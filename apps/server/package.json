@@ -1,0 +1,25 @@
+{
+  "name": "@wtr/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -b",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit -p tsconfig.json --pretty"
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.0.10",
+    "@wtr/core": "workspace:*",
+    "@wtr/shared": "workspace:*",
+    "hono": "^4.11.7",
+    "node-pty": "1.2.0-beta.14",
+    "ws": "^8.19.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.18.1"
+  }
+}

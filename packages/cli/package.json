@@ -1,0 +1,17 @@
+{
+  "name": "@wtr/cli",
+  "version": "0.1.0",
+  "private": true,
+  "bin": {
+    "wtr": "dist/index.js"
+  },
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc -b && chmod +x dist/index.js",
+    "typecheck": "tsc --noEmit -p tsconfig.json --pretty"
+  },
+  "dependencies": {
+    "@wtr/shared": "workspace:*"
+  }
+}

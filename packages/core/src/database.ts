@@ -1,0 +1,298 @@
+import fs from "node:fs";
+import path from "node:path";
+import Database from "better-sqlite3";
+import type {
+  OperationRecord,
+  PrInfo,
+  ProjectRecord,
+  TerminalRecord,
+  WorktreeRecord,
+} from "@wtr/shared";
+
+const MIGRATIONS = [
+  `
+  CREATE TABLE IF NOT EXISTS schema_migrations (
+    version INTEGER PRIMARY KEY,
+    applied_at TEXT NOT NULL
+  );
+  CREATE TABLE projects (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    repository_path TEXT NOT NULL UNIQUE,
+    main_worktree_path TEXT NOT NULL,
+    default_branch TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE TABLE worktrees (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    path TEXT NOT NULL UNIQUE,
+    branch TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK(kind IN ('main','linked')),
+    tmux_socket_name TEXT NOT NULL UNIQUE,
+    status TEXT NOT NULL CHECK(status IN ('active','cleaning','cleanup_failed','removed')),
+    cleanup_error TEXT,
+    pr_state TEXT NOT NULL DEFAULT 'unknown',
+    pr_number INTEGER,
+    pr_url TEXT,
+    pr_base_branch TEXT,
+    pr_head_branch TEXT,
+    pr_merged_at TEXT,
+    pr_refreshed_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE INDEX worktrees_project_idx ON worktrees(project_id);
+  CREATE TABLE terminals (
+    id TEXT PRIMARY KEY,
+    worktree_id TEXT NOT NULL REFERENCES worktrees(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    tmux_session_name TEXT NOT NULL,
+    argv_json TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('running','exited','missing')),
+    exit_code INTEGER,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(worktree_id, tmux_session_name)
+  );
+  CREATE INDEX terminals_worktree_idx ON terminals(worktree_id);
+  CREATE TABLE operations (
+    id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL CHECK(kind IN ('finish','discard','project_cleanup')),
+    project_id TEXT REFERENCES projects(id) ON DELETE SET NULL,
+    worktree_id TEXT REFERENCES worktrees(id) ON DELETE SET NULL,
+    status TEXT NOT NULL CHECK(status IN ('pending','running','completed','failed')),
+    request_json TEXT NOT NULL,
+    result_json TEXT,
+    error TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE INDEX operations_worktree_idx ON operations(worktree_id);
+  `,
+];
+
+interface ProjectRow {
+  id: string;
+  name: string;
+  repository_path: string;
+  main_worktree_path: string;
+  default_branch: string;
+  created_at: string;
+  updated_at: string;
+}
+interface WorktreeRow {
+  id: string;
+  project_id: string;
+  path: string;
+  branch: string;
+  kind: "main" | "linked";
+  tmux_socket_name: string;
+  status: "active" | "cleaning" | "cleanup_failed" | "removed";
+  cleanup_error: string | null;
+  pr_state: PrInfo["state"];
+  pr_number: number | null;
+  pr_url: string | null;
+  pr_base_branch: string | null;
+  pr_head_branch: string | null;
+  pr_merged_at: string | null;
+  pr_refreshed_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+interface TerminalRow {
+  id: string;
+  worktree_id: string;
+  name: string;
+  tmux_session_name: string;
+  argv_json: string;
+  status: TerminalRecord["status"];
+  exit_code: number | null;
+  created_at: string;
+  updated_at: string;
+}
+interface OperationRow {
+  id: string;
+  kind: OperationRecord["kind"];
+  project_id: string | null;
+  worktree_id: string | null;
+  status: OperationRecord["status"];
+  request_json: string;
+  result_json: string | null;
+  error: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export function serializeOperation(value: Record<string, unknown> | null): string | null {
+  return value === null ? null : JSON.stringify(value);
+}
+
+export function deserializeOperation(value: string | null): Record<string, unknown> | null {
+  return value === null ? null : (JSON.parse(value) as Record<string, unknown>);
+}
+
+export class WtrDatabase {
+  readonly connection: Database.Database;
+
+  constructor(readonly filePath: string) {
+    fs.mkdirSync(path.dirname(filePath), { recursive: true, mode: 0o700 });
+    this.connection = new Database(filePath);
+    this.connection.pragma("journal_mode = WAL");
+    this.connection.pragma("foreign_keys = ON");
+    this.migrate();
+  }
+
+  private migrate(): void {
+    this.connection.exec(
+      "CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)",
+    );
+    const applied = new Set(
+      (
+        this.connection.prepare("SELECT version FROM schema_migrations").all() as Array<{
+          version: number;
+        }>
+      ).map((row) => row.version),
+    );
+    MIGRATIONS.forEach((sql, index) => {
+      const version = index + 1;
+      if (applied.has(version)) return;
+      this.connection.transaction(() => {
+        this.connection.exec(sql);
+        this.connection
+          .prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)")
+          .run(version, new Date().toISOString());
+      })();
+    });
+  }
+
+  close(): void {
+    this.connection.close();
+  }
+
+  projects(): ProjectRecord[] {
+    const projects = this.connection
+      .prepare("SELECT * FROM projects ORDER BY name COLLATE NOCASE")
+      .all() as ProjectRow[];
+    return projects.map((project) => this.mapProject(project));
+  }
+
+  project(id: string): ProjectRecord | null {
+    const row = this.connection.prepare("SELECT * FROM projects WHERE id = ?").get(id) as
+      | ProjectRow
+      | undefined;
+    return row ? this.mapProject(row) : null;
+  }
+
+  projectByPath(repositoryPath: string): ProjectRecord | null {
+    const row = this.connection
+      .prepare("SELECT * FROM projects WHERE repository_path = ? OR main_worktree_path = ?")
+      .get(repositoryPath, repositoryPath) as ProjectRow | undefined;
+    return row ? this.mapProject(row) : null;
+  }
+
+  worktree(id: string): WorktreeRecord | null {
+    const row = this.connection.prepare("SELECT * FROM worktrees WHERE id = ?").get(id) as
+      | WorktreeRow
+      | undefined;
+    return row ? this.mapWorktree(row) : null;
+  }
+
+  worktreeByPath(worktreePath: string): WorktreeRecord | null {
+    const row = this.connection
+      .prepare("SELECT * FROM worktrees WHERE path = ? AND status != 'removed'")
+      .get(worktreePath) as WorktreeRow | undefined;
+    return row ? this.mapWorktree(row) : null;
+  }
+
+  terminal(id: string): TerminalRecord | null {
+    const row = this.connection.prepare("SELECT * FROM terminals WHERE id = ?").get(id) as
+      | TerminalRow
+      | undefined;
+    return row ? this.mapTerminal(row) : null;
+  }
+
+  operation(id: string): OperationRecord | null {
+    const row = this.connection.prepare("SELECT * FROM operations WHERE id = ?").get(id) as
+      | OperationRow
+      | undefined;
+    return row ? this.mapOperation(row) : null;
+  }
+
+  private mapProject(row: ProjectRow): ProjectRecord {
+    const worktrees = this.connection
+      .prepare(
+        "SELECT * FROM worktrees WHERE project_id = ? AND status != 'removed' ORDER BY kind, created_at",
+      )
+      .all(row.id) as WorktreeRow[];
+    return {
+      id: row.id,
+      name: row.name,
+      repositoryPath: row.repository_path,
+      mainWorktreePath: row.main_worktree_path,
+      defaultBranch: row.default_branch,
+      worktrees: worktrees.map((worktree) => this.mapWorktree(worktree)),
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  private mapWorktree(row: WorktreeRow): WorktreeRecord {
+    const terminals = this.connection
+      .prepare("SELECT * FROM terminals WHERE worktree_id = ? ORDER BY created_at")
+      .all(row.id) as TerminalRow[];
+    return {
+      id: row.id,
+      projectId: row.project_id,
+      path: row.path,
+      branch: row.branch,
+      kind: row.kind,
+      tmuxSocketName: row.tmux_socket_name,
+      status: row.status,
+      cleanupError: row.cleanup_error,
+      pr: {
+        state: row.pr_state,
+        number: row.pr_number,
+        url: row.pr_url,
+        baseBranch: row.pr_base_branch,
+        headBranch: row.pr_head_branch,
+        mergedAt: row.pr_merged_at,
+        refreshedAt: row.pr_refreshed_at,
+      },
+      dirty: null,
+      terminals: terminals.map((terminal) => this.mapTerminal(terminal)),
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  private mapTerminal(row: TerminalRow): TerminalRecord {
+    return {
+      id: row.id,
+      worktreeId: row.worktree_id,
+      name: row.name,
+      tmuxSessionName: row.tmux_session_name,
+      argv: JSON.parse(row.argv_json) as string[],
+      status: row.status,
+      exitCode: row.exit_code,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  private mapOperation(row: OperationRow): OperationRecord {
+    return {
+      id: row.id,
+      kind: row.kind,
+      projectId: row.project_id,
+      worktreeId: row.worktree_id,
+      status: row.status,
+      request: deserializeOperation(row.request_json) ?? {},
+      result: deserializeOperation(row.result_json),
+      error: row.error,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
+}

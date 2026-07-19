@@ -1,0 +1,118 @@
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import type { CommandRequest, CommandResult, CommandRunner } from "./command.js";
+import { generateTmuxSessionName, generateTmuxSocketName, TmuxAdapter } from "./tmux.js";
+
+const temporary: string[] = [];
+afterEach(async () =>
+  Promise.all(
+    temporary.splice(0).map((directory) => fs.rm(directory, { recursive: true, force: true })),
+  ),
+);
+
+class RecordingRunner implements CommandRunner {
+  readonly calls: CommandRequest[] = [];
+  responses: CommandResult[] = [];
+  async run(request: CommandRequest): Promise<CommandResult> {
+    this.calls.push(request);
+    return this.responses.shift() ?? { stdout: "", stderr: "", exitCode: 0 };
+  }
+}
+
+describe("TmuxAdapter", () => {
+  it("generates application-owned identifiers independent of branch names", () => {
+    expect(generateTmuxSocketName()).toMatch(/^wtr-wt-[a-f0-9]{16}$/);
+    expect(generateTmuxSessionName()).toMatch(/^wtr-term-[a-f0-9]{16}$/);
+    expect(generateTmuxSocketName()).not.toBe(generateTmuxSocketName());
+  });
+
+  it("preserves hostile and Unicode argv in a JSON launch spec without a shell", async () => {
+    const runtime = await fs.mkdtemp(path.join(os.tmpdir(), "wtr runtime "));
+    temporary.push(runtime);
+    const runner = new RecordingRunner();
+    const launcher = "/application owned/path with spaces/launcher.js";
+    const adapter = new TmuxAdapter(runner, runtime, "/tmux path/tmux", launcher);
+    const argv = [
+      "tool with spaces",
+      'a "quote"',
+      "semi;colon",
+      "$HOME",
+      "snowman ☃",
+      "single'quote",
+    ];
+    await adapter.createSession({
+      socketName: "wtr-wt-safe",
+      sessionName: "wtr-term-safe",
+      terminalId: "term_safe",
+      worktreeId: "wt_safe",
+      cwd: "/repo with spaces",
+      argv,
+      env: { WTR_TERMINAL_ID: "term_safe" },
+    });
+    const create = runner.calls.find((call) => call.args.includes("new-session"));
+    expect(create?.executable).toBe("/tmux path/tmux");
+    expect(create?.args.slice(-3, -1)).toEqual([process.execPath, launcher]);
+    const specPath = create?.args.at(-1);
+    expect(specPath).toBeTruthy();
+    const spec = JSON.parse(await fs.readFile(specPath!, "utf8")) as {
+      argv: string[];
+      cwd: string;
+    };
+    expect(spec.argv).toEqual(argv);
+    expect(spec.cwd).toBe("/repo with spaces");
+    expect(create?.args).not.toContain(argv.join(" "));
+  });
+
+  it("kills a newly created session when metadata setup fails", async () => {
+    const runtime = await fs.mkdtemp(path.join(os.tmpdir(), "wtr-runtime-"));
+    temporary.push(runtime);
+    const runner = new RecordingRunner();
+    runner.responses.push(
+      { stdout: "", stderr: "", exitCode: 0 },
+      { stdout: "", stderr: "metadata failed", exitCode: 1 },
+      { stdout: "", stderr: "", exitCode: 0 },
+      { stdout: "", stderr: "", exitCode: 0 },
+      { stdout: "", stderr: "no sessions", exitCode: 1 },
+      { stdout: "", stderr: "no server running", exitCode: 1 },
+    );
+    const adapter = new TmuxAdapter(runner, runtime, "tmux", "/launcher.js");
+    await expect(
+      adapter.createSession({
+        socketName: "socket",
+        sessionName: "session",
+        terminalId: "term",
+        worktreeId: "wt",
+        cwd: "/tmp",
+        argv: ["pi"],
+        env: {},
+      }),
+    ).rejects.toThrow(/metadata failed/);
+    expect(runner.calls.some((call) => call.args.includes("kill-session"))).toBe(true);
+  });
+
+  it("maps a live, exited, or absent pane to product terminal state", async () => {
+    const runtime = await fs.mkdtemp(path.join(os.tmpdir(), "wtr-runtime-"));
+    temporary.push(runtime);
+    const runner = new RecordingRunner();
+    runner.responses.push(
+      { stdout: "0\t\n", stderr: "", exitCode: 0 },
+      { stdout: "1\t17\n", stderr: "", exitCode: 0 },
+      { stdout: "", stderr: "no server running", exitCode: 1 },
+    );
+    const adapter = new TmuxAdapter(runner, runtime);
+    await expect(adapter.sessionState("socket", "one")).resolves.toEqual({
+      status: "running",
+      exitCode: null,
+    });
+    await expect(adapter.sessionState("socket", "two")).resolves.toEqual({
+      status: "exited",
+      exitCode: 17,
+    });
+    await expect(adapter.sessionState("socket", "three")).resolves.toEqual({
+      status: "missing",
+      exitCode: null,
+    });
+  });
+});

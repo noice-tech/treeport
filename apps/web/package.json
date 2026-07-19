@@ -1,0 +1,26 @@
+{
+  "name": "@wtr/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 5173",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit --emitDeclarationOnly false -p tsconfig.json --pretty"
+  },
+  "dependencies": {
+    "@heroicons/react": "^2.2.0",
+    "@wtr/shared": "workspace:*",
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/xterm": "^5.5.0",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.10",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.1.4",
+    "vite": "^8.1.5",
+    "vite-plugin-pwa": "^1.2.0"
+  }
+}

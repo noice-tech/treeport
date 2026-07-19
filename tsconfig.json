@@ -1,0 +1,10 @@
+{
+  "files": [],
+  "references": [
+    { "path": "packages/shared" },
+    { "path": "packages/core" },
+    { "path": "packages/cli" },
+    { "path": "apps/server" },
+    { "path": "apps/web" }
+  ]
+}

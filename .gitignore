@@ -1,0 +1,13 @@
+node_modules/
+.turbo/
+pnpm-debug.log*
+dist/
+coverage/
+*.db
+*.db-shm
+*.db-wal
+.env
+.DS_Store
+playwright-report/
+test-results/
+.pi-subagents/

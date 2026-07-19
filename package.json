@@ -1,0 +1,33 @@
+{
+  "name": "wtr",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "start": "node scripts/start.mjs",
+    "start:local": "pnpm --filter @wtr/server start",
+    "test": "vitest run",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "test:integration:real": "WTR_REAL_INTEGRATION=1 vitest run --config vitest.real.config.ts",
+    "test:web": "playwright test",
+    "typecheck": "turbo run typecheck",
+    "lint": "oxlint",
+    "lint:fix": "oxlint --fix",
+    "fmt": "oxfmt",
+    "fmt:check": "oxfmt --check",
+    "clean": "find apps packages -type d \\( -name dist -o -name dist-types \\) -prune -exec rm -rf {} + && rm -rf .turbo"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.58.2",
+    "@types/node": "^24.10.9",
+    "oxfmt": "^0.59.0",
+    "oxlint": "^1.74.0",
+    "tsx": "^4.21.0",
+    "turbo": "^2.10.5",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.18"
+  },
+  "packageManager": "pnpm@11.15.0"
+}
