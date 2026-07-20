@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { parse, printParseErrorCode, type ParseError } from "jsonc-parser";
 import type { CommandRunner } from "./command.js";
+import type { WorktreeSetupTask } from "./setup.js";
 
 const DEFAULT_WORKTREE_DIRECTORY = "../worktrees";
 const MAX_HOOK_OUTPUT = 4_000;
@@ -222,41 +223,60 @@ function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'"'"'`)}'`;
 }
 
+export async function resolveCreateWorktreeSetupTasks(input: {
+  shell: string;
+  mainWorktreePath: string;
+  worktreePath: string;
+}): Promise<WorktreeSetupTask[]> {
+  const tasks = await loadCreateWorktreeTasks(input.mainWorktreePath);
+  const compatibilityEnvironment = {
+    ZED_WORKTREE_ROOT: input.worktreePath,
+    ZED_MAIN_GIT_WORKTREE: input.mainWorktreePath,
+  };
+  return tasks.map((task) => {
+    const command = expand(task.command, compatibilityEnvironment);
+    const args = task.args.map((argument) => expand(argument, compatibilityEnvironment));
+    const expandedCwd = task.cwd ? expand(task.cwd, compatibilityEnvironment) : input.worktreePath;
+    const cwd = path.isAbsolute(expandedCwd)
+      ? expandedCwd
+      : path.resolve(input.worktreePath, expandedCwd);
+    const taskEnvironment = Object.fromEntries(
+      Object.entries(task.env).map(([key, value]) => [
+        key,
+        expand(value, compatibilityEnvironment),
+      ]),
+    );
+    const useShell = /[\s;&|<>`$()]/u.test(command);
+    return {
+      label: task.label,
+      argv: useShell
+        ? [input.shell, "-lc", [command, ...args.map(shellQuote)].join(" ")]
+        : [command, ...args],
+      cwd,
+      env: { ...compatibilityEnvironment, ...taskEnvironment },
+      timeoutMs: 30 * 60_000,
+    };
+  });
+}
+
 export async function runCreateWorktreeTasks(input: {
   runner: CommandRunner;
   shell: string;
   mainWorktreePath: string;
   worktreePath: string;
 }): Promise<ZedHookResult[]> {
-  const tasks = await loadCreateWorktreeTasks(input.mainWorktreePath);
-  const zedEnvironment = {
-    ZED_WORKTREE_ROOT: input.worktreePath,
-    ZED_MAIN_GIT_WORKTREE: input.mainWorktreePath,
-  };
+  const tasks = await resolveCreateWorktreeSetupTasks(input);
   const results: ZedHookResult[] = [];
   for (const task of tasks) {
-    const command = expand(task.command, zedEnvironment);
-    const args = task.args.map((argument) => expand(argument, zedEnvironment));
-    const expandedCwd = task.cwd ? expand(task.cwd, zedEnvironment) : input.worktreePath;
-    const cwd = path.isAbsolute(expandedCwd)
-      ? expandedCwd
-      : path.resolve(input.worktreePath, expandedCwd);
-    const taskEnvironment = Object.fromEntries(
-      Object.entries(task.env).map(([key, value]) => [key, expand(value, zedEnvironment)]),
-    );
-    const useShell = /[\s;&|<>`$()]/u.test(command);
-    const request = useShell
-      ? {
-          executable: input.shell,
-          args: ["-lc", [command, ...args.map(shellQuote)].join(" ")],
-        }
-      : { executable: command, args };
+    const [executable, ...args] = task.argv;
+    if (!executable) continue;
     try {
       const result = await input.runner.run({
-        ...request,
-        cwd,
-        env: { ...process.env, ...zedEnvironment, ...taskEnvironment },
-        timeoutMs: 30 * 60_000,
+        executable,
+        args,
+        cwd: task.cwd,
+        env: { ...process.env, ...task.env },
+        timeoutMs: task.timeoutMs,
       });
       if (result.exitCode !== 0) {
         const detail = (

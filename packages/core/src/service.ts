@@ -19,11 +19,13 @@ import { assertCleanupTransition, DomainError } from "./domain.js";
 import { ProductEventBus } from "./events.js";
 import type { GhAdapter } from "./gh.js";
 import type { GitAdapter } from "./git.js";
+import type { WorktreeSetupTask } from "./setup.js";
 import type { TmuxAdapter } from "./tmux.js";
 import { generateTmuxSessionName, generateTmuxSocketName } from "./tmux.js";
 import {
   normalizeWorktreeName,
   prepareZedWorktreeWrapper,
+  resolveCreateWorktreeSetupTasks,
   resolveZedWorktreePath,
   runCreateWorktreeTasks,
 } from "./zed.js";
@@ -143,7 +145,7 @@ export class WtrService {
       projects.flatMap((project) =>
         project.worktrees.map(async (worktree) => {
           worktree.dirty = await this.deps.git.dirtyState(worktree.path).catch(() => null);
-          await this.reconcileWorktreeTerminals(worktree);
+          if (!this.worktreeLocks.has(worktree.id)) await this.reconcileWorktreeTerminals(worktree);
         }),
       ),
     );
@@ -404,9 +406,8 @@ export class WtrService {
     this.projectLocks.add(projectId);
     let worktreePath: string;
     let wrapperPath: string;
-    let project: ProjectRecord;
+    let project!: ProjectRecord;
     let wrapperCreated = false;
-    let setupError: string | null = null;
     try {
       project = this.getProject(projectId);
       await this.importWorktrees(project.id, project.repositoryPath, project.mainWorktreePath);
@@ -495,50 +496,71 @@ export class WtrService {
       this.deps.database.connection
         .prepare("UPDATE worktrees SET managed_wrapper_path = ? WHERE path = ?")
         .run(wrapperCreated ? wrapperPath : null, worktreePath);
-
-      const hookResults = await runCreateWorktreeTasks({
-        runner: this.deps.runner,
-        shell: this.deps.config.shell,
-        mainWorktreePath: project.mainWorktreePath,
-        worktreePath,
-      }).catch((error: unknown) => [
-        {
-          label: "Zed create_worktree setup",
-          error: error instanceof Error ? error.message : String(error),
-        },
-      ]);
-      const hookFailure = hookResults.find((result) => result.error);
-      setupError = hookFailure
-        ? `${hookFailure.label}: ${hookFailure.error}`.slice(0, 4_096)
-        : null;
+      const worktree = this.deps.database.worktreeByPath(worktreePath!);
+      if (!worktree)
+        throw new DomainError(
+          "WORKTREE_DISCOVERY_FAILED",
+          "Git created the worktree but it could not be discovered",
+          500,
+        );
+      this.events.publish("worktree.created", { projectId, worktreeId: worktree.id });
+      let terminal: TerminalRecord | null = null;
+      let terminalError: string | null = null;
+      let setupError: string | null = null;
+      if (initialTerminal) {
+        let setupTasks: WorktreeSetupTask[] = [];
+        try {
+          setupTasks = await resolveCreateWorktreeSetupTasks({
+            shell: this.deps.config.shell,
+            mainWorktreePath: project.mainWorktreePath,
+            worktreePath: worktree.path,
+          });
+        } catch (error) {
+          setupError =
+            `create_worktree setup: ${error instanceof Error ? error.message : String(error)}`.slice(
+              0,
+              4_096,
+            );
+        }
+        try {
+          terminal = await this.createTerminal(
+            worktree.id,
+            initialTerminal.name,
+            initialTerminal.argv,
+            { tasks: setupTasks, error: setupError },
+          );
+        } catch (error) {
+          terminalError = error instanceof Error ? error.message : String(error);
+        }
+      } else {
+        const hookResults = await runCreateWorktreeTasks({
+          runner: this.deps.runner,
+          shell: this.deps.config.shell,
+          mainWorktreePath: project.mainWorktreePath,
+          worktreePath: worktree.path,
+        }).catch((error: unknown) => [
+          {
+            label: "create_worktree setup",
+            error: error instanceof Error ? error.message : String(error),
+          },
+        ]);
+        const hookFailure = hookResults.find((result) => result.error);
+        setupError = hookFailure
+          ? `${hookFailure.label}: ${hookFailure.error}`.slice(0, 4_096)
+          : null;
+      }
+      return { worktree: this.getWorktree(worktree.id), terminal, terminalError, setupError };
     } finally {
       this.projectLocks.delete(projectId);
     }
-    const worktree = this.deps.database.worktreeByPath(worktreePath!);
-    if (!worktree)
-      throw new DomainError(
-        "WORKTREE_DISCOVERY_FAILED",
-        "Git created the worktree but it could not be discovered",
-        500,
-      );
-    this.events.publish("worktree.created", { projectId, worktreeId: worktree.id });
-    let terminal: TerminalRecord | null = null;
-    let terminalError: string | null = null;
-    if (initialTerminal && !setupError) {
-      try {
-        terminal = await this.createTerminal(
-          worktree.id,
-          initialTerminal.name,
-          initialTerminal.argv,
-        );
-      } catch (error) {
-        terminalError = error instanceof Error ? error.message : String(error);
-      }
-    }
-    return { worktree: this.getWorktree(worktree.id), terminal, terminalError, setupError };
   }
 
-  async createTerminal(worktreeId: string, name: string, argv?: string[]): Promise<TerminalRecord> {
+  async createTerminal(
+    worktreeId: string,
+    name: string,
+    argv?: string[],
+    setup?: { tasks: WorktreeSetupTask[]; error: string | null },
+  ): Promise<TerminalRecord> {
     const worktree = this.getWorktree(worktreeId);
     if (this.worktreeLocks.has(worktreeId) || worktree.status !== "active") {
       throw new DomainError(
@@ -583,6 +605,8 @@ export class WtrService {
           WTR_WORKTREE_ID: worktree.id,
           WTR_TERMINAL_ID: terminalId,
         },
+        ...(setup?.tasks.length ? { setupTasks: setup.tasks } : {}),
+        ...(setup?.error ? { setupError: setup.error } : {}),
       });
     } catch (error) {
       if (inserted) {

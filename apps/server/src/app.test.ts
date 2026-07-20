@@ -19,6 +19,7 @@ function fixture(authToken: string | null = null) {
   const service = {
     events: new ProductEventBus(),
     listProjects: vi.fn(async () => []),
+    resolveProject: vi.fn(async () => ({ id: "p" })),
     createTerminal: vi.fn(),
     createWorktree: vi.fn(async () => ({
       worktree: {},
@@ -64,14 +65,19 @@ describe("HTTP API validation and authentication", () => {
     const created = await app.request("/api/projects/p/worktrees", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name: "topic", base: "current", sourceWorktreeId: "wt_main" }),
+      body: JSON.stringify({
+        name: "topic",
+        base: "current",
+        sourceWorktreeId: "wt_main",
+        initialTerminal: { name: "Terminal", argv: ["tool", "semi;colon", "$HOME"] },
+      }),
     });
     expect(created.status).toBe(201);
     expect(service.createWorktree).toHaveBeenCalledWith(
       "p",
       "topic",
       "current",
-      undefined,
+      { name: "Terminal", argv: ["tool", "semi;colon", "$HOME"] },
       "wt_main",
     );
 
@@ -86,6 +92,30 @@ describe("HTTP API validation and authentication", () => {
       confirmationToken: "a".repeat(64),
       confirmDestructive: true,
     });
+  });
+
+  it("forwards spawn argv as a structured initial terminal", async () => {
+    const { app, service } = fixture();
+    const response = await app.request("/api/spawn", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        project: "/repo",
+        worktreeName: "topic",
+        name: "Agent",
+        base: "default",
+        argv: ["tool", "semi;colon", "$HOME"],
+      }),
+    });
+    expect(response.status).toBe(201);
+    expect(service.resolveProject).toHaveBeenCalledWith("/repo");
+    expect(service.createWorktree).toHaveBeenCalledWith(
+      "p",
+      "topic",
+      "default",
+      { name: "Agent", argv: ["tool", "semi;colon", "$HOME"] },
+      undefined,
+    );
   });
 
   it("does not expose removed diagnostics and finish/discard routes", async () => {

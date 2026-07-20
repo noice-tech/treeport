@@ -70,6 +70,15 @@ describe("TmuxAdapter", () => {
       cwd: "/repo with spaces",
       argv,
       env: { WTR_TERMINAL_ID: "term_safe" },
+      setupTasks: [
+        {
+          label: "install ☃",
+          argv: ["tool with spaces", "semi;colon", "$HOME", "single'quote"],
+          cwd: "/repo with spaces/setup",
+          env: { HOSTILE: 'a "quote"' },
+          timeoutMs: 1234,
+        },
+      ],
     });
     const create = runner.calls.find((call) => call.args.includes("new-session"));
     expect(create?.executable).toBe("/tmux path/tmux");
@@ -79,10 +88,27 @@ describe("TmuxAdapter", () => {
     const spec = JSON.parse(await fs.readFile(specPath!, "utf8")) as {
       argv: string[];
       cwd: string;
+      setupTasks: Array<{
+        label: string;
+        argv: string[];
+        cwd: string;
+        env: Record<string, string>;
+        timeoutMs: number;
+      }>;
     };
     expect(spec.argv).toEqual(argv);
     expect(spec.cwd).toBe("/repo with spaces");
+    expect(spec.setupTasks).toEqual([
+      {
+        label: "install ☃",
+        argv: ["tool with spaces", "semi;colon", "$HOME", "single'quote"],
+        cwd: "/repo with spaces/setup",
+        env: { HOSTILE: 'a "quote"' },
+        timeoutMs: 1234,
+      },
+    ]);
     expect(create?.args).not.toContain(argv.join(" "));
+    expect(create?.args).not.toContain(spec.setupTasks[0]!.argv.join(" "));
   });
 
   it("kills a newly created session when metadata setup fails", async () => {

@@ -6,5 +6,6 @@ export * from "./events.js";
 export * from "./gh.js";
 export * from "./git.js";
 export * from "./service.js";
+export * from "./setup.js";
 export * from "./tmux.js";
 export * from "./zed.js";

@@ -12,6 +12,7 @@ import {
 import { createPortal } from "react-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  ArrowPathIcon,
   Bars3Icon,
   ChevronRightIcon,
   CommandLineIcon,
@@ -92,6 +93,21 @@ type Modal =
 
 const projectsQueryKey = ["projects"] as const;
 
+interface PendingWorktreeCreation {
+  id: string;
+  projectId: string;
+  typedName: string;
+  canonicalName: string;
+  destinationPath: string;
+  base: "default" | "current";
+  sourceWorktreeId?: string;
+}
+
+interface WorktreeDestination {
+  name: string;
+  path: string;
+}
+
 export default function App() {
   const queryClient = useQueryClient();
   const projectsQuery = useQuery({
@@ -112,6 +128,7 @@ export default function App() {
   const [isMobile, setIsMobile] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [modal, setModal] = useState<Modal>(null);
+  const [pendingWorktrees, setPendingWorktrees] = useState<PendingWorktreeCreation[]>([]);
   const [sidebarWidth, setSidebarWidth] = useState(() => {
     const savedWidth = Number.parseInt(localStorage.getItem("wtr-sidebar-width") ?? "", 10);
     return Number.isFinite(savedWidth) ? clampSidebarWidth(savedWidth) : DEFAULT_SIDEBAR_WIDTH;
@@ -289,6 +306,75 @@ export default function App() {
     if (nextTerminal) localStorage.setItem("wtr-terminal", nextTerminal.id);
     else localStorage.removeItem("wtr-terminal");
     setDrawerOpen(false);
+  };
+
+  const createWorktree = useMutation({
+    mutationFn: (pending: PendingWorktreeCreation) =>
+      apiClient.createWorktree(
+        pending.projectId,
+        pending.typedName,
+        pending.base,
+        pending.sourceWorktreeId,
+      ),
+    onSuccess: async (result, pending) => {
+      await queryClient.cancelQueries({ queryKey: projectsQueryKey });
+      const worktree =
+        result.terminal &&
+        !result.worktree.terminals.some((item) => item.id === result.terminal?.id)
+          ? { ...result.worktree, terminals: [...result.worktree.terminals, result.terminal] }
+          : result.worktree;
+      queryClient.setQueryData<ProjectRecord[]>(projectsQueryKey, (current) =>
+        current?.map((project) =>
+          project.id === pending.projectId
+            ? {
+                ...project,
+                worktrees: [
+                  ...project.worktrees.filter((item) => item.id !== worktree.id),
+                  worktree,
+                ],
+              }
+            : project,
+        ),
+      );
+      if (result.terminal) selectTerminal(result.terminal);
+      else selectWorktree(worktree);
+      setPendingWorktrees((current) => current.filter((item) => item.id !== pending.id));
+      if (result.setupError)
+        setError(`Worktree created, but setup could not start: ${result.setupError}`);
+      else if (result.terminalError)
+        setError(`Worktree created, but its terminal could not start: ${result.terminalError}`);
+      await queryClient.invalidateQueries({ queryKey: projectsQueryKey });
+    },
+    onError: (mutationError, pending) => {
+      setPendingWorktrees((current) => current.filter((item) => item.id !== pending.id));
+      setDrawerOpen(false);
+      showError(setError)(mutationError);
+    },
+  });
+
+  const submitWorktreeCreation = (
+    project: ProjectRecord,
+    name: string,
+    base: "default" | "current",
+    destination: WorktreeDestination,
+    sourceWorktreeId?: string,
+  ) => {
+    if (pendingWorktrees.some((item) => item.projectId === project.id)) return;
+    const pending: PendingWorktreeCreation = {
+      id: crypto.randomUUID(),
+      projectId: project.id,
+      typedName: name,
+      canonicalName: destination.name,
+      destinationPath: destination.path,
+      base,
+      ...(sourceWorktreeId ? { sourceWorktreeId } : {}),
+    };
+    setPendingWorktrees((current) => [...current, pending]);
+    setModal(null);
+    window.requestAnimationFrame(() => {
+      document.getElementById(`pending-worktree-${pending.id}`)?.focus();
+    });
+    createWorktree.mutate(pending);
   };
 
   const createTerminal = useMutation({
@@ -576,11 +662,40 @@ export default function App() {
                         </ul>
                       </li>
                     ))}
+                    {pendingWorktrees
+                      .filter(
+                        (pending) =>
+                          pending.projectId === project.id &&
+                          !project.worktrees.some(
+                            (worktree) => worktree.path === pending.destinationPath,
+                          ),
+                      )
+                      .map((pending) => (
+                        <li key={pending.id} className="min-w-0">
+                          <div
+                            id={`pending-worktree-${pending.id}`}
+                            className="flex min-h-11 min-w-0 items-center gap-1.5 rounded-md px-2 py-1.5 text-base font-normal text-zinc-400 outline-none focus-visible:ring-2 focus-visible:ring-cyan-400 sm:min-h-7 sm:py-0.5 sm:text-[0.6875rem]"
+                            role="status"
+                            aria-label={`Creating worktree ${pending.typedName}`}
+                            title={pending.destinationPath}
+                            tabIndex={-1}
+                          >
+                            <ArrowPathIcon
+                              className="size-4 shrink-0 animate-spin text-cyan-400"
+                              aria-hidden="true"
+                            />
+                            <span className="truncate">{pending.typedName}</span>
+                          </div>
+                        </li>
+                      ))}
                     <li className="min-w-0">
                       <Button
                         type="button"
                         variant="ghost"
                         className="h-auto min-h-11 w-full justify-start gap-1.5 px-2 py-1.5 text-base font-normal text-zinc-500 hover:bg-white/5 hover:text-zinc-100 sm:min-h-7 sm:py-0.5 sm:text-[0.6875rem]"
+                        disabled={pendingWorktrees.some(
+                          (pending) => pending.projectId === project.id,
+                        )}
                         onClick={(event) =>
                           openModal({ type: "worktree", project }, event.currentTarget)
                         }
@@ -676,6 +791,7 @@ export default function App() {
           close={() => setModal(null)}
           restoreFocusTo={modalTriggerRef.current}
           setError={setError}
+          onCreateWorktree={submitWorktreeCreation}
         />
       )}
     </div>
@@ -787,11 +903,19 @@ function ActionModal({
   close,
   restoreFocusTo,
   setError,
+  onCreateWorktree,
 }: {
   modal: Exclude<Modal, null>;
   close: () => void;
   restoreFocusTo: HTMLElement | null;
   setError: (value: string | null) => void;
+  onCreateWorktree: (
+    project: ProjectRecord,
+    name: string,
+    base: "default" | "current",
+    destination: WorktreeDestination,
+    sourceWorktreeId?: string,
+  ) => void;
 }) {
   const queryClient = useQueryClient();
   const worktreeId = modal.type === "remove" ? modal.worktree.id : null;
@@ -806,16 +930,8 @@ function ActionModal({
   const [refreshingStalePreview, setRefreshingStalePreview] = useState(false);
   const actionMutation = useMutation({
     mutationFn: (action: () => Promise<unknown>) => action(),
-    onSuccess: async (result) => {
+    onSuccess: async () => {
       close();
-      if (
-        result &&
-        typeof result === "object" &&
-        "setupError" in result &&
-        typeof result.setupError === "string"
-      ) {
-        setError(`Worktree created, but setup failed: ${result.setupError}`);
-      }
       await queryClient.invalidateQueries({ queryKey: projectsQueryKey });
     },
     onError: (error) => {
@@ -909,9 +1025,9 @@ function ActionModal({
         {modal.type === "worktree" && (
           <WorktreeForm
             project={modal.project}
-            busy={busy}
-            onSubmit={(name, base, sourceWorktreeId) =>
-              submit(() => apiClient.createWorktree(modal.project.id, name, base, sourceWorktreeId))
+            busy={false}
+            onSubmit={(name, base, destination, sourceWorktreeId) =>
+              onCreateWorktree(modal.project, name, base, destination, sourceWorktreeId)
             }
           />
         )}
@@ -971,7 +1087,12 @@ function WorktreeForm({
 }: {
   project: ProjectRecord;
   busy: boolean;
-  onSubmit: (name: string, base: "default" | "current", sourceWorktreeId?: string) => void;
+  onSubmit: (
+    name: string,
+    base: "default" | "current",
+    destination: WorktreeDestination,
+    sourceWorktreeId?: string,
+  ) => void;
 }) {
   const [name, setName] = useState("");
   const [baseValue, setBaseValue] = useState("default");
@@ -987,7 +1108,8 @@ function WorktreeForm({
       className="flex flex-col gap-5"
       onSubmit={(event) => {
         event.preventDefault();
-        onSubmit(name, base, base === "current" ? baseValue : undefined);
+        if (!destinationQuery.data) return;
+        onSubmit(name, base, destinationQuery.data, base === "current" ? baseValue : undefined);
       }}
     >
       <ModalHeading eyebrow={project.name} title="Create worktree" />
@@ -1027,12 +1149,14 @@ function WorktreeForm({
           ? `Destination: ${destinationQuery.data.path}`
           : destinationQuery.error
             ? destinationQuery.error.message
-            : "The daemon will create a detached Zed-style worktree and run create_worktree tasks."}
+            : "The daemon will create a detached worktree and run compatible setup tasks."}
       </p>
       <Button
         type="submit"
         className="self-end"
-        disabled={busy || destinationQuery.isFetching || destinationQuery.isError}
+        disabled={
+          busy || destinationQuery.isFetching || destinationQuery.isError || !destinationQuery.data
+        }
       >
         {busy ? "Creating and setting up…" : "Create worktree"}
       </Button>

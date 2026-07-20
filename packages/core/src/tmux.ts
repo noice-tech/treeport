@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import type { TerminalStatus } from "@wtr/shared";
 import type { CommandRunner } from "./command.js";
 import { runChecked } from "./command.js";
+import type { WorktreeSetupTask } from "./setup.js";
 
 export const generateTmuxSocketName = (): string =>
   `wtr-wt-${crypto.randomBytes(8).toString("hex")}`;
@@ -15,6 +16,8 @@ export interface LaunchSpec {
   argv: string[];
   cwd: string;
   env: Record<string, string>;
+  setupTasks?: WorktreeSetupTask[];
+  setupError?: string;
 }
 
 export interface TmuxSessionState {
@@ -79,10 +82,26 @@ export class TmuxAdapter {
     cwd: string;
     argv: string[];
     env: Record<string, string>;
+    setupTasks?: WorktreeSetupTask[];
+    setupError?: string;
   }): Promise<void> {
     await this.initialize();
     const specPath = path.join(this.specsDir, `${input.terminalId}.json`);
-    const spec: LaunchSpec = { argv: [...input.argv], cwd: input.cwd, env: { ...input.env } };
+    const spec: LaunchSpec = {
+      argv: [...input.argv],
+      cwd: input.cwd,
+      env: { ...input.env },
+      ...(input.setupTasks?.length
+        ? {
+            setupTasks: input.setupTasks.map((task) => ({
+              ...task,
+              argv: [...task.argv],
+              env: { ...task.env },
+            })),
+          }
+        : {}),
+      ...(input.setupError ? { setupError: input.setupError } : {}),
+    };
     await fs.writeFile(specPath, JSON.stringify(spec), { mode: 0o600 });
     let created = false;
     try {
