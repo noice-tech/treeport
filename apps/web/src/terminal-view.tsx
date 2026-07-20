@@ -1,228 +1,344 @@
-import { useEffect, useRef, useState } from "react";
-import { FitAddon } from "@xterm/addon-fit";
-import { Terminal } from "@xterm/xterm";
-import type { TerminalRecord } from "@wtr/shared";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { ArrowPathIcon, PlusIcon, XMarkIcon } from "@heroicons/react/16/solid";
+import type { TerminalRecord, WorktreeRecord } from "@wtr/shared";
+import { Button } from "./components/ui/button.js";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "./components/ui/tabs.js";
+import { Tooltip, TooltipContent, TooltipTrigger } from "./components/ui/tooltip.js";
+import { cn } from "./lib/utils.js";
+import {
+  terminalSessions,
+  type ArrowDirection,
+  type TerminalSession,
+  type TerminalSessionSnapshot,
+} from "./terminal-session.js";
 
 interface TerminalViewProps {
+  worktree: WorktreeRecord | null;
   terminal: TerminalRecord | null;
+  creatingTerminal: boolean;
+  closingTerminalId: string | null;
+  onSelectTerminal: (terminal: TerminalRecord) => void;
+  onCreateTerminal: () => void;
+  onCloseTerminal: (terminal: TerminalRecord) => void;
   onStatusChange: () => void;
 }
 
-export function TerminalView({ terminal, onStatusChange }: TerminalViewProps) {
+const EMPTY_ATTENTION: ReadonlySet<string> = new Set();
+const EMPTY_TITLES: ReadonlyMap<string, string> = new Map();
+const EMPTY_SNAPSHOT: TerminalSessionSnapshot = {
+  phase: "closed",
+  degraded: false,
+  controller: false,
+  title: null,
+  bellActive: false,
+  bellSerial: 0,
+  exitSerial: 0,
+  error: null,
+};
+
+export function TerminalView({
+  worktree,
+  terminal,
+  creatingTerminal,
+  closingTerminalId,
+  onSelectTerminal,
+  onCreateTerminal,
+  onCloseTerminal,
+  onStatusChange,
+}: TerminalViewProps) {
   const hostRef = useRef<HTMLDivElement>(null);
-  const terminalRef = useRef<Terminal | null>(null);
-  const socketRef = useRef<WebSocket | null>(null);
-  const controllerRef = useRef(false);
-  const [controller, setController] = useState(false);
-  const [connection, setConnection] = useState<
-    "connecting" | "connected" | "reconnecting" | "closed"
-  >("closed");
-  const [exitCode, setExitCode] = useState<number | null | undefined>(undefined);
+  const [session, setSession] = useState<TerminalSession | null>(null);
   const [ctrl, setCtrl] = useState(false);
   const [alt, setAlt] = useState(false);
+  const lastExitSerial = useRef(0);
+  const lastExitSessionId = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!terminal) {
+      setSession(null);
+      return;
+    }
+    const next = terminalSessions.acquire(terminal.id);
+    setSession(next);
+    return () => terminalSessions.release(terminal.id);
+  }, [terminal?.id]);
+
+  const activeSession = session?.terminalId === terminal?.id ? session : null;
+  const snapshot = useSyncExternalStore(
+    activeSession?.subscribe ?? (() => () => undefined),
+    activeSession?.getSnapshot ?? (() => EMPTY_SNAPSHOT),
+    () => EMPTY_SNAPSHOT,
+  );
+  const bellAttention = useSyncExternalStore(
+    terminalSessions.subscribe,
+    terminalSessions.getAttentionSnapshot,
+    () => EMPTY_ATTENTION,
+  );
+  const runtimeTitles = useSyncExternalStore(
+    terminalSessions.subscribe,
+    terminalSessions.getTitleSnapshot,
+    () => EMPTY_TITLES,
+  );
 
   useEffect(() => {
     const host = hostRef.current;
-    if (!host || !terminal) return;
-    let disposed = false;
-    let retry = 0;
-    let reconnectTimer: number | null = null;
-    const xterm = new Terminal({
-      cursorBlink: true,
-      convertEol: false,
-      fontFamily: '"SFMono-Regular", "Cascadia Code", "Liberation Mono", monospace',
-      fontSize: 14,
-      lineHeight: 1.15,
-      scrollback: 10_000,
-      allowProposedApi: false,
-      theme: {
-        background: "#09090b",
-        foreground: "#e4e4e7",
-        cursor: "#67e8f9",
-        selectionBackground: "#3f3f4666",
-        black: "#18181b",
-        red: "#fb7185",
-        green: "#86efac",
-        yellow: "#fde047",
-        blue: "#7dd3fc",
-        magenta: "#d8b4fe",
-        cyan: "#67e8f9",
-        white: "#f4f4f5",
-      },
-    });
-    const fit = new FitAddon();
-    xterm.loadAddon(fit);
-    xterm.open(host);
-    terminalRef.current = xterm;
+    if (!host || !activeSession) return;
+    activeSession.mount(host);
+    return () => activeSession.unmount(host);
+  }, [activeSession]);
 
-    const sendResize = () => {
-      try {
-        fit.fit();
-        if (controllerRef.current && socketRef.current?.readyState === WebSocket.OPEN) {
-          socketRef.current.send(
-            JSON.stringify({ type: "resize", cols: xterm.cols, rows: xterm.rows }),
-          );
-        }
-      } catch {
-        // The host can be temporarily hidden while the mobile drawer animates.
-      }
-    };
-    const resizeObserver = new ResizeObserver(sendResize);
-    resizeObserver.observe(host);
-    const input = xterm.onData((data) => {
-      if (controllerRef.current && socketRef.current?.readyState === WebSocket.OPEN) {
-        socketRef.current.send(JSON.stringify({ type: "input", data }));
-      }
-    });
-
-    const connect = () => {
-      if (disposed) return;
-      setConnection(retry ? "reconnecting" : "connecting");
-      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-      const socket = new WebSocket(
-        `${protocol}//${window.location.host}/api/terminals/${terminal.id}/attach`,
-      );
-      socketRef.current = socket;
-      socket.onopen = () => {
-        retry = 0;
-        setConnection("connected");
-        sendResize();
-      };
-      socket.onmessage = (event) => {
-        const message = JSON.parse(String(event.data)) as {
-          type: string;
-          data?: string;
-          controller?: boolean;
-          exitCode?: number | null;
-          message?: string;
-        };
-        if (message.type === "output" && message.data) xterm.write(message.data);
-        if (message.type === "control") {
-          const hasControl = message.controller === true;
-          controllerRef.current = hasControl;
-          setController(hasControl);
-          if (hasControl) window.setTimeout(sendResize, 0);
-        }
-        if (message.type === "exit") {
-          setExitCode(message.exitCode ?? null);
-          onStatusChange();
-        }
-        if (message.type === "error")
-          xterm.writeln(`\r\n\x1b[31m${message.message || "Attachment error"}\x1b[0m`);
-      };
-      socket.onclose = () => {
-        if (disposed) return;
-        controllerRef.current = false;
-        setController(false);
-        setConnection("reconnecting");
-        retry += 1;
-        reconnectTimer = window.setTimeout(
-          connect,
-          Math.min(10_000, 500 * 2 ** Math.min(retry, 5)),
-        );
-      };
-    };
-    connect();
-    window.setTimeout(sendResize, 0);
-    return () => {
-      disposed = true;
-      if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
-      resizeObserver.disconnect();
-      input.dispose();
-      controllerRef.current = false;
-      socketRef.current?.close();
-      socketRef.current = null;
-      terminalRef.current = null;
-      xterm.dispose();
-    };
-  }, [terminal?.id]);
+  useEffect(() => {
+    if (lastExitSessionId.current !== terminal?.id) {
+      lastExitSessionId.current = terminal?.id ?? null;
+      lastExitSerial.current = snapshot.exitSerial;
+      return;
+    }
+    if (snapshot.exitSerial <= lastExitSerial.current) return;
+    lastExitSerial.current = snapshot.exitSerial;
+    onStatusChange();
+  }, [onStatusChange, snapshot.exitSerial, terminal?.id]);
 
   const sendInput = (value: string) => {
     let data = value;
     if (ctrl && value.length === 1)
       data = String.fromCharCode(value.toUpperCase().charCodeAt(0) & 31);
     if (alt) data = `\u001b${data}`;
-    if (socketRef.current?.readyState === WebSocket.OPEN)
-      socketRef.current.send(JSON.stringify({ type: "input", data }));
+    activeSession?.sendText(data);
     setCtrl(false);
     setAlt(false);
-    terminalRef.current?.focus();
   };
 
-  if (!terminal) {
-    return (
-      <main className="empty-state">
-        <div>
-          <p className="eyebrow">No terminal selected</p>
-          <h1>Choose a terminal from the worktree drawer.</h1>
-          <p>Live processes stay inside app-owned tmux servers when this browser closes.</p>
-        </div>
-      </main>
-    );
-  }
+  const sendArrow = (direction: ArrowDirection) => {
+    activeSession?.sendArrow(direction, alt);
+    setCtrl(false);
+    setAlt(false);
+  };
+
+  const visibleTitle = terminal ? runtimeTitles.get(terminal.id) || terminal.name : "";
+  const terminals = worktree?.terminals ?? [];
 
   return (
-    <main className="terminal-shell" aria-label={`${terminal.name} terminal`}>
-      <header className="terminal-header">
-        <div className="terminal-title">
-          <strong>{terminal.name}</strong>
-          <span className={`connection-dot ${connection}`} aria-hidden="true" />
-          <span>{connection}</span>
-          {exitCode !== undefined && <span className="exit-label">exited {exitCode ?? "—"}</span>}
-        </div>
-        <div className="control-state">
-          <span className={controller ? "control-badge active" : "control-badge"}>
-            {controller ? "Control" : "View only"}
-          </span>
-          {!controller && (
-            <button
+    <Tabs
+      value={terminal?.id ?? ""}
+      onValueChange={(terminalId) => {
+        const nextTerminal = terminals.find((item) => item.id === terminalId);
+        if (nextTerminal) onSelectTerminal(nextTerminal);
+      }}
+      asChild
+    >
+      <main
+        className={cn(
+          "terminal-shell grid min-h-0 min-w-0 grid-rows-[2.5rem_minmax(0,1fr)] bg-zinc-950 max-[700px]:grid-rows-[2.75rem_minmax(0,1fr)_3.25rem]",
+          snapshot.bellActive && "terminal-bell",
+        )}
+        aria-label={terminal ? `${visibleTitle} terminal` : "Terminal panel"}
+      >
+        <header className="terminal-header flex min-w-0 items-stretch border-b border-white/8 bg-zinc-900/70">
+          <div className="min-w-0 max-w-full shrink overflow-x-auto">
+            <TabsList
+              className="flex h-full w-max items-stretch"
+              aria-label={`${worktree?.name ?? "Worktree"} terminals`}
+            >
+              {terminals.map((item) => {
+                const selected = item.id === terminal?.id;
+                const title = runtimeTitles.get(item.id) || item.name;
+                const needsAttention = bellAttention.has(item.id);
+                const status =
+                  selected && snapshot.degraded
+                    ? `${item.status}, reconnecting`
+                    : needsAttention
+                      ? `${item.status}, bell`
+                      : item.status;
+                const closing = closingTerminalId === item.id;
+                return (
+                  <div
+                    key={item.id}
+                    className="group/tab flex max-w-56 shrink-0 items-stretch border-r border-white/6 [&:has([data-state=active])]:bg-zinc-950"
+                  >
+                    <TabsTrigger
+                      value={item.id}
+                      className="flex min-w-0 max-w-48 items-center gap-1.5 px-3 text-base font-normal text-zinc-500 outline-none hover:bg-white/4 hover:text-zinc-200 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-cyan-400 data-[state=active]:text-zinc-100 sm:text-xs"
+                      aria-label={`${title}, ${status}`}
+                      title={title}
+                    >
+                      <span
+                        className={cn(
+                          "size-1.5 shrink-0 rounded-full bg-zinc-600",
+                          item.status === "running" && "bg-emerald-400",
+                          item.status === "exited" && "bg-rose-400",
+                          needsAttention && "bg-amber-300 shadow-[0_0_0.5rem] shadow-amber-300/60",
+                        )}
+                        aria-hidden="true"
+                      />
+                      <span className="truncate">{title}</span>
+                    </TabsTrigger>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon-sm"
+                          className="my-1 mr-1 shrink-0 text-zinc-600 hover:bg-white/5 hover:text-zinc-200"
+                          aria-label={`Close ${title}`}
+                          disabled={closing}
+                          onClick={() => onCloseTerminal(item)}
+                        >
+                          {closing ? <ArrowPathIcon className="animate-spin" /> : <XMarkIcon />}
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent side="bottom">Close terminal</TooltipContent>
+                    </Tooltip>
+                  </div>
+                );
+              })}
+            </TabsList>
+          </div>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                className="m-1 shrink-0 text-zinc-500 hover:bg-white/5 hover:text-zinc-100"
+                aria-label="New terminal"
+                disabled={!worktree || creatingTerminal}
+                onClick={onCreateTerminal}
+              >
+                {creatingTerminal ? <ArrowPathIcon className="animate-spin" /> : <PlusIcon />}
+                <span className="touch-target" aria-hidden="true" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">New terminal</TooltipContent>
+          </Tooltip>
+          {terminal && snapshot.phase === "ready" && !snapshot.controller && (
+            <Button
               type="button"
-              className="button button-small"
-              onClick={() => socketRef.current?.send(JSON.stringify({ type: "take_control" }))}
+              variant="secondary"
+              size="sm"
+              className="my-1 mr-1 ml-auto shrink-0"
+              onClick={() => activeSession?.takeControl()}
             >
               Take control
-            </button>
+            </Button>
           )}
-        </div>
-      </header>
-      <div className="xterm-host" ref={hostRef} />
-      <div className="accessory-row" aria-label="Terminal accessory keys">
-        <button type="button" onClick={() => sendInput("\u001b")}>
-          Esc
-        </button>
-        <button
-          type="button"
-          className={ctrl ? "latched" : ""}
-          onClick={() => setCtrl((value) => !value)}
-        >
-          Ctrl
-        </button>
-        <button
-          type="button"
-          className={alt ? "latched" : ""}
-          onClick={() => setAlt((value) => !value)}
-        >
-          Alt
-        </button>
-        <button type="button" onClick={() => sendInput("\t")}>
-          Tab
-        </button>
-        <button type="button" onClick={() => sendInput("\r")}>
-          Enter
-        </button>
-        <button type="button" aria-label="Arrow left" onClick={() => sendInput("\u001b[D")}>
-          ←
-        </button>
-        <button type="button" aria-label="Arrow up" onClick={() => sendInput("\u001b[A")}>
-          ↑
-        </button>
-        <button type="button" aria-label="Arrow down" onClick={() => sendInput("\u001b[B")}>
-          ↓
-        </button>
-        <button type="button" aria-label="Arrow right" onClick={() => sendInput("\u001b[C")}>
-          →
-        </button>
-      </div>
-    </main>
+        </header>
+        {terminal ? (
+          <div className="relative min-h-0 min-w-0 overflow-hidden">
+            <TabsContent
+              value={terminal.id}
+              key={terminal.id}
+              forceMount
+              className="xterm-host absolute inset-0 min-h-0 min-w-0 overflow-hidden p-2.5 outline-none max-[700px]:p-1.5"
+              ref={hostRef}
+              onMouseDown={() => activeSession?.focus()}
+            />
+            {snapshot.degraded && (
+              <div className="pointer-events-none absolute inset-x-0 top-3 z-10 flex justify-center">
+                <span className="rounded-full bg-zinc-900/90 px-3 py-1 text-xs text-amber-200 shadow ring-1 ring-amber-400/20 backdrop-blur">
+                  Reconnecting…
+                </span>
+              </div>
+            )}
+            {snapshot.phase === "closed" && snapshot.error && (
+              <div className="absolute inset-x-0 top-3 z-10 flex justify-center">
+                <div className="flex items-center gap-2 rounded-full bg-rose-950/95 px-3 py-1 text-xs text-rose-100 shadow ring-1 ring-rose-400/30 backdrop-blur">
+                  <span>{snapshot.error}</span>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 px-2 text-xs text-rose-100 hover:bg-rose-900"
+                    onClick={() => activeSession?.retry()}
+                  >
+                    Retry
+                  </Button>
+                </div>
+              </div>
+            )}
+            <span className="sr-only" aria-live="polite">
+              {snapshot.bellActive ? `Bell from ${visibleTitle}` : ""}
+            </span>
+          </div>
+        ) : (
+          <div className="empty-state grid min-h-0 place-items-center bg-[radial-gradient(circle_at_center,var(--color-zinc-900)_0,var(--color-zinc-950)_55%)] p-8">
+            <div className="grid max-w-lg gap-3">
+              <p className="eyebrow">No terminal open</p>
+              <h1 className="text-balance text-2xl font-semibold tracking-tight text-zinc-50 sm:text-3xl">
+                {worktree ? "Start a terminal for this worktree." : "Choose a worktree."}
+              </h1>
+              <p className="max-w-[52ch] text-base text-pretty text-zinc-400 sm:text-sm">
+                {worktree
+                  ? "Use the plus button in the tab bar to start a login shell."
+                  : "Select a worktree from the sidebar to view its terminals."}
+              </p>
+            </div>
+          </div>
+        )}
+        {terminal && (
+          <div
+            className="accessory-row hidden min-w-0 overflow-x-auto border-t border-white/8 bg-zinc-900 px-[env(safe-area-inset-left)] pt-1 pb-[calc(0.25rem+env(safe-area-inset-bottom))] max-[700px]:flex [&_button]:h-11 [&_button]:min-w-11 [&_button]:flex-1 [&_button]:rounded-none [&_button]:border-r [&_button]:border-white/8 [&_button]:text-sm [&_button:last-child]:border-r-0"
+            aria-label="Terminal accessory keys"
+          >
+            <Button variant="ghost" type="button" onClick={() => sendInput("\u001b")}>
+              Esc
+            </Button>
+            <Button
+              variant="ghost"
+              type="button"
+              className={ctrl ? "latched bg-cyan-950 text-cyan-100" : ""}
+              onClick={() => setCtrl((value) => !value)}
+            >
+              Ctrl
+            </Button>
+            <Button
+              variant="ghost"
+              type="button"
+              className={alt ? "latched bg-cyan-950 text-cyan-100" : ""}
+              onClick={() => setAlt((value) => !value)}
+            >
+              Alt
+            </Button>
+            <Button variant="ghost" type="button" onClick={() => sendInput("\t")}>
+              Tab
+            </Button>
+            <Button variant="ghost" type="button" onClick={() => sendInput("\r")}>
+              Enter
+            </Button>
+            <Button
+              variant="ghost"
+              type="button"
+              aria-label="Arrow left"
+              onClick={() => sendArrow("left")}
+            >
+              ←
+            </Button>
+            <Button
+              variant="ghost"
+              type="button"
+              aria-label="Arrow up"
+              onClick={() => sendArrow("up")}
+            >
+              ↑
+            </Button>
+            <Button
+              variant="ghost"
+              type="button"
+              aria-label="Arrow down"
+              onClick={() => sendArrow("down")}
+            >
+              ↓
+            </Button>
+            <Button
+              variant="ghost"
+              type="button"
+              aria-label="Arrow right"
+              onClick={() => sendArrow("right")}
+            >
+              →
+            </Button>
+          </div>
+        )}
+      </main>
+    </Tabs>
   );
 }

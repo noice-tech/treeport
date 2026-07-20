@@ -77,14 +77,37 @@ describe("GitAdapter", () => {
     expect(runner.calls.some((call) => call.args[0] === "fetch")).toBe(false);
   });
 
-  it("validates branch names with literal argv", async () => {
+  it("checks detached reachability only against branches, tags, and remotes", async () => {
+    const runner = new FakeRunner((request) => {
+      expect(request.args).toEqual([
+        "for-each-ref",
+        "--contains",
+        "abc123",
+        "--format=%(refname)",
+        "refs/heads",
+        "refs/tags",
+        "refs/remotes",
+      ]);
+      return { stdout: "", stderr: "", exitCode: 0 };
+    });
+    await expect(new GitAdapter(runner).isCommitReachable("/repo", "abc123")).resolves.toBe(false);
+  });
+
+  it("creates and removes detached worktrees with literal path argv", async () => {
     const runner = new FakeRunner(() => ({ stdout: "", stderr: "", exitCode: 0 }));
-    await expect(
-      new GitAdapter(runner).validateBranch("/repo with spaces", "feature/üñîçødé"),
-    ).resolves.toBe(true);
+    const adapter = new GitAdapter(runner);
+    await adapter.createDetachedWorktree("/repo with spaces", "/worktrees/üñîçødé repo", "abc123");
+    await adapter.removeWorktree("/repo with spaces", "/worktrees/üñîçødé repo", true);
     expect(runner.calls[0]).toMatchObject({
       cwd: "/repo with spaces",
-      args: ["check-ref-format", "--branch", "feature/üñîçødé"],
+      args: ["worktree", "add", "--detach", "--", "/worktrees/üñîçødé repo", "abc123"],
     });
+    expect(runner.calls[1]?.args).toEqual([
+      "worktree",
+      "remove",
+      "--force",
+      "--",
+      "/worktrees/üñîçødé repo",
+    ]);
   });
 });

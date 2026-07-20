@@ -1,7 +1,13 @@
 #!/usr/bin/env node
 import fs from "node:fs/promises";
 import path from "node:path";
-import type { ApiErrorBody, ProjectRecord, TerminalRecord, WorktreeRecord } from "@wtr/shared";
+import type {
+  ApiErrorBody,
+  ProjectRecord,
+  RemovePreview,
+  TerminalRecord,
+  WorktreeRecord,
+} from "@wtr/shared";
 import { extractJsonOutput } from "./args.js";
 
 const apiUrl = (process.env.WTR_API_URL || "http://127.0.0.1:4780").replace(/\/$/, "");
@@ -140,34 +146,19 @@ function usage(): never {
     `Usage:
   wtr project add <path> [--json]
   wtr project list [--json]
-  wtr project clean <id-or-path> [--preview] [--json]
   wtr worktree list [--project <id-or-path>] [--json]
-  wtr worktree create --project <id-or-path> --branch <branch> [--from-current] [--json]
-  wtr worktree finish <id-or-path-or-dot> [--json]
-  wtr worktree discard <id-or-path-or-dot> --confirm <branch> [--json]
+  wtr worktree create --project <id-or-path> --name <name> [--from-current] [--json]
+  wtr worktree remove <id-or-path-or-dot> [--force] [--json]
   wtr terminal list [--worktree <id-or-path>] [--json]
   wtr terminal create --worktree <id-or-path-or-dot> --name <name> [-- <command> args...] [--json]
   wtr terminal delete <terminal-id> [--json]
-  wtr spawn --project <id-or-path-or-dot> --branch <branch> --name <name> [-- <command> args...] [--json]
-  wtr diagnostics [--json]`,
+  wtr spawn --project <id-or-path-or-dot> --worktree-name <name> --name <terminal-name> [--from-current] [-- <command> args...] [--json]`,
     2,
   );
 }
 
 async function main(args: string[]): Promise<void> {
   const [group, action] = args.splice(0, 2);
-  if (group === "diagnostics" && !action) {
-    const result = await request<Record<string, unknown>>("/api/diagnostics");
-    print(result, () =>
-      Object.entries(result)
-        .map(
-          ([key, value]) =>
-            `${key}: ${typeof value === "object" ? JSON.stringify(value) : String(value)}`,
-        )
-        .join("\n"),
-    );
-    return;
-  }
   if (group === "project" && action === "add") {
     const repository = args.shift();
     if (!repository) usage();
@@ -188,24 +179,6 @@ async function main(args: string[]): Promise<void> {
     );
     return;
   }
-  if (group === "project" && action === "clean") {
-    const identifier = args.shift();
-    if (!identifier) usage();
-    const preview = removeFlag(args, "--preview");
-    const project = await resolveProject(identifier);
-    const result = preview
-      ? await request<{ previews: unknown[] }>(`/api/projects/${project.id}/cleanup-preview`)
-      : await request<{ operation: unknown }>(`/api/projects/${project.id}/cleanup`, {
-          method: "POST",
-          body: JSON.stringify({ preview: false }),
-        });
-    print(result, () =>
-      preview
-        ? JSON.stringify(result, null, 2)
-        : `Cleanup accepted\n${JSON.stringify(result, null, 2)}`,
-    );
-    return;
-  }
   if (group === "worktree" && action === "list") {
     const projectIdentifier = option(args, "--project");
     const list = projectIdentifier
@@ -214,7 +187,8 @@ async function main(args: string[]): Promise<void> {
     print(list, () =>
       list
         .map(
-          (worktree) => `${worktree.id}\t${worktree.branch}\t${worktree.status}\t${worktree.path}`,
+          (worktree) =>
+            `${worktree.id}\t${worktree.name}\t${worktree.branch ?? `detached@${worktree.head.slice(0, 8)}`}\t${worktree.status}\t${worktree.path}`,
         )
         .join("\n"),
     );
@@ -222,48 +196,53 @@ async function main(args: string[]): Promise<void> {
   }
   if (group === "worktree" && action === "create") {
     const projectIdentifier = option(args, "--project", true)!;
-    const branch = option(args, "--branch", true)!;
+    const name = option(args, "--name", true)!;
     const fromCurrent = removeFlag(args, "--from-current");
     const project = await resolveProject(projectIdentifier);
     const sourceWorktreeId = fromCurrent ? (await resolveWorktree(".")).id : undefined;
-    const result = await request<{ worktree: WorktreeRecord }>(
-      `/api/projects/${project.id}/worktrees`,
+    const result = await request<{
+      worktree: WorktreeRecord;
+      setupError: string | null;
+    }>(`/api/projects/${project.id}/worktrees`, {
+      method: "POST",
+      body: JSON.stringify({
+        name,
+        base: fromCurrent ? "current" : "default",
+        ...(sourceWorktreeId ? { sourceWorktreeId } : {}),
+      }),
+    });
+    print(
+      result,
+      () =>
+        `Created ${result.worktree.name}\n${result.worktree.path}${result.setupError ? `\nSetup error: ${result.setupError}` : ""}`,
+    );
+    return;
+  }
+  if (group === "worktree" && action === "remove") {
+    const identifier = args.shift();
+    if (!identifier) usage();
+    const confirmed = removeFlag(args, "--force");
+    const worktree = await resolveWorktree(identifier);
+    const preview = (
+      await request<{ preview: RemovePreview }>(`/api/worktrees/${worktree.id}/remove-preview`)
+    ).preview;
+    if (!preview.eligible) throw new CliError(preview.reasons.join("\n"), 5);
+    if (preview.warnings.length && !confirmed)
+      throw new CliError(
+        `${preview.warnings.join("\n")}\nRe-run with --force to confirm removal.`,
+        5,
+      );
+    const result = await request<{ operation: { id: string } }>(
+      `/api/worktrees/${worktree.id}/remove`,
       {
         method: "POST",
         body: JSON.stringify({
-          branch,
-          fromCurrent,
-          ...(sourceWorktreeId ? { sourceWorktreeId } : {}),
+          confirmationToken: preview.confirmationToken,
+          confirmDestructive: preview.warnings.length > 0,
         }),
       },
     );
-    print(result.worktree, () => `Created ${result.worktree.branch}\n${result.worktree.path}`);
-    return;
-  }
-  if (group === "worktree" && action === "finish") {
-    const identifier = args.shift();
-    if (!identifier) usage();
-    const worktree = await resolveWorktree(identifier);
-    const result = await request<{ operation: { id: string } }>(
-      `/api/worktrees/${worktree.id}/finish`,
-      { method: "POST", body: "{}" },
-    );
-    print(result.operation, () => `Finish accepted: ${result.operation.id}`);
-    return;
-  }
-  if (group === "worktree" && action === "discard") {
-    const identifier = args.shift();
-    if (!identifier) usage();
-    const confirmation = option(args, "--confirm", true)!;
-    const worktree = await resolveWorktree(identifier);
-    const result = await request<{ operation: { id: string } }>(
-      `/api/worktrees/${worktree.id}/discard`,
-      {
-        method: "POST",
-        body: JSON.stringify({ confirm: confirmation }),
-      },
-    );
-    print(result.operation, () => `Discard accepted: ${result.operation.id}`);
+    print(result.operation, () => `Remove accepted: ${result.operation.id}`);
     return;
   }
   if (group === "terminal" && action === "list") {
@@ -310,7 +289,7 @@ async function main(args: string[]): Promise<void> {
     if (!args[0]) args.shift();
     const argv = commandArgv(args);
     const projectIdentifier = option(args, "--project", true)!;
-    const branch = option(args, "--branch", true)!;
+    const worktreeName = option(args, "--worktree-name", true)!;
     const name = option(args, "--name", true)!;
     const fromCurrent = removeFlag(args, "--from-current");
     const project = await resolveProject(projectIdentifier);
@@ -319,13 +298,14 @@ async function main(args: string[]): Promise<void> {
       worktree: WorktreeRecord;
       terminal: TerminalRecord | null;
       terminalError: string | null;
+      setupError: string | null;
     }>("/api/spawn", {
       method: "POST",
       body: JSON.stringify({
         project: project.id,
-        branch,
+        worktreeName,
         name,
-        fromCurrent,
+        base: fromCurrent ? "current" : "default",
         ...(sourceWorktreeId ? { sourceWorktreeId } : {}),
         ...(argv ? { argv } : {}),
       }),
@@ -333,7 +313,7 @@ async function main(args: string[]): Promise<void> {
     print(
       result,
       () =>
-        `Created ${result.worktree.branch}${result.terminal ? ` with ${result.terminal.name}` : ""}${result.terminalError ? `\nTerminal error: ${result.terminalError}` : ""}`,
+        `Created ${result.worktree.name}${result.terminal ? ` with ${result.terminal.name}` : ""}${result.setupError ? `\nSetup error: ${result.setupError}` : ""}${result.terminalError ? `\nTerminal error: ${result.terminalError}` : ""}`,
     );
     return;
   }

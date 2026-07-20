@@ -9,11 +9,10 @@ import type { ZodType } from "zod";
 import { upgradeWebSocket } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
 import {
-  cleanupSchema,
   createTerminalSchema,
   createWorktreeSchema,
-  discardSchema,
   registerProjectSchema,
+  removeWorktreeSchema,
   spawnSchema,
   updateTerminalSchema,
 } from "@wtr/shared";
@@ -119,8 +118,6 @@ export function createApp({ service, config, tmux, webDist }: AppDependencies): 
     });
     return context.json({ ok: true, authenticationEnabled: true });
   });
-  app.get("/api/diagnostics", async (context) => context.json(await service.diagnostics()));
-
   app.get("/api/projects", async (context) =>
     context.json({ projects: await service.listProjects() }),
   );
@@ -142,6 +139,13 @@ export function createApp({ service, config, tmux, webDist }: AppDependencies): 
   app.get("/api/projects/:projectId/worktrees", (context) =>
     context.json({ worktrees: service.getProject(context.req.param("projectId")).worktrees }),
   );
+  app.get("/api/projects/:projectId/worktree-destination", async (context) => {
+    const name = context.req.query("name");
+    if (!name) throw new DomainError("VALIDATION_ERROR", "Worktree name is required", 400);
+    return context.json({
+      destination: await service.previewWorktreePath(context.req.param("projectId"), name),
+    });
+  });
   app.post("/api/projects/:projectId/worktrees", async (context) => {
     const body = await input(context, createWorktreeSchema);
     const initialTerminal = body.initialTerminal
@@ -152,8 +156,8 @@ export function createApp({ service, config, tmux, webDist }: AppDependencies): 
       : undefined;
     const result = await service.createWorktree(
       context.req.param("projectId"),
-      body.branch,
-      body.fromCurrent,
+      body.name,
+      body.base,
       initialTerminal,
       body.sourceWorktreeId,
     );
@@ -174,19 +178,13 @@ export function createApp({ service, config, tmux, webDist }: AppDependencies): 
     );
     return context.json({ terminal }, 201);
   });
-  app.get("/api/worktrees/:worktreeId/finish-preview", async (context) =>
-    context.json({ preview: await service.finishPreflight(context.req.param("worktreeId"), true) }),
+  app.get("/api/worktrees/:worktreeId/remove-preview", async (context) =>
+    context.json({ preview: await service.removePreview(context.req.param("worktreeId")) }),
   );
-  app.get("/api/worktrees/:worktreeId/discard-preview", async (context) =>
-    context.json({ preview: await service.discardPreview(context.req.param("worktreeId")) }),
-  );
-  app.post("/api/worktrees/:worktreeId/finish", async (context) =>
-    context.json({ operation: await service.beginFinish(context.req.param("worktreeId")) }, 202),
-  );
-  app.post("/api/worktrees/:worktreeId/discard", async (context) => {
-    const body = await input(context, discardSchema);
+  app.post("/api/worktrees/:worktreeId/remove", async (context) => {
+    const body = await input(context, removeWorktreeSchema);
     return context.json(
-      { operation: await service.beginDiscard(context.req.param("worktreeId"), body.confirm) },
+      { operation: await service.beginRemove(context.req.param("worktreeId"), body) },
       202,
     );
   });
@@ -216,28 +214,14 @@ export function createApp({ service, config, tmux, webDist }: AppDependencies): 
     const initialTerminal = { name: body.name, ...(body.argv ? { argv: body.argv } : {}) };
     const result = await service.createWorktree(
       project.id,
-      body.branch,
-      body.fromCurrent,
+      body.worktreeName,
+      body.base,
       initialTerminal,
       body.sourceWorktreeId,
     );
     return context.json(result, 201);
   });
 
-  app.get("/api/projects/:projectId/cleanup-preview", async (context) =>
-    context.json({ previews: await service.cleanupPreview(context.req.param("projectId")) }),
-  );
-  app.post("/api/projects/:projectId/cleanup", async (context) => {
-    const body = await input(context, cleanupSchema);
-    if (body.preview)
-      return context.json({
-        previews: await service.cleanupPreview(context.req.param("projectId")),
-      });
-    return context.json(
-      { operation: await service.beginProjectCleanup(context.req.param("projectId")) },
-      202,
-    );
-  });
   app.get("/api/operations/:operationId", (context) =>
     context.json({ operation: service.getOperation(context.req.param("operationId")) }),
   );
@@ -268,43 +252,25 @@ export function createApp({ service, config, tmux, webDist }: AppDependencies): 
     upgradeWebSocket((context) => {
       const terminalId = context.req.param("terminalId")!;
       let connectionId: string | null = null;
-      let closed = false;
       return {
         onOpen(_event, ws) {
-          void attachments
-            .open(terminalId, ws)
-            .then((idValue) => {
-              if (closed) attachments.close(idValue);
-              else connectionId = idValue;
-            })
-            .catch((error: unknown) => {
-              if (closed) return;
-              try {
-                ws.send(
-                  JSON.stringify({
-                    type: "error",
-                    message: error instanceof Error ? error.message : String(error),
-                  }),
-                );
-                ws.close();
-              } catch {
-                closed = true;
-              }
-            });
+          connectionId = attachments.accept(terminalId, ws);
         },
         onMessage(event) {
           if (connectionId) attachments.message(connectionId, event.data);
         },
         onClose() {
-          closed = true;
           if (connectionId) attachments.close(connectionId);
         },
         onError() {
-          closed = true;
           if (connectionId) attachments.close(connectionId);
         },
       };
     }),
+  );
+
+  app.all("/api/*", (context) =>
+    context.json({ error: { code: "NOT_FOUND", message: "API endpoint not found" } }, 404),
   );
 
   const staticRoot =

@@ -8,6 +8,7 @@ import type {
   TerminalRecord,
   WorktreeRecord,
 } from "@wtr/shared";
+import { inferWorktreeName } from "./zed.js";
 
 const MIGRATIONS = [
   `
@@ -71,6 +72,80 @@ const MIGRATIONS = [
   );
   CREATE INDEX operations_worktree_idx ON operations(worktree_id);
   `,
+  `
+  ALTER TABLE worktrees RENAME TO worktrees_v1;
+  CREATE TABLE worktrees (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    path TEXT NOT NULL UNIQUE,
+    head TEXT NOT NULL DEFAULT '',
+    branch TEXT,
+    detached INTEGER NOT NULL DEFAULT 0,
+    locked INTEGER NOT NULL DEFAULT 0,
+    lock_reason TEXT,
+    kind TEXT NOT NULL CHECK(kind IN ('main','linked')),
+    tmux_socket_name TEXT NOT NULL UNIQUE,
+    status TEXT NOT NULL CHECK(status IN ('active','cleaning','cleanup_failed','removed')),
+    cleanup_error TEXT,
+    managed_wrapper_path TEXT,
+    pr_state TEXT NOT NULL DEFAULT 'unknown',
+    pr_number INTEGER,
+    pr_url TEXT,
+    pr_base_branch TEXT,
+    pr_head_branch TEXT,
+    pr_merged_at TEXT,
+    pr_refreshed_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  INSERT INTO worktrees(
+    id,project_id,path,head,branch,detached,locked,lock_reason,kind,tmux_socket_name,status,
+    cleanup_error,managed_wrapper_path,pr_state,pr_number,pr_url,pr_base_branch,pr_head_branch,
+    pr_merged_at,pr_refreshed_at,created_at,updated_at
+  )
+  SELECT id,project_id,path,'',CASE WHEN branch='(detached)' THEN NULL ELSE branch END,
+    CASE WHEN branch='(detached)' THEN 1 ELSE 0 END,0,NULL,kind,tmux_socket_name,status,
+    cleanup_error,NULL,pr_state,pr_number,pr_url,pr_base_branch,pr_head_branch,pr_merged_at,
+    pr_refreshed_at,created_at,updated_at
+  FROM worktrees_v1;
+
+  ALTER TABLE terminals RENAME TO terminals_v1;
+  CREATE TABLE terminals (
+    id TEXT PRIMARY KEY,
+    worktree_id TEXT NOT NULL REFERENCES worktrees(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    tmux_session_name TEXT NOT NULL,
+    argv_json TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('running','exited','missing')),
+    exit_code INTEGER,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(worktree_id, tmux_session_name)
+  );
+  INSERT INTO terminals SELECT * FROM terminals_v1;
+
+  ALTER TABLE operations RENAME TO operations_v1;
+  CREATE TABLE operations (
+    id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL CHECK(kind IN ('finish','discard','project_cleanup','remove')),
+    project_id TEXT REFERENCES projects(id) ON DELETE SET NULL,
+    worktree_id TEXT REFERENCES worktrees(id) ON DELETE SET NULL,
+    status TEXT NOT NULL CHECK(status IN ('pending','running','completed','failed')),
+    request_json TEXT NOT NULL,
+    result_json TEXT,
+    error TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  INSERT INTO operations SELECT * FROM operations_v1;
+
+  DROP TABLE operations_v1;
+  DROP TABLE terminals_v1;
+  DROP TABLE worktrees_v1;
+  CREATE INDEX worktrees_project_idx ON worktrees(project_id);
+  CREATE INDEX terminals_worktree_idx ON terminals(worktree_id);
+  CREATE INDEX operations_worktree_idx ON operations(worktree_id);
+  `,
 ];
 
 interface ProjectRow {
@@ -86,11 +161,16 @@ interface WorktreeRow {
   id: string;
   project_id: string;
   path: string;
-  branch: string;
+  head: string;
+  branch: string | null;
+  detached: number;
+  locked: number;
+  lock_reason: string | null;
   kind: "main" | "linked";
   tmux_socket_name: string;
   status: "active" | "cleaning" | "cleanup_failed" | "removed";
   cleanup_error: string | null;
+  managed_wrapper_path: string | null;
   pr_state: PrInfo["state"];
   pr_number: number | null;
   pr_url: string | null;
@@ -196,14 +276,22 @@ export class WtrDatabase {
     const row = this.connection.prepare("SELECT * FROM worktrees WHERE id = ?").get(id) as
       | WorktreeRow
       | undefined;
-    return row ? this.mapWorktree(row) : null;
+    if (!row) return null;
+    const project = this.connection
+      .prepare("SELECT main_worktree_path FROM projects WHERE id = ?")
+      .get(row.project_id) as { main_worktree_path: string } | undefined;
+    return this.mapWorktree(row, project?.main_worktree_path ?? row.path);
   }
 
   worktreeByPath(worktreePath: string): WorktreeRecord | null {
     const row = this.connection
       .prepare("SELECT * FROM worktrees WHERE path = ? AND status != 'removed'")
       .get(worktreePath) as WorktreeRow | undefined;
-    return row ? this.mapWorktree(row) : null;
+    if (!row) return null;
+    const project = this.connection
+      .prepare("SELECT main_worktree_path FROM projects WHERE id = ?")
+      .get(row.project_id) as { main_worktree_path: string } | undefined;
+    return this.mapWorktree(row, project?.main_worktree_path ?? row.path);
   }
 
   terminal(id: string): TerminalRecord | null {
@@ -232,25 +320,31 @@ export class WtrDatabase {
       repositoryPath: row.repository_path,
       mainWorktreePath: row.main_worktree_path,
       defaultBranch: row.default_branch,
-      worktrees: worktrees.map((worktree) => this.mapWorktree(worktree)),
+      worktrees: worktrees.map((worktree) => this.mapWorktree(worktree, row.main_worktree_path)),
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     };
   }
 
-  private mapWorktree(row: WorktreeRow): WorktreeRecord {
+  private mapWorktree(row: WorktreeRow, mainWorktreePath: string): WorktreeRecord {
     const terminals = this.connection
       .prepare("SELECT * FROM terminals WHERE worktree_id = ? ORDER BY created_at")
       .all(row.id) as TerminalRow[];
     return {
       id: row.id,
       projectId: row.project_id,
+      name: inferWorktreeName(mainWorktreePath, row.path, row.kind),
       path: row.path,
+      head: row.head,
       branch: row.branch,
+      detached: Boolean(row.detached),
+      locked: Boolean(row.locked),
+      lockReason: row.lock_reason,
       kind: row.kind,
       tmuxSocketName: row.tmux_socket_name,
       status: row.status,
       cleanupError: row.cleanup_error,
+      managedWrapperPath: row.managed_wrapper_path,
       pr: {
         state: row.pr_state,
         number: row.pr_number,

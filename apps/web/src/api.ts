@@ -1,8 +1,8 @@
 import type {
   ApiErrorBody,
-  FinishPreflight,
   OperationRecord,
   ProjectRecord,
+  RemovePreview,
   TerminalRecord,
   WorktreeRecord,
 } from "@wtr/shared";
@@ -49,14 +49,30 @@ export const apiClient = {
         body: JSON.stringify({ path }),
       })
     ).project,
-  createWorktree: async (projectId: string, branch: string, fromCurrent: boolean) =>
+  worktreeDestination: async (projectId: string, name: string) =>
+    (
+      await api<{ destination: { name: string; path: string } }>(
+        `/api/projects/${projectId}/worktree-destination?name=${encodeURIComponent(name)}`,
+      )
+    ).destination,
+  createWorktree: async (
+    projectId: string,
+    name: string,
+    base: "default" | "current",
+    sourceWorktreeId?: string,
+  ) =>
     api<{
       worktree: WorktreeRecord;
       terminal: TerminalRecord | null;
       terminalError: string | null;
+      setupError: string | null;
     }>(`/api/projects/${projectId}/worktrees`, {
       method: "POST",
-      body: JSON.stringify({ branch, fromCurrent }),
+      body: JSON.stringify({
+        name,
+        base,
+        ...(sourceWorktreeId ? { sourceWorktreeId } : {}),
+      }),
     }),
   createTerminal: async (worktreeId: string, name: string, argv?: string[]) =>
     (
@@ -74,42 +90,18 @@ export const apiClient = {
     ).terminal,
   deleteTerminal: async (terminalId: string) =>
     api(`/api/terminals/${terminalId}`, { method: "DELETE" }),
-  refreshPr: async (worktreeId: string) =>
-    api(`/api/worktrees/${worktreeId}/pr/refresh`, { method: "POST", body: "{}" }),
-  finishPreview: async (worktreeId: string) =>
-    (await api<{ preview: FinishPreflight }>(`/api/worktrees/${worktreeId}/finish-preview`))
-      .preview,
-  discardPreview: async (worktreeId: string) =>
+  removePreview: async (worktreeId: string) =>
+    (await api<{ preview: RemovePreview }>(`/api/worktrees/${worktreeId}/remove-preview`)).preview,
+  removeWorktree: async (worktreeId: string, preview: RemovePreview) =>
     (
-      await api<{
-        preview: FinishPreflight & { commits: { ahead: number; behind: number } | null };
-      }>(`/api/worktrees/${worktreeId}/discard-preview`)
-    ).preview,
-  finish: async (worktreeId: string) =>
-    (
-      await api<{ operation: OperationRecord }>(`/api/worktrees/${worktreeId}/finish`, {
+      await api<{ operation: OperationRecord }>(`/api/worktrees/${worktreeId}/remove`, {
         method: "POST",
-        body: "{}",
+        body: JSON.stringify({
+          confirmationToken: preview.confirmationToken,
+          confirmDestructive: preview.warnings.length > 0,
+        }),
       })
     ).operation,
-  discard: async (worktreeId: string, confirm: string) =>
-    (
-      await api<{ operation: OperationRecord }>(`/api/worktrees/${worktreeId}/discard`, {
-        method: "POST",
-        body: JSON.stringify({ confirm }),
-      })
-    ).operation,
-  cleanupPreview: async (projectId: string) =>
-    (await api<{ previews: FinishPreflight[] }>(`/api/projects/${projectId}/cleanup-preview`))
-      .previews,
-  cleanup: async (projectId: string) =>
-    (
-      await api<{ operation: OperationRecord }>(`/api/projects/${projectId}/cleanup`, {
-        method: "POST",
-        body: JSON.stringify({ preview: false }),
-      })
-    ).operation,
-  diagnostics: () => api<Record<string, unknown>>("/api/diagnostics"),
   login: (token: string) =>
     api("/api/auth/session", { method: "POST", body: JSON.stringify({ token }) }),
 };

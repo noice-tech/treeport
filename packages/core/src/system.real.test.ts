@@ -10,7 +10,6 @@ import { loadConfig } from "./config.js";
 import { WtrDatabase } from "./database.js";
 import { GhAdapter } from "./gh.js";
 import { GitAdapter } from "./git.js";
-import { GtrAdapter } from "./gtr.js";
 import { WtrService } from "./service.js";
 import { TmuxAdapter } from "./tmux.js";
 
@@ -45,22 +44,17 @@ async function makeService(databasePath: string, runtimeDir: string) {
   const runner = new SpawnCommandRunner();
   const database = new WtrDatabase(databasePath);
   const git = new GitAdapter(runner);
-  const gtr = new GtrAdapter(runner);
   const launcherPath = fileURLToPath(new URL("../dist/launcher.js", import.meta.url));
   const tmux = new TmuxAdapter(runner, runtimeDir, "tmux", launcherPath);
   const gh = new GhAdapter(runner);
-  const service = new WtrService({ config, database, runner, git, gtr, tmux, gh });
+  const service = new WtrService({ config, database, runner, git, tmux, gh });
   await service.initialize();
   return { service, database, tmux, runner };
 }
 
-describe.skipIf(!enabled)("real Git, git gtr, and tmux lifecycle", () => {
+describe.skipIf(!enabled)("real Git, Zed-style worktrees, and tmux lifecycle", () => {
   it("persists two sessions across attachment and daemon restart, then removes them safely", async (context) => {
-    if (
-      !(await executable("git", ["--version"])) ||
-      !(await executable("tmux", ["-V"])) ||
-      !(await executable("git", ["gtr", "version"]))
-    ) {
+    if (!(await executable("git", ["--version"])) || !(await executable("tmux", ["-V"]))) {
       context.skip();
       return;
     }
@@ -108,7 +102,8 @@ describe.skipIf(!enabled)("real Git, git gtr, and tmux lifecycle", () => {
 
     let fixture = await makeService(databasePath, runtimeDir);
     const project = await fixture.service.registerProject(main);
-    const linked = (await fixture.service.createWorktree(project.id, "real/topic", false)).worktree;
+    const linked = (await fixture.service.createWorktree(project.id, "real-topic", "default"))
+      .worktree;
     const first = await fixture.service.createTerminal(linked.id, "Pi-like", [
       process.execPath,
       "-e",
@@ -166,47 +161,26 @@ describe.skipIf(!enabled)("real Git, git gtr, and tmux lifecycle", () => {
     expect((await fixture.service.refreshTerminalStatus(second.id)).status).toBe("running");
 
     await fs.writeFile(path.join(linked.path, "dirty file.txt"), "dirty");
-    await expect(fixture.service.beginFinish(linked.id)).rejects.toMatchObject({
-      code: "FINISH_REFUSED",
-    });
+    const dirtyPreview = await fixture.service.removePreview(linked.id);
+    expect(dirtyPreview.forceRequired).toBe(true);
+    expect(dirtyPreview.warnings.join(" ")).toMatch(/untracked/i);
     await fs.rm(path.join(linked.path, "dirty file.txt"));
-    await fs.writeFile(path.join(linked.path, "change.txt"), "unmerged\n");
-    await runChecked(command, { executable: "git", args: ["add", "change.txt"], cwd: linked.path });
-    await runChecked(command, {
-      executable: "git",
-      args: ["config", "user.email", "wtr@example.test"],
-      cwd: linked.path,
-    });
-    await runChecked(command, {
-      executable: "git",
-      args: ["config", "user.name", "wtr test"],
-      cwd: linked.path,
-    });
-    await runChecked(command, {
-      executable: "git",
-      args: ["commit", "-m", "topic"],
-      cwd: linked.path,
-    });
-    await expect(fixture.service.beginFinish(linked.id)).rejects.toMatchObject({
-      code: "FINISH_REFUSED",
-    });
 
-    await runChecked(command, {
-      executable: "git",
-      args: ["merge", "--no-ff", "real/topic", "-m", "merge topic"],
-      cwd: main,
+    const preview = await fixture.service.removePreview(linked.id);
+    const accepted = await fixture.service.beginRemove(linked.id, {
+      confirmationToken: preview.confirmationToken,
+      confirmDestructive: preview.warnings.length > 0,
     });
-    await runChecked(command, { executable: "git", args: ["push", "origin", "trunk"], cwd: main });
-    const accepted = await fixture.service.beginFinish(linked.id);
     const completed = await waitOperation(fixture.service, accepted.id);
     expect(completed.status).toBe("completed");
     expect(
       (await fixture.tmux.sessionState(linked.tmuxSocketName, second.tmuxSessionName)).status,
     ).toBe("missing");
     expect(fixture.service.getProject(project.id).worktrees).toHaveLength(1);
-    await expect(
-      fixture.service.beginFinish(fixture.service.getProject(project.id).worktrees[0]!.id),
-    ).rejects.toMatchObject({ code: "FINISH_REFUSED" });
+    expect(
+      (await fixture.service.removePreview(fixture.service.getProject(project.id).worktrees[0]!.id))
+        .eligible,
+    ).toBe(false);
     fixture.database.close();
   });
 });

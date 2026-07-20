@@ -3,40 +3,68 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import type {
   DirtyState,
-  FinishPreflight,
   OperationKind,
   OperationRecord,
   PrInfo,
   ProjectRecord,
+  RemovePreview,
   TerminalRecord,
   WorktreeRecord,
 } from "@wtr/shared";
 import type { AppConfig } from "./config.js";
-import { commandAvailable, type CommandRunner } from "./command.js";
+import type { CommandRunner } from "./command.js";
 import type { WtrDatabase } from "./database.js";
 import { serializeOperation } from "./database.js";
-import {
-  assertCleanupTransition,
-  assertDiscardConfirmation,
-  DomainError,
-  finishEligibility,
-} from "./domain.js";
+import { assertCleanupTransition, DomainError } from "./domain.js";
 import { ProductEventBus } from "./events.js";
 import type { GhAdapter } from "./gh.js";
 import type { GitAdapter } from "./git.js";
-import type { GtrAdapter } from "./gtr.js";
 import type { TmuxAdapter } from "./tmux.js";
 import { generateTmuxSessionName, generateTmuxSocketName } from "./tmux.js";
+import {
+  normalizeWorktreeName,
+  prepareZedWorktreeWrapper,
+  resolveZedWorktreePath,
+  runCreateWorktreeTasks,
+} from "./zed.js";
 
 const now = (): string => new Date().toISOString();
 const id = (prefix: string): string => `${prefix}_${crypto.randomUUID().replaceAll("-", "")}`;
+
+function removeConfirmationToken(
+  key: Buffer,
+  preview: Omit<RemovePreview, "confirmationToken">,
+  statusFingerprint: string,
+): string {
+  return crypto
+    .createHmac("sha256", key)
+    .update(
+      JSON.stringify({
+        worktreeId: preview.worktreeId,
+        path: preview.path,
+        head: preview.head,
+        branch: preview.branch,
+        detached: preview.detached,
+        detachedHeadReachable: preview.detachedHeadReachable,
+        locked: preview.locked,
+        lockReason: preview.lockReason,
+        dirty: preview.dirty,
+        forceRequired: preview.forceRequired,
+        eligible: preview.eligible,
+        reasons: preview.reasons,
+        warnings: preview.warnings,
+        statusFingerprint,
+        terminalIds: preview.terminals.map((terminal) => terminal.id).sort(),
+      }),
+    )
+    .digest("hex");
+}
 
 interface ServiceDependencies {
   config: AppConfig;
   database: WtrDatabase;
   runner: CommandRunner;
   git: GitAdapter;
-  gtr: GtrAdapter;
   tmux: TmuxAdapter;
   gh: GhAdapter;
   events?: ProductEventBus;
@@ -46,12 +74,15 @@ export interface CreateWorktreeResult {
   worktree: WorktreeRecord;
   terminal: TerminalRecord | null;
   terminalError: string | null;
+  setupError: string | null;
 }
 
 export class WtrService {
   readonly events: ProductEventBus;
   private readonly worktreeLocks = new Set<string>();
   private readonly projectLocks = new Set<string>();
+  private readonly removeConfirmationKey = crypto.randomBytes(32);
+  private projectsSnapshotInFlight: Promise<ProjectRecord[]> | null = null;
 
   constructor(private readonly deps: ServiceDependencies) {
     this.events = deps.events ?? new ProductEventBus();
@@ -95,7 +126,18 @@ export class WtrService {
     await this.reconcile();
   }
 
-  async listProjects(): Promise<ProjectRecord[]> {
+  listProjects(): Promise<ProjectRecord[]> {
+    if (this.projectsSnapshotInFlight) return this.projectsSnapshotInFlight;
+    const snapshot = this.collectProjectsSnapshot();
+    this.projectsSnapshotInFlight = snapshot;
+    const clear = () => {
+      if (this.projectsSnapshotInFlight === snapshot) this.projectsSnapshotInFlight = null;
+    };
+    void snapshot.then(clear, clear);
+    return snapshot;
+  }
+
+  private async collectProjectsSnapshot(): Promise<ProjectRecord[]> {
     const projects = this.deps.database.projects();
     await Promise.all(
       projects.flatMap((project) =>
@@ -250,9 +292,14 @@ export class WtrService {
     const timestamp = now();
     const seen = new Set<string>();
     const insert = this.deps.database.connection.prepare(
-      `INSERT INTO worktrees(id,project_id,path,branch,kind,tmux_socket_name,status,cleanup_error,created_at,updated_at)
-       VALUES(?,?,?,?,?,?, 'active',NULL,?,?)
-       ON CONFLICT(path) DO UPDATE SET project_id=excluded.project_id, branch=excluded.branch, kind=excluded.kind,
+      `INSERT INTO worktrees(
+         id,project_id,path,head,branch,detached,locked,lock_reason,kind,tmux_socket_name,
+         status,cleanup_error,created_at,updated_at
+       ) VALUES(?,?,?,?,?,?,?,?,?,?,'active',NULL,?,?)
+       ON CONFLICT(path) DO UPDATE SET project_id=excluded.project_id, head=excluded.head,
+         branch=excluded.branch, detached=excluded.detached, locked=excluded.locked,
+         lock_reason=excluded.lock_reason, kind=excluded.kind,
+         managed_wrapper_path=CASE WHEN worktrees.status='removed' THEN NULL ELSE worktrees.managed_wrapper_path END,
          status=CASE WHEN worktrees.status IN ('cleaning','cleanup_failed') THEN worktrees.status ELSE 'active' END,
          cleanup_error=CASE WHEN worktrees.status='cleanup_failed' THEN worktrees.cleanup_error ELSE NULL END,
          updated_at=excluded.updated_at`,
@@ -270,7 +317,11 @@ export class WtrService {
           existing?.id ?? id("wt"),
           projectId,
           item.path,
+          item.head ?? "",
           item.branch,
+          item.detached ? 1 : 0,
+          item.locked ? 1 : 0,
+          item.lockReason,
           item.path === mainPath ? "main" : "linked",
           existing?.tmux_socket_name ?? generateTmuxSocketName(),
           existing?.created_at ?? timestamp,
@@ -287,27 +338,64 @@ export class WtrService {
         status: string;
       }>;
       for (const worktree of known) {
-        if (
-          !seen.has(worktree.path) &&
-          worktree.status !== "cleaning" &&
-          worktree.status !== "cleanup_failed"
-        ) {
+        if (seen.has(worktree.path)) continue;
+        this.deps.database.connection
+          .prepare(
+            "UPDATE worktrees SET status='removed', cleanup_error=NULL, updated_at=? WHERE id=?",
+          )
+          .run(timestamp, worktree.id);
+        this.deps.database.connection
+          .prepare("UPDATE terminals SET status='missing', updated_at=? WHERE worktree_id=?")
+          .run(timestamp, worktree.id);
+        if (worktree.status === "cleaning" || worktree.status === "cleanup_failed") {
           this.deps.database.connection
-            .prepare("UPDATE worktrees SET status='removed', updated_at=? WHERE id=?")
-            .run(timestamp, worktree.id);
-          this.deps.database.connection
-            .prepare("UPDATE terminals SET status='missing', updated_at=? WHERE worktree_id=?")
-            .run(timestamp, worktree.id);
+            .prepare(
+              `UPDATE operations
+               SET status='completed', result_json=?, error=NULL, updated_at=?
+               WHERE id=(
+                 SELECT id FROM operations
+                 WHERE worktree_id=? AND kind='remove' AND status IN ('pending','running','failed')
+                 ORDER BY created_at DESC LIMIT 1
+               )`,
+            )
+            .run(
+              serializeOperation({
+                removed: true,
+                recovered: true,
+                path: worktree.path,
+                message:
+                  "Git no longer reports the worktree; removal was recovered during reconciliation",
+              }),
+              timestamp,
+              worktree.id,
+            );
         }
       }
     });
     transaction();
   }
 
+  async previewWorktreePath(
+    projectId: string,
+    inputName: string,
+  ): Promise<{ name: string; path: string }> {
+    const project = this.getProject(projectId);
+    const resolved = await resolveZedWorktreePath(project.mainWorktreePath, inputName).catch(
+      (error: unknown) => {
+        throw new DomainError(
+          "INVALID_WORKTREE_PATH",
+          error instanceof Error ? error.message : String(error),
+          400,
+        );
+      },
+    );
+    return { name: resolved.name, path: resolved.path };
+  }
+
   async createWorktree(
     projectId: string,
-    branch: string,
-    fromCurrent: boolean,
+    inputName: string,
+    base: "default" | "current",
     initialTerminal?: { name: string; argv?: string[] },
     sourceWorktreeId?: string,
   ): Promise<CreateWorktreeResult> {
@@ -315,53 +403,128 @@ export class WtrService {
       throw new DomainError("PROJECT_BUSY", "Project is already being modified", 409);
     this.projectLocks.add(projectId);
     let worktreePath: string;
+    let wrapperPath: string;
     let project: ProjectRecord;
+    let wrapperCreated = false;
+    let setupError: string | null = null;
     try {
       project = this.getProject(projectId);
-      if (!(await this.deps.git.validateBranch(project.repositoryPath, branch))) {
-        throw new DomainError("INVALID_BRANCH", `Invalid Git branch name: ${branch}`, 400);
-      }
+      await this.importWorktrees(project.id, project.repositoryPath, project.mainWorktreePath);
       project = this.getProject(projectId);
+      let name: string;
+      try {
+        name = normalizeWorktreeName(inputName);
+      } catch (error) {
+        throw new DomainError(
+          "INVALID_WORKTREE_NAME",
+          error instanceof Error ? error.message : String(error),
+          400,
+        );
+      }
       if (
         project.worktrees.some(
-          (worktree) => worktree.branch === branch && worktree.status !== "removed",
+          (worktree) =>
+            worktree.status !== "removed" &&
+            worktree.name.localeCompare(name, undefined, { sensitivity: "accent" }) === 0,
         )
       ) {
-        throw new DomainError("WORKTREE_EXISTS", `A worktree for ${branch} already exists`, 409);
+        throw new DomainError("WORKTREE_EXISTS", `A worktree named ${name} already exists`, 409);
       }
-      let sourcePath: string | undefined;
-      if (fromCurrent && sourceWorktreeId) {
+      const destination = await resolveZedWorktreePath(project.mainWorktreePath, name).catch(
+        (error: unknown) => {
+          throw new DomainError(
+            "INVALID_WORKTREE_PATH",
+            error instanceof Error ? error.message : String(error),
+            400,
+          );
+        },
+      );
+      worktreePath = destination.path;
+      wrapperPath = destination.wrapperPath;
+      const pathExists = await fs.access(worktreePath).then(
+        () => true,
+        () => false,
+      );
+      if (pathExists)
+        throw new DomainError(
+          "WORKTREE_PATH_EXISTS",
+          `Destination already exists: ${worktreePath}`,
+          409,
+        );
+
+      let commit: string;
+      if (base === "current") {
+        if (!sourceWorktreeId)
+          throw new DomainError(
+            "INVALID_SOURCE_WORKTREE",
+            "A source worktree is required when starting from current",
+            400,
+          );
         const source = this.getWorktree(sourceWorktreeId);
-        if (source.projectId !== projectId || source.status !== "active") {
+        if (source.projectId !== projectId || source.status !== "active")
           throw new DomainError(
             "INVALID_SOURCE_WORKTREE",
             "The source worktree must be active and belong to the project",
             400,
           );
-        }
-        sourcePath = source.path;
+        commit = await this.deps.git.resolveCommit(source.path);
+      } else {
+        commit = await this.deps.git.resolveDefaultCommit(project.repositoryPath);
       }
-      worktreePath = await this.deps.gtr.create(
-        project.repositoryPath,
-        branch,
-        fromCurrent,
-        sourcePath,
-      );
+
+      let preparedWrapper: Awaited<ReturnType<typeof prepareZedWorktreeWrapper>>;
+      try {
+        preparedWrapper = await prepareZedWorktreeWrapper(project.mainWorktreePath, wrapperPath);
+      } catch (error) {
+        throw new DomainError(
+          "INVALID_WORKTREE_PATH",
+          error instanceof Error ? error.message : String(error),
+          400,
+        );
+      }
+      wrapperCreated = preparedWrapper.created;
+      wrapperPath = preparedWrapper.path;
+      worktreePath = path.join(wrapperPath, path.basename(project.mainWorktreePath));
+      try {
+        await this.deps.git.createDetachedWorktree(project.repositoryPath, worktreePath, commit);
+      } catch (error) {
+        if (wrapperCreated) await fs.rmdir(wrapperPath).catch(() => undefined);
+        throw error;
+      }
       await this.importWorktrees(project.id, project.repositoryPath, project.mainWorktreePath);
+      this.deps.database.connection
+        .prepare("UPDATE worktrees SET managed_wrapper_path = ? WHERE path = ?")
+        .run(wrapperCreated ? wrapperPath : null, worktreePath);
+
+      const hookResults = await runCreateWorktreeTasks({
+        runner: this.deps.runner,
+        shell: this.deps.config.shell,
+        mainWorktreePath: project.mainWorktreePath,
+        worktreePath,
+      }).catch((error: unknown) => [
+        {
+          label: "Zed create_worktree setup",
+          error: error instanceof Error ? error.message : String(error),
+        },
+      ]);
+      const hookFailure = hookResults.find((result) => result.error);
+      setupError = hookFailure
+        ? `${hookFailure.label}: ${hookFailure.error}`.slice(0, 4_096)
+        : null;
     } finally {
       this.projectLocks.delete(projectId);
     }
-    const worktree = this.deps.database.worktreeByPath(worktreePath);
+    const worktree = this.deps.database.worktreeByPath(worktreePath!);
     if (!worktree)
       throw new DomainError(
         "WORKTREE_DISCOVERY_FAILED",
-        "git gtr succeeded but the worktree could not be discovered",
+        "Git created the worktree but it could not be discovered",
         500,
       );
     this.events.publish("worktree.created", { projectId, worktreeId: worktree.id });
     let terminal: TerminalRecord | null = null;
     let terminalError: string | null = null;
-    if (initialTerminal) {
+    if (initialTerminal && !setupError) {
       try {
         terminal = await this.createTerminal(
           worktree.id,
@@ -372,7 +535,7 @@ export class WtrService {
         terminalError = error instanceof Error ? error.message : String(error);
       }
     }
-    return { worktree: this.getWorktree(worktree.id), terminal, terminalError };
+    return { worktree: this.getWorktree(worktree.id), terminal, terminalError, setupError };
   }
 
   async createTerminal(worktreeId: string, name: string, argv?: string[]): Promise<TerminalRecord> {
@@ -498,7 +661,7 @@ export class WtrService {
 
   async refreshPr(worktreeId: string, force = false): Promise<PrInfo> {
     const worktree = this.getWorktree(worktreeId);
-    if (worktree.kind === "main") return worktree.pr;
+    if (worktree.kind === "main" || !worktree.branch) return worktree.pr;
     const age = worktree.pr.refreshedAt
       ? Date.now() - Date.parse(worktree.pr.refreshedAt)
       : Number.POSITIVE_INFINITY;
@@ -523,117 +686,150 @@ export class WtrService {
     return pr;
   }
 
-  async finishPreflight(worktreeId: string, refreshPr = true): Promise<FinishPreflight> {
-    let worktree = this.getWorktree(worktreeId);
-    if (refreshPr && worktree.kind === "linked") {
-      await this.refreshPr(worktreeId, true);
-      worktree = this.getWorktree(worktreeId);
-    }
+  private async prepareRemovePreview(
+    worktreeId: string,
+  ): Promise<{ preview: RemovePreview; statusFingerprint: string }> {
+    const worktree = this.getWorktree(worktreeId);
     const project = this.getProject(worktree.projectId);
-    const dirty = await this.deps.git.dirtyState(worktree.path);
-    const gitMerged =
-      worktree.kind === "linked"
-        ? await this.deps.git.isMerged(project.repositoryPath, worktree.branch)
-        : false;
-    const eligibility = finishEligibility({
-      kind: worktree.kind,
-      dirty,
-      pr: worktree.pr,
-      gitMerged,
-    });
-    return {
+    const live = (await this.deps.git.listWorktrees(project.repositoryPath)).find(
+      (item) => item.path === worktree.path,
+    );
+    if (!live)
+      throw new DomainError("WORKTREE_NOT_FOUND", "Git no longer reports this worktree", 404);
+    const head = live.head ?? worktree.head;
+    const status = await this.deps.git.dirtyStatus(worktree.path);
+    const dirty = status.dirty;
+    const reachable =
+      live.detached && head ? await this.deps.git.isCommitReachable(worktree.path, head) : null;
+    const reasons: string[] = [];
+    const warnings: string[] = [];
+    if (worktree.kind === "main") reasons.push("The main checkout cannot be removed");
+    if (live.locked)
+      reasons.push(
+        live.lockReason ? `The worktree is locked: ${live.lockReason}` : "The worktree is locked",
+      );
+    if (dirty.staged) warnings.push(`${dirty.staged} staged change(s) will be lost`);
+    if (dirty.unstaged) warnings.push(`${dirty.unstaged} unstaged change(s) will be lost`);
+    if (dirty.untracked) warnings.push(`${dirty.untracked} untracked file(s) will be lost`);
+    if (dirty.conflicts) warnings.push(`${dirty.conflicts} conflicted file(s) will be lost`);
+    if (live.detached && reachable === false)
+      warnings.push("Detached commits may become unreachable after removal");
+    if (live.detached && reachable === null)
+      warnings.push("Detached commit reachability could not be verified");
+    const previewWithoutToken = {
       worktreeId,
-      branch: worktree.branch,
+      name: worktree.name,
       path: worktree.path,
-      pr: worktree.pr,
-      gitMerged,
+      head,
+      branch: live.branch,
+      detached: live.detached,
+      locked: live.locked,
+      lockReason: live.lockReason,
       dirty,
-      eligible: eligibility.eligible,
-      reasons: eligibility.reasons,
+      detachedHeadReachable: reachable,
+      forceRequired: dirty.dirty,
+      eligible: reasons.length === 0,
+      reasons,
+      warnings,
       terminals: worktree.terminals.map(({ id: terminalId, name, status }) => ({
         id: terminalId,
         name,
         status,
       })),
-    };
-  }
-
-  async discardPreview(
-    worktreeId: string,
-  ): Promise<FinishPreflight & { commits: { ahead: number; behind: number } | null }> {
-    const worktree = this.getWorktree(worktreeId);
-    const project = this.getProject(worktree.projectId);
-    const preflight = await this.finishPreflight(worktreeId, true);
+    } satisfies Omit<RemovePreview, "confirmationToken">;
     return {
-      ...preflight,
-      commits: await this.deps.git.commitSummary(
-        project.repositoryPath,
-        worktree.branch,
-        project.defaultBranch,
-      ),
+      preview: {
+        ...previewWithoutToken,
+        confirmationToken: removeConfirmationToken(
+          this.removeConfirmationKey,
+          previewWithoutToken,
+          status.fingerprint,
+        ),
+      },
+      statusFingerprint: status.fingerprint,
     };
   }
 
-  async beginFinish(worktreeId: string): Promise<OperationRecord> {
-    const preflight = await this.finishPreflight(worktreeId, true);
-    if (!preflight.eligible)
-      throw new DomainError("FINISH_REFUSED", "Worktree is not safe to finish", 409, preflight);
-    return this.prepareCleanup(worktreeId, "finish", { preflight }, false);
+  async removePreview(worktreeId: string): Promise<RemovePreview> {
+    return (await this.prepareRemovePreview(worktreeId)).preview;
   }
 
-  async beginDiscard(worktreeId: string, confirmation: string): Promise<OperationRecord> {
-    const worktree = this.getWorktree(worktreeId);
-    assertDiscardConfirmation(worktree.kind, worktree.branch, confirmation);
-    const preview = await this.discardPreview(worktreeId);
-    return this.prepareCleanup(worktreeId, "discard", { preview, confirmation }, true);
-  }
-
-  private prepareCleanup(
+  async beginRemove(
     worktreeId: string,
-    kind: "finish" | "discard",
-    request: Record<string, unknown>,
-    force: boolean,
-  ): OperationRecord {
+    request: { confirmationToken: string; confirmDestructive: boolean },
+  ): Promise<OperationRecord> {
     const worktree = this.getWorktree(worktreeId);
-    if (this.worktreeLocks.has(worktreeId) || worktree.status === "cleaning") {
+    if (
+      this.worktreeLocks.has(worktreeId) ||
+      this.projectLocks.has(worktree.projectId) ||
+      worktree.status === "cleaning"
+    ) {
       throw new DomainError(
-        "CLEANUP_IN_PROGRESS",
-        "A cleanup operation is already running for this worktree",
+        "REMOVE_IN_PROGRESS",
+        "The worktree or project is already being modified",
         409,
       );
     }
-    assertCleanupTransition(worktree.status, "cleaning");
     this.worktreeLocks.add(worktreeId);
-    const operationId = id("op");
-    const timestamp = now();
-    const transaction = this.deps.database.connection.transaction(() => {
-      this.deps.database.connection
-        .prepare(
-          `INSERT INTO operations(id,kind,project_id,worktree_id,status,request_json,result_json,error,created_at,updated_at)
-           VALUES(?,?,?,?, 'pending',?,NULL,NULL,?,?)`,
-        )
-        .run(
-          operationId,
-          kind,
-          worktree.projectId,
-          worktreeId,
-          serializeOperation(request),
-          timestamp,
-          timestamp,
+    this.projectLocks.add(worktree.projectId);
+    let operationStarted = false;
+    try {
+      const { preview } = await this.prepareRemovePreview(worktreeId);
+      if (!preview.eligible)
+        throw new DomainError("REMOVE_REFUSED", "The worktree cannot be removed", 409, preview);
+      if (request.confirmationToken !== preview.confirmationToken) {
+        throw new DomainError(
+          "REMOVE_PREVIEW_STALE",
+          "The worktree changed after the removal preview; review it again",
+          409,
+          preview,
         );
-      this.deps.database.connection
-        .prepare(
-          "UPDATE worktrees SET status='cleaning', cleanup_error=NULL, updated_at=? WHERE id=?",
-        )
-        .run(timestamp, worktreeId);
-    });
-    transaction();
-    this.events.publish("cleanup.started", { operationId, worktreeId, kind });
-    setTimeout(() => void this.executeCleanup(operationId, force), 150).unref();
-    return this.getOperation(operationId);
+      }
+      if (preview.warnings.length > 0 && !request.confirmDestructive) {
+        throw new DomainError(
+          "REMOVE_CONFIRMATION_REQUIRED",
+          "Confirm the destructive removal after reviewing its warnings",
+          409,
+          preview,
+        );
+      }
+      assertCleanupTransition(worktree.status, "cleaning");
+      const operationId = id("op");
+      const timestamp = now();
+      const transaction = this.deps.database.connection.transaction(() => {
+        this.deps.database.connection
+          .prepare(
+            `INSERT INTO operations(id,kind,project_id,worktree_id,status,request_json,result_json,error,created_at,updated_at)
+             VALUES(?,'remove',?,?, 'pending',?,NULL,NULL,?,?)`,
+          )
+          .run(
+            operationId,
+            worktree.projectId,
+            worktreeId,
+            serializeOperation({ ...request, preview }),
+            timestamp,
+            timestamp,
+          );
+        this.deps.database.connection
+          .prepare(
+            "UPDATE worktrees SET status='cleaning', cleanup_error=NULL, updated_at=? WHERE id=?",
+          )
+          .run(timestamp, worktreeId);
+      });
+      transaction();
+      operationStarted = true;
+      setTimeout(() => void this.executeRemove(operationId, preview.forceRequired), 150).unref();
+      this.events.publish("remove.started", { operationId, worktreeId, kind: "remove" });
+      return this.getOperation(operationId);
+    } finally {
+      if (!operationStarted) {
+        this.worktreeLocks.delete(worktreeId);
+        this.projectLocks.delete(worktree.projectId);
+      }
+    }
   }
 
-  private async executeCleanup(operationId: string, force: boolean): Promise<void> {
+  private async executeRemove(operationId: string, force: boolean): Promise<void> {
     const operation = this.getOperation(operationId);
     if (!operation.worktreeId) return;
     const worktree = this.deps.database.worktree(operation.worktreeId);
@@ -642,12 +838,11 @@ export class WtrService {
     this.deps.database.connection
       .prepare("UPDATE operations SET status='running',updated_at=? WHERE id=?")
       .run(now(), operationId);
+    let terminalsStopped = false;
     try {
       await this.deps.tmux.killServer(worktree.tmuxSocketName);
-      await this.deps.gtr.remove(project.repositoryPath, worktree.branch, {
-        force,
-        deleteBranch: true,
-      });
+      terminalsStopped = true;
+      await this.deps.git.removeWorktree(project.repositoryPath, worktree.path, force);
       const timestamp = now();
       const transaction = this.deps.database.connection.transaction(() => {
         assertCleanupTransition("cleaning", "removed");
@@ -662,16 +857,28 @@ export class WtrService {
         this.deps.database.connection
           .prepare("UPDATE operations SET status='completed',result_json=?,updated_at=? WHERE id=?")
           .run(
-            serializeOperation({ removed: true, branch: worktree.branch, path: worktree.path }),
+            serializeOperation({
+              removed: true,
+              name: worktree.name,
+              branchPreserved: worktree.branch,
+              path: worktree.path,
+            }),
             timestamp,
             operationId,
           );
       });
       transaction();
+      if (worktree.managedWrapperPath)
+        await fs.rmdir(worktree.managedWrapperPath).catch(() => undefined);
       this.events.publish("worktree.removed", { projectId: project.id, worktreeId: worktree.id });
-      this.events.publish("cleanup.completed", { operationId, worktreeId: worktree.id });
+      this.events.publish("remove.completed", { operationId, worktreeId: worktree.id });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const base = error instanceof Error ? error.message : String(error);
+      const message = (
+        terminalsStopped
+          ? `Terminals were stopped, but Git removal failed: ${base}`
+          : `Terminal shutdown failed before Git removal: ${base}`
+      ).slice(0, 4_096);
       const timestamp = now();
       const transaction = this.deps.database.connection.transaction(() => {
         assertCleanupTransition("cleaning", "cleanup_failed");
@@ -686,133 +893,45 @@ export class WtrService {
       });
       transaction();
       await this.reconcileWorktreeTerminals(this.getWorktree(worktree.id));
-      this.events.publish("cleanup.failed", {
+      this.events.publish("remove.failed", {
         operationId,
         worktreeId: worktree.id,
         error: message,
       });
     } finally {
       this.worktreeLocks.delete(worktree.id);
+      this.projectLocks.delete(worktree.projectId);
     }
-  }
-
-  async cleanupPreview(projectId: string): Promise<FinishPreflight[]> {
-    const project = this.getProject(projectId);
-    const previews: FinishPreflight[] = [];
-    for (const worktree of project.worktrees.filter(
-      (item) => item.kind === "linked" && item.status !== "cleaning",
-    )) {
-      previews.push(await this.finishPreflight(worktree.id, true));
-    }
-    return previews;
-  }
-
-  async beginProjectCleanup(projectId: string): Promise<OperationRecord> {
-    const previews = await this.cleanupPreview(projectId);
-    const candidates = previews
-      .filter((preview) => preview.eligible)
-      .map((preview) => preview.worktreeId);
-    const operationId = id("op");
-    const timestamp = now();
-    this.deps.database.connection
-      .prepare(
-        `INSERT INTO operations(id,kind,project_id,worktree_id,status,request_json,result_json,error,created_at,updated_at)
-         VALUES(?,'project_cleanup',?,NULL,'pending',?,NULL,NULL,?,?)`,
-      )
-      .run(
-        operationId,
-        projectId,
-        serializeOperation({ candidates, previews }),
-        timestamp,
-        timestamp,
-      );
-    setTimeout(() => void this.executeProjectCleanup(operationId, candidates), 150).unref();
-    return this.getOperation(operationId);
-  }
-
-  private async executeProjectCleanup(operationId: string, worktreeIds: string[]): Promise<void> {
-    this.deps.database.connection
-      .prepare("UPDATE operations SET status='running',updated_at=? WHERE id=?")
-      .run(now(), operationId);
-    const children: string[] = [];
-    const failures: string[] = [];
-    for (const worktreeId of worktreeIds) {
-      try {
-        const child = this.prepareCleanup(
-          worktreeId,
-          "finish",
-          { parentOperationId: operationId },
-          false,
-        );
-        children.push(child.id);
-      } catch (error) {
-        failures.push(error instanceof Error ? error.message : String(error));
-      }
-    }
-    for (const childId of children) {
-      try {
-        const child = await this.waitForOperation(childId);
-        if (child.status === "failed")
-          failures.push(`${child.id}: ${child.error ?? "cleanup failed"}`);
-      } catch (error) {
-        failures.push(error instanceof Error ? error.message : String(error));
-      }
-    }
-    const timestamp = now();
-    this.deps.database.connection
-      .prepare("UPDATE operations SET status=?,result_json=?,error=?,updated_at=? WHERE id=?")
-      .run(
-        failures.length ? "failed" : "completed",
-        serializeOperation({ childOperations: children }),
-        failures.join("\n") || null,
-        timestamp,
-        operationId,
-      );
-  }
-
-  private async waitForOperation(operationId: string): Promise<OperationRecord> {
-    for (let attempt = 0; attempt < 6_000; attempt += 1) {
-      const operation = this.getOperation(operationId);
-      if (operation.status === "completed" || operation.status === "failed") return operation;
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
-    throw new Error(`Cleanup operation ${operationId} did not complete within ten minutes`);
   }
 
   async deleteProject(projectId: string): Promise<void> {
-    const project = this.getProject(projectId);
-    const linked = project.worktrees.filter((worktree) => worktree.kind === "linked");
-    if (linked.length)
-      throw new DomainError(
-        "PROJECT_HAS_WORKTREES",
-        "Remove linked worktrees before unregistering the project",
-        409,
-      );
-    for (const worktree of project.worktrees)
-      await this.deps.tmux.killServer(worktree.tmuxSocketName);
-    this.deps.database.connection.prepare("DELETE FROM projects WHERE id=?").run(projectId);
-  }
-
-  async diagnostics(): Promise<Record<string, unknown>> {
-    const [git, tmux, gtr, gh] = await Promise.all([
-      commandAvailable(this.deps.runner, this.deps.config.gitPath, ["--version"]),
-      commandAvailable(this.deps.runner, this.deps.config.tmuxPath, ["-V"]),
-      this.deps.gtr.capabilities(true),
-      this.deps.gh.diagnostics(),
-    ]);
-    return {
-      nodeVersion: process.version,
-      databasePath: this.deps.config.databasePath,
-      registeredProjectCount: this.deps.database.projects().length,
-      git,
-      tmux,
-      gtr,
-      gh,
-      defaultShell: this.deps.config.shell,
-      bindAddress: `${this.deps.config.host}:${this.deps.config.port}`,
-      authenticationEnabled: this.deps.config.authToken !== null,
-      tailscale: { status: "unknown", managed: false },
-    };
+    if (this.projectLocks.has(projectId))
+      throw new DomainError("PROJECT_BUSY", "Project is already being modified", 409);
+    this.projectLocks.add(projectId);
+    const lockedWorktrees: string[] = [];
+    try {
+      let project = this.getProject(projectId);
+      if (project.worktrees.some((worktree) => this.worktreeLocks.has(worktree.id)))
+        throw new DomainError("PROJECT_BUSY", "A project worktree is already being modified", 409);
+      for (const worktree of project.worktrees) {
+        this.worktreeLocks.add(worktree.id);
+        lockedWorktrees.push(worktree.id);
+      }
+      project = this.getProject(projectId);
+      const linked = project.worktrees.filter((worktree) => worktree.kind === "linked");
+      if (linked.length)
+        throw new DomainError(
+          "PROJECT_HAS_WORKTREES",
+          "Remove linked worktrees before unregistering the project",
+          409,
+        );
+      for (const worktree of project.worktrees)
+        await this.deps.tmux.killServer(worktree.tmuxSocketName);
+      this.deps.database.connection.prepare("DELETE FROM projects WHERE id=?").run(projectId);
+    } finally {
+      for (const worktreeId of lockedWorktrees) this.worktreeLocks.delete(worktreeId);
+      this.projectLocks.delete(projectId);
+    }
   }
 
   async reconcile(): Promise<void> {
@@ -823,8 +942,35 @@ export class WtrService {
         // Keep metadata when a repository is temporarily unavailable.
       }
     }
+    await this.cleanupRemovedManagedWrappers();
     for (const project of this.deps.database.projects()) {
-      for (const worktree of project.worktrees) await this.reconcileWorktreeTerminals(worktree);
+      for (const worktree of project.worktrees) {
+        await this.deps.tmux.configureServer(worktree.tmuxSocketName).catch(() => undefined);
+        await this.reconcileWorktreeTerminals(worktree);
+      }
+    }
+  }
+
+  private async cleanupRemovedManagedWrappers(): Promise<void> {
+    const removed = this.deps.database.connection
+      .prepare(
+        `SELECT id, managed_wrapper_path
+         FROM worktrees
+         WHERE status='removed' AND managed_wrapper_path IS NOT NULL`,
+      )
+      .all() as Array<{ id: string; managed_wrapper_path: string }>;
+    for (const worktree of removed) {
+      let cleaned = false;
+      try {
+        await fs.rmdir(worktree.managed_wrapper_path);
+        cleaned = true;
+      } catch (error) {
+        cleaned = (error as NodeJS.ErrnoException).code === "ENOENT";
+      }
+      if (cleaned)
+        this.deps.database.connection
+          .prepare("UPDATE worktrees SET managed_wrapper_path=NULL,updated_at=? WHERE id=?")
+          .run(now(), worktree.id);
     }
   }
 
@@ -860,7 +1006,13 @@ export function preserveArgv(argv: readonly string[]): string[] {
 }
 
 export function operationKind(value: string): OperationKind {
-  if (value === "finish" || value === "discard" || value === "project_cleanup") return value;
+  if (
+    value === "finish" ||
+    value === "discard" ||
+    value === "project_cleanup" ||
+    value === "remove"
+  )
+    return value;
   throw new DomainError("INVALID_OPERATION_KIND", `Unknown operation kind: ${value}`);
 }
 
@@ -869,5 +1021,6 @@ export const emptyDirtyState = (): DirtyState => ({
   staged: 0,
   unstaged: 0,
   untracked: 0,
+  conflicts: 0,
   total: 0,
 });

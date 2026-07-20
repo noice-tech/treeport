@@ -20,6 +20,14 @@ function fixture(authToken: string | null = null) {
     events: new ProductEventBus(),
     listProjects: vi.fn(async () => []),
     createTerminal: vi.fn(),
+    createWorktree: vi.fn(async () => ({
+      worktree: {},
+      terminal: null,
+      terminalError: null,
+      setupError: null,
+    })),
+    removePreview: vi.fn(async () => ({ worktreeId: "wt_1" })),
+    beginRemove: vi.fn(async () => ({ id: "op_1" })),
   } as unknown as WtrService;
   const app = createApp({ service, config, tmux: {} as TmuxAdapter, webDist: "/missing" });
   return { app, service };
@@ -49,6 +57,42 @@ describe("HTTP API validation and authentication", () => {
     });
     expect(response.status).toBe(400);
     expect(await response.json()).toMatchObject({ error: { code: "INVALID_JSON" } });
+  });
+
+  it("accepts detached worktree creation and one remove endpoint", async () => {
+    const { app, service } = fixture();
+    const created = await app.request("/api/projects/p/worktrees", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "topic", base: "current", sourceWorktreeId: "wt_main" }),
+    });
+    expect(created.status).toBe(201);
+    expect(service.createWorktree).toHaveBeenCalledWith(
+      "p",
+      "topic",
+      "current",
+      undefined,
+      "wt_main",
+    );
+
+    expect((await app.request("/api/worktrees/wt_1/remove-preview")).status).toBe(200);
+    const removed = await app.request("/api/worktrees/wt_1/remove", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ confirmationToken: "a".repeat(64), confirmDestructive: true }),
+    });
+    expect(removed.status).toBe(202);
+    expect(service.beginRemove).toHaveBeenCalledWith("wt_1", {
+      confirmationToken: "a".repeat(64),
+      confirmDestructive: true,
+    });
+  });
+
+  it("does not expose removed diagnostics and finish/discard routes", async () => {
+    const { app } = fixture();
+    expect((await app.request("/api/diagnostics")).status).toBe(404);
+    expect((await app.request("/api/worktrees/w/finish-preview")).status).toBe(404);
+    expect((await app.request("/api/worktrees/w/discard-preview")).status).toBe(404);
   });
 
   it("allows health checks but protects APIs when a token is configured", async () => {

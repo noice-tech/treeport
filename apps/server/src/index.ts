@@ -3,27 +3,29 @@ import { WebSocketServer } from "ws";
 import {
   GhAdapter,
   GitAdapter,
-  GtrAdapter,
   loadConfig,
   SpawnCommandRunner,
   TmuxAdapter,
   WtrDatabase,
   WtrService,
 } from "@wtr/core";
+import { TERMINAL_MAX_CLIENT_MESSAGE_BYTES } from "@wtr/shared";
 import { createApp } from "./app.js";
 
 const config = loadConfig();
 const runner = new SpawnCommandRunner();
 const database = new WtrDatabase(config.databasePath);
 const git = new GitAdapter(runner, config.gitPath);
-const gtr = new GtrAdapter(runner, config.gitPath);
 const tmux = new TmuxAdapter(runner, config.runtimeDir, config.tmuxPath);
 const gh = new GhAdapter(runner, config.ghPath);
-const service = new WtrService({ config, database, runner, git, gtr, tmux, gh });
+const service = new WtrService({ config, database, runner, git, tmux, gh });
 await service.initialize();
 
 const app = createApp({ service, config, tmux });
-const webSocketServer = new WebSocketServer({ noServer: true });
+const webSocketServer = new WebSocketServer({
+  noServer: true,
+  maxPayload: TERMINAL_MAX_CLIENT_MESSAGE_BYTES,
+});
 const server = serve({
   fetch: app.fetch,
   port: config.port,

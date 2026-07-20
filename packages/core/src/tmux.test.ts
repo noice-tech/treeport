@@ -28,6 +28,26 @@ describe("TmuxAdapter", () => {
     expect(generateTmuxSocketName()).not.toBe(generateTmuxSocketName());
   });
 
+  it("enables mouse scrolling in generated config and existing servers", async () => {
+    const runtime = await fs.mkdtemp(path.join(os.tmpdir(), "wtr-runtime-"));
+    temporary.push(runtime);
+    const runner = new RecordingRunner();
+    const adapter = new TmuxAdapter(runner, runtime);
+    await adapter.initialize();
+    expect(await fs.readFile(adapter.configPath, "utf8")).toContain("set -g mouse on");
+    await adapter.configureServer("socket");
+    expect(runner.calls[0]?.args).toEqual([
+      "-L",
+      "socket",
+      "-f",
+      adapter.configPath,
+      "set-option",
+      "-g",
+      "mouse",
+      "on",
+    ]);
+  });
+
   it("preserves hostile and Unicode argv in a JSON launch spec without a shell", async () => {
     const runtime = await fs.mkdtemp(path.join(os.tmpdir(), "wtr runtime "));
     temporary.push(runtime);
@@ -90,6 +110,17 @@ describe("TmuxAdapter", () => {
       }),
     ).rejects.toThrow(/metadata failed/);
     expect(runner.calls.some((call) => call.args.includes("kill-session"))).toBe(true);
+  });
+
+  it("reads the live pane title from tmux", async () => {
+    const runtime = await fs.mkdtemp(path.join(os.tmpdir(), "wtr-runtime-"));
+    temporary.push(runtime);
+    const runner = new RecordingRunner();
+    runner.responses.push({ stdout: "zsh · /repo\n", stderr: "", exitCode: 0 });
+    const adapter = new TmuxAdapter(runner, runtime);
+
+    await expect(adapter.sessionTitle("socket", "session")).resolves.toBe("zsh · /repo");
+    expect(runner.calls[0]?.args).toContain("#{pane_title}");
   });
 
   it("maps a live, exited, or absent pane to product terminal state", async () => {

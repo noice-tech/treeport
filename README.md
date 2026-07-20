@@ -9,16 +9,10 @@ V1 is intentionally narrow: no editor, file browser, diff/review UI, Git commit 
 - Node.js 22 or newer (developed and tested on Node 24)
 - `git`
 - `tmux` 3.2 or newer
-- [CodeRabbit Git Worktree Runner](https://github.com/coderabbitai/git-worktree-runner), `git gtr`
 - `gh` (optional, for GitHub PR status; authenticate with `gh auth login`)
 - Pi only if you want to launch `pi`
 
-The daemon never installs system dependencies. Check them with:
-
-```sh
-wtr diagnostics
-# or GET /api/diagnostics
-```
+The daemon never installs system dependencies. Startup failures report missing required commands.
 
 ## Install and run
 
@@ -48,7 +42,7 @@ Other development commands:
 ```sh
 pnpm test                  # unit and API tests
 pnpm test:integration      # deterministic adapter/service integration
-pnpm test:integration:real # disposable real Git/gtr/tmux/node-pty suite
+pnpm test:integration:real # disposable real Git/tmux/node-pty suite
 pnpm test:web              # Playwright desktop/mobile tests
 pnpm typecheck
 pnpm lint
@@ -70,7 +64,7 @@ Create a worktree and Pi terminal in one operation:
 ```sh
 wtr spawn \
   --project ~/Projects/example \
-  --branch investigate-cache \
+  --worktree-name investigate-cache \
   --name researcher \
   -- pi
 ```
@@ -84,7 +78,7 @@ wtr terminal create \
   -- pnpm dev
 ```
 
-The web UI provides the same project, worktree, terminal, finish, discard, and bulk-cleanup operations. Command input is always an argv array. Shell syntax has no special meaning unless an explicit shell is launched, for example `-- /bin/zsh -lc 'one && two'`.
+The web UI provides the same project, worktree, terminal, and removal operations. New worktrees use Zed's detached layout and run project-local `.zed/tasks.json` `create_worktree` hooks. Command input is always an argv array. Shell syntax has no special meaning unless an explicit shell is launched, for example `-- /bin/zsh -lc 'one && two'`.
 
 ## CLI
 
@@ -93,22 +87,18 @@ All machine-relevant commands support `--json`. The CLI calls the daemon API and
 ```text
 wtr project add <path>
 wtr project list
-wtr project clean <id-or-path> [--preview]
-
 wtr worktree list [--project <id-or-path>]
-wtr worktree create --project <id-or-path> --branch <branch> [--from-current]
-wtr worktree finish <id-or-path-or-dot>
-wtr worktree discard <id-or-path-or-dot> --confirm <branch>
+wtr worktree create --project <id-or-path> --name <name> [--from-current]
+wtr worktree remove <id-or-path-or-dot> [--force]
 
 wtr terminal list [--worktree <id-or-path>]
 wtr terminal create --worktree <id-or-path-or-dot> --name <name> [-- <command> args...]
 wtr terminal delete <terminal-id>
 
-wtr spawn --project <id-or-path-or-dot> --branch <branch> --name <name> [-- <command> args...]
-wtr diagnostics
+wtr spawn --project <id-or-path-or-dot> --worktree-name <name> --name <name> [--from-current] [-- <command> args...]
 ```
 
-Each terminal receives `WTR_API_URL`, `WTR_PROJECT_ID`, `WTR_WORKTREE_ID`, and `WTR_TERMINAL_ID`. A Pi process can therefore call `wtr` to create a child worktree/terminal or clean its own worktree. Cleanup is persisted as a daemon-owned operation and returns an operation ID before the daemon terminates the requesting tmux server. CLI exit codes are stable: `0` success, `1` unexpected failure, `2` usage, `3` daemon unreachable, `4` authentication, and `5` API/domain refusal.
+Each terminal receives `WTR_API_URL`, `WTR_PROJECT_ID`, `WTR_WORKTREE_ID`, and `WTR_TERMINAL_ID`. A Pi process can therefore call `wtr` to create a child worktree/terminal or remove its own worktree. Removal is persisted as a daemon-owned operation and returns an operation ID before the daemon terminates the requesting tmux server. CLI exit codes are stable: `0` success, `1` unexpected failure, `2` usage, `3` daemon unreachable, `4` authentication, and `5` API/domain refusal.
 
 ## Runtime model
 
@@ -124,15 +114,19 @@ worktree SQLite ID
 
 Identifiers never come from branch names or paths. `packages/core/src/launcher.ts` reads an application-owned JSON launch spec and uses Node `spawn(..., { shell: false })`, preserving spaces, quotes, Unicode, semicolons, and dollar signs literally.
 
-The generated tmux configuration is stored in the wtr runtime directory. It does not read or modify `~/.tmux.conf`. It disables the status bar, uses `tmux-256color`, retains dead panes and scrollback, and never restarts exited commands. SQLite stores status and intended mappings; tmux remains the runtime source of truth.
+The generated tmux configuration is stored in the wtr runtime directory. It does not read or modify `~/.tmux.conf`. It disables the status bar, uses `tmux-256color`, enables tmux mouse/copy-mode scrolling, retains dead panes and scrollback, and never restarts exited commands. SQLite stores status and intended mappings; tmux remains the runtime source of truth.
 
 ## Browser and phone handoff
 
 Opening a terminal creates a temporary `node-pty` process attached to its existing tmux session. Closing the browser kills only that tmux client; the command continues. Reopening on desktop or phone attaches to the same session and never relaunches Pi.
 
-Multiple clients can view a terminal. One client holds the input/resize lease. Select **Take control** on another client to transfer it without replacing the tmux session. The controlling client drives tmux’s `window-size latest` sizing. A brief resize when clients with very different dimensions hand off is an inherent tmux limitation; viewers may also see letterboxing until they take control.
+Multiple clients can view a terminal. One client holds the input/resize lease. Select **Take control** on another client to transfer it without replacing the tmux session. The controlling client drives tmux’s `window-size latest` sizing. A reconnecting browser keeps its lease for a short grace period using a tab-scoped client identity. A brief resize when clients with very different dimensions hand off is an inherent tmux limitation; viewers may also see letterboxing until they take control.
 
-The responsive PWA has a mobile drawer, full-screen xterm.js view, reconnect behavior, and Esc/Ctrl/Alt/Tab/Enter/arrow accessory keys. The application shell can load from its service-worker cache, but terminal sessions are never represented as available offline.
+Terminal sockets use a versioned hello/ready protocol with application heartbeats and output acknowledgements. The server pauses an attachment PTY when the browser falls behind, while the persistent tmux session continues independently. The browser retains at most three selected/recent xterm sessions and reuses them when switching tabs.
+
+Reconnect is deliberately reset-and-redraw, not durable replay: a new tmux attachment resets xterm and redraws the current screen, so browser-only scrollback may be lost. Input typed while disconnected is never queued or replayed. Terminal output remains absent from SQLite and application logs.
+
+The responsive PWA has a mobile drawer, full-screen xterm.js view, reconnect behavior, visual BEL feedback, and Esc/Ctrl/Alt/Tab/Enter/arrow accessory keys. Accessory arrows respect terminal application-cursor mode. The application shell can load from its service-worker cache, but terminal sessions are never represented as available offline.
 
 For private phone access without opening a LAN listener, use `pnpm start:local` and publish it through Tailscale Serve:
 
@@ -142,22 +136,22 @@ tailscale serve --bg http://127.0.0.1:4780
 
 Use your tailnet HTTPS URL on the phone. Tailscale configuration is not managed by wtr.
 
-## PR status and cleanup
+## Zed worktrees and removal
 
-Linked worktrees show `open`, `merged`, `closed`, `no_pr`, or `unknown`. Status comes from structured `gh pr list --json` output and is cached briefly. If `gh` is unavailable or unauthenticated, the UI shows `unknown`; it never invents a PR result.
+Existing Git worktrees are imported in place. Their display name is inferred from the checkout path rather than from the branch. For Zed's default layout:
 
-**Finish** is safe and refuses the main checkout, staged changes, unstaged changes, untracked files, or an unconfirmed merge. A merge is confirmed by either a merged GitHub PR or Git ancestry after fetching `origin/<default-branch>`. On acceptance the daemon:
+```text
+~/Projects/example
+~/Projects/worktrees/example/<worktree-name>/example
+```
 
-1. marks the worktree `cleaning` and blocks new terminals;
-2. kills the entire worktree tmux server;
-3. removes the worktree with `git gtr rm --yes --delete-branch`;
-4. marks metadata removed only after gtr succeeds.
+the middle directory is the worktree name. The main checkout is shown as `main worktree`. Legacy layouts continue to work and are never moved.
 
-If gtr fails after terminals stop, the worktree remains as `cleanup_failed` with the error and can be retried.
+New worktrees are detached at a resolved commit, matching Zed's separation between a worktree name and a Git branch. The default base is the fetched remote default branch; `--from-current` uses the selected/current worktree's `HEAD`. Project-local `.zed/settings.json` `git.worktree_directory` is honored, with `../worktrees` as the default. Project-local `.zed/tasks.json` tasks whose `hooks` include `create_worktree` run sequentially with `ZED_WORKTREE_ROOT` and `ZED_MAIN_GIT_WORKTREE`.
 
-**Discard** permits dirty/unmerged removal but requires the exact branch name. It kills the whole tmux server and uses the installed gtr force-removal option. It is never allowed for the main checkout.
+**Remove worktree** is the only removal action. Preview reports staged, unstaged, and untracked changes, detached-commit reachability, locked state, and every terminal that will stop. Dirty worktrees require destructive confirmation in the UI or `--force` in the CLI. The daemon then blocks mutation, kills the worktree's tmux server, and runs path-addressed `git worktree remove`; it never deletes an attached Git branch. Main and locked worktrees are refused. If Git removal fails after terminals stop, the worktree remains `cleanup_failed` with an explicit retryable error.
 
-**Clean merged worktrees** previews every linked worktree and runs the same safe finish logic per eligible branch. Dirty worktrees are never force-removed in bulk. Although the adapter detects `git gtr clean --merged --dry-run`, V1 deliberately uses per-worktree `git gtr rm` because gtr preview text is not a stable machine-readable contract.
+Runtime terminal titles are shared by the browser's terminal session manager so tabs, panes, the sidebar, and mobile selector update together. The configured SQLite terminal name remains the fallback and runtime titles are not persisted.
 
 ## API
 
@@ -165,22 +159,19 @@ The versioned JSON surface is under `/api`:
 
 ```text
 GET  /api/health                     GET/POST /api/auth/session
-GET  /api/diagnostics                GET      /api/events (SSE)
+GET  /api/events (SSE)
 GET/POST /api/projects               GET/DELETE /api/projects/:projectId
 POST /api/projects/:projectId/refresh
 GET/POST /api/projects/:projectId/worktrees
+GET  /api/projects/:projectId/worktree-destination
 GET  /api/worktrees/:worktreeId
 POST /api/worktrees/:worktreeId/terminals
-GET  /api/worktrees/:worktreeId/finish-preview
-GET  /api/worktrees/:worktreeId/discard-preview
-POST /api/worktrees/:worktreeId/finish
-POST /api/worktrees/:worktreeId/discard
+GET  /api/worktrees/:worktreeId/remove-preview
+POST /api/worktrees/:worktreeId/remove
 POST /api/worktrees/:worktreeId/pr/refresh
 GET/PATCH/DELETE /api/terminals/:terminalId
 WS   /api/terminals/:terminalId/attach
 POST /api/spawn
-GET  /api/projects/:projectId/cleanup-preview
-POST /api/projects/:projectId/cleanup
 GET  /api/operations/:operationId
 ```
 
