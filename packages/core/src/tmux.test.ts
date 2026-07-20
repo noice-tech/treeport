@@ -28,23 +28,23 @@ describe("TmuxAdapter", () => {
     expect(generateTmuxSocketName()).not.toBe(generateTmuxSocketName());
   });
 
-  it("enables mouse scrolling in generated config and existing servers", async () => {
+  it("configures mouse, extended keys, and hyperlinks for new and existing servers", async () => {
     const runtime = await fs.mkdtemp(path.join(os.tmpdir(), "wtr-runtime-"));
     temporary.push(runtime);
     const runner = new RecordingRunner();
     const adapter = new TmuxAdapter(runner, runtime);
     await adapter.initialize();
-    expect(await fs.readFile(adapter.configPath, "utf8")).toContain("set -g mouse on");
+    const config = await fs.readFile(adapter.configPath, "utf8");
+    expect(config).toContain("set -g mouse on");
+    expect(config).toContain("set -g extended-keys on");
+    expect(config).toContain('set -s terminal-features[999] "xterm-256color:hyperlinks"');
+
     await adapter.configureServer("socket");
-    expect(runner.calls[0]?.args).toEqual([
-      "-L",
-      "socket",
-      "-f",
-      adapter.configPath,
-      "set-option",
-      "-g",
-      "mouse",
-      "on",
+    const prefix = ["-L", "socket", "-f", adapter.configPath, "set-option"];
+    expect(runner.calls.map((call) => call.args)).toEqual([
+      [...prefix, "-g", "mouse", "on"],
+      [...prefix, "-g", "extended-keys", "on"],
+      [...prefix, "-s", "terminal-features[999]", "xterm-256color:hyperlinks"],
     ]);
   });
 
