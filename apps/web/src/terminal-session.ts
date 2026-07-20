@@ -7,6 +7,7 @@ import {
   TERMINAL_PROTOCOL_VERSION,
   type TerminalClientMessage,
   type TerminalProgress,
+  type TerminalRuntimeMetadata,
 } from "@tasktty/shared";
 
 export { parseTerminalProgress, type TerminalProgress } from "@tasktty/shared";
@@ -389,7 +390,6 @@ export class TerminalSession {
         phase: this.reconnectAllowed && !this.disposed ? "reconnecting" : "closed",
         controller: false,
         degraded: this.reconnectAllowed ? this.snapshotValue.degraded : false,
-        progress: null,
       });
       if (this.reconnectAllowed && !this.disposed) this.scheduleReconnect();
     };
@@ -418,7 +418,7 @@ export class TerminalSession {
       this.ready = true;
       this.retryAttempt = 0;
       this.clearDegraded();
-      this.update({ phase: "ready", controller: message.controller, progress: null, error: null });
+      this.update({ phase: "ready", controller: message.controller, error: null });
       this.scheduleFit();
       return;
     }
@@ -577,7 +577,6 @@ export class TerminalSession {
       phase: "closed",
       degraded: false,
       controller: false,
-      progress: null,
     });
   }
 
@@ -633,6 +632,34 @@ export class TerminalSessionManager {
   getAttentionSnapshot = (): ReadonlySet<string> => this.attentionSnapshot;
   getTitleSnapshot = (): ReadonlyMap<string, string> => this.titleSnapshot;
   getProgressSnapshot = (): ReadonlyMap<string, TerminalProgress> => this.progressSnapshot;
+
+  applyRuntimeMetadata(metadata: TerminalRuntimeMetadata): void {
+    this.setRuntimeTitle(metadata.terminalId, metadata.title);
+    this.setProgress(metadata.terminalId, metadata.progress);
+  }
+
+  replaceRuntimeMetadata(metadata: Iterable<TerminalRuntimeMetadata>): void {
+    const titles = new Map<string, string>();
+    const progress = new Map<string, TerminalProgress>();
+    for (const item of metadata) {
+      const title = item.title?.trim().slice(0, 256);
+      if (title) titles.set(item.terminalId, title);
+      if (item.progress) progress.set(item.terminalId, item.progress);
+    }
+    const titlesChanged =
+      titles.size !== this.titleSnapshot.size ||
+      [...titles].some(([terminalId, title]) => this.titleSnapshot.get(terminalId) !== title);
+    const progressChanged =
+      progress.size !== this.progressSnapshot.size ||
+      [...progress].some(([terminalId, value]) => {
+        const current = this.progressSnapshot.get(terminalId);
+        return current?.state !== value.state || current.value !== value.value;
+      });
+    if (!titlesChanged && !progressChanged) return;
+    this.titleSnapshot = titles;
+    this.progressSnapshot = progress;
+    this.emit();
+  }
 
   acquire(terminalId: string): TerminalSession {
     let entry = this.entries.get(terminalId);
@@ -690,6 +717,7 @@ export class TerminalSessionManager {
   forget(terminalId: string): void {
     this.disposeEntry(terminalId);
     this.clearRuntimeTitle(terminalId);
+    this.setProgress(terminalId, null);
   }
 
   clearAttention(terminalId: string): void {
@@ -707,14 +735,22 @@ export class TerminalSessionManager {
     }
     let changed = false;
     const titles = new Map(this.titleSnapshot);
+    const progress = new Map(this.progressSnapshot);
     for (const terminalId of titles.keys()) {
       if (!valid.has(terminalId)) {
         titles.delete(terminalId);
         changed = true;
       }
     }
+    for (const terminalId of progress.keys()) {
+      if (!valid.has(terminalId)) {
+        progress.delete(terminalId);
+        changed = true;
+      }
+    }
     if (changed) {
       this.titleSnapshot = titles;
+      this.progressSnapshot = progress;
       this.emit();
     }
   }
@@ -767,7 +803,6 @@ export class TerminalSessionManager {
     entry.session.dispose();
     this.entries.delete(terminalId);
     this.clearAttention(terminalId);
-    this.setProgress(terminalId, null);
   }
 
   private emit(): void {

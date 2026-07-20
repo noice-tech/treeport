@@ -17,14 +17,17 @@ import {
   updateProjectSchema,
   updateTerminalSchema,
 } from "@tasktty/shared";
+import type { ProductEvent } from "@tasktty/shared";
 import type { AppConfig, TmuxAdapter, TaskTTYService } from "@tasktty/core";
 import { DomainError } from "@tasktty/core";
 import { TerminalAttachmentManager } from "./attachments.js";
+import { TerminalMetadataManager } from "./terminal-metadata.js";
 
 interface AppDependencies {
   service: TaskTTYService;
   config: AppConfig;
   tmux: TmuxAdapter;
+  terminalMetadata?: TerminalMetadataManager;
   webDist?: string;
 }
 
@@ -52,9 +55,22 @@ async function input<T>(context: Context, schema: ZodType<T>): Promise<T> {
   return result.data;
 }
 
-export function createApp({ service, config, tmux, webDist }: AppDependencies): Hono {
+export function createApp({
+  service,
+  config,
+  tmux,
+  terminalMetadata,
+  webDist,
+}: AppDependencies): Hono {
   const app = new Hono();
-  const attachments = new TerminalAttachmentManager(service, tmux, config.tmuxPath);
+  const metadata = terminalMetadata ?? new TerminalMetadataManager(service, tmux, config.tmuxPath);
+  const metadataReady = metadata.initialize().catch((error: unknown) => {
+    console.error(
+      "[TaskTTY] Terminal metadata initialization failed:",
+      error instanceof Error ? error.message : String(error),
+    );
+  });
+  const attachments = new TerminalAttachmentManager(service, tmux, config.tmuxPath, metadata);
 
   const authenticate: MiddlewareHandler = async (context, next) => {
     if (!config.authToken) return next();
@@ -235,22 +251,45 @@ export function createApp({ service, config, tmux, webDist }: AppDependencies): 
 
   app.get("/api/events", (context) =>
     streamSSE(context, async (stream) => {
-      await stream.writeSSE({
-        event: "connected",
-        data: JSON.stringify({ at: new Date().toISOString() }),
+      const queuedEvents: ProductEvent[] = [];
+      let connected = false;
+      let aborted = false;
+      let heartbeat: NodeJS.Timeout | null = null;
+      let resolveAbort!: () => void;
+      const abort = new Promise<void>((resolve) => {
+        resolveAbort = resolve;
       });
+      stream.onAbort(() => {
+        aborted = true;
+        resolveAbort();
+      });
+      const writeEvent = (event: ProductEvent) =>
+        stream.writeSSE({ id: event.id, event: event.type, data: JSON.stringify(event) });
       const unsubscribe = service.events.subscribe((event) => {
-        void stream.writeSSE({ id: event.id, event: event.type, data: JSON.stringify(event) });
+        if (connected && !aborted) void writeEvent(event);
+        else if (!aborted) queuedEvents.push(event);
       });
-      const heartbeat = setInterval(
-        () => void stream.writeSSE({ event: "heartbeat", data: "{}" }),
-        15_000,
-      );
-      await new Promise<void>((resolve) => {
-        stream.onAbort(() => resolve());
-      });
-      clearInterval(heartbeat);
-      unsubscribe();
+      try {
+        await metadataReady;
+        if (aborted) return;
+        await stream.writeSSE({
+          event: "connected",
+          data: JSON.stringify({
+            at: new Date().toISOString(),
+            terminalMetadata: metadata.snapshot(),
+          }),
+        });
+        while (queuedEvents.length) await writeEvent(queuedEvents.shift()!);
+        connected = true;
+        heartbeat = setInterval(
+          () => void stream.writeSSE({ event: "heartbeat", data: "{}" }),
+          15_000,
+        );
+        await abort;
+      } finally {
+        if (heartbeat) clearInterval(heartbeat);
+        unsubscribe();
+      }
     }),
   );
 

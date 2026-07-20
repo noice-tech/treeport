@@ -8,6 +8,7 @@ import {
   type TerminalServerMessage,
 } from "@tasktty/shared";
 import { TerminalAttachmentManager } from "./attachments.js";
+import { TerminalMetadataManager } from "./terminal-metadata.js";
 import type { TerminalProgressObserver, TmuxProgressObserverOptions } from "./tmux-progress.js";
 
 class FakePty {
@@ -85,6 +86,8 @@ class FakeSocket {
   }
 }
 
+const metadataManagers: TerminalMetadataManager[] = [];
+
 function fixture() {
   const ptys: FakePty[] = [];
   const progressObservers: FakeProgressObserver[] = [];
@@ -120,14 +123,21 @@ function fixture() {
     progressObservers.push(observer);
     return observer;
   });
+  const metadata = new TerminalMetadataManager(
+    service,
+    tmux,
+    process.execPath,
+    createProgressObserver,
+  );
+  metadataManagers.push(metadata);
   const manager = new TerminalAttachmentManager(
     service,
     tmux,
     process.execPath,
+    metadata,
     spawn as never,
-    createProgressObserver,
   );
-  return { manager, progressObservers, ptys, publish, tmux };
+  return { manager, metadata, progressObservers, ptys, publish, tmux };
 }
 
 const hello = (clientId: string) =>
@@ -145,7 +155,10 @@ async function ready(socket: FakeSocket) {
   );
 }
 
-afterEach(() => vi.useRealTimers());
+afterEach(() => {
+  for (const metadata of metadataManagers.splice(0)) metadata.dispose();
+  vi.useRealTimers();
+});
 
 describe("TerminalAttachmentManager", () => {
   it("reapplies tmux server configuration before reading or attaching the session", async () => {
@@ -205,8 +218,8 @@ describe("TerminalAttachmentManager", () => {
     });
   });
 
-  it("fans progress out through one shared read-only observer and caches it for new viewers", async () => {
-    const { manager, progressObservers } = fixture();
+  it("fans daemon-owned progress out to every viewer and caches it for new viewers", async () => {
+    const { manager, metadata, progressObservers } = fixture();
     const first = new FakeSocket();
     const firstId = manager.accept("term", first as unknown as WSContext);
     manager.message(firstId, hello("tab-a"));
@@ -239,6 +252,8 @@ describe("TerminalAttachmentManager", () => {
     manager.close(firstId);
     expect(progressObservers[0]!.disposed).toBe(false);
     manager.close(viewerId);
+    expect(progressObservers[0]!.disposed).toBe(false);
+    metadata.dispose();
     expect(progressObservers[0]!.disposed).toBe(true);
   });
 

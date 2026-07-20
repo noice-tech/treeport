@@ -24,6 +24,19 @@ export const terminalProgressSchema = z.strictObject({
 
 export type TerminalProgress = z.infer<typeof terminalProgressSchema>;
 
+export const terminalRuntimeMetadataSchema = z.strictObject({
+  terminalId: z.string().min(1),
+  title: z.string().max(256).nullable(),
+  progress: terminalProgressSchema.nullable(),
+});
+
+export type TerminalRuntimeMetadata = z.infer<typeof terminalRuntimeMetadataSchema>;
+
+export function parseTerminalRuntimeMetadata(value: unknown): TerminalRuntimeMetadata | null {
+  const parsed = terminalRuntimeMetadataSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
+
 export function parseTerminalProgress(data: string): TerminalProgress | null | undefined {
   const [command, rawState, rawValue, ...extra] = data.split(";");
   if (command !== "4" || extra.length > 0 || !/^[0-4]$/.test(rawState ?? "")) return undefined;

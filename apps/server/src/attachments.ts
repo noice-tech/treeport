@@ -14,27 +14,15 @@ import {
   TERMINAL_OUTPUT_STALL_TIMEOUT_MS,
   TERMINAL_PROTOCOL_VERSION,
   type TerminalClientMessage,
-  type TerminalProgress,
+  type TerminalRuntimeMetadata,
   type TerminalServerMessage,
 } from "@tasktty/shared";
 import type { TaskTTYService, TmuxAdapter } from "@tasktty/core";
 import { resolveExecutablePath } from "@tasktty/core";
-import { progressControlAttachArgs } from "./tmux-control.js";
-import {
-  createTmuxProgressObserver,
-  type TerminalProgressObserver,
-  type TerminalProgressObserverFactory,
-} from "./tmux-progress.js";
+import type { TerminalMetadataManager } from "./terminal-metadata.js";
 
 type PtySpawner = typeof pty.spawn;
 type ConnectionState = "awaiting_hello" | "initializing" | "ready" | "closed";
-
-interface ProgressObserverEntry {
-  terminalId: string;
-  clients: Set<string>;
-  observer: TerminalProgressObserver | null;
-  progress: TerminalProgress | null;
-}
 
 interface ClientConnection {
   id: string;
@@ -44,7 +32,6 @@ interface ClientConnection {
   clientId: string | null;
   pty: IPty | null;
   streamId: string | null;
-  poll: NodeJS.Timeout | null;
   heartbeat: NodeJS.Timeout | null;
   helloTimeout: NodeJS.Timeout | null;
   stallTimeout: NodeJS.Timeout | null;
@@ -52,16 +39,13 @@ interface ClientConnection {
   exitDisposable: IDisposable | null;
   lastPongAt: number;
   lastPingNonce: string | null;
-  lastExitCode: number | null | undefined;
-  lastTitle: string | null;
   nextSequence: number;
   lastAckSequence: number;
   unacknowledgedBytes: number;
   outputBytes: Map<number, number>;
   paused: boolean;
   announcedReady: boolean;
-  polling: boolean;
-  progressObserver: ProgressObserverEntry | null;
+  metadataUnsubscribe: (() => void) | null;
 }
 
 interface ControllerLease {
@@ -94,15 +78,14 @@ function tmuxEnvironment(): NodeJS.ProcessEnv {
 export class TerminalAttachmentManager {
   private readonly clients = new Map<string, ClientConnection>();
   private readonly controllers = new Map<string, ControllerLease>();
-  private readonly progressObservers = new Map<string, ProgressObserverEntry>();
   private readonly tmuxExecutable: string;
 
   constructor(
     private readonly service: TaskTTYService,
     private readonly tmux: TmuxAdapter,
     tmuxExecutable: string,
+    private readonly metadata: TerminalMetadataManager,
     private readonly spawnPty: PtySpawner = pty.spawn,
-    private readonly createProgressObserver: TerminalProgressObserverFactory = createTmuxProgressObserver,
   ) {
     this.tmuxExecutable = resolveExecutablePath(tmuxExecutable);
   }
@@ -117,7 +100,6 @@ export class TerminalAttachmentManager {
       clientId: null,
       pty: null,
       streamId: null,
-      poll: null,
       heartbeat: null,
       helloTimeout: null,
       stallTimeout: null,
@@ -125,16 +107,13 @@ export class TerminalAttachmentManager {
       exitDisposable: null,
       lastPongAt: Date.now(),
       lastPingNonce: null,
-      lastExitCode: undefined,
-      lastTitle: null,
       nextSequence: 1,
       lastAckSequence: 0,
       unacknowledgedBytes: 0,
       outputBytes: new Map(),
       paused: false,
       announcedReady: false,
-      polling: false,
-      progressObserver: null,
+      metadataUnsubscribe: null,
     };
     connection.helloTimeout = setTimeout(
       () => this.protocolError(connection, "HELLO_TIMEOUT", "Terminal handshake timed out", 1008),
@@ -201,12 +180,12 @@ export class TerminalAttachmentManager {
     connection.state = "closed";
     this.clients.delete(connectionId);
     if (connection.helloTimeout) clearTimeout(connection.helloTimeout);
-    if (connection.poll) clearInterval(connection.poll);
     if (connection.heartbeat) clearInterval(connection.heartbeat);
     if (connection.stallTimeout) clearTimeout(connection.stallTimeout);
     connection.dataDisposable?.dispose();
     connection.exitDisposable?.dispose();
-    this.releaseProgressObserver(connection);
+    connection.metadataUnsubscribe?.();
+    connection.metadataUnsubscribe = null;
     try {
       connection.pty?.kill();
     } catch {
@@ -244,20 +223,13 @@ export class TerminalAttachmentManager {
         throw new Error("The tmux session for this terminal is missing");
       const worktree = this.service.getWorktree(terminal.worktreeId);
       await this.tmux.configureServer(worktree.tmuxSocketName);
-      const [sessionSize, sessionTitle] = await Promise.all([
+      const [sessionSize] = await Promise.all([
         this.tmux.sessionSize(worktree.tmuxSocketName, terminal.tmuxSessionName),
-        this.tmux.sessionTitle(worktree.tmuxSocketName, terminal.tmuxSessionName),
+        this.metadata.trackTerminal(terminal, worktree),
       ]);
       if (connection.state === "closed") return;
       const size = sessionSize ?? { cols, rows };
       const env = tmuxEnvironment();
-      this.acquireProgressObserver(
-        connection,
-        worktree.tmuxSocketName,
-        terminal.tmuxSessionName,
-        worktree.path,
-        env,
-      );
       env.TERM = "xterm-256color";
       const clientPty = this.spawnPty(
         this.tmuxExecutable,
@@ -272,7 +244,13 @@ export class TerminalAttachmentManager {
       );
       connection.pty = clientPty;
       connection.streamId = crypto.randomUUID();
-      connection.lastTitle = sessionTitle;
+      connection.metadataUnsubscribe = this.metadata.subscribe(
+        connection.terminalId,
+        (metadata) => {
+          if (connection.announcedReady && this.isActive(connection))
+            this.sendRuntimeMetadata(connection, metadata);
+        },
+      );
       clientPty.pause();
       connection.dataDisposable = clientPty.onData((data) => this.sendOutput(connection, data));
       connection.exitDisposable = clientPty.onExit(({ exitCode }) =>
@@ -298,24 +276,7 @@ export class TerminalAttachmentManager {
       )
         return;
       connection.announcedReady = true;
-      if (
-        !this.send(connection, {
-          version: TERMINAL_PROTOCOL_VERSION,
-          type: "title",
-          title: sessionTitle?.slice(0, 256) ?? "",
-        })
-      )
-        return;
-      const progress = connection.progressObserver?.progress;
-      if (
-        progress &&
-        !this.send(connection, {
-          version: TERMINAL_PROTOCOL_VERSION,
-          type: "progress",
-          progress,
-        })
-      )
-        return;
+      if (!this.sendRuntimeMetadata(connection, this.metadata.get(connection.terminalId))) return;
       if (!this.isActive(connection)) return;
       connection.lastPongAt = Date.now();
       connection.heartbeat = setInterval(
@@ -323,8 +284,6 @@ export class TerminalAttachmentManager {
         TERMINAL_HEARTBEAT_MS,
       );
       connection.heartbeat.unref();
-      connection.poll = setInterval(() => void this.pollTerminal(connection.id), 2_000);
-      connection.poll.unref();
       if (!this.isActive(connection)) return;
       clientPty.resume();
       this.broadcastControl(connection.terminalId);
@@ -360,89 +319,22 @@ export class TerminalAttachmentManager {
     if (message.type === "resize") connection.pty?.resize(message.cols, message.rows);
   }
 
-  private acquireProgressObserver(
+  private sendRuntimeMetadata(
     connection: ClientConnection,
-    socketName: string,
-    sessionName: string,
-    cwd: string,
-    env: NodeJS.ProcessEnv,
-  ): void {
-    let entry = this.progressObservers.get(connection.terminalId);
-    if (!entry) {
-      entry = {
-        terminalId: connection.terminalId,
-        clients: new Set(),
-        observer: null,
-        progress: null,
-      };
-      this.progressObservers.set(connection.terminalId, entry);
-      try {
-        const observedEntry = entry;
-        entry.observer = this.createProgressObserver({
-          executable: this.tmuxExecutable,
-          args: progressControlAttachArgs(socketName, this.tmux.configPath, sessionName),
-          cwd,
-          env,
-          onProgress: (progress) => this.updateProgress(observedEntry, progress),
-          onExit: () => this.progressObserverExited(observedEntry),
-        });
-      } catch {
-        this.progressObservers.delete(connection.terminalId);
-        return;
-      }
-    }
-    if (this.progressObservers.get(connection.terminalId) !== entry) return;
-    entry.clients.add(connection.id);
-    connection.progressObserver = entry;
-  }
-
-  private releaseProgressObserver(connection: ClientConnection): void {
-    const entry = connection.progressObserver;
-    connection.progressObserver = null;
-    if (!entry) return;
-    entry.clients.delete(connection.id);
-    if (entry.clients.size > 0 || this.progressObservers.get(entry.terminalId) !== entry) return;
-    this.progressObservers.delete(entry.terminalId);
-    entry.observer?.dispose();
-    entry.observer = null;
-    entry.progress = null;
-  }
-
-  private updateProgress(entry: ProgressObserverEntry, progress: TerminalProgress | null): void {
-    if (this.progressObservers.get(entry.terminalId) !== entry) return;
-    const current = entry.progress;
-    if (current?.state === progress?.state && current?.value === progress?.value) return;
-    entry.progress = progress;
-    for (const connectionId of entry.clients) {
-      const connection = this.clients.get(connectionId);
-      if (!connection?.announcedReady || !this.isActive(connection)) continue;
+    metadata: TerminalRuntimeMetadata,
+  ): boolean {
+    return (
+      this.send(connection, {
+        version: TERMINAL_PROTOCOL_VERSION,
+        type: "title",
+        title: metadata.title ?? "",
+      }) &&
       this.send(connection, {
         version: TERMINAL_PROTOCOL_VERSION,
         type: "progress",
-        progress,
-      });
-    }
-  }
-
-  private progressObserverExited(entry: ProgressObserverEntry): void {
-    if (this.progressObservers.get(entry.terminalId) !== entry) return;
-    this.progressObservers.delete(entry.terminalId);
-    entry.observer = null;
-    const hadProgress = entry.progress !== null;
-    entry.progress = null;
-    for (const connectionId of entry.clients) {
-      const connection = this.clients.get(connectionId);
-      if (!connection) continue;
-      connection.progressObserver = null;
-      if (hadProgress && connection.announcedReady && this.isActive(connection)) {
-        this.send(connection, {
-          version: TERMINAL_PROTOCOL_VERSION,
-          type: "progress",
-          progress: null,
-        });
-      }
-    }
-    entry.clients.clear();
+        progress: metadata.progress,
+      })
+    );
   }
 
   private sendOutput(connection: ClientConnection, data: string): void {
@@ -589,39 +481,6 @@ export class TerminalAttachmentManager {
       type: "ping",
       nonce,
     });
-  }
-
-  private async pollTerminal(connectionId: string): Promise<void> {
-    const connection = this.clients.get(connectionId);
-    if (!connection || connection.state !== "ready" || connection.polling) return;
-    connection.polling = true;
-    try {
-      const terminal = await this.service.refreshTerminalStatus(connection.terminalId);
-      if (!this.isActive(connection)) return;
-      const worktree = this.service.getWorktree(terminal.worktreeId);
-      const title = await this.tmux.sessionTitle(worktree.tmuxSocketName, terminal.tmuxSessionName);
-      if (!this.isActive(connection)) return;
-      if (title !== connection.lastTitle) {
-        connection.lastTitle = title;
-        this.send(connection, {
-          version: TERMINAL_PROTOCOL_VERSION,
-          type: "title",
-          title: title?.slice(0, 256) ?? "",
-        });
-      }
-      if (terminal.status === "exited" && terminal.exitCode !== connection.lastExitCode) {
-        connection.lastExitCode = terminal.exitCode;
-        this.send(connection, {
-          version: TERMINAL_PROTOCOL_VERSION,
-          type: "exit",
-          exitCode: terminal.exitCode,
-        });
-      }
-    } catch {
-      // Session cleanup will close the tmux client and trigger its PTY exit.
-    } finally {
-      connection.polling = false;
-    }
   }
 
   private broadcastControl(terminalId: string): void {

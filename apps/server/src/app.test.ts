@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import type { TerminalRuntimeMetadata } from "@tasktty/shared";
 import {
   ProductEventBus,
   type AppConfig,
@@ -6,6 +7,7 @@ import {
   type TaskTTYService,
 } from "@tasktty/core";
 import { createApp } from "./app.js";
+import type { TerminalMetadataManager } from "./terminal-metadata.js";
 
 function fixture(authToken: string | null = null) {
   const config: AppConfig = {
@@ -36,8 +38,19 @@ function fixture(authToken: string | null = null) {
     removePreview: vi.fn(async () => ({ worktreeId: "wt_1" })),
     beginRemove: vi.fn(async () => ({ id: "op_1" })),
   } as unknown as TaskTTYService;
-  const app = createApp({ service, config, tmux: {} as TmuxAdapter, webDist: "/missing" });
-  return { app, service };
+  const metadataSnapshot = vi.fn<() => TerminalRuntimeMetadata[]>(() => []);
+  const terminalMetadata = {
+    initialize: vi.fn(async () => undefined),
+    snapshot: metadataSnapshot,
+  } as unknown as TerminalMetadataManager;
+  const app = createApp({
+    service,
+    config,
+    tmux: {} as TmuxAdapter,
+    terminalMetadata,
+    webDist: "/missing",
+  });
+  return { app, metadataSnapshot, service };
 }
 
 describe("HTTP API validation and authentication", () => {
@@ -148,6 +161,30 @@ describe("HTTP API validation and authentication", () => {
     expect((await app.request("/api/diagnostics")).status).toBe(404);
     expect((await app.request("/api/worktrees/w/finish-preview")).status).toBe(404);
     expect((await app.request("/api/worktrees/w/discard-preview")).status).toBe(404);
+  });
+
+  it("starts SSE with the complete terminal metadata snapshot", async () => {
+    const { app, metadataSnapshot } = fixture();
+    metadataSnapshot.mockReturnValue([
+      {
+        terminalId: "term",
+        title: "pi · /repo",
+        progress: { state: "normal", value: 42 },
+      },
+    ]);
+    const abort = new AbortController();
+    const response = await app.request("/api/events", { signal: abort.signal });
+    const reader = response.body!.getReader();
+    const first = await reader.read();
+    const payload = new TextDecoder().decode(first.value);
+
+    expect(payload).toContain("event: connected");
+    expect(payload).toContain('"terminalId":"term"');
+    expect(payload).toContain('"title":"pi · /repo"');
+    expect(payload).toContain('"value":42');
+
+    abort.abort();
+    await reader.cancel();
   });
 
   it("allows health checks but protects APIs when a token is configured", async () => {
