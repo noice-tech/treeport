@@ -318,6 +318,7 @@ export class TaskTTYDatabase {
     return this.mapWorktree(row, project?.main_worktree_path ?? row.path)
   }
 
+  /** Legacy terminal rows are retained only for startup migration compatibility. */
   terminal(id: string): TerminalRecord | null {
     const row = this.connection
       .prepare('SELECT * FROM terminals WHERE id = ?')
@@ -357,11 +358,6 @@ export class TaskTTYDatabase {
     row: WorktreeRow,
     mainWorktreePath: string
   ): WorktreeRecord {
-    const terminals = this.connection
-      .prepare(
-        'SELECT * FROM terminals WHERE worktree_id = ? ORDER BY created_at'
-      )
-      .all(row.id) as TerminalRow[]
     return {
       id: row.id,
       projectId: row.project_id,
@@ -387,7 +383,7 @@ export class TaskTTYDatabase {
         refreshedAt: row.pr_refreshed_at
       },
       dirty: null,
-      terminals: terminals.map((terminal) => this.mapTerminal(terminal)),
+      terminals: [],
       createdAt: row.created_at,
       updatedAt: row.updated_at
     }

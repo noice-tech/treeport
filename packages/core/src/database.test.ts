@@ -76,7 +76,8 @@ describe('SQLite metadata', () => {
       branch: null,
       detached: true,
       head: '',
-      name: 'topic'
+      name: 'topic',
+      terminals: []
     })
     expect(database.terminal('term')?.name).toBe('Terminal')
     expect(database.project('p')?.color).toBeNull()

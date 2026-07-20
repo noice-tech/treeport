@@ -189,42 +189,46 @@ export function createApp({
 
   app.post('/api/projects', async (context) => {
     const body = await input(context, registerProjectSchema)
+    const registered = await service.registerProject(body.path, body.name)
     return context.json(
-      { project: await service.registerProject(body.path, body.name) },
+      { project: await service.getProjectSnapshot(registered.id) },
       201
     )
   })
 
-  app.get('/api/projects/:projectId', (context) =>
+  app.get('/api/projects/:projectId', async (context) =>
     context.json({
-      project: service.getProject(context.req.param('projectId'))
+      project: await service.getProjectSnapshot(context.req.param('projectId'))
     })
   )
 
   app.patch('/api/projects/:projectId', async (context) => {
     const body = await input(context, updateProjectSchema)
+    const projectId = context.req.param('projectId')
+    service.updateProjectColor(projectId, body.color)
     return context.json({
-      project: service.updateProjectColor(
-        context.req.param('projectId'),
-        body.color
-      )
+      project: await service.getProjectSnapshot(projectId)
     })
   })
 
-  app.post('/api/projects/:projectId/refresh', async (context) =>
-    context.json({
-      project: await service.refreshProject(context.req.param('projectId'))
+  app.post('/api/projects/:projectId/refresh', async (context) => {
+    const projectId = context.req.param('projectId')
+    await service.refreshProject(projectId)
+    return context.json({
+      project: await service.getProjectSnapshot(projectId)
     })
-  )
+  })
 
   app.delete('/api/projects/:projectId', async (context) => {
     await service.deleteProject(context.req.param('projectId'))
     return context.json({ ok: true })
   })
 
-  app.get('/api/projects/:projectId/worktrees', (context) =>
+  app.get('/api/projects/:projectId/worktrees', async (context) =>
     context.json({
-      worktrees: service.getProject(context.req.param('projectId')).worktrees
+      worktrees: (
+        await service.getProjectSnapshot(context.req.param('projectId'))
+      ).worktrees
     })
   )
 
@@ -269,7 +273,9 @@ export function createApp({
   app.get('/api/worktrees/:worktreeId', async (context) => {
     const worktreeId = context.req.param('worktreeId')
     await service.refreshPr(worktreeId, false)
-    return context.json({ worktree: service.getWorktree(worktreeId) })
+    return context.json({
+      worktree: await service.getWorktreeSnapshot(worktreeId)
+    })
   })
 
   app.post('/api/worktrees/:worktreeId/terminals', async (context) => {

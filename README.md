@@ -114,7 +114,7 @@ worktree SQLite ID
 
 Identifiers never come from branch names or paths. `packages/core/src/launcher.ts` reads an application-owned JSON launch spec and uses Node `spawn(..., { shell: false })`, preserving spaces, quotes, Unicode, semicolons, and dollar signs literally.
 
-The generated tmux configuration is stored in the tasktty runtime directory. It does not read or modify `~/.tmux.conf`. It disables the status bar, uses `tmux-256color`, enables extended keys, selects CSI-u key encoding on tmux 3.5+, retains dead panes and scrollback, and never restarts exited commands. Wheel scrolling still uses tmux's persistent history, but tasktty hides tmux's copy-mode indicator and styling; typing immediately returns to the live terminal without dropping the first key. SQLite stores status and intended mappings; tmux remains the runtime source of truth.
+The generated tmux configuration is stored in the tasktty runtime directory. It does not read or modify `~/.tmux.conf`. It disables the status bar, uses `tmux-256color`, enables extended keys, selects CSI-u key encoding on tmux 3.5+, retains dead panes and scrollback, and never restarts exited commands. Wheel scrolling still uses tmux's persistent history, but tasktty hides tmux's copy-mode indicator and styling; typing immediately returns to the live terminal without dropping the first key. SQLite stores project/worktree bindings and operation history. tmux owns terminal inventory, configured names, commands, and live or exited status.
 
 Production terminal rendering deliberately uses normal `attach-session` clients: control mode does not provide a byte-offset replay or enough private terminal state to restore application-cursor, bracketed-paste, mouse/focus, extended-key negotiation, and alternate-screen state exactly after reconnect. For each running terminal, a daemon-lifetime read-only, `ignore-size` control-mode sidecar observes title and OSC `9;4` progress metadata that normal tmux clients filter, without affecting rendering or pane dimensions. The daemon also polls tmux title/status as a fallback and publishes metadata snapshots and changes over SSE, so navigation stays current before a terminal is selected. `apps/server/src/tmux-control.ts` byte-decodes this output; tests cover flow-control events, OSC sequences, raw modified-key sequences, resizing, and session survival against real tmux. Control-mode rendering remains experimental and would require a persistent terminal model before replacing the normal attachment path.
 
@@ -155,7 +155,7 @@ tasktty currently includes a compatibility adapter for project-local `.zed/tasks
 
 **Remove worktree** is the only removal action. Preview reports staged, unstaged, and untracked changes, detached-commit reachability, locked state, and every terminal that will stop. Dirty worktrees require destructive confirmation in the UI or `--force` in the CLI. The daemon then blocks mutation, kills the worktree's tmux server, and runs path-addressed `git worktree remove`; it never deletes an attached Git branch. Main and locked worktrees are refused. If Git removal fails after terminals stop, the worktree remains `cleanup_failed` with an explicit retryable error.
 
-Runtime terminal titles and progress are owned by the daemon metadata manager and mirrored into the browser's terminal session manager through SSE, so tabs, panes, the sidebar, and mobile selector update together even for terminals that have not been opened in that browser. The configured SQLite terminal name remains the fallback and runtime metadata is not persisted.
+Runtime terminal titles and progress are owned by the daemon metadata manager and mirrored into the browser's terminal session manager through SSE, so tabs, panes, the sidebar, and mobile selector update together even for terminals that have not been opened in that browser. The configured name is stored with the tmux session as its fallback; observed title and progress metadata remain volatile.
 
 ## API
 
@@ -195,7 +195,7 @@ Default database locations:
 - macOS: `~/Library/Application Support/tasktty/tasktty.db`
 - Linux/XDG: `${XDG_DATA_HOME:-~/.local/share}/tasktty/tasktty.db`
 
-Schema tables are `projects`, `worktrees`, `terminals`, `operations`, and `schema_migrations`. Terminal output is never written to SQLite or application logs.
+Schema tables are `projects`, `worktrees`, `terminals`, `operations`, and `schema_migrations`. The legacy `terminals` table is retained temporarily only to migrate metadata for sessions created by earlier versions; it is not updated and is not the runtime terminal inventory. Terminal output is never written to SQLite or application logs.
 
 ## Security assumptions
 

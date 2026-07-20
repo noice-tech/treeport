@@ -5,7 +5,7 @@ import type {
   WorktreeRecord
 } from '@tasktty/shared'
 import type { TaskTTYService, TmuxAdapter } from '@tasktty/core'
-import { resolveExecutablePath } from '@tasktty/core'
+import { DomainError, resolveExecutablePath } from '@tasktty/core'
 import { progressControlAttachArgs } from './tmux-control.js'
 import {
   createTmuxProgressObserver,
@@ -242,16 +242,22 @@ export class TerminalMetadataManager {
         event.type === 'terminal.updated') &&
       terminalId
     ) {
-      const terminal = this.service.database.terminal(terminalId)
-      if (!terminal) {
-        this.removeTerminal(terminalId)
-        return
-      }
-
-      const worktree = this.service.database.worktree(terminal.worktreeId)
-      if (worktree) {
-        void this.trackTerminal(terminal, worktree)
-      }
+      void this.service
+        .getTerminal(terminalId)
+        .then((terminal) => {
+          const worktree = this.service.database.worktree(terminal.worktreeId)
+          if (worktree) {
+            return this.trackTerminal(terminal, worktree)
+          }
+        })
+        .catch((error: unknown) => {
+          if (
+            error instanceof DomainError &&
+            error.code === 'TERMINAL_NOT_FOUND'
+          ) {
+            this.removeTerminal(terminalId)
+          }
+        })
     }
   }
 

@@ -33,7 +33,12 @@ class SystemDouble implements CommandRunner {
   readonly worktrees: FakeWorktree[]
   readonly sessions = new Map<
     string,
-    { alive: boolean; exitCode: number | null }
+    {
+      alive: boolean
+      exitCode: number | null
+      created: number
+      options: Record<string, string>
+    }
   >()
   dirtyPaths = new Set<string>()
   dirtyStatuses = new Map<string, string>()
@@ -161,12 +166,57 @@ class SystemDouble implements CommandRunner {
 
       const session = args[args.indexOf('-s') + 1]!
       const socket = args[args.indexOf('-L') + 1]!
-      this.sessions.set(`${socket}/${session}`, { alive: true, exitCode: null })
+      this.sessions.set(`${socket}/${session}`, {
+        alive: true,
+        exitCode: null,
+        created: Math.floor(Date.now() / 1_000),
+        options: {}
+      })
       return ok()
     }
 
-    if (args.includes('set-option') || args.includes('source-file')) {
+    if (args.includes('set-option')) {
+      const session = args[args.indexOf('-t') + 1]!
+      const socket = args[args.indexOf('-L') + 1]!
+      const state = this.sessions.get(`${socket}/${session}`)
+      if (!state) {
+        return fail('missing')
+      }
+
+      const key = args[args.indexOf('-t') + 2]!
+      const value = args[args.indexOf('-t') + 3]!
+      if (args.includes('-o') && state.options[key] !== undefined) {
+        return fail(`already set: ${key}`)
+      }
+
+      state.options[key] = value
       return ok()
+    }
+
+    if (args.includes('source-file')) {
+      return ok()
+    }
+
+    if (args.includes('list-panes') && args.includes('-a')) {
+      const socket = args[args.indexOf('-L') + 1]!
+      const lines = [...this.sessions.entries()]
+        .filter(([key]) => key.startsWith(`${socket}/`))
+        .map(([key, state]) => {
+          const session = key.slice(socket.length + 1)
+          return [
+            session,
+            state.options['@tasktty-terminal-id'] ?? '',
+            state.options['@tasktty-worktree-id'] ?? '',
+            state.options['@tasktty-name'] ?? '',
+            state.options['@tasktty-argv'] ?? '',
+            state.options['@tasktty-created-at'] ?? '',
+            state.options['@tasktty-updated-at'] ?? '',
+            String(state.created),
+            state.alive ? '0' : '1',
+            state.exitCode === null ? '' : String(state.exitCode)
+          ].join('\t')
+        })
+      return lines.length ? ok(`${lines.join('\n')}\n`) : fail('no sessions')
     }
 
     if (args.includes('list-panes')) {
@@ -297,6 +347,29 @@ describe('TaskTTYService with injected command adapters', () => {
     runner.statusGate = null
   })
 
+  it('invalidates an in-flight project snapshot after a mutation', async () => {
+    const { main, runner, service } = await fixture()
+    const project = await service.registerProject(main)
+    let release!: () => void
+    runner.statusGate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+
+    const stale = service.listProjects()
+    await vi.waitFor(() =>
+      expect(
+        runner.calls.filter((call) => call.args[0] === 'status').length
+      ).toBeGreaterThan(0)
+    )
+    service.updateProjectColor(project.id, 'violet')
+    const fresh = service.listProjects()
+    expect(fresh).not.toBe(stale)
+    release()
+
+    await expect(fresh).resolves.toMatchObject([{ color: 'violet' }])
+    runner.statusGate = null
+  })
+
   it('persists project colors and publishes an update', async () => {
     const { main, service } = await fixture()
     const project = await service.registerProject(main)
@@ -315,8 +388,8 @@ describe('TaskTTYService with injected command adapters', () => {
     expect(events).toEqual(['project.updated', 'project.updated'])
   })
 
-  it('does not reconcile a terminal as missing while its tmux session is starting', async () => {
-    const { main, runner, service } = await fixture()
+  it('publishes a terminal only after its tmux session is ready', async () => {
+    const { main, runner, service, database } = await fixture()
     const project = await service.registerProject(main)
     const mainWorktree = project.worktrees[0]!
     let releaseTerminal!: () => void
@@ -330,24 +403,116 @@ describe('TaskTTYService with injected command adapters', () => {
         runner.calls.some((call) => call.args.includes('new-session'))
       ).toBe(true)
     )
-    const listPanesBeforeSnapshot = runner.calls.filter((call) =>
-      call.args.includes('list-panes')
-    ).length
-
     const snapshot = await service.listProjects()
-    const snapshotTerminal = snapshot[0]?.worktrees[0]?.terminals.find(
-      (terminal) => terminal.name === 'Starting'
-    )
-    expect(snapshotTerminal?.status).toBe('running')
     expect(
-      runner.calls.filter((call) => call.args.includes('list-panes'))
-    ).toHaveLength(listPanesBeforeSnapshot)
+      snapshot[0]?.worktrees[0]?.terminals.some(
+        (terminal) => terminal.name === 'Starting'
+      )
+    ).toBe(false)
 
     releaseTerminal()
     const terminal = await creatingTerminal
     runner.tmuxCreateGate = null
     expect(terminal.status).toBe('running')
-    expect(service.getTerminal(terminal.id).status).toBe('running')
+    expect((await service.getTerminal(terminal.id)).status).toBe('running')
+    expect(
+      database.connection
+        .prepare('SELECT count(*) FROM terminals')
+        .pluck()
+        .get()
+    ).toBe(0)
+  })
+
+  it('derives status and disappearance events from tmux inventory', async () => {
+    const { main, runner, service } = await fixture()
+    const project = await service.registerProject(main)
+    const terminal = await service.createTerminal(
+      project.worktrees[0]!.id,
+      'Observed'
+    )
+    const events: string[] = []
+    const unsubscribe = service.events.subscribe((event) => {
+      events.push(event.type)
+    })
+    const sessionKey = `${project.worktrees[0]!.tmuxSocketName}/${terminal.tmuxSessionName}`
+    const state = runner.sessions.get(sessionKey)!
+    state.alive = false
+    state.exitCode = 23
+
+    await expect(
+      service.refreshTerminalStatus(terminal.id)
+    ).resolves.toMatchObject({
+      status: 'exited',
+      exitCode: 23
+    })
+    runner.sessions.delete(sessionKey)
+    await expect(
+      service.refreshTerminalStatus(terminal.id)
+    ).rejects.toMatchObject({
+      code: 'TERMINAL_NOT_FOUND'
+    })
+    unsubscribe()
+    expect(events).toEqual(['terminal.updated', 'terminal.removed'])
+  })
+
+  it('migrates legacy terminal metadata into live tmux sessions without overwriting it', async () => {
+    const { main, runner, service, database, config } = await fixture()
+    const project = await service.registerProject(main)
+    const worktree = project.worktrees[0]!
+    const sessionName = 'tasktty-term-legacy'
+    runner.sessions.set(`${worktree.tmuxSocketName}/${sessionName}`, {
+      alive: true,
+      exitCode: null,
+      created: Math.floor(Date.now() / 1_000),
+      options: {
+        '@tasktty-terminal-id': 'term_legacy',
+        '@tasktty-worktree-id': worktree.id
+      }
+    })
+    const insertLegacyTerminal = database.connection.prepare(
+      `INSERT INTO terminals(
+         id,worktree_id,name,tmux_session_name,argv_json,status,exit_code,created_at,updated_at
+       ) VALUES(?,?,?,?,?,'running',NULL,?,?)`
+    )
+    insertLegacyTerminal.run(
+      'term_legacy',
+      worktree.id,
+      'Legacy name',
+      sessionName,
+      JSON.stringify(['legacy', '--flag']),
+      '2026-01-01T00:00:00.000Z',
+      '2026-01-01T00:00:00.000Z'
+    )
+    insertLegacyTerminal.run(
+      'term_corrupt',
+      worktree.id,
+      'Corrupt legacy row',
+      'tasktty-term-corrupt',
+      '{not json',
+      '2026-01-01T00:00:00.000Z',
+      '2026-01-01T00:00:00.000Z'
+    )
+
+    const restarted = new TaskTTYService({
+      config,
+      database,
+      runner,
+      git: new GitAdapter(runner),
+      tmux: new TmuxAdapter(runner, config.runtimeDir, 'tmux', '/launcher.js'),
+      gh: new GhAdapter(runner)
+    })
+    await restarted.initialize()
+    expect(await restarted.getTerminal('term_legacy')).toMatchObject({
+      name: 'Legacy name',
+      argv: ['legacy', '--flag']
+    })
+
+    await restarted.renameTerminal('term_legacy', 'Newer tmux name')
+    await restarted.initialize()
+    expect((await restarted.getTerminal('term_legacy')).name).toBe(
+      'Newer tmux name'
+    )
+    expect(database.terminal('term_legacy')?.name).toBe('Legacy name')
   })
 
   it('creates a detached Zed-style worktree, starts terminals, and removes by path', async () => {
@@ -514,7 +679,9 @@ describe('TaskTTYService with injected command adapters', () => {
     )
     expect(failed.status).toBe('failed')
     expect(service.getWorktree(linked.id).status).toBe('cleanup_failed')
-    expect(service.getTerminal(terminal.id).status).toBe('missing')
+    await expect(service.getTerminal(terminal.id)).rejects.toMatchObject({
+      code: 'TERMINAL_NOT_FOUND'
+    })
     expect(service.getWorktree(linked.id).cleanupError).toMatch(
       /Terminals were stopped/
     )
