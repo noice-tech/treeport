@@ -50,13 +50,18 @@ import {
   metadataRetryDelay,
   shouldRetryMetadataQuery,
 } from "./metadata-sync.js";
-import { terminalSessions } from "./terminal-session.js";
+import {
+  terminalProgressLabel,
+  terminalSessions,
+  type TerminalProgress,
+} from "./terminal-session.js";
 import { TerminalView } from "./terminal-view.js";
 
 const MIN_SIDEBAR_WIDTH = 240;
 const MAX_SIDEBAR_WIDTH = 420;
 const DEFAULT_SIDEBAR_WIDTH = 272;
 const EMPTY_RUNTIME_TITLES: ReadonlyMap<string, string> = new Map();
+const EMPTY_TERMINAL_PROGRESS: ReadonlyMap<string, TerminalProgress> = new Map();
 const FOCUSABLE_SELECTOR = [
   "a[href]",
   "button:not([disabled])",
@@ -354,6 +359,11 @@ export default function App() {
     terminalSessions.subscribe,
     terminalSessions.getTitleSnapshot,
     () => EMPTY_RUNTIME_TITLES,
+  );
+  const terminalProgress = useSyncExternalStore(
+    terminalSessions.subscribe,
+    terminalSessions.getProgressSnapshot,
+    () => EMPTY_TERMINAL_PROGRESS,
   );
   const terminalById = allTerminals.find((terminal) => terminal.id === selectedTerminalId) ?? null;
   useEffect(() => {
@@ -771,9 +781,26 @@ export default function App() {
                                     : "text-zinc-500 hover:bg-white/5 hover:text-zinc-100",
                                 )}
                                 onClick={() => selectTerminal(terminal)}
+                                aria-label={`${runtimeTitles.get(terminal.id) || terminal.name}, ${terminalProgress.has(terminal.id) ? terminalProgressLabel(terminalProgress.get(terminal.id)!) : terminal.status}`}
                               >
-                                <CommandLineIcon className="size-5 shrink-0 text-zinc-600 sm:size-4" />
-                                <span className="truncate">
+                                {terminalProgress.has(terminal.id) ? (
+                                  <ArrowPathIcon
+                                    className={cn(
+                                      "size-4 shrink-0 fill-cyan-300",
+                                      terminalProgress.get(terminal.id)?.state !== "paused" &&
+                                        terminalProgress.get(terminal.id)?.state !== "error" &&
+                                        "animate-spin",
+                                      terminalProgress.get(terminal.id)?.state === "error" &&
+                                        "fill-rose-300",
+                                      terminalProgress.get(terminal.id)?.state === "paused" &&
+                                        "fill-amber-300",
+                                    )}
+                                    aria-hidden="true"
+                                  />
+                                ) : (
+                                  <CommandLineIcon className="size-4 shrink-0 fill-zinc-600" />
+                                )}
+                                <span className="truncate" aria-hidden="true">
                                   {runtimeTitles.get(terminal.id) || terminal.name}
                                 </span>
                                 <span

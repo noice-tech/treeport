@@ -2,6 +2,8 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 import type {
   terminalKeyboardInput as mapTerminalKeyboardInput,
   terminalOptions as createTerminalOptions,
+  parseTerminalProgress as parseOscTerminalProgress,
+  terminalProgressLabel as formatTerminalProgressLabel,
   TerminalSession,
   TerminalSessionManager as TerminalSessionManagerInstance,
   TerminalSessionSnapshot,
@@ -16,6 +18,8 @@ type TerminalSessionManagerConstructor = new (
 let TerminalSessionManager: TerminalSessionManagerConstructor;
 let terminalKeyboardInput: typeof mapTerminalKeyboardInput;
 let terminalOptions: typeof createTerminalOptions;
+let parseTerminalProgress: typeof parseOscTerminalProgress;
+let terminalProgressLabel: typeof formatTerminalProgressLabel;
 
 class FakeSession {
   disposed = false;
@@ -28,6 +32,7 @@ class FakeSession {
     bellActive: false,
     bellSerial: 0,
     exitSerial: 0,
+    progress: null,
     error: null,
   };
 
@@ -48,6 +53,14 @@ class FakeSession {
     this.listeners.forEach((listener) => listener());
   }
 
+  setWorking(working: boolean): void {
+    this.snapshot = {
+      ...this.snapshot,
+      progress: working ? { state: "indeterminate", value: null } : null,
+    };
+    this.listeners.forEach((listener) => listener());
+  }
+
   dispose(): void {
     this.disposed = true;
     this.listeners.clear();
@@ -56,8 +69,13 @@ class FakeSession {
 
 beforeAll(async () => {
   vi.stubGlobal("self", globalThis);
-  ({ TerminalSessionManager, terminalKeyboardInput, terminalOptions } =
-    await import("./terminal-session.js"));
+  ({
+    TerminalSessionManager,
+    terminalKeyboardInput,
+    terminalOptions,
+    parseTerminalProgress,
+    terminalProgressLabel,
+  } = await import("./terminal-session.js"));
 });
 
 beforeEach(() => {
@@ -96,6 +114,30 @@ describe("terminal options", () => {
 
     handler.activate({ metaKey: true, ctrlKey: false } as MouseEvent, url);
     expect(open).toHaveBeenCalledWith(url, "_blank", "noopener,noreferrer");
+  });
+});
+
+describe("terminal progress", () => {
+  it("parses OSC 9;4 progress states emitted by pi", () => {
+    expect(parseTerminalProgress("4;3")).toEqual({ state: "indeterminate", value: null });
+    expect(parseTerminalProgress("4;0;")).toBeNull();
+  });
+
+  it("supports determinate states and ignores unrelated or malformed OSC 9 commands", () => {
+    expect(parseTerminalProgress("4;1;42")).toEqual({ state: "normal", value: 42 });
+    expect(parseTerminalProgress("4;2;100")).toEqual({ state: "error", value: 100 });
+    expect(parseTerminalProgress("4;4;7")).toEqual({ state: "paused", value: 7 });
+    expect(parseTerminalProgress("1;notification")).toBeUndefined();
+    expect(parseTerminalProgress("4;1;101")).toBeUndefined();
+    expect(parseTerminalProgress("4;1;1e2")).toBeUndefined();
+    expect(parseTerminalProgress("4;1; 42")).toBeUndefined();
+  });
+
+  it("describes non-running progress states without relying on color", () => {
+    expect(terminalProgressLabel({ state: "error", value: 42 })).toBe(
+      "progress error, 42% complete",
+    );
+    expect(terminalProgressLabel({ state: "paused", value: null })).toBe("progress paused");
   });
 });
 
@@ -188,5 +230,22 @@ describe("TerminalSessionManager", () => {
     sessions.get("one")?.setTitle("shell");
     sessions.get("one")?.setTitle("");
     expect(manager.getTitleSnapshot().has("one")).toBe(false);
+  });
+
+  it("publishes terminal progress and clears it when work stops or the session is evicted", () => {
+    const { manager, sessions } = fixture();
+    manager.acquire("one");
+    sessions.get("one")?.setWorking(true);
+    expect(manager.getProgressSnapshot().get("one")).toEqual({
+      state: "indeterminate",
+      value: null,
+    });
+
+    sessions.get("one")?.setWorking(false);
+    expect(manager.getProgressSnapshot().has("one")).toBe(false);
+
+    sessions.get("one")?.setWorking(true);
+    manager.forget("one");
+    expect(manager.getProgressSnapshot().has("one")).toBe(false);
   });
 });

@@ -6,8 +6,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "./components/ui/tabs.j
 import { Tooltip, TooltipContent, TooltipTrigger } from "./components/ui/tooltip.js";
 import { cn } from "./lib/utils.js";
 import {
+  terminalProgressLabel,
   terminalSessions,
   type ArrowDirection,
+  type TerminalProgress,
   type TerminalSession,
   type TerminalSessionSnapshot,
 } from "./terminal-session.js";
@@ -25,6 +27,7 @@ interface TerminalViewProps {
 
 const EMPTY_ATTENTION: ReadonlySet<string> = new Set();
 const EMPTY_TITLES: ReadonlyMap<string, string> = new Map();
+const EMPTY_PROGRESS: ReadonlyMap<string, TerminalProgress> = new Map();
 const EMPTY_SNAPSHOT: TerminalSessionSnapshot = {
   phase: "closed",
   degraded: false,
@@ -33,6 +36,7 @@ const EMPTY_SNAPSHOT: TerminalSessionSnapshot = {
   bellActive: false,
   bellSerial: 0,
   exitSerial: 0,
+  progress: null,
   error: null,
 };
 
@@ -78,6 +82,11 @@ export function TerminalView({
     terminalSessions.subscribe,
     terminalSessions.getTitleSnapshot,
     () => EMPTY_TITLES,
+  );
+  const terminalProgress = useSyncExternalStore(
+    terminalSessions.subscribe,
+    terminalSessions.getProgressSnapshot,
+    () => EMPTY_PROGRESS,
   );
 
   useEffect(() => {
@@ -143,12 +152,15 @@ export function TerminalView({
                 const selected = item.id === terminal?.id;
                 const title = runtimeTitles.get(item.id) || item.name;
                 const needsAttention = bellAttention.has(item.id);
-                const status =
-                  selected && snapshot.degraded
-                    ? `${item.status}, reconnecting`
-                    : needsAttention
-                      ? `${item.status}, bell`
-                      : item.status;
+                const progress = terminalProgress.get(item.id);
+                const status = [
+                  item.status,
+                  selected && snapshot.degraded ? "reconnecting" : null,
+                  progress ? terminalProgressLabel(progress) : null,
+                  needsAttention ? "bell" : null,
+                ]
+                  .filter(Boolean)
+                  .join(", ");
                 const closing = closingTerminalId === item.id;
                 return (
                   <div
@@ -161,15 +173,31 @@ export function TerminalView({
                       aria-label={`${title}, ${status}`}
                       title={title}
                     >
-                      <span
-                        className={cn(
-                          "size-1.5 shrink-0 rounded-full bg-zinc-600",
-                          item.status === "running" && "bg-emerald-400",
-                          item.status === "exited" && "bg-rose-400",
-                          needsAttention && "bg-amber-300 shadow-[0_0_0.5rem] shadow-amber-300/60",
-                        )}
-                        aria-hidden="true"
-                      />
+                      {progress ? (
+                        <ArrowPathIcon
+                          className={cn(
+                            "size-4 shrink-0 fill-cyan-300",
+                            progress.state !== "paused" &&
+                              progress.state !== "error" &&
+                              "animate-spin",
+                            progress.state === "error" && "fill-rose-300",
+                            progress.state === "paused" && "fill-amber-300",
+                            needsAttention && "drop-shadow-[0_0_0.35rem_#fcd34d]",
+                          )}
+                          aria-hidden="true"
+                        />
+                      ) : (
+                        <span
+                          className={cn(
+                            "size-1.5 shrink-0 rounded-full bg-zinc-600",
+                            item.status === "running" && "bg-emerald-400",
+                            item.status === "exited" && "bg-rose-400",
+                            needsAttention &&
+                              "bg-amber-300 shadow-[0_0_0.5rem] shadow-amber-300/60",
+                          )}
+                          aria-hidden="true"
+                        />
+                      )}
                       <span className="truncate">{title}</span>
                     </TabsTrigger>
                     <Tooltip>
