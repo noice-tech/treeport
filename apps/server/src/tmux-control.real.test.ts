@@ -8,6 +8,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import {
   controlAttachArgs,
   encodeControlInput,
+  progressControlAttachArgs,
   resizeControlClient,
   TmuxControlParser,
   type TmuxControlEvent,
@@ -56,7 +57,7 @@ describe.skipIf(!enabled)("real tmux control-mode characterization", () => {
       "process.stdin.on('data', data => {",
       "  pending = Buffer.concat([pending, data]);",
       "  if (pending.length < 13) return;",
-      "  process.stdout.write(Buffer.from('\\x1b]8;;https://example.test\\x07LINK\\x1b]8;;\\x07|'));",
+      "  process.stdout.write(Buffer.from('\\x1b]9;4;3\\x07\\x1b]8;;https://example.test\\x07LINK\\x1b]8;;\\x07|'));",
       "  process.stdout.write(pending);",
       "  process.stdout.write(Buffer.from('|END'));",
       "  pending = Buffer.alloc(0);",
@@ -148,12 +149,63 @@ describe.skipIf(!enabled)("real tmux control-mode characterization", () => {
         "pane output did not arrive",
       );
       const output = outputBytes();
+      expect(output.indexOf(Buffer.from("\x1b]9;4;3\x07"))).toBeGreaterThanOrEqual(0);
       expect(
         output.indexOf(Buffer.from("\x1b]8;;https://example.test\x07LINK\x1b]8;;\x07|")),
       ).toBeGreaterThanOrEqual(0);
       const start = output.indexOf(Buffer.from("LINK\x1b]8;;\x07|"));
       const echoed = output.subarray(start + Buffer.byteLength("LINK\x1b]8;;\x07|"));
       expect(echoed.subarray(0, sent.length)).toEqual(sent);
+
+      const progressControl = spawn(
+        "tmux",
+        progressControlAttachArgs(socket, tmux.configPath, session),
+        {
+          stdio: ["pipe", "pipe", "pipe"],
+          env: Object.fromEntries(
+            Object.entries(process.env).filter(
+              ([key, value]) => value !== undefined && key !== "TMUX" && key !== "TMUX_PANE",
+            ),
+          ) as NodeJS.ProcessEnv,
+        },
+      );
+      const progressParser = new TmuxControlParser();
+      const progressEvents: TmuxControlEvent[] = [];
+      progressControl.stdout.on("data", (chunk: Buffer) =>
+        progressEvents.push(...progressParser.push(chunk)),
+      );
+      progressControl.stderr.resume();
+      await waitFor(
+        () =>
+          progressEvents.some(
+            (event) => event.type === "notification" && event.name === "session-changed",
+          ),
+        "read-only progress observer did not attach",
+      );
+      for (const command of encodeControlInput(paneId, sent, 3)) control.stdin.write(command);
+      await waitFor(
+        () =>
+          Buffer.concat(
+            progressEvents
+              .filter(
+                (event): event is Extract<TmuxControlEvent, { type: "output" }> =>
+                  event.type === "output" && event.paneId === paneId,
+              )
+              .map((event) => Buffer.from(event.data)),
+          ).includes(Buffer.from("\x1b]9;4;3\x07")),
+        "read-only progress observer did not receive OSC 9;4",
+      );
+      await expect(
+        execute("tmux", [
+          ...base,
+          "display-message",
+          "-p",
+          "-t",
+          session,
+          "#{window_width}x#{window_height}",
+        ]).then((result) => result.stdout.trim()),
+      ).resolves.toBe("80x24");
+      progressControl.kill();
 
       control.stdin.write(resizeControlClient(91, 27));
       await waitFor(async () => {

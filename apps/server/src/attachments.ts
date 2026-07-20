@@ -14,13 +14,27 @@ import {
   TERMINAL_OUTPUT_STALL_TIMEOUT_MS,
   TERMINAL_PROTOCOL_VERSION,
   type TerminalClientMessage,
+  type TerminalProgress,
   type TerminalServerMessage,
 } from "@tasktty/shared";
 import type { TaskTTYService, TmuxAdapter } from "@tasktty/core";
 import { resolveExecutablePath } from "@tasktty/core";
+import { progressControlAttachArgs } from "./tmux-control.js";
+import {
+  createTmuxProgressObserver,
+  type TerminalProgressObserver,
+  type TerminalProgressObserverFactory,
+} from "./tmux-progress.js";
 
 type PtySpawner = typeof pty.spawn;
 type ConnectionState = "awaiting_hello" | "initializing" | "ready" | "closed";
+
+interface ProgressObserverEntry {
+  terminalId: string;
+  clients: Set<string>;
+  observer: TerminalProgressObserver | null;
+  progress: TerminalProgress | null;
+}
 
 interface ClientConnection {
   id: string;
@@ -47,6 +61,7 @@ interface ClientConnection {
   paused: boolean;
   announcedReady: boolean;
   polling: boolean;
+  progressObserver: ProgressObserverEntry | null;
 }
 
 interface ControllerLease {
@@ -68,9 +83,18 @@ function errorMessage(error: unknown): string {
   return (message || "Terminal attachment failed").slice(0, 1_000);
 }
 
+function tmuxEnvironment(): NodeJS.ProcessEnv {
+  return Object.fromEntries(
+    Object.entries(process.env).filter(
+      ([key, value]) => value !== undefined && key !== "TMUX" && key !== "TMUX_PANE",
+    ),
+  ) as NodeJS.ProcessEnv;
+}
+
 export class TerminalAttachmentManager {
   private readonly clients = new Map<string, ClientConnection>();
   private readonly controllers = new Map<string, ControllerLease>();
+  private readonly progressObservers = new Map<string, ProgressObserverEntry>();
   private readonly tmuxExecutable: string;
 
   constructor(
@@ -78,6 +102,7 @@ export class TerminalAttachmentManager {
     private readonly tmux: TmuxAdapter,
     tmuxExecutable: string,
     private readonly spawnPty: PtySpawner = pty.spawn,
+    private readonly createProgressObserver: TerminalProgressObserverFactory = createTmuxProgressObserver,
   ) {
     this.tmuxExecutable = resolveExecutablePath(tmuxExecutable);
   }
@@ -109,6 +134,7 @@ export class TerminalAttachmentManager {
       paused: false,
       announcedReady: false,
       polling: false,
+      progressObserver: null,
     };
     connection.helloTimeout = setTimeout(
       () => this.protocolError(connection, "HELLO_TIMEOUT", "Terminal handshake timed out", 1008),
@@ -180,6 +206,7 @@ export class TerminalAttachmentManager {
     if (connection.stallTimeout) clearTimeout(connection.stallTimeout);
     connection.dataDisposable?.dispose();
     connection.exitDisposable?.dispose();
+    this.releaseProgressObserver(connection);
     try {
       connection.pty?.kill();
     } catch {
@@ -223,11 +250,14 @@ export class TerminalAttachmentManager {
       ]);
       if (connection.state === "closed") return;
       const size = sessionSize ?? { cols, rows };
-      const env = Object.fromEntries(
-        Object.entries(process.env).filter(
-          ([key, value]) => value !== undefined && key !== "TMUX" && key !== "TMUX_PANE",
-        ),
-      ) as Record<string, string>;
+      const env = tmuxEnvironment();
+      this.acquireProgressObserver(
+        connection,
+        worktree.tmuxSocketName,
+        terminal.tmuxSessionName,
+        worktree.path,
+        env,
+      );
       env.TERM = "xterm-256color";
       const clientPty = this.spawnPty(
         this.tmuxExecutable,
@@ -276,6 +306,16 @@ export class TerminalAttachmentManager {
         })
       )
         return;
+      const progress = connection.progressObserver?.progress;
+      if (
+        progress &&
+        !this.send(connection, {
+          version: TERMINAL_PROTOCOL_VERSION,
+          type: "progress",
+          progress,
+        })
+      )
+        return;
       if (!this.isActive(connection)) return;
       connection.lastPongAt = Date.now();
       connection.heartbeat = setInterval(
@@ -318,6 +358,91 @@ export class TerminalAttachmentManager {
     if (message.type === "input") connection.pty?.write(message.data);
     if (message.type === "binary") connection.pty?.write(Buffer.from(message.data, "binary"));
     if (message.type === "resize") connection.pty?.resize(message.cols, message.rows);
+  }
+
+  private acquireProgressObserver(
+    connection: ClientConnection,
+    socketName: string,
+    sessionName: string,
+    cwd: string,
+    env: NodeJS.ProcessEnv,
+  ): void {
+    let entry = this.progressObservers.get(connection.terminalId);
+    if (!entry) {
+      entry = {
+        terminalId: connection.terminalId,
+        clients: new Set(),
+        observer: null,
+        progress: null,
+      };
+      this.progressObservers.set(connection.terminalId, entry);
+      try {
+        const observedEntry = entry;
+        entry.observer = this.createProgressObserver({
+          executable: this.tmuxExecutable,
+          args: progressControlAttachArgs(socketName, this.tmux.configPath, sessionName),
+          cwd,
+          env,
+          onProgress: (progress) => this.updateProgress(observedEntry, progress),
+          onExit: () => this.progressObserverExited(observedEntry),
+        });
+      } catch {
+        this.progressObservers.delete(connection.terminalId);
+        return;
+      }
+    }
+    if (this.progressObservers.get(connection.terminalId) !== entry) return;
+    entry.clients.add(connection.id);
+    connection.progressObserver = entry;
+  }
+
+  private releaseProgressObserver(connection: ClientConnection): void {
+    const entry = connection.progressObserver;
+    connection.progressObserver = null;
+    if (!entry) return;
+    entry.clients.delete(connection.id);
+    if (entry.clients.size > 0 || this.progressObservers.get(entry.terminalId) !== entry) return;
+    this.progressObservers.delete(entry.terminalId);
+    entry.observer?.dispose();
+    entry.observer = null;
+    entry.progress = null;
+  }
+
+  private updateProgress(entry: ProgressObserverEntry, progress: TerminalProgress | null): void {
+    if (this.progressObservers.get(entry.terminalId) !== entry) return;
+    const current = entry.progress;
+    if (current?.state === progress?.state && current?.value === progress?.value) return;
+    entry.progress = progress;
+    for (const connectionId of entry.clients) {
+      const connection = this.clients.get(connectionId);
+      if (!connection?.announcedReady || !this.isActive(connection)) continue;
+      this.send(connection, {
+        version: TERMINAL_PROTOCOL_VERSION,
+        type: "progress",
+        progress,
+      });
+    }
+  }
+
+  private progressObserverExited(entry: ProgressObserverEntry): void {
+    if (this.progressObservers.get(entry.terminalId) !== entry) return;
+    this.progressObservers.delete(entry.terminalId);
+    entry.observer = null;
+    const hadProgress = entry.progress !== null;
+    entry.progress = null;
+    for (const connectionId of entry.clients) {
+      const connection = this.clients.get(connectionId);
+      if (!connection) continue;
+      connection.progressObserver = null;
+      if (hadProgress && connection.announcedReady && this.isActive(connection)) {
+        this.send(connection, {
+          version: TERMINAL_PROTOCOL_VERSION,
+          type: "progress",
+          progress: null,
+        });
+      }
+    }
+    entry.clients.clear();
   }
 
   private sendOutput(connection: ClientConnection, data: string): void {
