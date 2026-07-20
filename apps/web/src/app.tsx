@@ -214,6 +214,7 @@ export default function App() {
   const [selectedTerminalId, setSelectedTerminalId] = useState<string | null>(() =>
     localStorage.getItem("tasktty-terminal"),
   );
+  const [focusTerminalId, setFocusTerminalId] = useState<string | null>(null);
   const [selectedWorktreeId, setSelectedWorktreeId] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [openProjectColorPickerId, setOpenProjectColorPickerId] = useState<string | null>(null);
@@ -545,6 +546,7 @@ export default function App() {
   const createTerminal = useMutation({
     mutationFn: (worktree: WorktreeRecord) => apiClient.createTerminal(worktree.id, "Terminal"),
     onSuccess: async (terminal) => {
+      setFocusTerminalId(terminal.id);
       selectTerminal(terminal);
       await queryClient.invalidateQueries({ queryKey: projectsQueryKey });
     },
@@ -952,6 +954,7 @@ export default function App() {
         <TerminalView
           worktree={selectedWorktree}
           terminal={selectedTerminal}
+          focusTerminalId={focusTerminalId}
           onSelectTerminal={selectTerminal}
           onCreateTerminal={() => selectedWorktree && createTerminal.mutate(selectedWorktree)}
           creatingTerminal={

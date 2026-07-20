@@ -681,6 +681,7 @@ test.describe("desktop worktree terminal UI", () => {
     await expect(page.locator(".terminal-row.selected")).toBeVisible();
 
     await expect(page.getByRole("tab", { name: /^dev · \/worktrees\/topic,/ })).toBeVisible();
+    await expect(page.locator(".xterm-helper-textarea")).toBeFocused();
     const socketsBeforeSwitch = await page.evaluate(() => (window as any).__wsInstances.length);
     await page.getByRole("tab", { name: /^zsh · \/worktrees\/topic,/ }).click();
     await expect
