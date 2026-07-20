@@ -93,13 +93,13 @@ Chat components nest in a fixed order (`MessageScrollerProvider` → `MessageScr
 ## Toast notifications use sonner
 
 ```tsx
-import { toast } from "sonner";
+import { toast } from 'sonner'
 
-toast.success("Changes saved.");
-toast.error("Something went wrong.");
-toast("File deleted.", {
-  action: { label: "Undo", onClick: () => undoDelete() },
-});
+toast.success('Changes saved.')
+toast.error('Something went wrong.')
+toast('File deleted.', {
+  action: { label: 'Undo', onClick: () => undoDelete() }
+})
 ```
 
 ---

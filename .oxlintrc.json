@@ -1,6 +1,7 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
   "plugins": ["typescript"],
+  "jsPlugins": ["@stylistic/eslint-plugin"],
   "categories": {
     "correctness": "off"
   },
@@ -17,6 +18,24 @@
     "test-results/**"
   ],
   "rules": {
+    "curly": "error",
+    "@stylistic/padding-line-between-statements": [
+      "error",
+      {
+        "blankLine": "always",
+        "prev": ["if", "function"],
+        "next": "*"
+      },
+      {
+        "blankLine": "always",
+        "prev": {
+          "selector": "ExpressionStatement[expression.type='CallExpression'][expression.callee.type='MemberExpression'][expression.callee.object.name='app'][expression.callee.property.name=/^(get|post|put|patch|delete)$/]"
+        },
+        "next": {
+          "selector": "ExpressionStatement[expression.type='CallExpression'][expression.callee.type='MemberExpression'][expression.callee.object.name='app'][expression.callee.property.name=/^(get|post|put|patch|delete)$/]"
+        }
+      }
+    ],
     "constructor-super": "error",
     "for-direction": "error",
     "getter-return": "error",

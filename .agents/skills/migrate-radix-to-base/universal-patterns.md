@@ -258,38 +258,48 @@ removed; `align` forwarded to Positioner. New `data-instant`,
 Radix:
 
 ```tsx
-import { Slot } from "radix-ui";
+import { Slot } from 'radix-ui'
 function BreadcrumbLink({
   asChild,
   className,
   ...props
-}: React.ComponentProps<"a"> & { asChild?: boolean }) {
-  const Comp = asChild ? Slot.Root : "a";
-  return <Comp data-slot="breadcrumb-link" className={cn("...", className)} {...props} />;
+}: React.ComponentProps<'a'> & { asChild?: boolean }) {
+  const Comp = asChild ? Slot.Root : 'a'
+  return (
+    <Comp
+      data-slot="breadcrumb-link"
+      className={cn('...', className)}
+      {...props}
+    />
+  )
 }
 ```
 
 Base UI:
 
 ```tsx
-import { mergeProps } from "@base-ui/react/merge-props";
-import { useRender } from "@base-ui/react/use-render";
+import { mergeProps } from '@base-ui/react/merge-props'
+import { useRender } from '@base-ui/react/use-render'
 
-function BreadcrumbLink({ className, render, ...props }: useRender.ComponentProps<"a">) {
+function BreadcrumbLink({
+  className,
+  render,
+  ...props
+}: useRender.ComponentProps<'a'>) {
   return useRender({
-    defaultTagName: "a",
+    defaultTagName: 'a',
     render,
-    props: mergeProps<"a">(
+    props: mergeProps<'a'>(
       // PITFALL: data-* attributes fail excess-property checking when passed
       // as an object literal into mergeProps (they are only special-cased in
       // JSX). Cast the literal:
       {
-        "data-slot": "breadcrumb-link",
-        className: cn("...", className),
-      } as React.ComponentProps<"a">,
-      props,
-    ),
-  });
+        'data-slot': 'breadcrumb-link',
+        className: cn('...', className)
+      } as React.ComponentProps<'a'>,
+      props
+    )
+  })
 }
 ```
 

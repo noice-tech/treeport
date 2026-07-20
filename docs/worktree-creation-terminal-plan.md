@@ -115,11 +115,11 @@ Do not expose Zed-specific task types to tmux or the launcher. Introduce a gener
 
 ```ts
 interface WorktreeSetupTask {
-  label: string;
-  argv: string[];
-  cwd: string;
-  env: Record<string, string>;
-  timeoutMs: number;
+  label: string
+  argv: string[]
+  cwd: string
+  env: Record<string, string>
+  timeoutMs: number
 }
 ```
 
@@ -326,10 +326,10 @@ Keep the current `201` response shape for compatibility:
 
 ```ts
 {
-  worktree: WorktreeRecord;
-  terminal: TerminalRecord | null;
-  terminalError: string | null;
-  setupError: string | null;
+  worktree: WorktreeRecord
+  terminal: TerminalRecord | null
+  terminalError: string | null
+  setupError: string | null
 }
 ```
 
