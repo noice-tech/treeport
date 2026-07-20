@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   decodeTmuxControlBytes,
   encodeControlInput,
+  progressControlAttachArgs,
   resizeControlClient,
   TmuxControlParser,
   TmuxControlProtocolError,
@@ -126,6 +127,20 @@ describe("TmuxControlParser", () => {
 });
 
 describe("tmux control command validation", () => {
+  it("attaches progress observers read-only without affecting pane size", () => {
+    expect(progressControlAttachArgs("socket", "/runtime/tmux.conf", "session")).toEqual([
+      "-L",
+      "socket",
+      "-f",
+      "/runtime/tmux.conf",
+      "-C",
+      "attach-session",
+      "-r",
+      "-t",
+      "session",
+    ]);
+  });
+
   it.each([
     () => encodeControlInput("%1; kill-server", bytes(1)),
     () => encodeControlInput("%1", bytes(1), 0),

@@ -17,6 +17,25 @@ const dimensions = {
   rows: z.number().int().min(2).max(500),
 };
 
+export const terminalProgressSchema = z.strictObject({
+  state: z.enum(["normal", "error", "indeterminate", "paused"]),
+  value: z.number().int().min(0).max(100).nullable(),
+});
+
+export type TerminalProgress = z.infer<typeof terminalProgressSchema>;
+
+export function parseTerminalProgress(data: string): TerminalProgress | null | undefined {
+  const [command, rawState, rawValue, ...extra] = data.split(";");
+  if (command !== "4" || extra.length > 0 || !/^[0-4]$/.test(rawState ?? "")) return undefined;
+  const state = Number(rawState);
+  if (state === 0) return null;
+  if (rawValue !== undefined && rawValue !== "" && !/^\d{1,3}$/.test(rawValue)) return undefined;
+  const value = rawValue === undefined || rawValue === "" ? null : Number(rawValue);
+  if (value !== null && value > 100) return undefined;
+  const states = [undefined, "normal", "error", "indeterminate", "paused"] as const;
+  return { state: states[state]!, value };
+}
+
 export const terminalClientMessageSchema = z.discriminatedUnion("type", [
   z.strictObject({ version, type: z.literal("hello"), clientId, ...dimensions }),
   z.strictObject({ version, type: z.literal("input"), data: z.string().max(64 * 1024) }),
@@ -50,6 +69,11 @@ export const terminalServerMessageSchema = z.discriminatedUnion("type", [
     data: z.string(),
   }),
   z.strictObject({ version, type: z.literal("title"), title: z.string().max(256) }),
+  z.strictObject({
+    version,
+    type: z.literal("progress"),
+    progress: terminalProgressSchema.nullable(),
+  }),
   z.strictObject({ version, type: z.literal("control"), controller: z.boolean() }),
   z.strictObject({ version, type: z.literal("ping"), nonce: z.string().min(1).max(128) }),
   z.strictObject({ version, type: z.literal("exit"), exitCode: z.number().int().nullable() }),

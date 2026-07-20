@@ -1,20 +1,18 @@
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import {
+  parseTerminalProgress,
   parseTerminalServerMessage,
   TERMINAL_HEARTBEAT_TIMEOUT_MS,
   TERMINAL_PROTOCOL_VERSION,
   type TerminalClientMessage,
+  type TerminalProgress,
 } from "@tasktty/shared";
+
+export { parseTerminalProgress, type TerminalProgress } from "@tasktty/shared";
 
 type ConnectionPhase = "connecting" | "ready" | "reconnecting" | "closed";
 export type ArrowDirection = "up" | "down" | "left" | "right";
-export type TerminalProgressState = "normal" | "error" | "indeterminate" | "paused";
-
-export interface TerminalProgress {
-  state: TerminalProgressState;
-  value: number | null;
-}
 
 const TERMINAL_SCROLL_EXIT_SEQUENCE = "\u001b[9000~";
 
@@ -23,23 +21,6 @@ export function terminalProgressLabel(progress: TerminalProgress): string {
   if (progress.state === "error") return `progress error${percentage}`;
   if (progress.state === "paused") return `progress paused${percentage}`;
   return progress.value === null ? "working" : `${progress.value}% complete`;
-}
-
-export function parseTerminalProgress(data: string): TerminalProgress | null | undefined {
-  const [command, rawState, rawValue, ...extra] = data.split(";");
-  if (command !== "4" || extra.length > 0 || !/^[0-4]$/.test(rawState ?? "")) return undefined;
-  const state = Number(rawState);
-  if (state === 0) return null;
-  if (rawValue !== undefined && rawValue !== "" && !/^\d{1,3}$/.test(rawValue)) return undefined;
-  const value = rawValue === undefined || rawValue === "" ? null : Number(rawValue);
-  if (value !== null && value > 100) return undefined;
-  const states: Record<number, TerminalProgressState> = {
-    1: "normal",
-    2: "error",
-    3: "indeterminate",
-    4: "paused",
-  };
-  return { state: states[state]!, value };
 }
 
 type TerminalKeyboardEvent = Pick<
@@ -347,13 +328,7 @@ export class TerminalSession {
     this.progressHandler = terminal.parser.registerOscHandler(9, (data) => {
       const progress = parseTerminalProgress(data);
       if (progress === undefined) return false;
-      const current = this.snapshotValue.progress;
-      if (
-        current?.state !== progress?.state ||
-        current?.value !== progress?.value ||
-        (current === null) !== (progress === null)
-      )
-        this.update({ progress });
+      this.handleProgress(progress);
       return true;
     });
   }
@@ -459,6 +434,10 @@ export class TerminalSession {
       this.update({ title: message.title.trim().slice(0, 256) });
       return;
     }
+    if (message.type === "progress") {
+      this.handleProgress(message.progress);
+      return;
+    }
     if (message.type === "control") {
       this.update({ controller: message.controller });
       if (message.controller) this.scheduleFit();
@@ -474,6 +453,12 @@ export class TerminalSession {
       if (message.retryable) this.update({ error: message.message });
       else this.stopWithError(message.message);
     }
+  }
+
+  private handleProgress(progress: TerminalProgress | null): void {
+    const current = this.snapshotValue.progress;
+    if (current?.state === progress?.state && current?.value === progress?.value) return;
+    this.update({ progress });
   }
 
   private handleOutput(streamId: string, sequence: number, data: string): void {

@@ -8,6 +8,7 @@ import {
   type TerminalServerMessage,
 } from "@tasktty/shared";
 import { TerminalAttachmentManager } from "./attachments.js";
+import type { TerminalProgressObserver, TmuxProgressObserverOptions } from "./tmux-progress.js";
 
 class FakePty {
   readonly pid = 1;
@@ -51,6 +52,24 @@ class FakePty {
   clear() {}
 }
 
+class FakeProgressObserver implements TerminalProgressObserver {
+  disposed = false;
+
+  constructor(readonly options: TmuxProgressObserverOptions) {}
+
+  emit(progress: Parameters<TmuxProgressObserverOptions["onProgress"]>[0]) {
+    this.options.onProgress(progress);
+  }
+
+  exit() {
+    this.options.onExit();
+  }
+
+  dispose() {
+    this.disposed = true;
+  }
+}
+
 class FakeSocket {
   readyState = 1 as const;
   sent: TerminalServerMessage[] = [];
@@ -68,6 +87,7 @@ class FakeSocket {
 
 function fixture() {
   const ptys: FakePty[] = [];
+  const progressObservers: FakeProgressObserver[] = [];
   const publish = vi.fn();
   const service = {
     refreshTerminalStatus: vi.fn(async () => ({
@@ -84,6 +104,7 @@ function fixture() {
     events: { publish },
   } as unknown as TaskTTYService;
   const tmux = {
+    configPath: "/runtime/tmux.conf",
     configureServer: vi.fn(async () => undefined),
     sessionSize: vi.fn(async () => ({ cols: 100, rows: 30 })),
     sessionTitle: vi.fn(async () => "shell"),
@@ -94,8 +115,19 @@ function fixture() {
     ptys.push(value);
     return value as unknown as IPty;
   });
-  const manager = new TerminalAttachmentManager(service, tmux, process.execPath, spawn as never);
-  return { manager, ptys, publish, tmux };
+  const createProgressObserver = vi.fn((options: TmuxProgressObserverOptions) => {
+    const observer = new FakeProgressObserver(options);
+    progressObservers.push(observer);
+    return observer;
+  });
+  const manager = new TerminalAttachmentManager(
+    service,
+    tmux,
+    process.execPath,
+    spawn as never,
+    createProgressObserver,
+  );
+  return { manager, progressObservers, ptys, publish, tmux };
 }
 
 const hello = (clientId: string) =>
@@ -171,6 +203,59 @@ describe("TerminalAttachmentManager", () => {
       type: "title",
       title: "",
     });
+  });
+
+  it("fans progress out through one shared read-only observer and caches it for new viewers", async () => {
+    const { manager, progressObservers } = fixture();
+    const first = new FakeSocket();
+    const firstId = manager.accept("term", first as unknown as WSContext);
+    manager.message(firstId, hello("tab-a"));
+    await ready(first);
+
+    expect(progressObservers).toHaveLength(1);
+    expect(progressObservers[0]!.options.args).toContain("-r");
+    expect(progressObservers[0]!.options.args).not.toContain("refresh-client");
+    progressObservers[0]!.emit({ state: "indeterminate", value: null });
+    expect(first.sent.at(-1)).toMatchObject({
+      type: "progress",
+      progress: { state: "indeterminate", value: null },
+    });
+
+    const viewer = new FakeSocket();
+    const viewerId = manager.accept("term", viewer as unknown as WSContext);
+    manager.message(viewerId, hello("tab-b"));
+    await ready(viewer);
+    expect(progressObservers).toHaveLength(1);
+    expect(viewer.sent).toContainEqual({
+      version: TERMINAL_PROTOCOL_VERSION,
+      type: "progress",
+      progress: { state: "indeterminate", value: null },
+    });
+
+    progressObservers[0]!.emit(null);
+    expect(first.sent.at(-1)).toMatchObject({ type: "progress", progress: null });
+    expect(viewer.sent.at(-1)).toMatchObject({ type: "progress", progress: null });
+
+    manager.close(firstId);
+    expect(progressObservers[0]!.disposed).toBe(false);
+    manager.close(viewerId);
+    expect(progressObservers[0]!.disposed).toBe(true);
+  });
+
+  it("clears progress if the observer exits without disrupting terminal output", async () => {
+    const { manager, progressObservers, ptys } = fixture();
+    const socket = new FakeSocket();
+    const id = manager.accept("term", socket as unknown as WSContext);
+    manager.message(id, hello("tab-a"));
+    await ready(socket);
+
+    progressObservers[0]!.emit({ state: "normal", value: 25 });
+    progressObservers[0]!.exit();
+    expect(socket.sent.at(-1)).toMatchObject({ type: "progress", progress: null });
+
+    ptys[0]!.emit("still attached");
+    expect(socket.sent.at(-1)).toMatchObject({ type: "output", data: "still attached" });
+    manager.close(id);
   });
 
   it("extends the stall deadline when acknowledgements make progress", async () => {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   parseTerminalClientMessage,
+  parseTerminalProgress,
   parseTerminalServerMessage,
   TERMINAL_PROTOCOL_VERSION,
 } from "./terminal-protocol.js";
@@ -65,5 +66,38 @@ describe("terminal protocol", () => {
         data: "bad",
       }),
     ).toBeNull();
+  });
+
+  it("accepts validated progress frames and explicit clears", () => {
+    expect(
+      parseTerminalServerMessage({
+        version: TERMINAL_PROTOCOL_VERSION,
+        type: "progress",
+        progress: { state: "indeterminate", value: null },
+      }),
+    ).toMatchObject({ type: "progress", progress: { state: "indeterminate" } });
+    expect(
+      parseTerminalServerMessage({
+        version: TERMINAL_PROTOCOL_VERSION,
+        type: "progress",
+        progress: null,
+      }),
+    ).toMatchObject({ type: "progress", progress: null });
+    expect(
+      parseTerminalServerMessage({
+        version: TERMINAL_PROTOCOL_VERSION,
+        type: "progress",
+        progress: { state: "normal", value: 101 },
+      }),
+    ).toBeNull();
+  });
+
+  it("parses OSC 9;4 payloads", () => {
+    expect(parseTerminalProgress("4;3")).toEqual({ state: "indeterminate", value: null });
+    expect(parseTerminalProgress("4;1;42")).toEqual({ state: "normal", value: 42 });
+    expect(parseTerminalProgress("4;0")).toBeNull();
+    expect(parseTerminalProgress("4;1;101")).toBeUndefined();
+    expect(parseTerminalProgress("4;1;1e2")).toBeUndefined();
+    expect(parseTerminalProgress("1;notice")).toBeUndefined();
   });
 });

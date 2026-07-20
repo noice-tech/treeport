@@ -251,6 +251,14 @@ export function controlAttachArgs(
   return ["-L", socketName, "-f", configPath, "-C", "attach-session", "-t", sessionName];
 }
 
+export function progressControlAttachArgs(
+  socketName: string,
+  configPath: string,
+  sessionName: string,
+): string[] {
+  return ["-L", socketName, "-f", configPath, "-C", "attach-session", "-r", "-t", sessionName];
+}
+
 export function encodeControlInput(
   paneId: string,
   input: Uint8Array,
