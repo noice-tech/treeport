@@ -13,8 +13,8 @@ This plan supersedes the creation-dialog and pre-terminal hook sequencing descri
 
 ## Product decisions
 
-- wtr owns the worktree lifecycle and terminal behavior.
-- Zed is only a compatibility source for setup task definitions. Its UI lifecycle, task presentation, reveal behavior, and internal architecture do not define wtr behavior.
+- tasktty owns the worktree lifecycle and terminal behavior.
+- Zed is only a compatibility source for setup task definitions. Its UI lifecycle, task presentation, reveal behavior, and internal architecture do not define tasktty behavior.
 - Setup execution uses a generic internal `WorktreeSetupTask` model. A Zed compatibility adapter translates matching `.zed/tasks.json` entries into that model. Future client adapters can target the same model.
 - The pending sidebar row visibly contains the exact name typed by the user and a spinner. It must not use a generic visible label such as `Creating`.
 - Accessible text may announce `Creating worktree <name>` without replacing the visible name.
@@ -358,7 +358,7 @@ Runtime setup failures now happen after the response and are represented by term
 
 **Acceptance criteria**
 
-- `wtr spawn -- <command> ...` eventually runs that exact argv after successful setup.
+- `tasktty spawn -- <command> ...` eventually runs that exact argv after successful setup.
 - Setup failure prevents the requested command and leaves its terminal log available.
 - No command is converted from argv into an interpolated shell string.
 
@@ -404,7 +404,7 @@ Add tests for:
 **Documentation updates**
 
 - Explain the immediate named pending row.
-- Explain that setup definitions may currently be imported from compatible `.zed/tasks.json` configuration, while lifecycle and terminal behavior are wtr-defined.
+- Explain that setup definitions may currently be imported from compatible `.zed/tasks.json` configuration, while lifecycle and terminal behavior are tasktty-defined.
 - Explain the one-terminal setup-to-command pipeline.
 - Explain that the create response means Git and tmux launch are ready, not that setup has completed.
 - Explain retained failure output and fail-fast behavior.
@@ -436,7 +436,7 @@ pnpm test -- packages/core/src/launcher.test.ts
 pnpm test -- apps/server/src/app.test.ts
 pnpm test:integration -- packages/core/src/service.integration.test.ts
 pnpm test:web --project=chromium apps/web/e2e/app.spec.ts
-WTR_REAL_INTEGRATION=1 pnpm test:integration:real -- packages/core/src/system.real.test.ts
+TASKTTY_REAL_INTEGRATION=1 pnpm test:integration:real -- packages/core/src/system.real.test.ts
 ```
 
 Then run the full project checks:

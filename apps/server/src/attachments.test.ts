@@ -1,12 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { IPty } from "node-pty";
 import type { WSContext } from "hono/ws";
-import type { TmuxAdapter, WtrService } from "@wtr/core";
+import type { TmuxAdapter, TaskTTYService } from "@tasktty/core";
 import {
   TERMINAL_OUTPUT_HIGH_WATERMARK,
   TERMINAL_PROTOCOL_VERSION,
   type TerminalServerMessage,
-} from "@wtr/shared";
+} from "@tasktty/shared";
 import { TerminalAttachmentManager } from "./attachments.js";
 
 class FakePty {
@@ -82,7 +82,7 @@ function fixture() {
       tmuxSocketName: "socket",
     })),
     events: { publish },
-  } as unknown as WtrService;
+  } as unknown as TaskTTYService;
   const tmux = {
     configureServer: vi.fn(async () => undefined),
     sessionSize: vi.fn(async () => ({ cols: 100, rows: 30 })),

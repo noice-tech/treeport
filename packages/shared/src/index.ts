@@ -2,7 +2,7 @@ import { z } from "zod";
 
 export * from "./terminal-protocol.js";
 
-export const PRODUCT_NAME = "wtr";
+export const PRODUCT_NAME = "TaskTTY";
 export const API_VERSION = 1;
 
 export type WorktreeKind = "main" | "linked";

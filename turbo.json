@@ -1,7 +1,7 @@
 {
   "$schema": "https://turbo.build/schema.json",
   "ui": "tui",
-  "globalPassThroughEnv": ["HOME", "PATH", "SHELL", "TMPDIR", "WTR_*", "XDG_*"],
+  "globalPassThroughEnv": ["HOME", "PATH", "SHELL", "TMPDIR", "TASKTTY_*", "XDG_*"],
   "tasks": {
     "build": {
       "dependsOn": ["^build"],

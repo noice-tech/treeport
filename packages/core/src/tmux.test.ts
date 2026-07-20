@@ -23,13 +23,13 @@ class RecordingRunner implements CommandRunner {
 
 describe("TmuxAdapter", () => {
   it("generates application-owned identifiers independent of branch names", () => {
-    expect(generateTmuxSocketName()).toMatch(/^wtr-wt-[a-f0-9]{16}$/);
-    expect(generateTmuxSessionName()).toMatch(/^wtr-term-[a-f0-9]{16}$/);
+    expect(generateTmuxSocketName()).toMatch(/^tasktty-wt-[a-f0-9]{16}$/);
+    expect(generateTmuxSessionName()).toMatch(/^tasktty-term-[a-f0-9]{16}$/);
     expect(generateTmuxSocketName()).not.toBe(generateTmuxSocketName());
   });
 
   it("stores hostile and Unicode argv losslessly in the launch spec", async () => {
-    const runtime = await fs.mkdtemp(path.join(os.tmpdir(), "wtr runtime "));
+    const runtime = await fs.mkdtemp(path.join(os.tmpdir(), "tasktty runtime "));
     temporary.push(runtime);
     const runner = new RecordingRunner();
     const launcher = "/application owned/path with spaces/launcher.js";
@@ -50,13 +50,13 @@ describe("TmuxAdapter", () => {
       timeoutMs: 1234,
     };
     await adapter.createSession({
-      socketName: "wtr-wt-safe",
-      sessionName: "wtr-term-safe",
+      socketName: "tasktty-wt-safe",
+      sessionName: "tasktty-term-safe",
       terminalId: "term_safe",
       worktreeId: "wt_safe",
       cwd: "/repo with spaces",
       argv,
-      env: { WTR_TERMINAL_ID: "term_safe" },
+      env: { TASKTTY_TERMINAL_ID: "term_safe" },
       setupTasks: [setupTask],
     });
 
@@ -65,13 +65,13 @@ describe("TmuxAdapter", () => {
     ).resolves.toEqual({
       argv,
       cwd: "/repo with spaces",
-      env: { WTR_TERMINAL_ID: "term_safe" },
+      env: { TASKTTY_TERMINAL_ID: "term_safe" },
       setupTasks: [setupTask],
     });
   });
 
   it("removes the launch spec when post-creation setup fails", async () => {
-    const runtime = await fs.mkdtemp(path.join(os.tmpdir(), "wtr-runtime-"));
+    const runtime = await fs.mkdtemp(path.join(os.tmpdir(), "tasktty-runtime-"));
     temporary.push(runtime);
     const runner = new RecordingRunner();
     runner.responses.push(
@@ -94,7 +94,7 @@ describe("TmuxAdapter", () => {
   });
 
   it("reads the live pane title from tmux", async () => {
-    const runtime = await fs.mkdtemp(path.join(os.tmpdir(), "wtr-runtime-"));
+    const runtime = await fs.mkdtemp(path.join(os.tmpdir(), "tasktty-runtime-"));
     temporary.push(runtime);
     const runner = new RecordingRunner();
     runner.responses.push({ stdout: "zsh · /repo\n", stderr: "", exitCode: 0 });
@@ -104,7 +104,7 @@ describe("TmuxAdapter", () => {
   });
 
   it("maps a live, exited, or absent pane to product terminal state", async () => {
-    const runtime = await fs.mkdtemp(path.join(os.tmpdir(), "wtr-runtime-"));
+    const runtime = await fs.mkdtemp(path.join(os.tmpdir(), "tasktty-runtime-"));
     temporary.push(runtime);
     const runner = new RecordingRunner();
     runner.responses.push(

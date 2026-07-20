@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { ArrowPathIcon, PlusIcon, XMarkIcon } from "@heroicons/react/16/solid";
-import type { TerminalRecord, WorktreeRecord } from "@wtr/shared";
+import type { TerminalRecord, WorktreeRecord } from "@tasktty/shared";
 import { Button } from "./components/ui/button.js";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./components/ui/tabs.js";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./components/ui/tooltip.js";

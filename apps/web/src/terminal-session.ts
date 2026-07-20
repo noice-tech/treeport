@@ -5,7 +5,7 @@ import {
   TERMINAL_HEARTBEAT_TIMEOUT_MS,
   TERMINAL_PROTOCOL_VERSION,
   type TerminalClientMessage,
-} from "@wtr/shared";
+} from "@tasktty/shared";
 
 type ConnectionPhase = "connecting" | "ready" | "reconnecting" | "closed";
 export type ArrowDirection = "up" | "down" | "left" | "right";
@@ -94,10 +94,10 @@ let fallbackClientId: string | null = null;
 function getClientId(): string {
   if (fallbackClientId) return fallbackClientId;
   try {
-    const stored = sessionStorage.getItem("wtr-terminal-client-id");
+    const stored = sessionStorage.getItem("tasktty-terminal-client-id");
     if (stored) return (fallbackClientId = stored);
     const created = crypto.randomUUID();
-    sessionStorage.setItem("wtr-terminal-client-id", created);
+    sessionStorage.setItem("tasktty-terminal-client-id", created);
     return (fallbackClientId = created);
   } catch {
     return (fallbackClientId = crypto.randomUUID());

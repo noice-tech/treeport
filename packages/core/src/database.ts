@@ -7,7 +7,7 @@ import type {
   ProjectRecord,
   TerminalRecord,
   WorktreeRecord,
-} from "@wtr/shared";
+} from "@tasktty/shared";
 import { inferWorktreeName } from "./zed.js";
 
 const MIGRATIONS = [
@@ -218,7 +218,7 @@ export function deserializeOperation(value: string | null): Record<string, unkno
   return value === null ? null : (JSON.parse(value) as Record<string, unknown>);
 }
 
-export class WtrDatabase {
+export class TaskTTYDatabase {
   readonly connection: Database.Database;
 
   constructor(readonly filePath: string) {

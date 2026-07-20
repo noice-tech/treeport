@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import { ProductEventBus, type AppConfig, type TmuxAdapter, type WtrService } from "@wtr/core";
+import {
+  ProductEventBus,
+  type AppConfig,
+  type TmuxAdapter,
+  type TaskTTYService,
+} from "@tasktty/core";
 import { createApp } from "./app.js";
 
 function fixture(authToken: string | null = null) {
@@ -7,7 +12,7 @@ function fixture(authToken: string | null = null) {
     host: "127.0.0.1",
     port: 4780,
     authToken,
-    databasePath: "/tmp/wtr-test.db",
+    databasePath: "/tmp/tasktty-test.db",
     dataDir: "/tmp",
     runtimeDir: "/tmp",
     shell: "/bin/zsh",
@@ -30,7 +35,7 @@ function fixture(authToken: string | null = null) {
     })),
     removePreview: vi.fn(async () => ({ worktreeId: "wt_1" })),
     beginRemove: vi.fn(async () => ({ id: "op_1" })),
-  } as unknown as WtrService;
+  } as unknown as TaskTTYService;
   const app = createApp({ service, config, tmux: {} as TmuxAdapter, webDist: "/missing" });
   return { app, service };
 }
@@ -153,5 +158,13 @@ describe("HTTP API validation and authentication", () => {
       (await app.request("/api/projects", { headers: { authorization: "Bearer static-secret" } }))
         .status,
     ).toBe(200);
+
+    const session = await app.request("/api/auth/session", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token: "static-secret" }),
+    });
+    expect(session.status).toBe(200);
+    expect(session.headers.get("set-cookie")).toMatch(/^tasktty_session=/);
   });
 });

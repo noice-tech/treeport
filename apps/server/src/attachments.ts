@@ -15,9 +15,9 @@ import {
   TERMINAL_PROTOCOL_VERSION,
   type TerminalClientMessage,
   type TerminalServerMessage,
-} from "@wtr/shared";
-import type { WtrService, TmuxAdapter } from "@wtr/core";
-import { resolveExecutablePath } from "@wtr/core";
+} from "@tasktty/shared";
+import type { TaskTTYService, TmuxAdapter } from "@tasktty/core";
+import { resolveExecutablePath } from "@tasktty/core";
 
 type PtySpawner = typeof pty.spawn;
 type ConnectionState = "awaiting_hello" | "initializing" | "ready" | "closed";
@@ -74,7 +74,7 @@ export class TerminalAttachmentManager {
   private readonly tmuxExecutable: string;
 
   constructor(
-    private readonly service: WtrService,
+    private readonly service: TaskTTYService,
     private readonly tmux: TmuxAdapter,
     tmuxExecutable: string,
     private readonly spawnPty: PtySpawner = pty.spawn,

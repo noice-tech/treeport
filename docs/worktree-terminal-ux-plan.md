@@ -424,7 +424,7 @@ Remove `TerminalView`'s component-local `terminalTitles` map.
 ### CLI
 
 - create accepts `--name` and base selection rather than `--branch`
-- expose `wtr worktree remove`
+- expose `tasktty worktree remove`
 - remove finish/discard/clean/diagnostics commands
 - list shows worktree name first, with branch/detached and path as secondary data
 

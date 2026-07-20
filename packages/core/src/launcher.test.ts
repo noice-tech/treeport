@@ -23,7 +23,7 @@ function spec(overrides: Partial<LaunchSpec> = {}): LaunchSpec {
   return {
     argv: ["final", "hostile;argument"],
     cwd: "/worktree",
-    env: { WTR_TERMINAL_ID: "term" },
+    env: { TASKTTY_TERMINAL_ID: "term" },
     ...overrides,
   };
 }
@@ -71,10 +71,10 @@ describe("terminal launcher setup pipeline", () => {
       cwd: "/one",
       shell: false,
       stdio: "inherit",
-      env: expect.objectContaining({ WTR_TERMINAL_ID: "term", ONE: "1" }),
+      env: expect.objectContaining({ TASKTTY_TERMINAL_ID: "term", ONE: "1" }),
     });
-    expect(output.value()).toContain("[wtr setup] first\n");
-    expect(output.value()).toContain("[wtr setup] second complete\n");
+    expect(output.value()).toContain("[TaskTTY setup] first\n");
+    expect(output.value()).toContain("[TaskTTY setup] second complete\n");
     expect(error.value()).toBe("");
   });
 
