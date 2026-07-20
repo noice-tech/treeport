@@ -867,16 +867,17 @@ export default function App() {
                                   <span className="truncate" aria-hidden="true">
                                     {runtimeTitles.get(terminal.id) || terminal.name}
                                   </span>
-                                  <span
-                                    className={cn(
-                                      "status-dot size-1.5 shrink-0 rounded-full bg-zinc-600",
-                                      terminal.status === "running" && "bg-emerald-400",
-                                      terminal.status === "exited" && "bg-rose-400",
-                                      needsAttention &&
-                                        "bg-amber-300 shadow-[0_0_0.5rem] shadow-amber-300/60",
-                                    )}
-                                    title={status}
-                                  />
+                                  {(terminal.status !== "running" || needsAttention) && (
+                                    <span
+                                      className={cn(
+                                        "status-dot size-1.5 shrink-0 rounded-full bg-zinc-600",
+                                        terminal.status === "exited" && "bg-rose-400",
+                                        needsAttention &&
+                                          "bg-amber-300 shadow-[0_0_0.5rem] shadow-amber-300/60",
+                                      )}
+                                      title={status}
+                                    />
+                                  )}
                                 </Button>
                               </li>
                             );

@@ -186,18 +186,17 @@ export function TerminalView({
                           )}
                           aria-hidden="true"
                         />
-                      ) : (
+                      ) : item.status !== "running" || needsAttention ? (
                         <span
                           className={cn(
                             "size-1.5 shrink-0 rounded-full bg-zinc-600",
-                            item.status === "running" && "bg-emerald-400",
                             item.status === "exited" && "bg-rose-400",
                             needsAttention &&
                               "bg-amber-300 shadow-[0_0_0.5rem] shadow-amber-300/60",
                           )}
                           aria-hidden="true"
                         />
-                      )}
+                      ) : null}
                       <span className="truncate">{title}</span>
                     </TabsTrigger>
                     <Tooltip>
