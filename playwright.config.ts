@@ -5,7 +5,7 @@ export default defineConfig({
   timeout: 20_000,
   use: { baseURL: "http://127.0.0.1:5173", trace: "retain-on-failure" },
   webServer: {
-    command: "pnpm --filter @wtr/web dev",
+    command: "pnpm --filter @tasktty/web dev",
     url: "http://127.0.0.1:5173",
     reuseExistingServer: true,
     timeout: 120_000,

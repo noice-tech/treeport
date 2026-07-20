@@ -1,5 +1,5 @@
 {
-  "name": "@wtr/server",
+  "name": "@tasktty/server",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -12,8 +12,8 @@
   },
   "dependencies": {
     "@hono/node-server": "^2.0.10",
-    "@wtr/core": "workspace:*",
-    "@wtr/shared": "workspace:*",
+    "@tasktty/core": "workspace:*",
+    "@tasktty/shared": "workspace:*",
     "hono": "^4.11.7",
     "node-pty": "1.2.0-beta.14",
     "ws": "^8.19.0",

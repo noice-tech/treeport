@@ -16,13 +16,13 @@ import {
   spawnSchema,
   updateProjectSchema,
   updateTerminalSchema,
-} from "@wtr/shared";
-import type { AppConfig, TmuxAdapter, WtrService } from "@wtr/core";
-import { DomainError } from "@wtr/core";
+} from "@tasktty/shared";
+import type { AppConfig, TmuxAdapter, TaskTTYService } from "@tasktty/core";
+import { DomainError } from "@tasktty/core";
 import { TerminalAttachmentManager } from "./attachments.js";
 
 interface AppDependencies {
-  service: WtrService;
+  service: TaskTTYService;
   config: AppConfig;
   tmux: TmuxAdapter;
   webDist?: string;
@@ -62,7 +62,7 @@ export function createApp({ service, config, tmux, webDist }: AppDependencies): 
       return next();
     const authorization = context.req.header("authorization");
     const bearer = authorization?.startsWith("Bearer ") ? authorization.slice(7) : null;
-    const cookie = getCookie(context, "wtr_session");
+    const cookie = getCookie(context, "tasktty_session");
     if (
       (bearer && secureEqual(bearer, config.authToken)) ||
       (cookie && secureEqual(cookie, config.authToken))
@@ -89,7 +89,7 @@ export function createApp({ service, config, tmux, webDist }: AppDependencies): 
         error.status as any,
       );
     }
-    console.error("[wtr]", error instanceof Error ? error.message : String(error));
+    console.error("[TaskTTY]", error instanceof Error ? error.message : String(error));
     return context.json(
       {
         error: {
@@ -111,7 +111,7 @@ export function createApp({ service, config, tmux, webDist }: AppDependencies): 
         401,
       );
     }
-    setCookie(context, "wtr_session", config.authToken, {
+    setCookie(context, "tasktty_session", config.authToken, {
       httpOnly: true,
       sameSite: "Strict",
       path: "/",

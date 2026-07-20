@@ -1,9 +1,9 @@
 {
-  "name": "@wtr/cli",
+  "name": "@tasktty/cli",
   "version": "0.1.0",
   "private": true,
   "bin": {
-    "wtr": "dist/index.js"
+    "tasktty": "dist/index.js"
   },
   "type": "module",
   "main": "dist/index.js",
@@ -12,6 +12,6 @@
     "typecheck": "tsc --noEmit -p tsconfig.json --pretty"
   },
   "dependencies": {
-    "@wtr/shared": "workspace:*"
+    "@tasktty/shared": "workspace:*"
   }
 }

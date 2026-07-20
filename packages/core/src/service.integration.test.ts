@@ -3,15 +3,15 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CommandRequest, CommandResult, CommandRunner } from "./command.js";
-import { WtrDatabase } from "./database.js";
+import { TaskTTYDatabase } from "./database.js";
 import { GhAdapter } from "./gh.js";
 import { GitAdapter } from "./git.js";
-import { WtrService } from "./service.js";
+import { TaskTTYService } from "./service.js";
 import { TmuxAdapter } from "./tmux.js";
 import type { AppConfig } from "./config.js";
 
 const directories: string[] = [];
-const databases: WtrDatabase[] = [];
+const databases: TaskTTYDatabase[] = [];
 afterEach(async () => {
   databases.splice(0).forEach((database) => database.close());
   await Promise.all(
@@ -102,7 +102,7 @@ class SystemDouble implements CommandRunner {
       this.sessions.set(`${socket}/${session}`, { alive: true, exitCode: null });
       return ok();
     }
-    if (args.includes("set-option")) return ok();
+    if (args.includes("set-option") || args.includes("source-file")) return ok();
     if (args.includes("list-panes")) {
       const session = args[args.indexOf("-t") + 1]!;
       const socket = args[args.indexOf("-L") + 1]!;
@@ -133,13 +133,13 @@ class SystemDouble implements CommandRunner {
 }
 
 async function fixture() {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), "wtr integration with spaces "));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "tasktty integration with spaces "));
   directories.push(root);
   const main = path.join(root, "main checkout");
   const runtime = path.join(root, "runtime");
   await fs.mkdir(main, { recursive: true });
   const runner = new SystemDouble(main);
-  const database = new WtrDatabase(path.join(root, "wtr.db"));
+  const database = new TaskTTYDatabase(path.join(root, "tasktty.db"));
   databases.push(database);
   const config: AppConfig = {
     host: "127.0.0.1",
@@ -157,12 +157,12 @@ async function fixture() {
   const git = new GitAdapter(runner);
   const tmux = new TmuxAdapter(runner, runtime, "tmux", "/launcher with spaces.js");
   const gh = new GhAdapter(runner);
-  const service = new WtrService({ config, database, runner, git, tmux, gh });
+  const service = new TaskTTYService({ config, database, runner, git, tmux, gh });
   await service.initialize();
   return { root, main, runner, service, database, config };
 }
 
-async function waitForOperation(service: WtrService, operationId: string) {
+async function waitForOperation(service: TaskTTYService, operationId: string) {
   for (let attempt = 0; attempt < 50; attempt += 1) {
     const operation = service.getOperation(operationId);
     if (operation.status === "completed" || operation.status === "failed") return operation;
@@ -171,7 +171,7 @@ async function waitForOperation(service: WtrService, operationId: string) {
   throw new Error("operation timeout");
 }
 
-async function beginFromPreview(service: WtrService, worktreeId: string) {
+async function beginFromPreview(service: TaskTTYService, worktreeId: string) {
   const preview = await service.removePreview(worktreeId);
   return service.beginRemove(worktreeId, {
     confirmationToken: preview.confirmationToken,
@@ -179,7 +179,7 @@ async function beginFromPreview(service: WtrService, worktreeId: string) {
   });
 }
 
-describe("WtrService with injected command adapters", () => {
+describe("TaskTTYService with injected command adapters", () => {
   it("shares overlapping project snapshot reconciliation", async () => {
     const { main, runner, service } = await fixture();
     await service.registerProject(main);
@@ -517,7 +517,7 @@ describe("WtrService with injected command adapters", () => {
     const preservedMarker = path.join(path.dirname(afterGitNonEmpty.path), "preserve.txt");
     await fs.writeFile(preservedMarker, "preserve");
 
-    const restarted = new WtrService({
+    const restarted = new TaskTTYService({
       config,
       database,
       runner,

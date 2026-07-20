@@ -2,6 +2,7 @@ node_modules/
 .turbo/
 pnpm-debug.log*
 dist/
+dist-types/
 coverage/
 *.db
 *.db-shm

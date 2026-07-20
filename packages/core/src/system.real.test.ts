@@ -7,14 +7,14 @@ import { afterAll, describe, expect, it } from "vitest";
 import * as nodePty from "node-pty";
 import { resolveExecutablePath, SpawnCommandRunner, runChecked } from "./command.js";
 import { loadConfig } from "./config.js";
-import { WtrDatabase } from "./database.js";
+import { TaskTTYDatabase } from "./database.js";
 import { GhAdapter } from "./gh.js";
 import { GitAdapter } from "./git.js";
-import { WtrService } from "./service.js";
+import { TaskTTYService } from "./service.js";
 import { TMUX_SCROLL_EXIT_SEQUENCE, TmuxAdapter } from "./tmux.js";
 
-const enabled = process.env.WTR_REAL_INTEGRATION === "1";
-const root = path.join(os.tmpdir(), `wtr real integration ${process.pid}`);
+const enabled = process.env.TASKTTY_REAL_INTEGRATION === "1";
+const root = path.join(os.tmpdir(), `tasktty real integration ${process.pid}`);
 afterAll(async () => fs.rm(root, { recursive: true, force: true }));
 
 async function executable(command: string, args: string[]) {
@@ -33,7 +33,7 @@ function ptyEnvironment(): Record<string, string> {
   ) as Record<string, string>;
 }
 
-async function waitOperation(service: WtrService, operationId: string) {
+async function waitOperation(service: TaskTTYService, operationId: string) {
   for (let attempt = 0; attempt < 200; attempt += 1) {
     const operation = service.getOperation(operationId);
     if (operation.status === "completed" || operation.status === "failed") return operation;
@@ -52,18 +52,18 @@ async function waitFor(check: () => boolean | Promise<boolean>, message: string)
 
 async function makeService(databasePath: string, runtimeDir: string) {
   const config = loadConfig({
-    WTR_DATABASE_PATH: databasePath,
-    WTR_RUNTIME_DIR: runtimeDir,
-    WTR_DATA_DIR: root,
-    WTR_SHELL: process.env.SHELL || "/bin/sh",
+    TASKTTY_DATABASE_PATH: databasePath,
+    TASKTTY_RUNTIME_DIR: runtimeDir,
+    TASKTTY_DATA_DIR: root,
+    TASKTTY_SHELL: process.env.SHELL || "/bin/sh",
   });
   const runner = new SpawnCommandRunner();
-  const database = new WtrDatabase(databasePath);
+  const database = new TaskTTYDatabase(databasePath);
   const git = new GitAdapter(runner);
   const launcherPath = fileURLToPath(new URL("../dist/launcher.js", import.meta.url));
   const tmux = new TmuxAdapter(runner, runtimeDir, "tmux", launcherPath);
   const gh = new GhAdapter(runner);
-  const service = new WtrService({ config, database, runner, git, tmux, gh });
+  const service = new TaskTTYService({ config, database, runner, git, tmux, gh });
   await service.initialize();
   return { service, database, tmux, runner };
 }
@@ -77,19 +77,19 @@ describe.skipIf(!enabled)("real Git, Zed-style worktrees, and tmux lifecycle", (
     await fs.mkdir(root, { recursive: true });
     const main = path.join(root, "main checkout with spaces");
     const remote = path.join(root, "remote origin.git");
-    const databasePath = path.join(root, "metadata", "wtr.db");
+    const databasePath = path.join(root, "metadata", "tasktty.db");
     const runtimeDir = path.join(root, "runtime");
     const command = new SpawnCommandRunner();
     await runChecked(command, { executable: "git", args: ["init", "--bare", remote] });
     await runChecked(command, { executable: "git", args: ["init", "-b", "trunk", main] });
     await runChecked(command, {
       executable: "git",
-      args: ["config", "user.email", "wtr@example.test"],
+      args: ["config", "user.email", "tasktty@example.test"],
       cwd: main,
     });
     await runChecked(command, {
       executable: "git",
-      args: ["config", "user.name", "wtr test"],
+      args: ["config", "user.name", "tasktty test"],
       cwd: main,
     });
     await fs.writeFile(path.join(main, "README.md"), "fixture\n");
@@ -308,7 +308,7 @@ describe.skipIf(!enabled)("real Git, Zed-style worktrees, and tmux lifecycle", (
     const inputPath = path.join(root, "scroll-input");
     const runner = new SpawnCommandRunner();
     const tmux = new TmuxAdapter(runner, runtimeDir);
-    const socket = `wtr-scroll-${process.pid}`;
+    const socket = `tasktty-scroll-${process.pid}`;
     const session = "scroll";
     await tmux.initialize();
     const base = ["-L", socket, "-f", tmux.configPath];

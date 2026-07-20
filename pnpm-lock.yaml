@@ -38,10 +38,10 @@ importers:
       '@hono/node-server':
         specifier: ^2.0.10
         version: 2.0.10(hono@4.12.30)
-      '@wtr/core':
+      '@tasktty/core':
         specifier: workspace:*
         version: link:../../packages/core
-      '@wtr/shared':
+      '@tasktty/shared':
         specifier: workspace:*
         version: link:../../packages/shared
       hono:
@@ -87,7 +87,7 @@ importers:
       '@tanstack/react-query':
         specifier: ^5.101.2
         version: 5.101.2(react@19.2.7)
-      '@wtr/shared':
+      '@tasktty/shared':
         specifier: workspace:*
         version: link:../../packages/shared
       '@xterm/addon-fit':
@@ -136,13 +136,13 @@ importers:
 
   packages/cli:
     dependencies:
-      '@wtr/shared':
+      '@tasktty/shared':
         specifier: workspace:*
         version: link:../shared
 
   packages/core:
     dependencies:
-      '@wtr/shared':
+      '@tasktty/shared':
         specifier: workspace:*
         version: link:../shared
       better-sqlite3:

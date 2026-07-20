@@ -134,13 +134,15 @@ export async function runLaunchSpec(
   const signalSource = dependencies.signalSource ?? process;
 
   if (spec.setupError) {
-    stderr.write(`[wtr setup] ${safeDiagnostic(spec.setupError) || "setup preparation failed"}\n`);
+    stderr.write(
+      `[TaskTTY setup] ${safeDiagnostic(spec.setupError) || "setup preparation failed"}\n`,
+    );
     return 1;
   }
 
   for (const task of spec.setupTasks ?? []) {
     const label = safeLabel(task.label);
-    stdout.write(`[wtr setup] ${label}\n`);
+    stdout.write(`[TaskTTY setup] ${label}\n`);
     const result = await runChild(task.argv, {
       cwd: task.cwd,
       env: { ...process.env, ...spec.env, ...task.env },
@@ -150,28 +152,28 @@ export async function runLaunchSpec(
     });
     if (result.spawnError) {
       stderr.write(
-        `[wtr setup] ${label} failed: ${safeDiagnostic(result.spawnError.message) || "spawn error"}\n`,
+        `[TaskTTY setup] ${label} failed: ${safeDiagnostic(result.spawnError.message) || "spawn error"}\n`,
       );
       return 127;
     }
     if (result.timedOut) {
-      stderr.write(`[wtr setup] ${label} failed: timed out after ${task.timeoutMs}ms\n`);
+      stderr.write(`[TaskTTY setup] ${label} failed: timed out after ${task.timeoutMs}ms\n`);
       return 124;
     }
     const terminationSignal = result.forwardedSignal ?? result.signal;
     if (terminationSignal) {
-      stderr.write(`[wtr setup] ${label} failed: terminated by ${terminationSignal}\n`);
+      stderr.write(`[TaskTTY setup] ${label} failed: terminated by ${terminationSignal}\n`);
       return 1;
     }
     if (result.code !== 0) {
-      stderr.write(`[wtr setup] ${label} failed: exit ${result.code ?? 1}\n`);
+      stderr.write(`[TaskTTY setup] ${label} failed: exit ${result.code ?? 1}\n`);
       return result.code ?? 1;
     }
-    stdout.write(`[wtr setup] ${label} complete\n`);
+    stdout.write(`[TaskTTY setup] ${label} complete\n`);
   }
 
   if (!spec.argv[0]) {
-    stderr.write("wtr launcher: argv is empty\n");
+    stderr.write("TaskTTY launcher: argv is empty\n");
     return 127;
   }
   const result = await runChild(spec.argv, {
@@ -181,7 +183,9 @@ export async function runLaunchSpec(
     signalSource,
   });
   if (result.spawnError) {
-    stderr.write(`wtr launcher: ${safeDiagnostic(result.spawnError.message) || "spawn error"}\n`);
+    stderr.write(
+      `TaskTTY launcher: ${safeDiagnostic(result.spawnError.message) || "spawn error"}\n`,
+    );
     return 127;
   }
   if (result.forwardedSignal || result.signal) return 1;
@@ -191,7 +195,7 @@ export async function runLaunchSpec(
 async function main(): Promise<void> {
   const specPath = process.argv[2];
   if (!specPath) {
-    process.stderr.write("wtr launcher: missing launch spec\n");
+    process.stderr.write("TaskTTY launcher: missing launch spec\n");
     process.exit(127);
   }
 
@@ -200,7 +204,7 @@ async function main(): Promise<void> {
     spec = JSON.parse(await fs.readFile(specPath, "utf8")) as LaunchSpec;
   } catch (error) {
     process.stderr.write(
-      `wtr launcher: cannot read launch spec: ${error instanceof Error ? error.message : String(error)}\n`,
+      `TaskTTY launcher: cannot read launch spec: ${error instanceof Error ? error.message : String(error)}\n`,
     );
     process.exit(127);
   }

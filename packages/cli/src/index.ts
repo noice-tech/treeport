@@ -7,11 +7,11 @@ import type {
   RemovePreview,
   TerminalRecord,
   WorktreeRecord,
-} from "@wtr/shared";
+} from "@tasktty/shared";
 import { extractJsonOutput } from "./args.js";
 
-const apiUrl = (process.env.WTR_API_URL || "http://127.0.0.1:4780").replace(/\/$/, "");
-const token = process.env.WTR_AUTH_TOKEN;
+const apiUrl = (process.env.TASKTTY_API_URL || "http://127.0.0.1:4780").replace(/\/$/, "");
+const token = process.env.TASKTTY_AUTH_TOKEN;
 const rawArgs = process.argv.slice(2);
 const jsonOutput = extractJsonOutput(rawArgs);
 
@@ -50,7 +50,7 @@ async function request<T>(pathname: string, options: RequestInit = {}): Promise<
   } catch (error) {
     if (error instanceof CliError) throw error;
     throw new CliError(
-      `Cannot reach wtr daemon at ${apiUrl}: ${error instanceof Error ? error.message : String(error)}`,
+      `Cannot reach TaskTTY daemon at ${apiUrl}: ${error instanceof Error ? error.message : String(error)}`,
       3,
     );
   } finally {
@@ -106,8 +106,8 @@ async function resolveProject(identifier: string): Promise<ProjectRecord> {
   const list = await projects();
   const direct = list.find((project) => project.id === identifier);
   if (direct) return direct;
-  if (identifier === "." && process.env.WTR_PROJECT_ID) {
-    const environmentMatch = list.find((project) => project.id === process.env.WTR_PROJECT_ID);
+  if (identifier === "." && process.env.TASKTTY_PROJECT_ID) {
+    const environmentMatch = list.find((project) => project.id === process.env.TASKTTY_PROJECT_ID);
     if (environmentMatch) return environmentMatch;
   }
   const candidate = await canonical(identifier);
@@ -124,8 +124,10 @@ async function resolveWorktree(identifier: string): Promise<WorktreeRecord> {
   const all = (await projects()).flatMap((project) => project.worktrees);
   const direct = all.find((worktree) => worktree.id === identifier);
   if (direct) return direct;
-  if (identifier === "." && process.env.WTR_WORKTREE_ID) {
-    const environmentMatch = all.find((worktree) => worktree.id === process.env.WTR_WORKTREE_ID);
+  if (identifier === "." && process.env.TASKTTY_WORKTREE_ID) {
+    const environmentMatch = all.find(
+      (worktree) => worktree.id === process.env.TASKTTY_WORKTREE_ID,
+    );
     if (environmentMatch) return environmentMatch;
   }
   const candidate = await canonical(identifier);
@@ -144,15 +146,15 @@ function print(value: unknown, human?: () => string): void {
 function usage(): never {
   throw new CliError(
     `Usage:
-  wtr project add <path> [--json]
-  wtr project list [--json]
-  wtr worktree list [--project <id-or-path>] [--json]
-  wtr worktree create --project <id-or-path> --name <name> [--from-current] [--json]
-  wtr worktree remove <id-or-path-or-dot> [--force] [--json]
-  wtr terminal list [--worktree <id-or-path>] [--json]
-  wtr terminal create --worktree <id-or-path-or-dot> --name <name> [-- <command> args...] [--json]
-  wtr terminal delete <terminal-id> [--json]
-  wtr spawn --project <id-or-path-or-dot> --worktree-name <name> --name <terminal-name> [--from-current] [-- <command> args...] [--json]`,
+  tasktty project add <path> [--json]
+  tasktty project list [--json]
+  tasktty worktree list [--project <id-or-path>] [--json]
+  tasktty worktree create --project <id-or-path> --name <name> [--from-current] [--json]
+  tasktty worktree remove <id-or-path-or-dot> [--force] [--json]
+  tasktty terminal list [--worktree <id-or-path>] [--json]
+  tasktty terminal create --worktree <id-or-path-or-dot> --name <name> [-- <command> args...] [--json]
+  tasktty terminal delete <terminal-id> [--json]
+  tasktty spawn --project <id-or-path-or-dot> --worktree-name <name> --name <terminal-name> [--from-current] [-- <command> args...] [--json]`,
     2,
   );
 }

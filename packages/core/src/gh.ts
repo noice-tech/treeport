@@ -1,4 +1,4 @@
-import type { PrInfo, PrState } from "@wtr/shared";
+import type { PrInfo, PrState } from "@tasktty/shared";
 import type { CommandRunner } from "./command.js";
 
 interface GhPrJson {

@@ -29,7 +29,7 @@ import type {
   RemovePreview,
   TerminalRecord,
   WorktreeRecord,
-} from "@wtr/shared";
+} from "@tasktty/shared";
 import { ApiError, apiClient } from "./api.js";
 import { Button } from "./components/ui/button.js";
 import {
@@ -204,7 +204,7 @@ export default function App() {
   });
   const projects = projectsQuery.data ?? [];
   const [selectedTerminalId, setSelectedTerminalId] = useState<string | null>(() =>
-    localStorage.getItem("wtr-terminal"),
+    localStorage.getItem("tasktty-terminal"),
   );
   const [selectedWorktreeId, setSelectedWorktreeId] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -214,7 +214,7 @@ export default function App() {
   const [modal, setModal] = useState<Modal>(null);
   const [pendingWorktrees, setPendingWorktrees] = useState<PendingWorktreeCreation[]>([]);
   const [sidebarWidth, setSidebarWidth] = useState(() => {
-    const savedWidth = Number.parseInt(localStorage.getItem("wtr-sidebar-width") ?? "", 10);
+    const savedWidth = Number.parseInt(localStorage.getItem("tasktty-sidebar-width") ?? "", 10);
     return Number.isFinite(savedWidth) ? clampSidebarWidth(savedWidth) : DEFAULT_SIDEBAR_WIDTH;
   });
   const [resizingSidebar, setResizingSidebar] = useState(false);
@@ -375,7 +375,7 @@ export default function App() {
     setSelectedTerminalId(terminal.id);
     setSelectedWorktreeId(terminal.worktreeId);
     selectedWorktreeIdRef.current = terminal.worktreeId;
-    localStorage.setItem("wtr-terminal", terminal.id);
+    localStorage.setItem("tasktty-terminal", terminal.id);
     setDrawerOpen(false);
   };
 
@@ -387,8 +387,8 @@ export default function App() {
       worktree.terminals[0] ??
       null;
     setSelectedTerminalId(nextTerminal?.id ?? null);
-    if (nextTerminal) localStorage.setItem("wtr-terminal", nextTerminal.id);
-    else localStorage.removeItem("wtr-terminal");
+    if (nextTerminal) localStorage.setItem("tasktty-terminal", nextTerminal.id);
+    else localStorage.removeItem("tasktty-terminal");
     setDrawerOpen(false);
   };
 
@@ -507,8 +507,8 @@ export default function App() {
         const closedIndex = terminals.findIndex((terminal) => terminal.id === closedTerminal.id);
         const nextTerminal = terminals[closedIndex + 1] ?? terminals[closedIndex - 1] ?? null;
         setSelectedTerminalId(nextTerminal?.id ?? null);
-        if (nextTerminal) localStorage.setItem("wtr-terminal", nextTerminal.id);
-        else localStorage.removeItem("wtr-terminal");
+        if (nextTerminal) localStorage.setItem("tasktty-terminal", nextTerminal.id);
+        else localStorage.removeItem("tasktty-terminal");
       }
       await queryClient.invalidateQueries({ queryKey: projectsQueryKey });
     },
@@ -518,7 +518,7 @@ export default function App() {
   const setAndSaveSidebarWidth = (width: number) => {
     const nextWidth = clampSidebarWidth(width);
     setSidebarWidth(nextWidth);
-    localStorage.setItem("wtr-sidebar-width", String(nextWidth));
+    localStorage.setItem("tasktty-sidebar-width", String(nextWidth));
   };
 
   const startSidebarResize = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -602,7 +602,7 @@ export default function App() {
           ))}
         </NativeSelect>
         <span className="mobile-brand font-mono text-sm font-semibold tracking-tight text-cyan-300">
-          wtr
+          TaskTTY
         </span>
       </header>
       <div
@@ -1066,7 +1066,7 @@ function Login({ onSuccess }: { onSuccess: () => void }) {
         <div className="grid gap-2">
           <p className="eyebrow">Private terminal access</p>
           <h1 className="text-balance text-2xl font-semibold tracking-tight text-zinc-50">
-            Unlock wtr
+            Unlock TaskTTY
           </h1>
           <p className="text-base text-pretty text-zinc-400 sm:text-sm">
             Enter the daemon’s static authentication token. It is stored only in an HttpOnly session
