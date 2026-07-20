@@ -1216,7 +1216,8 @@ function ActionModal({
     const appFrame = document.querySelector<HTMLElement>(".app-frame");
     appFrame?.setAttribute("inert", "");
     const frame = window.requestAnimationFrame(() => {
-      const first = focusableElements(dialog)[0];
+      const autofocus = dialog.querySelector<HTMLElement>("[autofocus]");
+      const first = autofocus ?? focusableElements(dialog)[0];
       if (first) first.focus();
       else dialog.focus();
     });
@@ -1246,7 +1247,10 @@ function ActionModal({
     >
       <section
         ref={dialogRef}
-        className="modal relative max-h-[calc(100dvh-2rem)] w-full max-w-lg overflow-y-auto rounded-xl bg-zinc-900 p-6 shadow-2xl ring-1 ring-white/10 max-[700px]:max-h-[90dvh] max-[700px]:max-w-none max-[700px]:rounded-b-none max-[700px]:p-5 max-[700px]:pb-[calc(1.25rem+env(safe-area-inset-bottom))]"
+        className={cn(
+          "modal relative max-h-[calc(100dvh-2rem)] w-full overflow-y-auto rounded-xl bg-zinc-900 p-6 shadow-2xl ring-1 ring-white/10 max-[700px]:max-h-[90dvh] max-[700px]:max-w-none max-[700px]:rounded-b-none max-[700px]:p-5 max-[700px]:pb-[calc(1.25rem+env(safe-area-inset-bottom))]",
+          modal.type === "worktree" ? "max-w-md" : "max-w-lg",
+        )}
         role="dialog"
         aria-modal="true"
         aria-labelledby="modal-title"
@@ -1342,26 +1346,32 @@ function WorktreeForm({
   ) => void;
 }) {
   const [name, setName] = useState("");
+  const [debouncedName, setDebouncedName] = useState("");
   const [baseValue, setBaseValue] = useState("default");
+  useEffect(() => {
+    const timeout = window.setTimeout(() => setDebouncedName(name), 250);
+    return () => window.clearTimeout(timeout);
+  }, [name]);
   const destinationQuery = useQuery({
-    queryKey: ["worktree-destination", project.id, name],
-    queryFn: () => apiClient.worktreeDestination(project.id, name),
-    enabled: Boolean(name.trim()),
+    queryKey: ["worktree-destination", project.id, debouncedName],
+    queryFn: () => apiClient.worktreeDestination(project.id, debouncedName),
+    enabled: Boolean(debouncedName.trim()),
+    placeholderData: (previous) => previous,
     retry: false,
   });
   const base = baseValue === "default" ? "default" : "current";
   return (
     <form
-      className="flex flex-col gap-5"
+      className="flex flex-col gap-4"
       onSubmit={(event) => {
         event.preventDefault();
-        if (!destinationQuery.data) return;
+        if (!destinationQuery.data || name !== debouncedName) return;
         onSubmit(name, base, destinationQuery.data, base === "current" ? baseValue : undefined);
       }}
     >
-      <ModalHeading eyebrow={project.name} title="Create worktree" />
+      <ModalHeading eyebrow={project.name} title="New worktree" />
       <FormField>
-        <Label htmlFor="worktree-name">Worktree name</Label>
+        <Label htmlFor="worktree-name">Name</Label>
         <Input
           id="worktree-name"
           name="worktree-name"
@@ -1374,38 +1384,48 @@ function WorktreeForm({
         />
       </FormField>
       <FormField>
-        <Label htmlFor="worktree-base">Start from</Label>
+        <Label htmlFor="worktree-base">Base</Label>
         <NativeSelect
           id="worktree-base"
           name="worktree-base"
           value={baseValue}
           onChange={(event) => setBaseValue(event.target.value)}
         >
-          <option value="default">Default branch ({project.defaultBranch})</option>
+          <option value="default">{project.defaultBranch} (latest from origin)</option>
           {project.worktrees
             .filter((worktree) => worktree.status === "active")
             .map((worktree) => (
               <option key={worktree.id} value={worktree.id}>
-                Current commit from {worktree.name}
+                {worktree.name} (current commit)
               </option>
             ))}
         </NativeSelect>
       </FormField>
-      <p className="form-note">
+      <p
+        className={cn("form-note min-h-5 truncate", destinationQuery.isError && "text-rose-300")}
+        title={destinationQuery.data?.path}
+        aria-live="polite"
+      >
         {destinationQuery.data
-          ? `Destination: ${destinationQuery.data.path}`
+          ? destinationQuery.data.path
           : destinationQuery.error
             ? destinationQuery.error.message
-            : "The daemon will create a detached worktree and run compatible setup tasks."}
+            : name.trim()
+              ? "Resolving destination…"
+              : "Enter a name to preview the destination."}
       </p>
       <Button
         type="submit"
         className="self-end"
         disabled={
-          busy || destinationQuery.isFetching || destinationQuery.isError || !destinationQuery.data
+          busy ||
+          name !== debouncedName ||
+          destinationQuery.isFetching ||
+          destinationQuery.isError ||
+          !destinationQuery.data
         }
       >
-        {busy ? "Creating and setting up…" : "Create worktree"}
+        {busy ? "Creating…" : "Create worktree"}
       </Button>
     </form>
   );
