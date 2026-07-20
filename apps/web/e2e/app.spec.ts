@@ -1,6 +1,8 @@
 import { expect, test, type Page } from "@playwright/test";
 import type { ProjectColor } from "@wtr/shared";
 
+const TERMINAL_SCROLL_EXIT_SEQUENCE = "\u001b[9000~";
+
 const project = {
   id: "proj_1",
   name: "example",
@@ -701,10 +703,11 @@ test.describe("desktop worktree terminal UI", () => {
     expect(sent.some((message: any) => String(message.data).includes("\u001b[<"))).toBe(false);
   });
 
-  test("routes wheel scrolling through tmux mouse mode instead of arrow keys", async ({ page }) => {
+  test("forwards application wheel events while hiding the inactive cursor", async ({ page }) => {
     await mockApp(page);
     await page.getByRole("button", { name: "Pi running", exact: true }).click();
     await page.getByRole("button", { name: "Take control" }).click();
+    await page.locator(".xterm-helper-textarea").focus();
     await page.evaluate(() => {
       const socket = (window as any).__lastWs;
       socket.onmessage?.({
@@ -719,6 +722,9 @@ test.describe("desktop worktree terminal UI", () => {
       (window as any).__wsSent = [];
     });
     await page.locator(".xterm-screen").dispatchEvent("wheel", { deltaY: -120 });
+    const terminalHost = page.locator(".terminal-session-host");
+    await expect(terminalHost).toHaveClass(/terminal-scrolling/);
+    await expect(page.locator(".xterm-cursor")).toHaveCSS("visibility", "hidden");
     await expect
       .poll(() => page.evaluate(() => (window as any).__wsSent))
       .toEqual(
@@ -729,6 +735,20 @@ test.describe("desktop worktree terminal UI", () => {
     const sent = await page.evaluate(() => (window as any).__wsSent);
     expect(sent.some((message: any) => message.data === "\u001b[A")).toBe(false);
     expect(sent.some((message: any) => String(message.data).includes("\u001b[<"))).toBe(true);
+
+    await page.locator(".xterm-helper-textarea").focus();
+    await page.keyboard.press("q");
+    await expect(terminalHost).not.toHaveClass(/terminal-scrolling/);
+    await expect(page.locator(".xterm-cursor")).not.toHaveCSS("visibility", "hidden");
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            (window as any).__wsSent.filter((message: any) => message.type === "input").at(-1)
+              ?.data,
+        ),
+      )
+      .toBe(`${TERMINAL_SCROLL_EXIT_SEQUENCE}q`);
   });
 
   test("resizes the sidebar with an accessible panel handle", async ({ page }) => {

@@ -11,7 +11,7 @@ import { WtrDatabase } from "./database.js";
 import { GhAdapter } from "./gh.js";
 import { GitAdapter } from "./git.js";
 import { WtrService } from "./service.js";
-import { TmuxAdapter } from "./tmux.js";
+import { TMUX_SCROLL_EXIT_SEQUENCE, TmuxAdapter } from "./tmux.js";
 
 const enabled = process.env.WTR_REAL_INTEGRATION === "1";
 const root = path.join(os.tmpdir(), `wtr real integration ${process.pid}`);
@@ -25,6 +25,14 @@ async function executable(command: string, args: string[]) {
   });
 }
 
+function ptyEnvironment(): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(process.env).filter(
+      ([key, value]) => value !== undefined && key !== "TMUX" && key !== "TMUX_PANE",
+    ),
+  ) as Record<string, string>;
+}
+
 async function waitOperation(service: WtrService, operationId: string) {
   for (let attempt = 0; attempt < 200; attempt += 1) {
     const operation = service.getOperation(operationId);
@@ -32,6 +40,14 @@ async function waitOperation(service: WtrService, operationId: string) {
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw new Error("cleanup operation timed out");
+}
+
+async function waitFor(check: () => boolean | Promise<boolean>, message: string): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (await check()) return;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error(message);
 }
 
 async function makeService(databasePath: string, runtimeDir: string) {
@@ -142,18 +158,13 @@ describe.skipIf(!enabled)("real Git, Zed-style worktrees, and tmux lifecycle", (
       await fixture.tmux.sessionState(linked.tmuxSocketName, second.tmuxSessionName),
     ).toMatchObject({ status: "running" });
 
-    const attachmentEnv = Object.fromEntries(
-      Object.entries(process.env).filter(
-        ([key, value]) => value !== undefined && key !== "TMUX" && key !== "TMUX_PANE",
-      ),
-    ) as Record<string, string>;
     const attachAndDetach = async (sessionName: string, expected: string) => {
       const client = nodePty.spawn(
         resolveExecutablePath("tmux"),
         fixture.tmux.attachArgs(linked.tmuxSocketName, sessionName),
         {
           cwd: linked.path,
-          env: attachmentEnv,
+          env: ptyEnvironment(),
           name: "xterm-256color",
           cols: 100,
           rows: 30,
@@ -286,5 +297,64 @@ describe.skipIf(!enabled)("real Git, Zed-style worktrees, and tmux lifecycle", (
         .eligible,
     ).toBe(false);
     fixture.database.close();
+  });
+
+  it("hides tmux copy mode and forwards the first key typed after scrolling", async (context) => {
+    if (!(await executable("tmux", ["-V"]))) {
+      context.skip();
+      return;
+    }
+    const runtimeDir = path.join(root, "scroll-runtime");
+    const inputPath = path.join(root, "scroll-input");
+    const runner = new SpawnCommandRunner();
+    const tmux = new TmuxAdapter(runner, runtimeDir);
+    const socket = `wtr-scroll-${process.pid}`;
+    const session = "scroll";
+    await tmux.initialize();
+    const base = ["-L", socket, "-f", tmux.configPath];
+    const program = `const fs=require("node:fs");for(let line=0;line<100;line+=1)console.log(\`history-\${line}\`);console.log("READY");process.stdin.setRawMode(true);process.stdin.on("data",data=>fs.appendFileSync(${JSON.stringify(inputPath)},data));setInterval(()=>{},1000);`;
+    await runChecked(runner, {
+      executable: "tmux",
+      args: [...base, "new-session", "-d", "-s", session, "--", process.execPath, "-e", program],
+    });
+
+    const client = nodePty.spawn(resolveExecutablePath("tmux"), tmux.attachArgs(socket, session), {
+      cwd: root,
+      env: ptyEnvironment(),
+      name: "xterm-256color",
+      cols: 80,
+      rows: 20,
+    });
+    let output = "";
+    client.onData((data) => {
+      output += data;
+    });
+
+    const paneMode = () =>
+      runner
+        .run({
+          executable: "tmux",
+          args: [...base, "display-message", "-p", "-t", session, "#{pane_in_mode}"],
+        })
+        .then((result) => result.stdout.trim());
+    const input = () => fs.readFile(inputPath, "utf8").catch(() => "");
+
+    try {
+      await waitFor(() => output.includes("READY"), "tmux client did not attach");
+      output = "";
+      client.write("\u001b[<64;10;10M");
+      await waitFor(async () => (await paneMode()) === "1", "mouse wheel did not enter copy mode");
+      expect(output).not.toMatch(/\[\d+\/\d+\]/);
+
+      client.write(`${TMUX_SCROLL_EXIT_SEQUENCE}☃`);
+      await waitFor(async () => (await input()) === "☃", "the first key was not forwarded");
+      expect(await paneMode()).toBe("0");
+
+      client.write(`${TMUX_SCROLL_EXIT_SEQUENCE}z`);
+      await waitFor(async () => (await input()) === "☃z", "the scroll-exit key leaked");
+    } finally {
+      client.kill();
+      await tmux.killServer(socket).catch(() => undefined);
+    }
   });
 });

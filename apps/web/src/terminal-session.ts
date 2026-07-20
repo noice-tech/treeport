@@ -10,6 +10,8 @@ import {
 type ConnectionPhase = "connecting" | "ready" | "reconnecting" | "closed";
 export type ArrowDirection = "up" | "down" | "left" | "right";
 
+const TERMINAL_SCROLL_EXIT_SEQUENCE = "\u001b[9000~";
+
 type TerminalKeyboardEvent = Pick<
   KeyboardEvent,
   "altKey" | "ctrlKey" | "isComposing" | "key" | "metaKey" | "shiftKey" | "type"
@@ -48,6 +50,22 @@ function forcePlainSelectionWhileMouseReporting(event: MouseEvent): void {
     configurable: true,
     value: true,
   });
+}
+
+function trackTerminalScrolling(
+  wrapper: HTMLElement,
+  onScroll: () => void,
+  onResumeInput: () => void,
+): void {
+  wrapper.addEventListener(
+    "wheel",
+    () => {
+      wrapper.classList.add("terminal-scrolling");
+      onScroll();
+    },
+    { capture: true, passive: true },
+  );
+  wrapper.addEventListener("paste", onResumeInput, true);
 }
 
 export interface TerminalSessionSnapshot {
@@ -143,6 +161,8 @@ export class TerminalSession {
   private expectedSequence = 1;
   private lastParsedSequence = 0;
   private readonly parsedSequences = new Set<number>();
+  private scrollExitPending = false;
+  private resumeOnNextInput = false;
   private lastBellAt = 0;
   private listeningForReconnect = false;
   private readonly reconnectNow = () => {
@@ -212,6 +232,7 @@ export class TerminalSession {
   }
 
   sendText(data: string): void {
+    this.prepareScrollExit();
     this.terminal?.input(data, true);
     this.focus();
   }
@@ -250,6 +271,13 @@ export class TerminalSession {
     terminal.loadAddon(fitAddon);
     terminal.open(this.wrapper);
     this.wrapper.addEventListener("mousedown", forcePlainSelectionWhileMouseReporting, true);
+    trackTerminalScrolling(
+      this.wrapper,
+      () => {
+        this.scrollExitPending = true;
+      },
+      () => this.prepareScrollExit(),
+    );
     this.terminal = terminal;
     this.fitAddon = fitAddon;
     this.opened = true;
@@ -258,19 +286,41 @@ export class TerminalSession {
       if (input === null) return true;
       event.preventDefault();
       event.stopPropagation();
+      this.prepareScrollExit();
       terminal.input(input, true);
       return false;
     });
+    terminal.onKey(() => this.prepareScrollExit());
     terminal.onData((data) => {
       if (this.ready && this.snapshotValue.controller)
-        this.send({ version: TERMINAL_PROTOCOL_VERSION, type: "input", data });
+        this.send({
+          version: TERMINAL_PROTOCOL_VERSION,
+          type: "input",
+          data: this.withScrollExit(data),
+        });
     });
     terminal.onBinary((data) => {
       if (this.ready && this.snapshotValue.controller)
-        this.send({ version: TERMINAL_PROTOCOL_VERSION, type: "binary", data });
+        this.send({
+          version: TERMINAL_PROTOCOL_VERSION,
+          type: "binary",
+          data: this.withScrollExit(data),
+        });
     });
     terminal.onTitleChange((title) => this.update({ title: title.trim().slice(0, 256) }));
     terminal.onBell(() => this.handleBell());
+  }
+
+  private prepareScrollExit(): void {
+    if (this.scrollExitPending) this.resumeOnNextInput = true;
+  }
+
+  private withScrollExit(data: string): string {
+    if (!this.resumeOnNextInput) return data;
+    this.scrollExitPending = false;
+    this.resumeOnNextInput = false;
+    this.wrapper?.classList.remove("terminal-scrolling");
+    return `${TERMINAL_SCROLL_EXIT_SEQUENCE}${data}`;
   }
 
   private connect(): void {
