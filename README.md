@@ -1,6 +1,6 @@
-# wtr
+# TaskTTY
 
-`wtr` is a worktree-first terminal driver. It registers Git repositories, discovers their main and linked worktrees, and runs any number of persistent terminals in an application-owned tmux server dedicated to each worktree. The web UI attaches normal terminal clients to Pi, shells, and dev servers; it does not replace or modify their TUIs.
+`tasktty` is a worktree-first terminal driver. It registers Git repositories, discovers their main and linked worktrees, and runs any number of persistent terminals in an application-owned tmux server dedicated to each worktree. The web UI attaches normal terminal clients to Pi, shells, and dev servers; it does not replace or modify their TUIs.
 
 V1 is intentionally narrow: no editor, file browser, diff/review UI, Git commit UI, chat renderer, task board, cloud relay, or general-purpose tmux workspace management.
 
@@ -19,11 +19,11 @@ The daemon never installs system dependencies. Startup failures report missing r
 ```sh
 pnpm install
 pnpm build
-pnpm --global add ./packages/cli # makes `wtr` available on PATH
+pnpm --global add ./packages/cli # makes `tasktty` available on PATH
 pnpm start
 ```
 
-`pnpm start` listens on `0.0.0.0:4780`. If `WTR_AUTH_TOKEN` is unset, it generates a strong token and prints it; enter that token in the browser login screen. Open <http://127.0.0.1:4780> locally or `http://<machine-lan-ip>:4780` from another private-network device. Production serves the built React application and API from one Node process.
+`pnpm start` listens on `0.0.0.0:4780`. If `TASKTTY_AUTH_TOKEN` is unset, it generates a strong token and prints it; enter that token in the browser login screen. Open <http://127.0.0.1:4780> locally or `http://<machine-lan-ip>:4780` from another private-network device. Production serves the built React application and API from one Node process.
 
 For loopback-only startup without authentication:
 
@@ -56,13 +56,13 @@ Turbo caches package builds and runs workspace dependencies in graph order. Play
 Register a repository:
 
 ```sh
-wtr project add ~/Projects/example
+tasktty project add ~/Projects/example
 ```
 
 Create a worktree and Pi terminal in one operation:
 
 ```sh
-wtr spawn \
+tasktty spawn \
   --project ~/Projects/example \
   --worktree-name investigate-cache \
   --name researcher \
@@ -72,7 +72,7 @@ wtr spawn \
 Create another terminal from anywhere inside that worktree:
 
 ```sh
-wtr terminal create \
+tasktty terminal create \
   --worktree . \
   --name dev \
   -- pnpm dev
@@ -85,24 +85,24 @@ The web UI provides the same project, worktree, terminal, and removal operations
 All machine-relevant commands support `--json`. The CLI calls the daemon API and does not duplicate lifecycle logic.
 
 ```text
-wtr project add <path>
-wtr project list
-wtr worktree list [--project <id-or-path>]
-wtr worktree create --project <id-or-path> --name <name> [--from-current]
-wtr worktree remove <id-or-path-or-dot> [--force]
+tasktty project add <path>
+tasktty project list
+tasktty worktree list [--project <id-or-path>]
+tasktty worktree create --project <id-or-path> --name <name> [--from-current]
+tasktty worktree remove <id-or-path-or-dot> [--force]
 
-wtr terminal list [--worktree <id-or-path>]
-wtr terminal create --worktree <id-or-path-or-dot> --name <name> [-- <command> args...]
-wtr terminal delete <terminal-id>
+tasktty terminal list [--worktree <id-or-path>]
+tasktty terminal create --worktree <id-or-path-or-dot> --name <name> [-- <command> args...]
+tasktty terminal delete <terminal-id>
 
-wtr spawn --project <id-or-path-or-dot> --worktree-name <name> --name <name> [--from-current] [-- <command> args...]
+tasktty spawn --project <id-or-path-or-dot> --worktree-name <name> --name <name> [--from-current] [-- <command> args...]
 ```
 
-Each terminal receives `WTR_API_URL`, `WTR_PROJECT_ID`, `WTR_WORKTREE_ID`, and `WTR_TERMINAL_ID`. A Pi process can therefore call `wtr` to create a child worktree/terminal or remove its own worktree. Removal is persisted as a daemon-owned operation and returns an operation ID before the daemon terminates the requesting tmux server. CLI exit codes are stable: `0` success, `1` unexpected failure, `2` usage, `3` daemon unreachable, `4` authentication, and `5` API/domain refusal.
+Each terminal receives `TASKTTY_API_URL`, `TASKTTY_PROJECT_ID`, `TASKTTY_WORKTREE_ID`, and `TASKTTY_TERMINAL_ID`. A Pi process can therefore call `tasktty` to create a child worktree/terminal or remove its own worktree. Removal is persisted as a daemon-owned operation and returns an operation ID before the daemon terminates the requesting tmux server. CLI exit codes are stable: `0` success, `1` unexpected failure, `2` usage, `3` daemon unreachable, `4` authentication, and `5` API/domain refusal.
 
 ## Runtime model
 
-For worktree `wt_…`, wtr generates a socket name such as `wtr-wt-a8f…`. Every terminal gets its own generated tmux session such as `wtr-term-2c1…`:
+For worktree `wt_…`, tasktty generates a socket name such as `tasktty-wt-a8f…`. Every terminal gets its own generated tmux session such as `tasktty-term-2c1…`:
 
 ```text
 worktree SQLite ID
@@ -114,7 +114,7 @@ worktree SQLite ID
 
 Identifiers never come from branch names or paths. `packages/core/src/launcher.ts` reads an application-owned JSON launch spec and uses Node `spawn(..., { shell: false })`, preserving spaces, quotes, Unicode, semicolons, and dollar signs literally.
 
-The generated tmux configuration is stored in the wtr runtime directory. It does not read or modify `~/.tmux.conf`. It disables the status bar, uses `tmux-256color`, enables extended keys, selects CSI-u key encoding on tmux 3.5+, retains dead panes and scrollback, and never restarts exited commands. Wheel scrolling still uses tmux's persistent history, but wtr hides tmux's copy-mode indicator and styling; typing immediately returns to the live terminal without dropping the first key. SQLite stores status and intended mappings; tmux remains the runtime source of truth.
+The generated tmux configuration is stored in the tasktty runtime directory. It does not read or modify `~/.tmux.conf`. It disables the status bar, uses `tmux-256color`, enables extended keys, selects CSI-u key encoding on tmux 3.5+, retains dead panes and scrollback, and never restarts exited commands. Wheel scrolling still uses tmux's persistent history, but tasktty hides tmux's copy-mode indicator and styling; typing immediately returns to the live terminal without dropping the first key. SQLite stores status and intended mappings; tmux remains the runtime source of truth.
 
 An experimental, non-default control-mode characterization lives in `apps/server/src/tmux-control.ts`. It byte-decodes pane output and sends input without interpolating user bytes. Tests parse flow-control events and exercise resize, OSC 8 hyperlinks, raw modified-key sequences, and session survival against real tmux. Production attachments deliberately remain normal `attach-session` clients: control mode does not provide a byte-offset replay or enough private terminal state to restore application-cursor, bracketed-paste, mouse/focus, extended-key negotiation, and alternate-screen state exactly after reconnect. The experiment must prove that equivalence, or add a persistent terminal model, before replacing the production attachment path.
 
@@ -136,7 +136,7 @@ For private phone access without opening a LAN listener, use `pnpm start:local` 
 tailscale serve --bg http://127.0.0.1:4780
 ```
 
-Use your tailnet HTTPS URL on the phone. Tailscale configuration is not managed by wtr.
+Use your tailnet HTTPS URL on the phone. Tailscale configuration is not managed by tasktty.
 
 ## Zed worktrees and removal
 
@@ -151,7 +151,7 @@ the middle directory is the worktree name. The main checkout is shown as `main w
 
 New worktrees are detached at a resolved commit. The default base is the fetched remote default branch; `--from-current` uses the selected/current worktree's `HEAD`. Project-local `.zed/settings.json` `git.worktree_directory` is honored, with `../worktrees` as the default.
 
-wtr currently includes a compatibility adapter for project-local `.zed/tasks.json` tasks whose `hooks` contain `create_worktree`; Zed defines the input format, not wtr's lifecycle. Compatible tasks from the main checkout run sequentially in the automatically created tmux terminal with `ZED_WORKTREE_ROOT` and `ZED_MAIN_GIT_WORKTREE`. Their stdout and stderr stream into the pane. After every task succeeds, the same pane starts the requested command or login shell. On the first failure, later tasks and the final command are skipped and tmux retains the exited pane and its scrollback. A terminal-backed create response means that Git creation and tmux launch completed; setup may still be running.
+tasktty currently includes a compatibility adapter for project-local `.zed/tasks.json` tasks whose `hooks` contain `create_worktree`; Zed defines the input format, not tasktty's lifecycle. Compatible tasks from the main checkout run sequentially in the automatically created tmux terminal with `ZED_WORKTREE_ROOT` and `ZED_MAIN_GIT_WORKTREE`. Their stdout and stderr stream into the pane. After every task succeeds, the same pane starts the requested command or login shell. On the first failure, later tasks and the final command are skipped and tmux retains the exited pane and its scrollback. A terminal-backed create response means that Git creation and tmux launch completed; setup may still be running.
 
 **Remove worktree** is the only removal action. Preview reports staged, unstaged, and untracked changes, detached-commit reachability, locked state, and every terminal that will stop. Dirty worktrees require destructive confirmation in the UI or `--force` in the CLI. The daemon then blocks mutation, kills the worktree's tmux server, and runs path-addressed `git worktree remove`; it never deletes an attached Git branch. Main and locked worktrees are refused. If Git removal fails after terminals stop, the worktree remains `cleanup_failed` with an explicit retryable error.
 
@@ -185,20 +185,20 @@ Errors use `{ "error": { "code", "message", "details"? } }`. SSE emits project, 
 
 Localhost defaults require no environment variables. See `.env.example` for:
 
-- `WTR_HOST`, `WTR_PORT`, `WTR_AUTH_TOKEN`
-- `WTR_DATABASE_PATH`, `WTR_DATA_DIR`, `WTR_RUNTIME_DIR`
-- `WTR_SHELL`, `WTR_TMUX_PATH`, `WTR_GIT_PATH`, `WTR_GH_PATH`
-- `WTR_API_URL`
+- `TASKTTY_HOST`, `TASKTTY_PORT`, `TASKTTY_AUTH_TOKEN`
+- `TASKTTY_DATABASE_PATH`, `TASKTTY_DATA_DIR`, `TASKTTY_RUNTIME_DIR`
+- `TASKTTY_SHELL`, `TASKTTY_TMUX_PATH`, `TASKTTY_GIT_PATH`, `TASKTTY_GH_PATH`
+- `TASKTTY_API_URL`
 
 Default database locations:
 
-- macOS: `~/Library/Application Support/wtr/wtr.db`
-- Linux/XDG: `${XDG_DATA_HOME:-~/.local/share}/wtr/wtr.db`
+- macOS: `~/Library/Application Support/tasktty/tasktty.db`
+- Linux/XDG: `${XDG_DATA_HOME:-~/.local/share}/tasktty/tasktty.db`
 
 Schema tables are `projects`, `worktrees`, `terminals`, `operations`, and `schema_migrations`. Terminal output is never written to SQLite or application logs.
 
 ## Security assumptions
 
-wtr is arbitrary terminal access. The daemon itself defaults to `127.0.0.1`; the root `pnpm start` convenience command intentionally selects `0.0.0.0` and always supplies authentication, generating and printing a token when necessary. Use `pnpm start:local` for the loopback-only default. CLI requests use a bearer token from the environment; browsers exchange the token for an HttpOnly, SameSite session cookie so secrets are not put in WebSocket URLs. Repository/worktree paths are canonicalized, API bodies are validated with Zod, and external commands use argument arrays without interpolated shell strings.
+tasktty is arbitrary terminal access. The daemon itself defaults to `127.0.0.1`; the root `pnpm start` convenience command intentionally selects `0.0.0.0` and always supplies authentication, generating and printing a token when necessary. Use `pnpm start:local` for the loopback-only default. CLI requests use a bearer token from the environment; browsers exchange the token for an HttpOnly, SameSite session cookie so secrets are not put in WebSocket URLs. Repository/worktree paths are canonicalized, API bodies are validated with Zod, and external commands use argument arrays without interpolated shell strings.
 
 This is a single-user, single-daemon local tool. It does not provide internet hosting, multi-user authorization, sandboxing, or a cloud relay. Use a private reverse proxy such as Tailscale Serve rather than exposing the daemon publicly.

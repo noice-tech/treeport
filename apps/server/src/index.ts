@@ -6,19 +6,19 @@ import {
   loadConfig,
   SpawnCommandRunner,
   TmuxAdapter,
-  WtrDatabase,
-  WtrService,
-} from "@wtr/core";
-import { TERMINAL_MAX_CLIENT_MESSAGE_BYTES } from "@wtr/shared";
+  TaskTTYDatabase,
+  TaskTTYService,
+} from "@tasktty/core";
+import { TERMINAL_MAX_CLIENT_MESSAGE_BYTES } from "@tasktty/shared";
 import { createApp } from "./app.js";
 
 const config = loadConfig();
 const runner = new SpawnCommandRunner();
-const database = new WtrDatabase(config.databasePath);
+const database = new TaskTTYDatabase(config.databasePath);
 const git = new GitAdapter(runner, config.gitPath);
 const tmux = new TmuxAdapter(runner, config.runtimeDir, config.tmuxPath);
 const gh = new GhAdapter(runner, config.ghPath);
-const service = new WtrService({ config, database, runner, git, tmux, gh });
+const service = new TaskTTYService({ config, database, runner, git, tmux, gh });
 await service.initialize();
 
 const app = createApp({ service, config, tmux });
@@ -33,7 +33,7 @@ const server = serve({
   websocket: { server: webSocketServer as unknown as WebSocketServerLike },
 });
 
-console.log(`wtr listening on ${config.apiUrl}`);
+console.log(`TaskTTY listening on ${config.apiUrl}`);
 console.log(`database: ${config.databasePath}`);
 
 function shutdown(): void {

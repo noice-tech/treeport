@@ -11,8 +11,8 @@ export default defineConfig({
       registerType: "autoUpdate",
       includeAssets: ["favicon.svg"],
       manifest: {
-        name: "wtr — worktree terminal driver",
-        short_name: "wtr",
+        name: "TaskTTY — worktree terminal driver",
+        short_name: "TaskTTY",
         description: "Persistent terminals organized by Git worktree",
         theme_color: "#09090b",
         background_color: "#09090b",

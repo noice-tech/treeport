@@ -3,9 +3,9 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import Database from "better-sqlite3";
-import { deserializeOperation, serializeOperation, WtrDatabase } from "./database.js";
+import { deserializeOperation, serializeOperation, TaskTTYDatabase } from "./database.js";
 
-const databases: WtrDatabase[] = [];
+const databases: TaskTTYDatabase[] = [];
 const directories: string[] = [];
 afterEach(async () => {
   databases.splice(0).forEach((database) => database.close());
@@ -16,9 +16,9 @@ afterEach(async () => {
 
 describe("SQLite metadata", () => {
   it("migrates an empty database and serializes operation payloads", async () => {
-    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "wtr-db-"));
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "tasktty-db-"));
     directories.push(directory);
-    const database = new WtrDatabase(path.join(directory, "metadata.db"));
+    const database = new TaskTTYDatabase(path.join(directory, "metadata.db"));
     databases.push(database);
     const request = {
       branch: "feature/üñîçødé",
@@ -41,7 +41,7 @@ describe("SQLite metadata", () => {
   });
 
   it("migrates version 1 rows to nullable branches and remove operations", async () => {
-    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "wtr-db-v1-"));
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "tasktty-db-v1-"));
     directories.push(directory);
     const filePath = path.join(directory, "metadata.db");
     const legacy = new Database(filePath);
@@ -62,7 +62,7 @@ describe("SQLite metadata", () => {
     `);
     legacy.close();
 
-    const database = new WtrDatabase(filePath);
+    const database = new TaskTTYDatabase(filePath);
     databases.push(database);
     expect(database.worktree("w")).toMatchObject({
       branch: null,

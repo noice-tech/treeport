@@ -9,12 +9,14 @@ describe("configuration", () => {
       SHELL: "/bin/zsh",
     });
     expect(config.host).toBe("127.0.0.1");
-    expect(config.databasePath).toBe("/tmp/data home/wtr/wtr.db");
+    expect(config.databasePath).toBe("/tmp/data home/tasktty/tasktty.db");
     expect(config.shell).toBe("/bin/zsh");
   });
 
   it("refuses non-loopback binding without authentication", () => {
-    expect(() => loadConfig({ WTR_HOST: "0.0.0.0" })).toThrow(/without WTR_AUTH_TOKEN/);
-    expect(loadConfig({ WTR_HOST: "0.0.0.0", WTR_AUTH_TOKEN: "secret" }).authToken).toBe("secret");
+    expect(() => loadConfig({ TASKTTY_HOST: "0.0.0.0" })).toThrow(/without TASKTTY_AUTH_TOKEN/);
+    expect(loadConfig({ TASKTTY_HOST: "0.0.0.0", TASKTTY_AUTH_TOKEN: "secret" }).authToken).toBe(
+      "secret",
+    );
   });
 });

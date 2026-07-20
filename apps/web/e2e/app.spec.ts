@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import type { ProjectColor } from "@wtr/shared";
+import type { ProjectColor } from "@tasktty/shared";
 
 const TERMINAL_SCROLL_EXIT_SEQUENCE = "\u001b[9000~";
 
@@ -24,7 +24,7 @@ const project = {
       locked: false,
       lockReason: null,
       kind: "main",
-      tmuxSocketName: "wtr-wt-main",
+      tmuxSocketName: "tasktty-wt-main",
       status: "active",
       cleanupError: null,
       managedWrapperPath: null,
@@ -45,7 +45,7 @@ const project = {
           id: "term_shell",
           worktreeId: "wt_main",
           name: "Shell",
-          tmuxSessionName: "wtr-term-shell",
+          tmuxSessionName: "tasktty-term-shell",
           argv: ["/bin/zsh", "-l"],
           status: "running",
           exitCode: null,
@@ -65,7 +65,7 @@ const project = {
       locked: false,
       lockReason: null,
       kind: "linked",
-      tmuxSocketName: "wtr-wt-topic",
+      tmuxSocketName: "tasktty-wt-topic",
       status: "active",
       cleanupError: null,
       managedWrapperPath: null,
@@ -86,7 +86,7 @@ const project = {
           id: "term_pi",
           worktreeId: "wt_topic",
           name: "Pi",
-          tmuxSessionName: "wtr-term-pi",
+          tmuxSessionName: "tasktty-term-pi",
           argv: ["pi"],
           status: "running",
           exitCode: null,
@@ -159,7 +159,7 @@ async function mockApp(page: Page) {
               streamId: this.streamId,
               sequence: 1,
               data: this.url.includes("term_new")
-                ? "[wtr setup] bootstrap\\r\\nSETUP_OUTPUT\\r\\n[wtr setup] bootstrap complete\\r\\nSHELL_READY\\r\\n"
+                ? "[TaskTTY setup] bootstrap\\r\\nSETUP_OUTPUT\\r\\n[TaskTTY setup] bootstrap complete\\r\\nSHELL_READY\\r\\n"
                 : "same persistent terminal session\\r\\n",
             }),
           });
@@ -281,7 +281,7 @@ async function mockApp(page: Page) {
         id: "term_new",
         worktreeId: "wt_new",
         name: body.initialTerminal?.name ?? "Terminal",
-        tmuxSessionName: "wtr-term-new",
+        tmuxSessionName: "tasktty-term-new",
         argv: ["/bin/zsh", "-l"],
         status: "running" as const,
         exitCode: null,
@@ -310,7 +310,7 @@ async function mockApp(page: Page) {
         id: "term_dev",
         worktreeId: "wt_topic",
         name: body.name,
-        tmuxSessionName: "wtr-term-dev",
+        tmuxSessionName: "tasktty-term-dev",
         argv: body.argv || ["/bin/zsh", "-l"],
         status: "running",
         exitCode: null,

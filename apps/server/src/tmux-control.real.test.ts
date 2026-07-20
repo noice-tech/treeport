@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
-import { SpawnCommandRunner, TmuxAdapter } from "@wtr/core";
+import { SpawnCommandRunner, TmuxAdapter } from "@tasktty/core";
 import { afterAll, describe, expect, it } from "vitest";
 import {
   controlAttachArgs,
@@ -13,8 +13,8 @@ import {
   type TmuxControlEvent,
 } from "./tmux-control.js";
 
-const enabled = process.env.WTR_REAL_INTEGRATION === "1";
-const root = path.join(os.tmpdir(), `wtr control characterization ${process.pid}`);
+const enabled = process.env.TASKTTY_REAL_INTEGRATION === "1";
+const root = path.join(os.tmpdir(), `tasktty control characterization ${process.pid}`);
 const execute = promisify(execFile);
 afterAll(async () => fs.rm(root, { recursive: true, force: true }));
 
@@ -44,7 +44,7 @@ describe.skipIf(!enabled)("real tmux control-mode characterization", () => {
     }
 
     await fs.mkdir(root, { recursive: true });
-    const socket = `wtr-control-${process.pid}`;
+    const socket = `tasktty-control-${process.pid}`;
     const session = "control-characterization";
     const tmux = new TmuxAdapter(new SpawnCommandRunner(), root);
     await tmux.initialize();

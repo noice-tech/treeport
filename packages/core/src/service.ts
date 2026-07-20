@@ -11,10 +11,10 @@ import type {
   RemovePreview,
   TerminalRecord,
   WorktreeRecord,
-} from "@wtr/shared";
+} from "@tasktty/shared";
 import type { AppConfig } from "./config.js";
 import type { CommandRunner } from "./command.js";
-import type { WtrDatabase } from "./database.js";
+import type { TaskTTYDatabase } from "./database.js";
 import { serializeOperation } from "./database.js";
 import { assertCleanupTransition, DomainError } from "./domain.js";
 import { ProductEventBus } from "./events.js";
@@ -65,7 +65,7 @@ function removeConfirmationToken(
 
 interface ServiceDependencies {
   config: AppConfig;
-  database: WtrDatabase;
+  database: TaskTTYDatabase;
   runner: CommandRunner;
   git: GitAdapter;
   tmux: TmuxAdapter;
@@ -80,7 +80,7 @@ export interface CreateWorktreeResult {
   setupError: string | null;
 }
 
-export class WtrService {
+export class TaskTTYService {
   readonly events: ProductEventBus;
   private readonly worktreeLocks = new Set<string>();
   private readonly projectLocks = new Set<string>();
@@ -91,7 +91,7 @@ export class WtrService {
     this.events = deps.events ?? new ProductEventBus();
   }
 
-  get database(): WtrDatabase {
+  get database(): TaskTTYDatabase {
     return this.deps.database;
   }
 
@@ -610,10 +610,10 @@ export class WtrService {
         cwd: worktree.path,
         argv: commandArgv,
         env: {
-          WTR_API_URL: this.deps.config.apiUrl,
-          WTR_PROJECT_ID: project.id,
-          WTR_WORKTREE_ID: worktree.id,
-          WTR_TERMINAL_ID: terminalId,
+          TASKTTY_API_URL: this.deps.config.apiUrl,
+          TASKTTY_PROJECT_ID: project.id,
+          TASKTTY_WORKTREE_ID: worktree.id,
+          TASKTTY_TERMINAL_ID: terminalId,
         },
         ...(setup?.tasks.length ? { setupTasks: setup.tasks } : {}),
         ...(setup?.error ? { setupError: setup.error } : {}),

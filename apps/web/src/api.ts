@@ -6,7 +6,7 @@ import type {
   RemovePreview,
   TerminalRecord,
   WorktreeRecord,
-} from "@wtr/shared";
+} from "@tasktty/shared";
 
 export class ApiError extends Error {
   constructor(
