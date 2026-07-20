@@ -351,6 +351,39 @@ test.describe("desktop worktree terminal UI", () => {
     await expect(page.locator(".pr-badge")).toHaveCount(0);
   });
 
+  test("opens OSC 8 links in a new tab on Cmd-click", async ({ page }) => {
+    await mockApp(page);
+    await page.evaluate(() => {
+      (window as any).__openedTerminalLink = null;
+      window.open = (...args) => {
+        (window as any).__openedTerminalLink = args;
+        return null;
+      };
+    });
+    await page.getByRole("button", { name: "Pi running", exact: true }).click();
+    await page.evaluate(() => {
+      const socket = (window as any).__wsInstances.find((item: any) =>
+        item.url.includes("term_pi"),
+      );
+      socket.onmessage?.({
+        data: JSON.stringify({
+          version: 1,
+          type: "output",
+          streamId: socket.streamId,
+          sequence: 2,
+          data: "\x1b]8;;https://example.test/pr/123\x1b\\#123 ↗\x1b]8;;\x1b\\\r\n",
+        }),
+      });
+    });
+
+    const linkedText = page.locator(".xterm-rows span").filter({ hasText: "#123" }).last();
+    await expect(linkedText).toBeVisible();
+    await linkedText.click({ modifiers: ["Meta"] });
+    await expect
+      .poll(() => page.evaluate(() => (window as any).__openedTerminalLink))
+      .toEqual(["https://example.test/pr/123", "_blank", "noopener,noreferrer"]);
+  });
+
   test("synchronizes fallback, runtime, and cleared titles across every desktop consumer", async ({
     page,
   }) => {

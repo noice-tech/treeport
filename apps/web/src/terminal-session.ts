@@ -46,7 +46,7 @@ function getClientId(): string {
   }
 }
 
-function terminalOptions() {
+export function terminalOptions() {
   return {
     cursorBlink: true,
     convertEol: false,
@@ -55,6 +55,12 @@ function terminalOptions() {
     lineHeight: 1.15,
     scrollback: 10_000,
     allowProposedApi: false,
+    linkHandler: {
+      activate(event: MouseEvent, url: string) {
+        if (!event.metaKey && !event.ctrlKey) return;
+        window.open(url, "_blank", "noopener,noreferrer");
+      },
+    },
     theme: {
       background: "#09090b",
       foreground: "#e4e4e7",

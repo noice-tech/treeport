@@ -1,5 +1,6 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
+  terminalOptions as createTerminalOptions,
   TerminalSession,
   TerminalSessionManager as TerminalSessionManagerInstance,
   TerminalSessionSnapshot,
@@ -12,6 +13,7 @@ type TerminalSessionManagerConstructor = new (
 ) => TerminalSessionManagerInstance;
 
 let TerminalSessionManager: TerminalSessionManagerConstructor;
+let terminalOptions: typeof createTerminalOptions;
 
 class FakeSession {
   disposed = false;
@@ -52,7 +54,7 @@ class FakeSession {
 
 beforeAll(async () => {
   vi.stubGlobal("self", globalThis);
-  ({ TerminalSessionManager } = await import("./terminal-session.js"));
+  ({ TerminalSessionManager, terminalOptions } = await import("./terminal-session.js"));
 });
 
 beforeEach(() => {
@@ -74,6 +76,21 @@ function fixture(maxSessions = 3, idleMs = 1_000) {
   });
   return { manager, sessions };
 }
+
+describe("terminal options", () => {
+  it("opens OSC 8 links in a new tab only on Cmd/Ctrl-click", () => {
+    const open = vi.fn();
+    vi.stubGlobal("window", { open });
+    const handler = terminalOptions().linkHandler;
+    const url = "https://github.com/acme/project/pull/123";
+
+    handler.activate({ metaKey: false, ctrlKey: false } as MouseEvent, url);
+    expect(open).not.toHaveBeenCalled();
+
+    handler.activate({ metaKey: true, ctrlKey: false } as MouseEvent, url);
+    expect(open).toHaveBeenCalledWith(url, "_blank", "noopener,noreferrer");
+  });
+});
 
 describe("TerminalSessionManager", () => {
   it("evicts the least-recent unselected session over capacity", () => {
