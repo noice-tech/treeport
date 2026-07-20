@@ -30,6 +30,7 @@ set -g status off
 set -g default-terminal "tmux-256color"
 set -s terminal-features[999] "xterm-256color:hyperlinks"
 set -g extended-keys on
+set -s extended-keys-format csi-u
 set -g history-limit 50000
 set -g remain-on-exit on
 set -g exit-empty off
@@ -140,19 +141,12 @@ export class TmuxAdapter {
   }
 
   async configureServer(socketName: string): Promise<void> {
-    const options = [
-      ["set-option", "-g", "mouse", "on"],
-      ["set-option", "-g", "extended-keys", "on"],
-      ["set-option", "-s", "terminal-features[999]", "xterm-256color:hyperlinks"],
-    ];
-    for (const args of options) {
-      await runChecked(this.runner, {
-        executable: this.executable,
-        args: [...this.base(socketName), ...args],
-        env: this.environment(),
-        timeoutMs: 10_000,
-      });
-    }
+    await runChecked(this.runner, {
+      executable: this.executable,
+      args: [...this.base(socketName), "source-file", this.configPath],
+      env: this.environment(),
+      timeoutMs: 10_000,
+    });
   }
 
   private async setMetadata(

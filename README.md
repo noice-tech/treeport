@@ -116,6 +116,8 @@ Identifiers never come from branch names or paths. `packages/core/src/launcher.t
 
 The generated tmux configuration is stored in the wtr runtime directory. It does not read or modify `~/.tmux.conf`. It disables the status bar, uses `tmux-256color`, enables tmux mouse/copy-mode scrolling, retains dead panes and scrollback, and never restarts exited commands. SQLite stores status and intended mappings; tmux remains the runtime source of truth.
 
+An experimental, non-default control-mode characterization lives in `apps/server/src/tmux-control.ts`. It byte-decodes pane output and sends input without interpolating user bytes. Tests characterize flow-control commands and exercise resize, OSC 8 hyperlinks, raw modified-key sequences, and session survival against real tmux. Production attachments deliberately remain normal `attach-session` clients: control mode does not provide a byte-offset replay or enough private terminal state to restore application-cursor, bracketed-paste, mouse/focus, extended-key negotiation, and alternate-screen state exactly after reconnect. The experiment must prove that equivalence, or add a persistent terminal model, before replacing the production attachment path.
+
 ## Browser and phone handoff
 
 Opening a terminal creates a temporary `node-pty` process attached to its existing tmux session. Closing the browser kills only that tmux client; the command continues. Reopening on desktop or phone attaches to the same session and never relaunches Pi.
