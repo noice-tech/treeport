@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { DirtyState } from "@wtr/shared";
@@ -7,10 +8,17 @@ import { runChecked } from "./command.js";
 export interface GitWorktreeInfo {
   path: string;
   head: string | null;
-  branch: string;
+  branch: string | null;
   bare: boolean;
   detached: boolean;
+  locked: boolean;
+  lockReason: string | null;
   prunable: boolean;
+}
+
+export interface GitDirtyStatus {
+  dirty: DirtyState;
+  fingerprint: string;
 }
 
 export function parseWorktreePorcelain(output: string): GitWorktreeInfo[] {
@@ -33,9 +41,11 @@ export function parseWorktreePorcelain(output: string): GitWorktreeInfo[] {
     return {
       path: worktreePath,
       head: values.get("HEAD") ?? null,
-      branch: ref?.replace(/^refs\/heads\//, "") ?? "(detached)",
+      branch: ref?.replace(/^refs\/heads\//, "") ?? null,
       bare: flags.has("bare"),
-      detached: flags.has("detached"),
+      detached: flags.has("detached") || !ref,
+      locked: values.has("locked") || flags.has("locked"),
+      lockReason: values.get("locked") || null,
       prunable: values.has("prunable") || flags.has("prunable"),
     };
   });
@@ -51,21 +61,27 @@ export function parseDirtyStatus(output: string): DirtyState {
   let staged = 0;
   let unstaged = 0;
   let untracked = 0;
-  for (const entry of output.split("\0").filter(Boolean)) {
+  let conflicts = 0;
+  const entries = output.split("\0").filter(Boolean);
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = entries[index]!;
     const x = entry[0];
     const y = entry[1];
     if (x === "?" && y === "?") {
       untracked += 1;
       continue;
     }
+    if (["DD", "AU", "UD", "UA", "DU", "AA", "UU"].includes(`${x}${y}`)) conflicts += 1;
     if (x && x !== " " && x !== "?") staged += 1;
     if (y && y !== " " && y !== "?") unstaged += 1;
+    if (x === "R" || x === "C" || y === "R" || y === "C") index += 1;
   }
   return {
     dirty: staged + unstaged + untracked > 0,
     staged,
     unstaged,
     untracked,
+    conflicts,
     total: staged + unstaged + untracked,
   };
 }
@@ -141,24 +157,80 @@ export class GitAdapter {
     return this.currentBranch(cwd);
   }
 
-  async validateBranch(cwd: string, branch: string): Promise<boolean> {
-    const result = await this.runner.run({
-      executable: this.executable,
-      args: ["check-ref-format", "--branch", branch],
-      cwd,
-      timeoutMs: 10_000,
-    });
-    return result.exitCode === 0;
+  async resolveCommit(cwd: string, ref = "HEAD"): Promise<string> {
+    const result = await this.checked(cwd, ["rev-parse", "--verify", `${ref}^{commit}`]);
+    const commit = result.stdout.trim();
+    if (!commit) throw new Error(`Git did not resolve ${ref} to a commit`);
+    return commit;
   }
 
-  async dirtyState(cwd: string): Promise<DirtyState> {
+  async resolveDefaultCommit(cwd: string): Promise<string> {
+    const defaultBranch = await this.defaultBranch(cwd);
+    const fetched = await this.runner.run({
+      executable: this.executable,
+      args: ["fetch", "--quiet", "origin", defaultBranch],
+      cwd,
+      timeoutMs: 60_000,
+    });
+    if (fetched.exitCode === 0) return this.resolveCommit(cwd, `origin/${defaultBranch}`);
+    return this.resolveCommit(cwd, defaultBranch);
+  }
+
+  async createDetachedWorktree(cwd: string, worktreePath: string, commit: string): Promise<void> {
+    await runChecked(this.runner, {
+      executable: this.executable,
+      args: ["worktree", "add", "--detach", "--", worktreePath, commit],
+      cwd,
+      timeoutMs: 10 * 60_000,
+    });
+  }
+
+  async removeWorktree(cwd: string, worktreePath: string, force: boolean): Promise<void> {
+    const args = ["worktree", "remove"];
+    if (force) args.push("--force");
+    args.push("--", worktreePath);
+    await runChecked(this.runner, {
+      executable: this.executable,
+      args,
+      cwd,
+      timeoutMs: 10 * 60_000,
+    });
+  }
+
+  async isCommitReachable(cwd: string, commit: string): Promise<boolean | null> {
+    const result = await this.runner.run({
+      executable: this.executable,
+      args: [
+        "for-each-ref",
+        "--contains",
+        commit,
+        "--format=%(refname)",
+        "refs/heads",
+        "refs/tags",
+        "refs/remotes",
+      ],
+      cwd,
+      timeoutMs: 30_000,
+    });
+    if (result.exitCode !== 0) return null;
+    return Boolean(result.stdout.trim());
+  }
+
+  async dirtyStatus(cwd: string): Promise<GitDirtyStatus> {
     const result = await this.checked(cwd, [
       "status",
       "--porcelain=v1",
       "-z",
       "--untracked-files=all",
     ]);
-    return parseDirtyStatus(result.stdout);
+    return {
+      dirty: parseDirtyStatus(result.stdout),
+      fingerprint: crypto.createHash("sha256").update(result.stdout).digest("hex"),
+    };
+  }
+
+  async dirtyState(cwd: string): Promise<DirtyState> {
+    return (await this.dirtyStatus(cwd)).dirty;
   }
 
   async isMerged(cwd: string, branch: string): Promise<boolean> {

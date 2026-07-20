@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+export * from "./terminal-protocol.js";
+
 export const PRODUCT_NAME = "wtr";
 export const API_VERSION = 1;
 
@@ -8,7 +10,8 @@ export type WorktreeStatus = "active" | "cleaning" | "cleanup_failed" | "removed
 export type TerminalStatus = "running" | "exited" | "missing";
 export type PrState = "no_pr" | "open" | "merged" | "closed" | "unknown";
 export type OperationStatus = "pending" | "running" | "completed" | "failed";
-export type OperationKind = "finish" | "discard" | "project_cleanup";
+/** Legacy operation kinds remain readable for existing SQLite rows. */
+export type OperationKind = "finish" | "discard" | "project_cleanup" | "remove";
 
 export interface PrInfo {
   state: PrState;
@@ -35,12 +38,18 @@ export interface TerminalRecord {
 export interface WorktreeRecord {
   id: string;
   projectId: string;
+  name: string;
   path: string;
-  branch: string;
+  head: string;
+  branch: string | null;
+  detached: boolean;
+  locked: boolean;
+  lockReason: string | null;
   kind: WorktreeKind;
   tmuxSocketName: string;
   status: WorktreeStatus;
   cleanupError: string | null;
+  managedWrapperPath: string | null;
   pr: PrInfo;
   dirty: DirtyState | null;
   terminals: TerminalRecord[];
@@ -64,19 +73,27 @@ export interface DirtyState {
   staged: number;
   unstaged: number;
   untracked: number;
+  conflicts: number;
   total: number;
 }
 
-export interface FinishPreflight {
+export interface RemovePreview {
   worktreeId: string;
-  branch: string;
+  name: string;
   path: string;
-  pr: PrInfo;
-  gitMerged: boolean;
+  head: string;
+  branch: string | null;
+  detached: boolean;
+  locked: boolean;
+  lockReason: string | null;
   dirty: DirtyState;
+  detachedHeadReachable: boolean | null;
+  forceRequired: boolean;
   eligible: boolean;
   reasons: string[];
+  warnings: string[];
   terminals: Array<Pick<TerminalRecord, "id" | "name" | "status">>;
+  confirmationToken: string;
 }
 
 export interface OperationRecord {
@@ -101,17 +118,27 @@ export const registerProjectSchema = z.object({
   name: z.string().trim().min(1).max(120).optional(),
 });
 
-export const createWorktreeSchema = z.object({
-  branch: z.string().trim().min(1).max(240),
-  fromCurrent: z.boolean().optional().default(false),
-  sourceWorktreeId: z.string().min(1).optional(),
-  initialTerminal: z
-    .object({
-      name: z.string().trim().min(1).max(120),
-      argv: z.array(z.string()).min(1).optional(),
-    })
-    .optional(),
+const initialTerminalSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  argv: z.array(z.string()).min(1).optional(),
 });
+
+export const createWorktreeSchema = z
+  .object({
+    name: z.string().trim().min(1).max(120),
+    base: z.enum(["default", "current"]).default("default"),
+    sourceWorktreeId: z.string().min(1).optional(),
+    initialTerminal: initialTerminalSchema.optional(),
+  })
+  .superRefine((value, context) => {
+    if (value.base === "current" && !value.sourceWorktreeId) {
+      context.addIssue({
+        code: "custom",
+        path: ["sourceWorktreeId"],
+        message: "A source worktree is required when starting from current",
+      });
+    }
+  });
 
 export const createTerminalSchema = z.object({
   name: z.string().trim().min(1).max(120),
@@ -122,20 +149,29 @@ export const updateTerminalSchema = z.object({
   name: z.string().trim().min(1).max(120),
 });
 
-export const discardSchema = z.object({
-  confirm: z.string().min(1),
+export const removeWorktreeSchema = z.object({
+  confirmationToken: z.string().length(64),
+  confirmDestructive: z.boolean(),
 });
 
-export const spawnSchema = z.object({
-  project: z.string().min(1),
-  branch: z.string().trim().min(1).max(240),
-  name: z.string().trim().min(1).max(120),
-  argv: z.array(z.string()).min(1).max(128).optional(),
-  fromCurrent: z.boolean().optional().default(false),
-  sourceWorktreeId: z.string().min(1).optional(),
-});
-
-export const cleanupSchema = z.object({ preview: z.boolean().optional().default(false) });
+export const spawnSchema = z
+  .object({
+    project: z.string().min(1),
+    worktreeName: z.string().trim().min(1).max(120),
+    name: z.string().trim().min(1).max(120),
+    argv: z.array(z.string()).min(1).max(128).optional(),
+    base: z.enum(["default", "current"]).default("default"),
+    sourceWorktreeId: z.string().min(1).optional(),
+  })
+  .superRefine((value, context) => {
+    if (value.base === "current" && !value.sourceWorktreeId) {
+      context.addIssue({
+        code: "custom",
+        path: ["sourceWorktreeId"],
+        message: "A source worktree is required when starting from current",
+      });
+    }
+  });
 
 export type ProductEventType =
   | "project.created"
@@ -147,9 +183,9 @@ export type ProductEventType =
   | "terminal.updated"
   | "terminal.removed"
   | "terminal.controller_changed"
-  | "cleanup.started"
-  | "cleanup.completed"
-  | "cleanup.failed";
+  | "remove.started"
+  | "remove.completed"
+  | "remove.failed";
 
 export interface ProductEvent {
   id: string;
@@ -157,14 +193,3 @@ export interface ProductEvent {
   at: string;
   data: Record<string, unknown>;
 }
-
-export type TerminalClientMessage =
-  | { type: "input"; data: string }
-  | { type: "resize"; cols: number; rows: number }
-  | { type: "take_control" };
-
-export type TerminalServerMessage =
-  | { type: "output"; data: string }
-  | { type: "control"; controller: boolean; controllerId: string | null }
-  | { type: "exit"; exitCode: number | null }
-  | { type: "error"; message: string };

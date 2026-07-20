@@ -34,30 +34,6 @@ export class GhAdapter {
     private readonly executable = "gh",
   ) {}
 
-  async diagnostics(): Promise<{
-    available: boolean;
-    version: string | null;
-    authenticated: boolean;
-  }> {
-    try {
-      const [version, auth] = await Promise.all([
-        this.runner.run({ executable: this.executable, args: ["--version"], timeoutMs: 5_000 }),
-        this.runner.run({
-          executable: this.executable,
-          args: ["auth", "status"],
-          timeoutMs: 10_000,
-        }),
-      ]);
-      return {
-        available: version.exitCode === 0,
-        version: `${version.stdout}\n${version.stderr}`.trim().split("\n")[0] || null,
-        authenticated: auth.exitCode === 0,
-      };
-    } catch {
-      return { available: false, version: null, authenticated: false };
-    }
-  }
-
   async pullRequest(cwd: string, branch: string): Promise<PrInfo> {
     const checkedAt = new Date().toISOString();
     try {

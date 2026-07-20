@@ -29,7 +29,10 @@ set -g history-limit 50000
 set -g remain-on-exit on
 set -g exit-empty off
 set -g focus-events on
-set -g mouse off
+set -g monitor-bell on
+set -g bell-action any
+set -g visual-bell off
+set -g mouse on
 set -g window-size latest
 set -g destroy-unattached off
 `;
@@ -100,6 +103,7 @@ export class TmuxAdapter {
         timeoutMs: 30_000,
       });
       created = true;
+      await this.configureServer(input.socketName);
       await Promise.all([
         this.setMetadata(input.socketName, input.sessionName, "@wtr-terminal-id", input.terminalId),
         this.setMetadata(input.socketName, input.sessionName, "@wtr-worktree-id", input.worktreeId),
@@ -112,6 +116,15 @@ export class TmuxAdapter {
       else await fs.unlink(specPath).catch(() => undefined);
       throw error;
     }
+  }
+
+  async configureServer(socketName: string): Promise<void> {
+    await runChecked(this.runner, {
+      executable: this.executable,
+      args: [...this.base(socketName), "set-option", "-g", "mouse", "on"],
+      env: this.environment(),
+      timeoutMs: 10_000,
+    });
   }
 
   private async setMetadata(
@@ -169,6 +182,17 @@ export class TmuxAdapter {
     if (result.exitCode !== 0) return null;
     const [cols, rows] = result.stdout.trim().split("\t").map(Number);
     return cols && rows ? { cols, rows } : null;
+  }
+
+  async sessionTitle(socketName: string, sessionName: string): Promise<string | null> {
+    const result = await this.runner.run({
+      executable: this.executable,
+      args: [...this.base(socketName), "display-message", "-p", "-t", sessionName, "#{pane_title}"],
+      env: this.environment(),
+      timeoutMs: 10_000,
+    });
+    if (result.exitCode !== 0) return null;
+    return result.stdout.trim() || null;
   }
 
   attachArgs(socketName: string, sessionName: string): string[] {

@@ -1,77 +1,225 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  ArrowPathIcon,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+} from "react";
+import { createPortal } from "react-dom";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
   Bars3Icon,
-  ChevronDownIcon,
+  ChevronRightIcon,
   CommandLineIcon,
-  EllipsisHorizontalIcon,
   PlusIcon,
-  WrenchScrewdriverIcon,
+  TrashIcon,
   XMarkIcon,
 } from "@heroicons/react/16/solid";
-import type { FinishPreflight, ProjectRecord, TerminalRecord, WorktreeRecord } from "@wtr/shared";
+import type { ProjectRecord, RemovePreview, TerminalRecord, WorktreeRecord } from "@wtr/shared";
 import { ApiError, apiClient } from "./api.js";
+import { Button } from "./components/ui/button.js";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "./components/ui/collapsible.js";
+import { Input } from "./components/ui/input.js";
+import { Label } from "./components/ui/label.js";
+import { NativeSelect } from "./components/ui/native-select.js";
+import { Tooltip, TooltipContent, TooltipTrigger } from "./components/ui/tooltip.js";
+import { cn } from "./lib/utils.js";
+import {
+  createInvalidationCoalescer,
+  METADATA_DEGRADED_GRACE_MS,
+  METADATA_STALE_TIME_MS,
+  metadataRetryDelay,
+  shouldRetryMetadataQuery,
+} from "./metadata-sync.js";
+import { terminalSessions } from "./terminal-session.js";
 import { TerminalView } from "./terminal-view.js";
+
+const MIN_SIDEBAR_WIDTH = 240;
+const MAX_SIDEBAR_WIDTH = 420;
+const DEFAULT_SIDEBAR_WIDTH = 272;
+const EMPTY_RUNTIME_TITLES: ReadonlyMap<string, string> = new Map();
+const FOCUSABLE_SELECTOR = [
+  "a[href]",
+  "button:not([disabled])",
+  "input:not([disabled])",
+  "select:not([disabled])",
+  "textarea:not([disabled])",
+  "[tabindex]:not([tabindex='-1'])",
+].join(",");
+
+function focusableElements(container: HTMLElement): HTMLElement[] {
+  return [...container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)].filter(
+    (element) => !element.closest("[inert]") && element.getClientRects().length > 0,
+  );
+}
+
+function trapTabKey(event: KeyboardEvent, container: HTMLElement): void {
+  if (event.key !== "Tab") return;
+  const elements = focusableElements(container);
+  if (!elements.length) {
+    event.preventDefault();
+    container.focus();
+    return;
+  }
+  const first = elements[0]!;
+  const last = elements.at(-1)!;
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+}
+
+function clampSidebarWidth(width: number): number {
+  return Math.min(MAX_SIDEBAR_WIDTH, Math.max(MIN_SIDEBAR_WIDTH, width));
+}
 
 type Modal =
   | { type: "project" }
   | { type: "worktree"; project: ProjectRecord }
-  | { type: "terminal"; worktree: WorktreeRecord }
-  | { type: "cleanup"; project: ProjectRecord }
-  | { type: "finish"; worktree: WorktreeRecord }
-  | { type: "discard"; worktree: WorktreeRecord }
-  | { type: "diagnostics" }
+  | { type: "remove"; worktree: WorktreeRecord }
   | null;
 
+const projectsQueryKey = ["projects"] as const;
+
 export default function App() {
-  const [projects, setProjects] = useState<ProjectRecord[]>([]);
+  const queryClient = useQueryClient();
+  const projectsQuery = useQuery({
+    queryKey: projectsQueryKey,
+    queryFn: apiClient.projects,
+    staleTime: METADATA_STALE_TIME_MS,
+    retry: shouldRetryMetadataQuery,
+    retryDelay: metadataRetryDelay,
+    refetchOnReconnect: true,
+    refetchOnWindowFocus: true,
+  });
+  const projects = projectsQuery.data ?? [];
   const [selectedTerminalId, setSelectedTerminalId] = useState<string | null>(() =>
     localStorage.getItem("wtr-terminal"),
   );
   const [selectedWorktreeId, setSelectedWorktreeId] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [unauthorized, setUnauthorized] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [modal, setModal] = useState<Modal>(null);
+  const [sidebarWidth, setSidebarWidth] = useState(() => {
+    const savedWidth = Number.parseInt(localStorage.getItem("wtr-sidebar-width") ?? "", 10);
+    return Number.isFinite(savedWidth) ? clampSidebarWidth(savedWidth) : DEFAULT_SIDEBAR_WIDTH;
+  });
+  const [resizingSidebar, setResizingSidebar] = useState(false);
+  const [sseDisconnected, setSseDisconnected] = useState(false);
+  const [showSyncDegraded, setShowSyncDegraded] = useState(false);
+  const selectedWorktreeIdRef = useRef<string | null>(null);
+  const resizeOrigin = useRef<{ pointerX: number; width: number } | null>(null);
+  const drawerRef = useRef<HTMLElement | null>(null);
+  const drawerTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const modalTriggerRef = useRef<HTMLElement | null>(null);
 
-  const load = useCallback(async () => {
-    try {
-      const next = await apiClient.projects();
-      setProjects(next);
-      setUnauthorized(false);
-      setSelectedTerminalId((current) => {
-        if (
-          current &&
-          next.some((project) =>
-            project.worktrees.some((worktree) =>
-              worktree.terminals.some((terminal) => terminal.id === current),
-            ),
-          )
-        ) {
-          return current;
-        }
-        return (
-          next.flatMap((project) => project.worktrees.flatMap((worktree) => worktree.terminals))[0]
-            ?.id ?? null
-        );
-      });
-    } catch (loadError) {
-      if (loadError instanceof ApiError && loadError.status === 401) setUnauthorized(true);
-      else setError(loadError instanceof Error ? loadError.message : String(loadError));
-    } finally {
-      setLoading(false);
+  const unauthorized =
+    projectsQuery.error instanceof ApiError && projectsQuery.error.status === 401;
+
+  useEffect(() => {
+    if (projectsQuery.error && projectsQuery.data === undefined && !unauthorized)
+      showError(setError)(projectsQuery.error);
+  }, [projectsQuery.data, projectsQuery.error, unauthorized]);
+
+  useEffect(() => {
+    const degraded =
+      projectsQuery.data !== undefined && (sseDisconnected || projectsQuery.isRefetchError);
+    if (!degraded) {
+      setShowSyncDegraded(false);
+      return;
     }
+    const timer = window.setTimeout(() => setShowSyncDegraded(true), METADATA_DEGRADED_GRACE_MS);
+    return () => window.clearTimeout(timer);
+  }, [projectsQuery.data, projectsQuery.isRefetchError, sseDisconnected]);
+
+  useEffect(() => {
+    const next = projectsQuery.data;
+    if (!next) return;
+    setSelectedTerminalId((current) => {
+      if (
+        current &&
+        next.some((project) =>
+          project.worktrees.some((worktree) =>
+            worktree.terminals.some((terminal) => terminal.id === current),
+          ),
+        )
+      ) {
+        return current;
+      }
+      const selectedWorktree = next
+        .flatMap((project) => project.worktrees)
+        .find((worktree) => worktree.id === selectedWorktreeIdRef.current);
+      if (selectedWorktreeIdRef.current) return selectedWorktree?.terminals[0]?.id ?? null;
+      return (
+        next.flatMap((project) => project.worktrees.flatMap((worktree) => worktree.terminals))[0]
+          ?.id ?? null
+      );
+    });
+  }, [projectsQuery.data]);
+
+  useEffect(() => {
+    const media = window.matchMedia("(max-width: 700px)");
+    const update = () => setIsMobile(media.matches);
+    update();
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
   }, []);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    if (!isMobile || !drawerOpen) return;
+    const drawer = drawerRef.current;
+    if (!drawer) return;
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+    const frame = window.requestAnimationFrame(() => {
+      focusableElements(drawer)[0]?.focus();
+    });
+    return () => {
+      window.cancelAnimationFrame(frame);
+      if (previouslyFocused?.isConnected) previouslyFocused.focus();
+      else drawerTriggerRef.current?.focus();
+    };
+  }, [drawerOpen, isMobile]);
+
+  useEffect(() => {
+    if (!isMobile || !drawerOpen || modal) return;
+    const drawer = drawerRef.current;
+    if (!drawer) return;
+    const keydown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setDrawerOpen(false);
+        return;
+      }
+      trapTabKey(event, drawer);
+    };
+    document.addEventListener("keydown", keydown);
+    return () => document.removeEventListener("keydown", keydown);
+  }, [drawerOpen, isMobile, modal]);
 
   useEffect(() => {
     if (unauthorized) return;
     const events = new EventSource("/api/events");
-    const refresh = () => void load();
+    const refreshes = createInvalidationCoalescer(() =>
+      queryClient.invalidateQueries({ queryKey: projectsQueryKey }, { cancelRefetch: false }),
+    );
+    const refresh = () => refreshes.schedule();
+    const connected = () => {
+      setSseDisconnected(false);
+      refresh();
+    };
+    const disconnected = () => setSseDisconnected(true);
     const eventNames = [
       "project.created",
       "project.updated",
@@ -81,55 +229,165 @@ export default function App() {
       "terminal.created",
       "terminal.updated",
       "terminal.removed",
-      "cleanup.completed",
-      "cleanup.failed",
+      "remove.completed",
+      "remove.failed",
     ];
+    events.addEventListener("connected", connected);
+    events.addEventListener("error", disconnected);
     eventNames.forEach((name) => events.addEventListener(name, refresh));
-    return () => events.close();
-  }, [load, unauthorized]);
+    return () => {
+      refreshes.dispose();
+      events.close();
+    };
+  }, [queryClient, unauthorized]);
 
   const allWorktrees = useMemo(() => projects.flatMap((project) => project.worktrees), [projects]);
   const allTerminals = useMemo(
     () => allWorktrees.flatMap((worktree) => worktree.terminals),
     [allWorktrees],
   );
+  useEffect(() => {
+    terminalSessions.reconcile(allTerminals);
+  }, [allTerminals]);
+  const runtimeTitles = useSyncExternalStore(
+    terminalSessions.subscribe,
+    terminalSessions.getTitleSnapshot,
+    () => EMPTY_RUNTIME_TITLES,
+  );
+  const terminalById = allTerminals.find((terminal) => terminal.id === selectedTerminalId) ?? null;
+  useEffect(() => {
+    if (!terminalById) return;
+    selectedWorktreeIdRef.current = terminalById.worktreeId;
+    setSelectedWorktreeId((current) =>
+      current === terminalById.worktreeId ? current : terminalById.worktreeId,
+    );
+  }, [terminalById?.id, terminalById?.worktreeId]);
+  const selectedWorktree =
+    allWorktrees.find((worktree) => worktree.id === selectedWorktreeId) ??
+    (terminalById
+      ? (allWorktrees.find((worktree) => worktree.id === terminalById.worktreeId) ?? null)
+      : null);
   const selectedTerminal =
-    allTerminals.find((terminal) => terminal.id === selectedTerminalId) ?? null;
-  const selectedWorktree = selectedTerminal
-    ? (allWorktrees.find((worktree) => worktree.id === selectedTerminal.worktreeId) ?? null)
-    : (allWorktrees.find((worktree) => worktree.id === selectedWorktreeId) ?? null);
-
-  const selectWorktree = (worktree: WorktreeRecord) => {
-    setSelectedWorktreeId(worktree.id);
-    if (worktree.kind === "linked")
-      void apiClient.refreshPr(worktree.id).then(load).catch(showError(setError));
-  };
+    selectedWorktree?.terminals.find((terminal) => terminal.id === selectedTerminalId) ?? null;
 
   const selectTerminal = (terminal: TerminalRecord) => {
     setSelectedTerminalId(terminal.id);
     setSelectedWorktreeId(terminal.worktreeId);
+    selectedWorktreeIdRef.current = terminal.worktreeId;
     localStorage.setItem("wtr-terminal", terminal.id);
-    const worktree = allWorktrees.find((item) => item.id === terminal.worktreeId);
-    if (worktree?.kind === "linked")
-      void apiClient.refreshPr(worktree.id).then(load).catch(showError(setError));
     setDrawerOpen(false);
   };
 
-  if (unauthorized) return <Login onSuccess={() => void load()} />;
+  const selectWorktree = (worktree: WorktreeRecord) => {
+    setSelectedWorktreeId(worktree.id);
+    selectedWorktreeIdRef.current = worktree.id;
+    const nextTerminal =
+      worktree.terminals.find((terminal) => terminal.id === selectedTerminalId) ??
+      worktree.terminals[0] ??
+      null;
+    setSelectedTerminalId(nextTerminal?.id ?? null);
+    if (nextTerminal) localStorage.setItem("wtr-terminal", nextTerminal.id);
+    else localStorage.removeItem("wtr-terminal");
+    setDrawerOpen(false);
+  };
+
+  const createTerminal = useMutation({
+    mutationFn: (worktree: WorktreeRecord) => apiClient.createTerminal(worktree.id, "Terminal"),
+    onSuccess: async (terminal) => {
+      selectTerminal(terminal);
+      await queryClient.invalidateQueries({ queryKey: projectsQueryKey });
+    },
+    onError: showError(setError),
+  });
+
+  const closeTerminal = useMutation({
+    mutationFn: (terminal: TerminalRecord) => apiClient.deleteTerminal(terminal.id),
+    onSuccess: async (_, closedTerminal) => {
+      terminalSessions.forget(closedTerminal.id);
+      if (selectedTerminalId === closedTerminal.id) {
+        const terminals = selectedWorktree?.terminals ?? [];
+        const closedIndex = terminals.findIndex((terminal) => terminal.id === closedTerminal.id);
+        const nextTerminal = terminals[closedIndex + 1] ?? terminals[closedIndex - 1] ?? null;
+        setSelectedTerminalId(nextTerminal?.id ?? null);
+        if (nextTerminal) localStorage.setItem("wtr-terminal", nextTerminal.id);
+        else localStorage.removeItem("wtr-terminal");
+      }
+      await queryClient.invalidateQueries({ queryKey: projectsQueryKey });
+    },
+    onError: showError(setError),
+  });
+
+  const setAndSaveSidebarWidth = (width: number) => {
+    const nextWidth = clampSidebarWidth(width);
+    setSidebarWidth(nextWidth);
+    localStorage.setItem("wtr-sidebar-width", String(nextWidth));
+  };
+
+  const startSidebarResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    resizeOrigin.current = { pointerX: event.clientX, width: sidebarWidth };
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setResizingSidebar(true);
+  };
+
+  const resizeSidebar = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!resizeOrigin.current) return;
+    setAndSaveSidebarWidth(
+      resizeOrigin.current.width + event.clientX - resizeOrigin.current.pointerX,
+    );
+  };
+
+  const openModal = (nextModal: Exclude<Modal, null>, trigger?: HTMLElement) => {
+    modalTriggerRef.current = trigger ?? (document.activeElement as HTMLElement | null);
+    setModal(nextModal);
+  };
+
+  const stopSidebarResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+    resizeOrigin.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId))
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    setResizingSidebar(false);
+  };
+
+  const resizeSidebarWithKeyboard = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    let nextWidth = sidebarWidth;
+    if (event.key === "ArrowLeft") nextWidth -= event.shiftKey ? 32 : 16;
+    else if (event.key === "ArrowRight") nextWidth += event.shiftKey ? 32 : 16;
+    else if (event.key === "Home") nextWidth = MIN_SIDEBAR_WIDTH;
+    else if (event.key === "End") nextWidth = MAX_SIDEBAR_WIDTH;
+    else return;
+    event.preventDefault();
+    setAndSaveSidebarWidth(nextWidth);
+  };
+
+  if (unauthorized) return <Login onSuccess={() => void projectsQuery.refetch()} />;
 
   return (
-    <div className="app-frame">
-      <header className="mobile-bar">
-        <button
+    <div
+      className={cn(
+        "app-frame isolate grid h-dvh grid-cols-[var(--sidebar-width)_minmax(0,1fr)] bg-zinc-950 max-[700px]:grid-cols-1 max-[700px]:grid-rows-[3.25rem_minmax(0,1fr)]",
+        resizingSidebar && "select-none",
+      )}
+      style={{ "--sidebar-width": `${sidebarWidth}px` } as CSSProperties}
+    >
+      <header
+        className="mobile-bar hidden min-w-0 grid-cols-[2.75rem_minmax(0,1fr)_2.75rem] items-center gap-2 border-b border-white/8 bg-zinc-900/95 px-2 backdrop-blur max-[700px]:grid"
+        inert={isMobile && drawerOpen ? true : undefined}
+      >
+        <Button
+          ref={drawerTriggerRef}
           type="button"
-          className="icon-button"
+          variant="ghost"
+          size="icon"
+          className="icon-button text-zinc-400 hover:bg-white/5 hover:text-zinc-100"
           aria-label="Open worktree drawer"
           onClick={() => setDrawerOpen(true)}
         >
           <Bars3Icon />
           <span className="touch-target" aria-hidden="true" />
-        </button>
-        <select
+        </Button>
+        <NativeSelect
+          className="h-9 border-0 bg-zinc-800/80 text-base ring-0"
           name="terminal-selector"
           aria-label="Terminal selector"
           value={selectedTerminalId ?? ""}
@@ -141,205 +399,282 @@ export default function App() {
           <option value="">Select terminal</option>
           {allTerminals.map((terminal) => (
             <option value={terminal.id} key={terminal.id}>
-              {terminal.name}
+              {runtimeTitles.get(terminal.id) || terminal.name}
             </option>
           ))}
-        </select>
-        <span className="mobile-brand">wtr</span>
+        </NativeSelect>
+        <span className="mobile-brand font-mono text-sm font-semibold tracking-tight text-cyan-300">
+          wtr
+        </span>
       </header>
       <div
-        className={drawerOpen ? "drawer-backdrop open" : "drawer-backdrop"}
+        className={cn(
+          "drawer-backdrop fixed inset-0 z-30 bg-black/60 opacity-0 backdrop-blur-sm transition-opacity pointer-events-none min-[701px]:hidden",
+          drawerOpen && "opacity-100 pointer-events-auto",
+        )}
         onClick={() => setDrawerOpen(false)}
         aria-hidden="true"
       />
-      <aside className={drawerOpen ? "sidebar open" : "sidebar"}>
-        <header className="sidebar-header">
-          <div>
-            <p className="eyebrow">Worktree driver</p>
-            <h1>wtr</h1>
-          </div>
-          <button
+      <aside
+        ref={drawerRef}
+        id="worktree-sidebar"
+        role={isMobile ? "dialog" : undefined}
+        aria-modal={isMobile && drawerOpen ? true : undefined}
+        aria-labelledby={isMobile ? "worktree-drawer-title" : undefined}
+        aria-hidden={isMobile && !drawerOpen ? true : undefined}
+        inert={isMobile && !drawerOpen ? true : undefined}
+        className={cn(
+          "sidebar relative z-40 flex min-h-0 flex-col border-r border-white/8 bg-zinc-900/80 backdrop-blur-xl max-[700px]:fixed max-[700px]:inset-y-0 max-[700px]:left-0 max-[700px]:w-[min(88vw,21rem)] max-[700px]:-translate-x-full max-[700px]:shadow-2xl max-[700px]:transition-transform",
+          drawerOpen && "open max-[700px]:translate-x-0",
+        )}
+      >
+        <h2 id="worktree-drawer-title" className="sr-only">
+          Projects and worktrees
+        </h2>
+        <div
+          className={cn(
+            "absolute inset-y-0 right-0 z-50 w-3 translate-x-1/2 touch-none cursor-col-resize outline-none before:absolute before:inset-y-0 before:left-1/2 before:w-px before:-translate-x-1/2 before:bg-white/8 after:absolute after:top-1/2 after:left-1/2 after:h-8 after:w-1 after:-translate-1/2 after:rounded-full after:bg-zinc-700 hover:before:w-0.5 hover:before:bg-cyan-400/60 hover:after:bg-cyan-400 focus-visible:before:w-0.5 focus-visible:before:bg-cyan-400 focus-visible:after:bg-cyan-400 max-[700px]:hidden",
+            resizingSidebar && "before:w-0.5 before:bg-cyan-400",
+          )}
+          role="separator"
+          aria-label="Resize sidebar"
+          aria-orientation="vertical"
+          aria-controls="worktree-sidebar"
+          aria-valuemin={MIN_SIDEBAR_WIDTH}
+          aria-valuemax={MAX_SIDEBAR_WIDTH}
+          aria-valuenow={sidebarWidth}
+          aria-valuetext={`${sidebarWidth} pixels`}
+          title="Drag to resize; double-click to reset"
+          tabIndex={0}
+          onPointerDown={startSidebarResize}
+          onPointerMove={resizeSidebar}
+          onPointerUp={stopSidebarResize}
+          onPointerCancel={stopSidebarResize}
+          onKeyDown={resizeSidebarWithKeyboard}
+          onDoubleClick={() => setAndSaveSidebarWidth(DEFAULT_SIDEBAR_WIDTH)}
+        />
+        <div className="hidden justify-end p-2 max-[700px]:flex">
+          <Button
             type="button"
-            className="icon-button mobile-close"
+            variant="ghost"
+            size="icon-sm"
+            className="icon-button mobile-close text-zinc-400 hover:bg-white/5 hover:text-zinc-100"
             aria-label="Close drawer"
             onClick={() => setDrawerOpen(false)}
           >
             <XMarkIcon />
             <span className="touch-target" aria-hidden="true" />
-          </button>
-        </header>
-        <div className="sidebar-primary">
-          <button
+          </Button>
+        </div>
+        <nav
+          className="tree min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-2 pt-3 pb-5 sm:px-1.5 sm:pb-4 [scrollbar-color:var(--color-zinc-700)_transparent]"
+          aria-label="Projects and worktrees"
+        >
+          {projectsQuery.isPending ? (
+            <p className="sidebar-note px-2 py-3 text-base text-zinc-500 sm:text-sm">
+              Loading repositories…
+            </p>
+          ) : null}
+          {!projectsQuery.isPending && !projects.length ? (
+            <p className="sidebar-note px-2 py-3 text-base text-pretty text-zinc-500 sm:text-sm">
+              Register a Git repository to begin.
+            </p>
+          ) : null}
+          <div className="grid gap-5 sm:gap-4">
+            {projects.map((project) => (
+              <Collapsible className="project-tree" defaultOpen key={project.id}>
+                <div className="project-row flex min-h-11 items-center gap-1 px-1 sm:min-h-7">
+                  <CollapsibleTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="group/project min-w-0 flex-1 justify-start px-1.5 text-base font-medium text-zinc-100 hover:bg-white/5 sm:text-[0.8125rem]"
+                      title={project.repositoryPath}
+                    >
+                      <ChevronRightIcon className="shrink-0 text-zinc-600 transition-transform group-data-[state=open]/project:rotate-90" />
+                      <span className="truncate">{project.name}</span>
+                    </Button>
+                  </CollapsibleTrigger>
+                </div>
+                <CollapsibleContent asChild>
+                  <ul role="list" className="ml-3 grid gap-0.5 border-l border-white/8 pl-1.5">
+                    {project.worktrees.map((worktree) => (
+                      <li key={worktree.id} className="group/worktree min-w-0">
+                        <div className="relative min-w-0">
+                          <Button
+                            variant="ghost"
+                            type="button"
+                            className={cn(
+                              "worktree-row h-auto min-h-11 w-full min-w-0 justify-start gap-1.5 rounded-md px-2 py-1.5 text-left text-base font-normal sm:min-h-7 sm:py-0.5 sm:text-[0.6875rem]",
+                              selectedWorktree?.id === worktree.id
+                                ? "selected bg-white/8 text-zinc-50"
+                                : "text-zinc-400 hover:bg-white/5 hover:text-zinc-100",
+                            )}
+                            onClick={() => selectWorktree(worktree)}
+                            title={`${worktree.path}${worktree.branch ? ` · ${worktree.branch}` : ` · detached at ${worktree.head.slice(0, 8)}`}`}
+                          >
+                            <span className="branch-line flex min-w-0 items-center gap-1.5 truncate">
+                              <span
+                                className={cn(
+                                  "size-1.5 shrink-0 rounded-full",
+                                  worktree.dirty?.dirty
+                                    ? "bg-amber-400 ring-2 ring-amber-400/10"
+                                    : "bg-zinc-600",
+                                )}
+                              />
+                              <span className="truncate">{worktree.name}</span>
+                            </span>
+                          </Button>
+                          {worktree.kind === "linked" && (
+                            <div className="worktree-actions absolute top-0 right-0 z-10 flex items-center gap-0.5 rounded-md bg-zinc-900 opacity-0 shadow-sm ring-1 ring-white/8 group-hover/worktree:opacity-100 group-focus-within/worktree:opacity-100 max-[700px]:relative max-[700px]:mt-0.5 max-[700px]:ml-7 max-[700px]:w-fit max-[700px]:opacity-100">
+                              <SidebarAction
+                                label={`Remove ${worktree.name}`}
+                                tooltip="Remove worktree"
+                                className="text-zinc-500 hover:bg-rose-400/8 hover:text-rose-300"
+                                onClick={(trigger) =>
+                                  openModal({ type: "remove", worktree }, trigger)
+                                }
+                              >
+                                <TrashIcon />
+                              </SidebarAction>
+                            </div>
+                          )}
+                        </div>
+                        <ul
+                          role="list"
+                          className="terminal-list ml-3 grid gap-0 border-l border-white/6 pl-1.5"
+                        >
+                          {worktree.terminals.map((terminal) => (
+                            <li key={terminal.id} className="min-w-0">
+                              <Button
+                                variant="ghost"
+                                type="button"
+                                className={cn(
+                                  "terminal-row grid h-auto min-h-11 w-full min-w-0 grid-cols-[1.25rem_minmax(0,1fr)_0.5rem] gap-1.5 rounded-md px-2 py-1.5 text-left text-base font-normal sm:min-h-7 sm:grid-cols-[1rem_minmax(0,1fr)_0.5rem] sm:py-0.5 sm:text-[0.6875rem]",
+                                  selectedTerminalId === terminal.id
+                                    ? "selected bg-cyan-400/8 text-cyan-50"
+                                    : "text-zinc-500 hover:bg-white/5 hover:text-zinc-100",
+                                )}
+                                onClick={() => selectTerminal(terminal)}
+                              >
+                                <CommandLineIcon className="size-5 shrink-0 text-zinc-600 sm:size-4" />
+                                <span className="truncate">
+                                  {runtimeTitles.get(terminal.id) || terminal.name}
+                                </span>
+                                <span
+                                  className={cn(
+                                    "status-dot size-1.5 shrink-0 rounded-full bg-zinc-600",
+                                    terminal.status === "running" && "bg-emerald-400",
+                                    terminal.status === "exited" && "bg-rose-400",
+                                  )}
+                                  title={terminal.status}
+                                />
+                              </Button>
+                            </li>
+                          ))}
+                        </ul>
+                      </li>
+                    ))}
+                    <li className="min-w-0">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        className="h-auto min-h-11 w-full justify-start gap-1.5 px-2 py-1.5 text-base font-normal text-zinc-500 hover:bg-white/5 hover:text-zinc-100 sm:min-h-7 sm:py-0.5 sm:text-[0.6875rem]"
+                        onClick={(event) =>
+                          openModal({ type: "worktree", project }, event.currentTarget)
+                        }
+                      >
+                        <PlusIcon /> New worktree
+                      </Button>
+                    </li>
+                  </ul>
+                </CollapsibleContent>
+              </Collapsible>
+            ))}
+          </div>
+        </nav>
+        <footer className="sidebar-tools flex items-center gap-1 border-t border-white/8 px-2 py-1.5">
+          <Button
             type="button"
-            className="button button-primary"
-            onClick={() => setModal({ type: "project" })}
+            variant="ghost"
+            size="sm"
+            className="flex-1 justify-start text-zinc-500 hover:bg-white/5 hover:text-zinc-200 sm:text-[0.8125rem]"
+            onClick={(event) => openModal({ type: "project" }, event.currentTarget)}
           >
             <PlusIcon /> Add project
-          </button>
-          <button
-            type="button"
-            className="icon-button"
-            aria-label="Diagnostics"
-            title="Diagnostics"
-            onClick={() => setModal({ type: "diagnostics" })}
-          >
-            <WrenchScrewdriverIcon />
-            <span className="touch-target" aria-hidden="true" />
-          </button>
-        </div>
-        <nav className="tree" aria-label="Projects and worktrees">
-          {loading ? <p className="sidebar-note">Loading repositories…</p> : null}
-          {!loading && !projects.length ? (
-            <p className="sidebar-note">Register a Git repository to begin.</p>
-          ) : null}
-          {projects.map((project) => (
-            <section className="project-tree" key={project.id}>
-              <div className="project-row">
-                <div className="project-name" title={project.repositoryPath}>
-                  <ChevronDownIcon /> <strong>{project.name}</strong>
-                </div>
-                <div className="row-actions">
-                  <button
-                    type="button"
-                    className="icon-button compact"
-                    aria-label={`Create worktree in ${project.name}`}
-                    title="New worktree"
-                    onClick={() => setModal({ type: "worktree", project })}
-                  >
-                    <PlusIcon />
-                    <span className="touch-target" aria-hidden="true" />
-                  </button>
-                  <button
-                    type="button"
-                    className="icon-button compact"
-                    aria-label={`Cleanup ${project.name}`}
-                    title="Clean merged worktrees"
-                    onClick={() => setModal({ type: "cleanup", project })}
-                  >
-                    <ArrowPathIcon />
-                    <span className="touch-target" aria-hidden="true" />
-                  </button>
-                </div>
-              </div>
-              <ul role="list">
-                {project.worktrees.map((worktree) => (
-                  <li key={worktree.id}>
-                    <button
-                      type="button"
-                      className={
-                        selectedWorktree?.id === worktree.id
-                          ? "worktree-row selected"
-                          : "worktree-row"
-                      }
-                      onClick={() => selectWorktree(worktree)}
-                    >
-                      <span className="branch-line">
-                        <span className={worktree.dirty?.dirty ? "dirty-mark" : "clean-mark"} />
-                        {worktree.branch}
-                      </span>
-                      {worktree.kind === "linked" && <PrBadge state={worktree.pr.state} />}
-                    </button>
-                    <div className="worktree-actions">
-                      <button
-                        type="button"
-                        onClick={() => setModal({ type: "terminal", worktree })}
-                      >
-                        <PlusIcon /> Terminal
-                      </button>
-                      {worktree.kind === "linked" && (
-                        <button
-                          type="button"
-                          onClick={() => setModal({ type: "finish", worktree })}
-                        >
-                          Finish
-                        </button>
-                      )}
-                      {worktree.kind === "linked" && (
-                        <button
-                          type="button"
-                          onClick={() => setModal({ type: "discard", worktree })}
-                        >
-                          <EllipsisHorizontalIcon /> Discard
-                        </button>
-                      )}
-                    </div>
-                    <ul role="list" className="terminal-list">
-                      {worktree.terminals.map((terminal) => (
-                        <li key={terminal.id}>
-                          <button
-                            type="button"
-                            className={
-                              selectedTerminalId === terminal.id
-                                ? "terminal-row selected"
-                                : "terminal-row"
-                            }
-                            onClick={() => selectTerminal(terminal)}
-                          >
-                            <CommandLineIcon />
-                            <span>{terminal.name}</span>
-                            <span
-                              className={`status-dot ${terminal.status}`}
-                              title={terminal.status}
-                            />
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  </li>
-                ))}
-              </ul>
-            </section>
-          ))}
-        </nav>
-        {selectedTerminal && (
-          <footer className="terminal-tools">
-            <button
-              type="button"
-              onClick={() => {
-                const name = window.prompt("Terminal name", selectedTerminal.name);
-                if (name?.trim())
-                  void apiClient
-                    .renameTerminal(selectedTerminal.id, name.trim())
-                    .then(load)
-                    .catch(showError(setError));
-              }}
-            >
-              Rename
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                if (
-                  window.confirm(
-                    `Delete terminal “${selectedTerminal.name}”? Its tmux session and process will be terminated.`,
-                  )
-                ) {
-                  void apiClient
-                    .deleteTerminal(selectedTerminal.id)
-                    .then(load)
-                    .catch(showError(setError));
-                }
-              }}
-            >
-              Delete terminal
-            </button>
-          </footer>
-        )}
+          </Button>
+        </footer>
       </aside>
-      <TerminalView terminal={selectedTerminal} onStatusChange={() => void load()} />
+      <div
+        className="contents"
+        inert={isMobile && drawerOpen ? true : undefined}
+        aria-hidden={isMobile && drawerOpen ? true : undefined}
+      >
+        <TerminalView
+          worktree={selectedWorktree}
+          terminal={selectedTerminal}
+          onSelectTerminal={selectTerminal}
+          onCreateTerminal={() => selectedWorktree && createTerminal.mutate(selectedWorktree)}
+          creatingTerminal={
+            createTerminal.isPending && createTerminal.variables?.id === selectedWorktree?.id
+          }
+          onCloseTerminal={(terminal) => {
+            if (
+              window.confirm(
+                `Close terminal “${runtimeTitles.get(terminal.id) || terminal.name}”? Its tmux session and process will be terminated.`,
+              )
+            ) {
+              closeTerminal.mutate(terminal);
+            }
+          }}
+          closingTerminalId={closeTerminal.isPending ? closeTerminal.variables?.id : null}
+          onStatusChange={() => void queryClient.invalidateQueries({ queryKey: projectsQueryKey })}
+        />
+      </div>
+      {showSyncDegraded && (
+        <div
+          className="fixed right-4 bottom-4 z-70 flex max-w-[min(30rem,calc(100vw-2rem))] items-center gap-3 rounded-lg bg-zinc-800 p-3 text-sm text-zinc-300 shadow-2xl ring-1 ring-white/10"
+          role="status"
+          inert={isMobile && drawerOpen ? true : undefined}
+          aria-hidden={isMobile && drawerOpen ? true : undefined}
+        >
+          <span>Updates paused; showing the last known project state.</span>
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            onClick={() => void projectsQuery.refetch()}
+          >
+            Retry
+          </Button>
+        </div>
+      )}
       {error && (
-        <div className="toast" role="alert">
+        <div
+          className="toast fixed right-4 bottom-4 z-80 flex max-w-[min(27.5rem,calc(100vw-2rem))] items-start gap-3 rounded-lg bg-rose-950 p-3 text-sm text-pretty text-rose-200 shadow-2xl ring-1 ring-rose-800/80"
+          role="alert"
+          inert={isMobile && drawerOpen ? true : undefined}
+          aria-hidden={isMobile && drawerOpen ? true : undefined}
+        >
           {error}
-          <button type="button" aria-label="Dismiss error" onClick={() => setError(null)}>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            type="button"
+            className="text-rose-300 hover:bg-rose-900 hover:text-rose-100"
+            aria-label="Dismiss error"
+            onClick={() => setError(null)}
+          >
             <XMarkIcon />
-          </button>
+          </Button>
         </div>
       )}
       {modal && (
         <ActionModal
           modal={modal}
           close={() => setModal(null)}
-          refresh={load}
+          restoreFocusTo={modalTriggerRef.current}
           setError={setError}
         />
       )}
@@ -347,42 +682,101 @@ export default function App() {
   );
 }
 
-function PrBadge({ state }: { state: WorktreeRecord["pr"]["state"] }) {
-  const label = state === "no_pr" ? "no PR" : state;
-  return <span className={`pr-badge ${state}`}>{label}</span>;
+function ModalHeading({ eyebrow, title }: { eyebrow: string; title: string }) {
+  return (
+    <div className="grid gap-1.5 pr-12">
+      <p className="eyebrow">{eyebrow}</p>
+      <h2
+        id="modal-title"
+        className="text-balance text-xl font-semibold tracking-tight text-zinc-50 sm:text-2xl"
+      >
+        {title}
+      </h2>
+    </div>
+  );
+}
+
+function FormField({ children }: { children: ReactNode }) {
+  return <div className="grid gap-2">{children}</div>;
+}
+
+function SidebarAction({
+  label,
+  tooltip = label,
+  className,
+  disabled,
+  onClick,
+  children,
+}: {
+  label: string;
+  tooltip?: string;
+  className?: string;
+  disabled?: boolean;
+  onClick: (trigger: HTMLButtonElement) => void;
+  children: ReactNode;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          className={className}
+          aria-label={label}
+          disabled={disabled}
+          onClick={(event) => onClick(event.currentTarget)}
+        >
+          {children}
+          <span className="touch-target" aria-hidden="true" />
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent side="top">{tooltip}</TooltipContent>
+    </Tooltip>
+  );
 }
 
 function Login({ onSuccess }: { onSuccess: () => void }) {
   const [token, setToken] = useState("");
-  const [error, setError] = useState<string | null>(null);
+  const login = useMutation({
+    mutationFn: apiClient.login,
+    onSuccess,
+  });
   return (
-    <main className="login-page">
+    <main className="login-page isolate grid min-h-dvh place-items-center bg-[radial-gradient(circle_at_center,var(--color-zinc-900)_0,var(--color-zinc-950)_58%)] p-6">
       <form
+        className="flex w-full max-w-xs flex-col gap-5 rounded-xl bg-zinc-900/70 p-6 shadow-2xl ring-1 ring-white/8 backdrop-blur"
         onSubmit={(event) => {
           event.preventDefault();
-          void apiClient.login(token).then(onSuccess).catch(showError(setError));
+          login.mutate(token);
         }}
       >
-        <p className="eyebrow">Private terminal access</p>
-        <h1>Unlock wtr</h1>
-        <p>
-          Enter the daemon’s static authentication token. It is stored only in an HttpOnly session
-          cookie.
-        </p>
-        <label htmlFor="token">Authentication token</label>
-        <input
-          id="token"
-          name="token"
-          type="password"
-          autoComplete="current-password"
-          value={token}
-          onChange={(event) => setToken(event.target.value)}
-          required
-        />
-        {error && <p className="form-error">{error}</p>}
-        <button type="submit" className="button button-primary">
-          Continue
-        </button>
+        <div className="grid gap-2">
+          <p className="eyebrow">Private terminal access</p>
+          <h1 className="text-balance text-2xl font-semibold tracking-tight text-zinc-50">
+            Unlock wtr
+          </h1>
+          <p className="text-base text-pretty text-zinc-400 sm:text-sm">
+            Enter the daemon’s static authentication token. It is stored only in an HttpOnly session
+            cookie.
+          </p>
+        </div>
+        <FormField>
+          <Label htmlFor="token">Authentication token</Label>
+          <Input
+            id="token"
+            name="token"
+            type="password"
+            autoComplete="current-password"
+            value={token}
+            onChange={(event) => setToken(event.target.value)}
+            required
+          />
+        </FormField>
+        {login.error && <p className="form-error">{login.error.message}</p>}
+        <Button type="submit" className="self-end" disabled={login.isPending}>
+          {login.isPending ? "Unlocking…" : "Continue"}
+        </Button>
       </form>
     </main>
   );
@@ -391,62 +785,121 @@ function Login({ onSuccess }: { onSuccess: () => void }) {
 function ActionModal({
   modal,
   close,
-  refresh,
+  restoreFocusTo,
   setError,
 }: {
   modal: Exclude<Modal, null>;
   close: () => void;
-  refresh: () => Promise<void>;
+  restoreFocusTo: HTMLElement | null;
   setError: (value: string | null) => void;
 }) {
-  const [busy, setBusy] = useState(false);
-  const [preview, setPreview] = useState<
-    (FinishPreflight & { commits?: { ahead: number; behind: number } | null }) | null
-  >(null);
-  const [cleanupPreviews, setCleanupPreviews] = useState<FinishPreflight[] | null>(null);
-  const [diagnostics, setDiagnostics] = useState<Record<string, unknown> | null>(null);
+  const queryClient = useQueryClient();
+  const worktreeId = modal.type === "remove" ? modal.worktree.id : null;
+  const previewQuery = useQuery({
+    queryKey: ["remove-preview", worktreeId],
+    queryFn: () => {
+      if (modal.type !== "remove") throw new Error("A removal preview is not available");
+      return apiClient.removePreview(modal.worktree.id);
+    },
+    enabled: modal.type === "remove",
+  });
+  const [refreshingStalePreview, setRefreshingStalePreview] = useState(false);
+  const actionMutation = useMutation({
+    mutationFn: (action: () => Promise<unknown>) => action(),
+    onSuccess: async (result) => {
+      close();
+      if (
+        result &&
+        typeof result === "object" &&
+        "setupError" in result &&
+        typeof result.setupError === "string"
+      ) {
+        setError(`Worktree created, but setup failed: ${result.setupError}`);
+      }
+      await queryClient.invalidateQueries({ queryKey: projectsQueryKey });
+    },
+    onError: (error) => {
+      if (
+        modal.type === "remove" &&
+        error instanceof ApiError &&
+        error.code === "REMOVE_PREVIEW_STALE"
+      ) {
+        setRefreshingStalePreview(true);
+        void previewQuery.refetch().finally(() => setRefreshingStalePreview(false));
+        return;
+      }
+      showError(setError)(error);
+    },
+  });
 
   useEffect(() => {
-    if (modal.type === "finish")
-      void apiClient.finishPreview(modal.worktree.id).then(setPreview).catch(showError(setError));
-    if (modal.type === "discard")
-      void apiClient.discardPreview(modal.worktree.id).then(setPreview).catch(showError(setError));
-    if (modal.type === "cleanup")
-      void apiClient
-        .cleanupPreview(modal.project.id)
-        .then(setCleanupPreviews)
-        .catch(showError(setError));
-    if (modal.type === "diagnostics")
-      void apiClient.diagnostics().then(setDiagnostics).catch(showError(setError));
-  }, [modal]);
+    if (previewQuery.error) showError(setError)(previewQuery.error);
+  }, [previewQuery.error, setError]);
 
-  const submit = (action: () => Promise<unknown>) => {
-    setBusy(true);
-    void action()
-      .then(async () => {
-        close();
-        await refresh();
-      })
-      .catch(showError(setError))
-      .finally(() => setBusy(false));
-  };
+  const submit = (action: () => Promise<unknown>) => actionMutation.mutate(action);
+  const busy = actionMutation.isPending;
+  const freshRemovePreview =
+    !previewQuery.isFetching && !previewQuery.isError && !refreshingStalePreview
+      ? (previewQuery.data ?? null)
+      : null;
+  const dialogRef = useRef<HTMLElement | null>(null);
+  const closeRef = useRef(close);
+  closeRef.current = close;
 
-  return (
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+    const appFrame = document.querySelector<HTMLElement>(".app-frame");
+    appFrame?.setAttribute("inert", "");
+    const frame = window.requestAnimationFrame(() => {
+      const first = focusableElements(dialog)[0];
+      if (first) first.focus();
+      else dialog.focus();
+    });
+    const keydown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeRef.current();
+        return;
+      }
+      trapTabKey(event, dialog);
+    };
+    document.addEventListener("keydown", keydown);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      document.removeEventListener("keydown", keydown);
+      appFrame?.removeAttribute("inert");
+      if (restoreFocusTo?.isConnected) restoreFocusTo.focus();
+      else if (previouslyFocused?.isConnected) previouslyFocused.focus();
+    };
+  }, []);
+
+  return createPortal(
     <div
-      className="modal-backdrop"
+      className="modal-backdrop fixed inset-0 z-60 grid place-items-center bg-black/70 p-4 backdrop-blur-sm max-[700px]:items-end max-[700px]:p-0"
       role="presentation"
       onMouseDown={(event) => event.target === event.currentTarget && close()}
     >
-      <section className="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
-        <button
+      <section
+        ref={dialogRef}
+        className="modal relative max-h-[calc(100dvh-2rem)] w-full max-w-lg overflow-y-auto rounded-xl bg-zinc-900 p-6 shadow-2xl ring-1 ring-white/10 max-[700px]:max-h-[90dvh] max-[700px]:max-w-none max-[700px]:rounded-b-none max-[700px]:p-5 max-[700px]:pb-[calc(1.25rem+env(safe-area-inset-bottom))]"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="modal-title"
+        tabIndex={-1}
+      >
+        <Button
           type="button"
-          className="icon-button modal-close"
+          variant="ghost"
+          size="icon"
+          className="icon-button modal-close absolute top-3 right-3 text-zinc-500 hover:bg-white/5 hover:text-zinc-100"
           aria-label="Close"
           onClick={close}
         >
           <XMarkIcon />
           <span className="touch-target" aria-hidden="true" />
-        </button>
+        </Button>
         {modal.type === "project" && (
           <ProjectForm
             busy={busy}
@@ -457,48 +910,24 @@ function ActionModal({
           <WorktreeForm
             project={modal.project}
             busy={busy}
-            onSubmit={(branch, fromCurrent) =>
-              submit(() => apiClient.createWorktree(modal.project.id, branch, fromCurrent))
+            onSubmit={(name, base, sourceWorktreeId) =>
+              submit(() => apiClient.createWorktree(modal.project.id, name, base, sourceWorktreeId))
             }
           />
         )}
-        {modal.type === "terminal" && (
-          <TerminalForm
+        {modal.type === "remove" && (
+          <RemoveConfirm
             worktree={modal.worktree}
+            preview={freshRemovePreview}
             busy={busy}
-            onSubmit={(name, argv) =>
-              submit(() => apiClient.createTerminal(modal.worktree.id, name, argv))
+            onConfirm={(preview) =>
+              submit(() => apiClient.removeWorktree(modal.worktree.id, preview))
             }
           />
         )}
-        {modal.type === "finish" && (
-          <CleanupConfirm
-            title="Finish worktree"
-            worktree={modal.worktree}
-            preview={preview}
-            busy={busy}
-            onConfirm={() => submit(() => apiClient.finish(modal.worktree.id))}
-          />
-        )}
-        {modal.type === "discard" && (
-          <DiscardConfirm
-            worktree={modal.worktree}
-            preview={preview}
-            busy={busy}
-            onConfirm={(confirm) => submit(() => apiClient.discard(modal.worktree.id, confirm))}
-          />
-        )}
-        {modal.type === "cleanup" && (
-          <BulkCleanup
-            project={modal.project}
-            previews={cleanupPreviews}
-            busy={busy}
-            onConfirm={() => submit(() => apiClient.cleanup(modal.project.id))}
-          />
-        )}
-        {modal.type === "diagnostics" && <Diagnostics values={diagnostics} />}
       </section>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -506,29 +935,31 @@ function ProjectForm({ busy, onSubmit }: { busy: boolean; onSubmit: (path: strin
   const [pathValue, setPathValue] = useState("");
   return (
     <form
+      className="flex flex-col gap-5"
       onSubmit={(event) => {
         event.preventDefault();
         onSubmit(pathValue);
       }}
     >
-      <p className="eyebrow">Repository</p>
-      <h2 id="modal-title">Register project</h2>
-      <label htmlFor="repository-path">Repository path</label>
-      <input
-        id="repository-path"
-        name="repository-path"
-        value={pathValue}
-        onChange={(event) => setPathValue(event.target.value)}
-        placeholder="/Users/you/Projects/example"
-        required
-        autoFocus
-      />
+      <ModalHeading eyebrow="Repository" title="Register project" />
+      <FormField>
+        <Label htmlFor="repository-path">Repository path</Label>
+        <Input
+          id="repository-path"
+          name="repository-path"
+          value={pathValue}
+          onChange={(event) => setPathValue(event.target.value)}
+          placeholder="/Users/you/Projects/example"
+          required
+          autoFocus
+        />
+      </FormField>
       <p className="form-note">
         The daemon resolves the main checkout and imports existing linked worktrees.
       </p>
-      <button type="submit" className="button button-primary" disabled={busy}>
+      <Button type="submit" className="self-end" disabled={busy}>
         {busy ? "Registering…" : "Register project"}
-      </button>
+      </Button>
     </form>
   );
 }
@@ -540,342 +971,161 @@ function WorktreeForm({
 }: {
   project: ProjectRecord;
   busy: boolean;
-  onSubmit: (branch: string, fromCurrent: boolean) => void;
+  onSubmit: (name: string, base: "default" | "current", sourceWorktreeId?: string) => void;
 }) {
-  const [branch, setBranch] = useState("");
-  const [fromCurrent, setFromCurrent] = useState(false);
+  const [name, setName] = useState("");
+  const [baseValue, setBaseValue] = useState("default");
+  const destinationQuery = useQuery({
+    queryKey: ["worktree-destination", project.id, name],
+    queryFn: () => apiClient.worktreeDestination(project.id, name),
+    enabled: Boolean(name.trim()),
+    retry: false,
+  });
+  const base = baseValue === "default" ? "default" : "current";
   return (
     <form
+      className="flex flex-col gap-5"
       onSubmit={(event) => {
         event.preventDefault();
-        onSubmit(branch, fromCurrent);
+        onSubmit(name, base, base === "current" ? baseValue : undefined);
       }}
     >
-      <p className="eyebrow">{project.name}</p>
-      <h2 id="modal-title">Create worktree</h2>
-      <label htmlFor="branch">Branch name</label>
-      <input
-        id="branch"
-        name="branch"
-        value={branch}
-        onChange={(event) => setBranch(event.target.value)}
-        placeholder="feature/cache"
-        required
-        autoFocus
-      />
-      <label className="check-row">
-        <input
-          type="checkbox"
-          name="from-current"
-          checked={fromCurrent}
-          onChange={(event) => setFromCurrent(event.target.checked)}
-        />{" "}
-        Start from current branch
-      </label>
+      <ModalHeading eyebrow={project.name} title="Create worktree" />
+      <FormField>
+        <Label htmlFor="worktree-name">Worktree name</Label>
+        <Input
+          id="worktree-name"
+          name="worktree-name"
+          value={name}
+          onChange={(event) => setName(event.target.value)}
+          placeholder="investigate-cache"
+          required
+          autoFocus
+          aria-invalid={destinationQuery.isError}
+        />
+      </FormField>
+      <FormField>
+        <Label htmlFor="worktree-base">Start from</Label>
+        <NativeSelect
+          id="worktree-base"
+          name="worktree-base"
+          value={baseValue}
+          onChange={(event) => setBaseValue(event.target.value)}
+        >
+          <option value="default">Default branch ({project.defaultBranch})</option>
+          {project.worktrees
+            .filter((worktree) => worktree.status === "active")
+            .map((worktree) => (
+              <option key={worktree.id} value={worktree.id}>
+                Current commit from {worktree.name}
+              </option>
+            ))}
+        </NativeSelect>
+      </FormField>
       <p className="form-note">
-        Creation runs through <code>git gtr</code>, including its copy rules and hooks.
+        {destinationQuery.data
+          ? `Destination: ${destinationQuery.data.path}`
+          : destinationQuery.error
+            ? destinationQuery.error.message
+            : "The daemon will create a detached Zed-style worktree and run create_worktree tasks."}
       </p>
-      <button type="submit" className="button button-primary" disabled={busy}>
-        {busy ? "Creating…" : "Create worktree"}
-      </button>
-    </form>
-  );
-}
-
-function TerminalForm({
-  worktree,
-  busy,
-  onSubmit,
-}: {
-  worktree: WorktreeRecord;
-  busy: boolean;
-  onSubmit: (name: string, argv?: string[]) => void;
-}) {
-  const [name, setName] = useState("Pi");
-  const [kind, setKind] = useState("pi");
-  const [argvText, setArgvText] = useState('["pnpm", "dev"]');
-  const [parseError, setParseError] = useState<string | null>(null);
-  return (
-    <form
-      onSubmit={(event) => {
-        event.preventDefault();
-        let argv: string[] | undefined;
-        if (kind === "pi") argv = ["pi"];
-        if (kind === "dev") argv = ["pnpm", "dev"];
-        if (kind === "custom") {
-          try {
-            const parsed = JSON.parse(argvText) as unknown;
-            if (
-              !Array.isArray(parsed) ||
-              !parsed.length ||
-              !parsed.every((value) => typeof value === "string")
-            )
-              throw new Error("Enter a non-empty JSON string array");
-            argv = parsed;
-          } catch (parseIssue) {
-            setParseError(parseIssue instanceof Error ? parseIssue.message : String(parseIssue));
-            return;
-          }
-        }
-        onSubmit(name, argv);
-      }}
-    >
-      <p className="eyebrow">{worktree.branch}</p>
-      <h2 id="modal-title">Create terminal</h2>
-      <label htmlFor="terminal-name">Display name</label>
-      <input
-        id="terminal-name"
-        name="terminal-name"
-        value={name}
-        onChange={(event) => setName(event.target.value)}
-        required
-        autoFocus
-      />
-      <label htmlFor="terminal-kind">Command</label>
-      <select
-        id="terminal-kind"
-        name="terminal-kind"
-        value={kind}
-        onChange={(event) => {
-          setKind(event.target.value);
-          if (event.target.value === "shell") setName("Shell");
-          if (event.target.value === "pi") setName("Pi");
-          if (event.target.value === "dev") setName("Dev server");
-        }}
+      <Button
+        type="submit"
+        className="self-end"
+        disabled={busy || destinationQuery.isFetching || destinationQuery.isError}
       >
-        <option value="pi">Pi — ["pi"]</option>
-        <option value="shell">Login shell</option>
-        <option value="dev">Dev server — ["pnpm", "dev"]</option>
-        <option value="custom">Custom argv</option>
-      </select>
-      {kind === "custom" && (
-        <>
-          <label htmlFor="argv">JSON argv array</label>
-          <textarea
-            id="argv"
-            name="argv"
-            rows={4}
-            value={argvText}
-            onChange={(event) => setArgvText(event.target.value)}
-          />
-          <p className="form-note">Arguments are spawned literally without shell interpolation.</p>
-        </>
-      )}
-      {parseError && <p className="form-error">{parseError}</p>}
-      <button type="submit" className="button button-primary" disabled={busy}>
-        {busy ? "Starting…" : "Create terminal"}
-      </button>
+        {busy ? "Creating and setting up…" : "Create worktree"}
+      </Button>
     </form>
   );
 }
 
-function CleanupConfirm({
-  title,
+function RemoveConfirm({
   worktree,
   preview,
   busy,
   onConfirm,
 }: {
-  title: string;
   worktree: WorktreeRecord;
-  preview: FinishPreflight | null;
+  preview: RemovePreview | null;
   busy: boolean;
-  onConfirm: () => void;
+  onConfirm: (preview: RemovePreview) => void;
 }) {
+  const destructive = Boolean(preview?.warnings.length);
+  const name = preview?.name ?? worktree.name;
+  const branch = preview ? preview.branch : worktree.branch;
+  const detached = preview?.detached ?? worktree.detached;
+  const head = preview?.head ?? worktree.head;
+  const worktreePath = preview?.path ?? worktree.path;
   return (
-    <div>
-      <p className="eyebrow">Safe cleanup</p>
-      <h2 id="modal-title">{title}</h2>
-      <CleanupFacts worktree={worktree} preview={preview} />
-      {preview && !preview.eligible && (
+    <div className="flex flex-col gap-5">
+      <ModalHeading
+        eyebrow={destructive ? "Destructive removal" : "Worktree"}
+        title="Remove worktree"
+      />
+      <dl className="facts">
+        <div>
+          <dt>Name</dt>
+          <dd>{name}</dd>
+        </div>
+        <div>
+          <dt>Git state</dt>
+          <dd>
+            {!detached && branch
+              ? `Branch ${branch} (preserved)`
+              : `Detached at ${head.slice(0, 8)}`}
+          </dd>
+        </div>
+        <div>
+          <dt>Path</dt>
+          <dd>{worktreePath}</dd>
+        </div>
+        <div>
+          <dt>Uncommitted</dt>
+          <dd>
+            {preview
+              ? `${preview.dirty.total} (${preview.dirty.staged} staged, ${preview.dirty.unstaged} unstaged, ${preview.dirty.untracked} untracked, ${preview.dirty.conflicts} conflicted)`
+              : "checking…"}
+          </dd>
+        </div>
+        <div>
+          <dt>Terminals stopped</dt>
+          <dd>
+            {preview
+              ? preview.terminals.map((terminal) => terminal.name).join(", ") || "none"
+              : "checking…"}
+          </dd>
+        </div>
+      </dl>
+      {preview && preview.reasons.length > 0 && (
         <div className="warning">
-          <strong>Finish refused</strong>
-          <ul>
+          <strong>Removal refused</strong>
+          <ul role="list">
             {preview.reasons.map((reason) => (
               <li key={reason}>{reason}</li>
             ))}
           </ul>
         </div>
       )}
-      <button
-        type="button"
-        className="button button-primary danger"
-        disabled={busy || !preview?.eligible}
-        onClick={onConfirm}
-      >
-        {busy ? "Accepting…" : "Finish and terminate terminals"}
-      </button>
-    </div>
-  );
-}
-
-function DiscardConfirm({
-  worktree,
-  preview,
-  busy,
-  onConfirm,
-}: {
-  worktree: WorktreeRecord;
-  preview: (FinishPreflight & { commits?: { ahead: number; behind: number } | null }) | null;
-  busy: boolean;
-  onConfirm: (confirm: string) => void;
-}) {
-  const [confirmation, setConfirmation] = useState("");
-  return (
-    <div>
-      <p className="eyebrow">Destructive cleanup</p>
-      <h2 id="modal-title">Discard worktree</h2>
-      <CleanupFacts worktree={worktree} preview={preview} />
-      <div className="warning danger">
-        <strong>All terminals and local changes will be lost.</strong>
-        <p>
-          This force-removes the worktree through <code>git gtr</code>.
-        </p>
-      </div>
-      <label htmlFor="branch-confirm">Type {worktree.branch} to confirm</label>
-      <input
-        id="branch-confirm"
-        name="branch-confirm"
-        value={confirmation}
-        onChange={(event) => setConfirmation(event.target.value)}
-        autoComplete="off"
-      />
-      <button
-        type="button"
-        className="button button-primary danger"
-        disabled={busy || confirmation !== worktree.branch}
-        onClick={() => onConfirm(confirmation)}
-      >
-        {busy ? "Accepting…" : "Discard permanently"}
-      </button>
-    </div>
-  );
-}
-
-function CleanupFacts({
-  worktree,
-  preview,
-}: {
-  worktree: WorktreeRecord;
-  preview: (FinishPreflight & { commits?: { ahead: number; behind: number } | null }) | null;
-}) {
-  return (
-    <dl className="facts">
-      <div>
-        <dt>Branch</dt>
-        <dd>{worktree.branch}</dd>
-      </div>
-      <div>
-        <dt>Path</dt>
-        <dd>{worktree.path}</dd>
-      </div>
-      <div>
-        <dt>Pull request</dt>
-        <dd>{preview?.pr.state ?? "checking…"}</dd>
-      </div>
-      <div>
-        <dt>Git merged</dt>
-        <dd>{preview ? (preview.gitMerged ? "yes" : "no") : "checking…"}</dd>
-      </div>
-      {preview?.commits && (
-        <div>
-          <dt>Commits</dt>
-          <dd>
-            {preview.commits.ahead} ahead, {preview.commits.behind} behind
-          </dd>
+      {preview && preview.warnings.length > 0 && (
+        <div className="warning danger">
+          <strong>Local work may be lost.</strong>
+          <ul role="list">
+            {preview.warnings.map((warning) => (
+              <li key={warning}>{warning}</li>
+            ))}
+          </ul>
         </div>
       )}
-      <div>
-        <dt>Uncommitted</dt>
-        <dd>
-          {preview
-            ? `${preview.dirty.total} (${preview.dirty.staged} staged, ${preview.dirty.unstaged} unstaged, ${preview.dirty.untracked} untracked)`
-            : "checking…"}
-        </dd>
-      </div>
-      <div>
-        <dt>Terminals killed</dt>
-        <dd>
-          {preview
-            ? preview.terminals.map((terminal) => terminal.name).join(", ") || "none"
-            : "checking…"}
-        </dd>
-      </div>
-    </dl>
-  );
-}
-
-function BulkCleanup({
-  project,
-  previews,
-  busy,
-  onConfirm,
-}: {
-  project: ProjectRecord;
-  previews: FinishPreflight[] | null;
-  busy: boolean;
-  onConfirm: () => void;
-}) {
-  const eligible = previews?.filter((preview) => preview.eligible) ?? [];
-  return (
-    <div>
-      <p className="eyebrow">{project.name}</p>
-      <h2 id="modal-title">Clean merged worktrees</h2>
-      <p className="form-note">
-        Bulk cleanup uses the same strict finish checks for each worktree. Dirty worktrees are never
-        forced.
-      </p>
-      <div className="preview-list">
-        {previews === null ? (
-          <p>Checking branches and pull requests…</p>
-        ) : (
-          previews.map((preview) => (
-            <div key={preview.worktreeId}>
-              <strong>{preview.branch}</strong>
-              <span>
-                {preview.path}
-                <br />
-                PR: {preview.pr.state} · dirty: {preview.dirty.total}
-                <br />
-                Terminals: {preview.terminals.map((terminal) => terminal.name).join(", ") || "none"}
-                <br />
-                {preview.eligible ? "Eligible for safe finish" : preview.reasons.join(", ")}
-              </span>
-            </div>
-          ))
-        )}
-      </div>
-      <button
+      <Button
         type="button"
-        className="button button-primary danger"
-        disabled={busy || !eligible.length}
-        onClick={onConfirm}
+        variant="destructive"
+        className="self-end"
+        disabled={busy || !preview?.eligible}
+        onClick={() => preview && onConfirm(preview)}
       >
-        {busy
-          ? "Accepting…"
-          : `Clean ${eligible.length} worktree${eligible.length === 1 ? "" : "s"}`}
-      </button>
-    </div>
-  );
-}
-
-function Diagnostics({ values }: { values: Record<string, unknown> | null }) {
-  return (
-    <div>
-      <p className="eyebrow">Local daemon</p>
-      <h2 id="modal-title">Diagnostics</h2>
-      {values ? (
-        <dl className="facts diagnostics">
-          {Object.entries(values).map(([key, value]) => (
-            <div key={key}>
-              <dt>{key}</dt>
-              <dd>{typeof value === "object" ? JSON.stringify(value) : String(value)}</dd>
-            </div>
-          ))}
-        </dl>
-      ) : (
-        <p>Checking dependencies…</p>
-      )}
+        {busy ? "Removing…" : destructive ? "Remove anyway" : "Remove worktree"}
+      </Button>
     </div>
   );
 }

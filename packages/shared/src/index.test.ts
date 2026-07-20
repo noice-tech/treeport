@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   createTerminalSchema,
   createWorktreeSchema,
-  discardSchema,
   registerProjectSchema,
+  removeWorktreeSchema,
   spawnSchema,
 } from "./index.js";
 
@@ -25,9 +25,9 @@ describe("API input validation", () => {
       "single'quote",
     ];
     expect(createTerminalSchema.parse({ name: "researcher", argv }).argv).toEqual(argv);
-    expect(spawnSchema.parse({ project: ".", branch: "topic", name: "Pi", argv }).argv).toEqual(
-      argv,
-    );
+    expect(
+      spawnSchema.parse({ project: ".", worktreeName: "topic", name: "Pi", argv }).argv,
+    ).toEqual(argv);
   });
 
   it("rejects empty argv rather than accepting a shell command string", () => {
@@ -35,11 +35,20 @@ describe("API input validation", () => {
     expect(createTerminalSchema.safeParse({ name: "bad", argv: "pnpm dev" }).success).toBe(false);
   });
 
-  it("validates worktree and destructive confirmation payloads", () => {
-    expect(createWorktreeSchema.parse({ branch: "feature/cache" })).toMatchObject({
-      branch: "feature/cache",
-      fromCurrent: false,
+  it("validates detached worktree creation and removal payloads", () => {
+    expect(createWorktreeSchema.parse({ name: "feature-cache" })).toMatchObject({
+      name: "feature-cache",
+      base: "default",
     });
-    expect(discardSchema.safeParse({ confirm: "" }).success).toBe(false);
+    expect(createWorktreeSchema.safeParse({ name: "topic", base: "current" }).success).toBe(false);
+    const confirmationToken = "a".repeat(64);
+    expect(removeWorktreeSchema.parse({ confirmationToken, confirmDestructive: true })).toEqual({
+      confirmationToken,
+      confirmDestructive: true,
+    });
+    expect(
+      removeWorktreeSchema.safeParse({ confirmationToken: "short", confirmDestructive: true })
+        .success,
+    ).toBe(false);
   });
 });

@@ -5,6 +5,6 @@ export * from "./domain.js";
 export * from "./events.js";
 export * from "./gh.js";
 export * from "./git.js";
-export * from "./gtr.js";
 export * from "./service.js";
 export * from "./tmux.js";
+export * from "./zed.js";

@@ -1,12 +1,11 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CommandRequest, CommandResult, CommandRunner } from "./command.js";
 import { WtrDatabase } from "./database.js";
 import { GhAdapter } from "./gh.js";
 import { GitAdapter } from "./git.js";
-import { GtrAdapter } from "./gtr.js";
 import { WtrService } from "./service.js";
 import { TmuxAdapter } from "./tmux.js";
 import type { AppConfig } from "./config.js";
@@ -20,20 +19,28 @@ afterEach(async () => {
   );
 });
 
+interface FakeWorktree {
+  path: string;
+  head: string;
+  branch: string | null;
+  locked?: boolean;
+}
+
 class SystemDouble implements CommandRunner {
   readonly calls: CommandRequest[] = [];
-  readonly worktrees: Array<{ path: string; branch: string }>;
+  readonly worktrees: FakeWorktree[];
   readonly sessions = new Map<string, { alive: boolean; exitCode: number | null }>();
   dirtyPaths = new Set<string>();
-  merged = false;
-  gtrRemoveFails = false;
+  dirtyStatuses = new Map<string, string>();
+  reachable = true;
+  removeFails = false;
   tmuxKillFails = false;
+  statusGate: Promise<void> | null = null;
+  worktreeAddGate: Promise<void> | null = null;
+  tmuxCreateGate: Promise<void> | null = null;
 
-  constructor(
-    readonly main: string,
-    readonly linkedBase: string,
-  ) {
-    this.worktrees = [{ path: main, branch: "trunk" }];
+  constructor(readonly main: string) {
+    this.worktrees = [{ path: main, head: "main-head", branch: "trunk" }];
   }
 
   async run(request: CommandRequest): Promise<CommandResult> {
@@ -41,54 +48,50 @@ class SystemDouble implements CommandRunner {
     const args = [...request.args];
     const ok = (stdout = ""): CommandResult => ({ stdout, stderr: "", exitCode: 0 });
     const fail = (stderr: string): CommandResult => ({ stdout: "", stderr, exitCode: 1 });
-    if (args[0] === "--version") return ok("git version 2.45.0\n");
-    if (args[0] === "-V") return ok("tmux 3.6a\n");
     if (args[0] === "rev-parse" && args[1] === "--show-toplevel") return ok(`${this.main}\n`);
+    if (args[0] === "rev-parse" && args[1] === "--verify") return ok("base-commit\n");
     if (args[0] === "worktree" && args[1] === "list") {
       return ok(
         this.worktrees
           .map(
-            (worktree, index) =>
-              `worktree ${worktree.path}\nHEAD ${index}\nbranch refs/heads/${worktree.branch}\n`,
+            (worktree) =>
+              `worktree ${worktree.path}\nHEAD ${worktree.head}\n${worktree.branch ? `branch refs/heads/${worktree.branch}` : "detached"}${worktree.locked ? "\nlocked editor" : ""}\n`,
           )
           .join("\n"),
       );
     }
+    if (args[0] === "worktree" && args[1] === "add") {
+      if (this.worktreeAddGate) await this.worktreeAddGate;
+      const worktreePath = args.at(-2)!;
+      const head = args.at(-1)!;
+      await fs.mkdir(worktreePath, { recursive: true });
+      this.worktrees.push({ path: worktreePath, head, branch: null });
+      return ok();
+    }
+    if (args[0] === "worktree" && args[1] === "remove") {
+      if (this.removeFails) return fail("git remove failed");
+      const worktreePath = args.at(-1)!;
+      const index = this.worktrees.findIndex((worktree) => worktree.path === worktreePath);
+      if (index === -1) return fail("missing");
+      this.worktrees.splice(index, 1);
+      await fs.rm(worktreePath, { recursive: true, force: true });
+      return ok();
+    }
     if (args[0] === "branch" && args[1] === "--show-current") return ok("trunk\n");
     if (args[0] === "ls-remote") return ok("ref: refs/heads/trunk\tHEAD\nabc\tHEAD\n");
     if (args[0] === "symbolic-ref") return ok("refs/remotes/origin/trunk\n");
-    if (args[0] === "check-ref-format") return args.at(-1)?.includes("..") ? fail("invalid") : ok();
-    if (args[0] === "status")
-      return ok(this.dirtyPaths.has(request.cwd ?? "") ? "?? dirty file.txt\0" : "");
     if (args[0] === "fetch") return ok();
-    if (args[0] === "merge-base") return this.merged ? ok() : fail("not ancestor");
-    if (args[0] === "rev-list") return ok("0\t1\n");
-    if (args[0] === "gtr" && args[1] === "version") return ok("git gtr version 2.7.3\n");
-    if (args[0] === "gtr" && args[1] === "help") {
-      return ok("--from-current --force --delete-branch --merged --dry-run\n");
+    if (args[0] === "status") {
+      if (this.statusGate) await this.statusGate;
+      return ok(
+        this.dirtyStatuses.get(request.cwd ?? "") ??
+          (this.dirtyPaths.has(request.cwd ?? "") ? "?? dirty file.txt\0" : ""),
+      );
     }
-    if (args[0] === "gtr" && args[1] === "new") {
-      const branch = args[2]!;
-      const linkedPath = path.join(this.linkedBase, branch.replaceAll("/", "-"));
-      await fs.mkdir(linkedPath, { recursive: true });
-      this.worktrees.push({ path: linkedPath, branch });
-      return ok();
-    }
-    if (args[0] === "gtr" && args[1] === "go") {
-      const worktree = this.worktrees.find((item) => item.branch === args[2]);
-      return worktree ? ok(`${worktree.path}\n`) : fail("missing");
-    }
-    if (args[0] === "gtr" && args[1] === "rm") {
-      if (this.gtrRemoveFails) return fail("gtr remove failed");
-      const branch = args[2]!;
-      const index = this.worktrees.findIndex((item) => item.branch === branch);
-      if (index === -1) return fail("missing");
-      const [removed] = this.worktrees.splice(index, 1);
-      if (removed) await fs.rm(removed.path, { recursive: true, force: true });
-      return ok();
-    }
-    if (args[0] === "auth" && args[1] === "status") return fail("not authenticated");
+    if (args[0] === "for-each-ref") return ok(this.reachable ? "refs/remotes/origin/trunk\n" : "");
+    if (args[0] === "auth") return fail("not authenticated");
     if (args.includes("new-session")) {
+      if (this.tmuxCreateGate) await this.tmuxCreateGate;
       const session = args[args.indexOf("-s") + 1]!;
       const socket = args[args.indexOf("-L") + 1]!;
       this.sessions.set(`${socket}/${session}`, { alive: true, exitCode: null });
@@ -128,11 +131,9 @@ async function fixture() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "wtr integration with spaces "));
   directories.push(root);
   const main = path.join(root, "main checkout");
-  const linked = path.join(root, "linked worktrees");
   const runtime = path.join(root, "runtime");
   await fs.mkdir(main, { recursive: true });
-  await fs.mkdir(linked, { recursive: true });
-  const runner = new SystemDouble(main, linked);
+  const runner = new SystemDouble(main);
   const database = new WtrDatabase(path.join(root, "wtr.db"));
   databases.push(database);
   const config: AppConfig = {
@@ -149,12 +150,11 @@ async function fixture() {
     apiUrl: "http://127.0.0.1:4780",
   };
   const git = new GitAdapter(runner);
-  const gtr = new GtrAdapter(runner);
   const tmux = new TmuxAdapter(runner, runtime, "tmux", "/launcher with spaces.js");
   const gh = new GhAdapter(runner);
-  const service = new WtrService({ config, database, runner, git, gtr, tmux, gh });
+  const service = new WtrService({ config, database, runner, git, tmux, gh });
   await service.initialize();
-  return { root, main, runner, service };
+  return { root, main, runner, service, database, config };
 }
 
 async function waitForOperation(service: WtrService, operationId: string) {
@@ -166,85 +166,370 @@ async function waitForOperation(service: WtrService, operationId: string) {
   throw new Error("operation timeout");
 }
 
+async function beginFromPreview(service: WtrService, worktreeId: string) {
+  const preview = await service.removePreview(worktreeId);
+  return service.beginRemove(worktreeId, {
+    confirmationToken: preview.confirmationToken,
+    confirmDestructive: preview.warnings.length > 0,
+  });
+}
+
 describe("WtrService with injected command adapters", () => {
-  it("registers, creates through gtr, runs independent terminals, and cleans safely", async () => {
+  it("shares overlapping project snapshot reconciliation", async () => {
     const { main, runner, service } = await fixture();
-    const project = await service.registerProject(main);
-    expect(project.mainWorktreePath).toBe(await fs.realpath(main));
-    expect(project.defaultBranch).toBe("trunk");
-    expect(project.worktrees[0]?.kind).toBe("main");
-
-    const created = await service.createWorktree(project.id, "feature/cache", false);
-    expect(created.worktree.path).toContain("linked worktrees");
-    expect(
-      runner.calls.some((call) => call.args.slice(0, 3).join(" ") === "gtr new feature/cache"),
-    ).toBe(true);
-
-    const argv = ["pi", "--prompt", 'spaces "quotes" ; $dollar 世界'];
-    const first = await service.createTerminal(created.worktree.id, "Pi", argv);
-    const second = await service.createTerminal(created.worktree.id, "Dev server", ["pnpm", "dev"]);
-    expect(first.argv).toEqual(argv);
-    expect(first.tmuxSessionName).not.toBe(second.tmuxSessionName);
-    expect(runner.sessions.size).toBe(2);
-
-    await service.deleteTerminal(first.id);
-    expect(runner.sessions.size).toBe(1);
-    expect(service.getTerminal(second.id).status).toBe("running");
-
-    runner.dirtyPaths.add(created.worktree.path);
-    await expect(service.beginFinish(created.worktree.id)).rejects.toMatchObject({
-      code: "FINISH_REFUSED",
+    await service.registerProject(main);
+    runner.calls.length = 0;
+    let release!: () => void;
+    runner.statusGate = new Promise<void>((resolve) => {
+      release = resolve;
     });
-    runner.dirtyPaths.clear();
-    await expect(service.beginFinish(created.worktree.id)).rejects.toMatchObject({
-      code: "FINISH_REFUSED",
-    });
-
-    runner.merged = true;
-    const operation = await service.beginFinish(created.worktree.id);
-    const completed = await waitForOperation(service, operation.id);
-    expect(completed.status).toBe("completed");
-    expect(runner.sessions.size).toBe(0);
-    expect(service.getProject(project.id).worktrees).toHaveLength(1);
-    expect(service.getProject(project.id).worktrees[0]?.kind).toBe("main");
-    await expect(
-      service.beginFinish(service.getProject(project.id).worktrees[0]!.id),
-    ).rejects.toMatchObject({ code: "FINISH_REFUSED" });
+    const first = service.listProjects();
+    const second = service.listProjects();
+    await vi.waitFor(() =>
+      expect(runner.calls.filter((call) => call.args[0] === "status")).toHaveLength(1),
+    );
+    release();
+    await Promise.all([first, second]);
+    runner.statusGate = null;
   });
 
-  it("preserves cleanup_failed across refresh and reconciles terminals after external failures", async () => {
+  it("creates a detached Zed-style worktree, starts terminals, and removes by path", async () => {
     const { main, runner, service } = await fixture();
     const project = await service.registerProject(main);
-    const linked = (await service.createWorktree(project.id, "feature/failure", false)).worktree;
+    const created = await service.createWorktree(project.id, "feature cache", "default");
+    expect(created.worktree.name).toBe("feature-cache");
+    expect(created.worktree.detached).toBe(true);
+    expect(created.worktree.branch).toBeNull();
+    const canonicalMain = await fs.realpath(main);
+    expect(created.worktree.path).toBe(
+      path.join(
+        path.dirname(canonicalMain),
+        "worktrees",
+        path.basename(canonicalMain),
+        "feature-cache",
+        path.basename(canonicalMain),
+      ),
+    );
+    expect(
+      runner.calls.some((call) => call.args.slice(0, 4).join(" ") === "worktree add --detach --"),
+    ).toBe(true);
+
+    const first = await service.createTerminal(created.worktree.id, "Pi", ["pi"]);
+    await service.createTerminal(created.worktree.id, "Dev", ["pnpm", "dev"]);
+    expect(runner.sessions.size).toBe(2);
+    await service.deleteTerminal(first.id);
+    expect(runner.sessions.size).toBe(1);
+
+    const operation = await beginFromPreview(service, created.worktree.id);
+    expect((await waitForOperation(service, operation.id)).status).toBe("completed");
+    expect(runner.sessions.size).toBe(0);
+    expect(service.getProject(project.id).worktrees).toHaveLength(1);
+    expect(
+      runner.calls.some((call) => call.args.includes("branch") && call.args.includes("-D")),
+    ).toBe(false);
+  });
+
+  it("keeps a created worktree visible and skips its initial terminal when a Zed hook fails", async () => {
+    const { main, runner, service } = await fixture();
+    await fs.mkdir(path.join(main, ".zed"), { recursive: true });
+    await fs.writeFile(
+      path.join(main, ".zed", "tasks.json"),
+      JSON.stringify([
+        {
+          label: "setup",
+          command: "fail-setup",
+          hooks: ["create_worktree"],
+        },
+      ]),
+    );
+    const project = await service.registerProject(main);
+    const result = await service.createWorktree(project.id, "hook-failure", "default", {
+      name: "Pi",
+      argv: ["pi"],
+    });
+    expect(result.setupError).toMatch(/setup.*Unexpected command/i);
+    expect(result.terminal).toBeNull();
+    expect(result.worktree.name).toBe("hook-failure");
+    expect(
+      service.getProject(project.id).worktrees.some((item) => item.id === result.worktree.id),
+    ).toBe(true);
+    expect(runner.sessions.size).toBe(0);
+  });
+
+  it("requires force for dirty work and preserves explicit failure state", async () => {
+    const { main, runner, service } = await fixture();
+    const project = await service.registerProject(main);
+    const linked = (await service.createWorktree(project.id, "failure", "default")).worktree;
     const terminal = await service.createTerminal(linked.id, "Pi", ["pi"]);
-    runner.merged = true;
-    runner.gtrRemoveFails = true;
-    const failed = await waitForOperation(service, (await service.beginFinish(linked.id)).id);
+    runner.dirtyPaths.add(linked.path);
+    const preview = await service.removePreview(linked.id);
+    expect(preview.forceRequired).toBe(true);
+    await expect(
+      service.beginRemove(linked.id, {
+        confirmationToken: preview.confirmationToken,
+        confirmDestructive: false,
+      }),
+    ).rejects.toMatchObject({ code: "REMOVE_CONFIRMATION_REQUIRED" });
+
+    runner.removeFails = true;
+    const failed = await waitForOperation(service, (await beginFromPreview(service, linked.id)).id);
     expect(failed.status).toBe("failed");
     expect(service.getWorktree(linked.id).status).toBe("cleanup_failed");
     expect(service.getTerminal(terminal.id).status).toBe("missing");
-    await service.refreshProject(project.id);
-    expect(service.getWorktree(linked.id).status).toBe("cleanup_failed");
-
-    const second = (await service.createWorktree(project.id, "feature/tmux-failure", false))
-      .worktree;
-    const liveTerminal = await service.createTerminal(second.id, "Dev", ["pnpm", "dev"]);
-    runner.gtrRemoveFails = false;
-    runner.tmuxKillFails = true;
-    const tmuxFailure = await waitForOperation(service, (await service.beginFinish(second.id)).id);
-    expect(tmuxFailure.status).toBe("failed");
-    expect(service.getTerminal(liveTerminal.id).status).toBe("running");
+    expect(service.getWorktree(linked.id).cleanupError).toMatch(/Terminals were stopped/);
   });
 
-  it("serializes duplicate worktree creation before asynchronous validation", async () => {
+  it("rejects removal when reachability, dirty categories, or terminal impact changed", async () => {
+    const { main, runner, service } = await fixture();
+    const project = await service.registerProject(main);
+    const linked = (await service.createWorktree(project.id, "stale", "default")).worktree;
+
+    const reachablePreview = await service.removePreview(linked.id);
+    runner.reachable = false;
+    await expect(
+      service.beginRemove(linked.id, {
+        confirmationToken: reachablePreview.confirmationToken,
+        confirmDestructive: false,
+      }),
+    ).rejects.toMatchObject({ code: "REMOVE_PREVIEW_STALE" });
+
+    runner.dirtyStatuses.set(linked.path, "?? untracked.txt\0");
+    const untrackedPreview = await service.removePreview(linked.id);
+    runner.dirtyStatuses.set(linked.path, " M modified.txt\0");
+    await expect(
+      service.beginRemove(linked.id, {
+        confirmationToken: untrackedPreview.confirmationToken,
+        confirmDestructive: true,
+      }),
+    ).rejects.toMatchObject({ code: "REMOVE_PREVIEW_STALE" });
+
+    runner.dirtyStatuses.set(linked.path, "?? draft.txt\0");
+    const pathPreview = await service.removePreview(linked.id);
+    runner.dirtyStatuses.set(linked.path, "?? credentials.txt\0");
+    await expect(
+      service.beginRemove(linked.id, {
+        confirmationToken: pathPreview.confirmationToken,
+        confirmDestructive: true,
+      }),
+    ).rejects.toMatchObject({ code: "REMOVE_PREVIEW_STALE" });
+
+    runner.dirtyStatuses.delete(linked.path);
+    runner.reachable = true;
+    const terminalPreview = await service.removePreview(linked.id);
+    await service.createTerminal(linked.id, "Late terminal", ["pi"]);
+    await expect(
+      service.beginRemove(linked.id, {
+        confirmationToken: terminalPreview.confirmationToken,
+        confirmDestructive: false,
+      }),
+    ).rejects.toMatchObject({ code: "REMOVE_PREVIEW_STALE" });
+    await expect(service.createTerminal(linked.id, "Locks released", ["pi"])).resolves.toBeTruthy();
+  });
+
+  it("preserves pre-existing wrappers and treats managed-wrapper cleanup as best effort", async () => {
     const { main, service } = await fixture();
     const project = await service.registerProject(main);
-    const results = await Promise.allSettled([
-      service.createWorktree(project.id, "feature/race-a", false),
-      service.createWorktree(project.id, "feature/race-b", false),
-    ]);
-    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
-    const rejected = results.find((result) => result.status === "rejected");
-    expect(rejected).toMatchObject({ reason: { code: "PROJECT_BUSY" } });
+    const canonicalMain = await fs.realpath(main);
+    const repositoryBase = path.join(
+      path.dirname(canonicalMain),
+      "worktrees",
+      path.basename(canonicalMain),
+    );
+
+    const existingWrapper = path.join(repositoryBase, "existing-wrapper");
+    await fs.mkdir(existingWrapper, { recursive: true });
+    const existing = (await service.createWorktree(project.id, "existing-wrapper", "default"))
+      .worktree;
+    expect(existing.managedWrapperPath).toBeNull();
+    expect(
+      (await waitForOperation(service, (await beginFromPreview(service, existing.id)).id)).status,
+    ).toBe("completed");
+    await expect(fs.stat(existingWrapper)).resolves.toBeTruthy();
+
+    const managed = (await service.createWorktree(project.id, "managed-wrapper", "default"))
+      .worktree;
+    expect(managed.managedWrapperPath).toBe(path.dirname(managed.path));
+    const marker = path.join(path.dirname(managed.path), "user-marker.txt");
+    await fs.writeFile(marker, "preserve");
+    expect(
+      (await waitForOperation(service, (await beginFromPreview(service, managed.id)).id)).status,
+    ).toBe("completed");
+    await expect(fs.readFile(marker, "utf8")).resolves.toBe("preserve");
+    expect(service.getProject(project.id).worktrees).toHaveLength(1);
+  });
+
+  it("refreshes live Git worktrees before checking inferred-name collisions", async () => {
+    const { root, main, runner, service } = await fixture();
+    const project = await service.registerProject(main);
+    runner.worktrees.push({
+      path: path.join(root, "external", "duplicate", path.basename(main)),
+      head: "external-head",
+      branch: null,
+    });
+    await expect(service.createWorktree(project.id, "duplicate", "default")).rejects.toMatchObject({
+      code: "WORKTREE_EXISTS",
+    });
+    expect(
+      runner.calls.filter((call) => call.args[0] === "worktree" && call.args[1] === "add"),
+    ).toHaveLength(0);
+  });
+
+  it("rejects a pre-existing symbolic-link wrapper", async () => {
+    if (process.platform === "win32") return;
+    const { root, main, service } = await fixture();
+    const project = await service.registerProject(main);
+    const canonicalMain = await fs.realpath(main);
+    const wrapper = path.join(
+      path.dirname(canonicalMain),
+      "worktrees",
+      path.basename(canonicalMain),
+      "linked-wrapper",
+    );
+    const outside = path.join(root, "outside");
+    await fs.mkdir(path.dirname(wrapper), { recursive: true });
+    await fs.mkdir(outside);
+    await fs.symlink(outside, wrapper, "dir");
+    await expect(
+      service.createWorktree(project.id, "linked-wrapper", "default"),
+    ).rejects.toMatchObject({
+      code: "INVALID_WORKTREE_PATH",
+    });
+  });
+
+  it("recovers interrupted removals on either side of the Git removal boundary", async () => {
+    const { main, runner, service, database, config } = await fixture();
+    const project = await service.registerProject(main);
+    const beforeGit = (await service.createWorktree(project.id, "before-git", "default")).worktree;
+    const afterGit = (await service.createWorktree(project.id, "after-git", "default")).worktree;
+    const afterGitNonEmpty = (
+      await service.createWorktree(project.id, "after-git-non-empty", "default")
+    ).worktree;
+    const timestamp = new Date().toISOString();
+    const insertInterrupted = (operationId: string, worktreeId: string) => {
+      database.connection
+        .prepare(
+          `INSERT INTO operations(id,kind,project_id,worktree_id,status,request_json,result_json,error,created_at,updated_at)
+           VALUES(?,'remove',?,?,'running','{}',NULL,NULL,?,?)`,
+        )
+        .run(operationId, project.id, worktreeId, timestamp, timestamp);
+      database.connection
+        .prepare("UPDATE worktrees SET status='cleaning',updated_at=? WHERE id=?")
+        .run(timestamp, worktreeId);
+    };
+    insertInterrupted("op_before_git", beforeGit.id);
+    insertInterrupted("op_after_git", afterGit.id);
+    insertInterrupted("op_after_git_non_empty", afterGitNonEmpty.id);
+    for (const worktree of [afterGit, afterGitNonEmpty]) {
+      runner.worktrees.splice(
+        runner.worktrees.findIndex((item) => item.path === worktree.path),
+        1,
+      );
+      await fs.rm(worktree.path, { recursive: true, force: true });
+    }
+    const preservedMarker = path.join(path.dirname(afterGitNonEmpty.path), "preserve.txt");
+    await fs.writeFile(preservedMarker, "preserve");
+
+    const restarted = new WtrService({
+      config,
+      database,
+      runner,
+      git: new GitAdapter(runner),
+      tmux: new TmuxAdapter(runner, config.runtimeDir, "tmux", "/launcher with spaces.js"),
+      gh: new GhAdapter(runner),
+    });
+    await restarted.initialize();
+
+    expect(restarted.getWorktree(beforeGit.id).status).toBe("cleanup_failed");
+    expect(restarted.getOperation("op_before_git")).toMatchObject({ status: "failed" });
+    expect(database.worktree(afterGit.id)?.status).toBe("removed");
+    expect(restarted.getOperation("op_after_git")).toMatchObject({
+      status: "completed",
+      result: expect.objectContaining({ recovered: true, removed: true }),
+      error: null,
+    });
+    await expect(fs.stat(path.dirname(afterGit.path))).rejects.toMatchObject({ code: "ENOENT" });
+    expect(database.worktree(afterGit.id)?.managedWrapperPath).toBeNull();
+    expect(database.worktree(afterGitNonEmpty.id)?.status).toBe("removed");
+    expect(restarted.getOperation("op_after_git_non_empty")).toMatchObject({
+      status: "completed",
+      result: expect.objectContaining({ recovered: true, removed: true }),
+      error: null,
+    });
+    await expect(fs.readFile(preservedMarker, "utf8")).resolves.toBe("preserve");
+    expect(database.worktree(afterGitNonEmpty.id)?.managedWrapperPath).toBe(
+      path.dirname(afterGitNonEmpty.path),
+    );
+  });
+
+  it("clears managed-wrapper provenance when an external worktree revives a removed path", async () => {
+    const { main, runner, service } = await fixture();
+    const project = await service.registerProject(main);
+    const managed = (await service.createWorktree(project.id, "reused-wrapper", "default"))
+      .worktree;
+    const wrapper = path.dirname(managed.path);
+    expect(managed.managedWrapperPath).toBe(wrapper);
+    await waitForOperation(service, (await beginFromPreview(service, managed.id)).id);
+
+    await fs.mkdir(managed.path, { recursive: true });
+    const marker = path.join(wrapper, "external-marker.txt");
+    await fs.writeFile(marker, "external");
+    runner.worktrees.push({ path: managed.path, head: "external-head", branch: null });
+    await service.refreshProject(project.id);
+    const revived = service.getWorktree(managed.id);
+    expect(revived.managedWrapperPath).toBeNull();
+
+    await waitForOperation(service, (await beginFromPreview(service, revived.id)).id);
+    await expect(fs.readFile(marker, "utf8")).resolves.toBe("external");
+  });
+
+  it("serializes project deletion against worktree and terminal creation", async () => {
+    const { main, runner, service } = await fixture();
+    const project = await service.registerProject(main);
+
+    let releaseAdd!: () => void;
+    runner.worktreeAddGate = new Promise<void>((resolve) => {
+      releaseAdd = resolve;
+    });
+    const creatingWorktree = service.createWorktree(project.id, "concurrent", "default");
+    await vi.waitFor(() =>
+      expect(
+        runner.calls.some((call) => call.args[0] === "worktree" && call.args[1] === "add"),
+      ).toBe(true),
+    );
+    await expect(service.deleteProject(project.id)).rejects.toMatchObject({ code: "PROJECT_BUSY" });
+    releaseAdd();
+    const linked = (await creatingWorktree).worktree;
+    runner.worktreeAddGate = null;
+    await expect(service.deleteProject(project.id)).rejects.toMatchObject({
+      code: "PROJECT_HAS_WORKTREES",
+    });
+    await waitForOperation(service, (await beginFromPreview(service, linked.id)).id);
+
+    const mainWorktree = service.getProject(project.id).worktrees[0]!;
+    let releaseTerminal!: () => void;
+    runner.tmuxCreateGate = new Promise<void>((resolve) => {
+      releaseTerminal = resolve;
+    });
+    const creatingTerminal = service.createTerminal(mainWorktree.id, "Concurrent", ["pi"]);
+    await vi.waitFor(() =>
+      expect(runner.calls.some((call) => call.args.includes("new-session"))).toBe(true),
+    );
+    await expect(service.deleteProject(project.id)).rejects.toMatchObject({ code: "PROJECT_BUSY" });
+    releaseTerminal();
+    await creatingTerminal;
+    runner.tmuxCreateGate = null;
+    await expect(service.deleteProject(project.id)).resolves.toBeUndefined();
+  });
+
+  it("refuses main and locked worktrees", async () => {
+    const { main, runner, service } = await fixture();
+    const project = await service.registerProject(main);
+    expect((await service.removePreview(project.worktrees[0]!.id)).eligible).toBe(false);
+    const linked = (await service.createWorktree(project.id, "locked", "default")).worktree;
+    runner.worktrees.find((item) => item.path === linked.path)!.locked = true;
+    await service.refreshProject(project.id);
+    const preview = await service.removePreview(linked.id);
+    expect(preview.eligible).toBe(false);
+    expect(preview.reasons.join(" ")).toMatch(/locked/i);
   });
 });
