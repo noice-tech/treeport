@@ -204,11 +204,10 @@ export class TmuxAdapter {
     })
   }
 
-  async setTerminalMetadata(
+  private async setTerminalMetadata(
     socketName: string,
     sessionName: string,
-    metadata: TmuxTerminalMetadata,
-    onlyIfUnset = false
+    metadata: TmuxTerminalMetadata
   ): Promise<void> {
     const values = [
       ['@tasktty-name', encodeMetadata(metadata.name)],
@@ -219,12 +218,11 @@ export class TmuxAdapter {
       ['@tasktty-terminal-id', metadata.terminalId]
     ] as const
     for (const [key, value] of values) {
-      const request = {
+      await runChecked(this.runner, {
         executable: this.executable,
         args: [
           ...this.base(socketName),
           'set-option',
-          ...(onlyIfUnset ? ['-o'] : []),
           '-t',
           sessionName,
           key,
@@ -232,16 +230,7 @@ export class TmuxAdapter {
         ],
         env: this.environment(),
         timeoutMs: 10_000
-      }
-      if (!onlyIfUnset) {
-        await runChecked(this.runner, request)
-        continue
-      }
-
-      const result = await this.runner.run(request)
-      if (result.exitCode !== 0 && !/already set/i.test(result.stderr)) {
-        throw new Error(result.stderr.trim() || `Failed to set ${key}`)
-      }
+      })
     }
   }
 

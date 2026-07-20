@@ -195,7 +195,7 @@ Default database locations:
 - macOS: `~/Library/Application Support/tasktty/tasktty.db`
 - Linux/XDG: `${XDG_DATA_HOME:-~/.local/share}/tasktty/tasktty.db`
 
-Schema tables are `projects`, `worktrees`, `terminals`, `operations`, and `schema_migrations`. The legacy `terminals` table is retained temporarily only to migrate metadata for sessions created by earlier versions; it is not updated and is not the runtime terminal inventory. Terminal output is never written to SQLite or application logs.
+Schema tables are `projects`, `worktrees`, `operations`, and `schema_migrations`. Terminal inventory and metadata live in tmux; terminal output is never written to SQLite or application logs.
 
 ## Security assumptions
 

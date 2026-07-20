@@ -5,7 +5,6 @@ import type {
   OperationRecord,
   PrInfo,
   ProjectRecord,
-  TerminalRecord,
   WorktreeRecord
 } from '@tasktty/shared'
 import { inferWorktreeName } from './zed.js'
@@ -45,19 +44,6 @@ const MIGRATIONS = [
     updated_at TEXT NOT NULL
   );
   CREATE INDEX worktrees_project_idx ON worktrees(project_id);
-  CREATE TABLE terminals (
-    id TEXT PRIMARY KEY,
-    worktree_id TEXT NOT NULL REFERENCES worktrees(id) ON DELETE CASCADE,
-    name TEXT NOT NULL,
-    tmux_session_name TEXT NOT NULL,
-    argv_json TEXT NOT NULL,
-    status TEXT NOT NULL CHECK(status IN ('running','exited','missing')),
-    exit_code INTEGER,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    UNIQUE(worktree_id, tmux_session_name)
-  );
-  CREATE INDEX terminals_worktree_idx ON terminals(worktree_id);
   CREATE TABLE operations (
     id TEXT PRIMARY KEY,
     kind TEXT NOT NULL CHECK(kind IN ('finish','discard','project_cleanup')),
@@ -109,21 +95,6 @@ const MIGRATIONS = [
     pr_refreshed_at,created_at,updated_at
   FROM worktrees_v1;
 
-  ALTER TABLE terminals RENAME TO terminals_v1;
-  CREATE TABLE terminals (
-    id TEXT PRIMARY KEY,
-    worktree_id TEXT NOT NULL REFERENCES worktrees(id) ON DELETE CASCADE,
-    name TEXT NOT NULL,
-    tmux_session_name TEXT NOT NULL,
-    argv_json TEXT NOT NULL,
-    status TEXT NOT NULL CHECK(status IN ('running','exited','missing')),
-    exit_code INTEGER,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    UNIQUE(worktree_id, tmux_session_name)
-  );
-  INSERT INTO terminals SELECT * FROM terminals_v1;
-
   ALTER TABLE operations RENAME TO operations_v1;
   CREATE TABLE operations (
     id TEXT PRIMARY KEY,
@@ -140,15 +111,16 @@ const MIGRATIONS = [
   INSERT INTO operations SELECT * FROM operations_v1;
 
   DROP TABLE operations_v1;
-  DROP TABLE terminals_v1;
   DROP TABLE worktrees_v1;
   CREATE INDEX worktrees_project_idx ON worktrees(project_id);
-  CREATE INDEX terminals_worktree_idx ON terminals(worktree_id);
   CREATE INDEX operations_worktree_idx ON operations(worktree_id);
   `,
   `
   ALTER TABLE projects ADD COLUMN color TEXT
     CHECK(color IS NULL OR color IN ('rose','orange','amber','emerald','cyan','blue','violet','pink'));
+  `,
+  `
+  DROP TABLE IF EXISTS terminals;
   `
 ]
 
@@ -183,17 +155,6 @@ interface WorktreeRow {
   pr_head_branch: string | null
   pr_merged_at: string | null
   pr_refreshed_at: string | null
-  created_at: string
-  updated_at: string
-}
-interface TerminalRow {
-  id: string
-  worktree_id: string
-  name: string
-  tmux_session_name: string
-  argv_json: string
-  status: TerminalRecord['status']
-  exit_code: number | null
   created_at: string
   updated_at: string
 }
@@ -318,14 +279,6 @@ export class TaskTTYDatabase {
     return this.mapWorktree(row, project?.main_worktree_path ?? row.path)
   }
 
-  /** Legacy terminal rows are retained only for startup migration compatibility. */
-  terminal(id: string): TerminalRecord | null {
-    const row = this.connection
-      .prepare('SELECT * FROM terminals WHERE id = ?')
-      .get(id) as TerminalRow | undefined
-    return row ? this.mapTerminal(row) : null
-  }
-
   operation(id: string): OperationRecord | null {
     const row = this.connection
       .prepare('SELECT * FROM operations WHERE id = ?')
@@ -384,20 +337,6 @@ export class TaskTTYDatabase {
       },
       dirty: null,
       terminals: [],
-      createdAt: row.created_at,
-      updatedAt: row.updated_at
-    }
-  }
-
-  private mapTerminal(row: TerminalRow): TerminalRecord {
-    return {
-      id: row.id,
-      worktreeId: row.worktree_id,
-      name: row.name,
-      tmuxSessionName: row.tmux_session_name,
-      argv: JSON.parse(row.argv_json) as string[],
-      status: row.status,
-      exitCode: row.exit_code,
       createdAt: row.created_at,
       updatedAt: row.updated_at
     }

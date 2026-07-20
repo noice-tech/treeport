@@ -185,10 +185,6 @@ class SystemDouble implements CommandRunner {
 
       const key = args[args.indexOf('-t') + 2]!
       const value = args[args.indexOf('-t') + 3]!
-      if (args.includes('-o') && state.options[key] !== undefined) {
-        return fail(`already set: ${key}`)
-      }
-
       state.options[key] = value
       return ok()
     }
@@ -417,7 +413,7 @@ describe('TaskTTYService with injected command adapters', () => {
     expect((await service.getTerminal(terminal.id)).status).toBe('running')
     expect(
       database.connection
-        .prepare('SELECT count(*) FROM terminals')
+        .prepare("SELECT count(*) FROM sqlite_master WHERE name='terminals'")
         .pluck()
         .get()
     ).toBe(0)
@@ -453,66 +449,6 @@ describe('TaskTTYService with injected command adapters', () => {
     })
     unsubscribe()
     expect(events).toEqual(['terminal.updated', 'terminal.removed'])
-  })
-
-  it('migrates legacy terminal metadata into live tmux sessions without overwriting it', async () => {
-    const { main, runner, service, database, config } = await fixture()
-    const project = await service.registerProject(main)
-    const worktree = project.worktrees[0]!
-    const sessionName = 'tasktty-term-legacy'
-    runner.sessions.set(`${worktree.tmuxSocketName}/${sessionName}`, {
-      alive: true,
-      exitCode: null,
-      created: Math.floor(Date.now() / 1_000),
-      options: {
-        '@tasktty-terminal-id': 'term_legacy',
-        '@tasktty-worktree-id': worktree.id
-      }
-    })
-    const insertLegacyTerminal = database.connection.prepare(
-      `INSERT INTO terminals(
-         id,worktree_id,name,tmux_session_name,argv_json,status,exit_code,created_at,updated_at
-       ) VALUES(?,?,?,?,?,'running',NULL,?,?)`
-    )
-    insertLegacyTerminal.run(
-      'term_legacy',
-      worktree.id,
-      'Legacy name',
-      sessionName,
-      JSON.stringify(['legacy', '--flag']),
-      '2026-01-01T00:00:00.000Z',
-      '2026-01-01T00:00:00.000Z'
-    )
-    insertLegacyTerminal.run(
-      'term_corrupt',
-      worktree.id,
-      'Corrupt legacy row',
-      'tasktty-term-corrupt',
-      '{not json',
-      '2026-01-01T00:00:00.000Z',
-      '2026-01-01T00:00:00.000Z'
-    )
-
-    const restarted = new TaskTTYService({
-      config,
-      database,
-      runner,
-      git: new GitAdapter(runner),
-      tmux: new TmuxAdapter(runner, config.runtimeDir, 'tmux', '/launcher.js'),
-      gh: new GhAdapter(runner)
-    })
-    await restarted.initialize()
-    expect(await restarted.getTerminal('term_legacy')).toMatchObject({
-      name: 'Legacy name',
-      argv: ['legacy', '--flag']
-    })
-
-    await restarted.renameTerminal('term_legacy', 'Newer tmux name')
-    await restarted.initialize()
-    expect((await restarted.getTerminal('term_legacy')).name).toBe(
-      'Newer tmux name'
-    )
-    expect(database.terminal('term_legacy')?.name).toBe('Legacy name')
   })
 
   it('creates a detached Zed-style worktree, starts terminals, and removes by path', async () => {

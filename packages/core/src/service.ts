@@ -131,59 +131,7 @@ export class TaskTTYService {
       }
     })
     transaction()
-    await this.migrateLegacyTerminals()
     await this.reconcile()
-  }
-
-  private async migrateLegacyTerminals(): Promise<void> {
-    const terminals = this.deps.database.connection
-      .prepare(
-        `SELECT terminals.id, terminals.worktree_id, terminals.name,
-                terminals.tmux_session_name, terminals.argv_json,
-                terminals.created_at, terminals.updated_at, worktrees.tmux_socket_name
-         FROM terminals
-         JOIN worktrees ON worktrees.id = terminals.worktree_id
-         WHERE worktrees.status != 'removed'`
-      )
-      .all() as Array<{
-      id: string
-      worktree_id: string
-      name: string
-      tmux_session_name: string
-      argv_json: string
-      created_at: string
-      updated_at: string
-      tmux_socket_name: string
-    }>
-    await Promise.all(
-      terminals.map((terminal) =>
-        Promise.resolve()
-          .then(() => JSON.parse(terminal.argv_json) as unknown)
-          .then((argv) => {
-            if (
-              !Array.isArray(argv) ||
-              !argv.every((value) => typeof value === 'string')
-            ) {
-              return
-            }
-
-            return this.deps.tmux.setTerminalMetadata(
-              terminal.tmux_socket_name,
-              terminal.tmux_session_name,
-              {
-                terminalId: terminal.id,
-                worktreeId: terminal.worktree_id,
-                name: terminal.name,
-                argv,
-                createdAt: terminal.created_at,
-                updatedAt: terminal.updated_at
-              },
-              true
-            )
-          })
-          .catch(() => undefined)
-      )
-    )
   }
 
   private invalidateProjectsSnapshot(): void {
