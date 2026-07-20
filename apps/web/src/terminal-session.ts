@@ -10,6 +10,64 @@ import {
 type ConnectionPhase = "connecting" | "ready" | "reconnecting" | "closed";
 export type ArrowDirection = "up" | "down" | "left" | "right";
 
+const TERMINAL_SCROLL_EXIT_SEQUENCE = "\u001b[9000~";
+
+type TerminalKeyboardEvent = Pick<
+  KeyboardEvent,
+  "altKey" | "ctrlKey" | "isComposing" | "key" | "metaKey" | "shiftKey" | "type"
+>;
+
+export function terminalKeyboardInput(
+  event: TerminalKeyboardEvent,
+  applicationCursorKeysMode = false,
+): string | null {
+  if (event.type !== "keydown" || event.isComposing || event.altKey || event.ctrlKey) return null;
+  if (event.key === "Enter" && event.shiftKey && !event.metaKey) return "\u001b[13;2u";
+  if (!event.metaKey || event.shiftKey) return null;
+  const prefix = applicationCursorKeysMode ? "\u001bO" : "\u001b[";
+  if (event.key === "ArrowLeft") return `${prefix}H`;
+  if (event.key === "ArrowRight") return `${prefix}F`;
+  return null;
+}
+
+function usesMacKeyboard(): boolean {
+  return typeof navigator !== "undefined" && /Mac|iPhone|iPad|iPod/.test(navigator.platform);
+}
+
+function forcePlainSelectionWhileMouseReporting(event: MouseEvent): void {
+  const wrapper = event.currentTarget;
+  if (
+    !(wrapper instanceof Element) ||
+    !wrapper.querySelector(".xterm.enable-mouse-events") ||
+    event.button !== 0 ||
+    event.altKey ||
+    event.ctrlKey ||
+    event.metaKey ||
+    event.shiftKey
+  )
+    return;
+  Object.defineProperty(event, usesMacKeyboard() ? "altKey" : "shiftKey", {
+    configurable: true,
+    value: true,
+  });
+}
+
+function trackTerminalScrolling(
+  wrapper: HTMLElement,
+  onScroll: () => void,
+  onResumeInput: () => void,
+): void {
+  wrapper.addEventListener(
+    "wheel",
+    () => {
+      wrapper.classList.add("terminal-scrolling");
+      onScroll();
+    },
+    { capture: true, passive: true },
+  );
+  wrapper.addEventListener("paste", onResumeInput, true);
+}
+
 export interface TerminalSessionSnapshot {
   phase: ConnectionPhase;
   degraded: boolean;
@@ -55,6 +113,7 @@ export function terminalOptions() {
     lineHeight: 1.15,
     scrollback: 10_000,
     allowProposedApi: false,
+    macOptionClickForcesSelection: true,
     linkHandler: {
       activate(event: MouseEvent, url: string) {
         if (!event.metaKey && !event.ctrlKey) return;
@@ -102,6 +161,8 @@ export class TerminalSession {
   private expectedSequence = 1;
   private lastParsedSequence = 0;
   private readonly parsedSequences = new Set<number>();
+  private scrollExitPending = false;
+  private resumeOnNextInput = false;
   private lastBellAt = 0;
   private listeningForReconnect = false;
   private readonly reconnectNow = () => {
@@ -171,6 +232,7 @@ export class TerminalSession {
   }
 
   sendText(data: string): void {
+    this.prepareScrollExit();
     this.terminal?.input(data, true);
     this.focus();
   }
@@ -208,19 +270,57 @@ export class TerminalSession {
     const fitAddon = new FitAddon();
     terminal.loadAddon(fitAddon);
     terminal.open(this.wrapper);
+    this.wrapper.addEventListener("mousedown", forcePlainSelectionWhileMouseReporting, true);
+    trackTerminalScrolling(
+      this.wrapper,
+      () => {
+        this.scrollExitPending = true;
+      },
+      () => this.prepareScrollExit(),
+    );
     this.terminal = terminal;
     this.fitAddon = fitAddon;
     this.opened = true;
+    terminal.attachCustomKeyEventHandler((event) => {
+      const input = terminalKeyboardInput(event, terminal.modes.applicationCursorKeysMode);
+      if (input === null) return true;
+      event.preventDefault();
+      event.stopPropagation();
+      this.prepareScrollExit();
+      terminal.input(input, true);
+      return false;
+    });
+    terminal.onKey(() => this.prepareScrollExit());
     terminal.onData((data) => {
       if (this.ready && this.snapshotValue.controller)
-        this.send({ version: TERMINAL_PROTOCOL_VERSION, type: "input", data });
+        this.send({
+          version: TERMINAL_PROTOCOL_VERSION,
+          type: "input",
+          data: this.withScrollExit(data),
+        });
     });
     terminal.onBinary((data) => {
       if (this.ready && this.snapshotValue.controller)
-        this.send({ version: TERMINAL_PROTOCOL_VERSION, type: "binary", data });
+        this.send({
+          version: TERMINAL_PROTOCOL_VERSION,
+          type: "binary",
+          data: this.withScrollExit(data),
+        });
     });
     terminal.onTitleChange((title) => this.update({ title: title.trim().slice(0, 256) }));
     terminal.onBell(() => this.handleBell());
+  }
+
+  private prepareScrollExit(): void {
+    if (this.scrollExitPending) this.resumeOnNextInput = true;
+  }
+
+  private withScrollExit(data: string): string {
+    if (!this.resumeOnNextInput) return data;
+    this.scrollExitPending = false;
+    this.resumeOnNextInput = false;
+    this.wrapper?.classList.remove("terminal-scrolling");
+    return `${TERMINAL_SCROLL_EXIT_SEQUENCE}${data}`;
   }
 
   private connect(): void {

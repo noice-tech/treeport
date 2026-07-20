@@ -1,5 +1,6 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
+  terminalKeyboardInput as mapTerminalKeyboardInput,
   terminalOptions as createTerminalOptions,
   TerminalSession,
   TerminalSessionManager as TerminalSessionManagerInstance,
@@ -13,6 +14,7 @@ type TerminalSessionManagerConstructor = new (
 ) => TerminalSessionManagerInstance;
 
 let TerminalSessionManager: TerminalSessionManagerConstructor;
+let terminalKeyboardInput: typeof mapTerminalKeyboardInput;
 let terminalOptions: typeof createTerminalOptions;
 
 class FakeSession {
@@ -54,7 +56,8 @@ class FakeSession {
 
 beforeAll(async () => {
   vi.stubGlobal("self", globalThis);
-  ({ TerminalSessionManager, terminalOptions } = await import("./terminal-session.js"));
+  ({ TerminalSessionManager, terminalKeyboardInput, terminalOptions } =
+    await import("./terminal-session.js"));
 });
 
 beforeEach(() => {
@@ -78,6 +81,10 @@ function fixture(maxSessions = 3, idleMs = 1_000) {
 }
 
 describe("terminal options", () => {
+  it("lets Option or a normalized plain macOS drag select while mouse reporting is active", () => {
+    expect(terminalOptions().macOptionClickForcesSelection).toBe(true);
+  });
+
   it("opens OSC 8 links in a new tab only on Cmd/Ctrl-click", () => {
     const open = vi.fn();
     vi.stubGlobal("window", { open });
@@ -89,6 +96,38 @@ describe("terminal options", () => {
 
     handler.activate({ metaKey: true, ctrlKey: false } as MouseEvent, url);
     expect(open).toHaveBeenCalledWith(url, "_blank", "noopener,noreferrer");
+  });
+});
+
+describe("terminal keyboard input", () => {
+  const key = (overrides: Partial<KeyboardEvent> = {}) =>
+    ({
+      type: "keydown",
+      key: "Enter",
+      isComposing: false,
+      altKey: false,
+      ctrlKey: false,
+      metaKey: false,
+      shiftKey: false,
+      ...overrides,
+    }) as KeyboardEvent;
+
+  it("encodes Shift+Enter as CSI-u without changing plain Enter", () => {
+    expect(terminalKeyboardInput(key({ shiftKey: true }))).toBe("\u001b[13;2u");
+    expect(terminalKeyboardInput(key())).toBeNull();
+    expect(terminalKeyboardInput(key({ shiftKey: true, ctrlKey: true }))).toBeNull();
+    expect(terminalKeyboardInput(key({ shiftKey: true, isComposing: true }))).toBeNull();
+    expect(terminalKeyboardInput(key({ type: "keyup", shiftKey: true }))).toBeNull();
+  });
+
+  it("maps Cmd+Left/Right to Home/End in the current cursor-key mode", () => {
+    expect(terminalKeyboardInput(key({ key: "ArrowLeft", metaKey: true }))).toBe("\u001b[H");
+    expect(terminalKeyboardInput(key({ key: "ArrowRight", metaKey: true }))).toBe("\u001b[F");
+    expect(terminalKeyboardInput(key({ key: "ArrowLeft", metaKey: true }), true)).toBe("\u001bOH");
+    expect(terminalKeyboardInput(key({ key: "ArrowRight", metaKey: true }), true)).toBe("\u001bOF");
+    expect(
+      terminalKeyboardInput(key({ key: "ArrowLeft", metaKey: true, shiftKey: true })),
+    ).toBeNull();
   });
 });
 

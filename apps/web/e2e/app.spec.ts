@@ -1,6 +1,8 @@
 import { expect, test, type Page } from "@playwright/test";
 import type { ProjectColor } from "@wtr/shared";
 
+const TERMINAL_SCROLL_EXIT_SEQUENCE = "\u001b[9000~";
+
 const project = {
   id: "proj_1",
   name: "example",
@@ -636,7 +638,33 @@ test.describe("desktop worktree terminal UI", () => {
     await expect(page.getByRole("tab", { name: /^dev · \/worktrees\/topic,/ })).toHaveCount(0);
   });
 
-  test("routes wheel scrolling through tmux mouse mode instead of arrow keys", async ({ page }) => {
+  test("preserves modified terminal keys used by macOS and Pi", async ({ page }) => {
+    await mockApp(page);
+    await page.getByRole("button", { name: "Pi running", exact: true }).click();
+    await page.getByRole("button", { name: "Take control" }).click();
+    await page.locator(".xterm-helper-textarea").focus();
+    await page.evaluate(() => {
+      (window as any).__wsSent = [];
+    });
+
+    await page.keyboard.press("Shift+Enter");
+    await page.keyboard.press("Meta+ArrowLeft");
+    await page.keyboard.press("Meta+ArrowRight");
+
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          (window as any).__wsSent
+            .filter((message: any) => message.type === "input")
+            .map((message: any) => message.data),
+        ),
+      )
+      .toEqual(["\u001b[13;2u", "\u001b[H", "\u001b[F"]);
+  });
+
+  test("keeps plain dragged text selected while tmux mouse reporting is active", async ({
+    page,
+  }) => {
     await mockApp(page);
     await page.getByRole("button", { name: "Pi running", exact: true }).click();
     await page.getByRole("button", { name: "Take control" }).click();
@@ -653,7 +681,50 @@ test.describe("desktop worktree terminal UI", () => {
       });
       (window as any).__wsSent = [];
     });
+    await expect(page.locator(".xterm.enable-mouse-events")).toBeVisible();
+
+    const screen = page.locator(".xterm-screen");
+    const bounds = await screen.boundingBox();
+    expect(bounds).not.toBeNull();
+    await page.mouse.move(bounds!.x + 8, bounds!.y + 8);
+    await page.mouse.down();
+    await page.mouse.move(bounds!.x + 160, bounds!.y + 8, { steps: 5 });
+    await page.mouse.up();
+
+    const copied = await page.locator(".xterm-helper-textarea").evaluate((textarea) => {
+      const clipboard = new DataTransfer();
+      textarea.dispatchEvent(
+        new ClipboardEvent("copy", { bubbles: true, cancelable: true, clipboardData: clipboard }),
+      );
+      return clipboard.getData("text/plain");
+    });
+    expect(copied.length).toBeGreaterThan(0);
+    const sent = await page.evaluate(() => (window as any).__wsSent);
+    expect(sent.some((message: any) => String(message.data).includes("\u001b[<"))).toBe(false);
+  });
+
+  test("forwards application wheel events while hiding the inactive cursor", async ({ page }) => {
+    await mockApp(page);
+    await page.getByRole("button", { name: "Pi running", exact: true }).click();
+    await page.getByRole("button", { name: "Take control" }).click();
+    await page.locator(".xterm-helper-textarea").focus();
+    await page.evaluate(() => {
+      const socket = (window as any).__lastWs;
+      socket.onmessage?.({
+        data: JSON.stringify({
+          version: 1,
+          type: "output",
+          streamId: socket.streamId,
+          sequence: 2,
+          data: "\u001b[?1000h\u001b[?1006h",
+        }),
+      });
+      (window as any).__wsSent = [];
+    });
     await page.locator(".xterm-screen").dispatchEvent("wheel", { deltaY: -120 });
+    const terminalHost = page.locator(".terminal-session-host");
+    await expect(terminalHost).toHaveClass(/terminal-scrolling/);
+    await expect(page.locator(".xterm-cursor")).toHaveCSS("visibility", "hidden");
     await expect
       .poll(() => page.evaluate(() => (window as any).__wsSent))
       .toEqual(
@@ -664,6 +735,20 @@ test.describe("desktop worktree terminal UI", () => {
     const sent = await page.evaluate(() => (window as any).__wsSent);
     expect(sent.some((message: any) => message.data === "\u001b[A")).toBe(false);
     expect(sent.some((message: any) => String(message.data).includes("\u001b[<"))).toBe(true);
+
+    await page.locator(".xterm-helper-textarea").focus();
+    await page.keyboard.press("q");
+    await expect(terminalHost).not.toHaveClass(/terminal-scrolling/);
+    await expect(page.locator(".xterm-cursor")).not.toHaveCSS("visibility", "hidden");
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            (window as any).__wsSent.filter((message: any) => message.type === "input").at(-1)
+              ?.data,
+        ),
+      )
+      .toBe(`${TERMINAL_SCROLL_EXIT_SEQUENCE}q`);
   });
 
   test("resizes the sidebar with an accessible panel handle", async ({ page }) => {

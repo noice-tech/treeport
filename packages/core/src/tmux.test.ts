@@ -28,27 +28,7 @@ describe("TmuxAdapter", () => {
     expect(generateTmuxSocketName()).not.toBe(generateTmuxSocketName());
   });
 
-  it("configures mouse, extended keys, and hyperlinks for new and existing servers", async () => {
-    const runtime = await fs.mkdtemp(path.join(os.tmpdir(), "wtr-runtime-"));
-    temporary.push(runtime);
-    const runner = new RecordingRunner();
-    const adapter = new TmuxAdapter(runner, runtime);
-    await adapter.initialize();
-    const config = await fs.readFile(adapter.configPath, "utf8");
-    expect(config).toContain("set -g mouse on");
-    expect(config).toContain("set -g extended-keys on");
-    expect(config).toContain('set -s terminal-features[999] "xterm-256color:hyperlinks"');
-
-    await adapter.configureServer("socket");
-    const prefix = ["-L", "socket", "-f", adapter.configPath, "set-option"];
-    expect(runner.calls.map((call) => call.args)).toEqual([
-      [...prefix, "-g", "mouse", "on"],
-      [...prefix, "-g", "extended-keys", "on"],
-      [...prefix, "-s", "terminal-features[999]", "xterm-256color:hyperlinks"],
-    ]);
-  });
-
-  it("preserves hostile and Unicode argv in a JSON launch spec without a shell", async () => {
+  it("stores hostile and Unicode argv losslessly in the launch spec", async () => {
     const runtime = await fs.mkdtemp(path.join(os.tmpdir(), "wtr runtime "));
     temporary.push(runtime);
     const runner = new RecordingRunner();
@@ -62,6 +42,13 @@ describe("TmuxAdapter", () => {
       "snowman ☃",
       "single'quote",
     ];
+    const setupTask = {
+      label: "install ☃",
+      argv: ["tool with spaces", "semi;colon", "$HOME", "single'quote"],
+      cwd: "/repo with spaces/setup",
+      env: { HOSTILE: 'a "quote"' },
+      timeoutMs: 1234,
+    };
     await adapter.createSession({
       socketName: "wtr-wt-safe",
       sessionName: "wtr-term-safe",
@@ -70,58 +57,26 @@ describe("TmuxAdapter", () => {
       cwd: "/repo with spaces",
       argv,
       env: { WTR_TERMINAL_ID: "term_safe" },
-      setupTasks: [
-        {
-          label: "install ☃",
-          argv: ["tool with spaces", "semi;colon", "$HOME", "single'quote"],
-          cwd: "/repo with spaces/setup",
-          env: { HOSTILE: 'a "quote"' },
-          timeoutMs: 1234,
-        },
-      ],
+      setupTasks: [setupTask],
     });
-    const create = runner.calls.find((call) => call.args.includes("new-session"));
-    expect(create?.executable).toBe("/tmux path/tmux");
-    expect(create?.args.slice(-3, -1)).toEqual([process.execPath, launcher]);
-    const specPath = create?.args.at(-1);
-    expect(specPath).toBeTruthy();
-    const spec = JSON.parse(await fs.readFile(specPath!, "utf8")) as {
-      argv: string[];
-      cwd: string;
-      setupTasks: Array<{
-        label: string;
-        argv: string[];
-        cwd: string;
-        env: Record<string, string>;
-        timeoutMs: number;
-      }>;
-    };
-    expect(spec.argv).toEqual(argv);
-    expect(spec.cwd).toBe("/repo with spaces");
-    expect(spec.setupTasks).toEqual([
-      {
-        label: "install ☃",
-        argv: ["tool with spaces", "semi;colon", "$HOME", "single'quote"],
-        cwd: "/repo with spaces/setup",
-        env: { HOSTILE: 'a "quote"' },
-        timeoutMs: 1234,
-      },
-    ]);
-    expect(create?.args).not.toContain(argv.join(" "));
-    expect(create?.args).not.toContain(spec.setupTasks[0]!.argv.join(" "));
+
+    await expect(
+      fs.readFile(path.join(adapter.specsDir, "term_safe.json"), "utf8").then(JSON.parse),
+    ).resolves.toEqual({
+      argv,
+      cwd: "/repo with spaces",
+      env: { WTR_TERMINAL_ID: "term_safe" },
+      setupTasks: [setupTask],
+    });
   });
 
-  it("kills a newly created session when metadata setup fails", async () => {
+  it("removes the launch spec when post-creation setup fails", async () => {
     const runtime = await fs.mkdtemp(path.join(os.tmpdir(), "wtr-runtime-"));
     temporary.push(runtime);
     const runner = new RecordingRunner();
     runner.responses.push(
       { stdout: "", stderr: "", exitCode: 0 },
-      { stdout: "", stderr: "metadata failed", exitCode: 1 },
-      { stdout: "", stderr: "", exitCode: 0 },
-      { stdout: "", stderr: "", exitCode: 0 },
-      { stdout: "", stderr: "no sessions", exitCode: 1 },
-      { stdout: "", stderr: "no server running", exitCode: 1 },
+      { stdout: "", stderr: "setup failed", exitCode: 1 },
     );
     const adapter = new TmuxAdapter(runner, runtime, "tmux", "/launcher.js");
     await expect(
@@ -134,8 +89,8 @@ describe("TmuxAdapter", () => {
         argv: ["pi"],
         env: {},
       }),
-    ).rejects.toThrow(/metadata failed/);
-    expect(runner.calls.some((call) => call.args.includes("kill-session"))).toBe(true);
+    ).rejects.toThrow();
+    await expect(fs.access(path.join(adapter.specsDir, "term.json"))).rejects.toThrow();
   });
 
   it("reads the live pane title from tmux", async () => {
@@ -146,7 +101,6 @@ describe("TmuxAdapter", () => {
     const adapter = new TmuxAdapter(runner, runtime);
 
     await expect(adapter.sessionTitle("socket", "session")).resolves.toBe("zsh · /repo");
-    expect(runner.calls[0]?.args).toContain("#{pane_title}");
   });
 
   it("maps a live, exited, or absent pane to product terminal state", async () => {

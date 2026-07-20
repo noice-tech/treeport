@@ -85,6 +85,10 @@ code {
   scrollbar-color: var(--color-zinc-700) transparent;
 }
 
+.terminal-session-host.terminal-scrolling .xterm-cursor {
+  visibility: hidden;
+}
+
 .terminal-bell {
   box-shadow: inset 0 0 0 2px color-mix(in oklab, var(--color-amber-300) 75%, transparent);
 }
