@@ -38,6 +38,7 @@ class SystemDouble implements CommandRunner {
   statusGate: Promise<void> | null = null;
   worktreeAddGate: Promise<void> | null = null;
   tmuxCreateGate: Promise<void> | null = null;
+  setupGate: Promise<void> | null = null;
 
   constructor(readonly main: string) {
     this.worktrees = [{ path: main, head: "main-head", branch: "trunk" }];
@@ -89,6 +90,10 @@ class SystemDouble implements CommandRunner {
       );
     }
     if (args[0] === "for-each-ref") return ok(this.reachable ? "refs/remotes/origin/trunk\n" : "");
+    if (request.executable === "hold-setup") {
+      if (this.setupGate) await this.setupGate;
+      return ok();
+    }
     if (args[0] === "auth") return fail("not authenticated");
     if (args.includes("new-session")) {
       if (this.tmuxCreateGate) await this.tmuxCreateGate;
@@ -193,6 +198,39 @@ describe("WtrService with injected command adapters", () => {
     runner.statusGate = null;
   });
 
+  it("does not reconcile a terminal as missing while its tmux session is starting", async () => {
+    const { main, runner, service } = await fixture();
+    const project = await service.registerProject(main);
+    const mainWorktree = project.worktrees[0]!;
+    let releaseTerminal!: () => void;
+    runner.tmuxCreateGate = new Promise<void>((resolve) => {
+      releaseTerminal = resolve;
+    });
+
+    const creatingTerminal = service.createTerminal(mainWorktree.id, "Starting");
+    await vi.waitFor(() =>
+      expect(runner.calls.some((call) => call.args.includes("new-session"))).toBe(true),
+    );
+    const listPanesBeforeSnapshot = runner.calls.filter((call) =>
+      call.args.includes("list-panes"),
+    ).length;
+
+    const snapshot = await service.listProjects();
+    const snapshotTerminal = snapshot[0]?.worktrees[0]?.terminals.find(
+      (terminal) => terminal.name === "Starting",
+    );
+    expect(snapshotTerminal?.status).toBe("running");
+    expect(runner.calls.filter((call) => call.args.includes("list-panes"))).toHaveLength(
+      listPanesBeforeSnapshot,
+    );
+
+    releaseTerminal();
+    const terminal = await creatingTerminal;
+    runner.tmuxCreateGate = null;
+    expect(terminal.status).toBe("running");
+    expect(service.getTerminal(terminal.id).status).toBe("running");
+  });
+
   it("creates a detached Zed-style worktree, starts terminals, and removes by path", async () => {
     const { main, runner, service } = await fixture();
     const project = await service.registerProject(main);
@@ -229,8 +267,8 @@ describe("WtrService with injected command adapters", () => {
     ).toBe(false);
   });
 
-  it("keeps a created worktree visible and skips its initial terminal when a Zed hook fails", async () => {
-    const { main, runner, service } = await fixture();
+  it("keeps a created worktree visible and delegates setup to its initial terminal", async () => {
+    const { main, runner, service, config } = await fixture();
     await fs.mkdir(path.join(main, ".zed"), { recursive: true });
     await fs.writeFile(
       path.join(main, ".zed", "tasks.json"),
@@ -243,17 +281,53 @@ describe("WtrService with injected command adapters", () => {
       ]),
     );
     const project = await service.registerProject(main);
+    const events: string[] = [];
+    const unsubscribe = service.events.subscribe((event) => events.push(event.type));
     const result = await service.createWorktree(project.id, "hook-failure", "default", {
       name: "Pi",
       argv: ["pi"],
     });
-    expect(result.setupError).toMatch(/setup.*Unexpected command/i);
-    expect(result.terminal).toBeNull();
+    unsubscribe();
+    expect(result.setupError).toBeNull();
+    expect(result.terminal).not.toBeNull();
     expect(result.worktree.name).toBe("hook-failure");
     expect(
       service.getProject(project.id).worktrees.some((item) => item.id === result.worktree.id),
     ).toBe(true);
-    expect(runner.sessions.size).toBe(0);
+    expect(runner.sessions.size).toBe(1);
+    expect(events.indexOf("worktree.created")).toBeLessThan(events.indexOf("terminal.created"));
+    const launchSpec = JSON.parse(
+      await fs.readFile(
+        path.join(config.runtimeDir, "launch-specs", `${result.terminal!.id}.json`),
+        "utf8",
+      ),
+    ) as { argv: string[]; setupTasks: Array<{ label: string; argv: string[] }> };
+    expect(launchSpec.argv).toEqual(["pi"]);
+    expect(launchSpec.setupTasks).toEqual([
+      expect.objectContaining({ label: "setup", argv: ["fail-setup"] }),
+    ]);
+    expect(runner.calls.some((call) => call.executable === "fail-setup")).toBe(false);
+  });
+
+  it("retains task preparation errors in an initial terminal launch spec", async () => {
+    const { main, service, config } = await fixture();
+    await fs.mkdir(path.join(main, ".zed"), { recursive: true });
+    await fs.writeFile(path.join(main, ".zed", "tasks.json"), "{ invalid json");
+    const project = await service.registerProject(main);
+    const result = await service.createWorktree(project.id, "invalid-setup", "default", {
+      name: "Terminal",
+    });
+    expect(result.worktree.name).toBe("invalid-setup");
+    expect(result.terminal).not.toBeNull();
+    expect(result.setupError).toMatch(/Invalid JSONC/);
+    const launchSpec = JSON.parse(
+      await fs.readFile(
+        path.join(config.runtimeDir, "launch-specs", `${result.terminal!.id}.json`),
+        "utf8",
+      ),
+    ) as { setupError: string; argv: string[] };
+    expect(launchSpec.setupError).toBe(result.setupError);
+    expect(launchSpec.argv).toEqual(["/bin/zsh", "-l"]);
   });
 
   it("requires force for dirty work and preserves explicit failure state", async () => {
@@ -480,6 +554,45 @@ describe("WtrService with injected command adapters", () => {
 
     await waitForOperation(service, (await beginFromPreview(service, revived.id)).id);
     await expect(fs.readFile(marker, "utf8")).resolves.toBe("external");
+  });
+
+  it("keeps removal blocked while headless setup is still running", async () => {
+    const { main, runner, service } = await fixture();
+    await fs.mkdir(path.join(main, ".zed"), { recursive: true });
+    await fs.writeFile(
+      path.join(main, ".zed", "tasks.json"),
+      JSON.stringify([
+        {
+          label: "held setup",
+          command: "hold-setup",
+          hooks: ["create_worktree"],
+        },
+      ]),
+    );
+    const project = await service.registerProject(main);
+    let releaseSetup!: () => void;
+    runner.setupGate = new Promise<void>((resolve) => {
+      releaseSetup = resolve;
+    });
+
+    const creating = service.createWorktree(project.id, "setup-locked", "default");
+    await vi.waitFor(() =>
+      expect(runner.calls.some((call) => call.executable === "hold-setup")).toBe(true),
+    );
+    const linked = service
+      .getProject(project.id)
+      .worktrees.find((worktree) => worktree.name === "setup-locked")!;
+    const preview = await service.removePreview(linked.id);
+    await expect(
+      service.beginRemove(linked.id, {
+        confirmationToken: preview.confirmationToken,
+        confirmDestructive: preview.warnings.length > 0,
+      }),
+    ).rejects.toMatchObject({ code: "REMOVE_IN_PROGRESS" });
+
+    releaseSetup();
+    await expect(creating).resolves.toMatchObject({ worktree: { id: linked.id } });
+    runner.setupGate = null;
   });
 
   it("serializes project deletion against worktree and terminal creation", async () => {

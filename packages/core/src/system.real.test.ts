@@ -77,7 +77,29 @@ describe.skipIf(!enabled)("real Git, Zed-style worktrees, and tmux lifecycle", (
       cwd: main,
     });
     await fs.writeFile(path.join(main, "README.md"), "fixture\n");
-    await runChecked(command, { executable: "git", args: ["add", "README.md"], cwd: main });
+    await fs.mkdir(path.join(main, ".zed"), { recursive: true });
+    await fs.writeFile(
+      path.join(main, ".zed", "tasks.json"),
+      JSON.stringify([
+        {
+          label: "first setup",
+          command: process.execPath,
+          args: ["-e", "console.log('SETUP_ONE')"],
+          hooks: ["create_worktree"],
+        },
+        {
+          label: "second setup",
+          command: process.execPath,
+          args: ["-e", "console.error('SETUP_TWO')"],
+          hooks: ["create_worktree"],
+        },
+      ]),
+    );
+    await runChecked(command, {
+      executable: "git",
+      args: ["add", "README.md", ".zed/tasks.json"],
+      cwd: main,
+    });
     await runChecked(command, { executable: "git", args: ["commit", "-m", "initial"], cwd: main });
     await runChecked(command, {
       executable: "git",
@@ -102,13 +124,12 @@ describe.skipIf(!enabled)("real Git, Zed-style worktrees, and tmux lifecycle", (
 
     let fixture = await makeService(databasePath, runtimeDir);
     const project = await fixture.service.registerProject(main);
-    const linked = (await fixture.service.createWorktree(project.id, "real-topic", "default"))
-      .worktree;
-    const first = await fixture.service.createTerminal(linked.id, "Pi-like", [
-      process.execPath,
-      "-e",
-      "console.log('PI_LIKE');setInterval(()=>{},1000)",
-    ]);
+    const created = await fixture.service.createWorktree(project.id, "real-topic", "default", {
+      name: "Pi-like",
+      argv: [process.execPath, "-e", "console.log('PI_LIKE');setInterval(()=>{},1000)"],
+    });
+    const linked = created.worktree;
+    const first = created.terminal!;
     const second = await fixture.service.createTerminal(linked.id, "Dev-like", [
       process.execPath,
       "-e",
@@ -147,8 +168,11 @@ describe.skipIf(!enabled)("real Git, Zed-style worktrees, and tmux lifecycle", (
       }
       client.kill();
       expect(output).toContain(expected);
+      return output;
     };
-    await attachAndDetach(first.tmuxSessionName, "PI_LIKE");
+    const setupOutput = await attachAndDetach(first.tmuxSessionName, "PI_LIKE");
+    expect(setupOutput.indexOf("SETUP_ONE")).toBeLessThan(setupOutput.indexOf("SETUP_TWO"));
+    expect(setupOutput.indexOf("SETUP_TWO")).toBeLessThan(setupOutput.indexOf("PI_LIKE"));
     await attachAndDetach(second.tmuxSessionName, "DEV_LIKE");
     expect((await fixture.service.refreshTerminalStatus(first.id)).status).toBe("running");
 
@@ -157,6 +181,86 @@ describe.skipIf(!enabled)("real Git, Zed-style worktrees, and tmux lifecycle", (
     await attachAndDetach(first.tmuxSessionName, "PI_LIKE");
     expect((await fixture.service.refreshTerminalStatus(first.id)).status).toBe("running");
     expect((await fixture.service.refreshTerminalStatus(second.id)).status).toBe("running");
+
+    await fs.writeFile(
+      path.join(main, ".zed", "tasks.json"),
+      JSON.stringify([
+        {
+          label: "failure setup one",
+          command: process.execPath,
+          args: ["-e", "console.log('FAIL_SETUP_ONE')"],
+          hooks: ["create_worktree"],
+        },
+        {
+          label: "failure setup two",
+          command: process.execPath,
+          args: ["-e", "console.error('FAIL_SETUP_TWO');process.exit(17)"],
+          hooks: ["create_worktree"],
+        },
+        {
+          label: "skipped setup",
+          command: process.execPath,
+          args: ["-e", "console.log('SHOULD_NOT_RUN')"],
+          hooks: ["create_worktree"],
+        },
+      ]),
+    );
+    const failedCreate = await fixture.service.createWorktree(
+      project.id,
+      "real-setup-failure",
+      "default",
+      {
+        name: "Failed setup",
+        argv: [process.execPath, "-e", "console.log('FINAL_SHOULD_NOT_RUN')"],
+      },
+    );
+    const failedWorktree = failedCreate.worktree;
+    const failedTerminal = failedCreate.terminal!;
+    let failedState = await fixture.tmux.sessionState(
+      failedWorktree.tmuxSocketName,
+      failedTerminal.tmuxSessionName,
+    );
+    for (let attempt = 0; attempt < 100 && failedState.status !== "exited"; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      failedState = await fixture.tmux.sessionState(
+        failedWorktree.tmuxSocketName,
+        failedTerminal.tmuxSessionName,
+      );
+    }
+    expect(failedState).toMatchObject({ status: "exited", exitCode: 17 });
+    const captured = await fixture.runner.run({
+      executable: "tmux",
+      args: [
+        "-L",
+        failedWorktree.tmuxSocketName,
+        "-f",
+        fixture.tmux.configPath,
+        "capture-pane",
+        "-p",
+        "-S",
+        "-",
+        "-t",
+        failedTerminal.tmuxSessionName,
+      ],
+    });
+    expect(captured.exitCode).toBe(0);
+    expect(captured.stdout).toContain("FAIL_SETUP_ONE");
+    expect(captured.stdout).toContain("FAIL_SETUP_TWO");
+    expect(captured.stdout).not.toContain("SHOULD_NOT_RUN");
+    expect(captured.stdout).not.toContain("FINAL_SHOULD_NOT_RUN");
+    expect(
+      fixture.service
+        .getProject(project.id)
+        .worktrees.some((worktree) => worktree.id === failedWorktree.id),
+    ).toBe(true);
+    expect((await fixture.service.refreshTerminalStatus(failedTerminal.id)).status).toBe("exited");
+    const failedPreview = await fixture.service.removePreview(failedWorktree.id);
+    const failedRemoval = await fixture.service.beginRemove(failedWorktree.id, {
+      confirmationToken: failedPreview.confirmationToken,
+      confirmDestructive: failedPreview.warnings.length > 0,
+    });
+    expect((await waitOperation(fixture.service, failedRemoval.id)).status).toBe("completed");
+
     await fixture.service.deleteTerminal(first.id);
     expect((await fixture.service.refreshTerminalStatus(second.id)).status).toBe("running");
 

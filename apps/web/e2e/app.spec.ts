@@ -154,7 +154,9 @@ async function mockApp(page: Page) {
               type: "output",
               streamId: this.streamId,
               sequence: 1,
-              data: "same persistent terminal session\\r\\n",
+              data: this.url.includes("term_new")
+                ? "[wtr setup] bootstrap\\r\\nSETUP_OUTPUT\\r\\n[wtr setup] bootstrap complete\\r\\nSHELL_READY\\r\\n"
+                : "same persistent terminal session\\r\\n",
             }),
           });
           if (!scope.__suppressInitialTitle) {
@@ -193,6 +195,9 @@ async function mockApp(page: Page) {
   let removePreviewDelayMs = 0;
   let removePreviewOverride: Record<string, unknown> = {};
   let staleRemoveToken: string | null = null;
+  let createGate: Promise<void> | null = null;
+  let releaseCreate: (() => void) | null = null;
+  let failCreate = false;
   await page.route("**/api/**", async (route) => {
     const url = new URL(route.request().url());
     const pathname = url.pathname;
@@ -232,11 +237,12 @@ async function mockApp(page: Page) {
       return;
     }
     if (pathname.endsWith("/worktree-destination")) {
+      const name = (url.searchParams.get("name") ?? "").trim().replace(/\s+/g, "-");
       await route.fulfill({
         json: {
           destination: {
-            name: url.searchParams.get("name"),
-            path: `/worktrees/${url.searchParams.get("name")}/repo`,
+            name,
+            path: `/worktrees/${name}/repo`,
           },
         },
       });
@@ -247,15 +253,44 @@ async function mockApp(page: Page) {
         name: string;
         base: "default" | "current";
         sourceWorktreeId?: string;
+        initialTerminal?: { name: string };
       };
+      if (createGate) await createGate;
+      createGate = null;
+      releaseCreate = null;
+      if (failCreate) {
+        failCreate = false;
+        await route.fulfill({
+          status: 500,
+          json: { error: { code: "CREATE_FAILED", message: "create failed" } },
+        });
+        return;
+      }
+      const canonicalName = body.name.trim().replace(/\s+/g, "-");
+      const terminal = {
+        id: "term_new",
+        worktreeId: "wt_new",
+        name: body.initialTerminal?.name ?? "Terminal",
+        tmuxSessionName: "wtr-term-new",
+        argv: ["/bin/zsh", "-l"],
+        status: "running" as const,
+        exitCode: null,
+        createdAt: "2026-01-01",
+        updatedAt: "2026-01-01",
+      };
+      const worktree = {
+        ...structuredClone(state.worktrees[1]!),
+        id: "wt_new",
+        name: canonicalName,
+        path: `/worktrees/${canonicalName}/repo`,
+        terminals: [terminal],
+      };
+      const existingIndex = state.worktrees.findIndex((item) => item.id === worktree.id);
+      if (existingIndex >= 0) state.worktrees[existingIndex] = worktree;
+      else state.worktrees.push(worktree);
       await route.fulfill({
         status: 201,
-        json: {
-          worktree: { ...state.worktrees[1], id: "wt_new", name: body.name },
-          terminal: null,
-          terminalError: null,
-          setupError: null,
-        },
+        json: { worktree, terminal, terminalError: null, setupError: null },
       });
       return;
     }
@@ -321,6 +356,15 @@ async function mockApp(page: Page) {
     },
     staleNextRemoveWithToken: (value: string) => {
       staleRemoveToken = value;
+    },
+    delayNextCreate: () => {
+      createGate = new Promise<void>((resolve) => {
+        releaseCreate = resolve;
+      });
+      return () => releaseCreate?.();
+    },
+    failNextCreate: () => {
+      failCreate = true;
     },
   };
 }
@@ -666,11 +710,14 @@ test.describe("desktop worktree terminal UI", () => {
     await expect(page.getByRole("alert")).toHaveCount(0);
   });
 
-  test("creates a named detached worktree from the default branch", async ({ page }) => {
-    await mockApp(page);
+  test("closes immediately, shows the typed name, and selects the created terminal", async ({
+    page,
+  }) => {
+    const mocked = await mockApp(page);
+    const releaseCreate = mocked.delayNextCreate();
     await page.getByRole("button", { name: "New worktree" }).click();
     await page.getByLabel("Worktree name").fill("new topic");
-    await expect(page.getByText("Destination: /worktrees/new topic/repo")).toBeVisible();
+    await expect(page.getByText("Destination: /worktrees/new-topic/repo")).toBeVisible();
     const requestPromise = page.waitForRequest(
       (request) =>
         request.method() === "POST" &&
@@ -678,7 +725,55 @@ test.describe("desktop worktree terminal UI", () => {
     );
     await page.getByRole("button", { name: "Create worktree" }).click();
     const request = await requestPromise;
-    expect(request.postDataJSON()).toEqual({ name: "new topic", base: "default" });
+    expect(request.postDataJSON()).toEqual({
+      name: "new topic",
+      base: "default",
+      initialTerminal: { name: "Terminal" },
+    });
+    await expect(page.getByRole("heading", { name: "Create worktree" })).toHaveCount(0);
+    const pending = page.getByRole("status", { name: "Creating worktree new topic" });
+    await expect(pending).toHaveText("new topic");
+    await expect(pending.locator(".animate-spin")).toBeVisible();
+    await expect(pending).toBeFocused();
+    const projectRequestsBeforeEvent = mocked.projectRequests();
+    await page.evaluate(() => (window as any).__eventSource.emit("worktree.created"));
+    await expect.poll(() => mocked.projectRequests()).toBeGreaterThan(projectRequestsBeforeEvent);
+    await expect(pending).toBeVisible();
+
+    releaseCreate();
+    await expect(pending).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "new-topic", exact: true })).toHaveCount(1);
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          ((window as any).__wsInstances || []).some((socket: { url: string }) =>
+            socket.url.includes("term_new"),
+          ),
+        ),
+      )
+      .toBe(true);
+    const terminalOutput = page.locator(".xterm-rows");
+    await expect(terminalOutput).toContainText("SETUP_OUTPUT");
+    await expect(terminalOutput).toContainText("SHELL_READY");
+    const text = await terminalOutput.textContent();
+    expect(text?.indexOf("SETUP_OUTPUT")).toBeLessThan(text?.indexOf("SHELL_READY") ?? -1);
+  });
+
+  test("keeps the create dialog closed and removes the typed row on failure", async ({ page }) => {
+    const mocked = await mockApp(page);
+    const releaseCreate = mocked.delayNextCreate();
+    mocked.failNextCreate();
+    await page.getByRole("button", { name: "New worktree" }).click();
+    await page.getByLabel("Worktree name").fill("will fail");
+    await expect(page.getByText("Destination: /worktrees/will-fail/repo")).toBeVisible();
+    await page.getByRole("button", { name: "Create worktree" }).click();
+    await expect(page.getByRole("heading", { name: "Create worktree" })).toHaveCount(0);
+    const pending = page.getByRole("status", { name: "Creating worktree will fail" });
+    await expect(pending).toHaveText("will fail");
+
+    releaseCreate();
+    await expect(pending).toHaveCount(0);
+    await expect(page.getByRole("alert")).toContainText("create failed");
   });
 });
 
@@ -698,6 +793,23 @@ test.describe("mobile terminal UI", () => {
     await expect(trigger).toBeFocused();
     await page.keyboard.press("Escape");
     await expect(drawer).not.toHaveClass(/open/);
+  });
+
+  test("closes the drawer and exposes a create failure alert", async ({ page }) => {
+    const mocked = await mockApp(page);
+    mocked.failNextCreate();
+    const drawer = page.locator(".sidebar");
+    await page.getByLabel("Open worktree drawer").click();
+    await page.getByRole("button", { name: "New worktree" }).click();
+    await page.getByLabel("Worktree name").fill("mobile failure");
+    await expect(page.getByText("Destination: /worktrees/mobile-failure/repo")).toBeVisible();
+    await page.getByRole("button", { name: "Create worktree" }).click();
+
+    await expect(drawer).not.toHaveClass(/open/);
+    const alert = page.getByRole("alert");
+    await expect(alert).toContainText("create failed");
+    await expect(alert).not.toHaveAttribute("inert", "");
+    await expect(alert).not.toHaveAttribute("aria-hidden", "true");
   });
 
   test("makes sync controls inert while the mobile drawer is open", async ({ page }) => {

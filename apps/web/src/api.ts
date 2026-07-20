@@ -71,6 +71,7 @@ export const apiClient = {
       body: JSON.stringify({
         name,
         base,
+        initialTerminal: { name: "Terminal" },
         ...(sourceWorktreeId ? { sourceWorktreeId } : {}),
       }),
     }),

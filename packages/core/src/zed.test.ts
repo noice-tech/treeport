@@ -7,6 +7,7 @@ import {
   inferWorktreeName,
   loadCreateWorktreeTasks,
   normalizeWorktreeName,
+  resolveCreateWorktreeSetupTasks,
   resolveZedWorktreePath,
   runCreateWorktreeTasks,
 } from "./zed.js";
@@ -102,6 +103,34 @@ describe("Zed worktree compatibility", () => {
       ]`,
     );
     expect(await loadCreateWorktreeTasks(main)).toHaveLength(2);
+    await expect(
+      resolveCreateWorktreeSetupTasks({
+        shell: "/bin/zsh",
+        mainWorktreePath: main,
+        worktreePath: worktree,
+      }),
+    ).resolves.toEqual([
+      {
+        label: "setup",
+        argv: ["bash", path.join(main, ".zed", "setup.sh")],
+        cwd: worktree,
+        env: {
+          ZED_WORKTREE_ROOT: worktree,
+          ZED_MAIN_GIT_WORKTREE: main,
+        },
+        timeoutMs: 30 * 60_000,
+      },
+      {
+        label: "build",
+        argv: ["/bin/zsh", "-lc", "bun install && bun run build"],
+        cwd: worktree,
+        env: {
+          ZED_WORKTREE_ROOT: worktree,
+          ZED_MAIN_GIT_WORKTREE: main,
+        },
+        timeoutMs: 30 * 60_000,
+      },
+    ]);
     const runner = new Runner();
     await expect(
       runCreateWorktreeTasks({
@@ -128,6 +157,51 @@ describe("Zed worktree compatibility", () => {
       args: ["-lc", "bun install && bun run build"],
       cwd: worktree,
     });
+  });
+
+  it("preserves hostile direct arguments and safely quotes explicit-shell arguments", async () => {
+    const { main } = await repository();
+    const worktree = path.join(path.dirname(main), "worktrees", "example", "hostile", "example");
+    await fs.mkdir(worktree, { recursive: true });
+    await fs.writeFile(
+      path.join(main, ".zed", "tasks.json"),
+      JSON.stringify([
+        {
+          label: "direct",
+          command: "node",
+          args: ["a b", "semi;colon", "$cash", "quote'argument", "雪"],
+          cwd: "nested dir",
+          env: { CUSTOM: "value $ZED_WORKTREE_ROOT 雪" },
+          hooks: ["create_worktree"],
+        },
+        {
+          label: "shell",
+          command: "echo value | cat",
+          args: ["a b", "semi;colon", "$cash", "quote'argument", "雪"],
+          hooks: ["create_worktree"],
+        },
+      ]),
+    );
+
+    const tasks = await resolveCreateWorktreeSetupTasks({
+      shell: "/bin/zsh",
+      mainWorktreePath: main,
+      worktreePath: worktree,
+    });
+    expect(tasks[0]).toMatchObject({
+      argv: ["node", "a b", "semi;colon", "$cash", "quote'argument", "雪"],
+      cwd: path.join(worktree, "nested dir"),
+      env: {
+        ZED_WORKTREE_ROOT: worktree,
+        ZED_MAIN_GIT_WORKTREE: main,
+        CUSTOM: `value ${worktree} 雪`,
+      },
+    });
+    expect(tasks[1]?.argv).toEqual([
+      "/bin/zsh",
+      "-lc",
+      `echo value | cat 'a b' 'semi;colon' '$cash' 'quote'"'"'argument' '雪'`,
+    ]);
   });
 
   it("stops after a bounded hook failure", async () => {

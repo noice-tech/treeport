@@ -78,7 +78,7 @@ wtr terminal create \
   -- pnpm dev
 ```
 
-The web UI provides the same project, worktree, terminal, and removal operations. New worktrees use Zed's detached layout and run project-local `.zed/tasks.json` `create_worktree` hooks. Command input is always an argv array. Shell syntax has no special meaning unless an explicit shell is launched, for example `-- /bin/zsh -lc 'one && two'`.
+The web UI provides the same project, worktree, terminal, and removal operations. Submitting a new worktree closes the dialog immediately and shows its typed name with a spinner while Git creates it. The web flow then selects one retained terminal that streams compatible setup output before starting its login shell. Command input is always an argv array. Shell syntax has no special meaning unless an explicit shell is launched, for example `-- /bin/zsh -lc 'one && two'`.
 
 ## CLI
 
@@ -147,7 +147,9 @@ Existing Git worktrees are imported in place. Their display name is inferred fro
 
 the middle directory is the worktree name. The main checkout is shown as `main worktree`. Legacy layouts continue to work and are never moved.
 
-New worktrees are detached at a resolved commit, matching Zed's separation between a worktree name and a Git branch. The default base is the fetched remote default branch; `--from-current` uses the selected/current worktree's `HEAD`. Project-local `.zed/settings.json` `git.worktree_directory` is honored, with `../worktrees` as the default. Project-local `.zed/tasks.json` tasks whose `hooks` include `create_worktree` run sequentially with `ZED_WORKTREE_ROOT` and `ZED_MAIN_GIT_WORKTREE`.
+New worktrees are detached at a resolved commit. The default base is the fetched remote default branch; `--from-current` uses the selected/current worktree's `HEAD`. Project-local `.zed/settings.json` `git.worktree_directory` is honored, with `../worktrees` as the default.
+
+wtr currently includes a compatibility adapter for project-local `.zed/tasks.json` tasks whose `hooks` contain `create_worktree`; Zed defines the input format, not wtr's lifecycle. Compatible tasks from the main checkout run sequentially in the automatically created tmux terminal with `ZED_WORKTREE_ROOT` and `ZED_MAIN_GIT_WORKTREE`. Their stdout and stderr stream into the pane. After every task succeeds, the same pane starts the requested command or login shell. On the first failure, later tasks and the final command are skipped and tmux retains the exited pane and its scrollback. A terminal-backed create response means that Git creation and tmux launch completed; setup may still be running.
 
 **Remove worktree** is the only removal action. Preview reports staged, unstaged, and untracked changes, detached-commit reachability, locked state, and every terminal that will stop. Dirty worktrees require destructive confirmation in the UI or `--force` in the CLI. The daemon then blocks mutation, kills the worktree's tmux server, and runs path-addressed `git worktree remove`; it never deletes an attached Git branch. Main and locked worktrees are refused. If Git removal fails after terminals stop, the worktree remains `cleanup_failed` with an explicit retryable error.
 
