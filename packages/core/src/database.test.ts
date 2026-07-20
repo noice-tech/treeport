@@ -71,6 +71,7 @@ describe("SQLite metadata", () => {
       name: "topic",
     });
     expect(database.terminal("term")?.name).toBe("Terminal");
+    expect(database.project("p")?.color).toBeNull();
     expect(database.operation("old")?.kind).toBe("finish");
     expect(() =>
       database.connection
@@ -79,5 +80,8 @@ describe("SQLite metadata", () => {
         )
         .run(),
     ).not.toThrow();
+    expect(() =>
+      database.connection.prepare("UPDATE projects SET color='indigo' WHERE id='p'").run(),
+    ).toThrow();
   });
 });

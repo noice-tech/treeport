@@ -1,6 +1,7 @@
 import type {
   ApiErrorBody,
   OperationRecord,
+  ProjectColor,
   ProjectRecord,
   RemovePreview,
   TerminalRecord,
@@ -47,6 +48,13 @@ export const apiClient = {
       await api<{ project: ProjectRecord }>("/api/projects", {
         method: "POST",
         body: JSON.stringify({ path }),
+      })
+    ).project,
+  updateProjectColor: async (projectId: string, color: ProjectColor | null) =>
+    (
+      await api<{ project: ProjectRecord }>(`/api/projects/${projectId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ color }),
       })
     ).project,
   worktreeDestination: async (projectId: string, name: string) =>

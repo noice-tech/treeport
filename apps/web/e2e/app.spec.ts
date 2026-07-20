@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import type { ProjectColor } from "@wtr/shared";
 
 const project = {
   id: "proj_1",
@@ -6,6 +7,7 @@ const project = {
   repositoryPath: "/repo",
   mainWorktreePath: "/repo",
   defaultBranch: "trunk",
+  color: null as ProjectColor | null,
   createdAt: "2026-01-01",
   updatedAt: "2026-01-01",
   worktrees: [
@@ -206,6 +208,12 @@ async function mockApp(page: Page) {
       await route.fulfill({ json: { projects: [state] } });
       return;
     }
+    if (pathname === "/api/projects/proj_1" && route.request().method() === "PATCH") {
+      const body = route.request().postDataJSON() as { color: typeof state.color };
+      state.color = body.color;
+      await route.fulfill({ json: { project: state } });
+      return;
+    }
     if (pathname.endsWith("/remove-preview")) {
       removePreviewRequests += 1;
       if (removePreviewDelayMs)
@@ -393,6 +401,27 @@ test.describe("desktop worktree terminal UI", () => {
       "zsh · /worktrees/topic",
     );
     await expect(page.locator(".pr-badge")).toHaveCount(0);
+  });
+
+  test("assigns a project color to its chevron and subtree rail", async ({ page }) => {
+    const mocked = await mockApp(page);
+    const projectTree = page.locator(".project-tree").filter({ hasText: "example" });
+    await projectTree.locator(".project-row").hover();
+    const trigger = page.getByRole("button", { name: "Change color for example" });
+    await trigger.click();
+    await page.mouse.move(700, 700);
+    await expect(trigger).toHaveCSS("opacity", "1");
+    await page.keyboard.press("Escape");
+    await expect(trigger).toBeFocused();
+
+    await trigger.click();
+    await page.getByRole("button", { name: "Violet", exact: true }).click();
+
+    await expect.poll(() => mocked.state.color).toBe("violet");
+    await expect(
+      page.getByRole("button", { name: "example", exact: true }).locator("svg"),
+    ).toHaveClass(/fill-violet-400/);
+    await expect(projectTree.locator("ul").first()).toHaveClass(/border-violet-400\/50/);
   });
 
   test("opens OSC 8 links in a new tab on Cmd-click", async ({ page }) => {
@@ -793,6 +822,27 @@ test.describe("mobile terminal UI", () => {
     await expect(trigger).toBeFocused();
     await page.keyboard.press("Escape");
     await expect(drawer).not.toHaveClass(/open/);
+  });
+
+  test("keeps the drawer open while choosing or dismissing a project color", async ({ page }) => {
+    const mocked = await mockApp(page);
+    const drawer = page.locator(".sidebar");
+    await page.getByLabel("Open worktree drawer").click();
+    const trigger = page.getByRole("button", { name: "Change color for example" });
+    await expect(trigger).toBeVisible();
+
+    await trigger.click();
+    await expect(page.getByText("Project color")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page.getByText("Project color")).toHaveCount(0);
+    await expect(drawer).toHaveClass(/open/);
+    await expect(trigger).toBeFocused();
+
+    await trigger.click();
+    await page.getByRole("button", { name: "Cyan", exact: true }).click();
+    await expect.poll(() => mocked.state.color).toBe("cyan");
+    await expect(drawer).toHaveClass(/open/);
+    await expect(trigger).toBeFocused();
   });
 
   test("closes the drawer and exposes a create failure alert", async ({ page }) => {

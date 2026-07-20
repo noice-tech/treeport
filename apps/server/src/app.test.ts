@@ -19,6 +19,7 @@ function fixture(authToken: string | null = null) {
   const service = {
     events: new ProductEventBus(),
     listProjects: vi.fn(async () => []),
+    updateProjectColor: vi.fn((id: string, color: string | null) => ({ id, color })),
     resolveProject: vi.fn(async () => ({ id: "p" })),
     createTerminal: vi.fn(),
     createWorktree: vi.fn(async () => ({
@@ -47,6 +48,25 @@ describe("HTTP API validation and authentication", () => {
       error: { code: "VALIDATION_ERROR", message: "Request validation failed" },
     });
     expect(service.createTerminal).not.toHaveBeenCalled();
+  });
+
+  it("updates projects with curated colors only", async () => {
+    const { app, service } = fixture();
+    const updated = await app.request("/api/projects/p", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ color: "violet" }),
+    });
+    expect(updated.status).toBe(200);
+    expect(service.updateProjectColor).toHaveBeenCalledWith("p", "violet");
+
+    const invalid = await app.request("/api/projects/p", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ color: "indigo" }),
+    });
+    expect(invalid.status).toBe(400);
+    expect(service.updateProjectColor).toHaveBeenCalledTimes(1);
   });
 
   it("rejects malformed JSON with a machine-readable code", async () => {

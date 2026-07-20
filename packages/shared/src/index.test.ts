@@ -5,6 +5,7 @@ import {
   registerProjectSchema,
   removeWorktreeSchema,
   spawnSchema,
+  updateProjectSchema,
 } from "./index.js";
 
 describe("API input validation", () => {
@@ -13,6 +14,13 @@ describe("API input validation", () => {
     expect(registerProjectSchema.parse({ path: "/repo with spaces" })).toEqual({
       path: "/repo with spaces",
     });
+  });
+
+  it("accepts only curated project colors and neutral", () => {
+    expect(updateProjectSchema.parse({ color: "cyan" })).toEqual({ color: "cyan" });
+    expect(updateProjectSchema.parse({ color: null })).toEqual({ color: null });
+    expect(updateProjectSchema.safeParse({ color: "indigo" }).success).toBe(false);
+    expect(updateProjectSchema.safeParse({ color: "#00ffff" }).success).toBe(false);
   });
 
   it("preserves command argv literally", () => {
