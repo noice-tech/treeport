@@ -1,240 +1,289 @@
-import fs from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
-import { execFile, spawn } from "node:child_process";
-import { promisify } from "node:util";
-import { SpawnCommandRunner, TmuxAdapter } from "@tasktty/core";
-import { afterAll, describe, expect, it } from "vitest";
+import fs from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
+import { execFile, spawn } from 'node:child_process'
+import { promisify } from 'node:util'
+import { SpawnCommandRunner, TmuxAdapter } from '@tasktty/core'
+import { afterAll, describe, expect, it } from 'vitest'
 import {
   controlAttachArgs,
   encodeControlInput,
   progressControlAttachArgs,
   resizeControlClient,
   TmuxControlParser,
-  type TmuxControlEvent,
-} from "./tmux-control.js";
+  type TmuxControlEvent
+} from './tmux-control.js'
 
-const enabled = process.env.TASKTTY_REAL_INTEGRATION === "1";
-const root = path.join(os.tmpdir(), `tasktty control characterization ${process.pid}`);
-const execute = promisify(execFile);
-afterAll(async () => fs.rm(root, { recursive: true, force: true }));
+const enabled = process.env.TASKTTY_REAL_INTEGRATION === '1'
+const root = path.join(
+  os.tmpdir(),
+  `tasktty control characterization ${process.pid}`
+)
+const execute = promisify(execFile)
+afterAll(async () => fs.rm(root, { recursive: true, force: true }))
 
-async function waitFor(check: () => boolean | Promise<boolean>, message: string): Promise<void> {
+async function waitFor(
+  check: () => boolean | Promise<boolean>,
+  message: string
+): Promise<void> {
   for (let attempt = 0; attempt < 200; attempt += 1) {
-    if (await check()) return;
-    await new Promise((resolve) => setTimeout(resolve, 25));
+    if (await check()) {
+      return
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 25))
   }
-  throw new Error(message);
+  throw new Error(message)
 }
 
 function supportsCsiU(version: string): boolean {
-  const match = version.match(/(\d+)\.(\d+)/);
-  if (!match) return false;
-  const [major, minor] = match.slice(1).map(Number);
-  return major! > 3 || (major === 3 && minor! >= 5);
+  const match = version.match(/(\d+)\.(\d+)/)
+  if (!match) {
+    return false
+  }
+
+  const [major, minor] = match.slice(1).map(Number)
+  return major! > 3 || (major === 3 && minor! >= 5)
 }
 
-describe.skipIf(!enabled)("real tmux control-mode characterization", () => {
-  it("applies production config, round-trips bytes, resizes, and leaves the session alive", async (context) => {
-    let tmuxVersion: string;
+describe.skipIf(!enabled)('real tmux control-mode characterization', () => {
+  it('applies production config, round-trips bytes, resizes, and leaves the session alive', async (context) => {
+    let tmuxVersion: string
     try {
-      tmuxVersion = (await execute("tmux", ["-V"])).stdout.trim();
+      tmuxVersion = (await execute('tmux', ['-V'])).stdout.trim()
     } catch {
-      context.skip();
-      return;
+      context.skip()
+      return
     }
 
-    await fs.mkdir(root, { recursive: true });
-    const socket = `tasktty-control-${process.pid}`;
-    const session = "control-characterization";
-    const tmux = new TmuxAdapter(new SpawnCommandRunner(), root);
-    await tmux.initialize();
-    const base = ["-L", socket, "-f", tmux.configPath];
+    await fs.mkdir(root, { recursive: true })
+    const socket = `tasktty-control-${process.pid}`
+    const session = 'control-characterization'
+    const tmux = new TmuxAdapter(new SpawnCommandRunner(), root)
+    await tmux.initialize()
+    const base = ['-L', socket, '-f', tmux.configPath]
     const program = [
-      "process.stdin.setRawMode?.(true);",
-      "process.stdin.resume();",
-      "let pending = Buffer.alloc(0);",
+      'process.stdin.setRawMode?.(true);',
+      'process.stdin.resume();',
+      'let pending = Buffer.alloc(0);',
       "process.stdin.on('data', data => {",
-      "  pending = Buffer.concat([pending, data]);",
-      "  if (pending.length < 13) return;",
+      '  pending = Buffer.concat([pending, data]);',
+      '  if (pending.length < 13) return;',
       "  process.stdout.write(Buffer.from('\\x1b]9;4;3\\x07\\x1b]8;;https://example.test\\x07LINK\\x1b]8;;\\x07|'));",
-      "  process.stdout.write(pending);",
+      '  process.stdout.write(pending);',
       "  process.stdout.write(Buffer.from('|END'));",
-      "  pending = Buffer.alloc(0);",
-      "});",
-      "setInterval(() => {}, 1000);",
-    ].join("");
+      '  pending = Buffer.alloc(0);',
+      '});',
+      'setInterval(() => {}, 1000);'
+    ].join('')
 
-    await execute("tmux", [
+    await execute('tmux', [
       ...base,
-      "new-session",
-      "-d",
-      "-s",
+      'new-session',
+      '-d',
+      '-s',
       session,
-      "-x",
-      "80",
-      "-y",
-      "24",
-      "--",
+      '-x',
+      '80',
+      '-y',
+      '24',
+      '--',
       process.execPath,
-      "-e",
-      program,
-    ]);
+      '-e',
+      program
+    ])
 
     try {
-      await execute("tmux", [...base, "set-option", "-g", "mouse", "off"]);
-      await tmux.configureServer(socket);
+      await execute('tmux', [...base, 'set-option', '-g', 'mouse', 'off'])
+      await tmux.configureServer(socket)
       await expect(
-        execute("tmux", [...base, "show-options", "-gv", "mouse"]).then((result) =>
-          result.stdout.trim(),
-        ),
-      ).resolves.toBe("on");
+        execute('tmux', [...base, 'show-options', '-gv', 'mouse']).then(
+          (result) => result.stdout.trim()
+        )
+      ).resolves.toBe('on')
       if (supportsCsiU(tmuxVersion)) {
         await expect(
-          execute("tmux", [...base, "show-options", "-sv", "extended-keys-format"]).then((result) =>
-            result.stdout.trim(),
-          ),
-        ).resolves.toBe("csi-u");
+          execute('tmux', [
+            ...base,
+            'show-options',
+            '-sv',
+            'extended-keys-format'
+          ]).then((result) => result.stdout.trim())
+        ).resolves.toBe('csi-u')
       }
 
       const paneId = (
-        await execute("tmux", [...base, "display-message", "-p", "-t", session, "#{pane_id}"])
-      ).stdout.trim();
-      const control = spawn("tmux", controlAttachArgs(socket, tmux.configPath, session), {
-        stdio: ["pipe", "pipe", "pipe"],
-        env: Object.fromEntries(
-          Object.entries(process.env).filter(
-            ([key, value]) => value !== undefined && key !== "TMUX" && key !== "TMUX_PANE",
-          ),
-        ) as NodeJS.ProcessEnv,
-      });
-      const parser = new TmuxControlParser();
-      const events: TmuxControlEvent[] = [];
-      let parserError: Error | null = null;
-      let stderr = "";
-      control.stdout.on("data", (chunk: Buffer) => {
-        try {
-          events.push(...parser.push(chunk));
-        } catch (error) {
-          parserError = error as Error;
+        await execute('tmux', [
+          ...base,
+          'display-message',
+          '-p',
+          '-t',
+          session,
+          '#{pane_id}'
+        ])
+      ).stdout.trim()
+      const control = spawn(
+        'tmux',
+        controlAttachArgs(socket, tmux.configPath, session),
+        {
+          stdio: ['pipe', 'pipe', 'pipe'],
+          env: Object.fromEntries(
+            Object.entries(process.env).filter(
+              ([key, value]) =>
+                value !== undefined && key !== 'TMUX' && key !== 'TMUX_PANE'
+            )
+          ) as NodeJS.ProcessEnv
         }
-      });
-      control.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString()));
+      )
+      const parser = new TmuxControlParser()
+      const events: TmuxControlEvent[] = []
+      let parserError: Error | null = null
+      let stderr = ''
+      control.stdout.on('data', (chunk: Buffer) => {
+        try {
+          events.push(...parser.push(chunk))
+        } catch (error) {
+          parserError = error as Error
+        }
+      })
+      control.stderr.on('data', (chunk: Buffer) => (stderr += chunk.toString()))
 
       await waitFor(
         () =>
-          events.some((event) => event.type === "notification" && event.name === "session-changed"),
-        "control client did not attach",
-      );
+          events.some(
+            (event) =>
+              event.type === 'notification' && event.name === 'session-changed'
+          ),
+        'control client did not attach'
+      )
 
       const sent = Buffer.concat([
         Buffer.from([0x1b, 0x00]),
-        Buffer.from("☃", "utf8"),
+        Buffer.from('☃', 'utf8'),
         Buffer.from([0x7f]),
-        Buffer.from("\x1b[65;5u"),
-      ]);
-      for (const command of encodeControlInput(paneId, sent, 3)) control.stdin.write(command);
+        Buffer.from('\x1b[65;5u')
+      ])
+      for (const command of encodeControlInput(paneId, sent, 3)) {
+        control.stdin.write(command)
+      }
 
       const outputBytes = () =>
         Buffer.concat(
           events
             .filter(
-              (event): event is Extract<TmuxControlEvent, { type: "output" }> =>
-                event.type === "output" && event.paneId === paneId,
+              (event): event is Extract<TmuxControlEvent, { type: 'output' }> =>
+                event.type === 'output' && event.paneId === paneId
             )
-            .map((event) => Buffer.from(event.data)),
-        );
+            .map((event) => Buffer.from(event.data))
+        )
       await waitFor(
-        () => outputBytes().includes(Buffer.from("|END")),
-        "pane output did not arrive",
-      );
-      const output = outputBytes();
-      expect(output.indexOf(Buffer.from("\x1b]9;4;3\x07"))).toBeGreaterThanOrEqual(0);
+        () => outputBytes().includes(Buffer.from('|END')),
+        'pane output did not arrive'
+      )
+      const output = outputBytes()
       expect(
-        output.indexOf(Buffer.from("\x1b]8;;https://example.test\x07LINK\x1b]8;;\x07|")),
-      ).toBeGreaterThanOrEqual(0);
-      const start = output.indexOf(Buffer.from("LINK\x1b]8;;\x07|"));
-      const echoed = output.subarray(start + Buffer.byteLength("LINK\x1b]8;;\x07|"));
-      expect(echoed.subarray(0, sent.length)).toEqual(sent);
+        output.indexOf(Buffer.from('\x1b]9;4;3\x07'))
+      ).toBeGreaterThanOrEqual(0)
+      expect(
+        output.indexOf(
+          Buffer.from('\x1b]8;;https://example.test\x07LINK\x1b]8;;\x07|')
+        )
+      ).toBeGreaterThanOrEqual(0)
+      const start = output.indexOf(Buffer.from('LINK\x1b]8;;\x07|'))
+      const echoed = output.subarray(
+        start + Buffer.byteLength('LINK\x1b]8;;\x07|')
+      )
+      expect(echoed.subarray(0, sent.length)).toEqual(sent)
 
       const progressControl = spawn(
-        "tmux",
+        'tmux',
         progressControlAttachArgs(socket, tmux.configPath, session),
         {
-          stdio: ["pipe", "pipe", "pipe"],
+          stdio: ['pipe', 'pipe', 'pipe'],
           env: Object.fromEntries(
             Object.entries(process.env).filter(
-              ([key, value]) => value !== undefined && key !== "TMUX" && key !== "TMUX_PANE",
-            ),
-          ) as NodeJS.ProcessEnv,
-        },
-      );
-      const progressParser = new TmuxControlParser();
-      const progressEvents: TmuxControlEvent[] = [];
-      progressControl.stdout.on("data", (chunk: Buffer) =>
-        progressEvents.push(...progressParser.push(chunk)),
-      );
-      progressControl.stderr.resume();
+              ([key, value]) =>
+                value !== undefined && key !== 'TMUX' && key !== 'TMUX_PANE'
+            )
+          ) as NodeJS.ProcessEnv
+        }
+      )
+      const progressParser = new TmuxControlParser()
+      const progressEvents: TmuxControlEvent[] = []
+      progressControl.stdout.on('data', (chunk: Buffer) =>
+        progressEvents.push(...progressParser.push(chunk))
+      )
+      progressControl.stderr.resume()
       await waitFor(
         () =>
           progressEvents.some(
-            (event) => event.type === "notification" && event.name === "session-changed",
+            (event) =>
+              event.type === 'notification' && event.name === 'session-changed'
           ),
-        "read-only progress observer did not attach",
-      );
-      for (const command of encodeControlInput(paneId, sent, 3)) control.stdin.write(command);
+        'read-only progress observer did not attach'
+      )
+      for (const command of encodeControlInput(paneId, sent, 3)) {
+        control.stdin.write(command)
+      }
       await waitFor(
         () =>
           Buffer.concat(
             progressEvents
               .filter(
-                (event): event is Extract<TmuxControlEvent, { type: "output" }> =>
-                  event.type === "output" && event.paneId === paneId,
+                (
+                  event
+                ): event is Extract<TmuxControlEvent, { type: 'output' }> =>
+                  event.type === 'output' && event.paneId === paneId
               )
-              .map((event) => Buffer.from(event.data)),
-          ).includes(Buffer.from("\x1b]9;4;3\x07")),
-        "read-only progress observer did not receive OSC 9;4",
-      );
+              .map((event) => Buffer.from(event.data))
+          ).includes(Buffer.from('\x1b]9;4;3\x07')),
+        'read-only progress observer did not receive OSC 9;4'
+      )
       await expect(
-        execute("tmux", [
+        execute('tmux', [
           ...base,
-          "display-message",
-          "-p",
-          "-t",
+          'display-message',
+          '-p',
+          '-t',
           session,
-          "#{window_width}x#{window_height}",
-        ]).then((result) => result.stdout.trim()),
-      ).resolves.toBe("80x24");
-      progressControl.kill();
+          '#{window_width}x#{window_height}'
+        ]).then((result) => result.stdout.trim())
+      ).resolves.toBe('80x24')
+      progressControl.kill()
 
-      control.stdin.write(resizeControlClient(91, 27));
+      control.stdin.write(resizeControlClient(91, 27))
       await waitFor(async () => {
         const size = (
-          await execute("tmux", [
+          await execute('tmux', [
             ...base,
-            "display-message",
-            "-p",
-            "-t",
+            'display-message',
+            '-p',
+            '-t',
             session,
-            "#{window_width}x#{window_height}",
+            '#{window_width}x#{window_height}'
           ])
-        ).stdout.trim();
-        return size === "91x27";
-      }, "control client resize was not applied");
+        ).stdout.trim()
+        return size === '91x27'
+      }, 'control client resize was not applied')
 
-      control.stdin.write("detach-client\n");
+      control.stdin.write('detach-client\n')
       await new Promise<void>((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error("control client did not exit")), 5_000);
-        control.once("exit", () => {
-          clearTimeout(timer);
-          resolve();
-        });
-      });
-      expect(parserError).toBeNull();
-      expect(stderr).toBe("");
-      await expect(execute("tmux", [...base, "has-session", "-t", session])).resolves.toBeTruthy();
+        const timer = setTimeout(
+          () => reject(new Error('control client did not exit')),
+          5_000
+        )
+        control.once('exit', () => {
+          clearTimeout(timer)
+          resolve()
+        })
+      })
+      expect(parserError).toBeNull()
+      expect(stderr).toBe('')
+      await expect(
+        execute('tmux', [...base, 'has-session', '-t', session])
+      ).resolves.toBeTruthy()
     } finally {
-      await execute("tmux", [...base, "kill-server"]).catch(() => undefined);
+      await execute('tmux', [...base, 'kill-server']).catch(() => undefined)
     }
-  });
-});
+  })
+})

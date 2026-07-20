@@ -7,10 +7,10 @@ import {
   type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
-  type ReactNode,
-} from "react";
-import { createPortal } from "react-dom";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+  type ReactNode
+} from 'react'
+import { createPortal } from 'react-dom'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   ArrowPathIcon,
   Bars3Icon,
@@ -21,186 +21,204 @@ import {
   PlusIcon,
   SwatchIcon,
   TrashIcon,
-  XMarkIcon,
-} from "@heroicons/react/16/solid";
-import { parseTerminalRuntimeMetadata } from "@tasktty/shared";
+  XMarkIcon
+} from '@heroicons/react/16/solid'
+import { parseTerminalRuntimeMetadata } from '@tasktty/shared'
 import type {
   ProjectColor,
   ProjectRecord,
   RemovePreview,
   TerminalRecord,
-  WorktreeRecord,
-} from "@tasktty/shared";
-import { ApiError, apiClient } from "./api.js";
-import { Button } from "./components/ui/button.js";
+  WorktreeRecord
+} from '@tasktty/shared'
+import { ApiError, apiClient } from './api.js'
+import { Button } from './components/ui/button.js'
 import {
   Collapsible,
   CollapsibleContent,
-  CollapsibleTrigger,
-} from "./components/ui/collapsible.js";
-import { Input } from "./components/ui/input.js";
-import { Label } from "./components/ui/label.js";
-import { NativeSelect } from "./components/ui/native-select.js";
-import { Popover, PopoverContent, PopoverTrigger } from "./components/ui/popover.js";
-import { Tooltip, TooltipContent, TooltipTrigger } from "./components/ui/tooltip.js";
-import { cn } from "./lib/utils.js";
+  CollapsibleTrigger
+} from './components/ui/collapsible.js'
+import { Input } from './components/ui/input.js'
+import { Label } from './components/ui/label.js'
+import { NativeSelect } from './components/ui/native-select.js'
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger
+} from './components/ui/popover.js'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger
+} from './components/ui/tooltip.js'
+import { cn } from './lib/utils.js'
 import {
   createInvalidationCoalescer,
   METADATA_DEGRADED_GRACE_MS,
   METADATA_STALE_TIME_MS,
   metadataRetryDelay,
-  shouldRetryMetadataQuery,
-} from "./metadata-sync.js";
+  shouldRetryMetadataQuery
+} from './metadata-sync.js'
 import {
   terminalProgressLabel,
   terminalSessions,
-  type TerminalProgress,
-} from "./terminal-session.js";
-import { TerminalView } from "./terminal-view.js";
+  type TerminalProgress
+} from './terminal-session.js'
+import { TerminalView } from './terminal-view.js'
 
-const MIN_SIDEBAR_WIDTH = 240;
-const MAX_SIDEBAR_WIDTH = 420;
-const DEFAULT_SIDEBAR_WIDTH = 272;
-const COLLAPSED_PROJECTS_STORAGE_KEY = "tasktty-collapsed-projects";
-const EMPTY_BELL_ATTENTION: ReadonlySet<string> = new Set();
-const EMPTY_RUNTIME_TITLES: ReadonlyMap<string, string> = new Map();
-const EMPTY_TERMINAL_PROGRESS: ReadonlyMap<string, TerminalProgress> = new Map();
+const MIN_SIDEBAR_WIDTH = 240
+const MAX_SIDEBAR_WIDTH = 420
+const DEFAULT_SIDEBAR_WIDTH = 272
+const COLLAPSED_PROJECTS_STORAGE_KEY = 'tasktty-collapsed-projects'
+const EMPTY_BELL_ATTENTION: ReadonlySet<string> = new Set()
+const EMPTY_RUNTIME_TITLES: ReadonlyMap<string, string> = new Map()
+const EMPTY_TERMINAL_PROGRESS: ReadonlyMap<string, TerminalProgress> = new Map()
 const FOCUSABLE_SELECTOR = [
-  "a[href]",
-  "button:not([disabled])",
-  "input:not([disabled])",
-  "select:not([disabled])",
-  "textarea:not([disabled])",
-  "[tabindex]:not([tabindex='-1'])",
-].join(",");
+  'a[href]',
+  'button:not([disabled])',
+  'input:not([disabled])',
+  'select:not([disabled])',
+  'textarea:not([disabled])',
+  "[tabindex]:not([tabindex='-1'])"
+].join(',')
 
 function focusableElements(container: HTMLElement): HTMLElement[] {
-  return [...container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)].filter(
-    (element) => !element.closest("[inert]") && element.getClientRects().length > 0,
-  );
+  return [
+    ...container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)
+  ].filter(
+    (element) =>
+      !element.closest('[inert]') && element.getClientRects().length > 0
+  )
 }
 
 function trapTabKey(event: KeyboardEvent, container: HTMLElement): void {
-  if (event.key !== "Tab") return;
-  const elements = focusableElements(container);
-  if (!elements.length) {
-    event.preventDefault();
-    container.focus();
-    return;
+  if (event.key !== 'Tab') {
+    return
   }
-  const first = elements[0]!;
-  const last = elements.at(-1)!;
+
+  const elements = focusableElements(container)
+  if (!elements.length) {
+    event.preventDefault()
+    container.focus()
+    return
+  }
+
+  const first = elements[0]!
+  const last = elements.at(-1)!
   if (event.shiftKey && document.activeElement === first) {
-    event.preventDefault();
-    last.focus();
+    event.preventDefault()
+    last.focus()
   } else if (!event.shiftKey && document.activeElement === last) {
-    event.preventDefault();
-    first.focus();
+    event.preventDefault()
+    first.focus()
   }
 }
 
 function clampSidebarWidth(width: number): number {
-  return Math.min(MAX_SIDEBAR_WIDTH, Math.max(MIN_SIDEBAR_WIDTH, width));
+  return Math.min(MAX_SIDEBAR_WIDTH, Math.max(MIN_SIDEBAR_WIDTH, width))
 }
 
 type Modal =
-  | { type: "project" }
-  | { type: "worktree"; project: ProjectRecord }
-  | { type: "remove"; worktree: WorktreeRecord }
-  | null;
+  | { type: 'project' }
+  | { type: 'worktree'; project: ProjectRecord }
+  | { type: 'remove'; worktree: WorktreeRecord }
+  | null
 
-const projectsQueryKey = ["projects"] as const;
+const projectsQueryKey = ['projects'] as const
 
 const PROJECT_COLOR_OPTIONS: Array<{
-  value: ProjectColor | null;
-  label: string;
-  swatch: string;
-  check: string;
+  value: ProjectColor | null
+  label: string
+  swatch: string
+  check: string
 }> = [
   {
     value: null,
-    label: "Neutral",
-    swatch: "bg-zinc-500 hover:bg-zinc-400",
-    check: "fill-white",
+    label: 'Neutral',
+    swatch: 'bg-zinc-500 hover:bg-zinc-400',
+    check: 'fill-white'
   },
   {
-    value: "rose",
-    label: "Rose",
-    swatch: "bg-rose-400 hover:bg-rose-300",
-    check: "fill-white",
+    value: 'rose',
+    label: 'Rose',
+    swatch: 'bg-rose-400 hover:bg-rose-300',
+    check: 'fill-white'
   },
   {
-    value: "orange",
-    label: "Orange",
-    swatch: "bg-orange-400 hover:bg-orange-300",
-    check: "fill-zinc-950",
+    value: 'orange',
+    label: 'Orange',
+    swatch: 'bg-orange-400 hover:bg-orange-300',
+    check: 'fill-zinc-950'
   },
   {
-    value: "amber",
-    label: "Amber",
-    swatch: "bg-amber-400 hover:bg-amber-300",
-    check: "fill-zinc-950",
+    value: 'amber',
+    label: 'Amber',
+    swatch: 'bg-amber-400 hover:bg-amber-300',
+    check: 'fill-zinc-950'
   },
   {
-    value: "emerald",
-    label: "Emerald",
-    swatch: "bg-emerald-400 hover:bg-emerald-300",
-    check: "fill-zinc-950",
+    value: 'emerald',
+    label: 'Emerald',
+    swatch: 'bg-emerald-400 hover:bg-emerald-300',
+    check: 'fill-zinc-950'
   },
   {
-    value: "cyan",
-    label: "Cyan",
-    swatch: "bg-cyan-400 hover:bg-cyan-300",
-    check: "fill-zinc-950",
+    value: 'cyan',
+    label: 'Cyan',
+    swatch: 'bg-cyan-400 hover:bg-cyan-300',
+    check: 'fill-zinc-950'
   },
   {
-    value: "blue",
-    label: "Blue",
-    swatch: "bg-blue-400 hover:bg-blue-300",
-    check: "fill-white",
+    value: 'blue',
+    label: 'Blue',
+    swatch: 'bg-blue-400 hover:bg-blue-300',
+    check: 'fill-white'
   },
   {
-    value: "violet",
-    label: "Violet",
-    swatch: "bg-violet-400 hover:bg-violet-300",
-    check: "fill-white",
+    value: 'violet',
+    label: 'Violet',
+    swatch: 'bg-violet-400 hover:bg-violet-300',
+    check: 'fill-white'
   },
   {
-    value: "pink",
-    label: "Pink",
-    swatch: "bg-pink-400 hover:bg-pink-300",
-    check: "fill-white",
-  },
-];
+    value: 'pink',
+    label: 'Pink',
+    swatch: 'bg-pink-400 hover:bg-pink-300',
+    check: 'fill-white'
+  }
+]
 
-const PROJECT_COLOR_STYLES: Record<ProjectColor, { chevron: string; rail: string }> = {
-  rose: { chevron: "fill-rose-400", rail: "border-rose-400/50" },
-  orange: { chevron: "fill-orange-400", rail: "border-orange-400/50" },
-  amber: { chevron: "fill-amber-400", rail: "border-amber-400/50" },
-  emerald: { chevron: "fill-emerald-400", rail: "border-emerald-400/50" },
-  cyan: { chevron: "fill-cyan-400", rail: "border-cyan-400/50" },
-  blue: { chevron: "fill-blue-400", rail: "border-blue-400/50" },
-  violet: { chevron: "fill-violet-400", rail: "border-violet-400/50" },
-  pink: { chevron: "fill-pink-400", rail: "border-pink-400/50" },
-};
+const PROJECT_COLOR_STYLES: Record<
+  ProjectColor,
+  { chevron: string; rail: string }
+> = {
+  rose: { chevron: 'fill-rose-400', rail: 'border-rose-400/50' },
+  orange: { chevron: 'fill-orange-400', rail: 'border-orange-400/50' },
+  amber: { chevron: 'fill-amber-400', rail: 'border-amber-400/50' },
+  emerald: { chevron: 'fill-emerald-400', rail: 'border-emerald-400/50' },
+  cyan: { chevron: 'fill-cyan-400', rail: 'border-cyan-400/50' },
+  blue: { chevron: 'fill-blue-400', rail: 'border-blue-400/50' },
+  violet: { chevron: 'fill-violet-400', rail: 'border-violet-400/50' },
+  pink: { chevron: 'fill-pink-400', rail: 'border-pink-400/50' }
+}
 
 interface PendingWorktreeCreation {
-  id: string;
-  projectId: string;
-  typedName: string;
-  canonicalName: string;
-  destinationPath: string;
-  base: "default" | "current";
-  sourceWorktreeId?: string;
+  id: string
+  projectId: string
+  typedName: string
+  canonicalName: string
+  destinationPath: string
+  base: 'default' | 'current'
+  sourceWorktreeId?: string
 }
 
 interface WorktreeDestination {
-  name: string;
-  path: string;
+  name: string
+  path: string
 }
 
 export default function App() {
-  const queryClient = useQueryClient();
+  const queryClient = useQueryClient()
   const projectsQuery = useQuery({
     queryKey: projectsQueryKey,
     queryFn: apiClient.projects,
@@ -208,271 +226,366 @@ export default function App() {
     retry: shouldRetryMetadataQuery,
     retryDelay: metadataRetryDelay,
     refetchOnReconnect: true,
-    refetchOnWindowFocus: true,
-  });
-  const projects = projectsQuery.data ?? [];
-  const [selectedTerminalId, setSelectedTerminalId] = useState<string | null>(() =>
-    localStorage.getItem("tasktty-terminal"),
-  );
-  const [focusTerminalId, setFocusTerminalId] = useState<string | null>(null);
-  const [selectedWorktreeId, setSelectedWorktreeId] = useState<string | null>(null);
-  const [drawerOpen, setDrawerOpen] = useState(false);
-  const [openProjectColorPickerId, setOpenProjectColorPickerId] = useState<string | null>(null);
-  const [isMobile, setIsMobile] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [modal, setModal] = useState<Modal>(null);
-  const [pendingWorktrees, setPendingWorktrees] = useState<PendingWorktreeCreation[]>([]);
+    refetchOnWindowFocus: true
+  })
+  const projects = projectsQuery.data ?? []
+  const [selectedTerminalId, setSelectedTerminalId] = useState<string | null>(
+    () => localStorage.getItem('tasktty-terminal')
+  )
+  const [focusTerminalId, setFocusTerminalId] = useState<string | null>(null)
+  const [selectedWorktreeId, setSelectedWorktreeId] = useState<string | null>(
+    null
+  )
+  const [drawerOpen, setDrawerOpen] = useState(false)
+  const [openProjectColorPickerId, setOpenProjectColorPickerId] = useState<
+    string | null
+  >(null)
+  const [isMobile, setIsMobile] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [modal, setModal] = useState<Modal>(null)
+  const [pendingWorktrees, setPendingWorktrees] = useState<
+    PendingWorktreeCreation[]
+  >([])
   const [collapsedProjectIds, setCollapsedProjectIds] = useState(
     () =>
       new Set(
-        (localStorage.getItem(COLLAPSED_PROJECTS_STORAGE_KEY) ?? "").split("\n").filter(Boolean),
-      ),
-  );
+        (localStorage.getItem(COLLAPSED_PROJECTS_STORAGE_KEY) ?? '')
+          .split('\n')
+          .filter(Boolean)
+      )
+  )
   const [sidebarWidth, setSidebarWidth] = useState(() => {
-    const savedWidth = Number.parseInt(localStorage.getItem("tasktty-sidebar-width") ?? "", 10);
-    return Number.isFinite(savedWidth) ? clampSidebarWidth(savedWidth) : DEFAULT_SIDEBAR_WIDTH;
-  });
-  const [resizingSidebar, setResizingSidebar] = useState(false);
-  const [sseDisconnected, setSseDisconnected] = useState(false);
-  const [showSyncDegraded, setShowSyncDegraded] = useState(false);
-  const selectedWorktreeIdRef = useRef<string | null>(null);
-  const resizeOrigin = useRef<{ pointerX: number; width: number } | null>(null);
-  const drawerRef = useRef<HTMLElement | null>(null);
-  const drawerTriggerRef = useRef<HTMLButtonElement | null>(null);
-  const modalTriggerRef = useRef<HTMLElement | null>(null);
+    const savedWidth = Number.parseInt(
+      localStorage.getItem('tasktty-sidebar-width') ?? '',
+      10
+    )
+    return Number.isFinite(savedWidth)
+      ? clampSidebarWidth(savedWidth)
+      : DEFAULT_SIDEBAR_WIDTH
+  })
+  const [resizingSidebar, setResizingSidebar] = useState(false)
+  const [sseDisconnected, setSseDisconnected] = useState(false)
+  const [showSyncDegraded, setShowSyncDegraded] = useState(false)
+  const selectedWorktreeIdRef = useRef<string | null>(null)
+  const resizeOrigin = useRef<{ pointerX: number; width: number } | null>(null)
+  const drawerRef = useRef<HTMLElement | null>(null)
+  const drawerTriggerRef = useRef<HTMLButtonElement | null>(null)
+  const modalTriggerRef = useRef<HTMLElement | null>(null)
 
   const unauthorized =
-    projectsQuery.error instanceof ApiError && projectsQuery.error.status === 401;
+    projectsQuery.error instanceof ApiError &&
+    projectsQuery.error.status === 401
 
   useEffect(() => {
-    if (collapsedProjectIds.size)
-      localStorage.setItem(COLLAPSED_PROJECTS_STORAGE_KEY, [...collapsedProjectIds].join("\n"));
-    else localStorage.removeItem(COLLAPSED_PROJECTS_STORAGE_KEY);
-  }, [collapsedProjectIds]);
+    if (collapsedProjectIds.size) {
+      localStorage.setItem(
+        COLLAPSED_PROJECTS_STORAGE_KEY,
+        [...collapsedProjectIds].join('\n')
+      )
+    } else {
+      localStorage.removeItem(COLLAPSED_PROJECTS_STORAGE_KEY)
+    }
+  }, [collapsedProjectIds])
 
   useEffect(() => {
-    if (projectsQuery.error && projectsQuery.data === undefined && !unauthorized)
-      showError(setError)(projectsQuery.error);
-  }, [projectsQuery.data, projectsQuery.error, unauthorized]);
+    if (
+      projectsQuery.error &&
+      projectsQuery.data === undefined &&
+      !unauthorized
+    ) {
+      showError(setError)(projectsQuery.error)
+    }
+  }, [projectsQuery.data, projectsQuery.error, unauthorized])
 
   useEffect(() => {
     const degraded =
-      projectsQuery.data !== undefined && (sseDisconnected || projectsQuery.isRefetchError);
+      projectsQuery.data !== undefined &&
+      (sseDisconnected || projectsQuery.isRefetchError)
     if (!degraded) {
-      setShowSyncDegraded(false);
-      return;
+      setShowSyncDegraded(false)
+      return
     }
-    const timer = window.setTimeout(() => setShowSyncDegraded(true), METADATA_DEGRADED_GRACE_MS);
-    return () => window.clearTimeout(timer);
-  }, [projectsQuery.data, projectsQuery.isRefetchError, sseDisconnected]);
+
+    const timer = window.setTimeout(
+      () => setShowSyncDegraded(true),
+      METADATA_DEGRADED_GRACE_MS
+    )
+    return () => window.clearTimeout(timer)
+  }, [projectsQuery.data, projectsQuery.isRefetchError, sseDisconnected])
 
   useEffect(() => {
-    const next = projectsQuery.data;
-    if (!next) return;
+    const next = projectsQuery.data
+    if (!next) {
+      return
+    }
+
     setSelectedTerminalId((current) => {
       if (
         current &&
         next.some((project) =>
           project.worktrees.some((worktree) =>
-            worktree.terminals.some((terminal) => terminal.id === current),
-          ),
+            worktree.terminals.some((terminal) => terminal.id === current)
+          )
         )
       ) {
-        return current;
+        return current
       }
+
       const selectedWorktree = next
         .flatMap((project) => project.worktrees)
-        .find((worktree) => worktree.id === selectedWorktreeIdRef.current);
-      if (selectedWorktreeIdRef.current) return selectedWorktree?.terminals[0]?.id ?? null;
-      return (
-        next.flatMap((project) => project.worktrees.flatMap((worktree) => worktree.terminals))[0]
-          ?.id ?? null
-      );
-    });
-  }, [projectsQuery.data]);
-
-  useEffect(() => {
-    const media = window.matchMedia("(max-width: 700px)");
-    const update = () => setIsMobile(media.matches);
-    update();
-    media.addEventListener("change", update);
-    return () => media.removeEventListener("change", update);
-  }, []);
-
-  useEffect(() => {
-    if (!isMobile || !drawerOpen) return;
-    const drawer = drawerRef.current;
-    if (!drawer) return;
-    const previouslyFocused = document.activeElement as HTMLElement | null;
-    const frame = window.requestAnimationFrame(() => {
-      focusableElements(drawer)[0]?.focus();
-    });
-    return () => {
-      window.cancelAnimationFrame(frame);
-      if (previouslyFocused?.isConnected) previouslyFocused.focus();
-      else drawerTriggerRef.current?.focus();
-    };
-  }, [drawerOpen, isMobile]);
-
-  useEffect(() => {
-    if (!isMobile || !drawerOpen || modal || openProjectColorPickerId) return;
-    const drawer = drawerRef.current;
-    if (!drawer) return;
-    const keydown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        setDrawerOpen(false);
-        return;
+        .find((worktree) => worktree.id === selectedWorktreeIdRef.current)
+      if (selectedWorktreeIdRef.current) {
+        return selectedWorktree?.terminals[0]?.id ?? null
       }
-      trapTabKey(event, drawer);
-    };
-    document.addEventListener("keydown", keydown);
-    return () => document.removeEventListener("keydown", keydown);
-  }, [drawerOpen, isMobile, modal, openProjectColorPickerId]);
+
+      return (
+        next.flatMap((project) =>
+          project.worktrees.flatMap((worktree) => worktree.terminals)
+        )[0]?.id ?? null
+      )
+    })
+  }, [projectsQuery.data])
 
   useEffect(() => {
-    if (unauthorized) return;
-    const events = new EventSource("/api/events");
+    const media = window.matchMedia('(max-width: 700px)')
+    const update = () => setIsMobile(media.matches)
+    update()
+    media.addEventListener('change', update)
+    return () => media.removeEventListener('change', update)
+  }, [])
+
+  useEffect(() => {
+    if (!isMobile || !drawerOpen) {
+      return
+    }
+
+    const drawer = drawerRef.current
+    if (!drawer) {
+      return
+    }
+
+    const previouslyFocused = document.activeElement as HTMLElement | null
+    const frame = window.requestAnimationFrame(() => {
+      focusableElements(drawer)[0]?.focus()
+    })
+    return () => {
+      window.cancelAnimationFrame(frame)
+      if (previouslyFocused?.isConnected) {
+        previouslyFocused.focus()
+      } else {
+        drawerTriggerRef.current?.focus()
+      }
+    }
+  }, [drawerOpen, isMobile])
+
+  useEffect(() => {
+    if (!isMobile || !drawerOpen || modal || openProjectColorPickerId) {
+      return
+    }
+
+    const drawer = drawerRef.current
+    if (!drawer) {
+      return
+    }
+
+    const keydown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        setDrawerOpen(false)
+        return
+      }
+
+      trapTabKey(event, drawer)
+    }
+    document.addEventListener('keydown', keydown)
+    return () => document.removeEventListener('keydown', keydown)
+  }, [drawerOpen, isMobile, modal, openProjectColorPickerId])
+
+  useEffect(() => {
+    if (unauthorized) {
+      return
+    }
+
+    const events = new EventSource('/api/events')
     const refreshes = createInvalidationCoalescer(() =>
-      queryClient.invalidateQueries({ queryKey: projectsQueryKey }, { cancelRefetch: false }),
-    );
-    const refresh = () => refreshes.schedule();
+      queryClient.invalidateQueries(
+        { queryKey: projectsQueryKey },
+        { cancelRefetch: false }
+      )
+    )
+    const refresh = () => refreshes.schedule()
     const connected = (event: MessageEvent<string>) => {
-      setSseDisconnected(false);
+      setSseDisconnected(false)
       try {
-        const payload = JSON.parse(event.data) as { terminalMetadata?: unknown };
+        const payload = JSON.parse(event.data) as { terminalMetadata?: unknown }
         if (Array.isArray(payload.terminalMetadata)) {
           terminalSessions.replaceRuntimeMetadata(
             payload.terminalMetadata
               .map(parseTerminalRuntimeMetadata)
-              .filter((metadata) => metadata !== null),
-          );
+              .filter((metadata) => metadata !== null)
+          )
         }
       } catch {
         // The projects refresh below remains a safe fallback for an invalid connected frame.
       }
-      refresh();
-    };
+      refresh()
+    }
     const runtimeMetadata = (event: MessageEvent<string>) => {
       try {
-        const envelope = JSON.parse(event.data) as { data?: unknown };
-        const metadata = parseTerminalRuntimeMetadata(envelope.data);
-        if (metadata) terminalSessions.applyRuntimeMetadata(metadata);
+        const envelope = JSON.parse(event.data) as { data?: unknown }
+        const metadata = parseTerminalRuntimeMetadata(envelope.data)
+        if (metadata) {
+          terminalSessions.applyRuntimeMetadata(metadata)
+        }
       } catch {
         // Ignore a malformed metadata event and keep the last authoritative snapshot.
       }
-    };
-    const disconnected = () => setSseDisconnected(true);
+    }
+    const disconnected = () => setSseDisconnected(true)
     const eventNames = [
-      "project.created",
-      "project.updated",
-      "worktree.created",
-      "worktree.updated",
-      "worktree.removed",
-      "terminal.created",
-      "terminal.updated",
-      "terminal.removed",
-      "remove.completed",
-      "remove.failed",
-    ];
-    events.addEventListener("connected", connected);
-    events.addEventListener("terminal.metadata", runtimeMetadata);
-    events.addEventListener("error", disconnected);
-    eventNames.forEach((name) => events.addEventListener(name, refresh));
+      'project.created',
+      'project.updated',
+      'worktree.created',
+      'worktree.updated',
+      'worktree.removed',
+      'terminal.created',
+      'terminal.updated',
+      'terminal.removed',
+      'remove.completed',
+      'remove.failed'
+    ]
+    events.addEventListener('connected', connected)
+    events.addEventListener('terminal.metadata', runtimeMetadata)
+    events.addEventListener('error', disconnected)
+    eventNames.forEach((name) => events.addEventListener(name, refresh))
     return () => {
-      refreshes.dispose();
-      events.close();
-    };
-  }, [queryClient, unauthorized]);
+      refreshes.dispose()
+      events.close()
+    }
+  }, [queryClient, unauthorized])
 
-  const allWorktrees = useMemo(() => projects.flatMap((project) => project.worktrees), [projects]);
+  const allWorktrees = useMemo(
+    () => projects.flatMap((project) => project.worktrees),
+    [projects]
+  )
   const allTerminals = useMemo(
     () => allWorktrees.flatMap((worktree) => worktree.terminals),
-    [allWorktrees],
-  );
+    [allWorktrees]
+  )
   useEffect(() => {
-    if (projectsQuery.data === undefined) return;
-    terminalSessions.reconcile(allTerminals);
-  }, [allTerminals, projectsQuery.data]);
+    if (projectsQuery.data === undefined) {
+      return
+    }
+
+    terminalSessions.reconcile(allTerminals)
+  }, [allTerminals, projectsQuery.data])
   const bellAttention = useSyncExternalStore(
     terminalSessions.subscribe,
     terminalSessions.getAttentionSnapshot,
-    () => EMPTY_BELL_ATTENTION,
-  );
+    () => EMPTY_BELL_ATTENTION
+  )
   const runtimeTitles = useSyncExternalStore(
     terminalSessions.subscribe,
     terminalSessions.getTitleSnapshot,
-    () => EMPTY_RUNTIME_TITLES,
-  );
+    () => EMPTY_RUNTIME_TITLES
+  )
   const terminalProgress = useSyncExternalStore(
     terminalSessions.subscribe,
     terminalSessions.getProgressSnapshot,
-    () => EMPTY_TERMINAL_PROGRESS,
-  );
-  const terminalById = allTerminals.find((terminal) => terminal.id === selectedTerminalId) ?? null;
+    () => EMPTY_TERMINAL_PROGRESS
+  )
+  const terminalById =
+    allTerminals.find((terminal) => terminal.id === selectedTerminalId) ?? null
   useEffect(() => {
-    if (!terminalById) return;
-    selectedWorktreeIdRef.current = terminalById.worktreeId;
+    if (!terminalById) {
+      return
+    }
+
+    selectedWorktreeIdRef.current = terminalById.worktreeId
     setSelectedWorktreeId((current) =>
-      current === terminalById.worktreeId ? current : terminalById.worktreeId,
-    );
-  }, [terminalById?.id, terminalById?.worktreeId]);
+      current === terminalById.worktreeId ? current : terminalById.worktreeId
+    )
+  }, [terminalById?.id, terminalById?.worktreeId])
   const selectedWorktree =
     allWorktrees.find((worktree) => worktree.id === selectedWorktreeId) ??
     (terminalById
-      ? (allWorktrees.find((worktree) => worktree.id === terminalById.worktreeId) ?? null)
-      : null);
+      ? (allWorktrees.find(
+          (worktree) => worktree.id === terminalById.worktreeId
+        ) ?? null)
+      : null)
   const selectedTerminal =
-    selectedWorktree?.terminals.find((terminal) => terminal.id === selectedTerminalId) ?? null;
+    selectedWorktree?.terminals.find(
+      (terminal) => terminal.id === selectedTerminalId
+    ) ?? null
 
   const selectTerminal = (terminal: TerminalRecord) => {
-    setSelectedTerminalId(terminal.id);
-    setSelectedWorktreeId(terminal.worktreeId);
-    selectedWorktreeIdRef.current = terminal.worktreeId;
-    localStorage.setItem("tasktty-terminal", terminal.id);
-    setDrawerOpen(false);
-  };
+    setSelectedTerminalId(terminal.id)
+    setSelectedWorktreeId(terminal.worktreeId)
+    selectedWorktreeIdRef.current = terminal.worktreeId
+    localStorage.setItem('tasktty-terminal', terminal.id)
+    setDrawerOpen(false)
+  }
 
   const selectWorktree = (worktree: WorktreeRecord) => {
-    setSelectedWorktreeId(worktree.id);
-    selectedWorktreeIdRef.current = worktree.id;
+    setSelectedWorktreeId(worktree.id)
+    selectedWorktreeIdRef.current = worktree.id
     const nextTerminal =
-      worktree.terminals.find((terminal) => terminal.id === selectedTerminalId) ??
+      worktree.terminals.find(
+        (terminal) => terminal.id === selectedTerminalId
+      ) ??
       worktree.terminals[0] ??
-      null;
-    setSelectedTerminalId(nextTerminal?.id ?? null);
-    if (nextTerminal) localStorage.setItem("tasktty-terminal", nextTerminal.id);
-    else localStorage.removeItem("tasktty-terminal");
-    setDrawerOpen(false);
-  };
+      null
+    setSelectedTerminalId(nextTerminal?.id ?? null)
+    if (nextTerminal) {
+      localStorage.setItem('tasktty-terminal', nextTerminal.id)
+    } else {
+      localStorage.removeItem('tasktty-terminal')
+    }
+
+    setDrawerOpen(false)
+  }
 
   const updateProjectColor = useMutation({
-    mutationFn: ({ projectId, color }: { projectId: string; color: ProjectColor | null }) =>
-      apiClient.updateProjectColor(projectId, color),
+    mutationFn: ({
+      projectId,
+      color
+    }: {
+      projectId: string
+      color: ProjectColor | null
+    }) => apiClient.updateProjectColor(projectId, color),
     onMutate: async ({ projectId, color }) => {
-      await queryClient.cancelQueries({ queryKey: projectsQueryKey });
-      const previous = queryClient.getQueryData<ProjectRecord[]>(projectsQueryKey);
+      await queryClient.cancelQueries({ queryKey: projectsQueryKey })
+      const previous =
+        queryClient.getQueryData<ProjectRecord[]>(projectsQueryKey)
       queryClient.setQueryData<ProjectRecord[]>(projectsQueryKey, (current) =>
-        current?.map((project) => (project.id === projectId ? { ...project, color } : project)),
-      );
-      return { previous };
+        current?.map((project) =>
+          project.id === projectId ? { ...project, color } : project
+        )
+      )
+      return { previous }
     },
     onError: (mutationError, _variables, context) => {
-      if (context?.previous)
-        queryClient.setQueryData<ProjectRecord[]>(projectsQueryKey, context.previous);
-      showError(setError)(mutationError);
+      if (context?.previous) {
+        queryClient.setQueryData<ProjectRecord[]>(
+          projectsQueryKey,
+          context.previous
+        )
+      }
+
+      showError(setError)(mutationError)
     },
     onSuccess: (updatedProject) => {
       queryClient.setQueryData<ProjectRecord[]>(projectsQueryKey, (current) =>
         current?.map((project) =>
           project.id === updatedProject.id
             ? { ...updatedProject, worktrees: project.worktrees }
-            : project,
-        ),
-      );
+            : project
+        )
+      )
     },
-    onSettled: () => queryClient.invalidateQueries({ queryKey: projectsQueryKey }),
-  });
+    onSettled: () =>
+      queryClient.invalidateQueries({ queryKey: projectsQueryKey })
+  })
 
   const createWorktree = useMutation({
     mutationFn: (pending: PendingWorktreeCreation) =>
@@ -480,52 +593,76 @@ export default function App() {
         pending.projectId,
         pending.typedName,
         pending.base,
-        pending.sourceWorktreeId,
+        pending.sourceWorktreeId
       ),
     onSuccess: async (result, pending) => {
-      await queryClient.cancelQueries({ queryKey: projectsQueryKey });
+      await queryClient.cancelQueries({ queryKey: projectsQueryKey })
       const worktree =
         result.terminal &&
-        !result.worktree.terminals.some((item) => item.id === result.terminal?.id)
-          ? { ...result.worktree, terminals: [...result.worktree.terminals, result.terminal] }
-          : result.worktree;
+        !result.worktree.terminals.some(
+          (item) => item.id === result.terminal?.id
+        )
+          ? {
+              ...result.worktree,
+              terminals: [...result.worktree.terminals, result.terminal]
+            }
+          : result.worktree
       queryClient.setQueryData<ProjectRecord[]>(projectsQueryKey, (current) =>
         current?.map((project) =>
           project.id === pending.projectId
             ? {
                 ...project,
                 worktrees: [
-                  ...project.worktrees.filter((item) => item.id !== worktree.id),
-                  worktree,
-                ],
+                  ...project.worktrees.filter(
+                    (item) => item.id !== worktree.id
+                  ),
+                  worktree
+                ]
               }
-            : project,
-        ),
-      );
-      if (result.terminal) selectTerminal(result.terminal);
-      else selectWorktree(worktree);
-      setPendingWorktrees((current) => current.filter((item) => item.id !== pending.id));
-      if (result.setupError)
-        setError(`Worktree created, but setup could not start: ${result.setupError}`);
-      else if (result.terminalError)
-        setError(`Worktree created, but its terminal could not start: ${result.terminalError}`);
-      await queryClient.invalidateQueries({ queryKey: projectsQueryKey });
+            : project
+        )
+      )
+      if (result.terminal) {
+        selectTerminal(result.terminal)
+      } else {
+        selectWorktree(worktree)
+      }
+
+      setPendingWorktrees((current) =>
+        current.filter((item) => item.id !== pending.id)
+      )
+      if (result.setupError) {
+        setError(
+          `Worktree created, but setup could not start: ${result.setupError}`
+        )
+      } else if (result.terminalError) {
+        setError(
+          `Worktree created, but its terminal could not start: ${result.terminalError}`
+        )
+      }
+
+      await queryClient.invalidateQueries({ queryKey: projectsQueryKey })
     },
     onError: (mutationError, pending) => {
-      setPendingWorktrees((current) => current.filter((item) => item.id !== pending.id));
-      setDrawerOpen(false);
-      showError(setError)(mutationError);
-    },
-  });
+      setPendingWorktrees((current) =>
+        current.filter((item) => item.id !== pending.id)
+      )
+      setDrawerOpen(false)
+      showError(setError)(mutationError)
+    }
+  })
 
   const submitWorktreeCreation = (
     project: ProjectRecord,
     name: string,
-    base: "default" | "current",
+    base: 'default' | 'current',
     destination: WorktreeDestination,
-    sourceWorktreeId?: string,
+    sourceWorktreeId?: string
   ) => {
-    if (pendingWorktrees.some((item) => item.projectId === project.id)) return;
+    if (pendingWorktrees.some((item) => item.projectId === project.id)) {
+      return
+    }
+
     const pending: PendingWorktreeCreation = {
       id: crypto.randomUUID(),
       projectId: project.id,
@@ -533,104 +670,140 @@ export default function App() {
       canonicalName: destination.name,
       destinationPath: destination.path,
       base,
-      ...(sourceWorktreeId ? { sourceWorktreeId } : {}),
-    };
-    setPendingWorktrees((current) => [...current, pending]);
-    setModal(null);
+      ...(sourceWorktreeId ? { sourceWorktreeId } : {})
+    }
+    setPendingWorktrees((current) => [...current, pending])
+    setModal(null)
     window.requestAnimationFrame(() => {
-      document.getElementById(`pending-worktree-${pending.id}`)?.focus();
-    });
-    createWorktree.mutate(pending);
-  };
+      document.getElementById(`pending-worktree-${pending.id}`)?.focus()
+    })
+    createWorktree.mutate(pending)
+  }
 
   const createTerminal = useMutation({
-    mutationFn: (worktree: WorktreeRecord) => apiClient.createTerminal(worktree.id, "Terminal"),
+    mutationFn: (worktree: WorktreeRecord) =>
+      apiClient.createTerminal(worktree.id, 'Terminal'),
     onSuccess: async (terminal) => {
-      setFocusTerminalId(terminal.id);
-      selectTerminal(terminal);
-      await queryClient.invalidateQueries({ queryKey: projectsQueryKey });
+      setFocusTerminalId(terminal.id)
+      selectTerminal(terminal)
+      await queryClient.invalidateQueries({ queryKey: projectsQueryKey })
     },
-    onError: showError(setError),
-  });
+    onError: showError(setError)
+  })
 
   const closeTerminal = useMutation({
-    mutationFn: (terminal: TerminalRecord) => apiClient.deleteTerminal(terminal.id),
+    mutationFn: (terminal: TerminalRecord) =>
+      apiClient.deleteTerminal(terminal.id),
     onSuccess: async (_, closedTerminal) => {
-      terminalSessions.forget(closedTerminal.id);
+      terminalSessions.forget(closedTerminal.id)
       if (selectedTerminalId === closedTerminal.id) {
-        const terminals = selectedWorktree?.terminals ?? [];
-        const closedIndex = terminals.findIndex((terminal) => terminal.id === closedTerminal.id);
-        const nextTerminal = terminals[closedIndex + 1] ?? terminals[closedIndex - 1] ?? null;
-        setSelectedTerminalId(nextTerminal?.id ?? null);
-        if (nextTerminal) localStorage.setItem("tasktty-terminal", nextTerminal.id);
-        else localStorage.removeItem("tasktty-terminal");
+        const terminals = selectedWorktree?.terminals ?? []
+        const closedIndex = terminals.findIndex(
+          (terminal) => terminal.id === closedTerminal.id
+        )
+        const nextTerminal =
+          terminals[closedIndex + 1] ?? terminals[closedIndex - 1] ?? null
+        setSelectedTerminalId(nextTerminal?.id ?? null)
+        if (nextTerminal) {
+          localStorage.setItem('tasktty-terminal', nextTerminal.id)
+        } else {
+          localStorage.removeItem('tasktty-terminal')
+        }
       }
-      await queryClient.invalidateQueries({ queryKey: projectsQueryKey });
+
+      await queryClient.invalidateQueries({ queryKey: projectsQueryKey })
     },
-    onError: showError(setError),
-  });
+    onError: showError(setError)
+  })
 
   const setProjectOpen = (projectId: string, open: boolean) => {
     setCollapsedProjectIds((current) => {
-      const next = new Set(current);
-      if (open) next.delete(projectId);
-      else next.add(projectId);
-      return next;
-    });
-  };
+      const next = new Set(current)
+      if (open) {
+        next.delete(projectId)
+      } else {
+        next.add(projectId)
+      }
+
+      return next
+    })
+  }
 
   const setAndSaveSidebarWidth = (width: number) => {
-    const nextWidth = clampSidebarWidth(width);
-    setSidebarWidth(nextWidth);
-    localStorage.setItem("tasktty-sidebar-width", String(nextWidth));
-  };
+    const nextWidth = clampSidebarWidth(width)
+    setSidebarWidth(nextWidth)
+    localStorage.setItem('tasktty-sidebar-width', String(nextWidth))
+  }
 
   const startSidebarResize = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (event.button !== 0) return;
-    resizeOrigin.current = { pointerX: event.clientX, width: sidebarWidth };
-    event.currentTarget.setPointerCapture(event.pointerId);
-    setResizingSidebar(true);
-  };
+    if (event.button !== 0) {
+      return
+    }
+
+    resizeOrigin.current = { pointerX: event.clientX, width: sidebarWidth }
+    event.currentTarget.setPointerCapture(event.pointerId)
+    setResizingSidebar(true)
+  }
 
   const resizeSidebar = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (!resizeOrigin.current) return;
-    setAndSaveSidebarWidth(
-      resizeOrigin.current.width + event.clientX - resizeOrigin.current.pointerX,
-    );
-  };
+    if (!resizeOrigin.current) {
+      return
+    }
 
-  const openModal = (nextModal: Exclude<Modal, null>, trigger?: HTMLElement) => {
-    modalTriggerRef.current = trigger ?? (document.activeElement as HTMLElement | null);
-    setModal(nextModal);
-  };
+    setAndSaveSidebarWidth(
+      resizeOrigin.current.width + event.clientX - resizeOrigin.current.pointerX
+    )
+  }
+
+  const openModal = (
+    nextModal: Exclude<Modal, null>,
+    trigger?: HTMLElement
+  ) => {
+    modalTriggerRef.current =
+      trigger ?? (document.activeElement as HTMLElement | null)
+    setModal(nextModal)
+  }
 
   const stopSidebarResize = (event: ReactPointerEvent<HTMLDivElement>) => {
-    resizeOrigin.current = null;
-    if (event.currentTarget.hasPointerCapture(event.pointerId))
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    setResizingSidebar(false);
-  };
+    resizeOrigin.current = null
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
 
-  const resizeSidebarWithKeyboard = (event: ReactKeyboardEvent<HTMLDivElement>) => {
-    let nextWidth = sidebarWidth;
-    if (event.key === "ArrowLeft") nextWidth -= event.shiftKey ? 32 : 16;
-    else if (event.key === "ArrowRight") nextWidth += event.shiftKey ? 32 : 16;
-    else if (event.key === "Home") nextWidth = MIN_SIDEBAR_WIDTH;
-    else if (event.key === "End") nextWidth = MAX_SIDEBAR_WIDTH;
-    else return;
-    event.preventDefault();
-    setAndSaveSidebarWidth(nextWidth);
-  };
+    setResizingSidebar(false)
+  }
 
-  if (unauthorized) return <Login onSuccess={() => void projectsQuery.refetch()} />;
+  const resizeSidebarWithKeyboard = (
+    event: ReactKeyboardEvent<HTMLDivElement>
+  ) => {
+    let nextWidth = sidebarWidth
+    if (event.key === 'ArrowLeft') {
+      nextWidth -= event.shiftKey ? 32 : 16
+    } else if (event.key === 'ArrowRight') {
+      nextWidth += event.shiftKey ? 32 : 16
+    } else if (event.key === 'Home') {
+      nextWidth = MIN_SIDEBAR_WIDTH
+    } else if (event.key === 'End') {
+      nextWidth = MAX_SIDEBAR_WIDTH
+    } else {
+      return
+    }
+
+    event.preventDefault()
+    setAndSaveSidebarWidth(nextWidth)
+  }
+
+  if (unauthorized) {
+    return <Login onSuccess={() => void projectsQuery.refetch()} />
+  }
 
   return (
     <div
       className={cn(
-        "app-frame isolate grid h-dvh grid-cols-[var(--sidebar-width)_minmax(0,1fr)] bg-zinc-950 max-[700px]:grid-cols-1 max-[700px]:grid-rows-[3.25rem_minmax(0,1fr)]",
-        resizingSidebar && "select-none",
+        'app-frame isolate grid h-dvh grid-cols-[var(--sidebar-width)_minmax(0,1fr)] bg-zinc-950 max-[700px]:grid-cols-1 max-[700px]:grid-rows-[3.25rem_minmax(0,1fr)]',
+        resizingSidebar && 'select-none'
       )}
-      style={{ "--sidebar-width": `${sidebarWidth}px` } as CSSProperties}
+      style={{ '--sidebar-width': `${sidebarWidth}px` } as CSSProperties}
     >
       <header
         className="mobile-bar hidden min-w-0 grid-cols-[2.75rem_minmax(0,1fr)_2.75rem] items-center gap-2 border-b border-white/8 bg-zinc-900/95 px-2 backdrop-blur max-[700px]:grid"
@@ -652,10 +825,14 @@ export default function App() {
           className="h-9 border-0 bg-zinc-800/80 text-base ring-0"
           name="terminal-selector"
           aria-label="Terminal selector"
-          value={selectedTerminalId ?? ""}
+          value={selectedTerminalId ?? ''}
           onChange={(event) => {
-            const terminal = allTerminals.find((item) => item.id === event.target.value);
-            if (terminal) selectTerminal(terminal);
+            const terminal = allTerminals.find(
+              (item) => item.id === event.target.value
+            )
+            if (terminal) {
+              selectTerminal(terminal)
+            }
           }}
         >
           <option value="">Select terminal</option>
@@ -671,8 +848,8 @@ export default function App() {
       </header>
       <div
         className={cn(
-          "drawer-backdrop fixed inset-0 z-30 bg-black/60 opacity-0 backdrop-blur-sm transition-opacity pointer-events-none min-[701px]:hidden",
-          drawerOpen && "opacity-100 pointer-events-auto",
+          'drawer-backdrop fixed inset-0 z-30 bg-black/60 opacity-0 backdrop-blur-sm transition-opacity pointer-events-none min-[701px]:hidden',
+          drawerOpen && 'opacity-100 pointer-events-auto'
         )}
         onClick={() => setDrawerOpen(false)}
         aria-hidden="true"
@@ -680,14 +857,14 @@ export default function App() {
       <aside
         ref={drawerRef}
         id="worktree-sidebar"
-        role={isMobile ? "dialog" : undefined}
+        role={isMobile ? 'dialog' : undefined}
         aria-modal={isMobile && drawerOpen ? true : undefined}
-        aria-labelledby={isMobile ? "worktree-drawer-title" : undefined}
+        aria-labelledby={isMobile ? 'worktree-drawer-title' : undefined}
         aria-hidden={isMobile && !drawerOpen ? true : undefined}
         inert={isMobile && !drawerOpen ? true : undefined}
         className={cn(
-          "sidebar relative z-40 flex min-h-0 flex-col border-r border-white/8 bg-zinc-900/80 backdrop-blur-xl max-[700px]:fixed max-[700px]:inset-y-0 max-[700px]:left-0 max-[700px]:w-[min(88vw,21rem)] max-[700px]:-translate-x-full max-[700px]:shadow-2xl max-[700px]:transition-transform",
-          drawerOpen && "open max-[700px]:translate-x-0",
+          'sidebar relative z-40 flex min-h-0 flex-col border-r border-white/8 bg-zinc-900/80 backdrop-blur-xl max-[700px]:fixed max-[700px]:inset-y-0 max-[700px]:left-0 max-[700px]:w-[min(88vw,21rem)] max-[700px]:-translate-x-full max-[700px]:shadow-2xl max-[700px]:transition-transform',
+          drawerOpen && 'open max-[700px]:translate-x-0'
         )}
       >
         <h2 id="worktree-drawer-title" className="sr-only">
@@ -695,8 +872,8 @@ export default function App() {
         </h2>
         <div
           className={cn(
-            "absolute inset-y-0 right-0 z-50 w-3 translate-x-1/2 touch-none cursor-col-resize outline-none before:absolute before:inset-y-0 before:left-1/2 before:w-px before:-translate-x-1/2 before:bg-white/8 after:absolute after:top-1/2 after:left-1/2 after:h-8 after:w-1 after:-translate-1/2 after:rounded-full after:bg-zinc-700 hover:before:w-0.5 hover:before:bg-cyan-400/60 hover:after:bg-cyan-400 focus-visible:before:w-0.5 focus-visible:before:bg-cyan-400 focus-visible:after:bg-cyan-400 max-[700px]:hidden",
-            resizingSidebar && "before:w-0.5 before:bg-cyan-400",
+            'absolute inset-y-0 right-0 z-50 w-3 translate-x-1/2 touch-none cursor-col-resize outline-none before:absolute before:inset-y-0 before:left-1/2 before:w-px before:-translate-x-1/2 before:bg-white/8 after:absolute after:top-1/2 after:left-1/2 after:h-8 after:w-1 after:-translate-1/2 after:rounded-full after:bg-zinc-700 hover:before:w-0.5 hover:before:bg-cyan-400/60 hover:after:bg-cyan-400 focus-visible:before:w-0.5 focus-visible:before:bg-cyan-400 focus-visible:after:bg-cyan-400 max-[700px]:hidden',
+            resizingSidebar && 'before:w-0.5 before:bg-cyan-400'
           )}
           role="separator"
           aria-label="Resize sidebar"
@@ -761,10 +938,10 @@ export default function App() {
                     >
                       <ChevronRightIcon
                         className={cn(
-                          "shrink-0 transition-transform group-data-[state=open]/project:rotate-90",
+                          'shrink-0 transition-transform group-data-[state=open]/project:rotate-90',
                           project.color
                             ? PROJECT_COLOR_STYLES[project.color].chevron
-                            : "fill-zinc-600",
+                            : 'fill-zinc-600'
                         )}
                       />
                       <span className="truncate">{project.name}</span>
@@ -777,9 +954,14 @@ export default function App() {
                       updateProjectColor.isPending &&
                       updateProjectColor.variables?.projectId === project.id
                     }
-                    onOpenChange={(open) => setOpenProjectColorPickerId(open ? project.id : null)}
+                    onOpenChange={(open) =>
+                      setOpenProjectColorPickerId(open ? project.id : null)
+                    }
                     onChange={(color) =>
-                      updateProjectColor.mutate({ projectId: project.id, color })
+                      updateProjectColor.mutate({
+                        projectId: project.id,
+                        color
+                      })
                     }
                   />
                 </div>
@@ -787,8 +969,10 @@ export default function App() {
                   <ul
                     role="list"
                     className={cn(
-                      "ml-3 grid gap-0.5 border-l pl-1.5",
-                      project.color ? PROJECT_COLOR_STYLES[project.color].rail : "border-white/8",
+                      'ml-3 grid gap-0.5 border-l pl-1.5',
+                      project.color
+                        ? PROJECT_COLOR_STYLES[project.color].rail
+                        : 'border-white/8'
                     )}
                   >
                     {project.worktrees.map((worktree) => (
@@ -798,25 +982,33 @@ export default function App() {
                             variant="ghost"
                             type="button"
                             className={cn(
-                              "worktree-row h-auto min-h-11 w-full min-w-0 justify-start gap-2 rounded-md px-2 py-1.5 text-left text-base font-medium sm:min-h-8 sm:py-1 sm:text-[0.8125rem]",
+                              'worktree-row h-auto min-h-11 w-full min-w-0 justify-start gap-2 rounded-md px-2 py-1.5 text-left text-base font-medium sm:min-h-8 sm:py-1 sm:text-[0.8125rem]',
                               selectedWorktree?.id === worktree.id
-                                ? "selected bg-white/8 text-zinc-50"
-                                : "text-zinc-300 hover:bg-white/5 hover:text-zinc-50",
+                                ? 'selected bg-white/8 text-zinc-50'
+                                : 'text-zinc-300 hover:bg-white/5 hover:text-zinc-50'
                             )}
                             onClick={() => selectWorktree(worktree)}
                             title={`${worktree.path}${worktree.branch ? ` · ${worktree.branch}` : ` · detached at ${worktree.head.slice(0, 8)}`}`}
                           >
-                            <FolderIcon className="shrink-0 text-zinc-500" aria-hidden="true" />
-                            <span className="min-w-0 truncate">{worktree.name}</span>
+                            <FolderIcon
+                              className="shrink-0 text-zinc-500"
+                              aria-hidden="true"
+                            />
+                            <span className="min-w-0 truncate">
+                              {worktree.name}
+                            </span>
                           </Button>
-                          {worktree.kind === "linked" && (
+                          {worktree.kind === 'linked' && (
                             <div className="worktree-actions absolute top-0 right-0 z-10 flex items-center gap-0.5 rounded-md bg-zinc-900 opacity-0 shadow-sm ring-1 ring-white/8 group-hover/worktree:opacity-100 group-focus-within/worktree:opacity-100 max-[700px]:relative max-[700px]:mt-0.5 max-[700px]:ml-7 max-[700px]:w-fit max-[700px]:opacity-100">
                               <SidebarAction
                                 label={`Remove ${worktree.name}`}
                                 tooltip="Remove worktree"
                                 className="text-zinc-500 hover:bg-rose-400/8 hover:text-rose-300"
                                 onClick={(trigger) =>
-                                  openModal({ type: "remove", worktree }, trigger)
+                                  openModal(
+                                    { type: 'remove', worktree },
+                                    trigger
+                                  )
                                 }
                               >
                                 <TrashIcon />
@@ -829,24 +1021,28 @@ export default function App() {
                           className="terminal-list ml-4 grid gap-0 border-l border-white/6 pl-2"
                         >
                           {worktree.terminals.map((terminal) => {
-                            const needsAttention = bellAttention.has(terminal.id);
-                            const progress = terminalProgress.get(terminal.id);
+                            const needsAttention = bellAttention.has(
+                              terminal.id
+                            )
+                            const progress = terminalProgress.get(terminal.id)
                             const status = [
-                              progress ? terminalProgressLabel(progress) : terminal.status,
-                              needsAttention ? "bell" : null,
+                              progress
+                                ? terminalProgressLabel(progress)
+                                : terminal.status,
+                              needsAttention ? 'bell' : null
                             ]
                               .filter(Boolean)
-                              .join(", ");
+                              .join(', ')
                             return (
                               <li key={terminal.id} className="min-w-0">
                                 <Button
                                   variant="ghost"
                                   type="button"
                                   className={cn(
-                                    "terminal-row grid h-auto min-h-11 w-full min-w-0 grid-cols-[1.25rem_minmax(0,1fr)_0.5rem] gap-1.5 rounded-md px-2 py-1.5 text-left text-base font-normal sm:min-h-7 sm:grid-cols-[1rem_minmax(0,1fr)_0.5rem] sm:py-0.5 sm:text-[0.6875rem]",
+                                    'terminal-row grid h-auto min-h-11 w-full min-w-0 grid-cols-[1.25rem_minmax(0,1fr)_0.5rem] gap-1.5 rounded-md px-2 py-1.5 text-left text-base font-normal sm:min-h-7 sm:grid-cols-[1rem_minmax(0,1fr)_0.5rem] sm:py-0.5 sm:text-[0.6875rem]',
                                     selectedTerminalId === terminal.id
-                                      ? "selected bg-cyan-400/8 text-cyan-50"
-                                      : "text-zinc-500 hover:bg-white/5 hover:text-zinc-100",
+                                      ? 'selected bg-cyan-400/8 text-cyan-50'
+                                      : 'text-zinc-500 hover:bg-white/5 hover:text-zinc-100'
                                   )}
                                   onClick={() => selectTerminal(terminal)}
                                   aria-label={`${runtimeTitles.get(terminal.id) || terminal.name}, ${status}`}
@@ -854,12 +1050,14 @@ export default function App() {
                                   {progress ? (
                                     <ArrowPathIcon
                                       className={cn(
-                                        "size-4 shrink-0 fill-cyan-300",
-                                        progress.state !== "paused" &&
-                                          progress.state !== "error" &&
-                                          "animate-spin",
-                                        progress.state === "error" && "fill-rose-300",
-                                        progress.state === "paused" && "fill-amber-300",
+                                        'size-4 shrink-0 fill-cyan-300',
+                                        progress.state !== 'paused' &&
+                                          progress.state !== 'error' &&
+                                          'animate-spin',
+                                        progress.state === 'error' &&
+                                          'fill-rose-300',
+                                        progress.state === 'paused' &&
+                                          'fill-amber-300'
                                       )}
                                       aria-hidden="true"
                                     />
@@ -867,22 +1065,25 @@ export default function App() {
                                     <CommandLineIcon className="size-4 shrink-0 fill-zinc-600" />
                                   )}
                                   <span className="truncate" aria-hidden="true">
-                                    {runtimeTitles.get(terminal.id) || terminal.name}
+                                    {runtimeTitles.get(terminal.id) ||
+                                      terminal.name}
                                   </span>
-                                  {(terminal.status !== "running" || needsAttention) && (
+                                  {(terminal.status !== 'running' ||
+                                    needsAttention) && (
                                     <span
                                       className={cn(
-                                        "status-dot size-1.5 shrink-0 rounded-full bg-zinc-600",
-                                        terminal.status === "exited" && "bg-rose-400",
+                                        'status-dot size-1.5 shrink-0 rounded-full bg-zinc-600',
+                                        terminal.status === 'exited' &&
+                                          'bg-rose-400',
                                         needsAttention &&
-                                          "bg-amber-300 shadow-[0_0_0.5rem] shadow-amber-300/60",
+                                          'bg-amber-300 shadow-[0_0_0.5rem] shadow-amber-300/60'
                                       )}
                                       title={status}
                                     />
                                   )}
                                 </Button>
                               </li>
-                            );
+                            )
                           })}
                         </ul>
                       </li>
@@ -892,8 +1093,9 @@ export default function App() {
                         (pending) =>
                           pending.projectId === project.id &&
                           !project.worktrees.some(
-                            (worktree) => worktree.path === pending.destinationPath,
-                          ),
+                            (worktree) =>
+                              worktree.path === pending.destinationPath
+                          )
                       )
                       .map((pending) => (
                         <li key={pending.id} className="min-w-0">
@@ -909,7 +1111,9 @@ export default function App() {
                               className="size-4 shrink-0 animate-spin text-cyan-400"
                               aria-hidden="true"
                             />
-                            <span className="truncate">{pending.typedName}</span>
+                            <span className="truncate">
+                              {pending.typedName}
+                            </span>
                           </div>
                         </li>
                       ))}
@@ -919,10 +1123,13 @@ export default function App() {
                         variant="ghost"
                         className="h-auto min-h-11 w-full justify-start gap-1.5 px-2 py-1.5 text-base font-normal text-zinc-500 hover:bg-white/5 hover:text-zinc-100 sm:min-h-7 sm:py-0.5 sm:text-[0.6875rem]"
                         disabled={pendingWorktrees.some(
-                          (pending) => pending.projectId === project.id,
+                          (pending) => pending.projectId === project.id
                         )}
                         onClick={(event) =>
-                          openModal({ type: "worktree", project }, event.currentTarget)
+                          openModal(
+                            { type: 'worktree', project },
+                            event.currentTarget
+                          )
                         }
                       >
                         <PlusIcon /> New worktree
@@ -940,7 +1147,9 @@ export default function App() {
             variant="ghost"
             size="sm"
             className="flex-1 justify-start text-zinc-500 hover:bg-white/5 hover:text-zinc-200 sm:text-[0.8125rem]"
-            onClick={(event) => openModal({ type: "project" }, event.currentTarget)}
+            onClick={(event) =>
+              openModal({ type: 'project' }, event.currentTarget)
+            }
           >
             <PlusIcon /> Add project
           </Button>
@@ -956,21 +1165,28 @@ export default function App() {
           terminal={selectedTerminal}
           focusTerminalId={focusTerminalId}
           onSelectTerminal={selectTerminal}
-          onCreateTerminal={() => selectedWorktree && createTerminal.mutate(selectedWorktree)}
+          onCreateTerminal={() =>
+            selectedWorktree && createTerminal.mutate(selectedWorktree)
+          }
           creatingTerminal={
-            createTerminal.isPending && createTerminal.variables?.id === selectedWorktree?.id
+            createTerminal.isPending &&
+            createTerminal.variables?.id === selectedWorktree?.id
           }
           onCloseTerminal={(terminal) => {
             if (
               window.confirm(
-                `Close terminal “${runtimeTitles.get(terminal.id) || terminal.name}”? Its tmux session and process will be terminated.`,
+                `Close terminal “${runtimeTitles.get(terminal.id) || terminal.name}”? Its tmux session and process will be terminated.`
               )
             ) {
-              closeTerminal.mutate(terminal);
+              closeTerminal.mutate(terminal)
             }
           }}
-          closingTerminalId={closeTerminal.isPending ? closeTerminal.variables?.id : null}
-          onStatusChange={() => void queryClient.invalidateQueries({ queryKey: projectsQueryKey })}
+          closingTerminalId={
+            closeTerminal.isPending ? closeTerminal.variables?.id : null
+          }
+          onStatusChange={() =>
+            void queryClient.invalidateQueries({ queryKey: projectsQueryKey })
+          }
         />
       </div>
       {showSyncDegraded && (
@@ -1021,7 +1237,7 @@ export default function App() {
         />
       )}
     </div>
-  );
+  )
 }
 
 function ModalHeading({ eyebrow, title }: { eyebrow: string; title: string }) {
@@ -1035,11 +1251,11 @@ function ModalHeading({ eyebrow, title }: { eyebrow: string; title: string }) {
         {title}
       </h2>
     </div>
-  );
+  )
 }
 
 function FormField({ children }: { children: ReactNode }) {
-  return <div className="grid gap-2">{children}</div>;
+  return <div className="grid gap-2">{children}</div>
 }
 
 function ProjectColorPicker({
@@ -1047,13 +1263,13 @@ function ProjectColorPicker({
   open,
   pending,
   onOpenChange,
-  onChange,
+  onChange
 }: {
-  project: ProjectRecord;
-  open: boolean;
-  pending: boolean;
-  onOpenChange: (open: boolean) => void;
-  onChange: (color: ProjectColor | null) => void;
+  project: ProjectRecord
+  open: boolean
+  pending: boolean
+  onOpenChange: (open: boolean) => void
+  onChange: (color: ProjectColor | null) => void
 }) {
   return (
     <Popover open={open} onOpenChange={onOpenChange}>
@@ -1078,7 +1294,7 @@ function ProjectColorPicker({
           <p className="text-sm font-medium text-zinc-100">Project color</p>
           <div className="grid grid-cols-3 gap-2">
             {PROJECT_COLOR_OPTIONS.map((option) => {
-              const selected = project.color === option.value;
+              const selected = project.color === option.value
               return (
                 <Button
                   key={option.label}
@@ -1086,28 +1302,28 @@ function ProjectColorPicker({
                   variant="ghost"
                   size="icon-sm"
                   className={cn(
-                    "rounded-full ring-2 ring-transparent",
+                    'rounded-full ring-2 ring-transparent',
                     option.swatch,
-                    selected && "ring-white ring-offset-2 ring-offset-zinc-900",
+                    selected && 'ring-white ring-offset-2 ring-offset-zinc-900'
                   )}
                   aria-label={option.label}
                   aria-pressed={selected}
                   title={option.label}
                   disabled={pending}
                   onClick={() => {
-                    onChange(option.value);
-                    onOpenChange(false);
+                    onChange(option.value)
+                    onOpenChange(false)
                   }}
                 >
                   {selected ? <CheckIcon className={option.check} /> : null}
                 </Button>
-              );
+              )
             })}
           </div>
         </div>
       </PopoverContent>
     </Popover>
-  );
+  )
 }
 
 function SidebarAction({
@@ -1116,14 +1332,14 @@ function SidebarAction({
   className,
   disabled,
   onClick,
-  children,
+  children
 }: {
-  label: string;
-  tooltip?: string;
-  className?: string;
-  disabled?: boolean;
-  onClick: (trigger: HTMLButtonElement) => void;
-  children: ReactNode;
+  label: string
+  tooltip?: string
+  className?: string
+  disabled?: boolean
+  onClick: (trigger: HTMLButtonElement) => void
+  children: ReactNode
 }) {
   return (
     <Tooltip>
@@ -1143,22 +1359,22 @@ function SidebarAction({
       </TooltipTrigger>
       <TooltipContent side="top">{tooltip}</TooltipContent>
     </Tooltip>
-  );
+  )
 }
 
 function Login({ onSuccess }: { onSuccess: () => void }) {
-  const [token, setToken] = useState("");
+  const [token, setToken] = useState('')
   const login = useMutation({
     mutationFn: apiClient.login,
-    onSuccess,
-  });
+    onSuccess
+  })
   return (
     <main className="login-page isolate grid min-h-dvh place-items-center bg-[radial-gradient(circle_at_center,var(--color-zinc-900)_0,var(--color-zinc-950)_58%)] p-6">
       <form
         className="flex w-full max-w-xs flex-col gap-5 rounded-xl bg-zinc-900/70 p-6 shadow-2xl ring-1 ring-white/8 backdrop-blur"
         onSubmit={(event) => {
-          event.preventDefault();
-          login.mutate(token);
+          event.preventDefault()
+          login.mutate(token)
         }}
       >
         <div className="grid gap-2">
@@ -1167,8 +1383,8 @@ function Login({ onSuccess }: { onSuccess: () => void }) {
             Unlock TaskTTY
           </h1>
           <p className="text-base text-pretty text-zinc-400 sm:text-sm">
-            Enter the daemon’s static authentication token. It is stored only in an HttpOnly session
-            cookie.
+            Enter the daemon’s static authentication token. It is stored only in
+            an HttpOnly session cookie.
           </p>
         </div>
         <FormField>
@@ -1185,11 +1401,11 @@ function Login({ onSuccess }: { onSuccess: () => void }) {
         </FormField>
         {login.error && <p className="form-error">{login.error.message}</p>}
         <Button type="submit" className="self-end" disabled={login.isPending}>
-          {login.isPending ? "Unlocking…" : "Continue"}
+          {login.isPending ? 'Unlocking…' : 'Continue'}
         </Button>
       </form>
     </main>
-  );
+  )
 }
 
 function ActionModal({
@@ -1197,94 +1413,113 @@ function ActionModal({
   close,
   restoreFocusTo,
   setError,
-  onCreateWorktree,
+  onCreateWorktree
 }: {
-  modal: Exclude<Modal, null>;
-  close: () => void;
-  restoreFocusTo: HTMLElement | null;
-  setError: (value: string | null) => void;
+  modal: Exclude<Modal, null>
+  close: () => void
+  restoreFocusTo: HTMLElement | null
+  setError: (value: string | null) => void
   onCreateWorktree: (
     project: ProjectRecord,
     name: string,
-    base: "default" | "current",
+    base: 'default' | 'current',
     destination: WorktreeDestination,
-    sourceWorktreeId?: string,
-  ) => void;
+    sourceWorktreeId?: string
+  ) => void
 }) {
-  const queryClient = useQueryClient();
-  const worktreeId = modal.type === "remove" ? modal.worktree.id : null;
+  const queryClient = useQueryClient()
+  const worktreeId = modal.type === 'remove' ? modal.worktree.id : null
   const previewQuery = useQuery({
-    queryKey: ["remove-preview", worktreeId],
+    queryKey: ['remove-preview', worktreeId],
     queryFn: () => {
-      if (modal.type !== "remove") throw new Error("A removal preview is not available");
-      return apiClient.removePreview(modal.worktree.id);
+      if (modal.type !== 'remove') {
+        throw new Error('A removal preview is not available')
+      }
+
+      return apiClient.removePreview(modal.worktree.id)
     },
-    enabled: modal.type === "remove",
-  });
-  const [refreshingStalePreview, setRefreshingStalePreview] = useState(false);
+    enabled: modal.type === 'remove'
+  })
+  const [refreshingStalePreview, setRefreshingStalePreview] = useState(false)
   const actionMutation = useMutation({
     mutationFn: (action: () => Promise<unknown>) => action(),
     onSuccess: async () => {
-      close();
-      await queryClient.invalidateQueries({ queryKey: projectsQueryKey });
+      close()
+      await queryClient.invalidateQueries({ queryKey: projectsQueryKey })
     },
     onError: (error) => {
       if (
-        modal.type === "remove" &&
+        modal.type === 'remove' &&
         error instanceof ApiError &&
-        error.code === "REMOVE_PREVIEW_STALE"
+        error.code === 'REMOVE_PREVIEW_STALE'
       ) {
-        setRefreshingStalePreview(true);
-        void previewQuery.refetch().finally(() => setRefreshingStalePreview(false));
-        return;
+        setRefreshingStalePreview(true)
+        void previewQuery
+          .refetch()
+          .finally(() => setRefreshingStalePreview(false))
+        return
       }
-      showError(setError)(error);
-    },
-  });
+
+      showError(setError)(error)
+    }
+  })
 
   useEffect(() => {
-    if (previewQuery.error) showError(setError)(previewQuery.error);
-  }, [previewQuery.error, setError]);
+    if (previewQuery.error) {
+      showError(setError)(previewQuery.error)
+    }
+  }, [previewQuery.error, setError])
 
-  const submit = (action: () => Promise<unknown>) => actionMutation.mutate(action);
-  const busy = actionMutation.isPending;
+  const submit = (action: () => Promise<unknown>) =>
+    actionMutation.mutate(action)
+  const busy = actionMutation.isPending
   const freshRemovePreview =
     !previewQuery.isFetching && !previewQuery.isError && !refreshingStalePreview
       ? (previewQuery.data ?? null)
-      : null;
-  const dialogRef = useRef<HTMLElement | null>(null);
-  const closeRef = useRef(close);
-  closeRef.current = close;
+      : null
+  const dialogRef = useRef<HTMLElement | null>(null)
+  const closeRef = useRef(close)
+  closeRef.current = close
 
   useEffect(() => {
-    const dialog = dialogRef.current;
-    if (!dialog) return;
-    const previouslyFocused = document.activeElement as HTMLElement | null;
-    const appFrame = document.querySelector<HTMLElement>(".app-frame");
-    appFrame?.setAttribute("inert", "");
+    const dialog = dialogRef.current
+    if (!dialog) {
+      return
+    }
+
+    const previouslyFocused = document.activeElement as HTMLElement | null
+    const appFrame = document.querySelector<HTMLElement>('.app-frame')
+    appFrame?.setAttribute('inert', '')
     const frame = window.requestAnimationFrame(() => {
-      const autofocus = dialog.querySelector<HTMLElement>("[autofocus]");
-      const first = autofocus ?? focusableElements(dialog)[0];
-      if (first) first.focus();
-      else dialog.focus();
-    });
-    const keydown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        closeRef.current();
-        return;
+      const autofocus = dialog.querySelector<HTMLElement>('[autofocus]')
+      const first = autofocus ?? focusableElements(dialog)[0]
+      if (first) {
+        first.focus()
+      } else {
+        dialog.focus()
       }
-      trapTabKey(event, dialog);
-    };
-    document.addEventListener("keydown", keydown);
+    })
+    const keydown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        closeRef.current()
+        return
+      }
+
+      trapTabKey(event, dialog)
+    }
+    document.addEventListener('keydown', keydown)
     return () => {
-      window.cancelAnimationFrame(frame);
-      document.removeEventListener("keydown", keydown);
-      appFrame?.removeAttribute("inert");
-      if (restoreFocusTo?.isConnected) restoreFocusTo.focus();
-      else if (previouslyFocused?.isConnected) previouslyFocused.focus();
-    };
-  }, []);
+      window.cancelAnimationFrame(frame)
+      document.removeEventListener('keydown', keydown)
+      appFrame?.removeAttribute('inert')
+      if (restoreFocusTo?.isConnected) {
+        restoreFocusTo.focus()
+      } else if (previouslyFocused?.isConnected) {
+        previouslyFocused.focus()
+      }
+    }
+  }, [])
 
   return createPortal(
     <div
@@ -1295,8 +1530,8 @@ function ActionModal({
       <section
         ref={dialogRef}
         className={cn(
-          "modal relative max-h-[calc(100dvh-2rem)] w-full overflow-y-auto rounded-xl bg-zinc-900 p-6 shadow-2xl ring-1 ring-white/10 max-[700px]:max-h-[90dvh] max-[700px]:max-w-none max-[700px]:rounded-b-none max-[700px]:p-5 max-[700px]:pb-[calc(1.25rem+env(safe-area-inset-bottom))]",
-          modal.type === "worktree" ? "max-w-md" : "max-w-lg",
+          'modal relative max-h-[calc(100dvh-2rem)] w-full overflow-y-auto rounded-xl bg-zinc-900 p-6 shadow-2xl ring-1 ring-white/10 max-[700px]:max-h-[90dvh] max-[700px]:max-w-none max-[700px]:rounded-b-none max-[700px]:p-5 max-[700px]:pb-[calc(1.25rem+env(safe-area-inset-bottom))]',
+          modal.type === 'worktree' ? 'max-w-md' : 'max-w-lg'
         )}
         role="dialog"
         aria-modal="true"
@@ -1314,22 +1549,30 @@ function ActionModal({
           <XMarkIcon />
           <span className="touch-target" aria-hidden="true" />
         </Button>
-        {modal.type === "project" && (
+        {modal.type === 'project' && (
           <ProjectForm
             busy={busy}
-            onSubmit={(repositoryPath) => submit(() => apiClient.addProject(repositoryPath))}
+            onSubmit={(repositoryPath) =>
+              submit(() => apiClient.addProject(repositoryPath))
+            }
           />
         )}
-        {modal.type === "worktree" && (
+        {modal.type === 'worktree' && (
           <WorktreeForm
             project={modal.project}
             busy={false}
             onSubmit={(name, base, destination, sourceWorktreeId) =>
-              onCreateWorktree(modal.project, name, base, destination, sourceWorktreeId)
+              onCreateWorktree(
+                modal.project,
+                name,
+                base,
+                destination,
+                sourceWorktreeId
+              )
             }
           />
         )}
-        {modal.type === "remove" && (
+        {modal.type === 'remove' && (
           <RemoveConfirm
             worktree={modal.worktree}
             preview={freshRemovePreview}
@@ -1341,18 +1584,24 @@ function ActionModal({
         )}
       </section>
     </div>,
-    document.body,
-  );
+    document.body
+  )
 }
 
-function ProjectForm({ busy, onSubmit }: { busy: boolean; onSubmit: (path: string) => void }) {
-  const [pathValue, setPathValue] = useState("");
+function ProjectForm({
+  busy,
+  onSubmit
+}: {
+  busy: boolean
+  onSubmit: (path: string) => void
+}) {
+  const [pathValue, setPathValue] = useState('')
   return (
     <form
       className="flex flex-col gap-5"
       onSubmit={(event) => {
-        event.preventDefault();
-        onSubmit(pathValue);
+        event.preventDefault()
+        onSubmit(pathValue)
       }}
     >
       <ModalHeading eyebrow="Repository" title="Register project" />
@@ -1369,51 +1618,60 @@ function ProjectForm({ busy, onSubmit }: { busy: boolean; onSubmit: (path: strin
         />
       </FormField>
       <p className="form-note">
-        The daemon resolves the main checkout and imports existing linked worktrees.
+        The daemon resolves the main checkout and imports existing linked
+        worktrees.
       </p>
       <Button type="submit" className="self-end" disabled={busy}>
-        {busy ? "Registering…" : "Register project"}
+        {busy ? 'Registering…' : 'Register project'}
       </Button>
     </form>
-  );
+  )
 }
 
 function WorktreeForm({
   project,
   busy,
-  onSubmit,
+  onSubmit
 }: {
-  project: ProjectRecord;
-  busy: boolean;
+  project: ProjectRecord
+  busy: boolean
   onSubmit: (
     name: string,
-    base: "default" | "current",
+    base: 'default' | 'current',
     destination: WorktreeDestination,
-    sourceWorktreeId?: string,
-  ) => void;
+    sourceWorktreeId?: string
+  ) => void
 }) {
-  const [name, setName] = useState("");
-  const [debouncedName, setDebouncedName] = useState("");
-  const [baseValue, setBaseValue] = useState("default");
+  const [name, setName] = useState('')
+  const [debouncedName, setDebouncedName] = useState('')
+  const [baseValue, setBaseValue] = useState('default')
   useEffect(() => {
-    const timeout = window.setTimeout(() => setDebouncedName(name), 250);
-    return () => window.clearTimeout(timeout);
-  }, [name]);
+    const timeout = window.setTimeout(() => setDebouncedName(name), 250)
+    return () => window.clearTimeout(timeout)
+  }, [name])
   const destinationQuery = useQuery({
-    queryKey: ["worktree-destination", project.id, debouncedName],
+    queryKey: ['worktree-destination', project.id, debouncedName],
     queryFn: () => apiClient.worktreeDestination(project.id, debouncedName),
     enabled: Boolean(debouncedName.trim()),
     placeholderData: (previous) => previous,
-    retry: false,
-  });
-  const base = baseValue === "default" ? "default" : "current";
+    retry: false
+  })
+  const base = baseValue === 'default' ? 'default' : 'current'
   return (
     <form
       className="flex flex-col gap-4"
       onSubmit={(event) => {
-        event.preventDefault();
-        if (!destinationQuery.data || name !== debouncedName) return;
-        onSubmit(name, base, destinationQuery.data, base === "current" ? baseValue : undefined);
+        event.preventDefault()
+        if (!destinationQuery.data || name !== debouncedName) {
+          return
+        }
+
+        onSubmit(
+          name,
+          base,
+          destinationQuery.data,
+          base === 'current' ? baseValue : undefined
+        )
       }}
     >
       <ModalHeading eyebrow={project.name} title="New worktree" />
@@ -1438,9 +1696,11 @@ function WorktreeForm({
           value={baseValue}
           onChange={(event) => setBaseValue(event.target.value)}
         >
-          <option value="default">{project.defaultBranch} (latest from origin)</option>
+          <option value="default">
+            {project.defaultBranch} (latest from origin)
+          </option>
           {project.worktrees
-            .filter((worktree) => worktree.status === "active")
+            .filter((worktree) => worktree.status === 'active')
             .map((worktree) => (
               <option key={worktree.id} value={worktree.id}>
                 {worktree.name} (current commit)
@@ -1449,7 +1709,10 @@ function WorktreeForm({
         </NativeSelect>
       </FormField>
       <p
-        className={cn("form-note min-h-5 truncate", destinationQuery.isError && "text-rose-300")}
+        className={cn(
+          'form-note min-h-5 truncate',
+          destinationQuery.isError && 'text-rose-300'
+        )}
         title={destinationQuery.data?.path}
         aria-live="polite"
       >
@@ -1458,8 +1721,8 @@ function WorktreeForm({
           : destinationQuery.error
             ? destinationQuery.error.message
             : name.trim()
-              ? "Resolving destination…"
-              : "Enter a name to preview the destination."}
+              ? 'Resolving destination…'
+              : 'Enter a name to preview the destination.'}
       </p>
       <Button
         type="submit"
@@ -1472,33 +1735,33 @@ function WorktreeForm({
           !destinationQuery.data
         }
       >
-        {busy ? "Creating…" : "Create worktree"}
+        {busy ? 'Creating…' : 'Create worktree'}
       </Button>
     </form>
-  );
+  )
 }
 
 function RemoveConfirm({
   worktree,
   preview,
   busy,
-  onConfirm,
+  onConfirm
 }: {
-  worktree: WorktreeRecord;
-  preview: RemovePreview | null;
-  busy: boolean;
-  onConfirm: (preview: RemovePreview) => void;
+  worktree: WorktreeRecord
+  preview: RemovePreview | null
+  busy: boolean
+  onConfirm: (preview: RemovePreview) => void
 }) {
-  const destructive = Boolean(preview?.warnings.length);
-  const name = preview?.name ?? worktree.name;
-  const branch = preview ? preview.branch : worktree.branch;
-  const detached = preview?.detached ?? worktree.detached;
-  const head = preview?.head ?? worktree.head;
-  const worktreePath = preview?.path ?? worktree.path;
+  const destructive = Boolean(preview?.warnings.length)
+  const name = preview?.name ?? worktree.name
+  const branch = preview ? preview.branch : worktree.branch
+  const detached = preview?.detached ?? worktree.detached
+  const head = preview?.head ?? worktree.head
+  const worktreePath = preview?.path ?? worktree.path
   return (
     <div className="flex flex-col gap-5">
       <ModalHeading
-        eyebrow={destructive ? "Destructive removal" : "Worktree"}
+        eyebrow={destructive ? 'Destructive removal' : 'Worktree'}
         title="Remove worktree"
       />
       <dl className="facts">
@@ -1523,15 +1786,16 @@ function RemoveConfirm({
           <dd>
             {preview
               ? `${preview.dirty.total} (${preview.dirty.staged} staged, ${preview.dirty.unstaged} unstaged, ${preview.dirty.untracked} untracked, ${preview.dirty.conflicts} conflicted)`
-              : "checking…"}
+              : 'checking…'}
           </dd>
         </div>
         <div>
           <dt>Terminals stopped</dt>
           <dd>
             {preview
-              ? preview.terminals.map((terminal) => terminal.name).join(", ") || "none"
-              : "checking…"}
+              ? preview.terminals.map((terminal) => terminal.name).join(', ') ||
+                'none'
+              : 'checking…'}
           </dd>
         </div>
       </dl>
@@ -1562,12 +1826,13 @@ function RemoveConfirm({
         disabled={busy || !preview?.eligible}
         onClick={() => preview && onConfirm(preview)}
       >
-        {busy ? "Removing…" : destructive ? "Remove anyway" : "Remove worktree"}
+        {busy ? 'Removing…' : destructive ? 'Remove anyway' : 'Remove worktree'}
       </Button>
     </div>
-  );
+  )
 }
 
 function showError(setError: (value: string | null) => void) {
-  return (value: unknown) => setError(value instanceof Error ? value.message : String(value));
+  return (value: unknown) =>
+    setError(value instanceof Error ? value.message : String(value))
 }

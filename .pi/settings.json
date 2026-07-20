@@ -1,5 +1,3 @@
 {
-  "packages": [
-    "npm:@noice-tech/pi-changelog"
-  ]
+  "packages": ["npm:@noice-tech/pi-changelog"]
 }

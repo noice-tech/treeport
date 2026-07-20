@@ -66,15 +66,15 @@ Represent worktree identity separately from Git state:
 
 ```ts
 interface WorktreeRecord {
-  id: string;
-  projectId: string;
-  name: string;
-  path: string;
-  head: string;
-  branch: string | null;
-  detached: boolean;
-  locked: boolean;
-  kind: "main" | "linked";
+  id: string
+  projectId: string
+  name: string
+  path: string
+  head: string
+  branch: string | null
+  detached: boolean
+  locked: boolean
+  kind: 'main' | 'linked'
   // existing runtime/status fields
 }
 ```
@@ -366,13 +366,13 @@ Define two labels:
 Make `TerminalSessionManager` own one immutable title snapshot:
 
 ```ts
-ReadonlyMap<terminalId, string | null>;
+ReadonlyMap<terminalId, string | null>
 ```
 
 Expose a subscription/hook and one resolver:
 
 ```ts
-runtimeTitle.get(terminal.id) ?? terminal.name;
+runtimeTitle.get(terminal.id) ?? terminal.name
 ```
 
 Use it for:

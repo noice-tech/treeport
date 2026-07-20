@@ -2,115 +2,135 @@ import type {
   ProductEvent,
   TerminalRecord,
   TerminalRuntimeMetadata,
-  WorktreeRecord,
-} from "@tasktty/shared";
-import type { TaskTTYService, TmuxAdapter } from "@tasktty/core";
-import { resolveExecutablePath } from "@tasktty/core";
-import { progressControlAttachArgs } from "./tmux-control.js";
+  WorktreeRecord
+} from '@tasktty/shared'
+import type { TaskTTYService, TmuxAdapter } from '@tasktty/core'
+import { resolveExecutablePath } from '@tasktty/core'
+import { progressControlAttachArgs } from './tmux-control.js'
 import {
   createTmuxProgressObserver,
   type TerminalProgressObserver,
-  type TerminalProgressObserverFactory,
-} from "./tmux-progress.js";
+  type TerminalProgressObserverFactory
+} from './tmux-progress.js'
 
-export const TERMINAL_METADATA_POLL_MS = 2_000;
+export const TERMINAL_METADATA_POLL_MS = 2_000
 
-type MetadataListener = (metadata: TerminalRuntimeMetadata) => void;
+type MetadataListener = (metadata: TerminalRuntimeMetadata) => void
 
 interface TerminalMetadataEntry extends TerminalRuntimeMetadata {
-  worktreeId: string;
-  socketName: string;
-  sessionName: string;
-  cwd: string;
-  status: TerminalRecord["status"];
-  titleRevision: number;
-  observer: TerminalProgressObserver | null;
-  observerVersion: number;
-  poll: NodeJS.Timeout | null;
-  polling: boolean;
+  worktreeId: string
+  socketName: string
+  sessionName: string
+  cwd: string
+  status: TerminalRecord['status']
+  titleRevision: number
+  observer: TerminalProgressObserver | null
+  observerVersion: number
+  poll: NodeJS.Timeout | null
+  polling: boolean
 }
 
 function tmuxEnvironment(): NodeJS.ProcessEnv {
   return Object.fromEntries(
     Object.entries(process.env).filter(
-      ([key, value]) => value !== undefined && key !== "TMUX" && key !== "TMUX_PANE",
-    ),
-  ) as NodeJS.ProcessEnv;
+      ([key, value]) =>
+        value !== undefined && key !== 'TMUX' && key !== 'TMUX_PANE'
+    )
+  ) as NodeJS.ProcessEnv
 }
 
 /** Owns daemon-lifetime title/progress observers independently of browser terminal attachments. */
 export class TerminalMetadataManager {
-  private readonly entries = new Map<string, TerminalMetadataEntry>();
-  private readonly listeners = new Map<string, Set<MetadataListener>>();
-  private readonly tmuxExecutable: string;
-  private initializePromise: Promise<void> | null = null;
-  private unsubscribeEvents: (() => void) | null = null;
-  private disposed = false;
+  private readonly entries = new Map<string, TerminalMetadataEntry>()
+  private readonly listeners = new Map<string, Set<MetadataListener>>()
+  private readonly tmuxExecutable: string
+  private initializePromise: Promise<void> | null = null
+  private unsubscribeEvents: (() => void) | null = null
+  private disposed = false
 
   constructor(
     private readonly service: TaskTTYService,
     private readonly tmux: TmuxAdapter,
     tmuxExecutable: string,
-    private readonly createObserver: TerminalProgressObserverFactory = createTmuxProgressObserver,
+    private readonly createObserver: TerminalProgressObserverFactory = createTmuxProgressObserver
   ) {
-    this.tmuxExecutable = resolveExecutablePath(tmuxExecutable);
+    this.tmuxExecutable = resolveExecutablePath(tmuxExecutable)
   }
 
   initialize(): Promise<void> {
-    if (this.initializePromise) return this.initializePromise;
+    if (this.initializePromise) {
+      return this.initializePromise
+    }
+
     this.unsubscribeEvents = this.service.events.subscribe((event) =>
-      this.handleProductEvent(event),
-    );
-    this.initializePromise = this.service.listProjects().then(async (projects) => {
-      await Promise.all(
-        projects.flatMap((project) =>
-          project.worktrees.flatMap((worktree) =>
-            worktree.terminals.map((terminal) => this.trackTerminal(terminal, worktree)),
-          ),
-        ),
-      );
-    });
-    return this.initializePromise;
+      this.handleProductEvent(event)
+    )
+    this.initializePromise = this.service
+      .listProjects()
+      .then(async (projects) => {
+        await Promise.all(
+          projects.flatMap((project) =>
+            project.worktrees.flatMap((worktree) =>
+              worktree.terminals.map((terminal) =>
+                this.trackTerminal(terminal, worktree)
+              )
+            )
+          )
+        )
+      })
+    return this.initializePromise
   }
 
   get(terminalId: string): TerminalRuntimeMetadata {
-    const entry = this.entries.get(terminalId);
+    const entry = this.entries.get(terminalId)
     return {
       terminalId,
       title: entry?.title ?? null,
-      progress: entry?.progress ?? null,
-    };
+      progress: entry?.progress ?? null
+    }
   }
 
   snapshot(): TerminalRuntimeMetadata[] {
-    return [...this.entries.values()].map(({ terminalId, title, progress }) => ({
-      terminalId,
-      title,
-      progress,
-    }));
+    return [...this.entries.values()].map(
+      ({ terminalId, title, progress }) => ({
+        terminalId,
+        title,
+        progress
+      })
+    )
   }
 
   subscribe(terminalId: string, listener: MetadataListener): () => void {
-    const listeners = this.listeners.get(terminalId) ?? new Set<MetadataListener>();
-    listeners.add(listener);
-    this.listeners.set(terminalId, listeners);
+    const listeners =
+      this.listeners.get(terminalId) ?? new Set<MetadataListener>()
+    listeners.add(listener)
+    this.listeners.set(terminalId, listeners)
     return () => {
-      listeners.delete(listener);
-      if (!listeners.size) this.listeners.delete(terminalId);
-    };
+      listeners.delete(listener)
+      if (!listeners.size) {
+        this.listeners.delete(terminalId)
+      }
+    }
   }
 
-  async trackTerminal(terminal: TerminalRecord, worktree: WorktreeRecord): Promise<void> {
-    if (this.disposed) return;
-    let entry = this.entries.get(terminal.id);
+  async trackTerminal(
+    terminal: TerminalRecord,
+    worktree: WorktreeRecord
+  ): Promise<void> {
+    if (this.disposed) {
+      return
+    }
+
+    let entry = this.entries.get(terminal.id)
     if (
       entry &&
       (entry.socketName !== worktree.tmuxSocketName ||
         entry.sessionName !== terminal.tmuxSessionName)
     ) {
-      this.removeTerminal(terminal.id);
-      entry = undefined;
+      this.removeTerminal(terminal.id)
+      entry = undefined
     }
+
     if (!entry) {
       entry = {
         terminalId: terminal.id,
@@ -125,175 +145,264 @@ export class TerminalMetadataManager {
         observer: null,
         observerVersion: 0,
         poll: null,
-        polling: false,
-      };
-      this.entries.set(terminal.id, entry);
-      if (terminal.status === "running") this.startRuntime(entry);
-      const observedEntry = entry;
-      const titleRevision = entry.titleRevision;
-      const observerVersion = entry.observerVersion;
+        polling: false
+      }
+      this.entries.set(terminal.id, entry)
+      if (terminal.status === 'running') {
+        this.startRuntime(entry)
+      }
+
+      const observedEntry = entry
+      const titleRevision = entry.titleRevision
+      const observerVersion = entry.observerVersion
       const title = await this.tmux
         .sessionTitle(worktree.tmuxSocketName, terminal.tmuxSessionName)
-        .catch(() => null);
-      if (this.entries.get(terminal.id) !== observedEntry) return;
+        .catch(() => null)
+      if (this.entries.get(terminal.id) !== observedEntry) {
+        return
+      }
+
       if (
         observedEntry.titleRevision === titleRevision &&
         observedEntry.observerVersion === observerVersion
-      )
-        this.update(observedEntry, { title });
+      ) {
+        this.update(observedEntry, { title })
+      }
     } else {
-      entry.worktreeId = terminal.worktreeId;
-      entry.cwd = worktree.path;
-      entry.status = terminal.status;
+      entry.worktreeId = terminal.worktreeId
+      entry.cwd = worktree.path
+      entry.status = terminal.status
     }
-    if (this.entries.get(terminal.id) !== entry) return;
-    if (entry.status === "running") this.startRuntime(entry);
-    else this.stopRuntime(entry);
+
+    if (this.entries.get(terminal.id) !== entry) {
+      return
+    }
+
+    if (entry.status === 'running') {
+      this.startRuntime(entry)
+    } else {
+      this.stopRuntime(entry)
+    }
   }
 
   removeTerminal(terminalId: string): void {
-    const entry = this.entries.get(terminalId);
-    if (!entry) return;
-    this.entries.delete(terminalId);
-    this.stopRuntime(entry);
-    const cleared = { terminalId, title: null, progress: null } satisfies TerminalRuntimeMetadata;
-    this.listeners.get(terminalId)?.forEach((listener) => listener(cleared));
+    const entry = this.entries.get(terminalId)
+    if (!entry) {
+      return
+    }
+
+    this.entries.delete(terminalId)
+    this.stopRuntime(entry)
+    const cleared = {
+      terminalId,
+      title: null,
+      progress: null
+    } satisfies TerminalRuntimeMetadata
+    this.listeners.get(terminalId)?.forEach((listener) => listener(cleared))
   }
 
   dispose(): void {
-    if (this.disposed) return;
-    this.disposed = true;
-    this.unsubscribeEvents?.();
-    this.unsubscribeEvents = null;
-    for (const terminalId of [...this.entries.keys()]) this.removeTerminal(terminalId);
-    this.listeners.clear();
+    if (this.disposed) {
+      return
+    }
+
+    this.disposed = true
+    this.unsubscribeEvents?.()
+    this.unsubscribeEvents = null
+    for (const terminalId of [...this.entries.keys()]) {
+      this.removeTerminal(terminalId)
+    }
+    this.listeners.clear()
   }
 
   private handleProductEvent(event: ProductEvent): void {
-    const terminalId = typeof event.data.terminalId === "string" ? event.data.terminalId : null;
-    if (event.type === "terminal.removed" && terminalId) {
-      this.removeTerminal(terminalId);
-      return;
+    const terminalId =
+      typeof event.data.terminalId === 'string' ? event.data.terminalId : null
+    if (event.type === 'terminal.removed' && terminalId) {
+      this.removeTerminal(terminalId)
+      return
     }
-    if (event.type === "worktree.removed") {
-      const worktreeId = typeof event.data.worktreeId === "string" ? event.data.worktreeId : null;
+
+    if (event.type === 'worktree.removed') {
+      const worktreeId =
+        typeof event.data.worktreeId === 'string' ? event.data.worktreeId : null
       if (worktreeId) {
         for (const entry of this.entries.values()) {
-          if (entry.worktreeId === worktreeId) this.removeTerminal(entry.terminalId);
+          if (entry.worktreeId === worktreeId) {
+            this.removeTerminal(entry.terminalId)
+          }
         }
       }
-      return;
+
+      return
     }
-    if ((event.type === "terminal.created" || event.type === "terminal.updated") && terminalId) {
-      const terminal = this.service.database.terminal(terminalId);
+
+    if (
+      (event.type === 'terminal.created' ||
+        event.type === 'terminal.updated') &&
+      terminalId
+    ) {
+      const terminal = this.service.database.terminal(terminalId)
       if (!terminal) {
-        this.removeTerminal(terminalId);
-        return;
+        this.removeTerminal(terminalId)
+        return
       }
-      const worktree = this.service.database.worktree(terminal.worktreeId);
-      if (worktree) void this.trackTerminal(terminal, worktree);
+
+      const worktree = this.service.database.worktree(terminal.worktreeId)
+      if (worktree) {
+        void this.trackTerminal(terminal, worktree)
+      }
     }
   }
 
   private startRuntime(entry: TerminalMetadataEntry): void {
     if (!entry.observer) {
-      const version = ++entry.observerVersion;
-      let exited = false;
+      const version = ++entry.observerVersion
+      let exited = false
       try {
         const observer = this.createObserver({
           executable: this.tmuxExecutable,
           args: progressControlAttachArgs(
             entry.socketName,
             this.tmux.configPath,
-            entry.sessionName,
+            entry.sessionName
           ),
           cwd: entry.cwd,
           env: tmuxEnvironment(),
           onTitle: (title) => {
-            if (this.entries.get(entry.terminalId) === entry && entry.observerVersion === version)
-              this.update(entry, { title });
+            if (
+              this.entries.get(entry.terminalId) === entry &&
+              entry.observerVersion === version
+            ) {
+              this.update(entry, { title })
+            }
           },
           onProgress: (progress) => {
-            if (this.entries.get(entry.terminalId) === entry && entry.observerVersion === version)
-              this.update(entry, { progress });
+            if (
+              this.entries.get(entry.terminalId) === entry &&
+              entry.observerVersion === version
+            ) {
+              this.update(entry, { progress })
+            }
           },
           onExit: () => {
-            exited = true;
-            if (this.entries.get(entry.terminalId) !== entry || entry.observerVersion !== version)
-              return;
-            entry.observerVersion += 1;
-            entry.observer = null;
-            this.update(entry, { progress: null });
-          },
-        });
+            exited = true
+            if (
+              this.entries.get(entry.terminalId) !== entry ||
+              entry.observerVersion !== version
+            ) {
+              return
+            }
+
+            entry.observerVersion += 1
+            entry.observer = null
+            this.update(entry, { progress: null })
+          }
+        })
         if (
           exited ||
           this.entries.get(entry.terminalId) !== entry ||
           entry.observerVersion !== version
-        )
-          observer.dispose();
-        else entry.observer = observer;
+        ) {
+          observer.dispose()
+        } else {
+          entry.observer = observer
+        }
       } catch {
-        entry.observer = null;
+        entry.observer = null
       }
     }
+
     if (!entry.poll) {
-      entry.poll = setInterval(() => void this.poll(entry), TERMINAL_METADATA_POLL_MS);
-      entry.poll.unref();
+      entry.poll = setInterval(
+        () => void this.poll(entry),
+        TERMINAL_METADATA_POLL_MS
+      )
+      entry.poll.unref()
     }
   }
 
   private stopRuntime(entry: TerminalMetadataEntry): void {
-    if (entry.poll) clearInterval(entry.poll);
-    entry.poll = null;
-    entry.observerVersion += 1;
-    entry.observer?.dispose();
-    entry.observer = null;
-    this.update(entry, { progress: null });
+    if (entry.poll) {
+      clearInterval(entry.poll)
+    }
+
+    entry.poll = null
+    entry.observerVersion += 1
+    entry.observer?.dispose()
+    entry.observer = null
+    this.update(entry, { progress: null })
   }
 
   private async poll(entry: TerminalMetadataEntry): Promise<void> {
-    if (entry.polling || this.entries.get(entry.terminalId) !== entry) return;
-    entry.polling = true;
-    const titleRevision = entry.titleRevision;
-    const observerVersion = entry.observerVersion;
+    if (entry.polling || this.entries.get(entry.terminalId) !== entry) {
+      return
+    }
+
+    entry.polling = true
+    const titleRevision = entry.titleRevision
+    const observerVersion = entry.observerVersion
     try {
       const [terminal, title] = await Promise.all([
         this.service.refreshTerminalStatus(entry.terminalId),
-        this.tmux.sessionTitle(entry.socketName, entry.sessionName),
-      ]);
-      if (this.entries.get(entry.terminalId) !== entry) return;
-      entry.status = terminal.status;
-      if (entry.titleRevision === titleRevision && entry.observerVersion === observerVersion)
-        this.update(entry, { title });
-      if (terminal.status === "running") this.startRuntime(entry);
-      else this.stopRuntime(entry);
+        this.tmux.sessionTitle(entry.socketName, entry.sessionName)
+      ])
+      if (this.entries.get(entry.terminalId) !== entry) {
+        return
+      }
+
+      entry.status = terminal.status
+      if (
+        entry.titleRevision === titleRevision &&
+        entry.observerVersion === observerVersion
+      ) {
+        this.update(entry, { title })
+      }
+
+      if (terminal.status === 'running') {
+        this.startRuntime(entry)
+      } else {
+        this.stopRuntime(entry)
+      }
     } catch {
       // Reconciliation or a later poll will recover transient tmux failures.
     } finally {
-      entry.polling = false;
+      entry.polling = false
     }
   }
 
   private update(
     entry: TerminalMetadataEntry,
-    patch: Partial<Pick<TerminalRuntimeMetadata, "title" | "progress">>,
+    patch: Partial<Pick<TerminalRuntimeMetadata, 'title' | 'progress'>>
   ): void {
-    if (this.entries.get(entry.terminalId) !== entry) return;
+    if (this.entries.get(entry.terminalId) !== entry) {
+      return
+    }
+
     const title =
-      patch.title === undefined ? entry.title : patch.title?.trim().slice(0, 256) || null;
-    const progress = patch.progress === undefined ? entry.progress : patch.progress;
+      patch.title === undefined
+        ? entry.title
+        : patch.title?.trim().slice(0, 256) || null
+    const progress =
+      patch.progress === undefined ? entry.progress : patch.progress
     if (
       title === entry.title &&
       progress?.state === entry.progress?.state &&
       progress?.value === entry.progress?.value
-    )
-      return;
-    if (title !== entry.title) entry.titleRevision += 1;
-    entry.title = title;
-    entry.progress = progress;
-    const metadata = { terminalId: entry.terminalId, title, progress };
-    this.listeners.get(entry.terminalId)?.forEach((listener) => listener(metadata));
-    this.service.events.publish("terminal.metadata", metadata);
+    ) {
+      return
+    }
+
+    if (title !== entry.title) {
+      entry.titleRevision += 1
+    }
+
+    entry.title = title
+    entry.progress = progress
+    const metadata = { terminalId: entry.terminalId, title, progress }
+    this.listeners
+      .get(entry.terminalId)
+      ?.forEach((listener) => listener(metadata))
+    this.service.events.publish('terminal.metadata', metadata)
   }
 }

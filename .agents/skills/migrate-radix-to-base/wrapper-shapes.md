@@ -32,9 +32,9 @@ non-button polymorphic components (breadcrumb link, marker).
 ```tsx
 <TooltipPrimitive.Arrow
   className={cn(
-    "cn-tooltip-arrow cn-tooltip-arrow-logical",
-    "data-[side=bottom]:top-1 data-[side=left]:right-[-13px] data-[side=left]:top-1/2! data-[side=left]:-translate-y-1/2 data-[side=right]:left-[-13px] data-[side=right]:top-1/2! data-[side=right]:-translate-y-1/2 data-[side=top]:-bottom-2.5",
-    className,
+    'cn-tooltip-arrow cn-tooltip-arrow-logical',
+    'data-[side=bottom]:top-1 data-[side=left]:right-[-13px] data-[side=left]:top-1/2! data-[side=left]:-translate-y-1/2 data-[side=right]:left-[-13px] data-[side=right]:top-1/2! data-[side=right]:-translate-y-1/2 data-[side=top]:-bottom-2.5',
+    className
   )}
 />
 ```
@@ -55,10 +55,10 @@ function DropdownMenuSubContent(props) {
       alignOffset={-3}
       side="right"
       sideOffset={0}
-      className={cn("w-auto", props.className)}
+      className={cn('w-auto', props.className)}
       {...props}
     />
-  );
+  )
 }
 ```
 

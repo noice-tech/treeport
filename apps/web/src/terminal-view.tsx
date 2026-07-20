@@ -1,36 +1,45 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { ArrowPathIcon, PlusIcon, XMarkIcon } from "@heroicons/react/16/solid";
-import type { TerminalRecord, WorktreeRecord } from "@tasktty/shared";
-import { Button } from "./components/ui/button.js";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "./components/ui/tabs.js";
-import { Tooltip, TooltipContent, TooltipTrigger } from "./components/ui/tooltip.js";
-import { cn } from "./lib/utils.js";
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { ArrowPathIcon, PlusIcon, XMarkIcon } from '@heroicons/react/16/solid'
+import type { TerminalRecord, WorktreeRecord } from '@tasktty/shared'
+import { Button } from './components/ui/button.js'
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger
+} from './components/ui/tabs.js'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger
+} from './components/ui/tooltip.js'
+import { cn } from './lib/utils.js'
 import {
   terminalProgressLabel,
   terminalSessions,
   type ArrowDirection,
   type TerminalProgress,
   type TerminalSession,
-  type TerminalSessionSnapshot,
-} from "./terminal-session.js";
+  type TerminalSessionSnapshot
+} from './terminal-session.js'
 
 interface TerminalViewProps {
-  worktree: WorktreeRecord | null;
-  terminal: TerminalRecord | null;
-  focusTerminalId: string | null;
-  creatingTerminal: boolean;
-  closingTerminalId: string | null;
-  onSelectTerminal: (terminal: TerminalRecord) => void;
-  onCreateTerminal: () => void;
-  onCloseTerminal: (terminal: TerminalRecord) => void;
-  onStatusChange: () => void;
+  worktree: WorktreeRecord | null
+  terminal: TerminalRecord | null
+  focusTerminalId: string | null
+  creatingTerminal: boolean
+  closingTerminalId: string | null
+  onSelectTerminal: (terminal: TerminalRecord) => void
+  onCreateTerminal: () => void
+  onCloseTerminal: (terminal: TerminalRecord) => void
+  onStatusChange: () => void
 }
 
-const EMPTY_ATTENTION: ReadonlySet<string> = new Set();
-const EMPTY_TITLES: ReadonlyMap<string, string> = new Map();
-const EMPTY_PROGRESS: ReadonlyMap<string, TerminalProgress> = new Map();
+const EMPTY_ATTENTION: ReadonlySet<string> = new Set()
+const EMPTY_TITLES: ReadonlyMap<string, string> = new Map()
+const EMPTY_PROGRESS: ReadonlyMap<string, TerminalProgress> = new Map()
 const EMPTY_SNAPSHOT: TerminalSessionSnapshot = {
-  phase: "closed",
+  phase: 'closed',
   degraded: false,
   controller: false,
   title: null,
@@ -38,8 +47,8 @@ const EMPTY_SNAPSHOT: TerminalSessionSnapshot = {
   bellSerial: 0,
   exitSerial: 0,
   progress: null,
-  error: null,
-};
+  error: null
+}
 
 export function TerminalView({
   worktree,
@@ -50,96 +59,113 @@ export function TerminalView({
   onSelectTerminal,
   onCreateTerminal,
   onCloseTerminal,
-  onStatusChange,
+  onStatusChange
 }: TerminalViewProps) {
-  const shellRef = useRef<HTMLElement>(null);
-  const hostRef = useRef<HTMLDivElement>(null);
-  const [session, setSession] = useState<TerminalSession | null>(null);
-  const [ctrl, setCtrl] = useState(false);
-  const [alt, setAlt] = useState(false);
-  const lastExitSerial = useRef(0);
-  const lastExitSessionId = useRef<string | null>(null);
-  const focusedTerminalId = useRef<string | null>(null);
+  const shellRef = useRef<HTMLElement>(null)
+  const hostRef = useRef<HTMLDivElement>(null)
+  const [session, setSession] = useState<TerminalSession | null>(null)
+  const [ctrl, setCtrl] = useState(false)
+  const [alt, setAlt] = useState(false)
+  const lastExitSerial = useRef(0)
+  const lastExitSessionId = useRef<string | null>(null)
+  const focusedTerminalId = useRef<string | null>(null)
 
   useEffect(() => {
     if (!terminal) {
-      setSession(null);
-      return;
+      setSession(null)
+      return
     }
-    const next = terminalSessions.acquire(terminal.id);
-    setSession(next);
-    return () => terminalSessions.release(terminal.id);
-  }, [terminal?.id]);
 
-  const activeSession = session?.terminalId === terminal?.id ? session : null;
+    const next = terminalSessions.acquire(terminal.id)
+    setSession(next)
+    return () => terminalSessions.release(terminal.id)
+  }, [terminal?.id])
+
+  const activeSession = session?.terminalId === terminal?.id ? session : null
   const snapshot = useSyncExternalStore(
     activeSession?.subscribe ?? (() => () => undefined),
     activeSession?.getSnapshot ?? (() => EMPTY_SNAPSHOT),
-    () => EMPTY_SNAPSHOT,
-  );
+    () => EMPTY_SNAPSHOT
+  )
   const bellAttention = useSyncExternalStore(
     terminalSessions.subscribe,
     terminalSessions.getAttentionSnapshot,
-    () => EMPTY_ATTENTION,
-  );
+    () => EMPTY_ATTENTION
+  )
   const runtimeTitles = useSyncExternalStore(
     terminalSessions.subscribe,
     terminalSessions.getTitleSnapshot,
-    () => EMPTY_TITLES,
-  );
+    () => EMPTY_TITLES
+  )
   const terminalProgress = useSyncExternalStore(
     terminalSessions.subscribe,
     terminalSessions.getProgressSnapshot,
-    () => EMPTY_PROGRESS,
-  );
+    () => EMPTY_PROGRESS
+  )
 
   useEffect(() => {
-    const host = hostRef.current;
-    if (!host || !activeSession) return;
-    activeSession.mount(host);
-    return () => activeSession.unmount(host);
-  }, [activeSession]);
+    const host = hostRef.current
+    if (!host || !activeSession) {
+      return
+    }
+
+    activeSession.mount(host)
+    return () => activeSession.unmount(host)
+  }, [activeSession])
 
   useEffect(() => {
     if (
       !activeSession ||
       activeSession.terminalId !== focusTerminalId ||
       focusedTerminalId.current === focusTerminalId
-    )
-      return;
-    focusedTerminalId.current = focusTerminalId;
-    activeSession.focus();
-  }, [activeSession, focusTerminalId]);
+    ) {
+      return
+    }
+
+    focusedTerminalId.current = focusTerminalId
+    activeSession.focus()
+  }, [activeSession, focusTerminalId])
 
   useEffect(() => {
     if (lastExitSessionId.current !== terminal?.id) {
-      lastExitSessionId.current = terminal?.id ?? null;
-      lastExitSerial.current = snapshot.exitSerial;
-      return;
+      lastExitSessionId.current = terminal?.id ?? null
+      lastExitSerial.current = snapshot.exitSerial
+      return
     }
-    if (snapshot.exitSerial <= lastExitSerial.current) return;
-    lastExitSerial.current = snapshot.exitSerial;
-    onStatusChange();
-  }, [onStatusChange, snapshot.exitSerial, terminal?.id]);
+
+    if (snapshot.exitSerial <= lastExitSerial.current) {
+      return
+    }
+
+    lastExitSerial.current = snapshot.exitSerial
+    onStatusChange()
+  }, [onStatusChange, snapshot.exitSerial, terminal?.id])
 
   const sendInput = (value: string) => {
-    let data = value;
-    if (ctrl && value.length === 1)
-      data = String.fromCharCode(value.toUpperCase().charCodeAt(0) & 31);
-    if (alt) data = `\u001b${data}`;
-    activeSession?.sendText(data);
-    setCtrl(false);
-    setAlt(false);
-  };
+    let data = value
+    if (ctrl && value.length === 1) {
+      data = String.fromCharCode(value.toUpperCase().charCodeAt(0) & 31)
+    }
+
+    if (alt) {
+      data = `\u001b${data}`
+    }
+
+    activeSession?.sendText(data)
+    setCtrl(false)
+    setAlt(false)
+  }
 
   const sendArrow = (direction: ArrowDirection) => {
-    activeSession?.sendArrow(direction, alt);
-    setCtrl(false);
-    setAlt(false);
-  };
+    activeSession?.sendArrow(direction, alt)
+    setCtrl(false)
+    setAlt(false)
+  }
 
-  const visibleTitle = terminal ? runtimeTitles.get(terminal.id) || terminal.name : "";
-  const terminals = worktree?.terminals ?? [];
+  const visibleTitle = terminal
+    ? runtimeTitles.get(terminal.id) || terminal.name
+    : ''
+  const terminals = worktree?.terminals ?? []
 
   useEffect(() => {
     // Mod+W stays browser-owned here; reserve it for Electron, where we can override the window accelerator.
@@ -149,103 +175,119 @@ export function TerminalView({
         event.altKey ||
         event.ctrlKey ||
         event.shiftKey ||
-        shellRef.current?.closest("[inert]")
-      )
-        return;
-      const index = Number(event.key) - 1;
-      if (!Number.isInteger(index) || index < 0 || index > 8) return;
-      const nextTerminal = terminals[index];
-      if (!nextTerminal) return;
-      event.preventDefault();
-      event.stopPropagation();
-      onSelectTerminal(nextTerminal);
-    };
-    document.addEventListener("keydown", keydown, true);
-    return () => document.removeEventListener("keydown", keydown, true);
-  }, [onSelectTerminal, terminals]);
+        shellRef.current?.closest('[inert]')
+      ) {
+        return
+      }
+
+      const index = Number(event.key) - 1
+      if (!Number.isInteger(index) || index < 0 || index > 8) {
+        return
+      }
+
+      const nextTerminal = terminals[index]
+      if (!nextTerminal) {
+        return
+      }
+
+      event.preventDefault()
+      event.stopPropagation()
+      onSelectTerminal(nextTerminal)
+    }
+    document.addEventListener('keydown', keydown, true)
+    return () => document.removeEventListener('keydown', keydown, true)
+  }, [onSelectTerminal, terminals])
 
   return (
     <Tabs
-      value={terminal?.id ?? ""}
+      value={terminal?.id ?? ''}
       onValueChange={(terminalId) => {
-        const nextTerminal = terminals.find((item) => item.id === terminalId);
-        if (nextTerminal) onSelectTerminal(nextTerminal);
+        const nextTerminal = terminals.find((item) => item.id === terminalId)
+        if (nextTerminal) {
+          onSelectTerminal(nextTerminal)
+        }
       }}
       asChild
     >
       <main
         ref={shellRef}
         className={cn(
-          "terminal-shell grid min-h-0 min-w-0 grid-rows-[2.5rem_minmax(0,1fr)] bg-zinc-950 max-[700px]:grid-rows-[2.75rem_minmax(0,1fr)_3.25rem]",
-          snapshot.bellActive && "terminal-bell",
+          'terminal-shell grid min-h-0 min-w-0 grid-rows-[2.5rem_minmax(0,1fr)] bg-zinc-950 max-[700px]:grid-rows-[2.75rem_minmax(0,1fr)_3.25rem]',
+          snapshot.bellActive && 'terminal-bell'
         )}
-        aria-label={terminal ? `${visibleTitle} terminal` : "Terminal panel"}
+        aria-label={terminal ? `${visibleTitle} terminal` : 'Terminal panel'}
       >
         <header className="terminal-header flex min-w-0 items-stretch border-b border-white/8 bg-zinc-900/70">
           <div className="min-w-0 max-w-full flex-1 overflow-x-auto">
             <TabsList
               className="flex h-full min-w-full items-stretch"
-              aria-label={`${worktree?.name ?? "Worktree"} terminals`}
+              aria-label={`${worktree?.name ?? 'Worktree'} terminals`}
             >
               {terminals.map((item, index) => {
-                const selected = item.id === terminal?.id;
-                const title = runtimeTitles.get(item.id) || item.name;
-                const needsAttention = bellAttention.has(item.id);
-                const progress = terminalProgress.get(item.id);
+                const selected = item.id === terminal?.id
+                const title = runtimeTitles.get(item.id) || item.name
+                const needsAttention = bellAttention.has(item.id)
+                const progress = terminalProgress.get(item.id)
                 const status = [
                   item.status,
-                  selected && snapshot.degraded ? "reconnecting" : null,
+                  selected && snapshot.degraded ? 'reconnecting' : null,
                   progress ? terminalProgressLabel(progress) : null,
-                  needsAttention ? "bell" : null,
+                  needsAttention ? 'bell' : null
                 ]
                   .filter(Boolean)
-                  .join(", ");
-                const closing = closingTerminalId === item.id;
+                  .join(', ')
+                const closing = closingTerminalId === item.id
                 return (
                   <div
                     key={item.id}
                     className={cn(
-                      "group/tab relative flex min-w-36 flex-1 basis-0 items-center border-r border-white/6 hover:bg-white/4 after:pointer-events-none after:absolute after:inset-x-0 after:top-0 after:h-0.5 after:bg-cyan-400 after:opacity-0",
-                      selected && "bg-zinc-800 hover:bg-zinc-700/70 after:opacity-100",
+                      'group/tab relative flex min-w-36 flex-1 basis-0 items-center border-r border-white/6 hover:bg-white/4 after:pointer-events-none after:absolute after:inset-x-0 after:top-0 after:h-0.5 after:bg-cyan-400 after:opacity-0',
+                      selected &&
+                        'bg-zinc-800 hover:bg-zinc-700/70 after:opacity-100'
                     )}
                   >
                     <TabsTrigger
                       value={item.id}
                       className="flex h-full min-w-0 flex-1 items-center gap-1.5 py-0 pr-0.5 pl-3 font-normal text-zinc-500 outline-none group-hover/tab:text-zinc-200 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-cyan-400 data-[state=active]:text-zinc-50"
                       aria-label={`${title}, ${status}`}
-                      aria-keyshortcuts={index < 9 ? `Meta+${index + 1}` : undefined}
+                      aria-keyshortcuts={
+                        index < 9 ? `Meta+${index + 1}` : undefined
+                      }
                       title={title}
                     >
                       {progress ? (
                         <ArrowPathIcon
                           className={cn(
-                            "size-4 shrink-0 fill-cyan-300",
-                            progress.state !== "paused" &&
-                              progress.state !== "error" &&
-                              "animate-spin",
-                            progress.state === "error" && "fill-rose-300",
-                            progress.state === "paused" && "fill-amber-300",
-                            needsAttention && "drop-shadow-[0_0_0.35rem_#fcd34d]",
+                            'size-4 shrink-0 fill-cyan-300',
+                            progress.state !== 'paused' &&
+                              progress.state !== 'error' &&
+                              'animate-spin',
+                            progress.state === 'error' && 'fill-rose-300',
+                            progress.state === 'paused' && 'fill-amber-300',
+                            needsAttention &&
+                              'drop-shadow-[0_0_0.35rem_#fcd34d]'
                           )}
                           aria-hidden="true"
                         />
-                      ) : item.status !== "running" || needsAttention ? (
+                      ) : item.status !== 'running' || needsAttention ? (
                         <span
                           className={cn(
-                            "size-1.5 shrink-0 rounded-full bg-zinc-600",
-                            item.status === "exited" && "bg-rose-400",
+                            'size-1.5 shrink-0 rounded-full bg-zinc-600',
+                            item.status === 'exited' && 'bg-rose-400',
                             needsAttention &&
-                              "bg-amber-300 shadow-[0_0_0.5rem] shadow-amber-300/60",
+                              'bg-amber-300 shadow-[0_0_0.5rem] shadow-amber-300/60'
                           )}
                           aria-hidden="true"
                         />
                       ) : null}
-                      <span className="min-w-0 flex-1 truncate text-base sm:text-[0.734375rem]">{title}</span>
+                      <span className="min-w-0 flex-1 truncate text-base sm:text-[0.734375rem]">
+                        {title}
+                      </span>
                       {index < 9 && (
                         <span
                           className={cn(
-                            "ml-1 shrink-0 text-[0.6875rem]/4 font-normal text-zinc-600 tabular-nums group-hover/tab:text-zinc-400",
-                            selected && "text-zinc-400",
+                            'ml-1 shrink-0 text-[0.6875rem]/4 font-normal text-zinc-600 tabular-nums group-hover/tab:text-zinc-400',
+                            selected && 'text-zinc-400'
                           )}
                           aria-hidden="true"
                         >
@@ -260,20 +302,26 @@ export function TerminalView({
                           variant="ghost"
                           size="icon-sm"
                           className={cn(
-                            "mr-1 shrink-0 self-center text-zinc-600 group-hover/tab:text-zinc-400 hover:bg-transparent hover:text-zinc-200",
-                            selected && "text-zinc-400",
+                            'mr-1 shrink-0 self-center text-zinc-600 group-hover/tab:text-zinc-400 hover:bg-transparent hover:text-zinc-200',
+                            selected && 'text-zinc-400'
                           )}
                           aria-label={`Close ${title}`}
                           disabled={closing}
                           onClick={() => onCloseTerminal(item)}
                         >
-                          {closing ? <ArrowPathIcon className="animate-spin" /> : <XMarkIcon />}
+                          {closing ? (
+                            <ArrowPathIcon className="animate-spin" />
+                          ) : (
+                            <XMarkIcon />
+                          )}
                         </Button>
                       </TooltipTrigger>
-                      <TooltipContent side="bottom">Close terminal</TooltipContent>
+                      <TooltipContent side="bottom">
+                        Close terminal
+                      </TooltipContent>
                     </Tooltip>
                   </div>
-                );
+                )
               })}
             </TabsList>
           </div>
@@ -288,13 +336,17 @@ export function TerminalView({
                 disabled={!worktree || creatingTerminal}
                 onClick={onCreateTerminal}
               >
-                {creatingTerminal ? <ArrowPathIcon className="animate-spin" /> : <PlusIcon />}
+                {creatingTerminal ? (
+                  <ArrowPathIcon className="animate-spin" />
+                ) : (
+                  <PlusIcon />
+                )}
                 <span className="touch-target" aria-hidden="true" />
               </Button>
             </TooltipTrigger>
             <TooltipContent side="bottom">New terminal</TooltipContent>
           </Tooltip>
-          {terminal && snapshot.phase === "ready" && !snapshot.controller && (
+          {terminal && snapshot.phase === 'ready' && !snapshot.controller && (
             <Button
               type="button"
               variant="secondary"
@@ -323,7 +375,7 @@ export function TerminalView({
                 </span>
               </div>
             )}
-            {snapshot.phase === "closed" && snapshot.error && (
+            {snapshot.phase === 'closed' && snapshot.error && (
               <div className="absolute inset-x-0 top-3 z-10 flex justify-center">
                 <div className="flex items-center gap-2 rounded-full bg-rose-950/95 px-3 py-1 text-xs text-rose-100 shadow ring-1 ring-rose-400/30 backdrop-blur">
                   <span>{snapshot.error}</span>
@@ -340,7 +392,7 @@ export function TerminalView({
               </div>
             )}
             <span className="sr-only" aria-live="polite">
-              {snapshot.bellActive ? `Bell from ${visibleTitle}` : ""}
+              {snapshot.bellActive ? `Bell from ${visibleTitle}` : ''}
             </span>
           </div>
         ) : (
@@ -348,12 +400,14 @@ export function TerminalView({
             <div className="grid max-w-lg gap-3">
               <p className="eyebrow">No terminal open</p>
               <h1 className="text-balance text-2xl font-semibold tracking-tight text-zinc-50 sm:text-3xl">
-                {worktree ? "Start a terminal for this worktree." : "Choose a worktree."}
+                {worktree
+                  ? 'Start a terminal for this worktree.'
+                  : 'Choose a worktree.'}
               </h1>
               <p className="max-w-[52ch] text-base text-pretty text-zinc-400 sm:text-sm">
                 {worktree
-                  ? "Use the plus button in the tab bar to start a login shell."
-                  : "Select a worktree from the sidebar to view its terminals."}
+                  ? 'Use the plus button in the tab bar to start a login shell.'
+                  : 'Select a worktree from the sidebar to view its terminals.'}
               </p>
             </div>
           </div>
@@ -363,13 +417,17 @@ export function TerminalView({
             className="accessory-row hidden min-w-0 overflow-x-auto border-t border-white/8 bg-zinc-900 px-[env(safe-area-inset-left)] pt-1 pb-[calc(0.25rem+env(safe-area-inset-bottom))] max-[700px]:flex [&_button]:h-11 [&_button]:min-w-11 [&_button]:flex-1 [&_button]:rounded-none [&_button]:border-r [&_button]:border-white/8 [&_button]:text-sm [&_button:last-child]:border-r-0"
             aria-label="Terminal accessory keys"
           >
-            <Button variant="ghost" type="button" onClick={() => sendInput("\u001b")}>
+            <Button
+              variant="ghost"
+              type="button"
+              onClick={() => sendInput('\u001b')}
+            >
               Esc
             </Button>
             <Button
               variant="ghost"
               type="button"
-              className={ctrl ? "latched bg-cyan-950 text-cyan-100" : ""}
+              className={ctrl ? 'latched bg-cyan-950 text-cyan-100' : ''}
               onClick={() => setCtrl((value) => !value)}
             >
               Ctrl
@@ -377,22 +435,30 @@ export function TerminalView({
             <Button
               variant="ghost"
               type="button"
-              className={alt ? "latched bg-cyan-950 text-cyan-100" : ""}
+              className={alt ? 'latched bg-cyan-950 text-cyan-100' : ''}
               onClick={() => setAlt((value) => !value)}
             >
               Alt
             </Button>
-            <Button variant="ghost" type="button" onClick={() => sendInput("\t")}>
+            <Button
+              variant="ghost"
+              type="button"
+              onClick={() => sendInput('\t')}
+            >
               Tab
             </Button>
-            <Button variant="ghost" type="button" onClick={() => sendInput("\r")}>
+            <Button
+              variant="ghost"
+              type="button"
+              onClick={() => sendInput('\r')}
+            >
               Enter
             </Button>
             <Button
               variant="ghost"
               type="button"
               aria-label="Arrow left"
-              onClick={() => sendArrow("left")}
+              onClick={() => sendArrow('left')}
             >
               ←
             </Button>
@@ -400,7 +466,7 @@ export function TerminalView({
               variant="ghost"
               type="button"
               aria-label="Arrow up"
-              onClick={() => sendArrow("up")}
+              onClick={() => sendArrow('up')}
             >
               ↑
             </Button>
@@ -408,7 +474,7 @@ export function TerminalView({
               variant="ghost"
               type="button"
               aria-label="Arrow down"
-              onClick={() => sendArrow("down")}
+              onClick={() => sendArrow('down')}
             >
               ↓
             </Button>
@@ -416,7 +482,7 @@ export function TerminalView({
               variant="ghost"
               type="button"
               aria-label="Arrow right"
-              onClick={() => sendArrow("right")}
+              onClick={() => sendArrow('right')}
             >
               →
             </Button>
@@ -424,5 +490,5 @@ export function TerminalView({
         )}
       </main>
     </Tabs>
-  );
+  )
 }
