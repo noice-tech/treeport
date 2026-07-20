@@ -14,6 +14,7 @@ import {
   registerProjectSchema,
   removeWorktreeSchema,
   spawnSchema,
+  updateProjectSchema,
   updateTerminalSchema,
 } from "@wtr/shared";
 import type { AppConfig, TmuxAdapter, WtrService } from "@wtr/core";
@@ -128,6 +129,12 @@ export function createApp({ service, config, tmux, webDist }: AppDependencies): 
   app.get("/api/projects/:projectId", (context) =>
     context.json({ project: service.getProject(context.req.param("projectId")) }),
   );
+  app.patch("/api/projects/:projectId", async (context) => {
+    const body = await input(context, updateProjectSchema);
+    return context.json({
+      project: service.updateProjectColor(context.req.param("projectId"), body.color),
+    });
+  });
   app.post("/api/projects/:projectId/refresh", async (context) =>
     context.json({ project: await service.refreshProject(context.req.param("projectId")) }),
   );

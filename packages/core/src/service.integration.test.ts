@@ -198,6 +198,20 @@ describe("WtrService with injected command adapters", () => {
     runner.statusGate = null;
   });
 
+  it("persists project colors and publishes an update", async () => {
+    const { main, service } = await fixture();
+    const project = await service.registerProject(main);
+    const events: string[] = [];
+    const unsubscribe = service.events.subscribe((event) => events.push(event.type));
+
+    expect(service.updateProjectColor(project.id, "violet").color).toBe("violet");
+    expect(service.getProject(project.id).color).toBe("violet");
+    expect(service.updateProjectColor(project.id, null).color).toBeNull();
+
+    unsubscribe();
+    expect(events).toEqual(["project.updated", "project.updated"]);
+  });
+
   it("does not reconcile a terminal as missing while its tmux session is starting", async () => {
     const { main, runner, service } = await fixture();
     const project = await service.registerProject(main);

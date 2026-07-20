@@ -57,12 +57,26 @@ export interface WorktreeRecord {
   updatedAt: string;
 }
 
+export const PROJECT_COLORS = [
+  "rose",
+  "orange",
+  "amber",
+  "emerald",
+  "cyan",
+  "blue",
+  "violet",
+  "pink",
+] as const;
+
+export type ProjectColor = (typeof PROJECT_COLORS)[number];
+
 export interface ProjectRecord {
   id: string;
   name: string;
   repositoryPath: string;
   mainWorktreePath: string;
   defaultBranch: string;
+  color: ProjectColor | null;
   worktrees: WorktreeRecord[];
   createdAt: string;
   updatedAt: string;
@@ -116,6 +130,10 @@ export interface ApiErrorBody {
 export const registerProjectSchema = z.object({
   path: z.string().trim().min(1),
   name: z.string().trim().min(1).max(120).optional(),
+});
+
+export const updateProjectSchema = z.object({
+  color: z.enum(PROJECT_COLORS).nullable(),
 });
 
 const initialTerminalSchema = z.object({

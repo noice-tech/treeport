@@ -6,6 +6,7 @@ import type {
   OperationKind,
   OperationRecord,
   PrInfo,
+  ProjectColor,
   ProjectRecord,
   RemovePreview,
   TerminalRecord,
@@ -164,6 +165,15 @@ export class WtrService {
     const project = this.deps.database.project(projectId);
     if (!project) throw new DomainError("PROJECT_NOT_FOUND", "Project not found", 404);
     return project;
+  }
+
+  updateProjectColor(projectId: string, color: ProjectColor | null): ProjectRecord {
+    this.getProject(projectId);
+    this.deps.database.connection
+      .prepare("UPDATE projects SET color = ?, updated_at = ? WHERE id = ?")
+      .run(color, now(), projectId);
+    this.events.publish("project.updated", { projectId });
+    return this.getProject(projectId);
   }
 
   getWorktree(worktreeId: string): WorktreeRecord {

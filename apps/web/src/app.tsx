@@ -14,13 +14,22 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowPathIcon,
   Bars3Icon,
+  CheckIcon,
   ChevronRightIcon,
   CommandLineIcon,
+  FolderIcon,
   PlusIcon,
+  SwatchIcon,
   TrashIcon,
   XMarkIcon,
 } from "@heroicons/react/16/solid";
-import type { ProjectRecord, RemovePreview, TerminalRecord, WorktreeRecord } from "@wtr/shared";
+import type {
+  ProjectColor,
+  ProjectRecord,
+  RemovePreview,
+  TerminalRecord,
+  WorktreeRecord,
+} from "@wtr/shared";
 import { ApiError, apiClient } from "./api.js";
 import { Button } from "./components/ui/button.js";
 import {
@@ -31,6 +40,7 @@ import {
 import { Input } from "./components/ui/input.js";
 import { Label } from "./components/ui/label.js";
 import { NativeSelect } from "./components/ui/native-select.js";
+import { Popover, PopoverContent, PopoverTrigger } from "./components/ui/popover.js";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./components/ui/tooltip.js";
 import { cn } from "./lib/utils.js";
 import {
@@ -93,6 +103,79 @@ type Modal =
 
 const projectsQueryKey = ["projects"] as const;
 
+const PROJECT_COLOR_OPTIONS: Array<{
+  value: ProjectColor | null;
+  label: string;
+  swatch: string;
+  check: string;
+}> = [
+  {
+    value: null,
+    label: "Neutral",
+    swatch: "bg-zinc-500 hover:bg-zinc-400",
+    check: "fill-white",
+  },
+  {
+    value: "rose",
+    label: "Rose",
+    swatch: "bg-rose-400 hover:bg-rose-300",
+    check: "fill-white",
+  },
+  {
+    value: "orange",
+    label: "Orange",
+    swatch: "bg-orange-400 hover:bg-orange-300",
+    check: "fill-zinc-950",
+  },
+  {
+    value: "amber",
+    label: "Amber",
+    swatch: "bg-amber-400 hover:bg-amber-300",
+    check: "fill-zinc-950",
+  },
+  {
+    value: "emerald",
+    label: "Emerald",
+    swatch: "bg-emerald-400 hover:bg-emerald-300",
+    check: "fill-zinc-950",
+  },
+  {
+    value: "cyan",
+    label: "Cyan",
+    swatch: "bg-cyan-400 hover:bg-cyan-300",
+    check: "fill-zinc-950",
+  },
+  {
+    value: "blue",
+    label: "Blue",
+    swatch: "bg-blue-400 hover:bg-blue-300",
+    check: "fill-white",
+  },
+  {
+    value: "violet",
+    label: "Violet",
+    swatch: "bg-violet-400 hover:bg-violet-300",
+    check: "fill-white",
+  },
+  {
+    value: "pink",
+    label: "Pink",
+    swatch: "bg-pink-400 hover:bg-pink-300",
+    check: "fill-white",
+  },
+];
+
+const PROJECT_COLOR_STYLES: Record<ProjectColor, { chevron: string; rail: string }> = {
+  rose: { chevron: "fill-rose-400", rail: "border-rose-400/50" },
+  orange: { chevron: "fill-orange-400", rail: "border-orange-400/50" },
+  amber: { chevron: "fill-amber-400", rail: "border-amber-400/50" },
+  emerald: { chevron: "fill-emerald-400", rail: "border-emerald-400/50" },
+  cyan: { chevron: "fill-cyan-400", rail: "border-cyan-400/50" },
+  blue: { chevron: "fill-blue-400", rail: "border-blue-400/50" },
+  violet: { chevron: "fill-violet-400", rail: "border-violet-400/50" },
+  pink: { chevron: "fill-pink-400", rail: "border-pink-400/50" },
+};
+
 interface PendingWorktreeCreation {
   id: string;
   projectId: string;
@@ -125,6 +208,7 @@ export default function App() {
   );
   const [selectedWorktreeId, setSelectedWorktreeId] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [openProjectColorPickerId, setOpenProjectColorPickerId] = useState<string | null>(null);
   const [isMobile, setIsMobile] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [modal, setModal] = useState<Modal>(null);
@@ -210,7 +294,7 @@ export default function App() {
   }, [drawerOpen, isMobile]);
 
   useEffect(() => {
-    if (!isMobile || !drawerOpen || modal) return;
+    if (!isMobile || !drawerOpen || modal || openProjectColorPickerId) return;
     const drawer = drawerRef.current;
     if (!drawer) return;
     const keydown = (event: KeyboardEvent) => {
@@ -223,7 +307,7 @@ export default function App() {
     };
     document.addEventListener("keydown", keydown);
     return () => document.removeEventListener("keydown", keydown);
-  }, [drawerOpen, isMobile, modal]);
+  }, [drawerOpen, isMobile, modal, openProjectColorPickerId]);
 
   useEffect(() => {
     if (unauthorized) return;
@@ -307,6 +391,34 @@ export default function App() {
     else localStorage.removeItem("wtr-terminal");
     setDrawerOpen(false);
   };
+
+  const updateProjectColor = useMutation({
+    mutationFn: ({ projectId, color }: { projectId: string; color: ProjectColor | null }) =>
+      apiClient.updateProjectColor(projectId, color),
+    onMutate: async ({ projectId, color }) => {
+      await queryClient.cancelQueries({ queryKey: projectsQueryKey });
+      const previous = queryClient.getQueryData<ProjectRecord[]>(projectsQueryKey);
+      queryClient.setQueryData<ProjectRecord[]>(projectsQueryKey, (current) =>
+        current?.map((project) => (project.id === projectId ? { ...project, color } : project)),
+      );
+      return { previous };
+    },
+    onError: (mutationError, _variables, context) => {
+      if (context?.previous)
+        queryClient.setQueryData<ProjectRecord[]>(projectsQueryKey, context.previous);
+      showError(setError)(mutationError);
+    },
+    onSuccess: (updatedProject) => {
+      queryClient.setQueryData<ProjectRecord[]>(projectsQueryKey, (current) =>
+        current?.map((project) =>
+          project.id === updatedProject.id
+            ? { ...updatedProject, worktrees: project.worktrees }
+            : project,
+        ),
+      );
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: projectsQueryKey }),
+  });
 
   const createWorktree = useMutation({
     mutationFn: (pending: PendingWorktreeCreation) =>
@@ -569,22 +681,47 @@ export default function App() {
           <div className="grid gap-5 sm:gap-4">
             {projects.map((project) => (
               <Collapsible className="project-tree" defaultOpen key={project.id}>
-                <div className="project-row flex min-h-11 items-center gap-1 px-1 sm:min-h-7">
+                <div className="project-row group/project-row flex min-h-11 items-center gap-1 px-1 sm:min-h-7">
                   <CollapsibleTrigger asChild>
                     <Button
                       type="button"
                       variant="ghost"
                       size="sm"
-                      className="group/project min-w-0 flex-1 justify-start px-1.5 text-base font-medium text-zinc-100 hover:bg-white/5 sm:text-[0.8125rem]"
+                      className="group/project min-w-0 flex-1 justify-start px-1.5 text-base font-semibold text-zinc-100 hover:bg-white/5 sm:text-[0.8125rem]"
                       title={project.repositoryPath}
                     >
-                      <ChevronRightIcon className="shrink-0 text-zinc-600 transition-transform group-data-[state=open]/project:rotate-90" />
+                      <ChevronRightIcon
+                        className={cn(
+                          "shrink-0 transition-transform group-data-[state=open]/project:rotate-90",
+                          project.color
+                            ? PROJECT_COLOR_STYLES[project.color].chevron
+                            : "fill-zinc-600",
+                        )}
+                      />
                       <span className="truncate">{project.name}</span>
                     </Button>
                   </CollapsibleTrigger>
+                  <ProjectColorPicker
+                    project={project}
+                    open={openProjectColorPickerId === project.id}
+                    pending={
+                      updateProjectColor.isPending &&
+                      updateProjectColor.variables?.projectId === project.id
+                    }
+                    onOpenChange={(open) => setOpenProjectColorPickerId(open ? project.id : null)}
+                    onChange={(color) =>
+                      updateProjectColor.mutate({ projectId: project.id, color })
+                    }
+                  />
                 </div>
                 <CollapsibleContent asChild>
-                  <ul role="list" className="ml-3 grid gap-0.5 border-l border-white/8 pl-1.5">
+                  <ul
+                    role="list"
+                    className={cn(
+                      "ml-3 grid gap-0.5 border-l pl-1.5",
+                      project.color ? PROJECT_COLOR_STYLES[project.color].rail : "border-white/8",
+                    )}
+                  >
                     {project.worktrees.map((worktree) => (
                       <li key={worktree.id} className="group/worktree min-w-0">
                         <div className="relative min-w-0">
@@ -592,25 +729,16 @@ export default function App() {
                             variant="ghost"
                             type="button"
                             className={cn(
-                              "worktree-row h-auto min-h-11 w-full min-w-0 justify-start gap-1.5 rounded-md px-2 py-1.5 text-left text-base font-normal sm:min-h-7 sm:py-0.5 sm:text-[0.6875rem]",
+                              "worktree-row h-auto min-h-11 w-full min-w-0 justify-start gap-2 rounded-md px-2 py-1.5 text-left text-base font-medium sm:min-h-8 sm:py-1 sm:text-[0.8125rem]",
                               selectedWorktree?.id === worktree.id
                                 ? "selected bg-white/8 text-zinc-50"
-                                : "text-zinc-400 hover:bg-white/5 hover:text-zinc-100",
+                                : "text-zinc-300 hover:bg-white/5 hover:text-zinc-50",
                             )}
                             onClick={() => selectWorktree(worktree)}
                             title={`${worktree.path}${worktree.branch ? ` · ${worktree.branch}` : ` · detached at ${worktree.head.slice(0, 8)}`}`}
                           >
-                            <span className="branch-line flex min-w-0 items-center gap-1.5 truncate">
-                              <span
-                                className={cn(
-                                  "size-1.5 shrink-0 rounded-full",
-                                  worktree.dirty?.dirty
-                                    ? "bg-amber-400 ring-2 ring-amber-400/10"
-                                    : "bg-zinc-600",
-                                )}
-                              />
-                              <span className="truncate">{worktree.name}</span>
-                            </span>
+                            <FolderIcon className="shrink-0 text-zinc-500" aria-hidden="true" />
+                            <span className="min-w-0 truncate">{worktree.name}</span>
                           </Button>
                           {worktree.kind === "linked" && (
                             <div className="worktree-actions absolute top-0 right-0 z-10 flex items-center gap-0.5 rounded-md bg-zinc-900 opacity-0 shadow-sm ring-1 ring-white/8 group-hover/worktree:opacity-100 group-focus-within/worktree:opacity-100 max-[700px]:relative max-[700px]:mt-0.5 max-[700px]:ml-7 max-[700px]:w-fit max-[700px]:opacity-100">
@@ -629,7 +757,7 @@ export default function App() {
                         </div>
                         <ul
                           role="list"
-                          className="terminal-list ml-3 grid gap-0 border-l border-white/6 pl-1.5"
+                          className="terminal-list ml-4 grid gap-0 border-l border-white/6 pl-2"
                         >
                           {worktree.terminals.map((terminal) => (
                             <li key={terminal.id} className="min-w-0">
@@ -814,6 +942,74 @@ function ModalHeading({ eyebrow, title }: { eyebrow: string; title: string }) {
 
 function FormField({ children }: { children: ReactNode }) {
   return <div className="grid gap-2">{children}</div>;
+}
+
+function ProjectColorPicker({
+  project,
+  open,
+  pending,
+  onOpenChange,
+  onChange,
+}: {
+  project: ProjectRecord;
+  open: boolean;
+  pending: boolean;
+  onOpenChange: (open: boolean) => void;
+  onChange: (color: ProjectColor | null) => void;
+}) {
+  return (
+    <Popover open={open} onOpenChange={onOpenChange}>
+      <PopoverTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          className="shrink-0 fill-zinc-500 opacity-0 hover:bg-white/5 hover:fill-zinc-100 group-hover/project-row:opacity-100 group-focus-within/project-row:opacity-100 data-[state=open]:opacity-100 max-[700px]:opacity-100"
+          aria-label={`Change color for ${project.name}`}
+        >
+          <SwatchIcon />
+          <span className="touch-target" aria-hidden="true" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent
+        align="end"
+        aria-label={`Color for ${project.name}`}
+        onEscapeKeyDown={(event) => event.stopPropagation()}
+      >
+        <div className="flex flex-col gap-3">
+          <p className="text-sm font-medium text-zinc-100">Project color</p>
+          <div className="grid grid-cols-3 gap-2">
+            {PROJECT_COLOR_OPTIONS.map((option) => {
+              const selected = project.color === option.value;
+              return (
+                <Button
+                  key={option.label}
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  className={cn(
+                    "rounded-full ring-2 ring-transparent",
+                    option.swatch,
+                    selected && "ring-white ring-offset-2 ring-offset-zinc-900",
+                  )}
+                  aria-label={option.label}
+                  aria-pressed={selected}
+                  title={option.label}
+                  disabled={pending}
+                  onClick={() => {
+                    onChange(option.value);
+                    onOpenChange(false);
+                  }}
+                >
+                  {selected ? <CheckIcon className={option.check} /> : null}
+                </Button>
+              );
+            })}
+          </div>
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
 }
 
 function SidebarAction({

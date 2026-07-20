@@ -146,6 +146,10 @@ const MIGRATIONS = [
   CREATE INDEX terminals_worktree_idx ON terminals(worktree_id);
   CREATE INDEX operations_worktree_idx ON operations(worktree_id);
   `,
+  `
+  ALTER TABLE projects ADD COLUMN color TEXT
+    CHECK(color IS NULL OR color IN ('rose','orange','amber','emerald','cyan','blue','violet','pink'));
+  `,
 ];
 
 interface ProjectRow {
@@ -154,6 +158,7 @@ interface ProjectRow {
   repository_path: string;
   main_worktree_path: string;
   default_branch: string;
+  color: ProjectRecord["color"];
   created_at: string;
   updated_at: string;
 }
@@ -320,6 +325,7 @@ export class WtrDatabase {
       repositoryPath: row.repository_path,
       mainWorktreePath: row.main_worktree_path,
       defaultBranch: row.default_branch,
+      color: row.color,
       worktrees: worktrees.map((worktree) => this.mapWorktree(worktree, row.main_worktree_path)),
       createdAt: row.created_at,
       updatedAt: row.updated_at,
