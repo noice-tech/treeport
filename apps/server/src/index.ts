@@ -11,6 +11,7 @@ import {
 } from "@tasktty/core";
 import { TERMINAL_MAX_CLIENT_MESSAGE_BYTES } from "@tasktty/shared";
 import { createApp } from "./app.js";
+import { TerminalMetadataManager } from "./terminal-metadata.js";
 
 const config = loadConfig();
 const runner = new SpawnCommandRunner();
@@ -20,8 +21,10 @@ const tmux = new TmuxAdapter(runner, config.runtimeDir, config.tmuxPath);
 const gh = new GhAdapter(runner, config.ghPath);
 const service = new TaskTTYService({ config, database, runner, git, tmux, gh });
 await service.initialize();
+const terminalMetadata = new TerminalMetadataManager(service, tmux, config.tmuxPath);
+await terminalMetadata.initialize();
 
-const app = createApp({ service, config, tmux });
+const app = createApp({ service, config, tmux, terminalMetadata });
 const webSocketServer = new WebSocketServer({
   noServer: true,
   maxPayload: TERMINAL_MAX_CLIENT_MESSAGE_BYTES,
@@ -37,6 +40,7 @@ console.log(`TaskTTY listening on ${config.apiUrl}`);
 console.log(`database: ${config.databasePath}`);
 
 function shutdown(): void {
+  terminalMetadata.dispose();
   server.close(() => {
     webSocketServer.close();
     database.close();

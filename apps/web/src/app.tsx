@@ -23,6 +23,7 @@ import {
   TrashIcon,
   XMarkIcon,
 } from "@heroicons/react/16/solid";
+import { parseTerminalRuntimeMetadata } from "@tasktty/shared";
 import type {
   ProjectColor,
   ProjectRecord,
@@ -321,9 +322,30 @@ export default function App() {
       queryClient.invalidateQueries({ queryKey: projectsQueryKey }, { cancelRefetch: false }),
     );
     const refresh = () => refreshes.schedule();
-    const connected = () => {
+    const connected = (event: MessageEvent<string>) => {
       setSseDisconnected(false);
+      try {
+        const payload = JSON.parse(event.data) as { terminalMetadata?: unknown };
+        if (Array.isArray(payload.terminalMetadata)) {
+          terminalSessions.replaceRuntimeMetadata(
+            payload.terminalMetadata
+              .map(parseTerminalRuntimeMetadata)
+              .filter((metadata) => metadata !== null),
+          );
+        }
+      } catch {
+        // The projects refresh below remains a safe fallback for an invalid connected frame.
+      }
       refresh();
+    };
+    const runtimeMetadata = (event: MessageEvent<string>) => {
+      try {
+        const envelope = JSON.parse(event.data) as { data?: unknown };
+        const metadata = parseTerminalRuntimeMetadata(envelope.data);
+        if (metadata) terminalSessions.applyRuntimeMetadata(metadata);
+      } catch {
+        // Ignore a malformed metadata event and keep the last authoritative snapshot.
+      }
     };
     const disconnected = () => setSseDisconnected(true);
     const eventNames = [
@@ -339,6 +361,7 @@ export default function App() {
       "remove.failed",
     ];
     events.addEventListener("connected", connected);
+    events.addEventListener("terminal.metadata", runtimeMetadata);
     events.addEventListener("error", disconnected);
     eventNames.forEach((name) => events.addEventListener(name, refresh));
     return () => {
@@ -353,8 +376,9 @@ export default function App() {
     [allWorktrees],
   );
   useEffect(() => {
+    if (projectsQuery.data === undefined) return;
     terminalSessions.reconcile(allTerminals);
-  }, [allTerminals]);
+  }, [allTerminals, projectsQuery.data]);
   const runtimeTitles = useSyncExternalStore(
     terminalSessions.subscribe,
     terminalSessions.getTitleSnapshot,

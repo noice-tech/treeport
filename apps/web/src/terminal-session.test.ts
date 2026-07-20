@@ -232,7 +232,40 @@ describe("TerminalSessionManager", () => {
     expect(manager.getTitleSnapshot().has("one")).toBe(false);
   });
 
-  it("publishes terminal progress and clears it when work stops or the session is evicted", () => {
+  it("applies daemon metadata for terminals that have never been selected", () => {
+    const { manager } = fixture();
+    manager.applyRuntimeMetadata({
+      terminalId: "background",
+      title: "pi · /repo",
+      progress: { state: "normal", value: 42 },
+    });
+
+    expect(manager.getTitleSnapshot().get("background")).toBe("pi · /repo");
+    expect(manager.getProgressSnapshot().get("background")).toEqual({
+      state: "normal",
+      value: 42,
+    });
+
+    manager.replaceRuntimeMetadata([{ terminalId: "other", title: "shell", progress: null }]);
+    expect(manager.getTitleSnapshot().has("background")).toBe(false);
+    expect(manager.getProgressSnapshot().has("background")).toBe(false);
+    expect(manager.getTitleSnapshot().get("other")).toBe("shell");
+  });
+
+  it("retains progress across LRU eviction and clears it when metadata is removed", () => {
+    const { manager, sessions } = fixture(1);
+    manager.acquire("one");
+    manager.release("one");
+    sessions.get("one")?.setWorking(true);
+    manager.acquire("two");
+    expect(sessions.get("one")?.disposed).toBe(true);
+    expect(manager.getProgressSnapshot().has("one")).toBe(true);
+
+    manager.reconcile([{ id: "two" }]);
+    expect(manager.getProgressSnapshot().has("one")).toBe(false);
+  });
+
+  it("publishes terminal progress and clears it when work stops or the terminal is forgotten", () => {
     const { manager, sessions } = fixture();
     manager.acquire("one");
     sessions.get("one")?.setWorking(true);

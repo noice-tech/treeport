@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   parseTerminalClientMessage,
   parseTerminalProgress,
+  parseTerminalRuntimeMetadata,
   parseTerminalServerMessage,
   TERMINAL_PROTOCOL_VERSION,
 } from "./terminal-protocol.js";
@@ -64,6 +65,31 @@ describe("terminal protocol", () => {
         streamId: "stream",
         sequence: 0,
         data: "bad",
+      }),
+    ).toBeNull();
+  });
+
+  it("validates runtime metadata snapshots", () => {
+    expect(
+      parseTerminalRuntimeMetadata({
+        terminalId: "term",
+        title: "pi · /repo",
+        progress: { state: "normal", value: 42 },
+      }),
+    ).toEqual({
+      terminalId: "term",
+      title: "pi · /repo",
+      progress: { state: "normal", value: 42 },
+    });
+    expect(
+      parseTerminalRuntimeMetadata({ terminalId: "term", title: null, progress: null }),
+    ).toEqual({ terminalId: "term", title: null, progress: null });
+    expect(
+      parseTerminalRuntimeMetadata({
+        terminalId: "term",
+        title: null,
+        progress: null,
+        extra: true,
       }),
     ).toBeNull();
   });

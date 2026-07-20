@@ -1,11 +1,23 @@
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
-import { TerminalProgressParser, TmuxProgressObserver } from "./tmux-progress.js";
+import {
+  TerminalMetadataParser,
+  TerminalProgressParser,
+  TmuxProgressObserver,
+} from "./tmux-progress.js";
 
 const bytes = (value: string) => Buffer.from(value, "binary");
 
 describe("TerminalProgressParser", () => {
+  it("extracts UTF-8 terminal titles alongside progress metadata", () => {
+    const parser = new TerminalMetadataParser();
+    expect(parser.push(Buffer.from("\x1b]2;Pi · /repo\x07\x1b]9;4;1;42\x1b\\"))).toEqual([
+      { type: "title", title: "Pi · /repo" },
+      { type: "progress", progress: { state: "normal", value: 42 } },
+    ]);
+  });
+
   it("extracts OSC 9;4 updates terminated by BEL or ST", () => {
     const parser = new TerminalProgressParser();
     expect(parser.push(bytes("before\x1b]9;4;3\x07after"))).toEqual([
@@ -52,6 +64,7 @@ describe("TmuxProgressObserver", () => {
       killed: false,
       kill: vi.fn(() => true),
     });
+    const onTitle = vi.fn();
     const onProgress = vi.fn();
     const onExit = vi.fn();
     const observer = new TmuxProgressObserver(
@@ -60,13 +73,15 @@ describe("TmuxProgressObserver", () => {
         args: ["-C", "attach"],
         cwd: "/tmp",
         env: {},
+        onTitle,
         onProgress,
         onExit,
       },
       vi.fn(() => child) as never,
     );
 
-    child.stdout.write("%output %0 before\\033]9;4;3\\007after\n");
+    child.stdout.write("%output %0 before\\033]2;Pi\\007\\033]9;4;3\\007after\n");
+    expect(onTitle).toHaveBeenCalledWith("Pi");
     expect(onProgress).toHaveBeenCalledWith({ state: "indeterminate", value: null });
 
     child.emit("error", new Error("observer failed"));

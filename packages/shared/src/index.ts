@@ -200,6 +200,7 @@ export type ProductEventType =
   | "terminal.created"
   | "terminal.updated"
   | "terminal.removed"
+  | "terminal.metadata"
   | "terminal.controller_changed"
   | "remove.started"
   | "remove.completed"

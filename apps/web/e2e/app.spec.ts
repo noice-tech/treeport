@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import type { ProjectColor } from "@tasktty/shared";
+import type { ProjectColor, TerminalRuntimeMetadata } from "@tasktty/shared";
 
 const TERMINAL_SCROLL_EXIT_SEQUENCE = "\u001b[9000~";
 
@@ -98,20 +98,30 @@ const project = {
   ],
 };
 
-async function mockApp(page: Page) {
-  await page.addInitScript(() => {
+async function mockApp(page: Page, initialTerminalMetadata: TerminalRuntimeMetadata[] = []) {
+  await page.addInitScript((initialMetadata) => {
     class MockEventSource {
-      listeners = new Map<string, Array<() => void>>();
+      listeners = new Map<string, Array<(event: { data: string }) => void>>();
       constructor() {
         const scope = window as any;
         scope.__eventSource = this;
-        setTimeout(() => this.emit("connected"), 0);
+        setTimeout(
+          () =>
+            this.emit(
+              "connected",
+              JSON.stringify({
+                at: new Date().toISOString(),
+                terminalMetadata: initialMetadata,
+              }),
+            ),
+          0,
+        );
       }
-      addEventListener(name: string, listener: () => void) {
+      addEventListener(name: string, listener: (event: { data: string }) => void) {
         this.listeners.set(name, [...(this.listeners.get(name) || []), listener]);
       }
-      emit(name: string) {
-        this.listeners.get(name)?.forEach((listener) => listener());
+      emit(name: string, data = "{}") {
+        this.listeners.get(name)?.forEach((listener) => listener({ data }));
       }
       close() {}
     }
@@ -192,7 +202,7 @@ async function mockApp(page: Page) {
       }
     }
     Object.assign(window, { EventSource: MockEventSource, WebSocket: MockWebSocket });
-  });
+  }, initialTerminalMetadata);
   const state = structuredClone(project);
   let projectRequests = 0;
   let removePreviewRequests = 0;
@@ -389,7 +399,7 @@ test.describe("desktop worktree terminal UI", () => {
     await page.getByRole("button", { name: "example", exact: true }).click();
     await expect(page.getByText("topic", { exact: true })).toBeHidden();
     await page.getByRole("button", { name: "example", exact: true }).click();
-    await page.getByRole("button", { name: "Pi running", exact: true }).click();
+    await page.getByRole("button", { name: "Pi, running", exact: true }).click();
     await expect(page.locator(".xterm")).toBeVisible();
     await expect(page.locator(".xterm-rows")).toContainText("same persistent terminal session");
     await expect(page.getByRole("tab", { name: /zsh · \/worktrees\/topic/ })).toHaveAttribute(
@@ -397,7 +407,7 @@ test.describe("desktop worktree terminal UI", () => {
       "active",
     );
     await expect(
-      page.getByRole("button", { name: "zsh · /worktrees/topic running", exact: true }).last(),
+      page.getByRole("button", { name: "zsh · /worktrees/topic, running", exact: true }).last(),
     ).toBeVisible();
     await expect(page.locator('select[name="terminal-selector"] option:checked')).toHaveText(
       "zsh · /worktrees/topic",
@@ -435,7 +445,7 @@ test.describe("desktop worktree terminal UI", () => {
         return null;
       };
     });
-    await page.getByRole("button", { name: "Pi running", exact: true }).click();
+    await page.getByRole("button", { name: "Pi, running", exact: true }).click();
     await page.evaluate(() => {
       const socket = (window as any).__wsInstances.find((item: any) =>
         item.url.includes("term_pi"),
@@ -464,12 +474,12 @@ test.describe("desktop worktree terminal UI", () => {
   }) => {
     await mockApp(page);
     await page.evaluate(() => ((window as any).__suppressInitialTitle = true));
-    await page.getByRole("button", { name: "Pi running", exact: true }).click();
+    await page.getByRole("button", { name: "Pi, running", exact: true }).click();
 
     await expect(page.getByRole("tab", { name: "Pi, running" })).toBeVisible();
     await expect(page.locator('main[aria-label="Pi terminal"]')).toBeVisible();
     await expect(
-      page.getByRole("button", { name: "Pi running", exact: true }).last(),
+      page.getByRole("button", { name: "Pi, running", exact: true }).last(),
     ).toBeVisible();
 
     await page.evaluate(() => {
@@ -483,7 +493,7 @@ test.describe("desktop worktree terminal UI", () => {
     await expect(page.getByRole("tab", { name: "runtime · /repo, running" })).toBeVisible();
     await expect(page.locator('main[aria-label="runtime · /repo terminal"]')).toBeVisible();
     await expect(
-      page.getByRole("button", { name: "runtime · /repo running", exact: true }).last(),
+      page.getByRole("button", { name: "runtime · /repo, running", exact: true }).last(),
     ).toBeVisible();
     page.once("dialog", async (dialog) => {
       expect(dialog.message()).toContain("runtime · /repo");
@@ -504,6 +514,31 @@ test.describe("desktop worktree terminal UI", () => {
       await dialog.dismiss();
     });
     await page.getByRole("button", { name: "Close Pi" }).click();
+  });
+
+  test("loads title and progress on first render before a terminal is selected", async ({
+    page,
+  }) => {
+    await mockApp(page, [
+      {
+        terminalId: "term_pi",
+        title: "background · /repo",
+        progress: { state: "normal", value: 42 },
+      },
+    ]);
+
+    const background = page.getByRole("button", {
+      name: /background · \/repo.*42% complete/,
+    });
+    await expect(background).toBeVisible();
+    await expect(background.locator("svg")).toHaveClass(/animate-spin/);
+    expect(
+      await page.evaluate(() =>
+        ((window as any).__wsInstances || []).some((socket: { url: string }) =>
+          socket.url.includes("term_pi"),
+        ),
+      ),
+    ).toBe(false);
   });
 
   test("traps modal focus, closes on Escape, and restores its trigger", async ({ page }) => {
@@ -535,7 +570,7 @@ test.describe("desktop worktree terminal UI", () => {
 
   test("reconnects and allows a viewer to take control without relaunching", async ({ page }) => {
     await mockApp(page);
-    await page.getByRole("button", { name: "Pi running", exact: true }).click();
+    await page.getByRole("button", { name: "Pi, running", exact: true }).click();
     await expect(page.getByRole("button", { name: "Take control" })).toBeVisible();
     await page.getByRole("button", { name: "Take control" }).click();
     await expect(page.getByRole("button", { name: "Take control" })).toHaveCount(0);
@@ -548,7 +583,7 @@ test.describe("desktop worktree terminal UI", () => {
 
   test("does not automatically retry a fatal terminal error", async ({ page }) => {
     await mockApp(page);
-    await page.getByRole("button", { name: "Pi running", exact: true }).click();
+    await page.getByRole("button", { name: "Pi, running", exact: true }).click();
     await expect(page.getByRole("button", { name: "Take control" })).toBeVisible();
     await page.evaluate(() => {
       const socket = (window as any).__lastWs;
@@ -576,7 +611,7 @@ test.describe("desktop worktree terminal UI", () => {
 
   test("surfaces BEL attention from a retained background terminal", async ({ page }) => {
     await mockApp(page);
-    await page.getByRole("button", { name: "Pi running", exact: true }).click();
+    await page.getByRole("button", { name: "Pi, running", exact: true }).click();
     await expect(page.getByRole("tab", { name: /zsh · \/worktrees\/topic/ })).toBeVisible();
     await page.getByRole("button", { name: "New terminal" }).click();
     await expect(page.getByRole("tab", { name: /dev · \/worktrees\/topic/ })).toHaveAttribute(
@@ -640,7 +675,7 @@ test.describe("desktop worktree terminal UI", () => {
 
   test("preserves modified terminal keys used by macOS and Pi", async ({ page }) => {
     await mockApp(page);
-    await page.getByRole("button", { name: "Pi running", exact: true }).click();
+    await page.getByRole("button", { name: "Pi, running", exact: true }).click();
     await page.getByRole("button", { name: "Take control" }).click();
     await page.locator(".xterm-helper-textarea").focus();
     await page.evaluate(() => {
@@ -666,7 +701,7 @@ test.describe("desktop worktree terminal UI", () => {
     page,
   }) => {
     await mockApp(page);
-    await page.getByRole("button", { name: "Pi running", exact: true }).click();
+    await page.getByRole("button", { name: "Pi, running", exact: true }).click();
     await page.getByRole("button", { name: "Take control" }).click();
     await page.evaluate(() => {
       const socket = (window as any).__lastWs;
@@ -705,7 +740,7 @@ test.describe("desktop worktree terminal UI", () => {
 
   test("forwards application wheel events while hiding the inactive cursor", async ({ page }) => {
     await mockApp(page);
-    await page.getByRole("button", { name: "Pi running", exact: true }).click();
+    await page.getByRole("button", { name: "Pi, running", exact: true }).click();
     await page.getByRole("button", { name: "Take control" }).click();
     await page.locator(".xterm-helper-textarea").focus();
     await page.evaluate(() => {
@@ -973,7 +1008,7 @@ test.describe("mobile terminal UI", () => {
     await expect(trigger).toBeFocused();
 
     await trigger.click();
-    await page.getByRole("button", { name: "Pi running", exact: true }).click();
+    await page.getByRole("button", { name: "Pi, running", exact: true }).click();
     await expect(page.locator(".xterm")).toBeVisible();
     await expect(page.locator('select[name="terminal-selector"] option:checked')).toHaveText(
       "zsh · /worktrees/topic",

@@ -6,17 +6,20 @@ const ESC = 0x1b;
 const BEL = 0x07;
 const OSC = 0x9d;
 const ST = 0x9c;
-const MAX_OSC_BYTES = 64;
+const MAX_OSC_BYTES = 1024;
 
 type ParserState = "ground" | "escape" | "osc" | "osc_escape";
+export type TerminalMetadataUpdate =
+  | { type: "title"; title: string }
+  | { type: "progress"; progress: TerminalProgress | null };
 
-/** Extracts OSC 9;4 progress updates from an arbitrary stream of terminal bytes. */
-export class TerminalProgressParser {
+/** Extracts title and OSC 9;4 progress metadata from arbitrary terminal bytes. */
+export class TerminalMetadataParser {
   private state: ParserState = "ground";
   private osc: number[] = [];
 
-  push(data: Uint8Array): Array<TerminalProgress | null> {
-    const progress: Array<TerminalProgress | null> = [];
+  push(data: Uint8Array): TerminalMetadataUpdate[] {
+    const updates: TerminalMetadataUpdate[] = [];
     for (const byte of data) {
       if (this.state === "ground") {
         if (byte === ESC) this.state = "escape";
@@ -31,21 +34,23 @@ export class TerminalProgressParser {
       }
 
       if (this.state === "osc") {
-        if (byte === BEL || byte === ST) this.finishOsc(progress);
+        if (byte === BEL || byte === ST) this.finishOsc(updates);
         else if (byte === ESC) this.state = "osc_escape";
         else this.appendOsc(byte);
         continue;
       }
 
       if (byte === 0x5c || byte === ST || byte === BEL) {
-        this.finishOsc(progress);
+        this.finishOsc(updates);
+      } else if (byte === 0x5d) {
+        this.startOsc();
       } else if (byte === ESC) {
         this.appendOsc(ESC);
       } else if (this.appendOsc(ESC) && this.appendOsc(byte)) {
         this.state = "osc";
       }
     }
-    return progress;
+    return updates;
   }
 
   private startOsc(): void {
@@ -61,14 +66,35 @@ export class TerminalProgressParser {
     return false;
   }
 
-  private finishOsc(progress: Array<TerminalProgress | null>): void {
-    if (this.osc[0] === 0x39 && this.osc[1] === 0x3b) {
-      const data = Buffer.from(this.osc.slice(2)).toString("ascii");
-      const parsed = parseTerminalProgress(data);
-      if (parsed !== undefined) progress.push(parsed);
+  private finishOsc(updates: TerminalMetadataUpdate[]): void {
+    const separator = this.osc.indexOf(0x3b);
+    if (separator > 0) {
+      const command = Buffer.from(this.osc.slice(0, separator)).toString("ascii");
+      const payload = this.osc.slice(separator + 1);
+      if (command === "9") {
+        const parsed = parseTerminalProgress(Buffer.from(payload).toString("ascii"));
+        if (parsed !== undefined) updates.push({ type: "progress", progress: parsed });
+      } else if (command === "0" || command === "2") {
+        updates.push({ type: "title", title: Buffer.from(payload).toString("utf8") });
+      }
     }
     this.osc = [];
     this.state = "ground";
+  }
+}
+
+/** Backwards-compatible progress-only parser used by focused protocol tests. */
+export class TerminalProgressParser {
+  private readonly parser = new TerminalMetadataParser();
+
+  push(data: Uint8Array): Array<TerminalProgress | null> {
+    return this.parser
+      .push(data)
+      .filter(
+        (update): update is Extract<TerminalMetadataUpdate, { type: "progress" }> =>
+          update.type === "progress",
+      )
+      .map((update) => update.progress);
   }
 }
 
@@ -77,6 +103,7 @@ export interface TmuxProgressObserverOptions {
   args: string[];
   cwd: string;
   env: NodeJS.ProcessEnv;
+  onTitle?: (title: string) => void;
   onProgress: (progress: TerminalProgress | null) => void;
   onExit: () => void;
 }
@@ -94,7 +121,7 @@ type ProcessSpawner = typeof spawn;
 export class TmuxProgressObserver implements TerminalProgressObserver {
   private readonly process: ChildProcessWithoutNullStreams;
   private readonly controlParser = new TmuxControlParser();
-  private readonly progressParser = new TerminalProgressParser();
+  private readonly metadataParser = new TerminalMetadataParser();
   private disposed = false;
 
   constructor(
@@ -121,8 +148,10 @@ export class TmuxProgressObserver implements TerminalProgressObserver {
     try {
       for (const event of this.controlParser.push(chunk)) {
         if (event.type !== "output") continue;
-        for (const progress of this.progressParser.push(event.data))
-          this.options.onProgress(progress);
+        for (const update of this.metadataParser.push(event.data)) {
+          if (update.type === "title") this.options.onTitle?.(update.title);
+          else this.options.onProgress(update.progress);
+        }
       }
     } catch {
       this.stop(true);
