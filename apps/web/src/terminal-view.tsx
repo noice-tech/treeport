@@ -69,6 +69,7 @@ export function TerminalView({
   const lastExitSerial = useRef(0)
   const lastExitSessionId = useRef<string | null>(null)
   const focusedTerminalId = useRef<string | null>(null)
+  const shortcutFocusTerminalId = useRef<string | null>(null)
 
   useEffect(() => {
     if (!terminal) {
@@ -114,15 +115,21 @@ export function TerminalView({
   }, [activeSession])
 
   useEffect(() => {
-    if (
-      !activeSession ||
-      activeSession.terminalId !== focusTerminalId ||
-      focusedTerminalId.current === focusTerminalId
-    ) {
+    if (!activeSession) {
       return
     }
 
-    focusedTerminalId.current = focusTerminalId
+    const focusAfterCreation =
+      activeSession.terminalId === focusTerminalId &&
+      focusedTerminalId.current !== focusTerminalId
+    const focusAfterShortcut =
+      activeSession.terminalId === shortcutFocusTerminalId.current
+    if (!focusAfterCreation && !focusAfterShortcut) {
+      return
+    }
+
+    focusedTerminalId.current = activeSession.terminalId
+    shortcutFocusTerminalId.current = null
     activeSession.focus()
   }, [activeSession, focusTerminalId])
 
@@ -192,11 +199,16 @@ export function TerminalView({
 
       event.preventDefault()
       event.stopPropagation()
+      if (activeSession?.terminalId === nextTerminal.id) {
+        activeSession.focus()
+      } else {
+        shortcutFocusTerminalId.current = nextTerminal.id
+      }
       onSelectTerminal(nextTerminal)
     }
     document.addEventListener('keydown', keydown, true)
     return () => document.removeEventListener('keydown', keydown, true)
-  }, [onSelectTerminal, terminals])
+  }, [activeSession, onSelectTerminal, terminals])
 
   return (
     <Tabs
