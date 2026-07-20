@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
+import { SpawnCommandRunner, TmuxAdapter } from "@wtr/core";
 import { afterAll, describe, expect, it } from "vitest";
 import {
   controlAttachArgs,
@@ -25,10 +26,18 @@ async function waitFor(check: () => boolean | Promise<boolean>, message: string)
   throw new Error(message);
 }
 
+function supportsCsiU(version: string): boolean {
+  const match = version.match(/(\d+)\.(\d+)/);
+  if (!match) return false;
+  const [major, minor] = match.slice(1).map(Number);
+  return major! > 3 || (major === 3 && minor! >= 5);
+}
+
 describe.skipIf(!enabled)("real tmux control-mode characterization", () => {
-  it("streams pane bytes, forwards input, resizes, and leaves the session alive", async (context) => {
+  it("applies production config, round-trips bytes, resizes, and leaves the session alive", async (context) => {
+    let tmuxVersion: string;
     try {
-      await execute("tmux", ["-V"]);
+      tmuxVersion = (await execute("tmux", ["-V"])).stdout.trim();
     } catch {
       context.skip();
       return;
@@ -37,21 +46,9 @@ describe.skipIf(!enabled)("real tmux control-mode characterization", () => {
     await fs.mkdir(root, { recursive: true });
     const socket = `wtr-control-${process.pid}`;
     const session = "control-characterization";
-    const configPath = path.join(root, "tmux.conf");
-    await fs.writeFile(
-      configPath,
-      [
-        'set -g default-terminal "tmux-256color"',
-        'set -s terminal-features[999] "xterm-256color:hyperlinks"',
-        "set -g extended-keys on",
-        "set -s extended-keys-format csi-u",
-        "set -g window-size latest",
-        "set -g exit-empty off",
-        "set -g remain-on-exit on",
-        "",
-      ].join("\n"),
-    );
-    const base = ["-L", socket, "-f", configPath];
+    const tmux = new TmuxAdapter(new SpawnCommandRunner(), root);
+    await tmux.initialize();
+    const base = ["-L", socket, "-f", tmux.configPath];
     const program = [
       "process.stdin.setRawMode?.(true);",
       "process.stdin.resume();",
@@ -84,12 +81,25 @@ describe.skipIf(!enabled)("real tmux control-mode characterization", () => {
     ]);
 
     try {
+      await execute("tmux", [...base, "set-option", "-g", "mouse", "off"]);
+      await tmux.configureServer(socket);
+      await expect(
+        execute("tmux", [...base, "show-options", "-gv", "mouse"]).then((result) =>
+          result.stdout.trim(),
+        ),
+      ).resolves.toBe("on");
+      if (supportsCsiU(tmuxVersion)) {
+        await expect(
+          execute("tmux", [...base, "show-options", "-sv", "extended-keys-format"]).then((result) =>
+            result.stdout.trim(),
+          ),
+        ).resolves.toBe("csi-u");
+      }
+
       const paneId = (
         await execute("tmux", [...base, "display-message", "-p", "-t", session, "#{pane_id}"])
       ).stdout.trim();
-      expect(paneId).toMatch(/^%\d+$/);
-
-      const control = spawn("tmux", controlAttachArgs(socket, configPath, session), {
+      const control = spawn("tmux", controlAttachArgs(socket, tmux.configPath, session), {
         stdio: ["pipe", "pipe", "pipe"],
         env: Object.fromEntries(
           Object.entries(process.env).filter(

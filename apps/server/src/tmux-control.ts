@@ -281,14 +281,3 @@ export function resizeControlClient(cols: number, rows: number): string {
     throw new RangeError("Terminal dimensions must be integers between 1 and 65535");
   return `refresh-client -C ${cols}x${rows}\n`;
 }
-
-export function setControlPanePaused(paneId: string, paused: boolean): string {
-  assertPaneId(paneId);
-  return `refresh-client -A '${paneId}:${paused ? "pause" : "continue"}'\n`;
-}
-
-export function setControlPauseAfter(seconds: number): string {
-  if (!Number.isSafeInteger(seconds) || seconds < 0 || seconds > 86_400)
-    throw new RangeError("pause-after must be an integer between 0 and 86400 seconds");
-  return `refresh-client -f pause-after=${seconds}\n`;
-}

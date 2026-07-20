@@ -10,6 +10,46 @@ import {
 type ConnectionPhase = "connecting" | "ready" | "reconnecting" | "closed";
 export type ArrowDirection = "up" | "down" | "left" | "right";
 
+type TerminalKeyboardEvent = Pick<
+  KeyboardEvent,
+  "altKey" | "ctrlKey" | "isComposing" | "key" | "metaKey" | "shiftKey" | "type"
+>;
+
+export function terminalKeyboardInput(
+  event: TerminalKeyboardEvent,
+  applicationCursorKeysMode = false,
+): string | null {
+  if (event.type !== "keydown" || event.isComposing || event.altKey || event.ctrlKey) return null;
+  if (event.key === "Enter" && event.shiftKey && !event.metaKey) return "\u001b[13;2u";
+  if (!event.metaKey || event.shiftKey) return null;
+  const prefix = applicationCursorKeysMode ? "\u001bO" : "\u001b[";
+  if (event.key === "ArrowLeft") return `${prefix}H`;
+  if (event.key === "ArrowRight") return `${prefix}F`;
+  return null;
+}
+
+function usesMacKeyboard(): boolean {
+  return typeof navigator !== "undefined" && /Mac|iPhone|iPad|iPod/.test(navigator.platform);
+}
+
+function forcePlainSelectionWhileMouseReporting(event: MouseEvent): void {
+  const wrapper = event.currentTarget;
+  if (
+    !(wrapper instanceof Element) ||
+    !wrapper.querySelector(".xterm.enable-mouse-events") ||
+    event.button !== 0 ||
+    event.altKey ||
+    event.ctrlKey ||
+    event.metaKey ||
+    event.shiftKey
+  )
+    return;
+  Object.defineProperty(event, usesMacKeyboard() ? "altKey" : "shiftKey", {
+    configurable: true,
+    value: true,
+  });
+}
+
 export interface TerminalSessionSnapshot {
   phase: ConnectionPhase;
   degraded: boolean;
@@ -55,6 +95,7 @@ export function terminalOptions() {
     lineHeight: 1.15,
     scrollback: 10_000,
     allowProposedApi: false,
+    macOptionClickForcesSelection: true,
     linkHandler: {
       activate(event: MouseEvent, url: string) {
         if (!event.metaKey && !event.ctrlKey) return;
@@ -208,9 +249,18 @@ export class TerminalSession {
     const fitAddon = new FitAddon();
     terminal.loadAddon(fitAddon);
     terminal.open(this.wrapper);
+    this.wrapper.addEventListener("mousedown", forcePlainSelectionWhileMouseReporting, true);
     this.terminal = terminal;
     this.fitAddon = fitAddon;
     this.opened = true;
+    terminal.attachCustomKeyEventHandler((event) => {
+      const input = terminalKeyboardInput(event, terminal.modes.applicationCursorKeysMode);
+      if (input === null) return true;
+      event.preventDefault();
+      event.stopPropagation();
+      terminal.input(input, true);
+      return false;
+    });
     terminal.onData((data) => {
       if (this.ready && this.snapshotValue.controller)
         this.send({ version: TERMINAL_PROTOCOL_VERSION, type: "input", data });

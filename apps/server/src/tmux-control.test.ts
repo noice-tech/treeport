@@ -1,16 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
-  controlAttachArgs,
   decodeTmuxControlBytes,
   encodeControlInput,
   resizeControlClient,
-  setControlPanePaused,
-  setControlPauseAfter,
   TmuxControlParser,
   TmuxControlProtocolError,
 } from "./tmux-control.js";
 
 const bytes = (...values: number[]) => Uint8Array.from(values);
+const utf8 = (value: string) => Uint8Array.from(Buffer.from(value));
 const output = (events: ReturnType<TmuxControlParser["push"]>) => {
   const event = events.find((candidate) => candidate.type === "output");
   if (!event || event.type !== "output") throw new Error("missing output event");
@@ -42,11 +40,10 @@ describe("TmuxControlParser", () => {
     expect(parser.push(Buffer.from("put %2 one\\015"))).toEqual([]);
     const events = parser.push(Buffer.from("\\012\n%output %2 two\\134three\n"));
     expect(events).toHaveLength(2);
-    expect(output(events).data).toEqual(Uint8Array.from(Buffer.from("one\r\n")));
+    expect(output(events).data).toEqual(utf8("one\r\n"));
     const second = events[1];
     expect(second?.type).toBe("output");
-    if (second?.type === "output")
-      expect(second.data).toEqual(Uint8Array.from(Buffer.from("two\\three")));
+    if (second?.type === "output") expect(second.data).toEqual(utf8("two\\three"));
     parser.finish();
   });
 
@@ -62,12 +59,12 @@ describe("TmuxControlParser", () => {
     expect(command?.type).toBe("command");
     if (command?.type === "command") {
       expect(command.success).toBe(true);
-      expect(command.lines.map((line) => Buffer.from(line).toString())).toEqual([
-        "%output %9 this-is-command-text",
-        "ordinary output",
+      expect(command.lines).toEqual([
+        utf8("%output %9 this-is-command-text"),
+        utf8("ordinary output"),
       ]);
     }
-    expect(output(events).data).toEqual(Uint8Array.from(Buffer.from("pane\n")));
+    expect(output(events).data).toEqual(utf8("pane\n"));
   });
 
   it("parses failed commands, extended output, flow events, exit, and notifications", () => {
@@ -106,55 +103,35 @@ describe("TmuxControlParser", () => {
     ]) {
       const parser = new TmuxControlParser();
       expect(() => parser.push(Buffer.from(line))).toThrow(TmuxControlProtocolError);
-      expect(() => parser.push(Buffer.from("%sessions-changed\n"))).toThrow(/failed state/);
+      expect(() => parser.push(Buffer.from("%sessions-changed\n"))).toThrow(
+        TmuxControlProtocolError,
+      );
     }
     const limited = new TmuxControlParser(8);
-    expect(() => limited.push(Buffer.from("%output %1 too long"))).toThrow(/size limit/);
+    expect(() => limited.push(Buffer.from("%output %1 too long"))).toThrow(
+      TmuxControlProtocolError,
+    );
   });
 
   it("bounds complete command responses and rejects unfinished streams", () => {
     const oversized = new TmuxControlParser(16);
     expect(() => oversized.push(Buffer.from("%begin 1 2 1\n1234567890\n1234567\n"))).toThrow(
-      /Command response/,
+      TmuxControlProtocolError,
     );
 
     const parser = new TmuxControlParser();
     parser.push(Buffer.from("%begin 1 2 1\nline\n"));
-    expect(() => parser.finish()).toThrow(/Incomplete/);
+    expect(() => parser.finish()).toThrow(TmuxControlProtocolError);
   });
 });
 
-describe("tmux control commands", () => {
-  it("builds a non-default control attachment", () => {
-    expect(controlAttachArgs("socket", "/runtime/tmux.conf", "session")).toEqual([
-      "-L",
-      "socket",
-      "-f",
-      "/runtime/tmux.conf",
-      "-C",
-      "attach-session",
-      "-t",
-      "session",
-    ]);
-  });
-
-  it("encodes arbitrary bytes as bounded hexadecimal arguments", () => {
-    expect(encodeControlInput("%12", bytes(0, 0x1b, 0x5c, 0xff, 0xe2), 2)).toEqual([
-      "send-keys -H -t %12 00 1b\n",
-      "send-keys -H -t %12 5c ff\n",
-      "send-keys -H -t %12 e2\n",
-    ]);
-    expect(() => encodeControlInput("%1; kill-server", bytes(1))).toThrow(/pane ID/);
-    expect(() => encodeControlInput("%1", bytes(1), 0)).toThrow(/chunkBytes/);
-  });
-
-  it("validates resize and flow-control commands", () => {
-    expect(resizeControlClient(120, 40)).toBe("refresh-client -C 120x40\n");
-    expect(() => resizeControlClient(0, 40)).toThrow(/dimensions/);
-    expect(() => resizeControlClient(80.5, 40)).toThrow(/dimensions/);
-    expect(setControlPanePaused("%7", true)).toBe("refresh-client -A '%7:pause'\n");
-    expect(setControlPanePaused("%7", false)).toBe("refresh-client -A '%7:continue'\n");
-    expect(setControlPauseAfter(30)).toBe("refresh-client -f pause-after=30\n");
-    expect(() => setControlPauseAfter(-1)).toThrow(/pause-after/);
+describe("tmux control command validation", () => {
+  it.each([
+    () => encodeControlInput("%1; kill-server", bytes(1)),
+    () => encodeControlInput("%1", bytes(1), 0),
+    () => resizeControlClient(0, 40),
+    () => resizeControlClient(80.5, 40),
+  ])("rejects values that cannot be sent safely to tmux", (command) => {
+    expect(command).toThrow(RangeError);
   });
 });

@@ -30,7 +30,7 @@ set -g status off
 set -g default-terminal "tmux-256color"
 set -s terminal-features[999] "xterm-256color:hyperlinks"
 set -g extended-keys on
-set -s extended-keys-format csi-u
+if-shell -F '#{>=:#{version},3.5}' 'set-option -s extended-keys-format csi-u'
 set -g history-limit 50000
 set -g remain-on-exit on
 set -g exit-empty off
