@@ -9,8 +9,38 @@ import {
 
 type ConnectionPhase = "connecting" | "ready" | "reconnecting" | "closed";
 export type ArrowDirection = "up" | "down" | "left" | "right";
+export type TerminalProgressState = "normal" | "error" | "indeterminate" | "paused";
+
+export interface TerminalProgress {
+  state: TerminalProgressState;
+  value: number | null;
+}
 
 const TERMINAL_SCROLL_EXIT_SEQUENCE = "\u001b[9000~";
+
+export function terminalProgressLabel(progress: TerminalProgress): string {
+  const percentage = progress.value === null ? "" : `, ${progress.value}% complete`;
+  if (progress.state === "error") return `progress error${percentage}`;
+  if (progress.state === "paused") return `progress paused${percentage}`;
+  return progress.value === null ? "working" : `${progress.value}% complete`;
+}
+
+export function parseTerminalProgress(data: string): TerminalProgress | null | undefined {
+  const [command, rawState, rawValue, ...extra] = data.split(";");
+  if (command !== "4" || extra.length > 0 || !/^[0-4]$/.test(rawState ?? "")) return undefined;
+  const state = Number(rawState);
+  if (state === 0) return null;
+  if (rawValue !== undefined && rawValue !== "" && !/^\d{1,3}$/.test(rawValue)) return undefined;
+  const value = rawValue === undefined || rawValue === "" ? null : Number(rawValue);
+  if (value !== null && value > 100) return undefined;
+  const states: Record<number, TerminalProgressState> = {
+    1: "normal",
+    2: "error",
+    3: "indeterminate",
+    4: "paused",
+  };
+  return { state: states[state]!, value };
+}
 
 type TerminalKeyboardEvent = Pick<
   KeyboardEvent,
@@ -76,6 +106,7 @@ export interface TerminalSessionSnapshot {
   bellActive: boolean;
   bellSerial: number;
   exitSerial: number;
+  progress: TerminalProgress | null;
   error: string | null;
 }
 
@@ -87,6 +118,7 @@ const DEFAULT_SNAPSHOT: TerminalSessionSnapshot = {
   bellActive: false,
   bellSerial: 0,
   exitSerial: 0,
+  progress: null,
   error: null,
 };
 
@@ -152,6 +184,7 @@ export class TerminalSession {
   private heartbeatTimer: number | null = null;
   private bellTimer: number | null = null;
   private resizeFrame: number | null = null;
+  private progressHandler: { dispose(): void } | null = null;
   private disposed = false;
   private opened = false;
   private ready = false;
@@ -257,6 +290,8 @@ export class TerminalSession {
     this.socket?.close(1000, "Session disposed");
     this.socket = null;
     this.wrapper?.remove();
+    this.progressHandler?.dispose();
+    this.progressHandler = null;
     this.terminal?.dispose();
     this.terminal = null;
     this.fitAddon = null;
@@ -309,6 +344,18 @@ export class TerminalSession {
     });
     terminal.onTitleChange((title) => this.update({ title: title.trim().slice(0, 256) }));
     terminal.onBell(() => this.handleBell());
+    this.progressHandler = terminal.parser.registerOscHandler(9, (data) => {
+      const progress = parseTerminalProgress(data);
+      if (progress === undefined) return false;
+      const current = this.snapshotValue.progress;
+      if (
+        current?.state !== progress?.state ||
+        current?.value !== progress?.value ||
+        (current === null) !== (progress === null)
+      )
+        this.update({ progress });
+      return true;
+    });
   }
 
   private prepareScrollExit(): void {
@@ -367,6 +414,7 @@ export class TerminalSession {
         phase: this.reconnectAllowed && !this.disposed ? "reconnecting" : "closed",
         controller: false,
         degraded: this.reconnectAllowed ? this.snapshotValue.degraded : false,
+        progress: null,
       });
       if (this.reconnectAllowed && !this.disposed) this.scheduleReconnect();
     };
@@ -395,7 +443,7 @@ export class TerminalSession {
       this.ready = true;
       this.retryAttempt = 0;
       this.clearDegraded();
-      this.update({ phase: "ready", controller: message.controller, error: null });
+      this.update({ phase: "ready", controller: message.controller, progress: null, error: null });
       this.scheduleFit();
       return;
     }
@@ -417,7 +465,7 @@ export class TerminalSession {
       return;
     }
     if (message.type === "exit") {
-      this.update({ exitSerial: this.snapshotValue.exitSerial + 1 });
+      this.update({ exitSerial: this.snapshotValue.exitSerial + 1, progress: null });
       return;
     }
     if (message.type === "error") {
@@ -544,6 +592,7 @@ export class TerminalSession {
       phase: "closed",
       degraded: false,
       controller: false,
+      progress: null,
     });
   }
 
@@ -573,6 +622,7 @@ interface SessionEntry {
   idleTimer: number | null;
   lastBellSerial: number;
   lastTitle: string | null;
+  lastProgress: TerminalProgress | null;
   unsubscribe: () => void;
 }
 
@@ -581,6 +631,7 @@ export class TerminalSessionManager {
   private readonly listeners = new Set<() => void>();
   private attentionSnapshot: ReadonlySet<string> = new Set();
   private titleSnapshot: ReadonlyMap<string, string> = new Map();
+  private progressSnapshot: ReadonlyMap<string, TerminalProgress> = new Map();
 
   constructor(
     private readonly maxSessions = 3,
@@ -596,6 +647,7 @@ export class TerminalSessionManager {
 
   getAttentionSnapshot = (): ReadonlySet<string> => this.attentionSnapshot;
   getTitleSnapshot = (): ReadonlyMap<string, string> => this.titleSnapshot;
+  getProgressSnapshot = (): ReadonlyMap<string, TerminalProgress> => this.progressSnapshot;
 
   acquire(terminalId: string): TerminalSession {
     let entry = this.entries.get(terminalId);
@@ -608,6 +660,7 @@ export class TerminalSessionManager {
         idleTimer: null,
         lastBellSerial: session.getSnapshot().bellSerial,
         lastTitle: session.getSnapshot().title,
+        lastProgress: session.getSnapshot().progress,
         unsubscribe: () => undefined,
       };
       const observedEntry = entry;
@@ -621,9 +674,14 @@ export class TerminalSessionManager {
           observedEntry.lastTitle = snapshot.title;
           this.setRuntimeTitle(terminalId, snapshot.title);
         }
+        if (snapshot.progress !== observedEntry.lastProgress) {
+          observedEntry.lastProgress = snapshot.progress;
+          this.setProgress(terminalId, snapshot.progress);
+        }
       });
       this.entries.set(terminalId, entry);
       if (entry.lastTitle) this.setRuntimeTitle(terminalId, entry.lastTitle);
+      if (entry.lastProgress) this.setProgress(terminalId, entry.lastProgress);
     }
     this.clearAttention(terminalId);
     entry.references += 1;
@@ -701,6 +759,17 @@ export class TerminalSessionManager {
     this.emit();
   }
 
+  private setProgress(terminalId: string, progress: TerminalProgress | null): void {
+    const current = this.progressSnapshot.get(terminalId);
+    if (progress && current?.state === progress.state && current.value === progress.value) return;
+    if (!progress && !current) return;
+    const next = new Map(this.progressSnapshot);
+    if (progress) next.set(terminalId, progress);
+    else next.delete(terminalId);
+    this.progressSnapshot = next;
+    this.emit();
+  }
+
   private evictSession(terminalId: string): void {
     this.disposeEntry(terminalId);
   }
@@ -713,6 +782,7 @@ export class TerminalSessionManager {
     entry.session.dispose();
     this.entries.delete(terminalId);
     this.clearAttention(terminalId);
+    this.setProgress(terminalId, null);
   }
 
   private emit(): void {
