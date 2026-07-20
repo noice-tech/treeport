@@ -17,6 +17,7 @@ import {
 interface TerminalViewProps {
   worktree: WorktreeRecord | null;
   terminal: TerminalRecord | null;
+  focusTerminalId: string | null;
   creatingTerminal: boolean;
   closingTerminalId: string | null;
   onSelectTerminal: (terminal: TerminalRecord) => void;
@@ -43,6 +44,7 @@ const EMPTY_SNAPSHOT: TerminalSessionSnapshot = {
 export function TerminalView({
   worktree,
   terminal,
+  focusTerminalId,
   creatingTerminal,
   closingTerminalId,
   onSelectTerminal,
@@ -50,12 +52,14 @@ export function TerminalView({
   onCloseTerminal,
   onStatusChange,
 }: TerminalViewProps) {
+  const shellRef = useRef<HTMLElement>(null);
   const hostRef = useRef<HTMLDivElement>(null);
   const [session, setSession] = useState<TerminalSession | null>(null);
   const [ctrl, setCtrl] = useState(false);
   const [alt, setAlt] = useState(false);
   const lastExitSerial = useRef(0);
   const lastExitSessionId = useRef<string | null>(null);
+  const focusedTerminalId = useRef<string | null>(null);
 
   useEffect(() => {
     if (!terminal) {
@@ -97,6 +101,17 @@ export function TerminalView({
   }, [activeSession]);
 
   useEffect(() => {
+    if (
+      !activeSession ||
+      activeSession.terminalId !== focusTerminalId ||
+      focusedTerminalId.current === focusTerminalId
+    )
+      return;
+    focusedTerminalId.current = focusTerminalId;
+    activeSession.focus();
+  }, [activeSession, focusTerminalId]);
+
+  useEffect(() => {
     if (lastExitSessionId.current !== terminal?.id) {
       lastExitSessionId.current = terminal?.id ?? null;
       lastExitSerial.current = snapshot.exitSerial;
@@ -126,6 +141,29 @@ export function TerminalView({
   const visibleTitle = terminal ? runtimeTitles.get(terminal.id) || terminal.name : "";
   const terminals = worktree?.terminals ?? [];
 
+  useEffect(() => {
+    // Mod+W stays browser-owned here; reserve it for Electron, where we can override the window accelerator.
+    const keydown = (event: KeyboardEvent) => {
+      if (
+        !event.metaKey ||
+        event.altKey ||
+        event.ctrlKey ||
+        event.shiftKey ||
+        shellRef.current?.closest("[inert]")
+      )
+        return;
+      const index = Number(event.key) - 1;
+      if (!Number.isInteger(index) || index < 0 || index > 8) return;
+      const nextTerminal = terminals[index];
+      if (!nextTerminal) return;
+      event.preventDefault();
+      event.stopPropagation();
+      onSelectTerminal(nextTerminal);
+    };
+    document.addEventListener("keydown", keydown, true);
+    return () => document.removeEventListener("keydown", keydown, true);
+  }, [onSelectTerminal, terminals]);
+
   return (
     <Tabs
       value={terminal?.id ?? ""}
@@ -136,6 +174,7 @@ export function TerminalView({
       asChild
     >
       <main
+        ref={shellRef}
         className={cn(
           "terminal-shell grid min-h-0 min-w-0 grid-rows-[2.5rem_minmax(0,1fr)] bg-zinc-950 max-[700px]:grid-rows-[2.75rem_minmax(0,1fr)_3.25rem]",
           snapshot.bellActive && "terminal-bell",
@@ -143,12 +182,12 @@ export function TerminalView({
         aria-label={terminal ? `${visibleTitle} terminal` : "Terminal panel"}
       >
         <header className="terminal-header flex min-w-0 items-stretch border-b border-white/8 bg-zinc-900/70">
-          <div className="min-w-0 max-w-full shrink overflow-x-auto">
+          <div className="min-w-0 max-w-full flex-1 overflow-x-auto">
             <TabsList
-              className="flex h-full w-max items-stretch"
+              className="flex h-full min-w-full items-stretch"
               aria-label={`${worktree?.name ?? "Worktree"} terminals`}
             >
-              {terminals.map((item) => {
+              {terminals.map((item, index) => {
                 const selected = item.id === terminal?.id;
                 const title = runtimeTitles.get(item.id) || item.name;
                 const needsAttention = bellAttention.has(item.id);
@@ -165,12 +204,16 @@ export function TerminalView({
                 return (
                   <div
                     key={item.id}
-                    className="group/tab flex max-w-56 shrink-0 items-stretch border-r border-white/6 [&:has([data-state=active])]:bg-zinc-950"
+                    className={cn(
+                      "group/tab relative flex min-w-36 flex-1 basis-0 items-center border-r border-white/6 hover:bg-white/4 after:pointer-events-none after:absolute after:inset-x-0 after:top-0 after:h-0.5 after:bg-cyan-400 after:opacity-0",
+                      selected && "bg-zinc-800 hover:bg-zinc-700/70 after:opacity-100",
+                    )}
                   >
                     <TabsTrigger
                       value={item.id}
-                      className="flex min-w-0 max-w-48 items-center gap-1.5 px-3 text-base font-normal text-zinc-500 outline-none hover:bg-white/4 hover:text-zinc-200 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-cyan-400 data-[state=active]:text-zinc-100 sm:text-xs"
+                      className="flex h-full min-w-0 flex-1 items-center gap-1.5 py-0 pr-0.5 pl-3 font-normal text-zinc-500 outline-none group-hover/tab:text-zinc-200 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-cyan-400 data-[state=active]:text-zinc-50"
                       aria-label={`${title}, ${status}`}
+                      aria-keyshortcuts={index < 9 ? `Meta+${index + 1}` : undefined}
                       title={title}
                     >
                       {progress ? (
@@ -197,7 +240,18 @@ export function TerminalView({
                           aria-hidden="true"
                         />
                       ) : null}
-                      <span className="truncate">{title}</span>
+                      <span className="min-w-0 flex-1 truncate text-base sm:text-[0.734375rem]">{title}</span>
+                      {index < 9 && (
+                        <span
+                          className={cn(
+                            "ml-1 shrink-0 text-[0.6875rem]/4 font-normal text-zinc-600 tabular-nums group-hover/tab:text-zinc-400",
+                            selected && "text-zinc-400",
+                          )}
+                          aria-hidden="true"
+                        >
+                          ⌘{index + 1}
+                        </span>
+                      )}
                     </TabsTrigger>
                     <Tooltip>
                       <TooltipTrigger asChild>
@@ -205,7 +259,10 @@ export function TerminalView({
                           type="button"
                           variant="ghost"
                           size="icon-sm"
-                          className="my-1 mr-1 shrink-0 text-zinc-600 hover:bg-white/5 hover:text-zinc-200"
+                          className={cn(
+                            "mr-1 shrink-0 self-center text-zinc-600 group-hover/tab:text-zinc-400 hover:bg-transparent hover:text-zinc-200",
+                            selected && "text-zinc-400",
+                          )}
                           aria-label={`Close ${title}`}
                           disabled={closing}
                           onClick={() => onCloseTerminal(item)}
