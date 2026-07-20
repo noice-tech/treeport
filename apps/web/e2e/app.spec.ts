@@ -415,6 +415,25 @@ test.describe("desktop worktree terminal UI", () => {
     await expect(page.locator(".pr-badge")).toHaveCount(0);
   });
 
+  test("remembers collapsed projects after a refresh", async ({ page }) => {
+    await mockApp(page);
+    const project = page.getByRole("button", { name: "example", exact: true });
+    const worktree = page.getByText("topic", { exact: true });
+
+    await project.click();
+    await expect(worktree).toBeHidden();
+    await expect
+      .poll(() => page.evaluate(() => localStorage.getItem("tasktty-collapsed-projects")))
+      .toBe("proj_1");
+    await page.reload();
+    await expect(worktree).toBeHidden();
+
+    await project.click();
+    await expect(worktree).toBeVisible();
+    await page.reload();
+    await expect(worktree).toBeVisible();
+  });
+
   test("assigns a project color to its chevron and subtree rail", async ({ page }) => {
     const mocked = await mockApp(page);
     const projectTree = page.locator(".project-tree").filter({ hasText: "example" });

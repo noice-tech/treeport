@@ -61,6 +61,7 @@ import { TerminalView } from "./terminal-view.js";
 const MIN_SIDEBAR_WIDTH = 240;
 const MAX_SIDEBAR_WIDTH = 420;
 const DEFAULT_SIDEBAR_WIDTH = 272;
+const COLLAPSED_PROJECTS_STORAGE_KEY = "tasktty-collapsed-projects";
 const EMPTY_RUNTIME_TITLES: ReadonlyMap<string, string> = new Map();
 const EMPTY_TERMINAL_PROGRESS: ReadonlyMap<string, TerminalProgress> = new Map();
 const FOCUSABLE_SELECTOR = [
@@ -219,6 +220,12 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [modal, setModal] = useState<Modal>(null);
   const [pendingWorktrees, setPendingWorktrees] = useState<PendingWorktreeCreation[]>([]);
+  const [collapsedProjectIds, setCollapsedProjectIds] = useState(
+    () =>
+      new Set(
+        (localStorage.getItem(COLLAPSED_PROJECTS_STORAGE_KEY) ?? "").split("\n").filter(Boolean),
+      ),
+  );
   const [sidebarWidth, setSidebarWidth] = useState(() => {
     const savedWidth = Number.parseInt(localStorage.getItem("tasktty-sidebar-width") ?? "", 10);
     return Number.isFinite(savedWidth) ? clampSidebarWidth(savedWidth) : DEFAULT_SIDEBAR_WIDTH;
@@ -234,6 +241,12 @@ export default function App() {
 
   const unauthorized =
     projectsQuery.error instanceof ApiError && projectsQuery.error.status === 401;
+
+  useEffect(() => {
+    if (collapsedProjectIds.size)
+      localStorage.setItem(COLLAPSED_PROJECTS_STORAGE_KEY, [...collapsedProjectIds].join("\n"));
+    else localStorage.removeItem(COLLAPSED_PROJECTS_STORAGE_KEY);
+  }, [collapsedProjectIds]);
 
   useEffect(() => {
     if (projectsQuery.error && projectsQuery.data === undefined && !unauthorized)
@@ -549,6 +562,15 @@ export default function App() {
     onError: showError(setError),
   });
 
+  const setProjectOpen = (projectId: string, open: boolean) => {
+    setCollapsedProjectIds((current) => {
+      const next = new Set(current);
+      if (open) next.delete(projectId);
+      else next.add(projectId);
+      return next;
+    });
+  };
+
   const setAndSaveSidebarWidth = (width: number) => {
     const nextWidth = clampSidebarWidth(width);
     setSidebarWidth(nextWidth);
@@ -714,7 +736,12 @@ export default function App() {
           ) : null}
           <div className="grid gap-5 sm:gap-4">
             {projects.map((project) => (
-              <Collapsible className="project-tree" defaultOpen key={project.id}>
+              <Collapsible
+                className="project-tree"
+                open={!collapsedProjectIds.has(project.id)}
+                onOpenChange={(open) => setProjectOpen(project.id, open)}
+                key={project.id}
+              >
                 <div className="project-row group/project-row flex min-h-11 items-center gap-1 px-1 sm:min-h-7">
                   <CollapsibleTrigger asChild>
                     <Button
