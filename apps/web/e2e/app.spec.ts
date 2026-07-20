@@ -652,9 +652,17 @@ test.describe("desktop worktree terminal UI", () => {
       });
     });
     const piTab = page.getByRole("tab", { name: /zsh · \/worktrees\/topic.*bell/ });
+    const piTreeRow = page.getByRole("button", {
+      name: /zsh · \/worktrees\/topic.*bell/,
+    });
     await expect(piTab).toBeVisible();
-    await piTab.click();
+    await expect(piTreeRow).toBeVisible();
+    await expect(piTreeRow.locator(".status-dot")).toHaveClass(/bg-amber-300/);
+    await piTreeRow.click();
     await expect(page.getByRole("tab", { name: /zsh · \/worktrees\/topic.*bell/ })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: /zsh · \/worktrees\/topic.*bell/ })).toHaveCount(
+      0,
+    );
   });
 
   test("creates and selects a login shell terminal without prompting", async ({ page }) => {

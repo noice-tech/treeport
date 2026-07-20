@@ -62,6 +62,7 @@ const MIN_SIDEBAR_WIDTH = 240;
 const MAX_SIDEBAR_WIDTH = 420;
 const DEFAULT_SIDEBAR_WIDTH = 272;
 const COLLAPSED_PROJECTS_STORAGE_KEY = "tasktty-collapsed-projects";
+const EMPTY_BELL_ATTENTION: ReadonlySet<string> = new Set();
 const EMPTY_RUNTIME_TITLES: ReadonlyMap<string, string> = new Map();
 const EMPTY_TERMINAL_PROGRESS: ReadonlyMap<string, TerminalProgress> = new Map();
 const FOCUSABLE_SELECTOR = [
@@ -392,6 +393,11 @@ export default function App() {
     if (projectsQuery.data === undefined) return;
     terminalSessions.reconcile(allTerminals);
   }, [allTerminals, projectsQuery.data]);
+  const bellAttention = useSyncExternalStore(
+    terminalSessions.subscribe,
+    terminalSessions.getAttentionSnapshot,
+    () => EMPTY_BELL_ATTENTION,
+  );
   const runtimeTitles = useSyncExternalStore(
     terminalSessions.subscribe,
     terminalSessions.getTitleSnapshot,
@@ -820,51 +826,61 @@ export default function App() {
                           role="list"
                           className="terminal-list ml-4 grid gap-0 border-l border-white/6 pl-2"
                         >
-                          {worktree.terminals.map((terminal) => (
-                            <li key={terminal.id} className="min-w-0">
-                              <Button
-                                variant="ghost"
-                                type="button"
-                                className={cn(
-                                  "terminal-row grid h-auto min-h-11 w-full min-w-0 grid-cols-[1.25rem_minmax(0,1fr)_0.5rem] gap-1.5 rounded-md px-2 py-1.5 text-left text-base font-normal sm:min-h-7 sm:grid-cols-[1rem_minmax(0,1fr)_0.5rem] sm:py-0.5 sm:text-[0.6875rem]",
-                                  selectedTerminalId === terminal.id
-                                    ? "selected bg-cyan-400/8 text-cyan-50"
-                                    : "text-zinc-500 hover:bg-white/5 hover:text-zinc-100",
-                                )}
-                                onClick={() => selectTerminal(terminal)}
-                                aria-label={`${runtimeTitles.get(terminal.id) || terminal.name}, ${terminalProgress.has(terminal.id) ? terminalProgressLabel(terminalProgress.get(terminal.id)!) : terminal.status}`}
-                              >
-                                {terminalProgress.has(terminal.id) ? (
-                                  <ArrowPathIcon
-                                    className={cn(
-                                      "size-4 shrink-0 fill-cyan-300",
-                                      terminalProgress.get(terminal.id)?.state !== "paused" &&
-                                        terminalProgress.get(terminal.id)?.state !== "error" &&
-                                        "animate-spin",
-                                      terminalProgress.get(terminal.id)?.state === "error" &&
-                                        "fill-rose-300",
-                                      terminalProgress.get(terminal.id)?.state === "paused" &&
-                                        "fill-amber-300",
-                                    )}
-                                    aria-hidden="true"
-                                  />
-                                ) : (
-                                  <CommandLineIcon className="size-4 shrink-0 fill-zinc-600" />
-                                )}
-                                <span className="truncate" aria-hidden="true">
-                                  {runtimeTitles.get(terminal.id) || terminal.name}
-                                </span>
-                                <span
+                          {worktree.terminals.map((terminal) => {
+                            const needsAttention = bellAttention.has(terminal.id);
+                            const progress = terminalProgress.get(terminal.id);
+                            const status = [
+                              progress ? terminalProgressLabel(progress) : terminal.status,
+                              needsAttention ? "bell" : null,
+                            ]
+                              .filter(Boolean)
+                              .join(", ");
+                            return (
+                              <li key={terminal.id} className="min-w-0">
+                                <Button
+                                  variant="ghost"
+                                  type="button"
                                   className={cn(
-                                    "status-dot size-1.5 shrink-0 rounded-full bg-zinc-600",
-                                    terminal.status === "running" && "bg-emerald-400",
-                                    terminal.status === "exited" && "bg-rose-400",
+                                    "terminal-row grid h-auto min-h-11 w-full min-w-0 grid-cols-[1.25rem_minmax(0,1fr)_0.5rem] gap-1.5 rounded-md px-2 py-1.5 text-left text-base font-normal sm:min-h-7 sm:grid-cols-[1rem_minmax(0,1fr)_0.5rem] sm:py-0.5 sm:text-[0.6875rem]",
+                                    selectedTerminalId === terminal.id
+                                      ? "selected bg-cyan-400/8 text-cyan-50"
+                                      : "text-zinc-500 hover:bg-white/5 hover:text-zinc-100",
                                   )}
-                                  title={terminal.status}
-                                />
-                              </Button>
-                            </li>
-                          ))}
+                                  onClick={() => selectTerminal(terminal)}
+                                  aria-label={`${runtimeTitles.get(terminal.id) || terminal.name}, ${status}`}
+                                >
+                                  {progress ? (
+                                    <ArrowPathIcon
+                                      className={cn(
+                                        "size-4 shrink-0 fill-cyan-300",
+                                        progress.state !== "paused" &&
+                                          progress.state !== "error" &&
+                                          "animate-spin",
+                                        progress.state === "error" && "fill-rose-300",
+                                        progress.state === "paused" && "fill-amber-300",
+                                      )}
+                                      aria-hidden="true"
+                                    />
+                                  ) : (
+                                    <CommandLineIcon className="size-4 shrink-0 fill-zinc-600" />
+                                  )}
+                                  <span className="truncate" aria-hidden="true">
+                                    {runtimeTitles.get(terminal.id) || terminal.name}
+                                  </span>
+                                  <span
+                                    className={cn(
+                                      "status-dot size-1.5 shrink-0 rounded-full bg-zinc-600",
+                                      terminal.status === "running" && "bg-emerald-400",
+                                      terminal.status === "exited" && "bg-rose-400",
+                                      needsAttention &&
+                                        "bg-amber-300 shadow-[0_0_0.5rem] shadow-amber-300/60",
+                                    )}
+                                    title={status}
+                                  />
+                                </Button>
+                              </li>
+                            );
+                          })}
                         </ul>
                       </li>
                     ))}
