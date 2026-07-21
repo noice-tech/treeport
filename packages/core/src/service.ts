@@ -8,6 +8,7 @@ import type {
   PrInfo,
   ProjectColor,
   ProjectRecord,
+  RecentProjectRecord,
   RemovePreview,
   TerminalRecord,
   WorktreeRecord
@@ -203,8 +204,15 @@ export class TaskTTYService {
     this.projectsSnapshotInFlight = null
   }
 
-  private clearWorktreeTerminalState(worktreeId: string): void {
-    for (const terminalId of this.terminalIdsByWorktree.get(worktreeId) ?? []) {
+  private clearWorktreeTerminalState(
+    worktreeId: string,
+    discoveredTerminalIds: Iterable<string> = []
+  ): void {
+    const terminalIds = new Set([
+      ...(this.terminalIdsByWorktree.get(worktreeId) ?? []),
+      ...discoveredTerminalIds
+    ])
+    for (const terminalId of terminalIds) {
       this.terminalStates.delete(terminalId)
       this.events.publish('terminal.removed', { worktreeId, terminalId })
     }
@@ -395,6 +403,10 @@ export class TaskTTYService {
     return snapshot
   }
 
+  listRecentProjects(): RecentProjectRecord[] {
+    return this.deps.database.recentProjects()
+  }
+
   private async collectCurrentProjectsSnapshot(): Promise<ProjectRecord[]> {
     while (true) {
       const revision = this.projectsSnapshotRevision
@@ -406,8 +418,8 @@ export class TaskTTYService {
   }
 
   private async collectProjectsSnapshot(): Promise<ProjectRecord[]> {
-    return Promise.all(
-      this.deps.database.projects().map(async (storedProject) => {
+    const projects = await Promise.all(
+      this.deps.database.openProjects().map(async (storedProject) => {
         let project = storedProject
         try {
           await this.importWorktrees(
@@ -421,6 +433,10 @@ export class TaskTTYService {
             state: 'unavailable',
             message: error instanceof Error ? error.message : String(error)
           }
+        }
+
+        if (this.deps.database.isProjectOpen(project.id) !== true) {
+          return null
         }
 
         await Promise.all(
@@ -437,6 +453,9 @@ export class TaskTTYService {
         )
         return project
       })
+    )
+    return projects.filter(
+      (project): project is ProjectRecord => project !== null
     )
   }
 
@@ -493,6 +512,7 @@ export class TaskTTYService {
   }
 
   async getProjectSnapshot(projectId: string): Promise<ProjectRecord> {
+    this.requireOpenProject(projectId)
     const project = (await this.listProjects()).find(
       (candidate) => candidate.id === projectId
     )
@@ -504,6 +524,8 @@ export class TaskTTYService {
   }
 
   async getWorktreeSnapshot(worktreeId: string): Promise<WorktreeRecord> {
+    const binding = this.getWorktree(worktreeId)
+    this.requireOpenProject(binding.projectId)
     const worktree = (await this.listProjects())
       .flatMap((project) => project.worktrees)
       .find((candidate) => candidate.id === worktreeId)
@@ -523,7 +545,7 @@ export class TaskTTYService {
     }
 
     const project = await this.observeAvailableProject(
-      this.getProject(binding.projectId)
+      this.requireOpenProject(binding.projectId)
     )
 
     const worktree = project.worktrees.find(
@@ -553,11 +575,32 @@ export class TaskTTYService {
     return project
   }
 
+  private requireOpenProject(projectId: string): ProjectRecord {
+    const project = this.getProject(projectId)
+    if (this.deps.database.isProjectOpen(projectId) !== true) {
+      throw new DomainError(
+        'PROJECT_CLOSED',
+        'Project is closed; open it before modifying it',
+        409
+      )
+    }
+
+    return project
+  }
+
   updateProjectColor(
     projectId: string,
     color: ProjectColor | null
   ): ProjectRecord {
-    this.getProject(projectId)
+    this.requireOpenProject(projectId)
+    if (this.projectLocks.has(projectId)) {
+      throw new DomainError(
+        'PROJECT_BUSY',
+        'Project is already being modified',
+        409
+      )
+    }
+
     this.deps.database.connection
       .prepare('UPDATE projects SET color = ?, updated_at = ? WHERE id = ?')
       .run(color, now(), projectId)
@@ -603,6 +646,7 @@ export class TaskTTYService {
     if (known) {
       const worktree = this.deps.database.worktree(known.worktreeId)
       if (worktree) {
+        this.requireOpenProject(worktree.projectId)
         const terminal = (await this.listWorktreeTerminals(worktree)).find(
           (candidate) => candidate.id === terminalId
         )
@@ -614,7 +658,7 @@ export class TaskTTYService {
 
     const inventories = await Promise.allSettled(
       this.deps.database
-        .projects()
+        .openProjects()
         .flatMap((project) => project.worktrees)
         .map((worktree) => this.listWorktreeTerminals(worktree))
     )
@@ -661,7 +705,7 @@ export class TaskTTYService {
   async resolveProject(identifier: string): Promise<ProjectRecord> {
     const direct = this.deps.database.project(identifier)
     if (direct) {
-      return direct
+      return this.requireOpenProject(direct.id)
     }
 
     const canonical = await fs
@@ -683,12 +727,14 @@ export class TaskTTYService {
       )
     }
 
+    this.requireOpenProject(match.id)
     return match
   }
 
   async resolveWorktree(identifier: string): Promise<WorktreeRecord> {
     const direct = this.deps.database.worktree(identifier)
     if (direct && direct.status !== 'removed') {
+      this.requireOpenProject(direct.projectId)
       return direct
     }
 
@@ -709,6 +755,7 @@ export class TaskTTYService {
       )
     }
 
+    this.requireOpenProject(match.projectId)
     return match
   }
 
@@ -779,127 +826,132 @@ export class TaskTTYService {
 
     const existing = identityMatch ?? pathMatch
     const projectId = existing?.id ?? id('proj')
-    if (existing && this.projectLocks.has(projectId)) {
-      throw new DomainError(
-        'PROJECT_BUSY',
-        'Project is already being modified',
-        409
-      )
-    }
 
-    if (existing) {
-      this.projectLocks.add(projectId)
-    }
-
-    try {
-      const updateRegistration = async (): Promise<void> => {
-        if (existing && existing.repositoryPath !== repositoryPath) {
-          await this.deps.git.repairWorktrees(repositoryPath)
-          const discovered = await this.deps.git.listWorktrees(repositoryPath)
-          if (
-            !discovered.some(
-              (worktree) =>
-                !worktree.bare &&
-                !worktree.prunable &&
-                worktree.path === repositoryPath &&
-                worktree.gitWorktreeKey === 'main'
-            )
-          ) {
-            throw new DomainError(
-              'NOT_A_GIT_REPOSITORY',
-              'Git worktree inventory did not report the recovered main checkout',
-              400
-            )
-          }
-        }
-
-        const timestamp = now()
-        const defaultBranch = await this.deps.git.defaultBranch(repositoryPath)
-        const requested = requestedName?.trim() || null
-        const existingMetadata = existing
-          ? this.deps.database.projectFilesystemMetadata(existing.id)
-          : null
-        if (existing && !existingMetadata) {
+    const updateRegistration = async (): Promise<void> => {
+      if (existing && existing.repositoryPath !== repositoryPath) {
+        await this.deps.git.repairWorktrees(repositoryPath)
+        const discovered = await this.deps.git.listWorktrees(repositoryPath)
+        if (
+          !discovered.some(
+            (worktree) =>
+              !worktree.bare &&
+              !worktree.prunable &&
+              worktree.path === repositoryPath &&
+              worktree.gitWorktreeKey === 'main'
+          )
+        ) {
           throw new DomainError(
-            'PROJECT_PATH_CONFLICT',
-            'The registered project is missing its filesystem identity',
-            409
+            'NOT_A_GIT_REPOSITORY',
+            'Git worktree inventory did not report the recovered main checkout',
+            400
           )
         }
+      }
 
-        const nameIsCustom = requested
-          ? true
-          : (existingMetadata?.nameIsCustom ?? false)
-        const automaticExistingName = Boolean(
-          existing &&
-          !nameIsCustom &&
-          existing.name === path.basename(existing.repositoryPath)
+      const timestamp = now()
+      const defaultBranch = await this.deps.git.defaultBranch(repositoryPath)
+      const requested = requestedName?.trim() || null
+      const existingMetadata = existing
+        ? this.deps.database.projectFilesystemMetadata(existing.id)
+        : null
+      if (existing && !existingMetadata) {
+        throw new DomainError(
+          'PROJECT_PATH_CONFLICT',
+          'The registered project is missing its filesystem identity',
+          409
         )
-        const name =
-          requested ||
-          (automaticExistingName
-            ? path.basename(repositoryPath)
-            : existing?.name) ||
-          path.basename(repositoryPath)
-        this.deps.database.connection
-          .prepare(
-            `INSERT INTO projects(
+      }
+
+      const nameIsCustom = requested
+        ? true
+        : (existingMetadata?.nameIsCustom ?? false)
+      const automaticExistingName = Boolean(
+        existing &&
+        !nameIsCustom &&
+        existing.name === path.basename(existing.repositoryPath)
+      )
+      const name =
+        requested ||
+        (automaticExistingName
+          ? path.basename(repositoryPath)
+          : existing?.name) ||
+        path.basename(repositoryPath)
+      this.deps.database.connection
+        .prepare(
+          `INSERT INTO projects(
                id,name,repository_path,main_worktree_path,default_branch,
-               repository_device,repository_inode,name_is_custom,created_at,updated_at
-             ) VALUES(?,?,?,?,?,?,?,?,?,?)
+               repository_device,repository_inode,name_is_custom,is_open,last_opened_at,
+               created_at,updated_at
+             ) VALUES(?,?,?,?,?,?,?,?,1,?,?,?)
              ON CONFLICT(id) DO UPDATE SET name=excluded.name, repository_path=excluded.repository_path,
                main_worktree_path=excluded.main_worktree_path, default_branch=excluded.default_branch,
                repository_device=excluded.repository_device, repository_inode=excluded.repository_inode,
                name_is_custom=excluded.name_is_custom,updated_at=excluded.updated_at`
-          )
-          .run(
-            projectId,
-            name,
-            repositoryPath,
-            mainPath,
-            defaultBranch,
-            repositoryDevice,
-            repositoryInode,
-            nameIsCustom ? 1 : 0,
-            existing?.createdAt ?? timestamp,
-            timestamp
-          )
-        await this.reconcileProjectWorktrees(
+        )
+        .run(
           projectId,
+          name,
           repositoryPath,
           mainPath,
-          Boolean(existing)
+          defaultBranch,
+          repositoryDevice,
+          repositoryInode,
+          nameIsCustom ? 1 : 0,
+          timestamp,
+          existing?.createdAt ?? timestamp,
+          timestamp
         )
-      }
-
-      if (existing) {
-        await this.serializeProjectObservation(projectId, updateRegistration)
-      } else {
-        await updateRegistration()
-      }
-
-      this.invalidateProjectsSnapshot()
-      const project = this.getProject(projectId)
-      this.events.publish(existing ? 'project.updated' : 'project.created', {
-        projectId
-      })
-      return project
-    } finally {
-      if (existing) {
-        this.projectLocks.delete(projectId)
-      }
+      await this.reconcileProjectWorktrees(
+        projectId,
+        repositoryPath,
+        mainPath,
+        Boolean(existing),
+        true
+      )
     }
+
+    if (existing) {
+      return await this.serializeProjectObservation(projectId, async () => {
+        if (this.projectLocks.has(projectId)) {
+          throw new DomainError(
+            'PROJECT_BUSY',
+            'Project is already being modified',
+            409
+          )
+        }
+
+        this.projectLocks.add(projectId)
+        try {
+          await updateRegistration()
+          this.deps.database.setProjectOpen(projectId, true, now())
+          this.invalidateProjectsSnapshot()
+          const project = this.getProject(projectId)
+          this.events.publish('project.updated', { projectId })
+          return project
+        } finally {
+          this.projectLocks.delete(projectId)
+        }
+      })
+    }
+
+    await updateRegistration()
+    this.invalidateProjectsSnapshot()
+    const project = this.getProject(projectId)
+    this.events.publish('project.created', { projectId })
+    return project
   }
 
   private async observeAvailableProject(
-    project: ProjectRecord
+    project: ProjectRecord,
+    allowClosed = false
   ): Promise<ProjectRecord> {
     try {
       await this.importWorktrees(
         project.id,
         project.repositoryPath,
         project.mainWorktreePath,
-        true
+        true,
+        allowClosed
       )
     } catch (error) {
       throw new DomainError(
@@ -913,6 +965,7 @@ export class TaskTTYService {
   }
 
   async refreshProject(projectId: string): Promise<ProjectRecord> {
+    this.requireOpenProject(projectId)
     if (this.projectLocks.has(projectId)) {
       throw new DomainError(
         'PROJECT_BUSY',
@@ -943,19 +996,135 @@ export class TaskTTYService {
     }
   }
 
-  private async serializeProjectObservation(
+  async openProject(projectId: string): Promise<ProjectRecord> {
+    await this.serializeProjectObservation(projectId, async () => {
+      this.getProject(projectId)
+      if (this.projectLocks.has(projectId)) {
+        throw new DomainError(
+          'PROJECT_BUSY',
+          'Project is already being modified',
+          409
+        )
+      }
+
+      this.projectLocks.add(projectId)
+      try {
+        this.deps.database.setProjectOpen(projectId, true, now())
+        this.invalidateProjectsSnapshot()
+        this.events.publish('project.updated', { projectId })
+      } finally {
+        this.projectLocks.delete(projectId)
+      }
+    })
+
+    return this.getProjectSnapshot(projectId)
+  }
+
+  async closeProject(projectId: string): Promise<void> {
+    await this.serializeProjectObservation(projectId, async () => {
+      const project = this.getProject(projectId)
+      if (this.deps.database.isProjectOpen(projectId) !== true) {
+        return
+      }
+
+      if (this.projectLocks.has(projectId)) {
+        throw new DomainError(
+          'PROJECT_BUSY',
+          'Project is already being modified',
+          409
+        )
+      }
+
+      if (
+        project.worktrees.some((worktree) =>
+          this.worktreeLocks.has(worktree.id)
+        )
+      ) {
+        throw new DomainError(
+          'PROJECT_BUSY',
+          'A project worktree is already being modified',
+          409
+        )
+      }
+
+      this.projectLocks.add(projectId)
+      const lockedWorktreeIds = project.worktrees.map((worktree) => worktree.id)
+      for (const worktreeId of lockedWorktreeIds) {
+        this.worktreeLocks.add(worktreeId)
+      }
+
+      try {
+        const failedWorktrees: Array<{ id: string; message: string }> = []
+        for (const worktree of project.worktrees) {
+          try {
+            const terminalIds = await this.deps.tmux.killServer(
+              worktree.tmuxSocketName
+            )
+            this.clearWorktreeTerminalState(worktree.id, terminalIds)
+          } catch (error) {
+            failedWorktrees.push({
+              id: worktree.id,
+              message: error instanceof Error ? error.message : String(error)
+            })
+          }
+        }
+
+        this.invalidateProjectsSnapshot()
+        if (failedWorktrees.length > 0) {
+          throw new DomainError(
+            'PROJECT_CLOSE_FAILED',
+            'Some terminal sessions could not be stopped; the project remains open',
+            500,
+            {
+              failedWorktreeIds: failedWorktrees.map((worktree) => worktree.id),
+              failures: failedWorktrees,
+              terminalsMayHaveStopped: true
+            }
+          )
+        }
+
+        try {
+          this.deps.database.setProjectOpen(projectId, false, now())
+        } catch (error) {
+          throw new DomainError(
+            'PROJECT_CLOSE_FAILED',
+            'Terminal sessions stopped, but the project could not be marked closed',
+            500,
+            {
+              failedWorktreeIds: [],
+              persistenceError:
+                error instanceof Error ? error.message : String(error),
+              terminalsMayHaveStopped: true
+            }
+          )
+        }
+
+        this.invalidateProjectsSnapshot()
+        this.events.publish('project.updated', { projectId })
+      } finally {
+        for (const worktreeId of lockedWorktreeIds) {
+          this.worktreeLocks.delete(worktreeId)
+        }
+        this.projectLocks.delete(projectId)
+      }
+    })
+  }
+
+  private async serializeProjectObservation<T>(
     projectId: string,
-    operation: () => Promise<void>
-  ): Promise<void> {
+    operation: () => Promise<T>
+  ): Promise<T> {
     const previous = this.projectObservationTails.get(projectId)
-    const observation = (previous ?? Promise.resolve())
-      .catch(() => undefined)
-      .then(operation)
-    this.projectObservationTails.set(projectId, observation)
+    const observation = (previous ?? Promise.resolve()).then(operation)
+    const tail = observation.then(
+      () => undefined,
+      () => undefined
+    )
+    this.projectObservationTails.set(projectId, tail)
     try {
-      await observation
+      return await observation
     } finally {
-      if (this.projectObservationTails.get(projectId) === observation) {
+      if (this.projectObservationTails.get(projectId) === tail) {
         this.projectObservationTails.delete(projectId)
       }
     }
@@ -965,14 +1134,16 @@ export class TaskTTYService {
     projectId: string,
     repositoryPath: string,
     mainPath: string,
-    allowProjectLock = false
+    allowProjectLock = false,
+    allowClosed = false
   ): Promise<void> {
     return this.serializeProjectObservation(projectId, () =>
       this.reconcileProjectWorktrees(
         projectId,
         repositoryPath,
         mainPath,
-        allowProjectLock
+        allowProjectLock,
+        allowClosed
       )
     )
   }
@@ -981,9 +1152,13 @@ export class TaskTTYService {
     projectId: string,
     repositoryPath: string,
     mainPath: string,
-    allowProjectLock: boolean
+    allowProjectLock: boolean,
+    allowClosed = false
   ): Promise<void> {
-    if (!allowProjectLock && this.projectLocks.has(projectId)) {
+    if (
+      (!allowProjectLock && this.projectLocks.has(projectId)) ||
+      (!allowClosed && this.deps.database.isProjectOpen(projectId) !== true)
+    ) {
       return
     }
 
@@ -1083,7 +1258,10 @@ export class TaskTTYService {
     const discovered = (
       await this.deps.git.listWorktrees(repositoryPath)
     ).filter((item) => !item.bare)
-    if (!allowProjectLock && this.projectLocks.has(projectId)) {
+    if (
+      (!allowProjectLock && this.projectLocks.has(projectId)) ||
+      (!allowClosed && this.deps.database.isProjectOpen(projectId) !== true)
+    ) {
       return
     }
 
@@ -1541,7 +1719,7 @@ export class TaskTTYService {
     projectId: string,
     inputName: string
   ): Promise<{ name: string; path: string }> {
-    const project = this.getProject(projectId)
+    const project = this.requireOpenProject(projectId)
     const resolved = await resolveZedWorktreePath(
       project.mainWorktreePath,
       inputName
@@ -1562,6 +1740,7 @@ export class TaskTTYService {
     initialTerminal?: { name: string; argv?: string[] },
     sourceWorktreeId?: string
   ): Promise<CreateWorktreeResult> {
+    this.requireOpenProject(projectId)
     if (this.projectLocks.has(projectId)) {
       throw new DomainError(
         'PROJECT_BUSY',
@@ -1576,7 +1755,9 @@ export class TaskTTYService {
     let project!: ProjectRecord
     let wrapperCreated = false
     try {
-      project = await this.observeAvailableProject(this.getProject(projectId))
+      project = await this.observeAvailableProject(
+        this.requireOpenProject(projectId)
+      )
       let name: string
       try {
         name = normalizeWorktreeName(inputName)
@@ -1774,7 +1955,11 @@ export class TaskTTYService {
     setup?: { tasks: WorktreeSetupTask[]; error: string | null }
   ): Promise<TerminalRecord> {
     const worktree = await this.requireAvailableWorktree(worktreeId)
-    if (this.worktreeLocks.has(worktreeId) || worktree.status !== 'active') {
+    if (
+      (setup === undefined && this.projectLocks.has(worktree.projectId)) ||
+      this.worktreeLocks.has(worktreeId) ||
+      worktree.status !== 'active'
+    ) {
       throw new DomainError(
         'WORKTREE_BUSY',
         'Cannot create a terminal while the worktree is cleaning or failed',
@@ -1782,8 +1967,8 @@ export class TaskTTYService {
       )
     }
 
+    const project = this.requireOpenProject(worktree.projectId)
     this.worktreeLocks.add(worktreeId)
-    const project = this.getProject(worktree.projectId)
     const terminalId = id('term')
     const sessionName = generateTmuxSessionName()
     const commandArgv = argv ? [...argv] : [this.deps.config.shell, '-l']
@@ -1852,6 +2037,18 @@ export class TaskTTYService {
       worktree.tmuxSocketName,
       terminal.tmuxSessionName
     )
+    if (
+      this.projectLocks.has(worktree.projectId) ||
+      this.worktreeLocks.has(worktree.id)
+    ) {
+      throw new DomainError('WORKTREE_BUSY', 'Worktree is being modified', 409)
+    }
+
+    this.requireOpenProject(worktree.projectId)
+    if (!this.terminalStates.has(terminalId)) {
+      throw new DomainError('TERMINAL_NOT_FOUND', 'Terminal not found', 404)
+    }
+
     if (state.status === 'missing') {
       this.terminalStates.delete(terminalId)
       this.terminalIdsByWorktree.get(worktree.id)?.delete(terminalId)
@@ -1889,19 +2086,32 @@ export class TaskTTYService {
   ): Promise<TerminalRecord> {
     const terminal = await this.getTerminal(terminalId)
     const worktree = this.getWorktree(terminal.worktreeId)
-    await this.deps.tmux.renameTerminal(
-      worktree.tmuxSocketName,
-      terminal.tmuxSessionName,
-      name,
-      now()
-    )
-    const renamed = await this.getTerminal(terminalId)
-    this.invalidateProjectsSnapshot()
-    this.events.publish('terminal.updated', {
-      worktreeId: terminal.worktreeId,
-      terminalId
-    })
-    return renamed
+    this.requireOpenProject(worktree.projectId)
+    if (
+      this.projectLocks.has(worktree.projectId) ||
+      this.worktreeLocks.has(worktree.id)
+    ) {
+      throw new DomainError('WORKTREE_BUSY', 'Worktree is being modified', 409)
+    }
+
+    this.worktreeLocks.add(worktree.id)
+    try {
+      await this.deps.tmux.renameTerminal(
+        worktree.tmuxSocketName,
+        terminal.tmuxSessionName,
+        name,
+        now()
+      )
+      const renamed = await this.getTerminal(terminalId)
+      this.invalidateProjectsSnapshot()
+      this.events.publish('terminal.updated', {
+        worktreeId: terminal.worktreeId,
+        terminalId
+      })
+      return renamed
+    } finally {
+      this.worktreeLocks.delete(worktree.id)
+    }
   }
 
   async deleteTerminal(terminalId: string): Promise<void> {
@@ -1911,7 +2121,11 @@ export class TaskTTYService {
       throw new DomainError('WORKTREE_NOT_FOUND', 'Worktree not found', 404)
     }
 
-    if (this.worktreeLocks.has(worktree.id)) {
+    this.requireOpenProject(worktree.projectId)
+    if (
+      this.projectLocks.has(worktree.projectId) ||
+      this.worktreeLocks.has(worktree.id)
+    ) {
       throw new DomainError('WORKTREE_BUSY', 'Worktree is being modified', 409)
     }
 
@@ -1947,25 +2161,38 @@ export class TaskTTYService {
       return worktree.pr
     }
 
-    const pr = await this.deps.gh.pullRequest(worktree.path, worktree.branch)
-    this.deps.database.connection
-      .prepare(
-        `UPDATE worktrees SET pr_state=?,pr_number=?,pr_url=?,pr_base_branch=?,pr_head_branch=?,pr_merged_at=?,pr_refreshed_at=?,updated_at=? WHERE id=?`
-      )
-      .run(
-        pr.state,
-        pr.number,
-        pr.url,
-        pr.baseBranch,
-        pr.headBranch,
-        pr.mergedAt,
-        pr.refreshedAt,
-        now(),
-        worktreeId
-      )
-    this.invalidateProjectsSnapshot()
-    this.events.publish('worktree.updated', { worktreeId })
-    return pr
+    if (
+      this.projectLocks.has(worktree.projectId) ||
+      this.worktreeLocks.has(worktreeId)
+    ) {
+      throw new DomainError('WORKTREE_BUSY', 'Worktree is being modified', 409)
+    }
+
+    this.worktreeLocks.add(worktreeId)
+    try {
+      this.requireOpenProject(worktree.projectId)
+      const pr = await this.deps.gh.pullRequest(worktree.path, worktree.branch)
+      this.deps.database.connection
+        .prepare(
+          `UPDATE worktrees SET pr_state=?,pr_number=?,pr_url=?,pr_base_branch=?,pr_head_branch=?,pr_merged_at=?,pr_refreshed_at=?,updated_at=? WHERE id=?`
+        )
+        .run(
+          pr.state,
+          pr.number,
+          pr.url,
+          pr.baseBranch,
+          pr.headBranch,
+          pr.mergedAt,
+          pr.refreshedAt,
+          now(),
+          worktreeId
+        )
+      this.invalidateProjectsSnapshot()
+      this.events.publish('worktree.updated', { worktreeId })
+      return pr
+    } finally {
+      this.worktreeLocks.delete(worktreeId)
+    }
   }
 
   private async prepareRemovePreview(
@@ -2073,6 +2300,7 @@ export class TaskTTYService {
     request: { confirmationToken: string; confirmDestructive: boolean }
   ): Promise<OperationRecord> {
     const worktree = this.getWorktree(worktreeId)
+    this.requireOpenProject(worktree.projectId)
     if (
       this.worktreeLocks.has(worktreeId) ||
       this.projectLocks.has(worktree.projectId) ||
@@ -2329,7 +2557,8 @@ export class TaskTTYService {
     const lockedWorktrees: string[] = []
     try {
       let project = await this.observeAvailableProject(
-        this.getProject(projectId)
+        this.getProject(projectId),
+        true
       )
       if (
         project.worktrees.some((worktree) =>
@@ -2359,16 +2588,24 @@ export class TaskTTYService {
         )
       }
 
+      const terminalIdsByWorktree = new Map<string, string[]>()
       for (const worktree of project.worktrees) {
-        await this.deps.tmux.killServer(worktree.tmuxSocketName)
+        terminalIdsByWorktree.set(
+          worktree.id,
+          await this.deps.tmux.killServer(worktree.tmuxSocketName)
+        )
       }
       this.deps.database.connection
         .prepare('DELETE FROM projects WHERE id=?')
         .run(projectId)
       for (const worktree of project.worktrees) {
-        this.clearWorktreeTerminalState(worktree.id)
+        this.clearWorktreeTerminalState(
+          worktree.id,
+          terminalIdsByWorktree.get(worktree.id)
+        )
       }
       this.invalidateProjectsSnapshot()
+      this.events.publish('project.removed', { projectId })
     } finally {
       for (const worktreeId of lockedWorktrees) {
         this.worktreeLocks.delete(worktreeId)
@@ -2379,7 +2616,7 @@ export class TaskTTYService {
 
   async reconcile(): Promise<void> {
     const availableProjects = new Set<string>()
-    for (const project of this.deps.database.projects()) {
+    for (const project of this.deps.database.openProjects()) {
       try {
         await this.importWorktrees(
           project.id,
@@ -2391,7 +2628,7 @@ export class TaskTTYService {
         // Keep metadata and tmux untouched while Git is unavailable.
       }
     }
-    for (const project of this.deps.database.projects()) {
+    for (const project of this.deps.database.openProjects()) {
       if (!availableProjects.has(project.id)) {
         continue
       }

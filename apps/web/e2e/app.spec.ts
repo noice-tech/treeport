@@ -1,5 +1,9 @@
 import { expect, test, type Page } from '@playwright/test'
-import type { ProjectColor, TerminalRuntimeMetadata } from '@tasktty/shared'
+import type {
+  ProjectColor,
+  RecentProjectRecord,
+  TerminalRuntimeMetadata
+} from '@tasktty/shared'
 
 const TERMINAL_SCROLL_EXIT_SEQUENCE = '\u001b[9000~'
 
@@ -115,7 +119,8 @@ const project = {
 
 async function mockApp(
   page: Page,
-  initialTerminalMetadata: TerminalRuntimeMetadata[] = []
+  initialTerminalMetadata: TerminalRuntimeMetadata[] = [],
+  options: { startClosed?: boolean; terminalFree?: boolean } = {}
 ) {
   await page.addInitScript((initialMetadata) => {
     class MockEventSource {
@@ -232,7 +237,26 @@ async function mockApp(
     })
   }, initialTerminalMetadata)
   const state = structuredClone(project)
+  if (options.terminalFree) {
+    for (const worktree of state.worktrees) {
+      worktree.terminals = []
+    }
+  }
+
+  const openProjects = options.startClosed ? [] : [state]
+  const recentProjects: RecentProjectRecord[] = options.startClosed
+    ? [
+        {
+          id: state.id,
+          name: state.name,
+          repositoryPath: state.repositoryPath,
+          lastOpenedAt: state.updatedAt
+        }
+      ]
+    : []
   let projectRequests = 0
+  let closeRequests = 0
+  let failClose = false
   let removePreviewRequests = 0
   let removePreviewDelayMs = 0
   let removePreviewOverride: Record<string, unknown> = {}
@@ -247,9 +271,96 @@ async function mockApp(
   await page.route('**/api/**', async (route) => {
     const url = new URL(route.request().url())
     const pathname = url.pathname
+    if (
+      pathname === '/api/projects/recent' &&
+      route.request().method() === 'GET'
+    ) {
+      await route.fulfill({ json: { projects: recentProjects } })
+      return
+    }
+
     if (pathname === '/api/projects' && route.request().method() === 'GET') {
       projectRequests += 1
-      await route.fulfill({ json: { projects: [state] } })
+      await route.fulfill({ json: { projects: openProjects } })
+      return
+    }
+
+    if (pathname === '/api/projects' && route.request().method() === 'POST') {
+      if (!openProjects.some((candidate) => candidate.id === state.id)) {
+        openProjects.push(state)
+      }
+
+      const recentIndex = recentProjects.findIndex(
+        (candidate) => candidate.id === state.id
+      )
+      if (recentIndex >= 0) {
+        recentProjects.splice(recentIndex, 1)
+      }
+
+      await route.fulfill({ status: 201, json: { project: state } })
+      return
+    }
+
+    if (
+      pathname === '/api/projects/proj_1/open' &&
+      route.request().method() === 'POST'
+    ) {
+      if (!openProjects.some((candidate) => candidate.id === state.id)) {
+        openProjects.push(state)
+      }
+
+      const recentIndex = recentProjects.findIndex(
+        (candidate) => candidate.id === state.id
+      )
+      if (recentIndex >= 0) {
+        recentProjects.splice(recentIndex, 1)
+      }
+
+      await route.fulfill({ json: { project: state } })
+      return
+    }
+
+    if (
+      pathname === '/api/projects/proj_1/close' &&
+      route.request().method() === 'POST'
+    ) {
+      closeRequests += 1
+      if (failClose) {
+        failClose = false
+        await route.fulfill({
+          status: 500,
+          json: {
+            error: {
+              code: 'PROJECT_CLOSE_FAILED',
+              message:
+                'Some terminal sessions could not be stopped; the project remains open',
+              details: { terminalsMayHaveStopped: true }
+            }
+          }
+        })
+        return
+      }
+
+      const openIndex = openProjects.findIndex(
+        (candidate) => candidate.id === state.id
+      )
+      if (openIndex >= 0) {
+        openProjects.splice(openIndex, 1)
+      }
+
+      if (!recentProjects.some((candidate) => candidate.id === state.id)) {
+        recentProjects.push({
+          id: state.id,
+          name: state.name,
+          repositoryPath: state.repositoryPath,
+          lastOpenedAt: state.updatedAt
+        })
+      }
+
+      for (const worktree of state.worktrees) {
+        worktree.terminals = []
+      }
+      await route.fulfill({ json: { ok: true } })
       return
     }
 
@@ -460,7 +571,12 @@ async function mockApp(
   await page.goto('/')
   return {
     state,
+    recentProjects,
     projectRequests: () => projectRequests,
+    closeRequests: () => closeRequests,
+    failNextClose: () => {
+      failClose = true
+    },
     removePreviewRequests: () => removePreviewRequests,
     setRemovePreview: (value: Record<string, unknown>) => {
       removePreviewOverride = value
@@ -523,6 +639,120 @@ test.describe('desktop worktree terminal UI', () => {
       page.locator('select[name="terminal-selector"] option:checked')
     ).toHaveText('zsh · /worktrees/topic')
     await expect(page.locator('.pr-badge')).toHaveCount(0)
+  })
+
+  test('reopens a recent project by durable ID', async ({ page }) => {
+    await mockApp(page, [], { startClosed: true, terminalFree: true })
+    await expect(
+      page.getByText('Open a Git repository to begin.')
+    ).toBeVisible()
+
+    await page.getByRole('button', { name: 'Open project' }).click()
+    const dialog = page.getByRole('dialog')
+    await expect(dialog.getByText('Recent projects')).toBeVisible()
+    await expect(dialog.getByText('/repo')).toBeVisible()
+    await dialog.getByRole('button', { name: /example.*\/repo/ }).click()
+
+    await expect(dialog).toHaveCount(0)
+    await expect(
+      page.getByRole('button', { name: 'example', exact: true })
+    ).toBeVisible()
+  })
+
+  test('opens a project by repository path', async ({ page }) => {
+    await mockApp(page, [], { startClosed: true, terminalFree: true })
+    await page.getByRole('button', { name: 'Open project' }).click()
+    const dialog = page.getByRole('dialog')
+    await dialog.getByLabel('Open by repository path').fill('/repo')
+    await dialog.getByRole('button', { name: 'Open project' }).click()
+
+    await expect(dialog).toHaveCount(0)
+    await expect(
+      page.getByRole('button', { name: 'example', exact: true })
+    ).toBeVisible()
+  })
+
+  test('closes a terminal-bearing project only after confirmation', async ({
+    page
+  }) => {
+    const mocked = await mockApp(page)
+    await expect
+      .poll(() => page.evaluate(() => localStorage.getItem('tasktty-terminal')))
+      .toBe('term_shell')
+    const projectRow = page
+      .locator('.project-row')
+      .filter({ hasText: 'example' })
+    await projectRow.hover()
+    const close = page.getByRole('button', {
+      name: 'Close project example'
+    })
+
+    page.once('dialog', async (dialog) => {
+      expect(dialog.message()).toContain('2 TaskTTY terminal sessions')
+      expect(dialog.message()).toContain('Recent projects')
+      await dialog.dismiss()
+    })
+    await close.click()
+    expect(mocked.closeRequests()).toBe(0)
+
+    page.once('dialog', (dialog) => dialog.accept())
+    await close.click()
+    await expect(
+      page.getByRole('button', { name: 'example', exact: true })
+    ).toHaveCount(0)
+    await expect(
+      page.getByRole('button', { name: 'Open project' })
+    ).toBeFocused()
+    expect(mocked.closeRequests()).toBe(1)
+    await expect
+      .poll(() => page.evaluate(() => localStorage.getItem('tasktty-terminal')))
+      .toBeNull()
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          ((window as any).__wsInstances ?? [])
+            .filter((socket: WebSocket) =>
+              socket.url.includes('/api/terminals/')
+            )
+            .every((socket: WebSocket) => socket.readyState === 3)
+        )
+      )
+      .toBe(true)
+  })
+
+  test('closes a terminal-free project without confirmation', async ({
+    page
+  }) => {
+    const mocked = await mockApp(page, [], { terminalFree: true })
+    let confirmationShown = false
+    page.on('dialog', async (dialog) => {
+      confirmationShown = true
+      await dialog.dismiss()
+    })
+    await page.locator('.project-row').filter({ hasText: 'example' }).hover()
+    await page.getByRole('button', { name: 'Close project example' }).click()
+
+    await expect(
+      page.getByRole('button', { name: 'example', exact: true })
+    ).toHaveCount(0)
+    expect(confirmationShown).toBe(false)
+    expect(mocked.closeRequests()).toBe(1)
+  })
+
+  test('keeps a project visible when terminal shutdown is partial', async ({
+    page
+  }) => {
+    const mocked = await mockApp(page, [], { terminalFree: true })
+    mocked.failNextClose()
+    await page.locator('.project-row').filter({ hasText: 'example' }).hover()
+    await page.getByRole('button', { name: 'Close project example' }).click()
+
+    await expect(page.getByRole('alert')).toContainText(
+      'Some terminal sessions could not be stopped'
+    )
+    await expect(
+      page.getByRole('button', { name: 'example', exact: true })
+    ).toBeVisible()
   })
 
   test('remembers collapsed projects after a refresh', async ({ page }) => {
@@ -1315,6 +1545,20 @@ test.describe('desktop worktree terminal UI', () => {
 
 test.describe('mobile terminal UI', () => {
   test.skip(({ isMobile }) => !isMobile)
+
+  test('keeps the project close action visible and usable by touch', async ({
+    page
+  }) => {
+    await mockApp(page, [], { terminalFree: true })
+    await page.getByLabel('Open worktree drawer').click()
+    const close = page.getByRole('button', { name: 'Close project example' })
+    await expect(close).toBeVisible()
+    await expect(close).toHaveCSS('opacity', '1')
+    await close.click()
+    await expect(
+      page.getByRole('button', { name: 'example', exact: true })
+    ).toHaveCount(0)
+  })
 
   test('closes only a nested modal on Escape and restores its drawer trigger', async ({
     page

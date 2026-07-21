@@ -57,6 +57,113 @@ describe('SQLite metadata', () => {
         .pluck()
         .all()
     ).toEqual([7])
+    expect(
+      database.connection
+        .prepare('PRAGMA table_info(projects)')
+        .all()
+        .map((column: any) => column.name)
+    ).toEqual(expect.arrayContaining(['is_open', 'last_opened_at']))
+    expect(
+      database.connection
+        .prepare(
+          "SELECT count(*) FROM sqlite_master WHERE type='index' AND name='projects_recent_idx'"
+        )
+        .pluck()
+        .get()
+    ).toBe(1)
+  })
+
+  it('filters open projects and orders lightweight recent registrations by open time', async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'tasktty-db-'))
+    directories.push(directory)
+    const database = new TaskTTYDatabase(path.join(directory, 'metadata.db'))
+    databases.push(database)
+    const insert = database.connection.prepare(
+      `INSERT INTO projects(
+         id,name,repository_path,main_worktree_path,default_branch,color,
+         repository_device,repository_inode,name_is_custom,is_open,last_opened_at,
+         created_at,updated_at
+       ) VALUES(?,?,?,?,?,'blue',?,?,0,?,?,?,?)`
+    )
+    insert.run(
+      'p_old',
+      'Old',
+      '/old',
+      '/old',
+      'main',
+      '1',
+      '1',
+      0,
+      '2026-01-01T00:00:00.000Z',
+      '2025-01-01T00:00:00.000Z',
+      '2026-12-01T00:00:00.000Z'
+    )
+    insert.run(
+      'p_new',
+      'New',
+      '/new',
+      '/new',
+      'main',
+      '2',
+      '2',
+      0,
+      '2026-02-01T00:00:00.000Z',
+      '2025-01-01T00:00:00.000Z',
+      '2025-01-01T00:00:00.000Z'
+    )
+    insert.run(
+      'p_open',
+      'Open',
+      '/open',
+      '/open',
+      'main',
+      '3',
+      '3',
+      1,
+      '2026-03-01T00:00:00.000Z',
+      '2025-01-01T00:00:00.000Z',
+      '2025-01-01T00:00:00.000Z'
+    )
+
+    expect(
+      database
+        .projects()
+        .map((project) => project.id)
+        .sort()
+    ).toEqual(['p_new', 'p_old', 'p_open'])
+    expect(database.openProjects().map((project) => project.id)).toEqual([
+      'p_open'
+    ])
+    expect(database.recentProjects()).toEqual([
+      {
+        id: 'p_new',
+        name: 'New',
+        repositoryPath: '/new',
+        lastOpenedAt: '2026-02-01T00:00:00.000Z'
+      },
+      {
+        id: 'p_old',
+        name: 'Old',
+        repositoryPath: '/old',
+        lastOpenedAt: '2026-01-01T00:00:00.000Z'
+      }
+    ])
+    expect('worktrees' in database.recentProjects()[0]!).toBe(false)
+
+    database.setProjectOpen('p_old', true, '2026-04-01T00:00:00.000Z')
+    database.setProjectOpen('p_open', false, '2026-05-01T00:00:00.000Z')
+    expect(database.isProjectOpen('p_old')).toBe(true)
+    expect(database.isProjectOpen('p_open')).toBe(false)
+    expect(database.recentProjects().map((project) => project.id)).toEqual([
+      'p_open',
+      'p_new'
+    ])
+    expect(
+      database.connection
+        .prepare('SELECT last_opened_at FROM projects WHERE id = ?')
+        .pluck()
+        .get('p_open')
+    ).toBe('2026-03-01T00:00:00.000Z')
   })
 
   it('reopens an already-version-7 database without reapplying the baseline', async () => {

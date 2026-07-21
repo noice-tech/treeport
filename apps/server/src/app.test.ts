@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { TerminalRuntimeMetadata } from '@tasktty/shared'
 import {
+  DomainError,
   ProductEventBus,
   type AppConfig,
   type TmuxAdapter,
@@ -25,6 +26,17 @@ function fixture() {
   const service = {
     events: new ProductEventBus(),
     listProjects: vi.fn(async () => []),
+    listRecentProjects: vi.fn(() => [
+      {
+        id: 'recent',
+        name: 'Recent',
+        repositoryPath: '/recent',
+        lastOpenedAt: '2026-01-01T00:00:00.000Z'
+      }
+    ]),
+    openProject: vi.fn(async (id: string) => ({ id })),
+    closeProject: vi.fn(async () => undefined),
+    deleteProject: vi.fn(async () => undefined),
     updateProjectColor: vi.fn((id: string, color: string | null) => ({
       id,
       color
@@ -69,6 +81,63 @@ describe('HTTP API validation', () => {
       error: { code: 'VALIDATION_ERROR', message: 'Request validation failed' }
     })
     expect(service.createTerminal).not.toHaveBeenCalled()
+  })
+
+  it('keeps recent, open, close, and destructive delete as distinct routes', async () => {
+    const { app, service } = fixture()
+
+    const recent = await app.request('/api/projects/recent')
+    expect(recent.status).toBe(200)
+    expect(await recent.json()).toMatchObject({
+      projects: [{ id: 'recent', repositoryPath: '/recent' }]
+    })
+    expect(service.getProjectSnapshot).not.toHaveBeenCalledWith('recent')
+
+    const opened = await app.request('/api/projects/p/open', {
+      method: 'POST'
+    })
+    expect(opened.status).toBe(200)
+    expect(service.openProject).toHaveBeenCalledWith('p')
+
+    const closed = await app.request('/api/projects/p/close', {
+      method: 'POST'
+    })
+    expect(closed.status).toBe(200)
+    expect(service.closeProject).toHaveBeenCalledWith('p')
+
+    const removed = await app.request('/api/projects/p', {
+      method: 'DELETE'
+    })
+    expect(removed.status).toBe(200)
+    expect(service.deleteProject).toHaveBeenCalledWith('p')
+    expect(service.closeProject).toHaveBeenCalledTimes(1)
+  })
+
+  it('preserves close failure details in the standard error envelope', async () => {
+    const { app, service } = fixture()
+    vi.mocked(service.closeProject).mockRejectedValueOnce(
+      new DomainError(
+        'PROJECT_CLOSE_FAILED',
+        'Some terminals may have stopped',
+        500,
+        { failedWorktreeIds: ['wt_1'], terminalsMayHaveStopped: true }
+      )
+    )
+
+    const response = await app.request('/api/projects/p/close', {
+      method: 'POST'
+    })
+    expect(response.status).toBe(500)
+    expect(await response.json()).toEqual({
+      error: {
+        code: 'PROJECT_CLOSE_FAILED',
+        message: 'Some terminals may have stopped',
+        details: {
+          failedWorktreeIds: ['wt_1'],
+          terminalsMayHaveStopped: true
+        }
+      }
+    })
   })
 
   it('updates projects with curated colors only', async () => {

@@ -481,7 +481,7 @@ export class TmuxAdapter {
     }
   }
 
-  async killServer(socketName: string): Promise<void> {
+  async killServer(socketName: string): Promise<string[]> {
     const terminalIds = (await this.listSessions(socketName)).map(
       (terminal) => terminal.id
     )
@@ -504,5 +504,6 @@ export class TmuxAdapter {
           .catch(() => undefined)
       )
     )
+    return terminalIds
   }
 }
