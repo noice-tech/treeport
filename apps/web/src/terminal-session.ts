@@ -16,8 +16,10 @@ type ConnectionPhase = 'connecting' | 'ready' | 'reconnecting' | 'closed'
 export type ArrowDirection = 'up' | 'down' | 'left' | 'right'
 
 const TERMINAL_SCROLL_EXIT_SEQUENCE = '\u001b[9000~'
-// tmux copy mode advances five rows for each wheel report.
-const TERMINAL_TOUCH_ROWS_PER_WHEEL = 5
+// tmux copy mode advances five rows for each wheel report. Requiring three
+// rows of finger travel keeps the gesture responsive without restoring the
+// original excessive gain.
+const TERMINAL_TOUCH_ROWS_PER_WHEEL = 3
 
 export function terminalProgressLabel(progress: TerminalProgress): string {
   const percentage =

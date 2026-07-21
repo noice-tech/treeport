@@ -1293,7 +1293,7 @@ test.describe('mobile terminal UI', () => {
     const client = await page.context().newCDPSession(page)
     const x = bounds!.x + bounds!.width / 2
     const startY = bounds!.y + row!.height * 2
-    const positions = [0, 6, 12, 18].map((rows) => startY + row!.height * rows)
+    const positions = [0, 4, 8, 12].map((rows) => startY + row!.height * rows)
     await client.send('Input.dispatchTouchEvent', {
       type: 'touchStart',
       touchPoints: [{ x, y: positions[0]! }]
