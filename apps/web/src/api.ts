@@ -3,6 +3,7 @@ import type {
   OperationRecord,
   ProjectColor,
   ProjectRecord,
+  RecentProjectRecord,
   RemovePreview,
   TerminalRecord,
   WorktreeRecord
@@ -48,6 +49,9 @@ export async function api<T>(
 export const apiClient = {
   projects: async () =>
     (await api<{ projects: ProjectRecord[] }>('/api/projects')).projects,
+  recentProjects: async () =>
+    (await api<{ projects: RecentProjectRecord[] }>('/api/projects/recent'))
+      .projects,
   addProject: async (path: string) =>
     (
       await api<{ project: ProjectRecord }>('/api/projects', {
@@ -55,6 +59,16 @@ export const apiClient = {
         body: JSON.stringify({ path })
       })
     ).project,
+  openProject: async (projectId: string) =>
+    (
+      await api<{ project: ProjectRecord }>(`/api/projects/${projectId}/open`, {
+        method: 'POST'
+      })
+    ).project,
+  closeProject: async (projectId: string) =>
+    api<{ ok: true }>(`/api/projects/${projectId}/close`, {
+      method: 'POST'
+    }),
   updateProjectColor: async (projectId: string, color: ProjectColor | null) =>
     (
       await api<{ project: ProjectRecord }>(`/api/projects/${projectId}`, {
@@ -131,7 +145,11 @@ export const apiClient = {
         `/api/worktrees/${worktreeId}/remove-preview`
       )
     ).preview,
-  removeWorktree: async (worktreeId: string, preview: RemovePreview) =>
+  removeWorktree: async (
+    worktreeId: string,
+    preview: RemovePreview,
+    confirmDestructive: boolean
+  ) =>
     (
       await api<{ operation: OperationRecord }>(
         `/api/worktrees/${worktreeId}/remove`,
@@ -139,7 +157,7 @@ export const apiClient = {
           method: 'POST',
           body: JSON.stringify({
             confirmationToken: preview.confirmationToken,
-            confirmDestructive: preview.warnings.length > 0
+            confirmDestructive
           })
         }
       )

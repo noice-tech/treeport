@@ -54,7 +54,10 @@ class SystemDouble implements CommandRunner {
   worktreeListGate: Promise<void> | null = null
   worktreeAddGate: Promise<void> | null = null
   tmuxCreateGate: Promise<void> | null = null
+  tmuxStateGate: Promise<void> | null = null
   setupGate: Promise<void> | null = null
+  removeAfterDeregisterGate: Promise<void> | null = null
+  worktreeDeregistered: (() => void) | null = null
 
   constructor(main: string) {
     this.main = main
@@ -151,15 +154,20 @@ class SystemDouble implements CommandRunner {
 
       const worktreePath = args.at(-2)!
       const head = args.at(-1)!
+      const gitWorktreeKey = path.join(
+        this.main,
+        '.git',
+        'worktrees',
+        path.basename(path.dirname(worktreePath))
+      )
       await fs.mkdir(worktreePath, { recursive: true })
+      await fs.writeFile(
+        path.join(worktreePath, '.git'),
+        `gitdir: ${gitWorktreeKey}\n`
+      )
       this.worktrees.push({
         path: worktreePath,
-        gitWorktreeKey: path.join(
-          this.main,
-          '.git',
-          'worktrees',
-          path.basename(path.dirname(worktreePath))
-        ),
+        gitWorktreeKey,
         head,
         branch: null
       })
@@ -180,6 +188,11 @@ class SystemDouble implements CommandRunner {
       }
 
       this.worktrees.splice(index, 1)
+      this.worktreeDeregistered?.()
+      if (this.removeAfterDeregisterGate) {
+        await this.removeAfterDeregisterGate
+      }
+
       await fs.rm(worktreePath, { recursive: true, force: true })
       return ok()
     }
@@ -284,6 +297,10 @@ class SystemDouble implements CommandRunner {
     }
 
     if (args.includes('list-panes')) {
+      if (this.tmuxStateGate) {
+        await this.tmuxStateGate
+      }
+
       const session = args[args.indexOf('-t') + 1]!
       const socket = args[args.indexOf('-L') + 1]!
       const state = this.sessions.get(`${socket}/${session}`)
@@ -1460,6 +1477,285 @@ describe('TaskTTYService with injected command adapters', () => {
     })
   })
 
+  it('keeps an in-flight removal cleaning after Git deregisters it', async () => {
+    const { main, runner, service } = await fixture()
+    const project = await service.registerProject(main)
+    const linked = (
+      await service.createWorktree(project.id, 'in-flight', 'default')
+    ).worktree
+    let releaseRemoval!: () => void
+    runner.removeAfterDeregisterGate = new Promise<void>((resolve) => {
+      releaseRemoval = resolve
+    })
+    let deregistered!: () => void
+    const deregisteredPromise = new Promise<void>((resolve) => {
+      deregistered = resolve
+    })
+    runner.worktreeDeregistered = deregistered
+    const events: string[] = []
+    const unsubscribe = service.events.subscribe((event) =>
+      events.push(event.type)
+    )
+
+    const operation = await beginFromPreview(service, linked.id)
+    expect(operation.request).toMatchObject({
+      checkoutIdentity: {
+        path: linked.path,
+        device: expect.any(String),
+        inode: expect.any(String),
+        gitWorktreeKey: expect.any(String),
+        gitMarker: expect.stringMatching(/^gitdir: /),
+        managedWrapperPath: linked.managedWrapperPath,
+        quarantinePath: expect.stringContaining('.tasktty-removing-op_')
+      }
+    })
+    await deregisteredPromise
+    const duringRemoval = await service.getProjectSnapshot(project.id)
+    expect(
+      duringRemoval.worktrees.find((worktree) => worktree.id === linked.id)
+    ).toMatchObject({ status: 'cleaning' })
+    expect(service.getOperation(operation.id).status).toBe('running')
+    await expect(fs.stat(linked.path)).resolves.toBeTruthy()
+    expect(events.filter((event) => event === 'remove.completed')).toHaveLength(
+      0
+    )
+
+    releaseRemoval()
+    expect((await waitForOperation(service, operation.id)).status).toBe(
+      'completed'
+    )
+    await expect(fs.stat(linked.path)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(service.database.worktree(linked.id)).toBeNull()
+    expect(events.filter((event) => event === 'remove.completed')).toHaveLength(
+      1
+    )
+    expect(events.filter((event) => event === 'worktree.removed')).toHaveLength(
+      1
+    )
+    unsubscribe()
+  })
+
+  it('recovers only an authorized interrupted checkout root', async () => {
+    const { main, runner, service, database, config } = await fixture()
+    const project = await service.registerProject(main)
+    const recoverable = (
+      await service.createWorktree(project.id, 'recoverable-root', 'default')
+    ).worktree
+    const quarantined = (
+      await service.createWorktree(project.id, 'quarantined-root', 'default')
+    ).worktree
+    const replaced = (
+      await service.createWorktree(project.id, 'replaced-root', 'default')
+    ).worktree
+    const repurposed = (
+      await service.createWorktree(project.id, 'repurposed-root', 'default')
+    ).worktree
+    const legacy = (
+      await service.createWorktree(project.id, 'legacy-root', 'default')
+    ).worktree
+    const timestamp = new Date().toISOString()
+    const insertInterrupted = async (
+      operationId: string,
+      worktree: typeof recoverable,
+      includeIdentity: boolean
+    ) => {
+      const preview = await service.removePreview(worktree.id)
+      const checkout = await fs.lstat(worktree.path, { bigint: true })
+      const gitWorktreeKey = (
+        database.connection
+          .prepare('SELECT git_worktree_key FROM worktrees WHERE id=?')
+          .get(worktree.id) as { git_worktree_key: string }
+      ).git_worktree_key
+      const gitMarker = await fs.readFile(
+        path.join(worktree.path, '.git'),
+        'utf8'
+      )
+      database.connection
+        .prepare(
+          `INSERT INTO operations(id,kind,project_id,worktree_id,status,request_json,result_json,error,created_at,updated_at)
+           VALUES(?,'remove',?,?,'running',?,NULL,NULL,?,?)`
+        )
+        .run(
+          operationId,
+          project.id,
+          worktree.id,
+          JSON.stringify(
+            includeIdentity
+              ? {
+                  preview,
+                  checkoutIdentity: {
+                    path: worktree.path,
+                    device: checkout.dev.toString(),
+                    inode: checkout.ino.toString(),
+                    gitWorktreeKey,
+                    gitMarker,
+                    managedWrapperPath: worktree.managedWrapperPath,
+                    quarantinePath: path.join(
+                      path.dirname(worktree.path),
+                      `.${path.basename(worktree.path)}.tasktty-removing-${operationId}`
+                    )
+                  }
+                }
+              : {}
+          ),
+          timestamp,
+          timestamp
+        )
+      database.connection
+        .prepare(
+          "UPDATE worktrees SET status='cleaning',updated_at=? WHERE id=?"
+        )
+        .run(timestamp, worktree.id)
+    }
+    await insertInterrupted('op_recoverable_root', recoverable, true)
+    await insertInterrupted('op_quarantined_root', quarantined, true)
+    await insertInterrupted('op_replaced_root', replaced, true)
+    await insertInterrupted('op_repurposed_root', repurposed, true)
+    await insertInterrupted('op_legacy_root', legacy, false)
+    runner.worktrees.splice(1, runner.worktrees.length - 1)
+    await fs.writeFile(
+      path.join(path.dirname(recoverable.path), 'preserve.txt'),
+      'preserve wrapper'
+    )
+    const quarantinePath = (
+      service.getOperation('op_quarantined_root').request.checkoutIdentity as {
+        quarantinePath: string
+      }
+    ).quarantinePath
+    await fs.rename(quarantined.path, quarantinePath)
+    await expect(fs.stat(quarantined.path)).rejects.toMatchObject({
+      code: 'ENOENT'
+    })
+    await expect(fs.stat(quarantinePath)).resolves.toBeTruthy()
+    await fs.rm(replaced.path, { recursive: true, force: true })
+    await fs.mkdir(replaced.path, { recursive: true })
+    const replacementMarker = path.join(replaced.path, 'replacement.txt')
+    await fs.writeFile(replacementMarker, 'replacement')
+    const repurposedInode = (
+      await fs.lstat(repurposed.path, { bigint: true })
+    ).ino.toString()
+    for (const entry of await fs.readdir(repurposed.path)) {
+      await fs.rm(path.join(repurposed.path, entry), {
+        recursive: true,
+        force: true
+      })
+    }
+    await fs.mkdir(path.join(repurposed.path, '.git'))
+    const repurposedMarker = path.join(repurposed.path, 'replacement.txt')
+    await fs.writeFile(repurposedMarker, 'replacement in the same directory')
+    expect(
+      (await fs.lstat(repurposed.path, { bigint: true })).ino.toString()
+    ).toBe(repurposedInode)
+
+    const restarted = new TaskTTYService({
+      config,
+      database,
+      runner,
+      git: new GitAdapter(runner),
+      tmux: new TmuxAdapter(
+        runner,
+        config.runtimeDir,
+        'tmux',
+        '/launcher with spaces.js'
+      ),
+      gh: new GhAdapter(runner)
+    })
+    const events: Array<{ type: string; worktreeId: unknown }> = []
+    const unsubscribe = restarted.events.subscribe((event) =>
+      events.push({ type: event.type, worktreeId: event.data.worktreeId })
+    )
+    await restarted.initialize()
+
+    await expect(fs.stat(recoverable.path)).rejects.toMatchObject({
+      code: 'ENOENT'
+    })
+    await expect(
+      fs.readFile(
+        path.join(path.dirname(recoverable.path), 'preserve.txt'),
+        'utf8'
+      )
+    ).resolves.toBe('preserve wrapper')
+    expect(
+      (await fs.readdir(path.dirname(recoverable.path))).some((entry) =>
+        entry.includes('.tasktty-removing-')
+      )
+    ).toBe(false)
+    expect(database.worktree(recoverable.id)).toBeNull()
+    expect(restarted.getOperation('op_recoverable_root')).toMatchObject({
+      status: 'completed',
+      result: expect.objectContaining({ removed: true, recovered: true })
+    })
+
+    await expect(fs.stat(quarantinePath)).rejects.toMatchObject({
+      code: 'ENOENT'
+    })
+    await expect(fs.stat(quarantined.path)).rejects.toMatchObject({
+      code: 'ENOENT'
+    })
+    expect(database.worktree(quarantined.id)).toBeNull()
+    expect(restarted.getOperation('op_quarantined_root')).toMatchObject({
+      status: 'completed',
+      result: expect.objectContaining({ removed: true, recovered: true })
+    })
+
+    await expect(fs.readFile(replacementMarker, 'utf8')).resolves.toBe(
+      'replacement'
+    )
+    expect(database.worktree(replaced.id)).toMatchObject({
+      status: 'cleanup_failed',
+      cleanupError: expect.stringMatching(/different filesystem object/i)
+    })
+    expect(restarted.getOperation('op_replaced_root')).toMatchObject({
+      status: 'failed',
+      error: expect.stringMatching(/different filesystem object/i)
+    })
+
+    await expect(fs.readFile(repurposedMarker, 'utf8')).resolves.toBe(
+      'replacement in the same directory'
+    )
+    expect(database.worktree(repurposed.id)).toMatchObject({
+      status: 'cleanup_failed',
+      cleanupError: expect.stringMatching(/Git marker/i)
+    })
+    expect(restarted.getOperation('op_repurposed_root')).toMatchObject({
+      status: 'failed',
+      error: expect.stringMatching(/Git marker/i)
+    })
+
+    await expect(fs.stat(legacy.path)).resolves.toBeTruthy()
+    expect(database.worktree(legacy.id)).toMatchObject({
+      status: 'cleanup_failed',
+      cleanupError: expect.stringMatching(/legacy removal/i)
+    })
+    expect(restarted.getOperation('op_legacy_root').status).toBe('failed')
+    const failuresBeforeSecondPoll = events.filter(
+      (event) => event.type === 'remove.failed'
+    ).length
+    await restarted.getProjectSnapshot(project.id)
+    expect(
+      events.filter((event) => event.type === 'remove.failed')
+    ).toHaveLength(failuresBeforeSecondPoll)
+
+    await fs.rm(legacy.path, { recursive: true, force: true })
+    await restarted.getProjectSnapshot(project.id)
+    expect(database.worktree(legacy.id)).toBeNull()
+    expect(restarted.getOperation('op_legacy_root').status).toBe('completed')
+    expect(
+      events.filter(
+        (event) =>
+          event.type === 'remove.completed' &&
+          event.worktreeId === recoverable.id
+      )
+    ).toHaveLength(1)
+    expect(
+      events.filter(
+        (event) =>
+          event.type === 'remove.completed' && event.worktreeId === legacy.id
+      )
+    ).toHaveLength(1)
+    unsubscribe()
+  })
+
   it('recovers interrupted removals on either side of the Git removal boundary', async () => {
     const { main, runner, service, database, config } = await fixture()
     const project = await service.registerProject(main)
@@ -1557,9 +1853,19 @@ describe('TaskTTYService with injected command adapters', () => {
     await fs.mkdir(managed.path, { recursive: true })
     const marker = path.join(wrapper, 'external-marker.txt')
     await fs.writeFile(marker, 'external')
+    const externalGitWorktreeKey = path.join(
+      main,
+      '.git',
+      'worktrees',
+      'external-reuse'
+    )
+    await fs.writeFile(
+      path.join(managed.path, '.git'),
+      `gitdir: ${externalGitWorktreeKey}\n`
+    )
     runner.worktrees.push({
       path: managed.path,
-      gitWorktreeKey: path.join(main, '.git', 'worktrees', 'external-reuse'),
+      gitWorktreeKey: externalGitWorktreeKey,
       head: 'external-head',
       branch: null
     })
@@ -1624,6 +1930,36 @@ describe('TaskTTYService with injected command adapters', () => {
     runner.setupGate = null
   })
 
+  it("does not release another mutation's project lock after path registration is refused", async () => {
+    const { main, runner, service } = await fixture()
+    const project = await service.registerProject(main)
+    let releaseAdd!: () => void
+    runner.worktreeAddGate = new Promise<void>((resolve) => {
+      releaseAdd = resolve
+    })
+    const creating = service.createWorktree(project.id, 'lock-owner', 'default')
+    await vi.waitFor(() =>
+      expect(
+        runner.calls.some(
+          (call) => call.args[0] === 'worktree' && call.args[1] === 'add'
+        )
+      ).toBe(true)
+    )
+
+    await expect(service.registerProject(main)).rejects.toMatchObject({
+      code: 'PROJECT_BUSY'
+    })
+    await expect(service.closeProject(project.id)).rejects.toMatchObject({
+      code: 'PROJECT_BUSY'
+    })
+
+    releaseAdd()
+    await expect(creating).resolves.toMatchObject({
+      worktree: { name: 'lock-owner' }
+    })
+    runner.worktreeAddGate = null
+  })
+
   it('serializes project deletion against worktree and terminal creation', async () => {
     const { main, runner, service } = await fixture()
     const project = await service.registerProject(main)
@@ -1680,6 +2016,274 @@ describe('TaskTTYService with injected command adapters', () => {
     await creatingTerminal
     runner.tmuxCreateGate = null
     await expect(service.deleteProject(project.id)).resolves.toBeUndefined()
+  })
+
+  it('closes every project worktree and reopens durable identity without terminals', async () => {
+    const { main, runner, service } = await fixture()
+    const project = await service.registerProject(main)
+    const mainWorktree = project.worktrees[0]!
+    await service.createTerminal(mainWorktree.id, 'Main terminal', ['pi'])
+    const linkedResult = await service.createWorktree(
+      project.id,
+      'close-all',
+      'default',
+      { name: 'Linked terminal', argv: ['pi'] }
+    )
+    const linked = linkedResult.worktree
+    expect(runner.sessions.size).toBe(2)
+
+    await service.closeProject(project.id)
+
+    expect(await service.listProjects()).toEqual([])
+    expect(service.listRecentProjects()).toEqual([
+      expect.objectContaining({
+        id: project.id,
+        repositoryPath: project.repositoryPath
+      })
+    ])
+    expect(runner.sessions.size).toBe(0)
+    expect(
+      service.database.project(project.id)?.worktrees.map(({ id }) => id)
+    ).toEqual(expect.arrayContaining([mainWorktree.id, linked.id]))
+
+    const reopened = await service.openProject(project.id)
+    expect(reopened.id).toBe(project.id)
+    expect(reopened.worktrees.map(({ id }) => id)).toEqual(
+      expect.arrayContaining([mainWorktree.id, linked.id])
+    )
+    expect(reopened.worktrees.flatMap(({ terminals }) => terminals)).toEqual([])
+    expect(service.listRecentProjects()).toEqual([])
+
+    await service.closeProject(project.id)
+    const pathReopened = await service.registerProject(main)
+    expect(pathReopened.id).toBe(project.id)
+    expect(service.database.isProjectOpen(project.id)).toBe(true)
+  })
+
+  it('keeps a project open after partial terminal shutdown and retries the close', async () => {
+    const { main, runner, service } = await fixture()
+    const project = await service.registerProject(main)
+    const mainWorktree = project.worktrees[0]!
+    const mainTerminal = await service.createTerminal(
+      mainWorktree.id,
+      'Main terminal',
+      ['pi']
+    )
+    const linkedResult = await service.createWorktree(
+      project.id,
+      'partial-close',
+      'default',
+      { name: 'Linked terminal', argv: ['pi'] }
+    )
+    const linked = linkedResult.worktree
+    runner.tmuxKillFailureSockets.add(linked.tmuxSocketName)
+    const removed: string[] = []
+    const unsubscribe = service.events.subscribe((event) => {
+      if (event.type === 'terminal.removed') {
+        removed.push(String(event.data.terminalId))
+      }
+    })
+
+    await expect(service.closeProject(project.id)).rejects.toMatchObject({
+      code: 'PROJECT_CLOSE_FAILED',
+      details: {
+        failedWorktreeIds: [linked.id],
+        terminalsMayHaveStopped: true
+      }
+    })
+    expect(service.database.isProjectOpen(project.id)).toBe(true)
+    expect(removed).toContain(mainTerminal.id)
+    expect(runner.sessions.size).toBe(1)
+    expect(
+      (await service.listProjects())[0]!.worktrees.flatMap(
+        ({ terminals }) => terminals
+      )
+    ).toHaveLength(1)
+
+    runner.tmuxKillFailureSockets.clear()
+    await expect(service.closeProject(project.id)).resolves.toBeUndefined()
+    unsubscribe()
+    expect(service.database.isProjectOpen(project.id)).toBe(false)
+    expect(runner.sessions.size).toBe(0)
+  })
+
+  it('reports a final persistence failure after clearing stopped terminals', async () => {
+    const { main, runner, service, database } = await fixture()
+    const project = await service.registerProject(main)
+    const mainWorktree = project.worktrees[0]!
+    const terminal = await service.createTerminal(
+      mainWorktree.id,
+      'Persistence failure',
+      ['pi']
+    )
+    const setProjectOpen = database.setProjectOpen.bind(database)
+    vi.spyOn(database, 'setProjectOpen').mockImplementation(
+      (projectId, open, timestamp) => {
+        if (!open) {
+          throw new Error('database write failed')
+        }
+
+        setProjectOpen(projectId, open, timestamp)
+      }
+    )
+    const events: string[] = []
+    const unsubscribe = service.events.subscribe((event) => {
+      events.push(`${event.type}:${String(event.data.terminalId ?? '')}`)
+    })
+
+    await expect(service.closeProject(project.id)).rejects.toMatchObject({
+      code: 'PROJECT_CLOSE_FAILED',
+      details: {
+        failedWorktreeIds: [],
+        terminalsMayHaveStopped: true
+      }
+    })
+    unsubscribe()
+    expect(database.isProjectOpen(project.id)).toBe(true)
+    expect(runner.sessions.size).toBe(0)
+    expect(events).toContain(`terminal.removed:${terminal.id}`)
+    expect(events.some((event) => event.startsWith('project.updated'))).toBe(
+      false
+    )
+  })
+
+  it('waits for in-flight observation before closing a project', async () => {
+    const { main, runner, service } = await fixture()
+    const project = await service.registerProject(main)
+    let releaseObservation!: () => void
+    runner.worktreeListGate = new Promise<void>((resolve) => {
+      releaseObservation = resolve
+    })
+    runner.calls.length = 0
+    const snapshot = service.listProjects()
+    await vi.waitFor(() =>
+      expect(
+        runner.calls.some(
+          (call) => call.args[0] === 'worktree' && call.args[1] === 'list'
+        )
+      ).toBe(true)
+    )
+
+    let closed = false
+    const closing = service.closeProject(project.id).then(() => {
+      closed = true
+    })
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(closed).toBe(false)
+    releaseObservation()
+    await snapshot
+    await closing
+    runner.worktreeListGate = null
+    expect(await service.listProjects()).toEqual([])
+  })
+
+  it('does not let an in-flight terminal poll repopulate state after close', async () => {
+    const { main, runner, service } = await fixture()
+    const project = await service.registerProject(main)
+    const terminal = await service.createTerminal(
+      project.worktrees[0]!.id,
+      'Polled terminal',
+      ['pi']
+    )
+    let releasePoll!: () => void
+    runner.calls.length = 0
+    runner.tmuxStateGate = new Promise<void>((resolve) => {
+      releasePoll = resolve
+    })
+    const removed: string[] = []
+    const unsubscribe = service.events.subscribe((event) => {
+      if (event.type === 'terminal.removed') {
+        removed.push(String(event.data.terminalId))
+      }
+    })
+    const polling = service.refreshTerminalStatus(terminal.id, false)
+    await vi.waitFor(() =>
+      expect(
+        runner.calls.some(
+          (call) =>
+            call.args.includes('list-panes') && !call.args.includes('-a')
+        )
+      ).toBe(true)
+    )
+
+    await service.closeProject(project.id)
+    releasePoll()
+    await expect(polling).rejects.toMatchObject({
+      code: expect.stringMatching(/PROJECT_CLOSED|TERMINAL_NOT_FOUND/)
+    })
+    runner.tmuxStateGate = null
+    unsubscribe()
+    expect(removed.filter((terminalId) => terminalId === terminal.id)).toEqual([
+      terminal.id
+    ])
+    expect(await service.listProjects()).toEqual([])
+  })
+
+  it('keeps a closed registration closed when path-based reopen fails', async () => {
+    const { main, runner, service } = await fixture()
+    const project = await service.registerProject(main)
+    await service.closeProject(project.id)
+    const recentBefore = service.listRecentProjects()[0]!
+    runner.listWorktreesFails = true
+
+    await expect(service.registerProject(main)).rejects.toThrow(
+      'repository unavailable'
+    )
+    expect(service.database.isProjectOpen(project.id)).toBe(false)
+    expect(service.listRecentProjects()).toEqual([recentBefore])
+    expect(await service.listProjects()).toEqual([])
+  })
+
+  it('opens unavailable registrations but rejects mutations while closed', async () => {
+    const { main, runner, service } = await fixture()
+    const project = await service.registerProject(main)
+    const mainWorktree = project.worktrees[0]!
+    await service.closeProject(project.id)
+
+    await expect(service.resolveProject(project.id)).rejects.toMatchObject({
+      code: 'PROJECT_CLOSED'
+    })
+    await expect(
+      service.createWorktree(project.id, 'closed', 'default')
+    ).rejects.toMatchObject({ code: 'PROJECT_CLOSED' })
+    await expect(
+      service.createTerminal(mainWorktree.id, 'Closed', ['pi'])
+    ).rejects.toMatchObject({ code: 'PROJECT_CLOSED' })
+    expect(() => service.updateProjectColor(project.id, 'violet')).toThrowError(
+      expect.objectContaining({ code: 'PROJECT_CLOSED' })
+    )
+
+    runner.listWorktreesFails = true
+    const reopened = await service.openProject(project.id)
+    expect(reopened.availability.state).toBe('unavailable')
+    expect(service.database.isProjectOpen(project.id)).toBe(true)
+  })
+
+  it('keeps destructive unregister available for a closed registration', async () => {
+    const { main, service } = await fixture()
+    const project = await service.registerProject(main)
+    await service.closeProject(project.id)
+
+    await service.deleteProject(project.id)
+
+    expect(service.database.project(project.id)).toBeNull()
+    expect(service.listRecentProjects()).toEqual([])
+  })
+
+  it('closes unavailable projects without observing Git', async () => {
+    const { main, runner, service } = await fixture()
+    const project = await service.registerProject(main)
+    runner.calls.length = 0
+    runner.listWorktreesFails = true
+
+    await service.closeProject(project.id)
+
+    expect(service.database.isProjectOpen(project.id)).toBe(false)
+    expect(
+      runner.calls.some(
+        (call) => call.args[0] === 'worktree' && call.args[1] === 'list'
+      )
+    ).toBe(false)
   })
 
   it('refuses main and locked worktrees', async () => {

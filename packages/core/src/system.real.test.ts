@@ -458,14 +458,83 @@ describe.skipIf(!enabled)(
           )
         ).status
       ).toBe('missing')
-      expect(fixture.service.getProject(project.id).worktrees).toHaveLength(1)
+      await expect(fs.stat(linked.path)).rejects.toMatchObject({
+        code: 'ENOENT'
+      })
+      expect(
+        (await new GitAdapter(fixture.runner).listWorktrees(main)).some(
+          (worktree) => worktree.path === linked.path
+        )
+      ).toBe(false)
+
+      const noServer = await fixture.service.createWorktree(
+        project.id,
+        'real-no-tmux-server',
+        'default'
+      )
       expect(
         (
-          await fixture.service.removePreview(
-            fixture.service.getProject(project.id).worktrees[0]!.id
+          await fixture.tmux.sessionState(
+            noServer.worktree.tmuxSocketName,
+            'missing-session'
           )
-        ).eligible
+        ).status
+      ).toBe('missing')
+      const noServerPreview = await fixture.service.removePreview(
+        noServer.worktree.id
+      )
+      const noServerRemoval = await fixture.service.beginRemove(
+        noServer.worktree.id,
+        {
+          confirmationToken: noServerPreview.confirmationToken,
+          confirmDestructive: noServerPreview.warnings.length > 0
+        }
+      )
+      expect(
+        (await waitOperation(fixture.service, noServerRemoval.id)).status
+      ).toBe('completed')
+      await expect(fs.stat(noServer.worktree.path)).rejects.toMatchObject({
+        code: 'ENOENT'
+      })
+      expect(fixture.service.getProject(project.id).worktrees).toHaveLength(1)
+      const mainWorktree = fixture.service.getProject(project.id).worktrees[0]!
+      expect(
+        (await fixture.service.removePreview(mainWorktree.id)).eligible
       ).toBe(false)
+      const closingTerminal = await fixture.service.createTerminal(
+        mainWorktree.id,
+        'Closing terminal',
+        [
+          process.execPath,
+          '-e',
+          "console.log('CLOSING');setInterval(()=>{},1000)"
+        ]
+      )
+      await fixture.service.closeProject(project.id)
+      expect(
+        (
+          await fixture.tmux.sessionState(
+            mainWorktree.tmuxSocketName,
+            closingTerminal.tmuxSessionName
+          )
+        ).status
+      ).toBe('missing')
+      expect(await fixture.service.listProjects()).toEqual([])
+      expect(fixture.service.listRecentProjects()).toEqual([
+        expect.objectContaining({ id: project.id })
+      ])
+
+      fixture.database.close()
+      fixture = await makeService(databasePath, runtimeDir)
+      expect(await fixture.service.listProjects()).toEqual([])
+      const reopened = await fixture.service.openProject(project.id)
+      expect(reopened.id).toBe(project.id)
+      expect(reopened.worktrees.map((worktree) => worktree.id)).toContain(
+        mainWorktree.id
+      )
+      expect(
+        reopened.worktrees.flatMap((worktree) => worktree.terminals)
+      ).toEqual([])
       fixture.database.close()
     })
 

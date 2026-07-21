@@ -27,6 +27,7 @@ import { parseTerminalRuntimeMetadata } from '@tasktty/shared'
 import type {
   ProjectColor,
   ProjectRecord,
+  RecentProjectRecord,
   RemovePreview,
   TerminalRecord,
   WorktreeRecord
@@ -73,6 +74,7 @@ const COLLAPSED_PROJECTS_STORAGE_KEY = 'tasktty-collapsed-projects'
 const EMPTY_BELL_ATTENTION: ReadonlySet<string> = new Set()
 const EMPTY_RUNTIME_TITLES: ReadonlyMap<string, string> = new Map()
 const EMPTY_TERMINAL_PROGRESS: ReadonlyMap<string, TerminalProgress> = new Map()
+const MANUAL_CLEANUP_PREFIX = 'Manual cleanup required:'
 const FOCUSABLE_SELECTOR = [
   'a[href]',
   'button:not([disabled])',
@@ -118,13 +120,20 @@ function clampSidebarWidth(width: number): number {
   return Math.min(MAX_SIDEBAR_WIDTH, Math.max(MIN_SIDEBAR_WIDTH, width))
 }
 
+function needsManualCleanup(worktree: WorktreeRecord): boolean {
+  return Boolean(worktree.cleanupError?.startsWith(MANUAL_CLEANUP_PREFIX))
+}
+
 type Modal =
   | { type: 'project' }
   | { type: 'worktree'; project: ProjectRecord }
-  | { type: 'remove'; worktree: WorktreeRecord }
+  | { type: 'remove'; worktree: WorktreeRecord; preview: RemovePreview }
   | null
 
+type RemovalStage = 'checking' | 'removing'
+
 const projectsQueryKey = ['projects'] as const
+const recentProjectsQueryKey = ['recent-projects'] as const
 
 const PROJECT_COLOR_OPTIONS: Array<{
   value: ProjectColor | null
@@ -247,6 +256,9 @@ export default function App() {
   const [pendingWorktrees, setPendingWorktrees] = useState<
     PendingWorktreeCreation[]
   >([])
+  const [pendingRemovals, setPendingRemovals] = useState<
+    Record<string, RemovalStage>
+  >({})
   const [collapsedProjectIds, setCollapsedProjectIds] = useState(
     () =>
       new Set(
@@ -271,7 +283,9 @@ export default function App() {
   const resizeOrigin = useRef<{ pointerX: number; width: number } | null>(null)
   const drawerRef = useRef<HTMLElement | null>(null)
   const drawerTriggerRef = useRef<HTMLButtonElement | null>(null)
+  const openProjectButtonRef = useRef<HTMLButtonElement | null>(null)
   const modalTriggerRef = useRef<HTMLElement | null>(null)
+  const removalGuardsRef = useRef(new Set<string>())
 
   useEffect(() => {
     if (collapsedProjectIds.size) {
@@ -340,6 +354,18 @@ export default function App() {
   }, [projectsQuery.data])
 
   useEffect(() => {
+    if (projectsQuery.data === undefined) {
+      return
+    }
+
+    if (selectedTerminalId) {
+      localStorage.setItem('tasktty-terminal', selectedTerminalId)
+    } else {
+      localStorage.removeItem('tasktty-terminal')
+    }
+  }, [projectsQuery.data, selectedTerminalId])
+
+  useEffect(() => {
     const media = window.matchMedia('(max-width: 700px)')
     const update = () => setIsMobile(media.matches)
     update()
@@ -402,7 +428,20 @@ export default function App() {
         { cancelRefetch: false }
       )
     )
+    const projectRefreshes = createInvalidationCoalescer(() =>
+      Promise.all([
+        queryClient.invalidateQueries(
+          { queryKey: projectsQueryKey },
+          { cancelRefetch: false }
+        ),
+        queryClient.invalidateQueries(
+          { queryKey: recentProjectsQueryKey },
+          { cancelRefetch: false }
+        )
+      ])
+    )
     const refresh = () => refreshes.schedule()
+    const refreshProjects = () => projectRefreshes.schedule()
     const connected = (event: MessageEvent<string>) => {
       setSseDisconnected(false)
       try {
@@ -433,22 +472,25 @@ export default function App() {
     const disconnected = () => setSseDisconnected(true)
     const eventNames = [
       'project.created',
-      'project.updated',
       'worktree.created',
       'worktree.updated',
       'worktree.removed',
       'terminal.created',
       'terminal.updated',
       'terminal.removed',
+      'remove.started',
       'remove.completed',
       'remove.failed'
     ]
     events.addEventListener('connected', connected)
     events.addEventListener('terminal.metadata', runtimeMetadata)
     events.addEventListener('error', disconnected)
+    events.addEventListener('project.updated', refreshProjects)
+    events.addEventListener('project.removed', refreshProjects)
     eventNames.forEach((name) => events.addEventListener(name, refresh))
     return () => {
       refreshes.dispose()
+      projectRefreshes.dispose()
       events.close()
     }
   }, [queryClient])
@@ -461,6 +503,25 @@ export default function App() {
     () => allWorktrees.flatMap((worktree) => worktree.terminals),
     [allWorktrees]
   )
+  useEffect(() => {
+    setPendingRemovals((current) => {
+      let changed = false
+      const next = { ...current }
+      for (const [worktreeId, stage] of Object.entries(current)) {
+        if (stage !== 'removing') {
+          continue
+        }
+
+        const worktree = allWorktrees.find((item) => item.id === worktreeId)
+        if (!worktree || worktree.status === 'cleanup_failed') {
+          delete next[worktreeId]
+          removalGuardsRef.current.delete(worktreeId)
+          changed = true
+        }
+      }
+      return changed ? next : current
+    })
+  }, [allWorktrees])
   useEffect(() => {
     if (projectsQuery.data === undefined) {
       return
@@ -515,6 +576,7 @@ export default function App() {
     : null
   const selectedWorktreeMutationsDisabled =
     Boolean(selectedWorktree?.prunable) ||
+    selectedWorktree?.status !== 'active' ||
     selectedProject?.availability.state === 'unavailable'
 
   const selectTerminal = (terminal: TerminalRecord) => {
@@ -715,6 +777,115 @@ export default function App() {
     onError: showError(setError)
   })
 
+  const closeProject = useMutation({
+    mutationFn: (project: ProjectRecord) => apiClient.closeProject(project.id),
+    onSuccess: async (_, closedProject) => {
+      const currentProjects =
+        queryClient.getQueryData<ProjectRecord[]>(projectsQueryKey) ?? projects
+      const remainingProjects = currentProjects.filter(
+        (project) => project.id !== closedProject.id
+      )
+      queryClient.setQueryData<ProjectRecord[]>(
+        projectsQueryKey,
+        remainingProjects
+      )
+      for (const terminal of closedProject.worktrees.flatMap(
+        (worktree) => worktree.terminals
+      )) {
+        terminalSessions.forget(terminal.id)
+      }
+
+      const closedWorktreeIds = new Set(
+        closedProject.worktrees.map((worktree) => worktree.id)
+      )
+      const closedTerminalIds = new Set(
+        closedProject.worktrees.flatMap((worktree) =>
+          worktree.terminals.map((terminal) => terminal.id)
+        )
+      )
+      if (
+        (selectedWorktreeIdRef.current &&
+          closedWorktreeIds.has(selectedWorktreeIdRef.current)) ||
+        (selectedTerminalId && closedTerminalIds.has(selectedTerminalId))
+      ) {
+        const fallbackTerminal = remainingProjects
+          .flatMap((project) => project.worktrees)
+          .flatMap((worktree) => worktree.terminals)[0]
+        const fallbackWorktree = fallbackTerminal
+          ? remainingProjects
+              .flatMap((project) => project.worktrees)
+              .find((worktree) => worktree.id === fallbackTerminal.worktreeId)
+          : remainingProjects.flatMap((project) => project.worktrees)[0]
+        setSelectedWorktreeId(fallbackWorktree?.id ?? null)
+        selectedWorktreeIdRef.current = fallbackWorktree?.id ?? null
+        setSelectedTerminalId(fallbackTerminal?.id ?? null)
+        if (fallbackTerminal) {
+          localStorage.setItem('tasktty-terminal', fallbackTerminal.id)
+        } else {
+          localStorage.removeItem('tasktty-terminal')
+        }
+      }
+
+      setCollapsedProjectIds((current) => {
+        const next = new Set(current)
+        next.delete(closedProject.id)
+        return next
+      })
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: projectsQueryKey }),
+        queryClient.invalidateQueries({ queryKey: recentProjectsQueryKey })
+      ])
+      window.requestAnimationFrame(() => openProjectButtonRef.current?.focus())
+    },
+    onError: (mutationError) => {
+      showError(setError)(mutationError)
+      if (
+        mutationError instanceof ApiError &&
+        mutationError.code === 'PROJECT_CLOSE_FAILED'
+      ) {
+        void queryClient.invalidateQueries({ queryKey: projectsQueryKey })
+      }
+    }
+  })
+
+  const requestProjectClose = (project: ProjectRecord) => {
+    const terminalCount = project.worktrees.reduce(
+      (count, worktree) => count + worktree.terminals.length,
+      0
+    )
+    if (
+      terminalCount > 0 &&
+      !window.confirm(
+        `Close “${project.name}”? This will terminate ${terminalCount} TaskTTY terminal ${terminalCount === 1 ? 'session and its process' : 'sessions and their processes'}. Git worktrees and files will remain on disk, and you can reopen the project from Recent projects.`
+      )
+    ) {
+      return
+    }
+
+    closeProject.mutate(project)
+  }
+
+  const projectOpened = async (project: ProjectRecord) => {
+    queryClient.setQueryData<ProjectRecord[]>(projectsQueryKey, (current) => [
+      ...(current ?? []).filter((candidate) => candidate.id !== project.id),
+      project
+    ])
+    queryClient.setQueryData<RecentProjectRecord[]>(
+      recentProjectsQueryKey,
+      (current) => current?.filter((candidate) => candidate.id !== project.id)
+    )
+    setCollapsedProjectIds((current) => {
+      const next = new Set(current)
+      next.delete(project.id)
+      return next
+    })
+    setModal(null)
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: projectsQueryKey }),
+      queryClient.invalidateQueries({ queryKey: recentProjectsQueryKey })
+    ])
+  }
+
   const setProjectOpen = (projectId: string, open: boolean) => {
     setCollapsedProjectIds((current) => {
       const next = new Set(current)
@@ -761,6 +932,132 @@ export default function App() {
     modalTriggerRef.current =
       trigger ?? (document.activeElement as HTMLElement | null)
     setModal(nextModal)
+  }
+
+  const setRemovalStage = (worktreeId: string, stage: RemovalStage) =>
+    setPendingRemovals((current) => ({ ...current, [worktreeId]: stage }))
+
+  const releaseRemoval = (worktreeId: string) => {
+    removalGuardsRef.current.delete(worktreeId)
+    setPendingRemovals((current) => {
+      if (!(worktreeId in current)) {
+        return current
+      }
+
+      const next = { ...current }
+      delete next[worktreeId]
+      return next
+    })
+  }
+
+  const markWorktreeCleaning = (worktreeId: string) =>
+    queryClient.setQueryData<ProjectRecord[]>(projectsQueryKey, (current) =>
+      current?.map((project) => ({
+        ...project,
+        worktrees: project.worktrees.map((worktree) =>
+          worktree.id === worktreeId
+            ? { ...worktree, status: 'cleaning', cleanupError: null }
+            : worktree
+        )
+      }))
+    )
+
+  const submitRemoval = async (
+    worktree: WorktreeRecord,
+    preview: RemovePreview,
+    confirmDestructive: boolean,
+    staleRetriesRemaining: number
+  ): Promise<void> => {
+    setRemovalStage(worktree.id, 'removing')
+    try {
+      await apiClient.removeWorktree(worktree.id, preview, confirmDestructive)
+      markWorktreeCleaning(worktree.id)
+      setModal((current) =>
+        current?.type === 'remove' && current.worktree.id === worktree.id
+          ? null
+          : current
+      )
+      void queryClient.invalidateQueries(
+        { queryKey: projectsQueryKey },
+        { cancelRefetch: false }
+      )
+    } catch (error) {
+      if (
+        error instanceof ApiError &&
+        error.code === 'REMOVE_PREVIEW_STALE' &&
+        staleRetriesRemaining > 0
+      ) {
+        setRemovalStage(worktree.id, 'checking')
+        try {
+          const freshPreview = await apiClient.removePreview(worktree.id)
+          if (freshPreview.eligible && freshPreview.warnings.length === 0) {
+            await submitRemoval(
+              worktree,
+              freshPreview,
+              false,
+              staleRetriesRemaining - 1
+            )
+            return
+          }
+
+          releaseRemoval(worktree.id)
+          openModal({ type: 'remove', worktree, preview: freshPreview })
+          return
+        } catch (refreshError) {
+          releaseRemoval(worktree.id)
+          showError(setError)(refreshError)
+          return
+        }
+      }
+
+      releaseRemoval(worktree.id)
+      showError(setError)(
+        error instanceof ApiError && error.code === 'REMOVE_PREVIEW_STALE'
+          ? new Error(
+              'The worktree kept changing during removal. Review it and try again.'
+            )
+          : error
+      )
+    }
+  }
+
+  const prepareRemoval = async (
+    worktree: WorktreeRecord,
+    trigger: HTMLElement
+  ): Promise<void> => {
+    if (
+      removalGuardsRef.current.has(worktree.id) ||
+      worktree.status === 'cleaning' ||
+      needsManualCleanup(worktree)
+    ) {
+      return
+    }
+
+    modalTriggerRef.current = trigger
+    removalGuardsRef.current.add(worktree.id)
+    setRemovalStage(worktree.id, 'checking')
+    try {
+      const preview = await apiClient.removePreview(worktree.id)
+      if (preview.eligible && preview.warnings.length === 0) {
+        await submitRemoval(worktree, preview, false, 1)
+        return
+      }
+
+      releaseRemoval(worktree.id)
+      openModal({ type: 'remove', worktree, preview }, trigger)
+    } catch (error) {
+      releaseRemoval(worktree.id)
+      showError(setError)(error)
+    }
+  }
+
+  const confirmRemoval = (worktree: WorktreeRecord, preview: RemovePreview) => {
+    if (removalGuardsRef.current.has(worktree.id)) {
+      return
+    }
+
+    removalGuardsRef.current.add(worktree.id)
+    void submitRemoval(worktree, preview, preview.warnings.length > 0, 1)
   }
 
   const stopSidebarResize = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -908,7 +1205,7 @@ export default function App() {
           ) : null}
           {!projectsQuery.isPending && !projects.length ? (
             <p className="sidebar-note px-2 py-3 text-base text-pretty text-zinc-500 sm:text-sm">
-              Register a Git repository to begin.
+              Open a Git repository to begin.
             </p>
           ) : null}
           <div className="grid gap-5 sm:gap-4">
@@ -966,6 +1263,23 @@ export default function App() {
                       })
                     }
                   />
+                  <SidebarAction
+                    label={`Close project ${project.name}`}
+                    tooltip="Close project"
+                    disabled={
+                      closeProject.isPending &&
+                      closeProject.variables?.id === project.id
+                    }
+                    className="shrink-0 fill-zinc-500 opacity-0 hover:bg-white/5 hover:fill-rose-300 group-hover/project-row:opacity-100 group-focus-within/project-row:opacity-100 max-[700px]:opacity-100"
+                    onClick={() => requestProjectClose(project)}
+                  >
+                    {closeProject.isPending &&
+                    closeProject.variables?.id === project.id ? (
+                      <ArrowPathIcon className="animate-spin" />
+                    ) : (
+                      <XMarkIcon />
+                    )}
+                  </SidebarAction>
                 </div>
                 <CollapsibleContent asChild>
                   <ul
@@ -992,35 +1306,82 @@ export default function App() {
                             onClick={() => selectWorktree(worktree)}
                             title={`${worktree.path}${worktree.branch ? ` · ${worktree.branch}` : ` · detached at ${worktree.head.slice(0, 8)}`}`}
                           >
-                            <FolderIcon
-                              className="shrink-0 text-zinc-500"
-                              aria-hidden="true"
-                            />
-                            <span className="min-w-0 truncate">
-                              {worktree.name}
+                            {pendingRemovals[worktree.id] ||
+                            worktree.status === 'cleaning' ? (
+                              <ArrowPathIcon
+                                className="shrink-0 animate-spin text-cyan-400"
+                                aria-hidden="true"
+                              />
+                            ) : (
+                              <FolderIcon
+                                className="shrink-0 text-zinc-500"
+                                aria-hidden="true"
+                              />
+                            )}
+                            <span className="flex min-w-0 flex-col">
+                              <span className="truncate">{worktree.name}</span>
+                              {(pendingRemovals[worktree.id] ||
+                                worktree.status === 'cleaning' ||
+                                worktree.status === 'cleanup_failed') && (
+                                <span
+                                  className={cn(
+                                    'truncate text-[0.6875rem] font-normal text-cyan-300',
+                                    worktree.status === 'cleanup_failed' &&
+                                      'text-rose-300'
+                                  )}
+                                  role="status"
+                                  title={worktree.cleanupError ?? undefined}
+                                >
+                                  {pendingRemovals[worktree.id] === 'checking'
+                                    ? 'Preparing removal…'
+                                    : pendingRemovals[worktree.id] ===
+                                          'removing' ||
+                                        worktree.status === 'cleaning'
+                                      ? 'Removing…'
+                                      : 'Removal failed'}
+                                  {worktree.status === 'cleanup_failed' &&
+                                  worktree.cleanupError
+                                    ? `: ${worktree.cleanupError}`
+                                    : ''}
+                                </span>
+                              )}
                             </span>
                           </Button>
                           {worktree.kind === 'linked' && (
                             <div className="worktree-actions absolute top-0 right-0 z-10 flex items-center gap-0.5 opacity-0 group-hover/worktree:opacity-100 group-focus-within/worktree:opacity-100 max-[700px]:static max-[700px]:ml-0.5 max-[700px]:shrink-0 max-[700px]:opacity-100">
                               <SidebarAction
-                                label={`Remove ${worktree.name}`}
+                                label={
+                                  needsManualCleanup(worktree)
+                                    ? `Manual cleanup required for ${worktree.name}`
+                                    : worktree.status === 'cleanup_failed'
+                                      ? `Retry removal for ${worktree.name}`
+                                      : `Remove ${worktree.name}`
+                                }
                                 tooltip={
                                   project.availability.state === 'unavailable'
                                     ? 'Git repository unavailable'
                                     : worktree.prunable
                                       ? 'Git reports this worktree as prunable'
-                                      : 'Remove worktree'
+                                      : pendingRemovals[worktree.id] ||
+                                          worktree.status === 'cleaning'
+                                        ? 'Removal is already in progress'
+                                        : needsManualCleanup(worktree)
+                                          ? worktree.cleanupError!
+                                          : worktree.status === 'cleanup_failed'
+                                            ? 'Retry removal'
+                                            : 'Remove worktree'
                                 }
                                 disabled={
                                   project.availability.state ===
-                                    'unavailable' || worktree.prunable
+                                    'unavailable' ||
+                                  worktree.prunable ||
+                                  Boolean(pendingRemovals[worktree.id]) ||
+                                  worktree.status === 'cleaning' ||
+                                  needsManualCleanup(worktree)
                                 }
                                 className="text-zinc-500 hover:bg-transparent hover:text-rose-300"
                                 onClick={(trigger) =>
-                                  openModal(
-                                    { type: 'remove', worktree },
-                                    trigger
-                                  )
+                                  void prepareRemoval(worktree, trigger)
                                 }
                               >
                                 <TrashIcon />
@@ -1158,6 +1519,7 @@ export default function App() {
         </nav>
         <footer className="sidebar-tools flex items-center gap-1 border-t border-white/8 px-2 py-1.5">
           <Button
+            ref={openProjectButtonRef}
             type="button"
             variant="ghost"
             size="sm"
@@ -1166,7 +1528,7 @@ export default function App() {
               openModal({ type: 'project' }, event.currentTarget)
             }
           >
-            <PlusIcon /> Add project
+            <PlusIcon /> Open project
           </Button>
         </footer>
       </aside>
@@ -1250,6 +1612,13 @@ export default function App() {
           restoreFocusTo={modalTriggerRef.current}
           setError={setError}
           onCreateWorktree={submitWorktreeCreation}
+          removalStage={
+            modal.type === 'remove'
+              ? (pendingRemovals[modal.worktree.id] ?? null)
+              : null
+          }
+          onConfirmRemoval={confirmRemoval}
+          onProjectOpened={projectOpened}
         />
       )}
     </div>
@@ -1383,7 +1752,10 @@ function ActionModal({
   close,
   restoreFocusTo,
   setError,
-  onCreateWorktree
+  onCreateWorktree,
+  removalStage,
+  onConfirmRemoval,
+  onProjectOpened
 }: {
   modal: Exclude<Modal, null>
   close: () => void
@@ -1396,57 +1768,10 @@ function ActionModal({
     destination: WorktreeDestination,
     sourceWorktreeId?: string
   ) => void
+  removalStage: RemovalStage | null
+  onConfirmRemoval: (worktree: WorktreeRecord, preview: RemovePreview) => void
+  onProjectOpened: (project: ProjectRecord) => Promise<void>
 }) {
-  const queryClient = useQueryClient()
-  const worktreeId = modal.type === 'remove' ? modal.worktree.id : null
-  const previewQuery = useQuery({
-    queryKey: ['remove-preview', worktreeId],
-    queryFn: () => {
-      if (modal.type !== 'remove') {
-        throw new Error('A removal preview is not available')
-      }
-
-      return apiClient.removePreview(modal.worktree.id)
-    },
-    enabled: modal.type === 'remove'
-  })
-  const [refreshingStalePreview, setRefreshingStalePreview] = useState(false)
-  const actionMutation = useMutation({
-    mutationFn: (action: () => Promise<unknown>) => action(),
-    onSuccess: async () => {
-      close()
-      await queryClient.invalidateQueries({ queryKey: projectsQueryKey })
-    },
-    onError: (error) => {
-      if (
-        modal.type === 'remove' &&
-        error instanceof ApiError &&
-        error.code === 'REMOVE_PREVIEW_STALE'
-      ) {
-        setRefreshingStalePreview(true)
-        void previewQuery
-          .refetch()
-          .finally(() => setRefreshingStalePreview(false))
-        return
-      }
-
-      showError(setError)(error)
-    }
-  })
-
-  useEffect(() => {
-    if (previewQuery.error) {
-      showError(setError)(previewQuery.error)
-    }
-  }, [previewQuery.error, setError])
-
-  const submit = (action: () => Promise<unknown>) =>
-    actionMutation.mutate(action)
-  const busy = actionMutation.isPending
-  const freshRemovePreview =
-    !previewQuery.isFetching && !previewQuery.isError && !refreshingStalePreview
-      ? (previewQuery.data ?? null)
-      : null
   const dialogRef = useRef<HTMLElement | null>(null)
   const closeRef = useRef(close)
   closeRef.current = close
@@ -1520,12 +1845,7 @@ function ActionModal({
           <span className="touch-target" aria-hidden="true" />
         </Button>
         {modal.type === 'project' && (
-          <ProjectForm
-            busy={busy}
-            onSubmit={(repositoryPath) =>
-              submit(() => apiClient.addProject(repositoryPath))
-            }
-          />
+          <ProjectForm setError={setError} onOpened={onProjectOpened} />
         )}
         {modal.type === 'worktree' && (
           <WorktreeForm
@@ -1545,11 +1865,9 @@ function ActionModal({
         {modal.type === 'remove' && (
           <RemoveConfirm
             worktree={modal.worktree}
-            preview={freshRemovePreview}
-            busy={busy}
-            onConfirm={(preview) =>
-              submit(() => apiClient.removeWorktree(modal.worktree.id, preview))
-            }
+            preview={modal.preview}
+            busy={removalStage !== null}
+            onConfirm={(preview) => onConfirmRemoval(modal.worktree, preview)}
           />
         )}
       </section>
@@ -1559,42 +1877,129 @@ function ActionModal({
 }
 
 function ProjectForm({
-  busy,
-  onSubmit
+  setError,
+  onOpened
 }: {
-  busy: boolean
-  onSubmit: (path: string) => void
+  setError: (value: string | null) => void
+  onOpened: (project: ProjectRecord) => Promise<void>
 }) {
   const [pathValue, setPathValue] = useState('')
+  const recentProjects = useQuery({
+    queryKey: recentProjectsQueryKey,
+    queryFn: apiClient.recentProjects,
+    retry: false
+  })
+  const openProject = useMutation({
+    mutationFn: (request: { id?: string; path?: string }) =>
+      request.id
+        ? apiClient.openProject(request.id)
+        : apiClient.addProject(request.path ?? ''),
+    onSuccess: onOpened,
+    onError: showError(setError)
+  })
+  const busy = openProject.isPending
+
   return (
-    <form
-      className="flex flex-col gap-5"
-      onSubmit={(event) => {
-        event.preventDefault()
-        onSubmit(pathValue)
-      }}
-    >
-      <ModalHeading eyebrow="Repository" title="Register project" />
-      <FormField>
-        <Label htmlFor="repository-path">Repository path</Label>
-        <Input
-          id="repository-path"
-          name="repository-path"
-          value={pathValue}
-          onChange={(event) => setPathValue(event.target.value)}
-          placeholder="/Users/you/Projects/example"
-          required
-          autoFocus
-        />
-      </FormField>
-      <p className="form-note">
-        The daemon resolves the main checkout and imports existing linked
-        worktrees.
-      </p>
-      <Button type="submit" className="self-end" disabled={busy}>
-        {busy ? 'Registering…' : 'Register project'}
-      </Button>
-    </form>
+    <div className="flex flex-col gap-5">
+      <ModalHeading eyebrow="Workspace" title="Open project" />
+      <section className="grid gap-2" aria-labelledby="recent-projects-title">
+        <div className="flex min-w-0 items-center justify-between gap-3">
+          <h3
+            id="recent-projects-title"
+            className="text-sm font-medium text-zinc-200"
+          >
+            Recent projects
+          </h3>
+          {recentProjects.isFetching && !recentProjects.isPending ? (
+            <ArrowPathIcon
+              className="size-4 shrink-0 animate-spin fill-zinc-500"
+              aria-label="Refreshing recent projects"
+            />
+          ) : null}
+        </div>
+        {recentProjects.isPending ? (
+          <p className="text-base text-zinc-500 sm:text-sm">
+            Loading recent projects…
+          </p>
+        ) : null}
+        {recentProjects.isError ? (
+          <div className="flex items-center justify-between gap-3 rounded-lg bg-white/3 p-3">
+            <p className="min-w-0 text-base text-zinc-400 sm:text-sm">
+              Recent projects could not be loaded.
+            </p>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              disabled={busy}
+              onClick={() => void recentProjects.refetch()}
+            >
+              Retry
+            </Button>
+          </div>
+        ) : null}
+        {recentProjects.isSuccess && !recentProjects.data.length ? (
+          <p className="text-base text-zinc-500 sm:text-sm">
+            Closed projects will appear here.
+          </p>
+        ) : null}
+        {recentProjects.data?.length ? (
+          <ul
+            role="list"
+            className="max-h-56 overflow-y-auto rounded-lg bg-white/3 p-1 ring-1 ring-white/8 [scrollbar-color:var(--color-zinc-700)_transparent]"
+          >
+            {recentProjects.data.map((project) => (
+              <li key={project.id}>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="h-auto min-h-11 w-full min-w-0 justify-start px-3 py-2 text-left hover:bg-white/5"
+                  disabled={busy}
+                  onClick={() => openProject.mutate({ id: project.id })}
+                >
+                  <span className="grid min-w-0 gap-0.5">
+                    <span className="truncate font-medium text-zinc-100">
+                      {project.name}
+                    </span>
+                    <span className="truncate text-zinc-500">
+                      {project.repositoryPath}
+                    </span>
+                  </span>
+                </Button>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+      </section>
+      <form
+        className="flex flex-col gap-4 border-t border-white/8 pt-5"
+        onSubmit={(event) => {
+          event.preventDefault()
+          openProject.mutate({ path: pathValue })
+        }}
+      >
+        <FormField>
+          <Label htmlFor="repository-path">Open by repository path</Label>
+          <Input
+            id="repository-path"
+            name="repository-path"
+            value={pathValue}
+            onChange={(event) => setPathValue(event.target.value)}
+            placeholder="/Users/you/Projects/example"
+            required
+            autoFocus
+            disabled={busy}
+          />
+        </FormField>
+        <p className="form-note">
+          The daemon resolves the main checkout and imports existing linked
+          worktrees.
+        </p>
+        <Button type="submit" className="self-end" disabled={busy}>
+          {busy ? 'Opening…' : 'Open project'}
+        </Button>
+      </form>
+    </div>
   )
 }
 
@@ -1653,6 +2058,7 @@ function WorktreeForm({
           value={name}
           onChange={(event) => setName(event.target.value)}
           placeholder="investigate-cache"
+          aria-label="Worktree name"
           required
           autoFocus
           aria-invalid={destinationQuery.isError}
@@ -1687,7 +2093,7 @@ function WorktreeForm({
         aria-live="polite"
       >
         {destinationQuery.data
-          ? destinationQuery.data.path
+          ? `Destination: ${destinationQuery.data.path}`
           : destinationQuery.error
             ? destinationQuery.error.message
             : name.trim()

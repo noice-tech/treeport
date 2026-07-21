@@ -257,7 +257,7 @@ The preview includes:
 
 - Main checkout: always refuse.
 - Locked worktree: refuse; do not unlock automatically.
-- Clean attached worktree: ordinary confirmation.
+- Clean attached worktree: remove immediately after an eligible, warning-free signed preview.
 - Clean unmerged attached branch: allow; preserve the branch.
 - Dirty, untracked, or conflicted worktree: destructive warning, then `--force`.
 - Detached HEAD reachable from a ref: treat like a clean worktree.
@@ -280,11 +280,12 @@ The destructive confirmation should clearly list changes/commits that may be los
    git worktree remove [--force] -- <canonical-path>
    ```
 
-8. Mark the worktree removed only after Git succeeds.
-9. Remove only an empty term-manager-created wrapper directory; never recursively delete inferred parent directories for imported worktrees.
-10. Reconcile browser terminal sessions and metadata.
+8. Mark the worktree removed only after Git no longer reports it and the exact checkout root is absent.
+9. On interrupted removal, atomically quarantine and reverify the exact previously authorized checkout root, then recursively clean it only when its recorded filesystem identity, Git administrative key, stale `.git` marker, and wrapper provenance still match.
+10. Remove only an empty term-manager-created wrapper directory; never recursively delete inferred parent directories for imported worktrees.
+11. Reconcile browser terminal sessions and metadata.
 
-If Git removal fails after tmux shutdown, mark `cleanup_failed` and explicitly report that terminals were already terminated.
+If Git removal fails after tmux shutdown, or an interrupted checkout cannot be verified safely, mark `cleanup_failed` and explicitly report that terminals were already terminated. The sidebar keeps the row visible with preparing, removing, or failed status and blocks duplicate removal while work is pending.
 
 ### Remove old surfaces
 
@@ -302,7 +303,7 @@ Historical SQLite operation kinds may remain readable for migration compatibilit
 
 ### Project row
 
-Remove project-level action icons. The header only expands/collapses the project and shows its name.
+> Superseded by issue #24. Project rows now retain the color control and add an explicit non-destructive **Close project** action. Closing terminates the project's TaskTTY terminals but preserves its Git worktrees and durable registration for reopening.
 
 ### Worktree list
 
@@ -315,7 +316,7 @@ Remove project-level action icons. The header only expands/collapses the project
 
 ### Sidebar footer
 
-Keep **Add project**. Remove Diagnostics.
+> Superseded by issue #24. The footer action is now **Open project** and its dialog lists closed registrations under **Recent projects** before the repository-path form. Diagnostics remains removed.
 
 ### Removal dialog
 

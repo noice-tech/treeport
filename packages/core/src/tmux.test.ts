@@ -244,7 +244,7 @@ describe('TmuxAdapter', () => {
     const specPath = path.join(adapter.specsDir, 'term_one.json')
     await fs.writeFile(specPath, '{}')
 
-    await adapter.killServer('socket')
+    await expect(adapter.killServer('socket')).resolves.toEqual(['term_one'])
 
     await expect(fs.access(specPath)).rejects.toThrow()
   })
@@ -267,7 +267,7 @@ describe('TmuxAdapter', () => {
     )
     const adapter = new TmuxAdapter(runner, runtime)
 
-    await expect(adapter.killServer('socket')).resolves.toBeUndefined()
+    await expect(adapter.killServer('socket')).resolves.toEqual([])
   })
 
   it('does not treat tmux connection permission errors as an absent server', async () => {

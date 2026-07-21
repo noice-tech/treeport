@@ -96,6 +96,48 @@ export interface ProjectRecord {
   updatedAt: string
 }
 
+export interface RecentProjectRecord {
+  id: string
+  name: string
+  repositoryPath: string
+  lastOpenedAt: string
+}
+
+export type TaskTTYContext =
+  | {
+      managed: false
+      reason: 'outside_tasktty'
+    }
+  | {
+      managed: true
+      apiUrl: string
+      project: Pick<
+        ProjectRecord,
+        | 'id'
+        | 'name'
+        | 'repositoryPath'
+        | 'mainWorktreePath'
+        | 'defaultBranch'
+        | 'availability'
+      >
+      worktree: Pick<
+        WorktreeRecord,
+        | 'id'
+        | 'projectId'
+        | 'name'
+        | 'path'
+        | 'head'
+        | 'branch'
+        | 'detached'
+        | 'kind'
+        | 'status'
+      >
+      terminal: Pick<
+        TerminalRecord,
+        'id' | 'worktreeId' | 'name' | 'status' | 'exitCode'
+      >
+    }
+
 export interface DirtyState {
   dirty: boolean
   staged: number
@@ -208,6 +250,7 @@ export const spawnSchema = z
 export type ProductEventType =
   | 'project.created'
   | 'project.updated'
+  | 'project.removed'
   | 'worktree.created'
   | 'worktree.updated'
   | 'worktree.removed'

@@ -31,11 +31,13 @@ For loopback-only startup:
 pnpm start:local
 ```
 
-Development runs Hono and Vite together through Turborepo:
+Development runs Hono, Vite, and a watch-built workspace CLI together through Turborepo:
 
 ```sh
 pnpm dev
 ```
+
+The root workspace links `tasktty` into `node_modules/.bin`. The development daemon inherits that path and passes it to managed terminals, so the same generic TaskTTY skill can use the CLI while TaskTTY itself is under development. Pi sessions in this repository load the canonical skill directly from `skills/tasktty` through `.pi/settings.json`; there is no separate development version of the skill.
 
 Other development commands:
 
@@ -53,11 +55,13 @@ Turbo caches package builds and runs workspace dependencies in graph order. Play
 
 ## First use
 
-Register a repository:
+Open a repository:
 
 ```sh
 tasktty project add ~/Projects/example
 ```
+
+The CLI command name remains `project add` for compatibility, but it opens a project in the active workspace. Running it for a closed project's path reopens the same durable registration.
 
 Create a worktree and Pi terminal in one operation:
 
@@ -78,13 +82,44 @@ tasktty terminal create \
   -- pnpm dev
 ```
 
-The web UI provides the same project, worktree, terminal, and removal operations. Submitting a new worktree closes the dialog immediately and shows its typed name with a spinner while Git creates it. The web flow then selects one retained terminal that streams compatible setup output before starting its login shell. Command input is always an argv array. Shell syntax has no special meaning unless an explicit shell is launched, for example `-- /bin/zsh -lc 'one && two'`.
+Inspect the exact TaskTTY context injected into a managed terminal:
+
+```sh
+tasktty context
+```
+
+The web UI provides the same project, worktree, terminal, and removal operations. **Open project** accepts a repository path or reopens a closed registration from **Recent projects**. Submitting a new worktree closes the dialog immediately and shows its typed name with a spinner while Git creates it. The web flow then selects one retained terminal that streams compatible setup output before starting its login shell. Command input is always an argv array. Shell syntax has no special meaning unless an explicit shell is launched, for example `-- /bin/zsh -lc 'one && two'`.
+
+## Agent Skill
+
+TaskTTY ships a portable [Agent Skills](https://agentskills.io/) skill at [`skills/tasktty/SKILL.md`](skills/tasktty/SKILL.md). Installing the skill teaches a compatible agent how to inspect its managed context and safely create persistent terminals and worktrees; it does not install TaskTTY itself or impose a task, planning, approval, prompt, or tool policy.
+
+Copy the complete skill directory to a compatible project or user skill location:
+
+```sh
+# Project-local, shared with a repository
+mkdir -p .agents/skills
+cp -R /path/to/tasktty/skills/tasktty .agents/skills/tasktty
+
+# User-level, available across projects
+mkdir -p ~/.agents/skills
+cp -R /path/to/tasktty/skills/tasktty ~/.agents/skills/tasktty
+```
+
+Pi also discovers `~/.pi/agent/skills/tasktty`. For one invocation from a TaskTTY checkout, load the canonical file directly:
+
+```sh
+pi --skill /absolute/path/to/tasktty/skills/tasktty/SKILL.md
+```
+
+Restart Pi or use `/reload` after installing or changing the skill. `/skill:tasktty` activates it explicitly. Project-local resources load only after the project is trusted. Review third-party skill instructions before enabling them.
 
 ## CLI
 
-All machine-relevant commands support `--json`. The CLI calls the daemon API and does not duplicate lifecycle logic.
+Commands print concise text by default. Add `--json` only when a program or extension needs structured output; JSON success responses go to stdout, while JSON errors use the API error envelope on stderr. The CLI calls the daemon API and does not duplicate lifecycle logic.
 
 ```text
+tasktty context
 tasktty project add <path>
 tasktty project list
 tasktty worktree list [--project <id-or-path>]
@@ -98,9 +133,15 @@ tasktty terminal delete <terminal-id>
 tasktty spawn --project <id-or-path-or-dot> --worktree-name <name> --name <name> [--from-current] [-- <command> args...]
 ```
 
-Each terminal receives `TASKTTY_API_URL`, `TASKTTY_PROJECT_ID`, `TASKTTY_WORKTREE_ID`, and `TASKTTY_TERMINAL_ID`. A Pi process can therefore call `tasktty` to create a child worktree/terminal or remove its own worktree. Removal is persisted as a daemon-owned operation and returns an operation ID before the daemon terminates the requesting tmux server. CLI exit codes are stable: `0` success, `1` unexpected failure, `2` usage, `3` daemon unreachable, and `5` API/domain refusal.
+Each terminal receives `TASKTTY_API_URL`, `TASKTTY_PROJECT_ID`, `TASKTTY_WORKTREE_ID`, and `TASKTTY_TERMINAL_ID`. `tasktty context` strictly resolves those IDs to the current project, worktree, and terminal; with no IDs it reports that the caller is outside TaskTTY, while partial or inconsistent IDs are refused instead of guessed from paths. A Pi process can therefore call `tasktty` to create a persistent child worktree or terminal that the user can open and continue in the normal Pi TUI. Removal is persisted as a daemon-owned operation and returns an operation ID before the daemon terminates the requesting tmux server.
+
+CLI exit codes are stable: `0` success, `1` unexpected failure, `2` usage, `3` daemon unreachable, and `5` API/domain refusal. With `--json`, failures are emitted on stderr as `{ "error": { "code", "message", "details"? } }`. A successful `spawn` can still report partial creation through a null `terminal`, `terminalError`, or `setupError`; callers must inspect those fields and must not blindly retry or remove the retained worktree.
 
 ## Runtime model
+
+The sidebar is a persistent workspace of open projects. Closing a project terminates every TaskTTY-managed tmux server and process associated with its main and linked worktrees, then removes the project from active snapshots. It does not remove Git worktrees, branches, checkout directories, files, project colors, or TaskTTY's durable bindings. Closed projects remain in **Recent projects** and survive daemon restarts. Reopening preserves project and worktree IDs but does not recreate terminated terminal commands.
+
+If one tmux server cannot be stopped, the close fails and the project remains open; servers already stopped are not restarted. Closed projects are not reconciled in the background, so their stored paths may become stale. Reopening by durable ID still succeeds and normal active observation reports the project as unavailable when appropriate.
 
 For worktree `wt_…`, tasktty generates a socket name such as `tasktty-wt-a8f…`. Every terminal gets its own generated tmux session such as `tasktty-term-2c1…`:
 
@@ -153,11 +194,11 @@ the middle directory is the worktree name. The main checkout is shown as `main w
 
 New worktrees are detached at a resolved commit. The default base is the fetched remote default branch; `--from-current` uses the selected/current worktree's `HEAD`. Project-local `.zed/settings.json` `git.worktree_directory` is honored, with `../worktrees` as the default.
 
-Git is authoritative for active worktree inventory and state. Every project snapshot observes `git worktree list --porcelain`; SQLite only binds TaskTTY IDs, tmux sockets, wrapper ownership, and presentation metadata to project-scoped Git administrative worktree identities. External linked-worktree moves preserve those bindings, while confirmed external removals disappear automatically and stop their TaskTTY tmux servers. Renaming the main checkout within its parent is recovered by filesystem identity, repairs Git's linked-worktree pointers, and updates an automatic project name; a custom name is preserved. A move elsewhere remains visible but unavailable until the new path is registered, which recovers the existing project instead of creating a duplicate. If a repository is unavailable, the last-known inventory remains visible but disabled and no destructive reconciliation occurs. Git-reported prunable worktrees likewise remain visible but disabled.
+Git is authoritative for active worktree inventory and state. Every open-project snapshot observes `git worktree list --porcelain`; closed registrations remain SQLite-only until reopened. SQLite only binds TaskTTY IDs, tmux sockets, wrapper ownership, and presentation metadata to project-scoped Git administrative worktree identities. External linked-worktree moves preserve those bindings, while confirmed external removals disappear automatically and stop their TaskTTY tmux servers. Renaming the main checkout within its parent is recovered by filesystem identity, repairs Git's linked-worktree pointers, and updates an automatic project name; a custom name is preserved. A move elsewhere remains visible but unavailable until the new path is registered, which recovers the existing project instead of creating a duplicate. If a repository is unavailable, the last-known inventory remains visible but disabled and no destructive reconciliation occurs. Git-reported prunable worktrees likewise remain visible but disabled.
 
 tasktty currently includes a compatibility adapter for project-local `.zed/tasks.json` tasks whose `hooks` contain `create_worktree`; Zed defines the input format, not tasktty's lifecycle. Compatible tasks from the main checkout run sequentially in the automatically created tmux terminal with `ZED_WORKTREE_ROOT` and `ZED_MAIN_GIT_WORKTREE`. Their stdout and stderr stream into the pane. After every task succeeds, the same pane starts the requested command or login shell. On the first failure, later tasks and the final command are skipped and tmux retains the exited pane and its scrollback. A terminal-backed create response means that Git creation and tmux launch completed; setup may still be running.
 
-**Remove worktree** is the only removal action. Preview reports staged, unstaged, and untracked changes, detached-commit reachability, locked state, and every terminal that will stop. Dirty worktrees require destructive confirmation in the UI or `--force` in the CLI. The daemon then blocks mutation, kills the worktree's tmux server, and runs path-addressed `git worktree remove`; it never deletes an attached Git branch. Main and locked worktrees are refused. If Git removal fails after terminals stop, the worktree remains `cleanup_failed` with an explicit retryable error.
+**Remove worktree** is the only removal action. The web UI submits an eligible, warning-free preview immediately; staged, unstaged, untracked, conflicted, or at-risk detached worktrees still require destructive confirmation. Preview also reports locked state and every terminal that will stop. The daemon then blocks mutation, marks the sidebar row as removing, kills the worktree's tmux server, and runs path-addressed `git worktree remove`; it never deletes an attached Git branch. Main and locked worktrees are refused. Completed removal means that Git no longer reports the worktree and the exact checkout root is absent. Interrupted removal may clean only the exact previously authorized checkout when its recorded filesystem identity, Git administrative key, stale `.git` marker, and wrapper provenance still match. TaskTTY atomically quarantines and reverifies that root before recursive cleanup. Wrapper cleanup remains empty-directory-only; unverifiable legacy or replaced paths stay `cleanup_failed` for inspection and appear with manual-cleanup guidance instead of an unsafe retry.
 
 Runtime terminal titles and progress are owned by the daemon metadata manager and mirrored into the browser's terminal session manager through SSE, so tabs, panes, the sidebar, and mobile selector update together even for terminals that have not been opened in that browser. The configured name is stored with the tmux session as its fallback; observed title and progress metadata remain volatile.
 
@@ -168,7 +209,10 @@ The versioned JSON surface is under `/api`:
 ```text
 GET  /api/health
 GET  /api/events (SSE)
-GET/POST /api/projects               GET/DELETE /api/projects/:projectId
+GET/POST /api/projects               GET/PATCH/DELETE /api/projects/:projectId
+GET  /api/projects/recent
+POST /api/projects/:projectId/open
+POST /api/projects/:projectId/close
 POST /api/projects/:projectId/refresh
 GET/POST /api/projects/:projectId/worktrees
 GET  /api/projects/:projectId/worktree-destination
@@ -182,6 +226,8 @@ WS   /api/terminals/:terminalId/attach
 POST /api/spawn
 GET  /api/operations/:operationId
 ```
+
+`GET /api/projects` returns open projects only. `POST /api/projects` opens or reopens by path, while the ID-based open endpoint also works for an unavailable stored path. Close is non-destructive workspace removal; `DELETE /api/projects/:projectId` remains destructive unregister and retains its linked-worktree restriction.
 
 Errors use `{ "error": { "code", "message", "details"? } }`. SSE emits project, worktree, terminal, controller, and cleanup changes.
 
