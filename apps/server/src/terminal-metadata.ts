@@ -1,10 +1,15 @@
+import path from 'node:path'
 import type {
   ProductEvent,
   TerminalRecord,
   TerminalRuntimeMetadata,
   WorktreeRecord
 } from '@tasktty/shared'
-import type { TaskTTYService, TmuxAdapter } from '@tasktty/core'
+import type {
+  TaskTTYService,
+  TmuxAdapter,
+  TmuxSessionTitleState
+} from '@tasktty/core'
 import { DomainError, resolveExecutablePath } from '@tasktty/core'
 import { progressControlAttachArgs } from './tmux-control.js'
 import {
@@ -15,6 +20,23 @@ import {
 
 export const TERMINAL_METADATA_POLL_MS = 2_000
 
+const SHELL_COMMANDS = new Set([
+  'ash',
+  'bash',
+  'csh',
+  'dash',
+  'elvish',
+  'fish',
+  'ksh',
+  'mksh',
+  'nu',
+  'pwsh',
+  'sh',
+  'tcsh',
+  'xonsh',
+  'zsh'
+])
+
 type MetadataListener = (metadata: TerminalRuntimeMetadata) => void
 
 interface TerminalMetadataEntry extends TerminalRuntimeMetadata {
@@ -23,6 +45,12 @@ interface TerminalMetadataEntry extends TerminalRuntimeMetadata {
   sessionName: string
   cwd: string
   status: TerminalRecord['status']
+  paneTitle: string | null
+  currentCommand: string | null
+  shellCommand: string | null
+  shellTitle: string | null
+  applicationTitleActive: boolean
+  observedTitlePending: boolean
   titleRevision: number
   observer: TerminalProgressObserver | null
   observerVersion: number
@@ -141,6 +169,16 @@ export class TerminalMetadataManager {
         status: terminal.status,
         title: null,
         progress: null,
+        paneTitle: null,
+        currentCommand: null,
+        shellCommand: SHELL_COMMANDS.has(
+          path.basename(terminal.argv?.[0] ?? '').replace(/^-/, '')
+        )
+          ? path.basename(terminal.argv?.[0] ?? '').replace(/^-/, '')
+          : null,
+        shellTitle: null,
+        applicationTitleActive: false,
+        observedTitlePending: false,
         titleRevision: 0,
         observer: null,
         observerVersion: 0,
@@ -155,18 +193,19 @@ export class TerminalMetadataManager {
       const observedEntry = entry
       const titleRevision = entry.titleRevision
       const observerVersion = entry.observerVersion
-      const title = await this.tmux
-        .sessionTitle(worktree.tmuxSocketName, terminal.tmuxSessionName)
+      const titleState = await this.tmux
+        .sessionTitleState(worktree.tmuxSocketName, terminal.tmuxSessionName)
         .catch(() => null)
       if (this.entries.get(terminal.id) !== observedEntry) {
         return
       }
 
       if (
+        titleState &&
         observedEntry.titleRevision === titleRevision &&
         observedEntry.observerVersion === observerVersion
       ) {
-        this.update(observedEntry, { title })
+        this.reconcileTitleState(observedEntry, titleState)
       }
     } else {
       entry.worktreeId = terminal.worktreeId
@@ -280,7 +319,9 @@ export class TerminalMetadataManager {
               this.entries.get(entry.terminalId) === entry &&
               entry.observerVersion === version
             ) {
-              this.update(entry, { title })
+              entry.paneTitle = title.trim().slice(0, 256) || null
+              entry.observedTitlePending = true
+              this.update(entry, { title: entry.paneTitle })
             }
           },
           onProgress: (progress) => {
@@ -349,20 +390,24 @@ export class TerminalMetadataManager {
     const titleRevision = entry.titleRevision
     const observerVersion = entry.observerVersion
     try {
-      const [terminal, title] = await Promise.all([
+      const [terminal, titleState] = await Promise.all([
         this.service.refreshTerminalStatus(entry.terminalId, false),
-        this.tmux.sessionTitle(entry.socketName, entry.sessionName)
+        this.tmux.sessionTitleState(entry.socketName, entry.sessionName)
       ])
-      if (this.entries.get(entry.terminalId) !== entry) {
+      if (
+        this.entries.get(entry.terminalId) !== entry ||
+        entry.observerVersion !== observerVersion
+      ) {
         return
       }
 
       entry.status = terminal.status
       if (
+        titleState &&
         entry.titleRevision === titleRevision &&
         entry.observerVersion === observerVersion
       ) {
-        this.update(entry, { title })
+        this.reconcileTitleState(entry, titleState)
       }
 
       if (terminal.status === 'running') {
@@ -375,6 +420,70 @@ export class TerminalMetadataManager {
     } finally {
       entry.polling = false
     }
+  }
+
+  private reconcileTitleState(
+    entry: TerminalMetadataEntry,
+    state: TmuxSessionTitleState
+  ): void {
+    const paneTitle = state.paneTitle?.trim().slice(0, 256) || null
+    const currentCommand = state.currentCommand?.trim().slice(0, 256) || null
+    const previousCommand = entry.currentCommand
+    const paneTitleChanged = paneTitle !== entry.paneTitle
+    const commandChanged = currentCommand !== previousCommand
+    const observedTitlePending = entry.observedTitlePending
+
+    entry.paneTitle = paneTitle
+    entry.currentCommand = currentCommand
+    entry.observedTitlePending = false
+
+    if (!entry.shellCommand) {
+      this.update(entry, { title: paneTitle ?? currentCommand })
+      return
+    }
+
+    if (currentCommand === entry.shellCommand) {
+      entry.applicationTitleActive = false
+      if (
+        observedTitlePending ||
+        paneTitleChanged ||
+        entry.shellTitle === null
+      ) {
+        entry.shellTitle = paneTitle
+      }
+
+      this.update(entry, {
+        title: entry.shellTitle ?? paneTitle ?? currentCommand
+      })
+      return
+    }
+
+    if (observedTitlePending) {
+      entry.applicationTitleActive = true
+      this.update(entry, { title: entry.title ?? paneTitle ?? currentCommand })
+      return
+    }
+
+    if (!commandChanged) {
+      if (paneTitleChanged) {
+        entry.applicationTitleActive = true
+        this.update(entry, { title: paneTitle ?? currentCommand })
+      }
+
+      return
+    }
+
+    if (previousCommand === null) {
+      entry.shellTitle = paneTitle
+    } else if (entry.applicationTitleActive) {
+      return
+    } else if (paneTitleChanged) {
+      entry.applicationTitleActive = true
+      this.update(entry, { title: paneTitle ?? currentCommand })
+      return
+    }
+
+    this.update(entry, { title: currentCommand ?? paneTitle })
   }
 
   private update(
