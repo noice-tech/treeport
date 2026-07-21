@@ -167,6 +167,8 @@ Multiple clients can view a terminal. One client holds the input/resize lease. S
 
 Terminal sockets use a versioned hello/ready protocol with application heartbeats and output acknowledgements. The server pauses an attachment PTY when the browser falls behind, while the persistent tmux session continues independently. The browser retains at most three selected/recent xterm sessions and reuses them when switching tabs.
 
+Dropping a file on the terminal or pasting a clipboard file/image uploads a private copy (up to 50 MiB) into TaskTTY’s runtime directory and pastes its daemon-local path through xterm’s bracketed-paste handling. This gives terminal applications such as Pi a readable path without writing into the Git worktree. Uploads older than 24 hours are pruned, and the directory retains at most 512 MiB of its newest files.
+
 Reconnect is deliberately reset-and-redraw, not durable replay: a new tmux attachment resets xterm and redraws the current screen, so browser-only scrollback may be lost. Input typed while disconnected is never queued or replayed. Terminal output remains absent from SQLite and application logs.
 
 The responsive PWA has a mobile drawer, full-screen xterm.js view, reconnect behavior, visual BEL feedback, and Esc/Ctrl/Alt/Tab/Enter/arrow accessory keys. Accessory arrows respect terminal application-cursor mode. The application shell can load from its service-worker cache, but terminal sessions are never represented as available offline.

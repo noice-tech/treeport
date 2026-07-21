@@ -9,6 +9,7 @@ export const TERMINAL_OUTPUT_HIGH_WATERMARK = 256 * 1024
 export const TERMINAL_OUTPUT_LOW_WATERMARK = 64 * 1024
 export const TERMINAL_OUTPUT_STALL_TIMEOUT_MS = 30_000
 export const TERMINAL_MAX_CLIENT_MESSAGE_BYTES = 128 * 1024
+export const TERMINAL_MAX_INPUT_BYTES = 64 * 1024
 
 const version = z.literal(TERMINAL_PROTOCOL_VERSION)
 const clientId = z.string().min(1).max(128)
@@ -88,12 +89,12 @@ export const terminalClientMessageSchema = z.discriminatedUnion('type', [
   z.strictObject({
     version,
     type: z.literal('input'),
-    data: z.string().max(64 * 1024)
+    data: z.string().max(TERMINAL_MAX_INPUT_BYTES)
   }),
   z.strictObject({
     version,
     type: z.literal('binary'),
-    data: z.string().max(64 * 1024)
+    data: z.string().max(TERMINAL_MAX_INPUT_BYTES)
   }),
   z.strictObject({ version, type: z.literal('resize'), ...dimensions }),
   z.strictObject({ version, type: z.literal('take_control') }),

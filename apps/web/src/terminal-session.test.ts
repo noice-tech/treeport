@@ -42,6 +42,7 @@ class FakeSession {
     bellSerial: 0,
     exitSerial: 0,
     progress: null,
+    fileTransfer: null,
     error: null
   }
 
