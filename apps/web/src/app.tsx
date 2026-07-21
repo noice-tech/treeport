@@ -817,7 +817,7 @@ export default function App() {
       style={{ '--sidebar-width': `${sidebarWidth}px` } as CSSProperties}
     >
       <header
-        className="mobile-bar hidden min-w-0 grid-cols-[2.75rem_minmax(0,1fr)_2.75rem] items-center gap-2 border-b border-white/8 bg-zinc-900/95 px-2 backdrop-blur max-[700px]:grid"
+        className="mobile-bar hidden min-w-0 grid-cols-[2.75rem_minmax(0,1fr)] items-center gap-2 border-b border-white/8 bg-zinc-900/95 px-2 backdrop-blur max-[700px]:grid"
         inert={isMobile && drawerOpen ? true : undefined}
       >
         <Button
@@ -853,9 +853,6 @@ export default function App() {
             </option>
           ))}
         </NativeSelect>
-        <span className="mobile-brand font-mono text-sm font-semibold tracking-tight text-cyan-300">
-          TaskTTY
-        </span>
       </header>
       <div
         className={cn(
@@ -998,12 +995,12 @@ export default function App() {
                   >
                     {project.worktrees.map((worktree) => (
                       <li key={worktree.id} className="group/worktree min-w-0">
-                        <div className="relative min-w-0">
+                        <div className="relative min-w-0 max-[700px]:flex max-[700px]:items-center">
                           <Button
                             variant="ghost"
                             type="button"
                             className={cn(
-                              'worktree-row h-auto min-h-11 w-full min-w-0 justify-start gap-2 rounded-md px-2 py-1.5 text-left text-base font-medium sm:min-h-8 sm:py-1 sm:text-[0.8125rem]',
+                              'worktree-row h-auto min-h-11 w-full min-w-0 justify-start gap-2 rounded-md px-2 py-1.5 text-left text-base font-medium sm:min-h-8 sm:py-1 sm:text-[0.8125rem] max-[700px]:flex-1',
                               selectedWorktree?.id === worktree.id
                                 ? 'selected bg-white/8 text-zinc-50'
                                 : 'text-zinc-300 hover:bg-white/5 hover:text-zinc-50'
@@ -1020,7 +1017,7 @@ export default function App() {
                             </span>
                           </Button>
                           {worktree.kind === 'linked' && (
-                            <div className="worktree-actions absolute top-0 right-0 z-10 flex items-center gap-0.5 rounded-md bg-zinc-900 opacity-0 shadow-sm ring-1 ring-white/8 group-hover/worktree:opacity-100 group-focus-within/worktree:opacity-100 max-[700px]:relative max-[700px]:mt-0.5 max-[700px]:ml-7 max-[700px]:w-fit max-[700px]:opacity-100">
+                            <div className="worktree-actions absolute top-0 right-0 z-10 flex items-center gap-0.5 opacity-0 group-hover/worktree:opacity-100 group-focus-within/worktree:opacity-100 max-[700px]:static max-[700px]:ml-0.5 max-[700px]:shrink-0 max-[700px]:opacity-100">
                               <SidebarAction
                                 label={`Remove ${worktree.name}`}
                                 tooltip={
@@ -1034,7 +1031,7 @@ export default function App() {
                                   project.availability.state ===
                                     'unavailable' || worktree.prunable
                                 }
-                                className="text-zinc-500 hover:bg-rose-400/8 hover:text-rose-300"
+                                className="text-zinc-500 hover:bg-transparent hover:text-rose-300"
                                 onClick={(trigger) =>
                                   openModal(
                                     { type: 'remove', worktree },
