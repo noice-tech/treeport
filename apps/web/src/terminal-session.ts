@@ -1118,6 +1118,7 @@ export class TerminalSessionManager {
   private attentionSnapshot: ReadonlySet<string> = new Set()
   private titleSnapshot: ReadonlyMap<string, string> = new Map()
   private progressSnapshot: ReadonlyMap<string, TerminalProgress> = new Map()
+  private bellSequences = new Map<string, number>()
 
   constructor(
     private readonly maxSessions = 3,
@@ -1138,6 +1139,22 @@ export class TerminalSessionManager {
     this.progressSnapshot
 
   applyRuntimeMetadata(metadata: TerminalRuntimeMetadata): void {
+    const previousBellSequence =
+      this.bellSequences.get(metadata.terminalId) ?? 0
+    const bellSequence = metadata.bell?.sequence ?? 0
+    if (metadata.bell) {
+      this.bellSequences.set(metadata.terminalId, bellSequence)
+    } else {
+      this.bellSequences.delete(metadata.terminalId)
+    }
+
+    if (
+      bellSequence > previousBellSequence &&
+      (this.entries.get(metadata.terminalId)?.references ?? 0) === 0
+    ) {
+      this.markAttention(metadata.terminalId)
+    }
+
     this.setRuntimeTitle(metadata.terminalId, metadata.title)
     this.setProgress(metadata.terminalId, metadata.progress)
   }
@@ -1145,6 +1162,7 @@ export class TerminalSessionManager {
   replaceRuntimeMetadata(metadata: Iterable<TerminalRuntimeMetadata>): void {
     const titles = new Map<string, string>()
     const progress = new Map<string, TerminalProgress>()
+    const bellSequences = new Map<string, number>()
     for (const item of metadata) {
       const title = item.title?.trim().slice(0, 256)
       if (title) {
@@ -1153,6 +1171,10 @@ export class TerminalSessionManager {
 
       if (item.progress) {
         progress.set(item.terminalId, item.progress)
+      }
+
+      if (item.bell) {
+        bellSequences.set(item.terminalId, item.bell.sequence)
       }
     }
     const titlesChanged =
@@ -1166,6 +1188,7 @@ export class TerminalSessionManager {
         const current = this.progressSnapshot.get(terminalId)
         return current?.state !== value.state || current.value !== value.value
       })
+    this.bellSequences = bellSequences
     if (!titlesChanged && !progressChanged) {
       return
     }
@@ -1249,6 +1272,8 @@ export class TerminalSessionManager {
 
   forget(terminalId: string): void {
     this.disposeEntry(terminalId)
+    this.bellSequences.delete(terminalId)
+    this.clearAttention(terminalId)
     this.clearRuntimeTitle(terminalId)
     this.setProgress(terminalId, null)
   }
@@ -1272,8 +1297,15 @@ export class TerminalSessionManager {
       }
     }
     let changed = false
+    const attention = new Set(this.attentionSnapshot)
     const titles = new Map(this.titleSnapshot)
     const progress = new Map(this.progressSnapshot)
+    for (const terminalId of attention) {
+      if (!valid.has(terminalId)) {
+        attention.delete(terminalId)
+        changed = true
+      }
+    }
     for (const terminalId of titles.keys()) {
       if (!valid.has(terminalId)) {
         titles.delete(terminalId)
@@ -1286,7 +1318,13 @@ export class TerminalSessionManager {
         changed = true
       }
     }
+    for (const terminalId of this.bellSequences.keys()) {
+      if (!valid.has(terminalId)) {
+        this.bellSequences.delete(terminalId)
+      }
+    }
     if (changed) {
+      this.attentionSnapshot = attention
       this.titleSnapshot = titles
       this.progressSnapshot = progress
       this.emit()

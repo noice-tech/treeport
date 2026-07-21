@@ -80,11 +80,37 @@ A successful `terminal create` means the tmux session was created. The requested
 
 Report partial creation with the returned worktree and terminal IDs. Do not blindly rerun `spawn`: the worktree may already exist. Do not remove retained resources automatically.
 
-Inspect terminals later with:
+Inspect terminal inventory later with:
 
 ```sh
 tasktty terminal list --worktree <worktree-id>
 ```
+
+Inspect one terminal's refreshed process status and volatile runtime metadata with:
+
+```sh
+tasktty terminal inspect <terminal-id>
+tasktty terminal inspect <terminal-id> --json
+```
+
+Runtime metadata includes the title, current OSC `9;4` progress, last progress start and clear timestamps, and latest daemon-observed real BEL. `.` resolves to the exact `TASKTTY_TERMINAL_ID` inside a managed terminal; it is not a name or path lookup.
+
+Wait for raw terminal conditions without polling or scraping output:
+
+```sh
+tasktty terminal wait <terminal-id> --until working
+tasktty terminal wait <terminal-id> --until idle --timeout 30m
+tasktty terminal wait <terminal-id> --until bell
+tasktty terminal wait <terminal-id> --until exit
+```
+
+- `idle` means no OSC progress is currently observed and can return immediately.
+- `working` means OSC progress is currently present and can return immediately.
+- `bell` means the next real BEL after the event subscription is established.
+- `exit` means the retained terminal process has exited.
+- Waits have no default timeout. Use a positive `ms`, `s`, `m`, or `h` duration when a deadline is required; Ctrl+C cancels.
+
+TaskTTY does not infer agent settlement. An orchestrator can inspect first, wait for `working` if no progress cycle has been observed, and then wait for `idle`. Progress depends on the child application emitting OSC `9;4`; for Pi, `terminal.showTerminalProgress` must be enabled. A null progress value is not proof that every application supports progress reporting.
 
 ## Automation and integrations
 
@@ -109,7 +135,9 @@ JSON success output is written to stdout. JSON errors use `{ "error": { "code", 
 
 - `0`: command completed; for `spawn`, still inspect `terminal`, `terminalError`, and `setupError`.
 - `2`: invalid CLI usage.
-- `3`: the daemon could not be reached.
+- `3`: the daemon could not be reached or its event stream failed.
+- `4`: a terminal wait timed out.
 - `5`: API, domain, or invalid-context refusal.
+- `130`: a terminal wait was interrupted with Ctrl+C.
 
 TaskTTY currently has no authentication. Use it only through a trusted local or private-network listener; do not invent credentials or put secrets in command arguments or URLs.

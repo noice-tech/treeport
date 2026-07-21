@@ -1,13 +1,16 @@
 #!/usr/bin/env node
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import type {
-  ApiErrorBody,
-  ProjectRecord,
-  RemovePreview,
-  TaskTTYContext,
-  TerminalRecord,
-  WorktreeRecord
+import {
+  parseTerminalRuntimeMetadata,
+  type ApiErrorBody,
+  type ProductEvent,
+  type ProjectRecord,
+  type RemovePreview,
+  type TaskTTYContext,
+  type TerminalRecord,
+  type TerminalRuntimeMetadata,
+  type WorktreeRecord
 } from '@tasktty/shared'
 import { extractJsonOutput } from './args.js'
 
@@ -35,9 +38,11 @@ class CliError extends Error {
         ? 'USAGE_ERROR'
         : exitCode === 3
           ? 'DAEMON_UNREACHABLE'
-          : exitCode === 5
-            ? 'DOMAIN_ERROR'
-            : 'UNEXPECTED_ERROR')
+          : exitCode === 4
+            ? 'WAIT_TIMEOUT'
+            : exitCode === 5
+              ? 'DOMAIN_ERROR'
+              : 'UNEXPECTED_ERROR')
     this.details = details
   }
 }
@@ -47,7 +52,15 @@ async function request<T>(
   options: RequestInit = {}
 ): Promise<T> {
   const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), 90_000)
+  const externalSignal = options.signal
+  const abort = () => controller.abort()
+  if (externalSignal?.aborted) {
+    controller.abort()
+  } else {
+    externalSignal?.addEventListener('abort', abort, { once: true })
+  }
+
+  const timeout = setTimeout(abort, 90_000)
   try {
     const response = await fetch(`${apiUrl}${pathname}`, {
       ...options,
@@ -82,6 +95,7 @@ async function request<T>(
     )
   } finally {
     clearTimeout(timeout)
+    externalSignal?.removeEventListener('abort', abort)
   }
 }
 
@@ -210,6 +224,388 @@ async function resolveWorktree(identifier: string): Promise<WorktreeRecord> {
   return match
 }
 
+type WaitCondition = 'idle' | 'working' | 'bell' | 'exit'
+
+interface TerminalObservation {
+  terminal: TerminalRecord
+  metadata: TerminalRuntimeMetadata
+}
+
+interface TerminalWaitResult extends TerminalObservation {
+  condition: WaitCondition
+  observedAt: string
+}
+
+function resolveTerminalId(identifier: string): string {
+  if (identifier !== '.') {
+    return identifier
+  }
+
+  const terminalId = process.env.TASKTTY_TERMINAL_ID?.trim()
+  if (!terminalId) {
+    throw new CliError(
+      'Cannot resolve . without TASKTTY_TERMINAL_ID',
+      5,
+      'TASKTTY_CONTEXT_INCOMPLETE',
+      { missing: ['TASKTTY_TERMINAL_ID'] }
+    )
+  }
+
+  return terminalId
+}
+
+function parseDuration(value: string): number {
+  const match = /^(\d+)(ms|s|m|h)$/.exec(value)
+  if (!match) {
+    throw new CliError(
+      'Timeout must be a positive duration such as 500ms, 30s, 5m, or 1h',
+      2
+    )
+  }
+
+  const units = { ms: 1, s: 1_000, m: 60_000, h: 3_600_000 } as const
+  const amount = Number(match[1])
+  const timeoutMs = amount * units[match[2] as keyof typeof units]
+  if (
+    !Number.isSafeInteger(timeoutMs) ||
+    timeoutMs <= 0 ||
+    timeoutMs > 2_147_483_647
+  ) {
+    throw new CliError('Timeout must be between 1ms and 2147483647ms', 2)
+  }
+
+  return timeoutMs
+}
+
+async function inspectTerminal(
+  terminalId: string,
+  signal?: AbortSignal
+): Promise<TerminalObservation> {
+  return request<TerminalObservation>(
+    `/api/terminals/${encodeURIComponent(terminalId)}`,
+    signal ? { signal } : {}
+  )
+}
+
+async function waitForTerminal(
+  terminalId: string,
+  condition: WaitCondition,
+  timeoutMs?: number
+): Promise<TerminalWaitResult> {
+  let observation: TerminalObservation | null = null
+  let bellBaseline: number | null = null
+  const matched = (observedAt: string): TerminalWaitResult | null => {
+    if (!observation) {
+      return null
+    }
+
+    const matches =
+      (condition === 'idle' && observation.metadata.progress === null) ||
+      (condition === 'working' && observation.metadata.progress !== null) ||
+      (condition === 'exit' && observation.terminal.status === 'exited') ||
+      (condition === 'bell' &&
+        bellBaseline !== null &&
+        (observation.metadata.bell?.sequence ?? 0) > bellBaseline)
+    if (!matches) {
+      return null
+    }
+
+    return {
+      condition,
+      observedAt:
+        condition === 'bell'
+          ? (observation.metadata.bell?.at ?? observedAt)
+          : observedAt,
+      ...observation
+    }
+  }
+
+  const controller = new AbortController()
+  let cancellation: 'timeout' | 'interrupt' | null = null
+  const interrupt = () => {
+    cancellation = 'interrupt'
+    controller.abort()
+  }
+  process.once('SIGINT', interrupt)
+  const timeout =
+    timeoutMs === undefined
+      ? null
+      : setTimeout(() => {
+          cancellation = 'timeout'
+          controller.abort()
+        }, timeoutMs)
+  timeout?.unref()
+  let reader: ReadableStreamDefaultReader<Uint8Array> | null = null
+
+  try {
+    observation = await inspectTerminal(terminalId, controller.signal)
+    const immediate = matched(new Date().toISOString())
+    if (immediate) {
+      return immediate
+    }
+
+    let response: Response
+    try {
+      response = await fetch(`${apiUrl}/api/events`, {
+        signal: controller.signal,
+        headers: { accept: 'text/event-stream' }
+      })
+    } catch (error) {
+      if (cancellation) {
+        throw error
+      }
+
+      throw new CliError(
+        `Cannot reach TaskTTY daemon at ${apiUrl}: ${error instanceof Error ? error.message : String(error)}`,
+        3,
+        'DAEMON_UNREACHABLE'
+      )
+    }
+    if (!response.ok || !response.body) {
+      const body = (await response.json().catch(() => ({}))) as ApiErrorBody
+      throw new CliError(
+        body.error?.message || `HTTP ${response.status}`,
+        response.ok ? 3 : 5,
+        body.error?.code ||
+          (response.ok ? 'DAEMON_PROTOCOL_ERROR' : 'API_ERROR'),
+        body.error?.details
+      )
+    }
+
+    reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    let eventName = 'message'
+    let dataLines: string[] = []
+    let result: TerminalWaitResult | null = null
+
+    const dispatch = async (): Promise<void> => {
+      const name = eventName
+      const data = dataLines.join('\n')
+      eventName = 'message'
+      dataLines = []
+      if (!data || name === 'heartbeat') {
+        return
+      }
+
+      let payload: unknown
+      try {
+        payload = JSON.parse(data)
+      } catch {
+        throw new CliError(
+          'TaskTTY daemon sent invalid event-stream JSON',
+          3,
+          'DAEMON_PROTOCOL_ERROR'
+        )
+      }
+      if (!observation) {
+        throw new CliError(
+          'TaskTTY daemon event stream opened before terminal inspection completed',
+          3,
+          'DAEMON_PROTOCOL_ERROR'
+        )
+      }
+
+      if (name === 'connected') {
+        const connected = payload as {
+          at?: unknown
+          terminalMetadata?: unknown
+        }
+        if (!Array.isArray(connected.terminalMetadata)) {
+          throw new CliError(
+            'TaskTTY daemon sent an invalid connected event',
+            3,
+            'DAEMON_PROTOCOL_ERROR'
+          )
+        }
+
+        const metadata = connected.terminalMetadata
+          .map(parseTerminalRuntimeMetadata)
+          .find((item) => item?.terminalId === terminalId)
+        if (metadata) {
+          observation = { ...observation, metadata }
+        }
+
+        bellBaseline = observation.metadata.bell?.sequence ?? 0
+        const observedAt =
+          typeof connected.at === 'string'
+            ? connected.at
+            : new Date().toISOString()
+        result = matched(observedAt)
+        if (result) {
+          return
+        }
+
+        observation = await inspectTerminal(terminalId, controller.signal)
+        if (cancellation) {
+          throw new Error('Terminal wait cancelled')
+        }
+
+        result = matched(new Date().toISOString())
+        return
+      }
+
+      if (
+        name !== 'terminal.metadata' &&
+        name !== 'terminal.updated' &&
+        name !== 'terminal.removed'
+      ) {
+        return
+      }
+
+      const event = payload as ProductEvent
+      if (
+        !event ||
+        typeof event !== 'object' ||
+        !event.data ||
+        typeof event.data !== 'object'
+      ) {
+        throw new CliError(
+          'TaskTTY daemon sent an invalid product event',
+          3,
+          'DAEMON_PROTOCOL_ERROR'
+        )
+      }
+
+      if (event.data.terminalId !== terminalId) {
+        return
+      }
+
+      if (name === 'terminal.removed') {
+        throw new CliError(
+          `Terminal ${terminalId} was removed while waiting`,
+          5,
+          'TERMINAL_REMOVED',
+          { terminalId, condition }
+        )
+      }
+
+      if (name === 'terminal.metadata') {
+        const metadata = parseTerminalRuntimeMetadata(event.data)
+        if (!metadata) {
+          throw new CliError(
+            'TaskTTY daemon sent invalid terminal metadata',
+            3,
+            'DAEMON_PROTOCOL_ERROR'
+          )
+        }
+
+        observation = { ...observation, metadata }
+      } else {
+        observation = await inspectTerminal(terminalId, controller.signal)
+        if (cancellation) {
+          throw new Error('Terminal wait cancelled')
+        }
+      }
+
+      result = matched(
+        typeof event.at === 'string' ? event.at : new Date().toISOString()
+      )
+    }
+
+    const processLine = async (line: string): Promise<void> => {
+      if (line === '') {
+        await dispatch()
+        return
+      }
+
+      if (line.startsWith(':')) {
+        return
+      }
+
+      const separator = line.indexOf(':')
+      const field = separator === -1 ? line : line.slice(0, separator)
+      let value = separator === -1 ? '' : line.slice(separator + 1)
+      if (value.startsWith(' ')) {
+        value = value.slice(1)
+      }
+
+      if (field === 'event') {
+        eventName = value || 'message'
+      } else if (field === 'data') {
+        dataLines.push(value)
+      }
+    }
+
+    while (!result) {
+      const chunk = await reader.read()
+      if (chunk.done) {
+        break
+      }
+
+      buffer += decoder.decode(chunk.value, { stream: true })
+      let newline = buffer.indexOf('\n')
+      while (newline !== -1 && !result) {
+        let line = buffer.slice(0, newline)
+        buffer = buffer.slice(newline + 1)
+        if (line.endsWith('\r')) {
+          line = line.slice(0, -1)
+        }
+
+        await processLine(line)
+        newline = buffer.indexOf('\n')
+      }
+    }
+
+    if (!result) {
+      buffer += decoder.decode()
+      if (buffer) {
+        await processLine(buffer.endsWith('\r') ? buffer.slice(0, -1) : buffer)
+      }
+
+      if (dataLines.length) {
+        await dispatch()
+      }
+    }
+
+    if (result) {
+      return result
+    }
+
+    throw new CliError(
+      'TaskTTY daemon event stream ended before the condition was observed',
+      3,
+      'DAEMON_DISCONNECTED'
+    )
+  } catch (error) {
+    if (cancellation === 'timeout') {
+      throw new CliError(
+        `Timed out waiting for terminal ${terminalId} to reach ${condition}`,
+        4,
+        'WAIT_TIMEOUT',
+        {
+          terminalId,
+          until: condition,
+          timeoutMs,
+          lastObservation: observation
+        }
+      )
+    }
+
+    if (cancellation === 'interrupt') {
+      throw new CliError('Interrupted', 130, 'INTERRUPTED')
+    }
+
+    if (error instanceof CliError) {
+      throw error
+    }
+
+    throw new CliError(
+      `TaskTTY daemon event stream failed: ${error instanceof Error ? error.message : String(error)}`,
+      3,
+      'DAEMON_DISCONNECTED'
+    )
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout)
+    }
+
+    process.off('SIGINT', interrupt)
+    controller.abort()
+    await reader?.cancel().catch(() => undefined)
+  }
+}
+
 function print(value: unknown, human?: () => string): void {
   if (jsonOutput) {
     console.log(JSON.stringify(value))
@@ -229,6 +625,8 @@ function usage(): never {
   tasktty worktree remove <id-or-path-or-dot> [--force] [--json]
   tasktty terminal list [--worktree <id-or-path>] [--json]
   tasktty terminal create --worktree <id-or-path-or-dot> --name <name> [-- <command> args...] [--json]
+  tasktty terminal inspect <terminal-id-or-dot> [--json]
+  tasktty terminal wait <terminal-id-or-dot> --until <idle|working|bell|exit> [--timeout <duration>] [--json]
   tasktty terminal delete <terminal-id> [--json]
   tasktty spawn --project <id-or-path-or-dot> --worktree-name <name> --name <terminal-name> [--from-current] [-- <command> args...] [--json]`,
     2
@@ -482,6 +880,63 @@ async function main(args: string[]): Promise<void> {
     print(
       result.terminal,
       () => `Created ${result.terminal.name} (${result.terminal.id})`
+    )
+    return
+  }
+
+  if (group === 'terminal' && action === 'inspect') {
+    const identifier = args.shift()
+    if (!identifier || args.length) {
+      usage()
+    }
+
+    const observation = await inspectTerminal(resolveTerminalId(identifier))
+    print(observation, () => {
+      const { terminal, metadata } = observation
+      const progress = metadata.progress
+        ? `working (${metadata.progress.state}${metadata.progress.value === null ? '' : ` ${metadata.progress.value}%`})`
+        : 'idle'
+      const status =
+        terminal.status === 'exited'
+          ? `exited${terminal.exitCode === null ? '' : ` (${terminal.exitCode})`}`
+          : terminal.status
+      return `Terminal: ${terminal.name} (${terminal.id})\nStatus:   ${status}\nTitle:    ${metadata.title ?? '—'}\nProgress: ${progress}\nStarted:  ${metadata.progressStartedAt ?? '—'}\nCleared:  ${metadata.progressClearedAt ?? '—'}\nBell:     ${metadata.bell ? `${metadata.bell.at} (#${metadata.bell.sequence})` : '—'}`
+    })
+    return
+  }
+
+  if (group === 'terminal' && action === 'wait') {
+    const identifier = args.shift()
+    if (
+      !identifier ||
+      args.filter((value) => value === '--until').length !== 1 ||
+      args.filter((value) => value === '--timeout').length > 1
+    ) {
+      usage()
+    }
+
+    const rawCondition = option(args, '--until', true)!
+    const rawTimeout = option(args, '--timeout')
+    if (args.length) {
+      usage()
+    }
+
+    if (!['idle', 'working', 'bell', 'exit'].includes(rawCondition)) {
+      throw new CliError(
+        '--until must be one of idle, working, bell, or exit',
+        2
+      )
+    }
+
+    const result = await waitForTerminal(
+      resolveTerminalId(identifier),
+      rawCondition as WaitCondition,
+      rawTimeout === undefined ? undefined : parseDuration(rawTimeout)
+    )
+    print(
+      result,
+      () =>
+        `${result.terminal.name} (${result.terminal.id}) reached ${result.condition} at ${result.observedAt}`
     )
     return
   }

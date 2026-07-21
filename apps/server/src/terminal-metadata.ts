@@ -111,21 +111,20 @@ export class TerminalMetadataManager {
 
   get(terminalId: string): TerminalRuntimeMetadata {
     const entry = this.entries.get(terminalId)
-    return {
-      terminalId,
-      title: entry?.title ?? null,
-      progress: entry?.progress ?? null
-    }
+    return entry
+      ? this.metadata(entry)
+      : {
+          terminalId,
+          title: null,
+          progress: null,
+          progressStartedAt: null,
+          progressClearedAt: null,
+          bell: null
+        }
   }
 
   snapshot(): TerminalRuntimeMetadata[] {
-    return [...this.entries.values()].map(
-      ({ terminalId, title, progress }) => ({
-        terminalId,
-        title,
-        progress
-      })
-    )
+    return [...this.entries.values()].map((entry) => this.metadata(entry))
   }
 
   subscribe(terminalId: string, listener: MetadataListener): () => void {
@@ -169,6 +168,9 @@ export class TerminalMetadataManager {
         status: terminal.status,
         title: null,
         progress: null,
+        progressStartedAt: null,
+        progressClearedAt: null,
+        bell: null,
         paneTitle: null,
         currentCommand: null,
         shellCommand: SHELL_COMMANDS.has(
@@ -235,7 +237,10 @@ export class TerminalMetadataManager {
     const cleared = {
       terminalId,
       title: null,
-      progress: null
+      progress: null,
+      progressStartedAt: null,
+      progressClearedAt: null,
+      bell: null
     } satisfies TerminalRuntimeMetadata
     this.listeners.get(terminalId)?.forEach((listener) => listener(cleared))
   }
@@ -330,6 +335,18 @@ export class TerminalMetadataManager {
               entry.observerVersion === version
             ) {
               this.update(entry, { progress })
+            }
+          },
+          onBell: () => {
+            if (
+              this.entries.get(entry.terminalId) === entry &&
+              entry.observerVersion === version
+            ) {
+              entry.bell = {
+                sequence: (entry.bell?.sequence ?? 0) + 1,
+                at: new Date().toISOString()
+              }
+              this.publish(entry)
             }
           },
           onExit: () => {
@@ -500,11 +517,10 @@ export class TerminalMetadataManager {
         : patch.title?.trim().slice(0, 256) || null
     const progress =
       patch.progress === undefined ? entry.progress : patch.progress
-    if (
-      title === entry.title &&
-      progress?.state === entry.progress?.state &&
-      progress?.value === entry.progress?.value
-    ) {
+    const progressChanged =
+      progress?.state !== entry.progress?.state ||
+      progress?.value !== entry.progress?.value
+    if (title === entry.title && !progressChanged) {
       return
     }
 
@@ -512,9 +528,33 @@ export class TerminalMetadataManager {
       entry.titleRevision += 1
     }
 
+    if (progressChanged) {
+      const now = new Date().toISOString()
+      if (entry.progress === null && progress !== null) {
+        entry.progressStartedAt = now
+      } else if (entry.progress !== null && progress === null) {
+        entry.progressClearedAt = now
+      }
+    }
+
     entry.title = title
     entry.progress = progress
-    const metadata = { terminalId: entry.terminalId, title, progress }
+    this.publish(entry)
+  }
+
+  private metadata(entry: TerminalMetadataEntry): TerminalRuntimeMetadata {
+    return {
+      terminalId: entry.terminalId,
+      title: entry.title,
+      progress: entry.progress,
+      progressStartedAt: entry.progressStartedAt,
+      progressClearedAt: entry.progressClearedAt,
+      bell: entry.bell
+    }
+  }
+
+  private publish(entry: TerminalMetadataEntry): void {
+    const metadata = this.metadata(entry)
     this.listeners
       .get(entry.terminalId)
       ?.forEach((listener) => listener(metadata))

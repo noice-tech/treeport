@@ -81,7 +81,10 @@ describe('terminal protocol', () => {
     ).toEqual({
       terminalId: 'term',
       title: 'pi · /repo',
-      progress: { state: 'normal', value: 42 }
+      progress: { state: 'normal', value: 42 },
+      progressStartedAt: null,
+      progressClearedAt: null,
+      bell: null
     })
     expect(
       parseTerminalRuntimeMetadata({
@@ -89,7 +92,28 @@ describe('terminal protocol', () => {
         title: null,
         progress: null
       })
-    ).toEqual({ terminalId: 'term', title: null, progress: null })
+    ).toEqual({
+      terminalId: 'term',
+      title: null,
+      progress: null,
+      progressStartedAt: null,
+      progressClearedAt: null,
+      bell: null
+    })
+    expect(
+      parseTerminalRuntimeMetadata({
+        terminalId: 'term',
+        title: null,
+        progress: null,
+        progressStartedAt: '2026-01-01T00:00:00.000Z',
+        progressClearedAt: '2026-01-01T00:01:00.000Z',
+        bell: { sequence: 2, at: '2026-01-01T00:02:00.000Z' }
+      })
+    ).toMatchObject({
+      progressStartedAt: '2026-01-01T00:00:00.000Z',
+      progressClearedAt: '2026-01-01T00:01:00.000Z',
+      bell: { sequence: 2 }
+    })
     expect(
       parseTerminalRuntimeMetadata({
         terminalId: 'term',

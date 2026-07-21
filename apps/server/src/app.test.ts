@@ -46,6 +46,20 @@ function fixture() {
     })),
     getProjectSnapshot: vi.fn(async (id: string) => ({ id })),
     resolveProject: vi.fn(async () => ({ id: 'p' })),
+    refreshTerminalStatus: vi.fn(async (id: string) => ({
+      id,
+      worktreeId: 'wt_1',
+      name: 'Pi',
+      tmuxSessionName: 'tasktty-term-1',
+      argv: ['pi'],
+      status: 'running',
+      exitCode: null,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z'
+    })),
+    database: {
+      worktree: vi.fn(() => ({ id: 'wt_1', path: '/repo' }))
+    },
     createTerminal: vi.fn(),
     getTerminal: vi.fn(async (id: string) => ({ id, worktreeId: 'wt_1' })),
     createWorktree: vi.fn(async () => ({
@@ -57,10 +71,25 @@ function fixture() {
     removePreview: vi.fn(async () => ({ worktreeId: 'wt_1' })),
     beginRemove: vi.fn(async () => ({ id: 'op_1' }))
   } as unknown as TaskTTYService
+  const runtimeMetadata: TerminalRuntimeMetadata = {
+    terminalId: 'term',
+    title: 'pi · /repo',
+    progress: null,
+    progressStartedAt: null,
+    progressClearedAt: null,
+    bell: null
+  }
   const metadataSnapshot = vi.fn<() => TerminalRuntimeMetadata[]>(() => [])
+  const metadataGet = vi.fn((terminalId: string) => ({
+    ...runtimeMetadata,
+    terminalId
+  }))
+  const metadataTrack = vi.fn(async () => undefined)
   const terminalMetadata = {
     initialize: vi.fn(async () => undefined),
-    snapshot: metadataSnapshot
+    snapshot: metadataSnapshot,
+    get: metadataGet,
+    trackTerminal: metadataTrack
   } as unknown as TerminalMetadataManager
   const app = createApp({
     service,
@@ -69,7 +98,14 @@ function fixture() {
     terminalMetadata,
     webDist: '/missing'
   })
-  return { app, config, metadataSnapshot, service }
+  return {
+    app,
+    config,
+    metadataGet,
+    metadataSnapshot,
+    metadataTrack,
+    service
+  }
 }
 
 describe('HTTP API validation', () => {
@@ -287,6 +323,25 @@ describe('HTTP API validation', () => {
     }
   })
 
+  it('inspects a refreshed terminal with daemon runtime metadata', async () => {
+    const { app, metadataGet, metadataTrack, service } = fixture()
+    const response = await app.request('/api/terminals/term')
+
+    expect(response.status).toBe(200)
+    expect(service.refreshTerminalStatus).toHaveBeenCalledWith('term')
+    expect(metadataTrack).toHaveBeenCalledOnce()
+    expect(metadataGet).toHaveBeenCalledWith('term')
+    expect(await response.json()).toMatchObject({
+      terminal: { id: 'term', status: 'running' },
+      metadata: {
+        terminalId: 'term',
+        title: 'pi · /repo',
+        progress: null,
+        bell: null
+      }
+    })
+  })
+
   it('does not expose removed diagnostics and finish/discard routes', async () => {
     const { app } = fixture()
     expect((await app.request('/api/diagnostics')).status).toBe(404)
@@ -298,15 +353,28 @@ describe('HTTP API validation', () => {
     )
   })
 
-  it('starts SSE with the complete terminal metadata snapshot', async () => {
-    const { app, metadataSnapshot } = fixture()
-    metadataSnapshot.mockReturnValue([
-      {
+  it('starts SSE with the complete metadata snapshot without replaying represented events', async () => {
+    const { app, metadataSnapshot, service } = fixture()
+    metadataSnapshot.mockImplementation(() => {
+      service.events.publish('terminal.metadata', {
         terminalId: 'term',
         title: 'pi · /repo',
-        progress: { state: 'normal', value: 42 }
-      }
-    ])
+        progress: { state: 'normal', value: 42 },
+        progressStartedAt: '2026-01-01T00:00:00.000Z',
+        progressClearedAt: null,
+        bell: { sequence: 2, at: '2026-01-01T00:00:01.000Z' }
+      })
+      return [
+        {
+          terminalId: 'term',
+          title: 'pi · /repo',
+          progress: { state: 'normal', value: 42 },
+          progressStartedAt: '2026-01-01T00:00:00.000Z',
+          progressClearedAt: null,
+          bell: null
+        }
+      ]
+    })
     const abort = new AbortController()
     const response = await app.request('/api/events', { signal: abort.signal })
     const reader = response.body!.getReader()
@@ -317,6 +385,12 @@ describe('HTTP API validation', () => {
     expect(payload).toContain('"terminalId":"term"')
     expect(payload).toContain('"title":"pi · /repo"')
     expect(payload).toContain('"value":42')
+    expect(payload).not.toContain('event: terminal.metadata')
+    const replay = await Promise.race([
+      reader.read().then((chunk) => new TextDecoder().decode(chunk.value)),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 20))
+    ])
+    expect(replay).toBeNull()
 
     abort.abort()
     await reader.cancel()

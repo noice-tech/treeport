@@ -327,13 +327,18 @@ export function createApp({
     })
   )
 
-  app.get('/api/terminals/:terminalId', async (context) =>
-    context.json({
-      terminal: await service.refreshTerminalStatus(
-        context.req.param('terminalId')
-      )
-    })
-  )
+  app.get('/api/terminals/:terminalId', async (context) => {
+    const terminal = await service.refreshTerminalStatus(
+      context.req.param('terminalId')
+    )
+    await metadataReady
+    const worktree = service.database.worktree(terminal.worktreeId)
+    if (worktree) {
+      await metadata.trackTerminal(terminal, worktree)
+    }
+
+    return context.json({ terminal, metadata: metadata.get(terminal.id) })
+  })
 
   app.post('/api/terminals/:terminalId/files', async (context) => {
     await service.getTerminal(context.req.param('terminalId'))
@@ -497,13 +502,16 @@ export function createApp({
           return
         }
 
+        const terminalMetadata = metadata.snapshot()
+        const representedEventCount = queuedEvents.length
         await stream.writeSSE({
           event: 'connected',
           data: JSON.stringify({
             at: new Date().toISOString(),
-            terminalMetadata: metadata.snapshot()
+            terminalMetadata
           })
         })
+        queuedEvents.splice(0, representedEventCount)
         while (queuedEvents.length) {
           await writeEvent(queuedEvents.shift()!)
         }
