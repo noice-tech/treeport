@@ -458,6 +458,44 @@ describe.skipIf(!enabled)(
           )
         ).status
       ).toBe('missing')
+      await expect(fs.stat(linked.path)).rejects.toMatchObject({
+        code: 'ENOENT'
+      })
+      expect(
+        (await new GitAdapter(fixture.runner).listWorktrees(main)).some(
+          (worktree) => worktree.path === linked.path
+        )
+      ).toBe(false)
+
+      const noServer = await fixture.service.createWorktree(
+        project.id,
+        'real-no-tmux-server',
+        'default'
+      )
+      expect(
+        (
+          await fixture.tmux.sessionState(
+            noServer.worktree.tmuxSocketName,
+            'missing-session'
+          )
+        ).status
+      ).toBe('missing')
+      const noServerPreview = await fixture.service.removePreview(
+        noServer.worktree.id
+      )
+      const noServerRemoval = await fixture.service.beginRemove(
+        noServer.worktree.id,
+        {
+          confirmationToken: noServerPreview.confirmationToken,
+          confirmDestructive: noServerPreview.warnings.length > 0
+        }
+      )
+      expect(
+        (await waitOperation(fixture.service, noServerRemoval.id)).status
+      ).toBe('completed')
+      await expect(fs.stat(noServer.worktree.path)).rejects.toMatchObject({
+        code: 'ENOENT'
+      })
       expect(fixture.service.getProject(project.id).worktrees).toHaveLength(1)
       expect(
         (

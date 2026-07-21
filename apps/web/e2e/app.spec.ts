@@ -236,7 +236,11 @@ async function mockApp(
   let removePreviewRequests = 0
   let removePreviewDelayMs = 0
   let removePreviewOverride: Record<string, unknown> = {}
-  let staleRemoveToken: string | null = null
+  let staleRemovePreview: Record<string, unknown> | null = null
+  let removeRequests = 0
+  const removeRequestBodies: unknown[] = []
+  let removeGate: Promise<void> | null = null
+  let releaseRemove: (() => void) | null = null
   let createGate: Promise<void> | null = null
   let releaseCreate: (() => void) | null = null
   let failCreate = false
@@ -414,12 +418,11 @@ async function mockApp(
     }
 
     if (pathname.endsWith('/remove')) {
-      if (staleRemoveToken) {
-        removePreviewOverride = {
-          ...removePreviewOverride,
-          confirmationToken: staleRemoveToken
-        }
-        staleRemoveToken = null
+      removeRequests += 1
+      removeRequestBodies.push(route.request().postDataJSON())
+      if (staleRemovePreview) {
+        removePreviewOverride = staleRemovePreview
+        staleRemovePreview = null
         await route.fulfill({
           status: 409,
           json: {
@@ -433,6 +436,13 @@ async function mockApp(
         return
       }
 
+      if (removeGate) {
+        await removeGate
+      }
+
+      removeGate = null
+      releaseRemove = null
+      state.worktrees[1]!.status = 'cleaning'
       await route.fulfill({
         status: 202,
         json: { operation: { id: 'op_1', status: 'pending' } }
@@ -458,8 +468,16 @@ async function mockApp(
     setRemovePreviewDelay: (value: number) => {
       removePreviewDelayMs = value
     },
-    staleNextRemoveWithToken: (value: string) => {
-      staleRemoveToken = value
+    removeRequests: () => removeRequests,
+    removeRequestBodies: () => [...removeRequestBodies],
+    staleNextRemoveWithPreview: (value: Record<string, unknown>) => {
+      staleRemovePreview = value
+    },
+    delayNextRemove: () => {
+      removeGate = new Promise<void>((resolve) => {
+        releaseRemove = resolve
+      })
+      return () => releaseRemove?.()
     },
     delayNextCreate: () => {
       createGate = new Promise<void>((resolve) => {
@@ -1051,48 +1069,159 @@ test.describe('desktop worktree terminal UI', () => {
     })
   })
 
-  test('requires a fresh removal preview and refreshes stale confirmations in place', async ({
+  test('removes a clean worktree without a dialog and blocks repeated requests', async ({
     page
   }) => {
     const mocked = await mockApp(page)
-    const openRemove = async () => {
-      await page.locator('.worktree-row').filter({ hasText: 'topic' }).hover()
-      await page.getByRole('button', { name: 'Remove topic' }).click()
-    }
+    mocked.setRemovePreviewDelay(200)
+    const releaseRemove = mocked.delayNextRemove()
+    const removeButton = page.getByRole('button', { name: 'Remove topic' })
+    await page.locator('.worktree-row').filter({ hasText: 'topic' }).hover()
+    await removeButton.evaluate((button: HTMLButtonElement) => {
+      button.click()
+      button.click()
+    })
 
-    await openRemove()
+    await expect(page.getByText('Preparing removal…')).toBeVisible()
+    await expect(removeButton).toBeDisabled()
+    await expect.poll(() => mocked.removePreviewRequests()).toBe(1)
+    await expect(page.getByText('Removing…')).toBeVisible()
+    await removeButton.evaluate((button: HTMLButtonElement) => {
+      button.click()
+      button.click()
+    })
+    await expect.poll(() => mocked.removeRequests()).toBe(1)
     await expect(
-      page.getByRole('button', { name: 'Remove worktree' })
-    ).toBeEnabled()
-    await page.getByRole('button', { name: 'Close', exact: true }).click()
+      page.getByRole('heading', { name: 'Remove worktree' })
+    ).toHaveCount(0)
+    expect(mocked.removeRequestBodies()).toEqual([
+      {
+        confirmationToken: 'a'.repeat(64),
+        confirmDestructive: false
+      }
+    ])
+    releaseRemove()
+  })
 
-    mocked.setRemovePreviewDelay(250)
-    const previewsBeforeReopen = mocked.removePreviewRequests()
-    await openRemove()
-    await expect(
-      page.getByRole('button', { name: 'Remove worktree' })
-    ).toBeDisabled()
-    await expect
-      .poll(() => mocked.removePreviewRequests())
-      .toBeGreaterThan(previewsBeforeReopen)
-    await expect(
-      page.getByRole('button', { name: 'Remove worktree' })
-    ).toBeEnabled()
-    mocked.setRemovePreviewDelay(0)
+  test('retries one stale clean preview without opening a dialog', async ({
+    page
+  }) => {
+    const mocked = await mockApp(page)
+    mocked.staleNextRemoveWithPreview({
+      confirmationToken: 'c'.repeat(64)
+    })
+    await page.locator('.worktree-row').filter({ hasText: 'topic' }).hover()
+    await page.getByRole('button', { name: 'Remove topic' }).click()
 
-    const previewsBeforeStale = mocked.removePreviewRequests()
-    mocked.staleNextRemoveWithToken('c'.repeat(64))
-    await page.getByRole('button', { name: 'Remove worktree' }).click()
-    await expect
-      .poll(() => mocked.removePreviewRequests())
-      .toBeGreaterThan(previewsBeforeStale)
+    await expect.poll(() => mocked.removeRequests()).toBe(2)
+    expect(mocked.removeRequestBodies()).toEqual([
+      {
+        confirmationToken: 'a'.repeat(64),
+        confirmDestructive: false
+      },
+      {
+        confirmationToken: 'c'.repeat(64),
+        confirmDestructive: false
+      }
+    ])
+    await expect(
+      page.getByRole('heading', { name: 'Remove worktree' })
+    ).toHaveCount(0)
+  })
+
+  test('refreshes a stale clean preview and requires confirmation when it becomes dirty', async ({
+    page
+  }) => {
+    const mocked = await mockApp(page)
+    mocked.staleNextRemoveWithPreview({
+      dirty: {
+        dirty: true,
+        staged: 0,
+        unstaged: 0,
+        untracked: 1,
+        conflicts: 0,
+        total: 1
+      },
+      forceRequired: true,
+      warnings: ['1 untracked file(s) will be lost'],
+      confirmationToken: 'c'.repeat(64)
+    })
+    await page.locator('.worktree-row').filter({ hasText: 'topic' }).hover()
+    await page.getByRole('button', { name: 'Remove topic' }).click()
+
     await expect(
       page.getByRole('heading', { name: 'Remove worktree' })
     ).toBeVisible()
     await expect(
-      page.getByRole('button', { name: 'Remove worktree' })
+      page.getByText('1 untracked file(s) will be lost')
+    ).toBeVisible()
+    expect(mocked.removeRequests()).toBe(1)
+    const secondRemove = page.waitForRequest(
+      (request) =>
+        request.method() === 'POST' &&
+        new URL(request.url()).pathname.endsWith('/remove')
+    )
+    await page.getByRole('button', { name: 'Remove anyway' }).click()
+    expect((await secondRemove).postDataJSON()).toEqual({
+      confirmationToken: 'c'.repeat(64),
+      confirmDestructive: true
+    })
+    await expect.poll(() => mocked.removeRequests()).toBe(2)
+  })
+
+  test('renders authoritative removal progress and a retryable failure', async ({
+    page
+  }) => {
+    const mocked = await mockApp(page)
+    const requestsBeforeStarted = mocked.projectRequests()
+    mocked.state.worktrees[1]!.status = 'cleaning'
+    await page.evaluate(() =>
+      (window as any).__eventSource.emit('remove.started')
+    )
+    await expect
+      .poll(() => mocked.projectRequests())
+      .toBeGreaterThan(requestsBeforeStarted)
+    await expect(page.getByText('Removing…')).toBeVisible()
+    await expect(
+      page.getByRole('button', { name: 'Remove topic' })
+    ).toBeDisabled()
+
+    mocked.state.worktrees[1]!.status = 'cleanup_failed'
+    mocked.state.worktrees[1]!.cleanupError =
+      'Terminals were stopped, but Git removal failed'
+    await page.evaluate(() =>
+      (window as any).__eventSource.emit('remove.failed')
+    )
+    await expect(page.getByText(/Removal failed:/)).toContainText(
+      'Git removal failed'
+    )
+    const retry = page.getByRole('button', {
+      name: 'Retry removal for topic'
+    })
+    await expect(retry).toBeEnabled()
+    await retry.click()
+    await expect.poll(() => mocked.removeRequests()).toBe(1)
+
+    mocked.state.worktrees[1]!.status = 'cleanup_failed'
+    mocked.state.worktrees[1]!.cleanupError =
+      'Terminals were stopped, but Git removal failed again'
+    await page.evaluate(() =>
+      (window as any).__eventSource.emit('remove.failed')
+    )
+    await expect(
+      page.getByRole('button', { name: 'Retry removal for topic' })
     ).toBeEnabled()
-    await expect(page.getByRole('alert')).toHaveCount(0)
+
+    mocked.state.worktrees[1]!.cleanupError =
+      'Manual cleanup required: the checkout Git marker changed'
+    await page.evaluate(() =>
+      (window as any).__eventSource.emit('remove.failed')
+    )
+    await expect(
+      page.getByRole('button', {
+        name: 'Manual cleanup required for topic'
+      })
+    ).toBeDisabled()
   })
 
   test('closes immediately, shows the typed name, and selects the created terminal', async ({
