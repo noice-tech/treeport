@@ -30,6 +30,7 @@ function fixture(authToken: string | null = null) {
       id,
       color
     })),
+    getProjectSnapshot: vi.fn(async (id: string) => ({ id })),
     resolveProject: vi.fn(async () => ({ id: 'p' })),
     createTerminal: vi.fn(),
     createWorktree: vi.fn(async () => ({

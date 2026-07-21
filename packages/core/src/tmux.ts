@@ -25,6 +25,38 @@ export interface TmuxSessionState {
   exitCode: number | null
 }
 
+export interface TmuxTerminalSession {
+  id: string
+  worktreeId: string
+  name: string
+  sessionName: string
+  argv: string[]
+  status: Exclude<TerminalStatus, 'missing'>
+  exitCode: number | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface TmuxTerminalMetadata {
+  terminalId: string
+  worktreeId: string
+  name: string
+  argv: string[]
+  createdAt: string
+  updatedAt: string
+}
+
+const encodeMetadata = (value: unknown): string =>
+  Buffer.from(JSON.stringify(value), 'utf8').toString('base64url')
+
+function decodeMetadata(value: string): unknown {
+  if (!value) {
+    return undefined
+  }
+
+  return JSON.parse(Buffer.from(value, 'base64url').toString('utf8'))
+}
+
 export const TMUX_SCROLL_EXIT_SEQUENCE = '\u001b[9000~'
 const TMUX_SCROLL_EXIT_KEY = TMUX_SCROLL_EXIT_SEQUENCE.replace(
   '\u001b',
@@ -92,6 +124,8 @@ export class TmuxAdapter {
     sessionName: string
     terminalId: string
     worktreeId: string
+    name: string
+    createdAt: string
     cwd: string
     argv: string[]
     env: Record<string, string>
@@ -138,20 +172,14 @@ export class TmuxAdapter {
       })
       created = true
       await this.configureServer(input.socketName)
-      await Promise.all([
-        this.setMetadata(
-          input.socketName,
-          input.sessionName,
-          '@tasktty-terminal-id',
-          input.terminalId
-        ),
-        this.setMetadata(
-          input.socketName,
-          input.sessionName,
-          '@tasktty-worktree-id',
-          input.worktreeId
-        )
-      ])
+      await this.setTerminalMetadata(input.socketName, input.sessionName, {
+        terminalId: input.terminalId,
+        worktreeId: input.worktreeId,
+        name: input.name,
+        argv: input.argv,
+        createdAt: input.createdAt,
+        updatedAt: input.createdAt
+      })
     } catch (error) {
       if (created) {
         await this.killSession(
@@ -176,25 +204,156 @@ export class TmuxAdapter {
     })
   }
 
-  private async setMetadata(
+  private async setTerminalMetadata(
     socketName: string,
     sessionName: string,
-    key: string,
-    value: string
+    metadata: TmuxTerminalMetadata
   ): Promise<void> {
-    await runChecked(this.runner, {
+    const values = [
+      ['@tasktty-name', encodeMetadata(metadata.name)],
+      ['@tasktty-argv', encodeMetadata(metadata.argv)],
+      ['@tasktty-created-at', encodeMetadata(metadata.createdAt)],
+      ['@tasktty-updated-at', encodeMetadata(metadata.updatedAt)],
+      ['@tasktty-worktree-id', metadata.worktreeId],
+      ['@tasktty-terminal-id', metadata.terminalId]
+    ] as const
+    for (const [key, value] of values) {
+      await runChecked(this.runner, {
+        executable: this.executable,
+        args: [
+          ...this.base(socketName),
+          'set-option',
+          '-t',
+          sessionName,
+          key,
+          value
+        ],
+        env: this.environment(),
+        timeoutMs: 10_000
+      })
+    }
+  }
+
+  async renameTerminal(
+    socketName: string,
+    sessionName: string,
+    name: string,
+    updatedAt: string
+  ): Promise<void> {
+    for (const [key, value] of [
+      ['@tasktty-updated-at', encodeMetadata(updatedAt)],
+      ['@tasktty-name', encodeMetadata(name)]
+    ] as const) {
+      await runChecked(this.runner, {
+        executable: this.executable,
+        args: [
+          ...this.base(socketName),
+          'set-option',
+          '-t',
+          sessionName,
+          key,
+          value
+        ],
+        env: this.environment(),
+        timeoutMs: 10_000
+      })
+    }
+  }
+
+  async listSessions(socketName: string): Promise<TmuxTerminalSession[]> {
+    const result = await this.runner.run({
       executable: this.executable,
       args: [
         ...this.base(socketName),
-        'set-option',
-        '-t',
-        sessionName,
-        key,
-        value
+        'list-panes',
+        '-a',
+        '-F',
+        '#{session_name}\t#{@tasktty-terminal-id}\t#{@tasktty-worktree-id}\t#{@tasktty-name}\t#{@tasktty-argv}\t#{@tasktty-created-at}\t#{@tasktty-updated-at}\t#{session_created}\t#{pane_dead}\t#{pane_dead_status}'
       ],
       env: this.environment(),
       timeoutMs: 10_000
     })
+    if (result.exitCode !== 0) {
+      if (
+        /no server running|no sessions|failed to connect|error connecting to/i.test(
+          result.stderr
+        )
+      ) {
+        return []
+      }
+
+      throw new Error(
+        result.stderr.trim() || 'Failed to list terminal sessions'
+      )
+    }
+
+    const sessions = new Map<string, TmuxTerminalSession>()
+    for (const line of result.stdout.split('\n')) {
+      if (!line) {
+        continue
+      }
+
+      const [
+        sessionName,
+        terminalId,
+        worktreeId,
+        encodedName,
+        encodedArgv,
+        encodedCreatedAt,
+        encodedUpdatedAt,
+        sessionCreated,
+        paneDead,
+        paneDeadStatus
+      ] = line.split('\t')
+      if (
+        !sessionName ||
+        !terminalId ||
+        !worktreeId ||
+        sessions.has(sessionName)
+      ) {
+        continue
+      }
+
+      try {
+        const name = decodeMetadata(encodedName ?? '')
+        const argv = decodeMetadata(encodedArgv ?? '')
+        const createdAt = decodeMetadata(encodedCreatedAt ?? '')
+        const updatedAt = decodeMetadata(encodedUpdatedAt ?? '')
+        if (
+          (name !== undefined && typeof name !== 'string') ||
+          (argv !== undefined &&
+            (!Array.isArray(argv) ||
+              !argv.every((value) => typeof value === 'string'))) ||
+          (createdAt !== undefined && typeof createdAt !== 'string') ||
+          (updatedAt !== undefined && typeof updatedAt !== 'string')
+        ) {
+          continue
+        }
+
+        const fallbackCreatedAt =
+          typeof createdAt === 'string'
+            ? createdAt
+            : new Date(Number(sessionCreated) * 1_000).toISOString()
+        const dead = paneDead === '1'
+        const exitCode =
+          dead && paneDeadStatus ? Number.parseInt(paneDeadStatus, 10) : null
+        sessions.set(sessionName, {
+          id: terminalId,
+          worktreeId,
+          name: name ?? sessionName,
+          sessionName,
+          argv: argv ?? [],
+          status: dead ? 'exited' : 'running',
+          exitCode: Number.isNaN(exitCode) ? null : exitCode,
+          createdAt: createdAt ?? fallbackCreatedAt,
+          updatedAt: updatedAt ?? createdAt ?? fallbackCreatedAt
+        })
+      } catch {
+        continue
+      }
+    }
+
+    return [...sessions.values()]
   }
 
   async sessionState(
@@ -318,6 +477,9 @@ export class TmuxAdapter {
   }
 
   async killServer(socketName: string): Promise<void> {
+    const terminalIds = (await this.listSessions(socketName)).map(
+      (terminal) => terminal.id
+    )
     const result = await this.runner.run({
       executable: this.executable,
       args: [...this.base(socketName), 'kill-server'],
@@ -332,5 +494,13 @@ export class TmuxAdapter {
         result.stderr.trim() || 'Failed to kill worktree tmux server'
       )
     }
+
+    await Promise.all(
+      terminalIds.map((terminalId) =>
+        fs
+          .unlink(path.join(this.specsDir, `${terminalId}.json`))
+          .catch(() => undefined)
+      )
+    )
   }
 }

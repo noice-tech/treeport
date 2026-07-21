@@ -65,13 +65,20 @@ function fixture(initialTerminals: TerminalRecord[]) {
   const service = {
     events,
     database: {
-      terminal: (terminalId: string) => terminals.get(terminalId),
       worktree: (worktreeId: string) =>
         worktreeId === worktree.id ? worktree : undefined
     },
     listProjects: vi.fn(async () => [
       { worktrees: [{ ...worktree, terminals: [...terminals.values()] }] }
     ]),
+    getTerminal: vi.fn(async (terminalId: string) => {
+      const item = terminals.get(terminalId)
+      if (!item) {
+        throw new Error('missing')
+      }
+
+      return item
+    }),
     refreshTerminalStatus
   } as unknown as TaskTTYService
   const sessionTitle = vi.fn(

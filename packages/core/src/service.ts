@@ -86,6 +86,8 @@ export class TaskTTYService {
   private readonly worktreeLocks = new Set<string>()
   private readonly projectLocks = new Set<string>()
   private readonly removeConfirmationKey = crypto.randomBytes(32)
+  private readonly terminalStates = new Map<string, TerminalRecord>()
+  private readonly terminalIdsByWorktree = new Map<string, Set<string>>()
   private projectsSnapshotInFlight: Promise<ProjectRecord[]> | null = null
 
   constructor(private readonly deps: ServiceDependencies) {
@@ -132,6 +134,17 @@ export class TaskTTYService {
     await this.reconcile()
   }
 
+  private invalidateProjectsSnapshot(): void {
+    this.projectsSnapshotInFlight = null
+  }
+
+  private clearWorktreeTerminalState(worktreeId: string): void {
+    for (const terminalId of this.terminalIdsByWorktree.get(worktreeId) ?? []) {
+      this.terminalStates.delete(terminalId)
+    }
+    this.terminalIdsByWorktree.delete(worktreeId)
+  }
+
   listProjects(): Promise<ProjectRecord[]> {
     if (this.projectsSnapshotInFlight) {
       return this.projectsSnapshotInFlight
@@ -153,25 +166,90 @@ export class TaskTTYService {
     await Promise.all(
       projects.flatMap((project) =>
         project.worktrees.map(async (worktree) => {
-          worktree.dirty = await this.deps.git
-            .dirtyState(worktree.path)
-            .catch(() => null)
-          if (!this.worktreeLocks.has(worktree.id)) {
-            await this.reconcileWorktreeTerminals(worktree)
-          }
+          const [dirty, terminals] = await Promise.all([
+            this.deps.git.dirtyState(worktree.path).catch(() => null),
+            this.listWorktreeTerminals(worktree)
+          ])
+          worktree.dirty = dirty
+          worktree.terminals = terminals
         })
       )
     )
-    return this.deps.database.projects().map((project) => ({
-      ...project,
-      worktrees: project.worktrees.map((worktree) => ({
-        ...worktree,
-        dirty:
-          projects
-            .flatMap((item) => item.worktrees)
-            .find((item) => item.id === worktree.id)?.dirty ?? null
+    return projects
+  }
+
+  private async listWorktreeTerminals(
+    worktree: WorktreeRecord
+  ): Promise<TerminalRecord[]> {
+    const terminals = (
+      await this.deps.tmux.listSessions(worktree.tmuxSocketName)
+    )
+      .filter((terminal) => terminal.worktreeId === worktree.id)
+      .map((terminal) => ({
+        id: terminal.id,
+        worktreeId: terminal.worktreeId,
+        name: terminal.name,
+        tmuxSessionName: terminal.sessionName,
+        argv: terminal.argv,
+        status: terminal.status,
+        exitCode: terminal.exitCode,
+        createdAt: terminal.createdAt,
+        updatedAt: terminal.updatedAt
       }))
-    }))
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
+    if (this.worktreeLocks.has(worktree.id)) {
+      return terminals
+    }
+
+    const previousIds = this.terminalIdsByWorktree.get(worktree.id)
+    const currentIds = new Set(terminals.map((terminal) => terminal.id))
+    for (const terminal of terminals) {
+      const previous = this.terminalStates.get(terminal.id)
+      this.terminalStates.set(terminal.id, terminal)
+      if (
+        previous &&
+        (previous.status !== terminal.status ||
+          previous.exitCode !== terminal.exitCode)
+      ) {
+        this.events.publish('terminal.updated', {
+          worktreeId: worktree.id,
+          terminalId: terminal.id
+        })
+      }
+    }
+    for (const terminalId of previousIds ?? []) {
+      if (!currentIds.has(terminalId)) {
+        this.terminalStates.delete(terminalId)
+        this.events.publish('terminal.removed', {
+          worktreeId: worktree.id,
+          terminalId
+        })
+      }
+    }
+    this.terminalIdsByWorktree.set(worktree.id, currentIds)
+    return terminals
+  }
+
+  async getProjectSnapshot(projectId: string): Promise<ProjectRecord> {
+    const project = (await this.listProjects()).find(
+      (candidate) => candidate.id === projectId
+    )
+    if (!project) {
+      throw new DomainError('PROJECT_NOT_FOUND', 'Project not found', 404)
+    }
+
+    return project
+  }
+
+  async getWorktreeSnapshot(worktreeId: string): Promise<WorktreeRecord> {
+    const worktree = (await this.listProjects())
+      .flatMap((project) => project.worktrees)
+      .find((candidate) => candidate.id === worktreeId)
+    if (!worktree) {
+      throw new DomainError('WORKTREE_NOT_FOUND', 'Worktree not found', 404)
+    }
+
+    return worktree
   }
 
   getProject(projectId: string): ProjectRecord {
@@ -191,6 +269,7 @@ export class TaskTTYService {
     this.deps.database.connection
       .prepare('UPDATE projects SET color = ?, updated_at = ? WHERE id = ?')
       .run(color, now(), projectId)
+    this.invalidateProjectsSnapshot()
     this.events.publish('project.updated', { projectId })
     return this.getProject(projectId)
   }
@@ -204,13 +283,55 @@ export class TaskTTYService {
     return worktree
   }
 
-  getTerminal(terminalId: string): TerminalRecord {
-    const terminal = this.deps.database.terminal(terminalId)
-    if (!terminal) {
-      throw new DomainError('TERMINAL_NOT_FOUND', 'Terminal not found', 404)
+  async getTerminal(terminalId: string): Promise<TerminalRecord> {
+    const known = this.terminalStates.get(terminalId)
+    if (known) {
+      const worktree = this.deps.database.worktree(known.worktreeId)
+      if (worktree) {
+        const terminal = (await this.listWorktreeTerminals(worktree)).find(
+          (candidate) => candidate.id === terminalId
+        )
+        if (terminal) {
+          return terminal
+        }
+      }
     }
 
-    return terminal
+    const inventories = await Promise.allSettled(
+      this.deps.database
+        .projects()
+        .flatMap((project) => project.worktrees)
+        .map((worktree) => this.listWorktreeTerminals(worktree))
+    )
+    const matches = inventories
+      .filter(
+        (inventory): inventory is PromiseFulfilledResult<TerminalRecord[]> =>
+          inventory.status === 'fulfilled'
+      )
+      .flatMap((inventory) => inventory.value)
+      .filter((terminal) => terminal.id === terminalId)
+
+    if (matches.length > 1) {
+      throw new DomainError(
+        'TERMINAL_ID_CONFLICT',
+        'Terminal ID is present in more than one tmux server',
+        500
+      )
+    }
+
+    if (matches[0]) {
+      return matches[0]
+    }
+
+    const failure = inventories.find(
+      (inventory): inventory is PromiseRejectedResult =>
+        inventory.status === 'rejected'
+    )
+    if (failure) {
+      throw failure.reason
+    }
+
+    throw new DomainError('TERMINAL_NOT_FOUND', 'Terminal not found', 404)
   }
 
   getOperation(operationId: string): OperationRecord {
@@ -347,6 +468,7 @@ export class TaskTTYService {
         )
         .run(defaultBranch, now(), projectId)
       await this.reconcile()
+      this.invalidateProjectsSnapshot()
       this.events.publish('project.updated', { projectId })
       return this.getProject(projectId)
     } finally {
@@ -423,11 +545,6 @@ export class TaskTTYService {
             "UPDATE worktrees SET status='removed', cleanup_error=NULL, updated_at=? WHERE id=?"
           )
           .run(timestamp, worktree.id)
-        this.deps.database.connection
-          .prepare(
-            "UPDATE terminals SET status='missing', updated_at=? WHERE worktree_id=?"
-          )
-          .run(timestamp, worktree.id)
         if (
           worktree.status === 'cleaning' ||
           worktree.status === 'cleanup_failed'
@@ -457,6 +574,7 @@ export class TaskTTYService {
       }
     })
     transaction()
+    this.invalidateProjectsSnapshot()
   }
 
   async previewWorktreePath(
@@ -680,6 +798,7 @@ export class TaskTTYService {
           : null
       }
 
+      this.invalidateProjectsSnapshot()
       return {
         worktree: this.getWorktree(worktree.id),
         terminal,
@@ -712,28 +831,14 @@ export class TaskTTYService {
     const sessionName = generateTmuxSessionName()
     const commandArgv = argv ? [...argv] : [this.deps.config.shell, '-l']
     const timestamp = now()
-    let inserted = false
     try {
-      this.deps.database.connection
-        .prepare(
-          `INSERT INTO terminals(id,worktree_id,name,tmux_session_name,argv_json,status,exit_code,created_at,updated_at)
-           VALUES(?,?,?,?,?,'running',NULL,?,?)`
-        )
-        .run(
-          terminalId,
-          worktreeId,
-          name,
-          sessionName,
-          JSON.stringify(commandArgv),
-          timestamp,
-          timestamp
-        )
-      inserted = true
       await this.deps.tmux.createSession({
         socketName: worktree.tmuxSocketName,
         sessionName,
         terminalId,
         worktreeId,
+        name,
+        createdAt: timestamp,
         cwd: worktree.path,
         argv: commandArgv,
         env: {
@@ -746,33 +851,30 @@ export class TaskTTYService {
         ...(setup?.error ? { setupError: setup.error } : {})
       })
     } catch (error) {
-      if (inserted) {
-        const state = await this.deps.tmux
-          .sessionState(worktree.tmuxSocketName, sessionName)
-          .catch(() => ({ status: 'missing' as const, exitCode: null }))
-        this.deps.database.connection
-          .prepare(
-            'UPDATE terminals SET status=?,exit_code=?,updated_at=? WHERE id=?'
-          )
-          .run(state.status, state.exitCode, now(), terminalId)
-        this.events.publish('terminal.created', {
-          projectId: project.id,
-          worktreeId,
-          terminalId,
-          creationFailed: true
-        })
-      }
-
       throw new DomainError(
         'TERMINAL_CREATE_FAILED',
         error instanceof Error ? error.message : String(error),
-        500,
-        inserted ? { terminalId } : undefined
+        500
       )
     } finally {
       this.worktreeLocks.delete(worktreeId)
     }
-    const terminal = this.getTerminal(terminalId)
+    const terminal: TerminalRecord = {
+      id: terminalId,
+      worktreeId,
+      name,
+      tmuxSessionName: sessionName,
+      argv: commandArgv,
+      status: 'running',
+      exitCode: null,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    }
+    this.terminalStates.set(terminalId, terminal)
+    const terminalIds = this.terminalIdsByWorktree.get(worktreeId) ?? new Set()
+    terminalIds.add(terminalId)
+    this.terminalIdsByWorktree.set(worktreeId, terminalIds)
+    this.invalidateProjectsSnapshot()
     this.events.publish('terminal.created', {
       projectId: project.id,
       worktreeId,
@@ -782,48 +884,68 @@ export class TaskTTYService {
   }
 
   async refreshTerminalStatus(terminalId: string): Promise<TerminalRecord> {
-    const terminal = this.getTerminal(terminalId)
+    const terminal =
+      this.terminalStates.get(terminalId) ??
+      (await this.getTerminal(terminalId))
     const worktree = this.getWorktree(terminal.worktreeId)
     const state = await this.deps.tmux.sessionState(
       worktree.tmuxSocketName,
       terminal.tmuxSessionName
     )
+    if (state.status === 'missing') {
+      this.terminalStates.delete(terminalId)
+      this.terminalIdsByWorktree.get(worktree.id)?.delete(terminalId)
+      this.invalidateProjectsSnapshot()
+      this.events.publish('terminal.removed', {
+        worktreeId: worktree.id,
+        terminalId
+      })
+      throw new DomainError('TERMINAL_NOT_FOUND', 'Terminal not found', 404)
+    }
+
+    const refreshed = {
+      ...terminal,
+      status: state.status,
+      exitCode: state.exitCode
+    }
+    this.terminalStates.set(terminalId, refreshed)
     if (
       state.status !== terminal.status ||
       state.exitCode !== terminal.exitCode
     ) {
-      this.deps.database.connection
-        .prepare(
-          'UPDATE terminals SET status=?,exit_code=?,updated_at=? WHERE id=?'
-        )
-        .run(state.status, state.exitCode, now(), terminalId)
+      this.invalidateProjectsSnapshot()
       this.events.publish('terminal.updated', {
         worktreeId: worktree.id,
         terminalId
       })
     }
 
-    return this.getTerminal(terminalId)
+    return refreshed
   }
 
   async renameTerminal(
     terminalId: string,
     name: string
   ): Promise<TerminalRecord> {
-    this.getTerminal(terminalId)
-    this.deps.database.connection
-      .prepare('UPDATE terminals SET name=?, updated_at=? WHERE id=?')
-      .run(name, now(), terminalId)
-    const terminal = this.getTerminal(terminalId)
+    const terminal = await this.getTerminal(terminalId)
+    const worktree = this.getWorktree(terminal.worktreeId)
+    await this.deps.tmux.renameTerminal(
+      worktree.tmuxSocketName,
+      terminal.tmuxSessionName,
+      name,
+      now()
+    )
+    const renamed = await this.getTerminal(terminalId)
+    this.invalidateProjectsSnapshot()
     this.events.publish('terminal.updated', {
       worktreeId: terminal.worktreeId,
       terminalId
     })
-    return terminal
+    return renamed
   }
 
   async deleteTerminal(terminalId: string): Promise<void> {
-    const terminal = this.getTerminal(terminalId)
+    const terminal = await this.getTerminal(terminalId)
     const worktree = this.deps.database.worktree(terminal.worktreeId)
     if (!worktree) {
       throw new DomainError('WORKTREE_NOT_FOUND', 'Worktree not found', 404)
@@ -840,12 +962,12 @@ export class TaskTTYService {
         terminal.tmuxSessionName,
         terminal.id
       )
-      this.deps.database.connection
-        .prepare('DELETE FROM terminals WHERE id=?')
-        .run(terminalId)
     } finally {
       this.worktreeLocks.delete(worktree.id)
     }
+    this.terminalStates.delete(terminalId)
+    this.terminalIdsByWorktree.get(worktree.id)?.delete(terminalId)
+    this.invalidateProjectsSnapshot()
     this.events.publish('terminal.removed', {
       worktreeId: worktree.id,
       terminalId
@@ -881,6 +1003,7 @@ export class TaskTTYService {
         now(),
         worktreeId
       )
+    this.invalidateProjectsSnapshot()
     this.events.publish('worktree.updated', { worktreeId })
     return pr
   }
@@ -888,7 +1011,7 @@ export class TaskTTYService {
   private async prepareRemovePreview(
     worktreeId: string
   ): Promise<{ preview: RemovePreview; statusFingerprint: string }> {
-    const worktree = this.getWorktree(worktreeId)
+    const worktree = await this.getWorktreeSnapshot(worktreeId)
     const project = this.getProject(worktree.projectId)
     const live = (
       await this.deps.git.listWorktrees(project.repositoryPath)
@@ -1057,6 +1180,7 @@ export class TaskTTYService {
           .run(timestamp, worktreeId)
       })
       transaction()
+      this.invalidateProjectsSnapshot()
       operationStarted = true
       setTimeout(
         () => void this.executeRemove(operationId, preview.forceRequired),
@@ -1113,11 +1237,6 @@ export class TaskTTYService {
           .run(timestamp, worktree.id)
         this.deps.database.connection
           .prepare(
-            "UPDATE terminals SET status='missing',updated_at=? WHERE worktree_id=?"
-          )
-          .run(timestamp, worktree.id)
-        this.deps.database.connection
-          .prepare(
             "UPDATE operations SET status='completed',result_json=?,updated_at=? WHERE id=?"
           )
           .run(
@@ -1132,6 +1251,8 @@ export class TaskTTYService {
           )
       })
       transaction()
+      this.clearWorktreeTerminalState(worktree.id)
+      this.invalidateProjectsSnapshot()
       if (worktree.managedWrapperPath) {
         await fs.rmdir(worktree.managedWrapperPath).catch(() => undefined)
       }
@@ -1166,7 +1287,7 @@ export class TaskTTYService {
           .run(message, timestamp, operationId)
       })
       transaction()
-      await this.reconcileWorktreeTerminals(this.getWorktree(worktree.id))
+      this.invalidateProjectsSnapshot()
       this.events.publish('remove.failed', {
         operationId,
         worktreeId: worktree.id,
@@ -1225,6 +1346,10 @@ export class TaskTTYService {
       this.deps.database.connection
         .prepare('DELETE FROM projects WHERE id=?')
         .run(projectId)
+      for (const worktree of project.worktrees) {
+        this.clearWorktreeTerminalState(worktree.id)
+      }
+      this.invalidateProjectsSnapshot()
     } finally {
       for (const worktreeId of lockedWorktrees) {
         this.worktreeLocks.delete(worktreeId)
@@ -1251,7 +1376,6 @@ export class TaskTTYService {
         await this.deps.tmux
           .configureServer(worktree.tmuxSocketName)
           .catch(() => undefined)
-        await this.reconcileWorktreeTerminals(worktree)
       }
     }
   }
@@ -1278,31 +1402,6 @@ export class TaskTTYService {
             'UPDATE worktrees SET managed_wrapper_path=NULL,updated_at=? WHERE id=?'
           )
           .run(now(), worktree.id)
-      }
-    }
-  }
-
-  private async reconcileWorktreeTerminals(
-    worktree: WorktreeRecord
-  ): Promise<void> {
-    for (const terminal of worktree.terminals) {
-      const state = await this.deps.tmux.sessionState(
-        worktree.tmuxSocketName,
-        terminal.tmuxSessionName
-      )
-      if (
-        state.status !== terminal.status ||
-        state.exitCode !== terminal.exitCode
-      ) {
-        this.deps.database.connection
-          .prepare(
-            'UPDATE terminals SET status=?,exit_code=?,updated_at=? WHERE id=?'
-          )
-          .run(state.status, state.exitCode, now(), terminal.id)
-        this.events.publish('terminal.updated', {
-          worktreeId: worktree.id,
-          terminalId: terminal.id
-        })
       }
     }
   }
