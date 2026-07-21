@@ -7,6 +7,7 @@ import { runChecked } from './command.js'
 
 export interface GitWorktreeInfo {
   path: string
+  gitWorktreeKey: string | null
   head: string | null
   branch: string | null
   bare: boolean
@@ -47,6 +48,7 @@ export function parseWorktreePorcelain(output: string): GitWorktreeInfo[] {
     const ref = values.get('branch')
     return {
       path: worktreePath,
+      gitWorktreeKey: null,
       head: values.get('HEAD') ?? null,
       branch: ref?.replace(/^refs\/heads\//, '') ?? null,
       bare: flags.has('bare'),
@@ -136,10 +138,26 @@ export class GitAdapter {
     const result = await this.checked(cwd, ['worktree', 'list', '--porcelain'])
     const parsed = parseWorktreePorcelain(result.stdout)
     return Promise.all(
-      parsed.map(async (item) => ({
-        ...item,
-        path: await fs.realpath(item.path).catch(() => path.resolve(item.path))
-      }))
+      parsed.map(async (item) => {
+        const worktreePath = await fs
+          .realpath(item.path)
+          .catch(() => path.resolve(item.path))
+        if (item.prunable) {
+          return { ...item, path: worktreePath }
+        }
+
+        const gitDirectory = await this.checked(worktreePath, [
+          'rev-parse',
+          '--absolute-git-dir'
+        ])
+        return {
+          ...item,
+          path: worktreePath,
+          gitWorktreeKey: await fs
+            .realpath(gitDirectory.stdout.trim())
+            .catch(() => path.resolve(gitDirectory.stdout.trim()))
+        }
+      })
     )
   }
 

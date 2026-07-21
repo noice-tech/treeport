@@ -225,6 +225,7 @@ export default function App() {
     staleTime: METADATA_STALE_TIME_MS,
     retry: shouldRetryMetadataQuery,
     retryDelay: metadataRetryDelay,
+    refetchInterval: 5_000,
     refetchOnReconnect: true,
     refetchOnWindowFocus: true
   })
@@ -517,6 +518,16 @@ export default function App() {
     selectedWorktree?.terminals.find(
       (terminal) => terminal.id === selectedTerminalId
     ) ?? null
+  const selectedProject = selectedWorktree
+    ? projects.find((project) =>
+        project.worktrees.some(
+          (worktree) => worktree.id === selectedWorktree.id
+        )
+      )
+    : null
+  const selectedWorktreeMutationsDisabled =
+    Boolean(selectedWorktree?.prunable) ||
+    selectedProject?.availability.state === 'unavailable'
 
   const selectTerminal = (terminal: TerminalRecord) => {
     setSelectedTerminalId(terminal.id)
@@ -934,7 +945,12 @@ export default function App() {
                       variant="ghost"
                       size="sm"
                       className="group/project min-w-0 flex-1 justify-start px-1.5 text-base font-semibold text-zinc-100 hover:bg-white/5 sm:text-[0.8125rem]"
-                      title={project.repositoryPath}
+                      title={
+                        project.availability.state === 'unavailable'
+                          ? project.availability.message ||
+                            'Git repository unavailable'
+                          : project.repositoryPath
+                      }
                     >
                       <ChevronRightIcon
                         className={cn(
@@ -945,6 +961,11 @@ export default function App() {
                         )}
                       />
                       <span className="truncate">{project.name}</span>
+                      {project.availability.state === 'unavailable' && (
+                        <span className="shrink-0 text-[0.625rem] font-normal text-amber-300">
+                          unavailable
+                        </span>
+                      )}
                     </Button>
                   </CollapsibleTrigger>
                   <ProjectColorPicker
@@ -1002,7 +1023,17 @@ export default function App() {
                             <div className="worktree-actions absolute top-0 right-0 z-10 flex items-center gap-0.5 rounded-md bg-zinc-900 opacity-0 shadow-sm ring-1 ring-white/8 group-hover/worktree:opacity-100 group-focus-within/worktree:opacity-100 max-[700px]:relative max-[700px]:mt-0.5 max-[700px]:ml-7 max-[700px]:w-fit max-[700px]:opacity-100">
                               <SidebarAction
                                 label={`Remove ${worktree.name}`}
-                                tooltip="Remove worktree"
+                                tooltip={
+                                  project.availability.state === 'unavailable'
+                                    ? 'Git repository unavailable'
+                                    : worktree.prunable
+                                      ? 'Git reports this worktree as prunable'
+                                      : 'Remove worktree'
+                                }
+                                disabled={
+                                  project.availability.state ===
+                                    'unavailable' || worktree.prunable
+                                }
                                 className="text-zinc-500 hover:bg-rose-400/8 hover:text-rose-300"
                                 onClick={(trigger) =>
                                   openModal(
@@ -1122,9 +1153,12 @@ export default function App() {
                         type="button"
                         variant="ghost"
                         className="h-auto min-h-11 w-full justify-start gap-1.5 px-2 py-1.5 text-base font-normal text-zinc-500 hover:bg-white/5 hover:text-zinc-100 sm:min-h-7 sm:py-0.5 sm:text-[0.6875rem]"
-                        disabled={pendingWorktrees.some(
-                          (pending) => pending.projectId === project.id
-                        )}
+                        disabled={
+                          project.availability.state === 'unavailable' ||
+                          pendingWorktrees.some(
+                            (pending) => pending.projectId === project.id
+                          )
+                        }
                         onClick={(event) =>
                           openModal(
                             { type: 'worktree', project },
@@ -1172,6 +1206,7 @@ export default function App() {
             createTerminal.isPending &&
             createTerminal.variables?.id === selectedWorktree?.id
           }
+          mutationsDisabled={selectedWorktreeMutationsDisabled}
           onCloseTerminal={(terminal) => {
             if (
               window.confirm(

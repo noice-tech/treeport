@@ -121,6 +121,29 @@ const MIGRATIONS = [
   `,
   `
   DROP TABLE IF EXISTS terminals;
+  `,
+  `
+  ALTER TABLE worktrees ADD COLUMN git_worktree_key TEXT;
+  ALTER TABLE worktrees ADD COLUMN prunable INTEGER NOT NULL DEFAULT 0;
+  CREATE UNIQUE INDEX worktrees_git_key_idx ON worktrees(project_id, git_worktree_key)
+    WHERE git_worktree_key IS NOT NULL;
+
+  ALTER TABLE operations RENAME TO operations_v2;
+  CREATE TABLE operations (
+    id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL CHECK(kind IN ('finish','discard','project_cleanup','remove','external_remove')),
+    project_id TEXT REFERENCES projects(id) ON DELETE SET NULL,
+    worktree_id TEXT REFERENCES worktrees(id) ON DELETE SET NULL,
+    status TEXT NOT NULL CHECK(status IN ('pending','running','completed','failed')),
+    request_json TEXT NOT NULL,
+    result_json TEXT,
+    error TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  INSERT INTO operations SELECT * FROM operations_v2;
+  DROP TABLE operations_v2;
+  CREATE INDEX operations_worktree_idx ON operations(worktree_id);
   `
 ]
 
@@ -143,6 +166,8 @@ interface WorktreeRow {
   detached: number
   locked: number
   lock_reason: string | null
+  git_worktree_key: string | null
+  prunable: number
   kind: 'main' | 'linked'
   tmux_socket_name: string
   status: 'active' | 'cleaning' | 'cleanup_failed' | 'removed'
@@ -299,6 +324,7 @@ export class TaskTTYDatabase {
       mainWorktreePath: row.main_worktree_path,
       defaultBranch: row.default_branch,
       color: row.color,
+      availability: { state: 'available', message: null },
       worktrees: worktrees.map((worktree) =>
         this.mapWorktree(worktree, row.main_worktree_path)
       ),
@@ -321,6 +347,7 @@ export class TaskTTYDatabase {
       detached: Boolean(row.detached),
       locked: Boolean(row.locked),
       lockReason: row.lock_reason,
+      prunable: Boolean(row.prunable),
       kind: row.kind,
       tmuxSocketName: row.tmux_socket_name,
       status: row.status,

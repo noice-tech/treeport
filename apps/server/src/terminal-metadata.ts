@@ -350,7 +350,7 @@ export class TerminalMetadataManager {
     const observerVersion = entry.observerVersion
     try {
       const [terminal, title] = await Promise.all([
-        this.service.refreshTerminalStatus(entry.terminalId),
+        this.service.refreshTerminalStatus(entry.terminalId, false),
         this.tmux.sessionTitle(entry.socketName, entry.sessionName)
       ])
       if (this.entries.get(entry.terminalId) !== entry) {

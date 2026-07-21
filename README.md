@@ -151,6 +151,8 @@ the middle directory is the worktree name. The main checkout is shown as `main w
 
 New worktrees are detached at a resolved commit. The default base is the fetched remote default branch; `--from-current` uses the selected/current worktree's `HEAD`. Project-local `.zed/settings.json` `git.worktree_directory` is honored, with `../worktrees` as the default.
 
+Git is authoritative for active worktree inventory and state. Every project snapshot observes `git worktree list --porcelain`; SQLite only binds TaskTTY IDs, tmux sockets, wrapper ownership, and presentation metadata to Git administrative worktree identities. External linked-worktree moves preserve those bindings, while confirmed external removals disappear automatically and stop their TaskTTY tmux servers. If a repository is unavailable, the last-known inventory remains visible but disabled and no destructive reconciliation occurs. Git-reported prunable worktrees likewise remain visible but disabled.
+
 tasktty currently includes a compatibility adapter for project-local `.zed/tasks.json` tasks whose `hooks` contain `create_worktree`; Zed defines the input format, not tasktty's lifecycle. Compatible tasks from the main checkout run sequentially in the automatically created tmux terminal with `ZED_WORKTREE_ROOT` and `ZED_MAIN_GIT_WORKTREE`. Their stdout and stderr stream into the pane. After every task succeeds, the same pane starts the requested command or login shell. On the first failure, later tasks and the final command are skipped and tmux retains the exited pane and its scrollback. A terminal-backed create response means that Git creation and tmux launch completed; setup may still be running.
 
 **Remove worktree** is the only removal action. Preview reports staged, unstaged, and untracked changes, detached-commit reachability, locked state, and every terminal that will stop. Dirty worktrees require destructive confirmation in the UI or `--force` in the CLI. The daemon then blocks mutation, kills the worktree's tmux server, and runs path-addressed `git worktree remove`; it never deletes an attached Git branch. Main and locked worktrees are refused. If Git removal fails after terminals stop, the worktree remains `cleanup_failed` with an explicit retryable error.
@@ -195,7 +197,7 @@ Default database locations:
 - macOS: `~/Library/Application Support/tasktty/tasktty.db`
 - Linux/XDG: `${XDG_DATA_HOME:-~/.local/share}/tasktty/tasktty.db`
 
-Schema tables are `projects`, `worktrees`, `operations`, and `schema_migrations`. Terminal inventory and metadata live in tmux; terminal output is never written to SQLite or application logs.
+Schema tables are `projects`, `worktrees`, `operations`, and `schema_migrations`. Worktree rows are TaskTTY metadata bindings rather than the authoritative active inventory. Terminal inventory and metadata live in tmux; terminal output is never written to SQLite or application logs.
 
 ## Security assumptions
 

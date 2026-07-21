@@ -49,6 +49,15 @@ export interface TmuxTerminalMetadata {
 const encodeMetadata = (value: unknown): string =>
   Buffer.from(JSON.stringify(value), 'utf8').toString('base64url')
 
+function isAbsentTmuxServer(stderr: string): boolean {
+  return (
+    /no server running|no sessions/i.test(stderr) ||
+    /(?:failed to connect|error connecting to).*(?:no such file or directory|connection refused)/i.test(
+      stderr
+    )
+  )
+}
+
 function decodeMetadata(value: string): unknown {
   if (!value) {
     return undefined
@@ -274,11 +283,7 @@ export class TmuxAdapter {
       timeoutMs: 10_000
     })
     if (result.exitCode !== 0) {
-      if (
-        /no server running|no sessions|failed to connect|error connecting to/i.test(
-          result.stderr
-        )
-      ) {
+      if (isAbsentTmuxServer(result.stderr)) {
         return []
       }
 
@@ -486,10 +491,7 @@ export class TmuxAdapter {
       env: this.environment(),
       timeoutMs: 15_000
     })
-    if (
-      result.exitCode !== 0 &&
-      !/no server running|no sessions/i.test(result.stderr)
-    ) {
+    if (result.exitCode !== 0 && !isAbsentTmuxServer(result.stderr)) {
       throw new Error(
         result.stderr.trim() || 'Failed to kill worktree tmux server'
       )
