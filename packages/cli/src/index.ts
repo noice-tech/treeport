@@ -5,6 +5,7 @@ import type {
   ApiErrorBody,
   ProjectRecord,
   RemovePreview,
+  TaskTTYContext,
   TerminalRecord,
   WorktreeRecord
 } from '@tasktty/shared'
@@ -18,11 +19,26 @@ const rawArgs = process.argv.slice(2)
 const jsonOutput = extractJsonOutput(rawArgs)
 
 class CliError extends Error {
+  readonly code: string
+  readonly details: unknown
+
   constructor(
     message: string,
-    readonly exitCode: number
+    readonly exitCode: number,
+    code?: string,
+    details?: unknown
   ) {
     super(message)
+    this.code =
+      code ??
+      (exitCode === 2
+        ? 'USAGE_ERROR'
+        : exitCode === 3
+          ? 'DAEMON_UNREACHABLE'
+          : exitCode === 5
+            ? 'DOMAIN_ERROR'
+            : 'UNEXPECTED_ERROR')
+    this.details = details
   }
 }
 
@@ -45,7 +61,12 @@ async function request<T>(
     const body = (await response.json().catch(() => ({}))) as T | ApiErrorBody
     if (!response.ok) {
       const error = (body as ApiErrorBody).error
-      throw new CliError(error?.message || `HTTP ${response.status}`, 5)
+      throw new CliError(
+        error?.message || `HTTP ${response.status}`,
+        5,
+        error?.code || 'API_ERROR',
+        error?.details
+      )
     }
 
     return body as T
@@ -56,7 +77,8 @@ async function request<T>(
 
     throw new CliError(
       `Cannot reach TaskTTY daemon at ${apiUrl}: ${error instanceof Error ? error.message : String(error)}`,
-      3
+      3,
+      'DAEMON_UNREACHABLE'
     )
   } finally {
     clearTimeout(timeout)
@@ -190,7 +212,7 @@ async function resolveWorktree(identifier: string): Promise<WorktreeRecord> {
 
 function print(value: unknown, human?: () => string): void {
   if (jsonOutput) {
-    console.log(JSON.stringify(value, null, 2))
+    console.log(JSON.stringify(value))
   } else {
     console.log(human ? human() : JSON.stringify(value, null, 2))
   }
@@ -199,6 +221,7 @@ function print(value: unknown, human?: () => string): void {
 function usage(): never {
   throw new CliError(
     `Usage:
+  tasktty context [--json]
   tasktty project add <path> [--json]
   tasktty project list [--json]
   tasktty worktree list [--project <id-or-path>] [--json]
@@ -214,6 +237,106 @@ function usage(): never {
 
 async function main(args: string[]): Promise<void> {
   const [group, action] = args.splice(0, 2)
+  if (group === 'context') {
+    if (action || args.length) {
+      usage()
+    }
+
+    const projectId = process.env.TASKTTY_PROJECT_ID?.trim()
+    const worktreeId = process.env.TASKTTY_WORKTREE_ID?.trim()
+    const terminalId = process.env.TASKTTY_TERMINAL_ID?.trim()
+    const presentIds = [projectId, worktreeId, terminalId].filter(Boolean)
+    if (!presentIds.length) {
+      const context: TaskTTYContext = {
+        managed: false,
+        reason: 'outside_tasktty'
+      }
+      print(context, () => 'Not running in a TaskTTY-managed terminal.')
+      return
+    }
+
+    const missing = [
+      ...(!process.env.TASKTTY_API_URL?.trim() ? ['TASKTTY_API_URL'] : []),
+      ...(!projectId ? ['TASKTTY_PROJECT_ID'] : []),
+      ...(!worktreeId ? ['TASKTTY_WORKTREE_ID'] : []),
+      ...(!terminalId ? ['TASKTTY_TERMINAL_ID'] : [])
+    ]
+    if (missing.length) {
+      throw new CliError(
+        `Incomplete TaskTTY context; missing ${missing.join(', ')}`,
+        5,
+        'TASKTTY_CONTEXT_INCOMPLETE',
+        { missing }
+      )
+    }
+
+    const project = (
+      await request<{ project: ProjectRecord }>(
+        `/api/projects/${encodeURIComponent(projectId!)}`
+      )
+    ).project
+    const worktree = project.worktrees.find(
+      (candidate) => candidate.id === worktreeId
+    )
+    if (!worktree) {
+      throw new CliError(
+        'TaskTTY context worktree does not belong to the current project',
+        5,
+        'TASKTTY_CONTEXT_INVALID',
+        { projectId, worktreeId }
+      )
+    }
+
+    const terminal = worktree.terminals.find(
+      (candidate) => candidate.id === terminalId
+    )
+    if (!terminal) {
+      throw new CliError(
+        'TaskTTY context terminal does not belong to the current worktree',
+        5,
+        'TASKTTY_CONTEXT_INVALID',
+        { worktreeId, terminalId }
+      )
+    }
+
+    const context: TaskTTYContext = {
+      managed: true,
+      apiUrl,
+      project: {
+        id: project.id,
+        name: project.name,
+        repositoryPath: project.repositoryPath,
+        mainWorktreePath: project.mainWorktreePath,
+        defaultBranch: project.defaultBranch,
+        availability: project.availability
+      },
+      worktree: {
+        id: worktree.id,
+        projectId: worktree.projectId,
+        name: worktree.name,
+        path: worktree.path,
+        head: worktree.head,
+        branch: worktree.branch,
+        detached: worktree.detached,
+        kind: worktree.kind,
+        status: worktree.status
+      },
+      terminal: {
+        id: terminal.id,
+        worktreeId: terminal.worktreeId,
+        name: terminal.name,
+        status: terminal.status,
+        exitCode: terminal.exitCode
+      }
+    }
+    print(
+      context,
+      () =>
+        `TaskTTY context\n\nProject:  ${context.project.name} (${context.project.id})\nWorktree: ${context.worktree.name} (${context.worktree.id})\nPath:     ${context.worktree.path}\nTerminal: ${context.terminal.name} (${context.terminal.id}) — ${context.terminal.status}\nAPI:      ${context.apiUrl}`
+    )
+    return
+  }
+
   if (group === 'project' && action === 'add') {
     const repository = args.shift()
     if (!repository) {
@@ -283,7 +406,7 @@ async function main(args: string[]): Promise<void> {
     print(
       result,
       () =>
-        `Created ${result.worktree.name}\n${result.worktree.path}${result.setupError ? `\nSetup error: ${result.setupError}` : ''}`
+        `Created ${result.worktree.name} (${result.worktree.id})\n${result.worktree.path}${result.setupError ? `\nSetup error: ${result.setupError}` : ''}`
     )
     return
   }
@@ -408,7 +531,7 @@ async function main(args: string[]): Promise<void> {
     print(
       result,
       () =>
-        `Created ${result.worktree.name}${result.terminal ? ` with ${result.terminal.name}` : ''}${result.setupError ? `\nSetup error: ${result.setupError}` : ''}${result.terminalError ? `\nTerminal error: ${result.terminalError}` : ''}`
+        `Created worktree ${result.worktree.name} (${result.worktree.id})\nPath: ${result.worktree.path}\n${result.terminal ? `Terminal: ${result.terminal.name} (${result.terminal.id}) — ${result.terminal.status}` : 'Terminal: not created'}${result.setupError ? `\nSetup error: ${result.setupError}` : ''}${result.terminalError ? `\nTerminal error: ${result.terminalError}` : ''}`
     )
     return
   }
@@ -421,6 +544,18 @@ main(rawArgs).catch((error: unknown) => {
     error instanceof CliError
       ? error
       : new CliError(error instanceof Error ? error.message : String(error), 1)
-  process.stderr.write(`${cliError.message}\n`)
+  if (jsonOutput) {
+    const body: ApiErrorBody = {
+      error: {
+        code: cliError.code,
+        message: cliError.message,
+        ...(cliError.details === undefined ? {} : { details: cliError.details })
+      }
+    }
+    process.stderr.write(`${JSON.stringify(body)}\n`)
+  } else {
+    process.stderr.write(`${cliError.message}\n`)
+  }
+
   process.exitCode = cliError.exitCode
 })

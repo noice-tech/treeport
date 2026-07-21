@@ -102,6 +102,41 @@ export interface RecentProjectRecord {
   lastOpenedAt: string
 }
 
+export type TaskTTYContext =
+  | {
+      managed: false
+      reason: 'outside_tasktty'
+    }
+  | {
+      managed: true
+      apiUrl: string
+      project: Pick<
+        ProjectRecord,
+        | 'id'
+        | 'name'
+        | 'repositoryPath'
+        | 'mainWorktreePath'
+        | 'defaultBranch'
+        | 'availability'
+      >
+      worktree: Pick<
+        WorktreeRecord,
+        | 'id'
+        | 'projectId'
+        | 'name'
+        | 'path'
+        | 'head'
+        | 'branch'
+        | 'detached'
+        | 'kind'
+        | 'status'
+      >
+      terminal: Pick<
+        TerminalRecord,
+        'id' | 'worktreeId' | 'name' | 'status' | 'exitCode'
+      >
+    }
+
 export interface DirtyState {
   dirty: boolean
   staged: number

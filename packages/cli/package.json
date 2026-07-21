@@ -3,12 +3,13 @@
   "version": "0.1.0",
   "private": true,
   "bin": {
-    "tasktty": "dist/index.js"
+    "tasktty": "bin/tasktty.mjs"
   },
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc -b && chmod +x dist/index.js",
+    "build": "tsc -b && chmod +x bin/tasktty.mjs dist/index.js",
+    "dev": "tsc -b --watch --preserveWatchOutput",
     "typecheck": "tsc --noEmit -p tsconfig.json --pretty"
   },
   "dependencies": {
