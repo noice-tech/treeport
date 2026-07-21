@@ -12,7 +12,7 @@ import type {
   terminalOptions as createTerminalOptions,
   parseTerminalProgress as parseOscTerminalProgress,
   terminalProgressLabel as formatTerminalProgressLabel,
-  TerminalSession,
+  TerminalSession as TerminalSessionInstance,
   TerminalSessionManager as TerminalSessionManagerInstance,
   TerminalSessionSnapshot
 } from './terminal-session.js'
@@ -20,9 +20,10 @@ import type {
 type TerminalSessionManagerConstructor = new (
   maxSessions?: number,
   idleMs?: number,
-  createSession?: (terminalId: string) => TerminalSession
+  createSession?: (terminalId: string) => TerminalSessionInstance
 ) => TerminalSessionManagerInstance
 
+let TerminalSession: new (terminalId: string) => TerminalSessionInstance
 let TerminalSessionManager: TerminalSessionManagerConstructor
 let terminalKeyboardInput: typeof mapTerminalKeyboardInput
 let terminalOptions: typeof createTerminalOptions
@@ -81,6 +82,7 @@ class FakeSession {
 beforeAll(async () => {
   vi.stubGlobal('self', globalThis)
   ;({
+    TerminalSession,
     TerminalSessionManager,
     terminalKeyboardInput,
     terminalOptions,
@@ -107,7 +109,7 @@ function fixture(maxSessions = 3, idleMs = 1_000) {
     (terminalId) => {
       const session = new FakeSession()
       sessions.set(terminalId, session)
-      return session as unknown as TerminalSession
+      return session as unknown as TerminalSessionInstance
     }
   )
   return { manager, sessions }
@@ -215,6 +217,60 @@ describe('terminal keyboard input', () => {
         key({ key: 'ArrowLeft', metaKey: true, shiftKey: true })
       )
     ).toBeNull()
+  })
+})
+
+describe('TerminalSession', () => {
+  it('sends its hello on insecure LAN origins without crypto.randomUUID', () => {
+    class FakeWebSocket {
+      static readonly OPEN = 1
+      static instance: FakeWebSocket
+      readonly readyState = FakeWebSocket.OPEN
+      readonly send = vi.fn()
+      onopen: (() => void) | null = null
+      onmessage: ((event: { data: unknown }) => void) | null = null
+      onerror: (() => void) | null = null
+      onclose: (() => void) | null = null
+
+      constructor(readonly url: string) {
+        FakeWebSocket.instance = this
+      }
+
+      close(): void {}
+    }
+
+    const setItem = vi.fn()
+    vi.stubGlobal('location', {
+      protocol: 'http:',
+      host: '192.168.1.181:5173'
+    })
+    vi.stubGlobal('sessionStorage', {
+      getItem: () => null,
+      setItem
+    })
+    vi.stubGlobal('crypto', {
+      getRandomValues: (bytes: Uint8Array) => bytes.fill(0x12)
+    })
+    vi.stubGlobal('WebSocket', FakeWebSocket)
+
+    const session = new TerminalSession('terminal-one')
+    ;(session as unknown as { connect(): void }).connect()
+    FakeWebSocket.instance.onopen?.()
+
+    expect(FakeWebSocket.instance.url).toBe(
+      'ws://192.168.1.181:5173/api/terminals/terminal-one/attach'
+    )
+    expect(FakeWebSocket.instance.send).toHaveBeenCalledOnce()
+    const hello = FakeWebSocket.instance.send.mock.calls[0]![0]
+    expect(JSON.parse(hello)).toMatchObject({
+      type: 'hello',
+      clientId: '12121212-1212-4212-9212-121212121212'
+    })
+    expect(setItem).toHaveBeenCalledWith(
+      'tasktty-terminal-client-id',
+      '12121212-1212-4212-9212-121212121212'
+    )
+    session.dispose()
   })
 })
 

@@ -147,13 +147,30 @@ function getClientId(): string {
     if (stored) {
       return (fallbackClientId = stored)
     }
-
-    const created = crypto.randomUUID()
-    sessionStorage.setItem('tasktty-terminal-client-id', created)
-    return (fallbackClientId = created)
   } catch {
-    return (fallbackClientId = crypto.randomUUID())
+    // Storage can be unavailable in private browsing modes.
   }
+
+  const bytes = new Uint8Array(16)
+  if (typeof globalThis.crypto?.getRandomValues === 'function') {
+    globalThis.crypto.getRandomValues(bytes)
+  } else {
+    for (let index = 0; index < bytes.length; index += 1) {
+      bytes[index] = Math.floor(Math.random() * 256)
+    }
+  }
+
+  bytes[6] = (bytes[6]! & 0x0f) | 0x40
+  bytes[8] = (bytes[8]! & 0x3f) | 0x80
+  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0'))
+  const created = `${hex.slice(0, 4).join('')}-${hex.slice(4, 6).join('')}-${hex.slice(6, 8).join('')}-${hex.slice(8, 10).join('')}-${hex.slice(10).join('')}`
+
+  try {
+    sessionStorage.setItem('tasktty-terminal-client-id', created)
+  } catch {
+    // The in-memory ID still keeps reconnects stable for this page load.
+  }
+  return (fallbackClientId = created)
 }
 
 export function terminalOptions() {
@@ -468,15 +485,25 @@ export class TerminalSession {
         return
       }
 
-      this.fit()
-      this.send({
-        version: TERMINAL_PROTOCOL_VERSION,
-        type: 'hello',
-        clientId: getClientId(),
-        cols: this.terminal?.cols ?? 100,
-        rows: this.terminal?.rows ?? 30
-      })
-      this.resetHeartbeatDeadline()
+      try {
+        this.fit()
+        this.send({
+          version: TERMINAL_PROTOCOL_VERSION,
+          type: 'hello',
+          clientId: getClientId(),
+          cols: this.terminal?.cols ?? 100,
+          rows: this.terminal?.rows ?? 30
+        })
+        this.resetHeartbeatDeadline()
+      } catch (error) {
+        const detail =
+          error instanceof Error
+            ? `${error.name}: ${error.message}`
+            : String(error)
+        this.reconnectAllowed = false
+        this.stopWithError(`Terminal handshake failed in browser: ${detail}`)
+        socket.close(1011, 'Browser handshake failed')
+      }
     }
     socket.onmessage = (event) => {
       if (this.socket !== socket) {
@@ -488,11 +515,12 @@ export class TerminalSession {
     socket.onerror = () => {
       // close drives retry and preserves one state transition.
     }
-    socket.onclose = () => {
+    socket.onclose = (event) => {
       if (this.socket !== socket) {
         return
       }
 
+      const connected = this.ready
       this.socket = null
       this.ready = false
       this.streamId = null
@@ -501,11 +529,20 @@ export class TerminalSession {
         this.clearDegraded()
       }
 
+      const closeError =
+        !connected && !this.snapshotValue.error
+          ? event.reason
+            ? `Terminal connection closed (${event.code}): ${event.reason}`
+            : event.code === 1006
+              ? 'Terminal connection failed: WebSocket closed abnormally (code 1006)'
+              : `Terminal connection closed before handshake (code ${event.code})`
+          : this.snapshotValue.error
       this.update({
         phase:
           this.reconnectAllowed && !this.disposed ? 'reconnecting' : 'closed',
         controller: false,
-        degraded: this.reconnectAllowed ? this.snapshotValue.degraded : false
+        degraded: this.reconnectAllowed ? this.snapshotValue.degraded : false,
+        error: closeError
       })
       if (this.reconnectAllowed && !this.disposed) {
         this.scheduleReconnect()
