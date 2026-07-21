@@ -119,7 +119,10 @@ function fixture() {
     configPath: '/runtime/tmux.conf',
     configureServer: vi.fn(async () => undefined),
     sessionSize: vi.fn(async () => ({ cols: 100, rows: 30 })),
-    sessionTitle: vi.fn(async () => 'shell'),
+    sessionTitleState: vi.fn(async () => ({
+      paneTitle: 'shell',
+      currentCommand: 'zsh'
+    })),
     attachArgs: vi.fn(() => ['attach-session', '-t', 'session'])
   } as unknown as TmuxAdapter
   const spawn = vi.fn(() => {
@@ -223,7 +226,7 @@ describe('TerminalAttachmentManager', () => {
 
   it('announces an empty title so clients can clear stale runtime titles', async () => {
     const { manager, tmux } = fixture()
-    vi.mocked(tmux.sessionTitle).mockResolvedValueOnce(null)
+    vi.mocked(tmux.sessionTitleState).mockResolvedValueOnce(null)
     const socket = new FakeSocket()
     const id = manager.accept('term', socket as unknown as WSContext)
     manager.message(id, hello('tab-a'))
