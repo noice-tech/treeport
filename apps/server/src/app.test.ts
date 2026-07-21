@@ -9,11 +9,10 @@ import {
 import { createApp } from './app.js'
 import type { TerminalMetadataManager } from './terminal-metadata.js'
 
-function fixture(authToken: string | null = null) {
+function fixture() {
   const config: AppConfig = {
     host: '127.0.0.1',
     port: 4780,
-    authToken,
     databasePath: '/tmp/tasktty-test.db',
     dataDir: '/tmp',
     runtimeDir: '/tmp',
@@ -57,7 +56,7 @@ function fixture(authToken: string | null = null) {
   return { app, metadataSnapshot, service }
 }
 
-describe('HTTP API validation and authentication', () => {
+describe('HTTP API validation', () => {
   it('returns consistent validation errors without calling domain services', async () => {
     const { app, service } = fixture()
     const response = await app.request('/api/worktrees/wt_1/terminals', {
@@ -203,26 +202,5 @@ describe('HTTP API validation and authentication', () => {
 
     abort.abort()
     await reader.cancel()
-  })
-
-  it('allows health checks but protects APIs when a token is configured', async () => {
-    const { app } = fixture('static-secret')
-    expect((await app.request('/api/health')).status).toBe(200)
-    expect((await app.request('/api/projects')).status).toBe(401)
-    expect(
-      (
-        await app.request('/api/projects', {
-          headers: { authorization: 'Bearer static-secret' }
-        })
-      ).status
-    ).toBe(200)
-
-    const session = await app.request('/api/auth/session', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ token: 'static-secret' })
-    })
-    expect(session.status).toBe(200)
-    expect(session.headers.get('set-cookie')).toMatch(/^tasktty_session=/)
   })
 })

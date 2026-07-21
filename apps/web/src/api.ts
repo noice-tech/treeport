@@ -125,10 +125,5 @@ export const apiClient = {
           })
         }
       )
-    ).operation,
-  login: (token: string) =>
-    api('/api/auth/session', {
-      method: 'POST',
-      body: JSON.stringify({ token })
-    })
+    ).operation
 }

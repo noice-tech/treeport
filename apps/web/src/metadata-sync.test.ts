@@ -15,7 +15,7 @@ describe('metadata sync', () => {
       shouldRetryMetadataQuery(1, new ApiError('UPSTREAM', 'bad', 503))
     ).toBe(true)
     expect(
-      shouldRetryMetadataQuery(0, new ApiError('UNAUTHORIZED', 'no', 401))
+      shouldRetryMetadataQuery(0, new ApiError('BAD_REQUEST', 'no', 400))
     ).toBe(false)
     expect(shouldRetryMetadataQuery(2, new Error('offline'))).toBe(false)
     expect(metadataRetryDelay(0)).toBe(500)

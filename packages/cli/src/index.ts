@@ -14,7 +14,6 @@ const apiUrl = (process.env.TASKTTY_API_URL || 'http://127.0.0.1:4780').replace(
   /\/$/,
   ''
 )
-const token = process.env.TASKTTY_AUTH_TOKEN
 const rawArgs = process.argv.slice(2)
 const jsonOutput = extractJsonOutput(rawArgs)
 
@@ -40,17 +39,13 @@ async function request<T>(
       headers: {
         accept: 'application/json',
         ...(options.body ? { 'content-type': 'application/json' } : {}),
-        ...(token ? { authorization: `Bearer ${token}` } : {}),
         ...options.headers
       }
     })
     const body = (await response.json().catch(() => ({}))) as T | ApiErrorBody
     if (!response.ok) {
       const error = (body as ApiErrorBody).error
-      throw new CliError(
-        error?.message || `HTTP ${response.status}`,
-        response.status === 401 ? 4 : 5
-      )
+      throw new CliError(error?.message || `HTTP ${response.status}`, 5)
     }
 
     return body as T

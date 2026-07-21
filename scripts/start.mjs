@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -15,20 +14,11 @@ if (!fs.existsSync(serverEntry)) {
 const host = process.env.TASKTTY_HOST?.trim() || '0.0.0.0'
 const port = process.env.TASKTTY_PORT?.trim() || '4780'
 const loopback = host === '127.0.0.1' || host === '::1' || host === 'localhost'
-const generatedToken = !loopback && !process.env.TASKTTY_AUTH_TOKEN?.trim()
-const authToken =
-  process.env.TASKTTY_AUTH_TOKEN?.trim() ||
-  (generatedToken ? crypto.randomBytes(32).toString('base64url') : '')
 
 console.log(`TaskTTY network listener: http://${host}:${port}`)
-if (generatedToken) {
-  console.log('Generated authentication token (enter this in the browser):')
-  console.log(authToken)
-} else {
-  console.log(
-    `authentication: ${authToken ? 'enabled' : 'disabled (loopback only)'}`
-  )
-}
+console.warn(
+  'Authentication is disabled; anyone who can reach this port has full access.'
+)
 
 if (!loopback) {
   console.warn(
@@ -42,7 +32,6 @@ const child = spawn(process.execPath, [serverEntry], {
     ...process.env,
     TASKTTY_HOST: host,
     TASKTTY_PORT: port,
-    TASKTTY_AUTH_TOKEN: authToken,
     TASKTTY_API_URL:
       process.env.TASKTTY_API_URL?.trim() || `http://127.0.0.1:${port}`
   },

@@ -340,7 +340,6 @@ async function fixture() {
   const config: AppConfig = {
     host: '127.0.0.1',
     port: 4780,
-    authToken: null,
     databasePath: database.filePath,
     dataDir: root,
     runtimeDir: runtime,
