@@ -5,6 +5,7 @@ import type {
   OperationRecord,
   PrInfo,
   ProjectRecord,
+  RecentProjectRecord,
   WorktreeRecord
 } from '@tasktty/shared'
 import { inferWorktreeName } from './zed.js'
@@ -28,11 +29,15 @@ const MIGRATIONS: Migration[] = [
         repository_device TEXT NOT NULL,
         repository_inode TEXT NOT NULL,
         name_is_custom INTEGER NOT NULL DEFAULT 0 CHECK(name_is_custom IN (0,1)),
+        is_open INTEGER NOT NULL DEFAULT 1 CHECK(is_open IN (0,1)),
+        last_opened_at TEXT NOT NULL,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
       CREATE UNIQUE INDEX projects_fs_identity_idx
         ON projects(repository_device, repository_inode);
+      CREATE INDEX projects_recent_idx
+        ON projects(is_open, last_opened_at DESC, id);
 
       CREATE TABLE worktrees (
         id TEXT PRIMARY KEY,
@@ -92,6 +97,8 @@ interface ProjectRow {
   repository_device: string
   repository_inode: string
   name_is_custom: number
+  is_open: number
+  last_opened_at: string
   created_at: string
   updated_at: string
 }
@@ -195,6 +202,57 @@ export class TaskTTYDatabase {
       .prepare('SELECT * FROM projects ORDER BY name COLLATE NOCASE')
       .all() as ProjectRow[]
     return projects.map((project) => this.mapProject(project))
+  }
+
+  openProjects(): ProjectRecord[] {
+    const projects = this.connection
+      .prepare(
+        'SELECT * FROM projects WHERE is_open = 1 ORDER BY name COLLATE NOCASE'
+      )
+      .all() as ProjectRow[]
+    return projects.map((project) => this.mapProject(project))
+  }
+
+  recentProjects(): RecentProjectRecord[] {
+    const projects = this.connection
+      .prepare(
+        `SELECT id,name,repository_path,last_opened_at
+         FROM projects WHERE is_open = 0
+         ORDER BY last_opened_at DESC, id`
+      )
+      .all() as Array<
+      Pick<ProjectRow, 'id' | 'name' | 'repository_path' | 'last_opened_at'>
+    >
+    return projects.map((project) => ({
+      id: project.id,
+      name: project.name,
+      repositoryPath: project.repository_path,
+      lastOpenedAt: project.last_opened_at
+    }))
+  }
+
+  isProjectOpen(projectId: string): boolean | null {
+    const row = this.connection
+      .prepare('SELECT is_open FROM projects WHERE id = ?')
+      .get(projectId) as { is_open: number } | undefined
+    return row ? Boolean(row.is_open) : null
+  }
+
+  setProjectOpen(projectId: string, open: boolean, timestamp: string): void {
+    if (open) {
+      this.connection
+        .prepare(
+          `UPDATE projects
+           SET is_open = 1, last_opened_at = ?, updated_at = ?
+           WHERE id = ?`
+        )
+        .run(timestamp, timestamp, projectId)
+      return
+    }
+
+    this.connection
+      .prepare('UPDATE projects SET is_open = 0, updated_at = ? WHERE id = ?')
+      .run(timestamp, projectId)
   }
 
   project(id: string): ProjectRecord | null {

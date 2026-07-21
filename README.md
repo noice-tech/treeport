@@ -53,11 +53,13 @@ Turbo caches package builds and runs workspace dependencies in graph order. Play
 
 ## First use
 
-Register a repository:
+Open a repository:
 
 ```sh
 tasktty project add ~/Projects/example
 ```
+
+The CLI command name remains `project add` for compatibility, but it opens a project in the active workspace. Running it for a closed project's path reopens the same durable registration.
 
 Create a worktree and Pi terminal in one operation:
 
@@ -78,7 +80,7 @@ tasktty terminal create \
   -- pnpm dev
 ```
 
-The web UI provides the same project, worktree, terminal, and removal operations. Submitting a new worktree closes the dialog immediately and shows its typed name with a spinner while Git creates it. The web flow then selects one retained terminal that streams compatible setup output before starting its login shell. Command input is always an argv array. Shell syntax has no special meaning unless an explicit shell is launched, for example `-- /bin/zsh -lc 'one && two'`.
+The web UI provides the same project, worktree, terminal, and removal operations. **Open project** accepts a repository path or reopens a closed registration from **Recent projects**. Submitting a new worktree closes the dialog immediately and shows its typed name with a spinner while Git creates it. The web flow then selects one retained terminal that streams compatible setup output before starting its login shell. Command input is always an argv array. Shell syntax has no special meaning unless an explicit shell is launched, for example `-- /bin/zsh -lc 'one && two'`.
 
 ## CLI
 
@@ -101,6 +103,10 @@ tasktty spawn --project <id-or-path-or-dot> --worktree-name <name> --name <name>
 Each terminal receives `TASKTTY_API_URL`, `TASKTTY_PROJECT_ID`, `TASKTTY_WORKTREE_ID`, and `TASKTTY_TERMINAL_ID`. A Pi process can therefore call `tasktty` to create a child worktree/terminal or remove its own worktree. Removal is persisted as a daemon-owned operation and returns an operation ID before the daemon terminates the requesting tmux server. CLI exit codes are stable: `0` success, `1` unexpected failure, `2` usage, `3` daemon unreachable, and `5` API/domain refusal.
 
 ## Runtime model
+
+The sidebar is a persistent workspace of open projects. Closing a project terminates every TaskTTY-managed tmux server and process associated with its main and linked worktrees, then removes the project from active snapshots. It does not remove Git worktrees, branches, checkout directories, files, project colors, or TaskTTY's durable bindings. Closed projects remain in **Recent projects** and survive daemon restarts. Reopening preserves project and worktree IDs but does not recreate terminated terminal commands.
+
+If one tmux server cannot be stopped, the close fails and the project remains open; servers already stopped are not restarted. Closed projects are not reconciled in the background, so their stored paths may become stale. Reopening by durable ID still succeeds and normal active observation reports the project as unavailable when appropriate.
 
 For worktree `wt_…`, tasktty generates a socket name such as `tasktty-wt-a8f…`. Every terminal gets its own generated tmux session such as `tasktty-term-2c1…`:
 
@@ -151,7 +157,7 @@ the middle directory is the worktree name. The main checkout is shown as `main w
 
 New worktrees are detached at a resolved commit. The default base is the fetched remote default branch; `--from-current` uses the selected/current worktree's `HEAD`. Project-local `.zed/settings.json` `git.worktree_directory` is honored, with `../worktrees` as the default.
 
-Git is authoritative for active worktree inventory and state. Every project snapshot observes `git worktree list --porcelain`; SQLite only binds TaskTTY IDs, tmux sockets, wrapper ownership, and presentation metadata to project-scoped Git administrative worktree identities. External linked-worktree moves preserve those bindings, while confirmed external removals disappear automatically and stop their TaskTTY tmux servers. Renaming the main checkout within its parent is recovered by filesystem identity, repairs Git's linked-worktree pointers, and updates an automatic project name; a custom name is preserved. A move elsewhere remains visible but unavailable until the new path is registered, which recovers the existing project instead of creating a duplicate. If a repository is unavailable, the last-known inventory remains visible but disabled and no destructive reconciliation occurs. Git-reported prunable worktrees likewise remain visible but disabled.
+Git is authoritative for active worktree inventory and state. Every open-project snapshot observes `git worktree list --porcelain`; closed registrations remain SQLite-only until reopened. SQLite only binds TaskTTY IDs, tmux sockets, wrapper ownership, and presentation metadata to project-scoped Git administrative worktree identities. External linked-worktree moves preserve those bindings, while confirmed external removals disappear automatically and stop their TaskTTY tmux servers. Renaming the main checkout within its parent is recovered by filesystem identity, repairs Git's linked-worktree pointers, and updates an automatic project name; a custom name is preserved. A move elsewhere remains visible but unavailable until the new path is registered, which recovers the existing project instead of creating a duplicate. If a repository is unavailable, the last-known inventory remains visible but disabled and no destructive reconciliation occurs. Git-reported prunable worktrees likewise remain visible but disabled.
 
 tasktty currently includes a compatibility adapter for project-local `.zed/tasks.json` tasks whose `hooks` contain `create_worktree`; Zed defines the input format, not tasktty's lifecycle. Compatible tasks from the main checkout run sequentially in the automatically created tmux terminal with `ZED_WORKTREE_ROOT` and `ZED_MAIN_GIT_WORKTREE`. Their stdout and stderr stream into the pane. After every task succeeds, the same pane starts the requested command or login shell. On the first failure, later tasks and the final command are skipped and tmux retains the exited pane and its scrollback. A terminal-backed create response means that Git creation and tmux launch completed; setup may still be running.
 
@@ -166,7 +172,10 @@ The versioned JSON surface is under `/api`:
 ```text
 GET  /api/health
 GET  /api/events (SSE)
-GET/POST /api/projects               GET/DELETE /api/projects/:projectId
+GET/POST /api/projects               GET/PATCH/DELETE /api/projects/:projectId
+GET  /api/projects/recent
+POST /api/projects/:projectId/open
+POST /api/projects/:projectId/close
 POST /api/projects/:projectId/refresh
 GET/POST /api/projects/:projectId/worktrees
 GET  /api/projects/:projectId/worktree-destination
@@ -180,6 +189,8 @@ WS   /api/terminals/:terminalId/attach
 POST /api/spawn
 GET  /api/operations/:operationId
 ```
+
+`GET /api/projects` returns open projects only. `POST /api/projects` opens or reopens by path, while the ID-based open endpoint also works for an unavailable stored path. Close is non-destructive workspace removal; `DELETE /api/projects/:projectId` remains destructive unregister and retains its linked-worktree restriction.
 
 Errors use `{ "error": { "code", "message", "details"? } }`. SSE emits project, worktree, terminal, controller, and cleanup changes.
 

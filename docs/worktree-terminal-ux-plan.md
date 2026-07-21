@@ -303,7 +303,7 @@ Historical SQLite operation kinds may remain readable for migration compatibilit
 
 ### Project row
 
-Remove project-level action icons. The header only expands/collapses the project and shows its name.
+> Superseded by issue #24. Project rows now retain the color control and add an explicit non-destructive **Close project** action. Closing terminates the project's TaskTTY terminals but preserves its Git worktrees and durable registration for reopening.
 
 ### Worktree list
 
@@ -316,7 +316,7 @@ Remove project-level action icons. The header only expands/collapses the project
 
 ### Sidebar footer
 
-Keep **Add project**. Remove Diagnostics.
+> Superseded by issue #24. The footer action is now **Open project** and its dialog lists closed registrations under **Recent projects** before the repository-path form. Diagnostics remains removed.
 
 ### Removal dialog
 
