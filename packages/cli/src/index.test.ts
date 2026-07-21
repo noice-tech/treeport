@@ -6,9 +6,10 @@ import { fileURLToPath } from 'node:url'
 import type {
   ProjectRecord,
   TerminalRecord,
+  TerminalRuntimeMetadata,
   WorktreeRecord
 } from '@tasktty/shared'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 const repositoryRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -122,11 +123,123 @@ describe('CLI context and machine output', () => {
   let apiUrl: string
   const requests: string[] = []
   const spawnBodies: unknown[] = []
+  let observedTerminal = terminal
+  let observedMetadata: TerminalRuntimeMetadata = {
+    terminalId: terminal.id,
+    title: 'Pi · /repo',
+    progress: null,
+    progressStartedAt: timestamp,
+    progressClearedAt: timestamp,
+    bell: null
+  }
+  let sseScenario: 'none' | 'working' | 'bell' | 'exit' | 'slow-refresh' =
+    'none'
+  let inspectionRequests = 0
+
+  beforeEach(() => {
+    observedTerminal = terminal
+    observedMetadata = {
+      terminalId: terminal.id,
+      title: 'Pi · /repo',
+      progress: null,
+      progressStartedAt: timestamp,
+      progressClearedAt: timestamp,
+      bell: null
+    }
+    sseScenario = 'none'
+    inspectionRequests = 0
+  })
 
   beforeAll(async () => {
     server = http.createServer(async (request, response) => {
       requests.push(`${request.method} ${request.url}`)
       response.setHeader('content-type', 'application/json')
+
+      if (
+        request.method === 'GET' &&
+        request.url?.startsWith('/api/terminals/')
+      ) {
+        const terminalId = decodeURIComponent(
+          request.url.slice('/api/terminals/'.length)
+        )
+        if (terminalId !== observedTerminal.id) {
+          response.statusCode = 404
+          response.end(
+            JSON.stringify({
+              error: {
+                code: 'TERMINAL_NOT_FOUND',
+                message: 'Terminal not found'
+              }
+            })
+          )
+          return
+        }
+
+        inspectionRequests += 1
+        if (sseScenario === 'slow-refresh' && inspectionRequests > 1) {
+          return
+        }
+
+        response.end(
+          JSON.stringify({
+            terminal: observedTerminal,
+            metadata: observedMetadata
+          })
+        )
+        return
+      }
+
+      if (request.method === 'GET' && request.url === '/api/events') {
+        response.setHeader('content-type', 'text/event-stream')
+        response.setHeader('cache-control', 'no-cache')
+        response.flushHeaders()
+        response.write(
+          `event: connected\ndata: ${JSON.stringify({ at: timestamp, terminalMetadata: [observedMetadata] })}\n\n`
+        )
+        if (sseScenario === 'none' || sseScenario === 'slow-refresh') {
+          return
+        }
+
+        const timer = setTimeout(() => {
+          let event: {
+            type: 'terminal.metadata' | 'terminal.updated'
+            data: Record<string, unknown>
+          }
+          if (sseScenario === 'working') {
+            observedMetadata = {
+              ...observedMetadata,
+              progress: { state: 'indeterminate', value: null },
+              progressStartedAt: '2026-01-01T00:01:00.000Z'
+            }
+            event = { type: 'terminal.metadata', data: observedMetadata }
+          } else if (sseScenario === 'bell') {
+            observedMetadata = {
+              ...observedMetadata,
+              bell: {
+                sequence: (observedMetadata.bell?.sequence ?? 0) + 1,
+                at: '2026-01-01T00:02:00.000Z'
+              }
+            }
+            event = { type: 'terminal.metadata', data: observedMetadata }
+          } else {
+            observedTerminal = {
+              ...observedTerminal,
+              status: 'exited',
+              exitCode: 7
+            }
+            event = {
+              type: 'terminal.updated',
+              data: { terminalId: observedTerminal.id }
+            }
+          }
+
+          const frame = `event: ${event.type}\r\ndata: ${JSON.stringify({ id: 'event-1', type: event.type, at: '2026-01-01T00:03:00.000Z', data: event.data })}\r\n\r\n`
+          response.write(frame.slice(0, Math.floor(frame.length / 2)))
+          response.write(frame.slice(Math.floor(frame.length / 2)))
+        }, 10)
+        response.on('close', () => clearTimeout(timer))
+        return
+      }
 
       if (request.method === 'GET' && request.url === '/api/projects') {
         response.end(JSON.stringify({ projects: [project] }))
@@ -385,6 +498,141 @@ describe('CLI context and machine output', () => {
     expect(result.code).toBe(0)
     expect(result.stdout).toContain('Created worktree child (wt_context)')
     expect(result.stdout).toContain('Terminal: Pi (term_context) — running')
+  })
+
+  it('inspects terminals by exact ID and managed dot context', async () => {
+    const human = await runCli(['terminal', 'inspect', terminal.id], {
+      TASKTTY_API_URL: apiUrl
+    })
+    expect(human.code).toBe(0)
+    expect(human.stderr).toBe('')
+    expect(human.stdout).toContain('Terminal: Pi (term_context)')
+    expect(human.stdout).toContain('Progress: idle')
+    expect(human.stdout).toContain('Title:    Pi · /repo')
+
+    const json = await runCli(['terminal', 'inspect', '.', '--json'], {
+      TASKTTY_API_URL: apiUrl,
+      TASKTTY_TERMINAL_ID: terminal.id
+    })
+    expect(json.code).toBe(0)
+    expect(JSON.parse(json.stdout)).toEqual({
+      terminal,
+      metadata: observedMetadata
+    })
+  })
+
+  it('returns immediately when a raw wait condition already matches', async () => {
+    const result = await runCli(
+      ['terminal', 'wait', terminal.id, '--until', 'idle', '--json'],
+      { TASKTTY_API_URL: apiUrl }
+    )
+
+    expect(result.code).toBe(0)
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      condition: 'idle',
+      terminal: { id: terminal.id },
+      metadata: { progress: null }
+    })
+  })
+
+  it('waits for fragmented progress and bell SSE events', async () => {
+    sseScenario = 'working'
+    const working = await runCli(
+      ['terminal', 'wait', terminal.id, '--until', 'working', '--json'],
+      { TASKTTY_API_URL: apiUrl }
+    )
+    expect(working.code).toBe(0)
+    expect(JSON.parse(working.stdout)).toMatchObject({
+      condition: 'working',
+      metadata: { progress: { state: 'indeterminate', value: null } }
+    })
+
+    observedMetadata = {
+      ...observedMetadata,
+      progress: null,
+      bell: { sequence: 4, at: '2026-01-01T00:01:00.000Z' }
+    }
+    sseScenario = 'bell'
+    const bell = await runCli(
+      ['terminal', 'wait', terminal.id, '--until', 'bell', '--json'],
+      { TASKTTY_API_URL: apiUrl }
+    )
+    expect(bell.code).toBe(0)
+    expect(JSON.parse(bell.stdout)).toMatchObject({
+      condition: 'bell',
+      observedAt: '2026-01-01T00:02:00.000Z',
+      metadata: { bell: { sequence: 5 } }
+    })
+  })
+
+  it('refreshes terminal status after an exit event', async () => {
+    sseScenario = 'exit'
+    const result = await runCli(
+      ['terminal', 'wait', terminal.id, '--until', 'exit', '--json'],
+      { TASKTTY_API_URL: apiUrl }
+    )
+
+    expect(result.code).toBe(0)
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      condition: 'exit',
+      terminal: { status: 'exited', exitCode: 7 }
+    })
+  })
+
+  it('times out with exit 4 and aborts an in-flight status refresh', async () => {
+    sseScenario = 'slow-refresh'
+    const result = await runCli(
+      [
+        'terminal',
+        'wait',
+        terminal.id,
+        '--until',
+        'working',
+        '--timeout',
+        '50ms',
+        '--json'
+      ],
+      { TASKTTY_API_URL: apiUrl }
+    )
+
+    expect(result.code).toBe(4)
+    expect(result.stdout).toBe('')
+    expect(JSON.parse(result.stderr)).toMatchObject({
+      error: {
+        code: 'WAIT_TIMEOUT',
+        details: {
+          terminalId: terminal.id,
+          until: 'working',
+          timeoutMs: 50,
+          lastObservation: { metadata: { progress: null } }
+        }
+      }
+    })
+  })
+
+  it('rejects invalid wait arguments and dot without terminal context', async () => {
+    const duration = await runCli(
+      [
+        'terminal',
+        'wait',
+        terminal.id,
+        '--until',
+        'working',
+        '--timeout',
+        '30',
+        '--json'
+      ],
+      { TASKTTY_API_URL: apiUrl }
+    )
+    expect(duration.code).toBe(2)
+
+    const dot = await runCli(['terminal', 'inspect', '.', '--json'], {
+      TASKTTY_API_URL: apiUrl
+    })
+    expect(dot.code).toBe(5)
+    expect(JSON.parse(dot.stderr)).toMatchObject({
+      error: { code: 'TASKTTY_CONTEXT_INCOMPLETE' }
+    })
   })
 
   it('rejects unexpected context arguments as usage errors', async () => {

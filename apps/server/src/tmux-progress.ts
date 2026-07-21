@@ -8,10 +8,17 @@ const OSC = 0x9d
 const ST = 0x9c
 const MAX_OSC_BYTES = 1024
 
-type ParserState = 'ground' | 'escape' | 'osc' | 'osc_escape'
+type ParserState =
+  | 'ground'
+  | 'escape'
+  | 'osc'
+  | 'osc_escape'
+  | 'osc_discard'
+  | 'osc_discard_escape'
 export type TerminalMetadataUpdate =
   | { type: 'title'; title: string }
   | { type: 'progress'; progress: TerminalProgress | null }
+  | { type: 'bell' }
 
 /** Extracts title and OSC 9;4 progress metadata from arbitrary terminal bytes. */
 export class TerminalMetadataParser {
@@ -26,6 +33,8 @@ export class TerminalMetadataParser {
           this.state = 'escape'
         } else if (byte === OSC) {
           this.startOsc()
+        } else if (byte === BEL) {
+          updates.push({ type: 'bell' })
         }
 
         continue
@@ -53,14 +62,36 @@ export class TerminalMetadataParser {
         continue
       }
 
+      if (this.state === 'osc_escape') {
+        if (byte === 0x5c || byte === ST || byte === BEL) {
+          this.finishOsc(updates)
+        } else if (byte === 0x5d) {
+          this.startOsc()
+        } else if (byte === ESC) {
+          this.appendOsc(ESC)
+        } else if (this.appendOsc(ESC) && this.appendOsc(byte)) {
+          this.state = 'osc'
+        }
+
+        continue
+      }
+
+      if (this.state === 'osc_discard') {
+        if (byte === BEL || byte === ST) {
+          this.state = 'ground'
+        } else if (byte === ESC) {
+          this.state = 'osc_discard_escape'
+        }
+
+        continue
+      }
+
       if (byte === 0x5c || byte === ST || byte === BEL) {
-        this.finishOsc(updates)
+        this.state = 'ground'
       } else if (byte === 0x5d) {
         this.startOsc()
-      } else if (byte === ESC) {
-        this.appendOsc(ESC)
-      } else if (this.appendOsc(ESC) && this.appendOsc(byte)) {
-        this.state = 'osc'
+      } else if (byte !== ESC) {
+        this.state = 'osc_discard'
       }
     }
     return updates
@@ -78,7 +109,7 @@ export class TerminalMetadataParser {
     }
 
     this.osc = []
-    this.state = 'ground'
+    this.state = 'osc_discard'
     return false
   }
 
@@ -133,6 +164,7 @@ export interface TmuxProgressObserverOptions {
   env: NodeJS.ProcessEnv
   onTitle?: (title: string) => void
   onProgress: (progress: TerminalProgress | null) => void
+  onBell?: () => void
   onExit: () => void
 }
 
@@ -185,8 +217,10 @@ export class TmuxProgressObserver implements TerminalProgressObserver {
         for (const update of this.metadataParser.push(event.data)) {
           if (update.type === 'title') {
             this.options.onTitle?.(update.title)
-          } else {
+          } else if (update.type === 'progress') {
             this.options.onProgress(update.progress)
+          } else {
+            this.options.onBell?.()
           }
         }
       }

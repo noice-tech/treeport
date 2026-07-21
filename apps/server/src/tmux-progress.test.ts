@@ -20,6 +20,18 @@ describe('TerminalProgressParser', () => {
     ])
   })
 
+  it('extracts real BEL without treating OSC terminators as bells', () => {
+    const parser = new TerminalMetadataParser()
+    expect(
+      parser.push(bytes('before\x07\x1b]2;Pi\x07\x1b]9;4;3\x07after\x07'))
+    ).toEqual([
+      { type: 'bell' },
+      { type: 'title', title: 'Pi' },
+      { type: 'progress', progress: { state: 'indeterminate', value: null } },
+      { type: 'bell' }
+    ])
+  })
+
   it('extracts OSC 9;4 updates terminated by BEL or ST', () => {
     const parser = new TerminalProgressParser()
     expect(parser.push(bytes('before\x1b]9;4;3\x07after'))).toEqual([
@@ -46,14 +58,17 @@ describe('TerminalProgressParser', () => {
   })
 
   it('ignores unrelated, malformed, and oversized OSC payloads and then recovers', () => {
-    const parser = new TerminalProgressParser()
+    const parser = new TerminalMetadataParser()
     expect(
       parser.push(
         bytes(
-          `\x1b]0;title\x07\x1b]9;4;1;101\x07\x1b]${'x'.repeat(80)}\x1b]9;4;3\x07`
+          `\x1b]0;title\x07\x1b]9;4;1;101\x07\x1b]${'x'.repeat(1_100)}\x07\x1b]9;4;3\x07`
         )
       )
-    ).toEqual([{ state: 'indeterminate', value: null }])
+    ).toEqual([
+      { type: 'title', title: 'title' },
+      { type: 'progress', progress: { state: 'indeterminate', value: null } }
+    ])
   })
 
   it('extracts multiple updates from one chunk', () => {
@@ -76,6 +91,7 @@ describe('TmuxProgressObserver', () => {
     })
     const onTitle = vi.fn()
     const onProgress = vi.fn()
+    const onBell = vi.fn()
     const onExit = vi.fn()
     const observer = new TmuxProgressObserver(
       {
@@ -85,14 +101,16 @@ describe('TmuxProgressObserver', () => {
         env: {},
         onTitle,
         onProgress,
+        onBell,
         onExit
       },
       vi.fn(() => child) as never
     )
 
     child.stdout.write(
-      '%output %0 before\\033]2;Pi\\007\\033]9;4;3\\007after\n'
+      '%output %0 before\\007\\033]2;Pi\\007\\033]9;4;3\\007after\n'
     )
+    expect(onBell).toHaveBeenCalledOnce()
     expect(onTitle).toHaveBeenCalledWith('Pi')
     expect(onProgress).toHaveBeenCalledWith({
       state: 'indeterminate',

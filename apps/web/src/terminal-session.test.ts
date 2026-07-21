@@ -339,7 +339,10 @@ describe('TerminalSessionManager', () => {
     manager.applyRuntimeMetadata({
       terminalId: 'background',
       title: 'pi · /repo',
-      progress: { state: 'normal', value: 42 }
+      progress: { state: 'normal', value: 42 },
+      progressStartedAt: '2026-01-01T00:00:00.000Z',
+      progressClearedAt: null,
+      bell: null
     })
 
     expect(manager.getTitleSnapshot().get('background')).toBe('pi · /repo')
@@ -349,11 +352,65 @@ describe('TerminalSessionManager', () => {
     })
 
     manager.replaceRuntimeMetadata([
-      { terminalId: 'other', title: 'shell', progress: null }
+      {
+        terminalId: 'other',
+        title: 'shell',
+        progress: null,
+        progressStartedAt: null,
+        progressClearedAt: null,
+        bell: null
+      }
     ])
     expect(manager.getTitleSnapshot().has('background')).toBe(false)
     expect(manager.getProgressSnapshot().has('background')).toBe(false)
     expect(manager.getTitleSnapshot().get('other')).toBe('shell')
+  })
+
+  it('baselines daemon bells and marks only later bells on unviewed terminals', () => {
+    const { manager } = fixture()
+    const metadata = {
+      terminalId: 'background',
+      title: 'Pi',
+      progress: null,
+      progressStartedAt: null,
+      progressClearedAt: null,
+      bell: { sequence: 1, at: '2026-01-01T00:00:00.000Z' }
+    } as const
+
+    manager.replaceRuntimeMetadata([metadata])
+    expect(manager.getAttentionSnapshot().has('background')).toBe(false)
+
+    manager.applyRuntimeMetadata({
+      ...metadata,
+      bell: { sequence: 2, at: '2026-01-01T00:01:00.000Z' }
+    })
+    expect(manager.getAttentionSnapshot().has('background')).toBe(true)
+    manager.clearAttention('background')
+    manager.applyRuntimeMetadata({
+      ...metadata,
+      bell: { sequence: 2, at: '2026-01-01T00:01:00.000Z' }
+    })
+    expect(manager.getAttentionSnapshot().has('background')).toBe(false)
+
+    manager.acquire('background')
+    manager.applyRuntimeMetadata({
+      ...metadata,
+      bell: { sequence: 3, at: '2026-01-01T00:02:00.000Z' }
+    })
+    expect(manager.getAttentionSnapshot().has('background')).toBe(false)
+    manager.release('background')
+    manager.applyRuntimeMetadata({
+      ...metadata,
+      bell: { sequence: 4, at: '2026-01-01T00:03:00.000Z' }
+    })
+    expect(manager.getAttentionSnapshot().has('background')).toBe(true)
+
+    manager.forget('background')
+    expect(manager.getAttentionSnapshot().has('background')).toBe(false)
+    manager.applyRuntimeMetadata(metadata)
+    expect(manager.getAttentionSnapshot().has('background')).toBe(true)
+    manager.reconcile([])
+    expect(manager.getAttentionSnapshot().has('background')).toBe(false)
   })
 
   it('retains progress across LRU eviction and clears it when metadata is removed', () => {

@@ -5,6 +5,7 @@ import { execFile, spawn } from 'node:child_process'
 import { promisify } from 'node:util'
 import { SpawnCommandRunner, TmuxAdapter } from '@tasktty/core'
 import { afterAll, describe, expect, it } from 'vitest'
+import { TerminalMetadataParser } from './tmux-progress.js'
 import {
   controlAttachArgs,
   encodeControlInput,
@@ -69,7 +70,7 @@ describe.skipIf(!enabled)('real tmux control-mode characterization', () => {
       "process.stdin.on('data', data => {",
       '  pending = Buffer.concat([pending, data]);',
       '  if (pending.length < 13) return;',
-      "  process.stdout.write(Buffer.from('\\x1b]9;4;3\\x07\\x1b]8;;https://example.test\\x07LINK\\x1b]8;;\\x07|'));",
+      "  process.stdout.write(Buffer.from('\\x1b]9;4;3\\x07\\x07\\x1b]8;;https://example.test\\x07LINK\\x1b]8;;\\x07|'));",
       '  process.stdout.write(pending);',
       "  process.stdout.write(Buffer.from('|END'));",
       '  pending = Buffer.alloc(0);',
@@ -225,19 +226,27 @@ describe.skipIf(!enabled)('real tmux control-mode characterization', () => {
       for (const command of encodeControlInput(paneId, sent, 3)) {
         control.stdin.write(command)
       }
+      const progressOutput = () =>
+        Buffer.concat(
+          progressEvents
+            .filter(
+              (event): event is Extract<TmuxControlEvent, { type: 'output' }> =>
+                event.type === 'output' && event.paneId === paneId
+            )
+            .map((event) => Buffer.from(event.data))
+        )
       await waitFor(
-        () =>
-          Buffer.concat(
-            progressEvents
-              .filter(
-                (
-                  event
-                ): event is Extract<TmuxControlEvent, { type: 'output' }> =>
-                  event.type === 'output' && event.paneId === paneId
-              )
-              .map((event) => Buffer.from(event.data))
-          ).includes(Buffer.from('\x1b]9;4;3\x07')),
-        'read-only progress observer did not receive OSC 9;4'
+        () => progressOutput().includes(Buffer.from('\x1b]9;4;3\x07\x07')),
+        'read-only progress observer did not receive OSC 9;4 and BEL'
+      )
+      expect(new TerminalMetadataParser().push(progressOutput())).toEqual(
+        expect.arrayContaining([
+          {
+            type: 'progress',
+            progress: { state: 'indeterminate', value: null }
+          },
+          { type: 'bell' }
+        ])
       )
       await expect(
         execute('tmux', [

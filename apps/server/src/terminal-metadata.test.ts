@@ -29,6 +29,10 @@ class FakeObserver implements TerminalProgressObserver {
     this.options.onProgress(progress)
   }
 
+  bell(): void {
+    this.options.onBell?.()
+  }
+
   dispose(): void {
     this.disposed = true
   }
@@ -134,8 +138,22 @@ describe('TerminalMetadataManager', () => {
     await manager.initialize()
     expect(observers).toHaveLength(2)
     expect(manager.snapshot()).toEqual([
-      { terminalId: 'one', title: 'title session-one', progress: null },
-      { terminalId: 'two', title: 'title session-two', progress: null }
+      {
+        terminalId: 'one',
+        title: 'title session-one',
+        progress: null,
+        progressStartedAt: null,
+        progressClearedAt: null,
+        bell: null
+      },
+      {
+        terminalId: 'two',
+        title: 'title session-two',
+        progress: null,
+        progressStartedAt: null,
+        progressClearedAt: null,
+        bell: null
+      }
     ])
 
     observers[1]!.title('pi · /repo')
@@ -143,12 +161,18 @@ describe('TerminalMetadataManager', () => {
     expect(manager.get('two')).toEqual({
       terminalId: 'two',
       title: 'pi · /repo',
-      progress: { state: 'indeterminate', value: null }
+      progress: { state: 'indeterminate', value: null },
+      progressStartedAt: expect.any(String),
+      progressClearedAt: null,
+      bell: null
     })
     expect(published).toContainEqual({
       terminalId: 'two',
       title: 'pi · /repo',
-      progress: { state: 'indeterminate', value: null }
+      progress: { state: 'indeterminate', value: null },
+      progressStartedAt: expect.any(String),
+      progressClearedAt: null,
+      bell: null
     })
   })
 
@@ -174,7 +198,10 @@ describe('TerminalMetadataManager', () => {
     expect(manager.get('one')).toEqual({
       terminalId: 'one',
       title: 'finished',
-      progress: null
+      progress: null,
+      progressStartedAt: expect.any(String),
+      progressClearedAt: expect.any(String),
+      bell: null
     })
     expect(observers[0]!.disposed).toBe(true)
   })
@@ -226,8 +253,42 @@ describe('TerminalMetadataManager', () => {
     expect(manager.get(item.id)).toEqual({
       terminalId: item.id,
       title: null,
-      progress: null
+      progress: null,
+      progressStartedAt: null,
+      progressClearedAt: null,
+      bell: null
     })
+  })
+
+  it('records progress transitions and daemon-observed bells without duplicating keepalives', async () => {
+    const item = terminal('one')
+    const { manager, observers, events } = fixture([item])
+    managers.push(manager)
+    await manager.initialize()
+    const published: unknown[] = []
+    events.subscribe((event) => {
+      if (event.type === 'terminal.metadata') {
+        published.push(event.data)
+      }
+    })
+
+    observers[0]!.progress({ state: 'indeterminate', value: null })
+    const startedAt = manager.get('one').progressStartedAt
+    observers[0]!.progress({ state: 'indeterminate', value: null })
+    observers[0]!.bell()
+    observers[0]!.bell()
+    observers[0]!.progress(null)
+    const cleared = manager.get('one')
+    observers[0]!.progress(null)
+
+    expect(startedAt).toEqual(expect.any(String))
+    expect(cleared).toMatchObject({
+      progress: null,
+      progressStartedAt: startedAt,
+      progressClearedAt: expect.any(String),
+      bell: { sequence: 2, at: expect.any(String) }
+    })
+    expect(published).toHaveLength(4)
   })
 
   it('tracks terminals created after startup and disposes them on removal', async () => {
@@ -245,7 +306,10 @@ describe('TerminalMetadataManager', () => {
       expect(manager.snapshot()).toContainEqual({
         terminalId: created.id,
         title: 'title session-new',
-        progress: null
+        progress: null,
+        progressStartedAt: null,
+        progressClearedAt: null,
+        bell: null
       })
     )
     expect(observers).toHaveLength(1)
