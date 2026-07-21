@@ -977,12 +977,12 @@ export default function App() {
                   >
                     {project.worktrees.map((worktree) => (
                       <li key={worktree.id} className="group/worktree min-w-0">
-                        <div className="relative min-w-0">
+                        <div className="relative min-w-0 max-[700px]:flex max-[700px]:items-center">
                           <Button
                             variant="ghost"
                             type="button"
                             className={cn(
-                              'worktree-row h-auto min-h-11 w-full min-w-0 justify-start gap-2 rounded-md px-2 py-1.5 text-left text-base font-medium sm:min-h-8 sm:py-1 sm:text-[0.8125rem]',
+                              'worktree-row h-auto min-h-11 w-full min-w-0 justify-start gap-2 rounded-md px-2 py-1.5 text-left text-base font-medium sm:min-h-8 sm:py-1 sm:text-[0.8125rem] max-[700px]:w-fit max-[700px]:shrink',
                               selectedWorktree?.id === worktree.id
                                 ? 'selected bg-white/8 text-zinc-50'
                                 : 'text-zinc-300 hover:bg-white/5 hover:text-zinc-50'
@@ -999,7 +999,7 @@ export default function App() {
                             </span>
                           </Button>
                           {worktree.kind === 'linked' && (
-                            <div className="worktree-actions absolute top-0 right-0 z-10 flex items-center gap-0.5 rounded-md bg-zinc-900 opacity-0 shadow-sm ring-1 ring-white/8 group-hover/worktree:opacity-100 group-focus-within/worktree:opacity-100 max-[700px]:relative max-[700px]:mt-0.5 max-[700px]:ml-7 max-[700px]:w-fit max-[700px]:opacity-100">
+                            <div className="worktree-actions absolute top-0 right-0 z-10 flex items-center gap-0.5 rounded-md bg-zinc-900 opacity-0 shadow-sm ring-1 ring-white/8 group-hover/worktree:opacity-100 group-focus-within/worktree:opacity-100 max-[700px]:static max-[700px]:ml-0.5 max-[700px]:shrink-0 max-[700px]:opacity-100">
                               <SidebarAction
                                 label={`Remove ${worktree.name}`}
                                 tooltip="Remove worktree"
