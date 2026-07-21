@@ -497,35 +497,168 @@ export class TaskTTYService {
       })
     const mainPath = await this.deps.git.resolveMainCheckout(checkout)
     const repositoryPath = await fs.realpath(mainPath)
-    const existing = this.deps.database.projectByPath(repositoryPath)
-    const timestamp = now()
+    const repositoryStat = await fs.stat(repositoryPath, { bigint: true })
+    const repositoryDevice = repositoryStat.dev.toString()
+    const repositoryInode = repositoryStat.ino.toString()
+    const pathMatch = this.deps.database.projectByPath(repositoryPath)
+    const identityMatch = this.deps.database.projectByFilesystemIdentity(
+      repositoryDevice,
+      repositoryInode
+    )
+    const pathMetadata = pathMatch
+      ? this.deps.database.projectFilesystemMetadata(pathMatch.id)
+      : null
+    if (pathMatch && !pathMetadata) {
+      throw new DomainError(
+        'PROJECT_PATH_CONFLICT',
+        'The registered project is missing its filesystem identity',
+        409
+      )
+    }
+
+    if (
+      pathMatch &&
+      pathMetadata &&
+      (pathMetadata.device !== repositoryDevice ||
+        pathMetadata.inode !== repositoryInode)
+    ) {
+      if (!identityMatch) {
+        throw new DomainError(
+          'PROJECT_PATH_CONFLICT',
+          'This path belongs to a registered project, but now contains a different repository',
+          409
+        )
+      }
+
+      if (identityMatch.id !== pathMatch.id) {
+        throw new DomainError(
+          'PROJECT_PATH_CONFLICT',
+          'The repository identity and registered path belong to different projects',
+          409
+        )
+      }
+    }
+
+    if (pathMatch && identityMatch && pathMatch.id !== identityMatch.id) {
+      throw new DomainError(
+        'PROJECT_PATH_CONFLICT',
+        'The repository identity and registered path belong to different projects',
+        409
+      )
+    }
+
+    const existing = identityMatch ?? pathMatch
     const projectId = existing?.id ?? id('proj')
-    const defaultBranch = await this.deps.git.defaultBranch(repositoryPath)
-    const name =
-      requestedName?.trim() || existing?.name || path.basename(repositoryPath)
-    this.deps.database.connection
-      .prepare(
-        `INSERT INTO projects(id,name,repository_path,main_worktree_path,default_branch,created_at,updated_at)
-         VALUES(?,?,?,?,?,?,?)
-         ON CONFLICT(repository_path) DO UPDATE SET name=excluded.name, main_worktree_path=excluded.main_worktree_path,
-           default_branch=excluded.default_branch, updated_at=excluded.updated_at`
+    if (existing && this.projectLocks.has(projectId)) {
+      throw new DomainError(
+        'PROJECT_BUSY',
+        'Project is already being modified',
+        409
       )
-      .run(
-        projectId,
-        name,
-        repositoryPath,
-        mainPath,
-        defaultBranch,
-        existing?.createdAt ?? timestamp,
-        timestamp
-      )
-    await this.importWorktrees(projectId, repositoryPath, mainPath)
-    this.invalidateProjectsSnapshot()
-    const project = this.getProject(projectId)
-    this.events.publish(existing ? 'project.updated' : 'project.created', {
-      projectId
-    })
-    return project
+    }
+
+    if (existing) {
+      this.projectLocks.add(projectId)
+    }
+
+    try {
+      const updateRegistration = async (): Promise<void> => {
+        if (existing && existing.repositoryPath !== repositoryPath) {
+          await this.deps.git.repairWorktrees(repositoryPath)
+          const discovered = await this.deps.git.listWorktrees(repositoryPath)
+          if (
+            !discovered.some(
+              (worktree) =>
+                !worktree.bare &&
+                !worktree.prunable &&
+                worktree.path === repositoryPath &&
+                worktree.gitWorktreeKey === 'main'
+            )
+          ) {
+            throw new DomainError(
+              'NOT_A_GIT_REPOSITORY',
+              'Git worktree inventory did not report the recovered main checkout',
+              400
+            )
+          }
+        }
+
+        const timestamp = now()
+        const defaultBranch = await this.deps.git.defaultBranch(repositoryPath)
+        const requested = requestedName?.trim() || null
+        const existingMetadata = existing
+          ? this.deps.database.projectFilesystemMetadata(existing.id)
+          : null
+        if (existing && !existingMetadata) {
+          throw new DomainError(
+            'PROJECT_PATH_CONFLICT',
+            'The registered project is missing its filesystem identity',
+            409
+          )
+        }
+
+        const nameIsCustom = requested
+          ? true
+          : (existingMetadata?.nameIsCustom ?? false)
+        const automaticExistingName = Boolean(
+          existing &&
+          !nameIsCustom &&
+          existing.name === path.basename(existing.repositoryPath)
+        )
+        const name =
+          requested ||
+          (automaticExistingName
+            ? path.basename(repositoryPath)
+            : existing?.name) ||
+          path.basename(repositoryPath)
+        this.deps.database.connection
+          .prepare(
+            `INSERT INTO projects(
+               id,name,repository_path,main_worktree_path,default_branch,
+               repository_device,repository_inode,name_is_custom,created_at,updated_at
+             ) VALUES(?,?,?,?,?,?,?,?,?,?)
+             ON CONFLICT(id) DO UPDATE SET name=excluded.name, repository_path=excluded.repository_path,
+               main_worktree_path=excluded.main_worktree_path, default_branch=excluded.default_branch,
+               repository_device=excluded.repository_device, repository_inode=excluded.repository_inode,
+               name_is_custom=excluded.name_is_custom,updated_at=excluded.updated_at`
+          )
+          .run(
+            projectId,
+            name,
+            repositoryPath,
+            mainPath,
+            defaultBranch,
+            repositoryDevice,
+            repositoryInode,
+            nameIsCustom ? 1 : 0,
+            existing?.createdAt ?? timestamp,
+            timestamp
+          )
+        await this.reconcileProjectWorktrees(
+          projectId,
+          repositoryPath,
+          mainPath,
+          Boolean(existing)
+        )
+      }
+
+      if (existing) {
+        await this.serializeProjectObservation(projectId, updateRegistration)
+      } else {
+        await updateRegistration()
+      }
+
+      this.invalidateProjectsSnapshot()
+      const project = this.getProject(projectId)
+      this.events.publish(existing ? 'project.updated' : 'project.created', {
+        projectId
+      })
+      return project
+    } finally {
+      if (existing) {
+        this.projectLocks.delete(projectId)
+      }
+    }
   }
 
   private async observeAvailableProject(
@@ -580,23 +713,14 @@ export class TaskTTYService {
     }
   }
 
-  private async importWorktrees(
+  private async serializeProjectObservation(
     projectId: string,
-    repositoryPath: string,
-    mainPath: string,
-    allowProjectLock = false
+    operation: () => Promise<void>
   ): Promise<void> {
     const previous = this.projectObservationTails.get(projectId)
     const observation = (previous ?? Promise.resolve())
       .catch(() => undefined)
-      .then(() =>
-        this.reconcileProjectWorktrees(
-          projectId,
-          repositoryPath,
-          mainPath,
-          allowProjectLock
-        )
-      )
+      .then(operation)
     this.projectObservationTails.set(projectId, observation)
     try {
       await observation
@@ -607,6 +731,22 @@ export class TaskTTYService {
     }
   }
 
+  private importWorktrees(
+    projectId: string,
+    repositoryPath: string,
+    mainPath: string,
+    allowProjectLock = false
+  ): Promise<void> {
+    return this.serializeProjectObservation(projectId, () =>
+      this.reconcileProjectWorktrees(
+        projectId,
+        repositoryPath,
+        mainPath,
+        allowProjectLock
+      )
+    )
+  }
+
   private async reconcileProjectWorktrees(
     projectId: string,
     repositoryPath: string,
@@ -615,6 +755,99 @@ export class TaskTTYService {
   ): Promise<void> {
     if (!allowProjectLock && this.projectLocks.has(projectId)) {
       return
+    }
+
+    const storedProject = this.getProject(projectId)
+    const storedIdentity =
+      this.deps.database.projectFilesystemMetadata(projectId)
+    if (!storedIdentity) {
+      throw new Error('Registered project is missing its filesystem identity')
+    }
+
+    let canonicalRepository = await fs
+      .realpath(repositoryPath)
+      .catch(() => null)
+    let canonicalStat = canonicalRepository
+      ? await fs.stat(canonicalRepository, { bigint: true }).catch(() => null)
+      : null
+    const currentIdentityMatches = Boolean(
+      canonicalStat?.isDirectory() &&
+      canonicalStat.dev.toString() === storedIdentity.device &&
+      canonicalStat.ino.toString() === storedIdentity.inode
+    )
+    if (!currentIdentityMatches) {
+      const candidates = new Set<string>()
+      const parent = path.dirname(repositoryPath)
+      const entries = await fs
+        .readdir(parent, { withFileTypes: true })
+        .catch(() => [])
+      for (const entry of entries) {
+        if (!entry.isDirectory() && !entry.isSymbolicLink()) {
+          continue
+        }
+
+        const candidate = await fs
+          .realpath(path.join(parent, entry.name))
+          .catch(() => null)
+        if (!candidate) {
+          continue
+        }
+
+        const candidateStat = await fs
+          .stat(candidate, { bigint: true })
+          .catch(() => null)
+        if (
+          candidateStat?.isDirectory() &&
+          candidateStat.dev.toString() === storedIdentity.device &&
+          candidateStat.ino.toString() === storedIdentity.inode
+        ) {
+          candidates.add(candidate)
+        }
+      }
+      if (candidates.size !== 1) {
+        throw new Error(
+          candidates.size > 1
+            ? 'Repository rename recovery is ambiguous'
+            : 'Registered main checkout is unavailable or contains a different repository'
+        )
+      }
+
+      canonicalRepository = [...candidates][0]!
+      canonicalStat = await fs.stat(canonicalRepository, { bigint: true })
+      if (
+        !canonicalStat.isDirectory() ||
+        canonicalStat.dev.toString() !== storedIdentity.device ||
+        canonicalStat.ino.toString() !== storedIdentity.inode
+      ) {
+        throw new Error('Repository rename candidate changed during recovery')
+      }
+    }
+
+    if (!canonicalRepository || !canonicalStat?.isDirectory()) {
+      throw new Error('Registered main checkout is unavailable')
+    }
+
+    repositoryPath = canonicalRepository
+    mainPath = canonicalRepository
+    const repositoryRenamed = repositoryPath !== storedProject.repositoryPath
+    if (repositoryRenamed) {
+      const canonical =
+        await this.deps.git.canonicalizeRepositoryPath(repositoryPath)
+      if (canonical !== repositoryPath) {
+        throw new Error(
+          'Repository rename candidate is not the Git top-level checkout'
+        )
+      }
+
+      const verifiedStat = await fs.stat(repositoryPath, { bigint: true })
+      if (
+        verifiedStat.dev.toString() !== storedIdentity.device ||
+        verifiedStat.ino.toString() !== storedIdentity.inode
+      ) {
+        throw new Error('Repository rename candidate changed during recovery')
+      }
+
+      await this.deps.git.repairWorktrees(repositoryPath)
     }
 
     const discovered = (
@@ -634,6 +867,17 @@ export class TaskTTYService {
       )
     }
 
+    const repositoryStat = await fs.stat(repositoryPath, { bigint: true })
+    const repositoryDevice = repositoryStat.dev.toString()
+    const repositoryInode = repositoryStat.ino.toString()
+    if (
+      storedIdentity.device !== repositoryDevice ||
+      storedIdentity.inode !== repositoryInode
+    ) {
+      throw new Error('Registered main checkout changed during observation')
+    }
+
+    const projectIdentityChanged = repositoryRenamed
     const timestamp = now()
     const known = this.deps.database.connection
       .prepare(
@@ -658,14 +902,19 @@ export class TaskTTYService {
       prunable: number
     }>
     const keyed = new Map(
-      known
-        .filter((worktree) => worktree.git_worktree_key)
-        .map((worktree) => [worktree.git_worktree_key!, worktree])
+      known.flatMap((worktree) =>
+        worktree.git_worktree_key
+          ? [[worktree.git_worktree_key, worktree] as const]
+          : []
+      )
     )
     const matched = discovered.map((item) => ({
       item,
       existing:
         (item.gitWorktreeKey ? keyed.get(item.gitWorktreeKey) : undefined) ??
+        (item.gitWorktreeKey === 'main'
+          ? known.find((worktree) => worktree.kind === 'main')
+          : undefined) ??
         known.find(
           (worktree) =>
             worktree.path === item.path &&
@@ -792,6 +1041,29 @@ export class TaskTTYService {
     }
 
     const transaction = this.deps.database.connection.transaction(() => {
+      if (projectIdentityChanged) {
+        const projectName =
+          repositoryRenamed &&
+          !storedIdentity.nameIsCustom &&
+          storedProject.name === path.basename(storedProject.repositoryPath)
+            ? path.basename(repositoryPath)
+            : storedProject.name
+        this.deps.database.connection
+          .prepare(
+            `UPDATE projects SET name=?,repository_path=?,main_worktree_path=?,
+               repository_device=?,repository_inode=?,updated_at=? WHERE id=?`
+          )
+          .run(
+            projectName,
+            repositoryPath,
+            mainPath,
+            repositoryDevice,
+            repositoryInode,
+            timestamp,
+            projectId
+          )
+      }
+
       for (const { item, existing } of matched) {
         const kind = item.path === mainPath ? 'main' : 'linked'
         if (existing) {
@@ -850,8 +1122,12 @@ export class TaskTTYService {
     })
     transaction()
 
-    if (changed.length > 0) {
+    if (projectIdentityChanged || changed.length > 0) {
       this.invalidateProjectsSnapshot()
+    }
+
+    if (repositoryRenamed) {
+      this.events.publish('project.updated', { projectId })
     }
 
     for (const { existing } of changed) {

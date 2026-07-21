@@ -104,7 +104,7 @@ describe.skipIf(!enabled)(
       }
 
       await fs.mkdir(root, { recursive: true })
-      const main = path.join(root, 'main checkout with spaces')
+      let main = path.join(root, 'main checkout with spaces')
       const remote = path.join(root, 'remote origin.git')
       const databasePath = path.join(root, 'metadata', 'tasktty.db')
       const runtimeDir = path.join(root, 'runtime')
@@ -271,6 +271,32 @@ describe.skipIf(!enabled)(
       expect(
         (await fixture.service.refreshTerminalStatus(second.id)).status
       ).toBe('running')
+
+      const renamedMain = path.join(root, 'renamed main checkout with spaces')
+      await fs.rename(main, renamedMain)
+      main = renamedMain
+      const recoveredProject = await fixture.service.getProjectSnapshot(
+        project.id
+      )
+      expect(recoveredProject).toMatchObject({
+        id: project.id,
+        name: path.basename(renamedMain),
+        repositoryPath: await fs.realpath(renamedMain),
+        mainWorktreePath: await fs.realpath(renamedMain),
+        availability: { state: 'available' }
+      })
+      expect(
+        recoveredProject.worktrees.find(
+          (worktree) => worktree.kind === 'linked'
+        )
+      ).toMatchObject({
+        id: linked.id,
+        tmuxSocketName: linked.tmuxSocketName,
+        terminals: expect.arrayContaining([
+          expect.objectContaining({ id: first.id }),
+          expect.objectContaining({ id: second.id })
+        ])
+      })
 
       const movedPath = path.join(root, 'externally moved real topic')
       await runChecked(command, {

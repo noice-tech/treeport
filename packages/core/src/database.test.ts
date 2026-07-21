@@ -2,7 +2,6 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import Database from 'better-sqlite3'
 import {
   deserializeOperation,
   serializeOperation,
@@ -52,55 +51,36 @@ describe('SQLite metadata', () => {
         .pluck()
         .get()
     ).toBe(0)
-  })
-
-  it('migrates version 1 rows and drops the terminal projection', async () => {
-    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'tasktty-db-v1-'))
-    directories.push(directory)
-    const filePath = path.join(directory, 'metadata.db')
-    const legacy = new Database(filePath)
-    legacy.exec(`
-      CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);
-      INSERT INTO schema_migrations VALUES(1,'2026-01-01');
-      CREATE TABLE projects(id TEXT PRIMARY KEY,name TEXT NOT NULL,repository_path TEXT NOT NULL UNIQUE,main_worktree_path TEXT NOT NULL,default_branch TEXT NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL);
-      CREATE TABLE worktrees(id TEXT PRIMARY KEY,project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,path TEXT NOT NULL UNIQUE,branch TEXT NOT NULL,kind TEXT NOT NULL CHECK(kind IN ('main','linked')),tmux_socket_name TEXT NOT NULL UNIQUE,status TEXT NOT NULL CHECK(status IN ('active','cleaning','cleanup_failed','removed')),cleanup_error TEXT,pr_state TEXT NOT NULL DEFAULT 'unknown',pr_number INTEGER,pr_url TEXT,pr_base_branch TEXT,pr_head_branch TEXT,pr_merged_at TEXT,pr_refreshed_at TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL);
-      CREATE INDEX worktrees_project_idx ON worktrees(project_id);
-      CREATE TABLE operations(id TEXT PRIMARY KEY,kind TEXT NOT NULL CHECK(kind IN ('finish','discard','project_cleanup')),project_id TEXT REFERENCES projects(id) ON DELETE SET NULL,worktree_id TEXT REFERENCES worktrees(id) ON DELETE SET NULL,status TEXT NOT NULL CHECK(status IN ('pending','running','completed','failed')),request_json TEXT NOT NULL,result_json TEXT,error TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL);
-      CREATE INDEX operations_worktree_idx ON operations(worktree_id);
-      INSERT INTO projects VALUES('p','repo','/repo','/repo','main','t','t');
-      INSERT INTO worktrees(id,project_id,path,branch,kind,tmux_socket_name,status,created_at,updated_at) VALUES('w','p','/repo/topic','(detached)','linked','sock','active','t','t');
-      INSERT INTO operations VALUES('old','finish','p','w','completed','{}','{}',NULL,'t','t');
-    `)
-    legacy.close()
-
-    const database = new TaskTTYDatabase(filePath)
-    databases.push(database)
-    expect(database.worktree('w')).toMatchObject({
-      branch: null,
-      detached: true,
-      head: '',
-      name: 'topic',
-      terminals: []
-    })
     expect(
       database.connection
-        .prepare("SELECT count(*) FROM sqlite_master WHERE name='terminals'")
+        .prepare('SELECT version FROM schema_migrations ORDER BY version')
         .pluck()
-        .get()
-    ).toBe(0)
-    expect(database.project('p')?.color).toBeNull()
-    expect(database.operation('old')?.kind).toBe('finish')
-    expect(() =>
-      database.connection
+        .all()
+    ).toEqual([7])
+  })
+
+  it('reopens an already-version-7 database without reapplying the baseline', async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'tasktty-db-v7-'))
+    directories.push(directory)
+    const filePath = path.join(directory, 'metadata.db')
+    const initial = new TaskTTYDatabase(filePath)
+    initial.close()
+
+    const reopened = new TaskTTYDatabase(filePath)
+    databases.push(reopened)
+    expect(
+      reopened.connection
+        .prepare('SELECT version FROM schema_migrations ORDER BY version')
+        .pluck()
+        .all()
+    ).toEqual([7])
+    expect(
+      reopened.connection
         .prepare(
-          "INSERT INTO operations VALUES('new','remove','p','w','pending','{}',NULL,NULL,'t','t')"
+          "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
         )
-        .run()
-    ).not.toThrow()
-    expect(() =>
-      database.connection
-        .prepare("UPDATE projects SET color='indigo' WHERE id='p'")
-        .run()
-    ).toThrow()
+        .pluck()
+        .all()
+    ).toEqual(['operations', 'projects', 'schema_migrations', 'worktrees'])
   })
 })

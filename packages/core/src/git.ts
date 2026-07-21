@@ -135,7 +135,17 @@ export class GitAdapter {
   }
 
   async listWorktrees(cwd: string): Promise<GitWorktreeInfo[]> {
-    const result = await this.checked(cwd, ['worktree', 'list', '--porcelain'])
+    const [result, commonDirectoryResult] = await Promise.all([
+      this.checked(cwd, ['worktree', 'list', '--porcelain']),
+      this.checked(cwd, ['rev-parse', '--git-common-dir'])
+    ])
+    const commonDirectoryValue = commonDirectoryResult.stdout.trim()
+    const resolvedCommonDirectory = path.isAbsolute(commonDirectoryValue)
+      ? commonDirectoryValue
+      : path.resolve(cwd, commonDirectoryValue)
+    const commonDirectory = await fs
+      .realpath(resolvedCommonDirectory)
+      .catch(() => path.resolve(resolvedCommonDirectory))
     const parsed = parseWorktreePorcelain(result.stdout)
     return Promise.all(
       parsed.map(async (item) => {
@@ -150,25 +160,50 @@ export class GitAdapter {
           'rev-parse',
           '--absolute-git-dir'
         ])
+        const gitDirectoryValue = gitDirectory.stdout.trim()
+        const canonicalGitDirectory = await fs
+          .realpath(gitDirectoryValue)
+          .catch(() => path.resolve(gitDirectoryValue))
+        const relative = path.relative(commonDirectory, canonicalGitDirectory)
+        let gitWorktreeKey: string
+        if (relative === '') {
+          gitWorktreeKey = 'main'
+        } else {
+          const segments = relative.split(path.sep)
+          if (
+            segments.length !== 2 ||
+            segments[0] !== 'worktrees' ||
+            !segments[1]
+          ) {
+            throw new Error(
+              `Invalid Git worktree administrative path: ${canonicalGitDirectory}`
+            )
+          }
+
+          gitWorktreeKey = `worktrees/${segments[1]}`
+        }
+
         return {
           ...item,
           path: worktreePath,
-          gitWorktreeKey: await fs
-            .realpath(gitDirectory.stdout.trim())
-            .catch(() => path.resolve(gitDirectory.stdout.trim()))
+          gitWorktreeKey
         }
       })
     )
   }
 
+  async repairWorktrees(cwd: string): Promise<void> {
+    await this.checked(cwd, ['worktree', 'repair'])
+  }
+
   async resolveMainCheckout(cwd: string): Promise<string> {
-    const worktrees = await this.listWorktrees(cwd)
-    const main = worktrees[0]
+    const result = await this.checked(cwd, ['worktree', 'list', '--porcelain'])
+    const main = parseWorktreePorcelain(result.stdout)[0]
     if (!main || main.bare) {
       throw new Error('A non-bare main Git checkout is required')
     }
 
-    return main.path
+    return fs.realpath(main.path)
   }
 
   async currentBranch(cwd: string): Promise<string> {
