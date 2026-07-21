@@ -249,6 +249,43 @@ describe('TmuxAdapter', () => {
     await expect(fs.access(specPath)).rejects.toThrow()
   })
 
+  it('treats a missing worktree server as already stopped', async () => {
+    const runtime = await fs.mkdtemp(path.join(os.tmpdir(), 'tasktty-runtime-'))
+    temporary.push(runtime)
+    const runner = new RecordingRunner()
+    runner.responses.push(
+      {
+        stdout: '',
+        stderr: 'error connecting to /tmp/tasktty (No such file or directory)',
+        exitCode: 1
+      },
+      {
+        stdout: '',
+        stderr: 'error connecting to /tmp/tasktty (No such file or directory)',
+        exitCode: 1
+      }
+    )
+    const adapter = new TmuxAdapter(runner, runtime)
+
+    await expect(adapter.killServer('socket')).resolves.toBeUndefined()
+  })
+
+  it('does not treat tmux connection permission errors as an absent server', async () => {
+    const runtime = await fs.mkdtemp(path.join(os.tmpdir(), 'tasktty-runtime-'))
+    temporary.push(runtime)
+    const runner = new RecordingRunner()
+    runner.responses.push({
+      stdout: '',
+      stderr: 'error connecting to /tmp/tasktty (Permission denied)',
+      exitCode: 1
+    })
+    const adapter = new TmuxAdapter(runner, runtime)
+
+    await expect(adapter.killServer('socket')).rejects.toThrow(
+      'Permission denied'
+    )
+  })
+
   it('maps a live, exited, or absent pane to product terminal state', async () => {
     const runtime = await fs.mkdtemp(path.join(os.tmpdir(), 'tasktty-runtime-'))
     temporary.push(runtime)

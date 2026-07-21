@@ -23,9 +23,11 @@ afterEach(async () => {
 
 interface FakeWorktree {
   path: string
+  gitWorktreeKey: string
   head: string
   branch: string | null
   locked?: boolean
+  prunable?: boolean
 }
 
 class SystemDouble implements CommandRunner {
@@ -44,15 +46,29 @@ class SystemDouble implements CommandRunner {
   dirtyStatuses = new Map<string, string>()
   reachable = true
   removeFails = false
+  listWorktreesFails = false
+  worktreeRepairFails = false
   tmuxKillFails = false
+  readonly tmuxKillFailureSockets = new Set<string>()
   statusGate: Promise<void> | null = null
+  worktreeListGate: Promise<void> | null = null
   worktreeAddGate: Promise<void> | null = null
   tmuxCreateGate: Promise<void> | null = null
   setupGate: Promise<void> | null = null
 
-  constructor(readonly main: string) {
-    this.worktrees = [{ path: main, head: 'main-head', branch: 'trunk' }]
+  constructor(main: string) {
+    this.main = main
+    this.worktrees = [
+      {
+        path: main,
+        gitWorktreeKey: path.join(main, '.git'),
+        head: 'main-head',
+        branch: 'trunk'
+      }
+    ]
   }
+
+  main: string
 
   async run(request: CommandRequest): Promise<CommandResult> {
     this.calls.push(structuredClone(request))
@@ -75,12 +91,54 @@ class SystemDouble implements CommandRunner {
       return ok('base-commit\n')
     }
 
+    if (args[0] === 'rev-parse' && args[1] === '--git-common-dir') {
+      return ok(`${path.join(this.main, '.git')}\n`)
+    }
+
+    if (args[0] === 'rev-parse' && args[1] === '--absolute-git-dir') {
+      const worktree = (
+        await Promise.all(
+          this.worktrees.map(async (candidate) => ({
+            candidate,
+            canonicalPath: await fs
+              .realpath(candidate.path)
+              .catch(() => path.resolve(candidate.path))
+          }))
+        )
+      ).find(({ canonicalPath }) => canonicalPath === request.cwd)?.candidate
+      return worktree ? ok(`${worktree.gitWorktreeKey}\n`) : fail('missing')
+    }
+
+    if (args[0] === 'worktree' && args[1] === 'repair') {
+      if (this.worktreeRepairFails) {
+        return fail('worktree repair failed')
+      }
+
+      for (const [index, worktree] of this.worktrees.entries()) {
+        const adminName = path.basename(worktree.gitWorktreeKey)
+        worktree.gitWorktreeKey =
+          index === 0
+            ? path.join(this.main, '.git')
+            : path.join(this.main, '.git', 'worktrees', adminName)
+      }
+      return ok()
+    }
+
     if (args[0] === 'worktree' && args[1] === 'list') {
+      if (this.listWorktreesFails) {
+        return fail('repository unavailable')
+      }
+
+      const worktrees = structuredClone(this.worktrees)
+      if (this.worktreeListGate) {
+        await this.worktreeListGate
+      }
+
       return ok(
-        this.worktrees
+        worktrees
           .map(
             (worktree) =>
-              `worktree ${worktree.path}\nHEAD ${worktree.head}\n${worktree.branch ? `branch refs/heads/${worktree.branch}` : 'detached'}${worktree.locked ? '\nlocked editor' : ''}\n`
+              `worktree ${worktree.path}\nHEAD ${worktree.head}\n${worktree.branch ? `branch refs/heads/${worktree.branch}` : 'detached'}${worktree.locked ? '\nlocked editor' : ''}${worktree.prunable ? '\nprunable missing' : ''}\n`
           )
           .join('\n')
       )
@@ -94,7 +152,17 @@ class SystemDouble implements CommandRunner {
       const worktreePath = args.at(-2)!
       const head = args.at(-1)!
       await fs.mkdir(worktreePath, { recursive: true })
-      this.worktrees.push({ path: worktreePath, head, branch: null })
+      this.worktrees.push({
+        path: worktreePath,
+        gitWorktreeKey: path.join(
+          this.main,
+          '.git',
+          'worktrees',
+          path.basename(path.dirname(worktreePath))
+        ),
+        head,
+        branch: null
+      })
       return ok()
     }
 
@@ -241,11 +309,11 @@ class SystemDouble implements CommandRunner {
     }
 
     if (args.includes('kill-server')) {
-      if (this.tmuxKillFails) {
+      const socket = args[args.indexOf('-L') + 1]!
+      if (this.tmuxKillFails || this.tmuxKillFailureSockets.has(socket)) {
         return fail('tmux shutdown failed')
       }
 
-      const socket = args[args.indexOf('-L') + 1]!
       for (const key of [...this.sessions.keys()]) {
         if (key.startsWith(`${socket}/`)) {
           this.sessions.delete(key)
@@ -363,6 +431,7 @@ describe('TaskTTYService with injected command adapters', () => {
     release()
 
     await expect(fresh).resolves.toMatchObject([{ color: 'violet' }])
+    await expect(stale).resolves.toMatchObject([{ color: 'violet' }])
     runner.statusGate = null
   })
 
@@ -449,6 +518,630 @@ describe('TaskTTYService with injected command adapters', () => {
     })
     unsubscribe()
     expect(events).toEqual(['terminal.updated', 'terminal.removed'])
+  })
+
+  it('keeps metadata polling tmux-only while direct status reads observe Git', async () => {
+    const { main, runner, service } = await fixture()
+    const project = await service.registerProject(main)
+    const terminal = await service.createTerminal(
+      project.worktrees[0]!.id,
+      'Polled'
+    )
+    runner.calls.splice(0)
+
+    await service.refreshTerminalStatus(terminal.id, false)
+    await service.refreshTerminalStatus(terminal.id, false)
+    expect(
+      runner.calls.filter(
+        (call) => call.args[0] === 'worktree' && call.args[1] === 'list'
+      )
+    ).toHaveLength(0)
+
+    await service.refreshTerminalStatus(terminal.id)
+    expect(
+      runner.calls.filter(
+        (call) => call.args[0] === 'worktree' && call.args[1] === 'list'
+      ).length
+    ).toBeGreaterThan(0)
+  })
+
+  it('preserves bindings and terminals when Git moves a linked worktree', async () => {
+    const { root, main, runner, service } = await fixture()
+    const project = await service.registerProject(main)
+    const linked = (
+      await service.createWorktree(project.id, 'moving', 'default')
+    ).worktree
+    const terminal = await service.createTerminal(linked.id, 'Moving terminal')
+    const events: string[] = []
+    const unsubscribe = service.events.subscribe((event) => {
+      if (event.type === 'worktree.updated') {
+        events.push(event.type)
+      }
+    })
+    const live = runner.worktrees.find((item) => item.path === linked.path)!
+    const movedPath = path.join(root, 'externally moved checkout')
+    await fs.rename(linked.path, movedPath)
+    live.path = movedPath
+
+    await expect(
+      service.refreshTerminalStatus(terminal.id)
+    ).resolves.toMatchObject({ id: terminal.id })
+    const moved = (await service.getProjectSnapshot(project.id)).worktrees.find(
+      (worktree) => worktree.id === linked.id
+    )!
+    expect(moved).toMatchObject({
+      id: linked.id,
+      path: await fs.realpath(movedPath),
+      tmuxSocketName: linked.tmuxSocketName
+    })
+    expect(moved.terminals.map((item) => item.id)).toContain(terminal.id)
+    expect(service.getWorktree(linked.id).path).toBe(
+      await fs.realpath(movedPath)
+    )
+    expect(events).toEqual(['worktree.updated'])
+    unsubscribe()
+  })
+
+  it('recovers a renamed main checkout and preserves its bindings and terminals', async () => {
+    const { root, main, runner, service } = await fixture()
+    const project = await service.registerProject(main)
+    const originalMain = project.worktrees.find(
+      (worktree) => worktree.kind === 'main'
+    )!
+    const linked = (
+      await service.createWorktree(project.id, 'main-rename-linked', 'default')
+    ).worktree
+    const terminal = await service.createTerminal(linked.id, 'Preserved')
+    const prunable = (
+      await service.createWorktree(
+        project.id,
+        'missing-during-repair',
+        'default'
+      )
+    ).worktree
+    runner.worktrees.find(
+      (worktree) => worktree.path === prunable.path
+    )!.prunable = true
+    await fs.rm(prunable.path, { recursive: true, force: true })
+    const renamedMain = path.join(root, 'renamed main checkout')
+    await fs.rename(main, renamedMain)
+    runner.main = renamedMain
+    runner.worktrees[0]!.path = renamedMain
+
+    const recovered = await service.getProjectSnapshot(project.id)
+    const recoveredMain = recovered.worktrees.find(
+      (worktree) => worktree.kind === 'main'
+    )!
+    const recoveredLinked = recovered.worktrees.find(
+      (worktree) => worktree.id === linked.id
+    )!
+    expect(recovered).toMatchObject({
+      id: project.id,
+      name: 'renamed main checkout',
+      repositoryPath: await fs.realpath(renamedMain),
+      mainWorktreePath: await fs.realpath(renamedMain),
+      availability: { state: 'available', message: null }
+    })
+    expect(recoveredMain).toMatchObject({
+      id: originalMain.id,
+      path: await fs.realpath(renamedMain),
+      tmuxSocketName: originalMain.tmuxSocketName
+    })
+    expect(recoveredLinked).toMatchObject({
+      id: linked.id,
+      tmuxSocketName: linked.tmuxSocketName
+    })
+    expect(recoveredLinked.terminals.map((item) => item.id)).toContain(
+      terminal.id
+    )
+    expect(
+      recovered.worktrees.find((worktree) => worktree.id === prunable.id)
+    ).toMatchObject({ id: prunable.id, prunable: true })
+    expect(
+      runner.calls.some(
+        (call) =>
+          call.args[0] === 'worktree' &&
+          call.args[1] === 'repair' &&
+          call.args.length === 2
+      )
+    ).toBe(true)
+  })
+
+  it('recovers a stopped-daemon main and linked-worktree rename', async () => {
+    const { root, main, runner, service, database, config } = await fixture()
+    const project = await service.registerProject(main)
+    const linked = (
+      await service.createWorktree(project.id, 'restart-main-rename', 'default')
+    ).worktree
+    const terminal = await service.createTerminal(linked.id, 'Preserved')
+    const linkedGitKey = runner.worktrees.find(
+      (worktree) => worktree.path === linked.path
+    )!.gitWorktreeKey
+    database.close()
+    databases.splice(databases.indexOf(database), 1)
+
+    const renamedMain = path.join(root, 'renamed while daemon stopped')
+    const movedLinked = path.join(root, 'linked moved while daemon stopped')
+    await fs.rename(main, renamedMain)
+    await fs.rename(linked.path, movedLinked)
+    runner.main = renamedMain
+    runner.worktrees[0]!.path = renamedMain
+    runner.worktrees.find(
+      (worktree) => worktree.gitWorktreeKey === linkedGitKey
+    )!.path = movedLinked
+
+    const restartedDatabase = new TaskTTYDatabase(config.databasePath)
+    databases.push(restartedDatabase)
+    const restarted = new TaskTTYService({
+      config,
+      database: restartedDatabase,
+      runner,
+      git: new GitAdapter(runner),
+      tmux: new TmuxAdapter(
+        runner,
+        config.runtimeDir,
+        'tmux',
+        '/launcher with spaces.js'
+      ),
+      gh: new GhAdapter(runner)
+    })
+    await restarted.initialize()
+
+    const recovered = await restarted.getProjectSnapshot(project.id)
+    expect(recovered).toMatchObject({
+      id: project.id,
+      repositoryPath: await fs.realpath(renamedMain),
+      availability: { state: 'available' }
+    })
+    expect(
+      recovered.worktrees.find((worktree) => worktree.id === linked.id)
+    ).toMatchObject({
+      id: linked.id,
+      path: await fs.realpath(movedLinked),
+      tmuxSocketName: linked.tmuxSocketName,
+      terminals: expect.arrayContaining([
+        expect.objectContaining({ id: terminal.id })
+      ])
+    })
+    expect(
+      restartedDatabase.connection
+        .prepare('SELECT git_worktree_key FROM worktrees WHERE id=?')
+        .pluck()
+        .get(linked.id)
+    ).toBe(`worktrees/${path.basename(linkedGitKey)}`)
+  })
+
+  it('preserves metadata when Git repair fails during main rename recovery', async () => {
+    const { root, main, runner, service, database } = await fixture()
+    const project = await service.registerProject(main)
+    const linked = (
+      await service.createWorktree(project.id, 'repair-failure', 'default')
+    ).worktree
+    const terminal = await service.createTerminal(linked.id, 'Preserved')
+    const renamedMain = path.join(root, 'repair failure rename')
+    await fs.rename(main, renamedMain)
+    runner.main = renamedMain
+    runner.worktrees[0]!.path = renamedMain
+    runner.worktreeRepairFails = true
+
+    const unavailable = await service.getProjectSnapshot(project.id)
+    expect(unavailable.availability).toMatchObject({
+      state: 'unavailable',
+      message: expect.stringContaining('worktree repair failed')
+    })
+    expect(database.project(project.id)?.repositoryPath).toBe(
+      project.repositoryPath
+    )
+    expect(database.worktree(linked.id)).toMatchObject({
+      path: linked.path,
+      tmuxSocketName: linked.tmuxSocketName
+    })
+    expect(
+      [...runner.sessions.keys()].some((key) =>
+        key.endsWith(`/${terminal.tmuxSessionName}`)
+      )
+    ).toBe(true)
+  })
+
+  it('preserves an explicit project name equal to the original folder name', async () => {
+    const { root, main, runner, service } = await fixture()
+    const project = await service.registerProject(main, path.basename(main))
+    const renamedMain = path.join(root, 'renamed custom checkout')
+    await fs.rename(main, renamedMain)
+    runner.main = renamedMain
+    runner.worktrees[0]!.path = renamedMain
+
+    await expect(service.getProjectSnapshot(project.id)).resolves.toMatchObject(
+      {
+        id: project.id,
+        name: path.basename(main),
+        repositoryPath: await fs.realpath(renamedMain),
+        availability: { state: 'available' }
+      }
+    )
+  })
+
+  it('refuses to adopt a different repository placed at a registered path', async () => {
+    const { root, main, runner, service, database } = await fixture()
+    const project = await service.registerProject(main)
+    const renamedMain = path.join(root, 'original repository renamed')
+    await fs.rename(main, renamedMain)
+    await fs.mkdir(main)
+    runner.main = main
+    runner.worktrees[0] = {
+      path: main,
+      gitWorktreeKey: path.join(main, '.git'),
+      head: 'replacement-head',
+      branch: 'trunk'
+    }
+
+    await expect(service.registerProject(main)).rejects.toMatchObject({
+      code: 'PROJECT_PATH_CONFLICT',
+      status: 409
+    })
+    expect(database.project(project.id)).toMatchObject({
+      id: project.id,
+      repositoryPath: project.repositoryPath,
+      mainWorktreePath: project.mainWorktreePath
+    })
+  })
+
+  it('keeps an unknown-parent move unavailable until re-registration recovers it', async () => {
+    const { root, main, runner, service, database } = await fixture()
+    const project = await service.registerProject(main)
+    const originalMain = project.worktrees.find(
+      (worktree) => worktree.kind === 'main'
+    )!
+    const linked = (
+      await service.createWorktree(project.id, 'reregister-linked', 'default')
+    ).worktree
+    const terminal = await service.createTerminal(linked.id, 'Preserved')
+    const destinationParent = path.join(root, 'elsewhere')
+    const movedMain = path.join(destinationParent, 'moved repository')
+    await fs.mkdir(destinationParent)
+    await fs.rename(main, movedMain)
+    await fs.mkdir(main)
+    runner.main = movedMain
+    runner.worktrees[0]!.path = movedMain
+    runner.calls.length = 0
+
+    const unavailable = await service.getProjectSnapshot(project.id)
+    expect(unavailable).toMatchObject({
+      id: project.id,
+      repositoryPath: project.repositoryPath,
+      availability: { state: 'unavailable' }
+    })
+    expect(database.project(project.id)?.repositoryPath).toBe(
+      project.repositoryPath
+    )
+    expect(
+      runner.calls.some(
+        (call) =>
+          call.cwd === main &&
+          call.args[0] === 'worktree' &&
+          call.args[1] === 'list'
+      )
+    ).toBe(false)
+    expect(
+      [...runner.sessions.keys()].some((key) =>
+        key.endsWith(`/${terminal.tmuxSessionName}`)
+      )
+    ).toBe(true)
+
+    await fs.rm(main, { recursive: true })
+    const recovered = await service.registerProject(movedMain)
+    expect(recovered).toMatchObject({
+      id: project.id,
+      name: 'moved repository',
+      repositoryPath: await fs.realpath(movedMain),
+      mainWorktreePath: await fs.realpath(movedMain)
+    })
+    expect(
+      recovered.worktrees.find((worktree) => worktree.kind === 'main')
+    ).toMatchObject({
+      id: originalMain.id,
+      tmuxSocketName: originalMain.tmuxSocketName
+    })
+    expect(
+      recovered.worktrees.find((worktree) => worktree.id === linked.id)
+    ).toMatchObject({ tmuxSocketName: linked.tmuxSocketName })
+  })
+
+  it('retires externally removed worktrees only after a successful Git observation', async () => {
+    const { main, runner, service, database } = await fixture()
+    const project = await service.registerProject(main)
+    const linked = (
+      await service.createWorktree(project.id, 'external-removal', 'default')
+    ).worktree
+    await service.createTerminal(linked.id, 'Removed terminal')
+    const index = runner.worktrees.findIndex(
+      (worktree) => worktree.path === linked.path
+    )
+    runner.worktrees.splice(index, 1)
+    await fs.rm(linked.path, { recursive: true, force: true })
+
+    const refreshed = await service.getProjectSnapshot(project.id)
+    expect(refreshed.worktrees.map((worktree) => worktree.id)).not.toContain(
+      linked.id
+    )
+    expect(database.worktree(linked.id)).toBeNull()
+    expect(
+      [...runner.sessions.keys()].some((key) =>
+        key.startsWith(`${linked.tmuxSocketName}/`)
+      )
+    ).toBe(false)
+    const externalOperation = database.connection
+      .prepare("SELECT id FROM operations WHERE kind='external_remove'")
+      .get() as { id: string }
+    expect(service.getOperation(externalOperation.id)).toMatchObject({
+      status: 'completed',
+      result: expect.objectContaining({
+        external: true,
+        worktreeId: linked.id,
+        path: linked.path
+      })
+    })
+  })
+
+  it('detects external removal through a direct terminal read', async () => {
+    const { main, runner, service, database } = await fixture()
+    const project = await service.registerProject(main)
+    const linked = (
+      await service.createWorktree(project.id, 'terminal-removal', 'default')
+    ).worktree
+    const terminal = await service.createTerminal(linked.id, 'Direct read')
+    runner.worktrees.splice(
+      runner.worktrees.findIndex((worktree) => worktree.path === linked.path),
+      1
+    )
+    await fs.rm(linked.path, { recursive: true, force: true })
+
+    await expect(service.getTerminal(terminal.id)).rejects.toMatchObject({
+      code: 'TERMINAL_NOT_FOUND'
+    })
+    expect(database.worktree(linked.id)).toBeNull()
+  })
+
+  it('preserves bindings and history when external terminal shutdown fails', async () => {
+    const { main, runner, service, database } = await fixture()
+    const project = await service.registerProject(main)
+    const linked = (
+      await service.createWorktree(project.id, 'shutdown-failure', 'default')
+    ).worktree
+    await service.createTerminal(linked.id, 'Still running')
+    const events: string[] = []
+    const unsubscribe = service.events.subscribe((event) => {
+      events.push(event.type)
+    })
+    runner.worktrees.splice(
+      runner.worktrees.findIndex((worktree) => worktree.path === linked.path),
+      1
+    )
+    await fs.rm(linked.path, { recursive: true, force: true })
+    runner.tmuxKillFails = true
+
+    const unavailable = await service.getProjectSnapshot(project.id)
+    expect(unavailable.availability).toMatchObject({
+      state: 'unavailable',
+      message: expect.stringContaining('tmux shutdown failed')
+    })
+    expect(database.worktree(linked.id)).not.toBeNull()
+    expect(
+      database.connection
+        .prepare("SELECT count(*) FROM operations WHERE kind='external_remove'")
+        .pluck()
+        .get()
+    ).toBe(0)
+    expect(events).not.toContain('worktree.removed')
+    expect(events).not.toContain('terminal.removed')
+
+    runner.tmuxKillFails = false
+    await expect(service.getProjectSnapshot(project.id)).resolves.toMatchObject(
+      { availability: { state: 'available' } }
+    )
+    expect(database.worktree(linked.id)).toBeNull()
+    unsubscribe()
+  })
+
+  it('commits successful external retirements before a later shutdown failure', async () => {
+    const { main, runner, service, database } = await fixture()
+    const project = await service.registerProject(main)
+    const first = (
+      await service.createWorktree(project.id, 'removed-first', 'default')
+    ).worktree
+    await new Promise((resolve) => setTimeout(resolve, 2))
+    const second = (
+      await service.createWorktree(project.id, 'removed-second', 'default')
+    ).worktree
+    const firstTerminal = await service.createTerminal(first.id, 'First')
+    const secondTerminal = await service.createTerminal(second.id, 'Second')
+    const events: Array<{ type: string; worktreeId: unknown }> = []
+    const unsubscribe = service.events.subscribe((event) => {
+      if (
+        event.type === 'terminal.removed' ||
+        event.type === 'worktree.removed'
+      ) {
+        events.push({ type: event.type, worktreeId: event.data.worktreeId })
+      }
+    })
+    runner.worktrees.splice(
+      runner.worktrees.findIndex((worktree) => worktree.path === first.path),
+      1
+    )
+    runner.worktrees.splice(
+      runner.worktrees.findIndex((worktree) => worktree.path === second.path),
+      1
+    )
+    await Promise.all([
+      fs.rm(first.path, { recursive: true, force: true }),
+      fs.rm(second.path, { recursive: true, force: true })
+    ])
+    runner.tmuxKillFailureSockets.add(second.tmuxSocketName)
+
+    const unavailable = await service.getProjectSnapshot(project.id)
+    expect(unavailable.availability).toMatchObject({ state: 'unavailable' })
+    expect(database.worktree(first.id)).toBeNull()
+    expect(database.worktree(second.id)).not.toBeNull()
+    const externalOperations = database.connection
+      .prepare(
+        "SELECT result_json FROM operations WHERE kind='external_remove'"
+      )
+      .all() as Array<{ result_json: string }>
+    expect(
+      externalOperations.map(({ result_json }) => JSON.parse(result_json))
+    ).toEqual([
+      expect.objectContaining({ worktreeId: first.id, external: true })
+    ])
+    expect(events).toEqual([
+      { type: 'terminal.removed', worktreeId: first.id },
+      { type: 'worktree.removed', worktreeId: first.id }
+    ])
+    expect(
+      [...runner.sessions.keys()].some((key) =>
+        key.endsWith(`/${firstTerminal.tmuxSessionName}`)
+      )
+    ).toBe(false)
+    expect(
+      [...runner.sessions.keys()].some((key) =>
+        key.endsWith(`/${secondTerminal.tmuxSessionName}`)
+      )
+    ).toBe(true)
+
+    runner.tmuxKillFailureSockets.delete(second.tmuxSocketName)
+    await service.getProjectSnapshot(project.id)
+    expect(database.worktree(second.id)).toBeNull()
+    unsubscribe()
+  })
+
+  it('treats incomplete Git inventories as unavailable without retiring bindings', async () => {
+    for (const keepLinked of [false, true]) {
+      const { main, runner, service, database } = await fixture()
+      const project = await service.registerProject(main)
+      const linked = (
+        await service.createWorktree(
+          project.id,
+          keepLinked ? 'missing-main' : 'empty-inventory',
+          'default'
+        )
+      ).worktree
+      await service.createTerminal(linked.id, 'Preserved')
+      runner.worktrees.splice(
+        0,
+        runner.worktrees.length,
+        ...(keepLinked
+          ? runner.worktrees.filter((worktree) => worktree.path === linked.path)
+          : [])
+      )
+
+      const unavailable = await service.getProjectSnapshot(project.id)
+      expect(unavailable.availability).toMatchObject({
+        state: 'unavailable',
+        message: expect.stringContaining('inventory is incomplete')
+      })
+      expect(database.worktree(linked.id)).not.toBeNull()
+      expect(
+        [...runner.sessions.keys()].some((key) =>
+          key.startsWith(`${linked.tmuxSocketName}/`)
+        )
+      ).toBe(true)
+      expect(
+        database.connection
+          .prepare(
+            "SELECT count(*) FROM operations WHERE kind='external_remove'"
+          )
+          .pluck()
+          .get()
+      ).toBe(0)
+    }
+  })
+
+  it('serializes project observations so an older scan cannot win', async () => {
+    const { main, runner, service } = await fixture()
+    const project = await service.registerProject(main)
+    const linked = (
+      await service.createWorktree(project.id, 'serialized', 'default')
+    ).worktree
+    const live = runner.worktrees.find(
+      (worktree) => worktree.path === linked.path
+    )!
+    let releaseObservation!: () => void
+    runner.worktreeListGate = new Promise<void>((resolve) => {
+      releaseObservation = resolve
+    })
+    const callsBefore = runner.calls.filter(
+      (call) => call.args[0] === 'worktree' && call.args[1] === 'list'
+    ).length
+    const older = service.getProjectSnapshot(project.id)
+    await vi.waitFor(() =>
+      expect(
+        runner.calls.filter(
+          (call) => call.args[0] === 'worktree' && call.args[1] === 'list'
+        ).length
+      ).toBeGreaterThan(callsBefore)
+    )
+    live.head = 'newer-head'
+    const newer = service.reconcile()
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(
+      runner.calls.filter(
+        (call) => call.args[0] === 'worktree' && call.args[1] === 'list'
+      ).length
+    ).toBe(callsBefore + 1)
+
+    releaseObservation()
+    await Promise.all([older, newer])
+    runner.worktreeListGate = null
+    expect(service.getWorktree(linked.id).head).toBe('newer-head')
+  })
+
+  it('keeps cached bindings and rejects mutations while Git is unavailable', async () => {
+    const { main, runner, service, database } = await fixture()
+    const project = await service.registerProject(main)
+    const linked = (
+      await service.createWorktree(project.id, 'unavailable', 'default')
+    ).worktree
+    const terminal = await service.createTerminal(linked.id, 'Preserved')
+    runner.listWorktreesFails = true
+
+    const unavailable = await service.getProjectSnapshot(project.id)
+    expect(unavailable.availability).toMatchObject({
+      state: 'unavailable',
+      message: expect.stringContaining('repository unavailable')
+    })
+    expect(unavailable.worktrees.map((worktree) => worktree.id)).toContain(
+      linked.id
+    )
+    expect(database.worktree(linked.id)).not.toBeNull()
+    expect(
+      [...runner.sessions.keys()].some((key) =>
+        key.endsWith(`/${terminal.tmuxSessionName}`)
+      )
+    ).toBe(true)
+    await expect(
+      service.createTerminal(linked.id, 'Blocked')
+    ).rejects.toMatchObject({ code: 'PROJECT_UNAVAILABLE' })
+
+    runner.listWorktreesFails = false
+    await expect(service.getProjectSnapshot(project.id)).resolves.toMatchObject(
+      { availability: { state: 'available', message: null } }
+    )
+  })
+
+  it('keeps Git-reported prunable worktrees visible but disabled', async () => {
+    const { main, runner, service } = await fixture()
+    const project = await service.registerProject(main)
+    const linked = (
+      await service.createWorktree(project.id, 'prunable', 'default')
+    ).worktree
+    runner.worktrees.find(
+      (worktree) => worktree.path === linked.path
+    )!.prunable = true
+
+    const observed = await service.getWorktreeSnapshot(linked.id)
+    expect(observed.prunable).toBe(true)
+    await expect(service.removePreview(linked.id)).rejects.toMatchObject({
+      code: 'WORKTREE_UNAVAILABLE'
+    })
   })
 
   it('creates a detached Zed-style worktree, starts terminals, and removes by path', async () => {
@@ -727,6 +1420,7 @@ describe('TaskTTYService with injected command adapters', () => {
     const project = await service.registerProject(main)
     runner.worktrees.push({
       path: path.join(root, 'external', 'duplicate', path.basename(main)),
+      gitWorktreeKey: path.join(main, '.git', 'worktrees', 'duplicate'),
       head: 'external-head',
       branch: null
     })
@@ -828,7 +1522,7 @@ describe('TaskTTYService with injected command adapters', () => {
     expect(restarted.getOperation('op_before_git')).toMatchObject({
       status: 'failed'
     })
-    expect(database.worktree(afterGit.id)?.status).toBe('removed')
+    expect(database.worktree(afterGit.id)).toBeNull()
     expect(restarted.getOperation('op_after_git')).toMatchObject({
       status: 'completed',
       result: expect.objectContaining({ recovered: true, removed: true }),
@@ -837,17 +1531,15 @@ describe('TaskTTYService with injected command adapters', () => {
     await expect(fs.stat(path.dirname(afterGit.path))).rejects.toMatchObject({
       code: 'ENOENT'
     })
-    expect(database.worktree(afterGit.id)?.managedWrapperPath).toBeNull()
-    expect(database.worktree(afterGitNonEmpty.id)?.status).toBe('removed')
+    expect(database.worktree(afterGit.id)).toBeNull()
+    expect(database.worktree(afterGitNonEmpty.id)).toBeNull()
     expect(restarted.getOperation('op_after_git_non_empty')).toMatchObject({
       status: 'completed',
       result: expect.objectContaining({ recovered: true, removed: true }),
       error: null
     })
     await expect(fs.readFile(preservedMarker, 'utf8')).resolves.toBe('preserve')
-    expect(database.worktree(afterGitNonEmpty.id)?.managedWrapperPath).toBe(
-      path.dirname(afterGitNonEmpty.path)
-    )
+    expect(database.worktree(afterGitNonEmpty.id)).toBeNull()
   })
 
   it('clears managed-wrapper provenance when an external worktree revives a removed path', async () => {
@@ -868,11 +1560,15 @@ describe('TaskTTYService with injected command adapters', () => {
     await fs.writeFile(marker, 'external')
     runner.worktrees.push({
       path: managed.path,
+      gitWorktreeKey: path.join(main, '.git', 'worktrees', 'external-reuse'),
       head: 'external-head',
       branch: null
     })
     await service.refreshProject(project.id)
-    const revived = service.getWorktree(managed.id)
+    const revived = service
+      .getProject(project.id)
+      .worktrees.find((worktree) => worktree.path === managed.path)!
+    expect(revived.id).not.toBe(managed.id)
     expect(revived.managedWrapperPath).toBeNull()
 
     await waitForOperation(

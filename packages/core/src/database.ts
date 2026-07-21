@@ -9,119 +9,77 @@ import type {
 } from '@tasktty/shared'
 import { inferWorktreeName } from './zed.js'
 
-const MIGRATIONS = [
-  `
-  CREATE TABLE IF NOT EXISTS schema_migrations (
-    version INTEGER PRIMARY KEY,
-    applied_at TEXT NOT NULL
-  );
-  CREATE TABLE projects (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    repository_path TEXT NOT NULL UNIQUE,
-    main_worktree_path TEXT NOT NULL,
-    default_branch TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-  );
-  CREATE TABLE worktrees (
-    id TEXT PRIMARY KEY,
-    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-    path TEXT NOT NULL UNIQUE,
-    branch TEXT NOT NULL,
-    kind TEXT NOT NULL CHECK(kind IN ('main','linked')),
-    tmux_socket_name TEXT NOT NULL UNIQUE,
-    status TEXT NOT NULL CHECK(status IN ('active','cleaning','cleanup_failed','removed')),
-    cleanup_error TEXT,
-    pr_state TEXT NOT NULL DEFAULT 'unknown',
-    pr_number INTEGER,
-    pr_url TEXT,
-    pr_base_branch TEXT,
-    pr_head_branch TEXT,
-    pr_merged_at TEXT,
-    pr_refreshed_at TEXT,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-  );
-  CREATE INDEX worktrees_project_idx ON worktrees(project_id);
-  CREATE TABLE operations (
-    id TEXT PRIMARY KEY,
-    kind TEXT NOT NULL CHECK(kind IN ('finish','discard','project_cleanup')),
-    project_id TEXT REFERENCES projects(id) ON DELETE SET NULL,
-    worktree_id TEXT REFERENCES worktrees(id) ON DELETE SET NULL,
-    status TEXT NOT NULL CHECK(status IN ('pending','running','completed','failed')),
-    request_json TEXT NOT NULL,
-    result_json TEXT,
-    error TEXT,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-  );
-  CREATE INDEX operations_worktree_idx ON operations(worktree_id);
-  `,
-  `
-  ALTER TABLE worktrees RENAME TO worktrees_v1;
-  CREATE TABLE worktrees (
-    id TEXT PRIMARY KEY,
-    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-    path TEXT NOT NULL UNIQUE,
-    head TEXT NOT NULL DEFAULT '',
-    branch TEXT,
-    detached INTEGER NOT NULL DEFAULT 0,
-    locked INTEGER NOT NULL DEFAULT 0,
-    lock_reason TEXT,
-    kind TEXT NOT NULL CHECK(kind IN ('main','linked')),
-    tmux_socket_name TEXT NOT NULL UNIQUE,
-    status TEXT NOT NULL CHECK(status IN ('active','cleaning','cleanup_failed','removed')),
-    cleanup_error TEXT,
-    managed_wrapper_path TEXT,
-    pr_state TEXT NOT NULL DEFAULT 'unknown',
-    pr_number INTEGER,
-    pr_url TEXT,
-    pr_base_branch TEXT,
-    pr_head_branch TEXT,
-    pr_merged_at TEXT,
-    pr_refreshed_at TEXT,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-  );
-  INSERT INTO worktrees(
-    id,project_id,path,head,branch,detached,locked,lock_reason,kind,tmux_socket_name,status,
-    cleanup_error,managed_wrapper_path,pr_state,pr_number,pr_url,pr_base_branch,pr_head_branch,
-    pr_merged_at,pr_refreshed_at,created_at,updated_at
-  )
-  SELECT id,project_id,path,'',CASE WHEN branch='(detached)' THEN NULL ELSE branch END,
-    CASE WHEN branch='(detached)' THEN 1 ELSE 0 END,0,NULL,kind,tmux_socket_name,status,
-    cleanup_error,NULL,pr_state,pr_number,pr_url,pr_base_branch,pr_head_branch,pr_merged_at,
-    pr_refreshed_at,created_at,updated_at
-  FROM worktrees_v1;
+interface Migration {
+  version: number
+  sql: string
+}
 
-  ALTER TABLE operations RENAME TO operations_v1;
-  CREATE TABLE operations (
-    id TEXT PRIMARY KEY,
-    kind TEXT NOT NULL CHECK(kind IN ('finish','discard','project_cleanup','remove')),
-    project_id TEXT REFERENCES projects(id) ON DELETE SET NULL,
-    worktree_id TEXT REFERENCES worktrees(id) ON DELETE SET NULL,
-    status TEXT NOT NULL CHECK(status IN ('pending','running','completed','failed')),
-    request_json TEXT NOT NULL,
-    result_json TEXT,
-    error TEXT,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-  );
-  INSERT INTO operations SELECT * FROM operations_v1;
+const MIGRATIONS: Migration[] = [
+  {
+    version: 7,
+    sql: `
+      CREATE TABLE projects (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        repository_path TEXT NOT NULL UNIQUE,
+        main_worktree_path TEXT NOT NULL,
+        default_branch TEXT NOT NULL,
+        color TEXT CHECK(color IS NULL OR color IN ('rose','orange','amber','emerald','cyan','blue','violet','pink')),
+        repository_device TEXT NOT NULL,
+        repository_inode TEXT NOT NULL,
+        name_is_custom INTEGER NOT NULL DEFAULT 0 CHECK(name_is_custom IN (0,1)),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE UNIQUE INDEX projects_fs_identity_idx
+        ON projects(repository_device, repository_inode);
 
-  DROP TABLE operations_v1;
-  DROP TABLE worktrees_v1;
-  CREATE INDEX worktrees_project_idx ON worktrees(project_id);
-  CREATE INDEX operations_worktree_idx ON operations(worktree_id);
-  `,
-  `
-  ALTER TABLE projects ADD COLUMN color TEXT
-    CHECK(color IS NULL OR color IN ('rose','orange','amber','emerald','cyan','blue','violet','pink'));
-  `,
-  `
-  DROP TABLE IF EXISTS terminals;
-  `
+      CREATE TABLE worktrees (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        path TEXT NOT NULL UNIQUE,
+        git_worktree_key TEXT,
+        head TEXT NOT NULL DEFAULT '',
+        branch TEXT,
+        detached INTEGER NOT NULL DEFAULT 0 CHECK(detached IN (0,1)),
+        locked INTEGER NOT NULL DEFAULT 0 CHECK(locked IN (0,1)),
+        lock_reason TEXT,
+        prunable INTEGER NOT NULL DEFAULT 0 CHECK(prunable IN (0,1)),
+        kind TEXT NOT NULL CHECK(kind IN ('main','linked')),
+        tmux_socket_name TEXT NOT NULL UNIQUE,
+        status TEXT NOT NULL CHECK(status IN ('active','cleaning','cleanup_failed','removed')),
+        cleanup_error TEXT,
+        managed_wrapper_path TEXT,
+        pr_state TEXT NOT NULL DEFAULT 'unknown',
+        pr_number INTEGER,
+        pr_url TEXT,
+        pr_base_branch TEXT,
+        pr_head_branch TEXT,
+        pr_merged_at TEXT,
+        pr_refreshed_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX worktrees_project_idx ON worktrees(project_id);
+      CREATE UNIQUE INDEX worktrees_git_key_idx
+        ON worktrees(project_id, git_worktree_key)
+        WHERE git_worktree_key IS NOT NULL;
+
+      CREATE TABLE operations (
+        id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL CHECK(kind IN ('finish','discard','project_cleanup','remove','external_remove')),
+        project_id TEXT REFERENCES projects(id) ON DELETE SET NULL,
+        worktree_id TEXT REFERENCES worktrees(id) ON DELETE SET NULL,
+        status TEXT NOT NULL CHECK(status IN ('pending','running','completed','failed')),
+        request_json TEXT NOT NULL,
+        result_json TEXT,
+        error TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX operations_worktree_idx ON operations(worktree_id);
+    `
+  }
 ]
 
 interface ProjectRow {
@@ -131,6 +89,9 @@ interface ProjectRow {
   main_worktree_path: string
   default_branch: string
   color: ProjectRecord['color']
+  repository_device: string
+  repository_inode: string
+  name_is_custom: number
   created_at: string
   updated_at: string
 }
@@ -143,6 +104,8 @@ interface WorktreeRow {
   detached: number
   locked: number
   lock_reason: string | null
+  git_worktree_key: string | null
+  prunable: number
   kind: 'main' | 'linked'
   tmux_socket_name: string
   status: 'active' | 'cleaning' | 'cleanup_failed' | 'removed'
@@ -207,8 +170,7 @@ export class TaskTTYDatabase {
         }>
       ).map((row) => row.version)
     )
-    MIGRATIONS.forEach((sql, index) => {
-      const version = index + 1
+    MIGRATIONS.forEach(({ version, sql }) => {
       if (applied.has(version)) {
         return
       }
@@ -249,6 +211,44 @@ export class TaskTTYDatabase {
       )
       .get(repositoryPath, repositoryPath) as ProjectRow | undefined
     return row ? this.mapProject(row) : null
+  }
+
+  projectByFilesystemIdentity(
+    device: string,
+    inode: string
+  ): ProjectRecord | null {
+    const row = this.connection
+      .prepare(
+        'SELECT * FROM projects WHERE repository_device = ? AND repository_inode = ?'
+      )
+      .get(device, inode) as ProjectRow | undefined
+    return row ? this.mapProject(row) : null
+  }
+
+  projectFilesystemMetadata(projectId: string): {
+    device: string
+    inode: string
+    nameIsCustom: boolean
+  } | null {
+    const row = this.connection
+      .prepare(
+        `SELECT repository_device,repository_inode,name_is_custom
+         FROM projects WHERE id=?`
+      )
+      .get(projectId) as
+      | {
+          repository_device: string
+          repository_inode: string
+          name_is_custom: number
+        }
+      | undefined
+    return row
+      ? {
+          device: row.repository_device,
+          inode: row.repository_inode,
+          nameIsCustom: Boolean(row.name_is_custom)
+        }
+      : null
   }
 
   worktree(id: string): WorktreeRecord | null {
@@ -299,6 +299,7 @@ export class TaskTTYDatabase {
       mainWorktreePath: row.main_worktree_path,
       defaultBranch: row.default_branch,
       color: row.color,
+      availability: { state: 'available', message: null },
       worktrees: worktrees.map((worktree) =>
         this.mapWorktree(worktree, row.main_worktree_path)
       ),
@@ -321,6 +322,7 @@ export class TaskTTYDatabase {
       detached: Boolean(row.detached),
       locked: Boolean(row.locked),
       lockReason: row.lock_reason,
+      prunable: Boolean(row.prunable),
       kind: row.kind,
       tmuxSocketName: row.tmux_socket_name,
       status: row.status,

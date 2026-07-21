@@ -19,6 +19,7 @@ locked editor owns it
     expect(result).toEqual([
       {
         path: '/tmp/main repo',
+        gitWorktreeKey: null,
         head: 'abc123',
         branch: 'trunk',
         bare: false,
@@ -29,6 +30,7 @@ locked editor owns it
       },
       {
         path: '/tmp/worktrees/feature cache',
+        gitWorktreeKey: null,
         head: 'def456',
         branch: null,
         bare: false,

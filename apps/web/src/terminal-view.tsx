@@ -28,6 +28,7 @@ interface TerminalViewProps {
   terminal: TerminalRecord | null
   focusTerminalId: string | null
   creatingTerminal: boolean
+  mutationsDisabled: boolean
   closingTerminalId: string | null
   onSelectTerminal: (terminal: TerminalRecord) => void
   onCreateTerminal: () => void
@@ -55,6 +56,7 @@ export function TerminalView({
   terminal,
   focusTerminalId,
   creatingTerminal,
+  mutationsDisabled,
   closingTerminalId,
   onSelectTerminal,
   onCreateTerminal,
@@ -204,6 +206,7 @@ export function TerminalView({
       } else {
         shortcutFocusTerminalId.current = nextTerminal.id
       }
+
       onSelectTerminal(nextTerminal)
     }
     document.addEventListener('keydown', keydown, true)
@@ -345,7 +348,7 @@ export function TerminalView({
                 size="icon-sm"
                 className="m-1 shrink-0 text-zinc-500 hover:bg-white/5 hover:text-zinc-100"
                 aria-label="New terminal"
-                disabled={!worktree || creatingTerminal}
+                disabled={!worktree || creatingTerminal || mutationsDisabled}
                 onClick={onCreateTerminal}
               >
                 {creatingTerminal ? (

@@ -170,7 +170,7 @@ describe('TerminalMetadataManager', () => {
 
     await vi.advanceTimersByTimeAsync(TERMINAL_METADATA_POLL_MS)
 
-    expect(refreshTerminalStatus).toHaveBeenCalledWith('one')
+    expect(refreshTerminalStatus).toHaveBeenCalledWith('one', false)
     expect(manager.get('one')).toEqual({
       terminalId: 'one',
       title: 'finished',
