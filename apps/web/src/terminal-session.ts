@@ -1,9 +1,11 @@
 import { FitAddon } from '@xterm/addon-fit'
 import { Terminal } from '@xterm/xterm'
+import { apiClient } from './api.js'
 import {
   parseTerminalProgress,
   parseTerminalServerMessage,
   TERMINAL_HEARTBEAT_TIMEOUT_MS,
+  TERMINAL_MAX_INPUT_BYTES,
   TERMINAL_PROTOCOL_VERSION,
   type TerminalClientMessage,
   type TerminalProgress,
@@ -14,8 +16,13 @@ export { parseTerminalProgress, type TerminalProgress } from '@tasktty/shared'
 
 type ConnectionPhase = 'connecting' | 'ready' | 'reconnecting' | 'closed'
 export type ArrowDirection = 'up' | 'down' | 'left' | 'right'
+export type TerminalFileTransfer = {
+  state: 'uploading' | 'error'
+  message: string
+}
 
 const TERMINAL_SCROLL_EXIT_SEQUENCE = '\u001b[9000~'
+const TERMINAL_MAX_FILES_PER_TRANSFER = 8
 
 export function terminalProgressLabel(progress: TerminalProgress): string {
   const percentage =
@@ -121,6 +128,7 @@ export interface TerminalSessionSnapshot {
   bellSerial: number
   exitSerial: number
   progress: TerminalProgress | null
+  fileTransfer: TerminalFileTransfer | null
   error: string | null
 }
 
@@ -133,6 +141,7 @@ const DEFAULT_SNAPSHOT: TerminalSessionSnapshot = {
   bellSerial: 0,
   exitSerial: 0,
   progress: null,
+  fileTransfer: null,
   error: null
 }
 
@@ -224,6 +233,8 @@ export class TerminalSession {
   private degradedTimer: number | null = null
   private heartbeatTimer: number | null = null
   private bellTimer: number | null = null
+  private fileTransferTimer: number | null = null
+  private fileTransferQueue: Promise<void> = Promise.resolve()
   private resizeFrame: number | null = null
   private progressHandler: { dispose(): void } | null = null
   private disposed = false
@@ -394,6 +405,65 @@ export class TerminalSession {
       },
       () => this.prepareScrollExit()
     )
+    const wrapper = this.wrapper
+    const transfersFiles = (transfer: DataTransfer | null) =>
+      Boolean(
+        transfer &&
+        (Array.from(transfer.types).includes('Files') ||
+          Array.from(transfer.items).some((item) => item.kind === 'file'))
+      )
+    const filesFromTransfer = (transfer: DataTransfer | null): File[] => {
+      const files = Array.from(transfer?.files ?? [])
+      if (files.length) {
+        return files
+      }
+
+      return Array.from(transfer?.items ?? []).flatMap((item) => {
+        const file = item.kind === 'file' ? item.getAsFile() : null
+        return file ? [file] : []
+      })
+    }
+    wrapper.addEventListener('dragover', (event) => {
+      if (!transfersFiles(event.dataTransfer)) {
+        return
+      }
+
+      event.preventDefault()
+      event.dataTransfer!.dropEffect = 'copy'
+      wrapper.classList.add('terminal-file-drag')
+    })
+    wrapper.addEventListener('dragleave', (event) => {
+      if (
+        !(event.relatedTarget instanceof Node) ||
+        !wrapper.contains(event.relatedTarget)
+      ) {
+        wrapper.classList.remove('terminal-file-drag')
+      }
+    })
+    wrapper.addEventListener('drop', (event) => {
+      if (!transfersFiles(event.dataTransfer)) {
+        return
+      }
+
+      event.preventDefault()
+      event.stopPropagation()
+      wrapper.classList.remove('terminal-file-drag')
+      this.queueFileUpload(filesFromTransfer(event.dataTransfer))
+    })
+    wrapper.addEventListener(
+      'paste',
+      (event) => {
+        const files = filesFromTransfer(event.clipboardData)
+        if (!files.length) {
+          return
+        }
+
+        event.preventDefault()
+        event.stopPropagation()
+        this.queueFileUpload(files)
+      },
+      true
+    )
     this.terminal = terminal
     this.fitAddon = fitAddon
     this.opened = true
@@ -444,6 +514,97 @@ export class TerminalSession {
       this.handleProgress(progress)
       return true
     })
+  }
+
+  private queueFileUpload(files: File[]): void {
+    this.fileTransferQueue = this.fileTransferQueue
+      .catch(() => undefined)
+      .then(() => this.uploadFiles(files))
+  }
+
+  private async uploadFiles(files: File[]): Promise<void> {
+    if (!files.length || this.disposed) {
+      return
+    }
+
+    if (files.length > TERMINAL_MAX_FILES_PER_TRANSFER) {
+      this.showFileTransferError(
+        `Choose no more than ${TERMINAL_MAX_FILES_PER_TRANSFER} files at a time`
+      )
+      return
+    }
+
+    if (!this.ready || !this.snapshotValue.controller) {
+      this.showFileTransferError('Take control of the terminal first')
+      return
+    }
+
+    if (this.fileTransferTimer !== null) {
+      window.clearTimeout(this.fileTransferTimer)
+      this.fileTransferTimer = null
+    }
+
+    this.update({
+      fileTransfer: {
+        state: 'uploading',
+        message: `Uploading ${files.length === 1 ? 'file' : `${files.length} files`}…`
+      }
+    })
+
+    try {
+      const paths: string[] = []
+      for (const file of files) {
+        paths.push(await apiClient.uploadTerminalFile(this.terminalId, file))
+      }
+
+      if (this.disposed) {
+        return
+      }
+
+      if (!this.ready || !this.snapshotValue.controller) {
+        this.showFileTransferError(
+          'Terminal control was lost during the upload'
+        )
+        return
+      }
+
+      const input = paths.join(' ')
+      if (
+        new TextEncoder().encode(input).byteLength >
+        TERMINAL_MAX_INPUT_BYTES - 32
+      ) {
+        this.showFileTransferError('The uploaded file paths are too long')
+        return
+      }
+
+      this.prepareScrollExit()
+      this.terminal?.paste(input)
+      this.focus()
+      this.update({ fileTransfer: null })
+    } catch (error) {
+      if (!this.disposed) {
+        this.showFileTransferError(
+          error instanceof Error ? error.message : 'File upload failed'
+        )
+      }
+    }
+  }
+
+  private showFileTransferError(message: string): void {
+    if (this.fileTransferTimer !== null) {
+      window.clearTimeout(this.fileTransferTimer)
+    }
+
+    this.update({
+      fileTransfer: {
+        state: 'error',
+        message: `Couldn’t paste file: ${message}`
+      }
+    })
+    this.fileTransferTimer = window.setTimeout(() => {
+      this.fileTransferTimer = null
+      this.update({ fileTransfer: null })
+    }, 6_000)
   }
 
   private prepareScrollExit(): void {
@@ -826,6 +987,10 @@ export class TerminalSession {
       window.clearTimeout(this.bellTimer)
     }
 
+    if (this.fileTransferTimer !== null) {
+      window.clearTimeout(this.fileTransferTimer)
+    }
+
     if (this.resizeFrame !== null) {
       cancelAnimationFrame(this.resizeFrame)
     }
@@ -834,6 +999,7 @@ export class TerminalSession {
     this.degradedTimer = null
     this.heartbeatTimer = null
     this.bellTimer = null
+    this.fileTransferTimer = null
     this.resizeFrame = null
   }
 }

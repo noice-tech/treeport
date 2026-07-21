@@ -86,8 +86,28 @@ code {
   scrollbar-color: var(--color-zinc-700) transparent;
 }
 
+.terminal-session-host {
+  position: relative;
+}
+
 .terminal-session-host.terminal-scrolling .xterm-cursor {
   visibility: hidden;
+}
+
+.terminal-session-host.terminal-file-drag::after {
+  position: absolute;
+  z-index: 10;
+  display: grid;
+  place-items: center;
+  content: 'Drop files to paste their paths';
+  inset: 0.25rem;
+  border: 1px dashed var(--color-cyan-400);
+  border-radius: 0.25rem;
+  background: color-mix(in oklab, var(--color-zinc-950) 88%, transparent);
+  color: var(--color-cyan-100);
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+  pointer-events: none;
 }
 
 .terminal-bell {

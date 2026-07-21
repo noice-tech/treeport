@@ -236,6 +236,7 @@ async function mockApp(
   let removePreviewDelayMs = 0
   let removePreviewOverride: Record<string, unknown> = {}
   let staleRemoveToken: string | null = null
+  let fileUploadRequests = 0
   let createGate: Promise<void> | null = null
   let releaseCreate: (() => void) | null = null
   let failCreate = false
@@ -399,6 +400,24 @@ async function mockApp(
     }
 
     if (
+      /^\/api\/terminals\/[^/]+\/files$/.test(pathname) &&
+      route.request().method() === 'POST'
+    ) {
+      fileUploadRequests += 1
+      const extension =
+        route.request().headers()['x-tasktty-file-extension'] || 'bin'
+      await route.fulfill({
+        status: 201,
+        json: {
+          file: {
+            path: `/tmp/tasktty-upload-${fileUploadRequests}.${extension}`
+          }
+        }
+      })
+      return
+    }
+
+    if (
       pathname.startsWith('/api/terminals/') &&
       route.request().method() === 'DELETE'
     ) {
@@ -451,6 +470,7 @@ async function mockApp(
     state,
     projectRequests: () => projectRequests,
     removePreviewRequests: () => removePreviewRequests,
+    fileUploadRequests: () => fileUploadRequests,
     setRemovePreview: (value: Record<string, unknown>) => {
       removePreviewOverride = value
     },
@@ -882,6 +902,100 @@ test.describe('desktop worktree terminal UI', () => {
         )
       )
       .toEqual(['\u001b[13;2u', '\u001b[H', '\u001b[F'])
+  })
+
+  test('uploads pasted and dropped files and pastes their server paths', async ({
+    page
+  }) => {
+    const mocked = await mockApp(page)
+    await page.getByRole('button', { name: 'Pi, running', exact: true }).click()
+    await page.getByRole('button', { name: 'Take control' }).click()
+    await page.evaluate(() => {
+      const socket = (window as any).__lastWs
+      socket.onmessage?.({
+        data: JSON.stringify({
+          version: 1,
+          type: 'output',
+          streamId: socket.streamId,
+          sequence: 2,
+          data: '\u001b[?2004h'
+        })
+      })
+      ;(window as any).__wsSent = []
+    })
+
+    const paste = await page
+      .locator('.xterm-helper-textarea')
+      .evaluate((textarea) => {
+        const clipboard = new DataTransfer()
+        clipboard.items.add(
+          new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], 'shot.png', {
+            type: 'image/png'
+          })
+        )
+        const event = new Event('paste', { bubbles: true, cancelable: true })
+        Object.defineProperty(event, 'clipboardData', { value: clipboard })
+        return {
+          files: clipboard.files.length,
+          prevented: !textarea.dispatchEvent(event)
+        }
+      })
+    expect(paste).toEqual({ files: 1, prevented: true })
+
+    await expect.poll(mocked.fileUploadRequests).toBe(1)
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          (window as any).__wsSent
+            .filter((message: any) => message.type === 'input')
+            .map((message: any) => message.data)
+            .join('')
+        )
+      )
+      .toContain('\u001b[200~/tmp/tasktty-upload-1.png\u001b[201~')
+
+    const drop = await page
+      .locator('.terminal-session-host')
+      .evaluate((terminalHost) => {
+        const transfer = new DataTransfer()
+        transfer.items.add(
+          new File(['hello'], 'notes.txt', { type: 'text/plain' })
+        )
+        const dragoverPrevented = !terminalHost.dispatchEvent(
+          new DragEvent('dragover', {
+            bubbles: true,
+            cancelable: true,
+            dataTransfer: transfer
+          })
+        )
+        const highlighted =
+          terminalHost.classList.contains('terminal-file-drag')
+        const dropPrevented = !terminalHost.dispatchEvent(
+          new DragEvent('drop', {
+            bubbles: true,
+            cancelable: true,
+            dataTransfer: transfer
+          })
+        )
+        return { dragoverPrevented, dropPrevented, highlighted }
+      })
+    expect(drop).toEqual({
+      dragoverPrevented: true,
+      dropPrevented: true,
+      highlighted: true
+    })
+
+    await expect.poll(mocked.fileUploadRequests).toBe(2)
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          (window as any).__wsSent
+            .filter((message: any) => message.type === 'input')
+            .map((message: any) => message.data)
+            .join('')
+        )
+      )
+      .toContain('/tmp/tasktty-upload-2.txt')
   })
 
   test('keeps plain dragged text selected while tmux mouse reporting is active', async ({

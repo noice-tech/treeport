@@ -48,6 +48,7 @@ const EMPTY_SNAPSHOT: TerminalSessionSnapshot = {
   bellSerial: 0,
   exitSerial: 0,
   progress: null,
+  fileTransfer: null,
   error: null
 }
 
@@ -383,13 +384,32 @@ export function TerminalView({
               ref={hostRef}
               onMouseDown={() => activeSession?.focus()}
             />
-            {snapshot.degraded && (
-              <div className="pointer-events-none absolute inset-x-0 top-3 z-10 flex justify-center">
-                <span className="max-w-[calc(100%-1.5rem)] rounded-full bg-zinc-900/90 px-3 py-1 text-center text-xs text-amber-200 shadow ring-1 ring-amber-400/20 backdrop-blur">
-                  {snapshot.error
-                    ? `${snapshot.error} Retrying…`
-                    : 'Reconnecting…'}
-                </span>
+            {(snapshot.degraded || snapshot.fileTransfer) && (
+              <div className="pointer-events-none absolute inset-x-0 top-3 z-10 flex flex-col items-center gap-2">
+                {snapshot.degraded && (
+                  <span className="max-w-[calc(100%-1.5rem)] rounded-full bg-zinc-900/90 px-3 py-1 text-center text-xs text-amber-200 shadow ring-1 ring-amber-400/20 backdrop-blur">
+                    {snapshot.error
+                      ? `${snapshot.error} Retrying…`
+                      : 'Reconnecting…'}
+                  </span>
+                )}
+                {snapshot.fileTransfer && (
+                  <span
+                    className={cn(
+                      'rounded-full bg-zinc-900/90 px-3 py-1 text-xs shadow ring-1 backdrop-blur',
+                      snapshot.fileTransfer.state === 'error'
+                        ? 'text-rose-100 ring-rose-400/30'
+                        : 'text-cyan-100 ring-cyan-400/20'
+                    )}
+                    role={
+                      snapshot.fileTransfer.state === 'error'
+                        ? 'alert'
+                        : 'status'
+                    }
+                  >
+                    {snapshot.fileTransfer.message}
+                  </span>
+                )}
               </div>
             )}
             {snapshot.phase === 'closed' && snapshot.error && (

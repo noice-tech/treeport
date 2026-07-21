@@ -1,3 +1,6 @@
+import crypto from 'node:crypto'
+import fs from 'node:fs/promises'
+import path from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import type { TerminalRuntimeMetadata } from '@tasktty/shared'
 import {
@@ -15,7 +18,7 @@ function fixture() {
     port: 4780,
     databasePath: '/tmp/tasktty-test.db',
     dataDir: '/tmp',
-    runtimeDir: '/tmp',
+    runtimeDir: path.join('/tmp', `tasktty-test-${crypto.randomUUID()}`),
     shell: '/bin/zsh',
     tmuxPath: 'tmux',
     gitPath: 'git',
@@ -32,6 +35,7 @@ function fixture() {
     getProjectSnapshot: vi.fn(async (id: string) => ({ id })),
     resolveProject: vi.fn(async () => ({ id: 'p' })),
     createTerminal: vi.fn(),
+    getTerminal: vi.fn(async (id: string) => ({ id, worktreeId: 'wt_1' })),
     createWorktree: vi.fn(async () => ({
       worktree: {},
       terminal: null,
@@ -53,7 +57,7 @@ function fixture() {
     terminalMetadata,
     webDist: '/missing'
   })
-  return { app, metadataSnapshot, service }
+  return { app, config, metadataSnapshot, service }
 }
 
 describe('HTTP API validation', () => {
@@ -167,6 +171,51 @@ describe('HTTP API validation', () => {
       { name: 'Agent', argv: ['tool', 'semi;colon', '$HOME'] },
       undefined
     )
+  })
+
+  it('uploads browser files to a private terminal-readable path', async () => {
+    const { app, config, service } = fixture()
+    const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47])
+    const uploadDirectory = path.join(config.runtimeDir, 'uploads')
+    const stalePath = path.join(uploadDirectory, 'tasktty-upload-stale.png')
+    try {
+      await fs.mkdir(uploadDirectory, { recursive: true })
+      await fs.writeFile(stalePath, 'stale')
+      const staleTime = new Date(Date.now() - 25 * 60 * 60_000)
+      await fs.utimes(stalePath, staleTime, staleTime)
+
+      const response = await app.request('/api/terminals/term_1/files', {
+        method: 'POST',
+        headers: {
+          'content-type': 'image/png',
+          'x-tasktty-file-extension': 'png'
+        },
+        body: bytes
+      })
+
+      expect(response.status).toBe(201)
+      expect(service.getTerminal).toHaveBeenCalledWith('term_1')
+      const result = (await response.json()) as { file: { path: string } }
+      expect(path.dirname(result.file.path)).toBe(
+        path.join(config.runtimeDir, 'uploads')
+      )
+      expect(path.extname(result.file.path)).toBe('.png')
+      expect(await fs.readFile(result.file.path)).toEqual(Buffer.from(bytes))
+      expect((await fs.stat(result.file.path)).mode & 0o777).toBe(0o600)
+      await expect(fs.stat(stalePath)).rejects.toMatchObject({ code: 'ENOENT' })
+
+      const invalid = await app.request('/api/terminals/term_1/files', {
+        method: 'POST',
+        headers: { 'x-tasktty-file-extension': '../png' },
+        body: new Uint8Array()
+      })
+      expect(invalid.status).toBe(400)
+      expect(await invalid.json()).toMatchObject({
+        error: { code: 'VALIDATION_ERROR' }
+      })
+    } finally {
+      await fs.rm(config.runtimeDir, { recursive: true, force: true })
+    }
   })
 
   it('does not expose removed diagnostics and finish/discard routes', async () => {

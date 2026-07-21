@@ -4,6 +4,7 @@ export * from './terminal-protocol.js'
 
 export const PRODUCT_NAME = 'TaskTTY'
 export const API_VERSION = 1
+export const TERMINAL_MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 
 export type WorktreeKind = 'main' | 'linked'
 export type WorktreeStatus =

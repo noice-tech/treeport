@@ -1,3 +1,5 @@
+import crypto from 'node:crypto'
+import fs from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Hono } from 'hono'
@@ -10,6 +12,7 @@ import {
   createTerminalSchema,
   createWorktreeSchema,
   registerProjectSchema,
+  TERMINAL_MAX_UPLOAD_BYTES,
   removeWorktreeSchema,
   spawnSchema,
   updateProjectSchema,
@@ -20,6 +23,75 @@ import type { AppConfig, TmuxAdapter, TaskTTYService } from '@tasktty/core'
 import { DomainError } from '@tasktty/core'
 import { TerminalAttachmentManager } from './attachments.js'
 import { TerminalMetadataManager } from './terminal-metadata.js'
+
+const UPLOAD_MIME_EXTENSIONS: Readonly<Record<string, string>> = {
+  'application/pdf': 'pdf',
+  'image/gif': 'gif',
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'image/svg+xml': 'svg',
+  'image/webp': 'webp',
+  'text/plain': 'txt'
+}
+const UPLOAD_RETENTION_MS = 24 * 60 * 60_000
+const UPLOAD_DIRECTORY_MAX_BYTES = 512 * 1024 * 1024
+
+interface UploadFileInfo {
+  path: string
+  size: number
+  mtimeMs: number
+}
+
+async function pruneTerminalUploads(
+  directory: string,
+  preservePath?: string
+): Promise<void> {
+  const entries = await fs.readdir(directory, { withFileTypes: true })
+  const files = (
+    await Promise.all(
+      entries
+        .filter(
+          (entry) => entry.isFile() && entry.name.startsWith('tasktty-upload-')
+        )
+        .map(async (entry): Promise<UploadFileInfo | null> => {
+          const filePath = path.join(directory, entry.name)
+          return fs
+            .stat(filePath)
+            .then((stat) => ({
+              path: filePath,
+              size: stat.size,
+              mtimeMs: stat.mtimeMs
+            }))
+            .catch(() => null)
+        })
+    )
+  )
+    .filter((file): file is UploadFileInfo => file !== null)
+    .sort((left, right) => {
+      if (left.path === preservePath) {
+        return -1
+      }
+
+      if (right.path === preservePath) {
+        return 1
+      }
+
+      return right.mtimeMs - left.mtimeMs
+    })
+
+  const expiredBefore = Date.now() - UPLOAD_RETENTION_MS
+  let retainedBytes = 0
+  for (const file of files) {
+    const expired = file.mtimeMs < expiredBefore
+    const overQuota = retainedBytes + file.size > UPLOAD_DIRECTORY_MAX_BYTES
+    if (file.path !== preservePath && (expired || overQuota)) {
+      await fs.rm(file.path, { force: true })
+      continue
+    }
+
+    retainedBytes += file.size
+  }
+}
 
 interface AppDependencies {
   service: TaskTTYService
@@ -76,6 +148,7 @@ export function createApp({
     config.tmuxPath,
     metadata
   )
+  let terminalUploadQueue = Promise.resolve()
 
   app.onError((error, context) => {
     if (error instanceof DomainError) {
@@ -246,6 +319,97 @@ export function createApp({
       )
     })
   )
+
+  app.post('/api/terminals/:terminalId/files', async (context) => {
+    await service.getTerminal(context.req.param('terminalId'))
+
+    const contentLength = context.req.header('content-length')
+    if (contentLength) {
+      const declaredBytes = Number(contentLength)
+      if (!Number.isSafeInteger(declaredBytes) || declaredBytes < 0) {
+        throw new DomainError('VALIDATION_ERROR', 'File size is invalid', 400)
+      }
+
+      if (declaredBytes > TERMINAL_MAX_UPLOAD_BYTES) {
+        throw new DomainError(
+          'FILE_TOO_LARGE',
+          `Files are limited to ${TERMINAL_MAX_UPLOAD_BYTES} bytes`,
+          413
+        )
+      }
+    }
+
+    const requestedExtension = context.req
+      .header('x-tasktty-file-extension')
+      ?.toLowerCase()
+    if (requestedExtension && !/^[a-z0-9]{1,16}$/.test(requestedExtension)) {
+      throw new DomainError(
+        'VALIDATION_ERROR',
+        'File extension is invalid',
+        400
+      )
+    }
+
+    const waitForPreviousUpload = terminalUploadQueue
+    let releaseUpload!: () => void
+    terminalUploadQueue = new Promise<void>((resolve) => {
+      releaseUpload = resolve
+    })
+    await waitForPreviousUpload
+
+    try {
+      const contentType =
+        context.req.header('content-type')?.split(';', 1)[0]?.toLowerCase() ??
+        ''
+      const extension =
+        requestedExtension || UPLOAD_MIME_EXTENSIONS[contentType] || ''
+      const uploadDirectory = path.join(config.runtimeDir, 'uploads')
+      await fs.mkdir(uploadDirectory, { recursive: true, mode: 0o700 })
+      await fs.chmod(uploadDirectory, 0o700)
+      await pruneTerminalUploads(uploadDirectory)
+      const filePath = path.join(
+        uploadDirectory,
+        `tasktty-upload-${crypto.randomUUID()}${extension ? `.${extension}` : ''}`
+      )
+      const file = await fs.open(filePath, 'wx', 0o600)
+      let complete = false
+      let receivedBytes = 0
+      try {
+        const reader = context.req.raw.body?.getReader()
+        if (reader) {
+          while (true) {
+            const { done, value } = await reader.read()
+            if (done) {
+              break
+            }
+
+            receivedBytes += value.byteLength
+            if (receivedBytes > TERMINAL_MAX_UPLOAD_BYTES) {
+              throw new DomainError(
+                'FILE_TOO_LARGE',
+                `Files are limited to ${TERMINAL_MAX_UPLOAD_BYTES} bytes`,
+                413
+              )
+            }
+
+            await file.writeFile(value)
+          }
+        }
+
+        complete = true
+      } finally {
+        await file.close()
+        if (!complete) {
+          await fs.rm(filePath, { force: true })
+        }
+      }
+
+      await pruneTerminalUploads(uploadDirectory, filePath)
+      return context.json({ file: { path: filePath } }, 201)
+    } finally {
+      releaseUpload()
+    }
+  })
 
   app.patch('/api/terminals/:terminalId', async (context) => {
     const body = await input(context, updateTerminalSchema)

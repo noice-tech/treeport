@@ -107,6 +107,24 @@ export const apiClient = {
     ).terminal,
   deleteTerminal: async (terminalId: string) =>
     api(`/api/terminals/${terminalId}`, { method: 'DELETE' }),
+  uploadTerminalFile: async (terminalId: string, file: File) => {
+    const extension = /\.([a-z0-9]{1,16})$/i.exec(file.name)?.[1]
+    return (
+      await api<{ file: { path: string } }>(
+        `/api/terminals/${terminalId}/files`,
+        {
+          method: 'POST',
+          headers: {
+            'content-type': file.type || 'application/octet-stream',
+            ...(extension
+              ? { 'x-tasktty-file-extension': extension.toLowerCase() }
+              : {})
+          },
+          body: file
+        }
+      )
+    ).file.path
+  },
   removePreview: async (worktreeId: string) =>
     (
       await api<{ preview: RemovePreview }>(
