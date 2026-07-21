@@ -47,12 +47,6 @@ Launch a program directly:
 tasktty terminal create --worktree <worktree-id> --name <terminal-name> -- <program> <arg> ...
 ```
 
-For example, launch a normal interactive Pi session without changing its configured capabilities:
-
-```sh
-tasktty terminal create --worktree <worktree-id> --name agent -- pi --name <session-name>
-```
-
 The command returns after TaskTTY creates the tmux session. The program continues independently of the browser and of the caller that created it.
 
 ## Create a child worktree and terminal
@@ -67,17 +61,7 @@ tasktty spawn \
   -- <program> <arg> ...
 ```
 
-A generic interactive Pi launch is:
-
-```sh
-tasktty spawn \
-  --project <project-id> \
-  --worktree-name <worktree-name> \
-  --name <terminal-name> \
-  -- pi --name <session-name>
-```
-
-If the caller supplies an initial Pi prompt containing arbitrary external text, write it to a caller-managed file and pass an absolute file argument such as `@/absolute/path/to/prompt.md`. Do not place arbitrary prompt text where Pi could interpret it as an option.
+The child program and its arguments are entirely caller-owned. TaskTTY preserves them but does not add prompts, modes, capability restrictions, or lifecycle policy.
 
 By default, TaskTTY bases the worktree on the fetched remote default branch. Add `--from-current` only when the caller wants the current worktree's committed `HEAD` as the base. Uncommitted changes are not copied.
 
