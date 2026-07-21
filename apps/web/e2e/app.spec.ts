@@ -10,6 +10,7 @@ const project = {
   mainWorktreePath: '/repo',
   defaultBranch: 'trunk',
   color: null as ProjectColor | null,
+  availability: { state: 'available' as const, message: null },
   createdAt: '2026-01-01',
   updatedAt: '2026-01-01',
   worktrees: [
@@ -1261,6 +1262,121 @@ test.describe('mobile terminal UI', () => {
     await page.getByLabel('Open worktree drawer').click()
     await expect(status).toHaveAttribute('inert', '')
     await expect(status).toHaveAttribute('aria-hidden', 'true')
+  })
+
+  test('scrolls tmux history with a one-finger terminal swipe', async ({
+    page
+  }) => {
+    await mockApp(page)
+    await page.getByLabel('Open worktree drawer').click()
+    await page.getByRole('button', { name: 'Pi, running', exact: true }).click()
+    await page.getByRole('button', { name: 'Take control' }).click()
+    await page.evaluate(() => {
+      const socket = (window as any).__lastWs
+      socket.onmessage?.({
+        data: JSON.stringify({
+          version: 1,
+          type: 'output',
+          streamId: socket.streamId,
+          sequence: 2,
+          data: '\u001b[?1049h\u001b[?1000h\u001b[?1006h'
+        })
+      })
+      ;(window as any).__wsSent = []
+    })
+    const screen = page.locator('.xterm-screen')
+    await expect(page.locator('.xterm.enable-mouse-events')).toBeVisible()
+    const bounds = await screen.boundingBox()
+    const row = await page.locator('.xterm-rows > div').first().boundingBox()
+    expect(bounds).not.toBeNull()
+    expect(row).not.toBeNull()
+    const client = await page.context().newCDPSession(page)
+    const x = bounds!.x + bounds!.width / 2
+    const startY = bounds!.y + row!.height * 2
+    const positions = [0, 6, 12, 18].map((rows) => startY + row!.height * rows)
+    await client.send('Input.dispatchTouchEvent', {
+      type: 'touchStart',
+      touchPoints: [{ x, y: positions[0]! }]
+    })
+    await client.send('Input.dispatchTouchEvent', {
+      type: 'touchMove',
+      touchPoints: [{ x, y: positions[1]! }]
+    })
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            (window as any).__wsSent.filter((message: any) =>
+              String(message.data).includes('\u001b[<64;')
+            ).length
+        )
+      )
+      .toBe(1)
+
+    await page.evaluate(() => {
+      const socket = (window as any).__lastWs
+      socket.onmessage?.({
+        data: JSON.stringify({
+          version: 1,
+          type: 'output',
+          streamId: socket.streamId,
+          sequence: 3,
+          data: '\u001b[?1000l'
+        })
+      })
+    })
+    await expect(page.locator('.xterm.enable-mouse-events')).toHaveCount(0)
+    const messagesBeforeModeChange = await page.evaluate(
+      () => (window as any).__wsSent.length
+    )
+
+    for (const y of positions.slice(2)) {
+      await client.send('Input.dispatchTouchEvent', {
+        type: 'touchMove',
+        touchPoints: [{ x, y }]
+      })
+    }
+    await client.send('Input.dispatchTouchEvent', {
+      type: 'touchEnd',
+      touchPoints: []
+    })
+
+    const terminalHost = page.locator('.terminal-session-host')
+    await expect(terminalHost).toHaveClass(/terminal-scrolling/)
+    await expect
+      .poll(() =>
+        page.evaluate(
+          (previousCount) =>
+            (window as any).__wsSent.filter(
+              (message: any) => message.type === 'input'
+            ).length > previousCount,
+          messagesBeforeModeChange
+        )
+      )
+      .toBe(true)
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          (window as any).__wsSent.some(
+            (message: any) => message.data === '\u001b[A'
+          )
+        )
+      )
+      .toBe(true)
+
+    await page.locator('.xterm-helper-textarea').focus()
+    await page.keyboard.press('q')
+    await expect(terminalHost).not.toHaveClass(/terminal-scrolling/)
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            (window as any).__wsSent
+              .filter((message: any) => message.type === 'input')
+              .at(-1)?.data
+        )
+      )
+      .toBe(`${TERMINAL_SCROLL_EXIT_SEQUENCE}q`)
   })
 
   test('uses an accessible drawer, synchronized titles, control takeover, and accessory keys', async ({

@@ -16,6 +16,8 @@ type ConnectionPhase = 'connecting' | 'ready' | 'reconnecting' | 'closed'
 export type ArrowDirection = 'up' | 'down' | 'left' | 'right'
 
 const TERMINAL_SCROLL_EXIT_SEQUENCE = '\u001b[9000~'
+// tmux copy mode advances five rows for each wheel report.
+const TERMINAL_TOUCH_ROWS_PER_WHEEL = 5
 
 export function terminalProgressLabel(progress: TerminalProgress): string {
   const percentage =
@@ -101,6 +103,10 @@ function trackTerminalScrolling(
   onScroll: () => void,
   onResumeInput: () => void
 ): void {
+  let lastTouchY: number | null = null
+  let touchScrollRemainder = 0
+  let translatingTouchScroll = false
+
   wrapper.addEventListener(
     'wheel',
     () => {
@@ -109,6 +115,95 @@ function trackTerminalScrolling(
     },
     { capture: true, passive: true }
   )
+  wrapper.addEventListener(
+    'touchstart',
+    (event) => {
+      if (event.touches.length !== 1) {
+        lastTouchY = null
+        touchScrollRemainder = 0
+        translatingTouchScroll = false
+        return
+      }
+
+      lastTouchY = event.touches[0]!.clientY
+      touchScrollRemainder = 0
+      translatingTouchScroll = Boolean(
+        wrapper.querySelector('.xterm.enable-mouse-events')
+      )
+    },
+    { capture: true, passive: true }
+  )
+  wrapper.addEventListener(
+    'touchmove',
+    (event) => {
+      if (event.touches.length !== 1 || lastTouchY === null) {
+        lastTouchY = null
+        touchScrollRemainder = 0
+        translatingTouchScroll = false
+        return
+      }
+
+      if (!translatingTouchScroll) {
+        return
+      }
+
+      const screen = wrapper.querySelector<HTMLElement>('.xterm-screen')
+      if (!screen) {
+        translatingTouchScroll = false
+        return
+      }
+
+      const touch = event.touches[0]!
+      touchScrollRemainder += lastTouchY - touch.clientY
+      lastTouchY = touch.clientY
+      event.preventDefault()
+
+      const rowHeight =
+        screen
+          .querySelector<HTMLElement>('.xterm-rows > div')
+          ?.getBoundingClientRect().height || 16
+      const rowsPerWheel = wrapper.querySelector('.xterm.enable-mouse-events')
+        ? TERMINAL_TOUCH_ROWS_PER_WHEEL
+        : 1
+      const touchStep = rowHeight * rowsPerWheel
+      const steps = Math.trunc(touchScrollRemainder / touchStep)
+      if (steps === 0) {
+        return
+      }
+
+      touchScrollRemainder -= steps * touchStep
+      const bounds = screen.getBoundingClientRect()
+      const clientX = Math.min(
+        Math.max(touch.clientX, bounds.left),
+        bounds.right - 1
+      )
+      const clientY = Math.min(
+        Math.max(touch.clientY, bounds.top),
+        bounds.bottom - 1
+      )
+      for (let index = 0; index < Math.abs(steps); index += 1) {
+        screen.dispatchEvent(
+          new WheelEvent('wheel', {
+            bubbles: true,
+            cancelable: true,
+            composed: true,
+            clientX,
+            clientY,
+            deltaMode: WheelEvent.DOM_DELTA_LINE,
+            deltaY: Math.sign(steps)
+          })
+        )
+      }
+    },
+    { capture: true, passive: false }
+  )
+  const resetTouchScroll = () => {
+    lastTouchY = null
+    touchScrollRemainder = 0
+    translatingTouchScroll = false
+  }
+  wrapper.addEventListener('touchend', resetTouchScroll, true)
+  wrapper.addEventListener('touchcancel', resetTouchScroll, true)
   wrapper.addEventListener('paste', onResumeInput, true)
 }
 
