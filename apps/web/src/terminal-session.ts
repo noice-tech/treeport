@@ -287,7 +287,7 @@ export function terminalOptions() {
       '"SFMono-Regular", "Cascadia Code", "Liberation Mono", monospace',
     fontSize: 14,
     lineHeight: 1.15,
-    scrollback: 10_000,
+    scrollback: 0,
     allowProposedApi: false,
     macOptionClickForcesSelection: true,
     linkHandler: {
