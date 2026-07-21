@@ -49,6 +49,9 @@ interface TerminalMetadataEntry extends TerminalRuntimeMetadata {
   currentCommand: string | null
   shellCommand: string | null
   shellTitle: string | null
+  persistedShellTitle: string | null
+  awaitingShellTitle: boolean
+  shellTitleWriting: boolean
   applicationTitleActive: boolean
   observedTitlePending: boolean
   titleRevision: number
@@ -179,6 +182,9 @@ export class TerminalMetadataManager {
           ? path.basename(terminal.argv?.[0] ?? '').replace(/^-/, '')
           : null,
         shellTitle: null,
+        persistedShellTitle: null,
+        awaitingShellTitle: false,
+        shellTitleWriting: false,
         applicationTitleActive: false,
         observedTitlePending: false,
         titleRevision: 0,
@@ -449,10 +455,16 @@ export class TerminalMetadataManager {
     const paneTitleChanged = paneTitle !== entry.paneTitle
     const commandChanged = currentCommand !== previousCommand
     const observedTitlePending = entry.observedTitlePending
+    if (previousCommand === null && entry.shellTitle === null) {
+      const shellTitle = state.shellTitle?.trim().slice(0, 256) || null
+      entry.shellTitle = shellTitle
+      entry.persistedShellTitle = shellTitle
+    }
 
     entry.paneTitle = paneTitle
     entry.currentCommand = currentCommand
     entry.observedTitlePending = false
+    this.persistShellTitle(entry)
 
     if (!entry.shellCommand) {
       this.update(entry, { title: paneTitle ?? currentCommand })
@@ -460,17 +472,28 @@ export class TerminalMetadataManager {
     }
 
     if (currentCommand === entry.shellCommand) {
+      const applicationTitleWasActive = entry.applicationTitleActive
+      const previousShellTitle = entry.shellTitle
+      const freshShellTitle =
+        observedTitlePending || (previousCommand !== null && paneTitleChanged)
       entry.applicationTitleActive = false
-      if (
-        observedTitlePending ||
-        paneTitleChanged ||
-        entry.shellTitle === null
-      ) {
+      if (freshShellTitle) {
         entry.shellTitle = paneTitle
+        entry.awaitingShellTitle = false
+      } else if (entry.shellTitle === null) {
+        if (applicationTitleWasActive || entry.awaitingShellTitle) {
+          entry.awaitingShellTitle = true
+        } else {
+          entry.shellTitle = paneTitle
+        }
+      }
+
+      if (entry.shellTitle !== previousShellTitle) {
+        this.persistShellTitle(entry)
       }
 
       this.update(entry, {
-        title: entry.shellTitle ?? paneTitle ?? currentCommand
+        title: entry.shellTitle ?? currentCommand
       })
       return
     }
@@ -491,7 +514,16 @@ export class TerminalMetadataManager {
     }
 
     if (previousCommand === null) {
-      entry.shellTitle = paneTitle
+      if (
+        paneTitle &&
+        (entry.shellTitle === null || paneTitle !== entry.shellTitle)
+      ) {
+        // Without a remembered shell title, an existing OSC title and a stale
+        // shell title are indistinguishable. Preserve the reported title.
+        entry.applicationTitleActive = true
+        this.update(entry, { title: paneTitle })
+        return
+      }
     } else if (entry.applicationTitleActive) {
       return
     } else if (paneTitleChanged) {
@@ -501,6 +533,27 @@ export class TerminalMetadataManager {
     }
 
     this.update(entry, { title: currentCommand ?? paneTitle })
+  }
+
+  private persistShellTitle(entry: TerminalMetadataEntry): void {
+    if (
+      entry.shellTitleWriting ||
+      entry.shellTitle === entry.persistedShellTitle
+    ) {
+      return
+    }
+
+    const shellTitle = entry.shellTitle
+    entry.shellTitleWriting = true
+    void this.tmux
+      .setSessionShellTitle(entry.socketName, entry.sessionName, shellTitle)
+      .then(() => {
+        entry.persistedShellTitle = shellTitle
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        entry.shellTitleWriting = false
+      })
   }
 
   private update(

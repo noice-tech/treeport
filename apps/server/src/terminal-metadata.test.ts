@@ -3,7 +3,8 @@ import type { TerminalRecord, WorktreeRecord } from '@tasktty/shared'
 import {
   ProductEventBus,
   type TaskTTYService,
-  type TmuxAdapter
+  type TmuxAdapter,
+  type TmuxSessionTitleState
 } from '@tasktty/core'
 import {
   TerminalMetadataManager,
@@ -86,14 +87,20 @@ function fixture(initialTerminals: TerminalRecord[]) {
     refreshTerminalStatus
   } as unknown as TaskTTYService
   const sessionTitleState = vi.fn(
-    async (_socket: string, sessionName: string) => ({
+    async (
+      _socket: string,
+      sessionName: string
+    ): Promise<TmuxSessionTitleState> => ({
       paneTitle: `title ${sessionName}`,
-      currentCommand: 'node'
+      currentCommand: 'node',
+      shellTitle: null
     })
   )
+  const setSessionShellTitle = vi.fn(async () => undefined)
   const tmux = {
     configPath: '/runtime/tmux.conf',
-    sessionTitleState
+    sessionTitleState,
+    setSessionShellTitle
   } as unknown as TmuxAdapter
   const observers: FakeObserver[] = []
   const createObserver = vi.fn((options: TmuxProgressObserverOptions) => {
@@ -113,6 +120,7 @@ function fixture(initialTerminals: TerminalRecord[]) {
     observers,
     refreshTerminalStatus,
     sessionTitleState,
+    setSessionShellTitle,
     terminals
   }
 }
@@ -238,17 +246,69 @@ describe('TerminalMetadataManager', () => {
     expect(manager.get(item.id).title).toBe('tasktty')
   })
 
-  it('shows a foreground command when tracking starts before the shell is idle', async () => {
+  it('prefers an existing application title when tracking starts while it is running', async () => {
     vi.useFakeTimers()
     const item = { ...terminal('one'), argv: ['/bin/zsh', '-l'] }
     const { manager, sessionTitleState } = fixture([item])
     managers.push(manager)
     sessionTitleState.mockResolvedValue({
-      paneTitle: 'tasktty',
-      currentCommand: 'npm'
+      paneTitle: 'π',
+      currentCommand: 'node',
+      shellTitle: 'tasktty'
     })
     await manager.initialize()
-    expect(manager.get(item.id).title).toBe('npm')
+    expect(manager.get(item.id).title).toBe('π')
+
+    sessionTitleState.mockResolvedValue({
+      paneTitle: 'π',
+      currentCommand: 'rg',
+      shellTitle: 'tasktty'
+    })
+    await vi.advanceTimersByTimeAsync(TERMINAL_METADATA_POLL_MS)
+    expect(manager.get(item.id).title).toBe('π')
+
+    sessionTitleState.mockResolvedValue({
+      paneTitle: 'π',
+      currentCommand: 'zsh',
+      shellTitle: 'tasktty'
+    })
+    await vi.advanceTimersByTimeAsync(TERMINAL_METADATA_POLL_MS)
+    expect(manager.get(item.id).title).toBe('tasktty')
+  })
+
+  it('prefers the existing pane title when no remembered shell title can identify it as stale', async () => {
+    const item = { ...terminal('one'), argv: ['/bin/zsh', '-l'] }
+    const { manager, sessionTitleState } = fixture([item])
+    managers.push(manager)
+    sessionTitleState.mockResolvedValue({
+      paneTitle: 'tasktty',
+      currentCommand: 'nano'
+    })
+
+    await manager.initialize()
+
+    expect(manager.get(item.id).title).toBe('tasktty')
+  })
+
+  it('waits for a fresh shell title after an application started without a remembered shell title', async () => {
+    vi.useFakeTimers()
+    const item = { ...terminal('one'), argv: ['/bin/zsh', '-l'] }
+    const { manager, sessionTitleState, setSessionShellTitle } = fixture([item])
+    managers.push(manager)
+    sessionTitleState.mockResolvedValue({
+      paneTitle: 'π',
+      currentCommand: 'node'
+    })
+    await manager.initialize()
+    expect(manager.get(item.id).title).toBe('π')
+
+    sessionTitleState.mockResolvedValue({
+      paneTitle: 'π',
+      currentCommand: 'zsh'
+    })
+    await vi.advanceTimersByTimeAsync(TERMINAL_METADATA_POLL_MS * 2)
+    expect(manager.get(item.id).title).toBe('zsh')
+    expect(setSessionShellTitle).not.toHaveBeenCalled()
 
     sessionTitleState.mockResolvedValue({
       paneTitle: 'tasktty',
@@ -256,6 +316,62 @@ describe('TerminalMetadataManager', () => {
     })
     await vi.advanceTimersByTimeAsync(TERMINAL_METADATA_POLL_MS)
     expect(manager.get(item.id).title).toBe('tasktty')
+    await vi.waitFor(() =>
+      expect(setSessionShellTitle).toHaveBeenCalledWith(
+        'socket',
+        item.tmuxSessionName,
+        'tasktty'
+      )
+    )
+  })
+
+  it('uses a remembered shell title to identify a title-less foreground command after restart', async () => {
+    vi.useFakeTimers()
+    const item = { ...terminal('one'), argv: ['/bin/zsh', '-l'] }
+    const { manager, sessionTitleState } = fixture([item])
+    managers.push(manager)
+    sessionTitleState.mockResolvedValue({
+      paneTitle: 'tasktty',
+      currentCommand: 'npm',
+      shellTitle: 'tasktty'
+    })
+    await manager.initialize()
+    expect(manager.get(item.id).title).toBe('npm')
+
+    sessionTitleState.mockResolvedValue({
+      paneTitle: 'tasktty',
+      currentCommand: 'zsh',
+      shellTitle: 'tasktty'
+    })
+    await vi.advanceTimersByTimeAsync(TERMINAL_METADATA_POLL_MS)
+    expect(manager.get(item.id).title).toBe('tasktty')
+  })
+
+  it('retries a failed shell title persistence write on a later reconciliation', async () => {
+    vi.useFakeTimers()
+    const item = { ...terminal('one'), argv: ['/bin/zsh', '-l'] }
+    const { manager, sessionTitleState, setSessionShellTitle } = fixture([item])
+    managers.push(manager)
+    setSessionShellTitle.mockRejectedValueOnce(new Error('tmux unavailable'))
+    sessionTitleState.mockResolvedValue({
+      paneTitle: 'tasktty',
+      currentCommand: 'zsh'
+    })
+    await manager.initialize()
+    await vi.waitFor(() =>
+      expect(setSessionShellTitle).toHaveBeenCalledTimes(1)
+    )
+
+    sessionTitleState.mockResolvedValue({
+      paneTitle: 'tasktty',
+      currentCommand: 'nano'
+    })
+    await vi.advanceTimersByTimeAsync(TERMINAL_METADATA_POLL_MS)
+
+    await vi.waitFor(() =>
+      expect(setSessionShellTitle).toHaveBeenCalledTimes(2)
+    )
+    expect(manager.get(item.id).title).toBe('nano')
   })
 
   it('keeps an application title while the application runs helper processes', async () => {

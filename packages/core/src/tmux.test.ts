@@ -124,12 +124,17 @@ describe('TmuxAdapter', () => {
     ).rejects.toThrow()
   })
 
-  it('reads the live pane title and foreground command from tmux', async () => {
+  it('reads the live pane title, foreground command, and remembered shell title from tmux', async () => {
     const runtime = await fs.mkdtemp(path.join(os.tmpdir(), 'tasktty-runtime-'))
     temporary.push(runtime)
     const runner = new RecordingRunner()
+    const shellTitle = 'zsh · /repo'
+    const encodedShellTitle = Buffer.from(
+      JSON.stringify(shellTitle),
+      'utf8'
+    ).toString('base64url')
     runner.responses.push({
-      stdout: 'nano\tzsh · /repo\n',
+      stdout: `${encodedShellTitle}\tnano\t${shellTitle}\n`,
       stderr: '',
       exitCode: 0
     })
@@ -138,12 +143,35 @@ describe('TmuxAdapter', () => {
     await expect(
       adapter.sessionTitleState('socket', 'session')
     ).resolves.toEqual({
-      paneTitle: 'zsh · /repo',
-      currentCommand: 'nano'
+      paneTitle: shellTitle,
+      currentCommand: 'nano',
+      shellTitle
     })
     expect(runner.calls[0]!.args).toContain(
-      '#{pane_current_command}\t#{pane_title}'
+      '#{@tasktty-shell-title}\t#{pane_current_command}\t#{pane_title}'
     )
+  })
+
+  it('stores remembered shell titles as encoded tmux session metadata', async () => {
+    const runtime = await fs.mkdtemp(path.join(os.tmpdir(), 'tasktty-runtime-'))
+    temporary.push(runtime)
+    const runner = new RecordingRunner()
+    const adapter = new TmuxAdapter(runner, runtime)
+    const shellTitle = 'π\t/repo'
+
+    await adapter.setSessionShellTitle('socket', 'session', shellTitle)
+
+    expect(runner.calls[0]!.args).toEqual([
+      '-L',
+      'socket',
+      '-f',
+      adapter.configPath,
+      'set-option',
+      '-t',
+      'session',
+      '@tasktty-shell-title',
+      Buffer.from(JSON.stringify(shellTitle), 'utf8').toString('base64url')
+    ])
   })
 
   it('discovers live tmux terminals from encoded session metadata', async () => {
