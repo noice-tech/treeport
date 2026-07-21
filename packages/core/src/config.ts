@@ -4,7 +4,6 @@ import path from 'node:path'
 export interface AppConfig {
   host: string
   port: number
-  authToken: string | null
   databasePath: string
   dataDir: string
   runtimeDir: string
@@ -60,22 +59,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const runtimeDir = path.resolve(
     expandHome(env.TASKTTY_RUNTIME_DIR || defaultRuntimeDir(env))
   )
-  const authToken = env.TASKTTY_AUTH_TOKEN?.trim() || null
-  if (
-    host !== '127.0.0.1' &&
-    host !== '::1' &&
-    host !== 'localhost' &&
-    !authToken
-  ) {
-    throw new Error(
-      'Refusing to bind a non-loopback address without TASKTTY_AUTH_TOKEN'
-    )
-  }
-
   return {
     host,
     port: portValue,
-    authToken,
     dataDir,
     runtimeDir,
     databasePath: path.resolve(

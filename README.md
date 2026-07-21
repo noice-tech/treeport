@@ -23,9 +23,9 @@ pnpm --global add ./packages/cli # makes `tasktty` available on PATH
 pnpm start
 ```
 
-`pnpm start` listens on `0.0.0.0:4780`. If `TASKTTY_AUTH_TOKEN` is unset, it generates a strong token and prints it; enter that token in the browser login screen. Open <http://127.0.0.1:4780> locally or `http://<machine-lan-ip>:4780` from another private-network device. Production serves the built React application and API from one Node process.
+`pnpm start` listens on `0.0.0.0:4780`. Authentication is temporarily disabled, so only use this listener on a trusted private network. Open <http://127.0.0.1:4780> locally or `http://<machine-lan-ip>:4780` from another private-network device. Production serves the built React application and API from one Node process.
 
-For loopback-only startup without authentication:
+For loopback-only startup:
 
 ```sh
 pnpm start:local
@@ -98,7 +98,7 @@ tasktty terminal delete <terminal-id>
 tasktty spawn --project <id-or-path-or-dot> --worktree-name <name> --name <name> [--from-current] [-- <command> args...]
 ```
 
-Each terminal receives `TASKTTY_API_URL`, `TASKTTY_PROJECT_ID`, `TASKTTY_WORKTREE_ID`, and `TASKTTY_TERMINAL_ID`. A Pi process can therefore call `tasktty` to create a child worktree/terminal or remove its own worktree. Removal is persisted as a daemon-owned operation and returns an operation ID before the daemon terminates the requesting tmux server. CLI exit codes are stable: `0` success, `1` unexpected failure, `2` usage, `3` daemon unreachable, `4` authentication, and `5` API/domain refusal.
+Each terminal receives `TASKTTY_API_URL`, `TASKTTY_PROJECT_ID`, `TASKTTY_WORKTREE_ID`, and `TASKTTY_TERMINAL_ID`. A Pi process can therefore call `tasktty` to create a child worktree/terminal or remove its own worktree. Removal is persisted as a daemon-owned operation and returns an operation ID before the daemon terminates the requesting tmux server. CLI exit codes are stable: `0` success, `1` unexpected failure, `2` usage, `3` daemon unreachable, and `5` API/domain refusal.
 
 ## Runtime model
 
@@ -164,7 +164,7 @@ Runtime terminal titles and progress are owned by the daemon metadata manager an
 The versioned JSON surface is under `/api`:
 
 ```text
-GET  /api/health                     GET/POST /api/auth/session
+GET  /api/health
 GET  /api/events (SSE)
 GET/POST /api/projects               GET/DELETE /api/projects/:projectId
 POST /api/projects/:projectId/refresh
@@ -187,7 +187,7 @@ Errors use `{ "error": { "code", "message", "details"? } }`. SSE emits project, 
 
 Localhost defaults require no environment variables. See `.env.example` for:
 
-- `TASKTTY_HOST`, `TASKTTY_PORT`, `TASKTTY_AUTH_TOKEN`
+- `TASKTTY_HOST`, `TASKTTY_PORT`
 - `TASKTTY_DATABASE_PATH`, `TASKTTY_DATA_DIR`, `TASKTTY_RUNTIME_DIR`
 - `TASKTTY_SHELL`, `TASKTTY_TMUX_PATH`, `TASKTTY_GIT_PATH`, `TASKTTY_GH_PATH`
 - `TASKTTY_API_URL`
@@ -201,6 +201,6 @@ Schema tables are `projects`, `worktrees`, `operations`, and `schema_migrations`
 
 ## Security assumptions
 
-tasktty is arbitrary terminal access. The daemon itself defaults to `127.0.0.1`; the root `pnpm start` convenience command intentionally selects `0.0.0.0` and always supplies authentication, generating and printing a token when necessary. Use `pnpm start:local` for the loopback-only default. CLI requests use a bearer token from the environment; browsers exchange the token for an HttpOnly, SameSite session cookie so secrets are not put in WebSocket URLs. Repository/worktree paths are canonicalized, API bodies are validated with Zod, and external commands use argument arrays without interpolated shell strings.
+tasktty is arbitrary terminal access. Authentication is temporarily disabled. The daemon itself defaults to `127.0.0.1`, but the root `pnpm start` convenience command selects `0.0.0.0`; use it only on a trusted private network, or use `pnpm start:local` to keep the listener loopback-only. Repository/worktree paths are canonicalized, API bodies are validated with Zod, and external commands use argument arrays without interpolated shell strings.
 
-This is a single-user, single-daemon local tool. It does not provide internet hosting, multi-user authorization, sandboxing, or a cloud relay. Use a private reverse proxy such as Tailscale Serve rather than exposing the daemon publicly.
+This is a single-user, single-daemon local tool. It does not provide internet hosting, authentication, multi-user authorization, sandboxing, or a cloud relay. Use a private reverse proxy such as Tailscale Serve rather than exposing the daemon publicly.

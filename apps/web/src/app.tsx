@@ -273,10 +273,6 @@ export default function App() {
   const drawerTriggerRef = useRef<HTMLButtonElement | null>(null)
   const modalTriggerRef = useRef<HTMLElement | null>(null)
 
-  const unauthorized =
-    projectsQuery.error instanceof ApiError &&
-    projectsQuery.error.status === 401
-
   useEffect(() => {
     if (collapsedProjectIds.size) {
       localStorage.setItem(
@@ -289,14 +285,10 @@ export default function App() {
   }, [collapsedProjectIds])
 
   useEffect(() => {
-    if (
-      projectsQuery.error &&
-      projectsQuery.data === undefined &&
-      !unauthorized
-    ) {
+    if (projectsQuery.error && projectsQuery.data === undefined) {
       showError(setError)(projectsQuery.error)
     }
-  }, [projectsQuery.data, projectsQuery.error, unauthorized])
+  }, [projectsQuery.data, projectsQuery.error])
 
   useEffect(() => {
     const degraded =
@@ -403,10 +395,6 @@ export default function App() {
   }, [drawerOpen, isMobile, modal, openProjectColorPickerId])
 
   useEffect(() => {
-    if (unauthorized) {
-      return
-    }
-
     const events = new EventSource('/api/events')
     const refreshes = createInvalidationCoalescer(() =>
       queryClient.invalidateQueries(
@@ -463,7 +451,7 @@ export default function App() {
       refreshes.dispose()
       events.close()
     }
-  }, [queryClient, unauthorized])
+  }, [queryClient])
 
   const allWorktrees = useMemo(
     () => projects.flatMap((project) => project.worktrees),
@@ -802,10 +790,6 @@ export default function App() {
 
     event.preventDefault()
     setAndSaveSidebarWidth(nextWidth)
-  }
-
-  if (unauthorized) {
-    return <Login onSuccess={() => void projectsQuery.refetch()} />
   }
 
   return (
@@ -1394,52 +1378,6 @@ function SidebarAction({
       </TooltipTrigger>
       <TooltipContent side="top">{tooltip}</TooltipContent>
     </Tooltip>
-  )
-}
-
-function Login({ onSuccess }: { onSuccess: () => void }) {
-  const [token, setToken] = useState('')
-  const login = useMutation({
-    mutationFn: apiClient.login,
-    onSuccess
-  })
-  return (
-    <main className="login-page isolate grid min-h-dvh place-items-center bg-[radial-gradient(circle_at_center,var(--color-zinc-900)_0,var(--color-zinc-950)_58%)] p-6">
-      <form
-        className="flex w-full max-w-xs flex-col gap-5 rounded-xl bg-zinc-900/70 p-6 shadow-2xl ring-1 ring-white/8 backdrop-blur"
-        onSubmit={(event) => {
-          event.preventDefault()
-          login.mutate(token)
-        }}
-      >
-        <div className="grid gap-2">
-          <p className="eyebrow">Private terminal access</p>
-          <h1 className="text-balance text-2xl font-semibold tracking-tight text-zinc-50">
-            Unlock TaskTTY
-          </h1>
-          <p className="text-base text-pretty text-zinc-400 sm:text-sm">
-            Enter the daemon’s static authentication token. It is stored only in
-            an HttpOnly session cookie.
-          </p>
-        </div>
-        <FormField>
-          <Label htmlFor="token">Authentication token</Label>
-          <Input
-            id="token"
-            name="token"
-            type="password"
-            autoComplete="current-password"
-            value={token}
-            onChange={(event) => setToken(event.target.value)}
-            required
-          />
-        </FormField>
-        {login.error && <p className="form-error">{login.error.message}</p>}
-        <Button type="submit" className="self-end" disabled={login.isPending}>
-          {login.isPending ? 'Unlocking…' : 'Continue'}
-        </Button>
-      </form>
-    </main>
   )
 }
 

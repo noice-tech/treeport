@@ -13,13 +13,7 @@ describe('configuration', () => {
     expect(config.shell).toBe('/bin/zsh')
   })
 
-  it('refuses non-loopback binding without authentication', () => {
-    expect(() => loadConfig({ TASKTTY_HOST: '0.0.0.0' })).toThrow(
-      /without TASKTTY_AUTH_TOKEN/
-    )
-    expect(
-      loadConfig({ TASKTTY_HOST: '0.0.0.0', TASKTTY_AUTH_TOKEN: 'secret' })
-        .authToken
-    ).toBe('secret')
+  it('allows a non-loopback binding', () => {
+    expect(loadConfig({ TASKTTY_HOST: '0.0.0.0' }).host).toBe('0.0.0.0')
   })
 })

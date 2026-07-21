@@ -1,10 +1,8 @@
-import crypto from 'node:crypto'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Hono } from 'hono'
-import { getCookie, setCookie } from 'hono/cookie'
 import { streamSSE } from 'hono/streaming'
-import type { Context, MiddlewareHandler } from 'hono'
+import type { Context } from 'hono'
 import type { ZodType } from 'zod'
 import { upgradeWebSocket } from '@hono/node-server'
 import { serveStatic } from '@hono/node-server/serve-static'
@@ -29,12 +27,6 @@ interface AppDependencies {
   tmux: TmuxAdapter
   terminalMetadata?: TerminalMetadataManager
   webDist?: string
-}
-
-function secureEqual(left: string, right: string): boolean {
-  const a = Buffer.from(left)
-  const b = Buffer.from(right)
-  return a.length === b.length && crypto.timingSafeEqual(a, b)
 }
 
 async function input<T>(context: Context, schema: ZodType<T>): Promise<T> {
@@ -85,40 +77,6 @@ export function createApp({
     metadata
   )
 
-  const authenticate: MiddlewareHandler = async (context, next) => {
-    if (!config.authToken) {
-      return next()
-    }
-
-    if (
-      context.req.path === '/api/health' ||
-      context.req.path === '/api/auth/session'
-    ) {
-      return next()
-    }
-
-    const authorization = context.req.header('authorization')
-    const bearer = authorization?.startsWith('Bearer ')
-      ? authorization.slice(7)
-      : null
-    const cookie = getCookie(context, 'tasktty_session')
-    if (
-      (bearer && secureEqual(bearer, config.authToken)) ||
-      (cookie && secureEqual(cookie, config.authToken))
-    ) {
-      return next()
-    }
-
-    return context.json(
-      {
-        error: { code: 'UNAUTHORIZED', message: 'Authentication is required' }
-      },
-      401
-    )
-  }
-
-  app.use('/api/*', authenticate)
-
   app.onError((error, context) => {
     if (error instanceof DomainError) {
       return context.json(
@@ -150,38 +108,6 @@ export function createApp({
   })
 
   app.get('/api/health', (context) => context.json({ ok: true, version: 1 }))
-
-  app.post('/api/auth/session', async (context) => {
-    if (!config.authToken) {
-      return context.json({ ok: true, authenticationEnabled: false })
-    }
-
-    const body = (await context.req.json().catch(() => ({}))) as {
-      token?: unknown
-    }
-    if (
-      typeof body.token !== 'string' ||
-      !secureEqual(body.token, config.authToken)
-    ) {
-      return context.json(
-        {
-          error: {
-            code: 'UNAUTHORIZED',
-            message: 'Invalid authentication token'
-          }
-        },
-        401
-      )
-    }
-
-    setCookie(context, 'tasktty_session', config.authToken, {
-      httpOnly: true,
-      sameSite: 'Strict',
-      path: '/',
-      maxAge: 60 * 60 * 24 * 30
-    })
-    return context.json({ ok: true, authenticationEnabled: true })
-  })
 
   app.get('/api/projects', async (context) =>
     context.json({ projects: await service.listProjects() })
