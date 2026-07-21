@@ -28,6 +28,7 @@ export interface TmuxSessionState {
 export interface TmuxSessionTitleState {
   paneTitle: string | null
   currentCommand: string | null
+  shellTitle?: string | null
 }
 
 export interface TmuxTerminalSession {
@@ -435,7 +436,7 @@ export class TmuxAdapter {
         '-p',
         '-t',
         sessionName,
-        '#{pane_current_command}\t#{pane_title}'
+        '#{@tasktty-shell-title}\t#{pane_current_command}\t#{pane_title}'
       ],
       env: this.environment(),
       timeoutMs: 10_000
@@ -444,17 +445,59 @@ export class TmuxAdapter {
       return null
     }
 
-    const separator = result.stdout.indexOf('\t')
-    if (separator === -1) {
+    const shellSeparator = result.stdout.indexOf('\t')
+    const commandSeparator = result.stdout.indexOf('\t', shellSeparator + 1)
+    if (shellSeparator === -1 || commandSeparator === -1) {
+      const separator = result.stdout.indexOf('\t')
+      if (separator === -1) {
+        return {
+          paneTitle: result.stdout.trim() || null,
+          currentCommand: null,
+          shellTitle: null
+        }
+      }
+
       return {
-        paneTitle: result.stdout.trim() || null,
-        currentCommand: null
+        paneTitle: result.stdout.slice(separator + 1).trim() || null,
+        currentCommand: result.stdout.slice(0, separator).trim() || null,
+        shellTitle: null
       }
     }
 
-    const currentCommand = result.stdout.slice(0, separator).trim() || null
-    const paneTitle = result.stdout.slice(separator + 1).trim() || null
-    return { paneTitle, currentCommand }
+    let shellTitle: string | null = null
+    try {
+      const decoded = decodeMetadata(
+        result.stdout.slice(0, shellSeparator).trim()
+      )
+      shellTitle = typeof decoded === 'string' ? decoded : null
+    } catch {
+      // Ignore malformed optional metadata from an older or external session.
+    }
+
+    const currentCommand =
+      result.stdout.slice(shellSeparator + 1, commandSeparator).trim() || null
+    const paneTitle = result.stdout.slice(commandSeparator + 1).trim() || null
+    return { paneTitle, currentCommand, shellTitle }
+  }
+
+  async setSessionShellTitle(
+    socketName: string,
+    sessionName: string,
+    title: string | null
+  ): Promise<void> {
+    await runChecked(this.runner, {
+      executable: this.executable,
+      args: [
+        ...this.base(socketName),
+        'set-option',
+        '-t',
+        sessionName,
+        '@tasktty-shell-title',
+        encodeMetadata(title)
+      ],
+      env: this.environment(),
+      timeoutMs: 10_000
+    })
   }
 
   async sessionTitle(
