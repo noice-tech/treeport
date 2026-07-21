@@ -113,6 +113,10 @@ export function createApp({
     context.json({ projects: await service.listProjects() })
   )
 
+  app.get('/api/projects/recent', (context) =>
+    context.json({ projects: service.listRecentProjects() })
+  )
+
   app.post('/api/projects', async (context) => {
     const body = await input(context, registerProjectSchema)
     const registered = await service.registerProject(body.path, body.name)
@@ -120,6 +124,17 @@ export function createApp({
       { project: await service.getProjectSnapshot(registered.id) },
       201
     )
+  })
+
+  app.post('/api/projects/:projectId/open', async (context) =>
+    context.json({
+      project: await service.openProject(context.req.param('projectId'))
+    })
+  )
+
+  app.post('/api/projects/:projectId/close', async (context) => {
+    await service.closeProject(context.req.param('projectId'))
+    return context.json({ ok: true })
   })
 
   app.get('/api/projects/:projectId', async (context) =>

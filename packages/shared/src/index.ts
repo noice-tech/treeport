@@ -95,6 +95,13 @@ export interface ProjectRecord {
   updatedAt: string
 }
 
+export interface RecentProjectRecord {
+  id: string
+  name: string
+  repositoryPath: string
+  lastOpenedAt: string
+}
+
 export interface DirtyState {
   dirty: boolean
   staged: number
@@ -207,6 +214,7 @@ export const spawnSchema = z
 export type ProductEventType =
   | 'project.created'
   | 'project.updated'
+  | 'project.removed'
   | 'worktree.created'
   | 'worktree.updated'
   | 'worktree.removed'
