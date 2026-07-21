@@ -14,8 +14,12 @@ export type WorktreeStatus =
 export type TerminalStatus = 'running' | 'exited' | 'missing'
 export type PrState = 'no_pr' | 'open' | 'merged' | 'closed' | 'unknown'
 export type OperationStatus = 'pending' | 'running' | 'completed' | 'failed'
-/** Legacy operation kinds remain readable for existing SQLite rows. */
-export type OperationKind = 'finish' | 'discard' | 'project_cleanup' | 'remove'
+export type OperationKind =
+  | 'finish'
+  | 'discard'
+  | 'project_cleanup'
+  | 'remove'
+  | 'external_remove'
 
 export interface PrInfo {
   state: PrState
@@ -49,6 +53,7 @@ export interface WorktreeRecord {
   detached: boolean
   locked: boolean
   lockReason: string | null
+  prunable: boolean
   kind: WorktreeKind
   tmuxSocketName: string
   status: WorktreeStatus
@@ -81,6 +86,10 @@ export interface ProjectRecord {
   mainWorktreePath: string
   defaultBranch: string
   color: ProjectColor | null
+  availability: {
+    state: 'available' | 'unavailable'
+    message: string | null
+  }
   worktrees: WorktreeRecord[]
   createdAt: string
   updatedAt: string

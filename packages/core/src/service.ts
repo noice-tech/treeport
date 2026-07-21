@@ -88,7 +88,9 @@ export class TaskTTYService {
   private readonly removeConfirmationKey = crypto.randomBytes(32)
   private readonly terminalStates = new Map<string, TerminalRecord>()
   private readonly terminalIdsByWorktree = new Map<string, Set<string>>()
+  private readonly projectObservationTails = new Map<string, Promise<void>>()
   private projectsSnapshotInFlight: Promise<ProjectRecord[]> | null = null
+  private projectsSnapshotRevision = 0
 
   constructor(private readonly deps: ServiceDependencies) {
     this.events = deps.events ?? new ProductEventBus()
@@ -135,12 +137,14 @@ export class TaskTTYService {
   }
 
   private invalidateProjectsSnapshot(): void {
+    this.projectsSnapshotRevision += 1
     this.projectsSnapshotInFlight = null
   }
 
   private clearWorktreeTerminalState(worktreeId: string): void {
     for (const terminalId of this.terminalIdsByWorktree.get(worktreeId) ?? []) {
       this.terminalStates.delete(terminalId)
+      this.events.publish('terminal.removed', { worktreeId, terminalId })
     }
     this.terminalIdsByWorktree.delete(worktreeId)
   }
@@ -150,7 +154,7 @@ export class TaskTTYService {
       return this.projectsSnapshotInFlight
     }
 
-    const snapshot = this.collectProjectsSnapshot()
+    const snapshot = this.collectCurrentProjectsSnapshot()
     this.projectsSnapshotInFlight = snapshot
     const clear = () => {
       if (this.projectsSnapshotInFlight === snapshot) {
@@ -161,21 +165,49 @@ export class TaskTTYService {
     return snapshot
   }
 
+  private async collectCurrentProjectsSnapshot(): Promise<ProjectRecord[]> {
+    while (true) {
+      const revision = this.projectsSnapshotRevision
+      const projects = await this.collectProjectsSnapshot()
+      if (revision === this.projectsSnapshotRevision) {
+        return projects
+      }
+    }
+  }
+
   private async collectProjectsSnapshot(): Promise<ProjectRecord[]> {
-    const projects = this.deps.database.projects()
-    await Promise.all(
-      projects.flatMap((project) =>
-        project.worktrees.map(async (worktree) => {
-          const [dirty, terminals] = await Promise.all([
-            this.deps.git.dirtyState(worktree.path).catch(() => null),
-            this.listWorktreeTerminals(worktree)
-          ])
-          worktree.dirty = dirty
-          worktree.terminals = terminals
-        })
-      )
+    return Promise.all(
+      this.deps.database.projects().map(async (storedProject) => {
+        let project = storedProject
+        try {
+          await this.importWorktrees(
+            project.id,
+            project.repositoryPath,
+            project.mainWorktreePath
+          )
+          project = this.deps.database.project(project.id) ?? project
+        } catch (error) {
+          project.availability = {
+            state: 'unavailable',
+            message: error instanceof Error ? error.message : String(error)
+          }
+        }
+
+        await Promise.all(
+          project.worktrees.map(async (worktree) => {
+            const [dirty, terminals] = await Promise.all([
+              project.availability.state === 'available' && !worktree.prunable
+                ? this.deps.git.dirtyState(worktree.path).catch(() => null)
+                : null,
+              this.listWorktreeTerminals(worktree)
+            ])
+            worktree.dirty = dirty
+            worktree.terminals = terminals
+          })
+        )
+        return project
+      })
     )
-    return projects
   }
 
   private async listWorktreeTerminals(
@@ -252,6 +284,36 @@ export class TaskTTYService {
     return worktree
   }
 
+  private async requireAvailableWorktree(
+    worktreeId: string
+  ): Promise<WorktreeRecord> {
+    const binding = this.deps.database.worktree(worktreeId)
+    if (!binding) {
+      throw new DomainError('WORKTREE_NOT_FOUND', 'Worktree not found', 404)
+    }
+
+    const project = await this.observeAvailableProject(
+      this.getProject(binding.projectId)
+    )
+
+    const worktree = project.worktrees.find(
+      (candidate) => candidate.id === worktreeId
+    )
+    if (!worktree) {
+      throw new DomainError('WORKTREE_NOT_FOUND', 'Worktree not found', 404)
+    }
+
+    if (worktree.prunable) {
+      throw new DomainError(
+        'WORKTREE_UNAVAILABLE',
+        'Git reports this worktree as prunable',
+        409
+      )
+    }
+
+    return worktree
+  }
+
   getProject(projectId: string): ProjectRecord {
     const project = this.deps.database.project(projectId)
     if (!project) {
@@ -284,6 +346,29 @@ export class TaskTTYService {
   }
 
   async getTerminal(terminalId: string): Promise<TerminalRecord> {
+    const matches = (await this.listProjects())
+      .flatMap((project) => project.worktrees)
+      .flatMap((worktree) => worktree.terminals)
+      .filter((terminal) => terminal.id === terminalId)
+
+    if (matches.length > 1) {
+      throw new DomainError(
+        'TERMINAL_ID_CONFLICT',
+        'Terminal ID is present in more than one tmux server',
+        500
+      )
+    }
+
+    if (matches[0]) {
+      return matches[0]
+    }
+
+    throw new DomainError('TERMINAL_NOT_FOUND', 'Terminal not found', 404)
+  }
+
+  private async getTerminalFromBindings(
+    terminalId: string
+  ): Promise<TerminalRecord> {
     const known = this.terminalStates.get(terminalId)
     if (known) {
       const worktree = this.deps.database.worktree(known.worktreeId)
@@ -412,34 +497,189 @@ export class TaskTTYService {
       })
     const mainPath = await this.deps.git.resolveMainCheckout(checkout)
     const repositoryPath = await fs.realpath(mainPath)
-    const existing = this.deps.database.projectByPath(repositoryPath)
-    const timestamp = now()
+    const repositoryStat = await fs.stat(repositoryPath, { bigint: true })
+    const repositoryDevice = repositoryStat.dev.toString()
+    const repositoryInode = repositoryStat.ino.toString()
+    const pathMatch = this.deps.database.projectByPath(repositoryPath)
+    const identityMatch = this.deps.database.projectByFilesystemIdentity(
+      repositoryDevice,
+      repositoryInode
+    )
+    const pathMetadata = pathMatch
+      ? this.deps.database.projectFilesystemMetadata(pathMatch.id)
+      : null
+    if (pathMatch && !pathMetadata) {
+      throw new DomainError(
+        'PROJECT_PATH_CONFLICT',
+        'The registered project is missing its filesystem identity',
+        409
+      )
+    }
+
+    if (
+      pathMatch &&
+      pathMetadata &&
+      (pathMetadata.device !== repositoryDevice ||
+        pathMetadata.inode !== repositoryInode)
+    ) {
+      if (!identityMatch) {
+        throw new DomainError(
+          'PROJECT_PATH_CONFLICT',
+          'This path belongs to a registered project, but now contains a different repository',
+          409
+        )
+      }
+
+      if (identityMatch.id !== pathMatch.id) {
+        throw new DomainError(
+          'PROJECT_PATH_CONFLICT',
+          'The repository identity and registered path belong to different projects',
+          409
+        )
+      }
+    }
+
+    if (pathMatch && identityMatch && pathMatch.id !== identityMatch.id) {
+      throw new DomainError(
+        'PROJECT_PATH_CONFLICT',
+        'The repository identity and registered path belong to different projects',
+        409
+      )
+    }
+
+    const existing = identityMatch ?? pathMatch
     const projectId = existing?.id ?? id('proj')
-    const defaultBranch = await this.deps.git.defaultBranch(repositoryPath)
-    const name =
-      requestedName?.trim() || existing?.name || path.basename(repositoryPath)
-    this.deps.database.connection
-      .prepare(
-        `INSERT INTO projects(id,name,repository_path,main_worktree_path,default_branch,created_at,updated_at)
-         VALUES(?,?,?,?,?,?,?)
-         ON CONFLICT(repository_path) DO UPDATE SET name=excluded.name, main_worktree_path=excluded.main_worktree_path,
-           default_branch=excluded.default_branch, updated_at=excluded.updated_at`
+    if (existing && this.projectLocks.has(projectId)) {
+      throw new DomainError(
+        'PROJECT_BUSY',
+        'Project is already being modified',
+        409
       )
-      .run(
-        projectId,
-        name,
-        repositoryPath,
-        mainPath,
-        defaultBranch,
-        existing?.createdAt ?? timestamp,
-        timestamp
+    }
+
+    if (existing) {
+      this.projectLocks.add(projectId)
+    }
+
+    try {
+      const updateRegistration = async (): Promise<void> => {
+        if (existing && existing.repositoryPath !== repositoryPath) {
+          await this.deps.git.repairWorktrees(repositoryPath)
+          const discovered = await this.deps.git.listWorktrees(repositoryPath)
+          if (
+            !discovered.some(
+              (worktree) =>
+                !worktree.bare &&
+                !worktree.prunable &&
+                worktree.path === repositoryPath &&
+                worktree.gitWorktreeKey === 'main'
+            )
+          ) {
+            throw new DomainError(
+              'NOT_A_GIT_REPOSITORY',
+              'Git worktree inventory did not report the recovered main checkout',
+              400
+            )
+          }
+        }
+
+        const timestamp = now()
+        const defaultBranch = await this.deps.git.defaultBranch(repositoryPath)
+        const requested = requestedName?.trim() || null
+        const existingMetadata = existing
+          ? this.deps.database.projectFilesystemMetadata(existing.id)
+          : null
+        if (existing && !existingMetadata) {
+          throw new DomainError(
+            'PROJECT_PATH_CONFLICT',
+            'The registered project is missing its filesystem identity',
+            409
+          )
+        }
+
+        const nameIsCustom = requested
+          ? true
+          : (existingMetadata?.nameIsCustom ?? false)
+        const automaticExistingName = Boolean(
+          existing &&
+          !nameIsCustom &&
+          existing.name === path.basename(existing.repositoryPath)
+        )
+        const name =
+          requested ||
+          (automaticExistingName
+            ? path.basename(repositoryPath)
+            : existing?.name) ||
+          path.basename(repositoryPath)
+        this.deps.database.connection
+          .prepare(
+            `INSERT INTO projects(
+               id,name,repository_path,main_worktree_path,default_branch,
+               repository_device,repository_inode,name_is_custom,created_at,updated_at
+             ) VALUES(?,?,?,?,?,?,?,?,?,?)
+             ON CONFLICT(id) DO UPDATE SET name=excluded.name, repository_path=excluded.repository_path,
+               main_worktree_path=excluded.main_worktree_path, default_branch=excluded.default_branch,
+               repository_device=excluded.repository_device, repository_inode=excluded.repository_inode,
+               name_is_custom=excluded.name_is_custom,updated_at=excluded.updated_at`
+          )
+          .run(
+            projectId,
+            name,
+            repositoryPath,
+            mainPath,
+            defaultBranch,
+            repositoryDevice,
+            repositoryInode,
+            nameIsCustom ? 1 : 0,
+            existing?.createdAt ?? timestamp,
+            timestamp
+          )
+        await this.reconcileProjectWorktrees(
+          projectId,
+          repositoryPath,
+          mainPath,
+          Boolean(existing)
+        )
+      }
+
+      if (existing) {
+        await this.serializeProjectObservation(projectId, updateRegistration)
+      } else {
+        await updateRegistration()
+      }
+
+      this.invalidateProjectsSnapshot()
+      const project = this.getProject(projectId)
+      this.events.publish(existing ? 'project.updated' : 'project.created', {
+        projectId
+      })
+      return project
+    } finally {
+      if (existing) {
+        this.projectLocks.delete(projectId)
+      }
+    }
+  }
+
+  private async observeAvailableProject(
+    project: ProjectRecord
+  ): Promise<ProjectRecord> {
+    try {
+      await this.importWorktrees(
+        project.id,
+        project.repositoryPath,
+        project.mainWorktreePath,
+        true
       )
-    await this.importWorktrees(projectId, repositoryPath, mainPath)
-    const project = this.getProject(projectId)
-    this.events.publish(existing ? 'project.updated' : 'project.created', {
-      projectId
-    })
-    return project
+    } catch (error) {
+      throw new DomainError(
+        'PROJECT_UNAVAILABLE',
+        error instanceof Error ? error.message : String(error),
+        503
+      )
+    }
+
+    return this.getProject(project.id)
   }
 
   async refreshProject(projectId: string): Promise<ProjectRecord> {
@@ -453,11 +693,8 @@ export class TaskTTYService {
 
     this.projectLocks.add(projectId)
     try {
-      const project = this.getProject(projectId)
-      await this.importWorktrees(
-        project.id,
-        project.repositoryPath,
-        project.mainWorktreePath
+      const project = await this.observeAvailableProject(
+        this.getProject(projectId)
       )
       const defaultBranch = await this.deps.git.defaultBranch(
         project.repositoryPath
@@ -476,75 +713,264 @@ export class TaskTTYService {
     }
   }
 
-  private async importWorktrees(
+  private async serializeProjectObservation(
+    projectId: string,
+    operation: () => Promise<void>
+  ): Promise<void> {
+    const previous = this.projectObservationTails.get(projectId)
+    const observation = (previous ?? Promise.resolve())
+      .catch(() => undefined)
+      .then(operation)
+    this.projectObservationTails.set(projectId, observation)
+    try {
+      await observation
+    } finally {
+      if (this.projectObservationTails.get(projectId) === observation) {
+        this.projectObservationTails.delete(projectId)
+      }
+    }
+  }
+
+  private importWorktrees(
     projectId: string,
     repositoryPath: string,
-    mainPath: string
+    mainPath: string,
+    allowProjectLock = false
   ): Promise<void> {
-    const discovered = await this.deps.git.listWorktrees(repositoryPath)
-    const timestamp = now()
-    const seen = new Set<string>()
-    const insert = this.deps.database.connection.prepare(
-      `INSERT INTO worktrees(
-         id,project_id,path,head,branch,detached,locked,lock_reason,kind,tmux_socket_name,
-         status,cleanup_error,created_at,updated_at
-       ) VALUES(?,?,?,?,?,?,?,?,?,?,'active',NULL,?,?)
-       ON CONFLICT(path) DO UPDATE SET project_id=excluded.project_id, head=excluded.head,
-         branch=excluded.branch, detached=excluded.detached, locked=excluded.locked,
-         lock_reason=excluded.lock_reason, kind=excluded.kind,
-         managed_wrapper_path=CASE WHEN worktrees.status='removed' THEN NULL ELSE worktrees.managed_wrapper_path END,
-         status=CASE WHEN worktrees.status IN ('cleaning','cleanup_failed') THEN worktrees.status ELSE 'active' END,
-         cleanup_error=CASE WHEN worktrees.status='cleanup_failed' THEN worktrees.cleanup_error ELSE NULL END,
-         updated_at=excluded.updated_at`
+    return this.serializeProjectObservation(projectId, () =>
+      this.reconcileProjectWorktrees(
+        projectId,
+        repositoryPath,
+        mainPath,
+        allowProjectLock
+      )
     )
-    const transaction = this.deps.database.connection.transaction(() => {
-      for (const item of discovered) {
-        if (item.bare || item.prunable) {
+  }
+
+  private async reconcileProjectWorktrees(
+    projectId: string,
+    repositoryPath: string,
+    mainPath: string,
+    allowProjectLock: boolean
+  ): Promise<void> {
+    if (!allowProjectLock && this.projectLocks.has(projectId)) {
+      return
+    }
+
+    const storedProject = this.getProject(projectId)
+    const storedIdentity =
+      this.deps.database.projectFilesystemMetadata(projectId)
+    if (!storedIdentity) {
+      throw new Error('Registered project is missing its filesystem identity')
+    }
+
+    let canonicalRepository = await fs
+      .realpath(repositoryPath)
+      .catch(() => null)
+    let canonicalStat = canonicalRepository
+      ? await fs.stat(canonicalRepository, { bigint: true }).catch(() => null)
+      : null
+    const currentIdentityMatches = Boolean(
+      canonicalStat?.isDirectory() &&
+      canonicalStat.dev.toString() === storedIdentity.device &&
+      canonicalStat.ino.toString() === storedIdentity.inode
+    )
+    if (!currentIdentityMatches) {
+      const candidates = new Set<string>()
+      const parent = path.dirname(repositoryPath)
+      const entries = await fs
+        .readdir(parent, { withFileTypes: true })
+        .catch(() => [])
+      for (const entry of entries) {
+        if (!entry.isDirectory() && !entry.isSymbolicLink()) {
           continue
         }
 
-        seen.add(item.path)
-        const existing = this.deps.database.connection
-          .prepare(
-            'SELECT id,created_at,tmux_socket_name FROM worktrees WHERE path=?'
-          )
-          .get(item.path) as
-          | { id: string; created_at: string; tmux_socket_name: string }
-          | undefined
-        insert.run(
-          existing?.id ?? id('wt'),
-          projectId,
-          item.path,
-          item.head ?? '',
-          item.branch,
-          item.detached ? 1 : 0,
-          item.locked ? 1 : 0,
-          item.lockReason,
-          item.path === mainPath ? 'main' : 'linked',
-          existing?.tmux_socket_name ?? generateTmuxSocketName(),
-          existing?.created_at ?? timestamp,
-          timestamp
+        const candidate = await fs
+          .realpath(path.join(parent, entry.name))
+          .catch(() => null)
+        if (!candidate) {
+          continue
+        }
+
+        const candidateStat = await fs
+          .stat(candidate, { bigint: true })
+          .catch(() => null)
+        if (
+          candidateStat?.isDirectory() &&
+          candidateStat.dev.toString() === storedIdentity.device &&
+          candidateStat.ino.toString() === storedIdentity.inode
+        ) {
+          candidates.add(candidate)
+        }
+      }
+      if (candidates.size !== 1) {
+        throw new Error(
+          candidates.size > 1
+            ? 'Repository rename recovery is ambiguous'
+            : 'Registered main checkout is unavailable or contains a different repository'
         )
       }
-      const known = this.deps.database.connection
-        .prepare(
-          "SELECT id,path,status FROM worktrees WHERE project_id=? AND kind='linked' AND status!='removed'"
-        )
-        .all(projectId) as Array<{
-        id: string
-        path: string
-        status: string
-      }>
-      for (const worktree of known) {
-        if (seen.has(worktree.path)) {
-          continue
-        }
 
-        this.deps.database.connection
-          .prepare(
-            "UPDATE worktrees SET status='removed', cleanup_error=NULL, updated_at=? WHERE id=?"
-          )
-          .run(timestamp, worktree.id)
+      canonicalRepository = [...candidates][0]!
+      canonicalStat = await fs.stat(canonicalRepository, { bigint: true })
+      if (
+        !canonicalStat.isDirectory() ||
+        canonicalStat.dev.toString() !== storedIdentity.device ||
+        canonicalStat.ino.toString() !== storedIdentity.inode
+      ) {
+        throw new Error('Repository rename candidate changed during recovery')
+      }
+    }
+
+    if (!canonicalRepository || !canonicalStat?.isDirectory()) {
+      throw new Error('Registered main checkout is unavailable')
+    }
+
+    repositoryPath = canonicalRepository
+    mainPath = canonicalRepository
+    const repositoryRenamed = repositoryPath !== storedProject.repositoryPath
+    if (repositoryRenamed) {
+      const canonical =
+        await this.deps.git.canonicalizeRepositoryPath(repositoryPath)
+      if (canonical !== repositoryPath) {
+        throw new Error(
+          'Repository rename candidate is not the Git top-level checkout'
+        )
+      }
+
+      const verifiedStat = await fs.stat(repositoryPath, { bigint: true })
+      if (
+        verifiedStat.dev.toString() !== storedIdentity.device ||
+        verifiedStat.ino.toString() !== storedIdentity.inode
+      ) {
+        throw new Error('Repository rename candidate changed during recovery')
+      }
+
+      await this.deps.git.repairWorktrees(repositoryPath)
+    }
+
+    const discovered = (
+      await this.deps.git.listWorktrees(repositoryPath)
+    ).filter((item) => !item.bare)
+    if (!allowProjectLock && this.projectLocks.has(projectId)) {
+      return
+    }
+
+    const observedMain = discovered.filter(
+      (item) =>
+        !item.prunable && item.path === mainPath && item.gitWorktreeKey !== null
+    )
+    if (observedMain.length !== 1) {
+      throw new Error(
+        'Git worktree inventory is incomplete: the registered main checkout was not reported'
+      )
+    }
+
+    const repositoryStat = await fs.stat(repositoryPath, { bigint: true })
+    const repositoryDevice = repositoryStat.dev.toString()
+    const repositoryInode = repositoryStat.ino.toString()
+    if (
+      storedIdentity.device !== repositoryDevice ||
+      storedIdentity.inode !== repositoryInode
+    ) {
+      throw new Error('Registered main checkout changed during observation')
+    }
+
+    const projectIdentityChanged = repositoryRenamed
+    const timestamp = now()
+    const known = this.deps.database.connection
+      .prepare(
+        `SELECT id,path,git_worktree_key,kind,tmux_socket_name,status,managed_wrapper_path,
+                created_at,head,branch,detached,locked,lock_reason,prunable
+         FROM worktrees WHERE project_id=?`
+      )
+      .all(projectId) as Array<{
+      id: string
+      path: string
+      git_worktree_key: string | null
+      kind: 'main' | 'linked'
+      tmux_socket_name: string
+      status: WorktreeRecord['status']
+      managed_wrapper_path: string | null
+      created_at: string
+      head: string
+      branch: string | null
+      detached: number
+      locked: number
+      lock_reason: string | null
+      prunable: number
+    }>
+    const keyed = new Map(
+      known.flatMap((worktree) =>
+        worktree.git_worktree_key
+          ? [[worktree.git_worktree_key, worktree] as const]
+          : []
+      )
+    )
+    const matched = discovered.map((item) => ({
+      item,
+      existing:
+        (item.gitWorktreeKey ? keyed.get(item.gitWorktreeKey) : undefined) ??
+        (item.gitWorktreeKey === 'main'
+          ? known.find((worktree) => worktree.kind === 'main')
+          : undefined) ??
+        known.find(
+          (worktree) =>
+            worktree.path === item.path &&
+            (!worktree.git_worktree_key || !item.gitWorktreeKey)
+        )
+    }))
+    const matchedIds = new Set(
+      matched.flatMap(({ existing }) => (existing ? [existing.id] : []))
+    )
+    const retired = known
+      .filter(
+        (worktree) => worktree.kind === 'linked' && !matchedIds.has(worktree.id)
+      )
+      .sort((left, right) => left.created_at.localeCompare(right.created_at))
+    const changed = matched.filter(({ item, existing }) => {
+      if (!existing) {
+        return true
+      }
+
+      const kind = item.path === mainPath ? 'main' : 'linked'
+      const desiredStatus =
+        existing.status === 'cleaning' || existing.status === 'cleanup_failed'
+          ? existing.status
+          : 'active'
+      return (
+        existing.path !== item.path ||
+        existing.git_worktree_key !==
+          (item.gitWorktreeKey ?? existing.git_worktree_key) ||
+        existing.head !== (item.head ?? '') ||
+        existing.branch !== item.branch ||
+        Boolean(existing.detached) !== item.detached ||
+        Boolean(existing.locked) !== item.locked ||
+        existing.lock_reason !== item.lockReason ||
+        Boolean(existing.prunable) !== item.prunable ||
+        existing.kind !== kind ||
+        existing.status !== desiredStatus
+      )
+    })
+    const changedExistingIds = new Set(
+      changed.flatMap(({ existing }) => (existing ? [existing.id] : []))
+    )
+    for (const worktree of retired) {
+      const terminalIds = new Set(
+        this.terminalIdsByWorktree.get(worktree.id) ?? []
+      )
+      const sessions = await this.deps.tmux.listSessions(
+        worktree.tmux_socket_name
+      )
+      for (const terminal of sessions) {
+        if (terminal.worktreeId === worktree.id) {
+          terminalIds.add(terminal.id)
+        }
+      }
+      await this.deps.tmux.killServer(worktree.tmux_socket_name)
+
+      const retire = this.deps.database.connection.transaction(() => {
         if (
           worktree.status === 'cleaning' ||
           worktree.status === 'cleanup_failed'
@@ -570,11 +996,145 @@ export class TaskTTYService {
               timestamp,
               worktree.id
             )
+        } else if (worktree.status !== 'removed') {
+          this.deps.database.connection
+            .prepare(
+              `INSERT INTO operations(
+                 id,kind,project_id,worktree_id,status,request_json,result_json,error,created_at,updated_at
+               ) VALUES(?,'external_remove',?,?, 'completed',?,?,NULL,?,?)`
+            )
+            .run(
+              id('op'),
+              projectId,
+              worktree.id,
+              serializeOperation({ source: 'git' }),
+              serializeOperation({
+                removed: true,
+                external: true,
+                worktreeId: worktree.id,
+                path: worktree.path,
+                head: worktree.head,
+                branch: worktree.branch
+              }),
+              timestamp,
+              timestamp
+            )
         }
+
+        this.deps.database.connection
+          .prepare('DELETE FROM worktrees WHERE id=?')
+          .run(worktree.id)
+      })
+      retire()
+      this.terminalIdsByWorktree.set(worktree.id, terminalIds)
+      this.clearWorktreeTerminalState(worktree.id)
+      this.invalidateProjectsSnapshot()
+
+      if (worktree.managed_wrapper_path) {
+        await fs.rmdir(worktree.managed_wrapper_path).catch(() => undefined)
+      }
+
+      this.events.publish('worktree.removed', {
+        projectId,
+        worktreeId: worktree.id
+      })
+    }
+
+    const transaction = this.deps.database.connection.transaction(() => {
+      if (projectIdentityChanged) {
+        const projectName =
+          repositoryRenamed &&
+          !storedIdentity.nameIsCustom &&
+          storedProject.name === path.basename(storedProject.repositoryPath)
+            ? path.basename(repositoryPath)
+            : storedProject.name
+        this.deps.database.connection
+          .prepare(
+            `UPDATE projects SET name=?,repository_path=?,main_worktree_path=?,
+               repository_device=?,repository_inode=?,updated_at=? WHERE id=?`
+          )
+          .run(
+            projectName,
+            repositoryPath,
+            mainPath,
+            repositoryDevice,
+            repositoryInode,
+            timestamp,
+            projectId
+          )
+      }
+
+      for (const { item, existing } of matched) {
+        const kind = item.path === mainPath ? 'main' : 'linked'
+        if (existing) {
+          if (!changedExistingIds.has(existing.id)) {
+            continue
+          }
+
+          this.deps.database.connection
+            .prepare(
+              `UPDATE worktrees SET path=?,git_worktree_key=?,head=?,branch=?,detached=?,locked=?,
+                 lock_reason=?,prunable=?,kind=?,
+                 status=CASE WHEN status IN ('cleaning','cleanup_failed') THEN status ELSE 'active' END,
+                 cleanup_error=CASE WHEN status='cleanup_failed' THEN cleanup_error ELSE NULL END,
+                 updated_at=? WHERE id=?`
+            )
+            .run(
+              item.path,
+              item.gitWorktreeKey ?? existing.git_worktree_key,
+              item.head ?? '',
+              item.branch,
+              item.detached ? 1 : 0,
+              item.locked ? 1 : 0,
+              item.lockReason,
+              item.prunable ? 1 : 0,
+              kind,
+              timestamp,
+              existing.id
+            )
+          continue
+        }
+
+        this.deps.database.connection
+          .prepare(
+            `INSERT INTO worktrees(
+               id,project_id,path,git_worktree_key,head,branch,detached,locked,lock_reason,
+               prunable,kind,tmux_socket_name,status,cleanup_error,created_at,updated_at
+             ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,'active',NULL,?,?)`
+          )
+          .run(
+            id('wt'),
+            projectId,
+            item.path,
+            item.gitWorktreeKey,
+            item.head ?? '',
+            item.branch,
+            item.detached ? 1 : 0,
+            item.locked ? 1 : 0,
+            item.lockReason,
+            item.prunable ? 1 : 0,
+            kind,
+            generateTmuxSocketName(),
+            timestamp,
+            timestamp
+          )
       }
     })
     transaction()
-    this.invalidateProjectsSnapshot()
+
+    if (projectIdentityChanged || changed.length > 0) {
+      this.invalidateProjectsSnapshot()
+    }
+
+    if (repositoryRenamed) {
+      this.events.publish('project.updated', { projectId })
+    }
+
+    for (const { existing } of changed) {
+      if (existing) {
+        this.events.publish('worktree.updated', { worktreeId: existing.id })
+      }
+    }
   }
 
   async previewWorktreePath(
@@ -616,13 +1176,7 @@ export class TaskTTYService {
     let project!: ProjectRecord
     let wrapperCreated = false
     try {
-      project = this.getProject(projectId)
-      await this.importWorktrees(
-        project.id,
-        project.repositoryPath,
-        project.mainWorktreePath
-      )
-      project = this.getProject(projectId)
+      project = await this.observeAvailableProject(this.getProject(projectId))
       let name: string
       try {
         name = normalizeWorktreeName(inputName)
@@ -684,7 +1238,11 @@ export class TaskTTYService {
         }
 
         const source = this.getWorktree(sourceWorktreeId)
-        if (source.projectId !== projectId || source.status !== 'active') {
+        if (
+          source.projectId !== projectId ||
+          source.status !== 'active' ||
+          source.prunable
+        ) {
           throw new DomainError(
             'INVALID_SOURCE_WORKTREE',
             'The source worktree must be active and belong to the project',
@@ -734,7 +1292,8 @@ export class TaskTTYService {
       await this.importWorktrees(
         project.id,
         project.repositoryPath,
-        project.mainWorktreePath
+        project.mainWorktreePath,
+        true
       )
       this.deps.database.connection
         .prepare('UPDATE worktrees SET managed_wrapper_path = ? WHERE path = ?')
@@ -816,7 +1375,7 @@ export class TaskTTYService {
     argv?: string[],
     setup?: { tasks: WorktreeSetupTask[]; error: string | null }
   ): Promise<TerminalRecord> {
-    const worktree = this.getWorktree(worktreeId)
+    const worktree = await this.requireAvailableWorktree(worktreeId)
     if (this.worktreeLocks.has(worktreeId) || worktree.status !== 'active') {
       throw new DomainError(
         'WORKTREE_BUSY',
@@ -883,10 +1442,13 @@ export class TaskTTYService {
     return terminal
   }
 
-  async refreshTerminalStatus(terminalId: string): Promise<TerminalRecord> {
-    const terminal =
-      this.terminalStates.get(terminalId) ??
-      (await this.getTerminal(terminalId))
+  async refreshTerminalStatus(
+    terminalId: string,
+    observeGit = true
+  ): Promise<TerminalRecord> {
+    const terminal = observeGit
+      ? await this.getTerminal(terminalId)
+      : await this.getTerminalFromBindings(terminalId)
     const worktree = this.getWorktree(terminal.worktreeId)
     const state = await this.deps.tmux.sessionState(
       worktree.tmuxSocketName,
@@ -975,7 +1537,7 @@ export class TaskTTYService {
   }
 
   async refreshPr(worktreeId: string, force = false): Promise<PrInfo> {
-    const worktree = this.getWorktree(worktreeId)
+    const worktree = await this.requireAvailableWorktree(worktreeId)
     if (worktree.kind === 'main' || !worktree.branch) {
       return worktree.pr
     }
@@ -1011,7 +1573,8 @@ export class TaskTTYService {
   private async prepareRemovePreview(
     worktreeId: string
   ): Promise<{ preview: RemovePreview; statusFingerprint: string }> {
-    const worktree = await this.getWorktreeSnapshot(worktreeId)
+    const worktree = await this.requireAvailableWorktree(worktreeId)
+    worktree.terminals = await this.listWorktreeTerminals(worktree)
     const project = this.getProject(worktree.projectId)
     const live = (
       await this.deps.git.listWorktrees(project.repositoryPath)
@@ -1232,11 +1795,6 @@ export class TaskTTYService {
         assertCleanupTransition('cleaning', 'removed')
         this.deps.database.connection
           .prepare(
-            "UPDATE worktrees SET status='removed',cleanup_error=NULL,updated_at=? WHERE id=?"
-          )
-          .run(timestamp, worktree.id)
-        this.deps.database.connection
-          .prepare(
             "UPDATE operations SET status='completed',result_json=?,updated_at=? WHERE id=?"
           )
           .run(
@@ -1249,6 +1807,9 @@ export class TaskTTYService {
             timestamp,
             operationId
           )
+        this.deps.database.connection
+          .prepare('DELETE FROM worktrees WHERE id=?')
+          .run(worktree.id)
       })
       transaction()
       this.clearWorktreeTerminalState(worktree.id)
@@ -1311,7 +1872,9 @@ export class TaskTTYService {
     this.projectLocks.add(projectId)
     const lockedWorktrees: string[] = []
     try {
-      let project = this.getProject(projectId)
+      let project = await this.observeAvailableProject(
+        this.getProject(projectId)
+      )
       if (
         project.worktrees.some((worktree) =>
           this.worktreeLocks.has(worktree.id)
@@ -1359,6 +1922,7 @@ export class TaskTTYService {
   }
 
   async reconcile(): Promise<void> {
+    const availableProjects = new Set<string>()
     for (const project of this.deps.database.projects()) {
       try {
         await this.importWorktrees(
@@ -1366,42 +1930,20 @@ export class TaskTTYService {
           project.repositoryPath,
           project.mainWorktreePath
         )
+        availableProjects.add(project.id)
       } catch {
-        // Keep metadata when a repository is temporarily unavailable.
+        // Keep metadata and tmux untouched while Git is unavailable.
       }
     }
-    await this.cleanupRemovedManagedWrappers()
     for (const project of this.deps.database.projects()) {
+      if (!availableProjects.has(project.id)) {
+        continue
+      }
+
       for (const worktree of project.worktrees) {
         await this.deps.tmux
           .configureServer(worktree.tmuxSocketName)
           .catch(() => undefined)
-      }
-    }
-  }
-
-  private async cleanupRemovedManagedWrappers(): Promise<void> {
-    const removed = this.deps.database.connection
-      .prepare(
-        `SELECT id, managed_wrapper_path
-         FROM worktrees
-         WHERE status='removed' AND managed_wrapper_path IS NOT NULL`
-      )
-      .all() as Array<{ id: string; managed_wrapper_path: string }>
-    for (const worktree of removed) {
-      let cleaned = false
-      try {
-        await fs.rmdir(worktree.managed_wrapper_path)
-        cleaned = true
-      } catch (error) {
-        cleaned = (error as NodeJS.ErrnoException).code === 'ENOENT'
-      }
-      if (cleaned) {
-        this.deps.database.connection
-          .prepare(
-            'UPDATE worktrees SET managed_wrapper_path=NULL,updated_at=? WHERE id=?'
-          )
-          .run(now(), worktree.id)
       }
     }
   }
@@ -1426,7 +1968,8 @@ export function operationKind(value: string): OperationKind {
     value === 'finish' ||
     value === 'discard' ||
     value === 'project_cleanup' ||
-    value === 'remove'
+    value === 'remove' ||
+    value === 'external_remove'
   ) {
     return value
   }
