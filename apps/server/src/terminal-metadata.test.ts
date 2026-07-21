@@ -85,12 +85,15 @@ function fixture(initialTerminals: TerminalRecord[]) {
     }),
     refreshTerminalStatus
   } as unknown as TaskTTYService
-  const sessionTitle = vi.fn(
-    async (_socket: string, sessionName: string) => `title ${sessionName}`
+  const sessionTitleState = vi.fn(
+    async (_socket: string, sessionName: string) => ({
+      paneTitle: `title ${sessionName}`,
+      currentCommand: 'node'
+    })
   )
   const tmux = {
     configPath: '/runtime/tmux.conf',
-    sessionTitle
+    sessionTitleState
   } as unknown as TmuxAdapter
   const observers: FakeObserver[] = []
   const createObserver = vi.fn((options: TmuxProgressObserverOptions) => {
@@ -109,7 +112,7 @@ function fixture(initialTerminals: TerminalRecord[]) {
     events,
     observers,
     refreshTerminalStatus,
-    sessionTitle,
+    sessionTitleState,
     terminals
   }
 }
@@ -183,14 +186,17 @@ describe('TerminalMetadataManager', () => {
       manager,
       observers,
       refreshTerminalStatus,
-      sessionTitle,
+      sessionTitleState,
       terminals
     } = fixture([item])
     managers.push(manager)
     await manager.initialize()
     observers[0]!.progress({ state: 'normal', value: 40 })
     terminals.set('one', { ...item, status: 'exited', exitCode: 0 })
-    sessionTitle.mockResolvedValue('finished')
+    sessionTitleState.mockResolvedValue({
+      paneTitle: 'finished',
+      currentCommand: 'node'
+    })
 
     await vi.advanceTimersByTimeAsync(TERMINAL_METADATA_POLL_MS)
 
@@ -206,14 +212,97 @@ describe('TerminalMetadataManager', () => {
     expect(observers[0]!.disposed).toBe(true)
   })
 
+  it('shows a foreground command and restores the shell pane title when it exits', async () => {
+    vi.useFakeTimers()
+    const item = { ...terminal('one'), argv: ['/bin/zsh', '-l'] }
+    const { manager, sessionTitleState } = fixture([item])
+    managers.push(manager)
+    sessionTitleState.mockResolvedValue({
+      paneTitle: 'tasktty',
+      currentCommand: 'zsh'
+    })
+    await manager.initialize()
+
+    sessionTitleState.mockResolvedValue({
+      paneTitle: 'tasktty',
+      currentCommand: 'nano'
+    })
+    await vi.advanceTimersByTimeAsync(TERMINAL_METADATA_POLL_MS)
+    expect(manager.get(item.id).title).toBe('nano')
+
+    sessionTitleState.mockResolvedValue({
+      paneTitle: 'tasktty',
+      currentCommand: 'zsh'
+    })
+    await vi.advanceTimersByTimeAsync(TERMINAL_METADATA_POLL_MS)
+    expect(manager.get(item.id).title).toBe('tasktty')
+  })
+
+  it('shows a foreground command when tracking starts before the shell is idle', async () => {
+    vi.useFakeTimers()
+    const item = { ...terminal('one'), argv: ['/bin/zsh', '-l'] }
+    const { manager, sessionTitleState } = fixture([item])
+    managers.push(manager)
+    sessionTitleState.mockResolvedValue({
+      paneTitle: 'tasktty',
+      currentCommand: 'npm'
+    })
+    await manager.initialize()
+    expect(manager.get(item.id).title).toBe('npm')
+
+    sessionTitleState.mockResolvedValue({
+      paneTitle: 'tasktty',
+      currentCommand: 'zsh'
+    })
+    await vi.advanceTimersByTimeAsync(TERMINAL_METADATA_POLL_MS)
+    expect(manager.get(item.id).title).toBe('tasktty')
+  })
+
+  it('keeps an application title while the application runs helper processes', async () => {
+    vi.useFakeTimers()
+    const item = { ...terminal('one'), argv: ['/bin/zsh', '-l'] }
+    const { manager, observers, sessionTitleState } = fixture([item])
+    managers.push(manager)
+    sessionTitleState.mockResolvedValue({
+      paneTitle: 'tasktty',
+      currentCommand: 'zsh'
+    })
+    await manager.initialize()
+
+    observers[0]!.title('editor')
+    sessionTitleState.mockResolvedValue({
+      paneTitle: 'editor',
+      currentCommand: 'vim'
+    })
+    await vi.advanceTimersByTimeAsync(TERMINAL_METADATA_POLL_MS)
+    expect(manager.get(item.id).title).toBe('editor')
+
+    sessionTitleState.mockResolvedValue({
+      paneTitle: 'editor',
+      currentCommand: 'rg'
+    })
+    await vi.advanceTimersByTimeAsync(TERMINAL_METADATA_POLL_MS)
+    expect(manager.get(item.id).title).toBe('editor')
+
+    sessionTitleState.mockResolvedValue({
+      paneTitle: 'editor',
+      currentCommand: 'zsh'
+    })
+    await vi.advanceTimersByTimeAsync(TERMINAL_METADATA_POLL_MS)
+    expect(manager.get(item.id).title).toBe('tasktty')
+  })
+
   it('does not overwrite observer titles with an older tmux lookup', async () => {
     const item = terminal('one')
-    const { manager, observers, sessionTitle } = fixture([item])
+    const { manager, observers, sessionTitleState } = fixture([item])
     managers.push(manager)
-    let resolveTitle!: (title: string) => void
-    sessionTitle.mockImplementationOnce(
+    let resolveTitle!: (state: {
+      paneTitle: string
+      currentCommand: string
+    }) => void
+    sessionTitleState.mockImplementationOnce(
       () =>
-        new Promise<string>((resolve) => {
+        new Promise((resolve) => {
           resolveTitle = resolve
         })
     )
@@ -221,20 +310,52 @@ describe('TerminalMetadataManager', () => {
     const initialTrack = manager.trackTerminal(item, worktree)
     await vi.waitFor(() => expect(observers).toHaveLength(1))
     observers[0]!.title('new observer title')
-    resolveTitle('stale polled title')
+    resolveTitle({
+      paneTitle: 'stale polled title',
+      currentCommand: 'node'
+    })
     await initialTrack
 
     expect(manager.get(item.id).title).toBe('new observer title')
   })
 
+  it('does not revive runtime when a poll returns after the terminal exits', async () => {
+    vi.useFakeTimers()
+    const item = terminal('one')
+    const { manager, observers, refreshTerminalStatus } = fixture([item])
+    managers.push(manager)
+    await manager.initialize()
+    let resolveStatus!: (terminal: TerminalRecord) => void
+    refreshTerminalStatus.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveStatus = resolve
+        })
+    )
+
+    await vi.advanceTimersByTimeAsync(TERMINAL_METADATA_POLL_MS)
+    await manager.trackTerminal(
+      { ...item, status: 'exited', exitCode: 0 },
+      worktree
+    )
+    resolveStatus(item)
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(observers).toHaveLength(1)
+    expect(observers[0]!.disposed).toBe(true)
+  })
+
   it('does not revive an observer when an older title lookup finishes after exit', async () => {
     const item = terminal('one')
-    const { manager, observers, sessionTitle } = fixture([item])
+    const { manager, observers, sessionTitleState } = fixture([item])
     managers.push(manager)
-    let resolveTitle!: (title: string) => void
-    sessionTitle.mockImplementationOnce(
+    let resolveTitle!: (state: {
+      paneTitle: string
+      currentCommand: string
+    }) => void
+    sessionTitleState.mockImplementationOnce(
       () =>
-        new Promise<string>((resolve) => {
+        new Promise((resolve) => {
           resolveTitle = resolve
         })
     )
@@ -245,7 +366,10 @@ describe('TerminalMetadataManager', () => {
       { ...item, status: 'exited', exitCode: 0 },
       worktree
     )
-    resolveTitle('stale running title')
+    resolveTitle({
+      paneTitle: 'stale running title',
+      currentCommand: 'node'
+    })
     await initialTrack
 
     expect(observers).toHaveLength(1)

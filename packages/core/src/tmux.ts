@@ -25,6 +25,11 @@ export interface TmuxSessionState {
   exitCode: number | null
 }
 
+export interface TmuxSessionTitleState {
+  paneTitle: string | null
+  currentCommand: string | null
+}
+
 export interface TmuxTerminalSession {
   id: string
   worktreeId: string
@@ -418,10 +423,10 @@ export class TmuxAdapter {
     return cols && rows ? { cols, rows } : null
   }
 
-  async sessionTitle(
+  async sessionTitleState(
     socketName: string,
     sessionName: string
-  ): Promise<string | null> {
+  ): Promise<TmuxSessionTitleState | null> {
     const result = await this.runner.run({
       executable: this.executable,
       args: [
@@ -430,7 +435,7 @@ export class TmuxAdapter {
         '-p',
         '-t',
         sessionName,
-        '#{pane_title}'
+        '#{pane_current_command}\t#{pane_title}'
       ],
       env: this.environment(),
       timeoutMs: 10_000
@@ -439,7 +444,26 @@ export class TmuxAdapter {
       return null
     }
 
-    return result.stdout.trim() || null
+    const separator = result.stdout.indexOf('\t')
+    if (separator === -1) {
+      return {
+        paneTitle: result.stdout.trim() || null,
+        currentCommand: null
+      }
+    }
+
+    const currentCommand = result.stdout.slice(0, separator).trim() || null
+    const paneTitle = result.stdout.slice(separator + 1).trim() || null
+    return { paneTitle, currentCommand }
+  }
+
+  async sessionTitle(
+    socketName: string,
+    sessionName: string
+  ): Promise<string | null> {
+    return (
+      (await this.sessionTitleState(socketName, sessionName))?.paneTitle ?? null
+    )
   }
 
   attachArgs(socketName: string, sessionName: string): string[] {

@@ -124,15 +124,25 @@ describe('TmuxAdapter', () => {
     ).rejects.toThrow()
   })
 
-  it('reads the live pane title from tmux', async () => {
+  it('reads the live pane title and foreground command from tmux', async () => {
     const runtime = await fs.mkdtemp(path.join(os.tmpdir(), 'tasktty-runtime-'))
     temporary.push(runtime)
     const runner = new RecordingRunner()
-    runner.responses.push({ stdout: 'zsh · /repo\n', stderr: '', exitCode: 0 })
+    runner.responses.push({
+      stdout: 'nano\tzsh · /repo\n',
+      stderr: '',
+      exitCode: 0
+    })
     const adapter = new TmuxAdapter(runner, runtime)
 
-    await expect(adapter.sessionTitle('socket', 'session')).resolves.toBe(
-      'zsh · /repo'
+    await expect(
+      adapter.sessionTitleState('socket', 'session')
+    ).resolves.toEqual({
+      paneTitle: 'zsh · /repo',
+      currentCommand: 'nano'
+    })
+    expect(runner.calls[0]!.args).toContain(
+      '#{pane_current_command}\t#{pane_title}'
     )
   })
 
