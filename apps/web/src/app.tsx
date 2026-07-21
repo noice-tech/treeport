@@ -73,6 +73,7 @@ const COLLAPSED_PROJECTS_STORAGE_KEY = 'tasktty-collapsed-projects'
 const EMPTY_BELL_ATTENTION: ReadonlySet<string> = new Set()
 const EMPTY_RUNTIME_TITLES: ReadonlyMap<string, string> = new Map()
 const EMPTY_TERMINAL_PROGRESS: ReadonlyMap<string, TerminalProgress> = new Map()
+const MANUAL_CLEANUP_PREFIX = 'Manual cleanup required:'
 const FOCUSABLE_SELECTOR = [
   'a[href]',
   'button:not([disabled])',
@@ -118,11 +119,17 @@ function clampSidebarWidth(width: number): number {
   return Math.min(MAX_SIDEBAR_WIDTH, Math.max(MIN_SIDEBAR_WIDTH, width))
 }
 
+function needsManualCleanup(worktree: WorktreeRecord): boolean {
+  return Boolean(worktree.cleanupError?.startsWith(MANUAL_CLEANUP_PREFIX))
+}
+
 type Modal =
   | { type: 'project' }
   | { type: 'worktree'; project: ProjectRecord }
-  | { type: 'remove'; worktree: WorktreeRecord }
+  | { type: 'remove'; worktree: WorktreeRecord; preview: RemovePreview }
   | null
+
+type RemovalStage = 'checking' | 'removing'
 
 const projectsQueryKey = ['projects'] as const
 
@@ -247,6 +254,9 @@ export default function App() {
   const [pendingWorktrees, setPendingWorktrees] = useState<
     PendingWorktreeCreation[]
   >([])
+  const [pendingRemovals, setPendingRemovals] = useState<
+    Record<string, RemovalStage>
+  >({})
   const [collapsedProjectIds, setCollapsedProjectIds] = useState(
     () =>
       new Set(
@@ -272,6 +282,7 @@ export default function App() {
   const drawerRef = useRef<HTMLElement | null>(null)
   const drawerTriggerRef = useRef<HTMLButtonElement | null>(null)
   const modalTriggerRef = useRef<HTMLElement | null>(null)
+  const removalGuardsRef = useRef(new Set<string>())
 
   useEffect(() => {
     if (collapsedProjectIds.size) {
@@ -440,6 +451,7 @@ export default function App() {
       'terminal.created',
       'terminal.updated',
       'terminal.removed',
+      'remove.started',
       'remove.completed',
       'remove.failed'
     ]
@@ -461,6 +473,25 @@ export default function App() {
     () => allWorktrees.flatMap((worktree) => worktree.terminals),
     [allWorktrees]
   )
+  useEffect(() => {
+    setPendingRemovals((current) => {
+      let changed = false
+      const next = { ...current }
+      for (const [worktreeId, stage] of Object.entries(current)) {
+        if (stage !== 'removing') {
+          continue
+        }
+
+        const worktree = allWorktrees.find((item) => item.id === worktreeId)
+        if (!worktree || worktree.status === 'cleanup_failed') {
+          delete next[worktreeId]
+          removalGuardsRef.current.delete(worktreeId)
+          changed = true
+        }
+      }
+      return changed ? next : current
+    })
+  }, [allWorktrees])
   useEffect(() => {
     if (projectsQuery.data === undefined) {
       return
@@ -515,6 +546,7 @@ export default function App() {
     : null
   const selectedWorktreeMutationsDisabled =
     Boolean(selectedWorktree?.prunable) ||
+    selectedWorktree?.status !== 'active' ||
     selectedProject?.availability.state === 'unavailable'
 
   const selectTerminal = (terminal: TerminalRecord) => {
@@ -763,6 +795,132 @@ export default function App() {
     setModal(nextModal)
   }
 
+  const setRemovalStage = (worktreeId: string, stage: RemovalStage) =>
+    setPendingRemovals((current) => ({ ...current, [worktreeId]: stage }))
+
+  const releaseRemoval = (worktreeId: string) => {
+    removalGuardsRef.current.delete(worktreeId)
+    setPendingRemovals((current) => {
+      if (!(worktreeId in current)) {
+        return current
+      }
+
+      const next = { ...current }
+      delete next[worktreeId]
+      return next
+    })
+  }
+
+  const markWorktreeCleaning = (worktreeId: string) =>
+    queryClient.setQueryData<ProjectRecord[]>(projectsQueryKey, (current) =>
+      current?.map((project) => ({
+        ...project,
+        worktrees: project.worktrees.map((worktree) =>
+          worktree.id === worktreeId
+            ? { ...worktree, status: 'cleaning', cleanupError: null }
+            : worktree
+        )
+      }))
+    )
+
+  const submitRemoval = async (
+    worktree: WorktreeRecord,
+    preview: RemovePreview,
+    confirmDestructive: boolean,
+    staleRetriesRemaining: number
+  ): Promise<void> => {
+    setRemovalStage(worktree.id, 'removing')
+    try {
+      await apiClient.removeWorktree(worktree.id, preview, confirmDestructive)
+      markWorktreeCleaning(worktree.id)
+      setModal((current) =>
+        current?.type === 'remove' && current.worktree.id === worktree.id
+          ? null
+          : current
+      )
+      void queryClient.invalidateQueries(
+        { queryKey: projectsQueryKey },
+        { cancelRefetch: false }
+      )
+    } catch (error) {
+      if (
+        error instanceof ApiError &&
+        error.code === 'REMOVE_PREVIEW_STALE' &&
+        staleRetriesRemaining > 0
+      ) {
+        setRemovalStage(worktree.id, 'checking')
+        try {
+          const freshPreview = await apiClient.removePreview(worktree.id)
+          if (freshPreview.eligible && freshPreview.warnings.length === 0) {
+            await submitRemoval(
+              worktree,
+              freshPreview,
+              false,
+              staleRetriesRemaining - 1
+            )
+            return
+          }
+
+          releaseRemoval(worktree.id)
+          openModal({ type: 'remove', worktree, preview: freshPreview })
+          return
+        } catch (refreshError) {
+          releaseRemoval(worktree.id)
+          showError(setError)(refreshError)
+          return
+        }
+      }
+
+      releaseRemoval(worktree.id)
+      showError(setError)(
+        error instanceof ApiError && error.code === 'REMOVE_PREVIEW_STALE'
+          ? new Error(
+              'The worktree kept changing during removal. Review it and try again.'
+            )
+          : error
+      )
+    }
+  }
+
+  const prepareRemoval = async (
+    worktree: WorktreeRecord,
+    trigger: HTMLElement
+  ): Promise<void> => {
+    if (
+      removalGuardsRef.current.has(worktree.id) ||
+      worktree.status === 'cleaning' ||
+      needsManualCleanup(worktree)
+    ) {
+      return
+    }
+
+    modalTriggerRef.current = trigger
+    removalGuardsRef.current.add(worktree.id)
+    setRemovalStage(worktree.id, 'checking')
+    try {
+      const preview = await apiClient.removePreview(worktree.id)
+      if (preview.eligible && preview.warnings.length === 0) {
+        await submitRemoval(worktree, preview, false, 1)
+        return
+      }
+
+      releaseRemoval(worktree.id)
+      openModal({ type: 'remove', worktree, preview }, trigger)
+    } catch (error) {
+      releaseRemoval(worktree.id)
+      showError(setError)(error)
+    }
+  }
+
+  const confirmRemoval = (worktree: WorktreeRecord, preview: RemovePreview) => {
+    if (removalGuardsRef.current.has(worktree.id)) {
+      return
+    }
+
+    removalGuardsRef.current.add(worktree.id)
+    void submitRemoval(worktree, preview, preview.warnings.length > 0, 1)
+  }
+
   const stopSidebarResize = (event: ReactPointerEvent<HTMLDivElement>) => {
     resizeOrigin.current = null
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
@@ -992,35 +1150,82 @@ export default function App() {
                             onClick={() => selectWorktree(worktree)}
                             title={`${worktree.path}${worktree.branch ? ` · ${worktree.branch}` : ` · detached at ${worktree.head.slice(0, 8)}`}`}
                           >
-                            <FolderIcon
-                              className="shrink-0 text-zinc-500"
-                              aria-hidden="true"
-                            />
-                            <span className="min-w-0 truncate">
-                              {worktree.name}
+                            {pendingRemovals[worktree.id] ||
+                            worktree.status === 'cleaning' ? (
+                              <ArrowPathIcon
+                                className="shrink-0 animate-spin text-cyan-400"
+                                aria-hidden="true"
+                              />
+                            ) : (
+                              <FolderIcon
+                                className="shrink-0 text-zinc-500"
+                                aria-hidden="true"
+                              />
+                            )}
+                            <span className="flex min-w-0 flex-col">
+                              <span className="truncate">{worktree.name}</span>
+                              {(pendingRemovals[worktree.id] ||
+                                worktree.status === 'cleaning' ||
+                                worktree.status === 'cleanup_failed') && (
+                                <span
+                                  className={cn(
+                                    'truncate text-[0.6875rem] font-normal text-cyan-300',
+                                    worktree.status === 'cleanup_failed' &&
+                                      'text-rose-300'
+                                  )}
+                                  role="status"
+                                  title={worktree.cleanupError ?? undefined}
+                                >
+                                  {pendingRemovals[worktree.id] === 'checking'
+                                    ? 'Preparing removal…'
+                                    : pendingRemovals[worktree.id] ===
+                                          'removing' ||
+                                        worktree.status === 'cleaning'
+                                      ? 'Removing…'
+                                      : 'Removal failed'}
+                                  {worktree.status === 'cleanup_failed' &&
+                                  worktree.cleanupError
+                                    ? `: ${worktree.cleanupError}`
+                                    : ''}
+                                </span>
+                              )}
                             </span>
                           </Button>
                           {worktree.kind === 'linked' && (
                             <div className="worktree-actions absolute top-0 right-0 z-10 flex items-center gap-0.5 opacity-0 group-hover/worktree:opacity-100 group-focus-within/worktree:opacity-100 max-[700px]:static max-[700px]:ml-0.5 max-[700px]:shrink-0 max-[700px]:opacity-100">
                               <SidebarAction
-                                label={`Remove ${worktree.name}`}
+                                label={
+                                  needsManualCleanup(worktree)
+                                    ? `Manual cleanup required for ${worktree.name}`
+                                    : worktree.status === 'cleanup_failed'
+                                      ? `Retry removal for ${worktree.name}`
+                                      : `Remove ${worktree.name}`
+                                }
                                 tooltip={
                                   project.availability.state === 'unavailable'
                                     ? 'Git repository unavailable'
                                     : worktree.prunable
                                       ? 'Git reports this worktree as prunable'
-                                      : 'Remove worktree'
+                                      : pendingRemovals[worktree.id] ||
+                                          worktree.status === 'cleaning'
+                                        ? 'Removal is already in progress'
+                                        : needsManualCleanup(worktree)
+                                          ? worktree.cleanupError!
+                                          : worktree.status === 'cleanup_failed'
+                                            ? 'Retry removal'
+                                            : 'Remove worktree'
                                 }
                                 disabled={
                                   project.availability.state ===
-                                    'unavailable' || worktree.prunable
+                                    'unavailable' ||
+                                  worktree.prunable ||
+                                  Boolean(pendingRemovals[worktree.id]) ||
+                                  worktree.status === 'cleaning' ||
+                                  needsManualCleanup(worktree)
                                 }
                                 className="text-zinc-500 hover:bg-transparent hover:text-rose-300"
                                 onClick={(trigger) =>
-                                  openModal(
-                                    { type: 'remove', worktree },
-                                    trigger
-                                  )
+                                  void prepareRemoval(worktree, trigger)
                                 }
                               >
                                 <TrashIcon />
@@ -1250,6 +1455,12 @@ export default function App() {
           restoreFocusTo={modalTriggerRef.current}
           setError={setError}
           onCreateWorktree={submitWorktreeCreation}
+          removalStage={
+            modal.type === 'remove'
+              ? (pendingRemovals[modal.worktree.id] ?? null)
+              : null
+          }
+          onConfirmRemoval={confirmRemoval}
         />
       )}
     </div>
@@ -1383,7 +1594,9 @@ function ActionModal({
   close,
   restoreFocusTo,
   setError,
-  onCreateWorktree
+  onCreateWorktree,
+  removalStage,
+  onConfirmRemoval
 }: {
   modal: Exclude<Modal, null>
   close: () => void
@@ -1396,57 +1609,22 @@ function ActionModal({
     destination: WorktreeDestination,
     sourceWorktreeId?: string
   ) => void
+  removalStage: RemovalStage | null
+  onConfirmRemoval: (worktree: WorktreeRecord, preview: RemovePreview) => void
 }) {
   const queryClient = useQueryClient()
-  const worktreeId = modal.type === 'remove' ? modal.worktree.id : null
-  const previewQuery = useQuery({
-    queryKey: ['remove-preview', worktreeId],
-    queryFn: () => {
-      if (modal.type !== 'remove') {
-        throw new Error('A removal preview is not available')
-      }
-
-      return apiClient.removePreview(modal.worktree.id)
-    },
-    enabled: modal.type === 'remove'
-  })
-  const [refreshingStalePreview, setRefreshingStalePreview] = useState(false)
   const actionMutation = useMutation({
     mutationFn: (action: () => Promise<unknown>) => action(),
     onSuccess: async () => {
       close()
       await queryClient.invalidateQueries({ queryKey: projectsQueryKey })
     },
-    onError: (error) => {
-      if (
-        modal.type === 'remove' &&
-        error instanceof ApiError &&
-        error.code === 'REMOVE_PREVIEW_STALE'
-      ) {
-        setRefreshingStalePreview(true)
-        void previewQuery
-          .refetch()
-          .finally(() => setRefreshingStalePreview(false))
-        return
-      }
-
-      showError(setError)(error)
-    }
+    onError: showError(setError)
   })
-
-  useEffect(() => {
-    if (previewQuery.error) {
-      showError(setError)(previewQuery.error)
-    }
-  }, [previewQuery.error, setError])
 
   const submit = (action: () => Promise<unknown>) =>
     actionMutation.mutate(action)
   const busy = actionMutation.isPending
-  const freshRemovePreview =
-    !previewQuery.isFetching && !previewQuery.isError && !refreshingStalePreview
-      ? (previewQuery.data ?? null)
-      : null
   const dialogRef = useRef<HTMLElement | null>(null)
   const closeRef = useRef(close)
   closeRef.current = close
@@ -1545,11 +1723,9 @@ function ActionModal({
         {modal.type === 'remove' && (
           <RemoveConfirm
             worktree={modal.worktree}
-            preview={freshRemovePreview}
-            busy={busy}
-            onConfirm={(preview) =>
-              submit(() => apiClient.removeWorktree(modal.worktree.id, preview))
-            }
+            preview={modal.preview}
+            busy={removalStage !== null}
+            onConfirm={(preview) => onConfirmRemoval(modal.worktree, preview)}
           />
         )}
       </section>
@@ -1653,6 +1829,7 @@ function WorktreeForm({
           value={name}
           onChange={(event) => setName(event.target.value)}
           placeholder="investigate-cache"
+          aria-label="Worktree name"
           required
           autoFocus
           aria-invalid={destinationQuery.isError}
@@ -1687,7 +1864,7 @@ function WorktreeForm({
         aria-live="polite"
       >
         {destinationQuery.data
-          ? destinationQuery.data.path
+          ? `Destination: ${destinationQuery.data.path}`
           : destinationQuery.error
             ? destinationQuery.error.message
             : name.trim()

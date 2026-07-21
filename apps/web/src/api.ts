@@ -113,7 +113,11 @@ export const apiClient = {
         `/api/worktrees/${worktreeId}/remove-preview`
       )
     ).preview,
-  removeWorktree: async (worktreeId: string, preview: RemovePreview) =>
+  removeWorktree: async (
+    worktreeId: string,
+    preview: RemovePreview,
+    confirmDestructive: boolean
+  ) =>
     (
       await api<{ operation: OperationRecord }>(
         `/api/worktrees/${worktreeId}/remove`,
@@ -121,7 +125,7 @@ export const apiClient = {
           method: 'POST',
           body: JSON.stringify({
             confirmationToken: preview.confirmationToken,
-            confirmDestructive: preview.warnings.length > 0
+            confirmDestructive
           })
         }
       )

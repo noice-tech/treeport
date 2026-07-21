@@ -35,6 +35,68 @@ const now = (): string => new Date().toISOString()
 const id = (prefix: string): string =>
   `${prefix}_${crypto.randomUUID().replaceAll('-', '')}`
 
+interface RemovalCheckoutIdentity {
+  path: string
+  device: string
+  inode: string
+  gitWorktreeKey: string
+  gitMarker: string
+  managedWrapperPath: string | null
+  quarantinePath: string
+}
+
+function removalCheckoutIdentity(
+  request: Record<string, unknown>
+): RemovalCheckoutIdentity | null {
+  const value = request.checkoutIdentity
+  if (!value || typeof value !== 'object') {
+    return null
+  }
+
+  const candidate = value as Record<string, unknown>
+  return typeof candidate.path === 'string' &&
+    typeof candidate.device === 'string' &&
+    typeof candidate.inode === 'string' &&
+    typeof candidate.gitWorktreeKey === 'string' &&
+    typeof candidate.gitMarker === 'string' &&
+    (typeof candidate.managedWrapperPath === 'string' ||
+      candidate.managedWrapperPath === null) &&
+    typeof candidate.quarantinePath === 'string'
+    ? {
+        path: candidate.path,
+        device: candidate.device,
+        inode: candidate.inode,
+        gitWorktreeKey: candidate.gitWorktreeKey,
+        gitMarker: candidate.gitMarker,
+        managedWrapperPath: candidate.managedWrapperPath,
+        quarantinePath: candidate.quarantinePath
+      }
+    : null
+}
+
+function gitMarkerTarget(checkoutPath: string, marker: string): string | null {
+  const match = /^gitdir: (.+)$/u.exec(marker.trim())
+  return match ? path.resolve(checkoutPath, match[1]!) : null
+}
+
+function gitMarkerMatchesKey(
+  checkoutPath: string,
+  marker: string,
+  gitWorktreeKey: string
+): boolean {
+  const target = gitMarkerTarget(checkoutPath, marker)
+  if (!target) {
+    return false
+  }
+
+  if (path.isAbsolute(gitWorktreeKey)) {
+    return target === path.resolve(gitWorktreeKey)
+  }
+
+  const normalizedKey = path.normalize(gitWorktreeKey)
+  return target.endsWith(`${path.sep}${normalizedKey}`)
+}
+
 function removeConfirmationToken(
   key: Buffer,
   preview: Omit<RemovePreview, 'confirmationToken'>,
@@ -147,6 +209,174 @@ export class TaskTTYService {
       this.events.publish('terminal.removed', { worktreeId, terminalId })
     }
     this.terminalIdsByWorktree.delete(worktreeId)
+  }
+
+  private async checkoutStat(checkoutPath: string) {
+    return fs.lstat(checkoutPath, { bigint: true }).catch((error: unknown) => {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        return null
+      }
+
+      throw error
+    })
+  }
+
+  private async authorizedCheckoutError(
+    checkoutPath: string,
+    identity: RemovalCheckoutIdentity | null,
+    acceptedPath = checkoutPath
+  ): Promise<string | null> {
+    const checkout = await this.checkoutStat(checkoutPath)
+    if (!checkout) {
+      return null
+    }
+
+    if (!identity || identity.path !== acceptedPath) {
+      return 'Manual cleanup required: the checkout remains on disk, but this removal has no matching filesystem identity'
+    }
+
+    if (
+      !checkout.isDirectory() ||
+      checkout.dev.toString() !== identity.device ||
+      checkout.ino.toString() !== identity.inode
+    ) {
+      return 'Manual cleanup required: the checkout path now refers to a different filesystem object'
+    }
+
+    const markerPath = path.join(checkoutPath, '.git')
+    const markerStat = await this.checkoutStat(markerPath)
+    const marker = markerStat?.isFile()
+      ? await fs.readFile(markerPath, 'utf8').catch(() => null)
+      : null
+    return marker !== identity.gitMarker ||
+      !gitMarkerMatchesKey(acceptedPath, marker ?? '', identity.gitWorktreeKey)
+      ? 'Manual cleanup required: the checkout Git marker no longer proves that TaskTTY owns this removal'
+      : null
+  }
+
+  private async removeAuthorizedCheckout(
+    checkoutPath: string,
+    identity: RemovalCheckoutIdentity | null
+  ): Promise<{ removed: boolean; error: string | null }> {
+    if (
+      !identity ||
+      identity.path !== checkoutPath ||
+      path.dirname(identity.quarantinePath) !== path.dirname(checkoutPath) ||
+      identity.quarantinePath === checkoutPath
+    ) {
+      return {
+        removed: false,
+        error:
+          'Manual cleanup required: the persisted checkout quarantine is invalid'
+      }
+    }
+
+    const quarantinePath = identity.quarantinePath
+    if (await this.checkoutStat(quarantinePath)) {
+      const quarantineError = await this.authorizedCheckoutError(
+        quarantinePath,
+        identity,
+        checkoutPath
+      )
+      if (quarantineError) {
+        return {
+          removed: false,
+          error: `${quarantineError}; the unverified directory was preserved at ${quarantinePath}`
+        }
+      }
+    } else {
+      const authorizationError = await this.authorizedCheckoutError(
+        checkoutPath,
+        identity
+      )
+      if (authorizationError) {
+        return { removed: false, error: authorizationError }
+      }
+
+      if (!(await this.checkoutStat(checkoutPath))) {
+        return { removed: false, error: null }
+      }
+
+      const renameError = await fs.rename(checkoutPath, quarantinePath).then(
+        () => null,
+        (error: unknown) => error
+      )
+      if (renameError) {
+        if (
+          (renameError as NodeJS.ErrnoException).code === 'ENOENT' &&
+          !(await this.checkoutStat(checkoutPath)) &&
+          !(await this.checkoutStat(quarantinePath))
+        ) {
+          return { removed: false, error: null }
+        }
+
+        throw renameError
+      }
+
+      const quarantineError = await this.authorizedCheckoutError(
+        quarantinePath,
+        identity,
+        checkoutPath
+      )
+      if (quarantineError) {
+        if (!(await this.checkoutStat(checkoutPath))) {
+          const restoreError = await fs
+            .rename(quarantinePath, checkoutPath)
+            .then(
+              () => null,
+              (error: unknown) => error
+            )
+          if (!restoreError) {
+            return { removed: false, error: quarantineError }
+          }
+        }
+
+        return {
+          removed: false,
+          error: `${quarantineError}; the unverified directory was preserved at ${quarantinePath}`
+        }
+      }
+    }
+
+    const removalError = await fs
+      .rm(quarantinePath, { recursive: true, force: true })
+      .then(
+        () => null,
+        (error: unknown) => error
+      )
+    if (removalError || (await this.checkoutStat(quarantinePath))) {
+      if (!(await this.checkoutStat(checkoutPath))) {
+        const restoreError = await fs.rename(quarantinePath, checkoutPath).then(
+          () => null,
+          (error: unknown) => error
+        )
+        if (!restoreError) {
+          return {
+            removed: false,
+            error: `Manual cleanup required: automatic checkout cleanup failed: ${
+              removalError instanceof Error
+                ? removalError.message
+                : 'the quarantined checkout root still exists'
+            }`
+          }
+        }
+      }
+
+      return {
+        removed: false,
+        error: `Manual cleanup required: automatic checkout cleanup failed; the checkout was preserved at ${quarantinePath}`
+      }
+    }
+
+    if (await this.checkoutStat(checkoutPath)) {
+      return {
+        removed: false,
+        error:
+          'Manual cleanup required: the checkout path was recreated during automatic cleanup'
+      }
+    }
+
+    return { removed: true, error: null }
   }
 
   listProjects(): Promise<ProjectRecord[]> {
@@ -881,8 +1111,8 @@ export class TaskTTYService {
     const timestamp = now()
     const known = this.deps.database.connection
       .prepare(
-        `SELECT id,path,git_worktree_key,kind,tmux_socket_name,status,managed_wrapper_path,
-                created_at,head,branch,detached,locked,lock_reason,prunable
+        `SELECT id,path,git_worktree_key,kind,tmux_socket_name,status,cleanup_error,
+                managed_wrapper_path,created_at,head,branch,detached,locked,lock_reason,prunable
          FROM worktrees WHERE project_id=?`
       )
       .all(projectId) as Array<{
@@ -892,6 +1122,7 @@ export class TaskTTYService {
       kind: 'main' | 'linked'
       tmux_socket_name: string
       status: WorktreeRecord['status']
+      cleanup_error: string | null
       managed_wrapper_path: string | null
       created_at: string
       head: string
@@ -926,7 +1157,10 @@ export class TaskTTYService {
     )
     const retired = known
       .filter(
-        (worktree) => worktree.kind === 'linked' && !matchedIds.has(worktree.id)
+        (worktree) =>
+          worktree.kind === 'linked' &&
+          !matchedIds.has(worktree.id) &&
+          !this.worktreeLocks.has(worktree.id)
       )
       .sort((left, right) => left.created_at.localeCompare(right.created_at))
     const changed = matched.filter(({ item, existing }) => {
@@ -957,6 +1191,116 @@ export class TaskTTYService {
       changed.flatMap(({ existing }) => (existing ? [existing.id] : []))
     )
     for (const worktree of retired) {
+      const recoveringRemoval =
+        worktree.status === 'cleaning' || worktree.status === 'cleanup_failed'
+      const removeOperation = recoveringRemoval
+        ? (this.deps.database.connection
+            .prepare(
+              `SELECT id,status,request_json,error FROM operations
+               WHERE worktree_id=? AND kind='remove'
+               ORDER BY created_at DESC,id DESC LIMIT 1`
+            )
+            .get(worktree.id) as
+            | {
+                id: string
+                status: OperationRecord['status']
+                request_json: string
+                error: string | null
+              }
+            | undefined)
+        : undefined
+      const removeRequest = removeOperation
+        ? (JSON.parse(removeOperation.request_json) as Record<string, unknown>)
+        : {}
+      const removeIdentity = removalCheckoutIdentity(removeRequest)
+      if (recoveringRemoval) {
+        const preview = removeRequest.preview as
+          | Record<string, unknown>
+          | undefined
+        const identity = removeIdentity
+        const checkout = await this.checkoutStat(worktree.path)
+        const quarantine = identity
+          ? await this.checkoutStat(identity.quarantinePath)
+          : null
+        let recoveryError: string | null = null
+        if (checkout || quarantine) {
+          if (!removeOperation) {
+            recoveryError =
+              'Manual cleanup required: the checkout remains on disk, but its accepted removal operation cannot be verified'
+          } else if (
+            preview?.worktreeId !== worktree.id ||
+            preview.path !== worktree.path
+          ) {
+            recoveryError =
+              'Manual cleanup required: the checkout remains on disk, but this legacy removal has no verifiable accepted preview'
+          } else if (!identity || identity.path !== worktree.path) {
+            recoveryError =
+              'Manual cleanup required: the checkout remains on disk, but this legacy removal has no matching filesystem identity'
+          } else if (identity.gitWorktreeKey !== worktree.git_worktree_key) {
+            recoveryError =
+              'Manual cleanup required: the checkout Git administrative identity changed after removal was accepted'
+          } else if (
+            identity.managedWrapperPath !== worktree.managed_wrapper_path
+          ) {
+            recoveryError =
+              'Manual cleanup required: the checkout wrapper provenance changed after removal was accepted'
+          } else {
+            recoveryError = checkout
+              ? await this.authorizedCheckoutError(worktree.path, identity)
+              : await this.authorizedCheckoutError(
+                  identity.quarantinePath,
+                  identity,
+                  worktree.path
+                )
+          }
+        }
+
+        if (recoveryError) {
+          const message = recoveryError.slice(0, 4_096)
+          if (
+            worktree.status !== 'cleanup_failed' ||
+            worktree.cleanup_error !== message ||
+            (removeOperation &&
+              (removeOperation.status !== 'failed' ||
+                removeOperation.error !== message))
+          ) {
+            const failedAt = now()
+            const failRecovery = this.deps.database.connection.transaction(
+              () => {
+                this.deps.database.connection
+                  .prepare(
+                    `UPDATE worktrees SET status='cleanup_failed',cleanup_error=?,updated_at=?
+                     WHERE id=?`
+                  )
+                  .run(message, failedAt, worktree.id)
+                if (removeOperation) {
+                  this.deps.database.connection
+                    .prepare(
+                      `UPDATE operations SET status='failed',result_json=NULL,error=?,updated_at=?
+                       WHERE id=?`
+                    )
+                    .run(message, failedAt, removeOperation.id)
+                }
+              }
+            )
+            failRecovery()
+            this.invalidateProjectsSnapshot()
+            this.events.publish('worktree.updated', {
+              worktreeId: worktree.id
+            })
+            if (removeOperation) {
+              this.events.publish('remove.failed', {
+                operationId: removeOperation.id,
+                worktreeId: worktree.id,
+                error: message
+              })
+            }
+          }
+
+          continue
+        }
+      }
+
       const terminalIds = new Set(
         this.terminalIdsByWorktree.get(worktree.id) ?? []
       )
@@ -970,20 +1314,70 @@ export class TaskTTYService {
       }
       await this.deps.tmux.killServer(worktree.tmux_socket_name)
 
+      if (recoveringRemoval && removeIdentity) {
+        const cleanup = await this.removeAuthorizedCheckout(
+          worktree.path,
+          removeIdentity
+        ).catch((error: unknown) => ({
+          removed: false,
+          error: `Manual cleanup required: automatic checkout cleanup failed: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        }))
+        if (cleanup.error) {
+          const message = cleanup.error.slice(0, 4_096)
+          if (
+            worktree.status !== 'cleanup_failed' ||
+            worktree.cleanup_error !== message ||
+            (removeOperation &&
+              (removeOperation.status !== 'failed' ||
+                removeOperation.error !== message))
+          ) {
+            const failedAt = now()
+            const failRecovery = this.deps.database.connection.transaction(
+              () => {
+                this.deps.database.connection
+                  .prepare(
+                    `UPDATE worktrees SET status='cleanup_failed',cleanup_error=?,updated_at=?
+                     WHERE id=?`
+                  )
+                  .run(message, failedAt, worktree.id)
+                if (removeOperation) {
+                  this.deps.database.connection
+                    .prepare(
+                      `UPDATE operations SET status='failed',result_json=NULL,error=?,updated_at=?
+                       WHERE id=?`
+                    )
+                    .run(message, failedAt, removeOperation.id)
+                }
+              }
+            )
+            failRecovery()
+            this.invalidateProjectsSnapshot()
+            this.events.publish('worktree.updated', {
+              worktreeId: worktree.id
+            })
+            if (removeOperation) {
+              this.events.publish('remove.failed', {
+                operationId: removeOperation.id,
+                worktreeId: worktree.id,
+                error: message
+              })
+            }
+          }
+
+          continue
+        }
+      }
+
+      const retiredAt = now()
       const retire = this.deps.database.connection.transaction(() => {
-        if (
-          worktree.status === 'cleaning' ||
-          worktree.status === 'cleanup_failed'
-        ) {
+        if (recoveringRemoval && removeOperation) {
           this.deps.database.connection
             .prepare(
               `UPDATE operations
                SET status='completed', result_json=?, error=NULL, updated_at=?
-               WHERE id=(
-                 SELECT id FROM operations
-                 WHERE worktree_id=? AND kind='remove' AND status IN ('pending','running','failed')
-                 ORDER BY created_at DESC LIMIT 1
-               )`
+               WHERE id=?`
             )
             .run(
               serializeOperation({
@@ -991,12 +1385,12 @@ export class TaskTTYService {
                 recovered: true,
                 path: worktree.path,
                 message:
-                  'Git no longer reports the worktree; removal was recovered during reconciliation'
+                  'Git no longer reports the worktree and the checkout root is absent; removal was recovered during reconciliation'
               }),
-              timestamp,
-              worktree.id
+              retiredAt,
+              removeOperation.id
             )
-        } else if (worktree.status !== 'removed') {
+        } else if (!recoveringRemoval && worktree.status !== 'removed') {
           this.deps.database.connection
             .prepare(
               `INSERT INTO operations(
@@ -1016,8 +1410,8 @@ export class TaskTTYService {
                 head: worktree.head,
                 branch: worktree.branch
               }),
-              timestamp,
-              timestamp
+              retiredAt,
+              retiredAt
             )
         }
 
@@ -1038,6 +1432,12 @@ export class TaskTTYService {
         projectId,
         worktreeId: worktree.id
       })
+      if (recoveringRemoval && removeOperation) {
+        this.events.publish('remove.completed', {
+          operationId: removeOperation.id,
+          worktreeId: worktree.id
+        })
+      }
     }
 
     const transaction = this.deps.database.connection.transaction(() => {
@@ -1323,11 +1723,9 @@ export class TaskTTYService {
             worktreePath: worktree.path
           })
         } catch (error) {
-          setupError =
-            `create_worktree setup: ${error instanceof Error ? error.message : String(error)}`.slice(
-              0,
-              4_096
-            )
+          setupError = `create_worktree setup: ${
+            error instanceof Error ? error.message : String(error)
+          }`.slice(0, 4_096)
         }
         try {
           terminal = await this.createTerminal(
@@ -1719,8 +2117,54 @@ export class TaskTTYService {
         )
       }
 
-      assertCleanupTransition(worktree.status, 'cleaning')
+      const checkout = await this.checkoutStat(preview.path)
+      const checkoutBinding = this.deps.database.connection
+        .prepare(
+          `SELECT git_worktree_key,managed_wrapper_path FROM worktrees WHERE id=?`
+        )
+        .get(worktreeId) as
+        | {
+            git_worktree_key: string | null
+            managed_wrapper_path: string | null
+          }
+        | undefined
+      const markerPath = path.join(preview.path, '.git')
+      const markerStat = await this.checkoutStat(markerPath)
+      const gitMarker = markerStat?.isFile()
+        ? await fs.readFile(markerPath, 'utf8').catch(() => null)
+        : null
+      if (
+        !checkout?.isDirectory() ||
+        !checkoutBinding?.git_worktree_key ||
+        gitMarker === null ||
+        !gitMarkerMatchesKey(
+          preview.path,
+          gitMarker,
+          checkoutBinding.git_worktree_key
+        )
+      ) {
+        throw new DomainError(
+          'REMOVE_PREVIEW_STALE',
+          'The worktree checkout changed after the removal preview; review it again',
+          409,
+          preview
+        )
+      }
+
       const operationId = id('op')
+      const checkoutIdentity: RemovalCheckoutIdentity = {
+        path: preview.path,
+        device: checkout.dev.toString(),
+        inode: checkout.ino.toString(),
+        gitWorktreeKey: checkoutBinding.git_worktree_key,
+        gitMarker,
+        managedWrapperPath: checkoutBinding.managed_wrapper_path,
+        quarantinePath: path.join(
+          path.dirname(preview.path),
+          `.${path.basename(preview.path)}.tasktty-removing-${operationId}`
+        )
+      }
+      assertCleanupTransition(worktree.status, 'cleaning')
       const timestamp = now()
       const transaction = this.deps.database.connection.transaction(() => {
         this.deps.database.connection
@@ -1732,7 +2176,7 @@ export class TaskTTYService {
             operationId,
             worktree.projectId,
             worktreeId,
-            serializeOperation({ ...request, preview }),
+            serializeOperation({ ...request, preview, checkoutIdentity }),
             timestamp,
             timestamp
           )
@@ -1782,6 +2226,7 @@ export class TaskTTYService {
       .prepare("UPDATE operations SET status='running',updated_at=? WHERE id=?")
       .run(now(), operationId)
     let terminalsStopped = false
+    let gitRemoved = false
     try {
       await this.deps.tmux.killServer(worktree.tmuxSocketName)
       terminalsStopped = true
@@ -1790,6 +2235,15 @@ export class TaskTTYService {
         worktree.path,
         force
       )
+      gitRemoved = true
+      const checkoutCleanup = await this.removeAuthorizedCheckout(
+        worktree.path,
+        removalCheckoutIdentity(operation.request)
+      )
+      if (checkoutCleanup.error) {
+        throw new Error(checkoutCleanup.error)
+      }
+
       const timestamp = now()
       const transaction = this.deps.database.connection.transaction(() => {
         assertCleanupTransition('cleaning', 'removed')
@@ -1829,9 +2283,11 @@ export class TaskTTYService {
     } catch (error) {
       const base = error instanceof Error ? error.message : String(error)
       const message = (
-        terminalsStopped
-          ? `Terminals were stopped, but Git removal failed: ${base}`
-          : `Terminal shutdown failed before Git removal: ${base}`
+        !terminalsStopped
+          ? `Terminal shutdown failed before Git removal: ${base}`
+          : gitRemoved
+            ? `Manual cleanup required: Git stopped reporting the worktree, but checkout cleanup failed: ${base}`
+            : `Terminals were stopped, but Git removal failed: ${base}`
       ).slice(0, 4_096)
       const timestamp = now()
       const transaction = this.deps.database.connection.transaction(() => {

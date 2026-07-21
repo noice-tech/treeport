@@ -55,6 +55,8 @@ class SystemDouble implements CommandRunner {
   worktreeAddGate: Promise<void> | null = null
   tmuxCreateGate: Promise<void> | null = null
   setupGate: Promise<void> | null = null
+  removeAfterDeregisterGate: Promise<void> | null = null
+  worktreeDeregistered: (() => void) | null = null
 
   constructor(main: string) {
     this.main = main
@@ -151,15 +153,20 @@ class SystemDouble implements CommandRunner {
 
       const worktreePath = args.at(-2)!
       const head = args.at(-1)!
+      const gitWorktreeKey = path.join(
+        this.main,
+        '.git',
+        'worktrees',
+        path.basename(path.dirname(worktreePath))
+      )
       await fs.mkdir(worktreePath, { recursive: true })
+      await fs.writeFile(
+        path.join(worktreePath, '.git'),
+        `gitdir: ${gitWorktreeKey}\n`
+      )
       this.worktrees.push({
         path: worktreePath,
-        gitWorktreeKey: path.join(
-          this.main,
-          '.git',
-          'worktrees',
-          path.basename(path.dirname(worktreePath))
-        ),
+        gitWorktreeKey,
         head,
         branch: null
       })
@@ -180,6 +187,11 @@ class SystemDouble implements CommandRunner {
       }
 
       this.worktrees.splice(index, 1)
+      this.worktreeDeregistered?.()
+      if (this.removeAfterDeregisterGate) {
+        await this.removeAfterDeregisterGate
+      }
+
       await fs.rm(worktreePath, { recursive: true, force: true })
       return ok()
     }
@@ -1460,6 +1472,285 @@ describe('TaskTTYService with injected command adapters', () => {
     })
   })
 
+  it('keeps an in-flight removal cleaning after Git deregisters it', async () => {
+    const { main, runner, service } = await fixture()
+    const project = await service.registerProject(main)
+    const linked = (
+      await service.createWorktree(project.id, 'in-flight', 'default')
+    ).worktree
+    let releaseRemoval!: () => void
+    runner.removeAfterDeregisterGate = new Promise<void>((resolve) => {
+      releaseRemoval = resolve
+    })
+    let deregistered!: () => void
+    const deregisteredPromise = new Promise<void>((resolve) => {
+      deregistered = resolve
+    })
+    runner.worktreeDeregistered = deregistered
+    const events: string[] = []
+    const unsubscribe = service.events.subscribe((event) =>
+      events.push(event.type)
+    )
+
+    const operation = await beginFromPreview(service, linked.id)
+    expect(operation.request).toMatchObject({
+      checkoutIdentity: {
+        path: linked.path,
+        device: expect.any(String),
+        inode: expect.any(String),
+        gitWorktreeKey: expect.any(String),
+        gitMarker: expect.stringMatching(/^gitdir: /),
+        managedWrapperPath: linked.managedWrapperPath,
+        quarantinePath: expect.stringContaining('.tasktty-removing-op_')
+      }
+    })
+    await deregisteredPromise
+    const duringRemoval = await service.getProjectSnapshot(project.id)
+    expect(
+      duringRemoval.worktrees.find((worktree) => worktree.id === linked.id)
+    ).toMatchObject({ status: 'cleaning' })
+    expect(service.getOperation(operation.id).status).toBe('running')
+    await expect(fs.stat(linked.path)).resolves.toBeTruthy()
+    expect(events.filter((event) => event === 'remove.completed')).toHaveLength(
+      0
+    )
+
+    releaseRemoval()
+    expect((await waitForOperation(service, operation.id)).status).toBe(
+      'completed'
+    )
+    await expect(fs.stat(linked.path)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(service.database.worktree(linked.id)).toBeNull()
+    expect(events.filter((event) => event === 'remove.completed')).toHaveLength(
+      1
+    )
+    expect(events.filter((event) => event === 'worktree.removed')).toHaveLength(
+      1
+    )
+    unsubscribe()
+  })
+
+  it('recovers only an authorized interrupted checkout root', async () => {
+    const { main, runner, service, database, config } = await fixture()
+    const project = await service.registerProject(main)
+    const recoverable = (
+      await service.createWorktree(project.id, 'recoverable-root', 'default')
+    ).worktree
+    const quarantined = (
+      await service.createWorktree(project.id, 'quarantined-root', 'default')
+    ).worktree
+    const replaced = (
+      await service.createWorktree(project.id, 'replaced-root', 'default')
+    ).worktree
+    const repurposed = (
+      await service.createWorktree(project.id, 'repurposed-root', 'default')
+    ).worktree
+    const legacy = (
+      await service.createWorktree(project.id, 'legacy-root', 'default')
+    ).worktree
+    const timestamp = new Date().toISOString()
+    const insertInterrupted = async (
+      operationId: string,
+      worktree: typeof recoverable,
+      includeIdentity: boolean
+    ) => {
+      const preview = await service.removePreview(worktree.id)
+      const checkout = await fs.lstat(worktree.path, { bigint: true })
+      const gitWorktreeKey = (
+        database.connection
+          .prepare('SELECT git_worktree_key FROM worktrees WHERE id=?')
+          .get(worktree.id) as { git_worktree_key: string }
+      ).git_worktree_key
+      const gitMarker = await fs.readFile(
+        path.join(worktree.path, '.git'),
+        'utf8'
+      )
+      database.connection
+        .prepare(
+          `INSERT INTO operations(id,kind,project_id,worktree_id,status,request_json,result_json,error,created_at,updated_at)
+           VALUES(?,'remove',?,?,'running',?,NULL,NULL,?,?)`
+        )
+        .run(
+          operationId,
+          project.id,
+          worktree.id,
+          JSON.stringify(
+            includeIdentity
+              ? {
+                  preview,
+                  checkoutIdentity: {
+                    path: worktree.path,
+                    device: checkout.dev.toString(),
+                    inode: checkout.ino.toString(),
+                    gitWorktreeKey,
+                    gitMarker,
+                    managedWrapperPath: worktree.managedWrapperPath,
+                    quarantinePath: path.join(
+                      path.dirname(worktree.path),
+                      `.${path.basename(worktree.path)}.tasktty-removing-${operationId}`
+                    )
+                  }
+                }
+              : {}
+          ),
+          timestamp,
+          timestamp
+        )
+      database.connection
+        .prepare(
+          "UPDATE worktrees SET status='cleaning',updated_at=? WHERE id=?"
+        )
+        .run(timestamp, worktree.id)
+    }
+    await insertInterrupted('op_recoverable_root', recoverable, true)
+    await insertInterrupted('op_quarantined_root', quarantined, true)
+    await insertInterrupted('op_replaced_root', replaced, true)
+    await insertInterrupted('op_repurposed_root', repurposed, true)
+    await insertInterrupted('op_legacy_root', legacy, false)
+    runner.worktrees.splice(1, runner.worktrees.length - 1)
+    await fs.writeFile(
+      path.join(path.dirname(recoverable.path), 'preserve.txt'),
+      'preserve wrapper'
+    )
+    const quarantinePath = (
+      service.getOperation('op_quarantined_root').request.checkoutIdentity as {
+        quarantinePath: string
+      }
+    ).quarantinePath
+    await fs.rename(quarantined.path, quarantinePath)
+    await expect(fs.stat(quarantined.path)).rejects.toMatchObject({
+      code: 'ENOENT'
+    })
+    await expect(fs.stat(quarantinePath)).resolves.toBeTruthy()
+    await fs.rm(replaced.path, { recursive: true, force: true })
+    await fs.mkdir(replaced.path, { recursive: true })
+    const replacementMarker = path.join(replaced.path, 'replacement.txt')
+    await fs.writeFile(replacementMarker, 'replacement')
+    const repurposedInode = (
+      await fs.lstat(repurposed.path, { bigint: true })
+    ).ino.toString()
+    for (const entry of await fs.readdir(repurposed.path)) {
+      await fs.rm(path.join(repurposed.path, entry), {
+        recursive: true,
+        force: true
+      })
+    }
+    await fs.mkdir(path.join(repurposed.path, '.git'))
+    const repurposedMarker = path.join(repurposed.path, 'replacement.txt')
+    await fs.writeFile(repurposedMarker, 'replacement in the same directory')
+    expect(
+      (await fs.lstat(repurposed.path, { bigint: true })).ino.toString()
+    ).toBe(repurposedInode)
+
+    const restarted = new TaskTTYService({
+      config,
+      database,
+      runner,
+      git: new GitAdapter(runner),
+      tmux: new TmuxAdapter(
+        runner,
+        config.runtimeDir,
+        'tmux',
+        '/launcher with spaces.js'
+      ),
+      gh: new GhAdapter(runner)
+    })
+    const events: Array<{ type: string; worktreeId: unknown }> = []
+    const unsubscribe = restarted.events.subscribe((event) =>
+      events.push({ type: event.type, worktreeId: event.data.worktreeId })
+    )
+    await restarted.initialize()
+
+    await expect(fs.stat(recoverable.path)).rejects.toMatchObject({
+      code: 'ENOENT'
+    })
+    await expect(
+      fs.readFile(
+        path.join(path.dirname(recoverable.path), 'preserve.txt'),
+        'utf8'
+      )
+    ).resolves.toBe('preserve wrapper')
+    expect(
+      (await fs.readdir(path.dirname(recoverable.path))).some((entry) =>
+        entry.includes('.tasktty-removing-')
+      )
+    ).toBe(false)
+    expect(database.worktree(recoverable.id)).toBeNull()
+    expect(restarted.getOperation('op_recoverable_root')).toMatchObject({
+      status: 'completed',
+      result: expect.objectContaining({ removed: true, recovered: true })
+    })
+
+    await expect(fs.stat(quarantinePath)).rejects.toMatchObject({
+      code: 'ENOENT'
+    })
+    await expect(fs.stat(quarantined.path)).rejects.toMatchObject({
+      code: 'ENOENT'
+    })
+    expect(database.worktree(quarantined.id)).toBeNull()
+    expect(restarted.getOperation('op_quarantined_root')).toMatchObject({
+      status: 'completed',
+      result: expect.objectContaining({ removed: true, recovered: true })
+    })
+
+    await expect(fs.readFile(replacementMarker, 'utf8')).resolves.toBe(
+      'replacement'
+    )
+    expect(database.worktree(replaced.id)).toMatchObject({
+      status: 'cleanup_failed',
+      cleanupError: expect.stringMatching(/different filesystem object/i)
+    })
+    expect(restarted.getOperation('op_replaced_root')).toMatchObject({
+      status: 'failed',
+      error: expect.stringMatching(/different filesystem object/i)
+    })
+
+    await expect(fs.readFile(repurposedMarker, 'utf8')).resolves.toBe(
+      'replacement in the same directory'
+    )
+    expect(database.worktree(repurposed.id)).toMatchObject({
+      status: 'cleanup_failed',
+      cleanupError: expect.stringMatching(/Git marker/i)
+    })
+    expect(restarted.getOperation('op_repurposed_root')).toMatchObject({
+      status: 'failed',
+      error: expect.stringMatching(/Git marker/i)
+    })
+
+    await expect(fs.stat(legacy.path)).resolves.toBeTruthy()
+    expect(database.worktree(legacy.id)).toMatchObject({
+      status: 'cleanup_failed',
+      cleanupError: expect.stringMatching(/legacy removal/i)
+    })
+    expect(restarted.getOperation('op_legacy_root').status).toBe('failed')
+    const failuresBeforeSecondPoll = events.filter(
+      (event) => event.type === 'remove.failed'
+    ).length
+    await restarted.getProjectSnapshot(project.id)
+    expect(
+      events.filter((event) => event.type === 'remove.failed')
+    ).toHaveLength(failuresBeforeSecondPoll)
+
+    await fs.rm(legacy.path, { recursive: true, force: true })
+    await restarted.getProjectSnapshot(project.id)
+    expect(database.worktree(legacy.id)).toBeNull()
+    expect(restarted.getOperation('op_legacy_root').status).toBe('completed')
+    expect(
+      events.filter(
+        (event) =>
+          event.type === 'remove.completed' &&
+          event.worktreeId === recoverable.id
+      )
+    ).toHaveLength(1)
+    expect(
+      events.filter(
+        (event) =>
+          event.type === 'remove.completed' && event.worktreeId === legacy.id
+      )
+    ).toHaveLength(1)
+    unsubscribe()
+  })
+
   it('recovers interrupted removals on either side of the Git removal boundary', async () => {
     const { main, runner, service, database, config } = await fixture()
     const project = await service.registerProject(main)
@@ -1557,9 +1848,19 @@ describe('TaskTTYService with injected command adapters', () => {
     await fs.mkdir(managed.path, { recursive: true })
     const marker = path.join(wrapper, 'external-marker.txt')
     await fs.writeFile(marker, 'external')
+    const externalGitWorktreeKey = path.join(
+      main,
+      '.git',
+      'worktrees',
+      'external-reuse'
+    )
+    await fs.writeFile(
+      path.join(managed.path, '.git'),
+      `gitdir: ${externalGitWorktreeKey}\n`
+    )
     runner.worktrees.push({
       path: managed.path,
-      gitWorktreeKey: path.join(main, '.git', 'worktrees', 'external-reuse'),
+      gitWorktreeKey: externalGitWorktreeKey,
       head: 'external-head',
       branch: null
     })
