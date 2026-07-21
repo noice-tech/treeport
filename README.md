@@ -31,11 +31,13 @@ For loopback-only startup:
 pnpm start:local
 ```
 
-Development runs Hono and Vite together through Turborepo:
+Development runs Hono, Vite, and a watch-built workspace CLI together through Turborepo:
 
 ```sh
 pnpm dev
 ```
+
+The root workspace links `tasktty` into `node_modules/.bin`. The development daemon inherits that path and passes it to managed terminals, so the same generic TaskTTY skill can use the CLI while TaskTTY itself is under development. Pi sessions in this repository load the canonical skill directly from `skills/tasktty` through `.pi/settings.json`; there is no separate development version of the skill.
 
 Other development commands:
 
@@ -78,13 +80,44 @@ tasktty terminal create \
   -- pnpm dev
 ```
 
+Inspect the exact TaskTTY context injected into a managed terminal:
+
+```sh
+tasktty context
+```
+
 The web UI provides the same project, worktree, terminal, and removal operations. Submitting a new worktree closes the dialog immediately and shows its typed name with a spinner while Git creates it. The web flow then selects one retained terminal that streams compatible setup output before starting its login shell. Command input is always an argv array. Shell syntax has no special meaning unless an explicit shell is launched, for example `-- /bin/zsh -lc 'one && two'`.
+
+## Agent Skill
+
+TaskTTY ships a portable [Agent Skills](https://agentskills.io/) skill at [`skills/tasktty/SKILL.md`](skills/tasktty/SKILL.md). Installing the skill teaches a compatible agent how to inspect its managed context and safely create persistent terminals and worktrees; it does not install TaskTTY itself or impose a task, planning, approval, prompt, or tool policy.
+
+Copy the complete skill directory to a compatible project or user skill location:
+
+```sh
+# Project-local, shared with a repository
+mkdir -p .agents/skills
+cp -R /path/to/tasktty/skills/tasktty .agents/skills/tasktty
+
+# User-level, available across projects
+mkdir -p ~/.agents/skills
+cp -R /path/to/tasktty/skills/tasktty ~/.agents/skills/tasktty
+```
+
+Pi also discovers `~/.pi/agent/skills/tasktty`. For one invocation from a TaskTTY checkout, load the canonical file directly:
+
+```sh
+pi --skill /absolute/path/to/tasktty/skills/tasktty/SKILL.md
+```
+
+Restart Pi or use `/reload` after installing or changing the skill. `/skill:tasktty` activates it explicitly. Project-local resources load only after the project is trusted. Review third-party skill instructions before enabling them.
 
 ## CLI
 
-All machine-relevant commands support `--json`. The CLI calls the daemon API and does not duplicate lifecycle logic.
+Commands print concise text by default. Add `--json` only when a program or extension needs structured output; JSON success responses go to stdout, while JSON errors use the API error envelope on stderr. The CLI calls the daemon API and does not duplicate lifecycle logic.
 
 ```text
+tasktty context
 tasktty project add <path>
 tasktty project list
 tasktty worktree list [--project <id-or-path>]
@@ -98,7 +131,9 @@ tasktty terminal delete <terminal-id>
 tasktty spawn --project <id-or-path-or-dot> --worktree-name <name> --name <name> [--from-current] [-- <command> args...]
 ```
 
-Each terminal receives `TASKTTY_API_URL`, `TASKTTY_PROJECT_ID`, `TASKTTY_WORKTREE_ID`, and `TASKTTY_TERMINAL_ID`. A Pi process can therefore call `tasktty` to create a child worktree/terminal or remove its own worktree. Removal is persisted as a daemon-owned operation and returns an operation ID before the daemon terminates the requesting tmux server. CLI exit codes are stable: `0` success, `1` unexpected failure, `2` usage, `3` daemon unreachable, and `5` API/domain refusal.
+Each terminal receives `TASKTTY_API_URL`, `TASKTTY_PROJECT_ID`, `TASKTTY_WORKTREE_ID`, and `TASKTTY_TERMINAL_ID`. `tasktty context` strictly resolves those IDs to the current project, worktree, and terminal; with no IDs it reports that the caller is outside TaskTTY, while partial or inconsistent IDs are refused instead of guessed from paths. A Pi process can therefore call `tasktty` to create a persistent child worktree or terminal that the user can open and continue in the normal Pi TUI. Removal is persisted as a daemon-owned operation and returns an operation ID before the daemon terminates the requesting tmux server.
+
+CLI exit codes are stable: `0` success, `1` unexpected failure, `2` usage, `3` daemon unreachable, and `5` API/domain refusal. With `--json`, failures are emitted on stderr as `{ "error": { "code", "message", "details"? } }`. A successful `spawn` can still report partial creation through a null `terminal`, `terminalError`, or `setupError`; callers must inspect those fields and must not blindly retry or remove the retained worktree.
 
 ## Runtime model
 
