@@ -121,6 +121,11 @@ export const apiClient = {
     ).terminal,
   deleteTerminal: async (terminalId: string) =>
     api(`/api/terminals/${terminalId}`, { method: 'DELETE' }),
+  acknowledgeTerminalBell: async (terminalId: string, sequence: number) =>
+    api<{ ok: true }>(`/api/terminals/${terminalId}/bell/acknowledge`, {
+      method: 'POST',
+      body: JSON.stringify({ sequence })
+    }),
   uploadTerminalFile: async (terminalId: string, file: File) => {
     const extension = /\.([a-z0-9]{1,16})$/i.exec(file.name)?.[1]
     return (

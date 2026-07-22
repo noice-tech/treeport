@@ -93,7 +93,7 @@ tasktty terminal inspect <terminal-id>
 tasktty terminal inspect <terminal-id> --json
 ```
 
-Runtime metadata includes the title, current OSC `9;4` progress, last progress start and clear timestamps, and latest daemon-observed real BEL. `.` resolves to the exact `TASKTTY_TERMINAL_ID` inside a managed terminal; it is not a name or path lookup.
+Runtime metadata includes the title, current OSC `9;4` progress, last progress start and clear timestamps, and latest daemon-observed real BEL. BEL metadata also reports daemon-lifetime unread attention shared by every browser; inspection and waits never acknowledge it, while viewing the terminal acknowledges the exact observed BEL sequence. `.` resolves to the exact `TASKTTY_TERMINAL_ID` inside a managed terminal; it is not a name or path lookup.
 
 Wait for raw terminal conditions without polling or scraping output:
 

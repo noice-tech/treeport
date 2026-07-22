@@ -32,12 +32,21 @@ export const terminalRuntimeMetadataSchema = z.strictObject({
   progressClearedAt: z.string().datetime().nullable().default(null),
   bell: z
     .strictObject({
-      sequence: z.number().int().nonnegative(),
-      at: z.string().datetime()
+      sequence: z.number().int().positive(),
+      at: z.string().datetime(),
+      unread: z.boolean()
     })
     .nullable()
     .default(null)
 })
+
+export const terminalBellAcknowledgementSchema = z.strictObject({
+  sequence: z.number().int().positive()
+})
+
+export type TerminalBellAcknowledgement = z.infer<
+  typeof terminalBellAcknowledgementSchema
+>
 
 export type TerminalRuntimeMetadata = z.infer<
   typeof terminalRuntimeMetadataSchema
