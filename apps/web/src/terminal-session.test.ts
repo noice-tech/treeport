@@ -16,6 +16,50 @@ import type {
   TerminalSessionSnapshot
 } from './terminal-session.js'
 
+const socketClient = vi.hoisted(() => ({ io: vi.fn() }))
+vi.mock('socket.io-client', () => ({ io: socketClient.io }))
+
+class FakeSocketIO {
+  connected = false
+  readonly handlers = new Map<string, Array<(value: any) => void>>()
+  readonly managerHandlers = new Map<string, Array<() => void>>()
+  readonly emit = vi.fn()
+  readonly volatile = { emit: vi.fn() }
+  readonly io = {
+    on: (event: string, listener: () => void) => {
+      this.managerHandlers.set(event, [
+        ...(this.managerHandlers.get(event) ?? []),
+        listener
+      ])
+    }
+  }
+
+  on(event: string, listener: (value: any) => void): this {
+    this.handlers.set(event, [...(this.handlers.get(event) ?? []), listener])
+    return this
+  }
+
+  connect(): this {
+    this.connected = true
+    this.emitServer('connect', undefined)
+    return this
+  }
+
+  disconnect(): this {
+    const wasConnected = this.connected
+    this.connected = false
+    if (wasConnected) {
+      this.emitServer('disconnect', 'io client disconnect')
+    }
+
+    return this
+  }
+
+  emitServer(event: string, value: any): void {
+    this.handlers.get(event)?.forEach((listener) => listener(value))
+  }
+}
+
 type TerminalSessionManagerConstructor = new (
   maxSessions?: number,
   idleMs?: number,
@@ -83,6 +127,11 @@ beforeAll(async () => {
 beforeEach(() => {
   vi.useFakeTimers()
   vi.stubGlobal('window', globalThis)
+  vi.stubGlobal(
+    'requestAnimationFrame',
+    vi.fn(() => 1)
+  )
+  vi.stubGlobal('cancelAnimationFrame', vi.fn())
 })
 
 afterEach(() => {
@@ -222,48 +271,13 @@ describe('terminal keyboard input', () => {
 })
 
 describe('TerminalSession', () => {
-  it('ignores protocol-v1 progress because SSE metadata owns web progress', () => {
-    const session = new TerminalSession('terminal-one')
-    const listener = vi.fn()
-    session.subscribe(listener)
-
-    ;(
-      session as unknown as { handleServerMessage(message: string): void }
-    ).handleServerMessage(
-      JSON.stringify({
-        version: 1,
-        type: 'progress',
-        progress: { state: 'indeterminate', value: null }
-      })
-    )
-
-    expect(listener).not.toHaveBeenCalled()
-    session.dispose()
+  beforeEach(() => {
+    socketClient.io.mockReset()
+    socketClient.io.mockImplementation(() => new FakeSocketIO())
   })
 
-  it('sends its hello on insecure LAN origins without crypto.randomUUID', () => {
-    class FakeWebSocket {
-      static readonly OPEN = 1
-      static instance: FakeWebSocket
-      readonly readyState = FakeWebSocket.OPEN
-      readonly send = vi.fn()
-      onopen: (() => void) | null = null
-      onmessage: ((event: { data: unknown }) => void) | null = null
-      onerror: (() => void) | null = null
-      onclose: (() => void) | null = null
-
-      constructor(readonly url: string) {
-        FakeWebSocket.instance = this
-      }
-
-      close(): void {}
-    }
-
+  it('uses an independent WebSocket-only Socket.IO connection with bounded auth', () => {
     const setItem = vi.fn()
-    vi.stubGlobal('location', {
-      protocol: 'http:',
-      host: '192.168.1.181:5173'
-    })
     vi.stubGlobal('sessionStorage', {
       getItem: () => null,
       setItem
@@ -271,25 +285,109 @@ describe('TerminalSession', () => {
     vi.stubGlobal('crypto', {
       getRandomValues: (bytes: Uint8Array) => bytes.fill(0x12)
     })
-    vi.stubGlobal('WebSocket', FakeWebSocket)
 
     const session = new TerminalSession('terminal-one')
     ;(session as unknown as { connect(): void }).connect()
-    FakeWebSocket.instance.onopen?.()
-
-    expect(FakeWebSocket.instance.url).toBe(
-      'ws://192.168.1.181:5173/api/terminals/terminal-one/attach'
+    expect(socketClient.io).toHaveBeenCalledWith(
+      '/terminals',
+      expect.objectContaining({
+        path: '/api/socket.io/',
+        transports: ['websocket'],
+        forceNew: true,
+        multiplex: false,
+        retries: 0
+      })
     )
-    expect(FakeWebSocket.instance.send).toHaveBeenCalledOnce()
-    const hello = FakeWebSocket.instance.send.mock.calls[0]![0]
-    expect(JSON.parse(hello)).toMatchObject({
-      type: 'hello',
-      clientId: '12121212-1212-4212-9212-121212121212'
+    const options = socketClient.io.mock.calls[0]![1] as {
+      auth: (authorize: (auth: unknown) => void) => void
+    }
+    const authorize = vi.fn()
+    options.auth(authorize)
+    expect(authorize).toHaveBeenCalledWith({
+      terminalId: 'terminal-one',
+      clientId: '12121212-1212-4212-9212-121212121212',
+      cols: 100,
+      rows: 30
     })
-    expect(setItem).toHaveBeenCalledWith(
-      'tasktty-terminal-client-id',
-      '12121212-1212-4212-9212-121212121212'
+    expect(setItem).toHaveBeenCalledOnce()
+    session.dispose()
+  })
+
+  it('ACKs only after xterm consumption and ignores a stale stream callback', () => {
+    const socket = new FakeSocketIO()
+    socketClient.io.mockReturnValue(socket)
+    const session = new TerminalSession('terminal-one')
+    let consumed: (() => void) | null = null
+    const reset = vi.fn()
+    ;(session as unknown as { terminal: unknown }).terminal = {
+      reset,
+      write: (_data: string, callback: () => void) => {
+        consumed = callback
+      },
+      dispose: vi.fn()
+    }
+    ;(session as unknown as { connect(): void }).connect()
+    socket.emitServer('ready', {
+      connectionId: 'connection-1',
+      streamId: 'stream-1',
+      generation: 4,
+      controller: true,
+      reset: 'full'
+    })
+    socket.emitServer('output', {
+      streamId: 'stream-1',
+      sequence: 1,
+      data: 'hello'
+    })
+
+    expect(reset).toHaveBeenCalledOnce()
+    expect(socket.emit).not.toHaveBeenCalledWith(
+      'output_ack',
+      expect.anything()
     )
+    ;(consumed as (() => void) | null)?.()
+    expect(socket.emit).toHaveBeenCalledWith('output_ack', {
+      streamId: 'stream-1',
+      sequence: 1
+    })
+    expect(socket.volatile.emit).not.toHaveBeenCalledWith(
+      'output_ack',
+      expect.anything()
+    )
+
+    socket.emitServer('output', {
+      streamId: 'stream-1',
+      sequence: 2,
+      data: 'later'
+    })
+    socket.emitServer('disconnect', 'transport close')
+    ;(consumed as (() => void) | null)?.()
+    expect(socket.emit).toHaveBeenCalledTimes(1)
+    session.dispose()
+  })
+
+  it('never buffers takeover while disconnected or before application ready', () => {
+    const socket = new FakeSocketIO()
+    socketClient.io.mockReturnValue(socket)
+    const session = new TerminalSession('terminal-one')
+    ;(session as unknown as { connect(): void }).connect()
+    session.takeControl()
+    expect(socket.volatile.emit).not.toHaveBeenCalled()
+
+    socket.emitServer('ready', {
+      connectionId: 'connection-1',
+      streamId: 'stream-1',
+      generation: 7,
+      controller: false,
+      reset: 'full'
+    })
+    session.takeControl()
+    expect(socket.volatile.emit).toHaveBeenCalledWith('take_control', {
+      generation: 7
+    })
+    socket.emitServer('disconnect', 'transport close')
+    session.takeControl()
+    expect(socket.volatile.emit).toHaveBeenCalledTimes(1)
     session.dispose()
   })
 })

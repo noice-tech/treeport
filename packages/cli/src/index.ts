@@ -1,10 +1,15 @@
 #!/usr/bin/env node
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import { io, type Socket } from 'socket.io-client'
 import {
+  parseEventsSnapshot,
+  parseProductEvent,
   parseTerminalRuntimeMetadata,
+  SOCKET_IO_PATH,
   type ApiErrorBody,
-  type ProductEvent,
+  type EventsClientToServerEvents,
+  type EventsServerToClientEvents,
   type ProjectRecord,
   type RemovePreview,
   type TaskTTYContext,
@@ -335,238 +340,166 @@ async function waitForTerminal(
           controller.abort()
         }, timeoutMs)
   timeout?.unref()
-  let reader: ReadableStreamDefaultReader<Uint8Array> | null = null
+  let events: Socket<
+    EventsServerToClientEvents,
+    EventsClientToServerEvents
+  > | null = null
 
   try {
     observation = await inspectTerminal(terminalId, controller.signal)
+    if (condition === 'bell') {
+      bellBaseline = observation.metadata.bell?.sequence ?? 0
+    }
+
     const immediate = matched(new Date().toISOString())
     if (immediate) {
       return immediate
     }
 
-    let response: Response
-    try {
-      response = await fetch(`${apiUrl}/api/events`, {
-        signal: controller.signal,
-        headers: { accept: 'text/event-stream' }
-      })
-    } catch (error) {
-      if (cancellation) {
-        throw error
-      }
-
-      throw new CliError(
-        `Cannot reach TaskTTY daemon at ${apiUrl}: ${error instanceof Error ? error.message : String(error)}`,
-        3,
-        'DAEMON_UNREACHABLE'
-      )
-    }
-    if (!response.ok || !response.body) {
-      const body = (await response.json().catch(() => ({}))) as ApiErrorBody
-      throw new CliError(
-        body.error?.message || `HTTP ${response.status}`,
-        response.ok ? 3 : 5,
-        body.error?.code ||
-          (response.ok ? 'DAEMON_PROTOCOL_ERROR' : 'API_ERROR'),
-        body.error?.details
-      )
-    }
-
-    reader = response.body.getReader()
-    const decoder = new TextDecoder()
-    let buffer = ''
-    let eventName = 'message'
-    let dataLines: string[] = []
-    let result: TerminalWaitResult | null = null
-
-    const dispatch = async (): Promise<void> => {
-      const name = eventName
-      const data = dataLines.join('\n')
-      eventName = 'message'
-      dataLines = []
-      if (!data || name === 'heartbeat') {
-        return
-      }
-
-      let payload: unknown
-      try {
-        payload = JSON.parse(data)
-      } catch {
-        throw new CliError(
-          'TaskTTY daemon sent invalid event-stream JSON',
-          3,
-          'DAEMON_PROTOCOL_ERROR'
-        )
-      }
-      if (!observation) {
-        throw new CliError(
-          'TaskTTY daemon event stream opened before terminal inspection completed',
-          3,
-          'DAEMON_PROTOCOL_ERROR'
-        )
-      }
-
-      if (name === 'connected') {
-        const connected = payload as {
-          at?: unknown
-          terminalMetadata?: unknown
+    events = io(`${apiUrl}/events`, {
+      path: SOCKET_IO_PATH,
+      transports: ['websocket'],
+      forceNew: true,
+      autoConnect: false,
+      reconnection: false,
+      retries: 0
+    })
+    return await new Promise<TerminalWaitResult>((resolve, reject) => {
+      let settled = false
+      let queue = Promise.resolve()
+      const finish = (result: TerminalWaitResult) => {
+        if (!settled) {
+          settled = true
+          resolve(result)
         }
-        if (!Array.isArray(connected.terminalMetadata)) {
-          throw new CliError(
-            'TaskTTY daemon sent an invalid connected event',
-            3,
-            'DAEMON_PROTOCOL_ERROR'
+      }
+      const fail = (error: unknown) => {
+        if (!settled) {
+          settled = true
+          reject(error)
+        }
+      }
+      const enqueue = (task: () => Promise<void>) => {
+        queue = queue.then(task)
+        void queue.catch(fail)
+      }
+
+      controller.signal.addEventListener(
+        'abort',
+        () => fail(new Error('Terminal wait cancelled')),
+        { once: true }
+      )
+      events!.on('snapshot', (value) =>
+        enqueue(async () => {
+          const snapshot = parseEventsSnapshot(value)
+          if (!snapshot || !observation) {
+            throw new CliError(
+              'TaskTTY daemon sent an invalid event snapshot',
+              3,
+              'DAEMON_PROTOCOL_ERROR'
+            )
+          }
+
+          const metadata = snapshot.terminalMetadata.find(
+            (item) => item.terminalId === terminalId
           )
-        }
+          if (metadata) {
+            observation = { ...observation, metadata }
+          }
 
-        const metadata = connected.terminalMetadata
-          .map(parseTerminalRuntimeMetadata)
-          .find((item) => item?.terminalId === terminalId)
-        if (metadata) {
-          observation = { ...observation, metadata }
-        }
+          const snapshotMatch = matched(snapshot.at)
+          if (snapshotMatch) {
+            finish(snapshotMatch)
+            return
+          }
 
-        bellBaseline = observation.metadata.bell?.sequence ?? 0
-        const observedAt =
-          typeof connected.at === 'string'
-            ? connected.at
-            : new Date().toISOString()
-        result = matched(observedAt)
-        if (result) {
-          return
-        }
+          observation = await inspectTerminal(terminalId, controller.signal)
+          if (cancellation) {
+            throw new Error('Terminal wait cancelled')
+          }
 
-        observation = await inspectTerminal(terminalId, controller.signal)
-        if (cancellation) {
-          throw new Error('Terminal wait cancelled')
-        }
-
-        result = matched(new Date().toISOString())
-        return
-      }
-
-      if (
-        name !== 'terminal.metadata' &&
-        name !== 'terminal.updated' &&
-        name !== 'terminal.removed'
-      ) {
-        return
-      }
-
-      const event = payload as ProductEvent
-      if (
-        !event ||
-        typeof event !== 'object' ||
-        !event.data ||
-        typeof event.data !== 'object'
-      ) {
-        throw new CliError(
-          'TaskTTY daemon sent an invalid product event',
-          3,
-          'DAEMON_PROTOCOL_ERROR'
-        )
-      }
-
-      if (event.data.terminalId !== terminalId) {
-        return
-      }
-
-      if (name === 'terminal.removed') {
-        throw new CliError(
-          `Terminal ${terminalId} was removed while waiting`,
-          5,
-          'TERMINAL_REMOVED',
-          { terminalId, condition }
-        )
-      }
-
-      if (name === 'terminal.metadata') {
-        const metadata = parseTerminalRuntimeMetadata(event.data)
-        if (!metadata) {
-          throw new CliError(
-            'TaskTTY daemon sent invalid terminal metadata',
-            3,
-            'DAEMON_PROTOCOL_ERROR'
-          )
-        }
-
-        observation = { ...observation, metadata }
-      } else {
-        observation = await inspectTerminal(terminalId, controller.signal)
-        if (cancellation) {
-          throw new Error('Terminal wait cancelled')
-        }
-      }
-
-      result = matched(
-        typeof event.at === 'string' ? event.at : new Date().toISOString()
+          const refreshedMatch = matched(new Date().toISOString())
+          if (refreshedMatch) {
+            finish(refreshedMatch)
+          }
+        })
       )
-    }
+      events!.on('product_event', (value) =>
+        enqueue(async () => {
+          const event = parseProductEvent(value)
+          if (!event) {
+            throw new CliError(
+              'TaskTTY daemon sent an invalid product event',
+              3,
+              'DAEMON_PROTOCOL_ERROR'
+            )
+          }
 
-    const processLine = async (line: string): Promise<void> => {
-      if (line === '') {
-        await dispatch()
-        return
-      }
+          if (
+            event.type !== 'terminal.metadata' &&
+            event.type !== 'terminal.updated' &&
+            event.type !== 'terminal.removed'
+          ) {
+            return
+          }
 
-      if (line.startsWith(':')) {
-        return
-      }
+          if (event.data.terminalId !== terminalId) {
+            return
+          }
 
-      const separator = line.indexOf(':')
-      const field = separator === -1 ? line : line.slice(0, separator)
-      let value = separator === -1 ? '' : line.slice(separator + 1)
-      if (value.startsWith(' ')) {
-        value = value.slice(1)
-      }
+          if (event.type === 'terminal.removed') {
+            throw new CliError(
+              `Terminal ${terminalId} was removed while waiting`,
+              5,
+              'TERMINAL_REMOVED',
+              { terminalId, condition }
+            )
+          }
 
-      if (field === 'event') {
-        eventName = value || 'message'
-      } else if (field === 'data') {
-        dataLines.push(value)
-      }
-    }
+          if (event.type === 'terminal.metadata') {
+            const metadata = parseTerminalRuntimeMetadata(event.data)
+            if (!metadata || !observation) {
+              throw new CliError(
+                'TaskTTY daemon sent invalid terminal metadata',
+                3,
+                'DAEMON_PROTOCOL_ERROR'
+              )
+            }
 
-    while (!result) {
-      const chunk = await reader.read()
-      if (chunk.done) {
-        break
-      }
+            observation = { ...observation, metadata }
+          } else {
+            observation = await inspectTerminal(terminalId, controller.signal)
+            if (cancellation) {
+              throw new Error('Terminal wait cancelled')
+            }
+          }
 
-      buffer += decoder.decode(chunk.value, { stream: true })
-      let newline = buffer.indexOf('\n')
-      while (newline !== -1 && !result) {
-        let line = buffer.slice(0, newline)
-        buffer = buffer.slice(newline + 1)
-        if (line.endsWith('\r')) {
-          line = line.slice(0, -1)
-        }
-
-        await processLine(line)
-        newline = buffer.indexOf('\n')
-      }
-    }
-
-    if (!result) {
-      buffer += decoder.decode()
-      if (buffer) {
-        await processLine(buffer.endsWith('\r') ? buffer.slice(0, -1) : buffer)
-      }
-
-      if (dataLines.length) {
-        await dispatch()
-      }
-    }
-
-    if (result) {
-      return result
-    }
-
-    throw new CliError(
-      'TaskTTY daemon event stream ended before the condition was observed',
-      3,
-      'DAEMON_DISCONNECTED'
-    )
+          const result = matched(event.at)
+          if (result) {
+            finish(result)
+          }
+        })
+      )
+      events!.on('connect_error', (error) =>
+        fail(
+          new CliError(
+            `Cannot reach TaskTTY daemon at ${apiUrl}: ${error.message}`,
+            3,
+            'DAEMON_UNREACHABLE'
+          )
+        )
+      )
+      events!.on('disconnect', () =>
+        fail(
+          new CliError(
+            'TaskTTY daemon event channel disconnected before the condition was observed',
+            3,
+            'DAEMON_DISCONNECTED'
+          )
+        )
+      )
+      events!.connect()
+    })
   } catch (error) {
     if (cancellation === 'timeout') {
       throw new CliError(
@@ -591,7 +524,7 @@ async function waitForTerminal(
     }
 
     throw new CliError(
-      `TaskTTY daemon event stream failed: ${error instanceof Error ? error.message : String(error)}`,
+      `TaskTTY daemon event channel failed: ${error instanceof Error ? error.message : String(error)}`,
       3,
       'DAEMON_DISCONNECTED'
     )
@@ -602,7 +535,8 @@ async function waitForTerminal(
 
     process.off('SIGINT', interrupt)
     controller.abort()
-    await reader?.cancel().catch(() => undefined)
+    events?.removeAllListeners()
+    events?.disconnect()
   }
 }
 

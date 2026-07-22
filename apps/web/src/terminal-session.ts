@@ -1,15 +1,17 @@
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { Terminal } from '@xterm/xterm'
+import { io, type Socket } from 'socket.io-client'
 import { apiClient } from './api.js'
 import {
-  parseTerminalServerMessage,
-  TERMINAL_HEARTBEAT_TIMEOUT_MS,
+  parseTerminalServerEvent,
+  SOCKET_IO_PATH,
   TERMINAL_MAX_INPUT_BYTES,
-  TERMINAL_PROTOCOL_VERSION,
-  type TerminalClientMessage,
+  type TerminalClientToServerEvents,
   type TerminalProgress,
-  type TerminalRuntimeMetadata
+  type TerminalRuntimeMetadata,
+  type TerminalServerEvent,
+  type TerminalServerToClientEvents
 } from '@tasktty/shared'
 
 export type { TerminalProgress } from '@tasktty/shared'
@@ -335,10 +337,11 @@ export class TerminalSession {
   private wrapper: HTMLDivElement | null = null
   private host: HTMLElement | null = null
   private resizeObserver: ResizeObserver | null = null
-  private socket: WebSocket | null = null
-  private retryTimer: number | null = null
+  private socket: Socket<
+    TerminalServerToClientEvents,
+    TerminalClientToServerEvents
+  > | null = null
   private degradedTimer: number | null = null
-  private heartbeatTimer: number | null = null
   private bellTimer: number | null = null
   private fileTransferTimer: number | null = null
   private fileTransferQueue: Promise<void> = Promise.resolve()
@@ -346,33 +349,15 @@ export class TerminalSession {
   private disposed = false
   private opened = false
   private ready = false
-  private retryAttempt = 0
   private reconnectAllowed = true
   private streamId: string | null = null
+  private controllerGeneration = 0
   private expectedSequence = 1
   private lastParsedSequence = 0
   private readonly parsedSequences = new Set<number>()
   private scrollExitPending = false
   private resumeOnNextInput = false
   private lastBellAt = 0
-  private listeningForReconnect = false
-  private readonly reconnectNow = () => {
-    if (this.disposed || !this.reconnectAllowed || this.ready || this.socket) {
-      return
-    }
-
-    if (this.retryTimer !== null) {
-      window.clearTimeout(this.retryTimer)
-    }
-
-    this.retryTimer = null
-    this.connect()
-  }
-  private readonly reconnectWhenVisible = () => {
-    if (document.visibilityState === 'visible') {
-      this.reconnectNow()
-    }
-  }
 
   constructor(terminalId: string) {
     this.terminalId = terminalId
@@ -391,12 +376,6 @@ export class TerminalSession {
     }
 
     this.host = host
-    if (!this.listeningForReconnect) {
-      window.addEventListener('online', this.reconnectNow)
-      document.addEventListener('visibilitychange', this.reconnectWhenVisible)
-      this.listeningForReconnect = true
-    }
-
     if (!this.wrapper) {
       this.wrapper = document.createElement('div')
       this.wrapper.className = 'terminal-session-host h-full min-h-0 min-w-0'
@@ -432,7 +411,7 @@ export class TerminalSession {
   }
 
   takeControl(): void {
-    this.send({ version: TERMINAL_PROTOCOL_VERSION, type: 'take_control' })
+    this.send('take_control', { generation: this.controllerGeneration })
   }
 
   retry(): void {
@@ -441,14 +420,21 @@ export class TerminalSession {
     }
 
     this.reconnectAllowed = true
-    this.retryAttempt = 0
     this.update({ error: null, phase: 'connecting', degraded: false })
-    this.connect()
+    if (this.socket) {
+      this.socket.connect()
+    } else {
+      this.connect()
+    }
   }
 
   sendText(data: string): void {
     this.prepareScrollExit()
-    this.terminal?.input(data, true)
+
+    if (this.ready && this.snapshotValue.controller) {
+      this.send('input', { generation: this.controllerGeneration, data })
+    }
+
     this.focus()
   }
 
@@ -469,16 +455,7 @@ export class TerminalSession {
     this.reconnectAllowed = false
     this.clearTimers()
     this.resizeObserver?.disconnect()
-    if (this.listeningForReconnect) {
-      window.removeEventListener('online', this.reconnectNow)
-      document.removeEventListener(
-        'visibilitychange',
-        this.reconnectWhenVisible
-      )
-      this.listeningForReconnect = false
-    }
-
-    this.socket?.close(1000, 'Session disposed')
+    this.socket?.disconnect()
     this.socket = null
     this.wrapper?.remove()
     this.terminal?.dispose()
@@ -590,18 +567,16 @@ export class TerminalSession {
     terminal.onKey(() => this.prepareScrollExit())
     terminal.onData((data) => {
       if (this.ready && this.snapshotValue.controller) {
-        this.send({
-          version: TERMINAL_PROTOCOL_VERSION,
-          type: 'input',
+        this.send('input', {
+          generation: this.controllerGeneration,
           data: this.withScrollExit(data)
         })
       }
     })
     terminal.onBinary((data) => {
       if (this.ready && this.snapshotValue.controller) {
-        this.send({
-          version: TERMINAL_PROTOCOL_VERSION,
-          type: 'binary',
+        this.send('binary', {
+          generation: this.controllerGeneration,
           data: this.withScrollExit(data)
         })
       }
@@ -726,110 +701,103 @@ export class TerminalSession {
     }
 
     this.ready = false
-    this.update({
-      phase: this.retryAttempt ? 'reconnecting' : 'connecting',
-      controller: false,
-      error: null
-    })
+    this.update({ phase: 'connecting', controller: false, error: null })
     this.startDegradedTimer()
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const socket = new WebSocket(
-      `${protocol}//${window.location.host}/api/terminals/${this.terminalId}/attach`
-    )
-    this.socket = socket
-    socket.onopen = () => {
-      if (this.socket !== socket) {
-        return
-      }
-
-      try {
-        this.fit()
-        this.send({
-          version: TERMINAL_PROTOCOL_VERSION,
-          type: 'hello',
+    const socket: Socket<
+      TerminalServerToClientEvents,
+      TerminalClientToServerEvents
+    > = io('/terminals', {
+      path: SOCKET_IO_PATH,
+      transports: ['websocket'],
+      forceNew: true,
+      multiplex: false,
+      autoConnect: false,
+      reconnection: true,
+      retries: 0,
+      auth: (authorize) =>
+        authorize({
+          terminalId: this.terminalId,
           clientId: getClientId(),
           cols: this.terminal?.cols ?? 100,
           rows: this.terminal?.rows ?? 30
         })
-        this.resetHeartbeatDeadline()
-      } catch (error) {
-        const detail =
-          error instanceof Error
-            ? `${error.name}: ${error.message}`
-            : String(error)
-        this.reconnectAllowed = false
-        this.stopWithError(`Terminal handshake failed in browser: ${detail}`)
-        socket.close(1011, 'Browser handshake failed')
-      }
-    }
-    socket.onmessage = (event) => {
+    })
+    this.socket = socket
+    socket.on('connect', () => {
       if (this.socket !== socket) {
         return
       }
 
-      this.handleServerMessage(String(event.data))
-    }
-    socket.onerror = () => {
-      // close drives retry and preserves one state transition.
-    }
-    socket.onclose = (event) => {
+      this.fit()
+    })
+    socket.on('ready', (value) => this.handleServerEvent('ready', value))
+    socket.on('output', (value) => this.handleServerEvent('output', value))
+    socket.on('title', (value) => this.handleServerEvent('title', value))
+    socket.on('progress', (value) => this.handleServerEvent('progress', value))
+    socket.on('control', (value) => this.handleServerEvent('control', value))
+    socket.on('exit', (value) => this.handleServerEvent('exit', value))
+    socket.on('terminal_error', (value) =>
+      this.handleServerEvent('terminal_error', value)
+    )
+    socket.on('connect_error', (error) => {
+      if (this.socket !== socket || !this.reconnectAllowed) {
+        return
+      }
+
+      this.update({
+        phase: 'reconnecting',
+        controller: false,
+        error: `Terminal connection failed: ${error.message}`
+      })
+    })
+    socket.on('disconnect', (reason) => {
       if (this.socket !== socket) {
         return
       }
 
       const connected = this.ready
-      this.socket = null
       this.ready = false
       this.streamId = null
-      this.clearHeartbeat()
+      this.controllerGeneration = 0
       if (!this.reconnectAllowed) {
         this.clearDegraded()
       }
 
-      const closeError =
-        !connected && !this.snapshotValue.error
-          ? event.reason
-            ? `Terminal connection closed (${event.code}): ${event.reason}`
-            : event.code === 1006
-              ? 'Terminal connection failed: WebSocket closed abnormally (code 1006)'
-              : `Terminal connection closed before handshake (code ${event.code})`
-          : this.snapshotValue.error
       this.update({
         phase:
           this.reconnectAllowed && !this.disposed ? 'reconnecting' : 'closed',
         controller: false,
         degraded: this.reconnectAllowed ? this.snapshotValue.degraded : false,
-        error: closeError
+        error:
+          !connected && !this.snapshotValue.error
+            ? `Terminal connection closed: ${reason}`
+            : this.snapshotValue.error
       })
-      if (this.reconnectAllowed && !this.disposed) {
-        this.scheduleReconnect()
+    })
+    socket.io.on('reconnect_attempt', () => {
+      if (this.socket === socket && this.reconnectAllowed) {
+        this.startDegradedTimer()
+        this.update({ phase: 'reconnecting', controller: false })
       }
-    }
+    })
+    socket.connect()
   }
 
-  private handleServerMessage(raw: string): void {
-    this.resetHeartbeatDeadline()
-    let value: unknown
-    try {
-      value = JSON.parse(raw)
-    } catch {
-      this.failProtocol('The terminal server sent invalid JSON')
-      return
-    }
-    const message = parseTerminalServerMessage(value)
-    if (!message) {
-      this.failProtocol('The terminal server sent an invalid message')
-      return
-    }
+  private handleServerEvent(event: TerminalServerEvent, value: unknown): void {
+    if (event === 'ready') {
+      const message = parseTerminalServerEvent('ready', value)
+      if (!message) {
+        this.failProtocol('The terminal server sent an invalid ready event')
+        return
+      }
 
-    if (message.type === 'ready') {
       this.terminal?.reset()
       this.streamId = message.streamId
+      this.controllerGeneration = message.generation
       this.expectedSequence = 1
       this.lastParsedSequence = 0
       this.parsedSequences.clear()
       this.ready = true
-      this.retryAttempt = 0
       this.clearDegraded()
       this.update({
         phase: 'ready',
@@ -840,31 +808,45 @@ export class TerminalSession {
       return
     }
 
-    if (message.type === 'ping') {
-      this.send({
-        version: TERMINAL_PROTOCOL_VERSION,
-        type: 'pong',
-        nonce: message.nonce
-      })
-      return
-    }
+    if (event === 'output') {
+      const message = parseTerminalServerEvent('output', value)
+      if (!message) {
+        this.failProtocol('The terminal server sent invalid output')
+        return
+      }
 
-    if (message.type === 'output') {
       this.handleOutput(message.streamId, message.sequence, message.data)
       return
     }
 
-    if (message.type === 'title') {
+    if (event === 'title') {
+      const message = parseTerminalServerEvent('title', value)
+      if (!message) {
+        this.failProtocol('The terminal server sent an invalid title')
+        return
+      }
+
       this.update({ title: message.title.trim().slice(0, 256) })
       return
     }
 
-    if (message.type === 'progress') {
-      // Kept in protocol v1 for compatibility; SSE metadata owns web progress.
+    if (event === 'progress') {
+      if (!parseTerminalServerEvent('progress', value)) {
+        this.failProtocol('The terminal server sent invalid progress')
+      }
+
+      // Product-event metadata remains the web progress authority.
       return
     }
 
-    if (message.type === 'control') {
+    if (event === 'control') {
+      const message = parseTerminalServerEvent('control', value)
+      if (!message) {
+        this.failProtocol('The terminal server sent invalid controller state')
+        return
+      }
+
+      this.controllerGeneration = message.generation
       this.update({ controller: message.controller })
       if (message.controller) {
         this.scheduleFit()
@@ -873,19 +855,29 @@ export class TerminalSession {
       return
     }
 
-    if (message.type === 'exit') {
+    if (event === 'exit') {
+      if (!parseTerminalServerEvent('exit', value)) {
+        this.failProtocol('The terminal server sent an invalid exit event')
+        return
+      }
+
       this.update({ exitSerial: this.snapshotValue.exitSerial + 1 })
       return
     }
 
-    if (message.type === 'error') {
-      this.reconnectAllowed = message.retryable
-      this.terminal?.writeln(`\r\n\x1b[31m${message.message}\x1b[0m`)
-      if (message.retryable) {
-        this.update({ error: message.message })
-      } else {
-        this.stopWithError(message.message)
-      }
+    const message = parseTerminalServerEvent('terminal_error', value)
+    if (!message) {
+      this.failProtocol('The terminal server sent an invalid error event')
+      return
+    }
+
+    this.reconnectAllowed = message.retryable
+    this.terminal?.writeln(`\r\n\x1b[31m${message.message}\x1b[0m`)
+    if (message.retryable) {
+      this.update({ error: message.message })
+    } else {
+      this.stopWithError(message.message)
+      this.socket?.disconnect()
     }
   }
 
@@ -909,19 +901,33 @@ export class TerminalSession {
       while (this.parsedSequences.delete(this.lastParsedSequence + 1)) {
         this.lastParsedSequence += 1
       }
-      this.send({
-        version: TERMINAL_PROTOCOL_VERSION,
-        type: 'output_ack',
+      this.send('output_ack', {
         streamId,
         sequence: this.lastParsedSequence
       })
     })
   }
 
-  private send(message: TerminalClientMessage): void {
-    if (this.socket?.readyState === WebSocket.OPEN) {
-      this.socket.send(JSON.stringify(message))
+  private send<E extends keyof TerminalClientToServerEvents>(
+    event: E,
+    payload: Parameters<TerminalClientToServerEvents[E]>[0]
+  ): void {
+    if (!this.socket?.connected || !this.ready) {
+      return
     }
+
+    if (event === 'output_ack') {
+      ;(this.socket.emit as (event: string, payload: unknown) => void)(
+        event,
+        payload
+      )
+      return
+    }
+
+    ;(this.socket.volatile.emit as (event: string, payload: unknown) => void)(
+      event,
+      payload
+    )
   }
 
   private scheduleFit(): void {
@@ -943,9 +949,8 @@ export class TerminalSession {
     try {
       this.fitAddon.fit()
       if (this.ready && this.snapshotValue.controller) {
-        this.send({
-          version: TERMINAL_PROTOCOL_VERSION,
-          type: 'resize',
+        this.send('resize', {
+          generation: this.controllerGeneration,
           cols: this.terminal.cols,
           rows: this.terminal.rows
         })
@@ -953,28 +958,6 @@ export class TerminalSession {
     } catch {
       // Hidden/mobile transition hosts can temporarily have no dimensions.
     }
-  }
-
-  private scheduleReconnect(): void {
-    if (this.retryTimer !== null) {
-      return
-    }
-
-    this.retryAttempt += 1
-    const cap = Math.min(10_000, 500 * 2 ** Math.min(this.retryAttempt, 5))
-    const delay = cap / 2 + Math.random() * (cap / 2)
-    this.retryTimer = window.setTimeout(() => {
-      this.retryTimer = null
-      this.connect()
-    }, delay)
-  }
-
-  private resetHeartbeatDeadline(): void {
-    this.clearHeartbeat()
-    this.heartbeatTimer = window.setTimeout(() => {
-      this.heartbeatTimer = null
-      this.socket?.close(1001, 'Heartbeat timed out')
-    }, TERMINAL_HEARTBEAT_TIMEOUT_MS + 5_000)
   }
 
   private startDegradedTimer(): void {
@@ -997,14 +980,6 @@ export class TerminalSession {
 
     this.degradedTimer = null
     this.update({ degraded: false })
-  }
-
-  private clearHeartbeat(): void {
-    if (this.heartbeatTimer !== null) {
-      window.clearTimeout(this.heartbeatTimer)
-    }
-
-    this.heartbeatTimer = null
   }
 
   private handleBell(): void {
@@ -1031,12 +1006,11 @@ export class TerminalSession {
   private failProtocol(message: string): void {
     this.reconnectAllowed = false
     this.stopWithError(message)
-    this.socket?.close(1002, message.slice(0, 123))
+    this.socket?.disconnect()
   }
 
   private stopWithError(message: string): void {
     this.ready = false
-    this.clearHeartbeat()
     this.clearDegraded()
     this.update({
       error: message,
@@ -1052,16 +1026,8 @@ export class TerminalSession {
   }
 
   private clearTimers(): void {
-    if (this.retryTimer !== null) {
-      window.clearTimeout(this.retryTimer)
-    }
-
     if (this.degradedTimer !== null) {
       window.clearTimeout(this.degradedTimer)
-    }
-
-    if (this.heartbeatTimer !== null) {
-      window.clearTimeout(this.heartbeatTimer)
     }
 
     if (this.bellTimer !== null) {
@@ -1076,9 +1042,7 @@ export class TerminalSession {
       cancelAnimationFrame(this.resizeFrame)
     }
 
-    this.retryTimer = null
     this.degradedTimer = null
-    this.heartbeatTimer = null
     this.bellTimer = null
     this.fileTransferTimer = null
     this.resizeFrame = null

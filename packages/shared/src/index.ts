@@ -1,5 +1,6 @@
 import { z } from 'zod'
 
+export * from './socket-protocol.js'
 export * from './terminal-protocol.js'
 
 export const PRODUCT_NAME = 'TaskTTY'

@@ -3,10 +3,8 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Hono } from 'hono'
-import { streamSSE } from 'hono/streaming'
 import type { Context } from 'hono'
 import type { ZodType } from 'zod'
-import { upgradeWebSocket } from '@hono/node-server'
 import { serveStatic } from '@hono/node-server/serve-static'
 import {
   createTerminalSchema,
@@ -18,10 +16,8 @@ import {
   updateProjectSchema,
   updateTerminalSchema
 } from '@tasktty/shared'
-import type { ProductEvent } from '@tasktty/shared'
 import type { AppConfig, TmuxAdapter, TaskTTYService } from '@tasktty/core'
 import { DomainError } from '@tasktty/core'
-import { TerminalAttachmentManager } from './attachments.js'
 import { TerminalMetadataManager } from './terminal-metadata.js'
 
 const UPLOAD_MIME_EXTENSIONS: Readonly<Record<string, string>> = {
@@ -142,12 +138,6 @@ export function createApp({
       error instanceof Error ? error.message : String(error)
     )
   })
-  const attachments = new TerminalAttachmentManager(
-    service,
-    tmux,
-    config.tmuxPath,
-    metadata
-  )
   let terminalUploadQueue = Promise.resolve()
 
   app.onError((error, context) => {
@@ -466,102 +456,6 @@ export function createApp({
   app.get('/api/operations/:operationId', (context) =>
     context.json({
       operation: service.getOperation(context.req.param('operationId'))
-    })
-  )
-
-  app.get('/api/events', (context) =>
-    streamSSE(context, async (stream) => {
-      const queuedEvents: ProductEvent[] = []
-      let connected = false
-      let aborted = false
-      let heartbeat: NodeJS.Timeout | null = null
-      let writeQueue = Promise.resolve()
-      let resolveAbort!: () => void
-      const abort = new Promise<void>((resolve) => {
-        resolveAbort = resolve
-      })
-      const stop = () => {
-        aborted = true
-        resolveAbort()
-      }
-      stream.onAbort(stop)
-      const writeSSE = (message: Parameters<typeof stream.writeSSE>[0]) => {
-        writeQueue = writeQueue.then(() => stream.writeSSE(message))
-        return writeQueue
-      }
-      const writeEvent = (event: ProductEvent) =>
-        writeSSE({
-          id: event.id,
-          event: event.type,
-          data: JSON.stringify(event)
-        })
-      const unsubscribe = service.events.subscribe((event) => {
-        if (connected && !aborted) {
-          void writeEvent(event).catch(stop)
-        } else if (!aborted) {
-          queuedEvents.push(event)
-        }
-      })
-      try {
-        await metadataReady
-        if (aborted) {
-          return
-        }
-
-        const terminalMetadata = metadata.snapshot()
-        const representedEventCount = queuedEvents.length
-        await writeSSE({
-          event: 'connected',
-          data: JSON.stringify({
-            at: new Date().toISOString(),
-            terminalMetadata
-          })
-        })
-        queuedEvents.splice(0, representedEventCount)
-        while (queuedEvents.length) {
-          await writeEvent(queuedEvents.shift()!)
-        }
-        connected = true
-        heartbeat = setInterval(
-          () => void writeSSE({ event: 'heartbeat', data: '{}' }).catch(stop),
-          15_000
-        )
-        await abort
-      } finally {
-        if (heartbeat) {
-          clearInterval(heartbeat)
-        }
-
-        unsubscribe()
-      }
-    })
-  )
-
-  app.get(
-    '/api/terminals/:terminalId/attach',
-    upgradeWebSocket((context) => {
-      const terminalId = context.req.param('terminalId')!
-      let connectionId: string | null = null
-      return {
-        onOpen(_event, ws) {
-          connectionId = attachments.accept(terminalId, ws)
-        },
-        onMessage(event) {
-          if (connectionId) {
-            attachments.message(connectionId, event.data)
-          }
-        },
-        onClose() {
-          if (connectionId) {
-            attachments.close(connectionId)
-          }
-        },
-        onError() {
-          if (connectionId) {
-            attachments.close(connectionId)
-          }
-        }
-      }
     })
   )
 
