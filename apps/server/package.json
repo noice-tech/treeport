@@ -14,7 +14,7 @@
     "@hono/node-server": "^2.0.10",
     "@tasktty/core": "workspace:*",
     "@tasktty/shared": "workspace:*",
-    "@xterm/headless": "^5.5.0",
+    "@xterm/headless": "^6.0.0",
     "hono": "^4.11.7",
     "node-pty": "1.2.0-beta.14",
     "socket.io": "4.8.3",

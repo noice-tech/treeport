@@ -53,20 +53,44 @@ export function terminalKeyboardInput(
   event: TerminalKeyboardEvent,
   applicationCursorKeysMode = false
 ): string | null {
-  if (
-    event.type !== 'keydown' ||
-    event.isComposing ||
-    event.altKey ||
-    event.ctrlKey
-  ) {
+  if (event.type !== 'keydown' || event.isComposing || event.ctrlKey) {
     return null
   }
 
-  if (event.key === 'Enter' && event.shiftKey && !event.metaKey) {
+  if (
+    event.key === 'Enter' &&
+    event.shiftKey &&
+    !event.altKey &&
+    !event.metaKey
+  ) {
     return '\u001b[13;2u'
   }
 
-  if (!event.metaKey || event.shiftKey) {
+  if (event.altKey && !event.metaKey && !event.shiftKey) {
+    if (usesMacKeyboard()) {
+      if (event.key === 'ArrowLeft') {
+        return '\u001bb'
+      }
+
+      if (event.key === 'ArrowRight') {
+        return '\u001bf'
+      }
+    } else {
+      const final = {
+        ArrowUp: 'A',
+        ArrowDown: 'B',
+        ArrowRight: 'C',
+        ArrowLeft: 'D'
+      }[event.key]
+      if (final) {
+        return `\u001b[1;5${final}`
+      }
+    }
+
+    return null
+  }
+
+  if (!event.metaKey || event.altKey || event.shiftKey) {
     return null
   }
 
@@ -107,11 +131,12 @@ function activateTerminalLink(event: MouseEvent, url: string): void {
   window.open(url, '_blank', 'noopener,noreferrer')
 }
 
-function forcePlainSelectionWhileMouseReporting(event: MouseEvent): void {
-  const wrapper = event.currentTarget
+function forcePlainSelectionWhileMouseReporting(
+  event: MouseEvent,
+  terminal: Terminal
+): void {
   if (
-    !(wrapper instanceof Element) ||
-    !wrapper.querySelector('.xterm.enable-mouse-events') ||
+    !terminal.element?.classList.contains('enable-mouse-events') ||
     event.button !== 0 ||
     event.altKey ||
     event.ctrlKey ||
@@ -129,12 +154,12 @@ function forcePlainSelectionWhileMouseReporting(event: MouseEvent): void {
 
 function trackTerminalScrolling(
   wrapper: HTMLElement,
+  terminal: Terminal,
   onScroll: () => void,
   onResumeInput: () => void
 ): void {
   let lastTouchY: number | null = null
   let touchScrollRemainder = 0
-  let translatingTouchScroll = false
 
   wrapper.addEventListener(
     'wheel',
@@ -150,15 +175,11 @@ function trackTerminalScrolling(
       if (event.touches.length !== 1) {
         lastTouchY = null
         touchScrollRemainder = 0
-        translatingTouchScroll = false
         return
       }
 
       lastTouchY = event.touches[0]!.clientY
       touchScrollRemainder = 0
-      translatingTouchScroll = Boolean(
-        wrapper.querySelector('.xterm.enable-mouse-events')
-      )
     },
     { capture: true, passive: true }
   )
@@ -168,17 +189,11 @@ function trackTerminalScrolling(
       if (event.touches.length !== 1 || lastTouchY === null) {
         lastTouchY = null
         touchScrollRemainder = 0
-        translatingTouchScroll = false
         return
       }
 
-      if (!translatingTouchScroll) {
-        return
-      }
-
-      const screen = wrapper.querySelector<HTMLElement>('.xterm-screen')
-      if (!screen) {
-        translatingTouchScroll = false
+      const element = terminal.element
+      if (!element) {
         return
       }
 
@@ -187,11 +202,9 @@ function trackTerminalScrolling(
       lastTouchY = touch.clientY
       event.preventDefault()
 
-      const rowHeight =
-        screen
-          .querySelector<HTMLElement>('.xterm-rows > div')
-          ?.getBoundingClientRect().height || 16
-      const rowsPerWheel = wrapper.querySelector('.xterm.enable-mouse-events')
+      const bounds = element.getBoundingClientRect()
+      const rowHeight = bounds.height / terminal.rows || 16
+      const rowsPerWheel = element.classList.contains('enable-mouse-events')
         ? TERMINAL_TOUCH_ROWS_PER_WHEEL
         : 1
       const touchStep = rowHeight * rowsPerWheel
@@ -201,7 +214,6 @@ function trackTerminalScrolling(
       }
 
       touchScrollRemainder -= steps * touchStep
-      const bounds = screen.getBoundingClientRect()
       const clientX = Math.min(
         Math.max(touch.clientX, bounds.left),
         bounds.right - 1
@@ -211,7 +223,7 @@ function trackTerminalScrolling(
         bounds.bottom - 1
       )
       for (let index = 0; index < Math.abs(steps); index += 1) {
-        screen.dispatchEvent(
+        element.dispatchEvent(
           new WheelEvent('wheel', {
             bubbles: true,
             cancelable: true,
@@ -229,7 +241,6 @@ function trackTerminalScrolling(
   const resetTouchScroll = () => {
     lastTouchY = null
     touchScrollRemainder = 0
-    translatingTouchScroll = false
   }
   wrapper.addEventListener('touchend', resetTouchScroll, true)
   wrapper.addEventListener('touchcancel', resetTouchScroll, true)
@@ -316,6 +327,9 @@ export function terminalOptions() {
       foreground: '#e4e4e7',
       cursor: '#67e8f9',
       selectionBackground: '#3f3f4666',
+      scrollbarSliderBackground: '#3f3f46',
+      scrollbarSliderHoverBackground: '#52525b',
+      scrollbarSliderActiveBackground: '#71717a',
       black: '#18181b',
       red: '#fb7185',
       green: '#86efac',
@@ -477,11 +491,12 @@ export class TerminalSession {
     terminal.open(this.wrapper)
     this.wrapper.addEventListener(
       'mousedown',
-      forcePlainSelectionWhileMouseReporting,
+      (event) => forcePlainSelectionWhileMouseReporting(event, terminal),
       true
     )
     trackTerminalScrolling(
       this.wrapper,
+      terminal,
       () => {
         this.scrollExitPending = true
       },

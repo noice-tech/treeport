@@ -48,9 +48,9 @@ export class TerminalMetadataParser {
       return Promise.resolve()
     }
 
-    // xterm 5.5 drops a three-byte character split after its second byte.
-    // Normalize through the same streaming decoder TaskTTY previously used,
-    // then continue feeding ordered bytes into xterm's terminal parser.
+    // xterm 6.0 still drops a three-byte character split after its second byte.
+    // Normalize through a streaming decoder before feeding ordered bytes into
+    // xterm's terminal parser.
     const decoded = this.decoder.decode(data, { stream: true })
     return new Promise((resolve) =>
       this.terminal.write(Buffer.from(decoded), resolve)

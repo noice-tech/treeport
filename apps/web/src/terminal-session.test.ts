@@ -249,6 +249,33 @@ describe('terminal keyboard input', () => {
     ).toBeNull()
   })
 
+  it('preserves xterm 5 Alt+Arrow word navigation', () => {
+    vi.stubGlobal('navigator', { platform: 'MacIntel' })
+    expect(terminalKeyboardInput(key({ key: 'ArrowLeft', altKey: true }))).toBe(
+      '\u001bb'
+    )
+    expect(
+      terminalKeyboardInput(key({ key: 'ArrowRight', altKey: true }))
+    ).toBe('\u001bf')
+    expect(
+      terminalKeyboardInput(key({ key: 'ArrowUp', altKey: true }))
+    ).toBeNull()
+
+    vi.stubGlobal('navigator', { platform: 'Linux x86_64' })
+    expect(terminalKeyboardInput(key({ key: 'ArrowLeft', altKey: true }))).toBe(
+      '\u001b[1;5D'
+    )
+    expect(
+      terminalKeyboardInput(key({ key: 'ArrowRight', altKey: true }))
+    ).toBe('\u001b[1;5C')
+    expect(terminalKeyboardInput(key({ key: 'ArrowUp', altKey: true }))).toBe(
+      '\u001b[1;5A'
+    )
+    expect(terminalKeyboardInput(key({ key: 'ArrowDown', altKey: true }))).toBe(
+      '\u001b[1;5B'
+    )
+  })
+
   it('maps Cmd+Left/Right to Home/End in the current cursor-key mode', () => {
     expect(
       terminalKeyboardInput(key({ key: 'ArrowLeft', metaKey: true }))
