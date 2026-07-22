@@ -2,10 +2,10 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { parseTerminalProgress, type TerminalProgress } from '@tasktty/shared'
 import { TmuxControlParser } from './tmux-control.js'
 
-const ESC = 0x1b
-const BEL = 0x07
-const OSC = 0x9d
-const ST = 0x9c
+const ESC = '\x1b'
+const BEL = '\x07'
+const OSC = '\u009d'
+const ST = '\u009c'
 const MAX_OSC_BYTES = 1024
 
 type ParserState =
@@ -22,18 +22,20 @@ export type TerminalMetadataUpdate =
 
 /** Extracts title and OSC 9;4 progress metadata from arbitrary terminal bytes. */
 export class TerminalMetadataParser {
+  private readonly decoder = new TextDecoder()
   private state: ParserState = 'ground'
-  private osc: number[] = []
+  private osc: string[] = []
+  private oscBytes = 0
 
   push(data: Uint8Array): TerminalMetadataUpdate[] {
     const updates: TerminalMetadataUpdate[] = []
-    for (const byte of data) {
+    for (const character of this.decoder.decode(data, { stream: true })) {
       if (this.state === 'ground') {
-        if (byte === ESC) {
+        if (character === ESC) {
           this.state = 'escape'
-        } else if (byte === OSC) {
+        } else if (character === OSC) {
           this.startOsc()
-        } else if (byte === BEL) {
+        } else if (character === BEL) {
           updates.push({ type: 'bell' })
         }
 
@@ -41,35 +43,35 @@ export class TerminalMetadataParser {
       }
 
       if (this.state === 'escape') {
-        if (byte === 0x5d) {
+        if (character === ']') {
           this.startOsc()
         } else {
-          this.state = byte === ESC ? 'escape' : 'ground'
+          this.state = character === ESC ? 'escape' : 'ground'
         }
 
         continue
       }
 
       if (this.state === 'osc') {
-        if (byte === BEL || byte === ST) {
+        if (character === BEL || character === ST) {
           this.finishOsc(updates)
-        } else if (byte === ESC) {
+        } else if (character === ESC) {
           this.state = 'osc_escape'
         } else {
-          this.appendOsc(byte)
+          this.appendOsc(character)
         }
 
         continue
       }
 
       if (this.state === 'osc_escape') {
-        if (byte === 0x5c || byte === ST || byte === BEL) {
+        if (character === '\\' || character === ST || character === BEL) {
           this.finishOsc(updates)
-        } else if (byte === 0x5d) {
+        } else if (character === ']') {
           this.startOsc()
-        } else if (byte === ESC) {
+        } else if (character === ESC) {
           this.appendOsc(ESC)
-        } else if (this.appendOsc(ESC) && this.appendOsc(byte)) {
+        } else if (this.appendOsc(ESC) && this.appendOsc(character)) {
           this.state = 'osc'
         }
 
@@ -77,20 +79,20 @@ export class TerminalMetadataParser {
       }
 
       if (this.state === 'osc_discard') {
-        if (byte === BEL || byte === ST) {
+        if (character === BEL || character === ST) {
           this.state = 'ground'
-        } else if (byte === ESC) {
+        } else if (character === ESC) {
           this.state = 'osc_discard_escape'
         }
 
         continue
       }
 
-      if (byte === 0x5c || byte === ST || byte === BEL) {
+      if (character === '\\' || character === ST || character === BEL) {
         this.state = 'ground'
-      } else if (byte === 0x5d) {
+      } else if (character === ']') {
         this.startOsc()
-      } else if (byte !== ESC) {
+      } else if (character !== ESC) {
         this.state = 'osc_discard'
       }
     }
@@ -100,42 +102,40 @@ export class TerminalMetadataParser {
   private startOsc(): void {
     this.state = 'osc'
     this.osc = []
+    this.oscBytes = 0
   }
 
-  private appendOsc(byte: number): boolean {
-    this.osc.push(byte)
-    if (this.osc.length <= MAX_OSC_BYTES) {
+  private appendOsc(character: string): boolean {
+    this.osc.push(character)
+    this.oscBytes += Buffer.byteLength(character)
+    if (this.oscBytes <= MAX_OSC_BYTES) {
       return true
     }
 
     this.osc = []
+    this.oscBytes = 0
     this.state = 'osc_discard'
     return false
   }
 
   private finishOsc(updates: TerminalMetadataUpdate[]): void {
-    const separator = this.osc.indexOf(0x3b)
+    const osc = this.osc.join('')
+    const separator = osc.indexOf(';')
     if (separator > 0) {
-      const command = Buffer.from(this.osc.slice(0, separator)).toString(
-        'ascii'
-      )
-      const payload = this.osc.slice(separator + 1)
+      const command = osc.slice(0, separator)
+      const payload = osc.slice(separator + 1)
       if (command === '9') {
-        const parsed = parseTerminalProgress(
-          Buffer.from(payload).toString('ascii')
-        )
+        const parsed = parseTerminalProgress(payload)
         if (parsed !== undefined) {
           updates.push({ type: 'progress', progress: parsed })
         }
       } else if (command === '0' || command === '2') {
-        updates.push({
-          type: 'title',
-          title: Buffer.from(payload).toString('utf8')
-        })
+        updates.push({ type: 'title', title: payload })
       }
     }
 
     this.osc = []
+    this.oscBytes = 0
     this.state = 'ground'
   }
 }

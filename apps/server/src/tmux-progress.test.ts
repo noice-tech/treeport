@@ -20,6 +20,25 @@ describe('TerminalProgressParser', () => {
     ])
   })
 
+  it('decodes merged UTF-8 titles across every byte split without false bells', () => {
+    const title = '✓ #6 — Fix title parsing'
+    const sequence = Buffer.from(`\x1b]0;${title}\x07`)
+    const chunkings: Uint8Array[][] = [
+      [...sequence.keys()].map((index) => sequence.subarray(index, index + 1)),
+      ...Array.from({ length: sequence.length - 1 }, (_, index) => [
+        sequence.subarray(0, index + 1),
+        sequence.subarray(index + 1)
+      ])
+    ]
+
+    for (const chunks of chunkings) {
+      const parser = new TerminalMetadataParser()
+      expect(chunks.flatMap((chunk) => parser.push(chunk))).toEqual([
+        { type: 'title', title }
+      ])
+    }
+  })
+
   it('extracts real BEL without treating OSC terminators as bells', () => {
     const parser = new TerminalMetadataParser()
     expect(
@@ -40,10 +59,15 @@ describe('TerminalProgressParser', () => {
     expect(parser.push(bytes('\x1b]9;4;1;42\x1b\\'))).toEqual([
       { state: 'normal', value: 42 }
     ])
-    expect(parser.push(bytes('\x9d9;4;2;100\x9c'))).toEqual([
+    expect(parser.push(Buffer.from('\u009d9;4;2;100\u009c'))).toEqual([
       { state: 'error', value: 100 }
     ])
     expect(parser.push(bytes('\x1b]9;4;0\x07'))).toEqual([null])
+  })
+
+  it('does not treat a UTF-8 continuation byte as C1 OSC', () => {
+    const parser = new TerminalMetadataParser()
+    expect(parser.push(Buffer.from('Ý9;4;3\x07'))).toEqual([{ type: 'bell' }])
   })
 
   it('preserves OSC parser state across arbitrary chunks', () => {
@@ -67,6 +91,21 @@ describe('TerminalProgressParser', () => {
       )
     ).toEqual([
       { type: 'title', title: 'title' },
+      { type: 'progress', progress: { state: 'indeterminate', value: null } }
+    ])
+  })
+
+  it('enforces the OSC size limit in UTF-8 bytes', () => {
+    const parser = new TerminalMetadataParser()
+    const maximumTitle = 'Ü'.repeat(511)
+    expect(
+      parser.push(
+        Buffer.from(
+          `\x1b]0;${maximumTitle}\x07\x1b]0;${maximumTitle}Ü\x07\x1b]9;4;3\x07`
+        )
+      )
+    ).toEqual([
+      { type: 'title', title: maximumTitle },
       { type: 'progress', progress: { state: 'indeterminate', value: null } }
     ])
   })
@@ -108,10 +147,11 @@ describe('TmuxProgressObserver', () => {
     )
 
     child.stdout.write(
-      '%output %0 before\\007\\033]2;Pi\\007\\033]9;4;3\\007after\n'
+      '%output %0 before\\007\\033]0;\\342\n' +
+        '%output %0 \\234\\223 #6 \\342\\200\\224 Fix title parsing\\007\\033]9;4;3\\007after\n'
     )
     expect(onBell).toHaveBeenCalledOnce()
-    expect(onTitle).toHaveBeenCalledWith('Pi')
+    expect(onTitle).toHaveBeenCalledWith('✓ #6 — Fix title parsing')
     expect(onProgress).toHaveBeenCalledWith({
       state: 'indeterminate',
       value: null
