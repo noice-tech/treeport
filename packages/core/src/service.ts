@@ -2314,7 +2314,6 @@ export class TaskTTYService {
     }
 
     this.worktreeLocks.add(worktreeId)
-    this.projectLocks.add(worktree.projectId)
     let operationStarted = false
     try {
       const { preview } = await this.prepareRemovePreview(worktreeId)
@@ -2430,7 +2429,6 @@ export class TaskTTYService {
     } finally {
       if (!operationStarted) {
         this.worktreeLocks.delete(worktreeId)
-        this.projectLocks.delete(worktree.projectId)
       }
     }
   }
@@ -2540,7 +2538,6 @@ export class TaskTTYService {
       })
     } finally {
       this.worktreeLocks.delete(worktree.id)
-      this.projectLocks.delete(worktree.projectId)
     }
   }
 
@@ -2553,13 +2550,21 @@ export class TaskTTYService {
       )
     }
 
+    let project = this.getProject(projectId)
+    if (
+      project.worktrees.some((worktree) => this.worktreeLocks.has(worktree.id))
+    ) {
+      throw new DomainError(
+        'PROJECT_BUSY',
+        'A project worktree is already being modified',
+        409
+      )
+    }
+
     this.projectLocks.add(projectId)
     const lockedWorktrees: string[] = []
     try {
-      let project = await this.observeAvailableProject(
-        this.getProject(projectId),
-        true
-      )
+      project = await this.observeAvailableProject(project, true)
       if (
         project.worktrees.some((worktree) =>
           this.worktreeLocks.has(worktree.id)
