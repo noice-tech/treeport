@@ -19,6 +19,7 @@ import {
 } from './tmux-progress.js'
 
 export const TERMINAL_METADATA_POLL_MS = 2_000
+export const TERMINAL_PROGRESS_STALE_MS = 5 * 60_000
 
 const SHELL_COMMANDS = new Set([
   'ash',
@@ -57,6 +58,8 @@ interface TerminalMetadataEntry extends TerminalRuntimeMetadata {
   titleRevision: number
   observer: TerminalProgressObserver | null
   observerVersion: number
+  progressLease: NodeJS.Timeout | null
+  progressActivityGeneration: number
   poll: NodeJS.Timeout | null
   polling: boolean
 }
@@ -190,6 +193,8 @@ export class TerminalMetadataManager {
         titleRevision: 0,
         observer: null,
         observerVersion: 0,
+        progressLease: null,
+        progressActivityGeneration: 0,
         poll: null,
         polling: false
       }
@@ -337,11 +342,36 @@ export class TerminalMetadataManager {
           },
           onProgress: (progress) => {
             if (
-              this.entries.get(entry.terminalId) === entry &&
-              entry.observerVersion === version
+              this.entries.get(entry.terminalId) !== entry ||
+              entry.observerVersion !== version
             ) {
-              this.update(entry, { progress })
+              return
             }
+
+            const activityGeneration = ++entry.progressActivityGeneration
+            if (entry.progressLease) {
+              clearTimeout(entry.progressLease)
+              entry.progressLease = null
+            }
+
+            if (progress !== null) {
+              entry.progressLease = setTimeout(() => {
+                if (
+                  this.entries.get(entry.terminalId) !== entry ||
+                  entry.observerVersion !== version ||
+                  entry.progressActivityGeneration !== activityGeneration
+                ) {
+                  return
+                }
+
+                entry.progressLease = null
+                entry.progressActivityGeneration += 1
+                this.update(entry, { progress: null })
+              }, TERMINAL_PROGRESS_STALE_MS)
+              entry.progressLease.unref()
+            }
+
+            this.update(entry, { progress })
           },
           onBell: () => {
             if (
@@ -366,6 +396,12 @@ export class TerminalMetadataManager {
 
             entry.observerVersion += 1
             entry.observer = null
+            entry.progressActivityGeneration += 1
+            if (entry.progressLease) {
+              clearTimeout(entry.progressLease)
+              entry.progressLease = null
+            }
+
             this.update(entry, { progress: null })
           }
         })
@@ -380,6 +416,13 @@ export class TerminalMetadataManager {
         }
       } catch {
         entry.observer = null
+        entry.progressActivityGeneration += 1
+        if (entry.progressLease) {
+          clearTimeout(entry.progressLease)
+          entry.progressLease = null
+        }
+
+        this.update(entry, { progress: null })
       }
     }
 
@@ -401,6 +444,12 @@ export class TerminalMetadataManager {
     entry.observerVersion += 1
     entry.observer?.dispose()
     entry.observer = null
+    entry.progressActivityGeneration += 1
+    if (entry.progressLease) {
+      clearTimeout(entry.progressLease)
+      entry.progressLease = null
+    }
+
     this.update(entry, { progress: null })
   }
 

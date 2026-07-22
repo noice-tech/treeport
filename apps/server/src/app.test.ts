@@ -2,7 +2,7 @@ import crypto from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
-import type { TerminalRuntimeMetadata } from '@tasktty/shared'
+import type { ProductEvent, TerminalRuntimeMetadata } from '@tasktty/shared'
 import {
   DomainError,
   ProductEventBus,
@@ -351,6 +351,63 @@ describe('HTTP API validation', () => {
     expect((await app.request('/api/worktrees/w/discard-preview')).status).toBe(
       404
     )
+  })
+
+  it('serializes rapid metadata transitions after the connected snapshot', async () => {
+    const { app, service } = fixture()
+    const abort = new AbortController()
+    const response = await app.request('/api/events', { signal: abort.signal })
+    const reader = response.body!.getReader()
+    await reader.read()
+
+    const base = {
+      terminalId: 'term',
+      title: null,
+      progressStartedAt: '2026-01-01T00:00:00.000Z',
+      progressClearedAt: null,
+      bell: null
+    }
+    service.events.publish('terminal.metadata', {
+      ...base,
+      progress: { state: 'normal', value: 10 }
+    })
+    service.events.publish('terminal.metadata', {
+      ...base,
+      progress: null,
+      progressClearedAt: '2026-01-01T00:00:01.000Z'
+    })
+    service.events.publish('terminal.metadata', {
+      ...base,
+      progress: { state: 'normal', value: 20 },
+      progressStartedAt: '2026-01-01T00:00:02.000Z'
+    })
+
+    const received: ProductEvent[] = []
+    let buffered = ''
+    const decoder = new TextDecoder()
+    while (received.length < 3) {
+      const chunk = await reader.read()
+      buffered += decoder.decode(chunk.value, { stream: !chunk.done })
+      const frames = buffered.split('\n\n')
+      buffered = frames.pop() ?? ''
+      for (const frame of frames) {
+        const data = frame
+          .split('\n')
+          .find((line) => line.startsWith('data: '))
+          ?.slice(6)
+        if (data) {
+          received.push(JSON.parse(data) as ProductEvent)
+        }
+      }
+    }
+
+    expect(received.map((event) => event.data.progress)).toEqual([
+      { state: 'normal', value: 10 },
+      null,
+      { state: 'normal', value: 20 }
+    ])
+    abort.abort()
+    await reader.cancel()
   })
 
   it('starts SSE with the complete metadata snapshot without replaying represented events', async () => {

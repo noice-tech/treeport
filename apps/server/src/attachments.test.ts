@@ -8,7 +8,10 @@ import {
   type TerminalServerMessage
 } from '@tasktty/shared'
 import { TerminalAttachmentManager } from './attachments.js'
-import { TerminalMetadataManager } from './terminal-metadata.js'
+import {
+  TerminalMetadataManager,
+  TERMINAL_PROGRESS_STALE_MS
+} from './terminal-metadata.js'
 import type {
   TerminalProgressObserver,
   TmuxProgressObserverOptions
@@ -303,6 +306,50 @@ describe('TerminalAttachmentManager', () => {
       data: 'still attached'
     })
     manager.close(id)
+  })
+
+  it('fans stale-progress expiry out without disrupting attachments', async () => {
+    const { manager, progressObservers, ptys } = fixture()
+    const first = new FakeSocket()
+    const firstId = manager.accept('term', first as unknown as WSContext)
+    manager.message(firstId, hello('tab-a'))
+    await ready(first)
+    const second = new FakeSocket()
+    const secondId = manager.accept('term', second as unknown as WSContext)
+    manager.message(secondId, hello('tab-b'))
+    await ready(second)
+
+    vi.useFakeTimers()
+    progressObservers[0]!.emit({ state: 'indeterminate', value: null })
+    await vi.advanceTimersByTimeAsync(TERMINAL_PROGRESS_STALE_MS)
+    expect(first.sent.at(-1)).toMatchObject({
+      type: 'progress',
+      progress: null
+    })
+    expect(second.sent.at(-1)).toMatchObject({
+      type: 'progress',
+      progress: null
+    })
+    vi.useRealTimers()
+
+    const later = new FakeSocket()
+    const laterId = manager.accept('term', later as unknown as WSContext)
+    manager.message(laterId, hello('tab-c'))
+    await ready(later)
+    expect(later.sent).toContainEqual({
+      version: TERMINAL_PROTOCOL_VERSION,
+      type: 'progress',
+      progress: null
+    })
+
+    ptys[0]!.emit('still attached')
+    expect(first.sent.at(-1)).toMatchObject({
+      type: 'output',
+      data: 'still attached'
+    })
+    manager.close(firstId)
+    manager.close(secondId)
+    manager.close(laterId)
   })
 
   it('extends the stall deadline when acknowledgements make progress', async () => {

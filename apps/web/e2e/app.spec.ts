@@ -945,6 +945,86 @@ test.describe('desktop worktree terminal UI', () => {
     ).toBe(false)
   })
 
+  test('keeps a daemon clear authoritative over delayed terminal progress', async ({
+    page
+  }) => {
+    await mockApp(page, [
+      {
+        terminalId: 'term_pi',
+        title: 'background · /repo',
+        progress: { state: 'normal', value: 42 }
+      }
+    ])
+
+    await page
+      .getByRole('button', { name: /background · \/repo.*42% complete/ })
+      .click()
+    await expect(page.getByRole('tab', { name: /42% complete/ })).toBeVisible()
+    await page.evaluate(() =>
+      (window as any).__eventSource.emit(
+        'terminal.metadata',
+        JSON.stringify({
+          data: {
+            terminalId: 'term_pi',
+            title: 'background · /repo',
+            progress: null,
+            progressStartedAt: '2026-01-01T00:00:00.000Z',
+            progressClearedAt: '2026-01-01T00:00:01.000Z',
+            bell: null
+          }
+        })
+      )
+    )
+    await expect(
+      page.getByRole('button', { name: /42% complete/ })
+    ).toHaveCount(0)
+    await expect(page.getByRole('tab', { name: /42% complete/ })).toHaveCount(0)
+
+    await page.evaluate(() => {
+      const socket = (window as any).__wsInstances.find((item: any) =>
+        item.url.includes('term_pi')
+      )
+      socket.onmessage?.({
+        data: JSON.stringify({
+          version: 1,
+          type: 'progress',
+          progress: { state: 'indeterminate', value: null }
+        })
+      })
+      socket.onmessage?.({
+        data: JSON.stringify({
+          version: 1,
+          type: 'output',
+          streamId: socket.streamId,
+          sequence: 2,
+          data: '\u001b]9;4;3\u0007'
+        })
+      })
+    })
+    await expect(page.getByRole('button', { name: /working/ })).toHaveCount(0)
+    await expect(page.getByRole('tab', { name: /working/ })).toHaveCount(0)
+
+    await page.evaluate(() =>
+      (window as any).__eventSource.emit(
+        'terminal.metadata',
+        JSON.stringify({
+          data: {
+            terminalId: 'term_pi',
+            title: 'background · /repo',
+            progress: { state: 'normal', value: 75 },
+            progressStartedAt: '2026-01-01T00:00:02.000Z',
+            progressClearedAt: '2026-01-01T00:00:01.000Z',
+            bell: null
+          }
+        })
+      )
+    )
+    await expect(
+      page.getByRole('button', { name: /75% complete/ })
+    ).toBeVisible()
+    await expect(page.getByRole('tab', { name: /75% complete/ })).toBeVisible()
+  })
+
   test('traps modal focus, closes on Escape, and restores its trigger', async ({
     page
   }) => {
@@ -964,16 +1044,45 @@ test.describe('desktop worktree terminal UI', () => {
     await expect(trigger).toBeFocused()
   })
 
-  test('refreshes the metadata snapshot whenever SSE reconnects', async ({
+  test('refreshes projects and replaces retained progress whenever SSE reconnects', async ({
     page
   }) => {
-    const mocked = await mockApp(page)
+    const mocked = await mockApp(page, [
+      {
+        terminalId: 'term_pi',
+        title: 'background · /repo',
+        progress: { state: 'indeterminate', value: null }
+      }
+    ])
     await expect(page.getByText('example')).toBeVisible()
+    await expect(
+      page.getByRole('button', { name: /background · \/repo.*working/ })
+    ).toBeVisible()
     await expect.poll(() => mocked.projectRequests()).toBeGreaterThan(1)
     await page.waitForTimeout(150)
     const before = mocked.projectRequests()
-    await page.evaluate(() => (window as any).__eventSource.emit('connected'))
+    await page.evaluate(() =>
+      (window as any).__eventSource.emit(
+        'connected',
+        JSON.stringify({
+          at: new Date().toISOString(),
+          terminalMetadata: [
+            {
+              terminalId: 'term_pi',
+              title: 'background · /repo',
+              progress: null,
+              progressStartedAt: '2026-01-01T00:00:00.000Z',
+              progressClearedAt: '2026-01-01T00:00:01.000Z',
+              bell: null
+            }
+          ]
+        })
+      )
+    )
     await expect.poll(() => mocked.projectRequests()).toBeGreaterThan(before)
+    await expect(
+      page.getByRole('button', { name: /background · \/repo.*working/ })
+    ).toHaveCount(0)
   })
 
   test('reconnects and allows a viewer to take control without relaunching', async ({
@@ -1659,6 +1768,43 @@ test.describe('desktop worktree terminal UI', () => {
 
 test.describe('mobile terminal UI', () => {
   test.skip(({ isMobile }) => !isMobile)
+
+  test('renders daemon progress clears in the worktree drawer', async ({
+    page
+  }) => {
+    await mockApp(page, [
+      {
+        terminalId: 'term_pi',
+        title: 'background · /repo',
+        progress: { state: 'normal', value: 42 }
+      }
+    ])
+    await page.getByLabel('Open worktree drawer').click()
+    await expect(
+      page.getByRole('button', { name: /background · \/repo.*42% complete/ })
+    ).toBeVisible()
+
+    await page.evaluate(() =>
+      (window as any).__eventSource.emit(
+        'terminal.metadata',
+        JSON.stringify({
+          data: {
+            terminalId: 'term_pi',
+            title: 'background · /repo',
+            progress: null,
+            progressStartedAt: '2026-01-01T00:00:00.000Z',
+            progressClearedAt: '2026-01-01T00:00:01.000Z',
+            bell: null
+          }
+        })
+      )
+    )
+    await expect(
+      page.getByRole('button', {
+        name: 'background · /repo, running'
+      })
+    ).toBeVisible()
+  })
 
   test('keeps the project close action visible and usable by touch', async ({
     page

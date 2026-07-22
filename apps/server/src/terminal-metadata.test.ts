@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { TerminalRecord, WorktreeRecord } from '@tasktty/shared'
+import type {
+  TerminalProgress,
+  TerminalRecord,
+  WorktreeRecord
+} from '@tasktty/shared'
 import {
   ProductEventBus,
   type TaskTTYService,
@@ -8,7 +12,8 @@ import {
 } from '@tasktty/core'
 import {
   TerminalMetadataManager,
-  TERMINAL_METADATA_POLL_MS
+  TERMINAL_METADATA_POLL_MS,
+  TERMINAL_PROGRESS_STALE_MS
 } from './terminal-metadata.js'
 import type {
   TerminalProgressObserver,
@@ -32,6 +37,10 @@ class FakeObserver implements TerminalProgressObserver {
 
   bell(): void {
     this.options.onBell?.()
+  }
+
+  exit(): void {
+    this.options.onExit()
   }
 
   dispose(): void {
@@ -529,6 +538,146 @@ describe('TerminalMetadataManager', () => {
       bell: { sequence: 2, at: expect.any(String) }
     })
     expect(published).toHaveLength(4)
+  })
+
+  it('expires stale progress while duplicate keepalives renew its lease', async () => {
+    vi.useFakeTimers()
+    const item = terminal('one')
+    const { manager, observers, events } = fixture([item])
+    managers.push(manager)
+    await manager.initialize()
+    const published: unknown[] = []
+    events.subscribe((event) => {
+      if (event.type === 'terminal.metadata') {
+        published.push(event.data)
+      }
+    })
+
+    observers[0]!.progress({ state: 'indeterminate', value: null })
+    await vi.advanceTimersByTimeAsync(TERMINAL_PROGRESS_STALE_MS - 1)
+    observers[0]!.progress({ state: 'indeterminate', value: null })
+    expect(published).toHaveLength(1)
+
+    await vi.advanceTimersByTimeAsync(TERMINAL_PROGRESS_STALE_MS - 1)
+    expect(manager.get('one').progress).toEqual({
+      state: 'indeterminate',
+      value: null
+    })
+    await vi.advanceTimersByTimeAsync(1)
+    expect(manager.get('one')).toMatchObject({
+      progress: null,
+      progressStartedAt: expect.any(String),
+      progressClearedAt: expect.any(String)
+    })
+    expect(published).toHaveLength(2)
+  })
+
+  it('expires every active progress state', async () => {
+    vi.useFakeTimers()
+    const item = terminal('one')
+    const { manager, observers } = fixture([item])
+    managers.push(manager)
+    await manager.initialize()
+    const states: TerminalProgress[] = [
+      { state: 'normal', value: 25 },
+      { state: 'indeterminate', value: null },
+      { state: 'error', value: 50 },
+      { state: 'paused', value: 75 }
+    ]
+
+    for (const progress of states) {
+      observers[0]!.progress(progress)
+      await vi.advanceTimersByTimeAsync(TERMINAL_PROGRESS_STALE_MS)
+      expect(manager.get('one').progress).toBeNull()
+    }
+  })
+
+  it('does not let an older deadline clear changed progress', async () => {
+    vi.useFakeTimers()
+    const item = terminal('one')
+    const { manager, observers, events } = fixture([item])
+    managers.push(manager)
+    await manager.initialize()
+    const published: unknown[] = []
+    events.subscribe((event) => {
+      if (event.type === 'terminal.metadata') {
+        published.push(event.data)
+      }
+    })
+
+    observers[0]!.progress({ state: 'normal', value: 25 })
+    await vi.advanceTimersByTimeAsync(TERMINAL_PROGRESS_STALE_MS - 1)
+    observers[0]!.progress({ state: 'error', value: 50 })
+    await vi.advanceTimersByTimeAsync(1)
+    expect(manager.get('one').progress).toEqual({ state: 'error', value: 50 })
+
+    await vi.advanceTimersByTimeAsync(TERMINAL_PROGRESS_STALE_MS - 1)
+    expect(manager.get('one').progress).toBeNull()
+    expect(published).toHaveLength(3)
+  })
+
+  it('invalidates progress leases on explicit clear and observer exit', async () => {
+    vi.useFakeTimers()
+    const item = terminal('one')
+    const { manager, observers, events } = fixture([item])
+    managers.push(manager)
+    await manager.initialize()
+    const published: unknown[] = []
+    events.subscribe((event) => {
+      if (event.type === 'terminal.metadata') {
+        published.push(event.data)
+      }
+    })
+
+    observers[0]!.progress({ state: 'normal', value: 25 })
+    observers[0]!.progress(null)
+    await vi.advanceTimersByTimeAsync(TERMINAL_PROGRESS_STALE_MS)
+    expect(manager.get('one').progress).toBeNull()
+    expect(published).toHaveLength(2)
+
+    observers[0]!.progress({ state: 'normal', value: 50 })
+    observers[0]!.exit()
+    observers[0]!.progress({ state: 'normal', value: 75 })
+    await vi.advanceTimersByTimeAsync(TERMINAL_PROGRESS_STALE_MS)
+    expect(manager.get('one').progress).toBeNull()
+    expect(published).toHaveLength(4)
+  })
+
+  it('invalidates old leases when a terminal entry is replaced or removed', async () => {
+    vi.useFakeTimers()
+    const item = terminal('one')
+    const { manager, observers, events } = fixture([item])
+    managers.push(manager)
+    await manager.initialize()
+    const published: unknown[] = []
+    events.subscribe((event) => {
+      if (event.type === 'terminal.metadata') {
+        published.push(event.data)
+      }
+    })
+    observers[0]!.progress({ state: 'normal', value: 25 })
+    await vi.advanceTimersByTimeAsync(TERMINAL_PROGRESS_STALE_MS - 1)
+
+    const replacement = {
+      ...item,
+      tmuxSessionName: 'replacement-session'
+    }
+    await manager.trackTerminal(replacement, worktree)
+    expect(observers[0]!.disposed).toBe(true)
+    expect(observers).toHaveLength(2)
+    observers[0]!.progress({ state: 'normal', value: 75 })
+    observers[1]!.progress({ state: 'paused', value: 50 })
+    await vi.advanceTimersByTimeAsync(1)
+    expect(manager.get('one').progress).toEqual({
+      state: 'paused',
+      value: 50
+    })
+
+    manager.removeTerminal('one')
+    const eventCount = published.length
+    await vi.advanceTimersByTimeAsync(TERMINAL_PROGRESS_STALE_MS)
+    expect(manager.snapshot()).toEqual([])
+    expect(published).toHaveLength(eventCount)
   })
 
   it('tracks terminals created after startup and disposes them on removal', async () => {

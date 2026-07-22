@@ -104,13 +104,13 @@ tasktty terminal wait <terminal-id> --until bell
 tasktty terminal wait <terminal-id> --until exit
 ```
 
-- `idle` means no OSC progress is currently observed and can return immediately.
-- `working` means OSC progress is currently present and can return immediately.
+- `idle` means no daemon-owned OSC progress is currently observed and can return immediately.
+- `working` means daemon-owned OSC progress is currently present and can return immediately. Every valid active progress frame renews a five-minute inactivity lease; an explicit clear or terminal/observer shutdown clears immediately.
 - `bell` means the next real BEL after the event subscription is established.
 - `exit` means the retained terminal process has exited.
 - Waits have no default timeout. Use a positive `ms`, `s`, `m`, or `h` duration when a deadline is required; Ctrl+C cancels.
 
-TaskTTY does not infer agent settlement. An orchestrator can inspect first, wait for `working` if no progress cycle has been observed, and then wait for `idle`. Progress depends on the child application emitting OSC `9;4`; for Pi, `terminal.showTerminalProgress` must be enabled. A null progress value is not proof that every application supports progress reporting.
+TaskTTY does not infer agent settlement. An orchestrator can inspect first, wait for `working` if no progress cycle has been observed, and then wait for `idle`. Progress depends on the child application emitting OSC `9;4`; for Pi, `terminal.showTerminalProgress` must be enabled. Applications should clear progress or refresh active progress more frequently than the five-minute lease. A null progress value is not proof that every application supports progress reporting.
 
 ## Automation and integrations
 
