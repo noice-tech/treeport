@@ -11,14 +11,13 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { GitBranchIcon, TerminalIcon } from 'lucide-react'
 import { io, type Socket } from 'socket.io-client'
 import {
   ArrowPathIcon,
   Bars3Icon,
   CheckIcon,
   ChevronRightIcon,
-  CommandLineIcon,
-  FolderIcon,
   PlusIcon,
   SwatchIcon,
   TrashIcon,
@@ -1327,8 +1326,8 @@ export default function App() {
                                 aria-hidden="true"
                               />
                             ) : (
-                              <FolderIcon
-                                className="shrink-0 text-zinc-500"
+                              <GitBranchIcon
+                                className="shrink-0 stroke-zinc-600 stroke-[1.5]"
                                 aria-hidden="true"
                               />
                             )}
@@ -1449,7 +1448,7 @@ export default function App() {
                                       aria-hidden="true"
                                     />
                                   ) : (
-                                    <CommandLineIcon className="size-4 shrink-0 fill-zinc-600" />
+                                    <TerminalIcon className="size-4 shrink-0 stroke-zinc-600 stroke-[1.5]" />
                                   )}
                                   <span className="truncate" aria-hidden="true">
                                     {runtimeTitles.get(terminal.id) ||
