@@ -1374,16 +1374,16 @@ export default function App() {
           </Popover>
         </div>
         <nav
-          className="tree min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-2 pt-3 pb-5 sm:px-1.5 sm:pb-4 [scrollbar-color:var(--color-zinc-700)_transparent]"
+          className="tree min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-2 pt-3 pb-5 min-[701px]:px-1.5 min-[701px]:pt-2 min-[701px]:pb-4 [scrollbar-color:var(--color-zinc-700)_transparent]"
           aria-label="Projects and worktrees"
         >
           {projectsQuery.isPending ? (
-            <p className="sidebar-note px-2 py-3 text-base text-zinc-500 sm:text-sm">
+            <p className="sidebar-note px-2 py-3 text-base text-zinc-500 min-[701px]:text-sm">
               Loading repositories…
             </p>
           ) : null}
           {!projectsQuery.isPending && !projects.length ? (
-            <p className="sidebar-note px-2 py-3 text-base text-pretty text-zinc-500 sm:text-sm">
+            <p className="sidebar-note px-2 py-3 text-base text-pretty text-zinc-500 min-[701px]:text-sm">
               Open a Git repository to begin.
             </p>
           ) : null}
@@ -1401,17 +1401,24 @@ export default function App() {
                         'Git repository unavailable'}
                     </p>
                   ) : null}
-                  <ul role="list" className="grid gap-0.5">
+                  <ul role="list" className="grid gap-2 min-[701px]:gap-1.5">
                     {project.worktrees.map((worktree) => (
                       <li key={worktree.id} className="group/worktree min-w-0">
-                        <div className="relative min-w-0 max-[700px]:flex max-[700px]:items-center">
+                        <div
+                          className={cn(
+                            'relative min-w-0 max-[700px]:flex max-[700px]:items-center max-[700px]:gap-0.5 max-[700px]:rounded-md max-[700px]:has-[button:hover]:bg-white/5',
+                            selectedWorktree?.id === worktree.id &&
+                              'max-[700px]:bg-white/8'
+                          )}
+                        >
                           <Button
                             variant="ghost"
                             type="button"
                             className={cn(
-                              'worktree-row h-auto min-h-11 w-full min-w-0 justify-start gap-2 rounded-md px-2 py-1.5 text-left text-base font-medium sm:min-h-8 sm:py-1 sm:text-[0.8125rem] max-[700px]:flex-1',
+                              'worktree-row h-auto min-h-11 w-full min-w-0 justify-start gap-1.5 rounded-md px-2 py-1.5 text-left text-base/5 font-medium min-[701px]:min-h-8 min-[701px]:py-1 min-[701px]:text-[0.8125rem]/4 max-[700px]:flex-1 max-[700px]:hover:bg-transparent',
+                              worktree.kind === 'linked' && 'min-[701px]:pr-9',
                               selectedWorktree?.id === worktree.id
-                                ? 'selected bg-white/8 text-zinc-50'
+                                ? 'selected text-zinc-50 min-[701px]:bg-white/8'
                                 : 'text-zinc-300 hover:bg-white/5 hover:text-zinc-50'
                             )}
                             onClick={() => selectWorktree(worktree)}
@@ -1436,7 +1443,7 @@ export default function App() {
                                 worktree.status === 'cleanup_failed') && (
                                 <span
                                   className={cn(
-                                    'truncate text-[0.6875rem] font-normal text-cyan-300',
+                                    'truncate text-sm/4 font-normal text-cyan-300 min-[701px]:text-[0.6875rem]',
                                     worktree.status === 'cleanup_failed' &&
                                       'text-rose-300'
                                   )}
@@ -1459,7 +1466,7 @@ export default function App() {
                             </span>
                           </Button>
                           {worktree.kind === 'linked' && (
-                            <div className="worktree-actions absolute top-0 right-0 z-10 flex items-center gap-0.5 opacity-0 group-hover/worktree:opacity-100 group-focus-within/worktree:opacity-100 max-[700px]:static max-[700px]:ml-0.5 max-[700px]:shrink-0 max-[700px]:opacity-100">
+                            <div className="worktree-actions absolute top-0 right-0 z-10 flex items-center gap-0.5 opacity-0 group-hover/worktree:opacity-100 group-focus-within/worktree:opacity-100 max-[700px]:static max-[700px]:shrink-0 max-[700px]:opacity-100">
                               <SidebarAction
                                 label={
                                   needsManualCleanup(worktree)
@@ -1502,7 +1509,7 @@ export default function App() {
                         </div>
                         <ul
                           role="list"
-                          className="terminal-list ml-4 grid gap-0 border-l border-white/6 pl-2"
+                          className="terminal-list ml-4 grid gap-0.5 border-l border-white/6 pl-2"
                         >
                           {worktree.terminals.map((terminal) => {
                             const needsAttention = bellAttention.has(
@@ -1523,10 +1530,10 @@ export default function App() {
                                   variant="ghost"
                                   type="button"
                                   className={cn(
-                                    'terminal-row grid h-auto min-h-11 w-full min-w-0 grid-cols-[1.25rem_minmax(0,1fr)_0.5rem] gap-1.5 rounded-md px-2 py-1.5 text-left text-base font-normal sm:min-h-7 sm:grid-cols-[1rem_minmax(0,1fr)_0.5rem] sm:py-0.5 sm:text-xs',
+                                    'terminal-row grid h-auto min-h-11 w-full min-w-0 grid-cols-[1.25rem_minmax(0,1fr)_0.5rem] gap-1.5 rounded-md px-2 py-1.5 text-left text-base/5 font-normal min-[701px]:min-h-7 min-[701px]:grid-cols-[1rem_minmax(0,1fr)_0.5rem] min-[701px]:py-0.5 min-[701px]:text-xs/4',
                                     selectedTerminalId === terminal.id
                                       ? 'selected bg-cyan-400/8 text-cyan-50'
-                                      : 'text-zinc-500 hover:bg-white/5 hover:text-zinc-100'
+                                      : 'text-zinc-400 hover:bg-white/5 hover:text-zinc-100'
                                   )}
                                   onClick={() => selectTerminal(terminal)}
                                   aria-label={`${runtimeTitles.get(terminal.id) || terminal.name}, ${status}`}
@@ -1585,7 +1592,7 @@ export default function App() {
                         <li key={pending.id} className="min-w-0">
                           <div
                             id={`pending-worktree-${pending.id}`}
-                            className="flex min-h-11 min-w-0 items-center gap-1.5 rounded-md px-2 py-1.5 text-base font-normal text-zinc-400 outline-none focus-visible:ring-2 focus-visible:ring-cyan-400 sm:min-h-7 sm:py-0.5 sm:text-xs"
+                            className="flex min-h-11 min-w-0 items-center gap-1.5 rounded-md px-2 py-1.5 text-base/5 font-normal text-zinc-400 outline-none focus-visible:ring-2 focus-visible:ring-cyan-400 min-[701px]:min-h-8 min-[701px]:py-1 min-[701px]:text-[0.8125rem]/4"
                             role="status"
                             aria-label={`Creating worktree ${pending.typedName}`}
                             title={pending.destinationPath}
@@ -1605,7 +1612,7 @@ export default function App() {
                       <Button
                         type="button"
                         variant="ghost"
-                        className="h-auto min-h-11 w-full justify-start gap-1.5 px-2 py-1.5 text-base font-normal text-zinc-500 hover:bg-white/5 hover:text-zinc-100 sm:min-h-7 sm:py-0.5 sm:text-xs"
+                        className="h-auto min-h-11 w-full justify-start gap-1.5 px-2 py-1.5 text-base/5 font-normal text-zinc-500 hover:bg-white/5 hover:text-zinc-100 min-[701px]:min-h-8 min-[701px]:py-1 min-[701px]:text-[0.8125rem]/4"
                         disabled={
                           project.availability.state === 'unavailable' ||
                           pendingWorktrees.some(
