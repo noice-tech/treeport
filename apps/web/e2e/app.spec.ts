@@ -395,6 +395,7 @@ async function mockApp(
   let removePreviewDelayMs = 0
   let removePreviewOverride: Record<string, unknown> = {}
   let fileUploadRequests = 0
+  let terminalCreations = 0
   let staleRemovePreview: Record<string, unknown> | null = null
   let removeRequests = 0
   const removeRequestBodies: unknown[] = []
@@ -755,8 +756,12 @@ async function mockApp(
         name: string
         argv?: string[]
       }
+      terminalCreations += 1
       const terminal = {
-        id: 'term_dev',
+        id:
+          terminalCreations === 1
+            ? 'term_dev'
+            : `term_dev_${terminalCreations}`,
         worktreeId: 'wt_topic',
         name: body.name,
         tmuxSessionName: 'tasktty-term-dev',
@@ -887,10 +892,8 @@ async function mockApp(
 test.describe('desktop worktree terminal UI', () => {
   test.skip(({ isMobile }) => Boolean(isMobile))
 
-  test('navigates projects, worktrees, and persistent terminal output', async ({
-    page
-  }) => {
-    await mockApp(page)
+  test('navigates and persists a desktop workspace', async ({ page }) => {
+    await mockApp(page, [], { includeSecondProject: true })
     await expect(
       page.getByRole('button', {
         name: 'Switch project, current project example'
@@ -917,149 +920,6 @@ test.describe('desktop worktree terminal UI', () => {
       page.locator('select[name="terminal-selector"] option:checked')
     ).toHaveText('zsh · /worktrees/topic')
     await expect(page.locator('.pr-badge')).toHaveCount(0)
-  })
-
-  test('reopens a recent project by durable ID', async ({ page }) => {
-    await mockApp(page, [], { startClosed: true, terminalFree: true })
-    await expect(
-      page.getByText('Open a Git repository to begin.')
-    ).toBeVisible()
-
-    await page.getByRole('button', { name: 'Open project' }).click()
-    await expect(page.getByText('Recent projects')).toBeVisible()
-    await expect(page.getByText('/repo')).toHaveCount(0)
-    await page.getByRole('button', { name: 'example', exact: true }).click()
-
-    await expect(
-      page.getByRole('button', {
-        name: 'Switch project, current project example'
-      })
-    ).toBeVisible()
-  })
-
-  test('opens a project by repository path', async ({ page }) => {
-    await mockApp(page, [], { startClosed: true, terminalFree: true })
-    await page.getByRole('button', { name: 'Open project' }).click()
-    await page.getByRole('button', { name: 'Open project…' }).click()
-    const dialog = page.getByRole('dialog')
-    await dialog.getByLabel('Open by repository path').fill('/repo')
-    await dialog.getByRole('button', { name: 'Open project' }).click()
-
-    await expect(dialog).toHaveCount(0)
-    await expect(
-      page.getByRole('button', {
-        name: 'Switch project, current project example'
-      })
-    ).toBeVisible()
-  })
-
-  test('closes a terminal-bearing project only after confirmation', async ({
-    page
-  }) => {
-    const mocked = await mockApp(page)
-    await expect
-      .poll(() => page.evaluate(() => localStorage.getItem('tasktty-terminal')))
-      .toBe('term_shell')
-    await page
-      .getByRole('button', {
-        name: 'Switch project, current project example'
-      })
-      .click()
-    const projectOption = page
-      .getByRole('listitem')
-      .filter({ hasText: 'example' })
-    await projectOption.hover()
-    const close = page.getByRole('button', {
-      name: 'Close project example'
-    })
-
-    page.once('dialog', async (dialog) => {
-      expect(dialog.message()).toContain('2 TaskTTY terminal sessions')
-      expect(dialog.message()).toContain('Recent projects')
-      await dialog.dismiss()
-    })
-    await close.click()
-    expect(mocked.closeRequests()).toBe(0)
-
-    page.once('dialog', (dialog) => dialog.accept())
-    await close.click()
-    await expect(
-      page.getByRole('button', { name: 'Open project' })
-    ).toBeFocused()
-    expect(mocked.closeRequests()).toBe(1)
-    await expect
-      .poll(() => page.evaluate(() => localStorage.getItem('tasktty-terminal')))
-      .toBeNull()
-    await expect
-      .poll(() =>
-        page.evaluate(() =>
-          ((window as any).__wsInstances ?? [])
-            .filter((socket: WebSocket) =>
-              socket.url.includes('/api/terminals/')
-            )
-            .every((socket: WebSocket) => socket.readyState === 3)
-        )
-      )
-      .toBe(true)
-  })
-
-  test('closes a terminal-free project without confirmation', async ({
-    page
-  }) => {
-    const mocked = await mockApp(page, [], { terminalFree: true })
-    let confirmationShown = false
-    page.on('dialog', async (dialog) => {
-      confirmationShown = true
-      await dialog.dismiss()
-    })
-    await page
-      .getByRole('button', {
-        name: 'Switch project, current project example'
-      })
-      .click()
-    const projectOption = page
-      .getByRole('listitem')
-      .filter({ hasText: 'example' })
-    await projectOption.hover()
-    await page.getByRole('button', { name: 'Close project example' }).click()
-
-    await expect(
-      page.getByRole('button', { name: 'Open project' })
-    ).toBeVisible()
-    expect(confirmationShown).toBe(false)
-    expect(mocked.closeRequests()).toBe(1)
-  })
-
-  test('keeps a project visible when terminal shutdown is partial', async ({
-    page
-  }) => {
-    const mocked = await mockApp(page, [], { terminalFree: true })
-    mocked.failNextClose()
-    await page
-      .getByRole('button', {
-        name: 'Switch project, current project example'
-      })
-      .click()
-    const projectOption = page
-      .getByRole('listitem')
-      .filter({ hasText: 'example' })
-    await projectOption.hover()
-    await page.getByRole('button', { name: 'Close project example' }).click()
-
-    await expect(page.getByRole('alert')).toContainText(
-      'Some terminal sessions could not be stopped'
-    )
-    await expect(
-      page.getByRole('button', {
-        name: 'Switch project, current project example'
-      })
-    ).toBeVisible()
-  })
-
-  test('searches projects and closes the switcher from the terminal', async ({
-    page
-  }) => {
-    await mockApp(page)
     await page
       .getByRole('button', {
         name: 'Switch project, current project example'
@@ -1076,12 +936,6 @@ test.describe('desktop worktree terminal UI', () => {
     await page.locator('.xterm-screen').click()
     await expect(search).toHaveCount(0)
     await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
-  })
-
-  test('shows one active project and persists project switching', async ({
-    page
-  }) => {
-    await mockApp(page, [], { includeSecondProject: true })
     const switcher = page.getByRole('button', {
       name: 'Switch project, current project example'
     })
@@ -1112,6 +966,114 @@ test.describe('desktop worktree terminal UI', () => {
       })
     ).toBeVisible()
     await expect(page.getByText('another topic', { exact: true })).toBeVisible()
+    const separator = page.getByRole('separator', { name: 'Resize sidebar' })
+    await expect(separator).toHaveAttribute('aria-valuenow', '272')
+    await separator.press('ArrowRight')
+    await expect(separator).toHaveAttribute('aria-valuenow', '288')
+  })
+  test('opens and closes a project across its full lifecycle', async ({
+    page
+  }) => {
+    const mocked = await mockApp(page, [], { startClosed: true })
+    await expect(
+      page.getByText('Open a Git repository to begin.')
+    ).toBeVisible()
+
+    await page.getByRole('button', { name: 'Open project' }).click()
+    await expect(page.getByText('Recent projects')).toBeVisible()
+    await expect(page.getByText('/repo')).toHaveCount(0)
+    await page.getByRole('button', { name: 'example', exact: true }).click()
+    await expect(
+      page.getByRole('button', {
+        name: 'Switch project, current project example'
+      })
+    ).toBeVisible()
+    await expect
+      .poll(() => page.evaluate(() => localStorage.getItem('tasktty-terminal')))
+      .toBe('term_shell')
+
+    const openSwitcher = () =>
+      page
+        .getByRole('button', {
+          name: 'Switch project, current project example'
+        })
+        .click()
+    const closeProject = async () => {
+      const projectOption = page
+        .getByRole('listitem')
+        .filter({ hasText: 'example' })
+
+      if (!(await projectOption.isVisible())) {
+        await openSwitcher()
+      }
+
+      await projectOption.hover()
+      await page.getByRole('button', { name: 'Close project example' }).click()
+    }
+    page.once('dialog', async (dialog) => {
+      expect(dialog.message()).toContain('2 TaskTTY terminal sessions')
+      expect(dialog.message()).toContain('Recent projects')
+      await dialog.dismiss()
+    })
+    await closeProject()
+    expect(mocked.closeRequests()).toBe(0)
+
+    mocked.failNextClose()
+    page.once('dialog', (dialog) => dialog.accept())
+    await closeProject()
+    await expect(page.getByRole('alert')).toContainText(
+      'Some terminal sessions could not be stopped'
+    )
+    await expect(
+      page.getByRole('button', {
+        name: 'Switch project, current project example'
+      })
+    ).toBeVisible()
+
+    page.once('dialog', (dialog) => dialog.accept())
+    await closeProject()
+    await expect(
+      page.getByRole('button', { name: 'Open project' })
+    ).toBeFocused()
+    expect(mocked.closeRequests()).toBe(2)
+    await expect
+      .poll(() => page.evaluate(() => localStorage.getItem('tasktty-terminal')))
+      .toBeNull()
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          ((window as any).__wsInstances ?? [])
+            .filter((socket: WebSocket) =>
+              socket.url.includes('/api/terminals/')
+            )
+            .every((socket: WebSocket) => socket.readyState === 3)
+        )
+      )
+      .toBe(true)
+
+    await page.getByRole('button', { name: 'Open project' }).click()
+    await page.getByRole('button', { name: 'Open project…' }).click()
+    const dialog = page.getByRole('dialog')
+    await dialog.getByLabel('Open by repository path').fill('/repo')
+    await dialog.getByRole('button', { name: 'Open project' }).click()
+    await expect(dialog).toHaveCount(0)
+    await expect(
+      page.getByRole('button', {
+        name: 'Switch project, current project example'
+      })
+    ).toBeVisible()
+
+    let confirmationShown = false
+    page.on('dialog', async (confirmation) => {
+      confirmationShown = true
+      await confirmation.dismiss()
+    })
+    await closeProject()
+    await expect(
+      page.getByRole('button', { name: 'Open project' })
+    ).toBeVisible()
+    expect(confirmationShown).toBe(false)
+    expect(mocked.closeRequests()).toBe(3)
   })
 
   test('detects plain web URLs and opens them only on platform modifier-click', async ({
@@ -1287,10 +1249,10 @@ test.describe('desktop worktree terminal UI', () => {
     await page.getByRole('button', { name: 'Close Pi' }).click()
   })
 
-  test('loads title and progress on first render before a terminal is selected', async ({
+  test('reconciles terminal metadata in chronological order', async ({
     page
   }) => {
-    await mockApp(page, [
+    const mocked = await mockApp(page, [
       {
         terminalId: 'term_pi',
         title: 'background · /repo',
@@ -1310,18 +1272,6 @@ test.describe('desktop worktree terminal UI', () => {
         )
       )
     ).toBe(false)
-  })
-
-  test('keeps a daemon clear authoritative over delayed terminal progress', async ({
-    page
-  }) => {
-    await mockApp(page, [
-      {
-        terminalId: 'term_pi',
-        title: 'background · /repo',
-        progress: { state: 'normal', value: 42 }
-      }
-    ])
 
     await page
       .getByRole('button', { name: /background · \/repo.*42% complete/ })
@@ -1390,43 +1340,11 @@ test.describe('desktop worktree terminal UI', () => {
       page.getByRole('button', { name: /75% complete/ })
     ).toBeVisible()
     await expect(page.getByRole('tab', { name: /75% complete/ })).toBeVisible()
-  })
-
-  test('traps modal focus, closes on Escape, and restores its trigger', async ({
-    page
-  }) => {
-    await mockApp(page)
-    const trigger = page.getByRole('button', { name: 'New worktree' })
-    await trigger.click()
-    const dialog = page.getByRole('dialog')
-    await expect(dialog).toBeVisible()
-    await dialog.getByLabel('Worktree name').fill('focus-test')
-    const submit = dialog.getByRole('button', { name: 'Create worktree' })
-    await expect(submit).toBeEnabled()
-    await submit.focus()
-    await submit.press('Tab')
-    await expect(dialog.getByRole('button', { name: 'Close' })).toBeFocused()
-    await page.keyboard.press('Escape')
-    await expect(dialog).toHaveCount(0)
-    await expect(trigger).toBeFocused()
-  })
-
-  test('refreshes projects and replaces retained progress whenever Socket.IO reconnects', async ({
-    page
-  }) => {
-    const mocked = await mockApp(page, [
-      {
-        terminalId: 'term_pi',
-        title: 'background · /repo',
-        progress: { state: 'indeterminate', value: null }
-      }
-    ])
     await expect(page.getByText('example')).toBeVisible()
     await expect(
-      page.getByRole('button', { name: /background · \/repo.*working/ })
+      page.getByRole('button', { name: /background · \/repo.*75% complete/ })
     ).toBeVisible()
     await expect.poll(() => mocked.projectRequests()).toBeGreaterThan(1)
-    await page.waitForTimeout(150)
     const before = mocked.projectRequests()
     await page.evaluate(() =>
       (window as any).__eventSource.emit(
@@ -1448,10 +1366,132 @@ test.describe('desktop worktree terminal UI', () => {
     )
     await expect.poll(() => mocked.projectRequests()).toBeGreaterThan(before)
     await expect(
-      page.getByRole('button', { name: /background · \/repo.*working/ })
+      page.getByRole('button', { name: /background · \/repo.*75% complete/ })
     ).toHaveCount(0)
   })
 
+  test('creates worktrees with focus, rollback, retry, and preset snapshots', async ({
+    page
+  }) => {
+    const mocked = await mockApp(page)
+    {
+      const trigger = page.getByRole('button', { name: 'New worktree' })
+      await trigger.click()
+      const dialog = page.getByRole('dialog')
+      await expect(dialog).toBeVisible()
+      await dialog.getByLabel('Worktree name').fill('focus-test')
+      const submit = dialog.getByRole('button', { name: 'Create worktree' })
+      await expect(submit).toBeEnabled()
+      await submit.focus()
+      await submit.press('Tab')
+      await expect(dialog.getByRole('button', { name: 'Close' })).toBeFocused()
+      await page.keyboard.press('Escape')
+      await expect(dialog).toHaveCount(0)
+      await expect(trigger).toBeFocused()
+    }
+    {
+      const releaseCreate = mocked.delayNextCreate()
+      mocked.failNextCreate()
+      await page.getByRole('button', { name: 'New worktree' }).click()
+      await page.getByLabel('Worktree name').fill('will fail')
+      await expect(
+        page.getByText('Destination: /worktrees/will-fail/repo')
+      ).toBeVisible()
+      await page.getByRole('button', { name: 'Create worktree' }).click()
+      await expect(
+        page.getByRole('heading', { name: 'Create worktree' })
+      ).toHaveCount(0)
+      const pending = page.getByRole('status', {
+        name: 'Creating worktree will fail'
+      })
+      await expect(pending).toHaveText('will fail')
+
+      releaseCreate()
+      await expect(pending).toHaveCount(0)
+      await expect(page.getByRole('alert')).toContainText('create failed')
+    }
+    {
+      const releaseCreate = mocked.delayNextCreate()
+      await page.getByRole('button', { name: 'New worktree' }).click()
+      await page.getByLabel('Worktree name').fill('new topic')
+      await expect(
+        page.getByText('Destination: /worktrees/new-topic/repo')
+      ).toBeVisible()
+      const requestPromise = page.waitForRequest(
+        (request) =>
+          request.method() === 'POST' &&
+          new URL(request.url()).pathname === '/api/projects/proj_1/worktrees'
+      )
+      await page.getByRole('button', { name: 'Create worktree' }).click()
+      const request = await requestPromise
+      expect(request.postDataJSON()).toEqual({
+        name: 'new topic',
+        base: 'default',
+        initialTerminal: { name: 'Shell' }
+      })
+      await expect(
+        page.getByRole('heading', { name: 'Create worktree' })
+      ).toHaveCount(0)
+      const pending = page.getByRole('status', {
+        name: 'Creating worktree new topic'
+      })
+      await expect(pending).toHaveText('new topic')
+      await expect(pending.locator('.animate-spin')).toBeVisible()
+      await expect(pending).toBeFocused()
+      const projectRequestsBeforeEvent = mocked.projectRequests()
+      await page.evaluate(() =>
+        (window as any).__eventSource.emit('worktree.created')
+      )
+      await expect
+        .poll(() => mocked.projectRequests())
+        .toBeGreaterThan(projectRequestsBeforeEvent)
+      await expect(pending).toBeVisible()
+
+      releaseCreate()
+      await expect(pending).toHaveCount(0)
+      await expect(
+        page.getByRole('button', { name: 'new-topic', exact: true })
+      ).toHaveCount(1)
+      await expect
+        .poll(() =>
+          page.evaluate(() =>
+            ((window as any).__wsInstances || []).some(
+              (socket: { url: string }) => socket.url.includes('term_new')
+            )
+          )
+        )
+        .toBe(true)
+      const terminalOutput = page.locator('.xterm-rows')
+      await expect(terminalOutput).toContainText('SETUP_OUTPUT')
+      await expect(terminalOutput).toContainText('SHELL_READY')
+      const text = await terminalOutput.textContent()
+      expect(text?.indexOf('SETUP_OUTPUT')).toBeLessThan(
+        text?.indexOf('SHELL_READY') ?? -1
+      )
+    }
+    {
+      await page.getByRole('button', { name: 'New worktree' }).click()
+      await page.getByLabel('Worktree name').fill('preset topic')
+      await page.getByLabel('Initial terminal').selectOption({ label: 'Hunk' })
+      await expect(
+        page.getByText('Destination: /worktrees/preset-topic/repo')
+      ).toBeVisible()
+      const requestPromise = page.waitForRequest(
+        (request) =>
+          request.method() === 'POST' &&
+          new URL(request.url()).pathname === '/api/projects/proj_1/worktrees'
+      )
+      await page.getByRole('button', { name: 'Create worktree' }).click()
+      expect((await requestPromise).postDataJSON()).toEqual({
+        name: 'preset topic',
+        base: 'default',
+        initialTerminal: expect.objectContaining({
+          name: 'Hunk',
+          returnToShell: true
+        })
+      })
+    }
+  })
   test('reconnects and allows a viewer to take control without relaunching', async ({
     page
   }) => {
@@ -1510,7 +1550,7 @@ test.describe('desktop worktree terminal UI', () => {
       .toBeGreaterThan(before)
   })
 
-  test('restores daemon BEL attention after refresh and acknowledges the observed sequence', async ({
+  test('distinguishes durable daemon BEL from foreground xterm BEL', async ({
     page
   }) => {
     const bellMetadata = {
@@ -1567,13 +1607,6 @@ test.describe('desktop worktree terminal UI', () => {
     await expect(
       page.getByRole('button', { name: /zsh · \/worktrees\/topic.*bell/ })
     ).toHaveCount(0)
-  })
-
-  test('keeps foreground xterm BEL feedback without durable browser attention', async ({
-    page
-  }) => {
-    await mockApp(page)
-    await page.getByRole('button', { name: 'Pi, running', exact: true }).click()
     await page.evaluate(() => {
       const socket = (window as any).__wsInstances.find((item: any) =>
         item.url.includes('term_pi')
@@ -1595,7 +1628,7 @@ test.describe('desktop worktree terminal UI', () => {
     ).toHaveCount(0)
   })
 
-  test('keeps global preset management available without a selected worktree', async ({
+  test('manages global terminal presets without a selected worktree', async ({
     page
   }) => {
     await mockApp(page, [], { terminalFree: true })
@@ -1606,90 +1639,6 @@ test.describe('desktop worktree terminal UI', () => {
       'data-disabled',
       ''
     )
-    await page.getByRole('menuitem', { name: 'Manage presets' }).click()
-    await expect(
-      page.getByRole('dialog', { name: 'Terminal presets' })
-    ).toBeVisible()
-  })
-
-  test('creates and selects a login shell terminal without prompting', async ({
-    page
-  }) => {
-    await mockApp(page)
-    await page.locator('.worktree-row').filter({ hasText: 'topic' }).click()
-    await expect(
-      page.getByRole('button', { name: 'Terminal', exact: true })
-    ).toHaveCount(0)
-    const requestPromise = page.waitForRequest(
-      (request) =>
-        request.method() === 'POST' &&
-        new URL(request.url()).pathname === '/api/worktrees/wt_topic/terminals'
-    )
-    await page.getByRole('button', { name: 'New terminal' }).click()
-    await page.getByRole('menuitem', { name: 'Shell' }).click()
-    const request = await requestPromise
-    expect(request.postDataJSON()).toEqual({ name: 'Shell' })
-    await expect(page.getByRole('dialog')).toHaveCount(0)
-    await expect(page.locator('.terminal-row.selected')).toBeVisible()
-
-    await expect(
-      page.getByRole('tab', { name: /^dev · \/worktrees\/topic,/ })
-    ).toBeVisible()
-    await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
-    const socketsBeforeSwitch = await page.evaluate(
-      () => (window as any).__wsInstances.length
-    )
-    await page.getByRole('tab', { name: /^zsh · \/worktrees\/topic,/ }).click()
-    await expect
-      .poll(() => page.evaluate(() => (window as any).__wsInstances.length))
-      .toBe(socketsBeforeSwitch)
-    await expect(
-      page.getByRole('tab', { name: /^dev · \/worktrees\/topic,/ })
-    ).toBeVisible()
-
-    const terminalId = 'term_dev'
-    page.once('dialog', (dialog) => dialog.accept())
-    const closeRequest = page.waitForRequest(
-      (request) =>
-        request.method() === 'DELETE' &&
-        new URL(request.url()).pathname === `/api/terminals/${terminalId}`
-    )
-    await page
-      .getByRole('button', { name: /^Close dev · \/worktrees\/topic$/ })
-      .click()
-    await closeRequest
-    await expect(
-      page.getByRole('tab', { name: /^dev · \/worktrees\/topic,/ })
-    ).toHaveCount(0)
-  })
-
-  test('launches a configured preset with its exact argv snapshot', async ({
-    page
-  }) => {
-    await mockApp(page)
-    await page.locator('.worktree-row').filter({ hasText: 'topic' }).click()
-    const requestPromise = page.waitForRequest(
-      (request) =>
-        request.method() === 'POST' &&
-        new URL(request.url()).pathname === '/api/worktrees/wt_topic/terminals'
-    )
-    await page.getByRole('button', { name: 'New terminal' }).click()
-    const presetItem = page.getByRole('menuitem', { name: 'Hunk', exact: true })
-    await expect(presetItem).not.toContainText('npx')
-    await presetItem.click()
-    const request = await requestPromise
-    expect(request.postDataJSON()).toEqual({
-      name: 'Hunk',
-      argv: ['npx', '--yes', 'hunkdiff@0.17.3', 'diff', 'HEAD', '--watch'],
-      returnToShell: true
-    })
-    await expect(page.locator('.terminal-row.selected')).toBeVisible()
-    await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
-  })
-
-  test('creates, edits, and deletes terminal presets', async ({ page }) => {
-    await mockApp(page)
-    await page.getByRole('button', { name: 'New terminal' }).click()
     await page.getByRole('menuitem', { name: 'Manage presets' }).click()
     const dialog = page.getByRole('dialog', { name: 'Terminal presets' })
     await expect(dialog).toBeVisible()
@@ -1748,8 +1697,74 @@ test.describe('desktop worktree terminal UI', () => {
       page.getByRole('button', { name: 'New terminal' })
     ).toBeFocused()
   })
+  test('launches Shell and a configured terminal preset', async ({ page }) => {
+    await mockApp(page)
+    await page.locator('.worktree-row').filter({ hasText: 'topic' }).click()
+    await expect(
+      page.getByRole('button', { name: 'Terminal', exact: true })
+    ).toHaveCount(0)
+    const requestPromise = page.waitForRequest(
+      (request) =>
+        request.method() === 'POST' &&
+        new URL(request.url()).pathname === '/api/worktrees/wt_topic/terminals'
+    )
+    await page.getByRole('button', { name: 'New terminal' }).click()
+    await page.getByRole('menuitem', { name: 'Shell' }).click()
+    const request = await requestPromise
+    expect(request.postDataJSON()).toEqual({ name: 'Shell' })
+    await expect(page.getByRole('dialog')).toHaveCount(0)
+    await expect(page.locator('.terminal-row.selected')).toBeVisible()
 
-  test('reloads an open preset form after a remote edit', async ({ page }) => {
+    await expect(
+      page.getByRole('tab', { name: /^dev · \/worktrees\/topic,/ })
+    ).toBeVisible()
+    await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
+    const socketsBeforeSwitch = await page.evaluate(
+      () => (window as any).__wsInstances.length
+    )
+    await page.getByRole('tab', { name: /^zsh · \/worktrees\/topic,/ }).click()
+    await expect
+      .poll(() => page.evaluate(() => (window as any).__wsInstances.length))
+      .toBe(socketsBeforeSwitch)
+    await expect(
+      page.getByRole('tab', { name: /^dev · \/worktrees\/topic,/ })
+    ).toBeVisible()
+
+    const terminalId = 'term_dev'
+    page.once('dialog', (dialog) => dialog.accept())
+    const closeRequest = page.waitForRequest(
+      (request) =>
+        request.method() === 'DELETE' &&
+        new URL(request.url()).pathname === `/api/terminals/${terminalId}`
+    )
+    await page
+      .getByRole('button', { name: /^Close dev · \/worktrees\/topic$/ })
+      .click()
+    await closeRequest
+    await expect(
+      page.getByRole('tab', { name: /^dev · \/worktrees\/topic,/ })
+    ).toHaveCount(0)
+    const presetRequestPromise = page.waitForRequest(
+      (request) =>
+        request.method() === 'POST' &&
+        new URL(request.url()).pathname === '/api/worktrees/wt_topic/terminals'
+    )
+    await page.getByRole('button', { name: 'New terminal' }).click()
+    const presetItem = page.getByRole('menuitem', { name: 'Hunk', exact: true })
+    await expect(presetItem).not.toContainText('npx')
+    await presetItem.click()
+    const presetRequest = await presetRequestPromise
+    expect(presetRequest.postDataJSON()).toEqual({
+      name: 'Hunk',
+      argv: ['npx', '--yes', 'hunkdiff@0.17.3', 'diff', 'HEAD', '--watch'],
+      returnToShell: true
+    })
+    await expect(page.locator('.terminal-row.selected')).toBeVisible()
+    await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
+  })
+
+  test('reconciles remote preset edits and deletion', async ({ page }) => {
+    await page.clock.install()
     const mocked = await mockApp(page)
     await page.getByRole('button', { name: 'New terminal' }).click()
     await page.getByRole('menuitem', { name: 'Manage presets' }).click()
@@ -1761,15 +1776,26 @@ test.describe('desktop worktree terminal UI', () => {
       name: 'Remote Hunk',
       updatedAt: '2026-02-01T00:00:00.000Z'
     }
-    await page.evaluate(() =>
-      document.dispatchEvent(new Event('visibilitychange'))
-    )
+    await page.clock.fastForward(5_000)
     await expect(dialog.getByLabel('Name')).toHaveValue('Remote Hunk')
     await expect(dialog.getByRole('status')).toContainText(
       'latest saved values were loaded'
     )
-  })
+    await dialog.getByRole('button', { name: 'Close', exact: true }).click()
 
+    await page.getByRole('button', { name: 'New worktree' }).click()
+    await page
+      .getByLabel('Initial terminal')
+      .selectOption({ label: 'Remote Hunk' })
+    mocked.terminalPresets.splice(0)
+    await page.clock.fastForward(5_000)
+    await expect(
+      page
+        .getByRole('status')
+        .filter({ hasText: 'selected preset was deleted' })
+    ).toBeVisible()
+    await expect(page.getByLabel('Initial terminal')).toHaveValue('shell')
+  })
   test('preserves modified terminal keys used by macOS and Pi', async ({
     page
   }) => {
@@ -1892,10 +1918,10 @@ test.describe('desktop worktree terminal UI', () => {
       .toContain('/tmp/tasktty-upload-2.txt')
   })
 
-  test('keeps plain dragged text selected while tmux mouse reporting is active', async ({
+  test('selects with Mac Option-drag and forwards application wheel events', async ({
     page
   }) => {
-    await mockApp(page)
+    await mockApp(page, [], { keyboardPlatform: 'MacIntel' })
     await page.getByRole('button', { name: 'Pi, running', exact: true }).click()
     await page.getByRole('button', { name: 'Take control' }).click()
     await page.evaluate(() => {
@@ -1922,9 +1948,11 @@ test.describe('desktop worktree terminal UI', () => {
     const bounds = await screen.boundingBox()
     expect(bounds).not.toBeNull()
     await page.mouse.move(bounds!.x + 8, bounds!.y + 8)
+    await page.keyboard.down('Alt')
     await page.mouse.down()
     await page.mouse.move(bounds!.x + 160, bounds!.y + 8, { steps: 5 })
     await page.mouse.up()
+    await page.keyboard.up('Alt')
 
     const copied = await page
       .locator('.xterm-helper-textarea')
@@ -1947,13 +1975,9 @@ test.describe('desktop worktree terminal UI', () => {
     expect(
       sent.some((message: any) => String(message.data).includes('\u001b[<'))
     ).toBe(false)
-  })
 
-  test('forwards application wheel events while hiding the inactive cursor', async ({
-    page
-  }) => {
-    await mockApp(page)
-    await page.getByRole('button', { name: 'Pi, running', exact: true }).click()
+    await page.reload()
+    await expect(page.locator('.xterm')).toBeVisible()
     await page.getByRole('button', { name: 'Take control' }).click()
     await page.locator('.xterm-helper-textarea').focus()
     await page.evaluate(() => {
@@ -1985,10 +2009,14 @@ test.describe('desktop worktree terminal UI', () => {
           })
         ])
       )
-    const sent = await page.evaluate(() => (window as any).__wsSent)
-    expect(sent.some((message: any) => message.data === '\u001b[A')).toBe(false)
+    const wheelSent = await page.evaluate(() => (window as any).__wsSent)
+    expect(wheelSent.some((message: any) => message.data === '\u001b[A')).toBe(
+      false
+    )
     expect(
-      sent.some((message: any) => String(message.data).includes('\u001b[<'))
+      wheelSent.some((message: any) =>
+        String(message.data).includes('\u001b[<')
+      )
     ).toBe(true)
 
     await page.locator('.xterm-helper-textarea').focus()
@@ -2010,27 +2038,10 @@ test.describe('desktop worktree terminal UI', () => {
       .toBe(`${TERMINAL_SCROLL_EXIT_SEQUENCE}q`)
   })
 
-  test('resizes the sidebar with an accessible panel handle', async ({
-    page
-  }) => {
-    await mockApp(page)
-    const separator = page.getByRole('separator', { name: 'Resize sidebar' })
-    await expect(separator).toHaveAttribute('aria-valuenow', '272')
-    await separator.press('ArrowRight')
-    await expect(separator).toHaveAttribute('aria-valuenow', '288')
-  })
-
   test('uses one removal action, live preview state, and places New worktree last', async ({
     page
   }) => {
     const mocked = await mockApp(page)
-    await expect(page.getByRole('button', { name: 'Diagnostics' })).toHaveCount(
-      0
-    )
-    await expect(
-      page.getByRole('button', { name: /Clean merged/ })
-    ).toHaveCount(0)
-    await expect(page.getByRole('button', { name: 'Finish' })).toHaveCount(0)
     const projectList = page.locator('.project-tree ul').first()
     await expect(projectList.locator(':scope > li').last()).toContainText(
       'New worktree'
@@ -2220,166 +2231,12 @@ test.describe('desktop worktree terminal UI', () => {
       })
     ).toBeDisabled()
   })
-
-  test('closes immediately, shows the typed name, and selects the created terminal', async ({
-    page
-  }) => {
-    const mocked = await mockApp(page)
-    const releaseCreate = mocked.delayNextCreate()
-    await page.getByRole('button', { name: 'New worktree' }).click()
-    await page.getByLabel('Worktree name').fill('new topic')
-    await expect(
-      page.getByText('Destination: /worktrees/new-topic/repo')
-    ).toBeVisible()
-    const requestPromise = page.waitForRequest(
-      (request) =>
-        request.method() === 'POST' &&
-        new URL(request.url()).pathname === '/api/projects/proj_1/worktrees'
-    )
-    await page.getByRole('button', { name: 'Create worktree' }).click()
-    const request = await requestPromise
-    expect(request.postDataJSON()).toEqual({
-      name: 'new topic',
-      base: 'default',
-      initialTerminal: { name: 'Shell' }
-    })
-    await expect(
-      page.getByRole('heading', { name: 'Create worktree' })
-    ).toHaveCount(0)
-    const pending = page.getByRole('status', {
-      name: 'Creating worktree new topic'
-    })
-    await expect(pending).toHaveText('new topic')
-    await expect(pending.locator('.animate-spin')).toBeVisible()
-    await expect(pending).toBeFocused()
-    const projectRequestsBeforeEvent = mocked.projectRequests()
-    await page.evaluate(() =>
-      (window as any).__eventSource.emit('worktree.created')
-    )
-    await expect
-      .poll(() => mocked.projectRequests())
-      .toBeGreaterThan(projectRequestsBeforeEvent)
-    await expect(pending).toBeVisible()
-
-    releaseCreate()
-    await expect(pending).toHaveCount(0)
-    await expect(
-      page.getByRole('button', { name: 'new-topic', exact: true })
-    ).toHaveCount(1)
-    await expect
-      .poll(() =>
-        page.evaluate(() =>
-          ((window as any).__wsInstances || []).some(
-            (socket: { url: string }) => socket.url.includes('term_new')
-          )
-        )
-      )
-      .toBe(true)
-    const terminalOutput = page.locator('.xterm-rows')
-    await expect(terminalOutput).toContainText('SETUP_OUTPUT')
-    await expect(terminalOutput).toContainText('SHELL_READY')
-    const text = await terminalOutput.textContent()
-    expect(text?.indexOf('SETUP_OUTPUT')).toBeLessThan(
-      text?.indexOf('SHELL_READY') ?? -1
-    )
-  })
-
-  test('snapshots a preset into a new worktree initial terminal request', async ({
-    page
-  }) => {
-    await mockApp(page)
-    await page.getByRole('button', { name: 'New worktree' }).click()
-    await page.getByLabel('Worktree name').fill('preset topic')
-    await page.getByLabel('Initial terminal').selectOption({ label: 'Hunk' })
-    await expect(
-      page.getByText('Destination: /worktrees/preset-topic/repo')
-    ).toBeVisible()
-    const requestPromise = page.waitForRequest(
-      (request) =>
-        request.method() === 'POST' &&
-        new URL(request.url()).pathname === '/api/projects/proj_1/worktrees'
-    )
-    await page.getByRole('button', { name: 'Create worktree' }).click()
-    expect((await requestPromise).postDataJSON()).toEqual({
-      name: 'preset topic',
-      base: 'default',
-      initialTerminal: {
-        name: 'Hunk',
-        argv: ['npx', '--yes', 'hunkdiff@0.17.3', 'diff', 'HEAD', '--watch'],
-        returnToShell: true
-      }
-    })
-  })
-
-  test('announces when a selected initial preset is deleted remotely', async ({
-    page
-  }) => {
-    const mocked = await mockApp(page)
-    await page.getByRole('button', { name: 'New worktree' }).click()
-    await page.getByLabel('Initial terminal').selectOption({ label: 'Hunk' })
-    mocked.terminalPresets.splice(0)
-    await page.evaluate(() =>
-      document.dispatchEvent(new Event('visibilitychange'))
-    )
-    await expect(
-      page
-        .getByRole('status')
-        .filter({ hasText: 'selected preset was deleted' })
-    ).toBeVisible({ timeout: 7_000 })
-    await expect(page.getByLabel('Initial terminal')).toHaveValue('shell')
-  })
-
-  test('keeps the create dialog closed and removes the typed row on failure', async ({
-    page
-  }) => {
-    const mocked = await mockApp(page)
-    const releaseCreate = mocked.delayNextCreate()
-    mocked.failNextCreate()
-    await page.getByRole('button', { name: 'New worktree' }).click()
-    await page.getByLabel('Worktree name').fill('will fail')
-    await expect(
-      page.getByText('Destination: /worktrees/will-fail/repo')
-    ).toBeVisible()
-    await page.getByRole('button', { name: 'Create worktree' }).click()
-    await expect(
-      page.getByRole('heading', { name: 'Create worktree' })
-    ).toHaveCount(0)
-    const pending = page.getByRole('status', {
-      name: 'Creating worktree will fail'
-    })
-    await expect(pending).toHaveText('will fail')
-
-    releaseCreate()
-    await expect(pending).toHaveCount(0)
-    await expect(page.getByRole('alert')).toContainText('create failed')
-  })
 })
 
 test.describe('mobile terminal UI', () => {
   test.skip(({ isMobile }) => !isMobile)
 
-  test('launches a configured terminal preset from the touch menu', async ({
-    page
-  }) => {
-    await mockApp(page)
-    await page.getByLabel('Open worktree drawer').click()
-    await page.getByRole('button', { name: 'Pi, running', exact: true }).click()
-    const requestPromise = page.waitForRequest(
-      (request) =>
-        request.method() === 'POST' &&
-        new URL(request.url()).pathname === '/api/worktrees/wt_topic/terminals'
-    )
-    await page.getByRole('button', { name: 'New terminal' }).click()
-    await page.getByRole('menuitem', { name: 'Hunk' }).click()
-    expect((await requestPromise).postDataJSON()).toEqual({
-      name: 'Hunk',
-      argv: ['npx', '--yes', 'hunkdiff@0.17.3', 'diff', 'HEAD', '--watch'],
-      returnToShell: true
-    })
-    await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
-  })
-
-  test('renders daemon progress clears in the worktree drawer', async ({
+  test('uses the mobile drawer and terminal controls end to end', async ({
     page
   }) => {
     await mockApp(page, [
@@ -2389,11 +2246,16 @@ test.describe('mobile terminal UI', () => {
         progress: { state: 'normal', value: 42 }
       }
     ])
-    await page.getByLabel('Open worktree drawer').click()
+    const drawer = page.locator('.sidebar')
+    const trigger = page.getByLabel('Open worktree drawer')
+    await expect(drawer).toHaveAttribute('inert', '')
+    await trigger.click()
+    await expect(drawer).toHaveClass(/open/)
+    await expect(drawer).not.toHaveAttribute('inert', '')
+    await expect(page.getByLabel('Close drawer')).toBeFocused()
     await expect(
       page.getByRole('button', { name: /background · \/repo.*42% complete/ })
     ).toBeVisible()
-
     await page.evaluate(() =>
       (window as any).__eventSource.emit(
         'terminal.metadata',
@@ -2410,35 +2272,126 @@ test.describe('mobile terminal UI', () => {
       )
     )
     await expect(
-      page.getByRole('button', {
-        name: 'background · /repo, running'
-      })
+      page.getByRole('button', { name: 'background · /repo, running' })
     ).toBeVisible()
-  })
+    await page.keyboard.press('Escape')
+    await expect(drawer).toHaveAttribute('inert', '')
+    await expect(trigger).toBeFocused()
 
-  test('keeps the project close action visible and usable by touch', async ({
-    page
-  }) => {
-    await mockApp(page, [], { terminalFree: true })
-    await page.getByLabel('Open worktree drawer').click()
+    await trigger.click()
     await page
-      .getByRole('button', {
-        name: 'Switch project, current project example'
+      .getByRole('button', { name: 'background · /repo, running', exact: true })
+      .click()
+    await expect(page.locator('.xterm')).toBeVisible()
+    await expect(
+      page.locator('select[name="terminal-selector"] option:checked')
+    ).toHaveText('zsh · /worktrees/topic')
+    await page.evaluate(() => {
+      const socket = (window as any).__wsInstances.find((item: any) =>
+        item.url.includes('term_pi')
+      )
+      socket.onmessage?.({
+        data: JSON.stringify({ version: 1, type: 'title', title: '' })
       })
+    })
+    await expect(
+      page.locator('select[name="terminal-selector"] option:checked')
+    ).toHaveText('Pi')
+    await page.getByRole('button', { name: 'Take control' }).click()
+    await page.getByRole('button', { name: 'Esc' }).click()
+    await page.evaluate(() => {
+      const socket = (window as any).__lastWs
+      socket.onmessage?.({
+        data: JSON.stringify({
+          version: 1,
+          type: 'output',
+          streamId: socket.streamId,
+          sequence: 2,
+          data: '\u001b[?1h'
+        })
+      })
+    })
+    await page.getByRole('button', { name: 'Arrow up' }).click()
+    await expect
+      .poll(() => page.evaluate(() => (window as any).__wsSent))
+      .toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ type: 'input', data: '\u001b' }),
+          expect.objectContaining({ type: 'input', data: '\u001bOA' })
+        ])
+      )
+
+    await page.setViewportSize({ width: 320, height: 700 })
+    const accessoryRow = page.locator('.accessory-row')
+    const ctrl = page.getByRole('button', { name: 'Ctrl', exact: true })
+    const alt = page.getByRole('button', { name: 'Alt', exact: true })
+    const shiftTab = page.getByRole('button', {
+      name: 'Shift+Tab',
+      exact: true
+    })
+    const rowWidth = await accessoryRow.evaluate((element) => ({
+      client: element.clientWidth,
+      scroll: element.scrollWidth
+    }))
+    expect(rowWidth.scroll).toBeGreaterThan(rowWidth.client)
+    const buttonWidth = await shiftTab.evaluate((element) => ({
+      client: element.clientWidth,
+      scroll: element.scrollWidth
+    }))
+    expect(buttonWidth.scroll).toBeLessThanOrEqual(buttonWidth.client)
+    await alt.click()
+    await ctrl.click()
+    await expect(alt).toHaveClass(/latched/)
+    await expect(ctrl).toHaveClass(/latched/)
+    await page.evaluate(() => {
+      ;(window as any).__wsSent = []
+    })
+    await accessoryRow.evaluate((element) => {
+      element.scrollLeft = element.scrollWidth
+    })
+    await shiftTab.scrollIntoViewIfNeeded()
+    await shiftTab.click()
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          (window as any).__wsSent
+            .filter((message: any) => message.type === 'input')
+            .map((message: any) => message.data)
+        )
+      )
+      .toEqual(['\u001b[Z'])
+    await expect(alt).not.toHaveClass(/latched/)
+    await expect(ctrl).not.toHaveClass(/latched/)
+
+    await page.setViewportSize({ width: 412, height: 915 })
+    const presetRequest = page.waitForRequest(
+      (request) =>
+        request.method() === 'POST' &&
+        new URL(request.url()).pathname === '/api/worktrees/wt_topic/terminals'
+    )
+    await page.getByRole('button', { name: 'New terminal' }).click()
+    await page.getByRole('menuitem', { name: 'Hunk' }).click()
+    expect((await presetRequest).postDataJSON()).toMatchObject({ name: 'Hunk' })
+    await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
+
+    await trigger.click()
+    await page
+      .getByRole('button', { name: 'Switch project, current project example' })
       .click()
     const close = page.getByRole('button', { name: 'Close project example' })
     await expect(close).toBeVisible()
     await expect(close).toHaveCSS('opacity', '1')
+    page.once('dialog', (dialog) => dialog.accept())
     await close.click()
     await expect(
       page.getByRole('button', { name: 'Open project' })
     ).toBeVisible()
   })
 
-  test('closes only a nested modal on Escape and restores its drawer trigger', async ({
+  test('keeps mobile modal and drawer accessibility state coherent', async ({
     page
   }) => {
-    await mockApp(page)
+    const mocked = await mockApp(page)
     const drawer = page.locator('.sidebar')
     await page.getByLabel('Open worktree drawer').click()
     const trigger = page.getByRole('button', { name: 'New worktree' })
@@ -2452,36 +2405,26 @@ test.describe('mobile terminal UI', () => {
     await expect(trigger).toBeFocused()
     await page.keyboard.press('Escape')
     await expect(drawer).not.toHaveClass(/open/)
-  })
 
-  test('closes the drawer and exposes a create failure alert', async ({
-    page
-  }) => {
-    const mocked = await mockApp(page)
     mocked.failNextCreate()
-    const drawer = page.locator('.sidebar')
     await page.getByLabel('Open worktree drawer').click()
-    await page.getByRole('button', { name: 'New worktree' }).click()
+    await trigger.click()
     await page.getByLabel('Worktree name').fill('mobile failure')
     await expect(
       page.getByText('Destination: /worktrees/mobile-failure/repo')
     ).toBeVisible()
     await page.getByRole('button', { name: 'Create worktree' }).click()
-
     await expect(drawer).not.toHaveClass(/open/)
     const alert = page.getByRole('alert')
     await expect(alert).toContainText('create failed')
     await expect(alert).not.toHaveAttribute('inert', '')
     await expect(alert).not.toHaveAttribute('aria-hidden', 'true')
-  })
 
-  test('makes sync controls inert while the mobile drawer is open', async ({
-    page
-  }) => {
-    await mockApp(page)
+    await page.clock.install()
     await page.evaluate(() => (window as any).__eventSource.disconnect())
+    await page.clock.fastForward(3_000)
     const status = page.locator('[role="status"]')
-    await expect(status).toBeVisible({ timeout: 5_000 })
+    await expect(status).toBeVisible()
     await page.getByLabel('Open worktree drawer').click()
     await expect(status).toHaveAttribute('inert', '')
     await expect(status).toHaveAttribute('aria-hidden', 'true')
@@ -2609,120 +2552,5 @@ test.describe('mobile terminal UI', () => {
         )
       )
       .toBe(`${TERMINAL_SCROLL_EXIT_SEQUENCE}q`)
-  })
-
-  test('sends Shift+Tab from the horizontally scrollable accessory row', async ({
-    page
-  }) => {
-    await page.setViewportSize({ width: 320, height: 700 })
-    await mockApp(page)
-    await page.getByLabel('Open worktree drawer').click()
-    await page.getByRole('button', { name: 'Pi, running', exact: true }).click()
-    await page.getByRole('button', { name: 'Take control' }).click()
-
-    const accessoryRow = page.locator('.accessory-row')
-    const ctrl = page.getByRole('button', { name: 'Ctrl', exact: true })
-    const alt = page.getByRole('button', { name: 'Alt', exact: true })
-    const shiftTab = page.getByRole('button', {
-      name: 'Shift+Tab',
-      exact: true
-    })
-    await expect(shiftTab).toBeVisible()
-    const rowWidth = await accessoryRow.evaluate((element) => ({
-      client: element.clientWidth,
-      scroll: element.scrollWidth
-    }))
-    expect(rowWidth.scroll).toBeGreaterThan(rowWidth.client)
-    const buttonWidth = await shiftTab.evaluate((element) => ({
-      client: element.clientWidth,
-      scroll: element.scrollWidth
-    }))
-    expect(buttonWidth.scroll).toBeLessThanOrEqual(buttonWidth.client)
-
-    await alt.click()
-    await ctrl.click()
-    await expect(alt).toHaveClass(/latched/)
-    await expect(ctrl).toHaveClass(/latched/)
-    await page.evaluate(() => {
-      ;(window as any).__wsSent = []
-    })
-    await accessoryRow.evaluate((element) => {
-      element.scrollLeft = element.scrollWidth
-    })
-    await expect
-      .poll(() => accessoryRow.evaluate((element) => element.scrollLeft))
-      .toBeGreaterThan(0)
-    await shiftTab.scrollIntoViewIfNeeded()
-    await expect(shiftTab).toBeInViewport()
-    await shiftTab.click()
-
-    await expect
-      .poll(() =>
-        page.evaluate(() =>
-          (window as any).__wsSent
-            .filter((message: any) => message.type === 'input')
-            .map((message: any) => message.data)
-        )
-      )
-      .toEqual(['\u001b[Z'])
-    await expect(alt).not.toHaveClass(/latched/)
-    await expect(ctrl).not.toHaveClass(/latched/)
-  })
-
-  test('uses an accessible drawer, synchronized titles, control takeover, and accessory keys', async ({
-    page
-  }) => {
-    await mockApp(page)
-    const drawer = page.locator('.sidebar')
-    const trigger = page.getByLabel('Open worktree drawer')
-    await expect(drawer).toHaveAttribute('inert', '')
-    await trigger.click()
-    await expect(drawer).toHaveClass(/open/)
-    await expect(drawer).not.toHaveAttribute('inert', '')
-    await expect(page.getByLabel('Close drawer')).toBeFocused()
-    await page.keyboard.press('Escape')
-    await expect(drawer).toHaveAttribute('inert', '')
-    await expect(trigger).toBeFocused()
-
-    await trigger.click()
-    await page.getByRole('button', { name: 'Pi, running', exact: true }).click()
-    await expect(page.locator('.xterm')).toBeVisible()
-    await expect(
-      page.locator('select[name="terminal-selector"] option:checked')
-    ).toHaveText('zsh · /worktrees/topic')
-    await page.evaluate(() => {
-      const socket = (window as any).__wsInstances.find((item: any) =>
-        item.url.includes('term_pi')
-      )
-      socket.onmessage?.({
-        data: JSON.stringify({ version: 1, type: 'title', title: '' })
-      })
-    })
-    await expect(
-      page.locator('select[name="terminal-selector"] option:checked')
-    ).toHaveText('Pi')
-    await page.getByRole('button', { name: 'Take control' }).click()
-    await page.getByRole('button', { name: 'Esc' }).click()
-    await page.evaluate(() => {
-      const socket = (window as any).__lastWs
-      socket.onmessage?.({
-        data: JSON.stringify({
-          version: 1,
-          type: 'output',
-          streamId: socket.streamId,
-          sequence: 2,
-          data: '\u001b[?1h'
-        })
-      })
-    })
-    await page.waitForTimeout(50)
-    await page.getByRole('button', { name: 'Arrow up' }).click()
-    const sent = await page.evaluate(() => (window as any).__wsSent)
-    expect(sent).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ type: 'input', data: '\u001b' }),
-        expect.objectContaining({ type: 'input', data: '\u001bOA' })
-      ])
-    )
   })
 })

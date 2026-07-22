@@ -159,10 +159,6 @@ function fixture(maxSessions = 3, idleMs = 1_000) {
 }
 
 describe('terminal options', () => {
-  it('lets Option or a normalized plain macOS drag select while mouse reporting is active', () => {
-    expect(terminalOptions().macOptionClickForcesSelection).toBe(true)
-  })
-
   it('opens OSC 8 links only on Cmd-click on Apple platforms', () => {
     const open = vi.fn()
     vi.stubGlobal('navigator', { platform: 'MacIntel' })
