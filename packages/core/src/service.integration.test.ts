@@ -56,8 +56,8 @@ class SystemDouble implements CommandRunner {
   tmuxCreateGate: Promise<void> | null = null
   tmuxStateGate: Promise<void> | null = null
   setupGate: Promise<void> | null = null
-  removeAfterDeregisterGate: Promise<void> | null = null
-  worktreeDeregistered: (() => void) | null = null
+  readonly removeAfterDeregisterGates = new Map<string, Promise<void>>()
+  worktreeDeregistered: ((worktreePath: string) => void) | null = null
 
   constructor(main: string) {
     this.main = main
@@ -188,9 +188,10 @@ class SystemDouble implements CommandRunner {
       }
 
       this.worktrees.splice(index, 1)
-      this.worktreeDeregistered?.()
-      if (this.removeAfterDeregisterGate) {
-        await this.removeAfterDeregisterGate
+      this.worktreeDeregistered?.(worktreePath)
+      const removeGate = this.removeAfterDeregisterGates.get(worktreePath)
+      if (removeGate) {
+        await removeGate
       }
 
       await fs.rm(worktreePath, { recursive: true, force: true })
@@ -1484,9 +1485,12 @@ describe('TaskTTYService with injected command adapters', () => {
       await service.createWorktree(project.id, 'in-flight', 'default')
     ).worktree
     let releaseRemoval!: () => void
-    runner.removeAfterDeregisterGate = new Promise<void>((resolve) => {
-      releaseRemoval = resolve
-    })
+    runner.removeAfterDeregisterGates.set(
+      linked.path,
+      new Promise<void>((resolve) => {
+        releaseRemoval = resolve
+      })
+    )
     let deregistered!: () => void
     const deregisteredPromise = new Promise<void>((resolve) => {
       deregistered = resolve
@@ -1533,6 +1537,126 @@ describe('TaskTTYService with injected command adapters', () => {
       1
     )
     unsubscribe()
+  })
+
+  it('removes distinct worktrees concurrently without weakening mutation locks', async () => {
+    const { main, runner, service } = await fixture()
+    const project = await service.registerProject(main)
+    const first = (
+      await service.createWorktree(project.id, 'concurrent-first', 'default')
+    ).worktree
+    const second = (
+      await service.createWorktree(project.id, 'concurrent-second', 'default')
+    ).worktree
+    const [firstPreview, secondPreview] = await Promise.all([
+      service.removePreview(first.id),
+      service.removePreview(second.id)
+    ])
+    let releaseFirst!: () => void
+    let releaseSecond!: () => void
+    runner.removeAfterDeregisterGates.set(
+      first.path,
+      new Promise<void>((resolve) => {
+        releaseFirst = resolve
+      })
+    )
+    runner.removeAfterDeregisterGates.set(
+      second.path,
+      new Promise<void>((resolve) => {
+        releaseSecond = resolve
+      })
+    )
+    const deregistered = new Set<string>()
+    runner.worktreeDeregistered = (worktreePath) => {
+      deregistered.add(worktreePath)
+    }
+
+    const [firstOperation, secondOperation] = await Promise.all([
+      service.beginRemove(first.id, {
+        confirmationToken: firstPreview.confirmationToken,
+        confirmDestructive: firstPreview.warnings.length > 0
+      }),
+      service.beginRemove(second.id, {
+        confirmationToken: secondPreview.confirmationToken,
+        confirmDestructive: secondPreview.warnings.length > 0
+      })
+    ])
+    await vi.waitFor(() =>
+      expect(deregistered).toEqual(new Set([first.path, second.path]))
+    )
+
+    expect(service.getOperation(firstOperation.id).status).toBe('running')
+    expect(service.getOperation(secondOperation.id).status).toBe('running')
+    expect(service.getWorktree(first.id).status).toBe('cleaning')
+    expect(service.getWorktree(second.id).status).toBe('cleaning')
+    await expect(
+      service.beginRemove(first.id, {
+        confirmationToken: firstPreview.confirmationToken,
+        confirmDestructive: firstPreview.warnings.length > 0
+      })
+    ).rejects.toMatchObject({ code: 'REMOVE_IN_PROGRESS' })
+    await expect(
+      service.createTerminal(second.id, 'Blocked during removal', ['pi'])
+    ).rejects.toMatchObject({ code: 'WORKTREE_BUSY' })
+    await expect(service.closeProject(project.id)).rejects.toMatchObject({
+      code: 'PROJECT_BUSY'
+    })
+    await expect(service.deleteProject(project.id)).rejects.toMatchObject({
+      code: 'PROJECT_BUSY'
+    })
+
+    releaseFirst()
+    expect((await waitForOperation(service, firstOperation.id)).status).toBe(
+      'completed'
+    )
+    expect(service.getOperation(secondOperation.id).status).toBe('running')
+    expect(service.getWorktree(second.id).status).toBe('cleaning')
+    await expect(service.deleteProject(project.id)).rejects.toMatchObject({
+      code: 'PROJECT_BUSY'
+    })
+
+    releaseSecond()
+    expect((await waitForOperation(service, secondOperation.id)).status).toBe(
+      'completed'
+    )
+    expect(service.getProject(project.id).worktrees).toEqual([
+      expect.objectContaining({ kind: 'main' })
+    ])
+  })
+
+  it('blocks removal while project deletion owns the project lock', async () => {
+    const { main, runner, service } = await fixture()
+    const project = await service.registerProject(main)
+    const linked = (
+      await service.createWorktree(project.id, 'delete-locked', 'default')
+    ).worktree
+    const preview = await service.removePreview(linked.id)
+    let releaseDeletion!: () => void
+    runner.worktreeListGate = new Promise<void>((resolve) => {
+      releaseDeletion = resolve
+    })
+    runner.calls.length = 0
+
+    const deleting = service.deleteProject(project.id)
+    await vi.waitFor(() =>
+      expect(
+        runner.calls.some(
+          (call) => call.args[0] === 'worktree' && call.args[1] === 'list'
+        )
+      ).toBe(true)
+    )
+    await expect(
+      service.beginRemove(linked.id, {
+        confirmationToken: preview.confirmationToken,
+        confirmDestructive: preview.warnings.length > 0
+      })
+    ).rejects.toMatchObject({ code: 'REMOVE_IN_PROGRESS' })
+
+    releaseDeletion()
+    await expect(deleting).rejects.toMatchObject({
+      code: 'PROJECT_HAS_WORKTREES'
+    })
+    runner.worktreeListGate = null
   })
 
   it('recovers only an authorized interrupted checkout root', async () => {
