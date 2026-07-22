@@ -5,7 +5,11 @@ import { execFile, spawn } from 'node:child_process'
 import { promisify } from 'node:util'
 import { SpawnCommandRunner, TmuxAdapter } from '@tasktty/core'
 import { afterAll, describe, expect, it } from 'vitest'
-import { TerminalMetadataParser } from './tmux-progress.js'
+import {
+  TerminalMetadataParser,
+  TmuxProgressObserver,
+  type TerminalMetadataUpdate
+} from './tmux-progress.js'
 import {
   controlAttachArgs,
   encodeControlInput,
@@ -70,7 +74,7 @@ describe.skipIf(!enabled)('real tmux control-mode characterization', () => {
       "process.stdin.on('data', data => {",
       '  pending = Buffer.concat([pending, data]);',
       '  if (pending.length < 13) return;',
-      "  process.stdout.write(Buffer.from('\\x1b]9;4;3\\x07\\x07\\x1b]8;;https://example.test\\x07LINK\\x1b]8;;\\x07|'));",
+      "  process.stdout.write(Buffer.from('\\x1b]2;Real tmux title\\x07\\x1b]9;4;3\\x07\\x1b]9;4;0\\x1b\\\\\\x07\\x1b]8;;https://example.test\\x07LINK\\x1b]8;;\\x07|'));",
       '  process.stdout.write(pending);',
       "  process.stdout.write(Buffer.from('|END'));",
       '  pending = Buffer.alloc(0);',
@@ -236,15 +240,23 @@ describe.skipIf(!enabled)('real tmux control-mode characterization', () => {
             .map((event) => Buffer.from(event.data))
         )
       await waitFor(
-        () => progressOutput().includes(Buffer.from('\x1b]9;4;3\x07\x07')),
-        'read-only progress observer did not receive OSC 9;4 and BEL'
+        () => progressOutput().includes(Buffer.from('\x1b]9;4;0\x1b\\\x07')),
+        'read-only progress observer did not receive terminal metadata'
       )
-      expect(new TerminalMetadataParser().push(progressOutput())).toEqual(
+      const metadataUpdates: unknown[] = []
+      const metadataParser = new TerminalMetadataParser((update) =>
+        metadataUpdates.push(update)
+      )
+      await metadataParser.push(progressOutput())
+      metadataParser.dispose()
+      expect(metadataUpdates).toEqual(
         expect.arrayContaining([
+          { type: 'title', title: 'Real tmux title' },
           {
             type: 'progress',
             progress: { state: 'indeterminate', value: null }
           },
+          { type: 'progress', progress: null },
           { type: 'bell' }
         ])
       )
@@ -258,7 +270,84 @@ describe.skipIf(!enabled)('real tmux control-mode characterization', () => {
           '#{window_width}x#{window_height}'
         ]).then((result) => result.stdout.trim())
       ).resolves.toBe('80x24')
+      const progressControlExited = new Promise<void>((resolve) =>
+        progressControl.once('exit', () => resolve())
+      )
       progressControl.kill()
+      await progressControlExited
+
+      const clientsBeforeObserver = (
+        await execute('tmux', [...base, 'list-clients', '-F', '#{client_pid}'])
+      ).stdout
+        .trim()
+        .split('\n')
+        .filter(Boolean).length
+      const observerUpdates: TerminalMetadataUpdate[] = []
+      let observerExited = false
+      const observer = new TmuxProgressObserver({
+        executable: 'tmux',
+        args: progressControlAttachArgs(socket, tmux.configPath, session),
+        cwd: root,
+        env: Object.fromEntries(
+          Object.entries(process.env).filter(
+            ([key, value]) =>
+              value !== undefined && key !== 'TMUX' && key !== 'TMUX_PANE'
+          )
+        ) as NodeJS.ProcessEnv,
+        onTitle: (title) => observerUpdates.push({ type: 'title', title }),
+        onProgress: (progress) =>
+          observerUpdates.push({ type: 'progress', progress }),
+        onBell: () => observerUpdates.push({ type: 'bell' }),
+        onExit: () => {
+          observerExited = true
+        }
+      })
+      await waitFor(async () => {
+        const clients = (
+          await execute('tmux', [
+            ...base,
+            'list-clients',
+            '-F',
+            '#{client_pid}'
+          ])
+        ).stdout
+          .trim()
+          .split('\n')
+          .filter(Boolean).length
+        return clients > clientsBeforeObserver
+      }, 'production progress observer did not attach')
+
+      observerUpdates.length = 0
+      for (const command of encodeControlInput(paneId, sent, 3)) {
+        control.stdin.write(command)
+      }
+      await waitFor(
+        () => observerUpdates.length >= 4,
+        'production progress observer did not publish terminal metadata'
+      )
+      expect(observerUpdates).toEqual([
+        { type: 'title', title: 'Real tmux title' },
+        {
+          type: 'progress',
+          progress: { state: 'indeterminate', value: null }
+        },
+        { type: 'progress', progress: null },
+        { type: 'bell' }
+      ])
+
+      observer.dispose()
+      const updateCount = observerUpdates.length
+      const outputLength = outputBytes().length
+      for (const command of encodeControlInput(paneId, sent, 3)) {
+        control.stdin.write(command)
+      }
+      await waitFor(
+        () => outputBytes().length > outputLength,
+        'pane did not respond after progress observer disposal'
+      )
+      await new Promise((resolve) => setTimeout(resolve, 25))
+      expect(observerUpdates).toHaveLength(updateCount)
+      expect(observerExited).toBe(false)
 
       control.stdin.write(resizeControlClient(91, 27))
       await waitFor(async () => {

@@ -292,7 +292,7 @@ export function TerminalView({
                   >
                     <TabsTrigger
                       value={item.id}
-                      className="flex h-full min-w-0 flex-1 items-center gap-1.5 py-0 pr-0.5 pl-3 font-normal text-zinc-500 outline-none group-hover/tab:text-zinc-200 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-cyan-400 data-[state=active]:text-zinc-50"
+                      className="flex h-full min-w-0 flex-1 items-center gap-1.5 py-0 pr-0.5 pl-3 text-[0.8125rem] font-normal text-zinc-500 outline-none group-hover/tab:text-zinc-200 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-cyan-400 data-[state=active]:text-zinc-50"
                       aria-label={`${title}, ${status}`}
                       aria-keyshortcuts={
                         index < 9 ? `Meta+${index + 1}` : undefined
