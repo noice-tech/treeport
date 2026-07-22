@@ -123,46 +123,20 @@ async function mockApp(
   options: { startClosed?: boolean; terminalFree?: boolean } = {}
 ) {
   await page.addInitScript((initialMetadata) => {
-    class MockEventSource {
-      listeners = new Map<string, Array<(event: { data: string }) => void>>()
-      constructor() {
-        const scope = window as any
-        scope.__eventSource = this
-        setTimeout(
-          () =>
-            this.emit(
-              'connected',
-              JSON.stringify({
-                at: new Date().toISOString(),
-                terminalMetadata: initialMetadata
-              })
-            ),
-          0
-        )
-      }
-      addEventListener(
-        name: string,
-        listener: (event: { data: string }) => void
-      ) {
-        this.listeners.set(name, [
-          ...(this.listeners.get(name) || []),
-          listener
-        ])
-      }
-      emit(name: string, data = '{}') {
-        this.listeners.get(name)?.forEach((listener) => listener({ data }))
-      }
-      close() {}
-    }
     class MockWebSocket {
       static OPEN = 1
       readyState = 0
+      binaryType = 'arraybuffer'
       onopen: (() => void) | null = null
-      onmessage: ((event: { data: string }) => void) | null = null
-      onclose: (() => void) | null = null
       onerror: (() => void) | null = null
       clientId = ''
-      readonly streamId = crypto.randomUUID()
+      terminalId = ''
+      namespace = ''
+      streamId = crypto.randomUUID()
+      generation = 1
+      private messageHandler: ((event: { data: string }) => void) | null = null
+      private closeHandler: (() => void) | null = null
+
       constructor(public url: string) {
         const scope = window as any
         scope.__controllerClientId ||= 'other'
@@ -171,70 +145,173 @@ async function mockApp(
         setTimeout(() => {
           this.readyState = 1
           this.onopen?.()
+          this.deliver(
+            `0${JSON.stringify({
+              sid: crypto.randomUUID(),
+              upgrades: [],
+              pingInterval: 25_000,
+              pingTimeout: 20_000,
+              maxPayload: 128 * 1024
+            })}`
+          )
         }, 10)
       }
+
+      set onmessage(handler: ((event: { data: string }) => void) | null) {
+        this.messageHandler = handler
+      }
+
+      get onmessage() {
+        return (event: { data: string }) => {
+          let message: any = null
+          try {
+            message = JSON.parse(String(event.data))
+          } catch {
+            this.messageHandler?.(event)
+            return
+          }
+          if (!message?.type || this.namespace !== '/terminals') {
+            this.messageHandler?.(event)
+            return
+          }
+
+          const type =
+            message.type === 'error' ? 'terminal_error' : message.type
+          const { type: _type, version: _version, ...payload } = message
+          if (type === 'control' && payload.generation === undefined) {
+            payload.generation = this.generation
+          }
+
+          this.deliverSocket(type, payload)
+        }
+      }
+
+      set onclose(handler: (() => void) | null) {
+        this.closeHandler = handler
+      }
+
+      get onclose() {
+        return () => {
+          this.readyState = 3
+          this.closeHandler?.()
+        }
+      }
+
       send(data: string) {
         const scope = window as any
-        const message = JSON.parse(data)
-        scope.__wsSent = [...(scope.__wsSent || []), message]
-        if (message.type === 'hello') {
-          this.clientId = message.clientId
-          const controller = scope.__controllerClientId === this.clientId
-          this.onmessage?.({
-            data: JSON.stringify({
-              version: 1,
-              type: 'ready',
-              connectionId: crypto.randomUUID(),
-              streamId: this.streamId,
-              controller,
-              reset: 'full',
-              heartbeatMs: 15000
-            })
-          })
-          this.onmessage?.({
-            data: JSON.stringify({
-              version: 1,
-              type: 'output',
-              streamId: this.streamId,
-              sequence: 1,
-              data: this.url.includes('term_new')
-                ? '[TaskTTY setup] bootstrap\\r\\nSETUP_OUTPUT\\r\\n[TaskTTY setup] bootstrap complete\\r\\nSHELL_READY\\r\\n'
-                : 'same persistent terminal session\\r\\n'
-            })
-          })
-          if (!scope.__suppressInitialTitle) {
-            this.onmessage?.({
-              data: JSON.stringify({
-                version: 1,
-                type: 'title',
-                title: this.url.includes('term_dev')
-                  ? 'dev · /worktrees/topic'
-                  : 'zsh · /worktrees/topic'
-              })
-            })
-          }
+        if (data === '2') {
+          this.deliver('3')
+          return
         }
 
-        if (message.type === 'take_control') {
-          scope.__controllerClientId = this.clientId
-          this.onmessage?.({
-            data: JSON.stringify({
-              version: 1,
-              type: 'control',
-              controller: true
+        if (data.startsWith('40/events')) {
+          this.namespace = '/events'
+          this.deliver(
+            `40/events,${JSON.stringify({ sid: crypto.randomUUID() })}`
+          )
+          scope.__eventSource = {
+            disconnect: () => this.deliver('41/events,'),
+            emit: (name: string, source = '{}') => {
+              if (name === 'error') {
+                this.close()
+                return
+              }
+
+              const value = JSON.parse(source)
+              if (name === 'connected') {
+                this.deliverSocket('snapshot', value)
+                return
+              }
+
+              const event = value?.type
+                ? value
+                : {
+                    id: crypto.randomUUID(),
+                    type: name,
+                    at: new Date().toISOString(),
+                    data: value?.data ?? value
+                  }
+              this.deliverSocket('product_event', event)
+            }
+          }
+          this.deliverSocket('snapshot', {
+            at: new Date().toISOString(),
+            terminalMetadata: initialMetadata
+          })
+          return
+        }
+
+        if (data.startsWith('40/terminals')) {
+          this.namespace = '/terminals'
+          const separator = data.indexOf(',')
+          const auth = JSON.parse(data.slice(separator + 1))
+          this.clientId = auth.clientId
+          this.terminalId = auth.terminalId
+          this.url = `${this.url}#${this.terminalId}`
+          this.deliver(
+            `40/terminals,${JSON.stringify({ sid: crypto.randomUUID() })}`
+          )
+          const controller = scope.__controllerClientId === this.clientId
+          this.deliverSocket('ready', {
+            connectionId: crypto.randomUUID(),
+            streamId: this.streamId,
+            generation: this.generation,
+            controller,
+            reset: 'full'
+          })
+          this.deliverSocket('output', {
+            streamId: this.streamId,
+            sequence: 1,
+            data:
+              this.terminalId === 'term_new'
+                ? '[TaskTTY setup] bootstrap\\r\\nSETUP_OUTPUT\\r\\n[TaskTTY setup] bootstrap complete\\r\\nSHELL_READY\\r\\n'
+                : 'same persistent terminal session\\r\\n'
+          })
+          if (!scope.__suppressInitialTitle) {
+            this.deliverSocket('title', {
+              title:
+                this.terminalId === 'term_dev'
+                  ? 'dev · /worktrees/topic'
+                  : 'zsh · /worktrees/topic'
             })
+          }
+
+          return
+        }
+
+        if (!data.startsWith('42/terminals,')) {
+          return
+        }
+
+        const [type, payload = {}] = JSON.parse(
+          data.slice('42/terminals,'.length)
+        )
+        const message = { type, ...payload }
+        scope.__wsSent = [...(scope.__wsSent || []), message]
+        if (type === 'take_control') {
+          scope.__controllerClientId = this.clientId
+          this.generation += 1
+          this.deliverSocket('control', {
+            generation: this.generation,
+            controller: true
           })
         }
       }
+
       close() {
         this.readyState = 3
-        this.onclose?.()
+        this.closeHandler?.()
+      }
+
+      private deliver(data: string): void {
+        queueMicrotask(() => this.messageHandler?.({ data }))
+      }
+
+      private deliverSocket(type: string, payload: unknown): void {
+        this.deliver(`42${this.namespace},${JSON.stringify([type, payload])}`)
       }
     }
-    Object.assign(window, {
-      EventSource: MockEventSource,
-      WebSocket: MockWebSocket
-    })
+    Object.assign(window, { WebSocket: MockWebSocket })
   }, initialTerminalMetadata)
   const state = structuredClone(project)
   if (options.terminalFree) {
@@ -1044,7 +1121,7 @@ test.describe('desktop worktree terminal UI', () => {
     await expect(trigger).toBeFocused()
   })
 
-  test('refreshes projects and replaces retained progress whenever SSE reconnects', async ({
+  test('refreshes projects and replaces retained progress whenever Socket.IO reconnects', async ({
     page
   }) => {
     const mocked = await mockApp(page, [
@@ -1114,7 +1191,7 @@ test.describe('desktop worktree terminal UI', () => {
     await expect(
       page.getByRole('button', { name: 'Take control' })
     ).toBeVisible()
-    await page.evaluate(() => {
+    await page.evaluate(async () => {
       const socket = (window as any).__lastWs
       socket.onmessage?.({
         data: JSON.stringify({
@@ -1125,6 +1202,7 @@ test.describe('desktop worktree terminal UI', () => {
           retryable: false
         })
       })
+      await new Promise((resolve) => setTimeout(resolve))
       socket.close()
     })
     await expect(page.getByRole('button', { name: 'Retry' })).toBeVisible()
@@ -1889,7 +1967,7 @@ test.describe('mobile terminal UI', () => {
     page
   }) => {
     await mockApp(page)
-    await page.evaluate(() => (window as any).__eventSource.emit('error'))
+    await page.evaluate(() => (window as any).__eventSource.disconnect())
     const status = page.locator('[role="status"]')
     await expect(status).toBeVisible({ timeout: 5_000 })
     await page.getByLabel('Open worktree drawer').click()
@@ -1959,8 +2037,11 @@ test.describe('mobile terminal UI', () => {
       })
     })
     await expect(page.locator('.xterm.enable-mouse-events')).toHaveCount(0)
-    const messagesBeforeModeChange = await page.evaluate(
-      () => (window as any).__wsSent.length
+    const inputMessagesBeforeModeChange = await page.evaluate(
+      () =>
+        (window as any).__wsSent.filter(
+          (message: any) => message.type === 'input'
+        ).length
     )
 
     for (const y of positions.slice(2)) {
@@ -1983,7 +2064,7 @@ test.describe('mobile terminal UI', () => {
             (window as any).__wsSent.filter(
               (message: any) => message.type === 'input'
             ).length > previousCount,
-          messagesBeforeModeChange
+          inputMessagesBeforeModeChange
         )
       )
       .toBe(true)
@@ -2121,8 +2202,8 @@ test.describe('mobile terminal UI', () => {
     const sent = await page.evaluate(() => (window as any).__wsSent)
     expect(sent).toEqual(
       expect.arrayContaining([
-        { version: 1, type: 'input', data: '\u001b' },
-        { version: 1, type: 'input', data: '\u001bOA' }
+        expect.objectContaining({ type: 'input', data: '\u001b' }),
+        expect.objectContaining({ type: 'input', data: '\u001bOA' })
       ])
     )
   })

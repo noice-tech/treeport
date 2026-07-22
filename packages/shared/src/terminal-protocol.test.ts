@@ -1,77 +1,131 @@
 import { describe, expect, it } from 'vitest'
 import {
-  parseTerminalClientMessage,
+  parseEventsSnapshot,
+  parseProductEvent,
+  parseTerminalAuth,
+  parseTerminalClientEvent,
   parseTerminalProgress,
   parseTerminalRuntimeMetadata,
-  parseTerminalServerMessage,
-  TERMINAL_PROTOCOL_VERSION
-} from './terminal-protocol.js'
+  parseTerminalServerEvent
+} from './index.js'
 
-describe('terminal protocol', () => {
-  it('accepts versioned hello and binary frames', () => {
+describe('Socket.IO contracts', () => {
+  it('strictly validates terminal auth and controller generations', () => {
     expect(
-      parseTerminalClientMessage({
-        version: TERMINAL_PROTOCOL_VERSION,
-        type: 'hello',
+      parseTerminalAuth({
+        terminalId: 'term-1',
         clientId: 'tab-1',
         cols: 120,
         rows: 40
       })
-    ).toMatchObject({ type: 'hello', clientId: 'tab-1' })
+    ).toMatchObject({ terminalId: 'term-1', clientId: 'tab-1' })
     expect(
-      parseTerminalClientMessage({
-        version: TERMINAL_PROTOCOL_VERSION,
-        type: 'binary',
-        data: '\0\xff'
-      })
-    ).toMatchObject({ type: 'binary' })
-  })
-
-  it('rejects wrong versions, extra keys, and invalid dimensions', () => {
-    expect(
-      parseTerminalClientMessage({ version: 2, type: 'take_control' })
-    ).toBeNull()
-    expect(
-      parseTerminalClientMessage({
-        version: TERMINAL_PROTOCOL_VERSION,
-        type: 'resize',
+      parseTerminalAuth({
+        terminalId: 'term-1',
+        clientId: 'tab-1',
         cols: 1,
         rows: 40
       })
     ).toBeNull()
     expect(
-      parseTerminalClientMessage({
-        version: TERMINAL_PROTOCOL_VERSION,
-        type: 'take_control',
+      parseTerminalAuth({
+        terminalId: 'term-1',
+        clientId: 'tab-1',
+        cols: 120,
+        rows: 40,
+        extra: true
+      })
+    ).toBeNull()
+
+    expect(
+      parseTerminalClientEvent('input', { generation: 2, data: 'hello' })
+    ).toEqual({ generation: 2, data: 'hello' })
+    expect(
+      parseTerminalClientEvent('binary', {
+        generation: 2,
+        data: '\0\xff'
+      })
+    ).toMatchObject({ data: '\0\xff' })
+    expect(
+      parseTerminalClientEvent('resize', {
+        generation: -1,
+        cols: 80,
+        rows: 24
+      })
+    ).toBeNull()
+    expect(
+      parseTerminalClientEvent('take_control', {
+        generation: 2,
         extra: true
       })
     ).toBeNull()
   })
 
-  it('accepts ready/output and rejects malformed server frames', () => {
+  it('validates fresh stream ready, output, consumption, and control payloads', () => {
     expect(
-      parseTerminalServerMessage({
-        version: TERMINAL_PROTOCOL_VERSION,
-        type: 'ready',
+      parseTerminalServerEvent('ready', {
         connectionId: 'connection',
         streamId: 'stream',
+        generation: 3,
         controller: true,
-        reset: 'full',
-        heartbeatMs: 15_000
+        reset: 'full'
       })
-    ).toMatchObject({ type: 'ready', reset: 'full' })
+    ).toMatchObject({ streamId: 'stream', generation: 3, reset: 'full' })
     expect(
-      parseTerminalServerMessage({
-        version: TERMINAL_PROTOCOL_VERSION,
-        type: 'output',
+      parseTerminalServerEvent('output', {
         streamId: 'stream',
         sequence: 0,
         data: 'bad'
       })
     ).toBeNull()
+    expect(
+      parseTerminalClientEvent('output_ack', {
+        streamId: 'stream',
+        sequence: 4
+      })
+    ).toEqual({ streamId: 'stream', sequence: 4 })
+    expect(
+      parseTerminalServerEvent('control', {
+        generation: Number.NaN,
+        controller: false
+      })
+    ).toBeNull()
   })
 
-  it('validates runtime metadata snapshots', () => {
+  it('validates snapshot-first product event payloads', () => {
+    expect(
+      parseEventsSnapshot({
+        at: '2026-01-01T00:00:00.000Z',
+        terminalMetadata: [{ terminalId: 'term', title: null, progress: null }]
+      })
+    ).toMatchObject({ terminalMetadata: [{ terminalId: 'term' }] })
+    expect(
+      parseEventsSnapshot({
+        at: 'not-a-date',
+        terminalMetadata: []
+      })
+    ).toBeNull()
+    expect(
+      parseProductEvent({
+        id: 'event-1',
+        type: 'terminal.updated',
+        at: '2026-01-01T00:00:00.000Z',
+        data: { terminalId: 'term' }
+      })
+    ).toMatchObject({ type: 'terminal.updated' })
+    expect(
+      parseProductEvent({
+        id: 'event-1',
+        type: 'unknown',
+        at: '2026-01-01T00:00:00.000Z',
+        data: {}
+      })
+    ).toBeNull()
+  })
+})
+
+describe('terminal runtime metadata', () => {
+  it('validates metadata snapshots and daemon BEL sequences', () => {
     expect(
       parseTerminalRuntimeMetadata({
         terminalId: 'term',
@@ -90,60 +144,18 @@ describe('terminal protocol', () => {
       parseTerminalRuntimeMetadata({
         terminalId: 'term',
         title: null,
-        progress: null
-      })
-    ).toEqual({
-      terminalId: 'term',
-      title: null,
-      progress: null,
-      progressStartedAt: null,
-      progressClearedAt: null,
-      bell: null
-    })
-    expect(
-      parseTerminalRuntimeMetadata({
-        terminalId: 'term',
-        title: null,
         progress: null,
         progressStartedAt: '2026-01-01T00:00:00.000Z',
         progressClearedAt: '2026-01-01T00:01:00.000Z',
         bell: { sequence: 2, at: '2026-01-01T00:02:00.000Z' }
       })
-    ).toMatchObject({
-      progressStartedAt: '2026-01-01T00:00:00.000Z',
-      progressClearedAt: '2026-01-01T00:01:00.000Z',
-      bell: { sequence: 2 }
-    })
+    ).toMatchObject({ bell: { sequence: 2 } })
     expect(
       parseTerminalRuntimeMetadata({
         terminalId: 'term',
         title: null,
         progress: null,
         extra: true
-      })
-    ).toBeNull()
-  })
-
-  it('accepts validated progress frames and explicit clears', () => {
-    expect(
-      parseTerminalServerMessage({
-        version: TERMINAL_PROTOCOL_VERSION,
-        type: 'progress',
-        progress: { state: 'indeterminate', value: null }
-      })
-    ).toMatchObject({ type: 'progress', progress: { state: 'indeterminate' } })
-    expect(
-      parseTerminalServerMessage({
-        version: TERMINAL_PROTOCOL_VERSION,
-        type: 'progress',
-        progress: null
-      })
-    ).toMatchObject({ type: 'progress', progress: null })
-    expect(
-      parseTerminalServerMessage({
-        version: TERMINAL_PROTOCOL_VERSION,
-        type: 'progress',
-        progress: { state: 'normal', value: 101 }
       })
     ).toBeNull()
   })

@@ -3,6 +3,8 @@ import http, { type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { Server as SocketIOServer } from 'socket.io'
+import { SOCKET_IO_PATH } from '@tasktty/shared'
 import type {
   ProjectRecord,
   TerminalRecord,
@@ -120,6 +122,7 @@ async function runCli(
 
 describe('CLI context and machine output', () => {
   let server: Server
+  let socketServer: SocketIOServer
   let apiUrl: string
   const requests: string[] = []
   const spawnBodies: unknown[] = []
@@ -132,8 +135,13 @@ describe('CLI context and machine output', () => {
     progressClearedAt: timestamp,
     bell: null
   }
-  let sseScenario: 'none' | 'working' | 'bell' | 'exit' | 'slow-refresh' =
-    'none'
+  let eventScenario:
+    | 'none'
+    | 'working'
+    | 'bell'
+    | 'bell-snapshot'
+    | 'exit'
+    | 'slow-refresh' = 'none'
   let inspectionRequests = 0
 
   beforeEach(() => {
@@ -146,7 +154,7 @@ describe('CLI context and machine output', () => {
       progressClearedAt: timestamp,
       bell: null
     }
-    sseScenario = 'none'
+    eventScenario = 'none'
     inspectionRequests = 0
   })
 
@@ -176,7 +184,7 @@ describe('CLI context and machine output', () => {
         }
 
         inspectionRequests += 1
-        if (sseScenario === 'slow-refresh' && inspectionRequests > 1) {
+        if (eventScenario === 'slow-refresh' && inspectionRequests > 1) {
           return
         }
 
@@ -186,58 +194,6 @@ describe('CLI context and machine output', () => {
             metadata: observedMetadata
           })
         )
-        return
-      }
-
-      if (request.method === 'GET' && request.url === '/api/events') {
-        response.setHeader('content-type', 'text/event-stream')
-        response.setHeader('cache-control', 'no-cache')
-        response.flushHeaders()
-        response.write(
-          `event: connected\ndata: ${JSON.stringify({ at: timestamp, terminalMetadata: [observedMetadata] })}\n\n`
-        )
-        if (sseScenario === 'none' || sseScenario === 'slow-refresh') {
-          return
-        }
-
-        const timer = setTimeout(() => {
-          let event: {
-            type: 'terminal.metadata' | 'terminal.updated'
-            data: Record<string, unknown>
-          }
-          if (sseScenario === 'working') {
-            observedMetadata = {
-              ...observedMetadata,
-              progress: { state: 'indeterminate', value: null },
-              progressStartedAt: '2026-01-01T00:01:00.000Z'
-            }
-            event = { type: 'terminal.metadata', data: observedMetadata }
-          } else if (sseScenario === 'bell') {
-            observedMetadata = {
-              ...observedMetadata,
-              bell: {
-                sequence: (observedMetadata.bell?.sequence ?? 0) + 1,
-                at: '2026-01-01T00:02:00.000Z'
-              }
-            }
-            event = { type: 'terminal.metadata', data: observedMetadata }
-          } else {
-            observedTerminal = {
-              ...observedTerminal,
-              status: 'exited',
-              exitCode: 7
-            }
-            event = {
-              type: 'terminal.updated',
-              data: { terminalId: observedTerminal.id }
-            }
-          }
-
-          const frame = `event: ${event.type}\r\ndata: ${JSON.stringify({ id: 'event-1', type: event.type, at: '2026-01-01T00:03:00.000Z', data: event.data })}\r\n\r\n`
-          response.write(frame.slice(0, Math.floor(frame.length / 2)))
-          response.write(frame.slice(Math.floor(frame.length / 2)))
-        }, 10)
-        response.on('close', () => clearTimeout(timer))
         return
       }
 
@@ -308,6 +264,73 @@ describe('CLI context and machine output', () => {
         JSON.stringify({ error: { code: 'NOT_FOUND', message: 'Not found' } })
       )
     })
+    socketServer = new SocketIOServer(server, {
+      path: SOCKET_IO_PATH,
+      transports: ['websocket'],
+      serveClient: false
+    })
+    socketServer.of('/events').on('connection', (socket) => {
+      if (eventScenario === 'bell-snapshot') {
+        observedMetadata = {
+          ...observedMetadata,
+          bell: { sequence: 1, at: '2026-01-01T00:02:00.000Z' }
+        }
+      }
+
+      socket.emit('snapshot', {
+        at: timestamp,
+        terminalMetadata: [observedMetadata]
+      })
+      if (
+        eventScenario === 'none' ||
+        eventScenario === 'slow-refresh' ||
+        eventScenario === 'bell-snapshot'
+      ) {
+        return
+      }
+
+      const timer = setTimeout(() => {
+        let event: {
+          type: 'terminal.metadata' | 'terminal.updated'
+          data: Record<string, unknown>
+        }
+        if (eventScenario === 'working') {
+          observedMetadata = {
+            ...observedMetadata,
+            progress: { state: 'indeterminate', value: null },
+            progressStartedAt: '2026-01-01T00:01:00.000Z'
+          }
+          event = { type: 'terminal.metadata', data: observedMetadata }
+        } else if (eventScenario === 'bell') {
+          observedMetadata = {
+            ...observedMetadata,
+            bell: {
+              sequence: (observedMetadata.bell?.sequence ?? 0) + 1,
+              at: '2026-01-01T00:02:00.000Z'
+            }
+          }
+          event = { type: 'terminal.metadata', data: observedMetadata }
+        } else {
+          observedTerminal = {
+            ...observedTerminal,
+            status: 'exited',
+            exitCode: 7
+          }
+          event = {
+            type: 'terminal.updated',
+            data: { terminalId: observedTerminal.id }
+          }
+        }
+
+        socket.emit('product_event', {
+          id: 'event-1',
+          type: event.type,
+          at: '2026-01-01T00:03:00.000Z',
+          data: event.data
+        })
+      }, 10)
+      socket.once('disconnect', () => clearTimeout(timer))
+    })
     await new Promise<void>((resolve) => {
       server.listen(0, '127.0.0.1', resolve)
     })
@@ -316,9 +339,7 @@ describe('CLI context and machine output', () => {
   })
 
   afterAll(async () => {
-    await new Promise<void>((resolve, reject) => {
-      server.close((error) => (error ? reject(error) : resolve()))
-    })
+    await new Promise<void>((resolve) => socketServer.close(() => resolve()))
   })
 
   it('prints concise context text by default', async () => {
@@ -535,8 +556,8 @@ describe('CLI context and machine output', () => {
     })
   })
 
-  it('waits for fragmented progress and bell SSE events', async () => {
-    sseScenario = 'working'
+  it('waits for progress and bell Socket.IO events', async () => {
+    eventScenario = 'working'
     const working = await runCli(
       ['terminal', 'wait', terminal.id, '--until', 'working', '--json'],
       { TASKTTY_API_URL: apiUrl }
@@ -552,7 +573,7 @@ describe('CLI context and machine output', () => {
       progress: null,
       bell: { sequence: 4, at: '2026-01-01T00:01:00.000Z' }
     }
-    sseScenario = 'bell'
+    eventScenario = 'bell'
     const bell = await runCli(
       ['terminal', 'wait', terminal.id, '--until', 'bell', '--json'],
       { TASKTTY_API_URL: apiUrl }
@@ -565,8 +586,22 @@ describe('CLI context and machine output', () => {
     })
   })
 
+  it('observes a bell between inspection and the Socket.IO snapshot', async () => {
+    eventScenario = 'bell-snapshot'
+    const result = await runCli(
+      ['terminal', 'wait', terminal.id, '--until', 'bell', '--json'],
+      { TASKTTY_API_URL: apiUrl }
+    )
+    expect(result.code).toBe(0)
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      condition: 'bell',
+      observedAt: '2026-01-01T00:02:00.000Z',
+      metadata: { bell: { sequence: 1 } }
+    })
+  })
+
   it('refreshes terminal status after an exit event', async () => {
-    sseScenario = 'exit'
+    eventScenario = 'exit'
     const result = await runCli(
       ['terminal', 'wait', terminal.id, '--until', 'exit', '--json'],
       { TASKTTY_API_URL: apiUrl }
@@ -580,7 +615,7 @@ describe('CLI context and machine output', () => {
   })
 
   it('times out with exit 4 and aborts an in-flight status refresh', async () => {
-    sseScenario = 'slow-refresh'
+    eventScenario = 'slow-refresh'
     const result = await runCli(
       [
         'terminal',

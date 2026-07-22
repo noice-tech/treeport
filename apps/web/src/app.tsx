@@ -11,6 +11,7 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { io, type Socket } from 'socket.io-client'
 import {
   ArrowPathIcon,
   Bars3Icon,
@@ -23,8 +24,15 @@ import {
   TrashIcon,
   XMarkIcon
 } from '@heroicons/react/16/solid'
-import { parseTerminalRuntimeMetadata } from '@tasktty/shared'
+import {
+  parseEventsSnapshot,
+  parseProductEvent,
+  parseTerminalRuntimeMetadata,
+  SOCKET_IO_PATH
+} from '@tasktty/shared'
 import type {
+  EventsClientToServerEvents,
+  EventsServerToClientEvents,
   ProjectColor,
   ProjectRecord,
   RecentProjectRecord,
@@ -277,7 +285,7 @@ export default function App() {
       : DEFAULT_SIDEBAR_WIDTH
   })
   const [resizingSidebar, setResizingSidebar] = useState(false)
-  const [sseDisconnected, setSseDisconnected] = useState(false)
+  const [eventsDisconnected, setEventsDisconnected] = useState(false)
   const [showSyncDegraded, setShowSyncDegraded] = useState(false)
   const selectedWorktreeIdRef = useRef<string | null>(null)
   const resizeOrigin = useRef<{ pointerX: number; width: number } | null>(null)
@@ -307,7 +315,7 @@ export default function App() {
   useEffect(() => {
     const degraded =
       projectsQuery.data !== undefined &&
-      (sseDisconnected || projectsQuery.isRefetchError)
+      (eventsDisconnected || projectsQuery.isRefetchError)
     if (!degraded) {
       setShowSyncDegraded(false)
       return
@@ -318,7 +326,7 @@ export default function App() {
       METADATA_DEGRADED_GRACE_MS
     )
     return () => window.clearTimeout(timer)
-  }, [projectsQuery.data, projectsQuery.isRefetchError, sseDisconnected])
+  }, [eventsDisconnected, projectsQuery.data, projectsQuery.isRefetchError])
 
   useEffect(() => {
     const next = projectsQuery.data
@@ -421,7 +429,15 @@ export default function App() {
   }, [drawerOpen, isMobile, modal, openProjectColorPickerId])
 
   useEffect(() => {
-    const events = new EventSource('/api/events')
+    const events: Socket<
+      EventsServerToClientEvents,
+      EventsClientToServerEvents
+    > = io('/events', {
+      path: SOCKET_IO_PATH,
+      transports: ['websocket'],
+      autoConnect: false,
+      retries: 0
+    })
     const refreshes = createInvalidationCoalescer(() =>
       queryClient.invalidateQueries(
         { queryKey: projectsQueryKey },
@@ -442,56 +458,54 @@ export default function App() {
     )
     const refresh = () => refreshes.schedule()
     const refreshProjects = () => projectRefreshes.schedule()
-    const connected = (event: MessageEvent<string>) => {
-      setSseDisconnected(false)
-      try {
-        const payload = JSON.parse(event.data) as { terminalMetadata?: unknown }
-        if (Array.isArray(payload.terminalMetadata)) {
-          terminalSessions.replaceRuntimeMetadata(
-            payload.terminalMetadata
-              .map(parseTerminalRuntimeMetadata)
-              .filter((metadata) => metadata !== null)
-          )
-        }
-      } catch {
-        // The projects refresh below remains a safe fallback for an invalid connected frame.
+    const snapshot = (value: unknown) => {
+      const payload = parseEventsSnapshot(value)
+      if (!payload) {
+        setEventsDisconnected(true)
+        return
       }
+
+      terminalSessions.replaceRuntimeMetadata(payload.terminalMetadata)
+      setEventsDisconnected(false)
       refresh()
     }
-    const runtimeMetadata = (event: MessageEvent<string>) => {
-      try {
-        const envelope = JSON.parse(event.data) as { data?: unknown }
-        const metadata = parseTerminalRuntimeMetadata(envelope.data)
+    const productEvent = (value: unknown) => {
+      const event = parseProductEvent(value)
+      if (!event) {
+        return
+      }
+
+      if (event.type === 'terminal.metadata') {
+        const metadata = parseTerminalRuntimeMetadata(event.data)
         if (metadata) {
           terminalSessions.applyRuntimeMetadata(metadata)
         }
-      } catch {
-        // Ignore a malformed metadata event and keep the last authoritative snapshot.
+
+        return
+      }
+
+      if (
+        event.type === 'project.updated' ||
+        event.type === 'project.removed'
+      ) {
+        refreshProjects()
+        return
+      }
+
+      if (event.type !== 'terminal.controller_changed') {
+        refresh()
       }
     }
-    const disconnected = () => setSseDisconnected(true)
-    const eventNames = [
-      'project.created',
-      'worktree.created',
-      'worktree.updated',
-      'worktree.removed',
-      'terminal.created',
-      'terminal.updated',
-      'terminal.removed',
-      'remove.started',
-      'remove.completed',
-      'remove.failed'
-    ]
-    events.addEventListener('connected', connected)
-    events.addEventListener('terminal.metadata', runtimeMetadata)
-    events.addEventListener('error', disconnected)
-    events.addEventListener('project.updated', refreshProjects)
-    events.addEventListener('project.removed', refreshProjects)
-    eventNames.forEach((name) => events.addEventListener(name, refresh))
+    const disconnected = () => setEventsDisconnected(true)
+    events.on('snapshot', snapshot)
+    events.on('product_event', productEvent)
+    events.on('disconnect', disconnected)
+    events.on('connect_error', disconnected)
+    events.connect()
     return () => {
       refreshes.dispose()
       projectRefreshes.dispose()
-      events.close()
+      events.disconnect()
     }
   }, [queryClient])
 

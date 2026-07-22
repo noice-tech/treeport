@@ -161,7 +161,7 @@ Identifiers never come from branch names or paths. `packages/core/src/launcher.t
 
 The generated tmux configuration is stored in the tasktty runtime directory. It does not read or modify `~/.tmux.conf`. It disables the status bar, uses `tmux-256color`, enables extended keys, selects CSI-u key encoding on tmux 3.5+, retains dead panes and scrollback, and never restarts exited commands. Wheel scrolling still uses tmux's persistent history, but tasktty hides tmux's copy-mode indicator and styling; typing immediately returns to the live terminal without dropping the first key. SQLite stores project/worktree bindings and operation history. tmux owns terminal inventory, configured names, commands, and live or exited status.
 
-Production terminal rendering deliberately uses normal `attach-session` clients: control mode does not provide a byte-offset replay or enough private terminal state to restore application-cursor, bracketed-paste, mouse/focus, extended-key negotiation, and alternate-screen state exactly after reconnect. For each running terminal, a daemon-lifetime read-only, `ignore-size` control-mode sidecar observes title, OSC `9;4` progress, and real BEL metadata that normal tmux clients filter, without affecting rendering or pane dimensions. The daemon records progress start/clear timestamps and the latest bell sequence for its lifetime. Every valid active progress frame renews a five-minute inactivity lease; an explicit clear or terminal/observer shutdown clears immediately, and an application that stops refreshing progress is eventually treated as idle. The daemon also polls tmux title/status as a fallback and publishes metadata snapshots and changes over SSE, so navigation and CLI waits stay current before a terminal is selected. Runtime metadata resets with the daemon and terminal applications that do not emit OSC `9;4` cannot distinguish “idle” from “no progress protocol support.” `apps/server/src/tmux-control.ts` byte-decodes this output; tests cover flow-control events, OSC sequences, raw modified-key sequences, resizing, and session survival against real tmux. Control-mode rendering remains experimental and would require a persistent terminal model before replacing the normal attachment path.
+Production terminal rendering deliberately uses normal `attach-session` clients: control mode does not provide a byte-offset replay or enough private terminal state to restore application-cursor, bracketed-paste, mouse/focus, extended-key negotiation, and alternate-screen state exactly after reconnect. For each running terminal, a daemon-lifetime read-only, `ignore-size` control-mode sidecar observes title, OSC `9;4` progress, and real BEL metadata that normal tmux clients filter, without affecting rendering or pane dimensions. The daemon records progress start/clear timestamps and the latest bell sequence for its lifetime. Every valid active progress frame renews a five-minute inactivity lease; an explicit clear or terminal/observer shutdown clears immediately, and an application that stops refreshing progress is eventually treated as idle. The daemon also polls tmux title/status as a fallback and publishes snapshot-first metadata changes through the Socket.IO `/events` namespace, so navigation and CLI waits stay current before a terminal is selected. Runtime metadata resets with the daemon and terminal applications that do not emit OSC `9;4` cannot distinguish “idle” from “no progress protocol support.” `apps/server/src/tmux-control.ts` byte-decodes this output; tests cover flow-control events, OSC sequences, raw modified-key sequences, resizing, and session survival against real tmux. Control-mode rendering remains experimental and would require a persistent terminal model before replacing the normal attachment path.
 
 ## Browser and phone handoff
 
@@ -169,7 +169,7 @@ Opening a terminal creates a temporary `node-pty` process attached to its existi
 
 Multiple clients can view a terminal. One client holds the input/resize lease. Select **Take control** on another client to transfer it without replacing the tmux session. The controlling client drives tmux’s `window-size latest` sizing. A reconnecting browser keeps its lease for a short grace period using a tab-scoped client identity. A brief resize when clients with very different dimensions hand off is an inherent tmux limitation; viewers may also see letterboxing until they take control.
 
-Terminal sockets use a versioned hello/ready protocol with application heartbeats and output acknowledgements. The server pauses an attachment PTY when the browser falls behind, while the persistent tmux session continues independently. The browser retains at most three selected/recent xterm sessions and reuses them when switching tabs.
+Terminal viewers use independent WebSocket-only Socket.IO connections and an application-level ready/reset handshake. Engine.IO owns connection heartbeat and reconnect mechanics, while TaskTTY retains fresh stream epochs, controller generations, and explicit output-consumption acknowledgements. The server pauses only a lagging viewer’s attachment PTY when xterm falls behind, while the persistent tmux session and other viewers continue independently. The browser retains at most three selected/recent xterm sessions and reuses them when switching tabs.
 
 Dropping a file on the terminal or pasting a clipboard file/image uploads a private copy (up to 50 MiB) into TaskTTY’s runtime directory and pastes its daemon-local path through xterm’s bracketed-paste handling. This gives terminal applications such as Pi a readable path without writing into the Git worktree. Uploads older than 24 hours are pruned, and the directory retains at most 512 MiB of its newest files.
 
@@ -204,7 +204,7 @@ tasktty currently includes a compatibility adapter for project-local `.zed/tasks
 
 **Remove worktree** is the only removal action. The web UI submits an eligible, warning-free preview immediately; staged, unstaged, untracked, conflicted, or at-risk detached worktrees still require destructive confirmation. Preview also reports locked state and every terminal that will stop. The daemon then blocks mutation, marks the sidebar row as removing, kills the worktree's tmux server, and runs path-addressed `git worktree remove`; it never deletes an attached Git branch. Main and locked worktrees are refused. Completed removal means that Git no longer reports the worktree and the exact checkout root is absent. Interrupted removal may clean only the exact previously authorized checkout when its recorded filesystem identity, Git administrative key, stale `.git` marker, and wrapper provenance still match. TaskTTY atomically quarantines and reverifies that root before recursive cleanup. Wrapper cleanup remains empty-directory-only; unverifiable legacy or replaced paths stay `cleanup_failed` for inspection and appear with manual-cleanup guidance instead of an unsafe retry.
 
-Runtime terminal titles and progress are owned by the daemon metadata manager and mirrored into the browser's terminal session manager through ordered SSE snapshots and events, so tabs, panes, the sidebar, and mobile selector update together even for terminals that have not been opened in that browser. Browser-local OSC parsing and attachment WebSocket progress frames are not progress state sources, so delayed terminal output cannot restore a newer daemon clear. The configured name is stored with the tmux session as its fallback; observed title and progress metadata remain volatile.
+Runtime terminal titles and progress are owned by the daemon metadata manager and mirrored into the browser's terminal session manager through ordered Socket.IO snapshots and product events, so tabs, panes, the sidebar, and mobile selector update together even for terminals that have not been opened in that browser. Browser-local OSC parsing and terminal-viewer progress events are not progress state sources, so delayed terminal output cannot restore a newer daemon clear. The configured name is stored with the tmux session as its fallback; observed title and progress metadata remain volatile.
 
 ## API
 
@@ -212,7 +212,6 @@ The versioned JSON surface is under `/api`:
 
 ```text
 GET  /api/health
-GET  /api/events (SSE)
 GET/POST /api/projects               GET/PATCH/DELETE /api/projects/:projectId
 GET  /api/projects/recent
 POST /api/projects/:projectId/open
@@ -226,14 +225,13 @@ GET  /api/worktrees/:worktreeId/remove-preview
 POST /api/worktrees/:worktreeId/remove
 POST /api/worktrees/:worktreeId/pr/refresh
 GET/PATCH/DELETE /api/terminals/:terminalId
-WS   /api/terminals/:terminalId/attach
 POST /api/spawn
 GET  /api/operations/:operationId
 ```
 
 `GET /api/projects` returns open projects only. `POST /api/projects` opens or reopens by path, while the ID-based open endpoint also works for an unavailable stored path. Close is non-destructive workspace removal; `DELETE /api/projects/:projectId` remains destructive unregister and retains its linked-worktree restriction.
 
-Errors use `{ "error": { "code", "message", "details"? } }`. SSE emits project, worktree, terminal, controller, and cleanup changes.
+Errors use `{ "error": { "code", "message", "details"? } }`. Real-time traffic uses WebSocket-only Socket.IO at `/api/socket.io/`: `/events` emits an authoritative runtime-metadata snapshot before ordered product events, and `/terminals` owns one independent connection and tmux attachment per viewer. Connection-state recovery and per-message compression are disabled, so every terminal reconnect establishes a fresh stream epoch, resets xterm, and relies on tmux redraw rather than output replay.
 
 ## Configuration and data
 
@@ -255,4 +253,4 @@ Schema tables are `projects`, `worktrees`, `operations`, and `schema_migrations`
 
 tasktty is arbitrary terminal access. Authentication is temporarily disabled. The daemon itself defaults to `127.0.0.1`, but the root `pnpm start` convenience command selects `0.0.0.0`; use it only on a trusted private network, or use `pnpm start:local` to keep the listener loopback-only. Repository/worktree paths are canonicalized, API bodies are validated with Zod, and external commands use argument arrays without interpolated shell strings.
 
-This is a single-user, single-daemon local tool. It does not provide internet hosting, authentication, multi-user authorization, sandboxing, or a cloud relay. Use a private reverse proxy such as Tailscale Serve rather than exposing the daemon publicly.
+This is a single-user, single-daemon local tool. It does not provide internet hosting, authentication, multi-user authorization, sandboxing, or a cloud relay. Socket.IO upgrades reject a supplied browser Origin unless it matches the effective request host (including a reverse proxy’s forwarded host); originless local CLI connections remain supported. Use a private reverse proxy such as Tailscale Serve rather than exposing the daemon publicly.

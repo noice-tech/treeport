@@ -1,44 +1,49 @@
 import crypto from 'node:crypto'
 import type { IDisposable, IPty } from 'node-pty'
 import * as pty from 'node-pty'
-import type { WSContext } from 'hono/ws'
 import {
-  parseTerminalClientMessage,
+  terminalBinarySchema,
+  terminalInputSchema,
+  terminalOutputAckSchema,
+  terminalResizeSchema,
+  terminalTakeControlSchema,
   TERMINAL_CONTROLLER_GRACE_MS,
-  TERMINAL_HEARTBEAT_MS,
-  TERMINAL_HEARTBEAT_TIMEOUT_MS,
-  TERMINAL_HELLO_TIMEOUT_MS,
   TERMINAL_MAX_CLIENT_MESSAGE_BYTES,
+  TERMINAL_MAX_INPUT_BYTES,
   TERMINAL_OUTPUT_HIGH_WATERMARK,
   TERMINAL_OUTPUT_LOW_WATERMARK,
   TERMINAL_OUTPUT_STALL_TIMEOUT_MS,
-  TERMINAL_PROTOCOL_VERSION,
-  type TerminalClientMessage,
+  type TerminalAuth,
+  type TerminalClientEvent,
   type TerminalRuntimeMetadata,
-  type TerminalServerMessage
+  type TerminalServerEvent,
+  type TerminalServerPayload
 } from '@tasktty/shared'
 import type { TaskTTYService, TmuxAdapter } from '@tasktty/core'
 import { resolveExecutablePath } from '@tasktty/core'
 import type { TerminalMetadataManager } from './terminal-metadata.js'
 
 type PtySpawner = typeof pty.spawn
-type ConnectionState = 'awaiting_hello' | 'initializing' | 'ready' | 'closed'
+type ConnectionState = 'initializing' | 'ready' | 'closed'
+
+export interface TerminalTransport {
+  readonly id: string
+  isConnected(): boolean
+  send(event: TerminalServerEvent, payload: TerminalServerPayload): boolean
+  disconnect(retryable: boolean): void
+}
 
 interface ClientConnection {
   id: string
   terminalId: string
-  ws: WSContext
+  transport: TerminalTransport
   state: ConnectionState
-  clientId: string | null
+  clientId: string
   pty: IPty | null
   streamId: string | null
-  heartbeat: NodeJS.Timeout | null
-  helloTimeout: NodeJS.Timeout | null
   stallTimeout: NodeJS.Timeout | null
   dataDisposable: IDisposable | null
   exitDisposable: IDisposable | null
-  lastPongAt: number
-  lastPingNonce: string | null
   nextSequence: number
   lastAckSequence: number
   unacknowledgedBytes: number
@@ -51,24 +56,9 @@ interface ClientConnection {
 interface ControllerLease {
   clientId: string
   connectionId: string | null
+  generation: number
   expiresAt: number
   timer: NodeJS.Timeout | null
-}
-
-function clientMessageByteLength(raw: unknown): number {
-  if (typeof raw === 'string') {
-    return Buffer.byteLength(raw)
-  }
-
-  if (raw instanceof ArrayBuffer) {
-    return raw.byteLength
-  }
-
-  if (ArrayBuffer.isView(raw)) {
-    return raw.byteLength
-  }
-
-  return Buffer.byteLength(String(raw))
 }
 
 function errorMessage(error: unknown): string {
@@ -90,6 +80,7 @@ function tmuxEnvironment(): NodeJS.ProcessEnv {
 export class TerminalAttachmentManager {
   private readonly clients = new Map<string, ClientConnection>()
   private readonly controllers = new Map<string, ControllerLease>()
+  private readonly controllerGenerations = new Map<string, number>()
   private readonly tmuxExecutable: string
 
   constructor(
@@ -102,23 +93,18 @@ export class TerminalAttachmentManager {
     this.tmuxExecutable = resolveExecutablePath(tmuxExecutable)
   }
 
-  accept(terminalId: string, ws: WSContext): string {
-    const id = crypto.randomUUID()
+  accept(auth: TerminalAuth, transport: TerminalTransport): string {
     const connection: ClientConnection = {
-      id,
-      terminalId,
-      ws,
-      state: 'awaiting_hello',
-      clientId: null,
+      id: transport.id,
+      terminalId: auth.terminalId,
+      transport,
+      state: 'initializing',
+      clientId: auth.clientId,
       pty: null,
       streamId: null,
-      heartbeat: null,
-      helloTimeout: null,
       stallTimeout: null,
       dataDisposable: null,
       exitDisposable: null,
-      lastPongAt: Date.now(),
-      lastPingNonce: null,
       nextSequence: 1,
       lastAckSequence: 0,
       unacknowledgedBytes: 0,
@@ -127,91 +113,18 @@ export class TerminalAttachmentManager {
       announcedReady: false,
       metadataUnsubscribe: null
     }
-    connection.helloTimeout = setTimeout(
-      () =>
-        this.protocolError(
-          connection,
-          'HELLO_TIMEOUT',
-          'Terminal handshake timed out',
-          1008
-        ),
-      TERMINAL_HELLO_TIMEOUT_MS
-    )
-    connection.helloTimeout.unref()
-    this.clients.set(id, connection)
-    return id
+    this.clients.set(connection.id, connection)
+    void this.initialize(connection, auth.cols, auth.rows)
+    return connection.id
   }
 
-  message(connectionId: string, raw: unknown): void {
+  message(
+    connectionId: string,
+    event: TerminalClientEvent,
+    value: unknown
+  ): void {
     const connection = this.clients.get(connectionId)
     if (!connection || connection.state === 'closed') {
-      return
-    }
-
-    if (clientMessageByteLength(raw) > TERMINAL_MAX_CLIENT_MESSAGE_BYTES) {
-      this.protocolError(
-        connection,
-        'MESSAGE_TOO_LARGE',
-        'Terminal message is too large',
-        1009
-      )
-      return
-    }
-
-    let value: unknown
-    try {
-      const serialized =
-        typeof raw === 'string'
-          ? raw
-          : raw instanceof ArrayBuffer
-            ? Buffer.from(raw).toString('utf8')
-            : ArrayBuffer.isView(raw)
-              ? Buffer.from(
-                  raw.buffer,
-                  raw.byteOffset,
-                  raw.byteLength
-                ).toString('utf8')
-              : String(raw)
-      value = JSON.parse(serialized)
-    } catch {
-      this.protocolError(
-        connection,
-        'INVALID_JSON',
-        'Invalid terminal message',
-        1008
-      )
-      return
-    }
-    const message = parseTerminalClientMessage(value)
-    if (!message) {
-      this.protocolError(
-        connection,
-        'INVALID_MESSAGE',
-        'Invalid terminal message',
-        1008
-      )
-      return
-    }
-
-    if (connection.state === 'awaiting_hello') {
-      if (message.type !== 'hello') {
-        this.protocolError(
-          connection,
-          'HELLO_REQUIRED',
-          'hello must be the first message',
-          1002
-        )
-        return
-      }
-
-      connection.state = 'initializing'
-      connection.clientId = message.clientId
-      if (connection.helloTimeout) {
-        clearTimeout(connection.helloTimeout)
-      }
-
-      connection.helloTimeout = null
-      void this.initialize(connection, message.cols, message.rows)
       return
     }
 
@@ -219,23 +132,108 @@ export class TerminalAttachmentManager {
       this.protocolError(
         connection,
         'NOT_READY',
-        'Terminal attachment is not ready',
-        1008
+        'Terminal attachment is not ready'
       )
       return
     }
 
-    if (message.type === 'hello') {
+    const serialized = JSON.stringify(value)
+    if (serialized === undefined) {
       this.protocolError(
         connection,
-        'DUPLICATE_HELLO',
-        'hello has already been received',
-        1002
+        'INVALID_MESSAGE',
+        'Invalid terminal message'
       )
       return
     }
 
-    this.handleReadyMessage(connection, message)
+    const serializedBytes = Buffer.byteLength(serialized)
+    if (serializedBytes > TERMINAL_MAX_CLIENT_MESSAGE_BYTES) {
+      this.protocolError(
+        connection,
+        'MESSAGE_TOO_LARGE',
+        'Terminal message is too large'
+      )
+      return
+    }
+
+    if (event === 'output_ack') {
+      const parsed = terminalOutputAckSchema.safeParse(value)
+      if (!parsed.success) {
+        this.protocolError(connection, 'INVALID_MESSAGE', 'Invalid output ACK')
+        return
+      }
+
+      this.acknowledgeOutput(
+        connection,
+        parsed.data.streamId,
+        parsed.data.sequence
+      )
+      return
+    }
+
+    if (event === 'take_control') {
+      const parsed = terminalTakeControlSchema.safeParse(value)
+      if (!parsed.success) {
+        this.protocolError(
+          connection,
+          'INVALID_MESSAGE',
+          'Invalid controller request'
+        )
+        return
+      }
+
+      this.takeControl(connection, parsed.data.generation)
+      return
+    }
+
+    if (event === 'input') {
+      const parsed = terminalInputSchema.safeParse(value)
+      if (
+        !parsed.success ||
+        Buffer.byteLength(parsed.data.data) > TERMINAL_MAX_INPUT_BYTES
+      ) {
+        this.protocolError(connection, 'INVALID_MESSAGE', 'Invalid input')
+        return
+      }
+
+      if (this.canControl(connection, parsed.data.generation)) {
+        connection.pty?.write(parsed.data.data)
+      }
+
+      return
+    }
+
+    if (event === 'binary') {
+      const parsed = terminalBinarySchema.safeParse(value)
+      if (
+        !parsed.success ||
+        Buffer.byteLength(parsed.data.data, 'latin1') > TERMINAL_MAX_INPUT_BYTES
+      ) {
+        this.protocolError(
+          connection,
+          'INVALID_MESSAGE',
+          'Invalid binary input'
+        )
+        return
+      }
+
+      if (this.canControl(connection, parsed.data.generation)) {
+        connection.pty?.write(Buffer.from(parsed.data.data, 'latin1'))
+      }
+
+      return
+    }
+
+    const parsed = terminalResizeSchema.safeParse(value)
+    if (!parsed.success) {
+      this.protocolError(connection, 'INVALID_MESSAGE', 'Invalid resize')
+      return
+    }
+
+    if (this.canControl(connection, parsed.data.generation)) {
+      connection.pty?.resize(parsed.data.cols, parsed.data.rows)
+    }
   }
 
   close(connectionId: string): void {
@@ -246,14 +244,6 @@ export class TerminalAttachmentManager {
 
     connection.state = 'closed'
     this.clients.delete(connectionId)
-    if (connection.helloTimeout) {
-      clearTimeout(connection.helloTimeout)
-    }
-
-    if (connection.heartbeat) {
-      clearInterval(connection.heartbeat)
-    }
-
     if (connection.stallTimeout) {
       clearTimeout(connection.stallTimeout)
     }
@@ -294,6 +284,19 @@ export class TerminalAttachmentManager {
       this.broadcastControl(connection.terminalId)
       this.publishControllerChanged(connection.terminalId, null)
     }
+  }
+
+  dispose(): void {
+    for (const connection of [...this.clients.values()]) {
+      connection.transport.disconnect(false)
+      this.close(connection.id)
+    }
+    for (const lease of this.controllers.values()) {
+      if (lease.timer) {
+        clearTimeout(lease.timer)
+      }
+    }
+    this.controllers.clear()
   }
 
   private async initialize(
@@ -351,30 +354,31 @@ export class TerminalAttachmentManager {
         this.sendOutput(connection, data)
       )
       connection.exitDisposable = clientPty.onExit(({ exitCode }) =>
-        this.send(connection, {
-          version: TERMINAL_PROTOCOL_VERSION,
-          type: 'exit',
-          exitCode
-        })
+        this.send(connection, 'exit', { exitCode })
       )
       this.claimController(connection)
       connection.state = 'ready'
-      const controller = this.isController(connection)
+      const lease = this.controllers.get(connection.terminalId)
       if (
-        !this.send(connection, {
-          version: TERMINAL_PROTOCOL_VERSION,
-          type: 'ready',
+        !this.send(connection, 'ready', {
           connectionId: connection.id,
           streamId: connection.streamId,
-          controller,
-          reset: 'full',
-          heartbeatMs: TERMINAL_HEARTBEAT_MS
+          generation: lease?.generation ?? 0,
+          controller: this.isController(connection),
+          reset: 'full'
         })
       ) {
         return
       }
 
       connection.announcedReady = true
+      if (this.isController(connection)) {
+        this.publishControllerChanged(
+          connection.terminalId,
+          connection.clientId
+        )
+      }
+
       if (
         !this.sendRuntimeMetadata(
           connection,
@@ -388,16 +392,6 @@ export class TerminalAttachmentManager {
         return
       }
 
-      connection.lastPongAt = Date.now()
-      connection.heartbeat = setInterval(
-        () => this.heartbeat(connection.id),
-        TERMINAL_HEARTBEAT_MS
-      )
-      connection.heartbeat.unref()
-      if (!this.isActive(connection)) {
-        return
-      }
-
       clientPty.resume()
       this.broadcastControl(connection.terminalId)
     } catch (error) {
@@ -405,53 +399,13 @@ export class TerminalAttachmentManager {
         return
       }
 
-      this.send(connection, {
-        version: TERMINAL_PROTOCOL_VERSION,
-        type: 'error',
+      this.send(connection, 'terminal_error', {
         code: 'ATTACH_FAILED',
         message: errorMessage(error),
         retryable: false
       })
-      this.disconnect(connection, 1011, 'Terminal attachment failed')
-    }
-  }
-
-  private handleReadyMessage(
-    connection: ClientConnection,
-    message: TerminalClientMessage
-  ): void {
-    if (message.type === 'pong') {
-      if (message.nonce === connection.lastPingNonce) {
-        connection.lastPongAt = Date.now()
-      }
-
-      return
-    }
-
-    if (message.type === 'output_ack') {
-      this.acknowledgeOutput(connection, message.streamId, message.sequence)
-      return
-    }
-
-    if (message.type === 'take_control') {
-      this.takeControl(connection)
-      return
-    }
-
-    if (!this.isController(connection)) {
-      return
-    }
-
-    if (message.type === 'input') {
-      connection.pty?.write(message.data)
-    }
-
-    if (message.type === 'binary') {
-      connection.pty?.write(Buffer.from(message.data, 'binary'))
-    }
-
-    if (message.type === 'resize') {
-      connection.pty?.resize(message.cols, message.rows)
+      connection.transport.disconnect(false)
+      this.close(connection.id)
     }
   }
 
@@ -460,16 +414,8 @@ export class TerminalAttachmentManager {
     metadata: TerminalRuntimeMetadata
   ): boolean {
     return (
-      this.send(connection, {
-        version: TERMINAL_PROTOCOL_VERSION,
-        type: 'title',
-        title: metadata.title ?? ''
-      }) &&
-      this.send(connection, {
-        version: TERMINAL_PROTOCOL_VERSION,
-        type: 'progress',
-        progress: metadata.progress
-      })
+      this.send(connection, 'title', { title: metadata.title ?? '' }) &&
+      this.send(connection, 'progress', { progress: metadata.progress })
     )
   }
 
@@ -483,9 +429,7 @@ export class TerminalAttachmentManager {
     connection.outputBytes.set(sequence, bytes)
     connection.unacknowledgedBytes += bytes
     if (
-      !this.send(connection, {
-        version: TERMINAL_PROTOCOL_VERSION,
-        type: 'output',
+      !this.send(connection, 'output', {
         streamId: connection.streamId,
         sequence,
         data
@@ -516,8 +460,7 @@ export class TerminalAttachmentManager {
       this.protocolError(
         connection,
         'INVALID_ACK',
-        'Invalid terminal output acknowledgement',
-        1008
+        'Invalid terminal output acknowledgement'
       )
       return
     }
@@ -562,15 +505,25 @@ export class TerminalAttachmentManager {
       clearTimeout(connection.stallTimeout)
     }
 
-    connection.stallTimeout = setTimeout(
-      () => this.disconnect(connection, 1011, 'Terminal output stalled'),
-      TERMINAL_OUTPUT_STALL_TIMEOUT_MS
-    )
+    connection.stallTimeout = setTimeout(() => {
+      this.send(connection, 'terminal_error', {
+        code: 'OUTPUT_STALLED',
+        message: 'Terminal output stalled',
+        retryable: true
+      })
+      connection.transport.disconnect(true)
+      this.close(connection.id)
+    }, TERMINAL_OUTPUT_STALL_TIMEOUT_MS)
     connection.stallTimeout.unref()
   }
 
+  private nextControllerGeneration(terminalId: string): number {
+    const generation = (this.controllerGenerations.get(terminalId) ?? 0) + 1
+    this.controllerGenerations.set(terminalId, generation)
+    return generation
+  }
+
   private claimController(connection: ClientConnection): void {
-    const clientId = connection.clientId!
     const existing = this.controllers.get(connection.terminalId)
     if (existing && existing.expiresAt <= Date.now()) {
       if (existing.timer) {
@@ -583,15 +536,16 @@ export class TerminalAttachmentManager {
     const lease = this.controllers.get(connection.terminalId)
     if (!lease) {
       this.controllers.set(connection.terminalId, {
-        clientId,
+        clientId: connection.clientId,
         connectionId: connection.id,
+        generation: this.nextControllerGeneration(connection.terminalId),
         expiresAt: Number.POSITIVE_INFINITY,
         timer: null
       })
       return
     }
 
-    if (lease.clientId !== clientId) {
+    if (lease.clientId !== connection.clientId) {
       return
     }
 
@@ -606,27 +560,36 @@ export class TerminalAttachmentManager {
     if (replaced && replaced !== connection.id) {
       const old = this.clients.get(replaced)
       if (old) {
-        this.disconnect(old, 4001, 'Replaced by reconnect')
+        old.transport.disconnect(false)
+        this.close(old.id)
       }
     }
   }
 
-  private takeControl(connection: ClientConnection): void {
+  private takeControl(connection: ClientConnection, generation: number): void {
     const previous = this.controllers.get(connection.terminalId)
-    if (previous?.timer) {
+    if (!previous || generation !== previous.generation) {
+      this.sendControl(connection)
+      return
+    }
+
+    if (previous.connectionId === connection.id) {
+      return
+    }
+
+    if (previous.timer) {
       clearTimeout(previous.timer)
     }
 
     this.controllers.set(connection.terminalId, {
-      clientId: connection.clientId!,
+      clientId: connection.clientId,
       connectionId: connection.id,
+      generation: this.nextControllerGeneration(connection.terminalId),
       expiresAt: Number.POSITIVE_INFINITY,
       timer: null
     })
     this.broadcastControl(connection.terminalId)
-    if (previous?.clientId !== connection.clientId) {
-      this.publishControllerChanged(connection.terminalId, connection.clientId)
-    }
+    this.publishControllerChanged(connection.terminalId, connection.clientId)
   }
 
   private expireControllerLease(terminalId: string, clientId: string): void {
@@ -639,8 +602,9 @@ export class TerminalAttachmentManager {
       (client) => client.terminalId === terminalId && client.state === 'ready'
     )
     if (replacement) {
-      lease.clientId = replacement.clientId!
+      lease.clientId = replacement.clientId
       lease.connectionId = replacement.id
+      lease.generation = this.nextControllerGeneration(terminalId)
       lease.expiresAt = Number.POSITIVE_INFINITY
       lease.timer = null
     } else {
@@ -651,6 +615,16 @@ export class TerminalAttachmentManager {
     this.publishControllerChanged(terminalId, replacement?.clientId ?? null)
   }
 
+  private canControl(
+    connection: ClientConnection,
+    generation: number
+  ): boolean {
+    const lease = this.controllers.get(connection.terminalId)
+    return (
+      lease?.connectionId === connection.id && lease.generation === generation
+    )
+  }
+
   private isController(connection: ClientConnection): boolean {
     return (
       this.controllers.get(connection.terminalId)?.connectionId ===
@@ -658,35 +632,21 @@ export class TerminalAttachmentManager {
     )
   }
 
-  private heartbeat(connectionId: string): void {
-    const connection = this.clients.get(connectionId)
-    if (!connection || connection.state !== 'ready') {
-      return
-    }
-
-    if (Date.now() - connection.lastPongAt >= TERMINAL_HEARTBEAT_TIMEOUT_MS) {
-      this.disconnect(connection, 1001, 'Heartbeat timed out')
-      return
-    }
-
-    const nonce = crypto.randomUUID()
-    connection.lastPingNonce = nonce
-    this.send(connection, {
-      version: TERMINAL_PROTOCOL_VERSION,
-      type: 'ping',
-      nonce
+  private sendControl(connection: ClientConnection): boolean {
+    const lease = this.controllers.get(connection.terminalId)
+    return this.send(connection, 'control', {
+      generation:
+        lease?.generation ??
+        this.controllerGenerations.get(connection.terminalId) ??
+        0,
+      controller: lease?.connectionId === connection.id
     })
   }
 
   private broadcastControl(terminalId: string): void {
-    const lease = this.controllers.get(terminalId)
     for (const client of this.clients.values()) {
       if (client.terminalId === terminalId && client.state === 'ready') {
-        this.send(client, {
-          version: TERMINAL_PROTOCOL_VERSION,
-          type: 'control',
-          controller: lease?.connectionId === client.id
-        })
+        this.sendControl(client)
       }
     }
   }
@@ -694,7 +654,8 @@ export class TerminalAttachmentManager {
   private isActive(connection: ClientConnection): boolean {
     return (
       this.clients.get(connection.id) === connection &&
-      connection.state === 'ready'
+      connection.state === 'ready' &&
+      connection.transport.isConnected()
     )
   }
 
@@ -711,47 +672,32 @@ export class TerminalAttachmentManager {
   private protocolError(
     connection: ClientConnection,
     code: string,
-    message: string,
-    closeCode: number
+    message: string
   ): void {
-    this.send(connection, {
-      version: TERMINAL_PROTOCOL_VERSION,
-      type: 'error',
+    this.send(connection, 'terminal_error', {
       code,
       message,
       retryable: false
     })
-    this.disconnect(connection, closeCode, message)
+    connection.transport.disconnect(false)
+    this.close(connection.id)
   }
 
   private send(
     connection: ClientConnection,
-    message: TerminalServerMessage
+    event: TerminalServerEvent,
+    payload: TerminalServerPayload
   ): boolean {
-    if (connection.ws.readyState !== 1) {
+    if (!connection.transport.isConnected()) {
       this.close(connection.id)
       return false
     }
 
-    try {
-      connection.ws.send(JSON.stringify(message))
-      return true
-    } catch {
+    const sent = connection.transport.send(event, payload)
+    if (!sent) {
       this.close(connection.id)
-      return false
     }
-  }
 
-  private disconnect(
-    connection: ClientConnection,
-    code: number,
-    reason: string
-  ): void {
-    try {
-      connection.ws.close(code, reason.slice(0, 123))
-    } catch {
-      // Cleanup below is authoritative.
-    }
-    this.close(connection.id)
+    return sent
   }
 }

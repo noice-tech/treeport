@@ -2,7 +2,7 @@ import crypto from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
-import type { ProductEvent, TerminalRuntimeMetadata } from '@tasktty/shared'
+import type { TerminalRuntimeMetadata } from '@tasktty/shared'
 import {
   DomainError,
   ProductEventBus,
@@ -353,103 +353,9 @@ describe('HTTP API validation', () => {
     )
   })
 
-  it('serializes rapid metadata transitions after the connected snapshot', async () => {
-    const { app, service } = fixture()
-    const abort = new AbortController()
-    const response = await app.request('/api/events', { signal: abort.signal })
-    const reader = response.body!.getReader()
-    await reader.read()
-
-    const base = {
-      terminalId: 'term',
-      title: null,
-      progressStartedAt: '2026-01-01T00:00:00.000Z',
-      progressClearedAt: null,
-      bell: null
-    }
-    service.events.publish('terminal.metadata', {
-      ...base,
-      progress: { state: 'normal', value: 10 }
-    })
-    service.events.publish('terminal.metadata', {
-      ...base,
-      progress: null,
-      progressClearedAt: '2026-01-01T00:00:01.000Z'
-    })
-    service.events.publish('terminal.metadata', {
-      ...base,
-      progress: { state: 'normal', value: 20 },
-      progressStartedAt: '2026-01-01T00:00:02.000Z'
-    })
-
-    const received: ProductEvent[] = []
-    let buffered = ''
-    const decoder = new TextDecoder()
-    while (received.length < 3) {
-      const chunk = await reader.read()
-      buffered += decoder.decode(chunk.value, { stream: !chunk.done })
-      const frames = buffered.split('\n\n')
-      buffered = frames.pop() ?? ''
-      for (const frame of frames) {
-        const data = frame
-          .split('\n')
-          .find((line) => line.startsWith('data: '))
-          ?.slice(6)
-        if (data) {
-          received.push(JSON.parse(data) as ProductEvent)
-        }
-      }
-    }
-
-    expect(received.map((event) => event.data.progress)).toEqual([
-      { state: 'normal', value: 10 },
-      null,
-      { state: 'normal', value: 20 }
-    ])
-    abort.abort()
-    await reader.cancel()
-  })
-
-  it('starts SSE with the complete metadata snapshot without replaying represented events', async () => {
-    const { app, metadataSnapshot, service } = fixture()
-    metadataSnapshot.mockImplementation(() => {
-      service.events.publish('terminal.metadata', {
-        terminalId: 'term',
-        title: 'pi · /repo',
-        progress: { state: 'normal', value: 42 },
-        progressStartedAt: '2026-01-01T00:00:00.000Z',
-        progressClearedAt: null,
-        bell: { sequence: 2, at: '2026-01-01T00:00:01.000Z' }
-      })
-      return [
-        {
-          terminalId: 'term',
-          title: 'pi · /repo',
-          progress: { state: 'normal', value: 42 },
-          progressStartedAt: '2026-01-01T00:00:00.000Z',
-          progressClearedAt: null,
-          bell: null
-        }
-      ]
-    })
-    const abort = new AbortController()
-    const response = await app.request('/api/events', { signal: abort.signal })
-    const reader = response.body!.getReader()
-    const first = await reader.read()
-    const payload = new TextDecoder().decode(first.value)
-
-    expect(payload).toContain('event: connected')
-    expect(payload).toContain('"terminalId":"term"')
-    expect(payload).toContain('"title":"pi · /repo"')
-    expect(payload).toContain('"value":42')
-    expect(payload).not.toContain('event: terminal.metadata')
-    const replay = await Promise.race([
-      reader.read().then((chunk) => new TextDecoder().decode(chunk.value)),
-      new Promise<null>((resolve) => setTimeout(() => resolve(null), 20))
-    ])
-    expect(replay).toBeNull()
-
-    abort.abort()
-    await reader.cancel()
+  it('does not retain the legacy SSE or raw terminal attachment routes', async () => {
+    const { app } = fixture()
+    expect((await app.request('/api/events')).status).toBe(404)
+    expect((await app.request('/api/terminals/term/attach')).status).toBe(404)
   })
 })

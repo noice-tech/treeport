@@ -1,5 +1,5 @@
-import { serve, type WebSocketServerLike } from '@hono/node-server'
-import { WebSocketServer } from 'ws'
+import type { Server as HttpServer } from 'node:http'
+import { serve } from '@hono/node-server'
 import {
   GhAdapter,
   GitAdapter,
@@ -9,8 +9,8 @@ import {
   TaskTTYDatabase,
   TaskTTYService
 } from '@tasktty/core'
-import { TERMINAL_MAX_CLIENT_MESSAGE_BYTES } from '@tasktty/shared'
 import { createApp } from './app.js'
+import { createSocketServer } from './socket-server.js'
 import { TerminalMetadataManager } from './terminal-metadata.js'
 
 const config = loadConfig()
@@ -29,24 +29,31 @@ const terminalMetadata = new TerminalMetadataManager(
 await terminalMetadata.initialize()
 
 const app = createApp({ service, config, tmux, terminalMetadata })
-const webSocketServer = new WebSocketServer({
-  noServer: true,
-  maxPayload: TERMINAL_MAX_CLIENT_MESSAGE_BYTES
-})
 const server = serve({
   fetch: app.fetch,
   port: config.port,
-  hostname: config.host,
-  websocket: { server: webSocketServer as unknown as WebSocketServerLike }
+  hostname: config.host
+})
+const { io, attachments } = createSocketServer(server as HttpServer, {
+  service,
+  config,
+  tmux,
+  terminalMetadata
 })
 
 console.log(`TaskTTY listening on ${config.apiUrl}`)
 console.log(`database: ${config.databasePath}`)
 
+let shuttingDown = false
 function shutdown(): void {
+  if (shuttingDown) {
+    return
+  }
+
+  shuttingDown = true
+  attachments.dispose()
   terminalMetadata.dispose()
-  server.close(() => {
-    webSocketServer.close()
+  io.close(() => {
     database.close()
     process.exit(0)
   })

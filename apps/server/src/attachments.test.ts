@@ -1,17 +1,17 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { IPty } from 'node-pty'
-import type { WSContext } from 'hono/ws'
 import type { TmuxAdapter, TaskTTYService } from '@tasktty/core'
 import {
   TERMINAL_OUTPUT_HIGH_WATERMARK,
-  TERMINAL_PROTOCOL_VERSION,
-  type TerminalServerMessage
+  TERMINAL_OUTPUT_STALL_TIMEOUT_MS,
+  type TerminalServerEvent,
+  type TerminalServerPayload
 } from '@tasktty/shared'
-import { TerminalAttachmentManager } from './attachments.js'
 import {
-  TerminalMetadataManager,
-  TERMINAL_PROGRESS_STALE_MS
-} from './terminal-metadata.js'
+  TerminalAttachmentManager,
+  type TerminalTransport
+} from './attachments.js'
+import { TerminalMetadataManager } from './terminal-metadata.js'
 import type {
   TerminalProgressObserver,
   TmuxProgressObserverOptions
@@ -45,6 +45,9 @@ class FakePty {
   emit(data: string) {
     this.dataListener?.(data)
   }
+  exit(exitCode: number) {
+    this.exitListener?.({ exitCode })
+  }
   pause() {
     this.pauses += 1
   }
@@ -72,29 +75,38 @@ class FakeProgressObserver implements TerminalProgressObserver {
     this.options.onProgress(progress)
   }
 
-  exit() {
-    this.options.onExit()
-  }
-
   dispose() {
     this.disposed = true
   }
 }
 
-class FakeSocket {
-  readyState = 1 as const
-  sent: TerminalServerMessage[] = []
-  closes: Array<[number | undefined, string | undefined]> = []
+class FakeTransport implements TerminalTransport {
+  private static serial = 0
+  readonly id = `socket-${++FakeTransport.serial}`
+  connected = true
+  sent: Array<{ type: TerminalServerEvent } & Record<string, unknown>> = []
+  disconnects: boolean[] = []
   failAfter: number | null = null
-  send(data: string | ArrayBuffer | Uint8Array) {
-    if (this.failAfter !== null && this.sent.length >= this.failAfter) {
-      throw new Error('send failed')
+
+  isConnected(): boolean {
+    return this.connected
+  }
+
+  send(event: TerminalServerEvent, payload: TerminalServerPayload): boolean {
+    if (
+      !this.connected ||
+      (this.failAfter !== null && this.sent.length >= this.failAfter)
+    ) {
+      return false
     }
 
-    this.sent.push(JSON.parse(String(data)) as TerminalServerMessage)
+    this.sent.push({ type: event, ...payload })
+    return true
   }
-  close(code?: number, reason?: string) {
-    this.closes.push([code, reason])
+
+  disconnect(retryable: boolean): void {
+    this.disconnects.push(retryable)
+    this.connected = false
   }
 }
 
@@ -108,6 +120,7 @@ function fixture() {
     refreshTerminalStatus: vi.fn(async () => ({
       id: 'term',
       worktreeId: 'wt',
+      tmuxSessionName: 'session',
       status: 'running',
       exitCode: null
     })),
@@ -157,19 +170,24 @@ function fixture() {
   return { manager, metadata, progressObservers, ptys, publish, tmux }
 }
 
-const hello = (clientId: string) =>
-  JSON.stringify({
-    version: TERMINAL_PROTOCOL_VERSION,
-    type: 'hello',
-    clientId,
-    cols: 100,
-    rows: 30
-  })
-
-async function ready(socket: FakeSocket) {
-  await vi.waitFor(() =>
-    expect(socket.sent.some((message) => message.type === 'ready')).toBe(true)
+function attach(
+  manager: TerminalAttachmentManager,
+  transport: FakeTransport,
+  clientId: string
+): string {
+  return manager.accept(
+    { terminalId: 'term', clientId, cols: 100, rows: 30 },
+    transport
   )
+}
+
+async function ready(transport: FakeTransport) {
+  await vi.waitFor(() =>
+    expect(transport.sent.some((message) => message.type === 'ready')).toBe(
+      true
+    )
+  )
+  return transport.sent.find((message) => message.type === 'ready')!
 }
 
 afterEach(() => {
@@ -180,305 +198,215 @@ afterEach(() => {
 })
 
 describe('TerminalAttachmentManager', () => {
-  it('reapplies tmux server configuration before reading or attaching the session', async () => {
-    const { manager, tmux } = fixture()
-    const socket = new FakeSocket()
-    manager.message(
-      manager.accept('term', socket as unknown as WSContext),
-      hello('tab-a')
-    )
-    await ready(socket)
+  it('configures tmux, announces a fresh stream before output, and ACKs consumption', async () => {
+    const { manager, ptys, tmux } = fixture()
+    const transport = new FakeTransport()
+    const id = attach(manager, transport, 'tab-a')
+    const readyMessage = await ready(transport)
+
     expect(tmux.configureServer).toHaveBeenCalledWith('socket')
     expect(
       vi.mocked(tmux.configureServer).mock.invocationCallOrder[0]
     ).toBeLessThan(vi.mocked(tmux.sessionSize).mock.invocationCallOrder[0]!)
-    expect(
-      vi.mocked(tmux.configureServer).mock.invocationCallOrder[0]
-    ).toBeLessThan(vi.mocked(tmux.attachArgs).mock.invocationCallOrder[0]!)
-  })
+    expect(readyMessage).toMatchObject({
+      type: 'ready',
+      reset: 'full',
+      controller: true,
+      generation: 1
+    })
 
-  it('requires hello, sends ready before output, and applies ACK backpressure', async () => {
-    const { manager, ptys } = fixture()
-    const socket = new FakeSocket()
-    const id = manager.accept('term', socket as unknown as WSContext)
-    manager.message(id, hello('tab-a'))
-    await ready(socket)
     const pty = ptys[0]!
     pty.emit('x'.repeat(TERMINAL_OUTPUT_HIGH_WATERMARK))
-    const output = socket.sent.find((message) => message.type === 'output')
-    expect(socket.sent[0]?.type).toBe('ready')
-    expect(socket.sent[0]).not.toHaveProperty('controllerClientId')
-    expect(output?.type).toBe('output')
+    const output = transport.sent.find((message) => message.type === 'output')!
+    expect(transport.sent[0]?.type).toBe('ready')
     expect(pty.pauses).toBeGreaterThanOrEqual(2)
-    if (output?.type === 'output') {
-      manager.message(
-        id,
-        JSON.stringify({
-          version: TERMINAL_PROTOCOL_VERSION,
-          type: 'output_ack',
-          streamId: output.streamId,
-          sequence: output.sequence
-        })
-      )
-    }
-
+    manager.message(id, 'output_ack', {
+      streamId: output.streamId,
+      sequence: output.sequence
+    })
     expect(pty.resumes).toBeGreaterThanOrEqual(2)
-    manager.close(id)
-    expect(pty.kills).toBe(1)
   })
 
-  it('announces an empty title so clients can clear stale runtime titles', async () => {
-    const { manager, tmux } = fixture()
+  it('fans daemon metadata to every viewer without making it terminal output authority', async () => {
+    const { manager, progressObservers, tmux } = fixture()
     vi.mocked(tmux.sessionTitleState).mockResolvedValueOnce(null)
-    const socket = new FakeSocket()
-    const id = manager.accept('term', socket as unknown as WSContext)
-    manager.message(id, hello('tab-a'))
-    await ready(socket)
-    expect(socket.sent).toContainEqual({
-      version: TERMINAL_PROTOCOL_VERSION,
-      type: 'title',
-      title: ''
-    })
-  })
-
-  it('fans daemon-owned progress out to every viewer and caches it for new viewers', async () => {
-    const { manager, metadata, progressObservers } = fixture()
-    const first = new FakeSocket()
-    const firstId = manager.accept('term', first as unknown as WSContext)
-    manager.message(firstId, hello('tab-a'))
+    const first = new FakeTransport()
+    const second = new FakeTransport()
+    attach(manager, first, 'tab-a')
     await ready(first)
-
-    expect(progressObservers).toHaveLength(1)
-    expect(progressObservers[0]!.options.args).toContain('-r')
-    expect(progressObservers[0]!.options.args).not.toContain('refresh-client')
-    progressObservers[0]!.emit({ state: 'indeterminate', value: null })
-    expect(first.sent.at(-1)).toMatchObject({
-      type: 'progress',
-      progress: { state: 'indeterminate', value: null }
-    })
-
-    const viewer = new FakeSocket()
-    const viewerId = manager.accept('term', viewer as unknown as WSContext)
-    manager.message(viewerId, hello('tab-b'))
-    await ready(viewer)
-    expect(progressObservers).toHaveLength(1)
-    expect(viewer.sent).toContainEqual({
-      version: TERMINAL_PROTOCOL_VERSION,
-      type: 'progress',
-      progress: { state: 'indeterminate', value: null }
-    })
-
-    progressObservers[0]!.emit(null)
-    expect(first.sent.at(-1)).toMatchObject({
-      type: 'progress',
-      progress: null
-    })
-    expect(viewer.sent.at(-1)).toMatchObject({
-      type: 'progress',
-      progress: null
-    })
-
-    manager.close(firstId)
-    expect(progressObservers[0]!.disposed).toBe(false)
-    manager.close(viewerId)
-    expect(progressObservers[0]!.disposed).toBe(false)
-    metadata.dispose()
-    expect(progressObservers[0]!.disposed).toBe(true)
-  })
-
-  it('clears progress if the observer exits without disrupting terminal output', async () => {
-    const { manager, progressObservers, ptys } = fixture()
-    const socket = new FakeSocket()
-    const id = manager.accept('term', socket as unknown as WSContext)
-    manager.message(id, hello('tab-a'))
-    await ready(socket)
-
-    progressObservers[0]!.emit({ state: 'normal', value: 25 })
-    progressObservers[0]!.exit()
-    expect(socket.sent.at(-1)).toMatchObject({
-      type: 'progress',
-      progress: null
-    })
-
-    ptys[0]!.emit('still attached')
-    expect(socket.sent.at(-1)).toMatchObject({
-      type: 'output',
-      data: 'still attached'
-    })
-    manager.close(id)
-  })
-
-  it('fans stale-progress expiry out without disrupting attachments', async () => {
-    const { manager, progressObservers, ptys } = fixture()
-    const first = new FakeSocket()
-    const firstId = manager.accept('term', first as unknown as WSContext)
-    manager.message(firstId, hello('tab-a'))
-    await ready(first)
-    const second = new FakeSocket()
-    const secondId = manager.accept('term', second as unknown as WSContext)
-    manager.message(secondId, hello('tab-b'))
+    attach(manager, second, 'tab-b')
     await ready(second)
 
-    vi.useFakeTimers()
+    expect(first.sent).toContainEqual({ type: 'title', title: '' })
+    expect(progressObservers).toHaveLength(1)
     progressObservers[0]!.emit({ state: 'indeterminate', value: null })
-    await vi.advanceTimersByTimeAsync(TERMINAL_PROGRESS_STALE_MS)
     expect(first.sent.at(-1)).toMatchObject({
       type: 'progress',
-      progress: null
+      progress: { state: 'indeterminate', value: null }
     })
     expect(second.sent.at(-1)).toMatchObject({
       type: 'progress',
-      progress: null
+      progress: { state: 'indeterminate', value: null }
     })
-    vi.useRealTimers()
-
-    const later = new FakeSocket()
-    const laterId = manager.accept('term', later as unknown as WSContext)
-    manager.message(laterId, hello('tab-c'))
-    await ready(later)
-    expect(later.sent).toContainEqual({
-      version: TERMINAL_PROTOCOL_VERSION,
-      type: 'progress',
-      progress: null
-    })
-
-    ptys[0]!.emit('still attached')
-    expect(first.sent.at(-1)).toMatchObject({
-      type: 'output',
-      data: 'still attached'
-    })
-    manager.close(firstId)
-    manager.close(secondId)
-    manager.close(laterId)
   })
 
-  it('extends the stall deadline when acknowledgements make progress', async () => {
+  it('isolates a slow viewer and keeps another viewer consuming output', async () => {
     const { manager, ptys } = fixture()
-    const socket = new FakeSocket()
-    const id = manager.accept('term', socket as unknown as WSContext)
-    manager.message(id, hello('tab-a'))
-    await ready(socket)
+    const slow = new FakeTransport()
+    const fast = new FakeTransport()
+    attach(manager, slow, 'tab-a')
+    await ready(slow)
+    const fastId = attach(manager, fast, 'tab-b')
+    await ready(fast)
     vi.useFakeTimers()
-    const pty = ptys[0]!
-    pty.emit('a'.repeat(200 * 1024))
-    pty.emit('b'.repeat(200 * 1024))
-    const outputs = socket.sent.filter((message) => message.type === 'output')
-    expect(outputs).toHaveLength(2)
-    await vi.advanceTimersByTimeAsync(20_000)
-    const first = outputs[0]!
-    if (first.type === 'output') {
-      manager.message(
-        id,
-        JSON.stringify({
-          version: TERMINAL_PROTOCOL_VERSION,
-          type: 'output_ack',
-          streamId: first.streamId,
-          sequence: first.sequence
-        })
-      )
-    }
 
-    await vi.advanceTimersByTimeAsync(20_000)
-    expect(socket.closes).toHaveLength(0)
-    await vi.advanceTimersByTimeAsync(10_001)
-    expect(socket.closes.at(-1)?.[1]).toContain('stalled')
+    ptys[0]!.emit('s'.repeat(TERMINAL_OUTPUT_HIGH_WATERMARK))
+    ptys[1]!.emit('fast')
+    const fastOutput = fast.sent.find((message) => message.type === 'output')!
+    manager.message(fastId, 'output_ack', {
+      streamId: fastOutput.streamId,
+      sequence: fastOutput.sequence
+    })
+
+    expect(ptys[0]!.pauses).toBeGreaterThan(ptys[1]!.pauses)
+    await vi.advanceTimersByTimeAsync(TERMINAL_OUTPUT_STALL_TIMEOUT_MS)
+    expect(slow.disconnects).toEqual([true])
+    expect(ptys[0]!.kills).toBe(1)
+    expect(fast.connected).toBe(true)
+    expect(ptys[1]!.kills).toBe(0)
   })
 
-  it('does not continue initialization after a send failure', async () => {
+  it('extends a stalled viewer deadline only when ACK progress is made', async () => {
     const { manager, ptys } = fixture()
-    const socket = new FakeSocket()
-    socket.failAfter = 1
-    const id = manager.accept('term', socket as unknown as WSContext)
-    manager.message(id, hello('tab-a'))
-    await vi.waitFor(() => expect(ptys).toHaveLength(1))
-    await vi.waitFor(() => expect(ptys[0]!.kills).toBe(1))
-    expect(ptys[0]!.resumes).toBe(0)
-    manager.close(id)
+    const transport = new FakeTransport()
+    const id = attach(manager, transport, 'tab-a')
+    await ready(transport)
+    vi.useFakeTimers()
+    ptys[0]!.emit('a'.repeat(200 * 1024))
+    ptys[0]!.emit('b'.repeat(200 * 1024))
+    const outputs = transport.sent.filter(
+      (message) => message.type === 'output'
+    )
+
+    await vi.advanceTimersByTimeAsync(20_000)
+    manager.message(id, 'output_ack', {
+      streamId: outputs[0]!.streamId,
+      sequence: outputs[0]!.sequence
+    })
+    await vi.advanceTimersByTimeAsync(20_000)
+    expect(transport.disconnects).toHaveLength(0)
+    await vi.advanceTimersByTimeAsync(10_001)
+    expect(transport.disconnects).toEqual([true])
   })
 
-  it('rejects oversized frames before parsing', () => {
-    const { manager } = fixture()
-    const socket = new FakeSocket()
-    manager.message(
-      manager.accept('term', socket as unknown as WSContext),
-      'x'.repeat(128 * 1024 + 1)
-    )
-    expect(socket.sent.at(-1)).toMatchObject({
-      type: 'error',
+  it('enforces packet and UTF-8 input byte limits before writing to tmux', async () => {
+    const { manager, ptys } = fixture()
+    const oversizedPacket = new FakeTransport()
+    const firstId = attach(manager, oversizedPacket, 'tab-a')
+    await ready(oversizedPacket)
+    manager.message(firstId, 'input', {
+      generation: 1,
+      data: 'x'.repeat(128 * 1024 + 1)
+    })
+    expect(oversizedPacket.sent.at(-1)).toMatchObject({
+      type: 'terminal_error',
       code: 'MESSAGE_TOO_LARGE'
     })
-    expect(socket.closes.at(-1)?.[0]).toBe(1009)
+
+    const multibyte = new FakeTransport()
+    const secondId = attach(manager, multibyte, 'tab-b')
+    await ready(multibyte)
+    manager.message(secondId, 'take_control', { generation: 1 })
+    const control = multibyte.sent.at(-1)!
+    manager.message(secondId, 'input', {
+      generation: control.generation,
+      data: '💥'.repeat(20_000)
+    })
+    expect(multibyte.sent.at(-1)).toMatchObject({
+      type: 'terminal_error',
+      code: 'INVALID_MESSAGE'
+    })
+    expect(ptys[1]!.writes).toHaveLength(0)
   })
 
-  it('preserves binary input bytes for the controller', async () => {
-    const { manager, ptys } = fixture()
-    const socket = new FakeSocket()
-    const id = manager.accept('term', socket as unknown as WSContext)
-    manager.message(id, hello('tab-a'))
-    await ready(socket)
-    manager.message(
-      id,
-      JSON.stringify({
-        version: TERMINAL_PROTOCOL_VERSION,
-        type: 'binary',
-        data: '\0ÿ'
-      })
-    )
-    expect(Buffer.isBuffer(ptys[0]!.writes[0])).toBe(true)
-    expect((ptys[0]!.writes[0] as Buffer).equals(Buffer.from([0, 255]))).toBe(
+  it('preserves binary bytes and rejects stale controller generations', async () => {
+    const { manager, ptys, publish } = fixture()
+    const first = new FakeTransport()
+    const viewer = new FakeTransport()
+    const firstId = attach(manager, first, 'tab-secret-a')
+    const firstReady = await ready(first)
+    const viewerId = attach(manager, viewer, 'tab-secret-b')
+    await ready(viewer)
+
+    manager.message(viewerId, 'take_control', { generation: 0 })
+    expect(viewer.sent.at(-1)).toMatchObject({
+      type: 'control',
+      controller: false,
+      generation: firstReady.generation
+    })
+    manager.message(viewerId, 'take_control', {
+      generation: firstReady.generation
+    })
+    const viewerControl = viewer.sent.at(-1)!
+    expect(viewerControl).toMatchObject({
+      type: 'control',
+      controller: true,
+      generation: 2
+    })
+
+    manager.message(firstId, 'input', { generation: 1, data: 'stale' })
+    manager.message(viewerId, 'binary', {
+      generation: viewerControl.generation,
+      data: '\0ÿ'
+    })
+    expect(ptys[0]!.writes).toHaveLength(0)
+    expect(Buffer.isBuffer(ptys[1]!.writes[0])).toBe(true)
+    expect((ptys[1]!.writes[0] as Buffer).equals(Buffer.from([0, 255]))).toBe(
       true
     )
-    manager.close(id)
-  })
-
-  it('does not expose the reconnect credential in controller events', async () => {
-    const { manager, publish } = fixture()
-    const first = new FakeSocket()
-    const viewer = new FakeSocket()
-    const firstId = manager.accept('term', first as unknown as WSContext)
-    manager.message(firstId, hello('tab-secret-a'))
-    await ready(first)
-    const viewerId = manager.accept('term', viewer as unknown as WSContext)
-    manager.message(viewerId, hello('tab-secret-b'))
-    await ready(viewer)
-    manager.message(
-      viewerId,
-      JSON.stringify({
-        version: TERMINAL_PROTOCOL_VERSION,
-        type: 'take_control'
-      })
-    )
-
     const eventData = publish.mock.calls.at(-1)?.[1]
     expect(eventData).toEqual({ terminalId: 'term', controlled: true })
     expect(JSON.stringify(eventData)).not.toContain('tab-secret')
-    manager.close(firstId)
-    manager.close(viewerId)
   })
 
-  it('restores controller ownership to the same tab during reconnect grace', async () => {
-    const { manager } = fixture()
-    const first = new FakeSocket()
-    const viewer = new FakeSocket()
-    const firstId = manager.accept('term', first as unknown as WSContext)
-    manager.message(firstId, hello('tab-a'))
-    await ready(first)
-    const viewerId = manager.accept('term', viewer as unknown as WSContext)
-    manager.message(viewerId, hello('tab-b'))
-    await ready(viewer)
+  it('reclaims control with a fresh PTY and stream during same-tab reconnect grace', async () => {
+    const { manager, ptys } = fixture()
+    const first = new FakeTransport()
+    const firstId = attach(manager, first, 'tab-a')
+    const initialReady = await ready(first)
     manager.close(firstId)
-    const reconnect = new FakeSocket()
-    const reconnectId = manager.accept(
-      'term',
-      reconnect as unknown as WSContext
-    )
-    manager.message(reconnectId, hello('tab-a'))
-    await ready(reconnect)
-    const readyMessage = reconnect.sent.find(
-      (message) => message.type === 'ready'
-    )
-    expect(readyMessage?.type === 'ready' && readyMessage.controller).toBe(true)
-    manager.close(viewerId)
+
+    const reconnect = new FakeTransport()
+    const reconnectId = attach(manager, reconnect, 'tab-a')
+    const reconnectReady = await ready(reconnect)
+    expect(reconnectReady).toMatchObject({
+      type: 'ready',
+      controller: true,
+      generation: initialReady.generation
+    })
+    expect(reconnectReady.streamId).not.toBe(initialReady.streamId)
+    expect(ptys).toHaveLength(2)
+    expect(ptys[0]!.kills).toBe(1)
+
+    ptys[0]!.emit('old output')
+    expect(
+      reconnect.sent.some((message) => message.data === 'old output')
+    ).toBe(false)
     manager.close(reconnectId)
+  })
+
+  it('cleans up all per-view resources during daemon shutdown', async () => {
+    const { manager, ptys } = fixture()
+    const first = new FakeTransport()
+    const second = new FakeTransport()
+    attach(manager, first, 'tab-a')
+    await ready(first)
+    attach(manager, second, 'tab-b')
+    await ready(second)
+
+    manager.dispose()
+    expect(first.disconnects).toEqual([false])
+    expect(second.disconnects).toEqual([false])
+    expect(ptys.map((pty) => pty.kills)).toEqual([1, 1])
   })
 })

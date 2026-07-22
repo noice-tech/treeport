@@ -13,6 +13,10 @@
     "typecheck": "tsc --noEmit -p tsconfig.json --pretty"
   },
   "dependencies": {
-    "@tasktty/shared": "workspace:*"
+    "@tasktty/shared": "workspace:*",
+    "socket.io-client": "4.8.3"
+  },
+  "devDependencies": {
+    "socket.io": "4.8.3"
   }
 }
