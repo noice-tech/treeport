@@ -475,23 +475,29 @@ export function createApp({
       let connected = false
       let aborted = false
       let heartbeat: NodeJS.Timeout | null = null
+      let writeQueue = Promise.resolve()
       let resolveAbort!: () => void
       const abort = new Promise<void>((resolve) => {
         resolveAbort = resolve
       })
-      stream.onAbort(() => {
+      const stop = () => {
         aborted = true
         resolveAbort()
-      })
+      }
+      stream.onAbort(stop)
+      const writeSSE = (message: Parameters<typeof stream.writeSSE>[0]) => {
+        writeQueue = writeQueue.then(() => stream.writeSSE(message))
+        return writeQueue
+      }
       const writeEvent = (event: ProductEvent) =>
-        stream.writeSSE({
+        writeSSE({
           id: event.id,
           event: event.type,
           data: JSON.stringify(event)
         })
       const unsubscribe = service.events.subscribe((event) => {
         if (connected && !aborted) {
-          void writeEvent(event)
+          void writeEvent(event).catch(stop)
         } else if (!aborted) {
           queuedEvents.push(event)
         }
@@ -504,7 +510,7 @@ export function createApp({
 
         const terminalMetadata = metadata.snapshot()
         const representedEventCount = queuedEvents.length
-        await stream.writeSSE({
+        await writeSSE({
           event: 'connected',
           data: JSON.stringify({
             at: new Date().toISOString(),
@@ -517,7 +523,7 @@ export function createApp({
         }
         connected = true
         heartbeat = setInterval(
-          () => void stream.writeSSE({ event: 'heartbeat', data: '{}' }),
+          () => void writeSSE({ event: 'heartbeat', data: '{}' }).catch(stop),
           15_000
         )
         await abort

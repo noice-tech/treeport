@@ -2,7 +2,6 @@ import { FitAddon } from '@xterm/addon-fit'
 import { Terminal } from '@xterm/xterm'
 import { apiClient } from './api.js'
 import {
-  parseTerminalProgress,
   parseTerminalServerMessage,
   TERMINAL_HEARTBEAT_TIMEOUT_MS,
   TERMINAL_MAX_INPUT_BYTES,
@@ -12,7 +11,7 @@ import {
   type TerminalRuntimeMetadata
 } from '@tasktty/shared'
 
-export { parseTerminalProgress, type TerminalProgress } from '@tasktty/shared'
+export type { TerminalProgress } from '@tasktty/shared'
 
 type ConnectionPhase = 'connecting' | 'ready' | 'reconnecting' | 'closed'
 export type ArrowDirection = 'up' | 'down' | 'left' | 'right'
@@ -224,7 +223,6 @@ export interface TerminalSessionSnapshot {
   bellActive: boolean
   bellSerial: number
   exitSerial: number
-  progress: TerminalProgress | null
   fileTransfer: TerminalFileTransfer | null
   error: string | null
 }
@@ -237,7 +235,6 @@ const DEFAULT_SNAPSHOT: TerminalSessionSnapshot = {
   bellActive: false,
   bellSerial: 0,
   exitSerial: 0,
-  progress: null,
   fileTransfer: null,
   error: null
 }
@@ -333,7 +330,6 @@ export class TerminalSession {
   private fileTransferTimer: number | null = null
   private fileTransferQueue: Promise<void> = Promise.resolve()
   private resizeFrame: number | null = null
-  private progressHandler: { dispose(): void } | null = null
   private disposed = false
   private opened = false
   private ready = false
@@ -472,8 +468,6 @@ export class TerminalSession {
     this.socket?.close(1000, 'Session disposed')
     this.socket = null
     this.wrapper?.remove()
-    this.progressHandler?.dispose()
-    this.progressHandler = null
     this.terminal?.dispose()
     this.terminal = null
     this.fitAddon = null
@@ -602,15 +596,6 @@ export class TerminalSession {
       this.update({ title: title.trim().slice(0, 256) })
     )
     terminal.onBell(() => this.handleBell())
-    this.progressHandler = terminal.parser.registerOscHandler(9, (data) => {
-      const progress = parseTerminalProgress(data)
-      if (progress === undefined) {
-        return false
-      }
-
-      this.handleProgress(progress)
-      return true
-    })
   }
 
   private queueFileUpload(files: File[]): void {
@@ -861,7 +846,7 @@ export class TerminalSession {
     }
 
     if (message.type === 'progress') {
-      this.handleProgress(message.progress)
+      // Kept in protocol v1 for compatibility; SSE metadata owns web progress.
       return
     }
 
@@ -875,10 +860,7 @@ export class TerminalSession {
     }
 
     if (message.type === 'exit') {
-      this.update({
-        exitSerial: this.snapshotValue.exitSerial + 1,
-        progress: null
-      })
+      this.update({ exitSerial: this.snapshotValue.exitSerial + 1 })
       return
     }
 
@@ -891,18 +873,6 @@ export class TerminalSession {
         this.stopWithError(message.message)
       }
     }
-  }
-
-  private handleProgress(progress: TerminalProgress | null): void {
-    const current = this.snapshotValue.progress
-    if (
-      current?.state === progress?.state &&
-      current?.value === progress?.value
-    ) {
-      return
-    }
-
-    this.update({ progress })
   }
 
   private handleOutput(streamId: string, sequence: number, data: string): void {
@@ -1108,7 +1078,6 @@ interface SessionEntry {
   idleTimer: number | null
   lastBellSerial: number
   lastTitle: string | null
-  lastProgress: TerminalProgress | null
   unsubscribe: () => void
 }
 
@@ -1209,7 +1178,6 @@ export class TerminalSessionManager {
         idleTimer: null,
         lastBellSerial: session.getSnapshot().bellSerial,
         lastTitle: session.getSnapshot().title,
-        lastProgress: session.getSnapshot().progress,
         unsubscribe: () => undefined
       }
       const observedEntry = entry
@@ -1226,19 +1194,10 @@ export class TerminalSessionManager {
           observedEntry.lastTitle = snapshot.title
           this.setRuntimeTitle(terminalId, snapshot.title)
         }
-
-        if (snapshot.progress !== observedEntry.lastProgress) {
-          observedEntry.lastProgress = snapshot.progress
-          this.setProgress(terminalId, snapshot.progress)
-        }
       })
       this.entries.set(terminalId, entry)
       if (entry.lastTitle) {
         this.setRuntimeTitle(terminalId, entry.lastTitle)
-      }
-
-      if (entry.lastProgress) {
-        this.setProgress(terminalId, entry.lastProgress)
       }
     }
 

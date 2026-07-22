@@ -10,7 +10,6 @@ import {
 import type {
   terminalKeyboardInput as mapTerminalKeyboardInput,
   terminalOptions as createTerminalOptions,
-  parseTerminalProgress as parseOscTerminalProgress,
   terminalProgressLabel as formatTerminalProgressLabel,
   TerminalSession as TerminalSessionInstance,
   TerminalSessionManager as TerminalSessionManagerInstance,
@@ -27,7 +26,6 @@ let TerminalSession: new (terminalId: string) => TerminalSessionInstance
 let TerminalSessionManager: TerminalSessionManagerConstructor
 let terminalKeyboardInput: typeof mapTerminalKeyboardInput
 let terminalOptions: typeof createTerminalOptions
-let parseTerminalProgress: typeof parseOscTerminalProgress
 let terminalProgressLabel: typeof formatTerminalProgressLabel
 
 class FakeSession {
@@ -41,7 +39,6 @@ class FakeSession {
     bellActive: false,
     bellSerial: 0,
     exitSerial: 0,
-    progress: null,
     fileTransfer: null,
     error: null
   }
@@ -66,14 +63,6 @@ class FakeSession {
     this.listeners.forEach((listener) => listener())
   }
 
-  setWorking(working: boolean): void {
-    this.snapshot = {
-      ...this.snapshot,
-      progress: working ? { state: 'indeterminate', value: null } : null
-    }
-    this.listeners.forEach((listener) => listener())
-  }
-
   dispose(): void {
     this.disposed = true
     this.listeners.clear()
@@ -87,7 +76,6 @@ beforeAll(async () => {
     TerminalSessionManager,
     terminalKeyboardInput,
     terminalOptions,
-    parseTerminalProgress,
     terminalProgressLabel
   } = await import('./terminal-session.js'))
 })
@@ -136,33 +124,6 @@ describe('terminal options', () => {
 })
 
 describe('terminal progress', () => {
-  it('parses OSC 9;4 progress states emitted by pi', () => {
-    expect(parseTerminalProgress('4;3')).toEqual({
-      state: 'indeterminate',
-      value: null
-    })
-    expect(parseTerminalProgress('4;0;')).toBeNull()
-  })
-
-  it('supports determinate states and ignores unrelated or malformed OSC 9 commands', () => {
-    expect(parseTerminalProgress('4;1;42')).toEqual({
-      state: 'normal',
-      value: 42
-    })
-    expect(parseTerminalProgress('4;2;100')).toEqual({
-      state: 'error',
-      value: 100
-    })
-    expect(parseTerminalProgress('4;4;7')).toEqual({
-      state: 'paused',
-      value: 7
-    })
-    expect(parseTerminalProgress('1;notification')).toBeUndefined()
-    expect(parseTerminalProgress('4;1;101')).toBeUndefined()
-    expect(parseTerminalProgress('4;1;1e2')).toBeUndefined()
-    expect(parseTerminalProgress('4;1; 42')).toBeUndefined()
-  })
-
   it('describes non-running progress states without relying on color', () => {
     expect(terminalProgressLabel({ state: 'error', value: 42 })).toBe(
       'progress error, 42% complete'
@@ -222,6 +183,25 @@ describe('terminal keyboard input', () => {
 })
 
 describe('TerminalSession', () => {
+  it('ignores protocol-v1 progress because SSE metadata owns web progress', () => {
+    const session = new TerminalSession('terminal-one')
+    const listener = vi.fn()
+    session.subscribe(listener)
+
+    ;(
+      session as unknown as { handleServerMessage(message: string): void }
+    ).handleServerMessage(
+      JSON.stringify({
+        version: 1,
+        type: 'progress',
+        progress: { state: 'indeterminate', value: null }
+      })
+    )
+
+    expect(listener).not.toHaveBeenCalled()
+    session.dispose()
+  })
+
   it('sends its hello on insecure LAN origins without crypto.randomUUID', () => {
     class FakeWebSocket {
       static readonly OPEN = 1
@@ -413,11 +393,18 @@ describe('TerminalSessionManager', () => {
     expect(manager.getAttentionSnapshot().has('background')).toBe(false)
   })
 
-  it('retains progress across LRU eviction and clears it when metadata is removed', () => {
+  it('retains daemon progress across LRU eviction and clears it when metadata is removed', () => {
     const { manager, sessions } = fixture(1)
+    manager.applyRuntimeMetadata({
+      terminalId: 'one',
+      title: null,
+      progress: { state: 'indeterminate', value: null },
+      progressStartedAt: '2026-01-01T00:00:00.000Z',
+      progressClearedAt: null,
+      bell: null
+    })
     manager.acquire('one')
     manager.release('one')
-    sessions.get('one')?.setWorking(true)
     manager.acquire('two')
     expect(sessions.get('one')?.disposed).toBe(true)
     expect(manager.getProgressSnapshot().has('one')).toBe(true)
@@ -426,19 +413,32 @@ describe('TerminalSessionManager', () => {
     expect(manager.getProgressSnapshot().has('one')).toBe(false)
   })
 
-  it('publishes terminal progress and clears it when work stops or the terminal is forgotten', () => {
-    const { manager, sessions } = fixture()
+  it('does not let session churn resurrect progress after a daemon clear', () => {
+    const { manager, sessions } = fixture(1)
+    const active = {
+      terminalId: 'one',
+      title: null,
+      progress: { state: 'indeterminate', value: null },
+      progressStartedAt: '2026-01-01T00:00:00.000Z',
+      progressClearedAt: null,
+      bell: null
+    } as const
+    manager.applyRuntimeMetadata(active)
     manager.acquire('one')
-    sessions.get('one')?.setWorking(true)
-    expect(manager.getProgressSnapshot().get('one')).toEqual({
-      state: 'indeterminate',
-      value: null
+    manager.release('one')
+    manager.applyRuntimeMetadata({
+      ...active,
+      progress: null,
+      progressClearedAt: '2026-01-01T00:00:01.000Z'
     })
 
-    sessions.get('one')?.setWorking(false)
+    sessions.get('one')?.setTitle('late terminal title')
+    manager.acquire('two')
+    manager.acquire('one')
     expect(manager.getProgressSnapshot().has('one')).toBe(false)
 
-    sessions.get('one')?.setWorking(true)
+    manager.applyRuntimeMetadata(active)
+    expect(manager.getProgressSnapshot().get('one')).toEqual(active.progress)
     manager.forget('one')
     expect(manager.getProgressSnapshot().has('one')).toBe(false)
   })
