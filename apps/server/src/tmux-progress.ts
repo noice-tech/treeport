@@ -1,159 +1,78 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { parseTerminalProgress, type TerminalProgress } from '@tasktty/shared'
+import xtermHeadless, { type IDisposable } from '@xterm/headless'
 import { TmuxControlParser } from './tmux-control.js'
 
-const ESC = '\x1b'
-const BEL = '\x07'
-const OSC = '\u009d'
-const ST = '\u009c'
-const MAX_OSC_BYTES = 1024
+const { Terminal } = xtermHeadless
 
-type ParserState =
-  | 'ground'
-  | 'escape'
-  | 'osc'
-  | 'osc_escape'
-  | 'osc_discard'
-  | 'osc_discard_escape'
 export type TerminalMetadataUpdate =
   | { type: 'title'; title: string }
   | { type: 'progress'; progress: TerminalProgress | null }
   | { type: 'bell' }
 
-/** Extracts title and OSC 9;4 progress metadata from arbitrary terminal bytes. */
+/** Observes terminal metadata through xterm's public parser APIs. */
 export class TerminalMetadataParser {
   private readonly decoder = new TextDecoder()
-  private state: ParserState = 'ground'
-  private osc: string[] = []
-  private oscBytes = 0
+  private readonly terminal = new Terminal({
+    allowProposedApi: true,
+    cols: 2,
+    rows: 1,
+    scrollback: 0,
+    disableStdin: true,
+    logLevel: 'off'
+  })
+  private readonly subscriptions: IDisposable[]
+  private disposed = false
 
-  push(data: Uint8Array): TerminalMetadataUpdate[] {
-    const updates: TerminalMetadataUpdate[] = []
-    for (const character of this.decoder.decode(data, { stream: true })) {
-      if (this.state === 'ground') {
-        if (character === ESC) {
-          this.state = 'escape'
-        } else if (character === OSC) {
-          this.startOsc()
-        } else if (character === BEL) {
-          updates.push({ type: 'bell' })
+  constructor(
+    private readonly onUpdate: (update: TerminalMetadataUpdate) => void
+  ) {
+    this.subscriptions = [
+      this.terminal.onTitleChange((title) =>
+        this.emit({ type: 'title', title })
+      ),
+      this.terminal.onBell(() => this.emit({ type: 'bell' })),
+      this.terminal.parser.registerOscHandler(9, (payload) => {
+        const progress = parseTerminalProgress(payload)
+        if (progress !== undefined) {
+          this.emit({ type: 'progress', progress })
         }
 
-        continue
-      }
-
-      if (this.state === 'escape') {
-        if (character === ']') {
-          this.startOsc()
-        } else {
-          this.state = character === ESC ? 'escape' : 'ground'
-        }
-
-        continue
-      }
-
-      if (this.state === 'osc') {
-        if (character === BEL || character === ST) {
-          this.finishOsc(updates)
-        } else if (character === ESC) {
-          this.state = 'osc_escape'
-        } else {
-          this.appendOsc(character)
-        }
-
-        continue
-      }
-
-      if (this.state === 'osc_escape') {
-        if (character === '\\' || character === ST || character === BEL) {
-          this.finishOsc(updates)
-        } else if (character === ']') {
-          this.startOsc()
-        } else if (character === ESC) {
-          this.appendOsc(ESC)
-        } else if (this.appendOsc(ESC) && this.appendOsc(character)) {
-          this.state = 'osc'
-        }
-
-        continue
-      }
-
-      if (this.state === 'osc_discard') {
-        if (character === BEL || character === ST) {
-          this.state = 'ground'
-        } else if (character === ESC) {
-          this.state = 'osc_discard_escape'
-        }
-
-        continue
-      }
-
-      if (character === '\\' || character === ST || character === BEL) {
-        this.state = 'ground'
-      } else if (character === ']') {
-        this.startOsc()
-      } else if (character !== ESC) {
-        this.state = 'osc_discard'
-      }
-    }
-    return updates
+        return true
+      })
+    ]
   }
 
-  private startOsc(): void {
-    this.state = 'osc'
-    this.osc = []
-    this.oscBytes = 0
-  }
-
-  private appendOsc(character: string): boolean {
-    this.osc.push(character)
-    this.oscBytes += Buffer.byteLength(character)
-    if (this.oscBytes <= MAX_OSC_BYTES) {
-      return true
+  push(data: Uint8Array): Promise<void> {
+    if (this.disposed) {
+      return Promise.resolve()
     }
 
-    this.osc = []
-    this.oscBytes = 0
-    this.state = 'osc_discard'
-    return false
+    // xterm 5.5 drops a three-byte character split after its second byte.
+    // Normalize through the same streaming decoder TaskTTY previously used,
+    // then continue feeding ordered bytes into xterm's terminal parser.
+    const decoded = this.decoder.decode(data, { stream: true })
+    return new Promise((resolve) =>
+      this.terminal.write(Buffer.from(decoded), resolve)
+    )
   }
 
-  private finishOsc(updates: TerminalMetadataUpdate[]): void {
-    const osc = this.osc.join('')
-    const separator = osc.indexOf(';')
-    if (separator > 0) {
-      const command = osc.slice(0, separator)
-      const payload = osc.slice(separator + 1)
-      if (command === '9') {
-        const parsed = parseTerminalProgress(payload)
-        if (parsed !== undefined) {
-          updates.push({ type: 'progress', progress: parsed })
-        }
-      } else if (command === '0' || command === '2') {
-        updates.push({ type: 'title', title: payload })
-      }
+  dispose(): void {
+    if (this.disposed) {
+      return
     }
 
-    this.osc = []
-    this.oscBytes = 0
-    this.state = 'ground'
+    this.disposed = true
+    for (const subscription of this.subscriptions.reverse()) {
+      subscription.dispose()
+    }
+    this.terminal.dispose()
   }
-}
 
-/** Backwards-compatible progress-only parser used by focused protocol tests. */
-export class TerminalProgressParser {
-  private readonly parser = new TerminalMetadataParser()
-
-  push(data: Uint8Array): Array<TerminalProgress | null> {
-    return this.parser
-      .push(data)
-      .filter(
-        (
-          update
-        ): update is Extract<TerminalMetadataUpdate, { type: 'progress' }> =>
-          update.type === 'progress'
-      )
-      .map((update) => update.progress)
+  private emit(update: TerminalMetadataUpdate): void {
+    if (!this.disposed) {
+      this.onUpdate(update)
+    }
   }
 }
 
@@ -181,18 +100,28 @@ type ProcessSpawner = typeof spawn
 export class TmuxProgressObserver implements TerminalProgressObserver {
   private readonly process: ChildProcessWithoutNullStreams
   private readonly controlParser = new TmuxControlParser()
-  private readonly metadataParser = new TerminalMetadataParser()
+  private readonly metadataParser: TerminalMetadataParser
+  private pendingWrites = 0
+  private failed = false
   private disposed = false
 
   constructor(
     private readonly options: TmuxProgressObserverOptions,
     spawnProcess: ProcessSpawner = spawn
   ) {
-    this.process = spawnProcess(options.executable, options.args, {
-      cwd: options.cwd,
-      env: options.env,
-      stdio: ['pipe', 'pipe', 'pipe']
-    })
+    this.metadataParser = new TerminalMetadataParser((update) =>
+      this.handleMetadata(update)
+    )
+    try {
+      this.process = spawnProcess(options.executable, options.args, {
+        cwd: options.cwd,
+        env: options.env,
+        stdio: ['pipe', 'pipe', 'pipe']
+      })
+    } catch (error) {
+      this.metadataParser.dispose()
+      throw error
+    }
     this.process.stdout.on('data', (chunk: Buffer) => this.handleData(chunk))
     this.process.stderr.resume()
     this.process.once('error', () => this.stop(true))
@@ -204,7 +133,7 @@ export class TmuxProgressObserver implements TerminalProgressObserver {
   }
 
   private handleData(chunk: Buffer): void {
-    if (this.disposed) {
+    if (this.disposed || this.failed) {
       return
     }
 
@@ -214,18 +143,45 @@ export class TmuxProgressObserver implements TerminalProgressObserver {
           continue
         }
 
-        for (const update of this.metadataParser.push(event.data)) {
-          if (update.type === 'title') {
-            this.options.onTitle?.(update.title)
-          } else if (update.type === 'progress') {
-            this.options.onProgress(update.progress)
-          } else {
-            this.options.onBell?.()
-          }
-        }
+        this.process.stdout.pause()
+        this.pendingWrites += 1
+        void this.metadataParser.push(event.data).then(
+          () => this.handleWriteParsed(),
+          () => this.stop(true)
+        )
       }
     } catch {
       this.stop(true)
+    }
+  }
+
+  private handleMetadata(update: TerminalMetadataUpdate): void {
+    if (this.disposed || this.failed) {
+      return
+    }
+
+    try {
+      if (update.type === 'title') {
+        this.options.onTitle?.(update.title)
+      } else if (update.type === 'progress') {
+        this.options.onProgress(update.progress)
+      } else {
+        this.options.onBell?.()
+      }
+    } catch {
+      this.failed = true
+      queueMicrotask(() => this.stop(true))
+    }
+  }
+
+  private handleWriteParsed(): void {
+    if (this.disposed) {
+      return
+    }
+
+    this.pendingWrites -= 1
+    if (this.pendingWrites === 0) {
+      this.process.stdout.resume()
     }
   }
 
@@ -235,6 +191,8 @@ export class TmuxProgressObserver implements TerminalProgressObserver {
     }
 
     this.disposed = true
+    this.metadataParser.dispose()
+    this.process.stdout.pause()
     try {
       this.process.kill()
     } catch {
