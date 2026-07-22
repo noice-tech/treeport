@@ -124,6 +124,7 @@ async function mockApp(
     keyboardPlatform?: string
     startClosed?: boolean
     terminalFree?: boolean
+    includeSecondProject?: boolean
   } = {}
 ) {
   if (options.keyboardPlatform) {
@@ -333,7 +334,24 @@ async function mockApp(
     }
   }
 
-  const openProjects = options.startClosed ? [] : [state]
+  const secondState = structuredClone(project)
+  secondState.id = 'proj_2'
+  secondState.name = 'another-project'
+  secondState.repositoryPath = '/another'
+  secondState.mainWorktreePath = '/another'
+  for (const worktree of secondState.worktrees) {
+    worktree.id = `second_${worktree.id}`
+    worktree.projectId = secondState.id
+    worktree.name = `another ${worktree.name}`
+    worktree.path = worktree.path.replace('/repo', '/another')
+    for (const terminal of worktree.terminals) {
+      terminal.id = `second_${terminal.id}`
+      terminal.worktreeId = worktree.id
+    }
+  }
+  const openProjects = options.startClosed
+    ? []
+    : [state, ...(options.includeSecondProject ? [secondState] : [])]
   const recentProjects: RecentProjectRecord[] = options.startClosed
     ? [
         {
@@ -724,11 +742,12 @@ test.describe('desktop worktree terminal UI', () => {
     page
   }) => {
     await mockApp(page)
-    await expect(page.getByText('example')).toBeVisible()
+    await expect(
+      page.getByRole('button', {
+        name: 'Switch project, current project example'
+      })
+    ).toBeVisible()
     await expect(page.getByText('topic', { exact: true })).toBeVisible()
-    await page.getByRole('button', { name: 'example', exact: true }).click()
-    await expect(page.getByText('topic', { exact: true })).toBeHidden()
-    await page.getByRole('button', { name: 'example', exact: true }).click()
     await page.getByRole('button', { name: 'Pi, running', exact: true }).click()
     await expect(page.locator('.xterm')).toBeVisible()
     await expect(page.locator('.xterm-rows')).toContainText(
@@ -758,27 +777,30 @@ test.describe('desktop worktree terminal UI', () => {
     ).toBeVisible()
 
     await page.getByRole('button', { name: 'Open project' }).click()
-    const dialog = page.getByRole('dialog')
-    await expect(dialog.getByText('Recent projects')).toBeVisible()
-    await expect(dialog.getByText('/repo')).toBeVisible()
-    await dialog.getByRole('button', { name: /example.*\/repo/ }).click()
+    await expect(page.getByText('Recent projects')).toBeVisible()
+    await expect(page.getByText('/repo')).toHaveCount(0)
+    await page.getByRole('button', { name: 'example', exact: true }).click()
 
-    await expect(dialog).toHaveCount(0)
     await expect(
-      page.getByRole('button', { name: 'example', exact: true })
+      page.getByRole('button', {
+        name: 'Switch project, current project example'
+      })
     ).toBeVisible()
   })
 
   test('opens a project by repository path', async ({ page }) => {
     await mockApp(page, [], { startClosed: true, terminalFree: true })
     await page.getByRole('button', { name: 'Open project' }).click()
+    await page.getByRole('button', { name: 'Open project…' }).click()
     const dialog = page.getByRole('dialog')
     await dialog.getByLabel('Open by repository path').fill('/repo')
     await dialog.getByRole('button', { name: 'Open project' }).click()
 
     await expect(dialog).toHaveCount(0)
     await expect(
-      page.getByRole('button', { name: 'example', exact: true })
+      page.getByRole('button', {
+        name: 'Switch project, current project example'
+      })
     ).toBeVisible()
   })
 
@@ -789,10 +811,15 @@ test.describe('desktop worktree terminal UI', () => {
     await expect
       .poll(() => page.evaluate(() => localStorage.getItem('tasktty-terminal')))
       .toBe('term_shell')
-    const projectRow = page
-      .locator('.project-row')
+    await page
+      .getByRole('button', {
+        name: 'Switch project, current project example'
+      })
+      .click()
+    const projectOption = page
+      .getByRole('listitem')
       .filter({ hasText: 'example' })
-    await projectRow.hover()
+    await projectOption.hover()
     const close = page.getByRole('button', {
       name: 'Close project example'
     })
@@ -807,9 +834,6 @@ test.describe('desktop worktree terminal UI', () => {
 
     page.once('dialog', (dialog) => dialog.accept())
     await close.click()
-    await expect(
-      page.getByRole('button', { name: 'example', exact: true })
-    ).toHaveCount(0)
     await expect(
       page.getByRole('button', { name: 'Open project' })
     ).toBeFocused()
@@ -839,12 +863,20 @@ test.describe('desktop worktree terminal UI', () => {
       confirmationShown = true
       await dialog.dismiss()
     })
-    await page.locator('.project-row').filter({ hasText: 'example' }).hover()
+    await page
+      .getByRole('button', {
+        name: 'Switch project, current project example'
+      })
+      .click()
+    const projectOption = page
+      .getByRole('listitem')
+      .filter({ hasText: 'example' })
+    await projectOption.hover()
     await page.getByRole('button', { name: 'Close project example' }).click()
 
     await expect(
-      page.getByRole('button', { name: 'example', exact: true })
-    ).toHaveCount(0)
+      page.getByRole('button', { name: 'Open project' })
+    ).toBeVisible()
     expect(confirmationShown).toBe(false)
     expect(mocked.closeRequests()).toBe(1)
   })
@@ -854,65 +886,83 @@ test.describe('desktop worktree terminal UI', () => {
   }) => {
     const mocked = await mockApp(page, [], { terminalFree: true })
     mocked.failNextClose()
-    await page.locator('.project-row').filter({ hasText: 'example' }).hover()
+    await page
+      .getByRole('button', {
+        name: 'Switch project, current project example'
+      })
+      .click()
+    const projectOption = page
+      .getByRole('listitem')
+      .filter({ hasText: 'example' })
+    await projectOption.hover()
     await page.getByRole('button', { name: 'Close project example' }).click()
 
     await expect(page.getByRole('alert')).toContainText(
       'Some terminal sessions could not be stopped'
     )
     await expect(
-      page.getByRole('button', { name: 'example', exact: true })
+      page.getByRole('button', {
+        name: 'Switch project, current project example'
+      })
     ).toBeVisible()
   })
 
-  test('remembers collapsed projects after a refresh', async ({ page }) => {
-    await mockApp(page)
-    const project = page.getByRole('button', { name: 'example', exact: true })
-    const worktree = page.getByText('topic', { exact: true })
-
-    await project.click()
-    await expect(worktree).toBeHidden()
-    await expect
-      .poll(() =>
-        page.evaluate(() => localStorage.getItem('tasktty-collapsed-projects'))
-      )
-      .toBe('proj_1')
-    await page.reload()
-    await expect(worktree).toBeHidden()
-
-    await project.click()
-    await expect(worktree).toBeVisible()
-    await page.reload()
-    await expect(worktree).toBeVisible()
-  })
-
-  test('assigns a project color to its chevron and subtree rail', async ({
+  test('searches projects and closes the switcher from the terminal', async ({
     page
   }) => {
-    const mocked = await mockApp(page)
-    const projectTree = page
-      .locator('.project-tree')
-      .filter({ hasText: 'example' })
-    await projectTree.locator('.project-row').hover()
-    const trigger = page.getByRole('button', {
-      name: 'Change color for example'
-    })
-    await trigger.click()
-    await page.mouse.move(700, 700)
-    await expect(trigger).toHaveCSS('opacity', '1')
-    await page.keyboard.press('Escape')
-    await expect(trigger).toBeFocused()
-
-    await trigger.click()
-    await page.getByRole('button', { name: 'Violet', exact: true }).click()
-
-    await expect.poll(() => mocked.state.color).toBe('violet')
+    await mockApp(page)
+    await page
+      .getByRole('button', {
+        name: 'Switch project, current project example'
+      })
+      .click()
+    const search = page.getByLabel('Search projects')
+    await search.fill('missing')
+    await expect(page.getByText('No open projects found.')).toBeVisible()
+    await search.fill('example')
     await expect(
-      page.getByRole('button', { name: 'example', exact: true }).locator('svg')
-    ).toHaveClass(/fill-violet-400/)
-    await expect(projectTree.locator('ul').first()).toHaveClass(
-      /border-violet-400\/50/
-    )
+      page.getByRole('button', { name: 'example', exact: true })
+    ).toBeVisible()
+
+    await page.locator('.xterm-screen').click()
+    await expect(search).toHaveCount(0)
+    await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
+  })
+
+  test('shows one active project and persists project switching', async ({
+    page
+  }) => {
+    await mockApp(page, [], { includeSecondProject: true })
+    const switcher = page.getByRole('button', {
+      name: 'Switch project, current project example'
+    })
+    await expect(page.getByText('topic', { exact: true })).toBeVisible()
+
+    await switcher.click()
+    await page
+      .getByRole('button', { name: 'another-project', exact: true })
+      .click()
+
+    await expect(
+      page.getByRole('button', {
+        name: 'Switch project, current project another-project'
+      })
+    ).toBeVisible()
+    await expect(page.getByText('topic', { exact: true })).toHaveCount(0)
+    await expect(page.getByText('another topic', { exact: true })).toBeVisible()
+    await expect
+      .poll(() =>
+        page.evaluate(() => localStorage.getItem('tasktty-active-project'))
+      )
+      .toBe('proj_2')
+
+    await page.reload()
+    await expect(
+      page.getByRole('button', {
+        name: 'Switch project, current project another-project'
+      })
+    ).toBeVisible()
+    await expect(page.getByText('another topic', { exact: true })).toBeVisible()
   })
 
   test('detects plain web URLs and opens them only on platform modifier-click', async ({
@@ -1987,13 +2037,18 @@ test.describe('mobile terminal UI', () => {
   }) => {
     await mockApp(page, [], { terminalFree: true })
     await page.getByLabel('Open worktree drawer').click()
+    await page
+      .getByRole('button', {
+        name: 'Switch project, current project example'
+      })
+      .click()
     const close = page.getByRole('button', { name: 'Close project example' })
     await expect(close).toBeVisible()
     await expect(close).toHaveCSS('opacity', '1')
     await close.click()
     await expect(
-      page.getByRole('button', { name: 'example', exact: true })
-    ).toHaveCount(0)
+      page.getByRole('button', { name: 'Open project' })
+    ).toBeVisible()
   })
 
   test('closes only a nested modal on Escape and restores its drawer trigger', async ({
@@ -2013,31 +2068,6 @@ test.describe('mobile terminal UI', () => {
     await expect(trigger).toBeFocused()
     await page.keyboard.press('Escape')
     await expect(drawer).not.toHaveClass(/open/)
-  })
-
-  test('keeps the drawer open while choosing or dismissing a project color', async ({
-    page
-  }) => {
-    const mocked = await mockApp(page)
-    const drawer = page.locator('.sidebar')
-    await page.getByLabel('Open worktree drawer').click()
-    const trigger = page.getByRole('button', {
-      name: 'Change color for example'
-    })
-    await expect(trigger).toBeVisible()
-
-    await trigger.click()
-    await expect(page.getByText('Project color')).toBeVisible()
-    await page.keyboard.press('Escape')
-    await expect(page.getByText('Project color')).toHaveCount(0)
-    await expect(drawer).toHaveClass(/open/)
-    await expect(trigger).toBeFocused()
-
-    await trigger.click()
-    await page.getByRole('button', { name: 'Cyan', exact: true }).click()
-    await expect.poll(() => mocked.state.color).toBe('cyan')
-    await expect(drawer).toHaveClass(/open/)
-    await expect(trigger).toBeFocused()
   })
 
   test('closes the drawer and exposes a create failure alert', async ({

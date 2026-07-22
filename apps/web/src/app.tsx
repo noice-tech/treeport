@@ -11,16 +11,15 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { GitBranchIcon, TerminalIcon } from 'lucide-react'
 import { io, type Socket } from 'socket.io-client'
 import {
   ArrowPathIcon,
   Bars3Icon,
   CheckIcon,
-  ChevronRightIcon,
-  CommandLineIcon,
-  FolderIcon,
+  ChevronUpDownIcon,
+  MagnifyingGlassIcon,
   PlusIcon,
-  SwatchIcon,
   TrashIcon,
   XMarkIcon
 } from '@heroicons/react/16/solid'
@@ -33,7 +32,6 @@ import {
 import type {
   EventsClientToServerEvents,
   EventsServerToClientEvents,
-  ProjectColor,
   ProjectRecord,
   RecentProjectRecord,
   RemovePreview,
@@ -42,11 +40,6 @@ import type {
 } from '@tasktty/shared'
 import { ApiError, apiClient } from './api.js'
 import { Button } from './components/ui/button.js'
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger
-} from './components/ui/collapsible.js'
 import { Input } from './components/ui/input.js'
 import { Label } from './components/ui/label.js'
 import { NativeSelect } from './components/ui/native-select.js'
@@ -78,7 +71,7 @@ import { TerminalView } from './terminal-view.js'
 const MIN_SIDEBAR_WIDTH = 240
 const MAX_SIDEBAR_WIDTH = 420
 const DEFAULT_SIDEBAR_WIDTH = 272
-const COLLAPSED_PROJECTS_STORAGE_KEY = 'tasktty-collapsed-projects'
+const ACTIVE_PROJECT_STORAGE_KEY = 'tasktty-active-project'
 const EMPTY_BELL_ATTENTION: ReadonlySet<string> = new Set()
 const EMPTY_RUNTIME_TITLES: ReadonlyMap<string, string> = new Map()
 const EMPTY_TERMINAL_PROGRESS: ReadonlyMap<string, TerminalProgress> = new Map()
@@ -143,82 +136,6 @@ type RemovalStage = 'checking' | 'removing'
 const projectsQueryKey = ['projects'] as const
 const recentProjectsQueryKey = ['recent-projects'] as const
 
-const PROJECT_COLOR_OPTIONS: Array<{
-  value: ProjectColor | null
-  label: string
-  swatch: string
-  check: string
-}> = [
-  {
-    value: null,
-    label: 'Neutral',
-    swatch: 'bg-zinc-500 hover:bg-zinc-400',
-    check: 'fill-white'
-  },
-  {
-    value: 'rose',
-    label: 'Rose',
-    swatch: 'bg-rose-400 hover:bg-rose-300',
-    check: 'fill-white'
-  },
-  {
-    value: 'orange',
-    label: 'Orange',
-    swatch: 'bg-orange-400 hover:bg-orange-300',
-    check: 'fill-zinc-950'
-  },
-  {
-    value: 'amber',
-    label: 'Amber',
-    swatch: 'bg-amber-400 hover:bg-amber-300',
-    check: 'fill-zinc-950'
-  },
-  {
-    value: 'emerald',
-    label: 'Emerald',
-    swatch: 'bg-emerald-400 hover:bg-emerald-300',
-    check: 'fill-zinc-950'
-  },
-  {
-    value: 'cyan',
-    label: 'Cyan',
-    swatch: 'bg-cyan-400 hover:bg-cyan-300',
-    check: 'fill-zinc-950'
-  },
-  {
-    value: 'blue',
-    label: 'Blue',
-    swatch: 'bg-blue-400 hover:bg-blue-300',
-    check: 'fill-white'
-  },
-  {
-    value: 'violet',
-    label: 'Violet',
-    swatch: 'bg-violet-400 hover:bg-violet-300',
-    check: 'fill-white'
-  },
-  {
-    value: 'pink',
-    label: 'Pink',
-    swatch: 'bg-pink-400 hover:bg-pink-300',
-    check: 'fill-white'
-  }
-]
-
-const PROJECT_COLOR_STYLES: Record<
-  ProjectColor,
-  { chevron: string; rail: string }
-> = {
-  rose: { chevron: 'fill-rose-400', rail: 'border-rose-400/50' },
-  orange: { chevron: 'fill-orange-400', rail: 'border-orange-400/50' },
-  amber: { chevron: 'fill-amber-400', rail: 'border-amber-400/50' },
-  emerald: { chevron: 'fill-emerald-400', rail: 'border-emerald-400/50' },
-  cyan: { chevron: 'fill-cyan-400', rail: 'border-cyan-400/50' },
-  blue: { chevron: 'fill-blue-400', rail: 'border-blue-400/50' },
-  violet: { chevron: 'fill-violet-400', rail: 'border-violet-400/50' },
-  pink: { chevron: 'fill-pink-400', rail: 'border-pink-400/50' }
-}
-
 interface PendingWorktreeCreation {
   id: string
   projectId: string
@@ -255,9 +172,11 @@ export default function App() {
     null
   )
   const [drawerOpen, setDrawerOpen] = useState(false)
-  const [openProjectColorPickerId, setOpenProjectColorPickerId] = useState<
-    string | null
-  >(null)
+  const [activeProjectId, setActiveProjectId] = useState<string | null>(() =>
+    localStorage.getItem(ACTIVE_PROJECT_STORAGE_KEY)
+  )
+  const [projectSwitcherOpen, setProjectSwitcherOpen] = useState(false)
+  const [projectSearch, setProjectSearch] = useState('')
   const [isMobile, setIsMobile] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [modal, setModal] = useState<Modal>(null)
@@ -267,14 +186,12 @@ export default function App() {
   const [pendingRemovals, setPendingRemovals] = useState<
     Record<string, RemovalStage>
   >({})
-  const [collapsedProjectIds, setCollapsedProjectIds] = useState(
-    () =>
-      new Set(
-        (localStorage.getItem(COLLAPSED_PROJECTS_STORAGE_KEY) ?? '')
-          .split('\n')
-          .filter(Boolean)
-      )
-  )
+  const recentProjectsQuery = useQuery({
+    queryKey: recentProjectsQueryKey,
+    queryFn: apiClient.recentProjects,
+    enabled: projectSwitcherOpen,
+    retry: false
+  })
   const [sidebarWidth, setSidebarWidth] = useState(() => {
     const savedWidth = Number.parseInt(
       localStorage.getItem('tasktty-sidebar-width') ?? '',
@@ -291,20 +208,10 @@ export default function App() {
   const resizeOrigin = useRef<{ pointerX: number; width: number } | null>(null)
   const drawerRef = useRef<HTMLElement | null>(null)
   const drawerTriggerRef = useRef<HTMLButtonElement | null>(null)
-  const openProjectButtonRef = useRef<HTMLButtonElement | null>(null)
+  const projectSwitcherTriggerRef = useRef<HTMLButtonElement | null>(null)
+  const projectSwitcherDismissedIntoTerminalRef = useRef(false)
   const modalTriggerRef = useRef<HTMLElement | null>(null)
   const removalGuardsRef = useRef(new Set<string>())
-
-  useEffect(() => {
-    if (collapsedProjectIds.size) {
-      localStorage.setItem(
-        COLLAPSED_PROJECTS_STORAGE_KEY,
-        [...collapsedProjectIds].join('\n')
-      )
-    } else {
-      localStorage.removeItem(COLLAPSED_PROJECTS_STORAGE_KEY)
-    }
-  }, [collapsedProjectIds])
 
   useEffect(() => {
     if (projectsQuery.error && projectsQuery.data === undefined) {
@@ -362,6 +269,38 @@ export default function App() {
   }, [projectsQuery.data])
 
   useEffect(() => {
+    const next = projectsQuery.data
+    if (!next) {
+      return
+    }
+
+    setActiveProjectId((current) => {
+      if (current && next.some((project) => project.id === current)) {
+        return current
+      }
+
+      const terminalProject = selectedTerminalId
+        ? next.find((project) =>
+            project.worktrees.some((worktree) =>
+              worktree.terminals.some(
+                (terminal) => terminal.id === selectedTerminalId
+              )
+            )
+          )
+        : null
+      return terminalProject?.id ?? next[0]?.id ?? null
+    })
+  }, [projectsQuery.data, selectedTerminalId])
+
+  useEffect(() => {
+    if (activeProjectId) {
+      localStorage.setItem(ACTIVE_PROJECT_STORAGE_KEY, activeProjectId)
+    } else {
+      localStorage.removeItem(ACTIVE_PROJECT_STORAGE_KEY)
+    }
+  }, [activeProjectId])
+
+  useEffect(() => {
     if (projectsQuery.data === undefined) {
       return
     }
@@ -406,7 +345,7 @@ export default function App() {
   }, [drawerOpen, isMobile])
 
   useEffect(() => {
-    if (!isMobile || !drawerOpen || modal || openProjectColorPickerId) {
+    if (!isMobile || !drawerOpen || modal || projectSwitcherOpen) {
       return
     }
 
@@ -426,7 +365,7 @@ export default function App() {
     }
     document.addEventListener('keydown', keydown)
     return () => document.removeEventListener('keydown', keydown)
-  }, [drawerOpen, isMobile, modal, openProjectColorPickerId])
+  }, [drawerOpen, isMobile, modal, projectSwitcherOpen])
 
   useEffect(() => {
     const events: Socket<
@@ -588,12 +527,26 @@ export default function App() {
         )
       )
     : null
+  const activeProject =
+    projects.find((project) => project.id === activeProjectId) ??
+    selectedProject ??
+    projects[0] ??
+    null
   const selectedWorktreeMutationsDisabled =
     Boolean(selectedWorktree?.prunable) ||
     selectedWorktree?.status !== 'active' ||
     selectedProject?.availability.state === 'unavailable'
 
   const selectTerminal = (terminal: TerminalRecord) => {
+    const project = projects.find((candidate) =>
+      candidate.worktrees.some(
+        (worktree) => worktree.id === terminal.worktreeId
+      )
+    )
+    if (project) {
+      setActiveProjectId(project.id)
+    }
+
     setSelectedTerminalId(terminal.id)
     setSelectedWorktreeId(terminal.worktreeId)
     selectedWorktreeIdRef.current = terminal.worktreeId
@@ -602,6 +555,7 @@ export default function App() {
   }
 
   const selectWorktree = (worktree: WorktreeRecord) => {
+    setActiveProjectId(worktree.projectId)
     setSelectedWorktreeId(worktree.id)
     selectedWorktreeIdRef.current = worktree.id
     const nextTerminal =
@@ -620,47 +574,29 @@ export default function App() {
     setDrawerOpen(false)
   }
 
-  const updateProjectColor = useMutation({
-    mutationFn: ({
-      projectId,
-      color
-    }: {
-      projectId: string
-      color: ProjectColor | null
-    }) => apiClient.updateProjectColor(projectId, color),
-    onMutate: async ({ projectId, color }) => {
-      await queryClient.cancelQueries({ queryKey: projectsQueryKey })
-      const previous =
-        queryClient.getQueryData<ProjectRecord[]>(projectsQueryKey)
-      queryClient.setQueryData<ProjectRecord[]>(projectsQueryKey, (current) =>
-        current?.map((project) =>
-          project.id === projectId ? { ...project, color } : project
-        )
-      )
-      return { previous }
-    },
-    onError: (mutationError, _variables, context) => {
-      if (context?.previous) {
-        queryClient.setQueryData<ProjectRecord[]>(
-          projectsQueryKey,
-          context.previous
-        )
+  const selectProject = (project: ProjectRecord) => {
+    setActiveProjectId(project.id)
+    const worktree = project.worktrees[0] ?? null
+    if (worktree) {
+      setSelectedWorktreeId(worktree.id)
+      selectedWorktreeIdRef.current = worktree.id
+      const terminal = worktree.terminals[0] ?? null
+      setSelectedTerminalId(terminal?.id ?? null)
+      if (terminal) {
+        localStorage.setItem('tasktty-terminal', terminal.id)
+      } else {
+        localStorage.removeItem('tasktty-terminal')
       }
+    } else {
+      setSelectedWorktreeId(null)
+      selectedWorktreeIdRef.current = null
+      setSelectedTerminalId(null)
+      localStorage.removeItem('tasktty-terminal')
+    }
 
-      showError(setError)(mutationError)
-    },
-    onSuccess: (updatedProject) => {
-      queryClient.setQueryData<ProjectRecord[]>(projectsQueryKey, (current) =>
-        current?.map((project) =>
-          project.id === updatedProject.id
-            ? { ...updatedProject, worktrees: project.worktrees }
-            : project
-        )
-      )
-    },
-    onSettled: () =>
-      queryClient.invalidateQueries({ queryKey: projectsQueryKey })
-  })
+    setProjectSwitcherOpen(false)
+    setProjectSearch('')
+  }
 
   const createWorktree = useMutation({
     mutationFn: (pending: PendingWorktreeCreation) =>
@@ -817,19 +753,24 @@ export default function App() {
           worktree.terminals.map((terminal) => terminal.id)
         )
       )
-      if (
+      const closedProjectIndex = currentProjects.findIndex(
+        (project) => project.id === closedProject.id
+      )
+      const fallbackProject =
+        remainingProjects[
+          Math.min(
+            Math.max(closedProjectIndex, 0),
+            remainingProjects.length - 1
+          )
+        ] ?? null
+      const closedSelection =
         (selectedWorktreeIdRef.current &&
           closedWorktreeIds.has(selectedWorktreeIdRef.current)) ||
         (selectedTerminalId && closedTerminalIds.has(selectedTerminalId))
-      ) {
-        const fallbackTerminal = remainingProjects
-          .flatMap((project) => project.worktrees)
-          .flatMap((worktree) => worktree.terminals)[0]
-        const fallbackWorktree = fallbackTerminal
-          ? remainingProjects
-              .flatMap((project) => project.worktrees)
-              .find((worktree) => worktree.id === fallbackTerminal.worktreeId)
-          : remainingProjects.flatMap((project) => project.worktrees)[0]
+      if (activeProjectId === closedProject.id || closedSelection) {
+        setActiveProjectId(fallbackProject?.id ?? null)
+        const fallbackWorktree = fallbackProject?.worktrees[0] ?? null
+        const fallbackTerminal = fallbackWorktree?.terminals[0] ?? null
         setSelectedWorktreeId(fallbackWorktree?.id ?? null)
         selectedWorktreeIdRef.current = fallbackWorktree?.id ?? null
         setSelectedTerminalId(fallbackTerminal?.id ?? null)
@@ -838,18 +779,19 @@ export default function App() {
         } else {
           localStorage.removeItem('tasktty-terminal')
         }
+
+        setProjectSwitcherOpen(false)
       }
 
-      setCollapsedProjectIds((current) => {
-        const next = new Set(current)
-        next.delete(closedProject.id)
-        return next
-      })
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: projectsQueryKey }),
         queryClient.invalidateQueries({ queryKey: recentProjectsQueryKey })
       ])
-      window.requestAnimationFrame(() => openProjectButtonRef.current?.focus())
+      if (activeProjectId === closedProject.id || !remainingProjects.length) {
+        window.requestAnimationFrame(() =>
+          projectSwitcherTriggerRef.current?.focus()
+        )
+      }
     },
     onError: (mutationError) => {
       showError(setError)(mutationError)
@@ -888,11 +830,7 @@ export default function App() {
       recentProjectsQueryKey,
       (current) => current?.filter((candidate) => candidate.id !== project.id)
     )
-    setCollapsedProjectIds((current) => {
-      const next = new Set(current)
-      next.delete(project.id)
-      return next
-    })
+    selectProject(project)
     setModal(null)
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: projectsQueryKey }),
@@ -900,18 +838,12 @@ export default function App() {
     ])
   }
 
-  const setProjectOpen = (projectId: string, open: boolean) => {
-    setCollapsedProjectIds((current) => {
-      const next = new Set(current)
-      if (open) {
-        next.delete(projectId)
-      } else {
-        next.add(projectId)
-      }
-
-      return next
-    })
-  }
+  const reopenProject = useMutation({
+    mutationFn: (project: RecentProjectRecord) =>
+      apiClient.openProject(project.id),
+    onSuccess: projectOpened,
+    onError: showError(setError)
+  })
 
   const setAndSaveSidebarWidth = (width: number) => {
     const nextWidth = clampSidebarWidth(width)
@@ -1103,6 +1035,26 @@ export default function App() {
     setAndSaveSidebarWidth(nextWidth)
   }
 
+  const normalizedProjectSearch = projectSearch.trim().toLocaleLowerCase()
+  const filteredOpenProjects = projects.filter(
+    (project) =>
+      !normalizedProjectSearch ||
+      project.name.toLocaleLowerCase().includes(normalizedProjectSearch) ||
+      project.repositoryPath
+        .toLocaleLowerCase()
+        .includes(normalizedProjectSearch)
+  )
+  const openProjectIds = new Set(projects.map((project) => project.id))
+  const filteredRecentProjects = (recentProjectsQuery.data ?? []).filter(
+    (project) =>
+      !openProjectIds.has(project.id) &&
+      (!normalizedProjectSearch ||
+        project.name.toLocaleLowerCase().includes(normalizedProjectSearch) ||
+        project.repositoryPath
+          .toLocaleLowerCase()
+          .includes(normalizedProjectSearch))
+  )
+
   return (
     <div
       className={cn(
@@ -1208,113 +1160,265 @@ export default function App() {
             <span className="touch-target" aria-hidden="true" />
           </Button>
         </div>
+        <div className="flex items-center gap-1 border-b border-white/8 p-2 max-[700px]:pt-0">
+          <Popover
+            open={projectSwitcherOpen}
+            onOpenChange={(open) => {
+              setProjectSwitcherOpen(open)
+              if (!open) {
+                setProjectSearch('')
+              }
+            }}
+          >
+            <PopoverTrigger asChild>
+              <Button
+                ref={projectSwitcherTriggerRef}
+                type="button"
+                variant="ghost"
+                className="h-9 min-w-0 flex-1 justify-start gap-2 px-2 text-sm text-zinc-100 hover:bg-white/5"
+                aria-label={
+                  activeProject
+                    ? `Switch project, current project ${activeProject.name}`
+                    : 'Open project'
+                }
+                title={activeProject?.repositoryPath}
+              >
+                <span className="truncate font-medium">
+                  {activeProject?.name ?? 'Open project'}
+                </span>
+                <ChevronUpDownIcon className="ml-auto shrink-0 fill-zinc-600" />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent
+              align="start"
+              className="w-[min(17rem,calc(100vw-1rem))] p-1"
+              onCloseAutoFocus={(event) => {
+                if (projectSwitcherDismissedIntoTerminalRef.current) {
+                  event.preventDefault()
+                  projectSwitcherDismissedIntoTerminalRef.current = false
+                }
+              }}
+            >
+              <div className="relative mb-1">
+                <MagnifyingGlassIcon className="pointer-events-none absolute top-1/2 left-2 size-4 -translate-y-1/2 fill-zinc-600" />
+                <Input
+                  value={projectSearch}
+                  onChange={(event) => setProjectSearch(event.target.value)}
+                  className="h-8 bg-zinc-950/50 pt-0.5 pr-2 pb-1 pl-7 ring-white/8 sm:h-7 sm:text-[0.8125rem]/4 sm:placeholder:text-[0.84375rem]"
+                  placeholder="Search projects…"
+                  aria-label="Search projects"
+                  autoFocus
+                />
+              </div>
+              <div className="grid max-h-[min(28rem,70vh)] gap-0.5 overflow-y-auto p-0.5 [scrollbar-color:var(--color-zinc-700)_transparent]">
+                {filteredOpenProjects.length ? (
+                  <ul role="list" className="grid gap-0.5">
+                    {filteredOpenProjects.map((project) => {
+                      const terminals = project.worktrees.flatMap(
+                        (worktree) => worktree.terminals
+                      )
+                      const needsAttention = terminals.some((terminal) =>
+                        bellAttention.has(terminal.id)
+                      )
+                      const progress = terminals
+                        .map((terminal) => terminalProgress.get(terminal.id))
+                        .find((item) => item !== undefined)
+
+                      return (
+                        <li
+                          key={project.id}
+                          className="group/project-option relative flex h-8 min-w-0 items-center gap-0.5 rounded-md pr-1 has-[button:hover]:bg-white/5 focus-within:bg-white/5"
+                        >
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            className="h-8 min-w-0 flex-1 justify-start px-2 text-left hover:bg-transparent max-[700px]:pr-8"
+                            onClick={() => selectProject(project)}
+                          >
+                            <span className="flex min-w-0 items-center gap-1.5">
+                              <span className="truncate text-sm font-medium text-zinc-100">
+                                {project.name}
+                              </span>
+                              {activeProject?.id === project.id ? (
+                                <CheckIcon className="shrink-0 fill-zinc-400" />
+                              ) : null}
+                            </span>
+                            {progress || needsAttention ? (
+                              <span className="ml-auto flex shrink-0 items-center gap-1.5 min-[701px]:group-hover/project-option:opacity-0 min-[701px]:group-focus-within/project-option:opacity-0">
+                                {progress ? (
+                                  <ArrowPathIcon
+                                    className={cn(
+                                      'size-4 shrink-0 fill-cyan-300',
+                                      progress.state !== 'paused' &&
+                                        progress.state !== 'error' &&
+                                        'animate-spin',
+                                      progress.state === 'error' &&
+                                        'fill-rose-300',
+                                      progress.state === 'paused' &&
+                                        'fill-amber-300'
+                                    )}
+                                    title={terminalProgressLabel(progress)}
+                                  />
+                                ) : null}
+                                {needsAttention ? (
+                                  <span
+                                    className="size-1.5 shrink-0 rounded-full bg-amber-300 shadow-[0_0_0.5rem] shadow-amber-300/60"
+                                    title="Terminal needs attention"
+                                  />
+                                ) : null}
+                              </span>
+                            ) : null}
+                          </Button>
+                          <SidebarAction
+                            label={`Close project ${project.name}`}
+                            tooltip="Close project"
+                            disabled={
+                              closeProject.isPending &&
+                              closeProject.variables?.id === project.id
+                            }
+                            className="absolute right-1 shrink-0 fill-zinc-500 opacity-0 hover:bg-white/5 hover:fill-rose-300 group-hover/project-option:opacity-100 group-focus-within/project-option:opacity-100 max-[700px]:opacity-100"
+                            onClick={() => requestProjectClose(project)}
+                          >
+                            {closeProject.isPending &&
+                            closeProject.variables?.id === project.id ? (
+                              <ArrowPathIcon className="animate-spin" />
+                            ) : (
+                              <XMarkIcon />
+                            )}
+                          </SidebarAction>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                ) : (
+                  <p className="px-2 py-1 text-sm text-zinc-500">
+                    No open projects found.
+                  </p>
+                )}
+                <section
+                  className="grid gap-0.5"
+                  aria-labelledby="recent-projects-switcher-title"
+                >
+                  <div className="flex items-center justify-between gap-2 px-2 py-1">
+                    <h3
+                      id="recent-projects-switcher-title"
+                      className="text-xs font-medium text-zinc-500"
+                    >
+                      Recent projects
+                    </h3>
+                    {recentProjectsQuery.isFetching ? (
+                      <ArrowPathIcon
+                        className="size-4 shrink-0 animate-spin fill-zinc-600"
+                        aria-label="Refreshing recent projects"
+                      />
+                    ) : null}
+                  </div>
+                  {recentProjectsQuery.isError ? (
+                    <div className="flex items-center justify-between gap-2 px-2 py-1">
+                      <p className="text-sm text-zinc-500">
+                        Recent projects unavailable.
+                      </p>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => void recentProjectsQuery.refetch()}
+                      >
+                        Retry
+                      </Button>
+                    </div>
+                  ) : null}
+                  {recentProjectsQuery.isSuccess &&
+                  filteredRecentProjects.length ? (
+                    <ul role="list" className="grid gap-0.5">
+                      {filteredRecentProjects.map((project) => (
+                        <li key={project.id}>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            className="h-8 w-full min-w-0 justify-start px-2 text-left"
+                            disabled={reopenProject.isPending}
+                            onClick={() => reopenProject.mutate(project)}
+                          >
+                            <span className="truncate text-sm font-medium text-zinc-200">
+                              {project.name}
+                            </span>
+                          </Button>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                  {recentProjectsQuery.isSuccess &&
+                  !filteredRecentProjects.length ? (
+                    <p className="px-2 py-1 text-sm text-zinc-500">
+                      {normalizedProjectSearch
+                        ? 'No recent projects found.'
+                        : 'Closed projects appear here.'}
+                    </p>
+                  ) : null}
+                </section>
+              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="mt-0.5 h-8 w-full justify-start border-t border-white/8 py-1 text-sm font-normal text-zinc-500 hover:text-zinc-100"
+                onClick={(event) => {
+                  setProjectSwitcherOpen(false)
+                  openModal({ type: 'project' }, event.currentTarget)
+                }}
+              >
+                <PlusIcon /> Open project…
+              </Button>
+            </PopoverContent>
+          </Popover>
+        </div>
         <nav
-          className="tree min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-2 pt-3 pb-5 sm:px-1.5 sm:pb-4 [scrollbar-color:var(--color-zinc-700)_transparent]"
+          className="tree min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-2 pt-3 pb-5 min-[701px]:px-1.5 min-[701px]:pt-2 min-[701px]:pb-4 [scrollbar-color:var(--color-zinc-700)_transparent]"
           aria-label="Projects and worktrees"
         >
           {projectsQuery.isPending ? (
-            <p className="sidebar-note px-2 py-3 text-base text-zinc-500 sm:text-sm">
+            <p className="sidebar-note px-2 py-3 text-base text-zinc-500 min-[701px]:text-sm">
               Loading repositories…
             </p>
           ) : null}
           {!projectsQuery.isPending && !projects.length ? (
-            <p className="sidebar-note px-2 py-3 text-base text-pretty text-zinc-500 sm:text-sm">
+            <p className="sidebar-note px-2 py-3 text-base text-pretty text-zinc-500 min-[701px]:text-sm">
               Open a Git repository to begin.
             </p>
           ) : null}
-          <div className="grid gap-5 sm:gap-4">
-            {projects.map((project) => (
-              <Collapsible
-                className="project-tree"
-                open={!collapsedProjectIds.has(project.id)}
-                onOpenChange={(open) => setProjectOpen(project.id, open)}
-                key={project.id}
-              >
-                <div className="project-row group/project-row flex min-h-11 items-center gap-1 px-1 sm:min-h-7">
-                  <CollapsibleTrigger asChild>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      className="group/project min-w-0 flex-1 justify-start px-1.5 text-base font-semibold text-zinc-100 hover:bg-white/5 sm:text-[0.8125rem]"
-                      title={
-                        project.availability.state === 'unavailable'
-                          ? project.availability.message ||
-                            'Git repository unavailable'
-                          : project.repositoryPath
-                      }
+          <div className="grid gap-4">
+            {projects
+              .filter((project) => project.id === activeProject?.id)
+              .map((project) => (
+                <div className="project-tree" key={project.id}>
+                  {project.availability.state === 'unavailable' ? (
+                    <p
+                      className="mx-1 mb-2 rounded-md bg-amber-400/8 px-2 py-1.5 text-sm text-amber-200"
+                      role="status"
                     >
-                      <ChevronRightIcon
-                        className={cn(
-                          'shrink-0 transition-transform group-data-[state=open]/project:rotate-90',
-                          project.color
-                            ? PROJECT_COLOR_STYLES[project.color].chevron
-                            : 'fill-zinc-600'
-                        )}
-                      />
-                      <span className="truncate">{project.name}</span>
-                      {project.availability.state === 'unavailable' && (
-                        <span className="shrink-0 text-[0.625rem] font-normal text-amber-300">
-                          unavailable
-                        </span>
-                      )}
-                    </Button>
-                  </CollapsibleTrigger>
-                  <ProjectColorPicker
-                    project={project}
-                    open={openProjectColorPickerId === project.id}
-                    pending={
-                      updateProjectColor.isPending &&
-                      updateProjectColor.variables?.projectId === project.id
-                    }
-                    onOpenChange={(open) =>
-                      setOpenProjectColorPickerId(open ? project.id : null)
-                    }
-                    onChange={(color) =>
-                      updateProjectColor.mutate({
-                        projectId: project.id,
-                        color
-                      })
-                    }
-                  />
-                  <SidebarAction
-                    label={`Close project ${project.name}`}
-                    tooltip="Close project"
-                    disabled={
-                      closeProject.isPending &&
-                      closeProject.variables?.id === project.id
-                    }
-                    className="shrink-0 fill-zinc-500 opacity-0 hover:bg-white/5 hover:fill-rose-300 group-hover/project-row:opacity-100 group-focus-within/project-row:opacity-100 max-[700px]:opacity-100"
-                    onClick={() => requestProjectClose(project)}
-                  >
-                    {closeProject.isPending &&
-                    closeProject.variables?.id === project.id ? (
-                      <ArrowPathIcon className="animate-spin" />
-                    ) : (
-                      <XMarkIcon />
-                    )}
-                  </SidebarAction>
-                </div>
-                <CollapsibleContent asChild>
-                  <ul
-                    role="list"
-                    className={cn(
-                      'ml-3 grid gap-0.5 border-l pl-1.5',
-                      project.color
-                        ? PROJECT_COLOR_STYLES[project.color].rail
-                        : 'border-white/8'
-                    )}
-                  >
+                      {project.availability.message ||
+                        'Git repository unavailable'}
+                    </p>
+                  ) : null}
+                  <ul role="list" className="grid gap-2 min-[701px]:gap-1.5">
                     {project.worktrees.map((worktree) => (
                       <li key={worktree.id} className="group/worktree min-w-0">
-                        <div className="relative min-w-0 max-[700px]:flex max-[700px]:items-center">
+                        <div
+                          className={cn(
+                            'relative min-w-0 max-[700px]:flex max-[700px]:items-center max-[700px]:gap-0.5 max-[700px]:rounded-md max-[700px]:has-[button:hover]:bg-white/5',
+                            selectedWorktree?.id === worktree.id &&
+                              'max-[700px]:bg-white/8'
+                          )}
+                        >
                           <Button
                             variant="ghost"
                             type="button"
                             className={cn(
-                              'worktree-row h-auto min-h-11 w-full min-w-0 justify-start gap-2 rounded-md px-2 py-1.5 text-left text-base font-medium sm:min-h-8 sm:py-1 sm:text-[0.8125rem] max-[700px]:flex-1',
+                              'worktree-row h-auto min-h-11 w-full min-w-0 justify-start gap-1.5 rounded-md px-2 py-1.5 text-left text-base/5 font-medium min-[701px]:min-h-8 min-[701px]:py-1 min-[701px]:text-[0.8125rem]/4 max-[700px]:flex-1 max-[700px]:hover:bg-transparent',
+                              worktree.kind === 'linked' && 'min-[701px]:pr-9',
                               selectedWorktree?.id === worktree.id
-                                ? 'selected bg-white/8 text-zinc-50'
+                                ? 'selected text-zinc-50 min-[701px]:bg-white/8'
                                 : 'text-zinc-300 hover:bg-white/5 hover:text-zinc-50'
                             )}
                             onClick={() => selectWorktree(worktree)}
@@ -1327,8 +1431,8 @@ export default function App() {
                                 aria-hidden="true"
                               />
                             ) : (
-                              <FolderIcon
-                                className="shrink-0 text-zinc-500"
+                              <GitBranchIcon
+                                className="shrink-0 stroke-zinc-600 stroke-[1.5]"
                                 aria-hidden="true"
                               />
                             )}
@@ -1339,7 +1443,7 @@ export default function App() {
                                 worktree.status === 'cleanup_failed') && (
                                 <span
                                   className={cn(
-                                    'truncate text-[0.6875rem] font-normal text-cyan-300',
+                                    'truncate text-sm/4 font-normal text-cyan-300 min-[701px]:text-[0.6875rem]',
                                     worktree.status === 'cleanup_failed' &&
                                       'text-rose-300'
                                   )}
@@ -1362,7 +1466,7 @@ export default function App() {
                             </span>
                           </Button>
                           {worktree.kind === 'linked' && (
-                            <div className="worktree-actions absolute top-0 right-0 z-10 flex items-center gap-0.5 opacity-0 group-hover/worktree:opacity-100 group-focus-within/worktree:opacity-100 max-[700px]:static max-[700px]:ml-0.5 max-[700px]:shrink-0 max-[700px]:opacity-100">
+                            <div className="worktree-actions absolute top-0 right-0 z-10 flex items-center gap-0.5 opacity-0 group-hover/worktree:opacity-100 group-focus-within/worktree:opacity-100 max-[700px]:static max-[700px]:shrink-0 max-[700px]:opacity-100">
                               <SidebarAction
                                 label={
                                   needsManualCleanup(worktree)
@@ -1405,7 +1509,7 @@ export default function App() {
                         </div>
                         <ul
                           role="list"
-                          className="terminal-list ml-4 grid gap-0 border-l border-white/6 pl-2"
+                          className="terminal-list ml-4 grid gap-0.5 border-l border-white/6 pl-2"
                         >
                           {worktree.terminals.map((terminal) => {
                             const needsAttention = bellAttention.has(
@@ -1426,10 +1530,10 @@ export default function App() {
                                   variant="ghost"
                                   type="button"
                                   className={cn(
-                                    'terminal-row grid h-auto min-h-11 w-full min-w-0 grid-cols-[1.25rem_minmax(0,1fr)_0.5rem] gap-1.5 rounded-md px-2 py-1.5 text-left text-base font-normal sm:min-h-7 sm:grid-cols-[1rem_minmax(0,1fr)_0.5rem] sm:py-0.5 sm:text-[0.6875rem]',
+                                    'terminal-row grid h-auto min-h-11 w-full min-w-0 grid-cols-[1.25rem_minmax(0,1fr)_0.5rem] gap-1.5 rounded-md px-2 py-1.5 text-left text-base/5 font-normal min-[701px]:min-h-7 min-[701px]:grid-cols-[1rem_minmax(0,1fr)_0.5rem] min-[701px]:py-0.5 min-[701px]:text-xs/4',
                                     selectedTerminalId === terminal.id
                                       ? 'selected bg-cyan-400/8 text-cyan-50'
-                                      : 'text-zinc-500 hover:bg-white/5 hover:text-zinc-100'
+                                      : 'text-zinc-400 hover:bg-white/5 hover:text-zinc-100'
                                   )}
                                   onClick={() => selectTerminal(terminal)}
                                   aria-label={`${runtimeTitles.get(terminal.id) || terminal.name}, ${status}`}
@@ -1449,7 +1553,7 @@ export default function App() {
                                       aria-hidden="true"
                                     />
                                   ) : (
-                                    <CommandLineIcon className="size-4 shrink-0 fill-zinc-600" />
+                                    <TerminalIcon className="size-4 shrink-0 stroke-zinc-600 stroke-[1.5]" />
                                   )}
                                   <span className="truncate" aria-hidden="true">
                                     {runtimeTitles.get(terminal.id) ||
@@ -1488,7 +1592,7 @@ export default function App() {
                         <li key={pending.id} className="min-w-0">
                           <div
                             id={`pending-worktree-${pending.id}`}
-                            className="flex min-h-11 min-w-0 items-center gap-1.5 rounded-md px-2 py-1.5 text-base font-normal text-zinc-400 outline-none focus-visible:ring-2 focus-visible:ring-cyan-400 sm:min-h-7 sm:py-0.5 sm:text-[0.6875rem]"
+                            className="flex min-h-11 min-w-0 items-center gap-1.5 rounded-md px-2 py-1.5 text-base/5 font-normal text-zinc-400 outline-none focus-visible:ring-2 focus-visible:ring-cyan-400 min-[701px]:min-h-8 min-[701px]:py-1 min-[701px]:text-[0.8125rem]/4"
                             role="status"
                             aria-label={`Creating worktree ${pending.typedName}`}
                             title={pending.destinationPath}
@@ -1508,7 +1612,7 @@ export default function App() {
                       <Button
                         type="button"
                         variant="ghost"
-                        className="h-auto min-h-11 w-full justify-start gap-1.5 px-2 py-1.5 text-base font-normal text-zinc-500 hover:bg-white/5 hover:text-zinc-100 sm:min-h-7 sm:py-0.5 sm:text-[0.6875rem]"
+                        className="h-auto min-h-11 w-full justify-start gap-1.5 px-2 py-1.5 text-base/5 font-normal text-zinc-500 hover:bg-white/5 hover:text-zinc-100 min-[701px]:min-h-8 min-[701px]:py-1 min-[701px]:text-[0.8125rem]/4"
                         disabled={
                           project.availability.state === 'unavailable' ||
                           pendingWorktrees.some(
@@ -1526,30 +1630,22 @@ export default function App() {
                       </Button>
                     </li>
                   </ul>
-                </CollapsibleContent>
-              </Collapsible>
-            ))}
+                </div>
+              ))}
           </div>
         </nav>
-        <footer className="sidebar-tools flex items-center gap-1 border-t border-white/8 px-2 py-1.5">
-          <Button
-            ref={openProjectButtonRef}
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="flex-1 justify-start text-zinc-500 hover:bg-white/5 hover:text-zinc-200 sm:text-[0.8125rem]"
-            onClick={(event) =>
-              openModal({ type: 'project' }, event.currentTarget)
-            }
-          >
-            <PlusIcon /> Open project
-          </Button>
-        </footer>
       </aside>
       <div
         className="contents"
         inert={isMobile && drawerOpen ? true : undefined}
         aria-hidden={isMobile && drawerOpen ? true : undefined}
+        onPointerDownCapture={() => {
+          if (projectSwitcherOpen) {
+            projectSwitcherDismissedIntoTerminalRef.current = true
+            setProjectSwitcherOpen(false)
+            setProjectSearch('')
+          }
+        }}
       >
         <TerminalView
           worktree={selectedWorktree}
@@ -1639,10 +1735,10 @@ export default function App() {
   )
 }
 
-function ModalHeading({ eyebrow, title }: { eyebrow: string; title: string }) {
+function ModalHeading({ eyebrow, title }: { eyebrow?: string; title: string }) {
   return (
     <div className="grid gap-1.5 pr-12">
-      <p className="eyebrow">{eyebrow}</p>
+      {eyebrow ? <p className="eyebrow">{eyebrow}</p> : null}
       <h2
         id="modal-title"
         className="text-balance text-xl font-semibold tracking-tight text-zinc-50 sm:text-2xl"
@@ -1655,74 +1751,6 @@ function ModalHeading({ eyebrow, title }: { eyebrow: string; title: string }) {
 
 function FormField({ children }: { children: ReactNode }) {
   return <div className="grid gap-2">{children}</div>
-}
-
-function ProjectColorPicker({
-  project,
-  open,
-  pending,
-  onOpenChange,
-  onChange
-}: {
-  project: ProjectRecord
-  open: boolean
-  pending: boolean
-  onOpenChange: (open: boolean) => void
-  onChange: (color: ProjectColor | null) => void
-}) {
-  return (
-    <Popover open={open} onOpenChange={onOpenChange}>
-      <PopoverTrigger asChild>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-sm"
-          className="shrink-0 fill-zinc-500 opacity-0 hover:bg-white/5 hover:fill-zinc-100 group-hover/project-row:opacity-100 group-focus-within/project-row:opacity-100 data-[state=open]:opacity-100 max-[700px]:opacity-100"
-          aria-label={`Change color for ${project.name}`}
-        >
-          <SwatchIcon />
-          <span className="touch-target" aria-hidden="true" />
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent
-        align="end"
-        aria-label={`Color for ${project.name}`}
-        onEscapeKeyDown={(event) => event.stopPropagation()}
-      >
-        <div className="flex flex-col gap-3">
-          <p className="text-sm font-medium text-zinc-100">Project color</p>
-          <div className="grid grid-cols-3 gap-2">
-            {PROJECT_COLOR_OPTIONS.map((option) => {
-              const selected = project.color === option.value
-              return (
-                <Button
-                  key={option.label}
-                  type="button"
-                  variant="ghost"
-                  size="icon-sm"
-                  className={cn(
-                    'rounded-full ring-2 ring-transparent',
-                    option.swatch,
-                    selected && 'ring-white ring-offset-2 ring-offset-zinc-900'
-                  )}
-                  aria-label={option.label}
-                  aria-pressed={selected}
-                  title={option.label}
-                  disabled={pending}
-                  onClick={() => {
-                    onChange(option.value)
-                    onOpenChange(false)
-                  }}
-                >
-                  {selected ? <CheckIcon className={option.check} /> : null}
-                </Button>
-              )
-            })}
-          </div>
-        </div>
-      </PopoverContent>
-    </Popover>
-  )
 }
 
 function SidebarAction({
@@ -1898,16 +1926,8 @@ function ProjectForm({
   onOpened: (project: ProjectRecord) => Promise<void>
 }) {
   const [pathValue, setPathValue] = useState('')
-  const recentProjects = useQuery({
-    queryKey: recentProjectsQueryKey,
-    queryFn: apiClient.recentProjects,
-    retry: false
-  })
   const openProject = useMutation({
-    mutationFn: (request: { id?: string; path?: string }) =>
-      request.id
-        ? apiClient.openProject(request.id)
-        : apiClient.addProject(request.path ?? ''),
+    mutationFn: (path: string) => apiClient.addProject(path),
     onSuccess: onOpened,
     onError: showError(setError)
   })
@@ -1915,96 +1935,25 @@ function ProjectForm({
 
   return (
     <div className="flex flex-col gap-5">
-      <ModalHeading eyebrow="Workspace" title="Open project" />
-      <section className="grid gap-2" aria-labelledby="recent-projects-title">
-        <div className="flex min-w-0 items-center justify-between gap-3">
-          <h3
-            id="recent-projects-title"
-            className="text-sm font-medium text-zinc-200"
-          >
-            Recent projects
-          </h3>
-          {recentProjects.isFetching && !recentProjects.isPending ? (
-            <ArrowPathIcon
-              className="size-4 shrink-0 animate-spin fill-zinc-500"
-              aria-label="Refreshing recent projects"
-            />
-          ) : null}
-        </div>
-        {recentProjects.isPending ? (
-          <p className="text-base text-zinc-500 sm:text-sm">
-            Loading recent projects…
-          </p>
-        ) : null}
-        {recentProjects.isError ? (
-          <div className="flex items-center justify-between gap-3 rounded-lg bg-white/3 p-3">
-            <p className="min-w-0 text-base text-zinc-400 sm:text-sm">
-              Recent projects could not be loaded.
-            </p>
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              disabled={busy}
-              onClick={() => void recentProjects.refetch()}
-            >
-              Retry
-            </Button>
-          </div>
-        ) : null}
-        {recentProjects.isSuccess && !recentProjects.data.length ? (
-          <p className="text-base text-zinc-500 sm:text-sm">
-            Closed projects will appear here.
-          </p>
-        ) : null}
-        {recentProjects.data?.length ? (
-          <ul
-            role="list"
-            className="max-h-56 overflow-y-auto rounded-lg bg-white/3 p-1 ring-1 ring-white/8 [scrollbar-color:var(--color-zinc-700)_transparent]"
-          >
-            {recentProjects.data.map((project) => (
-              <li key={project.id}>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  className="h-auto min-h-11 w-full min-w-0 justify-start px-3 py-2 text-left hover:bg-white/5"
-                  disabled={busy}
-                  onClick={() => openProject.mutate({ id: project.id })}
-                >
-                  <span className="grid min-w-0 gap-0.5">
-                    <span className="truncate font-medium text-zinc-100">
-                      {project.name}
-                    </span>
-                    <span className="truncate text-zinc-500">
-                      {project.repositoryPath}
-                    </span>
-                  </span>
-                </Button>
-              </li>
-            ))}
-          </ul>
-        ) : null}
-      </section>
+      <ModalHeading title="Open project" />
       <form
-        className="flex flex-col gap-4 border-t border-white/8 pt-5"
+        className="flex flex-col gap-4"
         onSubmit={(event) => {
           event.preventDefault()
-          openProject.mutate({ path: pathValue })
+          openProject.mutate(pathValue)
         }}
       >
-        <FormField>
-          <Label htmlFor="repository-path">Open by repository path</Label>
-          <Input
-            id="repository-path"
-            name="repository-path"
-            value={pathValue}
-            onChange={(event) => setPathValue(event.target.value)}
-            placeholder="/Users/you/Projects/example"
-            required
-            autoFocus
-            disabled={busy}
-          />
-        </FormField>
+        <Input
+          id="repository-path"
+          name="repository-path"
+          value={pathValue}
+          onChange={(event) => setPathValue(event.target.value)}
+          placeholder="/Users/you/Projects/example"
+          aria-label="Open by repository path"
+          required
+          autoFocus
+          disabled={busy}
+        />
         <p className="form-note">
           The daemon resolves the main checkout and imports existing linked
           worktrees.
