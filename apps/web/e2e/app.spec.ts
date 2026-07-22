@@ -120,8 +120,21 @@ const project = {
 async function mockApp(
   page: Page,
   initialTerminalMetadata: TerminalRuntimeMetadata[] = [],
-  options: { startClosed?: boolean; terminalFree?: boolean } = {}
+  options: {
+    keyboardPlatform?: string
+    startClosed?: boolean
+    terminalFree?: boolean
+  } = {}
 ) {
+  if (options.keyboardPlatform) {
+    await page.addInitScript((platform) => {
+      Object.defineProperty(navigator, 'platform', {
+        configurable: true,
+        value: platform
+      })
+    }, options.keyboardPlatform)
+  }
+
   await page.addInitScript((initialMetadata) => {
     class MockEventSource {
       listeners = new Map<string, Array<(event: { data: string }) => void>>()
@@ -825,8 +838,82 @@ test.describe('desktop worktree terminal UI', () => {
     )
   })
 
-  test('opens OSC 8 links in a new tab on Cmd-click', async ({ page }) => {
-    await mockApp(page)
+  test('detects plain web URLs and opens them only on platform modifier-click', async ({
+    page
+  }) => {
+    await mockApp(page, [], { keyboardPlatform: 'Linux x86_64' })
+    expect(await page.evaluate(() => navigator.platform)).toBe('Linux x86_64')
+    await page.evaluate(() => {
+      ;(window as any).__openedTerminalLinks = []
+      window.open = (...args) => {
+        ;(window as any).__openedTerminalLinks.push(args)
+        return null
+      }
+    })
+    await page.getByRole('button', { name: 'Pi, running', exact: true }).click()
+    await page.evaluate(() => {
+      const socket = (window as any).__wsInstances.find((item: any) =>
+        item.url.includes('term_pi')
+      )
+      socket.onmessage?.({
+        data: JSON.stringify({
+          version: 1,
+          type: 'output',
+          streamId: socket.streamId,
+          sequence: 2,
+          data: '\u001b[2J\u001b[Hhttps://example.test/docs.\r\nhttp://example.test/help,\r\n'
+        })
+      })
+    })
+
+    const httpsText = page
+      .locator('.xterm-rows span')
+      .filter({ hasText: 'https://example.test/docs' })
+      .last()
+    await expect(httpsText).toBeVisible()
+    await httpsText.hover({ position: { x: 16, y: 8 } })
+    await expect(page.locator('.xterm-screen')).toHaveClass(
+      /xterm-cursor-pointer/
+    )
+    await expect(httpsText).toHaveCSS('text-decoration-line', 'underline')
+
+    await httpsText.click({ position: { x: 16, y: 8 } })
+    await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
+    await httpsText.click({
+      modifiers: ['Meta'],
+      position: { x: 16, y: 8 }
+    })
+    expect(
+      await page.evaluate(() => (window as any).__openedTerminalLinks)
+    ).toEqual([])
+
+    await httpsText.click({
+      modifiers: ['Control'],
+      position: { x: 16, y: 8 }
+    })
+    const httpText = page
+      .locator('.xterm-rows span')
+      .filter({ hasText: 'http://example.test/help' })
+      .last()
+    await expect(httpText).toBeVisible()
+    await httpText.hover({ position: { x: 16, y: 8 } })
+    await httpText.click({
+      modifiers: ['Control'],
+      position: { x: 16, y: 8 }
+    })
+    await expect
+      .poll(() => page.evaluate(() => (window as any).__openedTerminalLinks))
+      .toEqual([
+        ['https://example.test/docs', '_blank', 'noopener,noreferrer'],
+        ['http://example.test/help', '_blank', 'noopener,noreferrer']
+      ])
+  })
+
+  test('opens OSC 8 links in a new tab on Apple Cmd-click', async ({
+    page
+  }) => {
+    await mockApp(page, [], { keyboardPlatform: 'MacIntel' })
+    expect(await page.evaluate(() => navigator.platform)).toBe('MacIntel')
     await page.evaluate(() => {
       ;(window as any).__openedTerminalLink = null
       window.open = (...args) => {
@@ -855,7 +942,10 @@ test.describe('desktop worktree terminal UI', () => {
       .filter({ hasText: '#123' })
       .last()
     await expect(linkedText).toBeVisible()
-    await linkedText.click({ modifiers: ['Meta'] })
+    await linkedText.click({
+      modifiers: ['Meta'],
+      position: { x: 8, y: 8 }
+    })
     await expect
       .poll(() => page.evaluate(() => (window as any).__openedTerminalLink))
       .toEqual(['https://example.test/pr/123', '_blank', 'noopener,noreferrer'])
@@ -1363,6 +1453,11 @@ test.describe('desktop worktree terminal UI', () => {
     await page.getByRole('button', { name: 'Pi, running', exact: true }).click()
     await page.getByRole('button', { name: 'Take control' }).click()
     await page.evaluate(() => {
+      ;(window as any).__openedTerminalLinks = []
+      window.open = (...args) => {
+        ;(window as any).__openedTerminalLinks.push(args)
+        return null
+      }
       const socket = (window as any).__lastWs
       socket.onmessage?.({
         data: JSON.stringify({
@@ -1370,7 +1465,7 @@ test.describe('desktop worktree terminal UI', () => {
           type: 'output',
           streamId: socket.streamId,
           sequence: 2,
-          data: '\u001b[?1000h\u001b[?1006h'
+          data: '\u001b[2J\u001b[Hhttps://example.test/select-me\r\n\u001b[?1000h\u001b[?1006h'
         })
       })
       ;(window as any).__wsSent = []
@@ -1398,7 +1493,10 @@ test.describe('desktop worktree terminal UI', () => {
         )
         return clipboard.getData('text/plain')
       })
-    expect(copied.length).toBeGreaterThan(0)
+    expect(copied).toContain('example.tes')
+    expect(
+      await page.evaluate(() => (window as any).__openedTerminalLinks)
+    ).toEqual([])
     const sent = await page.evaluate(() => (window as any).__wsSent)
     expect(
       sent.some((message: any) => String(message.data).includes('\u001b[<'))

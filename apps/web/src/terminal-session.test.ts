@@ -109,17 +109,56 @@ describe('terminal options', () => {
     expect(terminalOptions().macOptionClickForcesSelection).toBe(true)
   })
 
-  it('opens OSC 8 links in a new tab only on Cmd/Ctrl-click', () => {
+  it('opens OSC 8 links only on Cmd-click on Apple platforms', () => {
     const open = vi.fn()
+    vi.stubGlobal('navigator', { platform: 'MacIntel' })
     vi.stubGlobal('window', { open })
     const handler = terminalOptions().linkHandler
     const url = 'https://github.com/acme/project/pull/123'
 
     handler.activate({ metaKey: false, ctrlKey: false } as MouseEvent, url)
+    handler.activate({ metaKey: false, ctrlKey: true } as MouseEvent, url)
     expect(open).not.toHaveBeenCalled()
 
     handler.activate({ metaKey: true, ctrlKey: false } as MouseEvent, url)
+    expect(open).toHaveBeenCalledOnce()
     expect(open).toHaveBeenCalledWith(url, '_blank', 'noopener,noreferrer')
+  })
+
+  it('opens OSC 8 links only on Ctrl-click on non-Apple platforms', () => {
+    const open = vi.fn()
+    vi.stubGlobal('navigator', { platform: 'Linux x86_64' })
+    vi.stubGlobal('window', { open })
+    const handler = terminalOptions().linkHandler
+    const url = 'http://example.test/docs'
+
+    handler.activate({ metaKey: false, ctrlKey: false } as MouseEvent, url)
+    handler.activate({ metaKey: true, ctrlKey: false } as MouseEvent, url)
+    expect(open).not.toHaveBeenCalled()
+
+    handler.activate({ metaKey: false, ctrlKey: true } as MouseEvent, url)
+    expect(open).toHaveBeenCalledOnce()
+    expect(open).toHaveBeenCalledWith(url, '_blank', 'noopener,noreferrer')
+  })
+
+  it('rejects malformed and non-web OSC 8 link targets', () => {
+    const open = vi.fn()
+    vi.stubGlobal('navigator', { platform: 'Linux x86_64' })
+    vi.stubGlobal('window', { open })
+    const handler = terminalOptions().linkHandler
+    const click = { metaKey: false, ctrlKey: true } as MouseEvent
+
+    for (const url of [
+      'https://',
+      'javascript:alert(1)',
+      'data:text/plain,hello',
+      'file:///tmp/tasktty',
+      'ssh://example.test'
+    ]) {
+      handler.activate(click, url)
+    }
+
+    expect(open).not.toHaveBeenCalled()
   })
 })
 
