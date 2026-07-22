@@ -56,6 +56,7 @@ interface TerminalMetadataEntry extends TerminalRuntimeMetadata {
   applicationTitleActive: boolean
   observedTitlePending: boolean
   titleRevision: number
+  acknowledgedBellSequence: number
   observer: TerminalProgressObserver | null
   observerVersion: number
   progressLease: NodeJS.Timeout | null
@@ -191,6 +192,7 @@ export class TerminalMetadataManager {
         applicationTitleActive: false,
         observedTitlePending: false,
         titleRevision: 0,
+        acknowledgedBellSequence: 0,
         observer: null,
         observerVersion: 0,
         progressLease: null,
@@ -234,6 +236,36 @@ export class TerminalMetadataManager {
       this.startRuntime(entry)
     } else {
       this.stopRuntime(entry)
+    }
+  }
+
+  acknowledgeBell(terminalId: string, sequence: number): void {
+    const entry = this.entries.get(terminalId)
+    if (!entry) {
+      throw new DomainError(
+        'TERMINAL_NOT_FOUND',
+        `Terminal not found: ${terminalId}`,
+        404
+      )
+    }
+
+    const latestSequence = entry.bell?.sequence ?? 0
+    if (sequence > latestSequence) {
+      throw new DomainError(
+        'BELL_SEQUENCE_AHEAD',
+        'Bell acknowledgement is ahead of the latest observed bell',
+        409
+      )
+    }
+
+    if (sequence <= entry.acknowledgedBellSequence) {
+      return
+    }
+
+    entry.acknowledgedBellSequence = sequence
+    if (entry.bell && sequence === latestSequence && entry.bell.unread) {
+      entry.bell = { ...entry.bell, unread: false }
+      this.publish(entry)
     }
   }
 
@@ -380,7 +412,8 @@ export class TerminalMetadataManager {
             ) {
               entry.bell = {
                 sequence: (entry.bell?.sequence ?? 0) + 1,
-                at: new Date().toISOString()
+                at: new Date().toISOString(),
+                unread: true
               }
               this.publish(entry)
             }

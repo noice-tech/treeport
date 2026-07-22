@@ -15,6 +15,7 @@ import {
   TERMINAL_MAX_UPLOAD_BYTES,
   removeWorktreeSchema,
   spawnSchema,
+  terminalBellAcknowledgementSchema,
   updateProjectSchema,
   updateTerminalPresetSchema,
   updateTerminalSchema
@@ -363,6 +364,15 @@ export function createApp({
     }
 
     return context.json({ terminal, metadata: metadata.get(terminal.id) })
+  })
+
+  app.post('/api/terminals/:terminalId/bell/acknowledge', async (context) => {
+    const terminalId = context.req.param('terminalId')
+    const body = await input(context, terminalBellAcknowledgementSchema)
+    await metadataReady
+    await service.getTerminal(terminalId)
+    metadata.acknowledgeBell(terminalId, body.sequence)
+    return context.json({ ok: true })
   })
 
   app.post('/api/terminals/:terminalId/files', async (context) => {

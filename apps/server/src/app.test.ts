@@ -116,11 +116,13 @@ function fixture() {
     terminalId
   }))
   const metadataTrack = vi.fn(async () => undefined)
+  const metadataAcknowledgeBell = vi.fn()
   const terminalMetadata = {
     initialize: vi.fn(async () => undefined),
     snapshot: metadataSnapshot,
     get: metadataGet,
-    trackTerminal: metadataTrack
+    trackTerminal: metadataTrack,
+    acknowledgeBell: metadataAcknowledgeBell
   } as unknown as TerminalMetadataManager
   const app = createApp({
     service,
@@ -132,6 +134,7 @@ function fixture() {
   return {
     app,
     config,
+    metadataAcknowledgeBell,
     metadataGet,
     metadataSnapshot,
     metadataTrack,
@@ -479,6 +482,27 @@ describe('HTTP API validation', () => {
     } finally {
       await fs.rm(config.runtimeDir, { recursive: true, force: true })
     }
+  })
+
+  it('acknowledges an observed terminal bell through an exact sequence', async () => {
+    const { app, metadataAcknowledgeBell, metadataTrack } = fixture()
+    const response = await app.request('/api/terminals/term/bell/acknowledge', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sequence: 4 })
+    })
+
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({ ok: true })
+    expect(metadataTrack).not.toHaveBeenCalled()
+    expect(metadataAcknowledgeBell).toHaveBeenCalledWith('term', 4)
+
+    const invalid = await app.request('/api/terminals/term/bell/acknowledge', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sequence: 0 })
+    })
+    expect(invalid.status).toBe(400)
   })
 
   it('inspects a refreshed terminal with daemon runtime metadata', async () => {
