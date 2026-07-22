@@ -535,8 +535,46 @@ describe('TerminalMetadataManager', () => {
       progress: null,
       progressStartedAt: startedAt,
       progressClearedAt: expect.any(String),
-      bell: { sequence: 2, at: expect.any(String) }
+      bell: { sequence: 2, at: expect.any(String), unread: true }
     })
+    expect(published).toHaveLength(4)
+  })
+
+  it('owns monotonic bell acknowledgement without clearing newer bells', async () => {
+    const item = terminal('one')
+    const { manager, observers, events } = fixture([item])
+    managers.push(manager)
+    await manager.initialize()
+    const published: unknown[] = []
+    events.subscribe((event) => {
+      if (event.type === 'terminal.metadata') {
+        published.push(event.data)
+      }
+    })
+
+    observers[0]!.bell()
+    manager.acknowledgeBell('one', 1)
+    expect(manager.get('one').bell).toMatchObject({
+      sequence: 1,
+      unread: false
+    })
+
+    observers[0]!.bell()
+    manager.acknowledgeBell('one', 1)
+    expect(manager.get('one').bell).toMatchObject({
+      sequence: 2,
+      unread: true
+    })
+
+    manager.acknowledgeBell('one', 2)
+    manager.acknowledgeBell('one', 2)
+    expect(manager.get('one').bell).toMatchObject({
+      sequence: 2,
+      unread: false
+    })
+    expect(() => manager.acknowledgeBell('one', 3)).toThrowError(
+      expect.objectContaining({ code: 'BELL_SEQUENCE_AHEAD', status: 409 })
+    )
     expect(published).toHaveLength(4)
   })
 

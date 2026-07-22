@@ -273,7 +273,11 @@ describe('CLI context and machine output', () => {
       if (eventScenario === 'bell-snapshot') {
         observedMetadata = {
           ...observedMetadata,
-          bell: { sequence: 1, at: '2026-01-01T00:02:00.000Z' }
+          bell: {
+            sequence: 1,
+            at: '2026-01-01T00:02:00.000Z',
+            unread: true
+          }
         }
       }
 
@@ -306,7 +310,8 @@ describe('CLI context and machine output', () => {
             ...observedMetadata,
             bell: {
               sequence: (observedMetadata.bell?.sequence ?? 0) + 1,
-              at: '2026-01-01T00:02:00.000Z'
+              at: '2026-01-01T00:02:00.000Z',
+              unread: true
             }
           }
           event = { type: 'terminal.metadata', data: observedMetadata }
@@ -571,7 +576,11 @@ describe('CLI context and machine output', () => {
     observedMetadata = {
       ...observedMetadata,
       progress: null,
-      bell: { sequence: 4, at: '2026-01-01T00:01:00.000Z' }
+      bell: {
+        sequence: 4,
+        at: '2026-01-01T00:01:00.000Z',
+        unread: true
+      }
     }
     eventScenario = 'bell'
     const bell = await runCli(
@@ -582,7 +591,7 @@ describe('CLI context and machine output', () => {
     expect(JSON.parse(bell.stdout)).toMatchObject({
       condition: 'bell',
       observedAt: '2026-01-01T00:02:00.000Z',
-      metadata: { bell: { sequence: 5 } }
+      metadata: { bell: { sequence: 5, unread: true } }
     })
   })
 
@@ -596,7 +605,7 @@ describe('CLI context and machine output', () => {
     expect(JSON.parse(result.stdout)).toMatchObject({
       condition: 'bell',
       observedAt: '2026-01-01T00:02:00.000Z',
-      metadata: { bell: { sequence: 1 } }
+      metadata: { bell: { sequence: 1, unread: true } }
     })
   })
 

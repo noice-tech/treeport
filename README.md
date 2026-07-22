@@ -225,13 +225,14 @@ GET  /api/worktrees/:worktreeId/remove-preview
 POST /api/worktrees/:worktreeId/remove
 POST /api/worktrees/:worktreeId/pr/refresh
 GET/PATCH/DELETE /api/terminals/:terminalId
+POST /api/terminals/:terminalId/bell/acknowledge
 POST /api/spawn
 GET  /api/operations/:operationId
 ```
 
 `GET /api/projects` returns open projects only. `POST /api/projects` opens or reopens by path, while the ID-based open endpoint also works for an unavailable stored path. Close is non-destructive workspace removal; `DELETE /api/projects/:projectId` remains destructive unregister and retains its linked-worktree restriction.
 
-Errors use `{ "error": { "code", "message", "details"? } }`. Real-time traffic uses WebSocket-only Socket.IO at `/api/socket.io/`: `/events` emits an authoritative runtime-metadata snapshot before ordered product events, and `/terminals` owns one independent connection and tmux attachment per viewer. Connection-state recovery and per-message compression are disabled, so every terminal reconnect establishes a fresh stream epoch, resets xterm, and relies on tmux redraw rather than output replay.
+Errors use `{ "error": { "code", "message", "details"? } }`. Real-time traffic uses WebSocket-only Socket.IO at `/api/socket.io/`: `/events` emits an authoritative runtime-metadata snapshot before ordered product events, and `/terminals` owns one independent connection and tmux attachment per viewer. BEL attention is daemon-owned for the daemon lifetime: snapshots include each terminal's latest BEL and unread state, and viewing a terminal acknowledges the exact observed sequence for every connected browser. Connection-state recovery and per-message compression are disabled, so every terminal reconnect establishes a fresh stream epoch, resets xterm, and relies on tmux redraw rather than output replay.
 
 ## Configuration and data
 

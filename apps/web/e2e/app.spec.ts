@@ -1360,18 +1360,70 @@ test.describe('desktop worktree terminal UI', () => {
       .toBeGreaterThan(before)
   })
 
-  test('surfaces BEL attention from a retained background terminal', async ({
+  test('restores daemon BEL attention after refresh and acknowledges the observed sequence', async ({
+    page
+  }) => {
+    const bellMetadata = {
+      terminalId: 'term_pi',
+      title: 'zsh · /worktrees/topic',
+      progress: null,
+      progressStartedAt: null,
+      progressClearedAt: null,
+      bell: {
+        sequence: 4,
+        at: '2026-01-01T00:02:00.000Z',
+        unread: true
+      }
+    } satisfies TerminalRuntimeMetadata
+    await mockApp(page, [bellMetadata])
+
+    const piTreeRow = page.getByRole('button', {
+      name: /zsh · \/worktrees\/topic.*bell/
+    })
+    await expect(piTreeRow).toBeVisible()
+    await page.reload()
+    await expect(piTreeRow).toBeVisible()
+
+    const acknowledgement = page.waitForRequest(
+      (request) =>
+        request.method() === 'POST' &&
+        new URL(request.url()).pathname ===
+          '/api/terminals/term_pi/bell/acknowledge'
+    )
+    await piTreeRow.click()
+    const request = await acknowledgement
+    expect(request.postDataJSON()).toEqual({ sequence: 4 })
+    await expect(piTreeRow).toBeVisible()
+
+    await page.evaluate(() =>
+      (window as any).__eventSource.emit(
+        'terminal.metadata',
+        JSON.stringify({
+          data: {
+            terminalId: 'term_pi',
+            title: 'zsh · /worktrees/topic',
+            progress: null,
+            progressStartedAt: null,
+            progressClearedAt: null,
+            bell: {
+              sequence: 4,
+              at: '2026-01-01T00:02:00.000Z',
+              unread: false
+            }
+          }
+        })
+      )
+    )
+    await expect(
+      page.getByRole('button', { name: /zsh · \/worktrees\/topic.*bell/ })
+    ).toHaveCount(0)
+  })
+
+  test('keeps foreground xterm BEL feedback without durable browser attention', async ({
     page
   }) => {
     await mockApp(page)
     await page.getByRole('button', { name: 'Pi, running', exact: true }).click()
-    await expect(
-      page.getByRole('tab', { name: /zsh · \/worktrees\/topic/ })
-    ).toBeVisible()
-    await page.getByRole('button', { name: 'New terminal' }).click()
-    await expect(
-      page.getByRole('tab', { name: /dev · \/worktrees\/topic/ })
-    ).toHaveAttribute('data-state', 'active')
     await page.evaluate(() => {
       const socket = (window as any).__wsInstances.find((item: any) =>
         item.url.includes('term_pi')
@@ -1386,19 +1438,8 @@ test.describe('desktop worktree terminal UI', () => {
         })
       })
     })
-    const piTab = page.getByRole('tab', {
-      name: /zsh · \/worktrees\/topic.*bell/
-    })
-    const piTreeRow = page.getByRole('button', {
-      name: /zsh · \/worktrees\/topic.*bell/
-    })
-    await expect(piTab).toBeVisible()
-    await expect(piTreeRow).toBeVisible()
-    await expect(piTreeRow.locator('.status-dot')).toHaveClass(/bg-amber-300/)
-    await piTreeRow.click()
-    await expect(
-      page.getByRole('tab', { name: /zsh · \/worktrees\/topic.*bell/ })
-    ).toHaveCount(0)
+
+    await expect(page.locator('.terminal-shell')).toHaveClass(/terminal-bell/)
     await expect(
       page.getByRole('button', { name: /zsh · \/worktrees\/topic.*bell/ })
     ).toHaveCount(0)

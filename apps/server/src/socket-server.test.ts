@@ -243,6 +243,50 @@ describe('Socket.IO real network', () => {
     await closeClient(socket)
   })
 
+  it('broadcasts authoritative bell acknowledgement metadata to every client', async () => {
+    const value = await fixture()
+    const first = eventClient(value.url)
+    const second = eventClient(value.url)
+    const firstEvents: TerminalRuntimeMetadata[] = []
+    const secondEvents: TerminalRuntimeMetadata[] = []
+    first.on('product_event', (event) => {
+      if (event.type === 'terminal.metadata') {
+        firstEvents.push(event.data as TerminalRuntimeMetadata)
+      }
+    })
+    second.on('product_event', (event) => {
+      if (event.type === 'terminal.metadata') {
+        secondEvents.push(event.data as TerminalRuntimeMetadata)
+      }
+    })
+    await Promise.all([
+      new Promise<void>((resolve) => first.once('snapshot', () => resolve())),
+      new Promise<void>((resolve) => second.once('snapshot', () => resolve()))
+    ])
+
+    value.events.publish('terminal.metadata', {
+      terminalId: 'term',
+      title: 'shell',
+      progress: null,
+      progressStartedAt: null,
+      progressClearedAt: null,
+      bell: {
+        sequence: 1,
+        at: '2026-01-01T00:02:00.000Z',
+        unread: false
+      }
+    })
+
+    await vi.waitFor(() => {
+      expect(firstEvents).toHaveLength(1)
+      expect(secondEvents).toHaveLength(1)
+    })
+    expect(firstEvents[0]?.bell).toMatchObject({ sequence: 1, unread: false })
+    expect(secondEvents[0]?.bell).toMatchObject({ sequence: 1, unread: false })
+    await closeClient(first)
+    await closeClient(second)
+  })
+
   it('accepts same-origin and originless clients but rejects foreign browser origins', async () => {
     const value = await fixture()
     const allowed = eventClient(value.url, {

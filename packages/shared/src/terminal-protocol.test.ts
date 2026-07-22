@@ -6,7 +6,8 @@ import {
   parseTerminalClientEvent,
   parseTerminalProgress,
   parseTerminalRuntimeMetadata,
-  parseTerminalServerEvent
+  parseTerminalServerEvent,
+  terminalBellAcknowledgementSchema
 } from './index.js'
 
 describe('Socket.IO contracts', () => {
@@ -147,9 +148,13 @@ describe('terminal runtime metadata', () => {
         progress: null,
         progressStartedAt: '2026-01-01T00:00:00.000Z',
         progressClearedAt: '2026-01-01T00:01:00.000Z',
-        bell: { sequence: 2, at: '2026-01-01T00:02:00.000Z' }
+        bell: {
+          sequence: 2,
+          at: '2026-01-01T00:02:00.000Z',
+          unread: true
+        }
       })
-    ).toMatchObject({ bell: { sequence: 2 } })
+    ).toMatchObject({ bell: { sequence: 2, unread: true } })
     expect(
       parseTerminalRuntimeMetadata({
         terminalId: 'term',
@@ -158,6 +163,24 @@ describe('terminal runtime metadata', () => {
         extra: true
       })
     ).toBeNull()
+    expect(
+      parseTerminalRuntimeMetadata({
+        terminalId: 'term',
+        title: null,
+        progress: null,
+        bell: {
+          sequence: 0,
+          at: '2026-01-01T00:02:00.000Z',
+          unread: true
+        }
+      })
+    ).toBeNull()
+    expect(
+      terminalBellAcknowledgementSchema.safeParse({ sequence: 2 }).success
+    ).toBe(true)
+    expect(
+      terminalBellAcknowledgementSchema.safeParse({ sequence: 0 }).success
+    ).toBe(false)
   })
 
   it('parses OSC 9;4 payloads', () => {
