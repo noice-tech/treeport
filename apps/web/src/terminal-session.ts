@@ -1,4 +1,5 @@
 import { FitAddon } from '@xterm/addon-fit'
+import { WebLinksAddon } from '@xterm/addon-web-links'
 import { Terminal } from '@xterm/xterm'
 import { apiClient } from './api.js'
 import {
@@ -84,6 +85,24 @@ function usesMacKeyboard(): boolean {
     typeof navigator !== 'undefined' &&
     /Mac|iPhone|iPad|iPod/.test(navigator.platform)
   )
+}
+
+function activateTerminalLink(event: MouseEvent, url: string): void {
+  if (usesMacKeyboard() ? !event.metaKey : !event.ctrlKey) {
+    return
+  }
+
+  let parsedUrl: URL
+  try {
+    parsedUrl = new URL(url)
+  } catch {
+    return
+  }
+  if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
+    return
+  }
+
+  window.open(url, '_blank', 'noopener,noreferrer')
 }
 
 function forcePlainSelectionWhileMouseReporting(event: MouseEvent): void {
@@ -288,13 +307,7 @@ export function terminalOptions() {
     allowProposedApi: false,
     macOptionClickForcesSelection: true,
     linkHandler: {
-      activate(event: MouseEvent, url: string) {
-        if (!event.metaKey && !event.ctrlKey) {
-          return
-        }
-
-        window.open(url, '_blank', 'noopener,noreferrer')
-      }
+      activate: activateTerminalLink
     },
     theme: {
       background: '#09090b',
@@ -483,6 +496,7 @@ export class TerminalSession {
     const terminal = new Terminal(terminalOptions())
     const fitAddon = new FitAddon()
     terminal.loadAddon(fitAddon)
+    terminal.loadAddon(new WebLinksAddon(activateTerminalLink))
     terminal.open(this.wrapper)
     this.wrapper.addEventListener(
       'mousedown',
