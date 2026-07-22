@@ -294,7 +294,8 @@ export function createApp({
           name: body.initialTerminal.name,
           ...(body.initialTerminal.argv
             ? { argv: body.initialTerminal.argv }
-            : {})
+            : {}),
+          ...(body.initialTerminal.returnToShell ? { returnToShell: true } : {})
         }
       : undefined
     const result = await service.createWorktree(
@@ -320,7 +321,8 @@ export function createApp({
     const terminal = await service.createTerminal(
       context.req.param('worktreeId'),
       body.name,
-      body.argv
+      body.argv,
+      body.returnToShell ? { returnToShell: true } : undefined
     )
     return context.json({ terminal }, 201)
   })

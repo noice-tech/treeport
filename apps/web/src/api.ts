@@ -117,7 +117,11 @@ export const apiClient = {
     projectId: string,
     name: string,
     base: 'default' | 'current',
-    initialTerminal: { name: string; argv?: string[] },
+    initialTerminal: {
+      name: string
+      argv?: string[]
+      returnToShell?: boolean
+    },
     sourceWorktreeId?: string
   ) =>
     api<{
@@ -134,13 +138,22 @@ export const apiClient = {
         ...(sourceWorktreeId ? { sourceWorktreeId } : {})
       })
     }),
-  createTerminal: async (worktreeId: string, name: string, argv?: string[]) =>
+  createTerminal: async (
+    worktreeId: string,
+    name: string,
+    argv?: string[],
+    returnToShell = false
+  ) =>
     (
       await api<{ terminal: TerminalRecord }>(
         `/api/worktrees/${worktreeId}/terminals`,
         {
           method: 'POST',
-          body: JSON.stringify({ name, ...(argv ? { argv } : {}) })
+          body: JSON.stringify({
+            name,
+            ...(argv ? { argv } : {}),
+            ...(returnToShell ? { returnToShell: true } : {})
+          })
         }
       )
     ).terminal,

@@ -1824,7 +1824,11 @@ export class TaskTTYService {
     projectId: string,
     inputName: string,
     base: 'default' | 'current',
-    initialTerminal?: { name: string; argv?: string[] },
+    initialTerminal?: {
+      name: string
+      argv?: string[]
+      returnToShell?: boolean
+    },
     sourceWorktreeId?: string
   ): Promise<CreateWorktreeResult> {
     this.requireOpenProject(projectId)
@@ -2000,7 +2004,10 @@ export class TaskTTYService {
             worktree.id,
             initialTerminal.name,
             initialTerminal.argv,
-            { tasks: setupTasks, error: setupError }
+            {
+              setup: { tasks: setupTasks, error: setupError },
+              ...(initialTerminal.returnToShell ? { returnToShell: true } : {})
+            }
           )
         } catch (error) {
           terminalError = error instanceof Error ? error.message : String(error)
@@ -2039,11 +2046,15 @@ export class TaskTTYService {
     worktreeId: string,
     name: string,
     argv?: string[],
-    setup?: { tasks: WorktreeSetupTask[]; error: string | null }
+    options?: {
+      setup?: { tasks: WorktreeSetupTask[]; error: string | null }
+      returnToShell?: boolean
+    }
   ): Promise<TerminalRecord> {
     const worktree = await this.requireAvailableWorktree(worktreeId)
     if (
-      (setup === undefined && this.projectLocks.has(worktree.projectId)) ||
+      (options?.setup === undefined &&
+        this.projectLocks.has(worktree.projectId)) ||
       this.worktreeLocks.has(worktreeId) ||
       worktree.status !== 'active'
     ) {
@@ -2070,14 +2081,19 @@ export class TaskTTYService {
         createdAt: timestamp,
         cwd: worktree.path,
         argv: commandArgv,
+        ...(options?.returnToShell && argv
+          ? { fallbackArgv: [this.deps.config.shell, '-l'] }
+          : {}),
         env: {
           TASKTTY_API_URL: this.deps.config.apiUrl,
           TASKTTY_PROJECT_ID: project.id,
           TASKTTY_WORKTREE_ID: worktree.id,
           TASKTTY_TERMINAL_ID: terminalId
         },
-        ...(setup?.tasks.length ? { setupTasks: setup.tasks } : {}),
-        ...(setup?.error ? { setupError: setup.error } : {})
+        ...(options?.setup?.tasks.length
+          ? { setupTasks: options.setup.tasks }
+          : {}),
+        ...(options?.setup?.error ? { setupError: options.setup.error } : {})
       })
     } catch (error) {
       throw new DomainError(

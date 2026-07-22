@@ -14,15 +14,11 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { GitBranchIcon, TerminalIcon } from 'lucide-react'
 import { io, type Socket } from 'socket.io-client'
 import {
-  ArrowDownIcon,
   ArrowPathIcon,
-  ArrowUpIcon,
   Bars3Icon,
   CheckIcon,
   ChevronUpDownIcon,
-  CommandLineIcon,
   MagnifyingGlassIcon,
-  PencilIcon,
   PlusIcon,
   TrashIcon,
   XMarkIcon
@@ -32,10 +28,7 @@ import {
   parseProductEvent,
   parseTerminalRuntimeMetadata,
   SOCKET_IO_PATH,
-  TERMINAL_ARGUMENT_MAX_LENGTH,
-  TERMINAL_EXECUTABLE_MAX_LENGTH,
-  TERMINAL_NAME_MAX_LENGTH,
-  TERMINAL_PRESET_ARGUMENT_MAX_COUNT
+  TERMINAL_NAME_MAX_LENGTH
 } from '@tasktty/shared'
 import type {
   EventsClientToServerEvents,
@@ -48,6 +41,7 @@ import type {
   WorktreeRecord
 } from '@tasktty/shared'
 import { ApiError, apiClient } from './api.js'
+import { formatCommandLine, parseCommandLine } from './command-line.js'
 import { Button } from './components/ui/button.js'
 import { Input } from './components/ui/input.js'
 import { Label } from './components/ui/label.js'
@@ -154,7 +148,11 @@ interface PendingWorktreeCreation {
   canonicalName: string
   destinationPath: string
   base: 'default' | 'current'
-  initialTerminal: { name: string; argv?: string[] }
+  initialTerminal: {
+    name: string
+    argv?: string[]
+    returnToShell?: boolean
+  }
   sourceWorktreeId?: string
 }
 
@@ -690,7 +688,11 @@ export default function App() {
     name: string,
     base: 'default' | 'current',
     destination: WorktreeDestination,
-    initialTerminal: { name: string; argv?: string[] },
+    initialTerminal: {
+      name: string
+      argv?: string[]
+      returnToShell?: boolean
+    },
     sourceWorktreeId?: string
   ) => {
     if (pendingWorktrees.some((item) => item.projectId === project.id)) {
@@ -706,7 +708,8 @@ export default function App() {
       base,
       initialTerminal: {
         name: initialTerminal.name,
-        ...(initialTerminal.argv ? { argv: [...initialTerminal.argv] } : {})
+        ...(initialTerminal.argv ? { argv: [...initialTerminal.argv] } : {}),
+        ...(initialTerminal.returnToShell ? { returnToShell: true } : {})
       },
       ...(sourceWorktreeId ? { sourceWorktreeId } : {})
     }
@@ -722,12 +725,14 @@ export default function App() {
     mutationFn: ({
       worktreeId,
       name,
-      argv
+      argv,
+      returnToShell
     }: {
       worktreeId: string
       name: string
       argv?: string[]
-    }) => apiClient.createTerminal(worktreeId, name, argv),
+      returnToShell?: boolean
+    }) => apiClient.createTerminal(worktreeId, name, argv, returnToShell),
     onSuccess: async (terminal) => {
       setFocusTerminalId(terminal.id)
       selectTerminal(terminal)
@@ -1694,7 +1699,8 @@ export default function App() {
             createTerminal.mutate({
               worktreeId: selectedWorktree.id,
               name: input.name,
-              ...(input.argv ? { argv: [...input.argv] } : {})
+              ...(input.argv ? { argv: [...input.argv] } : {}),
+              ...(input.returnToShell ? { returnToShell: true } : {})
             })
           }
           onManagePresets={(trigger) =>
@@ -1865,7 +1871,11 @@ function ActionModal({
     name: string,
     base: 'default' | 'current',
     destination: WorktreeDestination,
-    initialTerminal: { name: string; argv?: string[] },
+    initialTerminal: {
+      name: string
+      argv?: string[]
+      returnToShell?: boolean
+    },
     sourceWorktreeId?: string
   ) => void
   removalStage: RemovalStage | null
@@ -2067,7 +2077,11 @@ function WorktreeForm({
     name: string,
     base: 'default' | 'current',
     destination: WorktreeDestination,
-    initialTerminal: { name: string; argv?: string[] },
+    initialTerminal: {
+      name: string
+      argv?: string[]
+      returnToShell?: boolean
+    },
     sourceWorktreeId?: string
   ) => void
 }) {
@@ -2120,7 +2134,8 @@ function WorktreeForm({
           selectedPreset
             ? {
                 name: selectedPreset.name,
-                argv: [selectedPreset.executable, ...selectedPreset.args]
+                argv: [selectedPreset.executable, ...selectedPreset.args],
+                returnToShell: true
               }
             : { name: 'Shell' },
           base === 'current' ? baseValue : undefined
@@ -2256,16 +2271,16 @@ function TerminalPresetsManager({
   const [editingId, setEditingId] = useState<string | null>(null)
   const [loadedUpdatedAt, setLoadedUpdatedAt] = useState<string | null>(null)
   const [name, setName] = useState('')
-  const [executable, setExecutable] = useState('')
-  const [args, setArgs] = useState<string[]>([])
+  const [command, setCommand] = useState('')
+  const [commandError, setCommandError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
 
   const resetForm = () => {
     setEditingId(null)
     setLoadedUpdatedAt(null)
     setName('')
-    setExecutable('')
-    setArgs([])
+    setCommand('')
+    setCommandError(null)
     setNotice(null)
   }
 
@@ -2279,8 +2294,8 @@ function TerminalPresetsManager({
       setEditingId(null)
       setLoadedUpdatedAt(null)
       setName('')
-      setExecutable('')
-      setArgs([])
+      setCommand('')
+      setCommandError(null)
       setNotice('That preset was deleted. You can create a new one.')
       return
     }
@@ -2288,8 +2303,8 @@ function TerminalPresetsManager({
     if (preset.updatedAt !== loadedUpdatedAt) {
       setLoadedUpdatedAt(preset.updatedAt)
       setName(preset.name)
-      setExecutable(preset.executable)
-      setArgs([...preset.args])
+      setCommand(formatCommandLine([preset.executable, ...preset.args]))
+      setCommandError(null)
       if (loadedUpdatedAt) {
         setNotice(
           'This preset changed, so the latest saved values were loaded.'
@@ -2324,8 +2339,8 @@ function TerminalPresetsManager({
       setEditingId(preset.id)
       setLoadedUpdatedAt(preset.updatedAt)
       setName(preset.name)
-      setExecutable(preset.executable)
-      setArgs([...preset.args])
+      setCommand(formatCommandLine([preset.executable, ...preset.args]))
+      setCommandError(null)
       setNotice('Preset saved.')
     },
     onError: (mutationError) => {
@@ -2359,23 +2374,22 @@ function TerminalPresetsManager({
 
   const busy = savePreset.isPending || deletePreset.isPending
   return (
-    <div className="flex flex-col gap-5">
-      <ModalHeading eyebrow="Terminals" title="Terminal presets" />
-      <p className="form-note max-w-[65ch]">
-        Presets keep the executable separate from its ordered arguments. Shell
-        is built in and always starts TaskTTY’s configured login shell.
+    <div className="flex flex-col gap-4">
+      <ModalHeading title="Terminal presets" />
+      <p className="form-note max-w-[60ch]">
+        Create reusable commands. Arguments are passed exactly as entered.
       </p>
-      <div className="grid min-h-0 gap-5 md:grid-cols-[minmax(12rem,0.8fr)_minmax(0,1.35fr)]">
+      <div className="grid min-h-0 gap-5 border-t border-white/8 pt-4 md:grid-cols-[minmax(12rem,0.8fr)_minmax(0,1.35fr)]">
         <section
           className="flex min-w-0 flex-col gap-2"
           aria-labelledby="saved-presets-title"
         >
-          <div className="flex items-center justify-between gap-3">
+          <div className="flex min-h-8 items-center justify-between gap-3">
             <h3
               id="saved-presets-title"
               className="text-sm font-medium text-zinc-200"
             >
-              Saved presets
+              Presets
             </h3>
             <Button
               type="button"
@@ -2384,37 +2398,39 @@ function TerminalPresetsManager({
               disabled={busy}
               onClick={resetForm}
             >
-              <PlusIcon /> New preset
+              <PlusIcon /> New
             </Button>
           </div>
           <div className="max-h-72 overflow-y-auto rounded-lg bg-white/3 p-1 ring-1 ring-white/8 [scrollbar-color:var(--color-zinc-700)_transparent]">
-            <div className="flex min-h-11 items-center gap-2 rounded-md px-2.5 py-2">
-              <CommandLineIcon className="shrink-0 text-zinc-500" />
-              <span className="grid min-w-0 flex-1 gap-0.5">
-                <span className="text-sm font-medium text-zinc-100">Shell</span>
-                <span className="text-xs text-zinc-500">
-                  Built in · login shell
-                </span>
+            <div className="grid min-h-14 min-w-0 content-center gap-0.5 rounded-md px-3 py-2">
+              <span className="truncate text-sm font-medium text-zinc-100">
+                Shell
+              </span>
+              <span className="truncate text-xs text-zinc-500">
+                Built in · login shell
               </span>
             </div>
             {presets.map((preset) => (
               <div
                 key={preset.id}
                 className={cn(
-                  'group/preset flex min-h-11 items-center gap-1 rounded-md px-2.5 py-1.5',
-                  editingId === preset.id && 'bg-white/7'
+                  'group/preset flex min-h-14 items-center rounded-md px-1 transition-colors hover:bg-white/5',
+                  editingId === preset.id && 'bg-white/7 hover:bg-white/7'
                 )}
               >
                 <button
                   type="button"
-                  className="grid min-w-0 flex-1 cursor-pointer gap-0.5 rounded-sm text-left outline-none focus-visible:outline-2 focus-visible:outline-cyan-400"
+                  className="grid min-w-0 flex-1 cursor-pointer gap-0.5 rounded-sm px-2 py-2 text-left outline-none focus-visible:outline-2 focus-visible:outline-cyan-400"
+                  aria-current={editingId === preset.id ? 'true' : undefined}
                   disabled={busy}
                   onClick={() => {
                     setEditingId(preset.id)
                     setLoadedUpdatedAt(preset.updatedAt)
                     setName(preset.name)
-                    setExecutable(preset.executable)
-                    setArgs([...preset.args])
+                    setCommand(
+                      formatCommandLine([preset.executable, ...preset.args])
+                    )
+                    setCommandError(null)
                     setNotice(null)
                   }}
                 >
@@ -2422,33 +2438,14 @@ function TerminalPresetsManager({
                     {preset.name}
                   </span>
                   <span className="truncate text-xs text-zinc-500">
-                    {preset.executable} · {preset.args.length}{' '}
-                    {preset.args.length === 1 ? 'argument' : 'arguments'}
+                    {formatCommandLine([preset.executable, ...preset.args])}
                   </span>
                 </button>
                 <Button
                   type="button"
                   variant="ghost"
                   size="icon-sm"
-                  className="size-11 min-[701px]:size-7"
-                  aria-label={`Edit ${preset.name}`}
-                  disabled={busy}
-                  onClick={() => {
-                    setEditingId(preset.id)
-                    setLoadedUpdatedAt(preset.updatedAt)
-                    setName(preset.name)
-                    setExecutable(preset.executable)
-                    setArgs([...preset.args])
-                    setNotice(null)
-                  }}
-                >
-                  <PencilIcon />
-                </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-sm"
-                  className="size-11 hover:text-rose-300 min-[701px]:size-7"
+                  className="mr-1 size-11 shrink-0 hover:text-rose-300 min-[701px]:size-8 min-[701px]:opacity-0 min-[701px]:group-hover/preset:opacity-100 min-[701px]:focus-visible:opacity-100"
                   aria-label={`Delete ${preset.name}`}
                   disabled={busy}
                   onClick={() => {
@@ -2463,11 +2460,6 @@ function TerminalPresetsManager({
                 </Button>
               </div>
             ))}
-            {!loading && !loadError && presets.length === 0 && (
-              <p className="px-2.5 py-3 text-sm text-zinc-500">
-                No saved presets yet.
-              </p>
-            )}
             {loading && (
               <p className="px-2.5 py-3 text-sm text-zinc-500" role="status">
                 Loading presets…
@@ -2492,16 +2484,23 @@ function TerminalPresetsManager({
           className="flex min-w-0 flex-col gap-4"
           onSubmit={(event) => {
             event.preventDefault()
+            const parsed = parseCommandLine(command)
+            if (parsed.argv === null) {
+              setCommandError(parsed.error)
+              return
+            }
+
+            const [executable, ...args] = parsed.argv
             savePreset.mutate({
               presetId: editingId,
-              input: { name, executable, args: [...args] },
+              input: { name, executable: executable!, args },
               expectedUpdatedAt: loadedUpdatedAt
             })
           }}
         >
           <div className="flex items-center justify-between gap-3">
             <h3 className="text-sm font-medium text-zinc-200">
-              {editingId ? 'Edit preset' : 'New preset'}
+              Preset details
             </h3>
             {notice && (
               <span className="text-xs text-zinc-400" role="status">
@@ -2527,140 +2526,49 @@ function TerminalPresetsManager({
             />
           </FormField>
           <FormField>
-            <Label htmlFor="preset-executable">Executable</Label>
+            <Label htmlFor="preset-command">Command</Label>
             <Input
-              id="preset-executable"
-              name="preset-executable"
-              value={executable}
-              maxLength={TERMINAL_EXECUTABLE_MAX_LENGTH}
+              id="preset-command"
+              name="preset-command"
+              value={command}
               disabled={busy}
               required
+              aria-invalid={commandError ? true : undefined}
+              aria-describedby={
+                commandError ? 'preset-command-error' : undefined
+              }
               onChange={(event) => {
-                setExecutable(event.target.value)
+                setCommand(event.target.value)
+                setCommandError(null)
                 setNotice(null)
               }}
-              placeholder="npx"
+              placeholder="diff main --mode split"
             />
-          </FormField>
-          <fieldset className="flex min-w-0 flex-col gap-2" disabled={busy}>
-            <legend className="sr-only">Arguments</legend>
-            <div className="flex items-center justify-between gap-3">
-              <span className="text-sm font-medium text-zinc-200">
-                Arguments
-              </span>
-              <Button
-                type="button"
-                variant="secondary"
-                size="sm"
-                disabled={
-                  busy || args.length >= TERMINAL_PRESET_ARGUMENT_MAX_COUNT
-                }
-                onClick={() => {
-                  setArgs((current) => [...current, ''])
-                  setNotice(null)
-                }}
+            {commandError && (
+              <p
+                id="preset-command-error"
+                className="text-xs text-rose-300"
+                role="alert"
               >
-                <PlusIcon /> Add argument
-              </Button>
-            </div>
-            {args.length === 0 && (
-              <p className="form-note">
-                No arguments. Empty arguments are preserved when added.
+                {commandError}
               </p>
             )}
-            <div className="flex max-h-64 flex-col gap-2 overflow-y-auto p-0.5 [scrollbar-color:var(--color-zinc-700)_transparent]">
-              {args.map((argument, index) => (
-                <div
-                  className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto_auto_auto] items-center gap-1"
-                  key={index}
-                >
-                  <Label
-                    className="sr-only"
-                    htmlFor={`preset-argument-${index}`}
-                  >
-                    Argument {index + 1}
-                  </Label>
-                  <Input
-                    id={`preset-argument-${index}`}
-                    value={argument}
-                    maxLength={TERMINAL_ARGUMENT_MAX_LENGTH}
-                    onChange={(event) => {
-                      const value = event.target.value
-                      setArgs((current) =>
-                        current.map((item, itemIndex) =>
-                          itemIndex === index ? value : item
-                        )
-                      )
-                      setNotice(null)
-                    }}
-                  />
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon-sm"
-                    className="size-11 min-[701px]:size-7"
-                    aria-label={`Move argument ${index + 1} up`}
-                    disabled={index === 0}
-                    onClick={() =>
-                      setArgs((current) => {
-                        const next = [...current]
-                        const previous = next[index - 1]!
-                        next[index - 1] = next[index]!
-                        next[index] = previous
-                        return next
-                      })
-                    }
-                  >
-                    <ArrowUpIcon />
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon-sm"
-                    className="size-11 min-[701px]:size-7"
-                    aria-label={`Move argument ${index + 1} down`}
-                    disabled={index === args.length - 1}
-                    onClick={() =>
-                      setArgs((current) => {
-                        const next = [...current]
-                        const following = next[index + 1]!
-                        next[index + 1] = next[index]!
-                        next[index] = following
-                        return next
-                      })
-                    }
-                  >
-                    <ArrowDownIcon />
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon-sm"
-                    className="size-11 hover:text-rose-300 min-[701px]:size-7"
-                    aria-label={`Remove argument ${index + 1}`}
-                    onClick={() =>
-                      setArgs((current) =>
-                        current.filter((_, itemIndex) => itemIndex !== index)
-                      )
-                    }
-                  >
-                    <TrashIcon />
-                  </Button>
-                </div>
-              ))}
-            </div>
-          </fieldset>
+          </FormField>
           <Button
             type="submit"
             className="self-end"
             disabled={
               busy ||
               !name.trim() ||
-              !executable.trim() ||
+              !command.trim() ||
               (editingId !== null && loadedUpdatedAt === null)
             }
           >
-            {savePreset.isPending ? 'Saving…' : 'Save preset'}
+            {savePreset.isPending
+              ? 'Saving…'
+              : editingId
+                ? 'Save changes'
+                : 'Create preset'}
           </Button>
         </form>
       </div>

@@ -92,21 +92,14 @@ The web UI provides the same project, worktree, terminal, and removal operations
 
 ### Terminal presets
 
-The **New terminal** menu always includes **Shell**, which starts the configured login shell without an explicit argv. **Manage presets** adds daemon-persisted choices that are shared by every browser using that TaskTTY server and survive daemon restarts. Each preset has a name, an executable, and an ordered list of arguments; TaskTTY uses the preset name for the terminal and launches the executable with those arguments exactly. Presets never contain or parse one shell command string.
+The **New terminal** menu always includes **Shell**, which starts the configured login shell without an explicit argv. **Manage presets** adds daemon-persisted choices that are shared by every browser using that TaskTTY server and survive daemon restarts. Enter a preset name and a command such as `diff main --mode split`. TaskTTY splits that input into argv, stores the executable and ordered arguments, and launches them directly. Quotes and backslashes can group or escape values containing spaces, but variables, operators, and other shell syntax are never expanded or executed.
 
-Example values for Pi:
+Example values:
 
-- Name: `Pi`
-- Executable: `pi`
-- Arguments: none
+- Pi — Name: `Pi`; Command: `pi`
+- Hunk — Name: `Hunk`; Command: `npx --yes hunkdiff@0.17.3 diff HEAD --watch`
 
-Example values for Hunk:
-
-- Name: `Hunk`
-- Executable: `npx`
-- Arguments, in order: `--yes`, `hunkdiff@0.17.3`, `diff`, `HEAD`, `--watch`
-
-These are documentation examples, not built-in presets. Add, edit, remove, or reorder individual arguments in **Manage presets**. The new-worktree dialog also lets you choose its initial terminal, defaulting to **Shell**. TaskTTY copies that choice into the worktree-create request as a terminal name and argv, so editing the saved preset does not change an operation already in progress. Missing executables and commands that exit follow the same retained-terminal and error behavior as terminals created by the CLI; TaskTTY does not preflight or install preset dependencies.
+These are documentation examples, not built-in presets. The new-worktree dialog also lets you choose its initial terminal, defaulting to **Shell**. TaskTTY copies that choice into the worktree-create request as a terminal name and argv, so editing the saved preset does not change an operation already in progress. A preset command runs as the terminal’s foreground program; when it exits—or cannot be started—TaskTTY opens the configured login shell in the same terminal. CLI-created explicit commands retain their existing exit behavior. TaskTTY does not preflight or install preset dependencies.
 
 ## Agent Skill
 

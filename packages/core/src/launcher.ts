@@ -220,10 +220,41 @@ export async function runLaunchSpec(
     stderr.write(
       `TaskTTY launcher: ${safeDiagnostic(result.spawnError.message) || 'spawn error'}\n`
     )
+  }
+
+  if (
+    result.forwardedSignal &&
+    (!spec.fallbackArgv || result.forwardedSignal !== 'SIGINT')
+  ) {
+    return 1
+  }
+
+  if (spec.fallbackArgv) {
+    const fallbackResult = await runChild(spec.fallbackArgv, {
+      cwd: spec.cwd,
+      env: { ...process.env, ...spec.env },
+      spawnProcess,
+      signalSource
+    })
+    if (fallbackResult.spawnError) {
+      stderr.write(
+        `TaskTTY launcher: ${safeDiagnostic(fallbackResult.spawnError.message) || 'spawn error'}\n`
+      )
+      return 127
+    }
+
+    if (fallbackResult.forwardedSignal || fallbackResult.signal) {
+      return 1
+    }
+
+    return fallbackResult.code ?? 1
+  }
+
+  if (result.spawnError) {
     return 127
   }
 
-  if (result.forwardedSignal || result.signal) {
+  if (result.signal) {
     return 1
   }
 

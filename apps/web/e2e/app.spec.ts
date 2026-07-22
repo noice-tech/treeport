@@ -676,7 +676,11 @@ async function mockApp(
         name: string
         base: 'default' | 'current'
         sourceWorktreeId?: string
-        initialTerminal?: { name: string; argv?: string[] }
+        initialTerminal?: {
+          name: string
+          argv?: string[]
+          returnToShell?: boolean
+        }
       }
       if (createGate) {
         await createGate
@@ -1614,58 +1618,55 @@ test.describe('desktop worktree terminal UI', () => {
         new URL(request.url()).pathname === '/api/worktrees/wt_topic/terminals'
     )
     await page.getByRole('button', { name: 'New terminal' }).click()
-    await page.getByRole('menuitem', { name: 'Hunk' }).click()
+    const presetItem = page.getByRole('menuitem', { name: 'Hunk', exact: true })
+    await expect(presetItem).not.toContainText('npx')
+    await presetItem.click()
     const request = await requestPromise
     expect(request.postDataJSON()).toEqual({
       name: 'Hunk',
-      argv: ['npx', '--yes', 'hunkdiff@0.17.3', 'diff', 'HEAD', '--watch']
+      argv: ['npx', '--yes', 'hunkdiff@0.17.3', 'diff', 'HEAD', '--watch'],
+      returnToShell: true
     })
     await expect(page.locator('.terminal-row.selected')).toBeVisible()
     await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
   })
 
-  test('creates, reorders, edits, and deletes terminal presets', async ({
-    page
-  }) => {
+  test('creates, edits, and deletes terminal presets', async ({ page }) => {
     await mockApp(page)
     await page.getByRole('button', { name: 'New terminal' }).click()
     await page.getByRole('menuitem', { name: 'Manage presets' }).click()
     const dialog = page.getByRole('dialog', { name: 'Terminal presets' })
     await expect(dialog).toBeVisible()
+    await expect(dialog.getByRole('button', { name: 'New' })).toBeVisible()
     await expect(
       dialog.getByRole('button', { name: 'Delete Shell' })
     ).toHaveCount(0)
 
     await dialog.getByLabel('Name').fill('Review tool')
-    await dialog.getByLabel('Executable').fill('npx')
-    await dialog.getByRole('button', { name: 'Add argument' }).click()
-    await dialog.getByLabel('Argument 1', { exact: true }).fill('--yes')
-    await dialog.getByRole('button', { name: 'Add argument' }).click()
-    await dialog.getByLabel('Argument 2', { exact: true }).fill('semi;$HOME')
-    await dialog.getByRole('button', { name: 'Move argument 2 up' }).click()
+    await dialog.getByLabel('Command').fill('npx "semi;$HOME" --yes')
     const createRequest = page.waitForRequest(
       (request) =>
         request.method() === 'POST' &&
         new URL(request.url()).pathname === '/api/terminal-presets'
     )
-    await dialog.getByRole('button', { name: 'Save preset' }).click()
+    await dialog.getByRole('button', { name: 'Create preset' }).click()
     expect((await createRequest).postDataJSON()).toEqual({
       name: 'Review tool',
       executable: 'npx',
       args: ['semi;$HOME', '--yes']
     })
-    await expect(
-      dialog.getByRole('button', { name: 'Edit Review tool' })
-    ).toBeVisible()
+    const presetRow = dialog.getByRole('button', { name: /^Review tool/ })
+    await expect(presetRow).toBeVisible()
+    await presetRow.click()
 
-    await dialog.getByRole('button', { name: 'Remove argument 2' }).click()
     await dialog.getByLabel('Name').fill('Review updated')
+    await dialog.getByLabel('Command').fill('npx "semi;$HOME"')
     const updateRequest = page.waitForRequest(
       (request) =>
         request.method() === 'PATCH' &&
         new URL(request.url()).pathname === '/api/terminal-presets/preset_2'
     )
-    await dialog.getByRole('button', { name: 'Save preset' }).click()
+    await dialog.getByRole('button', { name: 'Save changes' }).click()
     expect((await updateRequest).postDataJSON()).toEqual({
       name: 'Review updated',
       executable: 'npx',
@@ -1684,7 +1685,7 @@ test.describe('desktop worktree terminal UI', () => {
       expectedUpdatedAt: '2026-01-03T00:00:00.000Z'
     })
     await expect(
-      dialog.getByRole('button', { name: 'Edit Review updated' })
+      dialog.getByRole('button', { name: /^Review updated/ })
     ).toHaveCount(0)
     await dialog.getByRole('button', { name: 'Close', exact: true }).click()
     await expect(
@@ -1697,7 +1698,7 @@ test.describe('desktop worktree terminal UI', () => {
     await page.getByRole('button', { name: 'New terminal' }).click()
     await page.getByRole('menuitem', { name: 'Manage presets' }).click()
     const dialog = page.getByRole('dialog', { name: 'Terminal presets' })
-    await dialog.getByRole('button', { name: 'Edit Hunk' }).click()
+    await dialog.getByRole('button', { name: /^Hunk/ }).click()
     await dialog.getByLabel('Name').fill('Unsaved local name')
     mocked.terminalPresets[0] = {
       ...mocked.terminalPresets[0]!,
@@ -2246,7 +2247,8 @@ test.describe('desktop worktree terminal UI', () => {
       base: 'default',
       initialTerminal: {
         name: 'Hunk',
-        argv: ['npx', '--yes', 'hunkdiff@0.17.3', 'diff', 'HEAD', '--watch']
+        argv: ['npx', '--yes', 'hunkdiff@0.17.3', 'diff', 'HEAD', '--watch'],
+        returnToShell: true
       }
     })
   })
@@ -2313,7 +2315,8 @@ test.describe('mobile terminal UI', () => {
     await page.getByRole('menuitem', { name: 'Hunk' }).click()
     expect((await requestPromise).postDataJSON()).toEqual({
       name: 'Hunk',
-      argv: ['npx', '--yes', 'hunkdiff@0.17.3', 'diff', 'HEAD', '--watch']
+      argv: ['npx', '--yes', 'hunkdiff@0.17.3', 'diff', 'HEAD', '--watch'],
+      returnToShell: true
     })
     await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
   })

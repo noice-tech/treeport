@@ -46,7 +46,7 @@ function DropdownMenuItem({
   return (
     <DropdownMenuPrimitive.Item
       className={cn(
-        'relative flex min-h-11 cursor-default items-center gap-2 rounded-md px-2.5 py-2 text-base outline-none select-none data-[disabled]:pointer-events-none data-[disabled]:opacity-45 data-[highlighted]:bg-white/7 data-[highlighted]:text-zinc-50 sm:min-h-8 sm:py-1.5 sm:text-sm',
+        'relative flex min-h-11 cursor-default items-center gap-2 rounded-md px-2.5 py-2 text-base outline-none select-none [&_svg]:size-4 [&_svg]:shrink-0 data-[disabled]:pointer-events-none data-[disabled]:opacity-45 data-[highlighted]:bg-white/7 data-[highlighted]:text-zinc-50 sm:min-h-8 sm:py-1.5 sm:text-sm',
         className
       )}
       {...props}

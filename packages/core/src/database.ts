@@ -100,6 +100,21 @@ const MIGRATIONS: Migration[] = [
       CREATE INDEX terminal_presets_order_idx
         ON terminal_presets(created_at, id);
     `
+  },
+  {
+    version: 9,
+    sql: `
+      CREATE TABLE IF NOT EXISTS terminal_presets (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        executable TEXT NOT NULL,
+        args_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS terminal_presets_order_idx
+        ON terminal_presets(created_at, id);
+    `
   }
 ]
 

@@ -237,7 +237,8 @@ const terminalPresetRevisionSchema = z.string().min(1).max(64)
 
 const initialTerminalSchema = z.object({
   name: terminalNameSchema,
-  argv: terminalArgvSchema.optional()
+  argv: terminalArgvSchema.optional(),
+  returnToShell: z.boolean().optional()
 })
 
 export const createWorktreeSchema = z
@@ -259,7 +260,8 @@ export const createWorktreeSchema = z
 
 export const createTerminalSchema = z.object({
   name: terminalNameSchema,
-  argv: terminalArgvSchema.optional()
+  argv: terminalArgvSchema.optional(),
+  returnToShell: z.boolean().optional()
 })
 
 export const updateTerminalSchema = z.object({

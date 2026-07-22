@@ -56,7 +56,7 @@ describe('SQLite metadata', () => {
         .prepare('SELECT version FROM schema_migrations ORDER BY version')
         .pluck()
         .all()
-    ).toEqual([7, 8])
+    ).toEqual([7, 8, 9])
     expect(
       database.connection
         .prepare('PRAGMA table_info(projects)')
@@ -249,7 +249,7 @@ describe('SQLite metadata', () => {
     const filePath = path.join(directory, 'metadata.db')
     const initial = new TaskTTYDatabase(filePath)
     initial.connection.exec(
-      'DROP INDEX terminal_presets_order_idx; DROP TABLE terminal_presets; DELETE FROM schema_migrations WHERE version = 8;'
+      'DROP INDEX terminal_presets_order_idx; DROP TABLE terminal_presets; DELETE FROM schema_migrations WHERE version IN (8, 9);'
     )
     initial.connection
       .prepare(
@@ -280,7 +280,7 @@ describe('SQLite metadata', () => {
         .prepare('SELECT version FROM schema_migrations ORDER BY version')
         .pluck()
         .all()
-    ).toEqual([7, 8])
+    ).toEqual([7, 8, 9])
     expect(
       reopened.connection
         .prepare(
@@ -300,5 +300,33 @@ describe('SQLite metadata', () => {
       name: 'Existing',
       repositoryPath: '/existing'
     })
+  })
+
+  it('repairs a missing preset table when version 8 was already recorded', async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'tasktty-db-v8-'))
+    directories.push(directory)
+    const filePath = path.join(directory, 'metadata.db')
+    const initial = new TaskTTYDatabase(filePath)
+    initial.connection.exec(
+      'DROP INDEX terminal_presets_order_idx; DROP TABLE terminal_presets; DELETE FROM schema_migrations WHERE version = 9;'
+    )
+    initial.close()
+
+    const reopened = new TaskTTYDatabase(filePath)
+    databases.push(reopened)
+    expect(
+      reopened.connection
+        .prepare('SELECT version FROM schema_migrations ORDER BY version')
+        .pluck()
+        .all()
+    ).toEqual([7, 8, 9])
+    expect(
+      reopened.connection
+        .prepare(
+          "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='terminal_presets'"
+        )
+        .pluck()
+        .get()
+    ).toBe(1)
   })
 })

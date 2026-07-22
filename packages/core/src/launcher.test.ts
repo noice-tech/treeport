@@ -94,6 +94,95 @@ describe('terminal launcher setup pipeline', () => {
     expect(error.value()).toBe('')
   })
 
+  it('starts a fallback shell after the final command exits', async () => {
+    const calls: string[][] = []
+    const results = [23, 0]
+    const spawnProcess = vi.fn(
+      (executable: string, args: readonly string[]) => {
+        calls.push([executable, ...args])
+        const child = new FakeChild()
+        queueMicrotask(() => child.emit('exit', results.shift(), null))
+        return child as unknown as ChildProcess
+      }
+    ) as unknown as typeof spawn
+
+    await expect(
+      runLaunchSpec(spec({ fallbackArgv: ['/bin/zsh', '-l'] }), {
+        spawnProcess,
+        signalSource: new EventEmitter()
+      })
+    ).resolves.toBe(0)
+    expect(calls).toEqual([
+      ['final', 'hostile;argument'],
+      ['/bin/zsh', '-l']
+    ])
+  })
+
+  it('starts a fallback shell after the final command cannot be spawned', async () => {
+    const calls: string[][] = []
+    const spawnProcess = vi.fn(
+      (executable: string, args: readonly string[]) => {
+        calls.push([executable, ...args])
+        const child = new FakeChild()
+        queueMicrotask(() =>
+          executable === 'missing'
+            ? child.emit('error', new Error('not found'))
+            : child.emit('exit', 0, null)
+        )
+        return child as unknown as ChildProcess
+      }
+    ) as unknown as typeof spawn
+    const error = writable()
+
+    await expect(
+      runLaunchSpec(
+        spec({ argv: ['missing'], fallbackArgv: ['/bin/zsh', '-l'] }),
+        {
+          spawnProcess,
+          stderr: error.stream,
+          signalSource: new EventEmitter()
+        }
+      )
+    ).resolves.toBe(0)
+    expect(calls).toEqual([['missing'], ['/bin/zsh', '-l']])
+    expect(error.value()).toContain('not found')
+  })
+
+  it('starts a fallback shell after Ctrl-C but not terminal teardown', async () => {
+    const firstChild = new FakeChild()
+    const shell = new FakeChild()
+    const spawnProcess = vi
+      .fn()
+      .mockReturnValueOnce(firstChild as unknown as ChildProcess)
+      .mockImplementationOnce(() => {
+        queueMicrotask(() => shell.emit('exit', 0, null))
+        return shell as unknown as ChildProcess
+      }) as unknown as typeof spawn
+    const signalSource = new EventEmitter()
+    const launch = runLaunchSpec(spec({ fallbackArgv: ['/bin/zsh', '-l'] }), {
+      spawnProcess,
+      signalSource
+    })
+    await vi.waitFor(() => expect(spawnProcess).toHaveBeenCalledTimes(1))
+    signalSource.emit('SIGINT')
+    await expect(launch).resolves.toBe(0)
+    expect(spawnProcess).toHaveBeenCalledTimes(2)
+
+    const teardownChild = new FakeChild()
+    const teardownSpawn = vi.fn(
+      () => teardownChild as unknown as ChildProcess
+    ) as unknown as typeof spawn
+    const teardownSignals = new EventEmitter()
+    const teardown = runLaunchSpec(spec({ fallbackArgv: ['/bin/zsh', '-l'] }), {
+      spawnProcess: teardownSpawn,
+      signalSource: teardownSignals
+    })
+    await vi.waitFor(() => expect(teardownSpawn).toHaveBeenCalledTimes(1))
+    teardownSignals.emit('SIGHUP')
+    await expect(teardown).resolves.toBe(1)
+    expect(teardownSpawn).toHaveBeenCalledTimes(1)
+  })
+
   it('stops on the first setup failure and does not start the final command', async () => {
     const spawnProcess = vi.fn(() => {
       const child = new FakeChild()

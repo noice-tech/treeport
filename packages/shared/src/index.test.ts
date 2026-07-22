@@ -45,8 +45,12 @@ describe('API input validation', () => {
       "single'quote"
     ]
     expect(
-      createTerminalSchema.parse({ name: 'researcher', argv }).argv
-    ).toEqual(argv)
+      createTerminalSchema.parse({
+        name: 'researcher',
+        argv,
+        returnToShell: true
+      })
+    ).toMatchObject({ argv, returnToShell: true })
     expect(
       spawnSchema.parse({
         project: '.',

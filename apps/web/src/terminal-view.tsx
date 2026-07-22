@@ -53,7 +53,11 @@ interface TerminalViewProps {
   mutationsDisabled: boolean
   closingTerminalId: string | null
   onSelectTerminal: (terminal: TerminalRecord) => void
-  onCreateTerminal: (input: { name: string; argv?: string[] }) => void
+  onCreateTerminal: (input: {
+    name: string
+    argv?: string[]
+    returnToShell?: boolean
+  }) => void
   onManagePresets: (trigger: HTMLButtonElement | null) => void
   onCloseTerminal: (terminal: TerminalRecord) => void
   onStatusChange: () => void
@@ -406,21 +410,16 @@ export function TerminalView({
                   <DropdownMenuItem
                     key={preset.id}
                     disabled={launchDisabled}
-                    title={JSON.stringify([preset.executable, ...preset.args])}
                     onSelect={() =>
                       onCreateTerminal({
                         name: preset.name,
-                        argv: [preset.executable, ...preset.args]
+                        argv: [preset.executable, ...preset.args],
+                        returnToShell: true
                       })
                     }
                   >
                     <CommandLineIcon />
-                    <span className="grid min-w-0 gap-0.5">
-                      <span className="truncate">{preset.name}</span>
-                      <span className="truncate text-xs text-zinc-500">
-                        {preset.executable}
-                      </span>
-                    </span>
+                    <span className="truncate">{preset.name}</span>
                   </DropdownMenuItem>
                 ))}
                 {presetsLoading && (

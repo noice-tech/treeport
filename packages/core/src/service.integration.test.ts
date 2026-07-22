@@ -1324,7 +1324,8 @@ describe('TaskTTYService with injected command adapters', () => {
       'default',
       {
         name: 'Pi',
-        argv: ['pi']
+        argv: ['pi'],
+        returnToShell: true
       }
     )
     unsubscribe()
@@ -1351,15 +1352,30 @@ describe('TaskTTYService with injected command adapters', () => {
       )
     ) as {
       argv: string[]
+      fallbackArgv: string[]
       setupTasks: Array<{ label: string; argv: string[] }>
     }
     expect(launchSpec.argv).toEqual(['pi'])
+    expect(launchSpec.fallbackArgv).toEqual(['/bin/zsh', '-l'])
     expect(launchSpec.setupTasks).toEqual([
       expect.objectContaining({ label: 'setup', argv: ['fail-setup'] })
     ])
     expect(runner.calls.some((call) => call.executable === 'fail-setup')).toBe(
       false
     )
+
+    const direct = await service.createTerminal(
+      result.worktree.id,
+      'Direct argv',
+      ['pi']
+    )
+    const directLaunchSpec = JSON.parse(
+      await fs.readFile(
+        path.join(config.runtimeDir, 'launch-specs', `${direct.id}.json`),
+        'utf8'
+      )
+    ) as { fallbackArgv?: string[] }
+    expect(directLaunchSpec.fallbackArgv).toBeUndefined()
   })
 
   it('retains task preparation errors in an initial terminal launch spec', async () => {

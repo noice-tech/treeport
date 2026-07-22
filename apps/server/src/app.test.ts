@@ -154,6 +154,26 @@ describe('HTTP API validation', () => {
     expect(service.createTerminal).not.toHaveBeenCalled()
   })
 
+  it('forwards return-to-shell terminal launches without changing argv', async () => {
+    const { app, service } = fixture()
+    const response = await app.request('/api/worktrees/wt_1/terminals', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        name: 'Diff',
+        argv: ['diff', 'main', '--mode', 'split'],
+        returnToShell: true
+      })
+    })
+    expect(response.status).toBe(201)
+    expect(service.createTerminal).toHaveBeenCalledWith(
+      'wt_1',
+      'Diff',
+      ['diff', 'main', '--mode', 'split'],
+      { returnToShell: true }
+    )
+  })
+
   it('keeps recent, open, close, and destructive delete as distinct routes', async () => {
     const { app, service } = fixture()
 
@@ -356,7 +376,8 @@ describe('HTTP API validation', () => {
         sourceWorktreeId: 'wt_main',
         initialTerminal: {
           name: 'Terminal',
-          argv: ['tool', 'semi;colon', '$HOME']
+          argv: ['tool', 'semi;colon', '$HOME'],
+          returnToShell: true
         }
       })
     })
@@ -365,7 +386,11 @@ describe('HTTP API validation', () => {
       'p',
       'topic',
       'current',
-      { name: 'Terminal', argv: ['tool', 'semi;colon', '$HOME'] },
+      {
+        name: 'Terminal',
+        argv: ['tool', 'semi;colon', '$HOME'],
+        returnToShell: true
+      },
       'wt_main'
     )
 
