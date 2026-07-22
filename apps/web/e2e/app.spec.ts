@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Locator, type Page } from '@playwright/test'
 import type {
   ProjectColor,
   RecentProjectRecord,
@@ -7,6 +7,21 @@ import type {
 } from '@tasktty/shared'
 
 const TERMINAL_SCROLL_EXIT_SEQUENCE = '\u001b[9000~'
+
+async function terminalTextPoint(
+  locator: Locator,
+  offset: { x: number; y: number }
+): Promise<{ x: number; y: number }> {
+  let point: { x: number; y: number } | null = null
+  await expect
+    .poll(async () => {
+      const bounds = await locator.boundingBox()
+      point = bounds ? { x: bounds.x + offset.x, y: bounds.y + offset.y } : null
+      return point
+    })
+    .not.toBeNull()
+  return point!
+}
 
 const project = {
   id: 'proj_1',
@@ -1132,36 +1147,37 @@ test.describe('desktop worktree terminal UI', () => {
       .filter({ hasText: 'https://example.test/docs' })
       .last()
     await expect(httpsText).toBeVisible()
-    await httpsText.hover({ position: { x: 16, y: 8 } })
+    // xterm 6 makes rendered rows ignore pointer events; links are hit-tested
+    // from coordinates on the screen element instead.
+    const httpsPoint = await terminalTextPoint(httpsText, { x: 16, y: 8 })
+    await page.mouse.move(httpsPoint.x, httpsPoint.y)
     await expect(page.locator('.xterm-screen')).toHaveClass(
       /xterm-cursor-pointer/
     )
     await expect(httpsText).toHaveCSS('text-decoration-line', 'underline')
 
-    await httpsText.click({ position: { x: 16, y: 8 } })
+    await page.mouse.click(httpsPoint.x, httpsPoint.y)
     await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
-    await httpsText.click({
-      modifiers: ['Meta'],
-      position: { x: 16, y: 8 }
-    })
+    await page.keyboard.down('Meta')
+    await page.mouse.click(httpsPoint.x, httpsPoint.y)
+    await page.keyboard.up('Meta')
     expect(
       await page.evaluate(() => (window as any).__openedTerminalLinks)
     ).toEqual([])
 
-    await httpsText.click({
-      modifiers: ['Control'],
-      position: { x: 16, y: 8 }
-    })
+    await page.keyboard.down('Control')
+    await page.mouse.click(httpsPoint.x, httpsPoint.y)
+    await page.keyboard.up('Control')
     const httpText = page
       .locator('.xterm-rows span')
       .filter({ hasText: 'http://example.test/help' })
       .last()
     await expect(httpText).toBeVisible()
-    await httpText.hover({ position: { x: 16, y: 8 } })
-    await httpText.click({
-      modifiers: ['Control'],
-      position: { x: 16, y: 8 }
-    })
+    const httpPoint = await terminalTextPoint(httpText, { x: 16, y: 8 })
+    await page.mouse.move(httpPoint.x, httpPoint.y)
+    await page.keyboard.down('Control')
+    await page.mouse.click(httpPoint.x, httpPoint.y)
+    await page.keyboard.up('Control')
     await expect
       .poll(() => page.evaluate(() => (window as any).__openedTerminalLinks))
       .toEqual([
@@ -1203,10 +1219,10 @@ test.describe('desktop worktree terminal UI', () => {
       .filter({ hasText: '#123' })
       .last()
     await expect(linkedText).toBeVisible()
-    await linkedText.click({
-      modifiers: ['Meta'],
-      position: { x: 8, y: 8 }
-    })
+    const linkedPoint = await terminalTextPoint(linkedText, { x: 8, y: 8 })
+    await page.keyboard.down('Meta')
+    await page.mouse.click(linkedPoint.x, linkedPoint.y)
+    await page.keyboard.up('Meta')
     await expect
       .poll(() => page.evaluate(() => (window as any).__openedTerminalLink))
       .toEqual(['https://example.test/pr/123', '_blank', 'noopener,noreferrer'])
@@ -1757,7 +1773,7 @@ test.describe('desktop worktree terminal UI', () => {
   test('preserves modified terminal keys used by macOS and Pi', async ({
     page
   }) => {
-    await mockApp(page)
+    await mockApp(page, [], { keyboardPlatform: 'MacIntel' })
     await page.getByRole('button', { name: 'Pi, running', exact: true }).click()
     await page.getByRole('button', { name: 'Take control' }).click()
     await page.locator('.xterm-helper-textarea').focus()
@@ -1768,6 +1784,8 @@ test.describe('desktop worktree terminal UI', () => {
     await page.keyboard.press('Shift+Enter')
     await page.keyboard.press('Meta+ArrowLeft')
     await page.keyboard.press('Meta+ArrowRight')
+    await page.keyboard.press('Alt+ArrowLeft')
+    await page.keyboard.press('Alt+ArrowRight')
 
     await expect
       .poll(() =>
@@ -1777,7 +1795,7 @@ test.describe('desktop worktree terminal UI', () => {
             .map((message: any) => message.data)
         )
       )
-      .toEqual(['\u001b[13;2u', '\u001b[H', '\u001b[F'])
+      .toEqual(['\u001b[13;2u', '\u001b[H', '\u001b[F', '\u001bb', '\u001bf'])
   })
 
   test('uploads pasted and dropped files and pastes their server paths', async ({
@@ -2469,7 +2487,7 @@ test.describe('mobile terminal UI', () => {
     await expect(status).toHaveAttribute('aria-hidden', 'true')
   })
 
-  test('scrolls tmux history with a one-finger terminal swipe', async ({
+  test('scrolls tmux history with a one-finger swipe across mouse modes', async ({
     page
   }) => {
     await mockApp(page)
@@ -2517,6 +2535,10 @@ test.describe('mobile terminal UI', () => {
         )
       )
       .toBe(1)
+    await client.send('Input.dispatchTouchEvent', {
+      type: 'touchEnd',
+      touchPoints: []
+    })
 
     await page.evaluate(() => {
       const socket = (window as any).__lastWs
@@ -2538,12 +2560,14 @@ test.describe('mobile terminal UI', () => {
         ).length
     )
 
-    for (const y of positions.slice(2)) {
-      await client.send('Input.dispatchTouchEvent', {
-        type: 'touchMove',
-        touchPoints: [{ x, y }]
-      })
-    }
+    await client.send('Input.dispatchTouchEvent', {
+      type: 'touchStart',
+      touchPoints: [{ x, y: positions[2]! }]
+    })
+    await client.send('Input.dispatchTouchEvent', {
+      type: 'touchMove',
+      touchPoints: [{ x, y: positions[3]! }]
+    })
     await client.send('Input.dispatchTouchEvent', {
       type: 'touchEnd',
       touchPoints: []
