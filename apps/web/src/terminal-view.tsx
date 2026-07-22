@@ -1,7 +1,26 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
-import { ArrowPathIcon, PlusIcon, XMarkIcon } from '@heroicons/react/16/solid'
-import type { TerminalRecord, WorktreeRecord } from '@tasktty/shared'
+import {
+  ArrowPathIcon,
+  Cog6ToothIcon,
+  CommandLineIcon,
+  PlusIcon,
+  XMarkIcon
+} from '@heroicons/react/16/solid'
+import type {
+  TerminalPreset,
+  TerminalRecord,
+  WorktreeRecord
+} from '@tasktty/shared'
 import { Button } from './components/ui/button.js'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger
+} from './components/ui/dropdown-menu.js'
 import {
   Tabs,
   TabsContent,
@@ -27,11 +46,19 @@ interface TerminalViewProps {
   worktree: WorktreeRecord | null
   terminal: TerminalRecord | null
   focusTerminalId: string | null
+  presets: TerminalPreset[]
+  presetsLoading: boolean
+  presetsError: boolean
   creatingTerminal: boolean
   mutationsDisabled: boolean
   closingTerminalId: string | null
   onSelectTerminal: (terminal: TerminalRecord) => void
-  onCreateTerminal: () => void
+  onCreateTerminal: (input: {
+    name: string
+    argv?: string[]
+    returnToShell?: boolean
+  }) => void
+  onManagePresets: (trigger: HTMLButtonElement | null) => void
   onCloseTerminal: (terminal: TerminalRecord) => void
   onStatusChange: () => void
 }
@@ -55,16 +82,21 @@ export function TerminalView({
   worktree,
   terminal,
   focusTerminalId,
+  presets,
+  presetsLoading,
+  presetsError,
   creatingTerminal,
   mutationsDisabled,
   closingTerminalId,
   onSelectTerminal,
   onCreateTerminal,
+  onManagePresets,
   onCloseTerminal,
   onStatusChange
 }: TerminalViewProps) {
   const shellRef = useRef<HTMLElement>(null)
   const hostRef = useRef<HTMLDivElement>(null)
+  const newTerminalTriggerRef = useRef<HTMLButtonElement>(null)
   const [session, setSession] = useState<TerminalSession | null>(null)
   const [ctrl, setCtrl] = useState(false)
   const [alt, setAlt] = useState(false)
@@ -175,6 +207,7 @@ export function TerminalView({
     ? runtimeTitles.get(terminal.id) || terminal.name
     : ''
   const terminals = worktree?.terminals ?? []
+  const launchDisabled = !worktree || mutationsDisabled || creatingTerminal
 
   useEffect(() => {
     // Mod+W stays browser-owned here; reserve it for Electron, where we can override the window accelerator.
@@ -340,27 +373,77 @@ export function TerminalView({
               })}
             </TabsList>
           </div>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                className="m-1 shrink-0 text-zinc-500 hover:bg-white/5 hover:text-zinc-100"
-                aria-label="New terminal"
-                disabled={!worktree || creatingTerminal || mutationsDisabled}
-                onClick={onCreateTerminal}
-              >
-                {creatingTerminal ? (
-                  <ArrowPathIcon className="animate-spin" />
-                ) : (
-                  <PlusIcon />
+          <DropdownMenu>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    ref={newTerminalTriggerRef}
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    className="m-0 size-11 shrink-0 text-zinc-500 hover:bg-white/5 hover:text-zinc-100 min-[701px]:m-1 min-[701px]:size-7"
+                    aria-label="New terminal"
+                    disabled={creatingTerminal}
+                  >
+                    {creatingTerminal ? (
+                      <ArrowPathIcon className="animate-spin" />
+                    ) : (
+                      <PlusIcon />
+                    )}
+                  </Button>
+                </DropdownMenuTrigger>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">New terminal</TooltipContent>
+            </Tooltip>
+            <DropdownMenuContent align="end" side="bottom">
+              <DropdownMenuLabel>New terminal</DropdownMenuLabel>
+              <DropdownMenuGroup>
+                <DropdownMenuItem
+                  disabled={launchDisabled}
+                  onSelect={() => onCreateTerminal({ name: 'Shell' })}
+                >
+                  <CommandLineIcon />
+                  Shell
+                </DropdownMenuItem>
+                {presets.map((preset) => (
+                  <DropdownMenuItem
+                    key={preset.id}
+                    disabled={launchDisabled}
+                    onSelect={() =>
+                      onCreateTerminal({
+                        name: preset.name,
+                        argv: [preset.executable, ...preset.args],
+                        returnToShell: true
+                      })
+                    }
+                  >
+                    <CommandLineIcon />
+                    <span className="truncate">{preset.name}</span>
+                  </DropdownMenuItem>
+                ))}
+                {presetsLoading && (
+                  <DropdownMenuItem disabled>Loading presets…</DropdownMenuItem>
                 )}
-                <span className="touch-target" aria-hidden="true" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom">New terminal</TooltipContent>
-          </Tooltip>
+                {presetsError && (
+                  <DropdownMenuItem disabled>
+                    Presets unavailable
+                  </DropdownMenuItem>
+                )}
+              </DropdownMenuGroup>
+              <DropdownMenuSeparator />
+              <DropdownMenuGroup>
+                <DropdownMenuItem
+                  onSelect={() =>
+                    onManagePresets(newTerminalTriggerRef.current)
+                  }
+                >
+                  <Cog6ToothIcon />
+                  Manage presets
+                </DropdownMenuItem>
+              </DropdownMenuGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>
           {terminal && snapshot.phase === 'ready' && !snapshot.controller && (
             <Button
               type="button"
@@ -442,7 +525,7 @@ export function TerminalView({
               </h1>
               <p className="max-w-[52ch] text-base text-pretty text-zinc-400 sm:text-sm">
                 {worktree
-                  ? 'Use the plus button in the tab bar to start a login shell.'
+                  ? 'Use the New terminal menu to start a login shell or preset.'
                   : 'Select a worktree from the sidebar to view its terminals.'}
               </p>
             </div>

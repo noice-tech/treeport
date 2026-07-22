@@ -10,6 +10,7 @@ import type {
   ProjectRecord,
   RecentProjectRecord,
   RemovePreview,
+  TerminalPreset,
   TerminalRecord,
   WorktreeRecord
 } from '@tasktty/shared'
@@ -607,6 +608,92 @@ export class TaskTTYService {
     this.invalidateProjectsSnapshot()
     this.events.publish('project.updated', { projectId })
     return this.getProject(projectId)
+  }
+
+  listTerminalPresets(): TerminalPreset[] {
+    return this.deps.database.terminalPresets()
+  }
+
+  createTerminalPreset(
+    input: Pick<TerminalPreset, 'name' | 'executable' | 'args'>
+  ): TerminalPreset {
+    const timestamp = now()
+    const preset: TerminalPreset = {
+      id: id('preset'),
+      name: input.name,
+      executable: input.executable,
+      args: [...input.args],
+      createdAt: timestamp,
+      updatedAt: timestamp
+    }
+    this.deps.database.insertTerminalPreset(preset)
+    return preset
+  }
+
+  updateTerminalPreset(
+    presetId: string,
+    input: Pick<TerminalPreset, 'name' | 'executable' | 'args'>,
+    expectedUpdatedAt: string
+  ): TerminalPreset {
+    const existing = this.deps.database.terminalPreset(presetId)
+    if (!existing) {
+      throw new DomainError(
+        'TERMINAL_PRESET_NOT_FOUND',
+        'Terminal preset not found',
+        404
+      )
+    }
+
+    if (existing.updatedAt !== expectedUpdatedAt) {
+      throw new DomainError(
+        'TERMINAL_PRESET_CHANGED',
+        'Terminal preset changed; review the latest values and try again',
+        409
+      )
+    }
+
+    const timestamp = now()
+    const preset: TerminalPreset = {
+      ...existing,
+      name: input.name,
+      executable: input.executable,
+      args: [...input.args],
+      updatedAt:
+        timestamp > existing.updatedAt
+          ? timestamp
+          : new Date(Date.parse(existing.updatedAt) + 1).toISOString()
+    }
+    if (!this.deps.database.updateTerminalPreset(preset, expectedUpdatedAt)) {
+      throw new DomainError(
+        'TERMINAL_PRESET_CHANGED',
+        'Terminal preset changed; review the latest values and try again',
+        409
+      )
+    }
+
+    return preset
+  }
+
+  deleteTerminalPreset(presetId: string, expectedUpdatedAt: string): void {
+    const existing = this.deps.database.terminalPreset(presetId)
+    if (!existing) {
+      throw new DomainError(
+        'TERMINAL_PRESET_NOT_FOUND',
+        'Terminal preset not found',
+        404
+      )
+    }
+
+    if (
+      existing.updatedAt !== expectedUpdatedAt ||
+      !this.deps.database.deleteTerminalPreset(presetId, expectedUpdatedAt)
+    ) {
+      throw new DomainError(
+        'TERMINAL_PRESET_CHANGED',
+        'Terminal preset changed; review the latest values and try again',
+        409
+      )
+    }
   }
 
   getWorktree(worktreeId: string): WorktreeRecord {
@@ -1737,7 +1824,11 @@ export class TaskTTYService {
     projectId: string,
     inputName: string,
     base: 'default' | 'current',
-    initialTerminal?: { name: string; argv?: string[] },
+    initialTerminal?: {
+      name: string
+      argv?: string[]
+      returnToShell?: boolean
+    },
     sourceWorktreeId?: string
   ): Promise<CreateWorktreeResult> {
     this.requireOpenProject(projectId)
@@ -1913,7 +2004,10 @@ export class TaskTTYService {
             worktree.id,
             initialTerminal.name,
             initialTerminal.argv,
-            { tasks: setupTasks, error: setupError }
+            {
+              setup: { tasks: setupTasks, error: setupError },
+              ...(initialTerminal.returnToShell ? { returnToShell: true } : {})
+            }
           )
         } catch (error) {
           terminalError = error instanceof Error ? error.message : String(error)
@@ -1952,11 +2046,15 @@ export class TaskTTYService {
     worktreeId: string,
     name: string,
     argv?: string[],
-    setup?: { tasks: WorktreeSetupTask[]; error: string | null }
+    options?: {
+      setup?: { tasks: WorktreeSetupTask[]; error: string | null }
+      returnToShell?: boolean
+    }
   ): Promise<TerminalRecord> {
     const worktree = await this.requireAvailableWorktree(worktreeId)
     if (
-      (setup === undefined && this.projectLocks.has(worktree.projectId)) ||
+      (options?.setup === undefined &&
+        this.projectLocks.has(worktree.projectId)) ||
       this.worktreeLocks.has(worktreeId) ||
       worktree.status !== 'active'
     ) {
@@ -1983,14 +2081,19 @@ export class TaskTTYService {
         createdAt: timestamp,
         cwd: worktree.path,
         argv: commandArgv,
+        ...(options?.returnToShell && argv
+          ? { fallbackArgv: [this.deps.config.shell, '-l'] }
+          : {}),
         env: {
           TASKTTY_API_URL: this.deps.config.apiUrl,
           TASKTTY_PROJECT_ID: project.id,
           TASKTTY_WORKTREE_ID: worktree.id,
           TASKTTY_TERMINAL_ID: terminalId
         },
-        ...(setup?.tasks.length ? { setupTasks: setup.tasks } : {}),
-        ...(setup?.error ? { setupError: setup.error } : {})
+        ...(options?.setup?.tasks.length
+          ? { setupTasks: options.setup.tasks }
+          : {}),
+        ...(options?.setup?.error ? { setupError: options.setup.error } : {})
       })
     } catch (error) {
       throw new DomainError(

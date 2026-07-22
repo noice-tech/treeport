@@ -6,6 +6,11 @@ export * from './terminal-protocol.js'
 export const PRODUCT_NAME = 'TaskTTY'
 export const API_VERSION = 1
 export const TERMINAL_MAX_UPLOAD_BYTES = 50 * 1024 * 1024
+export const TERMINAL_NAME_MAX_LENGTH = 120
+export const TERMINAL_ARGV_MAX_COUNT = 128
+export const TERMINAL_EXECUTABLE_MAX_LENGTH = 4_096
+export const TERMINAL_ARGUMENT_MAX_LENGTH = 4_096
+export const TERMINAL_PRESET_ARGUMENT_MAX_COUNT = TERMINAL_ARGV_MAX_COUNT - 1
 
 export type WorktreeKind = 'main' | 'linked'
 export type WorktreeStatus =
@@ -41,6 +46,15 @@ export interface TerminalRecord {
   argv: string[]
   status: TerminalStatus
   exitCode: number | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface TerminalPreset {
+  id: string
+  name: string
+  executable: string
+  args: string[]
   createdAt: string
   updatedAt: string
 }
@@ -193,9 +207,38 @@ export const updateProjectSchema = z.object({
   color: z.enum(PROJECT_COLORS).nullable()
 })
 
+const terminalNameSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(TERMINAL_NAME_MAX_LENGTH)
+const terminalArgvSchema = z
+  .array(z.string())
+  .min(1)
+  .max(TERMINAL_ARGV_MAX_COUNT)
+const terminalPresetArgumentSchema = z
+  .string()
+  .max(TERMINAL_ARGUMENT_MAX_LENGTH)
+const terminalPresetExecutableSchema = z
+  .string()
+  .min(1)
+  .max(TERMINAL_EXECUTABLE_MAX_LENGTH)
+  .refine((value) => value.trim().length > 0, {
+    message: 'Executable cannot be blank'
+  })
+const terminalPresetFields = {
+  name: terminalNameSchema,
+  executable: terminalPresetExecutableSchema,
+  args: z
+    .array(terminalPresetArgumentSchema)
+    .max(TERMINAL_PRESET_ARGUMENT_MAX_COUNT)
+}
+const terminalPresetRevisionSchema = z.string().min(1).max(64)
+
 const initialTerminalSchema = z.object({
-  name: z.string().trim().min(1).max(120),
-  argv: z.array(z.string()).min(1).optional()
+  name: terminalNameSchema,
+  argv: terminalArgvSchema.optional(),
+  returnToShell: z.boolean().optional()
 })
 
 export const createWorktreeSchema = z
@@ -216,12 +259,24 @@ export const createWorktreeSchema = z
   })
 
 export const createTerminalSchema = z.object({
-  name: z.string().trim().min(1).max(120),
-  argv: z.array(z.string()).min(1).max(128).optional()
+  name: terminalNameSchema,
+  argv: terminalArgvSchema.optional(),
+  returnToShell: z.boolean().optional()
 })
 
 export const updateTerminalSchema = z.object({
-  name: z.string().trim().min(1).max(120)
+  name: terminalNameSchema
+})
+
+export const createTerminalPresetSchema = z.object(terminalPresetFields)
+
+export const updateTerminalPresetSchema = z.object({
+  ...terminalPresetFields,
+  expectedUpdatedAt: terminalPresetRevisionSchema
+})
+
+export const deleteTerminalPresetSchema = z.object({
+  expectedUpdatedAt: terminalPresetRevisionSchema
 })
 
 export const removeWorktreeSchema = z.object({
@@ -233,8 +288,8 @@ export const spawnSchema = z
   .object({
     project: z.string().min(1),
     worktreeName: z.string().trim().min(1).max(120),
-    name: z.string().trim().min(1).max(120),
-    argv: z.array(z.string()).min(1).max(128).optional(),
+    name: terminalNameSchema,
+    argv: terminalArgvSchema.optional(),
     base: z.enum(['default', 'current']).default('default'),
     sourceWorktreeId: z.string().min(1).optional()
   })

@@ -7,7 +7,9 @@ import type { Context } from 'hono'
 import type { ZodType } from 'zod'
 import { serveStatic } from '@hono/node-server/serve-static'
 import {
+  createTerminalPresetSchema,
   createTerminalSchema,
+  deleteTerminalPresetSchema,
   createWorktreeSchema,
   registerProjectSchema,
   TERMINAL_MAX_UPLOAD_BYTES,
@@ -15,6 +17,7 @@ import {
   spawnSchema,
   terminalBellAcknowledgementSchema,
   updateProjectSchema,
+  updateTerminalPresetSchema,
   updateTerminalSchema
 } from '@tasktty/shared'
 import type { AppConfig, TmuxAdapter, TaskTTYService } from '@tasktty/core'
@@ -173,6 +176,36 @@ export function createApp({
 
   app.get('/api/health', (context) => context.json({ ok: true, version: 1 }))
 
+  app.get('/api/terminal-presets', (context) =>
+    context.json({ presets: service.listTerminalPresets() })
+  )
+
+  app.post('/api/terminal-presets', async (context) => {
+    const body = await input(context, createTerminalPresetSchema)
+    return context.json({ preset: service.createTerminalPreset(body) }, 201)
+  })
+
+  app.patch('/api/terminal-presets/:presetId', async (context) => {
+    const body = await input(context, updateTerminalPresetSchema)
+    const { expectedUpdatedAt, ...presetInput } = body
+    return context.json({
+      preset: service.updateTerminalPreset(
+        context.req.param('presetId'),
+        presetInput,
+        expectedUpdatedAt
+      )
+    })
+  })
+
+  app.delete('/api/terminal-presets/:presetId', async (context) => {
+    const body = await input(context, deleteTerminalPresetSchema)
+    service.deleteTerminalPreset(
+      context.req.param('presetId'),
+      body.expectedUpdatedAt
+    )
+    return context.json({ ok: true })
+  })
+
   app.get('/api/projects', async (context) =>
     context.json({ projects: await service.listProjects() })
   )
@@ -262,7 +295,8 @@ export function createApp({
           name: body.initialTerminal.name,
           ...(body.initialTerminal.argv
             ? { argv: body.initialTerminal.argv }
-            : {})
+            : {}),
+          ...(body.initialTerminal.returnToShell ? { returnToShell: true } : {})
         }
       : undefined
     const result = await service.createWorktree(
@@ -288,7 +322,8 @@ export function createApp({
     const terminal = await service.createTerminal(
       context.req.param('worktreeId'),
       body.name,
-      body.argv
+      body.argv,
+      body.returnToShell ? { returnToShell: true } : undefined
     )
     return context.json({ terminal }, 201)
   })

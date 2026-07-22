@@ -88,7 +88,18 @@ Inspect the exact TaskTTY context injected into a managed terminal:
 tasktty context
 ```
 
-The web UI provides the same project, worktree, terminal, and removal operations. **Open project** accepts a repository path or reopens a closed registration from **Recent projects**. Submitting a new worktree closes the dialog immediately and shows its typed name with a spinner while Git creates it. The web flow then selects one retained terminal that streams compatible setup output before starting its login shell. Command input is always an argv array. Shell syntax has no special meaning unless an explicit shell is launched, for example `-- /bin/zsh -lc 'one && two'`.
+The web UI provides the same project, worktree, terminal, and removal operations. **Open project** accepts a repository path or reopens a closed registration from **Recent projects**. Submitting a new worktree closes the dialog immediately and shows its typed name with a spinner while Git creates it. The web flow then selects one retained terminal that streams compatible setup output before starting the selected initial command, which defaults to the login shell. Command input is always an argv array. Shell syntax has no special meaning unless an explicit shell is launched, for example `-- /bin/zsh -lc 'one && two'`.
+
+### Terminal presets
+
+The **New terminal** menu always includes **Shell**, which starts the configured login shell without an explicit argv. **Manage presets** adds daemon-persisted choices that are shared by every browser using that TaskTTY server and survive daemon restarts. Enter a preset name and a command such as `diff main --mode split`. TaskTTY splits that input into argv, stores the executable and ordered arguments, and launches them directly. Quotes and backslashes can group or escape values containing spaces, but variables, operators, and other shell syntax are never expanded or executed.
+
+Example values:
+
+- Pi — Name: `Pi`; Command: `pi`
+- Hunk — Name: `Hunk`; Command: `npx --yes hunkdiff@0.17.3 diff HEAD --watch`
+
+These are documentation examples, not built-in presets. The new-worktree dialog also lets you choose its initial terminal, defaulting to **Shell**. TaskTTY copies that choice into the worktree-create request as a terminal name and argv, so editing the saved preset does not change an operation already in progress. A preset command runs as the terminal’s foreground program; when it exits—or cannot be started—TaskTTY opens the configured login shell in the same terminal. CLI-created explicit commands retain their existing exit behavior. TaskTTY does not preflight or install preset dependencies.
 
 ## Agent Skill
 
@@ -159,7 +170,7 @@ worktree SQLite ID
 
 Identifiers never come from branch names or paths. `packages/core/src/launcher.ts` reads an application-owned JSON launch spec and uses Node `spawn(..., { shell: false })`, preserving spaces, quotes, Unicode, semicolons, and dollar signs literally.
 
-The generated tmux configuration is stored in the tasktty runtime directory. It does not read or modify `~/.tmux.conf`. It disables the status bar, uses `tmux-256color`, enables extended keys, selects CSI-u key encoding on tmux 3.5+, retains dead panes and scrollback, and never restarts exited commands. Wheel scrolling still uses tmux's persistent history, but tasktty hides tmux's copy-mode indicator and styling; typing immediately returns to the live terminal without dropping the first key. SQLite stores project/worktree bindings and operation history. tmux owns terminal inventory, configured names, commands, and live or exited status.
+The generated tmux configuration is stored in the tasktty runtime directory. It does not read or modify `~/.tmux.conf`. It disables the status bar, uses `tmux-256color`, enables extended keys, selects CSI-u key encoding on tmux 3.5+, retains dead panes and scrollback, and never restarts exited commands. Wheel scrolling still uses tmux's persistent history, but tasktty hides tmux's copy-mode indicator and styling; typing immediately returns to the live terminal without dropping the first key. SQLite stores project/worktree bindings, terminal presets, and operation history. tmux owns terminal inventory, configured names, commands, and live or exited status.
 
 Production terminal rendering deliberately uses normal `attach-session` clients: control mode does not provide a byte-offset replay or enough private terminal state to restore application-cursor, bracketed-paste, mouse/focus, extended-key negotiation, and alternate-screen state exactly after reconnect. For each running terminal, a daemon-lifetime read-only, `ignore-size` control-mode sidecar observes title, OSC `9;4` progress, and real BEL metadata that normal tmux clients filter, without affecting rendering or pane dimensions. The daemon records progress start/clear timestamps and the latest bell sequence for its lifetime. Every valid active progress frame renews a five-minute inactivity lease; an explicit clear or terminal/observer shutdown clears immediately, and an application that stops refreshing progress is eventually treated as idle. The daemon also polls tmux title/status as a fallback and publishes snapshot-first metadata changes through the Socket.IO `/events` namespace, so navigation and CLI waits stay current before a terminal is selected. Runtime metadata resets with the daemon and terminal applications that do not emit OSC `9;4` cannot distinguish “idle” from “no progress protocol support.” `apps/server/src/tmux-control.ts` byte-decodes this output; tests cover flow-control events, OSC sequences, raw modified-key sequences, resizing, and session survival against real tmux. Control-mode rendering remains experimental and would require a persistent terminal model before replacing the normal attachment path.
 
@@ -212,6 +223,7 @@ The versioned JSON surface is under `/api`:
 
 ```text
 GET  /api/health
+GET/POST /api/terminal-presets      PATCH/DELETE /api/terminal-presets/:presetId
 GET/POST /api/projects               GET/PATCH/DELETE /api/projects/:projectId
 GET  /api/projects/recent
 POST /api/projects/:projectId/open
@@ -248,7 +260,7 @@ Default database locations:
 - macOS: `~/Library/Application Support/tasktty/tasktty.db`
 - Linux/XDG: `${XDG_DATA_HOME:-~/.local/share}/tasktty/tasktty.db`
 
-Schema tables are `projects`, `worktrees`, `operations`, and `schema_migrations`. Worktree rows are TaskTTY metadata bindings rather than the authoritative active inventory. Terminal inventory and metadata live in tmux; terminal output is never written to SQLite or application logs.
+Schema tables are `projects`, `worktrees`, `operations`, `terminal_presets`, and `schema_migrations`. Worktree rows are TaskTTY metadata bindings rather than the authoritative active inventory. Terminal presets are daemon-global user configuration stored as executable and ordered argument data. Terminal inventory and metadata live in tmux; terminal output is never written to SQLite or application logs.
 
 ## Security assumptions
 

@@ -6,6 +6,7 @@ import type {
   PrInfo,
   ProjectRecord,
   RecentProjectRecord,
+  TerminalPreset,
   WorktreeRecord
 } from '@tasktty/shared'
 import { inferWorktreeName } from './zed.js'
@@ -84,6 +85,36 @@ const MIGRATIONS: Migration[] = [
       );
       CREATE INDEX operations_worktree_idx ON operations(worktree_id);
     `
+  },
+  {
+    version: 8,
+    sql: `
+      CREATE TABLE terminal_presets (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        executable TEXT NOT NULL,
+        args_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX terminal_presets_order_idx
+        ON terminal_presets(created_at, id);
+    `
+  },
+  {
+    version: 9,
+    sql: `
+      CREATE TABLE IF NOT EXISTS terminal_presets (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        executable TEXT NOT NULL,
+        args_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS terminal_presets_order_idx
+        ON terminal_presets(created_at, id);
+    `
   }
 ]
 
@@ -125,6 +156,14 @@ interface WorktreeRow {
   pr_head_branch: string | null
   pr_merged_at: string | null
   pr_refreshed_at: string | null
+  created_at: string
+  updated_at: string
+}
+interface TerminalPresetRow {
+  id: string
+  name: string
+  executable: string
+  args_json: string
   created_at: string
   updated_at: string
 }
@@ -229,6 +268,66 @@ export class TaskTTYDatabase {
       repositoryPath: project.repository_path,
       lastOpenedAt: project.last_opened_at
     }))
+  }
+
+  terminalPresets(): TerminalPreset[] {
+    const presets = this.connection
+      .prepare('SELECT * FROM terminal_presets ORDER BY created_at, id')
+      .all() as TerminalPresetRow[]
+    return presets.map((preset) => this.mapTerminalPreset(preset))
+  }
+
+  terminalPreset(id: string): TerminalPreset | null {
+    const row = this.connection
+      .prepare('SELECT * FROM terminal_presets WHERE id = ?')
+      .get(id) as TerminalPresetRow | undefined
+    return row ? this.mapTerminalPreset(row) : null
+  }
+
+  insertTerminalPreset(preset: TerminalPreset): void {
+    this.connection
+      .prepare(
+        `INSERT INTO terminal_presets(
+           id,name,executable,args_json,created_at,updated_at
+         ) VALUES(?,?,?,?,?,?)`
+      )
+      .run(
+        preset.id,
+        preset.name,
+        preset.executable,
+        JSON.stringify(preset.args),
+        preset.createdAt,
+        preset.updatedAt
+      )
+  }
+
+  updateTerminalPreset(
+    preset: TerminalPreset,
+    expectedUpdatedAt: string
+  ): boolean {
+    const result = this.connection
+      .prepare(
+        `UPDATE terminal_presets
+         SET name = ?, executable = ?, args_json = ?, updated_at = ?
+         WHERE id = ? AND updated_at = ?`
+      )
+      .run(
+        preset.name,
+        preset.executable,
+        JSON.stringify(preset.args),
+        preset.updatedAt,
+        preset.id,
+        expectedUpdatedAt
+      )
+    return result.changes > 0
+  }
+
+  deleteTerminalPreset(id: string, expectedUpdatedAt: string): boolean {
+    return (
+      this.connection
+        .prepare('DELETE FROM terminal_presets WHERE id = ? AND updated_at = ?')
+        .run(id, expectedUpdatedAt).changes > 0
+    )
   }
 
   isProjectOpen(projectId: string): boolean | null {
@@ -397,6 +496,17 @@ export class TaskTTYDatabase {
       },
       dirty: null,
       terminals: [],
+      createdAt: row.created_at,
+      updatedAt: row.updated_at
+    }
+  }
+
+  private mapTerminalPreset(row: TerminalPresetRow): TerminalPreset {
+    return {
+      id: row.id,
+      name: row.name,
+      executable: row.executable,
+      args: JSON.parse(row.args_json) as string[],
       createdAt: row.created_at,
       updatedAt: row.updated_at
     }

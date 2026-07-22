@@ -44,6 +44,37 @@ function fixture() {
       id,
       color
     })),
+    listTerminalPresets: vi.fn(() => [
+      {
+        id: 'preset_existing',
+        name: 'Existing',
+        executable: 'pi',
+        args: [],
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z'
+      }
+    ]),
+    createTerminalPreset: vi.fn(
+      (input: { name: string; executable: string; args: string[] }) => ({
+        id: 'preset_new',
+        ...input,
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z'
+      })
+    ),
+    updateTerminalPreset: vi.fn(
+      (
+        id: string,
+        input: { name: string; executable: string; args: string[] },
+        _expectedUpdatedAt: string
+      ) => ({
+        id,
+        ...input,
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-02T00:00:00.000Z'
+      })
+    ),
+    deleteTerminalPreset: vi.fn(),
     getProjectSnapshot: vi.fn(async (id: string) => ({ id })),
     resolveProject: vi.fn(async () => ({ id: 'p' })),
     refreshTerminalStatus: vi.fn(async (id: string) => ({
@@ -126,6 +157,26 @@ describe('HTTP API validation', () => {
     expect(service.createTerminal).not.toHaveBeenCalled()
   })
 
+  it('forwards return-to-shell terminal launches without changing argv', async () => {
+    const { app, service } = fixture()
+    const response = await app.request('/api/worktrees/wt_1/terminals', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        name: 'Diff',
+        argv: ['diff', 'main', '--mode', 'split'],
+        returnToShell: true
+      })
+    })
+    expect(response.status).toBe(201)
+    expect(service.createTerminal).toHaveBeenCalledWith(
+      'wt_1',
+      'Diff',
+      ['diff', 'main', '--mode', 'split'],
+      { returnToShell: true }
+    )
+  })
+
   it('keeps recent, open, close, and destructive delete as distinct routes', async () => {
     const { app, service } = fixture()
 
@@ -202,6 +253,108 @@ describe('HTTP API validation', () => {
     expect(service.updateProjectColor).toHaveBeenCalledTimes(1)
   })
 
+  it('routes validated terminal preset CRUD with literal arguments', async () => {
+    const { app, service } = fixture()
+    const listed = await app.request('/api/terminal-presets')
+    expect(listed.status).toBe(200)
+    expect(await listed.json()).toMatchObject({
+      presets: [{ id: 'preset_existing', executable: 'pi', args: [] }]
+    })
+    expect(service.refreshTerminalStatus).not.toHaveBeenCalled()
+
+    const input = {
+      name: '  Hunk  ',
+      executable: 'npx',
+      args: [
+        '--yes',
+        'hunkdiff@0.17.3',
+        'a b',
+        'semi;colon',
+        '$HOME',
+        'Unicode 世界'
+      ]
+    }
+    const created = await app.request('/api/terminal-presets', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(input)
+    })
+    expect(created.status).toBe(201)
+    expect(service.createTerminalPreset).toHaveBeenCalledWith({
+      ...input,
+      name: 'Hunk'
+    })
+
+    const updated = await app.request('/api/terminal-presets/preset_new', {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        ...input,
+        name: 'Review',
+        expectedUpdatedAt: '2026-01-01T00:00:00.000Z'
+      })
+    })
+    expect(updated.status).toBe(200)
+    expect(service.updateTerminalPreset).toHaveBeenCalledWith(
+      'preset_new',
+      {
+        ...input,
+        name: 'Review'
+      },
+      '2026-01-01T00:00:00.000Z'
+    )
+
+    const deleted = await app.request('/api/terminal-presets/preset_new', {
+      method: 'DELETE',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        expectedUpdatedAt: '2026-01-02T00:00:00.000Z'
+      })
+    })
+    expect(deleted.status).toBe(200)
+    expect(service.deleteTerminalPreset).toHaveBeenCalledWith(
+      'preset_new',
+      '2026-01-02T00:00:00.000Z'
+    )
+
+    const invalid = await app.request('/api/terminal-presets', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        name: 'Bad',
+        executable: 'npx --yes package',
+        args: '--watch'
+      })
+    })
+    expect(invalid.status).toBe(400)
+    expect(service.createTerminalPreset).toHaveBeenCalledTimes(1)
+  })
+
+  it('returns preset domain failures in the standard error envelope', async () => {
+    const { app, service } = fixture()
+    vi.mocked(service.deleteTerminalPreset).mockImplementationOnce(() => {
+      throw new DomainError(
+        'TERMINAL_PRESET_NOT_FOUND',
+        'Terminal preset not found',
+        404
+      )
+    })
+    const response = await app.request('/api/terminal-presets/preset_missing', {
+      method: 'DELETE',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        expectedUpdatedAt: '2026-01-01T00:00:00.000Z'
+      })
+    })
+    expect(response.status).toBe(404)
+    expect(await response.json()).toEqual({
+      error: {
+        code: 'TERMINAL_PRESET_NOT_FOUND',
+        message: 'Terminal preset not found'
+      }
+    })
+  })
+
   it('rejects malformed JSON with a machine-readable code', async () => {
     const { app } = fixture()
     const response = await app.request('/api/projects', {
@@ -226,7 +379,8 @@ describe('HTTP API validation', () => {
         sourceWorktreeId: 'wt_main',
         initialTerminal: {
           name: 'Terminal',
-          argv: ['tool', 'semi;colon', '$HOME']
+          argv: ['tool', 'semi;colon', '$HOME'],
+          returnToShell: true
         }
       })
     })
@@ -235,7 +389,11 @@ describe('HTTP API validation', () => {
       'p',
       'topic',
       'current',
-      { name: 'Terminal', argv: ['tool', 'semi;colon', '$HOME'] },
+      {
+        name: 'Terminal',
+        argv: ['tool', 'semi;colon', '$HOME'],
+        returnToShell: true
+      },
       'wt_main'
     )
 

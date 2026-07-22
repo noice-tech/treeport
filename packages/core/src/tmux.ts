@@ -14,6 +14,7 @@ export const generateTmuxSessionName = (): string =>
 
 export interface LaunchSpec {
   argv: string[]
+  fallbackArgv?: string[]
   cwd: string
   env: Record<string, string>
   setupTasks?: WorktreeSetupTask[]
@@ -143,6 +144,7 @@ export class TmuxAdapter {
     createdAt: string
     cwd: string
     argv: string[]
+    fallbackArgv?: string[]
     env: Record<string, string>
     setupTasks?: WorktreeSetupTask[]
     setupError?: string
@@ -151,6 +153,7 @@ export class TmuxAdapter {
     const specPath = path.join(this.specsDir, `${input.terminalId}.json`)
     const spec: LaunchSpec = {
       argv: [...input.argv],
+      ...(input.fallbackArgv ? { fallbackArgv: [...input.fallbackArgv] } : {}),
       cwd: input.cwd,
       env: { ...input.env },
       ...(input.setupTasks?.length

@@ -69,6 +69,7 @@ describe('TmuxAdapter', () => {
       createdAt: '2026-01-02T03:04:05.000Z',
       cwd: '/repo with spaces',
       argv,
+      fallbackArgv: ['/bin/zsh', '-l'],
       env: { TASKTTY_TERMINAL_ID: 'term_safe' },
       setupTasks: [setupTask]
     })
@@ -79,6 +80,7 @@ describe('TmuxAdapter', () => {
         .then(JSON.parse)
     ).resolves.toEqual({
       argv,
+      fallbackArgv: ['/bin/zsh', '-l'],
       cwd: '/repo with spaces',
       env: { TASKTTY_TERMINAL_ID: 'term_safe' },
       setupTasks: [setupTask]
