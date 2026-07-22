@@ -2012,6 +2012,64 @@ test.describe('mobile terminal UI', () => {
       .toBe(`${TERMINAL_SCROLL_EXIT_SEQUENCE}q`)
   })
 
+  test('sends Shift+Tab from the horizontally scrollable accessory row', async ({
+    page
+  }) => {
+    await page.setViewportSize({ width: 320, height: 700 })
+    await mockApp(page)
+    await page.getByLabel('Open worktree drawer').click()
+    await page.getByRole('button', { name: 'Pi, running', exact: true }).click()
+    await page.getByRole('button', { name: 'Take control' }).click()
+
+    const accessoryRow = page.locator('.accessory-row')
+    const ctrl = page.getByRole('button', { name: 'Ctrl', exact: true })
+    const alt = page.getByRole('button', { name: 'Alt', exact: true })
+    const shiftTab = page.getByRole('button', {
+      name: 'Shift+Tab',
+      exact: true
+    })
+    await expect(shiftTab).toBeVisible()
+    const rowWidth = await accessoryRow.evaluate((element) => ({
+      client: element.clientWidth,
+      scroll: element.scrollWidth
+    }))
+    expect(rowWidth.scroll).toBeGreaterThan(rowWidth.client)
+    const buttonWidth = await shiftTab.evaluate((element) => ({
+      client: element.clientWidth,
+      scroll: element.scrollWidth
+    }))
+    expect(buttonWidth.scroll).toBeLessThanOrEqual(buttonWidth.client)
+
+    await alt.click()
+    await ctrl.click()
+    await expect(alt).toHaveClass(/latched/)
+    await expect(ctrl).toHaveClass(/latched/)
+    await page.evaluate(() => {
+      ;(window as any).__wsSent = []
+    })
+    await accessoryRow.evaluate((element) => {
+      element.scrollLeft = element.scrollWidth
+    })
+    await expect
+      .poll(() => accessoryRow.evaluate((element) => element.scrollLeft))
+      .toBeGreaterThan(0)
+    await shiftTab.scrollIntoViewIfNeeded()
+    await expect(shiftTab).toBeInViewport()
+    await shiftTab.click()
+
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          (window as any).__wsSent
+            .filter((message: any) => message.type === 'input')
+            .map((message: any) => message.data)
+        )
+      )
+      .toEqual(['\u001b[Z'])
+    await expect(alt).not.toHaveClass(/latched/)
+    await expect(ctrl).not.toHaveClass(/latched/)
+  })
+
   test('uses an accessible drawer, synchronized titles, control takeover, and accessory keys', async ({
     page
   }) => {
