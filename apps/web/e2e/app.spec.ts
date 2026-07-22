@@ -2,6 +2,7 @@ import { expect, test, type Page } from '@playwright/test'
 import type {
   ProjectColor,
   RecentProjectRecord,
+  TerminalPreset,
   TerminalRuntimeMetadata
 } from '@tasktty/shared'
 
@@ -327,6 +328,16 @@ async function mockApp(
     Object.assign(window, { WebSocket: MockWebSocket })
   }, initialTerminalMetadata)
   const state = structuredClone(project)
+  const terminalPresets: TerminalPreset[] = [
+    {
+      id: 'preset_hunk',
+      name: 'Hunk',
+      executable: 'npx',
+      args: ['--yes', 'hunkdiff@0.17.3', 'diff', 'HEAD', '--watch'],
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z'
+    }
+  ]
   if (options.terminalFree) {
     for (const worktree of state.worktrees) {
       worktree.terminals = []
@@ -362,6 +373,124 @@ async function mockApp(
   await page.route('**/api/**', async (route) => {
     const url = new URL(route.request().url())
     const pathname = url.pathname
+    if (
+      pathname === '/api/terminal-presets' &&
+      route.request().method() === 'GET'
+    ) {
+      await route.fulfill({ json: { presets: terminalPresets } })
+      return
+    }
+
+    if (
+      pathname === '/api/terminal-presets' &&
+      route.request().method() === 'POST'
+    ) {
+      const body = route.request().postDataJSON() as Pick<
+        TerminalPreset,
+        'name' | 'executable' | 'args'
+      >
+      const preset: TerminalPreset = {
+        id: `preset_${terminalPresets.length + 1}`,
+        ...body,
+        createdAt: '2026-01-02T00:00:00.000Z',
+        updatedAt: '2026-01-02T00:00:00.000Z'
+      }
+      terminalPresets.push(preset)
+      await route.fulfill({ status: 201, json: { preset } })
+      return
+    }
+
+    if (
+      pathname.startsWith('/api/terminal-presets/') &&
+      route.request().method() === 'PATCH'
+    ) {
+      const presetId = pathname.split('/').at(-1)!
+      const body = route.request().postDataJSON() as Pick<
+        TerminalPreset,
+        'name' | 'executable' | 'args'
+      > & { expectedUpdatedAt: string }
+      const { expectedUpdatedAt, ...input } = body
+      const index = terminalPresets.findIndex(
+        (preset) => preset.id === presetId
+      )
+      if (index < 0) {
+        await route.fulfill({
+          status: 404,
+          json: {
+            error: {
+              code: 'TERMINAL_PRESET_NOT_FOUND',
+              message: 'Terminal preset not found'
+            }
+          }
+        })
+        return
+      }
+
+      if (terminalPresets[index]!.updatedAt !== expectedUpdatedAt) {
+        await route.fulfill({
+          status: 409,
+          json: {
+            error: {
+              code: 'TERMINAL_PRESET_CHANGED',
+              message: 'Terminal preset changed'
+            }
+          }
+        })
+        return
+      }
+
+      const preset: TerminalPreset = {
+        ...terminalPresets[index]!,
+        ...input,
+        updatedAt: '2026-01-03T00:00:00.000Z'
+      }
+      terminalPresets[index] = preset
+      await route.fulfill({ json: { preset } })
+      return
+    }
+
+    if (
+      pathname.startsWith('/api/terminal-presets/') &&
+      route.request().method() === 'DELETE'
+    ) {
+      const presetId = pathname.split('/').at(-1)!
+      const body = route.request().postDataJSON() as {
+        expectedUpdatedAt: string
+      }
+      const index = terminalPresets.findIndex(
+        (preset) => preset.id === presetId
+      )
+      if (index < 0) {
+        await route.fulfill({
+          status: 404,
+          json: {
+            error: {
+              code: 'TERMINAL_PRESET_NOT_FOUND',
+              message: 'Terminal preset not found'
+            }
+          }
+        })
+        return
+      }
+
+      if (terminalPresets[index]!.updatedAt !== body.expectedUpdatedAt) {
+        await route.fulfill({
+          status: 409,
+          json: {
+            error: {
+              code: 'TERMINAL_PRESET_CHANGED',
+              message: 'Terminal preset changed'
+            }
+          }
+        })
+        return
+      }
+
+      terminalPresets.splice(index, 1)
+      await route.fulfill({ json: { ok: true } })
+      return
+    }
+
     if (
       pathname === '/api/projects/recent' &&
       route.request().method() === 'GET'
@@ -529,7 +658,7 @@ async function mockApp(
         name: string
         base: 'default' | 'current'
         sourceWorktreeId?: string
-        initialTerminal?: { name: string }
+        initialTerminal?: { name: string; argv?: string[] }
       }
       if (createGate) {
         await createGate
@@ -550,9 +679,9 @@ async function mockApp(
       const terminal = {
         id: 'term_new',
         worktreeId: 'wt_new',
-        name: body.initialTerminal?.name ?? 'Terminal',
+        name: body.initialTerminal?.name ?? 'Shell',
         tmuxSessionName: 'tasktty-term-new',
-        argv: ['/bin/zsh', '-l'],
+        argv: body.initialTerminal?.argv ?? ['/bin/zsh', '-l'],
         status: 'running' as const,
         exitCode: null,
         createdAt: '2026-01-01',
@@ -680,6 +809,7 @@ async function mockApp(
   await page.goto('/')
   return {
     state,
+    terminalPresets,
     recentProjects,
     projectRequests: () => projectRequests,
     closeRequests: () => closeRequests,
@@ -1319,6 +1449,7 @@ test.describe('desktop worktree terminal UI', () => {
       page.getByRole('tab', { name: /zsh · \/worktrees\/topic/ })
     ).toBeVisible()
     await page.getByRole('button', { name: 'New terminal' }).click()
+    await page.getByRole('menuitem', { name: 'Shell' }).click()
     await expect(
       page.getByRole('tab', { name: /dev · \/worktrees\/topic/ })
     ).toHaveAttribute('data-state', 'active')
@@ -1354,6 +1485,23 @@ test.describe('desktop worktree terminal UI', () => {
     ).toHaveCount(0)
   })
 
+  test('keeps global preset management available without a selected worktree', async ({
+    page
+  }) => {
+    await mockApp(page, [], { terminalFree: true })
+    const trigger = page.getByRole('button', { name: 'New terminal' })
+    await expect(trigger).toBeEnabled()
+    await trigger.click()
+    await expect(page.getByRole('menuitem', { name: 'Shell' })).toHaveAttribute(
+      'data-disabled',
+      ''
+    )
+    await page.getByRole('menuitem', { name: 'Manage presets' }).click()
+    await expect(
+      page.getByRole('dialog', { name: 'Terminal presets' })
+    ).toBeVisible()
+  })
+
   test('creates and selects a login shell terminal without prompting', async ({
     page
   }) => {
@@ -1368,8 +1516,9 @@ test.describe('desktop worktree terminal UI', () => {
         new URL(request.url()).pathname === '/api/worktrees/wt_topic/terminals'
     )
     await page.getByRole('button', { name: 'New terminal' }).click()
+    await page.getByRole('menuitem', { name: 'Shell' }).click()
     const request = await requestPromise
-    expect(request.postDataJSON()).toEqual({ name: 'Terminal' })
+    expect(request.postDataJSON()).toEqual({ name: 'Shell' })
     await expect(page.getByRole('dialog')).toHaveCount(0)
     await expect(page.locator('.terminal-row.selected')).toBeVisible()
 
@@ -1402,6 +1551,116 @@ test.describe('desktop worktree terminal UI', () => {
     await expect(
       page.getByRole('tab', { name: /^dev · \/worktrees\/topic,/ })
     ).toHaveCount(0)
+  })
+
+  test('launches a configured preset with its exact argv snapshot', async ({
+    page
+  }) => {
+    await mockApp(page)
+    await page.locator('.worktree-row').filter({ hasText: 'topic' }).click()
+    const requestPromise = page.waitForRequest(
+      (request) =>
+        request.method() === 'POST' &&
+        new URL(request.url()).pathname === '/api/worktrees/wt_topic/terminals'
+    )
+    await page.getByRole('button', { name: 'New terminal' }).click()
+    await page.getByRole('menuitem', { name: 'Hunk' }).click()
+    const request = await requestPromise
+    expect(request.postDataJSON()).toEqual({
+      name: 'Hunk',
+      argv: ['npx', '--yes', 'hunkdiff@0.17.3', 'diff', 'HEAD', '--watch']
+    })
+    await expect(page.locator('.terminal-row.selected')).toBeVisible()
+    await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
+  })
+
+  test('creates, reorders, edits, and deletes terminal presets', async ({
+    page
+  }) => {
+    await mockApp(page)
+    await page.getByRole('button', { name: 'New terminal' }).click()
+    await page.getByRole('menuitem', { name: 'Manage presets' }).click()
+    const dialog = page.getByRole('dialog', { name: 'Terminal presets' })
+    await expect(dialog).toBeVisible()
+    await expect(
+      dialog.getByRole('button', { name: 'Delete Shell' })
+    ).toHaveCount(0)
+
+    await dialog.getByLabel('Name').fill('Review tool')
+    await dialog.getByLabel('Executable').fill('npx')
+    await dialog.getByRole('button', { name: 'Add argument' }).click()
+    await dialog.getByLabel('Argument 1', { exact: true }).fill('--yes')
+    await dialog.getByRole('button', { name: 'Add argument' }).click()
+    await dialog.getByLabel('Argument 2', { exact: true }).fill('semi;$HOME')
+    await dialog.getByRole('button', { name: 'Move argument 2 up' }).click()
+    const createRequest = page.waitForRequest(
+      (request) =>
+        request.method() === 'POST' &&
+        new URL(request.url()).pathname === '/api/terminal-presets'
+    )
+    await dialog.getByRole('button', { name: 'Save preset' }).click()
+    expect((await createRequest).postDataJSON()).toEqual({
+      name: 'Review tool',
+      executable: 'npx',
+      args: ['semi;$HOME', '--yes']
+    })
+    await expect(
+      dialog.getByRole('button', { name: 'Edit Review tool' })
+    ).toBeVisible()
+
+    await dialog.getByRole('button', { name: 'Remove argument 2' }).click()
+    await dialog.getByLabel('Name').fill('Review updated')
+    const updateRequest = page.waitForRequest(
+      (request) =>
+        request.method() === 'PATCH' &&
+        new URL(request.url()).pathname === '/api/terminal-presets/preset_2'
+    )
+    await dialog.getByRole('button', { name: 'Save preset' }).click()
+    expect((await updateRequest).postDataJSON()).toEqual({
+      name: 'Review updated',
+      executable: 'npx',
+      args: ['semi;$HOME'],
+      expectedUpdatedAt: '2026-01-02T00:00:00.000Z'
+    })
+
+    page.once('dialog', (confirmation) => confirmation.accept())
+    const deleteRequest = page.waitForRequest(
+      (request) =>
+        request.method() === 'DELETE' &&
+        new URL(request.url()).pathname === '/api/terminal-presets/preset_2'
+    )
+    await dialog.getByRole('button', { name: 'Delete Review updated' }).click()
+    expect((await deleteRequest).postDataJSON()).toEqual({
+      expectedUpdatedAt: '2026-01-03T00:00:00.000Z'
+    })
+    await expect(
+      dialog.getByRole('button', { name: 'Edit Review updated' })
+    ).toHaveCount(0)
+    await dialog.getByRole('button', { name: 'Close', exact: true }).click()
+    await expect(
+      page.getByRole('button', { name: 'New terminal' })
+    ).toBeFocused()
+  })
+
+  test('reloads an open preset form after a remote edit', async ({ page }) => {
+    const mocked = await mockApp(page)
+    await page.getByRole('button', { name: 'New terminal' }).click()
+    await page.getByRole('menuitem', { name: 'Manage presets' }).click()
+    const dialog = page.getByRole('dialog', { name: 'Terminal presets' })
+    await dialog.getByRole('button', { name: 'Edit Hunk' }).click()
+    await dialog.getByLabel('Name').fill('Unsaved local name')
+    mocked.terminalPresets[0] = {
+      ...mocked.terminalPresets[0]!,
+      name: 'Remote Hunk',
+      updatedAt: '2026-02-01T00:00:00.000Z'
+    }
+    await page.evaluate(() =>
+      document.dispatchEvent(new Event('visibilitychange'))
+    )
+    await expect(dialog.getByLabel('Name')).toHaveValue('Remote Hunk')
+    await expect(dialog.getByRole('status')).toContainText(
+      'latest saved values were loaded'
+    )
   })
 
   test('preserves modified terminal keys used by macOS and Pi', async ({
@@ -1873,7 +2132,7 @@ test.describe('desktop worktree terminal UI', () => {
     expect(request.postDataJSON()).toEqual({
       name: 'new topic',
       base: 'default',
-      initialTerminal: { name: 'Terminal' }
+      initialTerminal: { name: 'Shell' }
     })
     await expect(
       page.getByRole('heading', { name: 'Create worktree' })
@@ -1916,6 +2175,50 @@ test.describe('desktop worktree terminal UI', () => {
     )
   })
 
+  test('snapshots a preset into a new worktree initial terminal request', async ({
+    page
+  }) => {
+    await mockApp(page)
+    await page.getByRole('button', { name: 'New worktree' }).click()
+    await page.getByLabel('Worktree name').fill('preset topic')
+    await page.getByLabel('Initial terminal').selectOption({ label: 'Hunk' })
+    await expect(
+      page.getByText('Destination: /worktrees/preset-topic/repo')
+    ).toBeVisible()
+    const requestPromise = page.waitForRequest(
+      (request) =>
+        request.method() === 'POST' &&
+        new URL(request.url()).pathname === '/api/projects/proj_1/worktrees'
+    )
+    await page.getByRole('button', { name: 'Create worktree' }).click()
+    expect((await requestPromise).postDataJSON()).toEqual({
+      name: 'preset topic',
+      base: 'default',
+      initialTerminal: {
+        name: 'Hunk',
+        argv: ['npx', '--yes', 'hunkdiff@0.17.3', 'diff', 'HEAD', '--watch']
+      }
+    })
+  })
+
+  test('announces when a selected initial preset is deleted remotely', async ({
+    page
+  }) => {
+    const mocked = await mockApp(page)
+    await page.getByRole('button', { name: 'New worktree' }).click()
+    await page.getByLabel('Initial terminal').selectOption({ label: 'Hunk' })
+    mocked.terminalPresets.splice(0)
+    await page.evaluate(() =>
+      document.dispatchEvent(new Event('visibilitychange'))
+    )
+    await expect(
+      page
+        .getByRole('status')
+        .filter({ hasText: 'selected preset was deleted' })
+    ).toBeVisible({ timeout: 7_000 })
+    await expect(page.getByLabel('Initial terminal')).toHaveValue('shell')
+  })
+
   test('keeps the create dialog closed and removes the typed row on failure', async ({
     page
   }) => {
@@ -1944,6 +2247,26 @@ test.describe('desktop worktree terminal UI', () => {
 
 test.describe('mobile terminal UI', () => {
   test.skip(({ isMobile }) => !isMobile)
+
+  test('launches a configured terminal preset from the touch menu', async ({
+    page
+  }) => {
+    await mockApp(page)
+    await page.getByLabel('Open worktree drawer').click()
+    await page.getByRole('button', { name: 'Pi, running', exact: true }).click()
+    const requestPromise = page.waitForRequest(
+      (request) =>
+        request.method() === 'POST' &&
+        new URL(request.url()).pathname === '/api/worktrees/wt_topic/terminals'
+    )
+    await page.getByRole('button', { name: 'New terminal' }).click()
+    await page.getByRole('menuitem', { name: 'Hunk' }).click()
+    expect((await requestPromise).postDataJSON()).toEqual({
+      name: 'Hunk',
+      argv: ['npx', '--yes', 'hunkdiff@0.17.3', 'diff', 'HEAD', '--watch']
+    })
+    await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
+  })
 
   test('renders daemon progress clears in the worktree drawer', async ({
     page

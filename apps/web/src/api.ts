@@ -5,6 +5,7 @@ import type {
   ProjectRecord,
   RecentProjectRecord,
   RemovePreview,
+  TerminalPreset,
   TerminalRecord,
   WorktreeRecord
 } from '@tasktty/shared'
@@ -52,6 +53,36 @@ export const apiClient = {
   recentProjects: async () =>
     (await api<{ projects: RecentProjectRecord[] }>('/api/projects/recent'))
       .projects,
+  terminalPresets: async () =>
+    (await api<{ presets: TerminalPreset[] }>('/api/terminal-presets')).presets,
+  createTerminalPreset: async (
+    input: Pick<TerminalPreset, 'name' | 'executable' | 'args'>
+  ) =>
+    (
+      await api<{ preset: TerminalPreset }>('/api/terminal-presets', {
+        method: 'POST',
+        body: JSON.stringify(input)
+      })
+    ).preset,
+  updateTerminalPreset: async (
+    presetId: string,
+    input: Pick<TerminalPreset, 'name' | 'executable' | 'args'>,
+    expectedUpdatedAt: string
+  ) =>
+    (
+      await api<{ preset: TerminalPreset }>(
+        `/api/terminal-presets/${presetId}`,
+        {
+          method: 'PATCH',
+          body: JSON.stringify({ ...input, expectedUpdatedAt })
+        }
+      )
+    ).preset,
+  deleteTerminalPreset: async (presetId: string, expectedUpdatedAt: string) =>
+    api<{ ok: true }>(`/api/terminal-presets/${presetId}`, {
+      method: 'DELETE',
+      body: JSON.stringify({ expectedUpdatedAt })
+    }),
   addProject: async (path: string) =>
     (
       await api<{ project: ProjectRecord }>('/api/projects', {
@@ -86,6 +117,7 @@ export const apiClient = {
     projectId: string,
     name: string,
     base: 'default' | 'current',
+    initialTerminal: { name: string; argv?: string[] },
     sourceWorktreeId?: string
   ) =>
     api<{
@@ -98,7 +130,7 @@ export const apiClient = {
       body: JSON.stringify({
         name,
         base,
-        initialTerminal: { name: 'Terminal' },
+        initialTerminal,
         ...(sourceWorktreeId ? { sourceWorktreeId } : {})
       })
     }),

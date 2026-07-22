@@ -1,11 +1,17 @@
 import { describe, expect, it } from 'vitest'
 import {
+  createTerminalPresetSchema,
   createTerminalSchema,
   createWorktreeSchema,
   registerProjectSchema,
   removeWorktreeSchema,
   spawnSchema,
-  updateProjectSchema
+  TERMINAL_ARGUMENT_MAX_LENGTH,
+  TERMINAL_EXECUTABLE_MAX_LENGTH,
+  TERMINAL_NAME_MAX_LENGTH,
+  TERMINAL_PRESET_ARGUMENT_MAX_COUNT,
+  updateProjectSchema,
+  updateTerminalPresetSchema
 } from './index.js'
 
 describe('API input validation', () => {
@@ -57,6 +63,100 @@ describe('API input validation', () => {
     ).toBe(false)
     expect(
       createTerminalSchema.safeParse({ name: 'bad', argv: 'pnpm dev' }).success
+    ).toBe(false)
+  })
+
+  it('keeps legacy terminal and spawn argument lengths unchanged', () => {
+    const longArgument = 'x'.repeat(TERMINAL_ARGUMENT_MAX_LENGTH + 1)
+    expect(
+      createTerminalSchema.safeParse({
+        name: 'Legacy terminal',
+        argv: ['tool', longArgument]
+      }).success
+    ).toBe(true)
+    expect(
+      spawnSchema.safeParse({
+        project: '.',
+        worktreeName: 'topic',
+        name: 'Legacy spawn',
+        argv: ['tool', longArgument]
+      }).success
+    ).toBe(true)
+  })
+
+  it('validates preset fields separately and preserves literal arguments', () => {
+    const input = {
+      name: '  Hunk review  ',
+      executable: '/Applications/Tools with spaces/npx',
+      args: [
+        '--yes',
+        'hunkdiff@0.17.3',
+        'a "quote"',
+        'semi;colon',
+        '$HOME',
+        'Unicode 世界',
+        '',
+        "single'quote"
+      ]
+    }
+    const expected = {
+      ...input,
+      name: 'Hunk review'
+    }
+    expect(createTerminalPresetSchema.parse(input)).toEqual(expected)
+    expect(
+      updateTerminalPresetSchema.parse({
+        ...input,
+        expectedUpdatedAt: '2026-01-01T00:00:00.000Z'
+      })
+    ).toEqual({
+      ...expected,
+      expectedUpdatedAt: '2026-01-01T00:00:00.000Z'
+    })
+    expect(
+      createTerminalPresetSchema.safeParse({
+        name: 'bad',
+        executable: 'npx --yes hunkdiff',
+        args: '--watch'
+      }).success
+    ).toBe(false)
+    expect(
+      createTerminalPresetSchema.safeParse({
+        name: 'bad',
+        executable: '   ',
+        args: []
+      }).success
+    ).toBe(false)
+  })
+
+  it('bounds every terminal preset field', () => {
+    const valid = { name: 'Preset', executable: 'tool', args: [] as string[] }
+    expect(
+      createTerminalPresetSchema.safeParse({
+        ...valid,
+        name: 'n'.repeat(TERMINAL_NAME_MAX_LENGTH + 1)
+      }).success
+    ).toBe(false)
+    expect(
+      createTerminalPresetSchema.safeParse({
+        ...valid,
+        executable: 'x'.repeat(TERMINAL_EXECUTABLE_MAX_LENGTH + 1)
+      }).success
+    ).toBe(false)
+    expect(
+      createTerminalPresetSchema.safeParse({
+        ...valid,
+        args: Array.from(
+          { length: TERMINAL_PRESET_ARGUMENT_MAX_COUNT + 1 },
+          () => 'arg'
+        )
+      }).success
+    ).toBe(false)
+    expect(
+      createTerminalPresetSchema.safeParse({
+        ...valid,
+        args: ['x'.repeat(TERMINAL_ARGUMENT_MAX_LENGTH + 1)]
+      }).success
     ).toBe(false)
   })
 

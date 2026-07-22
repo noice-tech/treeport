@@ -10,6 +10,7 @@ import type {
   ProjectRecord,
   RecentProjectRecord,
   RemovePreview,
+  TerminalPreset,
   TerminalRecord,
   WorktreeRecord
 } from '@tasktty/shared'
@@ -607,6 +608,92 @@ export class TaskTTYService {
     this.invalidateProjectsSnapshot()
     this.events.publish('project.updated', { projectId })
     return this.getProject(projectId)
+  }
+
+  listTerminalPresets(): TerminalPreset[] {
+    return this.deps.database.terminalPresets()
+  }
+
+  createTerminalPreset(
+    input: Pick<TerminalPreset, 'name' | 'executable' | 'args'>
+  ): TerminalPreset {
+    const timestamp = now()
+    const preset: TerminalPreset = {
+      id: id('preset'),
+      name: input.name,
+      executable: input.executable,
+      args: [...input.args],
+      createdAt: timestamp,
+      updatedAt: timestamp
+    }
+    this.deps.database.insertTerminalPreset(preset)
+    return preset
+  }
+
+  updateTerminalPreset(
+    presetId: string,
+    input: Pick<TerminalPreset, 'name' | 'executable' | 'args'>,
+    expectedUpdatedAt: string
+  ): TerminalPreset {
+    const existing = this.deps.database.terminalPreset(presetId)
+    if (!existing) {
+      throw new DomainError(
+        'TERMINAL_PRESET_NOT_FOUND',
+        'Terminal preset not found',
+        404
+      )
+    }
+
+    if (existing.updatedAt !== expectedUpdatedAt) {
+      throw new DomainError(
+        'TERMINAL_PRESET_CHANGED',
+        'Terminal preset changed; review the latest values and try again',
+        409
+      )
+    }
+
+    const timestamp = now()
+    const preset: TerminalPreset = {
+      ...existing,
+      name: input.name,
+      executable: input.executable,
+      args: [...input.args],
+      updatedAt:
+        timestamp > existing.updatedAt
+          ? timestamp
+          : new Date(Date.parse(existing.updatedAt) + 1).toISOString()
+    }
+    if (!this.deps.database.updateTerminalPreset(preset, expectedUpdatedAt)) {
+      throw new DomainError(
+        'TERMINAL_PRESET_CHANGED',
+        'Terminal preset changed; review the latest values and try again',
+        409
+      )
+    }
+
+    return preset
+  }
+
+  deleteTerminalPreset(presetId: string, expectedUpdatedAt: string): void {
+    const existing = this.deps.database.terminalPreset(presetId)
+    if (!existing) {
+      throw new DomainError(
+        'TERMINAL_PRESET_NOT_FOUND',
+        'Terminal preset not found',
+        404
+      )
+    }
+
+    if (
+      existing.updatedAt !== expectedUpdatedAt ||
+      !this.deps.database.deleteTerminalPreset(presetId, expectedUpdatedAt)
+    ) {
+      throw new DomainError(
+        'TERMINAL_PRESET_CHANGED',
+        'Terminal preset changed; review the latest values and try again',
+        409
+      )
+    }
   }
 
   getWorktree(worktreeId: string): WorktreeRecord {

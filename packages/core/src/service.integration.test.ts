@@ -408,6 +408,97 @@ async function beginFromPreview(service: TaskTTYService, worktreeId: string) {
 }
 
 describe('TaskTTYService with injected command adapters', () => {
+  it('persists ordered terminal preset CRUD across service reconstruction', async () => {
+    const { runner, service, database, config } = await fixture()
+    const first = service.createTerminalPreset({
+      name: 'Pi 世界',
+      executable: '/Applications/Tools with spaces/pi',
+      args: ['a b', 'semi;colon', '$HOME', '"quote"', '']
+    })
+    await new Promise((resolve) => setTimeout(resolve, 2))
+    const second = service.createTerminalPreset({
+      name: 'Hunk',
+      executable: 'npx',
+      args: ['--yes', 'hunkdiff@0.17.3', 'diff', 'HEAD', '--watch']
+    })
+    expect(first.id).toMatch(/^preset_[0-9a-f]{32}$/)
+    expect(service.listTerminalPresets().map((preset) => preset.id)).toEqual([
+      first.id,
+      second.id
+    ])
+
+    const updated = service.updateTerminalPreset(
+      first.id,
+      {
+        name: 'Pi updated',
+        executable: 'pi',
+        args: ['--model', 'literal;$HOME']
+      },
+      first.updatedAt
+    )
+    expect(() =>
+      service.updateTerminalPreset(
+        first.id,
+        {
+          name: 'Stale overwrite',
+          executable: 'pi',
+          args: []
+        },
+        first.updatedAt
+      )
+    ).toThrow(
+      expect.objectContaining({
+        code: 'TERMINAL_PRESET_CHANGED',
+        status: 409
+      })
+    )
+    service.deleteTerminalPreset(second.id, second.updatedAt)
+    expect(service.listTerminalPresets()).toEqual([updated])
+    expect(() =>
+      service.updateTerminalPreset('preset_missing', updated, updated.updatedAt)
+    ).toThrow(
+      expect.objectContaining({
+        code: 'TERMINAL_PRESET_NOT_FOUND',
+        status: 404
+      })
+    )
+    expect(() =>
+      service.deleteTerminalPreset('preset_missing', updated.updatedAt)
+    ).toThrow(
+      expect.objectContaining({
+        code: 'TERMINAL_PRESET_NOT_FOUND',
+        status: 404
+      })
+    )
+    expect(() =>
+      service.deleteTerminalPreset(first.id, first.updatedAt)
+    ).toThrow(
+      expect.objectContaining({
+        code: 'TERMINAL_PRESET_CHANGED',
+        status: 409
+      })
+    )
+
+    database.close()
+    databases.splice(databases.indexOf(database), 1)
+    const reopenedDatabase = new TaskTTYDatabase(config.databasePath)
+    databases.push(reopenedDatabase)
+    const reconstructed = new TaskTTYService({
+      config,
+      database: reopenedDatabase,
+      runner,
+      git: new GitAdapter(runner),
+      tmux: new TmuxAdapter(
+        runner,
+        config.runtimeDir,
+        'tmux',
+        '/launcher with spaces.js'
+      ),
+      gh: new GhAdapter(runner)
+    })
+    expect(reconstructed.listTerminalPresets()).toEqual([updated])
+  })
+
   it('shares overlapping project snapshot reconciliation', async () => {
     const { main, runner, service } = await fixture()
     await service.registerProject(main)

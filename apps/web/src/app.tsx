@@ -13,12 +13,15 @@ import { createPortal } from 'react-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { io, type Socket } from 'socket.io-client'
 import {
+  ArrowDownIcon,
   ArrowPathIcon,
+  ArrowUpIcon,
   Bars3Icon,
   CheckIcon,
   ChevronRightIcon,
   CommandLineIcon,
   FolderIcon,
+  PencilIcon,
   PlusIcon,
   SwatchIcon,
   TrashIcon,
@@ -28,7 +31,11 @@ import {
   parseEventsSnapshot,
   parseProductEvent,
   parseTerminalRuntimeMetadata,
-  SOCKET_IO_PATH
+  SOCKET_IO_PATH,
+  TERMINAL_ARGUMENT_MAX_LENGTH,
+  TERMINAL_EXECUTABLE_MAX_LENGTH,
+  TERMINAL_NAME_MAX_LENGTH,
+  TERMINAL_PRESET_ARGUMENT_MAX_COUNT
 } from '@tasktty/shared'
 import type {
   EventsClientToServerEvents,
@@ -37,6 +44,7 @@ import type {
   ProjectRecord,
   RecentProjectRecord,
   RemovePreview,
+  TerminalPreset,
   TerminalRecord,
   WorktreeRecord
 } from '@tasktty/shared'
@@ -135,6 +143,7 @@ function needsManualCleanup(worktree: WorktreeRecord): boolean {
 type Modal =
   | { type: 'project' }
   | { type: 'worktree'; project: ProjectRecord }
+  | { type: 'presets' }
   | { type: 'remove'; worktree: WorktreeRecord; preview: RemovePreview }
   | null
 
@@ -142,6 +151,7 @@ type RemovalStage = 'checking' | 'removing'
 
 const projectsQueryKey = ['projects'] as const
 const recentProjectsQueryKey = ['recent-projects'] as const
+const terminalPresetsQueryKey = ['terminal-presets'] as const
 
 const PROJECT_COLOR_OPTIONS: Array<{
   value: ProjectColor | null
@@ -226,6 +236,7 @@ interface PendingWorktreeCreation {
   canonicalName: string
   destinationPath: string
   base: 'default' | 'current'
+  initialTerminal: { name: string; argv?: string[] }
   sourceWorktreeId?: string
 }
 
@@ -247,6 +258,15 @@ export default function App() {
     refetchOnWindowFocus: true
   })
   const projects = projectsQuery.data ?? []
+  const presetsQuery = useQuery({
+    queryKey: terminalPresetsQueryKey,
+    queryFn: apiClient.terminalPresets,
+    staleTime: 0,
+    refetchInterval: 5_000,
+    refetchOnReconnect: true,
+    refetchOnWindowFocus: true
+  })
+  const presets = presetsQuery.data ?? []
   const [selectedTerminalId, setSelectedTerminalId] = useState<string | null>(
     () => localStorage.getItem('tasktty-terminal')
   )
@@ -668,6 +688,7 @@ export default function App() {
         pending.projectId,
         pending.typedName,
         pending.base,
+        pending.initialTerminal,
         pending.sourceWorktreeId
       ),
     onSuccess: async (result, pending) => {
@@ -732,6 +753,7 @@ export default function App() {
     name: string,
     base: 'default' | 'current',
     destination: WorktreeDestination,
+    initialTerminal: { name: string; argv?: string[] },
     sourceWorktreeId?: string
   ) => {
     if (pendingWorktrees.some((item) => item.projectId === project.id)) {
@@ -745,6 +767,10 @@ export default function App() {
       canonicalName: destination.name,
       destinationPath: destination.path,
       base,
+      initialTerminal: {
+        name: initialTerminal.name,
+        ...(initialTerminal.argv ? { argv: [...initialTerminal.argv] } : {})
+      },
       ...(sourceWorktreeId ? { sourceWorktreeId } : {})
     }
     setPendingWorktrees((current) => [...current, pending])
@@ -756,8 +782,15 @@ export default function App() {
   }
 
   const createTerminal = useMutation({
-    mutationFn: (worktree: WorktreeRecord) =>
-      apiClient.createTerminal(worktree.id, 'Terminal'),
+    mutationFn: ({
+      worktreeId,
+      name,
+      argv
+    }: {
+      worktreeId: string
+      name: string
+      argv?: string[]
+    }) => apiClient.createTerminal(worktreeId, name, argv),
     onSuccess: async (terminal) => {
       setFocusTerminalId(terminal.id)
       selectTerminal(terminal)
@@ -1555,13 +1588,24 @@ export default function App() {
           worktree={selectedWorktree}
           terminal={selectedTerminal}
           focusTerminalId={focusTerminalId}
+          presets={presets}
+          presetsLoading={presetsQuery.isPending}
+          presetsError={presetsQuery.isError}
           onSelectTerminal={selectTerminal}
-          onCreateTerminal={() =>
-            selectedWorktree && createTerminal.mutate(selectedWorktree)
+          onCreateTerminal={(input) =>
+            selectedWorktree &&
+            createTerminal.mutate({
+              worktreeId: selectedWorktree.id,
+              name: input.name,
+              ...(input.argv ? { argv: [...input.argv] } : {})
+            })
+          }
+          onManagePresets={(trigger) =>
+            openModal({ type: 'presets' }, trigger ?? undefined)
           }
           creatingTerminal={
             createTerminal.isPending &&
-            createTerminal.variables?.id === selectedWorktree?.id
+            createTerminal.variables?.worktreeId === selectedWorktree?.id
           }
           mutationsDisabled={selectedWorktreeMutationsDisabled}
           onCloseTerminal={(terminal) => {
@@ -1625,6 +1669,10 @@ export default function App() {
           close={() => setModal(null)}
           restoreFocusTo={modalTriggerRef.current}
           setError={setError}
+          presets={presets}
+          presetsLoading={presetsQuery.isPending}
+          presetsError={presetsQuery.isError}
+          onRetryPresets={() => void presetsQuery.refetch()}
           onCreateWorktree={submitWorktreeCreation}
           removalStage={
             modal.type === 'remove'
@@ -1766,6 +1814,10 @@ function ActionModal({
   close,
   restoreFocusTo,
   setError,
+  presets,
+  presetsLoading,
+  presetsError,
+  onRetryPresets,
   onCreateWorktree,
   removalStage,
   onConfirmRemoval,
@@ -1775,11 +1827,16 @@ function ActionModal({
   close: () => void
   restoreFocusTo: HTMLElement | null
   setError: (value: string | null) => void
+  presets: TerminalPreset[]
+  presetsLoading: boolean
+  presetsError: boolean
+  onRetryPresets: () => void
   onCreateWorktree: (
     project: ProjectRecord,
     name: string,
     base: 'default' | 'current',
     destination: WorktreeDestination,
+    initialTerminal: { name: string; argv?: string[] },
     sourceWorktreeId?: string
   ) => void
   removalStage: RemovalStage | null
@@ -1840,7 +1897,11 @@ function ActionModal({
         ref={dialogRef}
         className={cn(
           'modal relative max-h-[calc(100dvh-2rem)] w-full overflow-y-auto rounded-xl bg-zinc-900 p-6 shadow-2xl ring-1 ring-white/10 max-[700px]:max-h-[90dvh] max-[700px]:max-w-none max-[700px]:rounded-b-none max-[700px]:p-5 max-[700px]:pb-[calc(1.25rem+env(safe-area-inset-bottom))]',
-          modal.type === 'worktree' ? 'max-w-md' : 'max-w-lg'
+          modal.type === 'presets'
+            ? 'max-w-3xl'
+            : modal.type === 'worktree'
+              ? 'max-w-md'
+              : 'max-w-lg'
         )}
         role="dialog"
         aria-modal="true"
@@ -1864,16 +1925,36 @@ function ActionModal({
         {modal.type === 'worktree' && (
           <WorktreeForm
             project={modal.project}
+            presets={presets}
+            presetsLoading={presetsLoading}
+            presetsError={presetsError}
+            onRetryPresets={onRetryPresets}
             busy={false}
-            onSubmit={(name, base, destination, sourceWorktreeId) =>
+            onSubmit={(
+              name,
+              base,
+              destination,
+              initialTerminal,
+              sourceWorktreeId
+            ) =>
               onCreateWorktree(
                 modal.project,
                 name,
                 base,
                 destination,
+                initialTerminal,
                 sourceWorktreeId
               )
             }
+          />
+        )}
+        {modal.type === 'presets' && (
+          <TerminalPresetsManager
+            presets={presets}
+            loading={presetsLoading}
+            loadError={presetsError}
+            onRetry={onRetryPresets}
+            setError={setError}
           />
         )}
         {modal.type === 'remove' && (
@@ -2019,25 +2100,49 @@ function ProjectForm({
 
 function WorktreeForm({
   project,
+  presets,
+  presetsLoading,
+  presetsError,
+  onRetryPresets,
   busy,
   onSubmit
 }: {
   project: ProjectRecord
+  presets: TerminalPreset[]
+  presetsLoading: boolean
+  presetsError: boolean
+  onRetryPresets: () => void
   busy: boolean
   onSubmit: (
     name: string,
     base: 'default' | 'current',
     destination: WorktreeDestination,
+    initialTerminal: { name: string; argv?: string[] },
     sourceWorktreeId?: string
   ) => void
 }) {
   const [name, setName] = useState('')
   const [debouncedName, setDebouncedName] = useState('')
   const [baseValue, setBaseValue] = useState('default')
+  const [initialPresetId, setInitialPresetId] = useState('shell')
+  const [initialPresetNotice, setInitialPresetNotice] = useState<string | null>(
+    null
+  )
   useEffect(() => {
     const timeout = window.setTimeout(() => setDebouncedName(name), 250)
     return () => window.clearTimeout(timeout)
   }, [name])
+  useEffect(() => {
+    if (
+      initialPresetId !== 'shell' &&
+      !presets.some((preset) => preset.id === initialPresetId)
+    ) {
+      setInitialPresetId('shell')
+      setInitialPresetNotice(
+        'The selected preset was deleted. Initial terminal changed to Shell.'
+      )
+    }
+  }, [initialPresetId, presets])
   const destinationQuery = useQuery({
     queryKey: ['worktree-destination', project.id, debouncedName],
     queryFn: () => apiClient.worktreeDestination(project.id, debouncedName),
@@ -2055,10 +2160,19 @@ function WorktreeForm({
           return
         }
 
+        const selectedPreset = presets.find(
+          (preset) => preset.id === initialPresetId
+        )
         onSubmit(
           name,
           base,
           destinationQuery.data,
+          selectedPreset
+            ? {
+                name: selectedPreset.name,
+                argv: [selectedPreset.executable, ...selectedPreset.args]
+              }
+            : { name: 'Shell' },
           base === 'current' ? baseValue : undefined
         )
       }}
@@ -2098,6 +2212,50 @@ function WorktreeForm({
             ))}
         </NativeSelect>
       </FormField>
+      <FormField>
+        <Label htmlFor="initial-terminal-preset">Initial terminal</Label>
+        <NativeSelect
+          id="initial-terminal-preset"
+          name="initial-terminal-preset"
+          value={initialPresetId}
+          onChange={(event) => {
+            setInitialPresetId(event.target.value)
+            setInitialPresetNotice(null)
+          }}
+        >
+          <option value="shell">Shell</option>
+          {presets.map((preset) => (
+            <option key={preset.id} value={preset.id}>
+              {preset.name}
+            </option>
+          ))}
+        </NativeSelect>
+        {initialPresetNotice && (
+          <p className="form-note" role="status">
+            {initialPresetNotice}
+          </p>
+        )}
+        {presetsLoading && (
+          <p className="form-note" role="status">
+            Loading terminal presets…
+          </p>
+        )}
+        {presetsError && (
+          <div className="flex items-center justify-between gap-3">
+            <p className="form-note">
+              Presets could not be loaded. Shell is still available.
+            </p>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={onRetryPresets}
+            >
+              Retry
+            </Button>
+          </div>
+        )}
+      </FormField>
       <p
         className={cn(
           'form-note min-h-5 truncate',
@@ -2128,6 +2286,435 @@ function WorktreeForm({
         {busy ? 'Creating…' : 'Create worktree'}
       </Button>
     </form>
+  )
+}
+
+function TerminalPresetsManager({
+  presets,
+  loading,
+  loadError,
+  onRetry,
+  setError
+}: {
+  presets: TerminalPreset[]
+  loading: boolean
+  loadError: boolean
+  onRetry: () => void
+  setError: (value: string | null) => void
+}) {
+  const queryClient = useQueryClient()
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [loadedUpdatedAt, setLoadedUpdatedAt] = useState<string | null>(null)
+  const [name, setName] = useState('')
+  const [executable, setExecutable] = useState('')
+  const [args, setArgs] = useState<string[]>([])
+  const [notice, setNotice] = useState<string | null>(null)
+
+  const resetForm = () => {
+    setEditingId(null)
+    setLoadedUpdatedAt(null)
+    setName('')
+    setExecutable('')
+    setArgs([])
+    setNotice(null)
+  }
+
+  useEffect(() => {
+    if (!editingId) {
+      return
+    }
+
+    const preset = presets.find((candidate) => candidate.id === editingId)
+    if (!preset) {
+      setEditingId(null)
+      setLoadedUpdatedAt(null)
+      setName('')
+      setExecutable('')
+      setArgs([])
+      setNotice('That preset was deleted. You can create a new one.')
+      return
+    }
+
+    if (preset.updatedAt !== loadedUpdatedAt) {
+      setLoadedUpdatedAt(preset.updatedAt)
+      setName(preset.name)
+      setExecutable(preset.executable)
+      setArgs([...preset.args])
+      if (loadedUpdatedAt) {
+        setNotice(
+          'This preset changed, so the latest saved values were loaded.'
+        )
+      }
+    }
+  }, [editingId, loadedUpdatedAt, presets])
+
+  const savePreset = useMutation({
+    mutationFn: ({
+      presetId,
+      input,
+      expectedUpdatedAt
+    }: {
+      presetId: string | null
+      input: Pick<TerminalPreset, 'name' | 'executable' | 'args'>
+      expectedUpdatedAt: string | null
+    }) =>
+      presetId
+        ? apiClient.updateTerminalPreset(presetId, input, expectedUpdatedAt!)
+        : apiClient.createTerminalPreset(input),
+    onSuccess: (preset, variables) => {
+      queryClient.setQueryData<TerminalPreset[]>(
+        terminalPresetsQueryKey,
+        (current) =>
+          variables.presetId
+            ? current?.map((candidate) =>
+                candidate.id === preset.id ? preset : candidate
+              )
+            : [...(current ?? []), preset]
+      )
+      setEditingId(preset.id)
+      setLoadedUpdatedAt(preset.updatedAt)
+      setName(preset.name)
+      setExecutable(preset.executable)
+      setArgs([...preset.args])
+      setNotice('Preset saved.')
+    },
+    onError: (mutationError) => {
+      void queryClient.invalidateQueries({ queryKey: terminalPresetsQueryKey })
+      showError(setError)(mutationError)
+    },
+    onSettled: () =>
+      queryClient.invalidateQueries({ queryKey: terminalPresetsQueryKey })
+  })
+
+  const deletePreset = useMutation({
+    mutationFn: (preset: TerminalPreset) =>
+      apiClient.deleteTerminalPreset(preset.id, preset.updatedAt),
+    onSuccess: (_, deletedPreset) => {
+      queryClient.setQueryData<TerminalPreset[]>(
+        terminalPresetsQueryKey,
+        (current) => current?.filter((preset) => preset.id !== deletedPreset.id)
+      )
+      if (editingId === deletedPreset.id) {
+        resetForm()
+        setNotice('Preset deleted.')
+      }
+    },
+    onError: (mutationError) => {
+      void queryClient.invalidateQueries({ queryKey: terminalPresetsQueryKey })
+      showError(setError)(mutationError)
+    },
+    onSettled: () =>
+      queryClient.invalidateQueries({ queryKey: terminalPresetsQueryKey })
+  })
+
+  const busy = savePreset.isPending || deletePreset.isPending
+  return (
+    <div className="flex flex-col gap-5">
+      <ModalHeading eyebrow="Terminals" title="Terminal presets" />
+      <p className="form-note max-w-[65ch]">
+        Presets keep the executable separate from its ordered arguments. Shell
+        is built in and always starts TaskTTY’s configured login shell.
+      </p>
+      <div className="grid min-h-0 gap-5 md:grid-cols-[minmax(12rem,0.8fr)_minmax(0,1.35fr)]">
+        <section
+          className="flex min-w-0 flex-col gap-2"
+          aria-labelledby="saved-presets-title"
+        >
+          <div className="flex items-center justify-between gap-3">
+            <h3
+              id="saved-presets-title"
+              className="text-sm font-medium text-zinc-200"
+            >
+              Saved presets
+            </h3>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              disabled={busy}
+              onClick={resetForm}
+            >
+              <PlusIcon /> New preset
+            </Button>
+          </div>
+          <div className="max-h-72 overflow-y-auto rounded-lg bg-white/3 p-1 ring-1 ring-white/8 [scrollbar-color:var(--color-zinc-700)_transparent]">
+            <div className="flex min-h-11 items-center gap-2 rounded-md px-2.5 py-2">
+              <CommandLineIcon className="shrink-0 text-zinc-500" />
+              <span className="grid min-w-0 flex-1 gap-0.5">
+                <span className="text-sm font-medium text-zinc-100">Shell</span>
+                <span className="text-xs text-zinc-500">
+                  Built in · login shell
+                </span>
+              </span>
+            </div>
+            {presets.map((preset) => (
+              <div
+                key={preset.id}
+                className={cn(
+                  'group/preset flex min-h-11 items-center gap-1 rounded-md px-2.5 py-1.5',
+                  editingId === preset.id && 'bg-white/7'
+                )}
+              >
+                <button
+                  type="button"
+                  className="grid min-w-0 flex-1 cursor-pointer gap-0.5 rounded-sm text-left outline-none focus-visible:outline-2 focus-visible:outline-cyan-400"
+                  disabled={busy}
+                  onClick={() => {
+                    setEditingId(preset.id)
+                    setLoadedUpdatedAt(preset.updatedAt)
+                    setName(preset.name)
+                    setExecutable(preset.executable)
+                    setArgs([...preset.args])
+                    setNotice(null)
+                  }}
+                >
+                  <span className="truncate text-sm font-medium text-zinc-100">
+                    {preset.name}
+                  </span>
+                  <span className="truncate text-xs text-zinc-500">
+                    {preset.executable} · {preset.args.length}{' '}
+                    {preset.args.length === 1 ? 'argument' : 'arguments'}
+                  </span>
+                </button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  className="size-11 min-[701px]:size-7"
+                  aria-label={`Edit ${preset.name}`}
+                  disabled={busy}
+                  onClick={() => {
+                    setEditingId(preset.id)
+                    setLoadedUpdatedAt(preset.updatedAt)
+                    setName(preset.name)
+                    setExecutable(preset.executable)
+                    setArgs([...preset.args])
+                    setNotice(null)
+                  }}
+                >
+                  <PencilIcon />
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  className="size-11 hover:text-rose-300 min-[701px]:size-7"
+                  aria-label={`Delete ${preset.name}`}
+                  disabled={busy}
+                  onClick={() => {
+                    if (
+                      window.confirm(`Delete terminal preset “${preset.name}”?`)
+                    ) {
+                      deletePreset.mutate(preset)
+                    }
+                  }}
+                >
+                  <TrashIcon />
+                </Button>
+              </div>
+            ))}
+            {!loading && !loadError && presets.length === 0 && (
+              <p className="px-2.5 py-3 text-sm text-zinc-500">
+                No saved presets yet.
+              </p>
+            )}
+            {loading && (
+              <p className="px-2.5 py-3 text-sm text-zinc-500" role="status">
+                Loading presets…
+              </p>
+            )}
+            {loadError && (
+              <div className="flex items-center justify-between gap-3 px-2.5 py-3">
+                <p className="text-sm text-zinc-400">Could not load presets.</p>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={onRetry}
+                >
+                  Retry
+                </Button>
+              </div>
+            )}
+          </div>
+        </section>
+        <form
+          className="flex min-w-0 flex-col gap-4"
+          onSubmit={(event) => {
+            event.preventDefault()
+            savePreset.mutate({
+              presetId: editingId,
+              input: { name, executable, args: [...args] },
+              expectedUpdatedAt: loadedUpdatedAt
+            })
+          }}
+        >
+          <div className="flex items-center justify-between gap-3">
+            <h3 className="text-sm font-medium text-zinc-200">
+              {editingId ? 'Edit preset' : 'New preset'}
+            </h3>
+            {notice && (
+              <span className="text-xs text-zinc-400" role="status">
+                {notice}
+              </span>
+            )}
+          </div>
+          <FormField>
+            <Label htmlFor="preset-name">Name</Label>
+            <Input
+              id="preset-name"
+              name="preset-name"
+              value={name}
+              maxLength={TERMINAL_NAME_MAX_LENGTH}
+              disabled={busy}
+              autoFocus
+              required
+              onChange={(event) => {
+                setName(event.target.value)
+                setNotice(null)
+              }}
+              placeholder="Code review"
+            />
+          </FormField>
+          <FormField>
+            <Label htmlFor="preset-executable">Executable</Label>
+            <Input
+              id="preset-executable"
+              name="preset-executable"
+              value={executable}
+              maxLength={TERMINAL_EXECUTABLE_MAX_LENGTH}
+              disabled={busy}
+              required
+              onChange={(event) => {
+                setExecutable(event.target.value)
+                setNotice(null)
+              }}
+              placeholder="npx"
+            />
+          </FormField>
+          <fieldset className="flex min-w-0 flex-col gap-2" disabled={busy}>
+            <legend className="sr-only">Arguments</legend>
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-sm font-medium text-zinc-200">
+                Arguments
+              </span>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                disabled={
+                  busy || args.length >= TERMINAL_PRESET_ARGUMENT_MAX_COUNT
+                }
+                onClick={() => {
+                  setArgs((current) => [...current, ''])
+                  setNotice(null)
+                }}
+              >
+                <PlusIcon /> Add argument
+              </Button>
+            </div>
+            {args.length === 0 && (
+              <p className="form-note">
+                No arguments. Empty arguments are preserved when added.
+              </p>
+            )}
+            <div className="flex max-h-64 flex-col gap-2 overflow-y-auto p-0.5 [scrollbar-color:var(--color-zinc-700)_transparent]">
+              {args.map((argument, index) => (
+                <div
+                  className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto_auto_auto] items-center gap-1"
+                  key={index}
+                >
+                  <Label
+                    className="sr-only"
+                    htmlFor={`preset-argument-${index}`}
+                  >
+                    Argument {index + 1}
+                  </Label>
+                  <Input
+                    id={`preset-argument-${index}`}
+                    value={argument}
+                    maxLength={TERMINAL_ARGUMENT_MAX_LENGTH}
+                    onChange={(event) => {
+                      const value = event.target.value
+                      setArgs((current) =>
+                        current.map((item, itemIndex) =>
+                          itemIndex === index ? value : item
+                        )
+                      )
+                      setNotice(null)
+                    }}
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    className="size-11 min-[701px]:size-7"
+                    aria-label={`Move argument ${index + 1} up`}
+                    disabled={index === 0}
+                    onClick={() =>
+                      setArgs((current) => {
+                        const next = [...current]
+                        const previous = next[index - 1]!
+                        next[index - 1] = next[index]!
+                        next[index] = previous
+                        return next
+                      })
+                    }
+                  >
+                    <ArrowUpIcon />
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    className="size-11 min-[701px]:size-7"
+                    aria-label={`Move argument ${index + 1} down`}
+                    disabled={index === args.length - 1}
+                    onClick={() =>
+                      setArgs((current) => {
+                        const next = [...current]
+                        const following = next[index + 1]!
+                        next[index + 1] = next[index]!
+                        next[index] = following
+                        return next
+                      })
+                    }
+                  >
+                    <ArrowDownIcon />
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    className="size-11 hover:text-rose-300 min-[701px]:size-7"
+                    aria-label={`Remove argument ${index + 1}`}
+                    onClick={() =>
+                      setArgs((current) =>
+                        current.filter((_, itemIndex) => itemIndex !== index)
+                      )
+                    }
+                  >
+                    <TrashIcon />
+                  </Button>
+                </div>
+              ))}
+            </div>
+          </fieldset>
+          <Button
+            type="submit"
+            className="self-end"
+            disabled={
+              busy ||
+              !name.trim() ||
+              !executable.trim() ||
+              (editingId !== null && loadedUpdatedAt === null)
+            }
+          >
+            {savePreset.isPending ? 'Saving…' : 'Save preset'}
+          </Button>
+        </form>
+      </div>
+    </div>
   )
 }
 
