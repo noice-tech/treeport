@@ -1379,6 +1379,7 @@ test.describe('desktop worktree terminal UI', () => {
       await trigger.click()
       const dialog = page.getByRole('dialog')
       await expect(dialog).toBeVisible()
+      await expect(dialog.getByLabel('Worktree name')).toBeFocused()
       await dialog.getByLabel('Worktree name').fill('focus-test')
       const submit = dialog.getByRole('button', { name: 'Create worktree' })
       await expect(submit).toBeEnabled()

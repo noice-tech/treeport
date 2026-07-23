@@ -1896,7 +1896,9 @@ function ActionModal({
     const appFrame = document.querySelector<HTMLElement>('.app-frame')
     appFrame?.setAttribute('inert', '')
     const frame = window.requestAnimationFrame(() => {
-      const autofocus = dialog.querySelector<HTMLElement>('[autofocus]')
+      const autofocus = dialog.querySelector<HTMLElement>(
+        '[data-modal-autofocus], [autofocus]'
+      )
       const first = autofocus ?? focusableElements(dialog)[0]
       if (first) {
         first.focus()
@@ -2154,6 +2156,7 @@ function WorktreeForm({
           aria-label="Worktree name"
           required
           autoFocus
+          data-modal-autofocus
           aria-invalid={destinationQuery.isError}
         />
       </FormField>
