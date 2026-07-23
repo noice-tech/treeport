@@ -140,8 +140,11 @@ async function mockApp(
     keyboardPlatform?: string
     startClosed?: boolean
     terminalFree?: boolean
+    worktreeFree?: boolean
     includeSecondProject?: boolean
     desktopBridge?: boolean
+    initialPath?: string
+    delayProjects?: boolean
   } = {}
 ) {
   if (options.keyboardPlatform) {
@@ -497,6 +500,10 @@ async function mockApp(
     }
   }
 
+  if (options.worktreeFree) {
+    state.worktrees = []
+  }
+
   const secondState = structuredClone(project)
   secondState.id = 'proj_2'
   secondState.name = 'another-project'
@@ -526,6 +533,12 @@ async function mockApp(
       ]
     : []
   let projectRequests = 0
+  let releaseProjects: (() => void) | null = null
+  const projectsGate = options.delayProjects
+    ? new Promise<void>((resolve) => {
+        releaseProjects = resolve
+      })
+    : null
   let closeRequests = 0
   let failClose = false
   let removePreviewRequests = 0
@@ -674,6 +687,10 @@ async function mockApp(
 
     if (pathname === '/api/projects' && route.request().method() === 'GET') {
       projectRequests += 1
+      if (projectsGate) {
+        await projectsGate
+      }
+
       await route.fulfill({ json: { projects: openProjects } })
       return
     }
@@ -993,12 +1010,13 @@ async function mockApp(
 
     await route.fulfill({ json: { ok: true } })
   })
-  await page.goto('/')
+  await page.goto(options.initialPath ?? '/')
   return {
     state,
     terminalPresets,
     recentProjects,
     projectRequests: () => projectRequests,
+    releaseProjects: () => releaseProjects?.(),
     closeRequests: () => closeRequests,
     failNextClose: () => {
       failClose = true
@@ -1043,6 +1061,163 @@ async function mockApp(
 
 test.describe('desktop worktree terminal UI', () => {
   test.skip(({ isMobile }) => Boolean(isMobile))
+
+  test('keeps one live project event socket under Strict Mode', async ({
+    page
+  }) => {
+    await mockApp(page)
+    await expect(
+      page.getByRole('button', {
+        name: 'Switch project, current project example'
+      })
+    ).toBeVisible()
+
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            ((window as any).__wsInstances ?? []).filter(
+              (socket: { namespace: string; readyState: number }) =>
+                socket.namespace === '/events' && socket.readyState === 1
+            ).length
+        )
+      )
+      .toBe(1)
+  })
+
+  test('migrates legacy workspace storage into one validated route hint', async ({
+    page
+  }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem('tasktty-active-project', 'proj_1')
+      localStorage.setItem('tasktty-terminal', 'term_pi')
+    })
+    await mockApp(page)
+
+    await expect(page).toHaveURL(
+      /\/projects\/proj_1\/worktrees\/wt_topic\/terminals\/term_pi$/
+    )
+    await expect
+      .poll(() =>
+        page.evaluate(() => ({
+          activeProject: localStorage.getItem('tasktty-active-project'),
+          terminal: localStorage.getItem('tasktty-terminal'),
+          route: localStorage.getItem('tasktty-last-workspace-route')
+        }))
+      )
+      .toEqual({
+        activeProject: null,
+        terminal: null,
+        route: '/projects/proj_1/worktrees/wt_topic/terminals/term_pi'
+      })
+  })
+
+  test('keeps a direct terminal route while project metadata loads', async ({
+    page
+  }) => {
+    const pathname = '/projects/proj_1/worktrees/wt_topic/terminals/term_pi'
+    const mocked = await mockApp(page, [], {
+      initialPath: pathname,
+      delayProjects: true
+    })
+
+    expect(new URL(page.url()).pathname).toBe(pathname)
+    await expect(page.getByText('Loading repositories…')).toBeVisible()
+    mocked.releaseProjects()
+    await expect(
+      page.getByRole('button', {
+        name: 'Switch project, current project example'
+      })
+    ).toBeVisible()
+    await expect(page.locator('.terminal-row.selected')).toContainText(
+      'zsh · /worktrees/topic'
+    )
+    expect(new URL(page.url()).pathname).toBe(pathname)
+  })
+
+  test('keeps an empty project route canonical', async ({ page }) => {
+    await mockApp(page, [], {
+      worktreeFree: true,
+      initialPath: '/projects/proj_1'
+    })
+    await expect(page).toHaveURL(/\/projects\/proj_1$/)
+    await expect(page.getByText('Open a Git repository to begin.')).toHaveCount(
+      0
+    )
+  })
+
+  test('keeps an empty worktree route canonical', async ({ page }) => {
+    await mockApp(page, [], {
+      terminalFree: true,
+      initialPath: '/projects/proj_1/worktrees/wt_topic'
+    })
+    await expect(page).toHaveURL(/\/projects\/proj_1\/worktrees\/wt_topic$/)
+    await expect(page.getByText('topic', { exact: true })).toBeVisible()
+  })
+
+  test('replaces invalid entity IDs with a deterministic valid route', async ({
+    page
+  }) => {
+    await mockApp(page, [], {
+      initialPath: '/projects/missing/worktrees/missing/terminals/missing'
+    })
+
+    await expect(page).toHaveURL(
+      /\/projects\/proj_1\/worktrees\/wt_main\/terminals\/term_shell$/
+    )
+    await expect(
+      page.getByRole('button', {
+        name: 'Switch project, current project example'
+      })
+    ).toBeVisible()
+  })
+
+  test('uses push history for choices and replace history for route repair', async ({
+    page
+  }) => {
+    await mockApp(page)
+    await expect(page).toHaveURL(
+      /\/projects\/proj_1\/worktrees\/wt_main\/terminals\/term_shell$/
+    )
+
+    await page.getByRole('button', { name: 'Pi, running', exact: true }).click()
+    await expect(page).toHaveURL(
+      /\/projects\/proj_1\/worktrees\/wt_topic\/terminals\/term_pi$/
+    )
+    const terminalSockets = await page.evaluate(
+      () =>
+        ((window as any).__wsInstances ?? []).filter(
+          (socket: { url: string }) => socket.url.includes('#term_')
+        ).length
+    )
+    await page.goBack()
+    await expect(page).toHaveURL(
+      /\/projects\/proj_1\/worktrees\/wt_main\/terminals\/term_shell$/
+    )
+    await page.goForward()
+    await expect(page).toHaveURL(
+      /\/projects\/proj_1\/worktrees\/wt_topic\/terminals\/term_pi$/
+    )
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            ((window as any).__wsInstances ?? []).filter(
+              (socket: { url: string }) => socket.url.includes('#term_')
+            ).length
+        )
+      )
+      .toBe(terminalSockets)
+
+    await page.goto('/projects/proj_1/worktrees/wt_main/terminals/term_pi')
+    await expect(page).toHaveURL(
+      /\/projects\/proj_1\/worktrees\/wt_main\/terminals\/term_shell$/
+    )
+    await page.goBack()
+    await expect(page).toHaveURL(
+      /\/projects\/proj_1\/worktrees\/wt_topic\/terminals\/term_pi$/
+    )
+  })
 
   test('navigates and persists a desktop workspace', async ({ page }) => {
     await mockApp(page, [], { includeSecondProject: true })
@@ -1110,13 +1285,23 @@ test.describe('desktop worktree terminal UI', () => {
     ).toBeVisible()
     await expect(page.getByText('topic', { exact: true })).toHaveCount(0)
     await expect(page.getByText('another topic', { exact: true })).toBeVisible()
+    await expect(page).toHaveURL(
+      /\/projects\/proj_2\/worktrees\/second_wt_main\/terminals\/second_term_shell$/
+    )
     await expect
       .poll(() =>
-        page.evaluate(() => localStorage.getItem('tasktty-active-project'))
+        page.evaluate(() =>
+          localStorage.getItem('tasktty-last-workspace-route')
+        )
       )
-      .toBe('proj_2')
+      .toBe(
+        '/projects/proj_2/worktrees/second_wt_main/terminals/second_term_shell'
+      )
 
     await page.reload()
+    await expect(page).toHaveURL(
+      /\/projects\/proj_2\/worktrees\/second_wt_main\/terminals\/second_term_shell$/
+    )
     await expect(
       page.getByRole('button', {
         name: 'Switch project, current project another-project'
@@ -1128,6 +1313,55 @@ test.describe('desktop worktree terminal UI', () => {
     await separator.press('ArrowRight')
     await expect(separator).toHaveAttribute('aria-valuenow', '288')
   })
+  test('replaces a removed selected project with its adjacent project', async ({
+    page
+  }) => {
+    await mockApp(page, [], { includeSecondProject: true })
+    await expect(page).toHaveURL(
+      /\/projects\/proj_1\/worktrees\/wt_main\/terminals\/term_shell$/
+    )
+
+    await page
+      .getByRole('button', {
+        name: 'Switch project, current project example'
+      })
+      .click()
+    const projectOption = page
+      .getByRole('listitem')
+      .filter({ hasText: 'example' })
+    await projectOption.hover()
+    page.once('dialog', (dialog) => dialog.accept())
+    await page.getByRole('button', { name: 'Close project example' }).click()
+
+    await expect(page).toHaveURL(
+      /\/projects\/proj_2\/worktrees\/second_wt_main\/terminals\/second_term_shell$/
+    )
+    await expect(
+      page.getByRole('button', {
+        name: 'Switch project, current project another-project'
+      })
+    ).toBeVisible()
+  })
+
+  test('repairs the route after authoritative worktree removal', async ({
+    page
+  }) => {
+    const mocked = await mockApp(page, [], {
+      initialPath: '/projects/proj_1/worktrees/wt_topic/terminals/term_pi'
+    })
+    await expect(page.getByText('topic', { exact: true })).toBeVisible()
+
+    mocked.state.worktrees.splice(1, 1)
+    await page.evaluate(() =>
+      (window as any).__eventSource.emit('worktree.removed')
+    )
+
+    await expect(page).toHaveURL(
+      /\/projects\/proj_1\/worktrees\/wt_main\/terminals\/term_shell$/
+    )
+    await expect(page.getByText('topic', { exact: true })).toHaveCount(0)
+  })
+
   test('opens and closes a project across its full lifecycle', async ({
     page
   }) => {
@@ -1145,9 +1379,9 @@ test.describe('desktop worktree terminal UI', () => {
         name: 'Switch project, current project example'
       })
     ).toBeVisible()
-    await expect
-      .poll(() => page.evaluate(() => localStorage.getItem('tasktty-terminal')))
-      .toBe('term_shell')
+    await expect(page).toHaveURL(
+      /\/projects\/proj_1\/worktrees\/wt_main\/terminals\/term_shell$/
+    )
 
     const openSwitcher = () =>
       page
@@ -1193,8 +1427,13 @@ test.describe('desktop worktree terminal UI', () => {
       page.getByRole('button', { name: 'Open project' })
     ).toBeFocused()
     expect(mocked.closeRequests()).toBe(2)
+    await expect(page).toHaveURL(/\/$/)
     await expect
-      .poll(() => page.evaluate(() => localStorage.getItem('tasktty-terminal')))
+      .poll(() =>
+        page.evaluate(() =>
+          localStorage.getItem('tasktty-last-workspace-route')
+        )
+      )
       .toBeNull()
     await expect
       .poll(() =>
@@ -1939,7 +2178,7 @@ test.describe('desktop worktree terminal UI', () => {
   test('manages global terminal presets without a selected worktree', async ({
     page
   }) => {
-    await mockApp(page, [], { terminalFree: true })
+    await mockApp(page, [], { worktreeFree: true })
     const trigger = page.getByRole('button', { name: 'New terminal' })
     await expect(trigger).toBeEnabled()
     await trigger.click()
@@ -2124,6 +2363,7 @@ test.describe('desktop worktree terminal UI', () => {
     await closeButton.click()
     await closeRequest
     await expect(closeButton).toHaveCount(0)
+    await expect(page).toHaveURL(/\/projects\/proj_1\/worktrees\/wt_topic$/)
   })
 
   test('handles Electron terminal commands through the existing tab flows', async ({
@@ -2176,6 +2416,9 @@ test.describe('desktop worktree terminal UI', () => {
     await expect(
       page.getByRole('tab', { name: /^zsh · \/worktrees\/topic,/ })
     ).toHaveAttribute('data-state', 'active')
+    await expect(page).toHaveURL(
+      /\/projects\/proj_1\/worktrees\/wt_topic\/terminals\/term_pi$/
+    )
   })
 
   test('reconciles remote preset edits and deletion', async ({ page }) => {

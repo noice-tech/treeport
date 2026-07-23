@@ -97,7 +97,8 @@ describe('TmuxAdapter', () => {
       runner,
       runtime,
       '/tmux path/tmux',
-      launcher
+      launcher,
+      { environment: {}, platform: 'linux' }
     )
     const argv = [
       'tool with spaces',
@@ -405,18 +406,23 @@ describe('TmuxAdapter', () => {
     ])
   })
 
-  it('treats an absent tmux server as an empty terminal inventory', async () => {
-    const runtime = await fs.mkdtemp(path.join(os.tmpdir(), 'tasktty-runtime-'))
-    temporary.push(runtime)
-    const runner = new RecordingRunner()
-    runner.responses.push({
-      stdout: '',
-      stderr: 'no server running on socket',
-      exitCode: 1
-    })
-    const adapter = new TmuxAdapter(runner, runtime)
-    await expect(adapter.listSessions('socket')).resolves.toEqual([])
-  })
+  it.each(['no server running on socket', 'no current target'])(
+    'treats an absent or empty tmux server as an empty terminal inventory: %s',
+    async (stderr) => {
+      const runtime = await fs.mkdtemp(
+        path.join(os.tmpdir(), 'tasktty-runtime-')
+      )
+      temporary.push(runtime)
+      const runner = new RecordingRunner()
+      runner.responses.push({
+        stdout: '',
+        stderr,
+        exitCode: 1
+      })
+      const adapter = new TmuxAdapter(runner, runtime)
+      await expect(adapter.listSessions('socket')).resolves.toEqual([])
+    }
+  )
 
   it('removes discovered launch specs when killing a worktree server', async () => {
     const runtime = await fs.mkdtemp(path.join(os.tmpdir(), 'tasktty-runtime-'))
