@@ -235,6 +235,8 @@ export default function App() {
   const projectSwitcherDismissedIntoTerminalRef = useRef(false)
   const modalTriggerRef = useRef<HTMLElement | null>(null)
   const removalGuardsRef = useRef(new Set<string>())
+  const createTerminalGuardRef = useRef(false)
+  const closeTerminalGuardRef = useRef(false)
 
   useEffect(() => {
     if (projectsQuery.error && projectsQuery.data === undefined) {
@@ -743,7 +745,10 @@ export default function App() {
       selectTerminal(terminal)
       await queryClient.invalidateQueries({ queryKey: projectsQueryKey })
     },
-    onError: showError(setError)
+    onError: showError(setError),
+    onSettled: () => {
+      createTerminalGuardRef.current = false
+    }
   })
 
   const closeTerminal = useMutation({
@@ -768,8 +773,82 @@ export default function App() {
 
       await queryClient.invalidateQueries({ queryKey: projectsQueryKey })
     },
-    onError: showError(setError)
+    onError: showError(setError),
+    onSettled: () => {
+      closeTerminalGuardRef.current = false
+    }
   })
+
+  const createTerminalInSelectedWorktree = (input: {
+    name: string
+    argv?: string[]
+    returnToShell?: boolean
+  }) => {
+    if (
+      !selectedWorktree ||
+      selectedWorktreeMutationsDisabled ||
+      createTerminal.isPending ||
+      createTerminalGuardRef.current
+    ) {
+      return
+    }
+
+    createTerminalGuardRef.current = true
+    createTerminal.mutate({
+      worktreeId: selectedWorktree.id,
+      name: input.name,
+      ...(input.argv ? { argv: [...input.argv] } : {}),
+      ...(input.returnToShell ? { returnToShell: true } : {})
+    })
+  }
+
+  const requestCloseTerminal = (terminal: TerminalRecord) => {
+    if (closeTerminal.isPending || closeTerminalGuardRef.current) {
+      return
+    }
+
+    if (
+      foregroundProcesses.has(terminal.id) &&
+      !window.confirm(
+        `Close terminal “${runtimeTitles.get(terminal.id) || terminal.name}”? Its foreground process will be terminated.`
+      )
+    ) {
+      return
+    }
+
+    closeTerminalGuardRef.current = true
+    closeTerminal.mutate(terminal)
+  }
+
+  useEffect(() => {
+    if (!window.taskttyDesktop) {
+      return
+    }
+
+    return window.taskttyDesktop.onTerminalCommand((command) => {
+      if (modal || projectSwitcherOpen || (isMobile && drawerOpen)) {
+        return
+      }
+
+      if (command === 'new-terminal') {
+        createTerminalInSelectedWorktree({ name: 'Shell' })
+      } else if (selectedTerminal) {
+        requestCloseTerminal(selectedTerminal)
+      }
+    })
+  }, [
+    closeTerminal.isPending,
+    createTerminal.isPending,
+    drawerOpen,
+    foregroundProcesses,
+    isMobile,
+    modal,
+    projectSwitcherOpen,
+    runtimeTitles,
+    selectedTerminal,
+    selectedWorktree,
+    selectedWorktreeMutationsDisabled
+  ])
 
   const closeProject = useMutation({
     mutationFn: (project: ProjectRecord) => apiClient.closeProject(project.id),
@@ -1801,15 +1880,7 @@ export default function App() {
           presetsLoading={presetsQuery.isPending}
           presetsError={presetsQuery.isError}
           onSelectTerminal={selectTerminal}
-          onCreateTerminal={(input) =>
-            selectedWorktree &&
-            createTerminal.mutate({
-              worktreeId: selectedWorktree.id,
-              name: input.name,
-              ...(input.argv ? { argv: [...input.argv] } : {}),
-              ...(input.returnToShell ? { returnToShell: true } : {})
-            })
-          }
+          onCreateTerminal={createTerminalInSelectedWorktree}
           onManagePresets={(trigger) =>
             openModal({ type: 'presets' }, trigger ?? undefined)
           }
@@ -1818,16 +1889,7 @@ export default function App() {
             createTerminal.variables?.worktreeId === selectedWorktree?.id
           }
           mutationsDisabled={selectedWorktreeMutationsDisabled}
-          onCloseTerminal={(terminal) => {
-            if (
-              !foregroundProcesses.has(terminal.id) ||
-              window.confirm(
-                `Close terminal “${runtimeTitles.get(terminal.id) || terminal.name}”? Its foreground process will be terminated.`
-              )
-            ) {
-              closeTerminal.mutate(terminal)
-            }
-          }}
+          onCloseTerminal={requestCloseTerminal}
           closingTerminalId={
             closeTerminal.isPending ? closeTerminal.variables?.id : null
           }

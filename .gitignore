@@ -11,4 +11,5 @@ coverage/
 .DS_Store
 playwright-report/
 test-results/
+apps/desktop/out/
 .pi-subagents/

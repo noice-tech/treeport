@@ -5,10 +5,12 @@
   "type": "module",
   "scripts": {
     "dev": "pnpm --filter @tasktty/cli build && turbo run dev",
+    "dev:desktop": "pnpm --parallel --filter @tasktty/web --filter @tasktty/desktop dev:desktop",
     "build": "turbo run build",
     "start": "node scripts/start.mjs",
     "start:local": "pnpm --filter @tasktty/server start",
     "test": "pnpm --filter @tasktty/cli build && vitest run",
+    "test:desktop": "pnpm --filter @tasktty/desktop test",
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "test:integration:real": "TASKTTY_REAL_INTEGRATION=1 vitest run --config vitest.real.config.ts",
     "test:web": "playwright test",

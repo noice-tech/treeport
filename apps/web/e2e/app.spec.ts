@@ -141,6 +141,7 @@ async function mockApp(
     startClosed?: boolean
     terminalFree?: boolean
     includeSecondProject?: boolean
+    desktopBridge?: boolean
   } = {}
 ) {
   if (options.keyboardPlatform) {
@@ -150,6 +151,30 @@ async function mockApp(
         value: platform
       })
     }, options.keyboardPlatform)
+  }
+
+  if (options.desktopBridge) {
+    await page.addInitScript(() => {
+      const scope = window as any
+      let listener:
+        | ((command: 'new-terminal' | 'close-terminal') => void)
+        | null = null
+      scope.taskttyDesktop = Object.freeze({
+        onTerminalCommand(
+          next: (command: 'new-terminal' | 'close-terminal') => void
+        ) {
+          listener = next
+          return () => {
+            if (listener === next) {
+              listener = null
+            }
+          }
+        }
+      })
+      scope.__dispatchDesktopCommand = (
+        command: 'new-terminal' | 'close-terminal'
+      ) => listener?.(command)
+    })
   }
 
   await page.addInitScript((initialMetadata) => {
@@ -396,6 +421,8 @@ async function mockApp(
   let removePreviewOverride: Record<string, unknown> = {}
   let fileUploadRequests = 0
   let terminalCreations = 0
+  let terminalCreateGate: Promise<void> | null = null
+  let releaseTerminalCreate: (() => void) | null = null
   let staleRemovePreview: Record<string, unknown> | null = null
   let removeRequests = 0
   const removeRequestBodies: unknown[] = []
@@ -757,6 +784,12 @@ async function mockApp(
         argv?: string[]
       }
       terminalCreations += 1
+      if (terminalCreateGate) {
+        await terminalCreateGate
+      }
+
+      terminalCreateGate = null
+      releaseTerminalCreate = null
       const terminal = {
         id:
           terminalCreations === 1
@@ -860,6 +893,13 @@ async function mockApp(
     },
     removePreviewRequests: () => removePreviewRequests,
     fileUploadRequests: () => fileUploadRequests,
+    terminalCreations: () => terminalCreations,
+    delayNextTerminalCreate: () => {
+      terminalCreateGate = new Promise<void>((resolve) => {
+        releaseTerminalCreate = resolve
+      })
+      return () => releaseTerminalCreate?.()
+    },
     setRemovePreview: (value: Record<string, unknown>) => {
       removePreviewOverride = value
     },
@@ -1822,6 +1862,50 @@ test.describe('desktop worktree terminal UI', () => {
     await closeButton.click()
     await closeRequest
     await expect(closeButton).toHaveCount(0)
+  })
+
+  test('handles Electron terminal commands through the existing tab flows', async ({
+    page
+  }) => {
+    const mocked = await mockApp(page, [], { desktopBridge: true })
+    await page.locator('.worktree-row').filter({ hasText: 'topic' }).click()
+
+    const releaseCreate = mocked.delayNextTerminalCreate()
+    const createRequest = page.waitForRequest(
+      (request) =>
+        request.method() === 'POST' &&
+        new URL(request.url()).pathname === '/api/worktrees/wt_topic/terminals'
+    )
+    await page.evaluate(() =>
+      (window as any).__dispatchDesktopCommand('new-terminal')
+    )
+    expect((await createRequest).postDataJSON()).toEqual({ name: 'Shell' })
+    await page.evaluate(() =>
+      (window as any).__dispatchDesktopCommand('new-terminal')
+    )
+    await expect.poll(() => mocked.terminalCreations()).toBe(1)
+    releaseCreate()
+
+    await expect(
+      page.getByRole('tab', { name: /^dev · \/worktrees\/topic,/ })
+    ).toBeVisible()
+    await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
+
+    const closeRequest = page.waitForRequest(
+      (request) =>
+        request.method() === 'DELETE' &&
+        new URL(request.url()).pathname === '/api/terminals/term_dev'
+    )
+    await page.evaluate(() =>
+      (window as any).__dispatchDesktopCommand('close-terminal')
+    )
+    await closeRequest
+    await expect(
+      page.getByRole('tab', { name: /^dev · \/worktrees\/topic,/ })
+    ).toHaveCount(0)
+    await expect(
+      page.getByRole('tab', { name: /^zsh · \/worktrees\/topic,/ })
+    ).toHaveAttribute('data-state', 'active')
   })
 
   test('reconciles remote preset edits and deletion', async ({ page }) => {

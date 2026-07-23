@@ -45,13 +45,29 @@ Other development commands:
 pnpm test                  # unit and API tests
 pnpm test:integration      # deterministic adapter/service integration
 pnpm test:integration:real # disposable real Git/tmux/node-pty suite
-pnpm test:web              # Playwright desktop/mobile tests
+pnpm test:web              # Playwright browser desktop/mobile tests
+pnpm test:desktop          # Electron window, security, and menu integration
 pnpm typecheck
 pnpm lint
 pnpm build
 ```
 
 Turbo caches package builds and runs workspace dependencies in graph order. Playwright needs `pnpm exec playwright install chromium` once.
+
+### Electron desktop companion
+
+The Electron app is a thin companion for the existing loopback TaskTTY daemon. It does not start, bundle, or stop the daemon, so build and start TaskTTY locally before launching the desktop development shell:
+
+```sh
+pnpm build
+pnpm start:local
+# In another terminal:
+pnpm dev:desktop
+```
+
+The desktop window loads the same HTTP application and keeps API and Socket.IO behavior shared with the browser. **New Terminal** (`Cmd+T` on macOS, `Ctrl+T` elsewhere) creates a Shell in the selected worktree. **Close Terminal** (`Cmd+W` or `Ctrl+W`) uses the same destructive confirmation and adjacent-tab selection as the tab close button; it does not close the desktop window.
+
+`TASKTTY_DESKTOP_URL` may override the development URL, but the companion accepts loopback HTTP origins only. The workspace pins Forge 7.11.2 and overrides its transitive `@electron/rebuild` with 4.2.0 because pnpm 11 rejects the older rebuild release’s exotic Git dependency. Electron Forge packaging still requires a hoisted pnpm layout; packaging, native daemon dependencies, signing, notarization, and distribution are intentionally outside this companion MVP.
 
 ## First use
 
