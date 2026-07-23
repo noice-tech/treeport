@@ -114,7 +114,10 @@ export const terminalResizeSchema = z.strictObject({
   generation,
   ...dimensions
 })
-export const terminalTakeControlSchema = z.strictObject({ generation })
+export const terminalTakeControlSchema = z.strictObject({
+  generation,
+  ...dimensions
+})
 export const terminalOutputAckSchema = z.strictObject({
   streamId,
   sequence: z.number().int().nonnegative()
@@ -125,7 +128,13 @@ export const terminalReadySchema = z.strictObject({
   streamId,
   generation,
   controller: z.boolean(),
-  reset: z.literal('full')
+  reset: z.literal('full'),
+  ...dimensions,
+  revision: z.number().int().positive()
+})
+export const terminalDimensionsSchema = z.strictObject({
+  ...dimensions,
+  revision: z.number().int().positive()
 })
 export const terminalOutputSchema = z.strictObject({
   streamId,
@@ -158,6 +167,7 @@ export type TerminalResize = z.infer<typeof terminalResizeSchema>
 export type TerminalTakeControl = z.infer<typeof terminalTakeControlSchema>
 export type TerminalOutputAck = z.infer<typeof terminalOutputAckSchema>
 export type TerminalReady = z.infer<typeof terminalReadySchema>
+export type TerminalDimensions = z.infer<typeof terminalDimensionsSchema>
 export type TerminalOutput = z.infer<typeof terminalOutputSchema>
 export type TerminalTitle = z.infer<typeof terminalTitleSchema>
 export type TerminalProgressEvent = z.infer<typeof terminalProgressEventSchema>
@@ -185,6 +195,7 @@ export interface TerminalClientToServerEvents {
 
 export interface TerminalServerEventPayloads {
   ready: TerminalReady
+  dimensions: TerminalDimensions
   output: TerminalOutput
   title: TerminalTitle
   progress: TerminalProgressEvent
@@ -199,6 +210,7 @@ export type TerminalServerPayload =
 
 export interface TerminalServerToClientEvents {
   ready: (payload: TerminalReady) => void
+  dimensions: (payload: TerminalDimensions) => void
   output: (payload: TerminalOutput) => void
   title: (payload: TerminalTitle) => void
   progress: (payload: TerminalProgressEvent) => void
@@ -233,6 +245,7 @@ export function parseTerminalServerEvent<E extends TerminalServerEvent>(
 ): TerminalServerEventPayloads[E] | null {
   const schema = {
     ready: terminalReadySchema,
+    dimensions: terminalDimensionsSchema,
     output: terminalOutputSchema,
     title: terminalTitleSchema,
     progress: terminalProgressEventSchema,

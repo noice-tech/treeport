@@ -134,6 +134,8 @@ function fixture() {
   const tmux = {
     configPath: '/runtime/tmux.conf',
     configureServer: vi.fn(async () => undefined),
+    useManualWindowSize: vi.fn(async () => undefined),
+    resizeWindow: vi.fn(async () => undefined),
     sessionSize: vi.fn(async () => ({ cols: 100, rows: 30 })),
     sessionTitleState: vi.fn(async () => ({
       paneTitle: 'shell',
@@ -212,7 +214,10 @@ describe('TerminalAttachmentManager', () => {
       type: 'ready',
       reset: 'full',
       controller: true,
-      generation: 1
+      generation: 1,
+      cols: 100,
+      rows: 30,
+      revision: 1
     })
 
     const pty = ptys[0]!
@@ -276,6 +281,97 @@ describe('TerminalAttachmentManager', () => {
     expect(ptys[1]!.kills).toBe(0)
   })
 
+  it('broadcasts canonical dimensions before resizing every active attachment and tmux', async () => {
+    const { manager, ptys, tmux } = fixture()
+    const controller = new FakeTransport()
+    const viewer = new FakeTransport()
+    const controllerId = attach(manager, controller, 'tab-a')
+    await ready(controller)
+    attach(manager, viewer, 'tab-b')
+    await ready(viewer)
+
+    manager.message(controllerId, 'resize', {
+      generation: 1,
+      cols: 132,
+      rows: 47
+    })
+
+    await vi.waitFor(() =>
+      expect(tmux.resizeWindow).toHaveBeenCalledWith(
+        'socket',
+        'session',
+        132,
+        47
+      )
+    )
+    expect(ptys.map((pty) => pty.resizes)).toEqual([[[132, 47]], [[132, 47]]])
+    expect(controller.sent).toContainEqual({
+      type: 'dimensions',
+      cols: 132,
+      rows: 47,
+      revision: 2
+    })
+    expect(viewer.sent).toContainEqual({
+      type: 'dimensions',
+      cols: 132,
+      rows: 47,
+      revision: 2
+    })
+  })
+
+  it('queues input behind an in-flight canonical resize', async () => {
+    const { manager, ptys, tmux } = fixture()
+    let finishResize!: () => void
+    vi.mocked(tmux.resizeWindow).mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finishResize = resolve
+        })
+    )
+    const controller = new FakeTransport()
+    const controllerId = attach(manager, controller, 'tab-a')
+    await ready(controller)
+
+    manager.message(controllerId, 'resize', {
+      generation: 1,
+      cols: 120,
+      rows: 40
+    })
+    await vi.waitFor(() => expect(tmux.resizeWindow).toHaveBeenCalledOnce())
+    manager.message(controllerId, 'input', {
+      generation: 1,
+      data: 'after resize'
+    })
+
+    await Promise.resolve()
+    expect(ptys[0]!.writes).toEqual([])
+    finishResize()
+    await vi.waitFor(() => expect(ptys[0]!.writes).toEqual(['after resize']))
+  })
+
+  it('reconnects a paused viewer before a canonical grid boundary', async () => {
+    const { manager, ptys, tmux } = fixture()
+    const controller = new FakeTransport()
+    const viewer = new FakeTransport()
+    const controllerId = attach(manager, controller, 'tab-a')
+    await ready(controller)
+    attach(manager, viewer, 'tab-b')
+    await ready(viewer)
+    ptys[1]!.emit('x'.repeat(TERMINAL_OUTPUT_HIGH_WATERMARK))
+
+    manager.message(controllerId, 'resize', {
+      generation: 1,
+      cols: 120,
+      rows: 40
+    })
+
+    await vi.waitFor(() => expect(tmux.resizeWindow).toHaveBeenCalled())
+    expect(viewer.disconnects).toEqual([true])
+    expect(ptys[1]!.kills).toBe(1)
+    expect(ptys[1]!.resizes).toEqual([])
+    expect(ptys[0]!.resizes).toEqual([[120, 40]])
+  })
+
   it('extends a stalled viewer deadline only when ACK progress is made', async () => {
     const { manager, ptys } = fixture()
     const transport = new FakeTransport()
@@ -316,7 +412,11 @@ describe('TerminalAttachmentManager', () => {
     const multibyte = new FakeTransport()
     const secondId = attach(manager, multibyte, 'tab-b')
     await ready(multibyte)
-    manager.message(secondId, 'take_control', { generation: 1 })
+    manager.message(secondId, 'take_control', {
+      generation: 1,
+      cols: 100,
+      rows: 30
+    })
     const control = multibyte.sent.at(-1)!
     manager.message(secondId, 'input', {
       generation: control.generation,
@@ -338,27 +438,36 @@ describe('TerminalAttachmentManager', () => {
     const viewerId = attach(manager, viewer, 'tab-secret-b')
     await ready(viewer)
 
-    manager.message(viewerId, 'take_control', { generation: 0 })
+    manager.message(viewerId, 'take_control', {
+      generation: 0,
+      cols: 100,
+      rows: 30
+    })
     expect(viewer.sent.at(-1)).toMatchObject({
       type: 'control',
       controller: false,
       generation: firstReady.generation
     })
     manager.message(viewerId, 'take_control', {
-      generation: firstReady.generation
+      generation: firstReady.generation,
+      cols: 120,
+      rows: 40
     })
+    await vi.waitFor(() =>
+      expect(viewer.sent.at(-1)).toMatchObject({
+        type: 'control',
+        controller: true,
+        generation: 2
+      })
+    )
     const viewerControl = viewer.sent.at(-1)!
-    expect(viewerControl).toMatchObject({
-      type: 'control',
-      controller: true,
-      generation: 2
-    })
 
     manager.message(firstId, 'input', { generation: 1, data: 'stale' })
     manager.message(viewerId, 'binary', {
       generation: viewerControl.generation,
       data: '\0ÿ'
     })
+    await vi.waitFor(() => expect(ptys[1]!.writes).toHaveLength(1))
     expect(ptys[0]!.writes).toHaveLength(0)
     expect(Buffer.isBuffer(ptys[1]!.writes[0])).toBe(true)
     expect((ptys[1]!.writes[0] as Buffer).equals(Buffer.from([0, 255]))).toBe(
@@ -367,6 +476,50 @@ describe('TerminalAttachmentManager', () => {
     const eventData = publish.mock.calls.at(-1)?.[1]
     expect(eventData).toEqual({ terminalId: 'term', controlled: true })
     expect(JSON.stringify(eventData)).not.toContain('tab-secret')
+  })
+
+  it('does not publish stale control after a takeover disconnects during resize', async () => {
+    const { manager, publish, tmux } = fixture()
+    const controller = new FakeTransport()
+    const viewer = new FakeTransport()
+    attach(manager, controller, 'tab-a')
+    await ready(controller)
+    const viewerId = attach(manager, viewer, 'tab-b')
+    await ready(viewer)
+    publish.mockClear()
+    let finishResize!: () => void
+    vi.mocked(tmux.resizeWindow).mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finishResize = resolve
+        })
+    )
+
+    manager.message(viewerId, 'take_control', {
+      generation: 1,
+      cols: 120,
+      rows: 40
+    })
+    await vi.waitFor(() => expect(tmux.resizeWindow).toHaveBeenCalledOnce())
+    manager.close(viewerId)
+    finishResize()
+    await vi.waitFor(() =>
+      expect(
+        (
+          manager as unknown as {
+            operationTails: Map<string, Promise<void>>
+          }
+        ).operationTails.size
+      ).toBe(0)
+    )
+
+    expect(publish).toHaveBeenCalledWith('terminal.controller_changed', {
+      terminalId: 'term',
+      controlled: false
+    })
+    expect(
+      publish.mock.calls.some(([, data]) => data.controlled === true)
+    ).toBe(false)
   })
 
   it('reclaims control with a fresh PTY and stream during same-tab reconnect grace', async () => {

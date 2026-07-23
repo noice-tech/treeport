@@ -201,6 +201,9 @@ async function mockApp(
       namespace = ''
       streamId = crypto.randomUUID()
       generation = 1
+      cols = 100
+      rows = 30
+      revision = 1
       private messageHandler: ((event: { data: string }) => void) | null = null
       private closeHandler: (() => void) | null = null
 
@@ -314,6 +317,8 @@ async function mockApp(
           const auth = JSON.parse(data.slice(separator + 1))
           this.clientId = auth.clientId
           this.terminalId = auth.terminalId
+          this.cols = auth.cols
+          this.rows = auth.rows
           this.url = `${this.url}#${this.terminalId}`
           this.deliver(
             `40/terminals,${JSON.stringify({ sid: crypto.randomUUID() })}`
@@ -324,7 +329,10 @@ async function mockApp(
             streamId: this.streamId,
             generation: this.generation,
             controller,
-            reset: 'full'
+            reset: 'full',
+            cols: this.cols,
+            rows: this.rows,
+            revision: this.revision
           })
           this.deliverSocket('output', {
             streamId: this.streamId,
@@ -355,6 +363,19 @@ async function mockApp(
         )
         const message = { type, ...payload }
         scope.__wsSent = [...(scope.__wsSent || []), message]
+        if (type === 'resize' || type === 'take_control') {
+          if (payload.cols !== this.cols || payload.rows !== this.rows) {
+            this.cols = payload.cols
+            this.rows = payload.rows
+            this.revision += 1
+            this.deliverSocket('dimensions', {
+              cols: this.cols,
+              rows: this.rows,
+              revision: this.revision
+            })
+          }
+        }
+
         if (type === 'take_control') {
           scope.__controllerClientId = this.clientId
           this.generation += 1
@@ -1250,7 +1271,17 @@ test.describe('desktop worktree terminal UI', () => {
   test('synchronizes fallback, runtime, and cleared titles across every desktop consumer', async ({
     page
   }) => {
-    await mockApp(page)
+    await mockApp(page, [
+      {
+        terminalId: 'term_pi',
+        title: null,
+        hasForegroundProcess: true,
+        progress: null,
+        progressStartedAt: null,
+        progressClearedAt: null,
+        bell: null
+      }
+    ])
     await page.evaluate(() => ((window as any).__suppressInitialTitle = true))
     await page.getByRole('button', { name: 'Pi, running', exact: true }).click()
 

@@ -90,6 +90,8 @@ async function fixture(): Promise<NetworkFixture> {
   } as unknown as TaskTTYService
   const tmux = {
     configureServer: vi.fn(async () => undefined),
+    useManualWindowSize: vi.fn(async () => undefined),
+    resizeWindow: vi.fn(async () => undefined),
     sessionSize: vi.fn(async () => ({ cols: 100, rows: 30 })),
     attachArgs: vi.fn(() => ['attach-session', '-t', 'session'])
   } as unknown as TmuxAdapter
