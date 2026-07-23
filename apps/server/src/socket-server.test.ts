@@ -16,7 +16,7 @@ import type {
   TerminalRuntimeMetadata,
   TerminalServerToClientEvents
 } from '@tasktty/shared'
-import { SOCKET_IO_PATH } from '@tasktty/shared'
+import { SOCKET_IO_PATH, TERMINAL_PROTOCOL_VERSION } from '@tasktty/shared'
 import { TerminalAttachmentManager } from './attachments.js'
 import { createSocketServer } from './socket-server.js'
 import type { TerminalMetadataManager } from './terminal-metadata.js'
@@ -181,7 +181,8 @@ function eventClient(
 
 function terminalClient(
   url: string,
-  clientId = 'tab-a'
+  clientId = 'tab-a',
+  terminalProtocol: string | null = String(TERMINAL_PROTOCOL_VERSION)
 ): Socket<TerminalServerToClientEvents, TerminalClientToServerEvents> {
   return createClient(`${url}/terminals`, {
     path: SOCKET_IO_PATH,
@@ -189,6 +190,7 @@ function terminalClient(
     forceNew: true,
     reconnection: true,
     reconnectionDelay: 10,
+    ...(terminalProtocol === null ? {} : { query: { terminalProtocol } }),
     auth: { terminalId: 'term', clientId, cols: 100, rows: 30 }
   })
 }
@@ -315,6 +317,33 @@ describe('Socket.IO real network', () => {
     await closeClient(allowed)
     await closeClient(rejected)
     await closeClient(originless)
+  })
+
+  it('negotiates exact terminal protocol modes and rejects unsupported versions', async () => {
+    const value = await fixture()
+    const current = terminalClient(value.url, 'tab-current')
+    const currentReady = await new Promise<Record<string, unknown>>((resolve) =>
+      current.once('ready', (payload) => resolve(payload))
+    )
+    expect(currentReady).toMatchObject({ cols: 100, rows: 30, revision: 1 })
+
+    const legacy = terminalClient(value.url, 'tab-legacy', null)
+    const legacyReady = await new Promise<Record<string, unknown>>((resolve) =>
+      legacy.once('ready', (payload) => resolve(payload))
+    )
+    expect(legacyReady).not.toHaveProperty('cols')
+    expect(legacyReady).not.toHaveProperty('revision')
+
+    const unsupported = terminalClient(value.url, 'tab-unsupported', '3')
+    unsupported.io.reconnection(false)
+    const error = await new Promise<Error>((resolve) =>
+      unsupported.once('connect_error', resolve)
+    )
+    expect(error.message).toBe('UNSUPPORTED_TERMINAL_PROTOCOL')
+
+    await closeClient(current)
+    await closeClient(legacy)
+    await closeClient(unsupported)
   })
 
   it('reconnects with a fresh PTY and stream without replaying disconnected input', async () => {

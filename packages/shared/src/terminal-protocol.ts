@@ -1,6 +1,7 @@
 import { z } from 'zod'
 
 export const SOCKET_IO_PATH = '/api/socket.io/'
+export const TERMINAL_PROTOCOL_VERSION = 2
 export const TERMINAL_CONTROLLER_GRACE_MS = 10_000
 export const TERMINAL_OUTPUT_HIGH_WATERMARK = 256 * 1024
 export const TERMINAL_OUTPUT_LOW_WATERMARK = 64 * 1024
@@ -16,6 +17,9 @@ const dimensions = {
   cols: z.number().int().min(2).max(1_000),
   rows: z.number().int().min(2).max(500)
 }
+
+export const terminalSizeSchema = z.strictObject(dimensions)
+export type TerminalSize = z.infer<typeof terminalSizeSchema>
 
 export const terminalProgressSchema = z.strictObject({
   state: z.enum(['normal', 'error', 'indeterminate', 'paused']),
@@ -118,20 +122,30 @@ export const terminalTakeControlSchema = z.strictObject({
   generation,
   ...dimensions
 })
+export const terminalLegacyTakeControlSchema = z.strictObject({ generation })
 export const terminalOutputAckSchema = z.strictObject({
   streamId,
   sequence: z.number().int().nonnegative()
 })
 
-export const terminalReadySchema = z.strictObject({
+const terminalReadyBase = {
   connectionId: z.string().min(1).max(128),
   streamId,
   generation,
   controller: z.boolean(),
-  reset: z.literal('full'),
+  reset: z.literal('full')
+}
+
+export const terminalLegacyReadySchema = z.strictObject(terminalReadyBase)
+export const terminalReadyV2Schema = z.strictObject({
+  ...terminalReadyBase,
   ...dimensions,
   revision: z.number().int().positive()
 })
+export const terminalReadySchema = z.union([
+  terminalLegacyReadySchema,
+  terminalReadyV2Schema
+])
 export const terminalDimensionsSchema = z.strictObject({
   ...dimensions,
   revision: z.number().int().positive()
@@ -165,8 +179,16 @@ export type TerminalInput = z.infer<typeof terminalInputSchema>
 export type TerminalBinary = z.infer<typeof terminalBinarySchema>
 export type TerminalResize = z.infer<typeof terminalResizeSchema>
 export type TerminalTakeControl = z.infer<typeof terminalTakeControlSchema>
+export type TerminalLegacyTakeControl = z.infer<
+  typeof terminalLegacyTakeControlSchema
+>
+export type TerminalTakeControlPayload =
+  | TerminalTakeControl
+  | TerminalLegacyTakeControl
 export type TerminalOutputAck = z.infer<typeof terminalOutputAckSchema>
-export type TerminalReady = z.infer<typeof terminalReadySchema>
+export type TerminalLegacyReady = z.infer<typeof terminalLegacyReadySchema>
+export type TerminalReadyV2 = z.infer<typeof terminalReadyV2Schema>
+export type TerminalReady = TerminalLegacyReady | TerminalReadyV2
 export type TerminalDimensions = z.infer<typeof terminalDimensionsSchema>
 export type TerminalOutput = z.infer<typeof terminalOutputSchema>
 export type TerminalTitle = z.infer<typeof terminalTitleSchema>
@@ -179,7 +201,7 @@ export interface TerminalClientEventPayloads {
   input: TerminalInput
   binary: TerminalBinary
   resize: TerminalResize
-  take_control: TerminalTakeControl
+  take_control: TerminalTakeControlPayload
   output_ack: TerminalOutputAck
 }
 
@@ -189,7 +211,7 @@ export interface TerminalClientToServerEvents {
   input: (payload: TerminalInput) => void
   binary: (payload: TerminalBinary) => void
   resize: (payload: TerminalResize) => void
-  take_control: (payload: TerminalTakeControl) => void
+  take_control: (payload: TerminalTakeControlPayload) => void
   output_ack: (payload: TerminalOutputAck) => void
 }
 
@@ -232,7 +254,10 @@ export function parseTerminalClientEvent<E extends TerminalClientEvent>(
     input: terminalInputSchema,
     binary: terminalBinarySchema,
     resize: terminalResizeSchema,
-    take_control: terminalTakeControlSchema,
+    take_control: z.union([
+      terminalLegacyTakeControlSchema,
+      terminalTakeControlSchema
+    ]),
     output_ack: terminalOutputAckSchema
   }[event]
   const parsed = schema.safeParse(value)

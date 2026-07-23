@@ -4,8 +4,10 @@ import * as pty from 'node-pty'
 import {
   terminalBinarySchema,
   terminalInputSchema,
+  terminalLegacyTakeControlSchema,
   terminalOutputAckSchema,
   terminalResizeSchema,
+  terminalSizeSchema,
   terminalTakeControlSchema,
   TERMINAL_CONTROLLER_GRACE_MS,
   TERMINAL_MAX_CLIENT_MESSAGE_BYTES,
@@ -13,6 +15,7 @@ import {
   TERMINAL_OUTPUT_HIGH_WATERMARK,
   TERMINAL_OUTPUT_LOW_WATERMARK,
   TERMINAL_OUTPUT_STALL_TIMEOUT_MS,
+  TERMINAL_PROTOCOL_VERSION,
   type TerminalAuth,
   type TerminalClientEvent,
   type TerminalRuntimeMetadata,
@@ -25,6 +28,10 @@ import type { TerminalMetadataManager } from './terminal-metadata.js'
 
 type PtySpawner = typeof pty.spawn
 type ConnectionState = 'initializing' | 'ready' | 'closed'
+type TerminalProtocolVersion = 1 | typeof TERMINAL_PROTOCOL_VERSION
+
+const TERMINAL_MAX_QUEUED_INPUT_BYTES = 1024 * 1024
+const TERMINAL_MAX_QUEUED_INPUT_MESSAGES = 256
 
 export interface TerminalTransport {
   readonly id: string
@@ -51,6 +58,9 @@ interface ClientConnection {
   paused: boolean
   announcedReady: boolean
   metadataUnsubscribe: (() => void) | null
+  protocolVersion: TerminalProtocolVersion
+  queuedInputBytes: number
+  queuedInputMessages: number
 }
 
 interface ControllerLease {
@@ -103,7 +113,11 @@ export class TerminalAttachmentManager {
     this.tmuxExecutable = resolveExecutablePath(tmuxExecutable)
   }
 
-  accept(auth: TerminalAuth, transport: TerminalTransport): string {
+  accept(
+    auth: TerminalAuth,
+    transport: TerminalTransport,
+    protocolVersion: TerminalProtocolVersion = TERMINAL_PROTOCOL_VERSION
+  ): string {
     const connection: ClientConnection = {
       id: transport.id,
       terminalId: auth.terminalId,
@@ -121,7 +135,10 @@ export class TerminalAttachmentManager {
       outputBytes: new Map(),
       paused: false,
       announcedReady: false,
-      metadataUnsubscribe: null
+      metadataUnsubscribe: null,
+      protocolVersion,
+      queuedInputBytes: 0,
+      queuedInputMessages: 0
     }
     this.clients.set(connection.id, connection)
     void this.initialize(connection, auth.cols, auth.rows)
@@ -183,8 +200,29 @@ export class TerminalAttachmentManager {
     }
 
     if (event === 'take_control') {
-      const parsed = terminalTakeControlSchema.safeParse(value)
-      if (!parsed.success) {
+      if (connection.protocolVersion === TERMINAL_PROTOCOL_VERSION) {
+        const parsed = terminalTakeControlSchema.safeParse(value)
+        if (!parsed.success) {
+          this.protocolError(
+            connection,
+            'INVALID_MESSAGE',
+            'Invalid controller request'
+          )
+          return
+        }
+
+        this.takeControl(
+          connection,
+          parsed.data.generation,
+          parsed.data.cols,
+          parsed.data.rows
+        )
+        return
+      }
+
+      const parsed = terminalLegacyTakeControlSchema.safeParse(value)
+      const dimensions = this.dimensions.get(connection.terminalId)
+      if (!parsed.success || !dimensions) {
         this.protocolError(
           connection,
           'INVALID_MESSAGE',
@@ -196,8 +234,8 @@ export class TerminalAttachmentManager {
       this.takeControl(
         connection,
         parsed.data.generation,
-        parsed.data.cols,
-        parsed.data.rows
+        dimensions.cols,
+        dimensions.rows
       )
       return
     }
@@ -212,7 +250,16 @@ export class TerminalAttachmentManager {
         return
       }
 
-      this.writeInput(connection, parsed.data.generation, parsed.data.data)
+      if (!this.canControl(connection, parsed.data.generation)) {
+        return
+      }
+
+      this.writeInput(
+        connection,
+        parsed.data.generation,
+        parsed.data.data,
+        Buffer.byteLength(parsed.data.data)
+      )
       return
     }
 
@@ -230,10 +277,15 @@ export class TerminalAttachmentManager {
         return
       }
 
+      if (!this.canControl(connection, parsed.data.generation)) {
+        return
+      }
+
       this.writeInput(
         connection,
         parsed.data.generation,
-        Buffer.from(parsed.data.data, 'latin1')
+        Buffer.from(parsed.data.data, 'latin1'),
+        Buffer.byteLength(parsed.data.data, 'latin1')
       )
       return
     }
@@ -346,7 +398,29 @@ export class TerminalAttachmentManager {
             worktree.tmuxSocketName,
             terminal.tmuxSessionName
           )
-          const size = sessionSize ?? { cols, rows }
+          let size
+          if (sessionSize) {
+            const parsed = terminalSizeSchema.safeParse(sessionSize)
+            if (!parsed.success) {
+              throw new Error('tmux reported unsupported terminal dimensions')
+            }
+
+            size = parsed.data
+          } else {
+            const parsed = terminalSizeSchema.safeParse({ cols, rows })
+            if (!parsed.success) {
+              throw new Error('Terminal fallback dimensions are invalid')
+            }
+
+            size = parsed.data
+            await this.tmux.resizeWindow(
+              worktree.tmuxSocketName,
+              terminal.tmuxSessionName,
+              size.cols,
+              size.rows
+            )
+          }
+
           dimensions = {
             ...size,
             revision: 1,
@@ -396,17 +470,26 @@ export class TerminalAttachmentManager {
         this.claimController(connection)
         connection.state = 'ready'
         const lease = this.controllers.get(connection.terminalId)
+        const ready = {
+          connectionId: connection.id,
+          streamId: connection.streamId,
+          generation: lease?.generation ?? 0,
+          controller: this.isController(connection),
+          reset: 'full' as const
+        }
         if (
-          !this.send(connection, 'ready', {
-            connectionId: connection.id,
-            streamId: connection.streamId,
-            generation: lease?.generation ?? 0,
-            controller: this.isController(connection),
-            reset: 'full',
-            cols: dimensions.cols,
-            rows: dimensions.rows,
-            revision: dimensions.revision
-          })
+          !this.send(
+            connection,
+            'ready',
+            connection.protocolVersion === TERMINAL_PROTOCOL_VERSION
+              ? {
+                  ...ready,
+                  cols: dimensions.cols,
+                  rows: dimensions.rows,
+                  revision: dimensions.revision
+                }
+              : ready
+          )
         ) {
           return
         }
@@ -584,16 +667,53 @@ export class TerminalAttachmentManager {
   private writeInput(
     connection: ClientConnection,
     generation: number,
-    data: string | Buffer
+    data: string | Buffer,
+    bytes: number
   ): void {
+    if (
+      connection.queuedInputBytes + bytes > TERMINAL_MAX_QUEUED_INPUT_BYTES ||
+      connection.queuedInputMessages + 1 > TERMINAL_MAX_QUEUED_INPUT_MESSAGES
+    ) {
+      this.protocolError(
+        connection,
+        'INPUT_QUEUE_FULL',
+        'Terminal input queue is full'
+      )
+      return
+    }
+
+    connection.queuedInputBytes += bytes
+    connection.queuedInputMessages += 1
     void this.enqueueTerminal(connection.terminalId, () => {
+      connection.queuedInputBytes = Math.max(
+        0,
+        connection.queuedInputBytes - bytes
+      )
+      connection.queuedInputMessages = Math.max(
+        0,
+        connection.queuedInputMessages - 1
+      )
       if (
         this.isActive(connection) &&
         this.canControl(connection, generation)
       ) {
         connection.pty?.write(data)
       }
+    }).catch((error) => this.failInputWrite(connection, error))
+  }
+
+  private failInputWrite(connection: ClientConnection, error: unknown): void {
+    if (!this.isActive(connection)) {
+      return
+    }
+
+    this.send(connection, 'terminal_error', {
+      code: 'INPUT_FAILED',
+      message: errorMessage(error),
+      retryable: true
     })
+    connection.transport.disconnect(true)
+    this.close(connection.id)
   }
 
   private resizeTerminal(
@@ -642,11 +762,13 @@ export class TerminalAttachmentManager {
       (client) => client.terminalId === terminalId && this.isActive(client)
     )
     for (const client of active) {
-      this.send(client, 'dimensions', {
-        cols: next.cols,
-        rows: next.rows,
-        revision: next.revision
-      })
+      if (client.protocolVersion === TERMINAL_PROTOCOL_VERSION) {
+        this.send(client, 'dimensions', {
+          cols: next.cols,
+          rows: next.rows,
+          revision: next.revision
+        })
+      }
     }
     for (const client of active) {
       if (this.isActive(client)) {

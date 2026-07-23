@@ -9,6 +9,7 @@ import {
   parseTerminalAuth,
   SOCKET_IO_PATH,
   TERMINAL_MAX_CLIENT_MESSAGE_BYTES,
+  TERMINAL_PROTOCOL_VERSION,
   type TerminalAuth,
   type TerminalServerEvent,
   type TerminalServerPayload
@@ -27,6 +28,7 @@ interface ServerToClientEvents
 
 interface SocketData {
   terminalAuth?: TerminalAuth
+  terminalProtocolVersion?: 1 | typeof TERMINAL_PROTOCOL_VERSION
 }
 
 type InterServerEvents = Record<never, never>
@@ -160,7 +162,19 @@ export function createSocketServer(
       return
     }
 
+    const requestedVersion = socket.handshake.query.terminalProtocol
+    if (
+      requestedVersion !== undefined &&
+      requestedVersion !== String(TERMINAL_PROTOCOL_VERSION)
+    ) {
+      next(new Error('UNSUPPORTED_TERMINAL_PROTOCOL'))
+      return
+    }
+
     socket.data.terminalAuth = auth
+    socket.data.terminalProtocolVersion = requestedVersion
+      ? TERMINAL_PROTOCOL_VERSION
+      : 1
     next()
   })
   terminals.on('connection', (socket) => {
@@ -187,7 +201,11 @@ export function createSocketServer(
         }
       }
     }
-    const connectionId = attachments.accept(auth, transport)
+    const connectionId = attachments.accept(
+      auth,
+      transport,
+      socket.data.terminalProtocolVersion
+    )
     socket.on('input', (payload) =>
       attachments.message(connectionId, 'input', payload)
     )

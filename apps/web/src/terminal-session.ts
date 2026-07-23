@@ -7,6 +7,7 @@ import {
   parseTerminalServerEvent,
   SOCKET_IO_PATH,
   TERMINAL_MAX_INPUT_BYTES,
+  TERMINAL_PROTOCOL_VERSION,
   type TerminalClientToServerEvents,
   type TerminalProgress,
   type TerminalRuntimeMetadata,
@@ -401,11 +402,14 @@ export class TerminalSession {
   private appliedRevision = 0
   private proposedDimensions: { cols: number; rows: number } | null = null
   private resizePending = false
+  private serverProtocolVersion: 1 | typeof TERMINAL_PROTOCOL_VERSION =
+    TERMINAL_PROTOCOL_VERSION
   private resizeIntentDirty = false
   private resizeQuietElapsed = false
   private resizeIntentGeneration = 0
   private renderEpoch = 0
   private renderQueue: Promise<void> = Promise.resolve()
+  private renderFailed = false
   private pendingTerminalWrites = 0
   private expectedSequence = 1
   private lastParsedSequence = 0
@@ -473,14 +477,23 @@ export class TerminalSession {
         rows: this.canonicalRows
       }
     )
-    this.send('take_control', {
-      generation: this.controllerGeneration,
-      ...dimensions
-    })
+    this.send(
+      'take_control',
+      this.serverProtocolVersion === TERMINAL_PROTOCOL_VERSION
+        ? { generation: this.controllerGeneration, ...dimensions }
+        : { generation: this.controllerGeneration }
+    )
   }
 
   retry(): void {
     if (this.disposed || this.ready) {
+      return
+    }
+
+    if (this.renderFailed) {
+      // A rejected render queue must never be reused. Reloading reconstructs
+      // xterm, its DOM listeners, and the queue before reconnecting.
+      window.location.reload()
       return
     }
 
@@ -790,6 +803,7 @@ export class TerminalSession {
       autoConnect: false,
       reconnection: true,
       retries: 0,
+      query: { terminalProtocol: String(TERMINAL_PROTOCOL_VERSION) },
       auth: (authorize) => {
         const dimensions = normalizeTerminalDimensions(
           this.proposedDimensions ?? {
@@ -878,12 +892,23 @@ export class TerminalSession {
       }
 
       this.cancelControllerResizeIntent()
+      const v2 = 'revision' in message
+      this.serverProtocolVersion = v2 ? TERMINAL_PROTOCOL_VERSION : 1
+      const dimensions = v2
+        ? { cols: message.cols, rows: message.rows }
+        : normalizeTerminalDimensions(
+            this.proposedDimensions ?? {
+              cols: this.terminal?.cols ?? 100,
+              rows: this.terminal?.rows ?? 30
+            }
+          )
+      const revision = v2 ? message.revision : 1
       this.streamId = message.streamId
       this.controllerGeneration = message.generation
-      this.canonicalCols = message.cols
-      this.canonicalRows = message.rows
-      this.canonicalRevision = message.revision
-      this.appliedRevision = 0
+      this.canonicalCols = dimensions.cols
+      this.canonicalRows = dimensions.rows
+      this.canonicalRevision = revision
+      this.appliedRevision = v2 ? 0 : revision
       this.expectedSequence = 1
       this.lastParsedSequence = 0
       this.parsedSequences.clear()
@@ -897,12 +922,16 @@ export class TerminalSession {
         }
 
         this.terminal?.reset()
-        this.applyCanonicalDimensions(
-          message.cols,
-          message.rows,
-          message.revision,
-          true
-        )
+        if (v2) {
+          this.applyCanonicalDimensions(
+            dimensions.cols,
+            dimensions.rows,
+            revision,
+            true
+          )
+        } else {
+          this.fit(true)
+        }
       })
       this.clearDegraded()
       this.update({
@@ -914,6 +943,11 @@ export class TerminalSession {
     }
 
     if (event === 'dimensions') {
+      if (this.serverProtocolVersion !== TERMINAL_PROTOCOL_VERSION) {
+        this.failProtocol('The legacy terminal server sent dimensions')
+        return
+      }
+
       const message = parseTerminalServerEvent('dimensions', value)
       if (!message) {
         this.failProtocol('The terminal server sent invalid dimensions')
@@ -992,7 +1026,7 @@ export class TerminalSession {
 
       this.controllerGeneration = message.generation
       this.update({ controller: message.controller })
-      if (message.controller && controllerChanged) {
+      if (controllerChanged) {
         this.scheduleFit()
       }
 
@@ -1079,15 +1113,17 @@ export class TerminalSession {
     epoch: number,
     operation: () => Promise<void> | void
   ): void {
-    this.renderQueue = this.renderQueue
-      .catch(() => undefined)
-      .then(async () => {
-        if (this.disposed || epoch !== this.renderEpoch) {
-          return
-        }
+    const queued = this.renderQueue.then(async () => {
+      if (this.disposed || this.renderFailed || epoch !== this.renderEpoch) {
+        return
+      }
 
-        await operation()
-      })
+      await operation()
+    })
+    this.renderQueue = queued
+    // Rendering is a fatal UI boundary: keep the causal queue rejected so no
+    // later operation runs, while observing the rejection to close explicitly.
+    void queued.catch((error: unknown) => this.failRendering(error))
   }
 
   private applyCanonicalDimensions(
@@ -1102,6 +1138,12 @@ export class TerminalSession {
 
     this.terminal.resize(cols, rows)
     this.appliedRevision = revision
+    if (this.wrapper) {
+      this.wrapper.dataset.terminalCols = String(cols)
+      this.wrapper.dataset.terminalRows = String(rows)
+      this.wrapper.dataset.terminalRevision = String(revision)
+    }
+
     if (revision === this.canonicalRevision) {
       this.fit(queueControllerResize)
     }
@@ -1196,7 +1238,14 @@ export class TerminalSession {
 
     this.resizeIntentDirty = false
     this.resizeQuietElapsed = false
-    this.resizePending = true
+    if (this.serverProtocolVersion === TERMINAL_PROTOCOL_VERSION) {
+      this.resizePending = true
+    } else {
+      this.canonicalCols = proposed.cols
+      this.canonicalRows = proposed.rows
+      this.appliedRevision = this.canonicalRevision
+    }
+
     this.send('resize', {
       generation: this.controllerGeneration,
       cols: proposed.cols,
@@ -1237,6 +1286,29 @@ export class TerminalSession {
             cols: this.terminal.cols,
             rows: this.terminal.rows
           })
+        }
+
+        return
+      }
+
+      if (this.serverProtocolVersion === 1) {
+        this.terminal.options.fontSize = TERMINAL_FONT_SIZE
+        this.fitAddon.fit()
+        if (
+          this.terminal.cols < TERMINAL_MIN_COLS ||
+          this.terminal.rows < TERMINAL_MIN_ROWS
+        ) {
+          this.cancelControllerResizeIntent(false)
+          return
+        }
+
+        const proposed = normalizeTerminalDimensions({
+          cols: this.terminal.cols,
+          rows: this.terminal.rows
+        })
+        this.proposedDimensions = proposed
+        if (this.snapshotValue.controller && queueControllerResize) {
+          this.queueControllerResizeIntent()
         }
 
         return
@@ -1303,8 +1375,10 @@ export class TerminalSession {
       ) {
         this.terminal.resize(this.canonicalCols, this.canonicalRows)
       }
-    } catch {
-      // Hidden/mobile transition hosts can temporarily have no dimensions.
+    } catch (error) {
+      // Fit is the DOM/render transition boundary. Missing dimensions are
+      // represented above; actual xterm/FitAddon failures close the session.
+      this.failRendering(error)
     }
   }
 
@@ -1349,6 +1423,24 @@ export class TerminalSession {
       this.bellTimer = null
       this.update({ bellActive: false })
     }, 180)
+  }
+
+  private failRendering(error: unknown): void {
+    if (this.renderFailed || this.disposed) {
+      return
+    }
+
+    this.renderFailed = true
+    const detail = (
+      error instanceof Error ? error.message : String(error)
+    ).trim()
+    this.reconnectAllowed = false
+    this.stopWithError(
+      detail
+        ? `Terminal rendering failed: ${detail.slice(0, 500)}`
+        : 'Terminal rendering failed'
+    )
+    this.socket?.disconnect()
   }
 
   private failProtocol(message: string): void {

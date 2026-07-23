@@ -28,6 +28,7 @@ class FakePty {
   kills = 0
   writes: Array<string | Buffer> = []
   resizes: Array<[number, number]> = []
+  writeError: Error | null = null
   private dataListener: ((data: string) => void) | null = null
   private exitListener:
     | ((event: { exitCode: number; signal?: number }) => void)
@@ -58,6 +59,10 @@ class FakePty {
     this.kills += 1
   }
   write(data: string | Buffer) {
+    if (this.writeError) {
+      throw this.writeError
+    }
+
     this.writes.push(data)
   }
   resize(cols: number, rows: number) {
@@ -169,17 +174,19 @@ function fixture() {
     metadata,
     spawn as never
   )
-  return { manager, metadata, progressObservers, ptys, publish, tmux }
+  return { manager, metadata, progressObservers, ptys, publish, spawn, tmux }
 }
 
 function attach(
   manager: TerminalAttachmentManager,
   transport: FakeTransport,
-  clientId: string
+  clientId: string,
+  protocolVersion: 1 | 2 = 2
 ): string {
   return manager.accept(
     { terminalId: 'term', clientId, cols: 100, rows: 30 },
-    transport
+    transport,
+    protocolVersion
   )
 }
 
@@ -230,6 +237,117 @@ describe('TerminalAttachmentManager', () => {
       sequence: output.sequence
     })
     expect(pty.resumes).toBeGreaterThanOrEqual(2)
+  })
+
+  it('serves exact legacy ready and takeover contracts without dimensions events', async () => {
+    const { manager, tmux } = fixture()
+    const controller = new FakeTransport()
+    attach(manager, controller, 'tab-a')
+    await ready(controller)
+    const legacy = new FakeTransport()
+    const legacyId = attach(manager, legacy, 'tab-b', 1)
+    const legacyReady = await ready(legacy)
+
+    expect(legacyReady).toMatchObject({ type: 'ready', reset: 'full' })
+    expect(legacyReady).not.toHaveProperty('cols')
+    expect(legacyReady).not.toHaveProperty('rows')
+    expect(legacyReady).not.toHaveProperty('revision')
+
+    manager.message(legacyId, 'take_control', { generation: 1 })
+    await vi.waitFor(() =>
+      expect(legacy.sent.at(-1)).toMatchObject({
+        type: 'control',
+        controller: true,
+        generation: 2
+      })
+    )
+    manager.message(legacyId, 'resize', {
+      generation: 2,
+      cols: 120,
+      rows: 40
+    })
+    await vi.waitFor(() =>
+      expect(tmux.resizeWindow).toHaveBeenCalledWith(
+        'socket',
+        'session',
+        120,
+        40
+      )
+    )
+    expect(legacy.sent.some((message) => message.type === 'dimensions')).toBe(
+      false
+    )
+  })
+
+  it('rejects dimensionless takeover from a negotiated v2 client', async () => {
+    const { manager } = fixture()
+    const transport = new FakeTransport()
+    const id = attach(manager, transport, 'tab-a')
+    await ready(transport)
+
+    manager.message(id, 'take_control', { generation: 1 })
+
+    expect(transport.sent.at(-1)).toMatchObject({
+      type: 'terminal_error',
+      code: 'INVALID_MESSAGE'
+    })
+    expect(transport.disconnects).toEqual([false])
+  })
+
+  it('validates tmux dimensions and applies fallback dimensions before ready', async () => {
+    const invalid = fixture()
+    vi.mocked(invalid.tmux.sessionSize).mockResolvedValueOnce({
+      cols: 1_001,
+      rows: 30
+    })
+    const invalidTransport = new FakeTransport()
+    attach(invalid.manager, invalidTransport, 'tab-invalid')
+    await vi.waitFor(() =>
+      expect(invalidTransport.sent.at(-1)).toMatchObject({
+        type: 'terminal_error',
+        code: 'ATTACH_FAILED',
+        retryable: false
+      })
+    )
+    expect(invalid.ptys).toHaveLength(0)
+
+    const fallback = fixture()
+    vi.mocked(fallback.tmux.sessionSize).mockResolvedValueOnce(null)
+    const fallbackTransport = new FakeTransport()
+    attach(fallback.manager, fallbackTransport, 'tab-fallback')
+    await ready(fallbackTransport)
+    expect(fallback.tmux.resizeWindow).toHaveBeenCalledWith(
+      'socket',
+      'session',
+      100,
+      30
+    )
+    expect(
+      vi.mocked(fallback.tmux.resizeWindow).mock.invocationCallOrder[0]
+    ).toBeLessThan(fallback.spawn.mock.invocationCallOrder[0]!)
+  })
+
+  it('does not cache or spawn after fallback resize failure and allows retry', async () => {
+    const { manager, ptys, tmux } = fixture()
+    vi.mocked(tmux.sessionSize).mockResolvedValue(null)
+    vi.mocked(tmux.resizeWindow)
+      .mockRejectedValueOnce(new Error('resize unavailable'))
+      .mockResolvedValueOnce(undefined)
+    const failed = new FakeTransport()
+    attach(manager, failed, 'tab-failed')
+    await vi.waitFor(() =>
+      expect(failed.sent.at(-1)).toMatchObject({
+        type: 'terminal_error',
+        code: 'ATTACH_FAILED'
+      })
+    )
+    expect(ptys).toHaveLength(0)
+
+    const retry = new FakeTransport()
+    attach(manager, retry, 'tab-retry')
+    await ready(retry)
+    expect(tmux.resizeWindow).toHaveBeenCalledTimes(2)
+    expect(ptys).toHaveLength(1)
   })
 
   it('fans daemon metadata to every viewer without making it terminal output authority', async () => {
@@ -347,6 +465,91 @@ describe('TerminalAttachmentManager', () => {
     expect(ptys[0]!.writes).toEqual([])
     finishResize()
     await vi.waitFor(() => expect(ptys[0]!.writes).toEqual(['after resize']))
+  })
+
+  it('bounds queued input by message count and bytes during a stalled resize', async () => {
+    const countFixture = fixture()
+    let finishCountResize!: () => void
+    vi.mocked(countFixture.tmux.resizeWindow).mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finishCountResize = resolve
+        })
+    )
+    const countTransport = new FakeTransport()
+    const countId = attach(countFixture.manager, countTransport, 'tab-count')
+    await ready(countTransport)
+    countFixture.manager.message(countId, 'resize', {
+      generation: 1,
+      cols: 120,
+      rows: 40
+    })
+    await vi.waitFor(() =>
+      expect(countFixture.tmux.resizeWindow).toHaveBeenCalledOnce()
+    )
+    for (let index = 0; index < 257; index += 1) {
+      countFixture.manager.message(countId, 'input', {
+        generation: 1,
+        data: ''
+      })
+    }
+    expect(countTransport.sent.at(-1)).toMatchObject({
+      type: 'terminal_error',
+      code: 'INPUT_QUEUE_FULL',
+      retryable: false
+    })
+    expect(countTransport.disconnects).toEqual([false])
+    finishCountResize()
+
+    const byteFixture = fixture()
+    let finishByteResize!: () => void
+    vi.mocked(byteFixture.tmux.resizeWindow).mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finishByteResize = resolve
+        })
+    )
+    const byteTransport = new FakeTransport()
+    const byteId = attach(byteFixture.manager, byteTransport, 'tab-bytes')
+    await ready(byteTransport)
+    byteFixture.manager.message(byteId, 'resize', {
+      generation: 1,
+      cols: 120,
+      rows: 40
+    })
+    await vi.waitFor(() =>
+      expect(byteFixture.tmux.resizeWindow).toHaveBeenCalledOnce()
+    )
+    for (let index = 0; index < 17; index += 1) {
+      byteFixture.manager.message(byteId, 'input', {
+        generation: 1,
+        data: 'x'.repeat(64 * 1024)
+      })
+    }
+    expect(byteTransport.sent.at(-1)).toMatchObject({
+      type: 'terminal_error',
+      code: 'INPUT_QUEUE_FULL'
+    })
+    finishByteResize()
+  })
+
+  it('translates an unexpected PTY input failure into a retryable boundary', async () => {
+    const { manager, ptys } = fixture()
+    const transport = new FakeTransport()
+    const id = attach(manager, transport, 'tab-a')
+    await ready(transport)
+    ptys[0]!.writeError = new Error('pty write failed')
+
+    manager.message(id, 'input', { generation: 1, data: 'x' })
+
+    await vi.waitFor(() =>
+      expect(transport.sent.at(-1)).toMatchObject({
+        type: 'terminal_error',
+        code: 'INPUT_FAILED',
+        retryable: true
+      })
+    )
+    expect(transport.disconnects).toEqual([true])
   })
 
   it('reconnects a paused viewer before a canonical grid boundary', async () => {

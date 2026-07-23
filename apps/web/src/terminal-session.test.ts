@@ -391,7 +391,8 @@ describe('TerminalSession', () => {
         transports: ['websocket'],
         forceNew: true,
         multiplex: false,
-        retries: 0
+        retries: 0,
+        query: { terminalProtocol: '2' }
       })
     )
     const options = socketClient.io.mock.calls[0]![1] as {
@@ -598,6 +599,166 @@ describe('TerminalSession', () => {
       streamId: 'stream-2',
       sequence: 1
     })
+    session.dispose()
+  })
+
+  it('refits as a viewer when takeover dimensions arrive before control loss', async () => {
+    const { control, dimensions, resize, session, socket } =
+      controllerSessionFixture()
+    ;(
+      session as unknown as { fitAddon: { proposeDimensions: () => unknown } }
+    ).fitAddon.proposeDimensions = () => ({ cols: 60, rows: 20 })
+
+    dimensions(120, 40, 2)
+    await vi.waitFor(() => expect(resize).toHaveBeenLastCalledWith(120, 40))
+    control(false, 5)
+    const fitCallback = vi.mocked(requestAnimationFrame).mock.calls.at(-1)?.[0]
+    fitCallback?.(0)
+
+    expect(
+      (session as unknown as { terminal: { options: { fontSize: number } } })
+        .terminal.options.fontSize
+    ).toBe(7)
+    expect(resize).toHaveBeenLastCalledWith(120, 40)
+    expect(socket.emit).not.toHaveBeenCalledWith('resize', expect.anything())
+    session.dispose()
+  })
+
+  it('uses an isolated legacy sizing and takeover path for an old server', async () => {
+    const socket = new FakeSocketIO()
+    socketClient.io.mockReturnValue(socket)
+    const session = new TerminalSession('terminal-one')
+    let legacyDimensions = { cols: 120, rows: 40 }
+    const terminal = {
+      cols: 100,
+      rows: 30,
+      options: { fontSize: 14 },
+      reset: vi.fn(),
+      resize: vi.fn(),
+      focus: vi.fn(),
+      dispose: vi.fn()
+    }
+    Object.assign(session as unknown as Record<string, unknown>, {
+      host: {},
+      terminal,
+      fitAddon: {
+        fit: () => {
+          terminal.cols = legacyDimensions.cols
+          terminal.rows = legacyDimensions.rows
+        },
+        proposeDimensions: () => legacyDimensions
+      }
+    })
+    ;(session as unknown as { connect(): void }).connect()
+    socket.emitServer('ready', {
+      connectionId: 'legacy-connection',
+      streamId: 'legacy-stream',
+      generation: 3,
+      controller: true,
+      reset: 'full'
+    })
+    await vi.waitFor(() => expect(terminal.reset).toHaveBeenCalledOnce())
+    legacyDimensions = { cols: 130, rows: 45 }
+    ;(session as unknown as { fit(queueControllerResize: boolean): void }).fit(
+      true
+    )
+    await vi.advanceTimersByTimeAsync(150)
+
+    expect(socket.emit).toHaveBeenCalledWith('resize', {
+      generation: 3,
+      cols: 130,
+      rows: 45
+    })
+    session.takeControl()
+    expect(socket.emit).toHaveBeenCalledWith('take_control', { generation: 3 })
+    session.sendText('legacy input')
+    expect(socket.volatile.emit).toHaveBeenCalledWith('input', {
+      generation: 3,
+      data: 'legacy input'
+    })
+    expect((session as unknown as { canInput(): boolean }).canInput()).toBe(
+      true
+    )
+    session.dispose()
+  })
+
+  it('closes on render queue failure and does not run later operations', async () => {
+    const socket = new FakeSocketIO()
+    socketClient.io.mockReturnValue(socket)
+    const session = new TerminalSession('terminal-one')
+    ;(session as unknown as { terminal: unknown }).terminal = {
+      reset: () => {
+        throw new Error('reset failed')
+      },
+      resize: vi.fn(),
+      options: { fontSize: 14 },
+      dispose: vi.fn()
+    }
+    ;(session as unknown as { connect(): void }).connect()
+    socket.emitServer('ready', {
+      connectionId: 'connection-1',
+      streamId: 'stream-1',
+      generation: 4,
+      controller: false,
+      reset: 'full',
+      cols: 100,
+      rows: 30,
+      revision: 1
+    })
+    await vi.waitFor(() =>
+      expect(session.getSnapshot()).toMatchObject({
+        phase: 'closed',
+        error: 'Terminal rendering failed: reset failed'
+      })
+    )
+    const sentinel = vi.fn()
+    ;(
+      session as unknown as {
+        enqueueRender(epoch: number, operation: () => void): void
+      }
+    ).enqueueRender(1, sentinel)
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(sentinel).not.toHaveBeenCalled()
+
+    const reload = vi.fn()
+    vi.stubGlobal('location', { reload })
+    session.retry()
+    expect(reload).toHaveBeenCalledOnce()
+    expect(socket.connected).toBe(false)
+    session.dispose()
+  })
+
+  it('translates FitAddon exceptions through the fatal rendering boundary', () => {
+    const socket = new FakeSocketIO()
+    socket.connected = true
+    const session = new TerminalSession('terminal-one')
+    Object.assign(session as unknown as Record<string, unknown>, {
+      socket,
+      ready: true,
+      host: {},
+      terminal: {
+        cols: 100,
+        rows: 30,
+        options: { fontSize: 14 },
+        dispose: vi.fn()
+      },
+      fitAddon: {
+        proposeDimensions: () => {
+          throw new Error('measurement failed')
+        }
+      },
+      canonicalRevision: 1,
+      appliedRevision: 1
+    })
+
+    ;(session as unknown as { fit(): void }).fit()
+
+    expect(session.getSnapshot()).toMatchObject({
+      phase: 'closed',
+      error: 'Terminal rendering failed: measurement failed'
+    })
+    expect(socket.connected).toBe(false)
     session.dispose()
   })
 
