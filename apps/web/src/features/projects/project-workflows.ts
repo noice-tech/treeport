@@ -8,12 +8,13 @@ import {
   recentProjectsQueryKey
 } from '../../project-metadata.js'
 import { terminalSessions } from '../../terminal-session.js'
-import { deepestProjectTarget } from '../../workspace-navigation.js'
+import type { WorkspaceTarget } from '../../workspace-navigation.js'
 import { useWorkspaceNavigate } from '../../workspace-router-navigation.js'
 
 export function useProjectWorkflows({
   projects,
   selectedProject,
+  targetForProject,
   projectSwitcherTriggerRef,
   closeProjectUi,
   openedProjectUi,
@@ -21,6 +22,7 @@ export function useProjectWorkflows({
 }: {
   projects: ProjectRecord[]
   selectedProject: ProjectRecord | null
+  targetForProject: (project: ProjectRecord) => WorkspaceTarget
   projectSwitcherTriggerRef: RefObject<HTMLButtonElement | null>
   closeProjectUi: () => void
   openedProjectUi: () => void
@@ -54,7 +56,7 @@ export function useProjectWorkflows({
       if (closedSelection) {
         await navigateToWorkspace(
           fallbackProject
-            ? deepestProjectTarget(fallbackProject)
+            ? targetForProject(fallbackProject)
             : { kind: 'root', pathname: '/' },
           true
         )
@@ -125,7 +127,7 @@ export function useProjectWorkflows({
       recentProjectsQueryKey,
       (current) => current?.filter((candidate) => candidate.id !== project.id)
     )
-    await navigateToWorkspace(deepestProjectTarget(project), replacesEmptyRoot)
+    await navigateToWorkspace(targetForProject(project), replacesEmptyRoot)
     openedProjectUi()
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: projectsQueryKey }),

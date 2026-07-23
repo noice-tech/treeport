@@ -4,6 +4,7 @@ import {
   deepestProjectTarget,
   legacyResumePath,
   resolveWorkspaceRoute,
+  targetForProject,
   targetForWorktree,
   terminalTarget,
   worktreeTarget
@@ -100,6 +101,22 @@ describe('workspace route resolution', () => {
     expect(resolveWorkspaceRoute([], '/projects/missing').target).toEqual({
       kind: 'root',
       pathname: '/'
+    })
+  })
+
+  it('returns to the last terminal used in a project', () => {
+    const projects = projectGraph()
+
+    expect(targetForProject(projects[0]!, 'terminal-b')).toEqual(
+      terminalTarget('project-a', 'worktree-a', 'terminal-b')
+    )
+    expect(targetForProject(projects[0]!, 'terminal-c')).toEqual(
+      terminalTarget('project-a', 'worktree-a', 'terminal-a')
+    )
+    expect(targetForProject(projects[2]!, 'terminal-a')).toEqual({
+      kind: 'project',
+      pathname: '/projects/project-empty',
+      projectId: 'project-empty'
     })
   })
 

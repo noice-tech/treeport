@@ -5,6 +5,8 @@ import type {
 } from '@tasktty/shared'
 
 export const LAST_WORKSPACE_ROUTE_STORAGE_KEY = 'tasktty-last-workspace-route'
+export const LAST_PROJECT_TERMINAL_STORAGE_PREFIX =
+  'tasktty-last-project-terminal:'
 export const LEGACY_ACTIVE_PROJECT_STORAGE_KEY = 'tasktty-active-project'
 export const LEGACY_TERMINAL_STORAGE_KEY = 'tasktty-terminal'
 
@@ -89,6 +91,24 @@ export function deepestProjectTarget(project: ProjectRecord): WorkspaceTarget {
   return terminal
     ? terminalTarget(project.id, worktree.id, terminal.id)
     : worktreeTarget(project.id, worktree.id)
+}
+
+export function targetForProject(
+  project: ProjectRecord,
+  rememberedTerminalId?: string | null
+): WorkspaceTarget {
+  if (rememberedTerminalId) {
+    for (const worktree of project.worktrees) {
+      const terminal = worktree.terminals.find(
+        (candidate) => candidate.id === rememberedTerminalId
+      )
+      if (terminal) {
+        return terminalTarget(project.id, worktree.id, terminal.id)
+      }
+    }
+  }
+
+  return deepestProjectTarget(project)
 }
 
 export function deepestWorktreeTarget(
