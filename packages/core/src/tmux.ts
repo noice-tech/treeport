@@ -58,7 +58,7 @@ const encodeMetadata = (value: unknown): string =>
 
 function isAbsentTmuxServer(stderr: string): boolean {
   return (
-    /no server running|no sessions/i.test(stderr) ||
+    /no server running|no sessions|no current target/i.test(stderr) ||
     /(?:failed to connect|error connecting to).*(?:no such file or directory|connection refused)/i.test(
       stderr
     )
