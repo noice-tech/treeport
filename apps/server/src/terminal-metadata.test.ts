@@ -161,6 +161,7 @@ describe('TerminalMetadataManager', () => {
       {
         terminalId: 'one',
         title: 'title session-one',
+        hasForegroundProcess: true,
         progress: null,
         progressStartedAt: null,
         progressClearedAt: null,
@@ -169,6 +170,7 @@ describe('TerminalMetadataManager', () => {
       {
         terminalId: 'two',
         title: 'title session-two',
+        hasForegroundProcess: true,
         progress: null,
         progressStartedAt: null,
         progressClearedAt: null,
@@ -181,6 +183,7 @@ describe('TerminalMetadataManager', () => {
     expect(manager.get('two')).toEqual({
       terminalId: 'two',
       title: 'pi · /repo',
+      hasForegroundProcess: true,
       progress: { state: 'indeterminate', value: null },
       progressStartedAt: expect.any(String),
       progressClearedAt: null,
@@ -189,6 +192,7 @@ describe('TerminalMetadataManager', () => {
     expect(published).toContainEqual({
       terminalId: 'two',
       title: 'pi · /repo',
+      hasForegroundProcess: true,
       progress: { state: 'indeterminate', value: null },
       progressStartedAt: expect.any(String),
       progressClearedAt: null,
@@ -221,6 +225,7 @@ describe('TerminalMetadataManager', () => {
     expect(manager.get('one')).toEqual({
       terminalId: 'one',
       title: 'finished',
+      hasForegroundProcess: false,
       progress: null,
       progressStartedAt: expect.any(String),
       progressClearedAt: expect.any(String),
@@ -239,6 +244,7 @@ describe('TerminalMetadataManager', () => {
       currentCommand: 'zsh'
     })
     await manager.initialize()
+    expect(manager.get(item.id).hasForegroundProcess).toBe(false)
 
     sessionTitleState.mockResolvedValue({
       paneTitle: 'tasktty',
@@ -246,6 +252,7 @@ describe('TerminalMetadataManager', () => {
     })
     await vi.advanceTimersByTimeAsync(TERMINAL_METADATA_POLL_MS)
     expect(manager.get(item.id).title).toBe('nano')
+    expect(manager.get(item.id).hasForegroundProcess).toBe(true)
 
     sessionTitleState.mockResolvedValue({
       paneTitle: 'tasktty',
@@ -253,6 +260,7 @@ describe('TerminalMetadataManager', () => {
     })
     await vi.advanceTimersByTimeAsync(TERMINAL_METADATA_POLL_MS)
     expect(manager.get(item.id).title).toBe('tasktty')
+    expect(manager.get(item.id).hasForegroundProcess).toBe(false)
   })
 
   it('prefers an existing application title when tracking starts while it is running', async () => {
@@ -442,6 +450,7 @@ describe('TerminalMetadataManager', () => {
     await initialTrack
 
     expect(manager.get(item.id).title).toBe('new observer title')
+    expect(manager.get(item.id).hasForegroundProcess).toBe(true)
   })
 
   it('does not revive runtime when a poll returns after the terminal exits', async () => {
@@ -502,6 +511,7 @@ describe('TerminalMetadataManager', () => {
     expect(manager.get(item.id)).toEqual({
       terminalId: item.id,
       title: null,
+      hasForegroundProcess: false,
       progress: null,
       progressStartedAt: null,
       progressClearedAt: null,
@@ -733,6 +743,7 @@ describe('TerminalMetadataManager', () => {
       expect(manager.snapshot()).toContainEqual({
         terminalId: created.id,
         title: 'title session-new',
+        hasForegroundProcess: true,
         progress: null,
         progressStartedAt: null,
         progressClearedAt: null,

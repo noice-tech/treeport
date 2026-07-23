@@ -483,6 +483,7 @@ describe('TerminalSessionManager', () => {
     manager.applyRuntimeMetadata({
       terminalId: 'background',
       title: 'pi · /repo',
+      hasForegroundProcess: true,
       progress: { state: 'normal', value: 42 },
       progressStartedAt: '2026-01-01T00:00:00.000Z',
       progressClearedAt: null,
@@ -490,6 +491,7 @@ describe('TerminalSessionManager', () => {
     })
 
     expect(manager.getTitleSnapshot().get('background')).toBe('pi · /repo')
+    expect(manager.getForegroundProcessSnapshot().has('background')).toBe(true)
     expect(manager.getProgressSnapshot().get('background')).toEqual({
       state: 'normal',
       value: 42
@@ -506,6 +508,7 @@ describe('TerminalSessionManager', () => {
       }
     ])
     expect(manager.getTitleSnapshot().has('background')).toBe(false)
+    expect(manager.getForegroundProcessSnapshot().has('background')).toBe(false)
     expect(manager.getProgressSnapshot().has('background')).toBe(false)
     expect(manager.getTitleSnapshot().get('other')).toBe('shell')
   })
