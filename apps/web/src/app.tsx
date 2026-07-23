@@ -197,6 +197,9 @@ export default function App() {
   )
   const [projectSwitcherOpen, setProjectSwitcherOpen] = useState(false)
   const [projectSearch, setProjectSearch] = useState('')
+  const [highlightedProjectId, setHighlightedProjectId] = useState<
+    string | null
+  >(null)
   const [isMobile, setIsMobile] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [modal, setModal] = useState<Modal>(null)
@@ -1095,6 +1098,22 @@ export default function App() {
           .toLocaleLowerCase()
           .includes(normalizedProjectSearch))
   )
+  const projectSwitcherOptions = [
+    ...filteredOpenProjects.map((project) => ({
+      kind: 'open' as const,
+      project
+    })),
+    ...filteredRecentProjects.map((project) => ({
+      kind: 'recent' as const,
+      project
+    }))
+  ]
+  const highlightedProjectOption =
+    projectSwitcherOptions.find(
+      (option) => option.project.id === highlightedProjectId
+    ) ??
+    projectSwitcherOptions[0] ??
+    null
 
   return (
     <div
@@ -1206,6 +1225,7 @@ export default function App() {
             open={projectSwitcherOpen}
             onOpenChange={(open) => {
               setProjectSwitcherOpen(open)
+              setHighlightedProjectId(null)
               if (!open) {
                 setProjectSearch('')
               }
@@ -1244,10 +1264,70 @@ export default function App() {
                 <MagnifyingGlassIcon className="pointer-events-none absolute top-1/2 left-2 size-4 -translate-y-1/2 fill-zinc-600" />
                 <Input
                   value={projectSearch}
-                  onChange={(event) => setProjectSearch(event.target.value)}
+                  onChange={(event) => {
+                    setProjectSearch(event.target.value)
+                    setHighlightedProjectId(null)
+                  }}
+                  onKeyDown={(event) => {
+                    if (
+                      event.nativeEvent.isComposing ||
+                      !projectSwitcherOptions.length
+                    ) {
+                      return
+                    }
+
+                    if (event.key === 'Enter') {
+                      event.preventDefault()
+                      if (highlightedProjectOption?.kind === 'open') {
+                        selectProject(highlightedProjectOption.project)
+                      } else if (
+                        highlightedProjectOption?.kind === 'recent' &&
+                        !reopenProject.isPending
+                      ) {
+                        reopenProject.mutate(highlightedProjectOption.project)
+                      }
+
+                      return
+                    }
+
+                    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') {
+                      return
+                    }
+
+                    event.preventDefault()
+                    const highlightedIndex = Math.max(
+                      0,
+                      projectSwitcherOptions.findIndex(
+                        (option) =>
+                          option.project.id ===
+                          highlightedProjectOption?.project.id
+                      )
+                    )
+                    const nextIndex =
+                      event.key === 'ArrowDown'
+                        ? Math.min(
+                            highlightedIndex + 1,
+                            projectSwitcherOptions.length - 1
+                          )
+                        : Math.max(highlightedIndex - 1, 0)
+                    const nextOption = projectSwitcherOptions[nextIndex]!
+                    setHighlightedProjectId(nextOption.project.id)
+                    window.requestAnimationFrame(() =>
+                      document
+                        .getElementById(
+                          `project-switcher-option-${nextOption.project.id}`
+                        )
+                        ?.scrollIntoView({ block: 'nearest' })
+                    )
+                  }}
                   className="h-8 bg-zinc-950/50 pt-0.5 pr-2 pb-1 pl-7 ring-white/8 sm:h-7 sm:text-[0.8125rem]/4 sm:placeholder:text-[0.84375rem]"
                   placeholder="Search projects…"
                   aria-label="Search projects"
+                  aria-activedescendant={
+                    highlightedProjectOption
+                      ? `project-switcher-option-${highlightedProjectOption.project.id}`
+                      : undefined
+                  }
                   autoFocus
                 />
               </div>
@@ -1268,12 +1348,26 @@ export default function App() {
                       return (
                         <li
                           key={project.id}
-                          className="group/project-option relative flex h-8 min-w-0 items-center gap-0.5 rounded-md pr-1 has-[button:hover]:bg-white/5 focus-within:bg-white/5"
+                          className={cn(
+                            'group/project-option relative flex h-8 min-w-0 items-center gap-0.5 rounded-md pr-1 has-[button:hover]:bg-white/5 focus-within:bg-white/5',
+                            highlightedProjectOption?.project.id ===
+                              project.id && 'bg-white/8'
+                          )}
+                          onMouseEnter={() =>
+                            setHighlightedProjectId(project.id)
+                          }
                         >
                           <Button
+                            id={`project-switcher-option-${project.id}`}
                             type="button"
                             variant="ghost"
                             className="h-8 min-w-0 flex-1 justify-start px-2 text-left hover:bg-transparent max-[700px]:pr-8"
+                            data-highlighted={
+                              highlightedProjectOption?.project.id ===
+                              project.id
+                                ? true
+                                : undefined
+                            }
                             onClick={() => selectProject(project)}
                           >
                             <span className="flex min-w-0 items-center gap-1.5">
@@ -1373,11 +1467,27 @@ export default function App() {
                   filteredRecentProjects.length ? (
                     <ul role="list" className="grid gap-0.5">
                       {filteredRecentProjects.map((project) => (
-                        <li key={project.id}>
+                        <li
+                          key={project.id}
+                          onMouseEnter={() =>
+                            setHighlightedProjectId(project.id)
+                          }
+                        >
                           <Button
+                            id={`project-switcher-option-${project.id}`}
                             type="button"
                             variant="ghost"
-                            className="h-8 w-full min-w-0 justify-start px-2 text-left"
+                            className={cn(
+                              'h-8 w-full min-w-0 justify-start px-2 text-left',
+                              highlightedProjectOption?.project.id ===
+                                project.id && 'bg-white/8'
+                            )}
+                            data-highlighted={
+                              highlightedProjectOption?.project.id ===
+                              project.id
+                                ? true
+                                : undefined
+                            }
                             disabled={reopenProject.isPending}
                             onClick={() => reopenProject.mutate(project)}
                           >
