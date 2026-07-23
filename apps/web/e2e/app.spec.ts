@@ -159,7 +159,17 @@ async function mockApp(
       let listener:
         | ((command: 'new-terminal' | 'close-terminal') => void)
         | null = null
+      let fullscreenListener: ((fullscreen: boolean) => void) | null = null
       scope.taskttyDesktop = Object.freeze({
+        platform: 'darwin',
+        onFullscreenChange(next: (fullscreen: boolean) => void) {
+          fullscreenListener = next
+          return () => {
+            if (fullscreenListener === next) {
+              fullscreenListener = null
+            }
+          }
+        },
         onTerminalCommand(
           next: (command: 'new-terminal' | 'close-terminal') => void
         ) {
@@ -174,6 +184,8 @@ async function mockApp(
       scope.__dispatchDesktopCommand = (
         command: 'new-terminal' | 'close-terminal'
       ) => listener?.(command)
+      scope.__dispatchDesktopFullscreen = (fullscreen: boolean) =>
+        fullscreenListener?.(fullscreen)
     })
   }
 
@@ -1868,6 +1880,14 @@ test.describe('desktop worktree terminal UI', () => {
     page
   }) => {
     const mocked = await mockApp(page, [], { desktopBridge: true })
+    const desktopTitlebar = page.locator('[data-tasktty-desktop-titlebar]')
+    await expect(desktopTitlebar).toBeVisible()
+    await page.evaluate(() => (window as any).__dispatchDesktopFullscreen(true))
+    await expect(desktopTitlebar).toHaveCount(0)
+    await page.evaluate(() =>
+      (window as any).__dispatchDesktopFullscreen(false)
+    )
+    await expect(desktopTitlebar).toBeVisible()
     await page.locator('.worktree-row').filter({ hasText: 'topic' }).click()
 
     const releaseCreate = mocked.delayNextTerminalCreate()

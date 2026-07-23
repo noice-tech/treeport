@@ -44,6 +44,11 @@ button {
   color: inherit;
 }
 
+.desktop-titlebar {
+  -webkit-app-region: drag;
+  user-select: none;
+}
+
 code {
   color: var(--color-cyan-200);
   font-family: 'SFMono-Regular', 'Cascadia Code', monospace;

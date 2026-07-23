@@ -58,6 +58,7 @@ function connectionPage(message: string): string {
   <style>
     :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, sans-serif; background: #09090b; color: #f4f4f5; }
     body { min-height: 100vh; margin: 0; display: grid; place-items: center; }
+    .titlebar { position: fixed; inset: 0 0 auto; height: 32px; -webkit-app-region: drag; }
     main { width: min(32rem, calc(100vw - 3rem)); }
     p { color: #a1a1aa; line-height: 1.6; }
     code { color: #a5f3fc; }
@@ -66,6 +67,7 @@ function connectionPage(message: string): string {
   </style>
 </head>
 <body>
+  <div class="titlebar" aria-hidden="true"></div>
   <main>
     <h1>TaskTTY is unavailable</h1>
     <p>${escapedMessage}</p>
@@ -191,6 +193,17 @@ function createWindow(): BrowserWindow {
     minWidth: 800,
     minHeight: 600,
     backgroundColor: '#09090b',
+    autoHideMenuBar: true,
+    frame: false,
+    titleBarStyle: 'hidden',
+    titleBarOverlay: {
+      color: '#09090b',
+      symbolColor: '#f4f4f5',
+      height: 32
+    },
+    ...(process.platform === 'darwin'
+      ? { trafficLightPosition: { x: 12, y: 9 } }
+      : {}),
     webPreferences: {
       preload: path.join(dirname, 'preload.js'),
       partition: 'tasktty-desktop',
@@ -201,6 +214,12 @@ function createWindow(): BrowserWindow {
   })
   mainWindow = window
 
+  window.on('enter-full-screen', () => {
+    window.webContents.send('fullscreen-change', true)
+  })
+  window.on('leave-full-screen', () => {
+    window.webContents.send('fullscreen-change', false)
+  })
   window.webContents.on('before-input-event', (event, input) => {
     const commandModifier =
       process.platform === 'darwin' ? input.meta : input.control

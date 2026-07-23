@@ -201,6 +201,11 @@ export default function App() {
     string | null
   >(null)
   const [isMobile, setIsMobile] = useState(false)
+  const [desktopFullscreen, setDesktopFullscreen] = useState(false)
+  const desktopPlatform = window.taskttyDesktop?.platform
+  const showDesktopTitlebar =
+    window.taskttyDesktop !== undefined &&
+    !(desktopPlatform === 'darwin' && desktopFullscreen)
   const [error, setError] = useState<string | null>(null)
   const [modal, setModal] = useState<Modal>(null)
   const [pendingWorktrees, setPendingWorktrees] = useState<
@@ -344,6 +349,11 @@ export default function App() {
     media.addEventListener('change', update)
     return () => media.removeEventListener('change', update)
   }, [])
+
+  useEffect(
+    () => window.taskttyDesktop?.onFullscreenChange(setDesktopFullscreen),
+    []
+  )
 
   useEffect(() => {
     if (!isMobile || !drawerOpen) {
@@ -1197,11 +1207,21 @@ export default function App() {
   return (
     <div
       className={cn(
-        'app-frame isolate grid h-dvh grid-cols-[var(--sidebar-width)_minmax(0,1fr)] bg-zinc-950 max-[700px]:grid-cols-1 max-[700px]:grid-rows-[3.25rem_minmax(0,1fr)]',
+        'app-frame isolate grid h-dvh grid-cols-[var(--sidebar-width)_minmax(0,1fr)] bg-zinc-950 max-[700px]:grid-cols-1',
+        showDesktopTitlebar
+          ? 'grid-rows-[2rem_minmax(0,1fr)] max-[700px]:grid-rows-[2rem_3.25rem_minmax(0,1fr)]'
+          : 'max-[700px]:grid-rows-[3.25rem_minmax(0,1fr)]',
         resizingSidebar && 'select-none'
       )}
       style={{ '--sidebar-width': `${sidebarWidth}px` } as CSSProperties}
     >
+      {showDesktopTitlebar && (
+        <div
+          className="desktop-titlebar col-span-full h-8 bg-zinc-950"
+          data-tasktty-desktop-titlebar
+          aria-hidden="true"
+        />
+      )}
       <header
         className="mobile-bar hidden min-w-0 grid-cols-[2.75rem_minmax(0,1fr)] items-center gap-2 border-b border-white/8 bg-zinc-900/95 px-2 backdrop-blur max-[700px]:grid"
         inert={isMobile && drawerOpen ? true : undefined}
