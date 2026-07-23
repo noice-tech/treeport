@@ -1,5 +1,4 @@
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
 import {
   app,
   BrowserWindow,
@@ -9,7 +8,7 @@ import {
   type MenuItemConstructorOptions
 } from 'electron'
 
-const dirname = path.dirname(fileURLToPath(import.meta.url))
+const dirname = __dirname
 const defaultRendererUrl = app.isPackaged
   ? 'http://127.0.0.1:4780'
   : 'http://127.0.0.1:5173'
@@ -193,7 +192,7 @@ function createWindow(): BrowserWindow {
     minHeight: 600,
     backgroundColor: '#09090b',
     webPreferences: {
-      preload: path.join(dirname, 'preload.cjs'),
+      preload: path.join(dirname, 'preload.js'),
       partition: 'tasktty-desktop',
       nodeIntegration: false,
       contextIsolation: true,

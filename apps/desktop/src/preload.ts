@@ -1,7 +1,4 @@
-// eslint-disable-next-line @typescript-eslint/no-require-imports -- sandboxed Electron preloads execute as CommonJS.
-import electron = require('electron')
-
-const { contextBridge, ipcRenderer } = electron
+import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
 
 type TerminalCommand = 'new-terminal' | 'close-terminal'
 
@@ -9,7 +6,7 @@ contextBridge.exposeInMainWorld(
   'taskttyDesktop',
   Object.freeze({
     onTerminalCommand(listener: (command: TerminalCommand) => void) {
-      const receive = (_event: Electron.IpcRendererEvent, value: unknown) => {
+      const receive = (_event: IpcRendererEvent, value: unknown) => {
         if (value === 'new-terminal' || value === 'close-terminal') {
           listener(value)
         }

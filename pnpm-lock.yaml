@@ -50,6 +50,9 @@ importers:
       '@electron-forge/core':
         specifier: 7.11.2
         version: 7.11.2(encoding@0.1.13)(esbuild@0.28.1)(lightningcss@1.32.0)(postcss@8.5.19)(supports-color@8.1.1)
+      '@electron-forge/plugin-vite':
+        specifier: 7.11.2
+        version: 7.11.2(supports-color@8.1.1)
       '@electron-forge/shared-types':
         specifier: 7.11.2
         version: 7.11.2(supports-color@8.1.1)
@@ -62,6 +65,9 @@ importers:
       typescript:
         specifier: ^5.9.3
         version: 5.9.3
+      vite:
+        specifier: ^8.1.5
+        version: 8.1.5(@types/node@24.13.3)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.49.0)(tsx@4.23.1)
 
   apps/server:
     dependencies:
@@ -752,6 +758,10 @@ packages:
 
   '@electron-forge/plugin-base@7.11.2':
     resolution: {integrity: sha512-tIFzEE2+D9NnCAn/rLwSkh8H59IqN+G973JNl7xmCzquO6qa7/veitZOQFGO79Zmmgkc8R/fmiCbh7LIdLS9Tg==}
+    engines: {node: '>= 16.4.0'}
+
+  '@electron-forge/plugin-vite@7.11.2':
+    resolution: {integrity: sha512-QagRgjXfMBeyP+NkMdUMqke/E0ldfcBycjkgCb2FEH3VnS+Llk5RE2716H3quTuUtRhX2gdRuUDdLsstHFuGWg==}
     engines: {node: '>= 16.4.0'}
 
   '@electron-forge/publisher-base@7.11.2':
@@ -5711,6 +5721,17 @@ snapshots:
   '@electron-forge/plugin-base@7.11.2(supports-color@8.1.1)':
     dependencies:
       '@electron-forge/shared-types': 7.11.2(supports-color@8.1.1)
+    transitivePeerDependencies:
+      - supports-color
+
+  '@electron-forge/plugin-vite@7.11.2(supports-color@8.1.1)':
+    dependencies:
+      '@electron-forge/plugin-base': 7.11.2(supports-color@8.1.1)
+      '@electron-forge/shared-types': 7.11.2(supports-color@8.1.1)
+      chalk: 4.1.2
+      debug: 4.4.3(supports-color@8.1.1)
+      fs-extra: 10.1.0
+      listr2: 7.0.2
     transitivePeerDependencies:
       - supports-color
 

@@ -31,11 +31,13 @@ For loopback-only startup:
 pnpm start:local
 ```
 
-Development runs Hono, Vite, and a watch-built workspace CLI together through Turborepo:
+Development runs Hono, Vite, a watch-built workspace CLI, and the Electron companion together through Turborepo:
 
 ```sh
 pnpm dev
 ```
+
+Use `pnpm dev:desktop` when the daemon is already running and you only want the web and Electron processes.
 
 The root workspace links `tasktty` into `node_modules/.bin`. The development daemon inherits that path and passes it to managed terminals, so the same generic TaskTTY skill can use the CLI while TaskTTY itself is under development. Pi sessions in this repository load the canonical skill directly from `skills/tasktty` through `.pi/settings.json`; there is no separate development version of the skill.
 
@@ -56,7 +58,7 @@ Turbo caches package builds and runs workspace dependencies in graph order. Play
 
 ### Electron desktop companion
 
-The Electron app is a thin companion for the existing loopback TaskTTY daemon. It does not start, bundle, or stop the daemon, so build and start TaskTTY locally before launching the desktop development shell:
+The Electron app is a thin companion for the existing loopback TaskTTY daemon. `pnpm dev` starts the development daemon, web app, and Electron window together. It does not bundle or own the daemon; for an already-running built daemon, launch only the web and desktop development processes with:
 
 ```sh
 pnpm build
@@ -65,7 +67,7 @@ pnpm start:local
 pnpm dev:desktop
 ```
 
-The desktop window loads the same HTTP application and keeps API and Socket.IO behavior shared with the browser. **New Terminal** (`Cmd+T` on macOS, `Ctrl+T` elsewhere) creates a Shell in the selected worktree. **Close Terminal** (`Cmd+W` or `Ctrl+W`) uses the same destructive confirmation and adjacent-tab selection as the tab close button; it does not close the desktop window.
+Electron Forge's Vite + TypeScript plugin builds and watches only the Electron main and preload entries. React remains in its own renderer context, served by the existing web workspace at `http://127.0.0.1:5173`; Electron loads that URL without bundling the web app. API and Socket.IO behavior therefore stay shared with the browser, without a build-before-dev step. **New Terminal** (`Cmd+T` on macOS, `Ctrl+T` elsewhere) creates a Shell in the selected worktree. **Close Terminal** (`Cmd+W` or `Ctrl+W`) uses the same destructive confirmation and adjacent-tab selection as the tab close button; it does not close the desktop window.
 
 `TASKTTY_DESKTOP_URL` may override the development URL, but the companion accepts loopback HTTP origins only. The workspace pins Forge 7.11.2 and overrides its transitive `@electron/rebuild` with 4.2.0 because pnpm 11 rejects the older rebuild release’s exotic Git dependency. Electron Forge packaging still requires a hoisted pnpm layout; packaging, native daemon dependencies, signing, notarization, and distribution are intentionally outside this companion MVP.
 

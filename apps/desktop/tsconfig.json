@@ -1,11 +1,18 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "rootDir": "src",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "rootDir": ".",
     "outDir": "dist",
     "tsBuildInfoFile": "dist/.tsbuildinfo",
     "lib": ["ES2022", "DOM"],
-    "types": ["node", "electron"]
+    "types": ["node", "electron", "@electron-forge/plugin-vite/forge-vite-env"]
   },
-  "include": ["src/**/*.ts", "src/**/*.cts"]
+  "include": [
+    "forge.config.ts",
+    "forge.env.d.ts",
+    "src/**/*.ts",
+    "vite.*.config.ts"
+  ]
 }

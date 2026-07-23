@@ -12,4 +12,5 @@ coverage/
 playwright-report/
 test-results/
 apps/desktop/out/
+apps/desktop/.vite/
 .pi-subagents/
