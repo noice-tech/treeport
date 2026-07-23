@@ -1,0 +1,119 @@
+import { useEffect, useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
+import { io, type Socket } from 'socket.io-client'
+import {
+  parseEventsSnapshot,
+  parseProductEvent,
+  parseTerminalRuntimeMetadata,
+  SOCKET_IO_PATH
+} from '@tasktty/shared'
+import type {
+  EventsClientToServerEvents,
+  EventsServerToClientEvents,
+  ProjectRecord
+} from '@tasktty/shared'
+import { createInvalidationCoalescer } from './metadata-sync.js'
+import { projectsQueryKey, recentProjectsQueryKey } from './project-metadata.js'
+import { terminalSessions } from './terminal-session.js'
+
+export function useProjectEventsBridge(
+  projects: ProjectRecord[] | undefined
+): boolean {
+  const queryClient = useQueryClient()
+  const [eventsDisconnected, setEventsDisconnected] = useState(false)
+
+  useEffect(() => {
+    const events: Socket<
+      EventsServerToClientEvents,
+      EventsClientToServerEvents
+    > = io('/events', {
+      path: SOCKET_IO_PATH,
+      transports: ['websocket'],
+      autoConnect: false,
+      retries: 0
+    })
+    const refreshes = createInvalidationCoalescer(() =>
+      queryClient.invalidateQueries(
+        { queryKey: projectsQueryKey },
+        { cancelRefetch: false }
+      )
+    )
+    const projectRefreshes = createInvalidationCoalescer(() =>
+      Promise.all([
+        queryClient.invalidateQueries(
+          { queryKey: projectsQueryKey },
+          { cancelRefetch: false }
+        ),
+        queryClient.invalidateQueries(
+          { queryKey: recentProjectsQueryKey },
+          { cancelRefetch: false }
+        )
+      ])
+    )
+    const refresh = () => refreshes.schedule()
+    const refreshProjects = () => projectRefreshes.schedule()
+    const snapshot = (value: unknown) => {
+      const payload = parseEventsSnapshot(value)
+      if (!payload) {
+        setEventsDisconnected(true)
+        return
+      }
+
+      terminalSessions.replaceRuntimeMetadata(payload.terminalMetadata)
+      setEventsDisconnected(false)
+      refresh()
+    }
+    const productEvent = (value: unknown) => {
+      const event = parseProductEvent(value)
+      if (!event) {
+        return
+      }
+
+      if (event.type === 'terminal.metadata') {
+        const metadata = parseTerminalRuntimeMetadata(event.data)
+        if (metadata) {
+          terminalSessions.applyRuntimeMetadata(metadata)
+        }
+
+        return
+      }
+
+      if (
+        event.type === 'project.updated' ||
+        event.type === 'project.removed'
+      ) {
+        refreshProjects()
+        return
+      }
+
+      if (event.type !== 'terminal.controller_changed') {
+        refresh()
+      }
+    }
+    const disconnected = () => setEventsDisconnected(true)
+    events.on('snapshot', snapshot)
+    events.on('product_event', productEvent)
+    events.on('disconnect', disconnected)
+    events.on('connect_error', disconnected)
+    events.connect()
+    return () => {
+      refreshes.dispose()
+      projectRefreshes.dispose()
+      events.disconnect()
+    }
+  }, [queryClient])
+
+  useEffect(() => {
+    if (!projects) {
+      return
+    }
+
+    terminalSessions.reconcile(
+      projects.flatMap((project) =>
+        project.worktrees.flatMap((worktree) => worktree.terminals)
+      )
+    )
+  }, [projects])
+
+  return eventsDisconnected
+}

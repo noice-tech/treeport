@@ -1,0 +1,274 @@
+import { useEffect, useRef, useState } from 'react'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useLocation } from '@tanstack/react-router'
+import type {
+  ProjectRecord,
+  TerminalPreset,
+  TerminalRecord,
+  WorktreeRecord
+} from '@tasktty/shared'
+import { apiClient } from '../../api.js'
+import { projectsQueryKey } from '../../project-metadata.js'
+import { terminalSessions } from '../../terminal-session.js'
+import { TerminalView } from '../../terminal-view.js'
+import { terminalTarget, worktreeTarget } from '../../workspace-navigation.js'
+import { useWorkspaceNavigate } from '../../workspace-router-navigation.js'
+
+export function TerminalWorkspace({
+  projects,
+  selectedProject,
+  selectedWorktree,
+  selectedTerminal,
+  presets,
+  presetsLoading,
+  presetsError,
+  foregroundProcesses,
+  runtimeTitles,
+  modalOpen,
+  projectSwitcherOpen,
+  isMobile,
+  drawerOpen,
+  setDrawerOpen,
+  setError,
+  onSelectTerminal,
+  onManagePresets
+}: {
+  projects: ProjectRecord[]
+  selectedProject: ProjectRecord | null
+  selectedWorktree: WorktreeRecord | null
+  selectedTerminal: TerminalRecord | null
+  presets: TerminalPreset[]
+  presetsLoading: boolean
+  presetsError: boolean
+  foregroundProcesses: ReadonlySet<string>
+  runtimeTitles: ReadonlyMap<string, string>
+  modalOpen: boolean
+  projectSwitcherOpen: boolean
+  isMobile: boolean
+  drawerOpen: boolean
+  setDrawerOpen: (open: boolean) => void
+  setError: (value: string | null) => void
+  onSelectTerminal: (terminal: TerminalRecord) => void
+  onManagePresets: (trigger?: HTMLElement | null) => void
+}) {
+  const queryClient = useQueryClient()
+  const location = useLocation()
+  const navigateToWorkspace = useWorkspaceNavigate()
+  const [focusTerminalId, setFocusTerminalId] = useState<string | null>(null)
+  const createTerminalGuardRef = useRef(false)
+  const closeTerminalGuardRef = useRef(false)
+  const selectedTerminalId = selectedTerminal?.id ?? null
+  const mutationsDisabled =
+    Boolean(selectedWorktree?.prunable) ||
+    selectedWorktree?.status !== 'active' ||
+    selectedProject?.availability.state === 'unavailable'
+  const showError = (value: unknown) =>
+    setError(value instanceof Error ? value.message : String(value))
+
+  const createTerminal = useMutation({
+    mutationFn: ({
+      worktreeId,
+      name,
+      argv,
+      returnToShell
+    }: {
+      worktreeId: string
+      name: string
+      argv?: string[]
+      returnToShell?: boolean
+    }) => apiClient.createTerminal(worktreeId, name, argv, returnToShell),
+    onSuccess: async (terminal) => {
+      const project = projects.find((candidate) =>
+        candidate.worktrees.some(
+          (worktree) => worktree.id === terminal.worktreeId
+        )
+      )
+      const worktree = project?.worktrees.find(
+        (candidate) => candidate.id === terminal.worktreeId
+      )
+      if (!project || !worktree) {
+        await queryClient.invalidateQueries({ queryKey: projectsQueryKey })
+        return
+      }
+
+      const replacesEmptyWorktree =
+        location.pathname === worktreeTarget(project.id, worktree.id).pathname
+      queryClient.setQueryData<ProjectRecord[]>(projectsQueryKey, (current) =>
+        current?.map((candidateProject) => ({
+          ...candidateProject,
+          worktrees: candidateProject.worktrees.map((candidateWorktree) =>
+            candidateWorktree.id === worktree.id
+              ? {
+                  ...candidateWorktree,
+                  terminals: [
+                    ...candidateWorktree.terminals.filter(
+                      (candidate) => candidate.id !== terminal.id
+                    ),
+                    terminal
+                  ]
+                }
+              : candidateWorktree
+          )
+        }))
+      )
+      setFocusTerminalId(terminal.id)
+      await navigateToWorkspace(
+        terminalTarget(project.id, worktree.id, terminal.id),
+        replacesEmptyWorktree
+      )
+      setDrawerOpen(false)
+      await queryClient.invalidateQueries({ queryKey: projectsQueryKey })
+    },
+    onError: showError,
+    onSettled: () => {
+      createTerminalGuardRef.current = false
+    }
+  })
+
+  const closeTerminal = useMutation({
+    mutationFn: (terminal: TerminalRecord) =>
+      apiClient.deleteTerminal(terminal.id),
+    onSuccess: async (_, closedTerminal) => {
+      if (
+        selectedTerminalId === closedTerminal.id &&
+        selectedProject &&
+        selectedWorktree
+      ) {
+        const closedIndex = selectedWorktree.terminals.findIndex(
+          (terminal) => terminal.id === closedTerminal.id
+        )
+        const nextTerminal =
+          selectedWorktree.terminals[closedIndex + 1] ??
+          selectedWorktree.terminals[closedIndex - 1] ??
+          null
+        await navigateToWorkspace(
+          nextTerminal
+            ? terminalTarget(
+                selectedProject.id,
+                selectedWorktree.id,
+                nextTerminal.id
+              )
+            : worktreeTarget(selectedProject.id, selectedWorktree.id),
+          true
+        )
+      }
+
+      terminalSessions.forget(closedTerminal.id)
+      queryClient.setQueryData<ProjectRecord[]>(projectsQueryKey, (current) =>
+        current?.map((project) => ({
+          ...project,
+          worktrees: project.worktrees.map((worktree) => ({
+            ...worktree,
+            terminals: worktree.terminals.filter(
+              (terminal) => terminal.id !== closedTerminal.id
+            )
+          }))
+        }))
+      )
+      await queryClient.invalidateQueries({ queryKey: projectsQueryKey })
+    },
+    onError: showError,
+    onSettled: () => {
+      closeTerminalGuardRef.current = false
+    }
+  })
+
+  const createTerminalInSelectedWorktree = (input: {
+    name: string
+    argv?: string[]
+    returnToShell?: boolean
+  }) => {
+    if (
+      !selectedWorktree ||
+      mutationsDisabled ||
+      createTerminal.isPending ||
+      createTerminalGuardRef.current
+    ) {
+      return
+    }
+
+    createTerminalGuardRef.current = true
+    createTerminal.mutate({
+      worktreeId: selectedWorktree.id,
+      name: input.name,
+      ...(input.argv ? { argv: [...input.argv] } : {}),
+      ...(input.returnToShell ? { returnToShell: true } : {})
+    })
+  }
+
+  const requestCloseTerminal = (terminal: TerminalRecord) => {
+    if (closeTerminal.isPending || closeTerminalGuardRef.current) {
+      return
+    }
+
+    if (
+      foregroundProcesses.has(terminal.id) &&
+      !window.confirm(
+        `Close terminal “${
+          runtimeTitles.get(terminal.id) || terminal.name
+        }”? Its foreground process will be terminated.`
+      )
+    ) {
+      return
+    }
+
+    closeTerminalGuardRef.current = true
+    closeTerminal.mutate(terminal)
+  }
+
+  useEffect(() => {
+    if (!window.taskttyDesktop) {
+      return
+    }
+
+    return window.taskttyDesktop.onTerminalCommand((command) => {
+      if (modalOpen || projectSwitcherOpen || (isMobile && drawerOpen)) {
+        return
+      }
+
+      if (command === 'new-terminal') {
+        createTerminalInSelectedWorktree({ name: 'Shell' })
+      } else if (selectedTerminal) {
+        requestCloseTerminal(selectedTerminal)
+      }
+    })
+  }, [
+    closeTerminal.isPending,
+    createTerminal.isPending,
+    drawerOpen,
+    foregroundProcesses,
+    isMobile,
+    modalOpen,
+    projectSwitcherOpen,
+    runtimeTitles,
+    selectedTerminal,
+    selectedWorktree,
+    mutationsDisabled
+  ])
+
+  return (
+    <TerminalView
+      worktree={selectedWorktree}
+      terminal={selectedTerminal}
+      focusTerminalId={focusTerminalId}
+      presets={presets}
+      presetsLoading={presetsLoading}
+      presetsError={presetsError}
+      onSelectTerminal={onSelectTerminal}
+      onCreateTerminal={createTerminalInSelectedWorktree}
+      onManagePresets={onManagePresets}
+      creatingTerminal={
+        createTerminal.isPending &&
+        createTerminal.variables?.worktreeId === selectedWorktree?.id
+      }
+      mutationsDisabled={mutationsDisabled}
+      onCloseTerminal={requestCloseTerminal}
+      closingTerminalId={
+        closeTerminal.isPending ? closeTerminal.variables?.id : null
+      }
+      onStatusChange={() =>
+        void queryClient.invalidateQueries({ queryKey: projectsQueryKey })
+      }
+    />
+  )
+}

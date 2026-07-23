@@ -13,7 +13,7 @@ import {
 import { createApp } from './app.js'
 import type { TerminalMetadataManager } from './terminal-metadata.js'
 
-function fixture() {
+function fixture(webDist = '/missing') {
   const config: AppConfig = {
     host: '127.0.0.1',
     port: 4780,
@@ -129,7 +129,7 @@ function fixture() {
     config,
     tmux: {} as TmuxAdapter,
     terminalMetadata,
-    webDist: '/missing'
+    webDist
   })
   return {
     app,
@@ -539,5 +539,31 @@ describe('HTTP API validation', () => {
     const { app } = fixture()
     expect((await app.request('/api/events')).status).toBe(404)
     expect((await app.request('/api/terminals/term/attach')).status).toBe(404)
+  })
+
+  it('serves the web entry point for deep links without masking API 404s', async () => {
+    const webDist = path.join('/tmp', `tasktty-web-dist-${crypto.randomUUID()}`)
+    await fs.mkdir(webDist, { recursive: true })
+    await fs.writeFile(
+      path.join(webDist, 'index.html'),
+      '<!doctype html><title>TaskTTY route fallback</title>'
+    )
+
+    try {
+      const { app } = fixture(webDist)
+      const deepLink = await app.request(
+        '/projects/project/worktrees/worktree/terminals/terminal'
+      )
+      expect(deepLink.status).toBe(200)
+      expect(await deepLink.text()).toContain('TaskTTY route fallback')
+
+      const missingApi = await app.request('/api/missing')
+      expect(missingApi.status).toBe(404)
+      expect(missingApi.headers.get('content-type')).toContain(
+        'application/json'
+      )
+    } finally {
+      await fs.rm(webDist, { recursive: true, force: true })
+    }
   })
 })
