@@ -7,7 +7,8 @@ import {
   parseTerminalProgress,
   parseTerminalRuntimeMetadata,
   parseTerminalServerEvent,
-  terminalBellAcknowledgementSchema
+  terminalBellAcknowledgementSchema,
+  terminalSizeSchema
 } from './index.js'
 
 describe('Socket.IO contracts', () => {
@@ -57,9 +58,21 @@ describe('Socket.IO contracts', () => {
     expect(
       parseTerminalClientEvent('take_control', {
         generation: 2,
+        cols: 120,
+        rows: 40
+      })
+    ).toEqual({ generation: 2, cols: 120, rows: 40 })
+    expect(
+      parseTerminalClientEvent('take_control', {
+        generation: 2,
+        cols: 120,
+        rows: 40,
         extra: true
       })
     ).toBeNull()
+    expect(parseTerminalClientEvent('take_control', { generation: 2 })).toEqual(
+      { generation: 2 }
+    )
   })
 
   it('validates fresh stream ready, output, consumption, and control payloads', () => {
@@ -69,9 +82,62 @@ describe('Socket.IO contracts', () => {
         streamId: 'stream',
         generation: 3,
         controller: true,
+        reset: 'full',
+        cols: 120,
+        rows: 40,
+        revision: 1
+      })
+    ).toMatchObject({
+      streamId: 'stream',
+      generation: 3,
+      reset: 'full',
+      cols: 120,
+      rows: 40,
+      revision: 1
+    })
+    expect(
+      parseTerminalServerEvent('ready', {
+        connectionId: 'legacy-connection',
+        streamId: 'legacy-stream',
+        generation: 2,
+        controller: false,
         reset: 'full'
       })
-    ).toMatchObject({ streamId: 'stream', generation: 3, reset: 'full' })
+    ).toMatchObject({ streamId: 'legacy-stream', reset: 'full' })
+    expect(
+      parseTerminalServerEvent('ready', {
+        connectionId: 'hybrid',
+        streamId: 'hybrid-stream',
+        generation: 2,
+        controller: false,
+        reset: 'full',
+        cols: 80
+      })
+    ).toBeNull()
+    expect(
+      parseTerminalServerEvent('ready', {
+        connectionId: 'hybrid',
+        streamId: 'hybrid-stream',
+        generation: 2,
+        controller: false,
+        reset: 'full',
+        cols: 80,
+        rows: 24
+      })
+    ).toBeNull()
+    expect(
+      terminalSizeSchema.safeParse({ cols: 1_000, rows: 500 }).success
+    ).toBe(true)
+    expect(
+      terminalSizeSchema.safeParse({ cols: 1_001, rows: 500 }).success
+    ).toBe(false)
+    expect(
+      parseTerminalServerEvent('dimensions', {
+        cols: 80,
+        rows: 24,
+        revision: 2
+      })
+    ).toEqual({ cols: 80, rows: 24, revision: 2 })
     expect(
       parseTerminalServerEvent('output', {
         streamId: 'stream',

@@ -158,6 +158,69 @@ function fixture(maxSessions = 3, idleMs = 1_000) {
   return { acknowledgeBell, manager, sessions }
 }
 
+function controllerSessionFixture() {
+  const socket = new FakeSocketIO()
+  socket.connected = true
+  let proposal = { cols: 120, rows: 40 }
+  const host = {} as HTMLElement
+  const resize = vi.fn()
+  const session = new TerminalSession('terminal-one')
+  Object.assign(session as unknown as Record<string, unknown>, {
+    socket,
+    ready: true,
+    host,
+    terminal: {
+      cols: 100,
+      rows: 30,
+      options: { fontSize: 14 },
+      reset: vi.fn(),
+      resize,
+      focus: vi.fn(),
+      dispose: vi.fn()
+    },
+    fitAddon: {
+      proposeDimensions: () => proposal
+    },
+    canonicalCols: 100,
+    canonicalRows: 30,
+    canonicalRevision: 1,
+    appliedRevision: 1,
+    controllerGeneration: 4,
+    snapshotValue: {
+      phase: 'ready',
+      degraded: false,
+      controller: true,
+      title: null,
+      bellActive: false,
+      bellSerial: 0,
+      exitSerial: 0,
+      fileTransfer: null,
+      error: null
+    }
+  })
+  const measure = (dimensions: { cols: number; rows: number }) => {
+    proposal = dimensions
+    ;(session as unknown as { fit(queueControllerResize: boolean): void }).fit(
+      true
+    )
+  }
+  const dimensions = (cols: number, rows: number, revision: number) => {
+    ;(
+      session as unknown as {
+        handleServerEvent(event: 'dimensions', value: unknown): void
+      }
+    ).handleServerEvent('dimensions', { cols, rows, revision })
+  }
+  const control = (controller: boolean, generation: number) => {
+    ;(
+      session as unknown as {
+        handleServerEvent(event: 'control', value: unknown): void
+      }
+    ).handleServerEvent('control', { controller, generation })
+  }
+  return { control, dimensions, host, measure, resize, session, socket }
+}
+
 describe('terminal options', () => {
   it('opens OSC 8 links only on Cmd-click on Apple platforms', () => {
     const open = vi.fn()
@@ -315,6 +378,11 @@ describe('TerminalSession', () => {
     })
 
     const session = new TerminalSession('terminal-one')
+    ;(session as unknown as { terminal: unknown }).terminal = {
+      cols: 5_000,
+      rows: 1,
+      dispose: vi.fn()
+    }
     ;(session as unknown as { connect(): void }).connect()
     expect(socketClient.io).toHaveBeenCalledWith(
       '/terminals',
@@ -323,7 +391,8 @@ describe('TerminalSession', () => {
         transports: ['websocket'],
         forceNew: true,
         multiplex: false,
-        retries: 0
+        retries: 0,
+        query: { terminalProtocol: '2' }
       })
     )
     const options = socketClient.io.mock.calls[0]![1] as {
@@ -334,23 +403,25 @@ describe('TerminalSession', () => {
     expect(authorize).toHaveBeenCalledWith({
       terminalId: 'terminal-one',
       clientId: '12121212-1212-4212-9212-121212121212',
-      cols: 100,
-      rows: 30
+      cols: 1_000,
+      rows: 2
     })
     expect(setItem).toHaveBeenCalledOnce()
     session.dispose()
   })
 
-  it('ACKs only after xterm consumption and ignores a stale stream callback', () => {
+  it('batches contiguous output writes while ACKing only parsed data', async () => {
     const socket = new FakeSocketIO()
     socketClient.io.mockReturnValue(socket)
     const session = new TerminalSession('terminal-one')
-    let consumed: (() => void) | null = null
+    const writes: Array<{ data: string; callback: () => void }> = []
     const reset = vi.fn()
     ;(session as unknown as { terminal: unknown }).terminal = {
       reset,
-      write: (_data: string, callback: () => void) => {
-        consumed = callback
+      resize: vi.fn(),
+      options: { fontSize: 14 },
+      write: (data: string, callback: () => void) => {
+        writes.push({ data, callback })
       },
       dispose: vi.fn()
     }
@@ -360,23 +431,35 @@ describe('TerminalSession', () => {
       streamId: 'stream-1',
       generation: 4,
       controller: true,
-      reset: 'full'
+      reset: 'full',
+      cols: 100,
+      rows: 30,
+      revision: 1
     })
     socket.emitServer('output', {
       streamId: 'stream-1',
       sequence: 1,
       data: 'hello'
     })
+    socket.emitServer('output', {
+      streamId: 'stream-1',
+      sequence: 2,
+      data: ' world'
+    })
 
-    expect(reset).toHaveBeenCalledOnce()
+    await vi.waitFor(() => expect(reset).toHaveBeenCalledOnce())
+    await vi.waitFor(() => expect(writes).toHaveLength(2))
+    expect(writes.map(({ data }) => data)).toEqual(['hello', ' world'])
     expect(socket.emit).not.toHaveBeenCalledWith(
       'output_ack',
       expect.anything()
     )
-    ;(consumed as (() => void) | null)?.()
-    expect(socket.emit).toHaveBeenCalledWith('output_ack', {
+
+    writes[0]!.callback()
+    writes[1]!.callback()
+    expect(socket.emit).toHaveBeenLastCalledWith('output_ack', {
       streamId: 'stream-1',
-      sequence: 1
+      sequence: 2
     })
     expect(socket.volatile.emit).not.toHaveBeenCalledWith(
       'output_ack',
@@ -385,12 +468,459 @@ describe('TerminalSession', () => {
 
     socket.emitServer('output', {
       streamId: 'stream-1',
-      sequence: 2,
+      sequence: 3,
       data: 'later'
     })
+    await vi.waitFor(() => expect(writes).toHaveLength(3))
     socket.emitServer('disconnect', 'transport close')
-    ;(consumed as (() => void) | null)?.()
+    writes[2]!.callback()
+    expect(socket.emit).toHaveBeenCalledTimes(2)
+    session.dispose()
+  })
+
+  it('drains earlier output before resizing and admitting later output', async () => {
+    const socket = new FakeSocketIO()
+    socketClient.io.mockReturnValue(socket)
+    const session = new TerminalSession('terminal-one')
+    const writes: Array<{ data: string; callback: () => void }> = []
+    const resize = vi.fn()
+    ;(session as unknown as { terminal: unknown }).terminal = {
+      reset: vi.fn(),
+      resize,
+      options: { fontSize: 14 },
+      write: (data: string, callback: () => void) => {
+        writes.push({ data, callback })
+      },
+      dispose: vi.fn()
+    }
+    ;(session as unknown as { connect(): void }).connect()
+    socket.emitServer('ready', {
+      connectionId: 'connection-1',
+      streamId: 'stream-1',
+      generation: 4,
+      controller: false,
+      reset: 'full',
+      cols: 100,
+      rows: 30,
+      revision: 1
+    })
+    socket.emitServer('output', {
+      streamId: 'stream-1',
+      sequence: 1,
+      data: 'old grid'
+    })
+    socket.emitServer('dimensions', { cols: 120, rows: 40, revision: 2 })
+    socket.emitServer('output', {
+      streamId: 'stream-1',
+      sequence: 2,
+      data: 'new grid'
+    })
+
+    await vi.waitFor(() => expect(writes).toHaveLength(2))
+    expect(writes.map(({ data }) => data)).toEqual(['old grid', ''])
+    expect(resize).toHaveBeenCalledTimes(1)
+
+    writes[0]!.callback()
+    expect(resize).toHaveBeenCalledTimes(1)
+    expect(writes).toHaveLength(2)
+    writes[1]!.callback()
+
+    await vi.waitFor(() => expect(resize).toHaveBeenLastCalledWith(120, 40))
+    await vi.waitFor(() => expect(writes).toHaveLength(3))
+    expect(writes[2]!.data).toBe('new grid')
+    session.dispose()
+  })
+
+  it('drains stale output before a new stream reset without ACKing it', async () => {
+    const socket = new FakeSocketIO()
+    socketClient.io.mockReturnValue(socket)
+    const session = new TerminalSession('terminal-one')
+    const writes: Array<{ data: string; callback: () => void }> = []
+    const reset = vi.fn()
+    ;(session as unknown as { terminal: unknown }).terminal = {
+      reset,
+      resize: vi.fn(),
+      options: { fontSize: 14 },
+      write: (data: string, callback: () => void) => {
+        writes.push({ data, callback })
+      },
+      dispose: vi.fn()
+    }
+    ;(session as unknown as { connect(): void }).connect()
+    socket.emitServer('ready', {
+      connectionId: 'connection-1',
+      streamId: 'stream-1',
+      generation: 4,
+      controller: false,
+      reset: 'full',
+      cols: 100,
+      rows: 30,
+      revision: 1
+    })
+    await vi.waitFor(() => expect(reset).toHaveBeenCalledOnce())
+    socket.emitServer('output', {
+      streamId: 'stream-1',
+      sequence: 1,
+      data: 'stale'
+    })
+    await vi.waitFor(() => expect(writes).toHaveLength(1))
+
+    socket.emitServer('ready', {
+      connectionId: 'connection-2',
+      streamId: 'stream-2',
+      generation: 5,
+      controller: false,
+      reset: 'full',
+      cols: 120,
+      rows: 40,
+      revision: 2
+    })
+    socket.emitServer('output', {
+      streamId: 'stream-2',
+      sequence: 1,
+      data: 'fresh'
+    })
+    await vi.waitFor(() => expect(writes).toHaveLength(2))
+    expect(writes[1]!.data).toBe('')
+
+    writes[0]!.callback()
+    expect(socket.emit).not.toHaveBeenCalledWith(
+      'output_ack',
+      expect.anything()
+    )
+    expect(reset).toHaveBeenCalledOnce()
+    writes[1]!.callback()
+
+    await vi.waitFor(() => expect(reset).toHaveBeenCalledTimes(2))
+    await vi.waitFor(() => expect(writes).toHaveLength(3))
+    expect(writes[2]!.data).toBe('fresh')
+    writes[2]!.callback()
+    expect(socket.emit).toHaveBeenLastCalledWith('output_ack', {
+      streamId: 'stream-2',
+      sequence: 1
+    })
+    session.dispose()
+  })
+
+  it('refits as a viewer when takeover dimensions arrive before control loss', async () => {
+    const { control, dimensions, resize, session, socket } =
+      controllerSessionFixture()
+    ;(
+      session as unknown as { fitAddon: { proposeDimensions: () => unknown } }
+    ).fitAddon.proposeDimensions = () => ({ cols: 60, rows: 20 })
+
+    dimensions(120, 40, 2)
+    await vi.waitFor(() => expect(resize).toHaveBeenLastCalledWith(120, 40))
+    control(false, 5)
+    const fitCallback = vi.mocked(requestAnimationFrame).mock.calls.at(-1)?.[0]
+    fitCallback?.(0)
+
+    expect(
+      (session as unknown as { terminal: { options: { fontSize: number } } })
+        .terminal.options.fontSize
+    ).toBe(7)
+    expect(resize).toHaveBeenLastCalledWith(120, 40)
+    expect(socket.emit).not.toHaveBeenCalledWith('resize', expect.anything())
+    session.dispose()
+  })
+
+  it('uses an isolated legacy sizing and takeover path for an old server', async () => {
+    const socket = new FakeSocketIO()
+    socketClient.io.mockReturnValue(socket)
+    const session = new TerminalSession('terminal-one')
+    let legacyDimensions = { cols: 120, rows: 40 }
+    const terminal = {
+      cols: 100,
+      rows: 30,
+      options: { fontSize: 14 },
+      reset: vi.fn(),
+      resize: vi.fn(),
+      focus: vi.fn(),
+      dispose: vi.fn()
+    }
+    Object.assign(session as unknown as Record<string, unknown>, {
+      host: {},
+      terminal,
+      fitAddon: {
+        fit: () => {
+          terminal.cols = legacyDimensions.cols
+          terminal.rows = legacyDimensions.rows
+        },
+        proposeDimensions: () => legacyDimensions
+      }
+    })
+    ;(session as unknown as { connect(): void }).connect()
+    socket.emitServer('ready', {
+      connectionId: 'legacy-connection',
+      streamId: 'legacy-stream',
+      generation: 3,
+      controller: true,
+      reset: 'full'
+    })
+    await vi.waitFor(() => expect(terminal.reset).toHaveBeenCalledOnce())
+    legacyDimensions = { cols: 130, rows: 45 }
+    ;(session as unknown as { fit(queueControllerResize: boolean): void }).fit(
+      true
+    )
+    await vi.advanceTimersByTimeAsync(150)
+
+    expect(socket.emit).toHaveBeenCalledWith('resize', {
+      generation: 3,
+      cols: 130,
+      rows: 45
+    })
+    session.takeControl()
+    expect(socket.emit).toHaveBeenCalledWith('take_control', { generation: 3 })
+    session.sendText('legacy input')
+    expect(socket.volatile.emit).toHaveBeenCalledWith('input', {
+      generation: 3,
+      data: 'legacy input'
+    })
+    expect((session as unknown as { canInput(): boolean }).canInput()).toBe(
+      true
+    )
+    session.dispose()
+  })
+
+  it('closes on render queue failure and does not run later operations', async () => {
+    const socket = new FakeSocketIO()
+    socketClient.io.mockReturnValue(socket)
+    const session = new TerminalSession('terminal-one')
+    ;(session as unknown as { terminal: unknown }).terminal = {
+      reset: () => {
+        throw new Error('reset failed')
+      },
+      resize: vi.fn(),
+      options: { fontSize: 14 },
+      dispose: vi.fn()
+    }
+    ;(session as unknown as { connect(): void }).connect()
+    socket.emitServer('ready', {
+      connectionId: 'connection-1',
+      streamId: 'stream-1',
+      generation: 4,
+      controller: false,
+      reset: 'full',
+      cols: 100,
+      rows: 30,
+      revision: 1
+    })
+    await vi.waitFor(() =>
+      expect(session.getSnapshot()).toMatchObject({
+        phase: 'closed',
+        error: 'Terminal rendering failed: reset failed'
+      })
+    )
+    const sentinel = vi.fn()
+    ;(
+      session as unknown as {
+        enqueueRender(epoch: number, operation: () => void): void
+      }
+    ).enqueueRender(1, sentinel)
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(sentinel).not.toHaveBeenCalled()
+
+    const reload = vi.fn()
+    vi.stubGlobal('location', { reload })
+    session.retry()
+    expect(reload).toHaveBeenCalledOnce()
+    expect(socket.connected).toBe(false)
+    session.dispose()
+  })
+
+  it('translates FitAddon exceptions through the fatal rendering boundary', () => {
+    const socket = new FakeSocketIO()
+    socket.connected = true
+    const session = new TerminalSession('terminal-one')
+    Object.assign(session as unknown as Record<string, unknown>, {
+      socket,
+      ready: true,
+      host: {},
+      terminal: {
+        cols: 100,
+        rows: 30,
+        options: { fontSize: 14 },
+        dispose: vi.fn()
+      },
+      fitAddon: {
+        proposeDimensions: () => {
+          throw new Error('measurement failed')
+        }
+      },
+      canonicalRevision: 1,
+      appliedRevision: 1
+    })
+
+    ;(session as unknown as { fit(): void }).fit()
+
+    expect(session.getSnapshot()).toMatchObject({
+      phase: 'closed',
+      error: 'Terminal rendering failed: measurement failed'
+    })
+    expect(socket.connected).toBe(false)
+    session.dispose()
+  })
+
+  it('coalesces repeated controller measurements to the latest bounded size', async () => {
+    const { measure, resize, session, socket } = controllerSessionFixture()
+
+    measure({ cols: 110, rows: 35 })
+    await vi.advanceTimersByTimeAsync(100)
+    measure({ cols: 130, rows: 42 })
+    await vi.advanceTimersByTimeAsync(100)
+    measure({ cols: 2_000, rows: 45 })
+    await vi.advanceTimersByTimeAsync(149)
+    expect(socket.emit).not.toHaveBeenCalledWith('resize', expect.anything())
+
+    await vi.advanceTimersByTimeAsync(1)
+    expect(socket.emit).toHaveBeenCalledOnce()
+    expect(socket.emit).toHaveBeenCalledWith('resize', {
+      generation: 4,
+      cols: 1_000,
+      rows: 45
+    })
+    session.sendText('blocked during resize')
+    expect(socket.volatile.emit).not.toHaveBeenCalled()
+    expect((session as unknown as { canInput(): boolean }).canInput()).toBe(
+      false
+    )
+    expect(resize).not.toHaveBeenCalled()
+    session.dispose()
+  })
+
+  it('does not send the next resize from an ACK during an ongoing gesture', async () => {
+    const { dimensions, measure, session, socket } = controllerSessionFixture()
+
+    measure({ cols: 120, rows: 40 })
+    await vi.advanceTimersByTimeAsync(150)
     expect(socket.emit).toHaveBeenCalledTimes(1)
+
+    measure({ cols: 130, rows: 45 })
+    await vi.advanceTimersByTimeAsync(100)
+    dimensions(120, 40, 2)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(
+      (session as unknown as { appliedRevision: number }).appliedRevision
+    ).toBe(2)
+    expect(socket.emit).toHaveBeenCalledTimes(1)
+
+    await vi.advanceTimersByTimeAsync(49)
+    expect(socket.emit).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(socket.emit).toHaveBeenLastCalledWith('resize', {
+      generation: 4,
+      cols: 130,
+      rows: 45
+    })
+    session.dispose()
+  })
+
+  it('flushes one final quiet resize after an in-flight resize is ACKed', async () => {
+    const { dimensions, measure, session, socket } = controllerSessionFixture()
+
+    measure({ cols: 120, rows: 40 })
+    await vi.advanceTimersByTimeAsync(150)
+    measure({ cols: 100, rows: 30 })
+    await vi.advanceTimersByTimeAsync(150)
+    expect(socket.emit).toHaveBeenCalledTimes(1)
+
+    dimensions(120, 40, 2)
+    await vi.waitFor(() => expect(socket.emit).toHaveBeenCalledTimes(2))
+    expect(socket.emit).toHaveBeenLastCalledWith('resize', {
+      generation: 4,
+      cols: 100,
+      rows: 30
+    })
+    session.dispose()
+  })
+
+  it('cancels stale resize intent on control loss and unmount', async () => {
+    const { control, host, measure, session, socket } =
+      controllerSessionFixture()
+
+    measure({ cols: 120, rows: 40 })
+    control(false, 5)
+    await vi.advanceTimersByTimeAsync(150)
+    expect(socket.emit).not.toHaveBeenCalled()
+
+    control(true, 6)
+    await vi.advanceTimersByTimeAsync(150)
+    expect(socket.emit).not.toHaveBeenCalled()
+    measure({ cols: 130, rows: 45 })
+    session.unmount(host)
+    await vi.advanceTimersByTimeAsync(150)
+    expect(socket.emit).not.toHaveBeenCalled()
+    session.dispose()
+  })
+
+  it('cancels queued resize intent on a reconnect ready epoch', async () => {
+    const { measure, session, socket } = controllerSessionFixture()
+
+    measure({ cols: 120, rows: 40 })
+    ;(
+      session as unknown as {
+        handleServerEvent(event: 'ready', value: unknown): void
+      }
+    ).handleServerEvent('ready', {
+      connectionId: 'connection-2',
+      streamId: 'stream-2',
+      generation: 5,
+      controller: false,
+      reset: 'full',
+      cols: 100,
+      rows: 30,
+      revision: 2
+    })
+    await vi.advanceTimersByTimeAsync(150)
+
+    expect(socket.emit).not.toHaveBeenCalled()
+    session.dispose()
+  })
+
+  it('ignores hidden controller measurements instead of sending 2x2', async () => {
+    const { measure, session, socket } = controllerSessionFixture()
+
+    measure({ cols: 120, rows: 40 })
+    await vi.advanceTimersByTimeAsync(100)
+    measure({ cols: 1, rows: 1 })
+    await vi.advanceTimersByTimeAsync(150)
+
+    expect(socket.emit).not.toHaveBeenCalled()
+    session.dispose()
+  })
+
+  it('clears a pending resize when control is lost before a later takeover', () => {
+    const session = new TerminalSession('terminal-one')
+    Object.assign(session as unknown as Record<string, unknown>, {
+      ready: true,
+      resizePending: true,
+      canonicalRevision: 1,
+      appliedRevision: 1,
+      snapshotValue: {
+        phase: 'ready',
+        degraded: false,
+        controller: true,
+        title: null,
+        bellActive: false,
+        bellSerial: 0,
+        exitSerial: 0,
+        fileTransfer: null,
+        error: null
+      }
+    })
+    const handleControl = (
+      session as unknown as {
+        handleServerEvent(event: 'control', value: unknown): void
+      }
+    ).handleServerEvent.bind(session)
+
+    handleControl('control', { generation: 5, controller: false })
+    handleControl('control', { generation: 6, controller: true })
+
+    expect((session as unknown as { canInput(): boolean }).canInput()).toBe(
+      true
+    )
     session.dispose()
   })
 
@@ -407,15 +937,26 @@ describe('TerminalSession', () => {
       streamId: 'stream-1',
       generation: 7,
       controller: false,
-      reset: 'full'
+      reset: 'full',
+      cols: 100,
+      rows: 30,
+      revision: 1
     })
+    ;(
+      session as unknown as { proposedDimensions: unknown }
+    ).proposedDimensions = {
+      cols: 5_000,
+      rows: 1
+    }
     session.takeControl()
-    expect(socket.volatile.emit).toHaveBeenCalledWith('take_control', {
-      generation: 7
+    expect(socket.emit).toHaveBeenCalledWith('take_control', {
+      generation: 7,
+      cols: 1_000,
+      rows: 2
     })
     socket.emitServer('disconnect', 'transport close')
     session.takeControl()
-    expect(socket.volatile.emit).toHaveBeenCalledTimes(1)
+    expect(socket.emit).toHaveBeenCalledTimes(1)
     session.dispose()
   })
 })

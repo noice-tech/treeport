@@ -7,6 +7,7 @@ import {
   parseTerminalServerEvent,
   SOCKET_IO_PATH,
   TERMINAL_MAX_INPUT_BYTES,
+  TERMINAL_PROTOCOL_VERSION,
   type TerminalClientToServerEvents,
   type TerminalProgress,
   type TerminalRuntimeMetadata,
@@ -25,6 +26,34 @@ export type TerminalFileTransfer = {
 
 const TERMINAL_SCROLL_EXIT_SEQUENCE = '\u001b[9000~'
 const TERMINAL_MAX_FILES_PER_TRANSFER = 8
+const TERMINAL_FONT_SIZE = 14
+const TERMINAL_MIN_VIEWER_FONT_SIZE = 4
+const TERMINAL_MIN_COLS = 2
+const TERMINAL_MAX_COLS = 1_000
+const TERMINAL_MIN_ROWS = 2
+const TERMINAL_MAX_ROWS = 500
+const TERMINAL_RESIZE_SETTLE_MS = 150
+
+function normalizeTerminalDimensions(
+  dimensions: { cols: number; rows: number },
+  fallback: { cols: number; rows: number } = { cols: 100, rows: 30 }
+): { cols: number; rows: number } {
+  return {
+    cols: Number.isFinite(dimensions.cols)
+      ? Math.min(
+          TERMINAL_MAX_COLS,
+          Math.max(TERMINAL_MIN_COLS, Math.trunc(dimensions.cols))
+        )
+      : fallback.cols,
+    rows: Number.isFinite(dimensions.rows)
+      ? Math.min(
+          TERMINAL_MAX_ROWS,
+          Math.max(TERMINAL_MIN_ROWS, Math.trunc(dimensions.rows))
+        )
+      : fallback.rows
+  }
+}
+
 // tmux copy mode advances five rows for each wheel report. Requiring three
 // rows of finger travel keeps the gesture responsive without restoring the
 // original excessive gain.
@@ -314,7 +343,7 @@ export function terminalOptions() {
     convertEol: false,
     fontFamily:
       '"SFMono-Regular", "Cascadia Code", "Liberation Mono", monospace',
-    fontSize: 14,
+    fontSize: TERMINAL_FONT_SIZE,
     lineHeight: 1.15,
     scrollback: 0,
     allowProposedApi: false,
@@ -360,12 +389,28 @@ export class TerminalSession {
   private fileTransferTimer: number | null = null
   private fileTransferQueue: Promise<void> = Promise.resolve()
   private resizeFrame: number | null = null
+  private resizeSettleTimer: number | null = null
   private disposed = false
   private opened = false
   private ready = false
   private reconnectAllowed = true
   private streamId: string | null = null
   private controllerGeneration = 0
+  private canonicalCols = 100
+  private canonicalRows = 30
+  private canonicalRevision = 0
+  private appliedRevision = 0
+  private proposedDimensions: { cols: number; rows: number } | null = null
+  private resizePending = false
+  private serverProtocolVersion: 1 | typeof TERMINAL_PROTOCOL_VERSION =
+    TERMINAL_PROTOCOL_VERSION
+  private resizeIntentDirty = false
+  private resizeQuietElapsed = false
+  private resizeIntentGeneration = 0
+  private renderEpoch = 0
+  private renderQueue: Promise<void> = Promise.resolve()
+  private renderFailed = false
+  private pendingTerminalWrites = 0
   private expectedSequence = 1
   private lastParsedSequence = 0
   private readonly parsedSequences = new Set<number>()
@@ -416,6 +461,7 @@ export class TerminalSession {
 
     this.resizeObserver?.disconnect()
     this.resizeObserver = null
+    this.cancelControllerResizeIntent(false)
     this.wrapper?.remove()
     this.host = null
   }
@@ -425,11 +471,29 @@ export class TerminalSession {
   }
 
   takeControl(): void {
-    this.send('take_control', { generation: this.controllerGeneration })
+    const dimensions = normalizeTerminalDimensions(
+      this.proposedDimensions ?? {
+        cols: this.canonicalCols,
+        rows: this.canonicalRows
+      }
+    )
+    this.send(
+      'take_control',
+      this.serverProtocolVersion === TERMINAL_PROTOCOL_VERSION
+        ? { generation: this.controllerGeneration, ...dimensions }
+        : { generation: this.controllerGeneration }
+    )
   }
 
   retry(): void {
     if (this.disposed || this.ready) {
+      return
+    }
+
+    if (this.renderFailed) {
+      // A rejected render queue must never be reused. Reloading reconstructs
+      // xterm, its DOM listeners, and the queue before reconnecting.
+      window.location.reload()
       return
     }
 
@@ -445,7 +509,7 @@ export class TerminalSession {
   sendText(data: string): void {
     this.prepareScrollExit()
 
-    if (this.ready && this.snapshotValue.controller) {
+    if (this.canInput()) {
       this.send('input', { generation: this.controllerGeneration, data })
     }
 
@@ -581,7 +645,7 @@ export class TerminalSession {
     })
     terminal.onKey(() => this.prepareScrollExit())
     terminal.onData((data) => {
-      if (this.ready && this.snapshotValue.controller) {
+      if (this.canInput()) {
         this.send('input', {
           generation: this.controllerGeneration,
           data: this.withScrollExit(data)
@@ -589,7 +653,7 @@ export class TerminalSession {
       }
     })
     terminal.onBinary((data) => {
-      if (this.ready && this.snapshotValue.controller) {
+      if (this.canInput()) {
         this.send('binary', {
           generation: this.controllerGeneration,
           data: this.withScrollExit(data)
@@ -625,6 +689,11 @@ export class TerminalSession {
       return
     }
 
+    if (!this.canInput()) {
+      this.showFileTransferError('Wait for the terminal resize to finish')
+      return
+    }
+
     if (this.fileTransferTimer !== null) {
       window.clearTimeout(this.fileTransferTimer)
       this.fileTransferTimer = null
@@ -651,6 +720,11 @@ export class TerminalSession {
         this.showFileTransferError(
           'Terminal control was lost during the upload'
         )
+        return
+      }
+
+      if (!this.canInput()) {
+        this.showFileTransferError('Wait for the terminal resize to finish')
         return
       }
 
@@ -729,13 +803,20 @@ export class TerminalSession {
       autoConnect: false,
       reconnection: true,
       retries: 0,
-      auth: (authorize) =>
+      query: { terminalProtocol: String(TERMINAL_PROTOCOL_VERSION) },
+      auth: (authorize) => {
+        const dimensions = normalizeTerminalDimensions(
+          this.proposedDimensions ?? {
+            cols: this.terminal?.cols ?? 100,
+            rows: this.terminal?.rows ?? 30
+          }
+        )
         authorize({
           terminalId: this.terminalId,
           clientId: getClientId(),
-          cols: this.terminal?.cols ?? 100,
-          rows: this.terminal?.rows ?? 30
+          ...dimensions
         })
+      }
     })
     this.socket = socket
     socket.on('connect', () => {
@@ -746,6 +827,9 @@ export class TerminalSession {
       this.fit()
     })
     socket.on('ready', (value) => this.handleServerEvent('ready', value))
+    socket.on('dimensions', (value) =>
+      this.handleServerEvent('dimensions', value)
+    )
     socket.on('output', (value) => this.handleServerEvent('output', value))
     socket.on('title', (value) => this.handleServerEvent('title', value))
     socket.on('progress', (value) => this.handleServerEvent('progress', value))
@@ -774,6 +858,7 @@ export class TerminalSession {
       this.ready = false
       this.streamId = null
       this.controllerGeneration = 0
+      this.cancelControllerResizeIntent()
       if (!this.reconnectAllowed) {
         this.clearDegraded()
       }
@@ -806,20 +891,91 @@ export class TerminalSession {
         return
       }
 
-      this.terminal?.reset()
+      this.cancelControllerResizeIntent()
+      const v2 = 'revision' in message
+      this.serverProtocolVersion = v2 ? TERMINAL_PROTOCOL_VERSION : 1
+      const dimensions = v2
+        ? { cols: message.cols, rows: message.rows }
+        : normalizeTerminalDimensions(
+            this.proposedDimensions ?? {
+              cols: this.terminal?.cols ?? 100,
+              rows: this.terminal?.rows ?? 30
+            }
+          )
+      const revision = v2 ? message.revision : 1
       this.streamId = message.streamId
       this.controllerGeneration = message.generation
+      this.canonicalCols = dimensions.cols
+      this.canonicalRows = dimensions.rows
+      this.canonicalRevision = revision
+      this.appliedRevision = v2 ? 0 : revision
       this.expectedSequence = 1
       this.lastParsedSequence = 0
       this.parsedSequences.clear()
       this.ready = true
+      this.renderEpoch += 1
+      const epoch = this.renderEpoch
+      this.enqueueRender(epoch, async () => {
+        await this.drainTerminalWrites()
+        if (this.disposed || epoch !== this.renderEpoch) {
+          return
+        }
+
+        this.terminal?.reset()
+        if (v2) {
+          this.applyCanonicalDimensions(
+            dimensions.cols,
+            dimensions.rows,
+            revision,
+            true
+          )
+        } else {
+          this.fit(true)
+        }
+      })
       this.clearDegraded()
       this.update({
         phase: 'ready',
         controller: message.controller,
         error: null
       })
-      this.scheduleFit()
+      return
+    }
+
+    if (event === 'dimensions') {
+      if (this.serverProtocolVersion !== TERMINAL_PROTOCOL_VERSION) {
+        this.failProtocol('The legacy terminal server sent dimensions')
+        return
+      }
+
+      const message = parseTerminalServerEvent('dimensions', value)
+      if (!message) {
+        this.failProtocol('The terminal server sent invalid dimensions')
+        return
+      }
+
+      if (message.revision <= this.canonicalRevision) {
+        return
+      }
+
+      this.canonicalCols = message.cols
+      this.canonicalRows = message.rows
+      this.canonicalRevision = message.revision
+      this.resizePending = false
+      const epoch = this.renderEpoch
+      this.enqueueRender(epoch, async () => {
+        await this.drainTerminalWrites()
+        if (this.disposed || epoch !== this.renderEpoch) {
+          return
+        }
+
+        this.applyCanonicalDimensions(
+          message.cols,
+          message.rows,
+          message.revision
+        )
+        this.flushControllerResize()
+      })
       return
     }
 
@@ -861,9 +1017,16 @@ export class TerminalSession {
         return
       }
 
+      const controllerChanged =
+        message.controller !== this.snapshotValue.controller ||
+        message.generation !== this.controllerGeneration
+      if (controllerChanged) {
+        this.cancelControllerResizeIntent()
+      }
+
       this.controllerGeneration = message.generation
       this.update({ controller: message.controller })
-      if (message.controller) {
+      if (controllerChanged) {
         this.scheduleFit()
       }
 
@@ -907,20 +1070,92 @@ export class TerminalSession {
     }
 
     this.expectedSequence += 1
-    this.terminal?.write(data, () => {
-      if (!this.ready || streamId !== this.streamId) {
+    const epoch = this.renderEpoch
+    this.enqueueRender(epoch, () => {
+      const terminal = this.terminal
+      if (!terminal) {
         return
       }
 
-      this.parsedSequences.add(sequence)
-      while (this.parsedSequences.delete(this.lastParsedSequence + 1)) {
-        this.lastParsedSequence += 1
-      }
-      this.send('output_ack', {
-        streamId,
-        sequence: this.lastParsedSequence
+      this.pendingTerminalWrites += 1
+      terminal.write(data, () => {
+        this.pendingTerminalWrites = Math.max(0, this.pendingTerminalWrites - 1)
+        if (
+          this.ready &&
+          epoch === this.renderEpoch &&
+          streamId === this.streamId
+        ) {
+          this.parsedSequences.add(sequence)
+          while (this.parsedSequences.delete(this.lastParsedSequence + 1)) {
+            this.lastParsedSequence += 1
+          }
+          this.send('output_ack', {
+            streamId,
+            sequence: this.lastParsedSequence
+          })
+        }
       })
     })
+  }
+
+  private async drainTerminalWrites(): Promise<void> {
+    const terminal = this.terminal
+    if (!terminal || this.pendingTerminalWrites === 0) {
+      return
+    }
+
+    // xterm write callbacks are FIFO and run after parsing, so an empty write
+    // marks a boundary without forcing every preceding chunk into its own cycle.
+    await new Promise<void>((resolve) => terminal.write('', resolve))
+  }
+
+  private enqueueRender(
+    epoch: number,
+    operation: () => Promise<void> | void
+  ): void {
+    const queued = this.renderQueue.then(async () => {
+      if (this.disposed || this.renderFailed || epoch !== this.renderEpoch) {
+        return
+      }
+
+      await operation()
+    })
+    this.renderQueue = queued
+    // Rendering is a fatal UI boundary: keep the causal queue rejected so no
+    // later operation runs, while observing the rejection to close explicitly.
+    void queued.catch((error: unknown) => this.failRendering(error))
+  }
+
+  private applyCanonicalDimensions(
+    cols: number,
+    rows: number,
+    revision: number,
+    queueControllerResize = false
+  ): void {
+    if (!this.terminal || revision <= this.appliedRevision) {
+      return
+    }
+
+    this.terminal.resize(cols, rows)
+    this.appliedRevision = revision
+    if (this.wrapper) {
+      this.wrapper.dataset.terminalCols = String(cols)
+      this.wrapper.dataset.terminalRows = String(rows)
+      this.wrapper.dataset.terminalRevision = String(revision)
+    }
+
+    if (revision === this.canonicalRevision) {
+      this.fit(queueControllerResize)
+    }
+  }
+
+  private canInput(): boolean {
+    return (
+      this.ready &&
+      this.snapshotValue.controller &&
+      !this.resizePending &&
+      this.appliedRevision === this.canonicalRevision
+    )
   }
 
   private send<E extends keyof TerminalClientToServerEvents>(
@@ -931,7 +1166,11 @@ export class TerminalSession {
       return
     }
 
-    if (event === 'output_ack') {
+    if (
+      event === 'output_ack' ||
+      event === 'resize' ||
+      event === 'take_control'
+    ) {
       ;(this.socket.emit as (event: string, payload: unknown) => void)(
         event,
         payload
@@ -952,26 +1191,194 @@ export class TerminalSession {
 
     this.resizeFrame = requestAnimationFrame(() => {
       this.resizeFrame = null
-      this.fit()
+      this.fit(true)
     })
   }
 
-  private fit(): void {
+  private queueControllerResizeIntent(): void {
+    if (this.resizeSettleTimer !== null) {
+      window.clearTimeout(this.resizeSettleTimer)
+    }
+
+    this.resizeIntentDirty = true
+    this.resizeQuietElapsed = false
+    this.resizeIntentGeneration = this.controllerGeneration
+    this.resizeSettleTimer = window.setTimeout(() => {
+      this.resizeSettleTimer = null
+      this.resizeQuietElapsed = true
+      this.flushControllerResize()
+    }, TERMINAL_RESIZE_SETTLE_MS)
+  }
+
+  private flushControllerResize(): void {
+    const proposed = this.proposedDimensions
+    if (
+      !this.resizeIntentDirty ||
+      !this.resizeQuietElapsed ||
+      !proposed ||
+      !this.host ||
+      !this.ready ||
+      !this.socket?.connected ||
+      !this.snapshotValue.controller ||
+      this.resizeIntentGeneration !== this.controllerGeneration ||
+      this.appliedRevision !== this.canonicalRevision ||
+      this.resizePending
+    ) {
+      return
+    }
+
+    if (
+      proposed.cols === this.canonicalCols &&
+      proposed.rows === this.canonicalRows
+    ) {
+      this.resizeIntentDirty = false
+      this.resizeQuietElapsed = false
+      return
+    }
+
+    this.resizeIntentDirty = false
+    this.resizeQuietElapsed = false
+    if (this.serverProtocolVersion === TERMINAL_PROTOCOL_VERSION) {
+      this.resizePending = true
+    } else {
+      this.canonicalCols = proposed.cols
+      this.canonicalRows = proposed.rows
+      this.appliedRevision = this.canonicalRevision
+    }
+
+    this.send('resize', {
+      generation: this.controllerGeneration,
+      cols: proposed.cols,
+      rows: proposed.rows
+    })
+  }
+
+  private cancelControllerResizeIntent(clearPending = true): void {
+    if (this.resizeSettleTimer !== null) {
+      window.clearTimeout(this.resizeSettleTimer)
+    }
+
+    this.resizeSettleTimer = null
+    if (clearPending) {
+      this.resizePending = false
+    }
+
+    this.resizeIntentDirty = false
+    this.resizeQuietElapsed = false
+    this.resizeIntentGeneration = 0
+    this.proposedDimensions = null
+  }
+
+  private fit(queueControllerResize = false): void {
     if (!this.host || !this.fitAddon || !this.terminal) {
       return
     }
 
     try {
-      this.fitAddon.fit()
-      if (this.ready && this.snapshotValue.controller) {
-        this.send('resize', {
-          generation: this.controllerGeneration,
+      if (!this.ready) {
+        this.terminal.options.fontSize = TERMINAL_FONT_SIZE
+        this.fitAddon.fit()
+        if (
+          this.terminal.cols >= TERMINAL_MIN_COLS &&
+          this.terminal.rows >= TERMINAL_MIN_ROWS
+        ) {
+          this.proposedDimensions = normalizeTerminalDimensions({
+            cols: this.terminal.cols,
+            rows: this.terminal.rows
+          })
+        }
+
+        return
+      }
+
+      if (this.serverProtocolVersion === 1) {
+        this.terminal.options.fontSize = TERMINAL_FONT_SIZE
+        this.fitAddon.fit()
+        if (
+          this.terminal.cols < TERMINAL_MIN_COLS ||
+          this.terminal.rows < TERMINAL_MIN_ROWS
+        ) {
+          this.cancelControllerResizeIntent(false)
+          return
+        }
+
+        const proposed = normalizeTerminalDimensions({
           cols: this.terminal.cols,
           rows: this.terminal.rows
         })
+        this.proposedDimensions = proposed
+        if (this.snapshotValue.controller && queueControllerResize) {
+          this.queueControllerResizeIntent()
+        }
+
+        return
       }
-    } catch {
-      // Hidden/mobile transition hosts can temporarily have no dimensions.
+
+      if (this.appliedRevision !== this.canonicalRevision) {
+        return
+      }
+
+      this.terminal.options.fontSize = TERMINAL_FONT_SIZE
+      const proposedDimensions = this.fitAddon.proposeDimensions()
+      if (
+        !proposedDimensions ||
+        !Number.isFinite(proposedDimensions.cols) ||
+        !Number.isFinite(proposedDimensions.rows) ||
+        proposedDimensions.cols < TERMINAL_MIN_COLS ||
+        proposedDimensions.rows < TERMINAL_MIN_ROWS
+      ) {
+        if (this.snapshotValue.controller) {
+          this.cancelControllerResizeIntent(false)
+        }
+
+        return
+      }
+
+      const proposed = normalizeTerminalDimensions(proposedDimensions)
+      this.proposedDimensions = proposed
+      if (this.snapshotValue.controller) {
+        if (!queueControllerResize) {
+          return
+        }
+
+        if (
+          !this.resizePending &&
+          proposed.cols === this.canonicalCols &&
+          proposed.rows === this.canonicalRows
+        ) {
+          if (this.resizeSettleTimer !== null) {
+            window.clearTimeout(this.resizeSettleTimer)
+          }
+
+          this.resizeSettleTimer = null
+          this.resizeIntentDirty = false
+          this.resizeQuietElapsed = false
+          return
+        }
+
+        this.queueControllerResizeIntent()
+        return
+      }
+
+      const scale = Math.min(
+        1,
+        proposed.cols / this.canonicalCols,
+        proposed.rows / this.canonicalRows
+      )
+      this.terminal.options.fontSize = Math.max(
+        TERMINAL_MIN_VIEWER_FONT_SIZE,
+        Math.floor(TERMINAL_FONT_SIZE * scale * 100) / 100
+      )
+      if (
+        this.terminal.cols !== this.canonicalCols ||
+        this.terminal.rows !== this.canonicalRows
+      ) {
+        this.terminal.resize(this.canonicalCols, this.canonicalRows)
+      }
+    } catch (error) {
+      // Fit is the DOM/render transition boundary. Missing dimensions are
+      // represented above; actual xterm/FitAddon failures close the session.
+      this.failRendering(error)
     }
   }
 
@@ -1018,6 +1425,24 @@ export class TerminalSession {
     }, 180)
   }
 
+  private failRendering(error: unknown): void {
+    if (this.renderFailed || this.disposed) {
+      return
+    }
+
+    this.renderFailed = true
+    const detail = (
+      error instanceof Error ? error.message : String(error)
+    ).trim()
+    this.reconnectAllowed = false
+    this.stopWithError(
+      detail
+        ? `Terminal rendering failed: ${detail.slice(0, 500)}`
+        : 'Terminal rendering failed'
+    )
+    this.socket?.disconnect()
+  }
+
   private failProtocol(message: string): void {
     this.reconnectAllowed = false
     this.stopWithError(message)
@@ -1057,10 +1482,20 @@ export class TerminalSession {
       cancelAnimationFrame(this.resizeFrame)
     }
 
+    if (this.resizeSettleTimer !== null) {
+      window.clearTimeout(this.resizeSettleTimer)
+    }
+
     this.degradedTimer = null
     this.bellTimer = null
     this.fileTransferTimer = null
     this.resizeFrame = null
+    this.resizeSettleTimer = null
+    this.resizePending = false
+    this.resizeIntentDirty = false
+    this.resizeQuietElapsed = false
+    this.resizeIntentGeneration = 0
+    this.proposedDimensions = null
   }
 }
 

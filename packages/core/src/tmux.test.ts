@@ -43,6 +43,51 @@ describe('TmuxAdapter', () => {
     expect(generateTmuxSocketName()).not.toBe(generateTmuxSocketName())
   })
 
+  it('configures manual window sizing without changing the global default', async () => {
+    const runtime = await fs.mkdtemp(path.join(os.tmpdir(), 'tasktty-runtime-'))
+    temporary.push(runtime)
+    const runner = new RecordingRunner()
+    const adapter = new TmuxAdapter(runner, runtime)
+
+    await adapter.useManualWindowSize('socket', 'session')
+
+    expect(runner.calls.at(-1)?.args).toEqual([
+      '-L',
+      'socket',
+      '-f',
+      adapter.configPath,
+      'set-option',
+      '-w',
+      '-t',
+      'session',
+      'window-size',
+      'manual'
+    ])
+  })
+
+  it('resizes a window explicitly at the canonical dimensions', async () => {
+    const runtime = await fs.mkdtemp(path.join(os.tmpdir(), 'tasktty-runtime-'))
+    temporary.push(runtime)
+    const runner = new RecordingRunner()
+    const adapter = new TmuxAdapter(runner, runtime)
+
+    await adapter.resizeWindow('socket', 'session', 132, 47)
+
+    expect(runner.calls.at(-1)?.args).toEqual([
+      '-L',
+      'socket',
+      '-f',
+      adapter.configPath,
+      'resize-window',
+      '-t',
+      'session',
+      '-x',
+      '132',
+      '-y',
+      '47'
+    ])
+  })
+
   it('stores hostile and Unicode argv losslessly in the launch spec', async () => {
     const runtime = await fs.mkdtemp(path.join(os.tmpdir(), 'tasktty runtime '))
     temporary.push(runtime)
@@ -52,7 +97,8 @@ describe('TmuxAdapter', () => {
       runner,
       runtime,
       '/tmux path/tmux',
-      launcher
+      launcher,
+      { environment: {}, platform: 'linux' }
     )
     const argv = [
       'tool with spaces',
@@ -99,6 +145,7 @@ describe('TmuxAdapter', () => {
         .filter((call) => call.args.includes('set-option'))
         .map((call) => call.args[call.args.indexOf('-t') + 2])
     ).toEqual([
+      'window-size',
       '@tasktty-name',
       '@tasktty-argv',
       '@tasktty-created-at',
@@ -362,7 +409,9 @@ describe('TmuxAdapter', () => {
   it.each(['no server running on socket', 'no current target'])(
     'treats an absent or empty tmux server as an empty terminal inventory: %s',
     async (stderr) => {
-      const runtime = await fs.mkdtemp(path.join(os.tmpdir(), 'tasktty-runtime-'))
+      const runtime = await fs.mkdtemp(
+        path.join(os.tmpdir(), 'tasktty-runtime-')
+      )
       temporary.push(runtime)
       const runner = new RecordingRunner()
       runner.responses.push({

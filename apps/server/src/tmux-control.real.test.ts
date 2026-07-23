@@ -101,6 +101,7 @@ describe.skipIf(!enabled)('real tmux control-mode characterization', () => {
     try {
       await execute('tmux', [...base, 'set-option', '-g', 'mouse', 'off'])
       await tmux.configureServer(socket)
+      await tmux.useManualWindowSize(socket, session)
       await expect(
         execute('tmux', [...base, 'show-options', '-gv', 'mouse']).then(
           (result) => result.stdout.trim()
@@ -350,6 +351,19 @@ describe.skipIf(!enabled)('real tmux control-mode characterization', () => {
       expect(observerExited).toBe(false)
 
       control.stdin.write(resizeControlClient(91, 27))
+      await new Promise((resolve) => setTimeout(resolve, 25))
+      await expect(
+        execute('tmux', [
+          ...base,
+          'display-message',
+          '-p',
+          '-t',
+          session,
+          '#{window_width}x#{window_height}'
+        ]).then((result) => result.stdout.trim())
+      ).resolves.toBe('80x24')
+
+      await tmux.resizeWindow(socket, session, 91, 27)
       await waitFor(async () => {
         const size = (
           await execute('tmux', [
@@ -362,7 +376,7 @@ describe.skipIf(!enabled)('real tmux control-mode characterization', () => {
           ])
         ).stdout.trim()
         return size === '91x27'
-      }, 'control client resize was not applied')
+      }, 'explicit canonical window resize was not applied')
 
       control.stdin.write('detach-client\n')
       await new Promise<void>((resolve, reject) => {

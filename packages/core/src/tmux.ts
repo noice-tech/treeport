@@ -93,7 +93,6 @@ set -g monitor-bell on
 set -g bell-action any
 set -g visual-bell off
 set -g mouse on
-set -g window-size latest
 set -g destroy-unattached off
 set -g mode-style "fg=default,bg=default"
 set -s user-keys[0] "${TMUX_SCROLL_EXIT_KEY}"
@@ -225,6 +224,7 @@ export class TmuxAdapter {
       })
       created = true
       await this.configureServer(input.socketName)
+      await this.useManualWindowSize(input.socketName, input.sessionName)
       await this.setTerminalMetadata(input.socketName, input.sessionName, {
         terminalId: input.terminalId,
         worktreeId: input.worktreeId,
@@ -435,6 +435,49 @@ export class TmuxAdapter {
     }
 
     return { status: 'running', exitCode: null }
+  }
+
+  async useManualWindowSize(
+    socketName: string,
+    sessionName: string
+  ): Promise<void> {
+    await runChecked(this.runner, {
+      executable: this.executable,
+      args: [
+        ...this.base(socketName),
+        'set-option',
+        '-w',
+        '-t',
+        sessionName,
+        'window-size',
+        'manual'
+      ],
+      env: this.environment(),
+      timeoutMs: 10_000
+    })
+  }
+
+  async resizeWindow(
+    socketName: string,
+    sessionName: string,
+    cols: number,
+    rows: number
+  ): Promise<void> {
+    await runChecked(this.runner, {
+      executable: this.executable,
+      args: [
+        ...this.base(socketName),
+        'resize-window',
+        '-t',
+        sessionName,
+        '-x',
+        String(cols),
+        '-y',
+        String(rows)
+      ],
+      env: this.environment(),
+      timeoutMs: 10_000
+    })
   }
 
   async sessionSize(

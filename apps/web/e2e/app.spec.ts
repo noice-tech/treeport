@@ -193,6 +193,43 @@ async function mockApp(
   }
 
   await page.addInitScript((initialMetadata) => {
+    const terminalStatePrefix = '__tasktty_terminal_state__:'
+    const readTerminalState = (terminalId: string) => {
+      const stored = localStorage.getItem(`${terminalStatePrefix}${terminalId}`)
+      return stored ? JSON.parse(stored) : null
+    }
+    const notifyTerminalState = (state: any) => {
+      const scope = window as any
+      for (const socket of scope.__wsInstances || []) {
+        if (
+          socket.namespace !== '/terminals' ||
+          socket.terminalId !== state.terminalId
+        ) {
+          continue
+        }
+
+        socket.applyTerminalState(state)
+      }
+    }
+    const storeTerminalState = (state: any) => {
+      localStorage.setItem(
+        `${terminalStatePrefix}${state.terminalId}`,
+        JSON.stringify(state)
+      )
+      notifyTerminalState(state)
+    }
+    const scope = window as any
+    if (!scope.__terminalStateListener) {
+      scope.__terminalStateListener = true
+      window.addEventListener('storage', (event) => {
+        if (!event.key?.startsWith(terminalStatePrefix) || !event.newValue) {
+          return
+        }
+
+        notifyTerminalState(JSON.parse(event.newValue))
+      })
+    }
+
     class MockWebSocket {
       static OPEN = 1
       readyState = 0
@@ -204,12 +241,14 @@ async function mockApp(
       namespace = ''
       streamId = crypto.randomUUID()
       generation = 1
+      cols = 100
+      rows = 30
+      revision = 1
       private messageHandler: ((event: { data: string }) => void) | null = null
       private closeHandler: (() => void) | null = null
 
       constructor(public url: string) {
         const scope = window as any
-        scope.__controllerClientId ||= 'other'
         scope.__wsInstances = [...(scope.__wsInstances || []), this]
         scope.__lastWs = this
         setTimeout(() => {
@@ -317,17 +356,40 @@ async function mockApp(
           const auth = JSON.parse(data.slice(separator + 1))
           this.clientId = auth.clientId
           this.terminalId = auth.terminalId
+          let terminalState = readTerminalState(this.terminalId)
+          if (!terminalState) {
+            terminalState = {
+              terminalId: this.terminalId,
+              cols: auth.cols,
+              rows: auth.rows,
+              revision: 1,
+              generation: 1,
+              controllerClientId: 'other'
+            }
+            localStorage.setItem(
+              `${terminalStatePrefix}${this.terminalId}`,
+              JSON.stringify(terminalState)
+            )
+          }
+
+          this.cols = terminalState.cols
+          this.rows = terminalState.rows
+          this.revision = terminalState.revision
+          this.generation = terminalState.generation
           this.url = `${this.url}#${this.terminalId}`
           this.deliver(
             `40/terminals,${JSON.stringify({ sid: crypto.randomUUID() })}`
           )
-          const controller = scope.__controllerClientId === this.clientId
+          const controller = terminalState.controllerClientId === this.clientId
           this.deliverSocket('ready', {
             connectionId: crypto.randomUUID(),
             streamId: this.streamId,
             generation: this.generation,
             controller,
-            reset: 'full'
+            reset: 'full',
+            cols: this.cols,
+            rows: this.rows,
+            revision: this.revision
           })
           this.deliverSocket('output', {
             streamId: this.streamId,
@@ -358,14 +420,52 @@ async function mockApp(
         )
         const message = { type, ...payload }
         scope.__wsSent = [...(scope.__wsSent || []), message]
-        if (type === 'take_control') {
-          scope.__controllerClientId = this.clientId
-          this.generation += 1
-          this.deliverSocket('control', {
-            generation: this.generation,
-            controller: true
+        if (type === 'resize' || type === 'take_control') {
+          const terminalState = readTerminalState(this.terminalId)
+          if (!terminalState) {
+            throw new Error('Missing mock terminal state')
+          }
+
+          if (payload.cols !== this.cols || payload.rows !== this.rows) {
+            terminalState.cols = payload.cols
+            terminalState.rows = payload.rows
+            terminalState.revision += 1
+          }
+
+          if (type === 'take_control') {
+            terminalState.controllerClientId = this.clientId
+            terminalState.generation += 1
+          }
+
+          storeTerminalState(terminalState)
+        }
+      }
+
+      applyTerminalState(state: any) {
+        const dimensionsChanged =
+          state.cols !== this.cols ||
+          state.rows !== this.rows ||
+          state.revision !== this.revision
+        this.cols = state.cols
+        this.rows = state.rows
+        this.revision = state.revision
+        this.generation = state.generation
+        if (this.readyState !== 1) {
+          return
+        }
+
+        if (dimensionsChanged) {
+          this.deliverSocket('dimensions', {
+            cols: this.cols,
+            rows: this.rows,
+            revision: this.revision
           })
         }
+
+        this.deliverSocket('control', {
+          generation: this.generation,
+          controller: state.controllerClientId === this.clientId
+        })
       }
 
       close() {
@@ -1820,6 +1920,146 @@ test.describe('desktop worktree terminal UI', () => {
       .toBeGreaterThan(before)
   })
 
+  test('broadcasts canonical dimensions and controller takeover across two viewers', async ({
+    context,
+    page
+  }) => {
+    const viewer = await context.newPage()
+    await mockApp(page)
+    await mockApp(viewer)
+    await page.getByRole('button', { name: 'Pi, running', exact: true }).click()
+    await viewer
+      .getByRole('button', { name: 'Pi, running', exact: true })
+      .click()
+
+    await page.getByRole('button', { name: 'Take control' }).click()
+    await expect(
+      page.getByRole('button', { name: 'Take control' })
+    ).toHaveCount(0)
+    await expect(
+      viewer.getByRole('button', { name: 'Take control' })
+    ).toBeVisible()
+    await page.waitForTimeout(250)
+    const beforeControllerResize = await page.evaluate(() =>
+      JSON.parse(
+        localStorage.getItem('__tasktty_terminal_state__:term_pi') || '{}'
+      )
+    )
+    await page.setViewportSize({ width: 1_100, height: 720 })
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            JSON.parse(
+              localStorage.getItem('__tasktty_terminal_state__:term_pi') || '{}'
+            ).revision
+        )
+      )
+      .toBeGreaterThan(beforeControllerResize.revision)
+    const afterControllerResize = await page.evaluate(() =>
+      JSON.parse(
+        localStorage.getItem('__tasktty_terminal_state__:term_pi') || '{}'
+      )
+    )
+    const viewerSocketState = await viewer.evaluate(() => {
+      const socket = (window as any).__lastWs
+      return {
+        cols: socket.cols,
+        rows: socket.rows,
+        revision: socket.revision
+      }
+    })
+    expect(viewerSocketState).toEqual({
+      cols: afterControllerResize.cols,
+      rows: afterControllerResize.rows,
+      revision: afterControllerResize.revision
+    })
+    await expect
+      .poll(() =>
+        viewer.locator('.terminal-session-host').evaluate((element) => ({
+          cols: Number((element as HTMLElement).dataset.terminalCols),
+          rows: Number((element as HTMLElement).dataset.terminalRows),
+          revision: Number((element as HTMLElement).dataset.terminalRevision)
+        }))
+      )
+      .toEqual(viewerSocketState)
+
+    await viewer.setViewportSize({ width: 760, height: 640 })
+    await viewer.waitForTimeout(250)
+    const afterViewerResize = await page.evaluate(() =>
+      JSON.parse(
+        localStorage.getItem('__tasktty_terminal_state__:term_pi') || '{}'
+      )
+    )
+    expect(afterViewerResize).toEqual(afterControllerResize)
+
+    await viewer.getByRole('button', { name: 'Take control' }).click()
+    await expect(
+      viewer.getByRole('button', { name: 'Take control' })
+    ).toHaveCount(0)
+    await expect(
+      page.getByRole('button', { name: 'Take control' })
+    ).toBeVisible()
+    const takeoverState = await viewer.evaluate(() => {
+      const socket = (window as any).__lastWs
+      return {
+        state: JSON.parse(
+          localStorage.getItem('__tasktty_terminal_state__:term_pi') || '{}'
+        ),
+        clientId: socket.clientId
+      }
+    })
+    expect(takeoverState.state.controllerClientId).toBe(takeoverState.clientId)
+    expect(takeoverState.state.generation).toBeGreaterThan(
+      afterViewerResize.generation
+    )
+
+    await viewer.setViewportSize({ width: 980, height: 700 })
+    await expect
+      .poll(() =>
+        viewer.evaluate(
+          () =>
+            JSON.parse(
+              localStorage.getItem('__tasktty_terminal_state__:term_pi') || '{}'
+            ).revision
+        )
+      )
+      .toBeGreaterThan(takeoverState.state.revision)
+    const finalState = await viewer.evaluate(() =>
+      JSON.parse(
+        localStorage.getItem('__tasktty_terminal_state__:term_pi') || '{}'
+      )
+    )
+    for (const target of [page, viewer]) {
+      const expectedGrid = {
+        cols: finalState.cols,
+        rows: finalState.rows,
+        revision: finalState.revision
+      }
+      await expect
+        .poll(() =>
+          target.evaluate(() => {
+            const socket = (window as any).__lastWs
+            return {
+              cols: socket.cols,
+              rows: socket.rows,
+              revision: socket.revision
+            }
+          })
+        )
+        .toEqual(expectedGrid)
+      await expect
+        .poll(() =>
+          target.locator('.terminal-session-host').evaluate((element) => ({
+            cols: Number((element as HTMLElement).dataset.terminalCols),
+            rows: Number((element as HTMLElement).dataset.terminalRows),
+            revision: Number((element as HTMLElement).dataset.terminalRevision)
+          }))
+        )
+        .toEqual(expectedGrid)
+    }
+  })
+
   test('does not automatically retry a fatal terminal error', async ({
     page
   }) => {
@@ -2396,7 +2636,11 @@ test.describe('desktop worktree terminal UI', () => {
 
     await page.reload()
     await expect(page.locator('.xterm')).toBeVisible()
-    await page.getByRole('button', { name: 'Take control' }).click()
+    const takeControl = page.getByRole('button', { name: 'Take control' })
+    if ((await takeControl.count()) > 0) {
+      await takeControl.click()
+    }
+
     await page.locator('.xterm-helper-textarea').focus()
     await page.evaluate(() => {
       const socket = (window as any).__lastWs
