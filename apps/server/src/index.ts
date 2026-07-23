@@ -54,8 +54,10 @@ function shutdown(): void {
   attachments.dispose()
   terminalMetadata.dispose()
   io.close(() => {
-    database.close()
-    process.exit(0)
+    void service.drainMutations().then(() => {
+      database.close()
+      process.exit(0)
+    })
   })
   setTimeout(() => process.exit(1), 5_000).unref()
 }
