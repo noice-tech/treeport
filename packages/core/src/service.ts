@@ -23,6 +23,7 @@ import { ProductEventBus } from './events.js'
 import type { GhAdapter } from './gh.js'
 import type { GitAdapter } from './git.js'
 import type { WorktreeSetupTask } from './setup.js'
+import { KeyedTaskQueue } from './task-queue.js'
 import type { TmuxAdapter } from './tmux.js'
 import { generateTmuxSessionName, generateTmuxSocketName } from './tmux.js'
 import {
@@ -149,6 +150,7 @@ export class TaskTTYService {
   readonly events: ProductEventBus
   private readonly worktreeLocks = new Set<string>()
   private readonly projectLocks = new Set<string>()
+  private readonly worktreeMutations = new KeyedTaskQueue<string>()
   private readonly removeConfirmationKey = crypto.randomBytes(32)
   private readonly terminalStates = new Map<string, TerminalRecord>()
   private readonly terminalIdsByWorktree = new Map<string, Set<string>>()
@@ -594,7 +596,10 @@ export class TaskTTYService {
     color: ProjectColor | null
   ): ProjectRecord {
     this.requireOpenProject(projectId)
-    if (this.projectLocks.has(projectId)) {
+    if (
+      this.projectLocks.has(projectId) ||
+      this.worktreeMutations.has(projectId)
+    ) {
       throw new DomainError(
         'PROJECT_BUSY',
         'Project is already being modified',
@@ -999,7 +1004,10 @@ export class TaskTTYService {
 
     if (existing) {
       return await this.serializeProjectObservation(projectId, async () => {
-        if (this.projectLocks.has(projectId)) {
+        if (
+          this.projectLocks.has(projectId) ||
+          this.worktreeMutations.has(projectId)
+        ) {
           throw new DomainError(
             'PROJECT_BUSY',
             'Project is already being modified',
@@ -1053,7 +1061,10 @@ export class TaskTTYService {
 
   async refreshProject(projectId: string): Promise<ProjectRecord> {
     this.requireOpenProject(projectId)
-    if (this.projectLocks.has(projectId)) {
+    if (
+      this.projectLocks.has(projectId) ||
+      this.worktreeMutations.has(projectId)
+    ) {
       throw new DomainError(
         'PROJECT_BUSY',
         'Project is already being modified',
@@ -1086,7 +1097,10 @@ export class TaskTTYService {
   async openProject(projectId: string): Promise<ProjectRecord> {
     await this.serializeProjectObservation(projectId, async () => {
       this.getProject(projectId)
-      if (this.projectLocks.has(projectId)) {
+      if (
+        this.projectLocks.has(projectId) ||
+        this.worktreeMutations.has(projectId)
+      ) {
         throw new DomainError(
           'PROJECT_BUSY',
           'Project is already being modified',
@@ -1114,7 +1128,10 @@ export class TaskTTYService {
         return
       }
 
-      if (this.projectLocks.has(projectId)) {
+      if (
+        this.projectLocks.has(projectId) ||
+        this.worktreeMutations.has(projectId)
+      ) {
         throw new DomainError(
           'PROJECT_BUSY',
           'Project is already being modified',
@@ -1243,7 +1260,9 @@ export class TaskTTYService {
     allowClosed = false
   ): Promise<void> {
     if (
-      (!allowProjectLock && this.projectLocks.has(projectId)) ||
+      (!allowProjectLock &&
+        (this.projectLocks.has(projectId) ||
+          this.worktreeMutations.has(projectId))) ||
       (!allowClosed && this.deps.database.isProjectOpen(projectId) !== true)
     ) {
       return
@@ -1346,7 +1365,9 @@ export class TaskTTYService {
       await this.deps.git.listWorktrees(repositoryPath)
     ).filter((item) => !item.bare)
     if (
-      (!allowProjectLock && this.projectLocks.has(projectId)) ||
+      (!allowProjectLock &&
+        (this.projectLocks.has(projectId) ||
+          this.worktreeMutations.has(projectId))) ||
       (!allowClosed && this.deps.database.isProjectOpen(projectId) !== true)
     ) {
       return
@@ -1821,6 +1842,40 @@ export class TaskTTYService {
   }
 
   async createWorktree(
+    projectId: string,
+    inputName: string,
+    base: 'default' | 'current',
+    initialTerminal?: {
+      name: string
+      argv?: string[]
+      returnToShell?: boolean
+    },
+    sourceWorktreeId?: string
+  ): Promise<CreateWorktreeResult> {
+    this.requireOpenProject(projectId)
+    if (
+      this.projectLocks.has(projectId) &&
+      !this.worktreeMutations.has(projectId)
+    ) {
+      throw new DomainError(
+        'PROJECT_BUSY',
+        'Project is already being modified',
+        409
+      )
+    }
+
+    return this.worktreeMutations.enqueue(projectId, () =>
+      this.executeCreateWorktree(
+        projectId,
+        inputName,
+        base,
+        initialTerminal,
+        sourceWorktreeId
+      )
+    )
+  }
+
+  private async executeCreateWorktree(
     projectId: string,
     inputName: string,
     base: 'default' | 'current',
@@ -2519,10 +2574,13 @@ export class TaskTTYService {
       transaction()
       this.invalidateProjectsSnapshot()
       operationStarted = true
-      setTimeout(
-        () => void this.executeRemove(operationId, preview.forceRequired),
-        150
-      ).unref()
+      void this.worktreeMutations
+        .enqueue(worktree.projectId, () =>
+          this.executeRemove(operationId, worktreeId, preview.forceRequired)
+        )
+        .catch(() => {
+          this.worktreeLocks.delete(worktreeId)
+        })
       this.events.publish('remove.started', {
         operationId,
         worktreeId,
@@ -2538,15 +2596,18 @@ export class TaskTTYService {
 
   private async executeRemove(
     operationId: string,
+    lockedWorktreeId: string,
     force: boolean
   ): Promise<void> {
     const operation = this.getOperation(operationId)
-    if (!operation.worktreeId) {
+    if (operation.worktreeId !== lockedWorktreeId) {
+      this.worktreeLocks.delete(lockedWorktreeId)
       return
     }
 
-    const worktree = this.deps.database.worktree(operation.worktreeId)
+    const worktree = this.deps.database.worktree(lockedWorktreeId)
     if (!worktree) {
+      this.worktreeLocks.delete(lockedWorktreeId)
       return
     }
 
@@ -2554,9 +2615,34 @@ export class TaskTTYService {
     this.deps.database.connection
       .prepare("UPDATE operations SET status='running',updated_at=? WHERE id=?")
       .run(now(), operationId)
+    let removalRevalidated = false
     let terminalsStopped = false
     let gitRemoved = false
     try {
+      const checkoutIdentity = removalCheckoutIdentity(operation.request)
+      const checkout = await this.checkoutStat(worktree.path)
+      const authorizationError = checkout
+        ? await this.authorizedCheckoutError(worktree.path, checkoutIdentity)
+        : 'the accepted checkout no longer exists'
+      if (authorizationError) {
+        throw new Error(authorizationError)
+      }
+
+      const liveWorktree = (
+        await this.deps.git.listWorktrees(project.repositoryPath)
+      ).find((item) => item.path === worktree.path)
+      if (
+        !checkoutIdentity ||
+        !liveWorktree?.gitWorktreeKey ||
+        liveWorktree.gitWorktreeKey !== checkoutIdentity.gitWorktreeKey
+      ) {
+        throw new Error(
+          'Git no longer reports the accepted worktree identity at this path'
+        )
+      }
+
+      removalRevalidated = true
+
       await this.deps.tmux.killServer(worktree.tmuxSocketName)
       terminalsStopped = true
       await this.deps.git.removeWorktree(
@@ -2567,7 +2653,7 @@ export class TaskTTYService {
       gitRemoved = true
       const checkoutCleanup = await this.removeAuthorizedCheckout(
         worktree.path,
-        removalCheckoutIdentity(operation.request)
+        checkoutIdentity
       )
       if (checkoutCleanup.error) {
         throw new Error(checkoutCleanup.error)
@@ -2612,11 +2698,13 @@ export class TaskTTYService {
     } catch (error) {
       const base = error instanceof Error ? error.message : String(error)
       const message = (
-        !terminalsStopped
-          ? `Terminal shutdown failed before Git removal: ${base}`
-          : gitRemoved
-            ? `Manual cleanup required: Git stopped reporting the worktree, but checkout cleanup failed: ${base}`
-            : `Terminals were stopped, but Git removal failed: ${base}`
+        !removalRevalidated
+          ? `Removal revalidation failed before destructive effects: ${base}`
+          : !terminalsStopped
+            ? `Terminal shutdown failed before Git removal: ${base}`
+            : gitRemoved
+              ? `Manual cleanup required: Git stopped reporting the worktree, but checkout cleanup failed: ${base}`
+              : `Terminals were stopped, but Git removal failed: ${base}`
       ).slice(0, 4_096)
       const timestamp = now()
       const transaction = this.deps.database.connection.transaction(() => {
@@ -2640,12 +2728,15 @@ export class TaskTTYService {
         error: message
       })
     } finally {
-      this.worktreeLocks.delete(worktree.id)
+      this.worktreeLocks.delete(lockedWorktreeId)
     }
   }
 
   async deleteProject(projectId: string): Promise<void> {
-    if (this.projectLocks.has(projectId)) {
+    if (
+      this.projectLocks.has(projectId) ||
+      this.worktreeMutations.has(projectId)
+    ) {
       throw new DomainError(
         'PROJECT_BUSY',
         'Project is already being modified',
@@ -2669,6 +2760,7 @@ export class TaskTTYService {
     try {
       project = await this.observeAvailableProject(project, true)
       if (
+        this.worktreeMutations.has(projectId) ||
         project.worktrees.some((worktree) =>
           this.worktreeLocks.has(worktree.id)
         )
@@ -2720,6 +2812,10 @@ export class TaskTTYService {
       }
       this.projectLocks.delete(projectId)
     }
+  }
+
+  async drainMutations(): Promise<void> {
+    await this.worktreeMutations.drain()
   }
 
   async reconcile(): Promise<void> {

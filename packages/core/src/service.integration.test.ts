@@ -53,6 +53,7 @@ class SystemDouble implements CommandRunner {
   statusGate: Promise<void> | null = null
   worktreeListGate: Promise<void> | null = null
   worktreeAddGate: Promise<void> | null = null
+  readonly worktreeAddGates = new Map<string, Promise<void>>()
   tmuxCreateGate: Promise<void> | null = null
   tmuxStateGate: Promise<void> | null = null
   setupGate: Promise<void> | null = null
@@ -148,11 +149,13 @@ class SystemDouble implements CommandRunner {
     }
 
     if (args[0] === 'worktree' && args[1] === 'add') {
-      if (this.worktreeAddGate) {
-        await this.worktreeAddGate
+      const worktreePath = args.at(-2)!
+      const addGate =
+        this.worktreeAddGates.get(worktreePath) ?? this.worktreeAddGate
+      if (addGate) {
+        await addGate
       }
 
-      const worktreePath = args.at(-2)!
       const head = args.at(-1)!
       const gitWorktreeKey = path.join(
         this.main,
@@ -1252,6 +1255,97 @@ describe('TaskTTYService with injected command adapters', () => {
     })
   })
 
+  it('serializes same-project creation lifecycles and drains queued work', async () => {
+    const { main, runner, service } = await fixture()
+    const project = await service.registerProject(main)
+    const firstDestination = await service.previewWorktreePath(
+      project.id,
+      'queued-first'
+    )
+    const secondDestination = await service.previewWorktreePath(
+      project.id,
+      'queued-second'
+    )
+    let releaseFirst!: () => void
+    let releaseSecond!: () => void
+    runner.worktreeAddGates.set(
+      firstDestination.path,
+      new Promise<void>((resolve) => {
+        releaseFirst = resolve
+      })
+    )
+    runner.worktreeAddGates.set(
+      secondDestination.path,
+      new Promise<void>((resolve) => {
+        releaseSecond = resolve
+      })
+    )
+
+    const first = service.createWorktree(
+      project.id,
+      firstDestination.name,
+      'default'
+    )
+    const second = service.createWorktree(
+      project.id,
+      secondDestination.name,
+      'default'
+    )
+    await vi.waitFor(() =>
+      expect(
+        runner.calls.filter(
+          (call) => call.args[0] === 'worktree' && call.args[1] === 'add'
+        )
+      ).toHaveLength(1)
+    )
+    expect(
+      runner.calls.some((call) => call.args.includes(secondDestination.path))
+    ).toBe(false)
+    await expect(service.closeProject(project.id)).rejects.toMatchObject({
+      code: 'PROJECT_BUSY'
+    })
+    await expect(service.deleteProject(project.id)).rejects.toMatchObject({
+      code: 'PROJECT_BUSY'
+    })
+
+    let drained = false
+    const draining = service.drainMutations().then(() => {
+      drained = true
+    })
+    releaseFirst()
+    await expect(first).resolves.toMatchObject({
+      worktree: { name: firstDestination.name }
+    })
+    await vi.waitFor(() =>
+      expect(
+        runner.calls.some((call) => call.args.includes(secondDestination.path))
+      ).toBe(true)
+    )
+    expect(drained).toBe(false)
+
+    releaseSecond()
+    await expect(second).resolves.toMatchObject({
+      worktree: { name: secondDestination.name }
+    })
+    await draining
+    expect(drained).toBe(true)
+  })
+
+  it('continues queued creation after an earlier creation fails', async () => {
+    const { main, service } = await fixture()
+    const project = await service.registerProject(main)
+
+    const invalid = service.createWorktree(project.id, '', 'default')
+    const valid = service.createWorktree(project.id, 'after-failure', 'default')
+
+    await expect(invalid).rejects.toMatchObject({
+      code: 'INVALID_WORKTREE_NAME'
+    })
+    await expect(valid).resolves.toMatchObject({
+      worktree: { name: 'after-failure' }
+    })
+  })
+
   it('creates a detached Zed-style worktree, starts terminals, and removes by path', async () => {
     const { main, runner, service } = await fixture()
     const project = await service.registerProject(main)
@@ -1646,14 +1740,14 @@ describe('TaskTTYService with injected command adapters', () => {
     unsubscribe()
   })
 
-  it('removes distinct worktrees concurrently without weakening mutation locks', async () => {
+  it('removes same-project worktrees in FIFO order without weakening mutation locks', async () => {
     const { main, runner, service } = await fixture()
     const project = await service.registerProject(main)
     const first = (
-      await service.createWorktree(project.id, 'concurrent-first', 'default')
+      await service.createWorktree(project.id, 'fifo-first', 'default')
     ).worktree
     const second = (
-      await service.createWorktree(project.id, 'concurrent-second', 'default')
+      await service.createWorktree(project.id, 'fifo-second', 'default')
     ).worktree
     const [firstPreview, secondPreview] = await Promise.all([
       service.removePreview(first.id),
@@ -1678,24 +1772,21 @@ describe('TaskTTYService with injected command adapters', () => {
       deregistered.add(worktreePath)
     }
 
-    const [firstOperation, secondOperation] = await Promise.all([
-      service.beginRemove(first.id, {
-        confirmationToken: firstPreview.confirmationToken,
-        confirmDestructive: firstPreview.warnings.length > 0
-      }),
-      service.beginRemove(second.id, {
-        confirmationToken: secondPreview.confirmationToken,
-        confirmDestructive: secondPreview.warnings.length > 0
-      })
-    ])
-    await vi.waitFor(() =>
-      expect(deregistered).toEqual(new Set([first.path, second.path]))
-    )
+    const firstOperation = await service.beginRemove(first.id, {
+      confirmationToken: firstPreview.confirmationToken,
+      confirmDestructive: firstPreview.warnings.length > 0
+    })
+    await vi.waitFor(() => expect(deregistered).toEqual(new Set([first.path])))
+    const secondOperation = await service.beginRemove(second.id, {
+      confirmationToken: secondPreview.confirmationToken,
+      confirmDestructive: secondPreview.warnings.length > 0
+    })
 
     expect(service.getOperation(firstOperation.id).status).toBe('running')
-    expect(service.getOperation(secondOperation.id).status).toBe('running')
+    expect(service.getOperation(secondOperation.id).status).toBe('pending')
     expect(service.getWorktree(first.id).status).toBe('cleaning')
     expect(service.getWorktree(second.id).status).toBe('cleaning')
+    expect(deregistered).toEqual(new Set([first.path]))
     await expect(
       service.beginRemove(first.id, {
         confirmationToken: firstPreview.confirmationToken,
@@ -1703,7 +1794,7 @@ describe('TaskTTYService with injected command adapters', () => {
       })
     ).rejects.toMatchObject({ code: 'REMOVE_IN_PROGRESS' })
     await expect(
-      service.createTerminal(second.id, 'Blocked during removal', ['pi'])
+      service.createTerminal(second.id, 'Blocked while pending', ['pi'])
     ).rejects.toMatchObject({ code: 'WORKTREE_BUSY' })
     await expect(service.closeProject(project.id)).rejects.toMatchObject({
       code: 'PROJECT_BUSY'
@@ -1715,6 +1806,9 @@ describe('TaskTTYService with injected command adapters', () => {
     releaseFirst()
     expect((await waitForOperation(service, firstOperation.id)).status).toBe(
       'completed'
+    )
+    await vi.waitFor(() =>
+      expect(deregistered).toEqual(new Set([first.path, second.path]))
     )
     expect(service.getOperation(secondOperation.id).status).toBe('running')
     expect(service.getWorktree(second.id).status).toBe('cleaning')
@@ -1729,6 +1823,82 @@ describe('TaskTTYService with injected command adapters', () => {
     expect(service.getProject(project.id).worktrees).toEqual([
       expect.objectContaining({ kind: 'main' })
     ])
+  })
+
+  it('revalidates a pending removal before destructive effects', async () => {
+    const { main, runner, service } = await fixture()
+    const project = await service.registerProject(main)
+    const first = (
+      await service.createWorktree(project.id, 'revalidate-first', 'default')
+    ).worktree
+    const second = (
+      await service.createWorktree(project.id, 'revalidate-second', 'default')
+    ).worktree
+    const terminal = await service.createTerminal(second.id, 'Preserved', [
+      'pi'
+    ])
+    const [firstPreview, secondPreview] = await Promise.all([
+      service.removePreview(first.id),
+      service.removePreview(second.id)
+    ])
+    let releaseFirst!: () => void
+    runner.removeAfterDeregisterGates.set(
+      first.path,
+      new Promise<void>((resolve) => {
+        releaseFirst = resolve
+      })
+    )
+    let firstDeregistered!: () => void
+    const firstDeregisteredPromise = new Promise<void>((resolve) => {
+      firstDeregistered = resolve
+    })
+    runner.worktreeDeregistered = (worktreePath) => {
+      if (worktreePath === first.path) {
+        firstDeregistered()
+      }
+    }
+
+    const firstOperation = await service.beginRemove(first.id, {
+      confirmationToken: firstPreview.confirmationToken,
+      confirmDestructive: firstPreview.warnings.length > 0
+    })
+    await firstDeregisteredPromise
+    const secondOperation = await service.beginRemove(second.id, {
+      confirmationToken: secondPreview.confirmationToken,
+      confirmDestructive: secondPreview.warnings.length > 0
+    })
+    expect(service.getOperation(secondOperation.id).status).toBe('pending')
+
+    await fs.rm(second.path, { recursive: true, force: true })
+    await fs.mkdir(second.path, { recursive: true })
+    const replacement = path.join(second.path, 'replacement.txt')
+    await fs.writeFile(replacement, 'preserved replacement')
+    releaseFirst()
+
+    expect((await waitForOperation(service, firstOperation.id)).status).toBe(
+      'completed'
+    )
+    const failed = await waitForOperation(service, secondOperation.id)
+    expect(failed).toMatchObject({
+      status: 'failed',
+      error: expect.stringMatching(/revalidation failed.*filesystem object/is)
+    })
+    await expect(fs.readFile(replacement, 'utf8')).resolves.toBe(
+      'preserved replacement'
+    )
+    expect(
+      runner.calls.some(
+        (call) =>
+          call.args[0] === 'worktree' &&
+          call.args[1] === 'remove' &&
+          call.args.includes(second.path)
+      )
+    ).toBe(false)
+    expect(
+      [...runner.sessions.keys()].some((key) =>
+        key.endsWith(`/${terminal.tmuxSessionName}`)
+      )
+    ).toBe(true)
   })
 
   it('blocks removal while project deletion owns the project lock', async () => {

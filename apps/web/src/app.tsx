@@ -695,10 +695,6 @@ export default function App() {
     },
     sourceWorktreeId?: string
   ) => {
-    if (pendingWorktrees.some((item) => item.projectId === project.id)) {
-      return
-    }
-
     const pending: PendingWorktreeCreation = {
       id: crypto.randomUUID(),
       projectId: project.id,
@@ -1652,12 +1648,7 @@ export default function App() {
                         type="button"
                         variant="ghost"
                         className="h-auto min-h-11 w-full justify-start gap-1.5 px-2 py-1.5 text-base/5 font-normal text-zinc-500 hover:bg-white/5 hover:text-zinc-100 min-[701px]:min-h-8 min-[701px]:py-1 min-[701px]:text-[0.8125rem]/4"
-                        disabled={
-                          project.availability.state === 'unavailable' ||
-                          pendingWorktrees.some(
-                            (pending) => pending.projectId === project.id
-                          )
-                        }
+                        disabled={project.availability.state === 'unavailable'}
                         onClick={(event) =>
                           openModal(
                             { type: 'worktree', project },
