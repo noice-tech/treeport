@@ -31,6 +31,7 @@ const TERMINAL_MIN_COLS = 2
 const TERMINAL_MAX_COLS = 1_000
 const TERMINAL_MIN_ROWS = 2
 const TERMINAL_MAX_ROWS = 500
+const TERMINAL_RESIZE_SETTLE_MS = 150
 
 function normalizeTerminalDimensions(
   dimensions: { cols: number; rows: number },
@@ -387,6 +388,7 @@ export class TerminalSession {
   private fileTransferTimer: number | null = null
   private fileTransferQueue: Promise<void> = Promise.resolve()
   private resizeFrame: number | null = null
+  private resizeSettleTimer: number | null = null
   private disposed = false
   private opened = false
   private ready = false
@@ -399,8 +401,12 @@ export class TerminalSession {
   private appliedRevision = 0
   private proposedDimensions: { cols: number; rows: number } | null = null
   private resizePending = false
+  private resizeIntentDirty = false
+  private resizeQuietElapsed = false
+  private resizeIntentGeneration = 0
   private renderEpoch = 0
   private renderQueue: Promise<void> = Promise.resolve()
+  private pendingTerminalWrites = 0
   private expectedSequence = 1
   private lastParsedSequence = 0
   private readonly parsedSequences = new Set<number>()
@@ -451,6 +457,7 @@ export class TerminalSession {
 
     this.resizeObserver?.disconnect()
     this.resizeObserver = null
+    this.cancelControllerResizeIntent(false)
     this.wrapper?.remove()
     this.host = null
   }
@@ -837,7 +844,7 @@ export class TerminalSession {
       this.ready = false
       this.streamId = null
       this.controllerGeneration = 0
-      this.resizePending = false
+      this.cancelControllerResizeIntent()
       if (!this.reconnectAllowed) {
         this.clearDegraded()
       }
@@ -870,25 +877,31 @@ export class TerminalSession {
         return
       }
 
+      this.cancelControllerResizeIntent()
       this.streamId = message.streamId
       this.controllerGeneration = message.generation
       this.canonicalCols = message.cols
       this.canonicalRows = message.rows
       this.canonicalRevision = message.revision
       this.appliedRevision = 0
-      this.resizePending = false
       this.expectedSequence = 1
       this.lastParsedSequence = 0
       this.parsedSequences.clear()
       this.ready = true
       this.renderEpoch += 1
       const epoch = this.renderEpoch
-      this.enqueueRender(epoch, () => {
+      this.enqueueRender(epoch, async () => {
+        await this.drainTerminalWrites()
+        if (this.disposed || epoch !== this.renderEpoch) {
+          return
+        }
+
         this.terminal?.reset()
         this.applyCanonicalDimensions(
           message.cols,
           message.rows,
-          message.revision
+          message.revision,
+          true
         )
       })
       this.clearDegraded()
@@ -916,13 +929,19 @@ export class TerminalSession {
       this.canonicalRevision = message.revision
       this.resizePending = false
       const epoch = this.renderEpoch
-      this.enqueueRender(epoch, () =>
+      this.enqueueRender(epoch, async () => {
+        await this.drainTerminalWrites()
+        if (this.disposed || epoch !== this.renderEpoch) {
+          return
+        }
+
         this.applyCanonicalDimensions(
           message.cols,
           message.rows,
           message.revision
         )
-      )
+        this.flushControllerResize()
+      })
       return
     }
 
@@ -964,13 +983,16 @@ export class TerminalSession {
         return
       }
 
-      this.controllerGeneration = message.generation
-      if (!message.controller) {
-        this.resizePending = false
+      const controllerChanged =
+        message.controller !== this.snapshotValue.controller ||
+        message.generation !== this.controllerGeneration
+      if (controllerChanged) {
+        this.cancelControllerResizeIntent()
       }
 
+      this.controllerGeneration = message.generation
       this.update({ controller: message.controller })
-      if (message.controller) {
+      if (message.controller && controllerChanged) {
         this.scheduleFit()
       }
 
@@ -1015,35 +1037,42 @@ export class TerminalSession {
 
     this.expectedSequence += 1
     const epoch = this.renderEpoch
-    this.enqueueRender(
-      epoch,
-      () =>
-        new Promise<void>((resolve) => {
-          if (!this.terminal) {
-            resolve()
-            return
+    this.enqueueRender(epoch, () => {
+      const terminal = this.terminal
+      if (!terminal) {
+        return
+      }
+
+      this.pendingTerminalWrites += 1
+      terminal.write(data, () => {
+        this.pendingTerminalWrites = Math.max(0, this.pendingTerminalWrites - 1)
+        if (
+          this.ready &&
+          epoch === this.renderEpoch &&
+          streamId === this.streamId
+        ) {
+          this.parsedSequences.add(sequence)
+          while (this.parsedSequences.delete(this.lastParsedSequence + 1)) {
+            this.lastParsedSequence += 1
           }
-
-          this.terminal.write(data, () => {
-            if (
-              this.ready &&
-              epoch === this.renderEpoch &&
-              streamId === this.streamId
-            ) {
-              this.parsedSequences.add(sequence)
-              while (this.parsedSequences.delete(this.lastParsedSequence + 1)) {
-                this.lastParsedSequence += 1
-              }
-              this.send('output_ack', {
-                streamId,
-                sequence: this.lastParsedSequence
-              })
-            }
-
-            resolve()
+          this.send('output_ack', {
+            streamId,
+            sequence: this.lastParsedSequence
           })
-        })
-    )
+        }
+      })
+    })
+  }
+
+  private async drainTerminalWrites(): Promise<void> {
+    const terminal = this.terminal
+    if (!terminal || this.pendingTerminalWrites === 0) {
+      return
+    }
+
+    // xterm write callbacks are FIFO and run after parsing, so an empty write
+    // marks a boundary without forcing every preceding chunk into its own cycle.
+    await new Promise<void>((resolve) => terminal.write('', resolve))
   }
 
   private enqueueRender(
@@ -1064,7 +1093,8 @@ export class TerminalSession {
   private applyCanonicalDimensions(
     cols: number,
     rows: number,
-    revision: number
+    revision: number,
+    queueControllerResize = false
   ): void {
     if (!this.terminal || revision <= this.appliedRevision) {
       return
@@ -1073,7 +1103,7 @@ export class TerminalSession {
     this.terminal.resize(cols, rows)
     this.appliedRevision = revision
     if (revision === this.canonicalRevision) {
-      this.fit()
+      this.fit(queueControllerResize)
     }
   }
 
@@ -1119,11 +1149,78 @@ export class TerminalSession {
 
     this.resizeFrame = requestAnimationFrame(() => {
       this.resizeFrame = null
-      this.fit()
+      this.fit(true)
     })
   }
 
-  private fit(): void {
+  private queueControllerResizeIntent(): void {
+    if (this.resizeSettleTimer !== null) {
+      window.clearTimeout(this.resizeSettleTimer)
+    }
+
+    this.resizeIntentDirty = true
+    this.resizeQuietElapsed = false
+    this.resizeIntentGeneration = this.controllerGeneration
+    this.resizeSettleTimer = window.setTimeout(() => {
+      this.resizeSettleTimer = null
+      this.resizeQuietElapsed = true
+      this.flushControllerResize()
+    }, TERMINAL_RESIZE_SETTLE_MS)
+  }
+
+  private flushControllerResize(): void {
+    const proposed = this.proposedDimensions
+    if (
+      !this.resizeIntentDirty ||
+      !this.resizeQuietElapsed ||
+      !proposed ||
+      !this.host ||
+      !this.ready ||
+      !this.socket?.connected ||
+      !this.snapshotValue.controller ||
+      this.resizeIntentGeneration !== this.controllerGeneration ||
+      this.appliedRevision !== this.canonicalRevision ||
+      this.resizePending
+    ) {
+      return
+    }
+
+    if (
+      proposed.cols === this.canonicalCols &&
+      proposed.rows === this.canonicalRows
+    ) {
+      this.resizeIntentDirty = false
+      this.resizeQuietElapsed = false
+      return
+    }
+
+    this.resizeIntentDirty = false
+    this.resizeQuietElapsed = false
+    this.resizePending = true
+    this.send('resize', {
+      generation: this.controllerGeneration,
+      cols: proposed.cols,
+      rows: proposed.rows
+    })
+  }
+
+  private cancelControllerResizeIntent(clearPending = true): void {
+    if (this.resizeSettleTimer !== null) {
+      window.clearTimeout(this.resizeSettleTimer)
+    }
+
+    this.resizeSettleTimer = null
+    if (clearPending) {
+      this.resizePending = false
+    }
+
+    this.resizeIntentDirty = false
+    this.resizeQuietElapsed = false
+    this.resizeIntentGeneration = 0
+    this.proposedDimensions = null
+  }
+
+  private fit(queueControllerResize = false): void {
     if (!this.host || !this.fitAddon || !this.terminal) {
       return
     }
@@ -1132,10 +1229,16 @@ export class TerminalSession {
       if (!this.ready) {
         this.terminal.options.fontSize = TERMINAL_FONT_SIZE
         this.fitAddon.fit()
-        this.proposedDimensions = normalizeTerminalDimensions({
-          cols: this.terminal.cols,
-          rows: this.terminal.rows
-        })
+        if (
+          this.terminal.cols >= TERMINAL_MIN_COLS &&
+          this.terminal.rows >= TERMINAL_MIN_ROWS
+        ) {
+          this.proposedDimensions = normalizeTerminalDimensions({
+            cols: this.terminal.cols,
+            rows: this.terminal.rows
+          })
+        }
+
         return
       }
 
@@ -1145,29 +1248,43 @@ export class TerminalSession {
 
       this.terminal.options.fontSize = TERMINAL_FONT_SIZE
       const proposedDimensions = this.fitAddon.proposeDimensions()
-      if (!proposedDimensions) {
+      if (
+        !proposedDimensions ||
+        !Number.isFinite(proposedDimensions.cols) ||
+        !Number.isFinite(proposedDimensions.rows) ||
+        proposedDimensions.cols < TERMINAL_MIN_COLS ||
+        proposedDimensions.rows < TERMINAL_MIN_ROWS
+      ) {
+        if (this.snapshotValue.controller) {
+          this.cancelControllerResizeIntent(false)
+        }
+
         return
       }
 
       const proposed = normalizeTerminalDimensions(proposedDimensions)
       this.proposedDimensions = proposed
       if (this.snapshotValue.controller) {
-        if (this.resizePending) {
+        if (!queueControllerResize) {
           return
         }
 
         if (
-          proposed.cols !== this.canonicalCols ||
-          proposed.rows !== this.canonicalRows
+          !this.resizePending &&
+          proposed.cols === this.canonicalCols &&
+          proposed.rows === this.canonicalRows
         ) {
-          this.resizePending = true
-          this.send('resize', {
-            generation: this.controllerGeneration,
-            cols: proposed.cols,
-            rows: proposed.rows
-          })
+          if (this.resizeSettleTimer !== null) {
+            window.clearTimeout(this.resizeSettleTimer)
+          }
+
+          this.resizeSettleTimer = null
+          this.resizeIntentDirty = false
+          this.resizeQuietElapsed = false
+          return
         }
 
+        this.queueControllerResizeIntent()
         return
       }
 
@@ -1273,10 +1390,20 @@ export class TerminalSession {
       cancelAnimationFrame(this.resizeFrame)
     }
 
+    if (this.resizeSettleTimer !== null) {
+      window.clearTimeout(this.resizeSettleTimer)
+    }
+
     this.degradedTimer = null
     this.bellTimer = null
     this.fileTransferTimer = null
     this.resizeFrame = null
+    this.resizeSettleTimer = null
+    this.resizePending = false
+    this.resizeIntentDirty = false
+    this.resizeQuietElapsed = false
+    this.resizeIntentGeneration = 0
+    this.proposedDimensions = null
   }
 }
 
