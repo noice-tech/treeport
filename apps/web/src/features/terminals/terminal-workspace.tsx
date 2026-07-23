@@ -54,7 +54,10 @@ export function TerminalWorkspace({
   const queryClient = useQueryClient()
   const location = useLocation()
   const navigateToWorkspace = useWorkspaceNavigate()
-  const [focusTerminalId, setFocusTerminalId] = useState<string | null>(null)
+  const [focusTerminalRequest, setFocusTerminalRequest] = useState<{
+    terminalId: string
+    sequence: number
+  } | null>(null)
   const createTerminalGuardRef = useRef(false)
   const closeTerminalGuardRef = useRef(false)
   const selectedTerminalId = selectedTerminal?.id ?? null
@@ -111,7 +114,10 @@ export function TerminalWorkspace({
           )
         }))
       )
-      setFocusTerminalId(terminal.id)
+      setFocusTerminalRequest((current) => ({
+        terminalId: terminal.id,
+        sequence: (current?.sequence ?? 0) + 1
+      }))
       await navigateToWorkspace(
         terminalTarget(project.id, worktree.id, terminal.id),
         replacesEmptyWorktree
@@ -141,6 +147,12 @@ export function TerminalWorkspace({
           selectedWorktree.terminals[closedIndex + 1] ??
           selectedWorktree.terminals[closedIndex - 1] ??
           null
+        if (nextTerminal) {
+          setFocusTerminalRequest((current) => ({
+            terminalId: nextTerminal.id,
+            sequence: (current?.sequence ?? 0) + 1
+          }))
+        }
         await navigateToWorkspace(
           nextTerminal
             ? terminalTarget(
@@ -250,7 +262,7 @@ export function TerminalWorkspace({
     <TerminalView
       worktree={selectedWorktree}
       terminal={selectedTerminal}
-      focusTerminalId={focusTerminalId}
+      focusTerminalRequest={focusTerminalRequest}
       presets={presets}
       presetsLoading={presetsLoading}
       presetsError={presetsError}
