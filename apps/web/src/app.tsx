@@ -201,6 +201,11 @@ export default function App() {
     string | null
   >(null)
   const [isMobile, setIsMobile] = useState(false)
+  const [desktopFullscreen, setDesktopFullscreen] = useState(false)
+  const desktopPlatform = window.taskttyDesktop?.platform
+  const showDesktopTitlebar =
+    window.taskttyDesktop !== undefined &&
+    !(desktopPlatform === 'darwin' && desktopFullscreen)
   const [error, setError] = useState<string | null>(null)
   const [modal, setModal] = useState<Modal>(null)
   const [pendingWorktrees, setPendingWorktrees] = useState<
@@ -235,6 +240,8 @@ export default function App() {
   const projectSwitcherDismissedIntoTerminalRef = useRef(false)
   const modalTriggerRef = useRef<HTMLElement | null>(null)
   const removalGuardsRef = useRef(new Set<string>())
+  const createTerminalGuardRef = useRef(false)
+  const closeTerminalGuardRef = useRef(false)
 
   useEffect(() => {
     if (projectsQuery.error && projectsQuery.data === undefined) {
@@ -342,6 +349,11 @@ export default function App() {
     media.addEventListener('change', update)
     return () => media.removeEventListener('change', update)
   }, [])
+
+  useEffect(
+    () => window.taskttyDesktop?.onFullscreenChange(setDesktopFullscreen),
+    []
+  )
 
   useEffect(() => {
     if (!isMobile || !drawerOpen) {
@@ -743,7 +755,10 @@ export default function App() {
       selectTerminal(terminal)
       await queryClient.invalidateQueries({ queryKey: projectsQueryKey })
     },
-    onError: showError(setError)
+    onError: showError(setError),
+    onSettled: () => {
+      createTerminalGuardRef.current = false
+    }
   })
 
   const closeTerminal = useMutation({
@@ -768,8 +783,82 @@ export default function App() {
 
       await queryClient.invalidateQueries({ queryKey: projectsQueryKey })
     },
-    onError: showError(setError)
+    onError: showError(setError),
+    onSettled: () => {
+      closeTerminalGuardRef.current = false
+    }
   })
+
+  const createTerminalInSelectedWorktree = (input: {
+    name: string
+    argv?: string[]
+    returnToShell?: boolean
+  }) => {
+    if (
+      !selectedWorktree ||
+      selectedWorktreeMutationsDisabled ||
+      createTerminal.isPending ||
+      createTerminalGuardRef.current
+    ) {
+      return
+    }
+
+    createTerminalGuardRef.current = true
+    createTerminal.mutate({
+      worktreeId: selectedWorktree.id,
+      name: input.name,
+      ...(input.argv ? { argv: [...input.argv] } : {}),
+      ...(input.returnToShell ? { returnToShell: true } : {})
+    })
+  }
+
+  const requestCloseTerminal = (terminal: TerminalRecord) => {
+    if (closeTerminal.isPending || closeTerminalGuardRef.current) {
+      return
+    }
+
+    if (
+      foregroundProcesses.has(terminal.id) &&
+      !window.confirm(
+        `Close terminal “${runtimeTitles.get(terminal.id) || terminal.name}”? Its foreground process will be terminated.`
+      )
+    ) {
+      return
+    }
+
+    closeTerminalGuardRef.current = true
+    closeTerminal.mutate(terminal)
+  }
+
+  useEffect(() => {
+    if (!window.taskttyDesktop) {
+      return
+    }
+
+    return window.taskttyDesktop.onTerminalCommand((command) => {
+      if (modal || projectSwitcherOpen || (isMobile && drawerOpen)) {
+        return
+      }
+
+      if (command === 'new-terminal') {
+        createTerminalInSelectedWorktree({ name: 'Shell' })
+      } else if (selectedTerminal) {
+        requestCloseTerminal(selectedTerminal)
+      }
+    })
+  }, [
+    closeTerminal.isPending,
+    createTerminal.isPending,
+    drawerOpen,
+    foregroundProcesses,
+    isMobile,
+    modal,
+    projectSwitcherOpen,
+    runtimeTitles,
+    selectedTerminal,
+    selectedWorktree,
+    selectedWorktreeMutationsDisabled
+  ])
 
   const closeProject = useMutation({
     mutationFn: (project: ProjectRecord) => apiClient.closeProject(project.id),
@@ -1118,11 +1207,21 @@ export default function App() {
   return (
     <div
       className={cn(
-        'app-frame isolate grid h-dvh grid-cols-[var(--sidebar-width)_minmax(0,1fr)] bg-zinc-950 max-[700px]:grid-cols-1 max-[700px]:grid-rows-[3.25rem_minmax(0,1fr)]',
+        'app-frame isolate grid h-dvh grid-cols-[var(--sidebar-width)_minmax(0,1fr)] bg-zinc-950 max-[700px]:grid-cols-1',
+        showDesktopTitlebar
+          ? 'grid-rows-[2rem_minmax(0,1fr)] max-[700px]:grid-rows-[2rem_3.25rem_minmax(0,1fr)]'
+          : 'max-[700px]:grid-rows-[3.25rem_minmax(0,1fr)]',
         resizingSidebar && 'select-none'
       )}
       style={{ '--sidebar-width': `${sidebarWidth}px` } as CSSProperties}
     >
+      {showDesktopTitlebar && (
+        <div
+          className="desktop-titlebar col-span-full h-8 bg-zinc-950"
+          data-tasktty-desktop-titlebar
+          aria-hidden="true"
+        />
+      )}
       <header
         className="mobile-bar hidden min-w-0 grid-cols-[2.75rem_minmax(0,1fr)] items-center gap-2 border-b border-white/8 bg-zinc-900/95 px-2 backdrop-blur max-[700px]:grid"
         inert={isMobile && drawerOpen ? true : undefined}
@@ -1801,15 +1900,7 @@ export default function App() {
           presetsLoading={presetsQuery.isPending}
           presetsError={presetsQuery.isError}
           onSelectTerminal={selectTerminal}
-          onCreateTerminal={(input) =>
-            selectedWorktree &&
-            createTerminal.mutate({
-              worktreeId: selectedWorktree.id,
-              name: input.name,
-              ...(input.argv ? { argv: [...input.argv] } : {}),
-              ...(input.returnToShell ? { returnToShell: true } : {})
-            })
-          }
+          onCreateTerminal={createTerminalInSelectedWorktree}
           onManagePresets={(trigger) =>
             openModal({ type: 'presets' }, trigger ?? undefined)
           }
@@ -1818,16 +1909,7 @@ export default function App() {
             createTerminal.variables?.worktreeId === selectedWorktree?.id
           }
           mutationsDisabled={selectedWorktreeMutationsDisabled}
-          onCloseTerminal={(terminal) => {
-            if (
-              !foregroundProcesses.has(terminal.id) ||
-              window.confirm(
-                `Close terminal “${runtimeTitles.get(terminal.id) || terminal.name}”? Its foreground process will be terminated.`
-              )
-            ) {
-              closeTerminal.mutate(terminal)
-            }
-          }}
+          onCloseTerminal={requestCloseTerminal}
           closingTerminalId={
             closeTerminal.isPending ? closeTerminal.variables?.id : null
           }

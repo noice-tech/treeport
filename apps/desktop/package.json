@@ -1,0 +1,22 @@
+{
+  "name": "@tasktty/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "main": ".vite/build/main.js",
+  "scripts": {
+    "dev": "node scripts/start.mjs",
+    "dev:desktop": "node scripts/start.mjs",
+    "build": "vite build --config vite.main.config.ts && vite build --config vite.preload.config.ts",
+    "test": "pnpm build && playwright test --config playwright.config.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json --pretty"
+  },
+  "devDependencies": {
+    "@electron-forge/core": "7.11.2",
+    "@electron-forge/plugin-vite": "7.11.2",
+    "@electron-forge/shared-types": "7.11.2",
+    "@types/node": "^24.10.9",
+    "electron": "43.2.0",
+    "typescript": "^5.9.3",
+    "vite": "^8.1.5"
+  }
+}

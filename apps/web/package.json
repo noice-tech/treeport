@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite --port 5173",
+    "dev:desktop": "vite --port 5173",
     "build": "vite build",
     "typecheck": "tsc --noEmit --emitDeclarationOnly false -p tsconfig.json --pretty"
   },

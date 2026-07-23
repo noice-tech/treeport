@@ -2,6 +2,12 @@ packages:
   - apps/*
   - packages/*
 
+overrides:
+  '@electron/rebuild': 4.2.0
+  fast-uri: 3.1.4
+  tar: 7.5.19
+  tmp: 0.2.6
+
 allowBuilds:
   better-sqlite3: true
   esbuild: true
