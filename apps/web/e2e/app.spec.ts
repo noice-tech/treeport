@@ -942,9 +942,14 @@ test.describe('desktop worktree terminal UI', () => {
     await expect(page.getByText('topic', { exact: true })).toBeVisible()
 
     await switcher.click()
-    await page
-      .getByRole('button', { name: 'another-project', exact: true })
-      .click()
+    const projectSearch = page.getByLabel('Search projects')
+    await projectSearch.fill('another')
+    const highlightedProject = page.getByRole('button', {
+      name: 'another-project',
+      exact: true
+    })
+    await expect(highlightedProject).toHaveAttribute('data-highlighted', 'true')
+    await projectSearch.press('Enter')
 
     await expect(
       page.getByRole('button', {
