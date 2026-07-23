@@ -1083,6 +1083,7 @@ export class TerminalSessionManager {
   private readonly listeners = new Set<() => void>()
   private attentionSnapshot: ReadonlySet<string> = new Set()
   private titleSnapshot: ReadonlyMap<string, string> = new Map()
+  private foregroundProcessSnapshot: ReadonlySet<string> = new Set()
   private progressSnapshot: ReadonlyMap<string, TerminalProgress> = new Map()
   private bellMetadata = new Map<string, BellMetadata>()
   private bellAcknowledgementTargets = new Map<string, number>()
@@ -1109,6 +1110,8 @@ export class TerminalSessionManager {
 
   getAttentionSnapshot = (): ReadonlySet<string> => this.attentionSnapshot
   getTitleSnapshot = (): ReadonlyMap<string, string> => this.titleSnapshot
+  getForegroundProcessSnapshot = (): ReadonlySet<string> =>
+    this.foregroundProcessSnapshot
   getProgressSnapshot = (): ReadonlyMap<string, TerminalProgress> =>
     this.progressSnapshot
 
@@ -1132,12 +1135,17 @@ export class TerminalSessionManager {
     }
 
     this.setRuntimeTitle(metadata.terminalId, metadata.title)
+    this.setForegroundProcess(
+      metadata.terminalId,
+      metadata.hasForegroundProcess === true
+    )
     this.setProgress(metadata.terminalId, metadata.progress)
     this.acknowledgeVisibleBell(metadata.terminalId)
   }
 
   replaceRuntimeMetadata(metadata: Iterable<TerminalRuntimeMetadata>): void {
     const titles = new Map<string, string>()
+    const foregroundProcesses = new Set<string>()
     const progress = new Map<string, TerminalProgress>()
     const bells = new Map<string, BellMetadata>()
     const attention = new Set<string>()
@@ -1145,6 +1153,10 @@ export class TerminalSessionManager {
       const title = item.title?.trim().slice(0, 256)
       if (title) {
         titles.set(item.terminalId, title)
+      }
+
+      if (item.hasForegroundProcess) {
+        foregroundProcesses.add(item.terminalId)
       }
 
       if (item.progress) {
@@ -1166,6 +1178,11 @@ export class TerminalSessionManager {
       [...titles].some(
         ([terminalId, title]) => this.titleSnapshot.get(terminalId) !== title
       )
+    const foregroundProcessesChanged =
+      foregroundProcesses.size !== this.foregroundProcessSnapshot.size ||
+      [...foregroundProcesses].some(
+        (terminalId) => !this.foregroundProcessSnapshot.has(terminalId)
+      )
     const progressChanged =
       progress.size !== this.progressSnapshot.size ||
       [...progress].some(([terminalId, value]) => {
@@ -1185,6 +1202,10 @@ export class TerminalSessionManager {
       this.titleSnapshot = titles
     }
 
+    if (foregroundProcessesChanged) {
+      this.foregroundProcessSnapshot = foregroundProcesses
+    }
+
     if (progressChanged) {
       this.progressSnapshot = progress
     }
@@ -1193,7 +1214,12 @@ export class TerminalSessionManager {
       this.attentionSnapshot = attention
     }
 
-    if (titlesChanged || progressChanged || attentionChanged) {
+    if (
+      titlesChanged ||
+      foregroundProcessesChanged ||
+      progressChanged ||
+      attentionChanged
+    ) {
       this.emit()
     }
 
@@ -1263,6 +1289,7 @@ export class TerminalSessionManager {
     this.bellAcknowledgementQueues.delete(terminalId)
     this.clearAttention(terminalId)
     this.clearRuntimeTitle(terminalId)
+    this.setForegroundProcess(terminalId, false)
     this.setProgress(terminalId, null)
   }
 
@@ -1287,6 +1314,7 @@ export class TerminalSessionManager {
     let changed = false
     const attention = new Set(this.attentionSnapshot)
     const titles = new Map(this.titleSnapshot)
+    const foregroundProcesses = new Set(this.foregroundProcessSnapshot)
     const progress = new Map(this.progressSnapshot)
     for (const terminalId of attention) {
       if (!valid.has(terminalId)) {
@@ -1297,6 +1325,12 @@ export class TerminalSessionManager {
     for (const terminalId of titles.keys()) {
       if (!valid.has(terminalId)) {
         titles.delete(terminalId)
+        changed = true
+      }
+    }
+    for (const terminalId of foregroundProcesses) {
+      if (!valid.has(terminalId)) {
+        foregroundProcesses.delete(terminalId)
         changed = true
       }
     }
@@ -1316,6 +1350,7 @@ export class TerminalSessionManager {
     if (changed) {
       this.attentionSnapshot = attention
       this.titleSnapshot = titles
+      this.foregroundProcessSnapshot = foregroundProcesses
       this.progressSnapshot = progress
       this.emit()
     }
@@ -1344,6 +1379,27 @@ export class TerminalSessionManager {
     const titles = new Map(this.titleSnapshot)
     titles.delete(terminalId)
     this.titleSnapshot = titles
+    this.emit()
+  }
+
+  private setForegroundProcess(
+    terminalId: string,
+    hasForegroundProcess: boolean
+  ): void {
+    if (
+      this.foregroundProcessSnapshot.has(terminalId) === hasForegroundProcess
+    ) {
+      return
+    }
+
+    const next = new Set(this.foregroundProcessSnapshot)
+    if (hasForegroundProcess) {
+      next.add(terminalId)
+    } else {
+      next.delete(terminalId)
+    }
+
+    this.foregroundProcessSnapshot = next
     this.emit()
   }
 

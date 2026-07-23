@@ -131,11 +131,13 @@ describe('terminal runtime metadata', () => {
       parseTerminalRuntimeMetadata({
         terminalId: 'term',
         title: 'pi · /repo',
+        hasForegroundProcess: true,
         progress: { state: 'normal', value: 42 }
       })
     ).toEqual({
       terminalId: 'term',
       title: 'pi · /repo',
+      hasForegroundProcess: true,
       progress: { state: 'normal', value: 42 },
       progressStartedAt: null,
       progressClearedAt: null,

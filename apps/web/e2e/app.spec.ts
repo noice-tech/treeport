@@ -1699,7 +1699,17 @@ test.describe('desktop worktree terminal UI', () => {
     ).toBeFocused()
   })
   test('launches Shell and a configured terminal preset', async ({ page }) => {
-    await mockApp(page)
+    await mockApp(page, [
+      {
+        terminalId: 'term_dev',
+        title: null,
+        hasForegroundProcess: false,
+        progress: null,
+        progressStartedAt: null,
+        progressClearedAt: null,
+        bell: null
+      }
+    ])
     await page.locator('.worktree-row').filter({ hasText: 'topic' }).click()
     await expect(
       page.getByRole('button', { name: 'Terminal', exact: true })
@@ -1732,7 +1742,11 @@ test.describe('desktop worktree terminal UI', () => {
     ).toBeVisible()
 
     const terminalId = 'term_dev'
-    page.once('dialog', (dialog) => dialog.accept())
+    let confirmationShown = false
+    page.once('dialog', (dialog) => {
+      confirmationShown = true
+      void dialog.accept()
+    })
     const closeRequest = page.waitForRequest(
       (request) =>
         request.method() === 'DELETE' &&
@@ -1742,6 +1756,7 @@ test.describe('desktop worktree terminal UI', () => {
       .getByRole('button', { name: /^Close dev · \/worktrees\/topic$/ })
       .click()
     await closeRequest
+    expect(confirmationShown).toBe(false)
     await expect(
       page.getByRole('tab', { name: /^dev · \/worktrees\/topic,/ })
     ).toHaveCount(0)
@@ -1762,6 +1777,46 @@ test.describe('desktop worktree terminal UI', () => {
     })
     await expect(page.locator('.terminal-row.selected')).toBeVisible()
     await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
+  })
+
+  test('confirms before closing a terminal with a foreground process', async ({
+    page
+  }) => {
+    await mockApp(page, [
+      {
+        terminalId: 'term_pi',
+        title: null,
+        hasForegroundProcess: true,
+        progress: null,
+        progressStartedAt: null,
+        progressClearedAt: null,
+        bell: null
+      }
+    ])
+    await page.locator('.worktree-row').filter({ hasText: 'topic' }).click()
+    const closeButton = page.getByRole('button', {
+      name: /^Close zsh · \/worktrees\/topic$/
+    })
+    await expect(closeButton).toBeVisible()
+
+    let confirmationShown = false
+    page.once('dialog', async (dialog) => {
+      confirmationShown = true
+      await dialog.dismiss()
+    })
+    await closeButton.click()
+    expect(confirmationShown).toBe(true)
+    await expect(closeButton).toBeVisible()
+
+    page.once('dialog', (dialog) => dialog.accept())
+    const closeRequest = page.waitForRequest(
+      (request) =>
+        request.method() === 'DELETE' &&
+        new URL(request.url()).pathname === '/api/terminals/term_pi'
+    )
+    await closeButton.click()
+    await closeRequest
+    await expect(closeButton).toHaveCount(0)
   })
 
   test('reconciles remote preset edits and deletion', async ({ page }) => {

@@ -174,6 +174,7 @@ export class TerminalMetadataManager {
         cwd: worktree.path,
         status: terminal.status,
         title: null,
+        hasForegroundProcess: terminal.status === 'running' ? null : false,
         progress: null,
         progressStartedAt: null,
         progressClearedAt: null,
@@ -215,6 +216,10 @@ export class TerminalMetadataManager {
         return
       }
 
+      if (titleState) {
+        this.updateForegroundProcess(observedEntry, titleState.currentCommand)
+      }
+
       if (
         titleState &&
         observedEntry.titleRevision === titleRevision &&
@@ -226,6 +231,9 @@ export class TerminalMetadataManager {
       entry.worktreeId = terminal.worktreeId
       entry.cwd = worktree.path
       entry.status = terminal.status
+      if (terminal.status !== 'running') {
+        this.update(entry, { hasForegroundProcess: false })
+      }
     }
 
     if (this.entries.get(terminal.id) !== entry) {
@@ -483,7 +491,10 @@ export class TerminalMetadataManager {
       entry.progressLease = null
     }
 
-    this.update(entry, { progress: null })
+    this.update(entry, {
+      progress: null,
+      hasForegroundProcess: entry.status === 'running' ? null : false
+    })
   }
 
   private async poll(entry: TerminalMetadataEntry): Promise<void> {
@@ -507,6 +518,10 @@ export class TerminalMetadataManager {
       }
 
       entry.status = terminal.status
+      if (titleState) {
+        this.updateForegroundProcess(entry, titleState.currentCommand)
+      }
+
       if (
         titleState &&
         entry.titleRevision === titleRevision &&
@@ -547,6 +562,7 @@ export class TerminalMetadataManager {
     entry.currentCommand = currentCommand
     entry.observedTitlePending = false
     this.persistShellTitle(entry)
+    this.updateForegroundProcess(entry, currentCommand)
 
     if (!entry.shellCommand) {
       this.update(entry, { title: paneTitle ?? currentCommand })
@@ -617,6 +633,21 @@ export class TerminalMetadataManager {
     this.update(entry, { title: currentCommand ?? paneTitle })
   }
 
+  private updateForegroundProcess(
+    entry: TerminalMetadataEntry,
+    currentCommand: string | null
+  ): void {
+    const command = currentCommand?.trim().slice(0, 256) || null
+    this.update(entry, {
+      hasForegroundProcess:
+        entry.status !== 'running'
+          ? false
+          : command === null
+            ? null
+            : command !== entry.shellCommand
+    })
+  }
+
   private persistShellTitle(entry: TerminalMetadataEntry): void {
     if (
       entry.shellTitleWriting ||
@@ -640,7 +671,12 @@ export class TerminalMetadataManager {
 
   private update(
     entry: TerminalMetadataEntry,
-    patch: Partial<Pick<TerminalRuntimeMetadata, 'title' | 'progress'>>
+    patch: Partial<
+      Pick<
+        TerminalRuntimeMetadata,
+        'title' | 'progress' | 'hasForegroundProcess'
+      >
+    >
   ): void {
     if (this.entries.get(entry.terminalId) !== entry) {
       return
@@ -655,7 +691,17 @@ export class TerminalMetadataManager {
     const progressChanged =
       progress?.state !== entry.progress?.state ||
       progress?.value !== entry.progress?.value
-    if (title === entry.title && !progressChanged) {
+    const hasForegroundProcess =
+      patch.hasForegroundProcess === undefined
+        ? entry.hasForegroundProcess
+        : patch.hasForegroundProcess
+    const foregroundProcessChanged =
+      hasForegroundProcess !== entry.hasForegroundProcess
+    if (
+      title === entry.title &&
+      !progressChanged &&
+      !foregroundProcessChanged
+    ) {
       return
     }
 
@@ -673,6 +719,7 @@ export class TerminalMetadataManager {
     }
 
     entry.title = title
+    entry.hasForegroundProcess = hasForegroundProcess
     entry.progress = progress
     this.publish(entry)
   }
@@ -681,6 +728,7 @@ export class TerminalMetadataManager {
     return {
       terminalId: entry.terminalId,
       title: entry.title,
+      hasForegroundProcess: entry.hasForegroundProcess,
       progress: entry.progress,
       progressStartedAt: entry.progressStartedAt,
       progressClearedAt: entry.progressClearedAt,

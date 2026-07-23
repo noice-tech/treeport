@@ -27,6 +27,7 @@ export type TerminalProgress = z.infer<typeof terminalProgressSchema>
 export const terminalRuntimeMetadataSchema = z.strictObject({
   terminalId: z.string().min(1),
   title: z.string().max(256).nullable(),
+  hasForegroundProcess: z.boolean().nullable().optional(),
   progress: terminalProgressSchema.nullable(),
   progressStartedAt: z.string().datetime().nullable().default(null),
   progressClearedAt: z.string().datetime().nullable().default(null),

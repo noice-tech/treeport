@@ -76,6 +76,7 @@ const MAX_SIDEBAR_WIDTH = 420
 const DEFAULT_SIDEBAR_WIDTH = 272
 const ACTIVE_PROJECT_STORAGE_KEY = 'tasktty-active-project'
 const EMPTY_BELL_ATTENTION: ReadonlySet<string> = new Set()
+const EMPTY_FOREGROUND_PROCESSES: ReadonlySet<string> = new Set()
 const EMPTY_RUNTIME_TITLES: ReadonlyMap<string, string> = new Map()
 const EMPTY_TERMINAL_PROGRESS: ReadonlyMap<string, TerminalProgress> = new Map()
 const MANUAL_CLEANUP_PREFIX = 'Manual cleanup required:'
@@ -510,6 +511,11 @@ export default function App() {
     terminalSessions.subscribe,
     terminalSessions.getTitleSnapshot,
     () => EMPTY_RUNTIME_TITLES
+  )
+  const foregroundProcesses = useSyncExternalStore(
+    terminalSessions.subscribe,
+    terminalSessions.getForegroundProcessSnapshot,
+    () => EMPTY_FOREGROUND_PROCESSES
   )
   const terminalProgress = useSyncExternalStore(
     terminalSessions.subscribe,
@@ -1713,8 +1719,9 @@ export default function App() {
           mutationsDisabled={selectedWorktreeMutationsDisabled}
           onCloseTerminal={(terminal) => {
             if (
+              !foregroundProcesses.has(terminal.id) ||
               window.confirm(
-                `Close terminal “${runtimeTitles.get(terminal.id) || terminal.name}”? Its tmux session and process will be terminated.`
+                `Close terminal “${runtimeTitles.get(terminal.id) || terminal.name}”? Its foreground process will be terminated.`
               )
             ) {
               closeTerminal.mutate(terminal)
