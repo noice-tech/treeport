@@ -45,7 +45,10 @@ import {
 interface TerminalViewProps {
   worktree: WorktreeRecord | null
   terminal: TerminalRecord | null
-  focusTerminalId: string | null
+  focusTerminalRequest: {
+    terminalId: string
+    sequence: number
+  } | null
   presets: TerminalPreset[]
   presetsLoading: boolean
   presetsError: boolean
@@ -81,7 +84,7 @@ const EMPTY_SNAPSHOT: TerminalSessionSnapshot = {
 export function TerminalView({
   worktree,
   terminal,
-  focusTerminalId,
+  focusTerminalRequest,
   presets,
   presetsLoading,
   presetsError,
@@ -102,7 +105,7 @@ export function TerminalView({
   const [alt, setAlt] = useState(false)
   const lastExitSerial = useRef(0)
   const lastExitSessionId = useRef<string | null>(null)
-  const focusedTerminalId = useRef<string | null>(null)
+  const handledFocusRequestSequence = useRef(0)
   const shortcutFocusTerminalId = useRef<string | null>(null)
 
   useEffect(() => {
@@ -153,19 +156,25 @@ export function TerminalView({
       return
     }
 
-    const focusAfterCreation =
-      activeSession.terminalId === focusTerminalId &&
-      focusedTerminalId.current !== focusTerminalId
+    const focusRequestSequence =
+      activeSession.terminalId === focusTerminalRequest?.terminalId
+        ? focusTerminalRequest.sequence
+        : null
+    const focusAfterRequest =
+      focusRequestSequence !== null &&
+      handledFocusRequestSequence.current !== focusRequestSequence
     const focusAfterShortcut =
       activeSession.terminalId === shortcutFocusTerminalId.current
-    if (!focusAfterCreation && !focusAfterShortcut) {
+    if (!focusAfterRequest && !focusAfterShortcut) {
       return
     }
 
-    focusedTerminalId.current = activeSession.terminalId
+    if (focusRequestSequence !== null) {
+      handledFocusRequestSequence.current = focusRequestSequence
+    }
     shortcutFocusTerminalId.current = null
     activeSession.focus()
-  }, [activeSession, focusTerminalId])
+  }, [activeSession, focusTerminalRequest])
 
   useEffect(() => {
     if (lastExitSessionId.current !== terminal?.id) {
