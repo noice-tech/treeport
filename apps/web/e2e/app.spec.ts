@@ -1308,6 +1308,17 @@ test.describe('desktop worktree terminal UI', () => {
       })
     ).toBeVisible()
     await expect(page.getByText('another topic', { exact: true })).toBeVisible()
+
+    await page
+      .getByRole('button', {
+        name: 'Switch project, current project another-project'
+      })
+      .click()
+    await page.getByRole('button', { name: 'example', exact: true }).click()
+    await expect(page).toHaveURL(
+      /\/projects\/proj_1\/worktrees\/wt_topic\/terminals\/term_pi$/
+    )
+
     const separator = page.getByRole('separator', { name: 'Resize sidebar' })
     await expect(separator).toHaveAttribute('aria-valuenow', '272')
     await separator.press('ArrowRight')

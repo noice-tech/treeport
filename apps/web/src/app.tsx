@@ -35,12 +35,13 @@ import {
 } from './project-metadata.js'
 import { terminalSessions, type TerminalProgress } from './terminal-session.js'
 import {
-  deepestProjectTarget,
+  LAST_PROJECT_TERMINAL_STORAGE_PREFIX,
   LAST_WORKSPACE_ROUTE_STORAGE_KEY,
   LEGACY_ACTIVE_PROJECT_STORAGE_KEY,
   LEGACY_TERMINAL_STORAGE_KEY,
   legacyResumePath,
   resolveWorkspaceRoute,
+  targetForProject,
   targetForTerminal,
   targetForWorktree
 } from './workspace-navigation.js'
@@ -147,6 +148,13 @@ export default function App() {
       localStorage.setItem(
         LAST_WORKSPACE_ROUTE_STORAGE_KEY,
         workspaceResolution.target.pathname
+      )
+    }
+
+    if (workspaceResolution.target.kind === 'terminal') {
+      localStorage.setItem(
+        `${LAST_PROJECT_TERMINAL_STORAGE_PREFIX}${workspaceResolution.target.projectId}`,
+        workspaceResolution.target.terminalId
       )
     }
   }, [workspaceResolution?.canonical, workspaceResolution?.target.pathname])
@@ -272,8 +280,16 @@ export default function App() {
     setDrawerOpen(false)
   }
 
+  const rememberedTargetForProject = (project: ProjectRecord) =>
+    targetForProject(
+      project,
+      localStorage.getItem(
+        `${LAST_PROJECT_TERMINAL_STORAGE_PREFIX}${project.id}`
+      )
+    )
+
   const selectProject = (project: ProjectRecord) => {
-    void navigateToWorkspace(deepestProjectTarget(project))
+    void navigateToWorkspace(rememberedTargetForProject(project))
     setProjectSwitcherOpen(false)
   }
 
@@ -281,6 +297,7 @@ export default function App() {
     useProjectWorkflows({
       projects,
       selectedProject,
+      targetForProject: rememberedTargetForProject,
       projectSwitcherTriggerRef,
       closeProjectUi: () => setProjectSwitcherOpen(false),
       openedProjectUi: () => {
