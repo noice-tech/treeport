@@ -107,16 +107,27 @@ export class TmuxAdapter {
   readonly configPath: string
   readonly specsDir: string
   private readonly launcherPath: string
+  private readonly hostEnvironment: NodeJS.ProcessEnv
+  private readonly platform: NodeJS.Platform
+  private readonly uid: number | undefined
 
   constructor(
     private readonly runner: CommandRunner,
     private readonly runtimeDir: string,
     private readonly executable = 'tmux',
-    launcherPath = fileURLToPath(new URL('./launcher.js', import.meta.url))
+    launcherPath = fileURLToPath(new URL('./launcher.js', import.meta.url)),
+    host: {
+      environment?: NodeJS.ProcessEnv
+      platform?: NodeJS.Platform
+      uid?: number
+    } = {}
   ) {
     this.configPath = path.join(runtimeDir, 'tmux.conf')
     this.specsDir = path.join(runtimeDir, 'launch-specs')
     this.launcherPath = launcherPath
+    this.hostEnvironment = host.environment ?? process.env
+    this.platform = host.platform ?? process.platform
+    this.uid = host.uid ?? process.getuid?.()
   }
 
   async initialize(): Promise<void> {
@@ -129,7 +140,7 @@ export class TmuxAdapter {
   }
 
   private environment(): NodeJS.ProcessEnv {
-    const env = { ...process.env }
+    const env = { ...this.hostEnvironment }
     delete env.TMUX
     delete env.TMUX_PANE
     return env
@@ -150,12 +161,36 @@ export class TmuxAdapter {
     setupError?: string
   }): Promise<void> {
     await this.initialize()
+    let sshAuthSock = this.hostEnvironment.SSH_AUTH_SOCK?.trim()
+    if (!sshAuthSock && this.platform === 'darwin' && this.uid !== undefined) {
+      const result = await this.runner
+        .run({
+          executable: '/bin/launchctl',
+          args: [
+            'asuser',
+            String(this.uid),
+            '/bin/launchctl',
+            'getenv',
+            'SSH_AUTH_SOCK'
+          ],
+          env: this.environment(),
+          timeoutMs: 10_000
+        })
+        .catch(() => null)
+      if (result?.exitCode === 0) {
+        sshAuthSock = result.stdout.trim() || undefined
+      }
+    }
+
     const specPath = path.join(this.specsDir, `${input.terminalId}.json`)
     const spec: LaunchSpec = {
       argv: [...input.argv],
       ...(input.fallbackArgv ? { fallbackArgv: [...input.fallbackArgv] } : {}),
       cwd: input.cwd,
-      env: { ...input.env },
+      env: {
+        ...(sshAuthSock ? { SSH_AUTH_SOCK: sshAuthSock } : {}),
+        ...input.env
+      },
       ...(input.setupTasks?.length
         ? {
             setupTasks: input.setupTasks.map((task) => ({

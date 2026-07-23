@@ -21,8 +21,17 @@ afterEach(async () =>
 class RecordingRunner implements CommandRunner {
   readonly calls: CommandRequest[] = []
   responses: CommandResult[] = []
+  launchctlResponse: CommandResult = {
+    stdout: '',
+    stderr: 'SSH_AUTH_SOCK is unavailable',
+    exitCode: 1
+  }
   async run(request: CommandRequest): Promise<CommandResult> {
     this.calls.push(request)
+    if (request.executable === '/bin/launchctl') {
+      return this.launchctlResponse
+    }
+
     return this.responses.shift() ?? { stdout: '', stderr: '', exitCode: 0 }
   }
 }
@@ -97,6 +106,115 @@ describe('TmuxAdapter', () => {
       '@tasktty-worktree-id',
       '@tasktty-terminal-id'
     ])
+  })
+
+  it('recovers the macOS SSH agent socket for terminal commands', async () => {
+    const runtime = await fs.mkdtemp(path.join(os.tmpdir(), 'tasktty-runtime-'))
+    temporary.push(runtime)
+    const runner = new RecordingRunner()
+    runner.launchctlResponse = {
+      stdout: '/private/tmp/com.apple.launchd.test/Listeners\n',
+      stderr: '',
+      exitCode: 0
+    }
+    const adapter = new TmuxAdapter(runner, runtime, 'tmux', '/launcher.js', {
+      environment: {},
+      platform: 'darwin',
+      uid: 501
+    })
+
+    await adapter.createSession({
+      socketName: 'socket',
+      sessionName: 'session',
+      terminalId: 'term',
+      worktreeId: 'wt',
+      name: 'Terminal',
+      createdAt: '2026-01-02T03:04:05.000Z',
+      cwd: '/tmp',
+      argv: ['pi'],
+      env: { TASKTTY_TERMINAL_ID: 'term' }
+    })
+
+    expect(runner.calls[0]).toMatchObject({
+      executable: '/bin/launchctl',
+      args: ['asuser', '501', '/bin/launchctl', 'getenv', 'SSH_AUTH_SOCK']
+    })
+    await expect(
+      fs
+        .readFile(path.join(adapter.specsDir, 'term.json'), 'utf8')
+        .then(JSON.parse)
+    ).resolves.toMatchObject({
+      env: {
+        SSH_AUTH_SOCK: '/private/tmp/com.apple.launchd.test/Listeners',
+        TASKTTY_TERMINAL_ID: 'term'
+      }
+    })
+  })
+
+  it('preserves an inherited SSH agent socket without consulting launchd', async () => {
+    const runtime = await fs.mkdtemp(path.join(os.tmpdir(), 'tasktty-runtime-'))
+    temporary.push(runtime)
+    const runner = new RecordingRunner()
+    const adapter = new TmuxAdapter(runner, runtime, 'tmux', '/launcher.js', {
+      environment: { SSH_AUTH_SOCK: '/agent/socket' },
+      platform: 'darwin',
+      uid: 501
+    })
+
+    await adapter.createSession({
+      socketName: 'socket',
+      sessionName: 'session',
+      terminalId: 'term',
+      worktreeId: 'wt',
+      name: 'Terminal',
+      createdAt: '2026-01-02T03:04:05.000Z',
+      cwd: '/tmp',
+      argv: ['pi'],
+      env: {}
+    })
+
+    expect(
+      runner.calls.some((call) => call.executable === '/bin/launchctl')
+    ).toBe(false)
+    await expect(
+      fs
+        .readFile(path.join(adapter.specsDir, 'term.json'), 'utf8')
+        .then(JSON.parse)
+    ).resolves.toMatchObject({ env: { SSH_AUTH_SOCK: '/agent/socket' } })
+  })
+
+  it('creates the terminal when the macOS SSH agent socket is unavailable', async () => {
+    const runtime = await fs.mkdtemp(path.join(os.tmpdir(), 'tasktty-runtime-'))
+    temporary.push(runtime)
+    const runner = new RecordingRunner()
+    runner.launchctlResponse = {
+      stdout: '',
+      stderr: 'No such process',
+      exitCode: 1
+    }
+    const adapter = new TmuxAdapter(runner, runtime, 'tmux', '/launcher.js', {
+      environment: {},
+      platform: 'darwin',
+      uid: 501
+    })
+
+    await adapter.createSession({
+      socketName: 'socket',
+      sessionName: 'session',
+      terminalId: 'term',
+      worktreeId: 'wt',
+      name: 'Terminal',
+      createdAt: '2026-01-02T03:04:05.000Z',
+      cwd: '/tmp',
+      argv: ['pi'],
+      env: {}
+    })
+
+    await expect(
+      fs
+        .readFile(path.join(adapter.specsDir, 'term.json'), 'utf8')
+        .then(JSON.parse)
+    ).resolves.toMatchObject({ env: {} })
   })
 
   it('removes the launch spec when post-creation setup fails', async () => {
