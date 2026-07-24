@@ -1265,12 +1265,12 @@ test.describe('desktop worktree terminal UI', () => {
       page.locator('select[name="terminal-selector"] option:checked')
     ).toHaveText('zsh · /worktrees/topic')
     await expect(page.locator('.pr-badge')).toHaveCount(0)
-    await page
-      .getByRole('button', {
-        name: 'Switch project, current project example'
-      })
-      .click()
+    const shortcutModifier = await page.evaluate(() =>
+      /Mac|iPhone|iPad|iPod/.test(navigator.platform) ? 'Meta' : 'Control'
+    )
+    await page.keyboard.press(`${shortcutModifier}+Shift+P`)
     const search = page.getByLabel('Search projects')
+    await expect(search).toBeFocused()
     await search.fill('missing')
     await expect(page.getByText('No open projects found.')).toBeVisible()
     await search.fill('example')

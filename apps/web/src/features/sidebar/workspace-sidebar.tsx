@@ -141,6 +141,7 @@ function ProjectSwitcher({
   onRequestProjectClose: requestProjectClose,
   onOpenModal: openModal
 }: ProjectSwitcherProps) {
+  const usesMacKeyboard = /Mac|iPhone|iPad|iPod/.test(navigator.platform)
   const [projectSearch, setProjectSearch] = useState('')
   const [highlightedProjectId, setHighlightedProjectId] = useState<
     string | null
@@ -210,7 +211,12 @@ function ProjectSwitcher({
               ? `Switch project, current project ${activeProject.name}`
               : 'Open project'
           }
-          title={activeProject?.repositoryPath}
+          aria-keyshortcuts={
+            usesMacKeyboard ? 'Meta+Shift+P' : 'Control+Shift+P'
+          }
+          title={`${activeProject?.repositoryPath ?? 'Open project'} — ${
+            usesMacKeyboard ? '⌘⇧P' : 'Ctrl+Shift+P'
+          }`}
         >
           <span className="truncate font-medium">
             {activeProject?.name ?? 'Open project'}
