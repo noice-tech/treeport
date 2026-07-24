@@ -1236,6 +1236,16 @@ test.describe('desktop worktree terminal UI', () => {
       })
     ).toBeVisible()
     await expect(page.getByText('topic', { exact: true })).toBeVisible()
+    await expect(page.locator('.worktree-row')).toHaveText([
+      'main worktree',
+      'topic'
+    ])
+    await expect(
+      page
+        .locator('.worktree-row')
+        .filter({ hasText: 'main worktree' })
+        .locator('.lucide-crown')
+    ).toBeVisible()
     await page.getByRole('button', { name: 'Pi, running', exact: true }).click()
     await expect(page.locator('.xterm')).toBeVisible()
     await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
@@ -1954,6 +1964,11 @@ test.describe('desktop worktree terminal UI', () => {
       await expect(
         page.getByRole('button', { name: 'new-topic', exact: true })
       ).toHaveCount(1)
+      await expect(page.locator('.worktree-row')).toHaveText([
+        'main worktree',
+        'topic',
+        'new-topic'
+      ])
       await expect
         .poll(() =>
           page.evaluate(() =>

@@ -243,6 +243,52 @@ describe('SQLite metadata', () => {
     ).toBe('2026-03-01T00:00:00.000Z')
   })
 
+  it('keeps the main worktree first and linked worktrees in creation order', async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'tasktty-db-'))
+    directories.push(directory)
+    const database = new TaskTTYDatabase(path.join(directory, 'metadata.db'))
+    databases.push(database)
+    database.connection
+      .prepare(
+        `INSERT INTO projects(
+           id,name,repository_path,main_worktree_path,default_branch,color,
+           repository_device,repository_inode,name_is_custom,is_open,last_opened_at,
+           created_at,updated_at
+         ) VALUES('p_order','Ordered','/ordered','/ordered','main',NULL,
+           '1','1',0,1,'2026-01-01','2026-01-01','2026-01-01')`
+      )
+      .run()
+    const insertWorktree = database.connection.prepare(
+      `INSERT INTO worktrees(
+         id,project_id,path,kind,tmux_socket_name,status,created_at,updated_at
+       ) VALUES(?,'p_order',?,?,?,'active',?,?)`
+    )
+    const insert = (
+      id: string,
+      worktreePath: string,
+      kind: 'main' | 'linked',
+      createdAt: string
+    ) =>
+      insertWorktree.run(
+        id,
+        worktreePath,
+        kind,
+        `socket-${id}`,
+        createdAt,
+        createdAt
+      )
+
+    insert('wt_newest', '/ordered-newest', 'linked', '2026-03-01')
+    insert('wt_main', '/ordered', 'main', '2026-04-01')
+    insert('wt_oldest', '/ordered-oldest', 'linked', '2026-01-01')
+    insert('wt_same_a', '/ordered-same-a', 'linked', '2026-02-01')
+    insert('wt_same_b', '/ordered-same-b', 'linked', '2026-02-01')
+
+    expect(
+      database.project('p_order')!.worktrees.map((worktree) => worktree.id)
+    ).toEqual(['wt_main', 'wt_oldest', 'wt_same_a', 'wt_same_b', 'wt_newest'])
+  })
+
   it('upgrades a version-7 database without reapplying the baseline', async () => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'tasktty-db-v7-'))
     directories.push(directory)
