@@ -49,6 +49,7 @@ import {
 interface TerminalViewProps {
   worktree: WorktreeRecord | null
   terminal: TerminalRecord | null
+  loading: boolean
   autoFocusBlocked: boolean
   presets: TerminalPreset[]
   presetsLoading: boolean
@@ -85,6 +86,7 @@ const EMPTY_SNAPSHOT: TerminalSessionSnapshot = {
 export function TerminalView({
   worktree,
   terminal,
+  loading,
   autoFocusBlocked,
   presets,
   presetsLoading,
@@ -347,7 +349,7 @@ export function TerminalView({
                             selected && 'text-zinc-400'
                           )}
                           aria-label={`Close ${title}`}
-                          disabled={closing}
+                          disabled={closing || terminals.length === 1}
                           onClick={() => onCloseTerminal(item)}
                         >
                           {closing ? (
@@ -358,7 +360,9 @@ export function TerminalView({
                         </Button>
                       </TooltipTrigger>
                       <TooltipContent side="bottom">
-                        Close terminal
+                        {terminals.length === 1
+                          ? 'Every worktree keeps at least one terminal'
+                          : 'Close terminal'}
                       </TooltipContent>
                     </Tooltip>
                   </div>
@@ -506,6 +510,15 @@ export function TerminalView({
             <span className="sr-only" aria-live="polite">
               {snapshot.bellActive ? `Bell from ${visibleTitle}` : ''}
             </span>
+          </div>
+        ) : loading ? (
+          <div className="grid min-h-0 place-items-center bg-[radial-gradient(circle_at_center,var(--color-zinc-900)_0,var(--color-zinc-950)_55%)] p-8">
+            <div role="status" aria-label="Loading workspace">
+              <ArrowPathIcon
+                className="size-6 animate-spin fill-zinc-500"
+                aria-hidden="true"
+              />
+            </div>
           </div>
         ) : (
           <div className="empty-state grid min-h-0 place-items-center bg-[radial-gradient(circle_at_center,var(--color-zinc-900)_0,var(--color-zinc-950)_55%)] p-8">

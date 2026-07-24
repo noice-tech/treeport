@@ -1123,6 +1123,10 @@ test.describe('desktop worktree terminal UI', () => {
 
     expect(new URL(page.url()).pathname).toBe(pathname)
     await expect(page.getByText('Loading repositories…')).toBeVisible()
+    await expect(
+      page.getByRole('status', { name: 'Loading workspace' })
+    ).toBeVisible()
+    await expect(page.getByText('Choose a worktree.')).toHaveCount(0)
     mocked.releaseProjects()
     await expect(
       page.getByRole('button', {
@@ -3068,6 +3072,7 @@ test.describe('mobile terminal UI', () => {
     await page
       .getByRole('button', { name: 'Switch project, current project example' })
       .click()
+    await expect(page.getByLabel('Search projects')).not.toBeFocused()
     const close = page.getByRole('button', { name: 'Close project example' })
     await expect(close).toBeVisible()
     await expect(close).toHaveCSS('opacity', '1')

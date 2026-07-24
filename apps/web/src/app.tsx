@@ -467,6 +467,7 @@ export default function App() {
           selectedProject={selectedProject}
           selectedWorktree={selectedWorktree}
           selectedTerminal={selectedTerminal}
+          loading={projectsQuery.isPending}
           presets={presets}
           presetsLoading={presetsQuery.isPending}
           presetsError={presetsQuery.isError}

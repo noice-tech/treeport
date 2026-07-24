@@ -54,7 +54,10 @@ class SystemDouble implements CommandRunner {
   worktreeListGate: Promise<void> | null = null
   worktreeAddGate: Promise<void> | null = null
   readonly worktreeAddGates = new Map<string, Promise<void>>()
+  tmuxCreateFails = false
   tmuxCreateGate: Promise<void> | null = null
+  tmuxInventoryFails = false
+  tmuxInventoryGate: Promise<void> | null = null
   tmuxStateGate: Promise<void> | null = null
   setupGate: Promise<void> | null = null
   readonly removeAfterDeregisterGates = new Map<string, Promise<void>>()
@@ -249,6 +252,10 @@ class SystemDouble implements CommandRunner {
         await this.tmuxCreateGate
       }
 
+      if (this.tmuxCreateFails) {
+        return fail('tmux create failed')
+      }
+
       const session = args[args.indexOf('-s') + 1]!
       const socket = args[args.indexOf('-L') + 1]!
       this.sessions.set(`${socket}/${session}`, {
@@ -279,6 +286,14 @@ class SystemDouble implements CommandRunner {
     }
 
     if (args.includes('list-panes') && args.includes('-a')) {
+      if (this.tmuxInventoryFails) {
+        return fail('tmux inventory failed')
+      }
+
+      if (this.tmuxInventoryGate) {
+        await this.tmuxInventoryGate
+      }
+
       const socket = args[args.indexOf('-L') + 1]!
       const lines = [...this.sessions.entries()]
         .filter(([key]) => key.startsWith(`${socket}/`))
@@ -564,10 +579,121 @@ describe('TaskTTYService with injected command adapters', () => {
     expect(events).toEqual(['project.updated', 'project.updated'])
   })
 
+  it('provisions one shell terminal and keeps the last terminal', async () => {
+    const { main, runner, service } = await fixture()
+    const project = await service.registerProject(main)
+    const mainWorktree = (await service.getProjectSnapshot(project.id))
+      .worktrees[0]!
+    const [terminal] = mainWorktree.terminals
+
+    expect(terminal).toMatchObject({
+      name: 'Shell',
+      argv: ['/bin/zsh', '-l'],
+      status: 'running'
+    })
+    await Promise.all([service.listProjects(), service.listProjects()])
+    expect(runner.sessions.size).toBe(1)
+    await expect(service.deleteTerminal(terminal!.id)).rejects.toMatchObject({
+      code: 'LAST_TERMINAL'
+    })
+
+    const second = await service.createTerminal(mainWorktree.id, 'Second')
+    await expect(service.deleteTerminal(second.id)).resolves.toBeUndefined()
+    expect(
+      (await service.getWorktreeSnapshot(mainWorktree.id)).terminals
+    ).toEqual([expect.objectContaining({ id: terminal!.id })])
+  })
+
+  it('provisions a terminal for an externally discovered worktree', async () => {
+    const { root, main, runner, service } = await fixture()
+    const project = await service.registerProject(main)
+    const linkedPath = path.join(root, 'external linked')
+    await fs.mkdir(linkedPath, { recursive: true })
+    runner.worktrees.push({
+      path: linkedPath,
+      gitWorktreeKey: path.join(main, '.git', 'worktrees', 'external-linked'),
+      head: 'external-head',
+      branch: 'external-linked'
+    })
+
+    const refreshed = await service.getProjectSnapshot(project.id)
+    const linked = refreshed.worktrees.find(
+      (worktree) => worktree.kind === 'linked'
+    )
+    expect(linked?.terminals).toEqual([
+      expect.objectContaining({ name: 'Shell', argv: ['/bin/zsh', '-l'] })
+    ])
+    expect(runner.sessions.size).toBe(2)
+  })
+
+  it('reports a project unavailable until terminal provisioning recovers', async () => {
+    const { main, runner, service } = await fixture()
+    runner.tmuxCreateFails = true
+    const unavailable = await service.registerProject(main)
+    expect(unavailable.availability).toMatchObject({
+      state: 'unavailable',
+      message: expect.stringContaining('tmux create failed')
+    })
+    expect(unavailable.worktrees[0]?.terminals).toEqual([])
+    expect(service.database.isProjectOpen(unavailable.id)).toBe(true)
+
+    runner.tmuxCreateFails = false
+    const recovered = await service.getProjectSnapshot(unavailable.id)
+    expect(recovered.availability.state).toBe('available')
+    expect(recovered.worktrees[0]?.terminals).toHaveLength(1)
+  })
+
+  it('returns unavailable projects when terminal inventory fails', async () => {
+    const { main, runner, service } = await fixture()
+    const project = await service.registerProject(main)
+    runner.tmuxInventoryFails = true
+
+    const unavailable = await service.getProjectSnapshot(project.id)
+    expect(unavailable.availability).toMatchObject({
+      state: 'unavailable',
+      message: 'tmux inventory failed'
+    })
+    expect(unavailable.worktrees[0]?.terminals).toEqual([])
+
+    runner.tmuxInventoryFails = false
+    const recovered = await service.getProjectSnapshot(project.id)
+    expect(recovered.availability.state).toBe('available')
+    expect(recovered.worktrees[0]?.terminals).toHaveLength(1)
+  })
+
+  it('keeps project closure serialized against terminal provisioning', async () => {
+    const { main, runner, service } = await fixture()
+    const project = await service.registerProject(main)
+    runner.sessions.clear()
+    runner.calls.length = 0
+    let releaseInventory!: () => void
+    runner.tmuxInventoryGate = new Promise<void>((resolve) => {
+      releaseInventory = resolve
+    })
+
+    const refreshing = service.listProjects()
+    await vi.waitFor(() =>
+      expect(
+        runner.calls.some(
+          (call) => call.args.includes('list-panes') && call.args.includes('-a')
+        )
+      ).toBe(true)
+    )
+    await expect(service.closeProject(project.id)).rejects.toMatchObject({
+      code: 'PROJECT_BUSY'
+    })
+
+    releaseInventory()
+    const [refreshed] = await refreshing
+    runner.tmuxInventoryGate = null
+    expect(refreshed?.worktrees[0]?.terminals).toHaveLength(1)
+  })
+
   it('publishes a terminal only after its tmux session is ready', async () => {
     const { main, runner, service, database } = await fixture()
     const project = await service.registerProject(main)
     const mainWorktree = project.worktrees[0]!
+    runner.calls.length = 0
     let releaseTerminal!: () => void
     runner.tmuxCreateGate = new Promise<void>((resolve) => {
       releaseTerminal = resolve
@@ -639,6 +765,9 @@ describe('TaskTTYService with injected command adapters', () => {
       )
     ).worktree
     const preview = await service.removePreview(linked.id)
+    const createCallsBefore = runner.calls.filter((call) =>
+      call.args.includes('new-session')
+    ).length
     let releaseTerminal!: () => void
     runner.tmuxCreateGate = new Promise<void>((resolve) => {
       releaseTerminal = resolve
@@ -661,7 +790,7 @@ describe('TaskTTYService with injected command adapters', () => {
     await vi.waitFor(() =>
       expect(
         runner.calls.filter((call) => call.args.includes('new-session'))
-      ).toHaveLength(1)
+      ).toHaveLength(createCallsBefore + 1)
     )
     expect(removalSettled).toBe(false)
 
@@ -1179,6 +1308,7 @@ describe('TaskTTYService with injected command adapters', () => {
     ])
     expect(events).toEqual([
       { type: 'terminal.removed', worktreeId: first.id },
+      { type: 'terminal.removed', worktreeId: first.id },
       { type: 'worktree.removed', worktreeId: first.id }
     ])
     expect(
@@ -1451,15 +1581,15 @@ describe('TaskTTYService with injected command adapters', () => {
       'pi'
     ])
     await service.createTerminal(created.worktree.id, 'Dev', ['pnpm', 'dev'])
-    expect(runner.sessions.size).toBe(2)
+    expect(runner.sessions.size).toBe(4)
     await service.deleteTerminal(first.id)
-    expect(runner.sessions.size).toBe(1)
+    expect(runner.sessions.size).toBe(3)
 
     const operation = await beginFromPreview(service, created.worktree.id)
     expect((await waitForOperation(service, operation.id)).status).toBe(
       'completed'
     )
-    expect(runner.sessions.size).toBe(0)
+    expect(runner.sessions.size).toBe(1)
     expect(service.getProject(project.id).worktrees).toHaveLength(1)
     expect(
       runner.calls.some(
@@ -1505,7 +1635,7 @@ describe('TaskTTYService with injected command adapters', () => {
         .getProject(project.id)
         .worktrees.some((item) => item.id === result.worktree.id)
     ).toBe(true)
-    expect(runner.sessions.size).toBe(1)
+    expect(runner.sessions.size).toBe(2)
     expect(events.indexOf('worktree.created')).toBeLessThan(
       events.indexOf('terminal.created')
     )
@@ -2424,6 +2554,10 @@ describe('TaskTTYService with injected command adapters', () => {
         confirmationToken: preview.confirmationToken,
         confirmDestructive: preview.warnings.length > 0
       })
+      .then(
+        (operation) => ({ operation, error: null }),
+        (error: unknown) => ({ operation: null, error })
+      )
       .finally(() => {
         removalSettled = true
       })
@@ -2435,10 +2569,10 @@ describe('TaskTTYService with injected command adapters', () => {
       worktree: { id: linked.id }
     })
     runner.setupGate = null
-    const operation = await removing
-    await expect(
-      waitForOperation(service, operation.id)
-    ).resolves.toMatchObject({ status: 'completed' })
+    await expect(removing).resolves.toMatchObject({
+      error: { code: 'REMOVE_PREVIEW_STALE' }
+    })
+    expect(service.getWorktree(linked.id).status).toBe('active')
   })
 
   it("does not release another mutation's project lock after path registration is refused", async () => {
@@ -2506,6 +2640,7 @@ describe('TaskTTYService with injected command adapters', () => {
     )
 
     const mainWorktree = service.getProject(project.id).worktrees[0]!
+    runner.calls.length = 0
     let releaseTerminal!: () => void
     runner.tmuxCreateGate = new Promise<void>((resolve) => {
       releaseTerminal = resolve
@@ -2529,7 +2664,7 @@ describe('TaskTTYService with injected command adapters', () => {
     await expect(service.deleteProject(project.id)).resolves.toBeUndefined()
   })
 
-  it('closes every project worktree and reopens durable identity without terminals', async () => {
+  it('closes every project worktree and provisions terminals when reopening', async () => {
     const { main, runner, service } = await fixture()
     const project = await service.registerProject(main)
     const mainWorktree = project.worktrees[0]!
@@ -2541,7 +2676,7 @@ describe('TaskTTYService with injected command adapters', () => {
       { name: 'Linked terminal', argv: ['pi'] }
     )
     const linked = linkedResult.worktree
-    expect(runner.sessions.size).toBe(2)
+    expect(runner.sessions.size).toBe(3)
 
     await service.closeProject(project.id)
 
@@ -2562,7 +2697,16 @@ describe('TaskTTYService with injected command adapters', () => {
     expect(reopened.worktrees.map(({ id }) => id)).toEqual(
       expect.arrayContaining([mainWorktree.id, linked.id])
     )
-    expect(reopened.worktrees.flatMap(({ terminals }) => terminals)).toEqual([])
+    expect(
+      reopened.worktrees.flatMap(({ terminals }) => terminals)
+    ).toHaveLength(2)
+    expect(
+      reopened.worktrees.every(
+        (worktree) =>
+          worktree.terminals.length === 1 &&
+          worktree.terminals[0]?.name === 'Shell'
+      )
+    ).toBe(true)
     expect(service.listRecentProjects()).toEqual([])
 
     await service.closeProject(project.id)
@@ -2609,7 +2753,7 @@ describe('TaskTTYService with injected command adapters', () => {
       (await service.listProjects())[0]!.worktrees.flatMap(
         ({ terminals }) => terminals
       )
-    ).toHaveLength(1)
+    ).toHaveLength(2)
 
     runner.tmuxKillFailureSockets.clear()
     await expect(service.closeProject(project.id)).resolves.toBeUndefined()

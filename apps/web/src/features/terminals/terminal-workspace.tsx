@@ -19,6 +19,7 @@ export function TerminalWorkspace({
   selectedProject,
   selectedWorktree,
   selectedTerminal,
+  loading,
   presets,
   presetsLoading,
   presetsError,
@@ -37,6 +38,7 @@ export function TerminalWorkspace({
   selectedProject: ProjectRecord | null
   selectedWorktree: WorktreeRecord | null
   selectedTerminal: TerminalRecord | null
+  loading: boolean
   presets: TerminalPreset[]
   presetsLoading: boolean
   presetsError: boolean
@@ -117,7 +119,10 @@ export function TerminalWorkspace({
       setDrawerOpen(false)
       await queryClient.invalidateQueries({ queryKey: projectsQueryKey })
     },
-    onError: showError,
+    onError: async (error) => {
+      showError(error)
+      await queryClient.invalidateQueries({ queryKey: projectsQueryKey })
+    },
     onSettled: () => {
       createTerminalGuardRef.current = false
     }
@@ -195,7 +200,11 @@ export function TerminalWorkspace({
   }
 
   const requestCloseTerminal = (terminal: TerminalRecord) => {
-    if (closeTerminal.isPending || closeTerminalGuardRef.current) {
+    if (
+      closeTerminal.isPending ||
+      closeTerminalGuardRef.current ||
+      selectedWorktree?.terminals.length === 1
+    ) {
       return
     }
 
@@ -248,6 +257,7 @@ export function TerminalWorkspace({
     <TerminalView
       worktree={selectedWorktree}
       terminal={selectedTerminal}
+      loading={loading}
       autoFocusBlocked={
         modalOpen || projectSwitcherOpen || (isMobile && drawerOpen)
       }
