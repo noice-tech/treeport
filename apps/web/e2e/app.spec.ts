@@ -1123,6 +1123,10 @@ test.describe('desktop worktree terminal UI', () => {
 
     expect(new URL(page.url()).pathname).toBe(pathname)
     await expect(page.getByText('Loading repositories…')).toBeVisible()
+    await expect(
+      page.getByRole('status', { name: 'Loading workspace' })
+    ).toBeVisible()
+    await expect(page.getByText('Choose a worktree.')).toHaveCount(0)
     mocked.releaseProjects()
     await expect(
       page.getByRole('button', {
