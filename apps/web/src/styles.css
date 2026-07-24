@@ -220,6 +220,98 @@ code {
   text-align: right;
 }
 
+.worktree-progress-icon {
+  --worktree-progress-glow: var(--color-cyan-400);
+
+  transform-origin: center;
+  animation: worktree-branch-breathe 1.8s ease-in-out infinite;
+  filter: drop-shadow(
+    0 0 0.2rem
+      color-mix(in oklab, var(--worktree-progress-glow) 45%, transparent)
+  );
+}
+
+.worktree-progress-icon :is(path, line, polyline) {
+  stroke-dasharray: 24;
+  animation: worktree-branch-draw 1.8s cubic-bezier(0.65, 0, 0.35, 1) infinite;
+}
+
+.worktree-progress-icon circle {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: worktree-branch-node 1.8s cubic-bezier(0.34, 1.56, 0.64, 1)
+    infinite;
+}
+
+.worktree-progress-icon circle:nth-of-type(2) {
+  animation-delay: 120ms;
+}
+
+.worktree-removing-icon {
+  --worktree-progress-glow: var(--color-rose-400);
+}
+
+.worktree-removing-icon,
+.worktree-removing-icon :is(path, line, polyline, circle) {
+  animation-direction: reverse;
+}
+
+@keyframes worktree-branch-breathe {
+  0%,
+  100% {
+    opacity: 0.5;
+    transform: scale(0.92) rotate(-4deg);
+  }
+
+  45%,
+  65% {
+    opacity: 1;
+    transform: scale(1) rotate(0deg);
+  }
+}
+
+@keyframes worktree-branch-draw {
+  0% {
+    stroke-dashoffset: 24;
+  }
+
+  45%,
+  70% {
+    stroke-dashoffset: 0;
+  }
+
+  100% {
+    stroke-dashoffset: -24;
+  }
+}
+
+@keyframes worktree-branch-node {
+  0%,
+  22% {
+    opacity: 0;
+    transform: scale(0.25);
+  }
+
+  48%,
+  72% {
+    opacity: 1;
+    transform: scale(1);
+  }
+
+  100% {
+    opacity: 0.35;
+    transform: scale(0.75);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .worktree-progress-icon,
+  .worktree-progress-icon :is(path, line, polyline),
+  .worktree-progress-icon circle {
+    animation: none;
+  }
+}
+
 @media (max-width: 700px) {
   .facts > div,
   .facts.diagnostics > div {

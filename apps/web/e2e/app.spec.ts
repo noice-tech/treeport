@@ -1911,8 +1911,34 @@ test.describe('desktop worktree terminal UI', () => {
       const pending = page.getByRole('status', {
         name: 'Creating worktree new topic'
       })
+      expect(await pending.evaluate((element) => element.tagName)).toBe(
+        'BUTTON'
+      )
+      await expect(pending).toHaveClass(/motion-safe:animate-pulse/)
       await expect(pending).toHaveText('new topic')
-      await expect(pending.locator('.animate-spin')).toBeVisible()
+      const creatingIcon = pending.locator('.worktree-progress-icon')
+      await expect(creatingIcon).toBeVisible()
+      await expect(creatingIcon).toHaveCSS(
+        'animation-name',
+        'worktree-branch-breathe'
+      )
+      const currentWorktree = page
+        .locator('.worktree-row')
+        .filter({ hasText: 'main worktree' })
+      const [pendingTypography, currentTypography] = await Promise.all(
+        [pending, currentWorktree].map((row) =>
+          row.evaluate((element) => {
+            const styles = getComputedStyle(element)
+            return {
+              fontFamily: styles.fontFamily,
+              fontSize: styles.fontSize,
+              fontWeight: styles.fontWeight,
+              lineHeight: styles.lineHeight
+            }
+          })
+        )
+      )
+      expect(pendingTypography).toEqual(currentTypography)
       await expect(pending).toBeFocused()
       const projectRequestsBeforeEvent = mocked.projectRequests()
       await page.evaluate(() =>
@@ -2886,10 +2912,20 @@ test.describe('desktop worktree terminal UI', () => {
       button.click()
     })
 
-    await expect(page.getByText('Preparing removal…')).toBeVisible()
+    await expect(page.getByText('Preparing removal…')).toHaveCount(0)
+    const removingIcon = page
+      .locator('.worktree-row')
+      .filter({ hasText: 'topic' })
+      .locator('.worktree-removing-icon')
+    await expect(removingIcon).toBeVisible()
+    await expect(removingIcon.locator('..')).toHaveClass(
+      /motion-safe:animate-pulse/
+    )
+    await expect(removingIcon).toHaveClass(/stroke-rose-400/)
+    await expect(removingIcon).toHaveCSS('animation-direction', 'reverse')
     await expect(removeButton).toBeDisabled()
     await expect.poll(() => mocked.removePreviewRequests()).toBe(1)
-    await expect(page.getByText('Removing…')).toBeVisible()
+    await expect(page.getByText('Removing…')).toHaveCount(0)
     await removeButton.evaluate((button: HTMLButtonElement) => {
       button.click()
       button.click()
@@ -2985,7 +3021,13 @@ test.describe('desktop worktree terminal UI', () => {
     await expect
       .poll(() => mocked.projectRequests())
       .toBeGreaterThan(requestsBeforeStarted)
-    await expect(page.getByText('Removing…')).toBeVisible()
+    await expect(page.getByText('Removing…')).toHaveCount(0)
+    await expect(
+      page
+        .locator('.worktree-row')
+        .filter({ hasText: 'topic' })
+        .locator('.worktree-removing-icon')
+    ).toBeVisible()
     await expect(
       page.getByRole('button', { name: 'Remove topic' })
     ).toBeDisabled()
