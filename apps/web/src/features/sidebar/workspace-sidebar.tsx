@@ -813,7 +813,7 @@ export function WorkspaceSidebar({
                                 />
                               ) : worktree.kind === 'main' ? (
                                 <CrownIcon
-                                  className="size-4 shrink-0 stroke-amber-300 stroke-[1.5]"
+                                  className="size-4 shrink-0 stroke-zinc-600 stroke-[1.5]"
                                   aria-hidden="true"
                                 />
                               ) : (
