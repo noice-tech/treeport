@@ -109,6 +109,7 @@ interface ProjectSwitcherProps {
   bellAttention: ReadonlySet<string>
   terminalProgress: ReadonlyMap<string, TerminalProgress>
   closingProjectId: string | null
+  isMobile: boolean
   projectSwitcherOpen: boolean
   setProjectSwitcherOpen: (open: boolean) => void
   projectSwitcherTriggerRef: RefObject<HTMLButtonElement | null>
@@ -129,6 +130,7 @@ function ProjectSwitcher({
   bellAttention,
   terminalProgress,
   closingProjectId,
+  isMobile,
   projectSwitcherOpen,
   setProjectSwitcherOpen,
   projectSwitcherTriggerRef,
@@ -219,6 +221,11 @@ function ProjectSwitcher({
       <PopoverContent
         align="start"
         className="w-[min(17rem,calc(100vw-1rem))] p-1"
+        onOpenAutoFocus={(event) => {
+          if (isMobile) {
+            event.preventDefault()
+          }
+        }}
         onCloseAutoFocus={(event) => {
           if (projectSwitcherDismissedIntoTerminalRef.current) {
             event.preventDefault()
@@ -293,7 +300,7 @@ function ProjectSwitcher({
                 ? `project-switcher-option-${highlightedProjectOption.project.id}`
                 : undefined
             }
-            autoFocus
+            autoFocus={!isMobile}
           />
         </div>
         <div className="grid max-h-[min(28rem,70vh)] gap-0.5 overflow-y-auto p-0.5 [scrollbar-color:var(--color-zinc-700)_transparent]">
@@ -627,6 +634,7 @@ export function WorkspaceSidebar({
             bellAttention={bellAttention}
             terminalProgress={terminalProgress}
             closingProjectId={closingProjectId}
+            isMobile={isMobile}
             projectSwitcherOpen={projectSwitcherOpen}
             setProjectSwitcherOpen={setProjectSwitcherOpen}
             projectSwitcherTriggerRef={projectSwitcherTriggerRef}
