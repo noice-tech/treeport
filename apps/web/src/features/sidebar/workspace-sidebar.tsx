@@ -914,7 +914,7 @@ export function WorkspaceSidebar({
                                     terminal.name
                                   }, ${status}`}
                                 >
-                                  {progress ? (
+                                  {progress && !needsAttention ? (
                                     <ArrowPathIcon
                                       className={cn(
                                         'size-4 shrink-0 fill-cyan-300',
@@ -929,21 +929,30 @@ export function WorkspaceSidebar({
                                       aria-hidden="true"
                                     />
                                   ) : (
-                                    <TerminalIcon className="size-4 shrink-0 stroke-zinc-600 stroke-[1.5]" />
+                                    <TerminalIcon
+                                      className={cn(
+                                        'size-4 shrink-0 stroke-zinc-600 stroke-[1.5]',
+                                        needsAttention && 'stroke-amber-300'
+                                      )}
+                                      aria-hidden="true"
+                                    />
                                   )}
-                                  <span className="truncate" aria-hidden="true">
+                                  <span
+                                    className={cn(
+                                      'truncate',
+                                      needsAttention && 'text-amber-200'
+                                    )}
+                                    aria-hidden="true"
+                                  >
                                     {runtimeTitles.get(terminal.id) ||
                                       terminal.name}
                                   </span>
-                                  {(terminal.status !== 'running' ||
-                                    needsAttention) && (
+                                  {terminal.status !== 'running' && (
                                     <span
                                       className={cn(
                                         'status-dot size-1.5 shrink-0 rounded-full bg-zinc-600',
                                         terminal.status === 'exited' &&
-                                          'bg-rose-400',
-                                        needsAttention &&
-                                          'bg-amber-300 shadow-[0_0_0.5rem] shadow-amber-300/60'
+                                          'bg-rose-400'
                                       )}
                                       title={status}
                                     />
