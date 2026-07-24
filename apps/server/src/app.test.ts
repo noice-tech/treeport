@@ -165,7 +165,8 @@ describe('HTTP API validation', () => {
       body: JSON.stringify({
         name: 'Diff',
         argv: ['diff', 'main', '--mode', 'split'],
-        returnToShell: true
+        returnToShell: true,
+        initialSize: { cols: 132, rows: 47 }
       })
     })
     expect(response.status).toBe(201)
@@ -173,7 +174,7 @@ describe('HTTP API validation', () => {
       'wt_1',
       'Diff',
       ['diff', 'main', '--mode', 'split'],
-      { returnToShell: true }
+      { returnToShell: true, initialSize: { cols: 132, rows: 47 } }
     )
   })
 
@@ -380,7 +381,8 @@ describe('HTTP API validation', () => {
         initialTerminal: {
           name: 'Terminal',
           argv: ['tool', 'semi;colon', '$HOME'],
-          returnToShell: true
+          returnToShell: true,
+          initialSize: { cols: 144, rows: 48 }
         }
       })
     })
@@ -392,7 +394,8 @@ describe('HTTP API validation', () => {
       {
         name: 'Terminal',
         argv: ['tool', 'semi;colon', '$HOME'],
-        returnToShell: true
+        returnToShell: true,
+        initialSize: { cols: 144, rows: 48 }
       },
       'wt_main'
     )

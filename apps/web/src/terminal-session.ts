@@ -12,6 +12,7 @@ import {
   type TerminalProgress,
   type TerminalRuntimeMetadata,
   type TerminalServerEvent,
+  type TerminalSize,
   type TerminalServerToClientEvents
 } from '@tasktty/shared'
 
@@ -431,6 +432,19 @@ export class TerminalSession {
   }
 
   getSnapshot = (): TerminalSessionSnapshot => this.snapshotValue
+
+  getInitialSize(): TerminalSize | null {
+    if (!this.host || !this.terminal) {
+      return null
+    }
+
+    return normalizeTerminalDimensions(
+      this.proposedDimensions ?? {
+        cols: this.terminal.cols,
+        rows: this.terminal.rows
+      }
+    )
+  }
 
   subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener)
@@ -1557,6 +1571,10 @@ export class TerminalSessionManager {
     this.foregroundProcessSnapshot
   getProgressSnapshot = (): ReadonlyMap<string, TerminalProgress> =>
     this.progressSnapshot
+
+  getInitialSize(terminalId: string): TerminalSize | null {
+    return this.entries.get(terminalId)?.session.getInitialSize() ?? null
+  }
 
   applyRuntimeMetadata(metadata: TerminalRuntimeMetadata): void {
     const currentBell = this.bellMetadata.get(metadata.terminalId)

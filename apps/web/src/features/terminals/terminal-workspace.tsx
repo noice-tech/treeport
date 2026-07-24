@@ -5,6 +5,7 @@ import type {
   ProjectRecord,
   TerminalPreset,
   TerminalRecord,
+  TerminalSize,
   WorktreeRecord
 } from '@tasktty/shared'
 import { apiClient } from '../../api.js'
@@ -71,13 +72,22 @@ export function TerminalWorkspace({
       worktreeId,
       name,
       argv,
-      returnToShell
+      returnToShell,
+      initialSize
     }: {
       worktreeId: string
       name: string
       argv?: string[]
       returnToShell?: boolean
-    }) => apiClient.createTerminal(worktreeId, name, argv, returnToShell),
+      initialSize?: TerminalSize
+    }) =>
+      apiClient.createTerminal(
+        worktreeId,
+        name,
+        argv,
+        returnToShell,
+        initialSize
+      ),
     onSuccess: async (terminal) => {
       const project = projects.find((candidate) =>
         candidate.worktrees.some(
@@ -191,11 +201,15 @@ export function TerminalWorkspace({
     }
 
     createTerminalGuardRef.current = true
+    const initialSize = selectedTerminal
+      ? terminalSessions.getInitialSize(selectedTerminal.id)
+      : null
     createTerminal.mutate({
       worktreeId: selectedWorktree.id,
       name: input.name,
       ...(input.argv ? { argv: [...input.argv] } : {}),
-      ...(input.returnToShell ? { returnToShell: true } : {})
+      ...(input.returnToShell ? { returnToShell: true } : {}),
+      ...(initialSize ? { initialSize } : {})
     })
   }
 

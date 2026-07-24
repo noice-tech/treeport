@@ -7,6 +7,7 @@ import type {
   RemovePreview,
   TerminalPreset,
   TerminalRecord,
+  TerminalSize,
   WorktreeRecord
 } from '@tasktty/shared'
 
@@ -121,6 +122,7 @@ export const apiClient = {
       name: string
       argv?: string[]
       returnToShell?: boolean
+      initialSize?: TerminalSize
     },
     sourceWorktreeId?: string
   ) =>
@@ -142,7 +144,8 @@ export const apiClient = {
     worktreeId: string,
     name: string,
     argv?: string[],
-    returnToShell = false
+    returnToShell = false,
+    initialSize?: TerminalSize
   ) =>
     (
       await api<{ terminal: TerminalRecord }>(
@@ -152,7 +155,8 @@ export const apiClient = {
           body: JSON.stringify({
             name,
             ...(argv ? { argv } : {}),
-            ...(returnToShell ? { returnToShell: true } : {})
+            ...(returnToShell ? { returnToShell: true } : {}),
+            ...(initialSize ? { initialSize } : {})
           })
         }
       )

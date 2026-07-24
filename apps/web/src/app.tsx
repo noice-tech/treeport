@@ -357,7 +357,8 @@ export default function App() {
     setDrawerOpen,
     setModal,
     openModal,
-    setError
+    setError,
+    selectedTerminalId
   })
 
   const setAndSaveSidebarWidth = (width: number) => {

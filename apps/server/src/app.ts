@@ -296,7 +296,12 @@ export function createApp({
           ...(body.initialTerminal.argv
             ? { argv: body.initialTerminal.argv }
             : {}),
-          ...(body.initialTerminal.returnToShell ? { returnToShell: true } : {})
+          ...(body.initialTerminal.returnToShell
+            ? { returnToShell: true }
+            : {}),
+          ...(body.initialTerminal.initialSize
+            ? { initialSize: body.initialTerminal.initialSize }
+            : {})
         }
       : undefined
     const result = await service.createWorktree(
@@ -323,7 +328,12 @@ export function createApp({
       context.req.param('worktreeId'),
       body.name,
       body.argv,
-      body.returnToShell ? { returnToShell: true } : undefined
+      body.returnToShell || body.initialSize
+        ? {
+            ...(body.returnToShell ? { returnToShell: true } : {}),
+            ...(body.initialSize ? { initialSize: body.initialSize } : {})
+          }
+        : undefined
     )
     return context.json({ terminal }, 201)
   })

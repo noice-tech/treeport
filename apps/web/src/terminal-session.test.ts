@@ -75,6 +75,7 @@ let terminalProgressLabel: typeof formatTerminalProgressLabel
 
 class FakeSession {
   disposed = false
+  initialSize = { cols: 120, rows: 40 }
   private readonly listeners = new Set<() => void>()
   private snapshot: TerminalSessionSnapshot = {
     phase: 'ready',
@@ -89,6 +90,7 @@ class FakeSession {
   }
 
   getSnapshot = () => this.snapshot
+  getInitialSize = () => this.initialSize
 
   subscribe = (listener: () => void) => {
     this.listeners.add(listener)
@@ -386,6 +388,14 @@ describe('TerminalSession', () => {
   beforeEach(() => {
     socketClient.io.mockReset()
     socketClient.io.mockImplementation(() => new FakeSocketIO())
+  })
+
+  it('reports the proposed viewport size for a new terminal launch', () => {
+    const { measure, session } = controllerSessionFixture()
+
+    expect(session.getInitialSize()).toEqual({ cols: 100, rows: 30 })
+    measure({ cols: 132, rows: 47 })
+    expect(session.getInitialSize()).toEqual({ cols: 132, rows: 47 })
   })
 
   it('uses an independent WebSocket-only Socket.IO connection with bounded auth', () => {
@@ -983,6 +993,16 @@ describe('TerminalSession', () => {
 })
 
 describe('TerminalSessionManager', () => {
+  it('reports the mounted session size for a new terminal launch', () => {
+    const { manager, sessions } = fixture()
+    manager.acquire('one')
+
+    expect(manager.getInitialSize('one')).toEqual({ cols: 120, rows: 40 })
+    sessions.get('one')!.initialSize = { cols: 132, rows: 47 }
+    expect(manager.getInitialSize('one')).toEqual({ cols: 132, rows: 47 })
+    expect(manager.getInitialSize('missing')).toBeNull()
+  })
+
   it('evicts the least-recent unselected session over capacity', () => {
     const { manager, sessions } = fixture(2)
     manager.acquire('one')
