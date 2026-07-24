@@ -232,6 +232,28 @@ export default function App() {
   )
 
   useEffect(() => {
+    if (!window.taskttyDesktop) {
+      return
+    }
+
+    return window.taskttyDesktop.onCommand((command) => {
+      if (
+        command !== 'new-worktree' ||
+        !activeProject ||
+        activeProject.availability.state === 'unavailable' ||
+        modal ||
+        projectSwitcherOpen ||
+        (isMobile && drawerOpen)
+      ) {
+        return
+      }
+
+      modalTriggerRef.current = document.activeElement as HTMLElement | null
+      setModal({ type: 'worktree', project: activeProject })
+    })
+  }, [activeProject, drawerOpen, isMobile, modal, projectSwitcherOpen])
+
+  useEffect(() => {
     if (!isMobile || !drawerOpen) {
       return
     }

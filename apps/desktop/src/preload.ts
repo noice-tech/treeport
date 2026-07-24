@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
 
-type TerminalCommand = 'new-terminal' | 'close-terminal'
+type DesktopCommand = 'new-worktree' | 'new-terminal' | 'close-terminal'
 
 contextBridge.exposeInMainWorld(
   'taskttyDesktop',
@@ -20,14 +20,18 @@ contextBridge.exposeInMainWorld(
       ipcRenderer.on('fullscreen-change', receive)
       return () => ipcRenderer.removeListener('fullscreen-change', receive)
     },
-    onTerminalCommand(listener: (command: TerminalCommand) => void) {
+    onCommand(listener: (command: DesktopCommand) => void) {
       const receive = (_event: IpcRendererEvent, value: unknown) => {
-        if (value === 'new-terminal' || value === 'close-terminal') {
+        if (
+          value === 'new-worktree' ||
+          value === 'new-terminal' ||
+          value === 'close-terminal'
+        ) {
           listener(value)
         }
       }
-      ipcRenderer.on('terminal-command', receive)
-      return () => ipcRenderer.removeListener('terminal-command', receive)
+      ipcRenderer.on('desktop-command', receive)
+      return () => ipcRenderer.removeListener('desktop-command', receive)
     }
   })
 )

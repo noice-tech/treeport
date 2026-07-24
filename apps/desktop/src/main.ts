@@ -131,13 +131,15 @@ async function loadTaskTTY(window: BrowserWindow): Promise<void> {
   await window.loadURL(connectionPageUrl).catch(() => undefined)
 }
 
-function sendTerminalCommand(command: 'new-terminal' | 'close-terminal'): void {
+function sendDesktopCommand(
+  command: 'new-worktree' | 'new-terminal' | 'close-terminal'
+): void {
   const focusedWindow = BrowserWindow.getFocusedWindow()
   if (!focusedWindow || !isRendererUrl(focusedWindow.webContents.getURL())) {
     return
   }
 
-  focusedWindow.webContents.send('terminal-command', command)
+  focusedWindow.webContents.send('desktop-command', command)
 }
 
 function installMenu(): void {
@@ -149,16 +151,23 @@ function installMenu(): void {
       label: 'File',
       submenu: [
         {
+          id: 'new-worktree',
+          label: 'New Worktree…',
+          accelerator: 'CommandOrControl+N',
+          click: () => sendDesktopCommand('new-worktree')
+        },
+        {
           id: 'new-terminal',
           label: 'New Terminal',
           accelerator: 'CommandOrControl+T',
-          click: () => sendTerminalCommand('new-terminal')
+          click: () => sendDesktopCommand('new-terminal')
         },
+        { type: 'separator' },
         {
           id: 'close-terminal',
           label: 'Close Terminal',
           accelerator: 'CommandOrControl+W',
-          click: () => sendTerminalCommand('close-terminal')
+          click: () => sendDesktopCommand('close-terminal')
         },
         ...(process.platform === 'darwin'
           ? []
@@ -225,9 +234,14 @@ function createWindow(): BrowserWindow {
     const commandModifier =
       process.platform === 'darwin' ? input.meta : input.control
     const command = {
+      n: 'new-worktree',
       t: 'new-terminal',
       w: 'close-terminal'
-    }[input.key.toLowerCase()] as 'new-terminal' | 'close-terminal' | undefined
+    }[input.key.toLowerCase()] as
+      | 'new-worktree'
+      | 'new-terminal'
+      | 'close-terminal'
+      | undefined
     if (
       input.type !== 'keyDown' ||
       input.isAutoRepeat ||
@@ -241,7 +255,7 @@ function createWindow(): BrowserWindow {
     }
 
     event.preventDefault()
-    window.webContents.send('terminal-command', command)
+    window.webContents.send('desktop-command', command)
   })
   window.webContents.on('will-navigate', (event, targetUrl) => {
     if (isRendererUrl(targetUrl)) {
