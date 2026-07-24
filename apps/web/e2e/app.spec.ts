@@ -159,9 +159,8 @@ async function mockApp(
   if (options.desktopBridge) {
     await page.addInitScript(() => {
       const scope = window as any
-      let listener:
-        | ((command: 'new-terminal' | 'close-terminal') => void)
-        | null = null
+      type DesktopCommand = 'new-worktree' | 'new-terminal' | 'close-terminal'
+      const listeners = new Set<(command: DesktopCommand) => void>()
       let fullscreenListener: ((fullscreen: boolean) => void) | null = null
       scope.__openedDesktopFileUrls = []
       scope.taskttyDesktop = Object.freeze({
@@ -178,20 +177,13 @@ async function mockApp(
             }
           }
         },
-        onTerminalCommand(
-          next: (command: 'new-terminal' | 'close-terminal') => void
-        ) {
-          listener = next
-          return () => {
-            if (listener === next) {
-              listener = null
-            }
-          }
+        onCommand(next: (command: DesktopCommand) => void) {
+          listeners.add(next)
+          return () => listeners.delete(next)
         }
       })
-      scope.__dispatchDesktopCommand = (
-        command: 'new-terminal' | 'close-terminal'
-      ) => listener?.(command)
+      scope.__dispatchDesktopCommand = (command: DesktopCommand) =>
+        listeners.forEach((listener) => listener(command))
       scope.__dispatchDesktopFullscreen = (fullscreen: boolean) =>
         fullscreenListener?.(fullscreen)
     })
@@ -2478,7 +2470,7 @@ test.describe('desktop worktree terminal UI', () => {
     await expect(page).toHaveURL(/\/projects\/proj_1\/worktrees\/wt_topic$/)
   })
 
-  test('handles Electron terminal commands through the existing tab flows', async ({
+  test('handles Electron commands through the existing worktree and tab flows', async ({
     page
   }) => {
     const mocked = await mockApp(page, [], { desktopBridge: true })
@@ -2490,6 +2482,7 @@ test.describe('desktop worktree terminal UI', () => {
       (window as any).__dispatchDesktopFullscreen(false)
     )
     await expect(desktopTitlebar).toBeVisible()
+
     await page.locator('.worktree-row').filter({ hasText: 'topic' }).click()
 
     const releaseCreate = mocked.delayNextTerminalCreate()
@@ -2501,7 +2494,9 @@ test.describe('desktop worktree terminal UI', () => {
     await page.evaluate(() =>
       (window as any).__dispatchDesktopCommand('new-terminal')
     )
-    expect((await createRequest).postDataJSON()).toEqual({ name: 'Shell' })
+    expect((await createRequest).postDataJSON()).toMatchObject({
+      name: 'Shell'
+    })
     await page.evaluate(() =>
       (window as any).__dispatchDesktopCommand('new-terminal')
     )
@@ -2531,6 +2526,22 @@ test.describe('desktop worktree terminal UI', () => {
     await expect(page).toHaveURL(
       /\/projects\/proj_1\/worktrees\/wt_topic\/terminals\/term_pi$/
     )
+
+    const newWorktreeButton = page.getByRole('button', {
+      name: 'New worktree',
+      exact: true
+    })
+    await expect(newWorktreeButton.locator('kbd')).toHaveText('⌘N')
+    await expect(newWorktreeButton).toHaveAttribute(
+      'aria-keyshortcuts',
+      'Meta+N'
+    )
+    await page.evaluate(() =>
+      (window as any).__dispatchDesktopCommand('new-worktree')
+    )
+    await expect(
+      page.getByRole('heading', { name: 'New worktree' })
+    ).toBeVisible()
   })
 
   test('reconciles remote preset edits and deletion', async ({ page }) => {

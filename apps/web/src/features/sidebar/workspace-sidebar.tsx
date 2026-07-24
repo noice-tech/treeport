@@ -534,6 +534,12 @@ export function WorkspaceSidebar({
   onResizeSidebarWithKeyboard: resizeSidebarWithKeyboard,
   onSetSidebarWidth: setAndSaveSidebarWidth
 }: WorkspaceSidebarProps) {
+  const newWorktreeShortcut = window.taskttyDesktop
+    ? window.taskttyDesktop.platform === 'darwin'
+      ? '⌘N'
+      : 'Ctrl+N'
+    : null
+
   return (
     <>
       <header
@@ -917,6 +923,18 @@ export function WorkspaceSidebar({
                         variant="ghost"
                         className="h-auto min-h-11 w-full justify-start gap-1.5 px-2 py-1.5 text-base/5 font-normal text-zinc-500 hover:bg-white/5 hover:text-zinc-100 min-[701px]:min-h-8 min-[701px]:py-1 min-[701px]:text-[0.8125rem]/4"
                         disabled={project.availability.state === 'unavailable'}
+                        aria-keyshortcuts={
+                          newWorktreeShortcut
+                            ? window.taskttyDesktop?.platform === 'darwin'
+                              ? 'Meta+N'
+                              : 'Control+N'
+                            : undefined
+                        }
+                        title={
+                          newWorktreeShortcut
+                            ? `New worktree — ${newWorktreeShortcut}`
+                            : undefined
+                        }
                         onClick={(event) =>
                           openModal(
                             { type: 'worktree', project },
@@ -924,7 +942,16 @@ export function WorkspaceSidebar({
                           )
                         }
                       >
-                        <PlusIcon /> New worktree
+                        <PlusIcon />
+                        <span>New worktree</span>
+                        {newWorktreeShortcut ? (
+                          <kbd
+                            className="ml-auto font-sans text-[0.6875rem] text-zinc-500"
+                            aria-hidden="true"
+                          >
+                            {newWorktreeShortcut}
+                          </kbd>
+                        ) : null}
                       </Button>
                     </li>
                   </ul>

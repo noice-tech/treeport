@@ -18,7 +18,7 @@ test('dispatches native commands and opens local file URLs', async () => {
     response.end(`<!doctype html>
       <body data-command="none">TaskTTY desktop test</body>
       <script>
-        window.taskttyDesktop.onTerminalCommand((command) => {
+        window.taskttyDesktop.onCommand((command) => {
           document.body.dataset.command = command
         })
       </script>`)
@@ -101,16 +101,39 @@ test('dispatches native commands and opens local file URLs', async () => {
     const accelerators = await electronApp.evaluate(({ Menu }) => {
       const menu = Menu.getApplicationMenu()
       return {
+        newWorktree: menu?.getMenuItemById('new-worktree')?.accelerator,
         newTerminal: menu?.getMenuItemById('new-terminal')?.accelerator,
         closeTerminal: menu?.getMenuItemById('close-terminal')?.accelerator
       }
     })
     expect(accelerators).toEqual({
+      newWorktree: 'CommandOrControl+N',
       newTerminal: 'CommandOrControl+T',
       closeTerminal: 'CommandOrControl+W'
     })
 
     const commandModifier = process.platform === 'darwin' ? 'meta' : 'control'
+    await electronApp.evaluate(
+      ({ BrowserWindow }, input) => {
+        const webContents = BrowserWindow.getAllWindows()[0]?.webContents
+        webContents?.sendInputEvent({
+          type: 'keyDown',
+          keyCode: input.key,
+          modifiers: [input.modifier]
+        })
+        webContents?.sendInputEvent({
+          type: 'keyUp',
+          keyCode: input.key,
+          modifiers: [input.modifier]
+        })
+      },
+      { key: 'N', modifier: commandModifier }
+    )
+    await expect(window.locator('body')).toHaveAttribute(
+      'data-command',
+      'new-worktree'
+    )
+
     await electronApp.evaluate(
       ({ BrowserWindow }, input) => {
         const webContents = BrowserWindow.getAllWindows()[0]?.webContents

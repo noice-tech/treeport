@@ -242,8 +242,13 @@ export function TerminalWorkspace({
       return
     }
 
-    return window.taskttyDesktop.onTerminalCommand((command) => {
-      if (modalOpen || projectSwitcherOpen || (isMobile && drawerOpen)) {
+    return window.taskttyDesktop.onCommand((command) => {
+      if (
+        command === 'new-worktree' ||
+        modalOpen ||
+        projectSwitcherOpen ||
+        (isMobile && drawerOpen)
+      ) {
         return
       }
 
