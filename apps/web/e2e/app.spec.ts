@@ -3068,6 +3068,7 @@ test.describe('mobile terminal UI', () => {
     await page
       .getByRole('button', { name: 'Switch project, current project example' })
       .click()
+    await expect(page.getByLabel('Search projects')).not.toBeFocused()
     const close = page.getByRole('button', { name: 'Close project example' })
     await expect(close).toBeVisible()
     await expect(close).toHaveCSS('opacity', '1')

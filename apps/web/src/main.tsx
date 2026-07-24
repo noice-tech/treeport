@@ -7,6 +7,17 @@ import { TerminalFocusProvider } from './terminal-focus.js'
 import { router } from './router.js'
 import './styles.css'
 
+const isIOS =
+  /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+  (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+const viewport = document.querySelector<HTMLMetaElement>(
+  'meta[name="viewport"]'
+)
+// Modern iOS still allows pinch zoom but honors this for input focus zoom.
+if (isIOS && viewport && !viewport.content.includes('maximum-scale')) {
+  viewport.content = `${viewport.content}, maximum-scale=1`
+}
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: { retry: false },
