@@ -7,7 +7,7 @@ import {
   type RefObject
 } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { GitBranchIcon, TerminalIcon } from 'lucide-react'
+import { CrownIcon, GitBranchIcon, TerminalIcon } from 'lucide-react'
 import {
   ArrowPathIcon,
   Bars3Icon,
@@ -809,6 +809,11 @@ export function WorkspaceSidebar({
                               worktree.status === 'cleaning' ? (
                                 <GitBranchIcon
                                   className="worktree-progress-icon worktree-removing-icon size-4 shrink-0 stroke-rose-400 stroke-[1.5]"
+                                  aria-hidden="true"
+                                />
+                              ) : worktree.kind === 'main' ? (
+                                <CrownIcon
+                                  className="size-4 shrink-0 stroke-amber-300 stroke-[1.5]"
                                   aria-hidden="true"
                                 />
                               ) : (
