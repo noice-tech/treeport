@@ -1180,10 +1180,18 @@ test.describe('desktop worktree terminal UI', () => {
       /\/projects\/proj_1\/worktrees\/wt_main\/terminals\/term_shell$/
     )
 
-    await page.getByRole('button', { name: 'Pi, running', exact: true }).click()
+    const piTerminal = page.getByRole('button', {
+      name: 'Pi, running',
+      exact: true
+    })
+    await piTerminal.click()
     await expect(page).toHaveURL(
       /\/projects\/proj_1\/worktrees\/wt_topic\/terminals\/term_pi$/
     )
+    await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
+
+    await page.locator('.terminal-row.selected').click()
+    await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
     const terminalSockets = await page.evaluate(
       () =>
         ((window as any).__wsInstances ?? []).filter(
@@ -1229,6 +1237,7 @@ test.describe('desktop worktree terminal UI', () => {
     await expect(page.getByText('topic', { exact: true })).toBeVisible()
     await page.getByRole('button', { name: 'Pi, running', exact: true }).click()
     await expect(page.locator('.xterm')).toBeVisible()
+    await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
     await expect(page.locator('.xterm-rows')).toContainText(
       'same persistent terminal session'
     )
@@ -2268,6 +2277,7 @@ test.describe('desktop worktree terminal UI', () => {
       }
     ])
     await page.locator('.worktree-row').filter({ hasText: 'topic' }).click()
+    await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
     await expect(
       page.getByRole('button', { name: 'Terminal', exact: true })
     ).toHaveCount(0)
@@ -2290,7 +2300,13 @@ test.describe('desktop worktree terminal UI', () => {
     const socketsBeforeSwitch = await page.evaluate(
       () => (window as any).__wsInstances.length
     )
-    await page.getByRole('tab', { name: /^zsh · \/worktrees\/topic,/ }).click()
+    const zshTab = page.getByRole('tab', {
+      name: /^zsh · \/worktrees\/topic,/
+    })
+    await zshTab.click()
+    await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
+    await zshTab.click()
+    await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
     await expect
       .poll(() => page.evaluate(() => (window as any).__wsInstances.length))
       .toBe(socketsBeforeSwitch)
@@ -2956,6 +2972,7 @@ test.describe('mobile terminal UI', () => {
       .getByRole('button', { name: 'background · /repo, running', exact: true })
       .click()
     await expect(page.locator('.xterm')).toBeVisible()
+    await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
     await expect(
       page.locator('select[name="terminal-selector"] option:checked')
     ).toHaveText('zsh · /worktrees/topic')
