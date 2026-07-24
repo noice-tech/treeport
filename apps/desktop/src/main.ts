@@ -4,7 +4,9 @@ import {
   BrowserWindow,
   ipcMain,
   Menu,
+  Notification,
   shell,
+  type IpcMainEvent,
   type MenuItemConstructorOptions
 } from 'electron'
 
@@ -33,6 +35,135 @@ rendererUrl.hash = ''
 const rendererOrigin = rendererUrl.origin
 let mainWindow: BrowserWindow | null = null
 let loadGeneration = 0
+
+type BellNotificationRequest = {
+  terminalId: string
+  sequence: number
+  title: string
+  projectName: string
+  worktreeName: string
+}
+type BellNotificationAction = {
+  type: 'view' | 'dismiss'
+  terminalId: string
+  sequence: number
+}
+type NativeBellNotification = {
+  sequence: number
+  notification: Notification
+}
+
+const bellNotifications = new Map<string, NativeBellNotification>()
+
+function clearBellNotifications(): void {
+  for (const entry of bellNotifications.values()) {
+    entry.notification.close()
+  }
+  bellNotifications.clear()
+}
+
+function isTrustedRendererEvent(event: IpcMainEvent): boolean {
+  return Boolean(
+    mainWindow &&
+    event.sender === mainWindow.webContents &&
+    event.senderFrame === event.sender.mainFrame &&
+    event.senderFrame &&
+    isRendererUrl(event.senderFrame.url)
+  )
+}
+
+function hasOnlyKeys(
+  value: Record<string, unknown>,
+  expectedKeys: string[]
+): boolean {
+  const keys = Object.keys(value).sort()
+  return (
+    keys.length === expectedKeys.length &&
+    keys.every((key, index) => key === expectedKeys[index])
+  )
+}
+
+function isBoundedString(
+  value: unknown,
+  maximumLength: number
+): value is string {
+  return (
+    typeof value === 'string' &&
+    value.trim().length > 0 &&
+    value.length <= maximumLength
+  )
+}
+
+function parseBellNotificationRequest(
+  value: unknown
+): BellNotificationRequest | null {
+  if (typeof value !== 'object' || value === null) {
+    return null
+  }
+
+  const request = value as Record<string, unknown>
+  if (
+    !hasOnlyKeys(request, [
+      'projectName',
+      'sequence',
+      'terminalId',
+      'title',
+      'worktreeName'
+    ]) ||
+    !isBoundedString(request.terminalId, 128) ||
+    !Number.isSafeInteger(request.sequence) ||
+    (request.sequence as number) <= 0 ||
+    !isBoundedString(request.title, 256) ||
+    !isBoundedString(request.projectName, 256) ||
+    !isBoundedString(request.worktreeName, 256)
+  ) {
+    return null
+  }
+
+  return request as BellNotificationRequest
+}
+
+function parseBellNotificationClear(
+  value: unknown
+): Pick<BellNotificationRequest, 'terminalId' | 'sequence'> | null {
+  if (typeof value !== 'object' || value === null) {
+    return null
+  }
+
+  const request = value as Record<string, unknown>
+  if (
+    !hasOnlyKeys(request, ['sequence', 'terminalId']) ||
+    !isBoundedString(request.terminalId, 128) ||
+    !Number.isSafeInteger(request.sequence) ||
+    (request.sequence as number) <= 0
+  ) {
+    return null
+  }
+
+  return request as Pick<BellNotificationRequest, 'terminalId' | 'sequence'>
+}
+
+function sendBellNotificationAction(action: BellNotificationAction): void {
+  const window = mainWindow
+  if (!window || !isRendererUrl(window.webContents.getURL())) {
+    return
+  }
+
+  if (action.type === 'view') {
+    if (window.isMinimized()) {
+      window.restore()
+    }
+
+    if (!window.isVisible()) {
+      window.show()
+    }
+
+    app.focus({ steal: true })
+    window.focus()
+  }
+
+  window.webContents.send('bell-notification:action', action)
+}
 
 function isRendererUrl(value: string): boolean {
   return URL.canParse(value) && new URL(value).origin === rendererOrigin
@@ -268,9 +399,19 @@ function createWindow(): BrowserWindow {
   window.webContents.session.setPermissionRequestHandler(
     (_webContents, _permission, callback) => callback(false)
   )
+  window.webContents.on(
+    'did-start-navigation',
+    (_event, _url, isInPlace, isMainFrame) => {
+      if (isMainFrame && !isInPlace) {
+        clearBellNotifications()
+      }
+    }
+  )
+  window.webContents.on('render-process-gone', clearBellNotifications)
   window.on('closed', () => {
     if (mainWindow === window) {
       mainWindow = null
+      clearBellNotifications()
     }
   })
   void loadTaskTTY(window)
@@ -299,6 +440,77 @@ if (!hasSingleInstanceLock) {
     ) {
       void loadTaskTTY(mainWindow)
     }
+  })
+
+  ipcMain.on('bell-notification:show', (event, value: unknown) => {
+    if (!isTrustedRendererEvent(event) || !Notification.isSupported()) {
+      return
+    }
+
+    const request = parseBellNotificationRequest(value)
+    if (!request) {
+      return
+    }
+
+    const previous = bellNotifications.get(request.terminalId)
+    previous?.notification.close()
+
+    const notification = new Notification({
+      title: request.title,
+      body: `Terminal bell · ${request.projectName} · ${request.worktreeName}`,
+      silent: previous !== undefined,
+      ...(process.platform === 'linux'
+        ? {}
+        : {
+            actions: [
+              { type: 'button', text: 'View' },
+              { type: 'button', text: 'Dismiss' }
+            ]
+          })
+    })
+    const entry = { sequence: request.sequence, notification }
+    bellNotifications.set(request.terminalId, entry)
+    const activate = (type: BellNotificationAction['type']) => {
+      if (bellNotifications.get(request.terminalId) !== entry) {
+        return
+      }
+
+      bellNotifications.delete(request.terminalId)
+      notification.close()
+      sendBellNotificationAction({
+        type,
+        terminalId: request.terminalId,
+        sequence: request.sequence
+      })
+    }
+    notification.on('click', () => activate('view'))
+    notification.on('action', (_event, index) => {
+      if (index === 0) {
+        activate('view')
+      } else if (index === 1) {
+        activate('dismiss')
+      }
+    })
+    notification.show()
+  })
+
+  ipcMain.on('bell-notification:clear', (event, value: unknown) => {
+    if (!isTrustedRendererEvent(event)) {
+      return
+    }
+
+    const request = parseBellNotificationClear(value)
+    if (!request) {
+      return
+    }
+
+    const current = bellNotifications.get(request.terminalId)
+    if (!current || current.sequence > request.sequence) {
+      return
+    }
+
+    bellNotifications.delete(request.terminalId)
+    current.notification.close()
   })
 
   void app.whenReady().then(() => {

@@ -1508,19 +1508,29 @@ interface SessionEntry {
   unsubscribe: () => void
 }
 
-interface BellMetadata {
+export interface TerminalBellMetadata {
   sequence: number
+  at: string
   unread: boolean
+}
+
+export interface TerminalBellEvent {
+  terminalId: string
+  sequence: number
+  at: string
 }
 
 export class TerminalSessionManager {
   private readonly entries = new Map<string, SessionEntry>()
   private readonly listeners = new Set<() => void>()
+  private readonly bellEventListeners = new Set<
+    (event: TerminalBellEvent) => void
+  >()
   private attentionSnapshot: ReadonlySet<string> = new Set()
   private titleSnapshot: ReadonlyMap<string, string> = new Map()
   private foregroundProcessSnapshot: ReadonlySet<string> = new Set()
   private progressSnapshot: ReadonlyMap<string, TerminalProgress> = new Map()
-  private bellMetadata = new Map<string, BellMetadata>()
+  private bellMetadata: ReadonlyMap<string, TerminalBellMetadata> = new Map()
   private bellAcknowledgementTargets = new Map<string, number>()
   private bellAcknowledgementQueues = new Map<string, Promise<void>>()
   private bellAcknowledgementEpoch = 0
@@ -1531,7 +1541,7 @@ export class TerminalSessionManager {
     private readonly createSession: (terminalId: string) => TerminalSession = (
       terminalId
     ) => new TerminalSession(terminalId),
-    private readonly acknowledgeBell: (
+    private readonly sendBellAcknowledgement: (
       terminalId: string,
       sequence: number
     ) => Promise<unknown> = (terminalId, sequence) =>
@@ -1543,7 +1553,16 @@ export class TerminalSessionManager {
     return () => this.listeners.delete(listener)
   }
 
+  subscribeBellEvents = (
+    listener: (event: TerminalBellEvent) => void
+  ): (() => void) => {
+    this.bellEventListeners.add(listener)
+    return () => this.bellEventListeners.delete(listener)
+  }
+
   getAttentionSnapshot = (): ReadonlySet<string> => this.attentionSnapshot
+  getBellSnapshot = (): ReadonlyMap<string, TerminalBellMetadata> =>
+    this.bellMetadata
   getTitleSnapshot = (): ReadonlyMap<string, string> => this.titleSnapshot
   getForegroundProcessSnapshot = (): ReadonlySet<string> =>
     this.foregroundProcessSnapshot
@@ -1559,11 +1578,33 @@ export class TerminalSessionManager {
         incomingBell.sequence > currentBell.sequence ||
         (incomingBell.sequence === currentBell.sequence &&
           (currentBell.unread || !incomingBell.unread)))
+    const bellChanged =
+      bellIsCurrent &&
+      (currentBell?.sequence !== incomingBell.sequence ||
+        currentBell?.at !== incomingBell.at ||
+        currentBell?.unread !== incomingBell.unread)
+    const bellEvent =
+      bellIsCurrent &&
+      incomingBell.unread &&
+      (!currentBell || incomingBell.sequence > currentBell.sequence)
+        ? {
+            terminalId: metadata.terminalId,
+            sequence: incomingBell.sequence,
+            at: incomingBell.at
+          }
+        : null
     if (bellIsCurrent) {
-      this.bellMetadata.set(metadata.terminalId, {
-        sequence: incomingBell.sequence,
-        unread: incomingBell.unread
-      })
+      if (bellChanged) {
+        const next = new Map(this.bellMetadata)
+        next.set(metadata.terminalId, {
+          sequence: incomingBell.sequence,
+          at: incomingBell.at,
+          unread: incomingBell.unread
+        })
+        this.bellMetadata = next
+        this.emit()
+      }
+
       this.setAttention(metadata.terminalId, incomingBell.unread)
     } else if (!currentBell && incomingBell === null) {
       this.setAttention(metadata.terminalId, false)
@@ -1575,14 +1616,16 @@ export class TerminalSessionManager {
       metadata.hasForegroundProcess === true
     )
     this.setProgress(metadata.terminalId, metadata.progress)
-    this.acknowledgeVisibleBell(metadata.terminalId)
+    if (bellEvent) {
+      this.bellEventListeners.forEach((listener) => listener(bellEvent))
+    }
   }
 
   replaceRuntimeMetadata(metadata: Iterable<TerminalRuntimeMetadata>): void {
     const titles = new Map<string, string>()
     const foregroundProcesses = new Set<string>()
     const progress = new Map<string, TerminalProgress>()
-    const bells = new Map<string, BellMetadata>()
+    const bells = new Map<string, TerminalBellMetadata>()
     const attention = new Set<string>()
     for (const item of metadata) {
       const title = item.title?.trim().slice(0, 256)
@@ -1601,6 +1644,7 @@ export class TerminalSessionManager {
       if (item.bell) {
         bells.set(item.terminalId, {
           sequence: item.bell.sequence,
+          at: item.bell.at,
           unread: item.bell.unread
         })
         if (item.bell.unread) {
@@ -1629,6 +1673,16 @@ export class TerminalSessionManager {
       [...attention].some(
         (terminalId) => !this.attentionSnapshot.has(terminalId)
       )
+    const bellsChanged =
+      bells.size !== this.bellMetadata.size ||
+      [...bells].some(([terminalId, value]) => {
+        const current = this.bellMetadata.get(terminalId)
+        return (
+          current?.sequence !== value.sequence ||
+          current?.at !== value.at ||
+          current?.unread !== value.unread
+        )
+      })
     this.bellMetadata = bells
     this.bellAcknowledgementEpoch += 1
     this.bellAcknowledgementTargets.clear()
@@ -1653,13 +1707,10 @@ export class TerminalSessionManager {
       titlesChanged ||
       foregroundProcessesChanged ||
       progressChanged ||
-      attentionChanged
+      attentionChanged ||
+      bellsChanged
     ) {
       this.emit()
-    }
-
-    for (const terminalId of bells.keys()) {
-      this.acknowledgeVisibleBell(terminalId)
     }
   }
 
@@ -1691,7 +1742,6 @@ export class TerminalSessionManager {
 
     entry.references += 1
     entry.lastUsed = Date.now()
-    this.acknowledgeVisibleBell(terminalId)
     if (entry.idleTimer !== null) {
       window.clearTimeout(entry.idleTimer)
     }
@@ -1719,7 +1769,13 @@ export class TerminalSessionManager {
 
   forget(terminalId: string): void {
     this.disposeEntry(terminalId)
-    this.bellMetadata.delete(terminalId)
+    if (this.bellMetadata.has(terminalId)) {
+      const bells = new Map(this.bellMetadata)
+      bells.delete(terminalId)
+      this.bellMetadata = bells
+      this.emit()
+    }
+
     this.bellAcknowledgementTargets.delete(terminalId)
     this.bellAcknowledgementQueues.delete(terminalId)
     this.clearAttention(terminalId)
@@ -1775,11 +1831,13 @@ export class TerminalSessionManager {
         changed = true
       }
     }
-    for (const terminalId of this.bellMetadata.keys()) {
+    const bells = new Map(this.bellMetadata)
+    for (const terminalId of bells.keys()) {
       if (!valid.has(terminalId)) {
-        this.bellMetadata.delete(terminalId)
+        bells.delete(terminalId)
         this.bellAcknowledgementTargets.delete(terminalId)
         this.bellAcknowledgementQueues.delete(terminalId)
+        changed = true
       }
     }
     if (changed) {
@@ -1787,6 +1845,7 @@ export class TerminalSessionManager {
       this.titleSnapshot = titles
       this.foregroundProcessSnapshot = foregroundProcesses
       this.progressSnapshot = progress
+      this.bellMetadata = bells
       this.emit()
     }
   }
@@ -1858,28 +1917,27 @@ export class TerminalSessionManager {
     this.emit()
   }
 
-  private acknowledgeVisibleBell(terminalId: string): void {
+  acknowledgeBell(terminalId: string, sequence: number): Promise<void> {
     const bell = this.bellMetadata.get(terminalId)
-    if (
-      !bell?.unread ||
-      (this.entries.get(terminalId)?.references ?? 0) === 0 ||
-      bell.sequence <= (this.bellAcknowledgementTargets.get(terminalId) ?? 0)
-    ) {
-      return
+    if (!bell?.unread || bell.sequence !== sequence) {
+      return Promise.resolve()
     }
 
-    const sequence = bell.sequence
+    const target = this.bellAcknowledgementTargets.get(terminalId) ?? 0
+    const currentQueue = this.bellAcknowledgementQueues.get(terminalId)
+    if (sequence <= target) {
+      return currentQueue ?? Promise.resolve()
+    }
+
     const epoch = this.bellAcknowledgementEpoch
     this.bellAcknowledgementTargets.set(terminalId, sequence)
-    const previous =
-      this.bellAcknowledgementQueues.get(terminalId) ?? Promise.resolve()
+    const previous = currentQueue ?? Promise.resolve()
     const queued = previous
       .catch(() => undefined)
       .then(async () => {
         const currentBell = this.bellMetadata.get(terminalId)
         if (
           this.bellAcknowledgementEpoch !== epoch ||
-          (this.entries.get(terminalId)?.references ?? 0) === 0 ||
           currentBell?.sequence !== sequence ||
           !currentBell.unread
         ) {
@@ -1890,22 +1948,22 @@ export class TerminalSessionManager {
           return
         }
 
-        await this.acknowledgeBell(terminalId, sequence)
+        await this.sendBellAcknowledgement(terminalId, sequence)
       })
-      .then(
-        () => undefined,
-        () => {
-          if (this.bellAcknowledgementTargets.get(terminalId) === sequence) {
-            this.bellAcknowledgementTargets.delete(terminalId)
-          }
+      .catch((error: unknown) => {
+        if (this.bellAcknowledgementTargets.get(terminalId) === sequence) {
+          this.bellAcknowledgementTargets.delete(terminalId)
         }
-      )
+
+        throw error
+      })
       .finally(() => {
         if (this.bellAcknowledgementQueues.get(terminalId) === queued) {
           this.bellAcknowledgementQueues.delete(terminalId)
         }
       })
     this.bellAcknowledgementQueues.set(terminalId, queued)
+    return queued
   }
 
   private setProgress(

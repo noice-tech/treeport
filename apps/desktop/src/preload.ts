@@ -1,6 +1,36 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
 
 type TerminalCommand = 'new-terminal' | 'close-terminal'
+type BellNotification = {
+  terminalId: string
+  sequence: number
+  title: string
+  projectName: string
+  worktreeName: string
+}
+type BellNotificationAction = {
+  type: 'view' | 'dismiss'
+  terminalId: string
+  sequence: number
+}
+
+function isBellNotificationAction(
+  value: unknown
+): value is BellNotificationAction {
+  if (typeof value !== 'object' || value === null) {
+    return false
+  }
+
+  const action = value as Record<string, unknown>
+  return (
+    (action.type === 'view' || action.type === 'dismiss') &&
+    typeof action.terminalId === 'string' &&
+    action.terminalId.length > 0 &&
+    action.terminalId.length <= 128 &&
+    Number.isSafeInteger(action.sequence) &&
+    (action.sequence as number) > 0
+  )
+}
 
 contextBridge.exposeInMainWorld(
   'taskttyDesktop',
@@ -23,6 +53,26 @@ contextBridge.exposeInMainWorld(
       }
       ipcRenderer.on('terminal-command', receive)
       return () => ipcRenderer.removeListener('terminal-command', receive)
+    },
+    showBellNotification(notification: BellNotification) {
+      ipcRenderer.send('bell-notification:show', notification)
+    },
+    clearBellNotification(
+      notification: Pick<BellNotification, 'terminalId' | 'sequence'>
+    ) {
+      ipcRenderer.send('bell-notification:clear', notification)
+    },
+    onBellNotificationAction(
+      listener: (action: BellNotificationAction) => void
+    ) {
+      const receive = (_event: IpcRendererEvent, value: unknown) => {
+        if (isBellNotificationAction(value)) {
+          listener(value)
+        }
+      }
+      ipcRenderer.on('bell-notification:action', receive)
+      return () =>
+        ipcRenderer.removeListener('bell-notification:action', receive)
     }
   })
 )

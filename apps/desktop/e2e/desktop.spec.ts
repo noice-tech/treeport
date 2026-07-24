@@ -15,10 +15,13 @@ test('dispatches native terminal commands without closing the window', async () 
 
     response.setHeader('content-type', 'text/html')
     response.end(`<!doctype html>
-      <body data-command="none">TaskTTY desktop test</body>
+      <body data-bell-action="none" data-command="none">TaskTTY desktop test</body>
       <script>
         window.taskttyDesktop.onTerminalCommand((command) => {
           document.body.dataset.command = command
+        })
+        window.taskttyDesktop.onBellNotificationAction((action) => {
+          document.body.dataset.bellAction = JSON.stringify(action)
         })
       </script>`)
   })
@@ -47,6 +50,33 @@ test('dispatches native terminal commands without closing the window', async () 
     })
     await window.bringToFront()
     await expect(window.locator('body')).toHaveAttribute('data-command', 'none')
+    expect(
+      await window.evaluate(() => ({
+        show: typeof window.taskttyDesktop.showBellNotification,
+        clear: typeof window.taskttyDesktop.clearBellNotification,
+        actions: typeof window.taskttyDesktop.onBellNotificationAction
+      }))
+    ).toEqual({ show: 'function', clear: 'function', actions: 'function' })
+    await electronApp.evaluate(({ BrowserWindow }) => {
+      BrowserWindow.getAllWindows()[0]?.webContents.send(
+        'bell-notification:action',
+        { type: 'dismiss', terminalId: '', sequence: 0 }
+      )
+    })
+    await expect(window.locator('body')).toHaveAttribute(
+      'data-bell-action',
+      'none'
+    )
+    await electronApp.evaluate(({ BrowserWindow }) => {
+      BrowserWindow.getAllWindows()[0]?.webContents.send(
+        'bell-notification:action',
+        { type: 'view', terminalId: 'term_one', sequence: 7 }
+      )
+    })
+    await expect(window.locator('body')).toHaveAttribute(
+      'data-bell-action',
+      JSON.stringify({ type: 'view', terminalId: 'term_one', sequence: 7 })
+    )
     const preferences = await electronApp.evaluate(({ BrowserWindow }) =>
       BrowserWindow.getAllWindows()[0]?.webContents.getLastWebPreferences()
     )
