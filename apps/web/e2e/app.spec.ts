@@ -3083,6 +3083,37 @@ test.describe('mobile terminal UI', () => {
     ).toBeVisible()
   })
 
+  test('submits a mobile worktree before its preview debounce settles', async ({
+    page
+  }) => {
+    await mockApp(page)
+    await page.getByLabel('Open worktree drawer').click()
+    await page.getByRole('button', { name: 'New worktree' }).click()
+    await page.clock.install()
+
+    const submit = page.getByRole('button', { name: 'Create worktree' })
+    const submitBox = await submit.boundingBox()
+    expect(submitBox).not.toBeNull()
+    const requestPromise = page.waitForRequest(
+      (request) =>
+        request.method() === 'POST' &&
+        new URL(request.url()).pathname === '/api/projects/proj_1/worktrees'
+    )
+
+    await page.getByLabel('Worktree name').fill('touch submit')
+    await page.touchscreen.tap(
+      submitBox!.x + submitBox!.width / 2,
+      submitBox!.y + submitBox!.height / 2
+    )
+
+    expect((await requestPromise).postDataJSON()).toMatchObject({
+      name: 'touch submit'
+    })
+    await expect(
+      page.getByRole('heading', { name: 'Create worktree' })
+    ).toHaveCount(0)
+  })
+
   test('keeps mobile modal and drawer accessibility state coherent', async ({
     page
   }) => {

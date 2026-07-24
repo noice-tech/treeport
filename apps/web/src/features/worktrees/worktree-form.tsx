@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import type { ProjectRecord, TerminalPreset } from '@tasktty/shared'
 import { apiClient } from '../../api.js'
 import { Button } from '../../components/ui/button.js'
@@ -41,8 +41,10 @@ export function WorktreeForm({
     sourceWorktreeId?: string
   ) => void
 }) {
+  const queryClient = useQueryClient()
   const [name, setName] = useState('')
   const [debouncedName, setDebouncedName] = useState('')
+  const [resolvingSubmission, setResolvingSubmission] = useState(false)
   const [baseValue, setBaseValue] = useState('default')
   const [initialPresetId, setInitialPresetId] = useState('shell')
   const initialPresetMissing =
@@ -66,19 +68,53 @@ export function WorktreeForm({
   return (
     <form
       className="flex flex-col gap-4"
-      onSubmit={(event) => {
+      onSubmit={async (event) => {
         event.preventDefault()
-        if (!destinationQuery.data || name !== debouncedName) {
+        if (busy || resolvingSubmission) {
           return
+        }
+
+        const submittedName = String(
+          new FormData(event.currentTarget).get('worktree-name') ?? ''
+        )
+        if (!submittedName.trim()) {
+          return
+        }
+
+        setName(submittedName)
+        setDebouncedName(submittedName)
+        setResolvingSubmission(true)
+
+        const readyDestination =
+          submittedName === debouncedName &&
+          !destinationQuery.isFetching &&
+          !destinationQuery.isError
+            ? destinationQuery.data
+            : undefined
+        let destination: WorktreeDestination
+        if (readyDestination) {
+          destination = readyDestination
+        } else {
+          try {
+            destination = await queryClient.fetchQuery({
+              queryKey: ['worktree-destination', project.id, submittedName],
+              queryFn: () =>
+                apiClient.worktreeDestination(project.id, submittedName),
+              retry: false
+            })
+          } catch {
+            setResolvingSubmission(false)
+            return
+          }
         }
 
         const selectedPreset = presets.find(
           (preset) => preset.id === effectiveInitialPresetId
         )
         onSubmit(
-          name,
+          submittedName,
           base,
-          destinationQuery.data,
+          destination,
           selectedPreset
             ? {
                 name: selectedPreset.name,
@@ -186,15 +222,9 @@ export function WorktreeForm({
       <Button
         type="submit"
         className="self-end"
-        disabled={
-          busy ||
-          name !== debouncedName ||
-          destinationQuery.isFetching ||
-          destinationQuery.isError ||
-          !destinationQuery.data
-        }
+        disabled={busy || resolvingSubmission || !name.trim()}
       >
-        {busy ? 'Creating…' : 'Create worktree'}
+        {busy || resolvingSubmission ? 'Creating…' : 'Create worktree'}
       </Button>
     </form>
   )
