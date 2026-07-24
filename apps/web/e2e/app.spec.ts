@@ -1858,7 +1858,13 @@ test.describe('desktop worktree terminal UI', () => {
       expect(request.postDataJSON()).toEqual({
         name: 'new topic',
         base: 'default',
-        initialTerminal: { name: 'Shell' }
+        initialTerminal: {
+          name: 'Shell',
+          initialSize: {
+            cols: expect.any(Number),
+            rows: expect.any(Number)
+          }
+        }
       })
       await expect(
         page.getByRole('heading', { name: 'Create worktree' })
@@ -1918,7 +1924,11 @@ test.describe('desktop worktree terminal UI', () => {
         base: 'default',
         initialTerminal: expect.objectContaining({
           name: 'Hunk',
-          returnToShell: true
+          returnToShell: true,
+          initialSize: {
+            cols: expect.any(Number),
+            rows: expect.any(Number)
+          }
         })
       })
     }
@@ -2293,7 +2303,13 @@ test.describe('desktop worktree terminal UI', () => {
     await page.getByRole('button', { name: 'New terminal' }).click()
     await page.getByRole('menuitem', { name: 'Shell' }).click()
     const request = await requestPromise
-    expect(request.postDataJSON()).toEqual({ name: 'Shell' })
+    expect(request.postDataJSON()).toEqual({
+      name: 'Shell',
+      initialSize: {
+        cols: expect.any(Number),
+        rows: expect.any(Number)
+      }
+    })
     await expect(page.getByRole('dialog')).toHaveCount(0)
     await expect(page.locator('.terminal-row.selected')).toBeVisible()
 
@@ -2350,7 +2366,11 @@ test.describe('desktop worktree terminal UI', () => {
     expect(presetRequest.postDataJSON()).toEqual({
       name: 'Hunk',
       argv: ['npx', '--yes', 'hunkdiff@0.17.3', 'diff', 'HEAD', '--watch'],
-      returnToShell: true
+      returnToShell: true,
+      initialSize: {
+        cols: expect.any(Number),
+        rows: expect.any(Number)
+      }
     })
     await expect(page.locator('.terminal-row.selected')).toBeVisible()
     await expect(page.locator('.xterm-helper-textarea')).toBeFocused()

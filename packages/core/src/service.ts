@@ -12,6 +12,7 @@ import type {
   RemovePreview,
   TerminalPreset,
   TerminalRecord,
+  TerminalSize,
   WorktreeRecord
 } from '@tasktty/shared'
 import type { AppConfig } from './config.js'
@@ -1859,6 +1860,7 @@ export class TaskTTYService {
       name: string
       argv?: string[]
       returnToShell?: boolean
+      initialSize?: TerminalSize
     },
     sourceWorktreeId?: string
   ): Promise<CreateWorktreeResult> {
@@ -1893,6 +1895,7 @@ export class TaskTTYService {
       name: string
       argv?: string[]
       returnToShell?: boolean
+      initialSize?: TerminalSize
     },
     sourceWorktreeId?: string
   ): Promise<CreateWorktreeResult> {
@@ -2071,7 +2074,10 @@ export class TaskTTYService {
             initialTerminal.argv,
             {
               setup: { tasks: setupTasks, error: setupError },
-              ...(initialTerminal.returnToShell ? { returnToShell: true } : {})
+              ...(initialTerminal.returnToShell ? { returnToShell: true } : {}),
+              ...(initialTerminal.initialSize
+                ? { initialSize: initialTerminal.initialSize }
+                : {})
             }
           )
         } catch (error) {
@@ -2166,6 +2172,7 @@ export class TaskTTYService {
     options?: {
       setup?: { tasks: WorktreeSetupTask[]; error: string | null }
       returnToShell?: boolean
+      initialSize?: TerminalSize
     }
   ): Promise<TerminalRecord> {
     const project = this.requireOpenProject(worktree.projectId)
@@ -2186,6 +2193,7 @@ export class TaskTTYService {
         ...(options?.returnToShell && argv
           ? { fallbackArgv: [this.deps.config.shell, '-l'] }
           : {}),
+        ...(options?.initialSize ? { initialSize: options.initialSize } : {}),
         env: {
           TASKTTY_API_URL: this.deps.config.apiUrl,
           TASKTTY_PROJECT_ID: project.id,
@@ -2236,6 +2244,7 @@ export class TaskTTYService {
     options?: {
       setup?: { tasks: WorktreeSetupTask[]; error: string | null }
       returnToShell?: boolean
+      initialSize?: TerminalSize
     }
   ): Promise<TerminalRecord> {
     await this.requireAvailableWorktree(worktreeId)

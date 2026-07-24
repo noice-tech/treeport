@@ -538,6 +538,54 @@ describe.skipIf(!enabled)(
       fixture.database.close()
     })
 
+    it('starts a terminal process at its requested initial dimensions', async (context) => {
+      if (!(await executable('tmux', ['-V']))) {
+        context.skip()
+        return
+      }
+
+      const runtimeDir = path.join(root, 'initial-size-runtime')
+      const outputPath = path.join(root, 'initial-size.json')
+      const runner = new SpawnCommandRunner()
+      const launcherPath = fileURLToPath(
+        new URL('../dist/launcher.js', import.meta.url)
+      )
+      const tmux = new TmuxAdapter(runner, runtimeDir, 'tmux', launcherPath)
+      const socket = `tasktty-initial-size-${process.pid}`
+      await fs.mkdir(root, { recursive: true })
+      try {
+        await tmux.createSession({
+          socketName: socket,
+          sessionName: 'initial-size',
+          terminalId: 'term_initial_size',
+          worktreeId: 'wt_initial_size',
+          name: 'Initial size',
+          createdAt: '2026-01-02T03:04:05.000Z',
+          cwd: root,
+          argv: [
+            process.execPath,
+            '-e',
+            `require('node:fs').writeFileSync(${JSON.stringify(outputPath)}, JSON.stringify({ cols: process.stdout.columns, rows: process.stdout.rows }))`
+          ],
+          initialSize: { cols: 132, rows: 47 },
+          env: {}
+        })
+        await waitFor(
+          () =>
+            fs.access(outputPath).then(
+              () => true,
+              () => false
+            ),
+          'terminal process did not report its initial size'
+        )
+        await expect(
+          fs.readFile(outputPath, 'utf8').then(JSON.parse)
+        ).resolves.toEqual({ cols: 132, rows: 47 })
+      } finally {
+        await tmux.killServer(socket).catch(() => undefined)
+      }
+    })
+
     it('hides tmux copy mode and forwards the first key typed after scrolling', async (context) => {
       if (!(await executable('tmux', ['-V']))) {
         context.skip()

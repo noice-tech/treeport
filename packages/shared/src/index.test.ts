@@ -48,9 +48,14 @@ describe('API input validation', () => {
       createTerminalSchema.parse({
         name: 'researcher',
         argv,
-        returnToShell: true
+        returnToShell: true,
+        initialSize: { cols: 132, rows: 47 }
       })
-    ).toMatchObject({ argv, returnToShell: true })
+    ).toMatchObject({
+      argv,
+      returnToShell: true,
+      initialSize: { cols: 132, rows: 47 }
+    })
     expect(
       spawnSchema.parse({
         project: '.',
@@ -61,12 +66,27 @@ describe('API input validation', () => {
     ).toEqual(argv)
   })
 
-  it('rejects empty argv rather than accepting a shell command string', () => {
+  it('rejects empty argv, command strings, and invalid initial sizes', () => {
     expect(
       createTerminalSchema.safeParse({ name: 'bad', argv: [] }).success
     ).toBe(false)
     expect(
       createTerminalSchema.safeParse({ name: 'bad', argv: 'pnpm dev' }).success
+    ).toBe(false)
+    expect(
+      createTerminalSchema.safeParse({
+        name: 'bad size',
+        initialSize: { cols: 1, rows: 24 }
+      }).success
+    ).toBe(false)
+    expect(
+      createWorktreeSchema.safeParse({
+        name: 'bad worktree size',
+        initialTerminal: {
+          name: 'Hunk',
+          initialSize: { cols: 120, rows: 501 }
+        }
+      }).success
     ).toBe(false)
   })
 

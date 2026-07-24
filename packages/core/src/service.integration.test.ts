@@ -1546,7 +1546,8 @@ describe('TaskTTYService with injected command adapters', () => {
       {
         name: 'Pi',
         argv: ['pi'],
-        returnToShell: true
+        returnToShell: true,
+        initialSize: { cols: 132, rows: 47 }
       }
     )
     unsubscribe()
@@ -1559,6 +1560,12 @@ describe('TaskTTYService with injected command adapters', () => {
         .worktrees.some((item) => item.id === result.worktree.id)
     ).toBe(true)
     expect(runner.sessions.size).toBe(2)
+    const initialTerminalCreate = runner.calls
+      .filter((call) => call.args.includes('new-session'))
+      .at(-1)!
+    expect(initialTerminalCreate.args).toEqual(
+      expect.arrayContaining(['-x', '132', '-y', '47'])
+    )
     expect(events.indexOf('worktree.created')).toBeLessThan(
       events.indexOf('terminal.created')
     )
