@@ -9,6 +9,8 @@ import { NativeSelect } from '../../components/ui/native-select.js'
 import { cn } from '../../lib/utils.js'
 import { FormField, ModalHeading } from '../dialogs/dialog-parts.js'
 
+const INITIAL_TERMINAL_PRESET_STORAGE_KEY = 'tasktty-initial-terminal-preset'
+
 export interface WorktreeDestination {
   name: string
   path: string
@@ -46,17 +48,28 @@ export function WorktreeForm({
   const [debouncedName, setDebouncedName] = useState('')
   const [resolvingSubmission, setResolvingSubmission] = useState(false)
   const [baseValue, setBaseValue] = useState('default')
-  const [initialPresetId, setInitialPresetId] = useState('shell')
+  const [initialPresetId, setInitialPresetId] = useState(
+    () => localStorage.getItem(INITIAL_TERMINAL_PRESET_STORAGE_KEY) ?? 'shell'
+  )
+  const initialPresetAvailable = presets.some(
+    (preset) => preset.id === initialPresetId
+  )
+  const initialPresetUnavailable =
+    initialPresetId !== 'shell' && !initialPresetAvailable
+  const waitingForInitialPreset = initialPresetUnavailable && presetsLoading
   const initialPresetMissing =
-    initialPresetId !== 'shell' &&
-    !presets.some((preset) => preset.id === initialPresetId)
-  const effectiveInitialPresetId = initialPresetMissing
-    ? 'shell'
-    : initialPresetId
+    initialPresetUnavailable && !presetsLoading && !presetsError
+  const effectiveInitialPresetId =
+    initialPresetUnavailable && !presetsLoading ? 'shell' : initialPresetId
   useEffect(() => {
     const timeout = window.setTimeout(() => setDebouncedName(name), 250)
     return () => window.clearTimeout(timeout)
   }, [name])
+  useEffect(() => {
+    if (initialPresetMissing) {
+      localStorage.setItem(INITIAL_TERMINAL_PRESET_STORAGE_KEY, 'shell')
+    }
+  }, [initialPresetMissing])
   const destinationQuery = useQuery({
     queryKey: ['worktree-destination', project.id, debouncedName],
     queryFn: () => apiClient.worktreeDestination(project.id, debouncedName),
@@ -168,8 +181,17 @@ export function WorktreeForm({
           id="initial-terminal-preset"
           name="initial-terminal-preset"
           value={effectiveInitialPresetId}
-          onChange={(event) => setInitialPresetId(event.target.value)}
+          onChange={(event) => {
+            setInitialPresetId(event.target.value)
+            localStorage.setItem(
+              INITIAL_TERMINAL_PRESET_STORAGE_KEY,
+              event.target.value
+            )
+          }}
         >
+          {waitingForInitialPreset && (
+            <option value={initialPresetId}>Loading saved preset…</option>
+          )}
           <option value="shell">Shell</option>
           {presets.map((preset) => (
             <option key={preset.id} value={preset.id}>
@@ -222,7 +244,9 @@ export function WorktreeForm({
       <Button
         type="submit"
         className="self-end"
-        disabled={busy || resolvingSubmission || !name.trim()}
+        disabled={
+          busy || resolvingSubmission || waitingForInitialPreset || !name.trim()
+        }
       >
         {busy || resolvingSubmission ? 'Creating…' : 'Create worktree'}
       </Button>

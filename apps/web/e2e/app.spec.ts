@@ -1955,8 +1955,14 @@ test.describe('desktop worktree terminal UI', () => {
     }
     {
       await page.getByRole('button', { name: 'New worktree' }).click()
-      await page.getByLabel('Worktree name').fill('preset topic')
       await page.getByLabel('Initial terminal').selectOption({ label: 'Hunk' })
+      await page.keyboard.press('Escape')
+      await page.reload()
+      await page.getByRole('button', { name: 'New worktree' }).click()
+      await expect(page.getByLabel('Initial terminal')).toHaveValue(
+        'preset_hunk'
+      )
+      await page.getByLabel('Worktree name').fill('preset topic')
       await expect(
         page.getByText('Destination: /worktrees/preset-topic/repo')
       ).toBeVisible()
@@ -1978,6 +1984,14 @@ test.describe('desktop worktree terminal UI', () => {
           }
         })
       })
+      await page.getByRole('button', { name: 'New worktree' }).click()
+      await expect(page.getByLabel('Initial terminal')).toHaveValue(
+        'preset_hunk'
+      )
+      await page.getByLabel('Initial terminal').selectOption('shell')
+      await page.keyboard.press('Escape')
+      await page.getByRole('button', { name: 'New worktree' }).click()
+      await expect(page.getByLabel('Initial terminal')).toHaveValue('shell')
     }
   })
   test('reconnects and allows a viewer to take control without relaunching', async ({
@@ -2551,6 +2565,17 @@ test.describe('desktop worktree terminal UI', () => {
         .filter({ hasText: 'selected preset was deleted' })
     ).toBeVisible()
     await expect(page.getByLabel('Initial terminal')).toHaveValue('shell')
+    await page
+      .getByRole('dialog')
+      .getByRole('button', { name: 'Close', exact: true })
+      .click()
+    await page.getByRole('button', { name: 'New worktree' }).click()
+    await expect(page.getByLabel('Initial terminal')).toHaveValue('shell')
+    await expect(
+      page
+        .getByRole('status')
+        .filter({ hasText: 'selected preset was deleted' })
+    ).toHaveCount(0)
   })
   test('preserves modified terminal keys used by macOS and Pi', async ({
     page
