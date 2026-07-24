@@ -163,8 +163,13 @@ async function mockApp(
         | ((command: 'new-terminal' | 'close-terminal') => void)
         | null = null
       let fullscreenListener: ((fullscreen: boolean) => void) | null = null
+      scope.__openedDesktopFileUrls = []
       scope.taskttyDesktop = Object.freeze({
         platform: 'darwin',
+        openFileUrl(url: string) {
+          scope.__openedDesktopFileUrls.push(url)
+          return Promise.resolve(true)
+        },
         onFullscreenChange(next: (fullscreen: boolean) => void) {
           fullscreenListener = next
           return () => {
@@ -1608,6 +1613,48 @@ test.describe('desktop worktree terminal UI', () => {
     await expect
       .poll(() => page.evaluate(() => (window as any).__openedTerminalLink))
       .toEqual(['https://example.test/pr/123', '_blank', 'noopener,noreferrer'])
+  })
+
+  test('opens OSC 8 file links with the default desktop app on Cmd-click', async ({
+    page
+  }) => {
+    await mockApp(page, [], {
+      desktopBridge: true,
+      keyboardPlatform: 'MacIntel'
+    })
+    await page.getByRole('button', { name: 'Pi, running', exact: true }).click()
+    await page.evaluate(() => {
+      const socket = (window as any).__wsInstances.find((item: any) =>
+        item.url.includes('term_pi')
+      )
+      socket.onmessage?.({
+        data: JSON.stringify({
+          version: 1,
+          type: 'output',
+          streamId: socket.streamId,
+          sequence: 2,
+          data: '\x1b]8;;file:///Users/example/project/readme%20draft.md\x1b\\readme draft.md\x1b]8;;\x1b\\\r\n'
+        })
+      })
+    })
+
+    const linkedText = page
+      .locator('.xterm-rows span')
+      .filter({ hasText: 'readme draft.md' })
+      .last()
+    await expect(linkedText).toBeVisible()
+    const linkedPoint = await terminalTextPoint(linkedText, { x: 8, y: 8 })
+    await page.mouse.click(linkedPoint.x, linkedPoint.y)
+    expect(
+      await page.evaluate(() => (window as any).__openedDesktopFileUrls)
+    ).toEqual([])
+
+    await page.keyboard.down('Meta')
+    await page.mouse.click(linkedPoint.x, linkedPoint.y)
+    await page.keyboard.up('Meta')
+    await expect
+      .poll(() => page.evaluate(() => (window as any).__openedDesktopFileUrls))
+      .toEqual(['file:///Users/example/project/readme%20draft.md'])
   })
 
   test('synchronizes fallback, runtime, and cleared titles across every desktop consumer', async ({

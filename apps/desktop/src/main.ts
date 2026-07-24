@@ -7,6 +7,7 @@ import {
   shell,
   type MenuItemConstructorOptions
 } from 'electron'
+import { filePathFromUrl } from './file-url.js'
 
 const dirname = __dirname
 const defaultRendererUrl = app.isPackaged
@@ -299,6 +300,19 @@ if (!hasSingleInstanceLock) {
     ) {
       void loadTaskTTY(mainWindow)
     }
+  })
+  ipcMain.handle('open-file-url', async (event, value: unknown) => {
+    if (
+      !mainWindow ||
+      event.sender !== mainWindow.webContents ||
+      event.senderFrame !== event.sender.mainFrame ||
+      !isRendererUrl(event.senderFrame.url)
+    ) {
+      return false
+    }
+
+    const filePath = filePathFromUrl(value)
+    return filePath ? (await shell.openPath(filePath)) === '' : false
   })
 
   void app.whenReady().then(() => {

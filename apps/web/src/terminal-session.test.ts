@@ -254,7 +254,28 @@ describe('terminal options', () => {
     expect(open).toHaveBeenCalledWith(url, '_blank', 'noopener,noreferrer')
   })
 
-  it('rejects malformed and non-web OSC 8 link targets', () => {
+  it('opens file OSC 8 links through the desktop bridge on modifier-click', () => {
+    const open = vi.fn()
+    const openFileUrl = vi.fn(() => Promise.resolve(true))
+    vi.stubGlobal('navigator', { platform: 'MacIntel' })
+    vi.stubGlobal('window', {
+      open,
+      taskttyDesktop: { openFileUrl }
+    })
+    const handler = terminalOptions().linkHandler
+    const url = 'file:///Users/example/project/readme%20draft.md'
+
+    handler.activate({ metaKey: false, ctrlKey: false } as MouseEvent, url)
+    handler.activate({ metaKey: false, ctrlKey: true } as MouseEvent, url)
+    expect(openFileUrl).not.toHaveBeenCalled()
+
+    handler.activate({ metaKey: true, ctrlKey: false } as MouseEvent, url)
+    expect(openFileUrl).toHaveBeenCalledOnce()
+    expect(openFileUrl).toHaveBeenCalledWith(url)
+    expect(open).not.toHaveBeenCalled()
+  })
+
+  it('ignores file links outside the desktop app and rejects unsafe targets', () => {
     const open = vi.fn()
     vi.stubGlobal('navigator', { platform: 'Linux x86_64' })
     vi.stubGlobal('window', { open })

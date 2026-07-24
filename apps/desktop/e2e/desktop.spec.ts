@@ -2,9 +2,10 @@ import fs from 'node:fs/promises'
 import http from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { _electron as electron, expect, test } from '@playwright/test'
 
-test('dispatches native terminal commands without closing the window', async () => {
+test('dispatches native commands and opens local file URLs', async () => {
   const userData = await fs.mkdtemp(path.join(os.tmpdir(), 'tasktty-electron-'))
   const server = http.createServer((request, response) => {
     if (request.url === '/api/health') {
@@ -55,6 +56,40 @@ test('dispatches native terminal commands without closing the window', async () 
       contextIsolation: true,
       sandbox: true
     })
+
+    await electronApp.evaluate(({ shell }) => {
+      const scope = globalThis as typeof globalThis & {
+        __openedTaskTTYFilePaths?: string[]
+      }
+      scope.__openedTaskTTYFilePaths = []
+      shell.openPath = async (filePath) => {
+        scope.__openedTaskTTYFilePaths!.push(filePath)
+        return ''
+      }
+    })
+    const filePath = path.join(userData, 'résumé draft.txt')
+    await expect(
+      window.evaluate(
+        (url) => (window as any).taskttyDesktop.openFileUrl(url),
+        pathToFileURL(filePath).href
+      )
+    ).resolves.toBe(true)
+    await expect(
+      window.evaluate(() =>
+        (window as any).taskttyDesktop.openFileUrl('file:relative.txt')
+      )
+    ).resolves.toBe(false)
+    expect(
+      await electronApp.evaluate(
+        () =>
+          (
+            globalThis as typeof globalThis & {
+              __openedTaskTTYFilePaths?: string[]
+            }
+          ).__openedTaskTTYFilePaths
+      )
+    ).toEqual([filePath])
+
     expect(
       await electronApp.evaluate(
         ({ BrowserWindow, session }) =>
