@@ -52,6 +52,75 @@ function needsManualCleanup(worktree: WorktreeRecord): boolean {
   return Boolean(worktree.cleanupError?.startsWith(MANUAL_CLEANUP_PREFIX))
 }
 
+function WorktreeShell({
+  name,
+  title,
+  icon,
+  status,
+  selected = false,
+  linked = false,
+  pending = false,
+  busy = false,
+  id,
+  className,
+  ariaLabel,
+  onClick
+}: {
+  name: string
+  title: string
+  icon: ReactNode
+  status?: ReactNode
+  selected?: boolean
+  linked?: boolean
+  pending?: boolean
+  busy?: boolean
+  id?: string
+  className?: string
+  ariaLabel?: string | undefined
+  onClick?: () => void
+}) {
+  const classes = cn(
+    'worktree-row flex h-auto min-h-11 w-full min-w-0 items-center justify-start gap-1.5 rounded-md px-2 py-1.5 text-left text-base/5 font-medium min-[701px]:min-h-8 min-[701px]:py-1 min-[701px]:text-[0.8125rem]/4',
+    linked && 'min-[701px]:pr-9',
+    pending
+      ? 'text-zinc-300'
+      : selected
+        ? 'selected text-zinc-50 min-[701px]:bg-white/8'
+        : 'text-zinc-300 hover:bg-white/5 hover:text-zinc-50',
+    'max-[700px]:flex-1 max-[700px]:hover:bg-transparent',
+    (pending || busy) && 'motion-safe:animate-pulse',
+    pending && 'pointer-events-none',
+    className
+  )
+  const content = (
+    <>
+      {icon}
+      <span className="flex min-w-0 flex-col">
+        <span className="truncate">{name}</span>
+        {status}
+      </span>
+    </>
+  )
+
+  return (
+    <Button
+      id={id}
+      variant="ghost"
+      type="button"
+      className={classes}
+      onClick={pending ? undefined : onClick}
+      title={title}
+      role={pending ? 'status' : undefined}
+      aria-label={pending ? `Creating worktree ${name}` : ariaLabel}
+      aria-live={pending || ariaLabel ? 'polite' : undefined}
+      aria-disabled={pending || undefined}
+      tabIndex={pending ? -1 : undefined}
+    >
+      {content}
+    </Button>
+  )
+}
+
 export interface WorkspaceSidebarProps {
   projects: ProjectRecord[]
   projectsPending: boolean
@@ -707,64 +776,57 @@ export function WorkspaceSidebar({
                               'max-[700px]:bg-white/8'
                           )}
                         >
-                          <Button
-                            variant="ghost"
-                            type="button"
-                            className={cn(
-                              'worktree-row h-auto min-h-11 w-full min-w-0 justify-start gap-1.5 rounded-md px-2 py-1.5 text-left text-base/5 font-medium min-[701px]:min-h-8 min-[701px]:py-1 min-[701px]:text-[0.8125rem]/4 max-[700px]:flex-1 max-[700px]:hover:bg-transparent',
-                              worktree.kind === 'linked' && 'min-[701px]:pr-9',
-                              selectedWorktree?.id === worktree.id
-                                ? 'selected text-zinc-50 min-[701px]:bg-white/8'
-                                : 'text-zinc-300 hover:bg-white/5 hover:text-zinc-50'
-                            )}
-                            onClick={() => selectWorktree(worktree)}
+                          <WorktreeShell
+                            name={worktree.name}
                             title={`${worktree.path}${
                               worktree.branch
                                 ? ` · ${worktree.branch}`
                                 : ` · detached at ${worktree.head.slice(0, 8)}`
                             }`}
-                          >
-                            {pendingRemovals[worktree.id] ||
-                            worktree.status === 'cleaning' ? (
-                              <ArrowPathIcon
-                                className="shrink-0 animate-spin text-cyan-400"
-                                aria-hidden="true"
-                              />
-                            ) : (
-                              <GitBranchIcon
-                                className="shrink-0 stroke-zinc-600 stroke-[1.5]"
-                                aria-hidden="true"
-                              />
-                            )}
-                            <span className="flex min-w-0 flex-col">
-                              <span className="truncate">{worktree.name}</span>
-                              {(pendingRemovals[worktree.id] ||
-                                worktree.status === 'cleaning' ||
-                                worktree.status === 'cleanup_failed') && (
+                            linked={worktree.kind === 'linked'}
+                            selected={selectedWorktree?.id === worktree.id}
+                            busy={
+                              Boolean(pendingRemovals[worktree.id]) ||
+                              worktree.status === 'cleaning'
+                            }
+                            ariaLabel={
+                              pendingRemovals[worktree.id] === 'checking'
+                                ? `${worktree.name}, preparing removal`
+                                : pendingRemovals[worktree.id] ||
+                                    worktree.status === 'cleaning'
+                                  ? `${worktree.name}, removing`
+                                  : undefined
+                            }
+                            onClick={() => selectWorktree(worktree)}
+                            icon={
+                              pendingRemovals[worktree.id] ||
+                              worktree.status === 'cleaning' ? (
+                                <GitBranchIcon
+                                  className="worktree-progress-icon worktree-removing-icon size-4 shrink-0 stroke-rose-400 stroke-[1.5]"
+                                  aria-hidden="true"
+                                />
+                              ) : (
+                                <GitBranchIcon
+                                  className="shrink-0 stroke-zinc-600 stroke-[1.5]"
+                                  aria-hidden="true"
+                                />
+                              )
+                            }
+                            status={
+                              worktree.status === 'cleanup_failed' ? (
                                 <span
-                                  className={cn(
-                                    'truncate text-sm/4 font-normal text-cyan-300 min-[701px]:text-[0.6875rem]',
-                                    worktree.status === 'cleanup_failed' &&
-                                      'text-rose-300'
-                                  )}
+                                  className="truncate text-sm/4 font-normal text-rose-300 min-[701px]:text-[0.6875rem]"
                                   role="status"
                                   title={worktree.cleanupError ?? undefined}
                                 >
-                                  {pendingRemovals[worktree.id] === 'checking'
-                                    ? 'Preparing removal…'
-                                    : pendingRemovals[worktree.id] ===
-                                          'removing' ||
-                                        worktree.status === 'cleaning'
-                                      ? 'Removing…'
-                                      : 'Removal failed'}
-                                  {worktree.status === 'cleanup_failed' &&
-                                  worktree.cleanupError
+                                  Removal failed
+                                  {worktree.cleanupError
                                     ? `: ${worktree.cleanupError}`
                                     : ''}
                                 </span>
-                              )}
-                            </span>
-                          </Button>
+                              ) : undefined
+                            }
+                          />
                           {worktree.kind === 'linked' && (
                             <div className="worktree-actions absolute top-0 right-0 z-10 flex items-center gap-0.5 opacity-0 group-hover/worktree:opacity-100 group-focus-within/worktree:opacity-100 max-[700px]:static max-[700px]:shrink-0 max-[700px]:opacity-100">
                               <SidebarAction
@@ -893,22 +955,18 @@ export function WorkspaceSidebar({
                       )
                       .map((pending) => (
                         <li key={pending.id} className="min-w-0">
-                          <div
+                          <WorktreeShell
                             id={`pending-worktree-${pending.id}`}
-                            className="flex min-h-11 min-w-0 items-center gap-1.5 rounded-md px-2 py-1.5 text-base/5 font-normal text-zinc-400 outline-none focus-visible:ring-2 focus-visible:ring-cyan-400 min-[701px]:min-h-8 min-[701px]:py-1 min-[701px]:text-[0.8125rem]/4"
-                            role="status"
-                            aria-label={`Creating worktree ${pending.typedName}`}
+                            name={pending.typedName}
                             title={pending.destinationPath}
-                            tabIndex={-1}
-                          >
-                            <ArrowPathIcon
-                              className="size-4 shrink-0 animate-spin text-cyan-400"
-                              aria-hidden="true"
-                            />
-                            <span className="truncate">
-                              {pending.typedName}
-                            </span>
-                          </div>
+                            pending
+                            icon={
+                              <GitBranchIcon
+                                className="worktree-progress-icon size-4 shrink-0 stroke-cyan-400 stroke-[1.5]"
+                                aria-hidden="true"
+                              />
+                            }
+                          />
                         </li>
                       ))}
                     <li className="min-w-0">
