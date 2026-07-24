@@ -163,8 +163,13 @@ async function mockApp(
         | ((command: 'new-terminal' | 'close-terminal') => void)
         | null = null
       let fullscreenListener: ((fullscreen: boolean) => void) | null = null
+      scope.__openedDesktopFileUrls = []
       scope.taskttyDesktop = Object.freeze({
         platform: 'darwin',
+        openFileUrl(url: string) {
+          scope.__openedDesktopFileUrls.push(url)
+          return Promise.resolve(true)
+        },
         onFullscreenChange(next: (fullscreen: boolean) => void) {
           fullscreenListener = next
           return () => {
@@ -1610,6 +1615,48 @@ test.describe('desktop worktree terminal UI', () => {
       .toEqual(['https://example.test/pr/123', '_blank', 'noopener,noreferrer'])
   })
 
+  test('opens OSC 8 file links with the default desktop app on Cmd-click', async ({
+    page
+  }) => {
+    await mockApp(page, [], {
+      desktopBridge: true,
+      keyboardPlatform: 'MacIntel'
+    })
+    await page.getByRole('button', { name: 'Pi, running', exact: true }).click()
+    await page.evaluate(() => {
+      const socket = (window as any).__wsInstances.find((item: any) =>
+        item.url.includes('term_pi')
+      )
+      socket.onmessage?.({
+        data: JSON.stringify({
+          version: 1,
+          type: 'output',
+          streamId: socket.streamId,
+          sequence: 2,
+          data: '\x1b]8;;file:///Users/example/project/readme%20draft.md\x1b\\readme draft.md\x1b]8;;\x1b\\\r\n'
+        })
+      })
+    })
+
+    const linkedText = page
+      .locator('.xterm-rows span')
+      .filter({ hasText: 'readme draft.md' })
+      .last()
+    await expect(linkedText).toBeVisible()
+    const linkedPoint = await terminalTextPoint(linkedText, { x: 8, y: 8 })
+    await page.mouse.click(linkedPoint.x, linkedPoint.y)
+    expect(
+      await page.evaluate(() => (window as any).__openedDesktopFileUrls)
+    ).toEqual([])
+
+    await page.keyboard.down('Meta')
+    await page.mouse.click(linkedPoint.x, linkedPoint.y)
+    await page.keyboard.up('Meta')
+    await expect
+      .poll(() => page.evaluate(() => (window as any).__openedDesktopFileUrls))
+      .toEqual(['file:///Users/example/project/readme%20draft.md'])
+  })
+
   test('synchronizes fallback, runtime, and cleared titles across every desktop consumer', async ({
     page
   }) => {
@@ -2949,6 +2996,38 @@ test.describe('desktop worktree terminal UI', () => {
 test.describe('mobile terminal UI', () => {
   test.skip(({ isMobile }) => !isMobile)
 
+  test('scopes the terminal selector to the active project', async ({
+    page
+  }) => {
+    await mockApp(page, [], { includeSecondProject: true })
+    const terminalSelector = page.locator('select[name="terminal-selector"]')
+    const optionValues = () =>
+      terminalSelector
+        .locator('option')
+        .evaluateAll((options) =>
+          options.map((option) => (option as HTMLOptionElement).value)
+        )
+
+    await expect.poll(optionValues).toEqual(['', 'term_shell', 'term_pi'])
+
+    await page.getByLabel('Open worktree drawer').click()
+    await page
+      .getByRole('button', {
+        name: 'Switch project, current project example'
+      })
+      .click()
+    await page
+      .getByRole('button', { name: 'another-project', exact: true })
+      .click()
+
+    await expect(page).toHaveURL(
+      /\/projects\/proj_2\/worktrees\/second_wt_main\/terminals\/second_term_shell$/
+    )
+    await expect
+      .poll(optionValues)
+      .toEqual(['', 'second_term_shell', 'second_term_pi'])
+  })
+
   test('uses the mobile drawer and terminal controls end to end', async ({
     page
   }) => {
@@ -3101,6 +3180,37 @@ test.describe('mobile terminal UI', () => {
     await expect(
       page.getByRole('button', { name: 'Open project' })
     ).toBeVisible()
+  })
+
+  test('submits a mobile worktree before its preview debounce settles', async ({
+    page
+  }) => {
+    await mockApp(page)
+    await page.getByLabel('Open worktree drawer').click()
+    await page.getByRole('button', { name: 'New worktree' }).click()
+    await page.clock.install()
+
+    const submit = page.getByRole('button', { name: 'Create worktree' })
+    const submitBox = await submit.boundingBox()
+    expect(submitBox).not.toBeNull()
+    const requestPromise = page.waitForRequest(
+      (request) =>
+        request.method() === 'POST' &&
+        new URL(request.url()).pathname === '/api/projects/proj_1/worktrees'
+    )
+
+    await page.getByLabel('Worktree name').fill('touch submit')
+    await page.touchscreen.tap(
+      submitBox!.x + submitBox!.width / 2,
+      submitBox!.y + submitBox!.height / 2
+    )
+
+    expect((await requestPromise).postDataJSON()).toMatchObject({
+      name: 'touch submit'
+    })
+    await expect(
+      page.getByRole('heading', { name: 'Create worktree' })
+    ).toHaveCount(0)
   })
 
   test('keeps mobile modal and drawer accessibility state coherent', async ({

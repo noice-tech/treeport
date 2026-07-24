@@ -154,11 +154,18 @@ function activateTerminalLink(event: MouseEvent, url: string): void {
   } catch {
     return
   }
-  if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
+  if (parsedUrl.protocol === 'file:') {
+    const opening = window.taskttyDesktop?.openFileUrl(url)
+    if (opening) {
+      void opening.catch(() => undefined)
+    }
+
     return
   }
 
-  window.open(url, '_blank', 'noopener,noreferrer')
+  if (parsedUrl.protocol === 'http:' || parsedUrl.protocol === 'https:') {
+    window.open(url, '_blank', 'noopener,noreferrer')
+  }
 }
 
 function forcePlainSelectionWhileMouseReporting(
@@ -350,7 +357,8 @@ export function terminalOptions() {
     allowProposedApi: false,
     macOptionClickForcesSelection: true,
     linkHandler: {
-      activate: activateTerminalLink
+      activate: activateTerminalLink,
+      allowNonHttpProtocols: true
     },
     theme: {
       background: '#09090b',

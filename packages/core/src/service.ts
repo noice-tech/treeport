@@ -2068,7 +2068,7 @@ export class TaskTTYService {
           }`.slice(0, 4_096)
         }
         try {
-          terminal = await this.createTerminal(
+          terminal = await this.executeCreateTerminal(
             worktree.id,
             initialTerminal.name,
             initialTerminal.argv,
@@ -2078,7 +2078,8 @@ export class TaskTTYService {
               ...(initialTerminal.initialSize
                 ? { initialSize: initialTerminal.initialSize }
                 : {})
-            }
+            },
+            true
           )
         } catch (error) {
           terminalError = error instanceof Error ? error.message : String(error)
@@ -2247,6 +2248,23 @@ export class TaskTTYService {
       initialSize?: TerminalSize
     }
   ): Promise<TerminalRecord> {
+    const projectId = this.getWorktree(worktreeId).projectId
+    return this.worktreeMutations.enqueue(projectId, () =>
+      this.executeCreateTerminal(worktreeId, name, argv, options)
+    )
+  }
+
+  private async executeCreateTerminal(
+    worktreeId: string,
+    name: string,
+    argv?: string[],
+    options?: {
+      setup?: { tasks: WorktreeSetupTask[]; error: string | null }
+      returnToShell?: boolean
+      initialSize?: TerminalSize
+    },
+    allowProjectLock = false
+  ): Promise<TerminalRecord> {
     await this.requireAvailableWorktree(worktreeId)
     try {
       return await this.terminalMutations.enqueue(worktreeId, async () => {
@@ -2256,8 +2274,7 @@ export class TaskTTYService {
         }
 
         if (
-          (options?.setup === undefined &&
-            this.projectLocks.has(worktree.projectId)) ||
+          (!allowProjectLock && this.projectLocks.has(worktree.projectId)) ||
           this.worktreeLocks.has(worktreeId) ||
           worktree.status !== 'active' ||
           worktree.prunable
@@ -2294,13 +2311,6 @@ export class TaskTTYService {
       worktree.tmuxSocketName,
       terminal.tmuxSessionName
     )
-    if (
-      this.projectLocks.has(worktree.projectId) ||
-      this.worktreeLocks.has(worktree.id)
-    ) {
-      throw new DomainError('WORKTREE_BUSY', 'Worktree is being modified', 409)
-    }
-
     this.requireOpenProject(worktree.projectId)
     if (!this.terminalStates.has(terminalId)) {
       throw new DomainError('TERMINAL_NOT_FOUND', 'Terminal not found', 404)
@@ -2342,13 +2352,28 @@ export class TaskTTYService {
     name: string
   ): Promise<TerminalRecord> {
     const terminal = await this.getTerminal(terminalId)
+    const projectId = this.getWorktree(terminal.worktreeId).projectId
+    return this.worktreeMutations.enqueue(projectId, () =>
+      this.executeRenameTerminal(terminalId, name)
+    )
+  }
+
+  private async executeRenameTerminal(
+    terminalId: string,
+    name: string
+  ): Promise<TerminalRecord> {
+    const terminal = await this.getTerminal(terminalId)
     const worktree = this.getWorktree(terminal.worktreeId)
     this.requireOpenProject(worktree.projectId)
     if (
       this.projectLocks.has(worktree.projectId) ||
       this.worktreeLocks.has(worktree.id)
     ) {
-      throw new DomainError('WORKTREE_BUSY', 'Worktree is being modified', 409)
+      throw new DomainError(
+        'WORKTREE_BUSY',
+        'Cannot rename a terminal during a destructive project operation',
+        409
+      )
     }
 
     this.worktreeLocks.add(worktree.id)
@@ -2373,6 +2398,14 @@ export class TaskTTYService {
 
   async deleteTerminal(terminalId: string): Promise<void> {
     const terminal = await this.getTerminal(terminalId)
+    const projectId = this.getWorktree(terminal.worktreeId).projectId
+    return this.worktreeMutations.enqueue(projectId, () =>
+      this.executeDeleteTerminal(terminalId)
+    )
+  }
+
+  private async executeDeleteTerminal(terminalId: string): Promise<void> {
+    const terminal = await this.getTerminal(terminalId)
     const worktree = this.deps.database.worktree(terminal.worktreeId)
     if (!worktree) {
       throw new DomainError('WORKTREE_NOT_FOUND', 'Worktree not found', 404)
@@ -2383,7 +2416,11 @@ export class TaskTTYService {
       this.projectLocks.has(worktree.projectId) ||
       this.worktreeLocks.has(worktree.id)
     ) {
-      throw new DomainError('WORKTREE_BUSY', 'Worktree is being modified', 409)
+      throw new DomainError(
+        'WORKTREE_BUSY',
+        'Cannot delete a terminal during a destructive project operation',
+        409
+      )
     }
 
     this.worktreeLocks.add(worktree.id)
@@ -2427,38 +2464,40 @@ export class TaskTTYService {
       return worktree.pr
     }
 
-    if (
-      this.projectLocks.has(worktree.projectId) ||
-      this.worktreeLocks.has(worktreeId)
-    ) {
-      throw new DomainError('WORKTREE_BUSY', 'Worktree is being modified', 409)
+    this.requireOpenProject(worktree.projectId)
+    const pr = await this.deps.gh.pullRequest(worktree.path, worktree.branch)
+    const current = this.deps.database.worktree(worktreeId)
+
+    if (!current) {
+      throw new DomainError('WORKTREE_NOT_FOUND', 'Worktree not found', 404)
     }
 
-    this.worktreeLocks.add(worktreeId)
-    try {
-      this.requireOpenProject(worktree.projectId)
-      const pr = await this.deps.gh.pullRequest(worktree.path, worktree.branch)
-      this.deps.database.connection
-        .prepare(
-          `UPDATE worktrees SET pr_state=?,pr_number=?,pr_url=?,pr_base_branch=?,pr_head_branch=?,pr_merged_at=?,pr_refreshed_at=?,updated_at=? WHERE id=?`
-        )
-        .run(
-          pr.state,
-          pr.number,
-          pr.url,
-          pr.baseBranch,
-          pr.headBranch,
-          pr.mergedAt,
-          pr.refreshedAt,
-          now(),
-          worktreeId
-        )
-      this.invalidateProjectsSnapshot()
-      this.events.publish('worktree.updated', { worktreeId })
-      return pr
-    } finally {
-      this.worktreeLocks.delete(worktreeId)
+    if (current.status !== 'active') {
+      throw new DomainError(
+        'WORKTREE_UNAVAILABLE',
+        'Cannot refresh a pull request while the worktree is being removed',
+        409
+      )
     }
+
+    this.deps.database.connection
+      .prepare(
+        `UPDATE worktrees SET pr_state=?,pr_number=?,pr_url=?,pr_base_branch=?,pr_head_branch=?,pr_merged_at=?,pr_refreshed_at=?,updated_at=? WHERE id=?`
+      )
+      .run(
+        pr.state,
+        pr.number,
+        pr.url,
+        pr.baseBranch,
+        pr.headBranch,
+        pr.mergedAt,
+        pr.refreshedAt,
+        now(),
+        worktreeId
+      )
+    this.invalidateProjectsSnapshot()
+    this.events.publish('worktree.updated', { worktreeId })
+    return pr
   }
 
   private async prepareRemovePreview(
@@ -2562,6 +2601,40 @@ export class TaskTTYService {
   }
 
   async beginRemove(
+    worktreeId: string,
+    request: { confirmationToken: string; confirmDestructive: boolean }
+  ): Promise<OperationRecord> {
+    const worktree = this.getWorktree(worktreeId)
+    this.requireOpenProject(worktree.projectId)
+    if (worktree.status === 'cleaning') {
+      throw new DomainError(
+        'REMOVE_IN_PROGRESS',
+        'The worktree is already being removed',
+        409
+      )
+    }
+
+    if (this.worktreeMutations.has(worktree.projectId)) {
+      return this.worktreeMutations.enqueue(worktree.projectId, () =>
+        this.acceptRemove(worktreeId, request)
+      )
+    }
+
+    if (
+      this.projectLocks.has(worktree.projectId) ||
+      this.worktreeLocks.has(worktreeId)
+    ) {
+      throw new DomainError(
+        'REMOVE_IN_PROGRESS',
+        'The worktree or project is already being modified',
+        409
+      )
+    }
+
+    return this.acceptRemove(worktreeId, request)
+  }
+
+  private async acceptRemove(
     worktreeId: string,
     request: { confirmationToken: string; confirmDestructive: boolean }
   ): Promise<OperationRecord> {
