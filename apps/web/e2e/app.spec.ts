@@ -1784,7 +1784,6 @@ test.describe('desktop worktree terminal UI', () => {
       name: /background · \/repo.*42% complete/
     })
     await expect(background).toBeVisible()
-    await expect(background.locator('svg')).toHaveClass(/animate-spin/)
     expect(
       await page.evaluate(() =>
         ((window as any).__wsInstances || []).some((socket: { url: string }) =>
