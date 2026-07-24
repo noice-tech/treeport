@@ -248,12 +248,10 @@ export default function App() {
     return () => document.removeEventListener('keydown', keydown)
   }, [drawerOpen, isMobile, modal, projectSwitcherOpen])
 
-  const allTerminals = useMemo(
+  const activeProjectTerminals = useMemo(
     () =>
-      projects.flatMap((project) =>
-        project.worktrees.flatMap((worktree) => worktree.terminals)
-      ),
-    [projects]
+      activeProject?.worktrees.flatMap((worktree) => worktree.terminals) ?? [],
+    [activeProject]
   )
   const bellAttention = useSyncExternalStore(
     terminalSessions.subscribe,
@@ -414,7 +412,7 @@ export default function App() {
         activeProject={activeProject}
         selectedWorktree={selectedWorktree}
         selectedTerminalId={selectedTerminalId}
-        allTerminals={allTerminals}
+        projectTerminals={activeProjectTerminals}
         runtimeTitles={runtimeTitles}
         bellAttention={bellAttention}
         terminalProgress={terminalProgress}

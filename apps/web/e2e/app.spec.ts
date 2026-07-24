@@ -2929,6 +2929,38 @@ test.describe('desktop worktree terminal UI', () => {
 test.describe('mobile terminal UI', () => {
   test.skip(({ isMobile }) => !isMobile)
 
+  test('scopes the terminal selector to the active project', async ({
+    page
+  }) => {
+    await mockApp(page, [], { includeSecondProject: true })
+    const terminalSelector = page.locator('select[name="terminal-selector"]')
+    const optionValues = () =>
+      terminalSelector
+        .locator('option')
+        .evaluateAll((options) =>
+          options.map((option) => (option as HTMLOptionElement).value)
+        )
+
+    await expect.poll(optionValues).toEqual(['', 'term_shell', 'term_pi'])
+
+    await page.getByLabel('Open worktree drawer').click()
+    await page
+      .getByRole('button', {
+        name: 'Switch project, current project example'
+      })
+      .click()
+    await page
+      .getByRole('button', { name: 'another-project', exact: true })
+      .click()
+
+    await expect(page).toHaveURL(
+      /\/projects\/proj_2\/worktrees\/second_wt_main\/terminals\/second_term_shell$/
+    )
+    await expect
+      .poll(optionValues)
+      .toEqual(['', 'second_term_shell', 'second_term_pi'])
+  })
+
   test('uses the mobile drawer and terminal controls end to end', async ({
     page
   }) => {
