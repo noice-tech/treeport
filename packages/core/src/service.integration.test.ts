@@ -725,6 +725,83 @@ describe('TaskTTYService with injected command adapters', () => {
     ).toBe(0)
   })
 
+  it('queues terminal creation behind an in-flight project mutation', async () => {
+    const { main, runner, service } = await fixture()
+    const project = await service.registerProject(main)
+    const mainWorktree = project.worktrees[0]!
+    let releaseTerminal!: () => void
+    runner.tmuxCreateGate = new Promise<void>((resolve) => {
+      releaseTerminal = resolve
+    })
+
+    const first = service.createTerminal(mainWorktree.id, 'First')
+    await vi.waitFor(() =>
+      expect(
+        runner.calls.filter((call) => call.args.includes('new-session'))
+      ).toHaveLength(1)
+    )
+    const second = service.createTerminal(mainWorktree.id, 'Second')
+    await Promise.resolve()
+    expect(
+      runner.calls.filter((call) => call.args.includes('new-session'))
+    ).toHaveLength(1)
+
+    releaseTerminal()
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      expect.objectContaining({ name: 'First' }),
+      expect.objectContaining({ name: 'Second' })
+    ])
+    runner.tmuxCreateGate = null
+  })
+
+  it('queues removal behind a terminal mutation before its lock is acquired', async () => {
+    const { main, runner, service } = await fixture()
+    const project = await service.registerProject(main)
+    const linked = (
+      await service.createWorktree(
+        project.id,
+        'remove-after-terminal',
+        'default'
+      )
+    ).worktree
+    const preview = await service.removePreview(linked.id)
+    const createCallsBefore = runner.calls.filter((call) =>
+      call.args.includes('new-session')
+    ).length
+    let releaseTerminal!: () => void
+    runner.tmuxCreateGate = new Promise<void>((resolve) => {
+      releaseTerminal = resolve
+    })
+
+    const creating = service.createTerminal(linked.id, 'First')
+    let removalSettled = false
+    const removing = service
+      .beginRemove(linked.id, {
+        confirmationToken: preview.confirmationToken,
+        confirmDestructive: preview.warnings.length > 0
+      })
+      .then(
+        (operation) => ({ operation, error: null }),
+        (error: unknown) => ({ operation: null, error })
+      )
+      .finally(() => {
+        removalSettled = true
+      })
+    await vi.waitFor(() =>
+      expect(
+        runner.calls.filter((call) => call.args.includes('new-session'))
+      ).toHaveLength(createCallsBefore + 1)
+    )
+    expect(removalSettled).toBe(false)
+
+    releaseTerminal()
+    await expect(creating).resolves.toMatchObject({ name: 'First' })
+    await expect(removing).resolves.toMatchObject({
+      error: { code: 'REMOVE_PREVIEW_STALE' }
+    })
+    runner.tmuxCreateGate = null
+  })
+
   it('derives status and disappearance events from tmux inventory', async () => {
     const { main, runner, service } = await fixture()
     const project = await service.registerProject(main)
@@ -1867,7 +1944,7 @@ describe('TaskTTYService with injected command adapters', () => {
     unsubscribe()
   })
 
-  it('removes same-project worktrees in FIFO order without weakening mutation locks', async () => {
+  it('removes same-project worktrees in FIFO order and queues later user mutations', async () => {
     const { main, runner, service } = await fixture()
     const project = await service.registerProject(main)
     const first = (
@@ -1904,15 +1981,21 @@ describe('TaskTTYService with injected command adapters', () => {
       confirmDestructive: firstPreview.warnings.length > 0
     })
     await vi.waitFor(() => expect(deregistered).toEqual(new Set([first.path])))
-    const secondOperation = await service.beginRemove(second.id, {
-      confirmationToken: secondPreview.confirmationToken,
-      confirmDestructive: secondPreview.warnings.length > 0
-    })
+    let secondRemovalSettled = false
+    const secondRemoval = service
+      .beginRemove(second.id, {
+        confirmationToken: secondPreview.confirmationToken,
+        confirmDestructive: secondPreview.warnings.length > 0
+      })
+      .finally(() => {
+        secondRemovalSettled = true
+      })
+    await Promise.resolve()
 
+    expect(secondRemovalSettled).toBe(false)
     expect(service.getOperation(firstOperation.id).status).toBe('running')
-    expect(service.getOperation(secondOperation.id).status).toBe('pending')
     expect(service.getWorktree(first.id).status).toBe('cleaning')
-    expect(service.getWorktree(second.id).status).toBe('cleaning')
+    expect(service.getWorktree(second.id).status).toBe('active')
     expect(deregistered).toEqual(new Set([first.path]))
     await expect(
       service.beginRemove(first.id, {
@@ -1920,9 +2003,18 @@ describe('TaskTTYService with injected command adapters', () => {
         confirmDestructive: firstPreview.warnings.length > 0
       })
     ).rejects.toMatchObject({ code: 'REMOVE_IN_PROGRESS' })
-    await expect(
-      service.createTerminal(second.id, 'Blocked while pending', ['pi'])
-    ).rejects.toMatchObject({ code: 'WORKTREE_BUSY' })
+    let terminalCreationSettled = false
+    const terminalCreation = service
+      .createTerminal(second.id, 'Queued while pending', ['pi'])
+      .then(
+        (terminal) => ({ terminal, error: null }),
+        (error: unknown) => ({ terminal: null, error })
+      )
+      .finally(() => {
+        terminalCreationSettled = true
+      })
+    await Promise.resolve()
+    expect(terminalCreationSettled).toBe(false)
     await expect(service.closeProject(project.id)).rejects.toMatchObject({
       code: 'PROJECT_BUSY'
     })
@@ -1934,6 +2026,10 @@ describe('TaskTTYService with injected command adapters', () => {
     expect((await waitForOperation(service, firstOperation.id)).status).toBe(
       'completed'
     )
+    const secondOperation = await secondRemoval
+    await expect(terminalCreation).resolves.toMatchObject({
+      error: { code: 'WORKTREE_BUSY' }
+    })
     await vi.waitFor(() =>
       expect(deregistered).toEqual(new Set([first.path, second.path]))
     )
@@ -1952,7 +2048,7 @@ describe('TaskTTYService with injected command adapters', () => {
     ])
   })
 
-  it('revalidates a pending removal before destructive effects', async () => {
+  it('revalidates a queued removal before destructive effects', async () => {
     const { main, runner, service } = await fixture()
     const project = await service.registerProject(main)
     const first = (
@@ -1990,11 +2086,21 @@ describe('TaskTTYService with injected command adapters', () => {
       confirmDestructive: firstPreview.warnings.length > 0
     })
     await firstDeregisteredPromise
-    const secondOperation = await service.beginRemove(second.id, {
-      confirmationToken: secondPreview.confirmationToken,
-      confirmDestructive: secondPreview.warnings.length > 0
-    })
-    expect(service.getOperation(secondOperation.id).status).toBe('pending')
+    let secondRemovalSettled = false
+    const secondRemoval = service
+      .beginRemove(second.id, {
+        confirmationToken: secondPreview.confirmationToken,
+        confirmDestructive: secondPreview.warnings.length > 0
+      })
+      .then(
+        (operation) => ({ operation, error: null }),
+        (error: unknown) => ({ operation: null, error })
+      )
+      .finally(() => {
+        secondRemovalSettled = true
+      })
+    await Promise.resolve()
+    expect(secondRemovalSettled).toBe(false)
 
     await fs.rm(second.path, { recursive: true, force: true })
     await fs.mkdir(second.path, { recursive: true })
@@ -2005,10 +2111,8 @@ describe('TaskTTYService with injected command adapters', () => {
     expect((await waitForOperation(service, firstOperation.id)).status).toBe(
       'completed'
     )
-    const failed = await waitForOperation(service, secondOperation.id)
-    expect(failed).toMatchObject({
-      status: 'failed',
-      error: expect.stringMatching(/revalidation failed.*filesystem object/is)
+    await expect(secondRemoval).resolves.toMatchObject({
+      error: { code: 'REMOVE_PREVIEW_STALE' }
     })
     await expect(fs.readFile(replacement, 'utf8')).resolves.toBe(
       'preserved replacement'
@@ -2411,7 +2515,7 @@ describe('TaskTTYService with injected command adapters', () => {
     await expect(fs.readFile(marker, 'utf8')).resolves.toBe('external')
   })
 
-  it('keeps removal blocked while headless setup is still running', async () => {
+  it('queues removal while headless setup is still running', async () => {
     const { main, runner, service } = await fixture()
     await fs.mkdir(path.join(main, '.zed'), { recursive: true })
     await fs.writeFile(
@@ -2444,18 +2548,31 @@ describe('TaskTTYService with injected command adapters', () => {
       .getProject(project.id)
       .worktrees.find((worktree) => worktree.name === 'setup-locked')!
     const preview = await service.removePreview(linked.id)
-    await expect(
-      service.beginRemove(linked.id, {
+    let removalSettled = false
+    const removing = service
+      .beginRemove(linked.id, {
         confirmationToken: preview.confirmationToken,
         confirmDestructive: preview.warnings.length > 0
       })
-    ).rejects.toMatchObject({ code: 'REMOVE_IN_PROGRESS' })
+      .then(
+        (operation) => ({ operation, error: null }),
+        (error: unknown) => ({ operation: null, error })
+      )
+      .finally(() => {
+        removalSettled = true
+      })
+    await Promise.resolve()
+    expect(removalSettled).toBe(false)
 
     releaseSetup()
     await expect(creating).resolves.toMatchObject({
       worktree: { id: linked.id }
     })
     runner.setupGate = null
+    await expect(removing).resolves.toMatchObject({
+      error: { code: 'REMOVE_PREVIEW_STALE' }
+    })
+    expect(service.getWorktree(linked.id).status).toBe('active')
   })
 
   it("does not release another mutation's project lock after path registration is refused", async () => {
