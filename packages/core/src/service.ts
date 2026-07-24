@@ -151,6 +151,7 @@ export class TaskTTYService {
   private readonly worktreeLocks = new Set<string>()
   private readonly projectLocks = new Set<string>()
   private readonly worktreeMutations = new KeyedTaskQueue<string>()
+  private readonly terminalMutations = new KeyedTaskQueue<string>()
   private readonly removeConfirmationKey = crypto.randomBytes(32)
   private readonly terminalStates = new Map<string, TerminalRecord>()
   private readonly terminalIdsByWorktree = new Map<string, Set<string>>()
@@ -430,6 +431,7 @@ export class TaskTTYService {
             project.repositoryPath,
             project.mainWorktreePath
           )
+          await this.ensureProjectTerminals(project.id)
           project = this.deps.database.project(project.id) ?? project
         } catch (error) {
           project.availability = {
@@ -448,7 +450,14 @@ export class TaskTTYService {
               project.availability.state === 'available' && !worktree.prunable
                 ? this.deps.git.dirtyState(worktree.path).catch(() => null)
                 : null,
-              this.listWorktreeTerminals(worktree)
+              this.listWorktreeTerminals(worktree).catch((error: unknown) => {
+                project.availability = {
+                  state: 'unavailable',
+                  message:
+                    error instanceof Error ? error.message : String(error)
+                }
+                return []
+              })
             ])
             worktree.dirty = dirty
             worktree.terminals = terminals
@@ -1003,7 +1012,7 @@ export class TaskTTYService {
     }
 
     if (existing) {
-      return await this.serializeProjectObservation(projectId, async () => {
+      await this.serializeProjectObservation(projectId, async () => {
         if (
           this.projectLocks.has(projectId) ||
           this.worktreeMutations.has(projectId)
@@ -1019,21 +1028,21 @@ export class TaskTTYService {
         try {
           await updateRegistration()
           this.deps.database.setProjectOpen(projectId, true, now())
+          await this.ensureProjectTerminals(projectId).catch(() => undefined)
           this.invalidateProjectsSnapshot()
-          const project = this.getProject(projectId)
           this.events.publish('project.updated', { projectId })
-          return project
         } finally {
           this.projectLocks.delete(projectId)
         }
       })
+      return this.getProjectSnapshot(projectId)
     }
 
     await updateRegistration()
+    await this.ensureProjectTerminals(projectId).catch(() => undefined)
     this.invalidateProjectsSnapshot()
-    const project = this.getProject(projectId)
     this.events.publish('project.created', { projectId })
-    return project
+    return this.getProjectSnapshot(projectId)
   }
 
   private async observeAvailableProject(
@@ -1077,6 +1086,7 @@ export class TaskTTYService {
       const project = await this.observeAvailableProject(
         this.getProject(projectId)
       )
+      await this.ensureProjectTerminals(projectId)
       const defaultBranch = await this.deps.git.defaultBranch(
         project.repositoryPath
       )
@@ -2085,6 +2095,12 @@ export class TaskTTYService {
           : null
       }
 
+      try {
+        terminal ??= await this.ensureWorktreeTerminal(worktree.id)
+      } catch (error) {
+        terminalError ??= error instanceof Error ? error.message : String(error)
+      }
+
       this.invalidateProjectsSnapshot()
       return {
         worktree: this.getWorktree(worktree.id),
@@ -2097,8 +2113,54 @@ export class TaskTTYService {
     }
   }
 
-  async createTerminal(
-    worktreeId: string,
+  private async ensureProjectTerminals(projectId: string): Promise<void> {
+    const project = this.getProject(projectId)
+    if (this.deps.database.isProjectOpen(projectId) !== true) {
+      return
+    }
+
+    await Promise.all(
+      project.worktrees.map((worktree) =>
+        this.ensureWorktreeTerminal(worktree.id)
+      )
+    )
+  }
+
+  private ensureWorktreeTerminal(
+    worktreeId: string
+  ): Promise<TerminalRecord | null> {
+    if (this.terminalMutations.has(worktreeId)) {
+      return Promise.resolve(null)
+    }
+
+    return this.terminalMutations.enqueue(worktreeId, async () => {
+      const worktree = this.deps.database.worktree(worktreeId)
+      if (
+        !worktree ||
+        this.deps.database.isProjectOpen(worktree.projectId) !== true ||
+        worktree.status !== 'active' ||
+        worktree.prunable ||
+        this.worktreeLocks.has(worktreeId)
+      ) {
+        return null
+      }
+
+      this.worktreeLocks.add(worktreeId)
+      try {
+        const terminals = await this.listWorktreeTerminals(worktree)
+        if (terminals.length > 0) {
+          return terminals[0]!
+        }
+
+        return await this.createTerminalSession(worktree, 'Shell')
+      } finally {
+        this.worktreeLocks.delete(worktreeId)
+      }
+    })
+  }
+
+  private async createTerminalSession(
+    worktree: WorktreeRecord,
     name: string,
     argv?: string[],
     options?: {
@@ -2106,22 +2168,7 @@ export class TaskTTYService {
       returnToShell?: boolean
     }
   ): Promise<TerminalRecord> {
-    const worktree = await this.requireAvailableWorktree(worktreeId)
-    if (
-      (options?.setup === undefined &&
-        this.projectLocks.has(worktree.projectId)) ||
-      this.worktreeLocks.has(worktreeId) ||
-      worktree.status !== 'active'
-    ) {
-      throw new DomainError(
-        'WORKTREE_BUSY',
-        'Cannot create a terminal while the worktree is cleaning or failed',
-        409
-      )
-    }
-
     const project = this.requireOpenProject(worktree.projectId)
-    this.worktreeLocks.add(worktreeId)
     const terminalId = id('term')
     const sessionName = generateTmuxSessionName()
     const commandArgv = argv ? [...argv] : [this.deps.config.shell, '-l']
@@ -2131,7 +2178,7 @@ export class TaskTTYService {
         socketName: worktree.tmuxSocketName,
         sessionName,
         terminalId,
-        worktreeId,
+        worktreeId: worktree.id,
         name,
         createdAt: timestamp,
         cwd: worktree.path,
@@ -2156,12 +2203,11 @@ export class TaskTTYService {
         error instanceof Error ? error.message : String(error),
         500
       )
-    } finally {
-      this.worktreeLocks.delete(worktreeId)
     }
+
     const terminal: TerminalRecord = {
       id: terminalId,
-      worktreeId,
+      worktreeId: worktree.id,
       name,
       tmuxSessionName: sessionName,
       argv: commandArgv,
@@ -2171,16 +2217,60 @@ export class TaskTTYService {
       updatedAt: timestamp
     }
     this.terminalStates.set(terminalId, terminal)
-    const terminalIds = this.terminalIdsByWorktree.get(worktreeId) ?? new Set()
+    const terminalIds = this.terminalIdsByWorktree.get(worktree.id) ?? new Set()
     terminalIds.add(terminalId)
-    this.terminalIdsByWorktree.set(worktreeId, terminalIds)
+    this.terminalIdsByWorktree.set(worktree.id, terminalIds)
     this.invalidateProjectsSnapshot()
     this.events.publish('terminal.created', {
       projectId: project.id,
-      worktreeId,
+      worktreeId: worktree.id,
       terminalId
     })
     return terminal
+  }
+
+  async createTerminal(
+    worktreeId: string,
+    name: string,
+    argv?: string[],
+    options?: {
+      setup?: { tasks: WorktreeSetupTask[]; error: string | null }
+      returnToShell?: boolean
+    }
+  ): Promise<TerminalRecord> {
+    await this.requireAvailableWorktree(worktreeId)
+    try {
+      return await this.terminalMutations.enqueue(worktreeId, async () => {
+        const worktree = this.deps.database.worktree(worktreeId)
+        if (!worktree) {
+          throw new DomainError('WORKTREE_NOT_FOUND', 'Worktree not found', 404)
+        }
+
+        if (
+          (options?.setup === undefined &&
+            this.projectLocks.has(worktree.projectId)) ||
+          this.worktreeLocks.has(worktreeId) ||
+          worktree.status !== 'active' ||
+          worktree.prunable
+        ) {
+          throw new DomainError(
+            'WORKTREE_BUSY',
+            'Cannot create a terminal while the worktree is cleaning or failed',
+            409
+          )
+        }
+
+        this.worktreeLocks.add(worktreeId)
+        try {
+          return await this.createTerminalSession(worktree, name, argv, options)
+        } finally {
+          this.worktreeLocks.delete(worktreeId)
+        }
+      })
+    } catch (error) {
+      this.invalidateProjectsSnapshot()
+      throw error
+    }
   }
 
   async refreshTerminalStatus(
@@ -2289,6 +2379,15 @@ export class TaskTTYService {
 
     this.worktreeLocks.add(worktree.id)
     try {
+      const terminals = await this.listWorktreeTerminals(worktree)
+      if (terminals.length <= 1) {
+        throw new DomainError(
+          'LAST_TERMINAL',
+          'Every open worktree must keep at least one terminal',
+          409
+        )
+      }
+
       await this.deps.tmux.killSession(
         worktree.tmuxSocketName,
         terminal.tmuxSessionName,
@@ -2815,7 +2914,10 @@ export class TaskTTYService {
   }
 
   async drainMutations(): Promise<void> {
-    await this.worktreeMutations.drain()
+    await Promise.all([
+      this.worktreeMutations.drain(),
+      this.terminalMutations.drain()
+    ])
   }
 
   async reconcile(): Promise<void> {
@@ -2842,6 +2944,7 @@ export class TaskTTYService {
           .configureServer(worktree.tmuxSocketName)
           .catch(() => undefined)
       }
+      await this.ensureProjectTerminals(project.id).catch(() => undefined)
     }
   }
 }

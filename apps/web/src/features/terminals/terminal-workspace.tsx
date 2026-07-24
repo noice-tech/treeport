@@ -119,7 +119,10 @@ export function TerminalWorkspace({
       setDrawerOpen(false)
       await queryClient.invalidateQueries({ queryKey: projectsQueryKey })
     },
-    onError: showError,
+    onError: async (error) => {
+      showError(error)
+      await queryClient.invalidateQueries({ queryKey: projectsQueryKey })
+    },
     onSettled: () => {
       createTerminalGuardRef.current = false
     }
@@ -197,7 +200,11 @@ export function TerminalWorkspace({
   }
 
   const requestCloseTerminal = (terminal: TerminalRecord) => {
-    if (closeTerminal.isPending || closeTerminalGuardRef.current) {
+    if (
+      closeTerminal.isPending ||
+      closeTerminalGuardRef.current ||
+      selectedWorktree?.terminals.length === 1
+    ) {
       return
     }
 
