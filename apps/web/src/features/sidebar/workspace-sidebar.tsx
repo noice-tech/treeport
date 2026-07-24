@@ -914,29 +914,24 @@ export function WorkspaceSidebar({
                                     terminal.name
                                   }, ${status}`}
                                 >
-                                  {progress && !needsAttention ? (
-                                    <ArrowPathIcon
-                                      className={cn(
-                                        'size-4 shrink-0 fill-cyan-300',
+                                  <TerminalIcon
+                                    className={cn(
+                                      'size-4 shrink-0 stroke-zinc-600 stroke-[1.5]',
+                                      progress &&
+                                        !needsAttention &&
                                         progress.state !== 'paused' &&
-                                          progress.state !== 'error' &&
-                                          'animate-spin',
-                                        progress.state === 'error' &&
-                                          'fill-rose-300',
-                                        progress.state === 'paused' &&
-                                          'fill-amber-300'
-                                      )}
-                                      aria-hidden="true"
-                                    />
-                                  ) : (
-                                    <TerminalIcon
-                                      className={cn(
-                                        'size-4 shrink-0 stroke-zinc-600 stroke-[1.5]',
-                                        needsAttention && 'stroke-amber-300'
-                                      )}
-                                      aria-hidden="true"
-                                    />
-                                  )}
+                                        progress.state !== 'error' &&
+                                        'terminal-progress-icon stroke-cyan-400',
+                                      progress?.state === 'error' &&
+                                        !needsAttention &&
+                                        'stroke-rose-300',
+                                      progress?.state === 'paused' &&
+                                        !needsAttention &&
+                                        'stroke-amber-300',
+                                      needsAttention && 'stroke-amber-300'
+                                    )}
+                                    aria-hidden="true"
+                                  />
                                   <span
                                     className={cn(
                                       'truncate',

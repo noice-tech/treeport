@@ -6,6 +6,7 @@ import {
   PlusIcon,
   XMarkIcon
 } from '@heroicons/react/16/solid'
+import { TerminalIcon } from 'lucide-react'
 import type {
   TerminalPreset,
   TerminalRecord,
@@ -300,14 +301,14 @@ export function TerminalView({
                       title={title}
                     >
                       {progress ? (
-                        <ArrowPathIcon
+                        <TerminalIcon
                           className={cn(
-                            'size-4 shrink-0 fill-cyan-300',
+                            'size-4 shrink-0 stroke-[1.5]',
                             progress.state !== 'paused' &&
                               progress.state !== 'error' &&
-                              'animate-spin',
-                            progress.state === 'error' && 'fill-rose-300',
-                            progress.state === 'paused' && 'fill-amber-300',
+                              'terminal-progress-icon stroke-cyan-400',
+                            progress.state === 'error' && 'stroke-rose-300',
+                            progress.state === 'paused' && 'stroke-amber-300',
                             needsAttention &&
                               'drop-shadow-[0_0_0.35rem_#fcd34d]'
                           )}
