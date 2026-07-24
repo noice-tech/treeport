@@ -61,7 +61,7 @@ export interface WorkspaceSidebarProps {
   activeProject: ProjectRecord | null
   selectedWorktree: WorktreeRecord | null
   selectedTerminalId: string | null
-  allTerminals: TerminalRecord[]
+  projectTerminals: TerminalRecord[]
   runtimeTitles: ReadonlyMap<string, string>
   bellAttention: ReadonlySet<string>
   terminalProgress: ReadonlyMap<string, TerminalProgress>
@@ -493,7 +493,7 @@ export function WorkspaceSidebar({
   activeProject,
   selectedWorktree,
   selectedTerminalId,
-  allTerminals,
+  projectTerminals,
   runtimeTitles,
   bellAttention,
   terminalProgress,
@@ -552,7 +552,7 @@ export function WorkspaceSidebar({
           aria-label="Terminal selector"
           value={selectedTerminalId ?? ''}
           onChange={(event) => {
-            const terminal = allTerminals.find(
+            const terminal = projectTerminals.find(
               (item) => item.id === event.target.value
             )
             if (terminal) {
@@ -561,7 +561,7 @@ export function WorkspaceSidebar({
           }}
         >
           <option value="">Select terminal</option>
-          {allTerminals.map((terminal) => (
+          {projectTerminals.map((terminal) => (
             <option value={terminal.id} key={terminal.id}>
               {runtimeTitles.get(terminal.id) || terminal.name}
             </option>
