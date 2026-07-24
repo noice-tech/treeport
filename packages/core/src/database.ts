@@ -446,7 +446,7 @@ export class TaskTTYDatabase {
   private mapProject(row: ProjectRow): ProjectRecord {
     const worktrees = this.connection
       .prepare(
-        "SELECT * FROM worktrees WHERE project_id = ? AND status != 'removed' ORDER BY kind, created_at"
+        "SELECT * FROM worktrees WHERE project_id = ? AND status != 'removed' ORDER BY CASE kind WHEN 'main' THEN 0 ELSE 1 END, created_at, rowid"
       )
       .all(row.id) as WorktreeRow[]
     return {

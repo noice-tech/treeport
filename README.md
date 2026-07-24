@@ -10,7 +10,7 @@ It works with the Git worktrees you already have. No migration, custom task form
 
 - **Worktrees are tasks** — each Git worktree becomes a focused workspace with its own terminals.
 - **Desktop and browser** — use the Electron app, a desktop browser, or the responsive web UI on another device.
-- **Fully synchronized terminals** — terminals live in tmux and persist across navigation, reloads, disconnects, and clients. Multiple viewers share one canonical terminal size and can hand off control.
+- **Fully synchronized terminals** — terminals live in tmux and persist across navigation, reloads, disconnects, and clients. Multiple viewers share one canonical terminal size, with control handed off automatically when you interact.
 - **Fast keyboard navigation** — create worktrees and terminals, close terminals, switch projects, and jump between terminal tabs with shortcuts.
 - **Terminal-aware notifications** — titles, OSC `9;4` progress, and unread BEL activity surface across worktrees and terminal tabs, even when a terminal is not open.
 - **Built for agents** — the included Agent Skill and CLI let agents inspect their context, create persistent terminals and worktrees, wait for terminal activity, and spawn child tasks you can immediately open.
