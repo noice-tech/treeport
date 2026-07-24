@@ -75,6 +75,7 @@ const EMPTY_SNAPSHOT: TerminalSessionSnapshot = {
   phase: 'closed',
   degraded: false,
   controller: false,
+  controlPending: false,
   title: null,
   bellActive: false,
   bellSerial: 0,
@@ -442,15 +443,19 @@ export function TerminalView({
             </DropdownMenuContent>
           </DropdownMenu>
           {terminal && snapshot.phase === 'ready' && !snapshot.controller && (
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              className="my-1 mr-1 ml-auto shrink-0"
-              onClick={() => activeSession?.takeControl()}
+            <span
+              className="my-1 mr-2 ml-auto inline-flex shrink-0 items-center gap-1.5 self-center rounded-full bg-white/5 px-2 py-1 text-[0.6875rem] font-medium text-zinc-400 ring-1 ring-white/8"
+              title="Interact with the terminal to control it"
             >
-              Take control
-            </Button>
+              <span
+                className={cn(
+                  'size-1.5 rounded-full bg-zinc-500',
+                  snapshot.controlPending && 'animate-pulse bg-cyan-400'
+                )}
+                aria-hidden="true"
+              />
+              {snapshot.controlPending ? 'Taking control…' : 'Viewing'}
+            </span>
           )}
         </header>
         {terminal ? (
@@ -461,7 +466,7 @@ export function TerminalView({
               forceMount
               className="xterm-host absolute inset-0 min-h-0 min-w-0 overflow-hidden p-2.5 outline-none max-[700px]:p-1.5"
               ref={hostRef}
-              onMouseDown={() => activeSession?.focus()}
+              onMouseDown={() => activeSession?.focus({ requestControl: true })}
             />
             {(snapshot.degraded || snapshot.fileTransfer) && (
               <div className="pointer-events-none absolute inset-x-0 top-3 z-10 flex flex-col items-center gap-2">
@@ -508,7 +513,14 @@ export function TerminalView({
               </div>
             )}
             <span className="sr-only" aria-live="polite">
-              {snapshot.bellActive ? `Bell from ${visibleTitle}` : ''}
+              {snapshot.phase === 'ready'
+                ? snapshot.controller
+                  ? 'Controlling terminal'
+                  : snapshot.controlPending
+                    ? 'Taking control of terminal'
+                    : 'Viewing terminal'
+                : ''}
+              {snapshot.bellActive ? ` Bell from ${visibleTitle}` : ''}
             </span>
           </div>
         ) : loading ? (
@@ -541,6 +553,7 @@ export function TerminalView({
           <div
             className="accessory-row hidden min-w-0 overflow-x-auto border-t border-white/8 bg-zinc-900 pt-1 pr-[env(safe-area-inset-right)] pb-[calc(0.25rem+env(safe-area-inset-bottom))] pl-[env(safe-area-inset-left)] max-[700px]:flex [&_button]:h-11 [&_button]:min-w-11 [&_button]:grow [&_button]:rounded-none [&_button]:border-r [&_button]:border-white/8 [&_button]:text-sm [&_button:last-child]:border-r-0"
             aria-label="Terminal accessory keys"
+            onPointerDownCapture={() => activeSession?.requestControl()}
           >
             <Button
               variant="ghost"

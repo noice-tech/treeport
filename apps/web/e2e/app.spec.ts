@@ -418,23 +418,34 @@ async function mockApp(
         const message = { type, ...payload }
         scope.__wsSent = [...(scope.__wsSent || []), message]
         if (type === 'resize' || type === 'take_control') {
-          const terminalState = readTerminalState(this.terminalId)
-          if (!terminalState) {
-            throw new Error('Missing mock terminal state')
-          }
+          const applyTerminalUpdate = () => {
+            const terminalState = readTerminalState(this.terminalId)
+            if (!terminalState) {
+              throw new Error('Missing mock terminal state')
+            }
 
-          if (payload.cols !== this.cols || payload.rows !== this.rows) {
-            terminalState.cols = payload.cols
-            terminalState.rows = payload.rows
-            terminalState.revision += 1
-          }
+            if (payload.cols !== this.cols || payload.rows !== this.rows) {
+              terminalState.cols = payload.cols
+              terminalState.rows = payload.rows
+              terminalState.revision += 1
+            }
 
-          if (type === 'take_control') {
-            terminalState.controllerClientId = this.clientId
-            terminalState.generation += 1
-          }
+            if (type === 'take_control') {
+              terminalState.controllerClientId = this.clientId
+              terminalState.generation += 1
+            }
 
-          storeTerminalState(terminalState)
+            storeTerminalState(terminalState)
+          }
+          if (type === 'take_control' && scope.__delayTakeControl) {
+            scope.__releaseTakeControl = () => {
+              scope.__delayTakeControl = false
+              scope.__releaseTakeControl = null
+              applyTerminalUpdate()
+            }
+          } else {
+            applyTerminalUpdate()
+          }
         }
       }
 
@@ -1054,6 +1065,36 @@ async function mockApp(
       failCreate = true
     }
   }
+}
+
+async function waitForTerminalControl(page: Page) {
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const terminalId = location.pathname.split('/').at(-1)
+        const socket = [...((window as any).__wsInstances ?? [])]
+          .reverse()
+          .find(
+            (candidate: any) =>
+              candidate.namespace === '/terminals' &&
+              candidate.terminalId === terminalId
+          )
+        const state = terminalId
+          ? JSON.parse(
+              localStorage.getItem(
+                `__tasktty_terminal_state__:${terminalId}`
+              ) || '{}'
+            )
+          : null
+        return Boolean(socket && state?.controllerClientId === socket.clientId)
+      })
+    )
+    .toBe(true)
+}
+
+async function requestTerminalControl(page: Page) {
+  await page.locator('.xterm-screen').click({ position: { x: 4, y: 4 } })
+  await waitForTerminalControl(page)
 }
 
 test.describe('desktop worktree terminal UI', () => {
@@ -2032,13 +2073,9 @@ test.describe('desktop worktree terminal UI', () => {
   }) => {
     await mockApp(page)
     await page.getByRole('button', { name: 'Pi, running', exact: true }).click()
-    await expect(
-      page.getByRole('button', { name: 'Take control' })
-    ).toBeVisible()
-    await page.getByRole('button', { name: 'Take control' }).click()
-    await expect(
-      page.getByRole('button', { name: 'Take control' })
-    ).toHaveCount(0)
+    await expect(page.getByText('Viewing', { exact: true })).toBeVisible()
+    await requestTerminalControl(page)
+    await expect(page.getByText('Viewing', { exact: true })).toHaveCount(0)
     const before = await page.evaluate(
       () => (window as any).__wsInstances.length
     )
@@ -2046,6 +2083,109 @@ test.describe('desktop worktree terminal UI', () => {
     await expect
       .poll(() => page.evaluate(() => (window as any).__wsInstances.length))
       .toBeGreaterThan(before)
+  })
+
+  test('shows pending control and does not replay the triggering key', async ({
+    page
+  }) => {
+    await mockApp(page)
+    await page.getByRole('button', { name: 'Pi, running', exact: true }).click()
+    await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
+    await expect(page.getByText('Viewing', { exact: true })).toBeVisible()
+    await page.evaluate(() => {
+      ;(window as any).__wsSent = []
+      ;(window as any).__delayTakeControl = true
+      document.querySelector('.xterm-helper-textarea')!.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          bubbles: true,
+          key: 'f',
+          metaKey: true
+        })
+      )
+    })
+    await page.waitForTimeout(50)
+    await expect(page.getByText('Viewing', { exact: true })).toBeVisible()
+    expect(
+      await page.evaluate(() =>
+        (window as any).__wsSent.some(
+          (message: any) => message.type === 'take_control'
+        )
+      )
+    ).toBe(false)
+
+    await page.keyboard.press('x')
+    await expect(
+      page.getByText('Taking control…', { exact: true })
+    ).toBeVisible()
+    expect(
+      await page.evaluate(() =>
+        (window as any).__wsSent.some(
+          (message: any) => message.type === 'input' && message.data === 'x'
+        )
+      )
+    ).toBe(false)
+
+    await page.evaluate(() => (window as any).__releaseTakeControl())
+    await waitForTerminalControl(page)
+    expect(
+      await page.evaluate(() =>
+        (window as any).__wsSent.some(
+          (message: any) => message.type === 'input' && message.data === 'x'
+        )
+      )
+    ).toBe(false)
+
+    await page.keyboard.press('y')
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          (window as any).__wsSent.some(
+            (message: any) => message.type === 'input' && message.data === 'y'
+          )
+        )
+      )
+      .toBe(true)
+  })
+
+  test('takes control on an ordinary clipboard paste without replaying it', async ({
+    page
+  }) => {
+    await mockApp(page)
+    await page.getByRole('button', { name: 'Pi, running', exact: true }).click()
+    await page.evaluate(() => {
+      ;(window as any).__wsSent = []
+      ;(window as any).__delayTakeControl = true
+      const clipboard = new DataTransfer()
+      clipboard.setData('text/plain', 'pasted while viewing')
+      const event = new Event('paste', { bubbles: true, cancelable: true })
+      Object.defineProperty(event, 'clipboardData', { value: clipboard })
+      document.querySelector('.xterm-helper-textarea')!.dispatchEvent(event)
+    })
+
+    await expect(
+      page.getByText('Taking control…', { exact: true })
+    ).toBeVisible()
+    expect(
+      await page.evaluate(() =>
+        (window as any).__wsSent.some(
+          (message: any) =>
+            message.type === 'input' &&
+            String(message.data).includes('pasted while viewing')
+        )
+      )
+    ).toBe(false)
+
+    await page.evaluate(() => (window as any).__releaseTakeControl())
+    await waitForTerminalControl(page)
+    expect(
+      await page.evaluate(() =>
+        (window as any).__wsSent.some(
+          (message: any) =>
+            message.type === 'input' &&
+            String(message.data).includes('pasted while viewing')
+        )
+      )
+    ).toBe(false)
   })
 
   test('broadcasts canonical dimensions and controller takeover across two viewers', async ({
@@ -2060,13 +2200,9 @@ test.describe('desktop worktree terminal UI', () => {
       .getByRole('button', { name: 'Pi, running', exact: true })
       .click()
 
-    await page.getByRole('button', { name: 'Take control' }).click()
-    await expect(
-      page.getByRole('button', { name: 'Take control' })
-    ).toHaveCount(0)
-    await expect(
-      viewer.getByRole('button', { name: 'Take control' })
-    ).toBeVisible()
+    await requestTerminalControl(page)
+    await expect(page.getByText('Viewing', { exact: true })).toHaveCount(0)
+    await expect(viewer.getByText('Viewing', { exact: true })).toBeVisible()
     await page.waitForTimeout(250)
     const beforeControllerResize = await page.evaluate(() =>
       JSON.parse(
@@ -2121,13 +2257,9 @@ test.describe('desktop worktree terminal UI', () => {
     )
     expect(afterViewerResize).toEqual(afterControllerResize)
 
-    await viewer.getByRole('button', { name: 'Take control' }).click()
-    await expect(
-      viewer.getByRole('button', { name: 'Take control' })
-    ).toHaveCount(0)
-    await expect(
-      page.getByRole('button', { name: 'Take control' })
-    ).toBeVisible()
+    await requestTerminalControl(viewer)
+    await expect(viewer.getByText('Viewing', { exact: true })).toHaveCount(0)
+    await expect(page.getByText('Viewing', { exact: true })).toBeVisible()
     const takeoverState = await viewer.evaluate(() => {
       const socket = (window as any).__lastWs
       return {
@@ -2193,9 +2325,7 @@ test.describe('desktop worktree terminal UI', () => {
   }) => {
     await mockApp(page)
     await page.getByRole('button', { name: 'Pi, running', exact: true }).click()
-    await expect(
-      page.getByRole('button', { name: 'Take control' })
-    ).toBeVisible()
+    await expect(page.getByText('Viewing', { exact: true })).toBeVisible()
     await page.evaluate(async () => {
       const socket = (window as any).__lastWs
       socket.onmessage?.({
@@ -2634,7 +2764,7 @@ test.describe('desktop worktree terminal UI', () => {
   }) => {
     await mockApp(page, [], { keyboardPlatform: 'MacIntel' })
     await page.getByRole('button', { name: 'Pi, running', exact: true }).click()
-    await page.getByRole('button', { name: 'Take control' }).click()
+    await requestTerminalControl(page)
     await page.locator('.xterm-helper-textarea').focus()
     await page.evaluate(() => {
       ;(window as any).__wsSent = []
@@ -2662,7 +2792,7 @@ test.describe('desktop worktree terminal UI', () => {
   }) => {
     const mocked = await mockApp(page)
     await page.getByRole('button', { name: 'Pi, running', exact: true }).click()
-    await page.getByRole('button', { name: 'Take control' }).click()
+    await expect(page.getByText('Viewing', { exact: true })).toBeVisible()
     await page.evaluate(() => {
       const socket = (window as any).__lastWs
       socket.onmessage?.({
@@ -2675,11 +2805,9 @@ test.describe('desktop worktree terminal UI', () => {
         })
       })
       ;(window as any).__wsSent = []
-    })
-
-    const paste = await page
-      .locator('.xterm-helper-textarea')
-      .evaluate((textarea) => {
+      ;(window as any).__delayTakeControl = true
+      ;(window as any).__pasteTerminalFile = () => {
+        const textarea = document.querySelector('.xterm-helper-textarea')!
         const clipboard = new DataTransfer()
         clipboard.items.add(
           new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], 'shot.png', {
@@ -2692,9 +2820,24 @@ test.describe('desktop worktree terminal UI', () => {
           files: clipboard.files.length,
           prevented: !textarea.dispatchEvent(event)
         }
-      })
-    expect(paste).toEqual({ files: 1, prevented: true })
+      }
+    })
 
+    const pasteWhileViewing = await page.evaluate(() =>
+      (window as any).__pasteTerminalFile()
+    )
+    expect(pasteWhileViewing).toEqual({ files: 1, prevented: true })
+    await expect(page.getByRole('alert')).toContainText(
+      'Couldn’t paste file: taking control; try again in a moment'
+    )
+    expect(mocked.fileUploadRequests()).toBe(0)
+
+    await page.evaluate(() => (window as any).__releaseTakeControl())
+    await waitForTerminalControl(page)
+    const paste = await page.evaluate(() =>
+      (window as any).__pasteTerminalFile()
+    )
+    expect(paste).toEqual({ files: 1, prevented: true })
     await expect.poll(mocked.fileUploadRequests).toBe(1)
     await expect
       .poll(() =>
@@ -2756,7 +2899,7 @@ test.describe('desktop worktree terminal UI', () => {
   }) => {
     await mockApp(page, [], { keyboardPlatform: 'MacIntel' })
     await page.getByRole('button', { name: 'Pi, running', exact: true }).click()
-    await page.getByRole('button', { name: 'Take control' }).click()
+    await requestTerminalControl(page)
     await page.evaluate(() => {
       ;(window as any).__openedTerminalLinks = []
       window.open = (...args) => {
@@ -2811,10 +2954,7 @@ test.describe('desktop worktree terminal UI', () => {
 
     await page.reload()
     await expect(page.locator('.xterm')).toBeVisible()
-    const takeControl = page.getByRole('button', { name: 'Take control' })
-    if ((await takeControl.count()) > 0) {
-      await takeControl.click()
-    }
+    await requestTerminalControl(page)
 
     await page.locator('.xterm-helper-textarea').focus()
     await page.evaluate(() => {
@@ -3183,7 +3323,12 @@ test.describe('mobile terminal UI', () => {
     await expect(
       page.locator('select[name="terminal-selector"] option:checked')
     ).toHaveText('Pi')
-    await page.getByRole('button', { name: 'Take control' }).click()
+    await expect(page.getByText('Viewing', { exact: true })).toBeVisible()
+    await page.evaluate(() => {
+      ;(window as any).__wsSent = []
+    })
+    await page.getByRole('button', { name: 'Esc' }).click()
+    await waitForTerminalControl(page)
     await page.getByRole('button', { name: 'Esc' }).click()
     await page.evaluate(() => {
       const socket = (window as any).__lastWs
@@ -3354,7 +3499,49 @@ test.describe('mobile terminal UI', () => {
     await mockApp(page)
     await page.getByLabel('Open worktree drawer').click()
     await page.getByRole('button', { name: 'Pi, running', exact: true }).click()
-    await page.getByRole('button', { name: 'Take control' }).click()
+    const screen = page.locator('.xterm-screen')
+    const bounds = await screen.boundingBox()
+    const row = await page.locator('.xterm-rows > div').first().boundingBox()
+    expect(bounds).not.toBeNull()
+    expect(row).not.toBeNull()
+    const client = await page.context().newCDPSession(page)
+    const x = bounds!.x + bounds!.width / 2
+    const startY = bounds!.y + row!.height * 2
+    const positions = [0, 4, 8, 12].map((rows) => startY + row!.height * rows)
+
+    await client.send('Input.dispatchTouchEvent', {
+      type: 'touchStart',
+      touchPoints: [{ x, y: positions[0]! }]
+    })
+    await client.send('Input.dispatchTouchEvent', {
+      type: 'touchMove',
+      touchPoints: [{ x, y: positions[1]! }]
+    })
+    await client.send('Input.dispatchTouchEvent', {
+      type: 'touchEnd',
+      touchPoints: []
+    })
+    await page.waitForTimeout(100)
+    expect(
+      await page.evaluate(() => {
+        const socket = (window as any).__lastWs
+        const state = JSON.parse(
+          localStorage.getItem('__tasktty_terminal_state__:term_pi') || '{}'
+        )
+        return state.controllerClientId === socket.clientId
+      })
+    ).toBe(false)
+    await expect(page.getByText('Viewing', { exact: true })).toBeVisible()
+
+    await client.send('Input.dispatchTouchEvent', {
+      type: 'touchStart',
+      touchPoints: [{ x, y: positions[0]! }]
+    })
+    await client.send('Input.dispatchTouchEvent', {
+      type: 'touchEnd',
+      touchPoints: []
+    })
+    await waitForTerminalControl(page)
     await page.evaluate(() => {
       const socket = (window as any).__lastWs
       socket.onmessage?.({
@@ -3368,16 +3555,7 @@ test.describe('mobile terminal UI', () => {
       })
       ;(window as any).__wsSent = []
     })
-    const screen = page.locator('.xterm-screen')
     await expect(page.locator('.xterm.enable-mouse-events')).toBeVisible()
-    const bounds = await screen.boundingBox()
-    const row = await page.locator('.xterm-rows > div').first().boundingBox()
-    expect(bounds).not.toBeNull()
-    expect(row).not.toBeNull()
-    const client = await page.context().newCDPSession(page)
-    const x = bounds!.x + bounds!.width / 2
-    const startY = bounds!.y + row!.height * 2
-    const positions = [0, 4, 8, 12].map((rows) => startY + row!.height * rows)
     await client.send('Input.dispatchTouchEvent', {
       type: 'touchStart',
       touchPoints: [{ x, y: positions[0]! }]
