@@ -347,7 +347,7 @@ export function TerminalView({
                             selected && 'text-zinc-400'
                           )}
                           aria-label={`Close ${title}`}
-                          disabled={closing}
+                          disabled={closing || terminals.length === 1}
                           onClick={() => onCloseTerminal(item)}
                         >
                           {closing ? (
@@ -358,7 +358,9 @@ export function TerminalView({
                         </Button>
                       </TooltipTrigger>
                       <TooltipContent side="bottom">
-                        Close terminal
+                        {terminals.length === 1
+                          ? 'Every worktree keeps at least one terminal'
+                          : 'Close terminal'}
                       </TooltipContent>
                     </Tooltip>
                   </div>
