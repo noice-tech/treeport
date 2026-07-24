@@ -34,6 +34,10 @@ import {
 } from './components/ui/tooltip.js'
 import { cn } from './lib/utils.js'
 import {
+  useRequestTerminalFocus,
+  useTerminalAutoFocus
+} from './terminal-focus.js'
+import {
   terminalProgressLabel,
   terminalSessions,
   type ArrowDirection,
@@ -45,10 +49,7 @@ import {
 interface TerminalViewProps {
   worktree: WorktreeRecord | null
   terminal: TerminalRecord | null
-  focusTerminalRequest: {
-    terminalId: string
-    sequence: number
-  } | null
+  autoFocusBlocked: boolean
   presets: TerminalPreset[]
   presetsLoading: boolean
   presetsError: boolean
@@ -84,7 +85,7 @@ const EMPTY_SNAPSHOT: TerminalSessionSnapshot = {
 export function TerminalView({
   worktree,
   terminal,
-  focusTerminalRequest,
+  autoFocusBlocked,
   presets,
   presetsLoading,
   presetsError,
@@ -105,8 +106,7 @@ export function TerminalView({
   const [alt, setAlt] = useState(false)
   const lastExitSerial = useRef(0)
   const lastExitSessionId = useRef<string | null>(null)
-  const handledFocusRequestSequence = useRef(0)
-  const shortcutFocusTerminalId = useRef<string | null>(null)
+  const requestTerminalFocus = useRequestTerminalFocus()
 
   useEffect(() => {
     if (!terminal) {
@@ -151,30 +151,11 @@ export function TerminalView({
     return () => activeSession.unmount(host)
   }, [activeSession])
 
-  useEffect(() => {
-    if (!activeSession) {
-      return
-    }
-
-    const focusRequestSequence =
-      activeSession.terminalId === focusTerminalRequest?.terminalId
-        ? focusTerminalRequest.sequence
-        : null
-    const focusAfterRequest =
-      focusRequestSequence !== null &&
-      handledFocusRequestSequence.current !== focusRequestSequence
-    const focusAfterShortcut =
-      activeSession.terminalId === shortcutFocusTerminalId.current
-    if (!focusAfterRequest && !focusAfterShortcut) {
-      return
-    }
-
-    if (focusRequestSequence !== null) {
-      handledFocusRequestSequence.current = focusRequestSequence
-    }
-    shortcutFocusTerminalId.current = null
-    activeSession.focus()
-  }, [activeSession, focusTerminalRequest])
+  useTerminalAutoFocus({
+    terminalId: terminal?.id ?? null,
+    session: activeSession,
+    blocked: autoFocusBlocked
+  })
 
   useEffect(() => {
     if (lastExitSessionId.current !== terminal?.id) {
@@ -243,10 +224,8 @@ export function TerminalView({
 
       event.preventDefault()
       event.stopPropagation()
-      if (activeSession?.terminalId === nextTerminal.id) {
+      if (activeSession && activeSession.terminalId === nextTerminal.id) {
         activeSession.focus()
-      } else {
-        shortcutFocusTerminalId.current = nextTerminal.id
       }
 
       onSelectTerminal(nextTerminal)
@@ -305,6 +284,11 @@ export function TerminalView({
                   >
                     <TabsTrigger
                       value={item.id}
+                      onClick={() => {
+                        if (selected) {
+                          requestTerminalFocus(item.id)
+                        }
+                      }}
                       className="flex h-full min-w-0 flex-1 items-center gap-1.5 py-0 pr-0.5 pl-3 text-[0.8125rem] font-normal text-zinc-500 outline-none group-hover/tab:text-zinc-200 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-cyan-400 data-[state=active]:text-zinc-50"
                       aria-label={`${title}, ${status}`}
                       aria-keyshortcuts={
