@@ -137,6 +137,36 @@ export default function App() {
   }, [error])
 
   useEffect(() => {
+    const keydown = (event: KeyboardEvent) => {
+      const usesMacKeyboard = /Mac|iPhone|iPad|iPod/.test(navigator.platform)
+      const modifierPressed = usesMacKeyboard
+        ? event.metaKey && !event.ctrlKey
+        : event.ctrlKey && !event.metaKey
+
+      if (
+        event.isComposing ||
+        event.key.toLocaleLowerCase() !== 'p' ||
+        !event.shiftKey ||
+        event.altKey ||
+        !modifierPressed ||
+        modal
+      ) {
+        return
+      }
+
+      event.preventDefault()
+      event.stopPropagation()
+      if (isMobile) {
+        setDrawerOpen(true)
+      }
+
+      setProjectSwitcherOpen(true)
+    }
+    document.addEventListener('keydown', keydown, true)
+    return () => document.removeEventListener('keydown', keydown, true)
+  }, [isMobile, modal])
+
+  useEffect(() => {
     if (!workspaceResolution || workspaceResolution.canonical) {
       return
     }
