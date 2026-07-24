@@ -54,6 +54,7 @@ const EMPTY_BELL_ATTENTION: ReadonlySet<string> = new Set()
 const EMPTY_FOREGROUND_PROCESSES: ReadonlySet<string> = new Set()
 const EMPTY_RUNTIME_TITLES: ReadonlyMap<string, string> = new Map()
 const EMPTY_TERMINAL_PROGRESS: ReadonlyMap<string, TerminalProgress> = new Map()
+const ERROR_TOAST_DURATION_MS = 5_000
 
 function clampSidebarWidth(width: number): number {
   return Math.min(MAX_SIDEBAR_WIDTH, Math.max(MIN_SIDEBAR_WIDTH, width))
@@ -122,6 +123,18 @@ export default function App() {
       trigger ?? (document.activeElement as HTMLElement | null)
     setModal(nextModal)
   }
+
+  useEffect(() => {
+    if (!error) {
+      return
+    }
+
+    const timer = window.setTimeout(
+      () => setError(null),
+      ERROR_TOAST_DURATION_MS
+    )
+    return () => window.clearTimeout(timer)
+  }, [error])
 
   useEffect(() => {
     if (!workspaceResolution || workspaceResolution.canonical) {
