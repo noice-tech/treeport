@@ -19,6 +19,7 @@ export function TerminalWorkspace({
   selectedProject,
   selectedWorktree,
   selectedTerminal,
+  loading,
   presets,
   presetsLoading,
   presetsError,
@@ -37,6 +38,7 @@ export function TerminalWorkspace({
   selectedProject: ProjectRecord | null
   selectedWorktree: WorktreeRecord | null
   selectedTerminal: TerminalRecord | null
+  loading: boolean
   presets: TerminalPreset[]
   presetsLoading: boolean
   presetsError: boolean
@@ -248,6 +250,7 @@ export function TerminalWorkspace({
     <TerminalView
       worktree={selectedWorktree}
       terminal={selectedTerminal}
+      loading={loading}
       autoFocusBlocked={
         modalOpen || projectSwitcherOpen || (isMobile && drawerOpen)
       }
