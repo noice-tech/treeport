@@ -6,6 +6,11 @@ contextBridge.exposeInMainWorld(
   'taskttyDesktop',
   Object.freeze({
     platform: process.platform,
+    openFileUrl(url: string): Promise<boolean> {
+      return ipcRenderer
+        .invoke('open-file-url', url)
+        .then((opened) => opened === true)
+    },
     onFullscreenChange(listener: (fullscreen: boolean) => void) {
       const receive = (_event: IpcRendererEvent, value: unknown) => {
         if (typeof value === 'boolean') {
