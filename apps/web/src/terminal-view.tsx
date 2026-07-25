@@ -6,7 +6,6 @@ import {
   PlusIcon,
   XMarkIcon
 } from '@heroicons/react/16/solid'
-import { TerminalIcon } from 'lucide-react'
 import type {
   TerminalPreset,
   TerminalRecord,
@@ -34,6 +33,7 @@ import {
   TooltipTrigger
 } from './components/ui/tooltip.js'
 import { cn } from './lib/utils.js'
+import { TerminalStatusIcon } from './components/terminal-status-icon.js'
 import {
   useRequestTerminalFocus,
   useTerminalAutoFocus
@@ -268,6 +268,10 @@ export function TerminalView({
                 const title = runtimeTitles.get(item.id) || item.name
                 const needsAttention = bellAttention.has(item.id)
                 const progress = terminalProgress.get(item.id)
+                const working =
+                  !!progress &&
+                  progress.state !== 'paused' &&
+                  progress.state !== 'error'
                 const status = [
                   item.status,
                   selected && snapshot.degraded ? 'reconnecting' : null,
@@ -301,18 +305,16 @@ export function TerminalView({
                       title={title}
                     >
                       {progress ? (
-                        <TerminalIcon
+                        <TerminalStatusIcon
+                          working={working}
                           className={cn(
-                            'size-4 shrink-0 stroke-[1.5]',
-                            progress.state !== 'paused' &&
-                              progress.state !== 'error' &&
-                              'terminal-progress-icon stroke-cyan-400',
+                            'size-4 shrink-0 stroke-zinc-500',
+                            working && 'stroke-cyan-400',
                             progress.state === 'error' && 'stroke-rose-300',
                             progress.state === 'paused' && 'stroke-amber-300',
                             needsAttention &&
-                              'drop-shadow-[0_0_0.35rem_#fcd34d]'
+                              'stroke-amber-300'
                           )}
-                          aria-hidden="true"
                         />
                       ) : item.status !== 'running' || needsAttention ? (
                         <span
@@ -325,7 +327,12 @@ export function TerminalView({
                           aria-hidden="true"
                         />
                       ) : null}
-                      <span className="min-w-0 flex-1 truncate text-base sm:text-[0.734375rem]">
+                      <span
+                        className={cn(
+                          'min-w-0 flex-1 truncate text-base sm:text-[0.734375rem]',
+                          working && !needsAttention && 'text-cyan-300'
+                        )}
+                      >
                         {title}
                       </span>
                       {index < 9 && (

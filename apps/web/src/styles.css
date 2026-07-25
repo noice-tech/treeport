@@ -6,6 +6,13 @@
   --font-sans: 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
   --font-sans--font-feature-settings:
     'cv02', 'cv03', 'cv04', 'cv11', 'ss01', 'ss03';
+  --animate-comet: comet 1.1s linear infinite;
+
+  @keyframes comet {
+    to {
+      stroke-dashoffset: -100;
+    }
+  }
 }
 
 @custom-variant dark (&:is(.dark *));
@@ -245,11 +252,6 @@ code {
   animation-direction: reverse;
 }
 
-.terminal-progress-icon {
-  transform-origin: center;
-  animation: terminal-working 2s ease-in-out infinite;
-}
-
 @keyframes worktree-branch-breathe {
   0%,
   100% {
@@ -298,31 +300,10 @@ code {
   }
 }
 
-@keyframes terminal-working {
-  0%,
-  100% {
-    opacity: 0.72;
-    transform: scale(0.96);
-    filter: drop-shadow(
-      0 0 0.06rem color-mix(in oklab, var(--color-cyan-400) 20%, transparent)
-    );
-  }
-
-  48%,
-  68% {
-    opacity: 1;
-    transform: scale(1);
-    filter: drop-shadow(
-      0 0 0.12rem color-mix(in oklab, var(--color-cyan-400) 35%, transparent)
-    );
-  }
-}
-
 @media (prefers-reduced-motion: reduce) {
   .worktree-progress-icon,
   .worktree-progress-icon :is(path, line, polyline),
-  .worktree-progress-icon circle,
-  .terminal-progress-icon {
+  .worktree-progress-icon circle {
     animation: none;
   }
 }
