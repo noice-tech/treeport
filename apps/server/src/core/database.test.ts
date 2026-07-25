@@ -6,7 +6,7 @@ import {
   deserializeOperation,
   serializeOperation,
   TaskTTYDatabase
-} from './database.js'
+} from './database'
 
 const databases: TaskTTYDatabase[] = []
 const directories: string[] = []

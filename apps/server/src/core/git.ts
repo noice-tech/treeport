@@ -2,8 +2,8 @@ import crypto from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import type { DirtyState } from '@tasktty/shared'
-import type { CommandRunner } from './command.js'
-import { runChecked } from './command.js'
+import type { CommandRunner } from './command'
+import { runChecked } from './command'
 
 export interface GitWorktreeInfo {
   path: string

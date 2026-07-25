@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { loadConfig } from './config.js'
+import { loadConfig } from './config'
 
 describe('configuration', () => {
   it('defaults to loopback and XDG data locations', () => {

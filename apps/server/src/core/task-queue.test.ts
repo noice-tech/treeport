@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { KeyedTaskQueue } from './task-queue.js'
+import { KeyedTaskQueue } from './task-queue'
 
 function gate() {
   let release!: () => void

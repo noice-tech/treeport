@@ -1,8 +1,8 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { parse, printParseErrorCode, type ParseError } from 'jsonc-parser'
-import type { CommandRunner } from './command.js'
-import type { WorktreeSetupTask } from './setup.js'
+import type { CommandRunner } from './command'
+import type { WorktreeSetupTask } from './setup'
 
 const DEFAULT_WORKTREE_DIRECTORY = '../worktrees'
 const MAX_HOOK_OUTPUT = 4_000

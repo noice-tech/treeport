@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { assertCleanupTransition } from './domain.js'
+import { assertCleanupTransition } from './domain'
 
 describe('worktree removal state', () => {
   it('enforces conservative removal state transitions', () => {

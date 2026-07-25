@@ -2,12 +2,12 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import type { CommandRequest, CommandResult, CommandRunner } from './command.js'
+import type { CommandRequest, CommandResult, CommandRunner } from './command'
 import {
   generateTmuxSessionName,
   generateTmuxSocketName,
   TmuxAdapter
-} from './tmux.js'
+} from './tmux'
 
 const temporary: string[] = []
 afterEach(async () =>
@@ -92,7 +92,7 @@ describe('TmuxAdapter', () => {
     const runtime = await fs.mkdtemp(path.join(os.tmpdir(), 'tasktty-runtime-'))
     temporary.push(runtime)
     const runner = new RecordingRunner()
-    const adapter = new TmuxAdapter(runner, runtime)
+    const adapter = new TmuxAdapter(runner, runtime, 'tmux', '/launcher.js')
 
     await adapter.createSession({
       socketName: 'socket',

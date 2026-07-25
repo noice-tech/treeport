@@ -6,7 +6,7 @@ import {
   resizeControlClient,
   TmuxControlParser,
   TmuxControlProtocolError
-} from './tmux-control.js'
+} from './tmux-control'
 
 const bytes = (...values: number[]) => Uint8Array.from(values)
 const utf8 = (value: string) => Uint8Array.from(Buffer.from(value))

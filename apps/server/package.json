@@ -4,15 +4,17 @@
   "private": true,
   "type": "module",
   "main": "dist/index.js",
+  "files": [
+    "dist"
+  ],
   "scripts": {
-    "dev": "tsx watch src/index.ts",
-    "build": "tsc -b",
-    "start": "node dist/index.js",
+    "dev": "tsdown --watch --on-success \"node --enable-source-maps dist/index.js\"",
+    "build": "tsdown",
+    "start": "node --enable-source-maps dist/index.js",
     "typecheck": "tsc --noEmit -p tsconfig.json --pretty"
   },
   "dependencies": {
     "@hono/node-server": "^2.0.10",
-    "@tasktty/shared": "workspace:*",
     "@xterm/headless": "^6.0.0",
     "better-sqlite3": "^12.11.1",
     "effect": "^3.22.0",
@@ -23,7 +25,9 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@tasktty/shared": "workspace:*",
     "@types/better-sqlite3": "^7.6.13",
-    "socket.io-client": "4.8.3"
+    "socket.io-client": "4.8.3",
+    "tsdown": "0.22.14"
   }
 }

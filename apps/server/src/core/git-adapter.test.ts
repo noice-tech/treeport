@@ -2,8 +2,8 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import type { CommandRequest, CommandResult, CommandRunner } from './command.js'
-import { GitAdapter } from './git.js'
+import type { CommandRequest, CommandResult, CommandRunner } from './command'
+import { GitAdapter } from './git'
 
 const temporary: string[] = []
 afterEach(async () =>

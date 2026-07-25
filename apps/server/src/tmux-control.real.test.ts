@@ -3,13 +3,13 @@ import os from 'node:os'
 import path from 'node:path'
 import { execFile, spawn } from 'node:child_process'
 import { promisify } from 'node:util'
-import { SpawnCommandRunner, TmuxAdapter } from './core/index.js'
+import { SpawnCommandRunner, TmuxAdapter } from './core/index'
 import { afterAll, describe, expect, it } from 'vitest'
 import {
   TerminalMetadataParser,
   TmuxProgressObserver,
   type TerminalMetadataUpdate
-} from './tmux-progress.js'
+} from './tmux-progress'
 import {
   controlAttachArgs,
   encodeControlInput,
@@ -17,7 +17,7 @@ import {
   resizeControlClient,
   TmuxControlParser,
   type TmuxControlEvent
-} from './tmux-control.js'
+} from './tmux-control'
 
 const enabled = process.env.TASKTTY_REAL_INTEGRATION === '1'
 const root = path.join(

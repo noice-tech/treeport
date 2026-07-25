@@ -1,4 +1,5 @@
 import type { Server as HttpServer } from 'node:http'
+import { fileURLToPath } from 'node:url'
 import { serve } from '@hono/node-server'
 import {
   GhAdapter,
@@ -8,16 +9,24 @@ import {
   TmuxAdapter,
   TaskTTYDatabase,
   TaskTTYService
-} from './core/index.js'
-import { createApp } from './app.js'
-import { createSocketServer } from './socket-server.js'
-import { TerminalMetadataManager } from './terminal-metadata.js'
+} from './core/index'
+import { createApp } from './app'
+import { createSocketServer } from './socket-server'
+import { TerminalMetadataManager } from './terminal-metadata'
 
 const config = loadConfig()
 const runner = new SpawnCommandRunner()
 const database = new TaskTTYDatabase(config.databasePath)
 const git = new GitAdapter(runner, config.gitPath)
-const tmux = new TmuxAdapter(runner, config.runtimeDir, config.tmuxPath)
+const launcherPath = fileURLToPath(
+  new URL('./core/launcher.js', import.meta.url)
+)
+const tmux = new TmuxAdapter(
+  runner,
+  config.runtimeDir,
+  config.tmuxPath,
+  launcherPath
+)
 const gh = new GhAdapter(runner, config.ghPath)
 const service = new TaskTTYService({ config, database, runner, git, tmux, gh })
 await service.initialize()

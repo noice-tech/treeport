@@ -9,7 +9,7 @@ import type {
   TerminalPreset,
   WorktreeRecord
 } from '@tasktty/shared'
-import { inferWorktreeName } from './zed.js'
+import { inferWorktreeName } from './zed'
 
 interface Migration {
   version: number

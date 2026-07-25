@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { mapPrState } from './gh.js'
+import { mapPrState } from './gh'
 
 describe('GitHub PR state mapping', () => {
   it.each([

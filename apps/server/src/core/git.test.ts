@@ -3,7 +3,7 @@ import {
   detectDefaultBranch,
   parseDirtyStatus,
   parseWorktreePorcelain
-} from './git.js'
+} from './git'
 
 describe('git parsing', () => {
   it('parses attached, detached, and locked worktrees with paths containing spaces', () => {
