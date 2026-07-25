@@ -18,7 +18,7 @@ import type { AppConfig, TaskTTYService, TmuxAdapter } from '@tasktty/core'
 import {
   TerminalAttachmentManager,
   type TerminalTransport
-} from './attachments.js'
+} from './terminal-attachments.js'
 import type { TerminalMetadataManager } from './terminal-metadata.js'
 
 type ClientToServerEvents = TerminalClientToServerEvents

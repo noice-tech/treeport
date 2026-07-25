@@ -17,7 +17,7 @@ import type {
   TerminalServerToClientEvents
 } from '@tasktty/shared'
 import { SOCKET_IO_PATH, TERMINAL_PROTOCOL_VERSION } from '@tasktty/shared'
-import { TerminalAttachmentManager } from './attachments.js'
+import { TerminalAttachmentManager } from './terminal-attachments.js'
 import { createSocketServer } from './socket-server.js'
 import type { TerminalMetadataManager } from './terminal-metadata.js'
 
@@ -61,10 +61,12 @@ class FakePty {
 interface NetworkFixture {
   server: HttpServer
   url: string
+  attachments: TerminalAttachmentManager
   events: ProductEventBus
   metadata: TerminalMetadataManager
   metadataSnapshot: ReturnType<typeof vi.fn<() => TerminalRuntimeMetadata[]>>
   ptys: FakePty[]
+  service: TaskTTYService
   close(): Promise<void>
 }
 
@@ -152,10 +154,12 @@ async function fixture(): Promise<NetworkFixture> {
   const value: NetworkFixture = {
     server,
     url: `http://127.0.0.1:${address.port}`,
+    attachments,
     events,
     metadata,
     metadataSnapshot,
     ptys,
+    service,
     close: () =>
       new Promise<void>((resolve) => {
         attachments.dispose()
@@ -344,6 +348,42 @@ describe('Socket.IO real network', () => {
     await closeClient(current)
     await closeClient(legacy)
     await closeClient(unsupported)
+  })
+
+  it('does not finish attachment setup after a real pre-ready disconnect', async () => {
+    const value = await fixture()
+    let finishRefresh!: (terminal: unknown) => void
+    vi.mocked(value.service.refreshTerminalStatus).mockReturnValueOnce(
+      new Promise((resolve) => {
+        finishRefresh = resolve
+      }) as never
+    )
+    const closeAttachment = vi.spyOn(value.attachments, 'close')
+    const socket = terminalClient(value.url)
+    socket.io.reconnection(false)
+    await new Promise<void>((resolve, reject) => {
+      socket.once('connect', () => resolve())
+      socket.once('connect_error', reject)
+    })
+    await vi.waitFor(() =>
+      expect(value.service.refreshTerminalStatus).toHaveBeenCalledOnce()
+    )
+
+    socket.disconnect()
+    await vi.waitFor(() => expect(closeAttachment).toHaveBeenCalledOnce())
+    finishRefresh({
+      id: 'term',
+      worktreeId: 'wt',
+      tmuxSessionName: 'session',
+      status: 'running',
+      exitCode: null
+    })
+
+    const probe = terminalClient(value.url, 'tab-probe')
+    await new Promise<void>((resolve) => probe.once('ready', () => resolve()))
+    expect(value.ptys).toHaveLength(1)
+    await closeClient(socket)
+    await closeClient(probe)
   })
 
   it('reconnects with a fresh PTY and stream without replaying disconnected input', async () => {
