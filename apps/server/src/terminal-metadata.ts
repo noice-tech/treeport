@@ -50,7 +50,7 @@ type TerminalMetadataPhase =
   | 'poll_title_state'
   | 'persist_shell_title'
 
-export class TerminalMetadataRuntimeError {
+class TerminalMetadataRuntimeError {
   readonly _tag = 'TerminalMetadataRuntimeError'
 
   constructor(

@@ -2,8 +2,6 @@ import crypto from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import type {
-  DirtyState,
-  OperationKind,
   OperationRecord,
   PrInfo,
   ProjectColor,
@@ -3040,33 +3038,3 @@ function isPathWithin(candidate: string, parent: string): boolean {
       !path.isAbsolute(relative))
   )
 }
-
-export function preserveArgv(argv: readonly string[]): string[] {
-  return [...argv]
-}
-
-export function operationKind(value: string): OperationKind {
-  if (
-    value === 'finish' ||
-    value === 'discard' ||
-    value === 'project_cleanup' ||
-    value === 'remove' ||
-    value === 'external_remove'
-  ) {
-    return value
-  }
-
-  throw new DomainError(
-    'INVALID_OPERATION_KIND',
-    `Unknown operation kind: ${value}`
-  )
-}
-
-export const emptyDirtyState = (): DirtyState => ({
-  dirty: false,
-  staged: 0,
-  unstaged: 0,
-  untracked: 0,
-  conflicts: 0,
-  total: 0
-})

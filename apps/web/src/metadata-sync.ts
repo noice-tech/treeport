@@ -1,7 +1,7 @@
 import { ApiError } from './api'
 
 export const METADATA_STALE_TIME_MS = 30_000
-export const METADATA_INVALIDATION_DELAY_MS = 75
+const METADATA_INVALIDATION_DELAY_MS = 75
 export const METADATA_DEGRADED_GRACE_MS = 3_000
 
 export function shouldRetryMetadataQuery(
