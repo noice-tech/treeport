@@ -1,22 +1,128 @@
 # TaskTTY
 
-**Turn Git worktrees into task workspaces.**
+**Use Git worktrees as your development task system.**
 
-TaskTTY gives every worktree its own persistent terminals for agents, shells, and development servers. Open them in the Electron app or a browser, switch between tasks instantly, and pick up from any connected client without restarting anything.
+TaskTTY turns every Git worktree into a persistent workspace for a piece of work. Each worktree can run any number of terminals—coding agents, shells, development servers, test watchers, and normal TUIs—and you can reopen the same sessions from the desktop app, browser, or phone without restarting them.
 
-It works with the Git worktrees you already have. No migration, custom task format, or replacement terminal UI required.
+```text
+Repository
+├── main worktree
+│   ├── shell
+│   └── dev server
+├── investigate-terminal-resize
+│   ├── Pi
+│   ├── test watcher
+│   └── shell
+└── improve-mobile-layout
+    ├── Claude Code
+    └── dev server
+```
 
-## Highlights
+## The bet
 
-- **Worktrees are tasks** — each Git worktree becomes a focused workspace with its own terminals.
-- **Desktop and browser** — use the Electron app, a desktop browser, or the responsive web UI on another device.
-- **Fully synchronized terminals** — terminals live in tmux and persist across navigation, reloads, disconnects, and clients. Multiple viewers share one canonical terminal size, with control handed off automatically when you interact.
-- **Fast keyboard navigation** — create worktrees and terminals, close terminals, switch projects, and jump between terminal tabs with shortcuts.
-- **Terminal-aware notifications** — titles, OSC `9;4` progress, and unread BEL activity surface across worktrees and terminal tabs, even when a terminal is not open.
-- **Built for agents** — the included Agent Skill and CLI let agents inspect their context, create persistent terminals and worktrees, wait for terminal activity, and spawn child tasks you can immediately open.
-- **Bring your existing setup** — TaskTTY discovers main and linked Git worktrees and leaves their branches, paths, and terminal TUIs alone.
+TaskTTY is built around a deliberately opinionated idea:
 
-TaskTTY is intentionally not an editor, Git client, or chat renderer. It is the workspace around your terminals.
+> **A worktree is a piece of work.**
+
+A worktree already contains the concrete state of a development task:
+
+* an isolated checkout;
+* a known starting revision;
+* local changes and commits;
+* an optional branch and pull request;
+* running agents and development processes;
+* a natural point at which the work can be finished or discarded.
+
+TaskTTY does not add a parallel task database that can drift away from Git. Git remains authoritative. When a worktree exists, the work still exists.
+
+## Works with the tools you already use
+
+TaskTTY discovers the main checkout and every linked worktree reported by Git, including worktrees created outside TaskTTY.
+
+Create or open a worktree using:
+
+* TaskTTY;
+* Zed;
+* the Git CLI;
+* an agent or script;
+* another compatible worktree tool.
+
+TaskTTY sees the same worktree and can attach persistent terminals to it. There is no import ceremony and no separate TaskTTY-only workspace hierarchy.
+
+## Real terminals with application-style navigation
+
+TaskTTY runs normal terminal applications rather than replacing them with a provider-specific chat interface.
+
+The desktop companion provides familiar tabbed-application behavior:
+
+* `Cmd+T` / `Ctrl+T` creates a terminal;
+* `Cmd+W` / `Ctrl+W` closes one using TaskTTY's normal safety checks;
+* mouse and keyboard navigation work outside a nested terminal multiplexer UI.
+
+The browser and responsive PWA expose the same worktrees and terminal sessions. Closing a browser or switching devices only detaches the current client; the underlying process continues running.
+
+Applications can optionally publish titles, attention, and progress through standard terminal protocols. See [Terminal signals and progressive enhancement](docs/terminal-signals.md).
+
+## What TaskTTY owns
+
+TaskTTY owns:
+
+* discovery and durable identity of Git repositories and worktrees;
+* persistent terminals associated with each worktree;
+* browser, mobile, and desktop navigation;
+* terminal attention and runtime metadata;
+* agent- and script-friendly CLI and HTTP APIs;
+* conservative worktree cleanup.
+
+Git owns:
+
+* worktree inventory;
+* branches and commits;
+* staged, unstaged, untracked, and conflicted state;
+* the actual checkout contents.
+
+## What TaskTTY is not
+
+TaskTTY is intentionally not:
+
+* an editor or file browser;
+* a Git commit or diff UI;
+* an issue tracker or task board;
+* a normalized coding-agent chat renderer;
+* a cloud-agent platform;
+* a general-purpose terminal multiplexer.
+
+Use your existing editor, Git tools, and coding agents. TaskTTY provides the persistent worktree and terminal layer around them.
+
+## Design principles
+
+### Worktrees are first-class
+
+TaskTTY does not treat Git worktrees as an invisible implementation detail. Their paths, branches, revisions, dirty state, and pull requests remain visible because they are useful development context.
+
+Human-friendly titles and reminders may be layered onto worktrees, but they do not replace their Git identity.
+
+### External state is normal
+
+TaskTTY assumes repositories and worktrees may be changed by other tools. It continuously reconciles its view with Git instead of requiring exclusive ownership.
+
+### Terminal applications stay terminal applications
+
+Pi, Claude Code, Codex, shells, development servers, and arbitrary TUIs run normally. TaskTTY attaches to them; it does not reinterpret their interfaces or constrain their capabilities.
+
+### Cleanup must be safer than creation
+
+Creating a worktree should be cheap. Removing one must account for dirty files, conflicted state, detached commits, active terminals, filesystem identity, and changes that occurred after confirmation.
+
+TaskTTY prefers refusing an ambiguous cleanup over deleting the wrong directory.
+
+## Product decisions
+
+TaskTTY is intentionally opinionated. See:
+
+- [Product principles](docs/product-principles.md)
+- [Terminal signals and progressive enhancement](docs/terminal-signals.md)
+- [Decision 0001: Worktrees are the unit of work](docs/decisions/0001-worktrees-are-the-unit-of-work.md)
 
 ## Quick start
 
