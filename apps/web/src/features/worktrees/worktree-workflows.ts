@@ -4,18 +4,20 @@ import { useLocation } from '@tanstack/react-router'
 import type {
   ProjectRecord,
   RemovePreview,
+  TerminalSize,
   WorktreeRecord
 } from '@tasktty/shared'
-import { ApiError, apiClient } from '../../api.js'
-import type { ActionModalState, RemovalStage } from '../dialogs/action-modal.js'
-import { projectsQueryKey } from '../../project-metadata.js'
+import { ApiError, apiClient } from '../../api'
+import type { ActionModalState, RemovalStage } from '../dialogs/action-modal'
+import { projectsQueryKey } from '../../project-metadata'
+import { terminalSessions } from '../../terminal-session'
 import {
   projectTarget,
   terminalTarget,
   worktreeTarget
-} from '../../workspace-navigation.js'
-import { useWorkspaceNavigate } from '../../workspace-router-navigation.js'
-import type { WorktreeDestination } from './worktree-form.js'
+} from '../../workspace-navigation'
+import { useWorkspaceNavigate } from '../../workspace-router-navigation'
+import type { WorktreeDestination } from './worktree-form'
 
 const MANUAL_CLEANUP_PREFIX = 'Manual cleanup required:'
 
@@ -33,6 +35,7 @@ export interface PendingWorktreeCreation {
     name: string
     argv?: string[]
     returnToShell?: boolean
+    initialSize?: TerminalSize
   }
   sourceWorktreeId?: string
 }
@@ -41,7 +44,8 @@ export function useWorktreeWorkflows({
   setDrawerOpen,
   setModal,
   openModal,
-  setError
+  setError,
+  selectedTerminalId
 }: {
   setDrawerOpen: (open: boolean) => void
   setModal: Dispatch<SetStateAction<ActionModalState>>
@@ -50,6 +54,7 @@ export function useWorktreeWorkflows({
     trigger?: HTMLElement
   ) => void
   setError: (value: string | null) => void
+  selectedTerminalId: string | null
 }) {
   const queryClient = useQueryClient()
   const location = useLocation()
@@ -144,6 +149,9 @@ export function useWorktreeWorkflows({
     },
     sourceWorktreeId?: string
   ) => {
+    const initialSize = selectedTerminalId
+      ? terminalSessions.getInitialSize(selectedTerminalId)
+      : null
     const pending: PendingWorktreeCreation = {
       id: crypto.randomUUID(),
       projectId: project.id,
@@ -153,7 +161,8 @@ export function useWorktreeWorkflows({
       initialTerminal: {
         name: initialTerminal.name,
         ...(initialTerminal.argv ? { argv: [...initialTerminal.argv] } : {}),
-        ...(initialTerminal.returnToShell ? { returnToShell: true } : {})
+        ...(initialTerminal.returnToShell ? { returnToShell: true } : {}),
+        ...(initialSize ? { initialSize } : {})
       },
       ...(sourceWorktreeId ? { sourceWorktreeId } : {})
     }

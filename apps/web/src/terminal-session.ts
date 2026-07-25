@@ -2,7 +2,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { Terminal } from '@xterm/xterm'
 import { io, type Socket } from 'socket.io-client'
-import { apiClient } from './api.js'
+import { apiClient } from './api'
 import {
   parseTerminalServerEvent,
   SOCKET_IO_PATH,
@@ -12,6 +12,7 @@ import {
   type TerminalProgress,
   type TerminalRuntimeMetadata,
   type TerminalServerEvent,
+  type TerminalSize,
   type TerminalServerToClientEvents
 } from '@tasktty/shared'
 
@@ -153,11 +154,18 @@ function activateTerminalLink(event: MouseEvent, url: string): void {
   } catch {
     return
   }
-  if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
+  if (parsedUrl.protocol === 'file:') {
+    const opening = window.taskttyDesktop?.openFileUrl(url)
+    if (opening) {
+      void opening.catch(() => undefined)
+    }
+
     return
   }
 
-  window.open(url, '_blank', 'noopener,noreferrer')
+  if (parsedUrl.protocol === 'http:' || parsedUrl.protocol === 'https:') {
+    window.open(url, '_blank', 'noopener,noreferrer')
+  }
 }
 
 function forcePlainSelectionWhileMouseReporting(
@@ -280,6 +288,7 @@ export interface TerminalSessionSnapshot {
   phase: ConnectionPhase
   degraded: boolean
   controller: boolean
+  controlPending: boolean
   title: string | null
   bellActive: boolean
   bellSerial: number
@@ -292,6 +301,7 @@ const DEFAULT_SNAPSHOT: TerminalSessionSnapshot = {
   phase: 'closed',
   degraded: false,
   controller: false,
+  controlPending: false,
   title: null,
   bellActive: false,
   bellSerial: 0,
@@ -349,7 +359,8 @@ export function terminalOptions() {
     allowProposedApi: false,
     macOptionClickForcesSelection: true,
     linkHandler: {
-      activate: activateTerminalLink
+      activate: activateTerminalLink,
+      allowNonHttpProtocols: true
     },
     theme: {
       background: '#09090b',
@@ -396,6 +407,7 @@ export class TerminalSession {
   private reconnectAllowed = true
   private streamId: string | null = null
   private controllerGeneration = 0
+  private controlRequestGeneration: number | null = null
   private canonicalCols = 100
   private canonicalRows = 30
   private canonicalRevision = 0
@@ -423,6 +435,19 @@ export class TerminalSession {
   }
 
   getSnapshot = (): TerminalSessionSnapshot => this.snapshotValue
+
+  getInitialSize(): TerminalSize | null {
+    if (!this.host || !this.terminal) {
+      return null
+    }
+
+    return normalizeTerminalDimensions(
+      this.proposedDimensions ?? {
+        cols: this.terminal.cols,
+        rows: this.terminal.rows
+      }
+    )
+  }
 
   subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener)
@@ -466,17 +491,32 @@ export class TerminalSession {
     this.host = null
   }
 
-  focus(): void {
+  focus(options: { requestControl?: boolean } = {}): void {
+    if (options.requestControl) {
+      this.requestControl()
+    }
+
     this.terminal?.focus()
   }
 
-  takeControl(): void {
+  requestControl(): void {
+    if (
+      !this.ready ||
+      !this.socket?.connected ||
+      this.snapshotValue.controller ||
+      this.controlRequestGeneration === this.controllerGeneration
+    ) {
+      return
+    }
+
     const dimensions = normalizeTerminalDimensions(
       this.proposedDimensions ?? {
         cols: this.canonicalCols,
         rows: this.canonicalRows
       }
     )
+    this.controlRequestGeneration = this.controllerGeneration
+    this.update({ controlPending: true })
     this.send(
       'take_control',
       this.serverProtocolVersion === TERMINAL_PROTOCOL_VERSION
@@ -507,6 +547,7 @@ export class TerminalSession {
   }
 
   sendText(data: string): void {
+    this.requestControl()
     this.prepareScrollExit()
 
     if (this.canInput()) {
@@ -555,7 +596,39 @@ export class TerminalSession {
     terminal.open(this.wrapper)
     this.wrapper.addEventListener(
       'mousedown',
-      (event) => forcePlainSelectionWhileMouseReporting(event, terminal),
+      (event) => {
+        this.requestControl()
+        forcePlainSelectionWhileMouseReporting(event, terminal)
+      },
+      true
+    )
+    this.wrapper.addEventListener('click', () => this.requestControl(), true)
+    this.wrapper.addEventListener(
+      'keydown',
+      (event) => {
+        const key = event.key.toLowerCase()
+        const modifierOnly = [
+          'alt',
+          'altgraph',
+          'control',
+          'meta',
+          'shift'
+        ].includes(key)
+        const mappedInput = terminalKeyboardInput(
+          event,
+          terminal.modes.applicationCursorKeysMode
+        )
+        const browserOwnedMetaShortcut = event.metaKey && mappedInput === null
+        const copyOrPasteShortcut =
+          event.ctrlKey && event.shiftKey && (key === 'c' || key === 'v')
+        if (
+          !modifierOnly &&
+          !browserOwnedMetaShortcut &&
+          !copyOrPasteShortcut
+        ) {
+          this.requestControl()
+        }
+      },
       true
     )
     trackTerminalScrolling(
@@ -564,7 +637,10 @@ export class TerminalSession {
       () => {
         this.scrollExitPending = true
       },
-      () => this.prepareScrollExit()
+      () => {
+        this.requestControl()
+        this.prepareScrollExit()
+      }
     )
     const wrapper = this.wrapper
     const transfersFiles = (transfer: DataTransfer | null) =>
@@ -589,6 +665,7 @@ export class TerminalSession {
         return
       }
 
+      this.requestControl()
       event.preventDefault()
       event.dataTransfer!.dropEffect = 'copy'
       wrapper.classList.add('terminal-file-drag')
@@ -609,6 +686,7 @@ export class TerminalSession {
       event.preventDefault()
       event.stopPropagation()
       wrapper.classList.remove('terminal-file-drag')
+      this.requestControl()
       this.queueFileUpload(filesFromTransfer(event.dataTransfer))
     })
     wrapper.addEventListener(
@@ -621,6 +699,7 @@ export class TerminalSession {
 
         event.preventDefault()
         event.stopPropagation()
+        this.requestControl()
         this.queueFileUpload(files)
       },
       true
@@ -685,7 +764,11 @@ export class TerminalSession {
     }
 
     if (!this.ready || !this.snapshotValue.controller) {
-      this.showFileTransferError('Take control of the terminal first')
+      this.showFileTransferError(
+        this.snapshotValue.controlPending
+          ? 'taking control; try again in a moment'
+          : 'interact with the terminal to take control first'
+      )
       return
     }
 
@@ -790,7 +873,13 @@ export class TerminalSession {
     }
 
     this.ready = false
-    this.update({ phase: 'connecting', controller: false, error: null })
+    this.controlRequestGeneration = null
+    this.update({
+      phase: 'connecting',
+      controller: false,
+      controlPending: false,
+      error: null
+    })
     this.startDegradedTimer()
     const socket: Socket<
       TerminalServerToClientEvents,
@@ -843,9 +932,11 @@ export class TerminalSession {
         return
       }
 
+      this.controlRequestGeneration = null
       this.update({
         phase: 'reconnecting',
         controller: false,
+        controlPending: false,
         error: `Terminal connection failed: ${error.message}`
       })
     })
@@ -858,6 +949,7 @@ export class TerminalSession {
       this.ready = false
       this.streamId = null
       this.controllerGeneration = 0
+      this.controlRequestGeneration = null
       this.cancelControllerResizeIntent()
       if (!this.reconnectAllowed) {
         this.clearDegraded()
@@ -867,6 +959,7 @@ export class TerminalSession {
         phase:
           this.reconnectAllowed && !this.disposed ? 'reconnecting' : 'closed',
         controller: false,
+        controlPending: false,
         degraded: this.reconnectAllowed ? this.snapshotValue.degraded : false,
         error:
           !connected && !this.snapshotValue.error
@@ -876,8 +969,13 @@ export class TerminalSession {
     })
     socket.io.on('reconnect_attempt', () => {
       if (this.socket === socket && this.reconnectAllowed) {
+        this.controlRequestGeneration = null
         this.startDegradedTimer()
-        this.update({ phase: 'reconnecting', controller: false })
+        this.update({
+          phase: 'reconnecting',
+          controller: false,
+          controlPending: false
+        })
       }
     })
     socket.connect()
@@ -892,6 +990,7 @@ export class TerminalSession {
       }
 
       this.cancelControllerResizeIntent()
+      this.controlRequestGeneration = null
       const v2 = 'revision' in message
       this.serverProtocolVersion = v2 ? TERMINAL_PROTOCOL_VERSION : 1
       const dimensions = v2
@@ -937,6 +1036,7 @@ export class TerminalSession {
       this.update({
         phase: 'ready',
         controller: message.controller,
+        controlPending: false,
         error: null
       })
       return
@@ -1025,7 +1125,11 @@ export class TerminalSession {
       }
 
       this.controllerGeneration = message.generation
-      this.update({ controller: message.controller })
+      this.controlRequestGeneration = null
+      this.update({
+        controller: message.controller,
+        controlPending: false
+      })
       if (controllerChanged) {
         this.scheduleFit()
       }
@@ -1052,7 +1156,8 @@ export class TerminalSession {
     this.reconnectAllowed = message.retryable
     this.terminal?.writeln(`\r\n\x1b[31m${message.message}\x1b[0m`)
     if (message.retryable) {
-      this.update({ error: message.message })
+      this.controlRequestGeneration = null
+      this.update({ controlPending: false, error: message.message })
     } else {
       this.stopWithError(message.message)
       this.socket?.disconnect()
@@ -1452,11 +1557,13 @@ export class TerminalSession {
   private stopWithError(message: string): void {
     this.ready = false
     this.clearDegraded()
+    this.controlRequestGeneration = null
     this.update({
       error: message,
       phase: 'closed',
       degraded: false,
-      controller: false
+      controller: false,
+      controlPending: false
     })
   }
 
@@ -1568,6 +1675,10 @@ export class TerminalSessionManager {
     this.foregroundProcessSnapshot
   getProgressSnapshot = (): ReadonlyMap<string, TerminalProgress> =>
     this.progressSnapshot
+
+  getInitialSize(terminalId: string): TerminalSize | null {
+    return this.entries.get(terminalId)?.session.getInitialSize() ?? null
+  }
 
   applyRuntimeMetadata(metadata: TerminalRuntimeMetadata): void {
     const currentBell = this.bellMetadata.get(metadata.terminalId)

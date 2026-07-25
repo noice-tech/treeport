@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { terminalSizeSchema } from './terminal-protocol.js'
 
 export * from './socket-protocol.js'
 export * from './terminal-protocol.js'
@@ -238,7 +239,8 @@ const terminalPresetRevisionSchema = z.string().min(1).max(64)
 const initialTerminalSchema = z.object({
   name: terminalNameSchema,
   argv: terminalArgvSchema.optional(),
-  returnToShell: z.boolean().optional()
+  returnToShell: z.boolean().optional(),
+  initialSize: terminalSizeSchema.optional()
 })
 
 export const createWorktreeSchema = z
@@ -261,7 +263,8 @@ export const createWorktreeSchema = z
 export const createTerminalSchema = z.object({
   name: terminalNameSchema,
   argv: terminalArgvSchema.optional(),
-  returnToShell: z.boolean().optional()
+  returnToShell: z.boolean().optional(),
+  initialSize: terminalSizeSchema.optional()
 })
 
 export const updateTerminalSchema = z.object({

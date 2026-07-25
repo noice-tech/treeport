@@ -8,7 +8,7 @@ import {
   useState,
   type ReactNode
 } from 'react'
-import type { TerminalSession } from './terminal-session.js'
+import type { TerminalSession } from './terminal-session'
 
 interface TerminalFocusRequest {
   terminalId: string

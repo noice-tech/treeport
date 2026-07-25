@@ -2,9 +2,10 @@ import fs from 'node:fs/promises'
 import http from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { _electron as electron, expect, test } from '@playwright/test'
 
-test('dispatches native terminal commands without closing the window', async () => {
+test('dispatches native commands and opens local file URLs', async () => {
   const userData = await fs.mkdtemp(path.join(os.tmpdir(), 'tasktty-electron-'))
   const server = http.createServer((request, response) => {
     if (request.url === '/api/health') {
@@ -17,7 +18,7 @@ test('dispatches native terminal commands without closing the window', async () 
     response.end(`<!doctype html>
       <body data-bell-action="none" data-bell-fallback="none" data-bell-native="none" data-command="none">TaskTTY desktop test</body>
       <script>
-        window.taskttyDesktop.onTerminalCommand((command) => {
+        window.taskttyDesktop.onCommand((command) => {
           document.body.dataset.command = command
         })
         window.taskttyDesktop.onBellNotificationFallback((notification) => {
@@ -156,6 +157,40 @@ test('dispatches native terminal commands without closing the window', async () 
       contextIsolation: true,
       sandbox: true
     })
+
+    await electronApp.evaluate(({ shell }) => {
+      const scope = globalThis as typeof globalThis & {
+        __openedTaskTTYFilePaths?: string[]
+      }
+      scope.__openedTaskTTYFilePaths = []
+      shell.openPath = async (filePath) => {
+        scope.__openedTaskTTYFilePaths!.push(filePath)
+        return ''
+      }
+    })
+    const filePath = path.join(userData, 'résumé draft.txt')
+    await expect(
+      window.evaluate(
+        (url) => (window as any).taskttyDesktop.openFileUrl(url),
+        pathToFileURL(filePath).href
+      )
+    ).resolves.toBe(true)
+    await expect(
+      window.evaluate(() =>
+        (window as any).taskttyDesktop.openFileUrl('file:relative.txt')
+      )
+    ).resolves.toBe(false)
+    expect(
+      await electronApp.evaluate(
+        () =>
+          (
+            globalThis as typeof globalThis & {
+              __openedTaskTTYFilePaths?: string[]
+            }
+          ).__openedTaskTTYFilePaths
+      )
+    ).toEqual([filePath])
+
     expect(
       await electronApp.evaluate(
         ({ BrowserWindow, session }) =>
@@ -167,16 +202,39 @@ test('dispatches native terminal commands without closing the window', async () 
     const accelerators = await electronApp.evaluate(({ Menu }) => {
       const menu = Menu.getApplicationMenu()
       return {
+        newWorktree: menu?.getMenuItemById('new-worktree')?.accelerator,
         newTerminal: menu?.getMenuItemById('new-terminal')?.accelerator,
         closeTerminal: menu?.getMenuItemById('close-terminal')?.accelerator
       }
     })
     expect(accelerators).toEqual({
+      newWorktree: 'CommandOrControl+N',
       newTerminal: 'CommandOrControl+T',
       closeTerminal: 'CommandOrControl+W'
     })
 
     const commandModifier = process.platform === 'darwin' ? 'meta' : 'control'
+    await electronApp.evaluate(
+      ({ BrowserWindow }, input) => {
+        const webContents = BrowserWindow.getAllWindows()[0]?.webContents
+        webContents?.sendInputEvent({
+          type: 'keyDown',
+          keyCode: input.key,
+          modifiers: [input.modifier]
+        })
+        webContents?.sendInputEvent({
+          type: 'keyUp',
+          keyCode: input.key,
+          modifiers: [input.modifier]
+        })
+      },
+      { key: 'N', modifier: commandModifier }
+    )
+    await expect(window.locator('body')).toHaveAttribute(
+      'data-command',
+      'new-worktree'
+    )
+
     await electronApp.evaluate(
       ({ BrowserWindow }, input) => {
         const webContents = BrowserWindow.getAllWindows()[0]?.webContents

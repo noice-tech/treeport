@@ -9,6 +9,7 @@ import {
   type IpcMainEvent,
   type MenuItemConstructorOptions
 } from 'electron'
+import { filePathFromUrl } from './file-url.js'
 
 const dirname = __dirname
 const defaultRendererUrl = app.isPackaged
@@ -318,13 +319,15 @@ async function loadTaskTTY(window: BrowserWindow): Promise<void> {
   await window.loadURL(connectionPageUrl).catch(() => undefined)
 }
 
-function sendTerminalCommand(command: 'new-terminal' | 'close-terminal'): void {
+function sendDesktopCommand(
+  command: 'new-worktree' | 'new-terminal' | 'close-terminal'
+): void {
   const focusedWindow = BrowserWindow.getFocusedWindow()
   if (!focusedWindow || !isRendererUrl(focusedWindow.webContents.getURL())) {
     return
   }
 
-  focusedWindow.webContents.send('terminal-command', command)
+  focusedWindow.webContents.send('desktop-command', command)
 }
 
 function installMenu(): void {
@@ -336,16 +339,23 @@ function installMenu(): void {
       label: 'File',
       submenu: [
         {
+          id: 'new-worktree',
+          label: 'New Worktree…',
+          accelerator: 'CommandOrControl+N',
+          click: () => sendDesktopCommand('new-worktree')
+        },
+        {
           id: 'new-terminal',
           label: 'New Terminal',
           accelerator: 'CommandOrControl+T',
-          click: () => sendTerminalCommand('new-terminal')
+          click: () => sendDesktopCommand('new-terminal')
         },
+        { type: 'separator' },
         {
           id: 'close-terminal',
           label: 'Close Terminal',
           accelerator: 'CommandOrControl+W',
-          click: () => sendTerminalCommand('close-terminal')
+          click: () => sendDesktopCommand('close-terminal')
         },
         ...(process.platform === 'darwin'
           ? []
@@ -412,9 +422,14 @@ function createWindow(): BrowserWindow {
     const commandModifier =
       process.platform === 'darwin' ? input.meta : input.control
     const command = {
+      n: 'new-worktree',
       t: 'new-terminal',
       w: 'close-terminal'
-    }[input.key.toLowerCase()] as 'new-terminal' | 'close-terminal' | undefined
+    }[input.key.toLowerCase()] as
+      | 'new-worktree'
+      | 'new-terminal'
+      | 'close-terminal'
+      | undefined
     if (
       input.type !== 'keyDown' ||
       input.isAutoRepeat ||
@@ -428,7 +443,7 @@ function createWindow(): BrowserWindow {
     }
 
     event.preventDefault()
-    window.webContents.send('terminal-command', command)
+    window.webContents.send('desktop-command', command)
   })
   window.webContents.on('will-navigate', (event, targetUrl) => {
     if (isRendererUrl(targetUrl)) {
@@ -498,6 +513,19 @@ if (!hasSingleInstanceLock) {
     ) {
       void loadTaskTTY(mainWindow)
     }
+  })
+  ipcMain.handle('open-file-url', async (event, value: unknown) => {
+    if (
+      !mainWindow ||
+      event.sender !== mainWindow.webContents ||
+      event.senderFrame !== event.sender.mainFrame ||
+      !isRendererUrl(event.senderFrame.url)
+    ) {
+      return false
+    }
+
+    const filePath = filePathFromUrl(value)
+    return filePath ? (await shell.openPath(filePath)) === '' : false
   })
 
   ipcMain.on('bell-notification:show', (event, value: unknown) => {

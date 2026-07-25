@@ -1,6 +1,6 @@
 import type { RemovePreview, WorktreeRecord } from '@tasktty/shared'
-import { Button } from '../../components/ui/button.js'
-import { ModalHeading } from '../dialogs/dialog-parts.js'
+import { Button } from '../../components/ui/button'
+import { ModalHeading } from '../dialogs/dialog-parts'
 
 export function RemoveConfirm({
   worktree,

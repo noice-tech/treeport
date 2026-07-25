@@ -2,14 +2,14 @@ import type { RefObject } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useLocation } from '@tanstack/react-router'
 import type { ProjectRecord, RecentProjectRecord } from '@tasktty/shared'
-import { ApiError, apiClient } from '../../api.js'
+import { ApiError, apiClient } from '../../api'
 import {
   projectsQueryKey,
   recentProjectsQueryKey
-} from '../../project-metadata.js'
-import { terminalSessions } from '../../terminal-session.js'
-import type { WorkspaceTarget } from '../../workspace-navigation.js'
-import { useWorkspaceNavigate } from '../../workspace-router-navigation.js'
+} from '../../project-metadata'
+import { terminalSessions } from '../../terminal-session'
+import type { WorkspaceTarget } from '../../workspace-navigation'
+import { useWorkspaceNavigate } from '../../workspace-router-navigation'
 
 export function useProjectWorkflows({
   projects,

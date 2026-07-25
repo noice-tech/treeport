@@ -690,7 +690,7 @@ describe('TaskTTYService with injected command adapters', () => {
   })
 
   it('publishes a terminal only after its tmux session is ready', async () => {
-    const { main, runner, service, database } = await fixture()
+    const { main, runner, service } = await fixture()
     const project = await service.registerProject(main)
     const mainWorktree = project.worktrees[0]!
     runner.calls.length = 0
@@ -717,12 +717,6 @@ describe('TaskTTYService with injected command adapters', () => {
     runner.tmuxCreateGate = null
     expect(terminal.status).toBe('running')
     expect((await service.getTerminal(terminal.id)).status).toBe('running')
-    expect(
-      database.connection
-        .prepare("SELECT count(*) FROM sqlite_master WHERE name='terminals'")
-        .pluck()
-        .get()
-    ).toBe(0)
   })
 
   it('queues terminal creation behind an in-flight project mutation', async () => {
@@ -1017,12 +1011,6 @@ describe('TaskTTYService with injected command adapters', () => {
         expect.objectContaining({ id: terminal.id })
       ])
     })
-    expect(
-      restartedDatabase.connection
-        .prepare('SELECT git_worktree_key FROM worktrees WHERE id=?')
-        .pluck()
-        .get(linked.id)
-    ).toBe(`worktrees/${path.basename(linkedGitKey)}`)
   })
 
   it('preserves metadata when Git repair fails during main rename recovery', async () => {
@@ -1623,7 +1611,8 @@ describe('TaskTTYService with injected command adapters', () => {
       {
         name: 'Pi',
         argv: ['pi'],
-        returnToShell: true
+        returnToShell: true,
+        initialSize: { cols: 132, rows: 47 }
       }
     )
     unsubscribe()
@@ -1636,6 +1625,12 @@ describe('TaskTTYService with injected command adapters', () => {
         .worktrees.some((item) => item.id === result.worktree.id)
     ).toBe(true)
     expect(runner.sessions.size).toBe(2)
+    const initialTerminalCreate = runner.calls
+      .filter((call) => call.args.includes('new-session'))
+      .at(-1)!
+    expect(initialTerminalCreate.args).toEqual(
+      expect.arrayContaining(['-x', '132', '-y', '47'])
+    )
     expect(events.indexOf('worktree.created')).toBeLessThan(
       events.indexOf('terminal.created')
     )

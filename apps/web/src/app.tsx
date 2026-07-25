@@ -16,25 +16,25 @@ import type {
   TerminalRecord,
   WorktreeRecord
 } from '@tasktty/shared'
-import { Button } from './components/ui/button.js'
+import { Button } from './components/ui/button'
 import {
   ActionModal,
   type ActionModalState
-} from './features/dialogs/action-modal.js'
-import { useBellNotifications } from './features/notifications/use-bell-notifications.js'
-import { useProjectWorkflows } from './features/projects/project-workflows.js'
-import { WorkspaceSidebar } from './features/sidebar/workspace-sidebar.js'
-import { TerminalWorkspace } from './features/terminals/terminal-workspace.js'
-import { useWorktreeWorkflows } from './features/worktrees/worktree-workflows.js'
-import { focusableElements, trapTabKey } from './lib/focus.js'
-import { cn } from './lib/utils.js'
-import { METADATA_DEGRADED_GRACE_MS } from './metadata-sync.js'
-import { useProjectEventsBridge } from './project-events-bridge.js'
+} from './features/dialogs/action-modal'
+import { useBellNotifications } from './features/notifications/use-bell-notifications'
+import { useProjectWorkflows } from './features/projects/project-workflows'
+import { WorkspaceSidebar } from './features/sidebar/workspace-sidebar'
+import { TerminalWorkspace } from './features/terminals/terminal-workspace'
+import { useWorktreeWorkflows } from './features/worktrees/worktree-workflows'
+import { focusableElements, trapTabKey } from './lib/focus'
+import { cn } from './lib/utils'
+import { METADATA_DEGRADED_GRACE_MS } from './metadata-sync'
+import { useProjectEventsBridge } from './project-events-bridge'
 import {
   projectsQueryOptions,
   terminalPresetsQueryOptions
-} from './project-metadata.js'
-import { terminalSessions, type TerminalProgress } from './terminal-session.js'
+} from './project-metadata'
+import { terminalSessions, type TerminalProgress } from './terminal-session'
 import {
   LAST_PROJECT_TERMINAL_STORAGE_PREFIX,
   LAST_WORKSPACE_ROUTE_STORAGE_KEY,
@@ -45,8 +45,8 @@ import {
   targetForProject,
   targetForTerminal,
   targetForWorktree
-} from './workspace-navigation.js'
-import { useWorkspaceNavigate } from './workspace-router-navigation.js'
+} from './workspace-navigation'
+import { useWorkspaceNavigate } from './workspace-router-navigation'
 
 const MIN_SIDEBAR_WIDTH = 240
 const MAX_SIDEBAR_WIDTH = 420
@@ -166,6 +166,36 @@ export default function App() {
   }, [error])
 
   useEffect(() => {
+    const keydown = (event: KeyboardEvent) => {
+      const usesMacKeyboard = /Mac|iPhone|iPad|iPod/.test(navigator.platform)
+      const modifierPressed = usesMacKeyboard
+        ? event.metaKey && !event.ctrlKey
+        : event.ctrlKey && !event.metaKey
+
+      if (
+        event.isComposing ||
+        event.key.toLocaleLowerCase() !== 'p' ||
+        !event.shiftKey ||
+        event.altKey ||
+        !modifierPressed ||
+        modal
+      ) {
+        return
+      }
+
+      event.preventDefault()
+      event.stopPropagation()
+      if (isMobile) {
+        setDrawerOpen(true)
+      }
+
+      setProjectSwitcherOpen(true)
+    }
+    document.addEventListener('keydown', keydown, true)
+    return () => document.removeEventListener('keydown', keydown, true)
+  }, [isMobile, modal])
+
+  useEffect(() => {
     if (!workspaceResolution || workspaceResolution.canonical) {
       return
     }
@@ -231,6 +261,28 @@ export default function App() {
   )
 
   useEffect(() => {
+    if (!window.taskttyDesktop) {
+      return
+    }
+
+    return window.taskttyDesktop.onCommand((command) => {
+      if (
+        command !== 'new-worktree' ||
+        !activeProject ||
+        activeProject.availability.state === 'unavailable' ||
+        modal ||
+        projectSwitcherOpen ||
+        (isMobile && drawerOpen)
+      ) {
+        return
+      }
+
+      modalTriggerRef.current = document.activeElement as HTMLElement | null
+      setModal({ type: 'worktree', project: activeProject })
+    })
+  }, [activeProject, drawerOpen, isMobile, modal, projectSwitcherOpen])
+
+  useEffect(() => {
     if (!isMobile || !drawerOpen) {
       return
     }
@@ -277,12 +329,10 @@ export default function App() {
     return () => document.removeEventListener('keydown', keydown)
   }, [drawerOpen, isMobile, modal, projectSwitcherOpen])
 
-  const allTerminals = useMemo(
+  const activeProjectTerminals = useMemo(
     () =>
-      projects.flatMap((project) =>
-        project.worktrees.flatMap((worktree) => worktree.terminals)
-      ),
-    [projects]
+      activeProject?.worktrees.flatMap((worktree) => worktree.terminals) ?? [],
+    [activeProject]
   )
   const selectTerminal = (terminal: TerminalRecord) => {
     const target = targetForTerminal(projects, terminal)
@@ -338,7 +388,8 @@ export default function App() {
     setDrawerOpen,
     setModal,
     openModal,
-    setError
+    setError,
+    selectedTerminalId
   })
 
   const setAndSaveSidebarWidth = (width: number) => {
@@ -423,7 +474,7 @@ export default function App() {
         activeProject={activeProject}
         selectedWorktree={selectedWorktree}
         selectedTerminalId={selectedTerminalId}
-        allTerminals={allTerminals}
+        projectTerminals={activeProjectTerminals}
         runtimeTitles={runtimeTitles}
         bellAttention={bellAttention}
         terminalProgress={terminalProgress}

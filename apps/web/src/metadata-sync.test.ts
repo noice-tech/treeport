@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ApiError } from './api.js'
+import { ApiError } from './api'
 import {
   createInvalidationCoalescer,
   metadataRetryDelay,
   shouldRetryMetadataQuery
-} from './metadata-sync.js'
+} from './metadata-sync'
 
 afterEach(() => vi.useRealTimers())
 

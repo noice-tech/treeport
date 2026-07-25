@@ -12,9 +12,9 @@ import type {
   EventsServerToClientEvents,
   ProjectRecord
 } from '@tasktty/shared'
-import { createInvalidationCoalescer } from './metadata-sync.js'
-import { projectsQueryKey, recentProjectsQueryKey } from './project-metadata.js'
-import { terminalSessions } from './terminal-session.js'
+import { createInvalidationCoalescer } from './metadata-sync'
+import { projectsQueryKey, recentProjectsQueryKey } from './project-metadata'
+import { terminalSessions } from './terminal-session'
 
 export function useProjectEventsBridge(
   projects: ProjectRecord[] | undefined

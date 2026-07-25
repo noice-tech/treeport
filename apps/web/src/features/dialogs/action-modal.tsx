@@ -7,16 +7,16 @@ import type {
   TerminalPreset,
   WorktreeRecord
 } from '@tasktty/shared'
-import { Button } from '../../components/ui/button.js'
-import { focusableElements, trapTabKey } from '../../lib/focus.js'
-import { cn } from '../../lib/utils.js'
-import { ProjectForm } from '../projects/project-form.js'
-import { TerminalPresetsManager } from '../terminal-presets/presets-manager.js'
-import { RemoveConfirm } from '../worktrees/remove-confirm.js'
+import { Button } from '../../components/ui/button'
+import { focusableElements, trapTabKey } from '../../lib/focus'
+import { cn } from '../../lib/utils'
+import { ProjectForm } from '../projects/project-form'
+import { TerminalPresetsManager } from '../terminal-presets/presets-manager'
+import { RemoveConfirm } from '../worktrees/remove-confirm'
 import {
   WorktreeForm,
   type WorktreeDestination
-} from '../worktrees/worktree-form.js'
+} from '../worktrees/worktree-form'
 
 export type ActionModalState =
   | { type: 'project' }

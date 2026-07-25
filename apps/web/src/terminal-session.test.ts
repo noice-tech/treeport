@@ -14,7 +14,7 @@ import type {
   TerminalSession as TerminalSessionInstance,
   TerminalSessionManager as TerminalSessionManagerInstance,
   TerminalSessionSnapshot
-} from './terminal-session.js'
+} from './terminal-session'
 
 const socketClient = vi.hoisted(() => ({ io: vi.fn() }))
 vi.mock('socket.io-client', () => ({ io: socketClient.io }))
@@ -75,11 +75,13 @@ let terminalProgressLabel: typeof formatTerminalProgressLabel
 
 class FakeSession {
   disposed = false
+  initialSize = { cols: 120, rows: 40 }
   private readonly listeners = new Set<() => void>()
   private snapshot: TerminalSessionSnapshot = {
     phase: 'ready',
     degraded: false,
     controller: false,
+    controlPending: false,
     title: null,
     bellActive: false,
     bellSerial: 0,
@@ -89,6 +91,7 @@ class FakeSession {
   }
 
   getSnapshot = () => this.snapshot
+  getInitialSize = () => this.initialSize
 
   subscribe = (listener: () => void) => {
     this.listeners.add(listener)
@@ -122,7 +125,7 @@ beforeAll(async () => {
     terminalKeyboardInput,
     terminalOptions,
     terminalProgressLabel
-  } = await import('./terminal-session.js'))
+  } = await import('./terminal-session'))
 })
 
 beforeEach(() => {
@@ -190,6 +193,7 @@ function controllerSessionFixture() {
       phase: 'ready',
       degraded: false,
       controller: true,
+      controlPending: false,
       title: null,
       bellActive: false,
       bellSerial: 0,
@@ -254,7 +258,28 @@ describe('terminal options', () => {
     expect(open).toHaveBeenCalledWith(url, '_blank', 'noopener,noreferrer')
   })
 
-  it('rejects malformed and non-web OSC 8 link targets', () => {
+  it('opens file OSC 8 links through the desktop bridge on modifier-click', () => {
+    const open = vi.fn()
+    const openFileUrl = vi.fn(() => Promise.resolve(true))
+    vi.stubGlobal('navigator', { platform: 'MacIntel' })
+    vi.stubGlobal('window', {
+      open,
+      taskttyDesktop: { openFileUrl }
+    })
+    const handler = terminalOptions().linkHandler
+    const url = 'file:///Users/example/project/readme%20draft.md'
+
+    handler.activate({ metaKey: false, ctrlKey: false } as MouseEvent, url)
+    handler.activate({ metaKey: false, ctrlKey: true } as MouseEvent, url)
+    expect(openFileUrl).not.toHaveBeenCalled()
+
+    handler.activate({ metaKey: true, ctrlKey: false } as MouseEvent, url)
+    expect(openFileUrl).toHaveBeenCalledOnce()
+    expect(openFileUrl).toHaveBeenCalledWith(url)
+    expect(open).not.toHaveBeenCalled()
+  })
+
+  it('ignores file links outside the desktop app and rejects unsafe targets', () => {
     const open = vi.fn()
     vi.stubGlobal('navigator', { platform: 'Linux x86_64' })
     vi.stubGlobal('window', { open })
@@ -365,6 +390,14 @@ describe('TerminalSession', () => {
   beforeEach(() => {
     socketClient.io.mockReset()
     socketClient.io.mockImplementation(() => new FakeSocketIO())
+  })
+
+  it('reports the proposed viewport size for a new terminal launch', () => {
+    const { measure, session } = controllerSessionFixture()
+
+    expect(session.getInitialSize()).toEqual({ cols: 100, rows: 30 })
+    measure({ cols: 132, rows: 47 })
+    expect(session.getInitialSize()).toEqual({ cols: 132, rows: 47 })
   })
 
   it('uses an independent WebSocket-only Socket.IO connection with bounded auth', () => {
@@ -669,8 +702,6 @@ describe('TerminalSession', () => {
       cols: 130,
       rows: 45
     })
-    session.takeControl()
-    expect(socket.emit).toHaveBeenCalledWith('take_control', { generation: 3 })
     session.sendText('legacy input')
     expect(socket.volatile.emit).toHaveBeenCalledWith('input', {
       generation: 3,
@@ -679,6 +710,9 @@ describe('TerminalSession', () => {
     expect((session as unknown as { canInput(): boolean }).canInput()).toBe(
       true
     )
+    socket.emitServer('control', { generation: 4, controller: false })
+    session.requestControl()
+    expect(socket.emit).toHaveBeenCalledWith('take_control', { generation: 4 })
     session.dispose()
   })
 
@@ -901,6 +935,7 @@ describe('TerminalSession', () => {
         phase: 'ready',
         degraded: false,
         controller: true,
+        controlPending: false,
         title: null,
         bellActive: false,
         bellSerial: 0,
@@ -929,8 +964,8 @@ describe('TerminalSession', () => {
     socketClient.io.mockReturnValue(socket)
     const session = new TerminalSession('terminal-one')
     ;(session as unknown as { connect(): void }).connect()
-    session.takeControl()
-    expect(socket.volatile.emit).not.toHaveBeenCalled()
+    session.requestControl()
+    expect(socket.emit).not.toHaveBeenCalled()
 
     socket.emitServer('ready', {
       connectionId: 'connection-1',
@@ -948,20 +983,95 @@ describe('TerminalSession', () => {
       cols: 5_000,
       rows: 1
     }
-    session.takeControl()
+    session.requestControl()
+    session.requestControl()
+    expect(session.getSnapshot().controlPending).toBe(true)
     expect(socket.emit).toHaveBeenCalledWith('take_control', {
       generation: 7,
       cols: 1_000,
       rows: 2
     })
-    socket.emitServer('disconnect', 'transport close')
-    session.takeControl()
     expect(socket.emit).toHaveBeenCalledTimes(1)
+
+    session.sendText('not replayed')
+    expect(socket.volatile.emit).not.toHaveBeenCalledWith(
+      'input',
+      expect.anything()
+    )
+    socket.emitServer('control', { generation: 8, controller: true })
+    expect(session.getSnapshot()).toMatchObject({
+      controller: true,
+      controlPending: false
+    })
+    expect(socket.volatile.emit).not.toHaveBeenCalledWith(
+      'input',
+      expect.anything()
+    )
+
+    socket.emitServer('disconnect', 'transport close')
+    expect(session.getSnapshot().controlPending).toBe(false)
+    session.requestControl()
+    expect(socket.emit).toHaveBeenCalledTimes(1)
+    session.dispose()
+  })
+
+  it('requests control only when focus is explicitly user-initiated', () => {
+    const socket = new FakeSocketIO()
+    socketClient.io.mockReturnValue(socket)
+    const focus = vi.fn()
+    const session = new TerminalSession('terminal-one')
+    Object.assign(session as unknown as Record<string, unknown>, {
+      terminal: {
+        cols: 100,
+        rows: 30,
+        options: { fontSize: 14 },
+        focus,
+        reset: vi.fn(),
+        resize: vi.fn(),
+        dispose: vi.fn()
+      }
+    })
+    ;(session as unknown as { connect(): void }).connect()
+    socket.emitServer('ready', {
+      connectionId: 'connection-1',
+      streamId: 'stream-1',
+      generation: 2,
+      controller: false,
+      reset: 'full',
+      cols: 100,
+      rows: 30,
+      revision: 1
+    })
+
+    session.focus()
+    expect(focus).toHaveBeenCalledOnce()
+    expect(socket.emit).not.toHaveBeenCalledWith(
+      'take_control',
+      expect.anything()
+    )
+
+    session.focus({ requestControl: true })
+    expect(focus).toHaveBeenCalledTimes(2)
+    expect(socket.emit).toHaveBeenCalledWith('take_control', {
+      generation: 2,
+      cols: 100,
+      rows: 30
+    })
     session.dispose()
   })
 })
 
 describe('TerminalSessionManager', () => {
+  it('reports the mounted session size for a new terminal launch', () => {
+    const { manager, sessions } = fixture()
+    manager.acquire('one')
+
+    expect(manager.getInitialSize('one')).toEqual({ cols: 120, rows: 40 })
+    sessions.get('one')!.initialSize = { cols: 132, rows: 47 }
+    expect(manager.getInitialSize('one')).toEqual({ cols: 132, rows: 47 })
+    expect(manager.getInitialSize('missing')).toBeNull()
+  })
+
   it('evicts the least-recent unselected session over capacity', () => {
     const { manager, sessions } = fixture(2)
     manager.acquire('one')

@@ -6,11 +6,11 @@ import {
   terminalSessions,
   type TerminalBellEvent,
   type TerminalBellMetadata
-} from '../../terminal-session.js'
+} from '../../terminal-session'
 import {
   targetForTerminal,
   type WorkspaceTarget
-} from '../../workspace-navigation.js'
+} from '../../workspace-navigation'
 
 const EMPTY_BELLS: ReadonlyMap<string, TerminalBellMetadata> = new Map()
 

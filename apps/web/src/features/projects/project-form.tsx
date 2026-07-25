@@ -1,10 +1,10 @@
 import { useState } from 'react'
 import { useMutation } from '@tanstack/react-query'
 import type { ProjectRecord } from '@tasktty/shared'
-import { apiClient } from '../../api.js'
-import { Button } from '../../components/ui/button.js'
-import { Input } from '../../components/ui/input.js'
-import { ModalHeading } from '../dialogs/dialog-parts.js'
+import { apiClient } from '../../api'
+import { Button } from '../../components/ui/button'
+import { Input } from '../../components/ui/input'
+import { ModalHeading } from '../dialogs/dialog-parts'
 
 export function ProjectForm({
   setError,

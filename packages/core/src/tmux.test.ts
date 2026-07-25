@@ -88,6 +88,34 @@ describe('TmuxAdapter', () => {
     ])
   })
 
+  it('starts a new session at the requested initial dimensions', async () => {
+    const runtime = await fs.mkdtemp(path.join(os.tmpdir(), 'tasktty-runtime-'))
+    temporary.push(runtime)
+    const runner = new RecordingRunner()
+    const adapter = new TmuxAdapter(runner, runtime)
+
+    await adapter.createSession({
+      socketName: 'socket',
+      sessionName: 'session',
+      terminalId: 'term',
+      worktreeId: 'wt',
+      name: 'Hunk',
+      createdAt: '2026-01-02T03:04:05.000Z',
+      cwd: '/repo',
+      argv: ['hunk', 'diff', 'HEAD'],
+      initialSize: { cols: 132, rows: 47 },
+      env: {}
+    })
+
+    const create = runner.calls.find((call) =>
+      call.args.includes('new-session')
+    )!
+    expect(
+      create.args.slice(create.args.indexOf('-s'), create.args.indexOf('-c'))
+    ).toEqual(['-s', 'session', '-x', '132', '-y', '47'])
+    expect(create.args.indexOf('-x')).toBeLessThan(create.args.indexOf('--'))
+  })
+
   it('stores hostile and Unicode argv losslessly in the launch spec', async () => {
     const runtime = await fs.mkdtemp(path.join(os.tmpdir(), 'tasktty runtime '))
     temporary.push(runtime)
@@ -144,15 +172,18 @@ describe('TmuxAdapter', () => {
       runner.calls
         .filter((call) => call.args.includes('set-option'))
         .map((call) => call.args[call.args.indexOf('-t') + 2])
-    ).toEqual([
-      'window-size',
-      '@tasktty-name',
-      '@tasktty-argv',
-      '@tasktty-created-at',
-      '@tasktty-updated-at',
-      '@tasktty-worktree-id',
-      '@tasktty-terminal-id'
-    ])
+        .sort()
+    ).toEqual(
+      [
+        'window-size',
+        '@tasktty-name',
+        '@tasktty-argv',
+        '@tasktty-created-at',
+        '@tasktty-updated-at',
+        '@tasktty-worktree-id',
+        '@tasktty-terminal-id'
+      ].sort()
+    )
   })
 
   it('recovers the macOS SSH agent socket for terminal commands', async () => {

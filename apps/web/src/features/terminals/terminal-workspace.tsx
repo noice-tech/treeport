@@ -5,14 +5,15 @@ import type {
   ProjectRecord,
   TerminalPreset,
   TerminalRecord,
+  TerminalSize,
   WorktreeRecord
 } from '@tasktty/shared'
-import { apiClient } from '../../api.js'
-import { projectsQueryKey } from '../../project-metadata.js'
-import { terminalSessions } from '../../terminal-session.js'
-import { TerminalView } from '../../terminal-view.js'
-import { terminalTarget, worktreeTarget } from '../../workspace-navigation.js'
-import { useWorkspaceNavigate } from '../../workspace-router-navigation.js'
+import { apiClient } from '../../api'
+import { projectsQueryKey } from '../../project-metadata'
+import { terminalSessions } from '../../terminal-session'
+import { TerminalView } from '../../terminal-view'
+import { terminalTarget, worktreeTarget } from '../../workspace-navigation'
+import { useWorkspaceNavigate } from '../../workspace-router-navigation'
 
 export function TerminalWorkspace({
   projects,
@@ -71,13 +72,22 @@ export function TerminalWorkspace({
       worktreeId,
       name,
       argv,
-      returnToShell
+      returnToShell,
+      initialSize
     }: {
       worktreeId: string
       name: string
       argv?: string[]
       returnToShell?: boolean
-    }) => apiClient.createTerminal(worktreeId, name, argv, returnToShell),
+      initialSize?: TerminalSize
+    }) =>
+      apiClient.createTerminal(
+        worktreeId,
+        name,
+        argv,
+        returnToShell,
+        initialSize
+      ),
     onSuccess: async (terminal) => {
       const project = projects.find((candidate) =>
         candidate.worktrees.some(
@@ -191,11 +201,15 @@ export function TerminalWorkspace({
     }
 
     createTerminalGuardRef.current = true
+    const initialSize = selectedTerminal
+      ? terminalSessions.getInitialSize(selectedTerminal.id)
+      : null
     createTerminal.mutate({
       worktreeId: selectedWorktree.id,
       name: input.name,
       ...(input.argv ? { argv: [...input.argv] } : {}),
-      ...(input.returnToShell ? { returnToShell: true } : {})
+      ...(input.returnToShell ? { returnToShell: true } : {}),
+      ...(initialSize ? { initialSize } : {})
     })
   }
 
@@ -228,8 +242,13 @@ export function TerminalWorkspace({
       return
     }
 
-    return window.taskttyDesktop.onTerminalCommand((command) => {
-      if (modalOpen || projectSwitcherOpen || (isMobile && drawerOpen)) {
+    return window.taskttyDesktop.onCommand((command) => {
+      if (
+        command === 'new-worktree' ||
+        modalOpen ||
+        projectSwitcherOpen ||
+        (isMobile && drawerOpen)
+      ) {
         return
       }
 

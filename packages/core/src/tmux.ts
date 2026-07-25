@@ -2,7 +2,7 @@ import crypto from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import type { TerminalStatus } from '@tasktty/shared'
+import type { TerminalSize, TerminalStatus } from '@tasktty/shared'
 import type { CommandRunner } from './command.js'
 import { runChecked } from './command.js'
 import type { WorktreeSetupTask } from './setup.js'
@@ -155,6 +155,7 @@ export class TmuxAdapter {
     cwd: string
     argv: string[]
     fallbackArgv?: string[]
+    initialSize?: TerminalSize
     env: Record<string, string>
     setupTasks?: WorktreeSetupTask[]
     setupError?: string
@@ -212,6 +213,14 @@ export class TmuxAdapter {
           '-d',
           '-s',
           input.sessionName,
+          ...(input.initialSize
+            ? [
+                '-x',
+                String(input.initialSize.cols),
+                '-y',
+                String(input.initialSize.rows)
+              ]
+            : []),
           '-c',
           input.cwd,
           '--',
