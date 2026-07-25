@@ -10,7 +10,7 @@ import {
 import {
   TerminalAttachmentManager,
   type TerminalTransport
-} from './attachments.js'
+} from './terminal-attachments.js'
 import { TerminalMetadataManager } from './terminal-metadata.js'
 import type {
   TerminalProgressObserver,
@@ -26,22 +26,44 @@ class FakePty {
   pauses = 0
   resumes = 0
   kills = 0
+  dataDisposals = 0
+  exitDisposals = 0
   writes: Array<string | Buffer> = []
   resizes: Array<[number, number]> = []
   writeError: Error | null = null
+  onDataError: Error | null = null
+  onExitError: Error | null = null
   private dataListener: ((data: string) => void) | null = null
   private exitListener:
     | ((event: { exitCode: number; signal?: number }) => void)
     | null = null
   onData = (listener: (data: string) => void) => {
+    if (this.onDataError) {
+      throw this.onDataError
+    }
+
     this.dataListener = listener
-    return { dispose: () => (this.dataListener = null) }
+    return {
+      dispose: () => {
+        this.dataDisposals += 1
+        this.dataListener = null
+      }
+    }
   }
   onExit = (
     listener: (event: { exitCode: number; signal?: number }) => void
   ) => {
+    if (this.onExitError) {
+      throw this.onExitError
+    }
+
     this.exitListener = listener
-    return { dispose: () => (this.exitListener = null) }
+    return {
+      dispose: () => {
+        this.exitDisposals += 1
+        this.exitListener = null
+      }
+    }
   }
   emit(data: string) {
     this.dataListener?.(data)
@@ -174,7 +196,26 @@ function fixture() {
     metadata,
     spawn as never
   )
-  return { manager, metadata, progressObservers, ptys, publish, spawn, tmux }
+  return {
+    manager,
+    metadata,
+    progressObservers,
+    ptys,
+    publish,
+    service,
+    spawn,
+    tmux
+  }
+}
+
+function deferred<Value>() {
+  let resolve!: (value: Value | PromiseLike<Value>) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<Value>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, resolve, reject }
 }
 
 function attach(
@@ -741,6 +782,224 @@ describe('TerminalAttachmentManager', () => {
       reconnect.sent.some((message) => message.data === 'old output')
     ).toBe(false)
     manager.close(reconnectId)
+  })
+
+  it('abandons every pending initialization phase after close, including late promise completion', async () => {
+    const phases = [
+      'refresh',
+      'configure',
+      'metadata',
+      'manual-size',
+      'session-size',
+      'fallback-resize'
+    ] as const
+
+    for (const phase of phases) {
+      const value = fixture()
+      const pending = deferred<unknown>()
+      if (phase === 'refresh') {
+        vi.mocked(value.service.refreshTerminalStatus).mockReturnValueOnce(
+          pending.promise as never
+        )
+      } else if (phase === 'configure') {
+        vi.mocked(value.tmux.configureServer).mockReturnValueOnce(
+          pending.promise as Promise<void>
+        )
+      } else if (phase === 'metadata') {
+        vi.spyOn(value.metadata, 'trackTerminal').mockReturnValueOnce(
+          pending.promise as Promise<void>
+        )
+      } else if (phase === 'manual-size') {
+        vi.mocked(value.tmux.useManualWindowSize).mockReturnValueOnce(
+          pending.promise as Promise<void>
+        )
+      } else if (phase === 'session-size') {
+        vi.mocked(value.tmux.sessionSize).mockReturnValueOnce(
+          pending.promise as never
+        )
+      } else {
+        vi.mocked(value.tmux.sessionSize).mockResolvedValueOnce(null)
+        vi.mocked(value.tmux.resizeWindow).mockReturnValueOnce(
+          pending.promise as Promise<void>
+        )
+      }
+
+      const transport = new FakeTransport()
+      const id = attach(value.manager, transport, `tab-${phase}`)
+      await vi.waitFor(() => {
+        const started =
+          phase === 'refresh'
+            ? value.service.refreshTerminalStatus
+            : phase === 'configure'
+              ? value.tmux.configureServer
+              : phase === 'metadata'
+                ? value.metadata.trackTerminal
+                : phase === 'manual-size'
+                  ? value.tmux.useManualWindowSize
+                  : phase === 'session-size'
+                    ? value.tmux.sessionSize
+                    : value.tmux.resizeWindow
+        expect(started).toHaveBeenCalled()
+      })
+
+      value.manager.close(id)
+      pending.resolve(
+        phase === 'refresh'
+          ? {
+              id: 'term',
+              worktreeId: 'wt',
+              tmuxSessionName: 'session',
+              status: 'running',
+              exitCode: null
+            }
+          : phase === 'session-size'
+            ? { cols: 100, rows: 30 }
+            : undefined
+      )
+      await new Promise((resolve) => setTimeout(resolve, 0))
+
+      expect(value.spawn, phase).not.toHaveBeenCalled()
+      expect(
+        transport.sent.some((message) => message.type === 'ready'),
+        phase
+      ).toBe(false)
+      expect(
+        transport.sent.some((message) => message.type === 'terminal_error'),
+        phase
+      ).toBe(false)
+    }
+  })
+
+  it('releases partial acquisitions exactly once when subscription setup fails', async () => {
+    const value = fixture()
+    const unsubscribe = vi.fn()
+    vi.spyOn(value.metadata, 'subscribe').mockReturnValue(unsubscribe)
+    value.spawn.mockImplementationOnce(() => {
+      const pty = new FakePty()
+      pty.onExitError = new Error('exit subscription failed')
+      value.ptys.push(pty)
+      return pty as unknown as IPty
+    })
+    const transport = new FakeTransport()
+
+    attach(value.manager, transport, 'tab-partial')
+    await vi.waitFor(() =>
+      expect(transport.sent.at(-1)).toMatchObject({
+        type: 'terminal_error',
+        code: 'ATTACH_FAILED'
+      })
+    )
+
+    expect(value.ptys[0]!.kills).toBe(1)
+    expect(value.ptys[0]!.dataDisposals).toBe(1)
+    expect(value.ptys[0]!.exitDisposals).toBe(0)
+    expect(unsubscribe).toHaveBeenCalledOnce()
+    value.manager.dispose()
+    expect(value.ptys[0]!.kills).toBe(1)
+    expect(value.ptys[0]!.dataDisposals).toBe(1)
+    expect(unsubscribe).toHaveBeenCalledOnce()
+  })
+
+  it('revalidates canonical dimensions before ready when resize queues behind initialization', async () => {
+    const value = fixture()
+    const controller = new FakeTransport()
+    const controllerId = attach(value.manager, controller, 'tab-controller')
+    await ready(controller)
+
+    const finishManualSize = deferred<void>()
+    vi.mocked(value.tmux.useManualWindowSize).mockReturnValueOnce(
+      finishManualSize.promise
+    )
+    const joining = new FakeTransport()
+    attach(value.manager, joining, 'tab-joining')
+    await vi.waitFor(() =>
+      expect(value.tmux.useManualWindowSize).toHaveBeenCalledTimes(2)
+    )
+
+    value.manager.message(controllerId, 'resize', {
+      generation: 1,
+      cols: 120,
+      rows: 40
+    })
+    finishManualSize.resolve()
+    const joiningReady = await ready(joining)
+
+    expect(joiningReady).toMatchObject({
+      cols: 120,
+      rows: 40,
+      revision: 2
+    })
+    expect(value.ptys[1]!.resizes).toEqual([[120, 40]])
+    expect(value.tmux.resizeWindow).toHaveBeenCalledWith(
+      'socket',
+      'session',
+      120,
+      40
+    )
+  })
+
+  it('closes queued initialization without occupying or poisoning the terminal queue', async () => {
+    const value = fixture()
+    const pending = deferred<{ cols: number; rows: number } | null>()
+    vi.mocked(value.tmux.sessionSize).mockReturnValueOnce(pending.promise)
+    const first = new FakeTransport()
+    attach(value.manager, first, 'tab-first')
+    await vi.waitFor(() =>
+      expect(value.tmux.sessionSize).toHaveBeenCalledOnce()
+    )
+
+    const queued = new FakeTransport()
+    const queuedId = attach(value.manager, queued, 'tab-queued')
+    await vi.waitFor(() =>
+      expect(value.tmux.configureServer).toHaveBeenCalledTimes(2)
+    )
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    value.manager.close(queuedId)
+    pending.resolve({ cols: 100, rows: 30 })
+    await ready(first)
+
+    const later = new FakeTransport()
+    attach(value.manager, later, 'tab-later')
+    await ready(later)
+    expect(value.ptys).toHaveLength(2)
+    expect(queued.sent).toEqual([])
+  })
+
+  it('releases scoped resources when transport send self-closes initialization', async () => {
+    const value = fixture()
+    const unsubscribe = vi.fn()
+    vi.spyOn(value.metadata, 'subscribe').mockReturnValue(unsubscribe)
+    const transport = new FakeTransport()
+    transport.failAfter = 1
+
+    attach(value.manager, transport, 'tab-send-close')
+    await vi.waitFor(() => expect(value.ptys).toHaveLength(1))
+    await vi.waitFor(() => expect(value.ptys[0]!.kills).toBe(1))
+
+    expect(transport.sent.map((message) => message.type)).toEqual(['ready'])
+    expect(value.ptys[0]!.dataDisposals).toBe(1)
+    expect(value.ptys[0]!.exitDisposals).toBe(1)
+    expect(unsubscribe).toHaveBeenCalledOnce()
+  })
+
+  it('keeps close and dispose synchronous and idempotent after ready', async () => {
+    const value = fixture()
+    const unsubscribe = vi.fn()
+    vi.spyOn(value.metadata, 'subscribe').mockReturnValue(unsubscribe)
+    const transport = new FakeTransport()
+    const id = attach(value.manager, transport, 'tab-a')
+    await ready(transport)
+
+    value.manager.close(id)
+    value.manager.close(id)
+    value.manager.dispose()
+    value.manager.dispose()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(value.ptys[0]!.kills).toBe(1)
+    expect(value.ptys[0]!.dataDisposals).toBe(1)
+    expect(value.ptys[0]!.exitDisposals).toBe(1)
+    expect(unsubscribe).toHaveBeenCalledOnce()
   })
 
   it('cleans up all per-view resources during daemon shutdown', async () => {
