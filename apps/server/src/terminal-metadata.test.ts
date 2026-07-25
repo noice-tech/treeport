@@ -70,6 +70,14 @@ function terminal(id: string): TerminalRecord {
   }
 }
 
+function deferred<Value>() {
+  let resolve!: (value: Value | PromiseLike<Value>) => void
+  const promise = new Promise<Value>((resolvePromise) => {
+    resolve = resolvePromise
+  })
+  return { promise, resolve }
+}
+
 function fixture(initialTerminals: TerminalRecord[]) {
   const terminals = new Map(initialTerminals.map((item) => [item.id, item]))
   const events = new ProductEventBus()
@@ -362,6 +370,77 @@ describe('TerminalMetadataManager', () => {
     })
     await vi.advanceTimersByTimeAsync(TERMINAL_METADATA_POLL_MS)
     expect(manager.get(item.id).title).toBe('tasktty')
+  })
+
+  it('coalesces shell title writes without losing a title observed in flight', async () => {
+    vi.useFakeTimers()
+    const item = { ...terminal('one'), argv: ['/bin/zsh', '-l'] }
+    const { manager, observers, sessionTitleState, setSessionShellTitle } =
+      fixture([item])
+    managers.push(manager)
+    sessionTitleState.mockResolvedValue({
+      paneTitle: 'initial',
+      currentCommand: 'zsh',
+      shellTitle: 'initial'
+    })
+    await manager.initialize()
+
+    const firstWrite = deferred<undefined>()
+    setSessionShellTitle.mockImplementationOnce(() => firstWrite.promise)
+    observers[0]!.title('first')
+    sessionTitleState.mockResolvedValue({
+      paneTitle: 'first',
+      currentCommand: 'zsh',
+      shellTitle: 'initial'
+    })
+    await vi.advanceTimersByTimeAsync(TERMINAL_METADATA_POLL_MS)
+    expect(setSessionShellTitle).toHaveBeenLastCalledWith(
+      'socket',
+      item.tmuxSessionName,
+      'first'
+    )
+
+    observers[0]!.title('second')
+    sessionTitleState.mockResolvedValue({
+      paneTitle: 'second',
+      currentCommand: 'zsh',
+      shellTitle: 'initial'
+    })
+    await vi.advanceTimersByTimeAsync(TERMINAL_METADATA_POLL_MS)
+    expect(setSessionShellTitle).toHaveBeenCalledTimes(1)
+
+    firstWrite.resolve(undefined)
+    await vi.waitFor(() =>
+      expect(setSessionShellTitle).toHaveBeenLastCalledWith(
+        'socket',
+        item.tmuxSessionName,
+        'second'
+      )
+    )
+    expect(manager.get(item.id).title).toBe('second')
+
+    const interruptedWrite = deferred<undefined>()
+    setSessionShellTitle.mockImplementationOnce(() => interruptedWrite.promise)
+    observers[0]!.title('third')
+    sessionTitleState.mockResolvedValue({
+      paneTitle: 'third',
+      currentCommand: 'zsh',
+      shellTitle: 'second'
+    })
+    await vi.advanceTimersByTimeAsync(TERMINAL_METADATA_POLL_MS)
+    observers[0]!.title('stale-after-removal')
+    sessionTitleState.mockResolvedValue({
+      paneTitle: 'stale-after-removal',
+      currentCommand: 'zsh',
+      shellTitle: 'second'
+    })
+    await vi.advanceTimersByTimeAsync(TERMINAL_METADATA_POLL_MS)
+
+    manager.removeTerminal(item.id)
+    interruptedWrite.resolve(undefined)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(setSessionShellTitle).toHaveBeenCalledTimes(3)
+    expect(observers[0]!.disposed).toBe(true)
   })
 
   it('retries a failed shell title persistence write on a later reconciliation', async () => {
