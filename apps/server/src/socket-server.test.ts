@@ -8,7 +8,7 @@ import {
   type AppConfig,
   type TaskTTYService,
   type TmuxAdapter
-} from '@tasktty/core'
+} from './core/index.js'
 import type {
   EventsClientToServerEvents,
   EventsServerToClientEvents,

@@ -8,7 +8,7 @@ import {
   TmuxAdapter,
   TaskTTYDatabase,
   TaskTTYService
-} from '@tasktty/core'
+} from './core/index.js'
 import { createApp } from './app.js'
 import { createSocketServer } from './socket-server.js'
 import { TerminalMetadataManager } from './terminal-metadata.js'

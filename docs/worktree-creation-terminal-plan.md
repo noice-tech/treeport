@@ -65,10 +65,10 @@ Consequences:
 
 Primary files:
 
-- `packages/core/src/service.ts`
-- `packages/core/src/zed.ts`
-- `packages/core/src/tmux.ts`
-- `packages/core/src/launcher.ts`
+- `apps/server/src/core/service.ts`
+- `apps/server/src/core/zed.ts`
+- `apps/server/src/core/tmux.ts`
+- `apps/server/src/core/launcher.ts`
 - `apps/server/src/app.ts`
 
 ## Target lifecycle
@@ -217,8 +217,8 @@ Cache insertion must happen before terminal selection so selection reconciliatio
 
 **Files**
 
-- `packages/core/src/zed.ts`
-- `packages/core/src/zed.test.ts`
+- `apps/server/src/core/zed.ts`
+- `apps/server/src/core/zed.test.ts`
 
 **Changes**
 
@@ -243,8 +243,8 @@ Cache insertion must happen before terminal selection so selection reconciliatio
 
 **Files**
 
-- `packages/core/src/tmux.ts`
-- `packages/core/src/tmux.test.ts`
+- `apps/server/src/core/tmux.ts`
+- `apps/server/src/core/tmux.test.ts`
 
 **Changes**
 
@@ -269,8 +269,8 @@ Cache insertion must happen before terminal selection so selection reconciliatio
 
 **Files**
 
-- `packages/core/src/launcher.ts`
-- `packages/core/src/launcher.test.ts` (new)
+- `apps/server/src/core/launcher.ts`
+- `apps/server/src/core/launcher.test.ts` (new)
 
 **Changes**
 
@@ -301,8 +301,8 @@ Cache insertion must happen before terminal selection so selection reconciliatio
 
 **Files**
 
-- `packages/core/src/service.ts`
-- `packages/core/src/service.integration.test.ts`
+- `apps/server/src/core/service.ts`
+- `apps/server/src/core/service.integration.test.ts`
 
 **Changes**
 
@@ -390,7 +390,7 @@ Add tests for:
 
 **Files**
 
-- `packages/core/src/system.real.test.ts`
+- `apps/server/src/core/system.real.test.ts`
 - `README.md`
 
 **Real test cases**
@@ -430,13 +430,13 @@ A future persisted design should model checkout creation and setup execution as 
 Run focused validation first:
 
 ```text
-pnpm test -- packages/core/src/zed.test.ts
-pnpm test -- packages/core/src/tmux.test.ts
-pnpm test -- packages/core/src/launcher.test.ts
+pnpm test -- apps/server/src/core/zed.test.ts
+pnpm test -- apps/server/src/core/tmux.test.ts
+pnpm test -- apps/server/src/core/launcher.test.ts
 pnpm test -- apps/server/src/app.test.ts
-pnpm test:integration -- packages/core/src/service.integration.test.ts
+pnpm test:integration -- apps/server/src/core/service.integration.test.ts
 pnpm test:web --project=chromium apps/web/e2e/app.spec.ts
-TASKTTY_REAL_INTEGRATION=1 pnpm test:integration:real -- packages/core/src/system.real.test.ts
+TASKTTY_REAL_INTEGRATION=1 pnpm test:integration:real -- apps/server/src/core/system.real.test.ts
 ```
 
 Then run the full project checks:
