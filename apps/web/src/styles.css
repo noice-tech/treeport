@@ -33,13 +33,6 @@ body {
   @apply m-0 antialiased;
 }
 
-button,
-input,
-select,
-textarea {
-  font: inherit;
-}
-
 /* iOS zooms focused form controls whose rendered text is below 16px. */
 @supports (-webkit-touch-callout: none) {
   [data-slot='input'],
@@ -47,10 +40,6 @@ textarea {
   [data-slot='textarea'] {
     font-size: max(1rem, 16px);
   }
-}
-
-button {
-  color: inherit;
 }
 
 .desktop-titlebar {

@@ -80,7 +80,7 @@ function WorktreeShell({
   onClick?: () => void
 }) {
   const classes = cn(
-    'worktree-row flex h-auto min-h-11 w-full min-w-0 items-center justify-start gap-1.5 rounded-md px-2 py-1.5 text-left text-base/5 font-medium min-[701px]:min-h-8 min-[701px]:py-1 min-[701px]:text-[0.8125rem]/4',
+    'worktree-row flex h-auto min-h-11 w-full min-w-0 items-center justify-start gap-1.5 rounded-md px-2 py-1.5 text-left text-base/5 font-medium min-[701px]:min-h-8 min-[701px]:py-0.5 min-[701px]:text-sm/5',
     linked && 'min-[701px]:pr-9',
     pending
       ? 'text-zinc-300'
@@ -772,7 +772,7 @@ export function WorkspaceSidebar({
                         'Git repository unavailable'}
                     </p>
                   ) : null}
-                  <ul role="list" className="grid gap-2 min-[701px]:gap-1.5">
+                  <ul role="list" className="grid gap-2 min-[701px]:gap-1">
                     {project.worktrees.map((worktree) => (
                       <li key={worktree.id} className="group/worktree min-w-0">
                         <div
@@ -808,17 +808,17 @@ export function WorkspaceSidebar({
                               pendingRemovals[worktree.id] ||
                               worktree.status === 'cleaning' ? (
                                 <GitBranchIcon
-                                  className="worktree-progress-icon worktree-removing-icon size-4 shrink-0 stroke-rose-400 stroke-[1.5]"
+                                  className="worktree-progress-icon worktree-removing-icon size-4 shrink-0 stroke-rose-400 stroke-[1.5] min-[701px]:size-3.5"
                                   aria-hidden="true"
                                 />
                               ) : worktree.kind === 'main' ? (
                                 <CrownIcon
-                                  className="size-4 shrink-0 stroke-zinc-600 stroke-[1.5]"
+                                  className="size-4 shrink-0 stroke-zinc-600 stroke-[1.5] min-[701px]:size-3.5"
                                   aria-hidden="true"
                                 />
                               ) : (
                                 <GitBranchIcon
-                                  className="shrink-0 stroke-zinc-600 stroke-[1.5]"
+                                  className="shrink-0 stroke-zinc-600 stroke-[1.5] min-[701px]:size-3.5"
                                   aria-hidden="true"
                                 />
                               )
@@ -882,7 +882,7 @@ export function WorkspaceSidebar({
                         </div>
                         <ul
                           role="list"
-                          className="terminal-list ml-4 grid gap-0.5 border-l border-white/6 pl-2"
+                          className="terminal-list ml-4 grid gap-px border-l border-white/6 pl-2 min-[701px]:ml-2.5 min-[701px]:pl-1.5"
                         >
                           {worktree.terminals.map((terminal) => {
                             const needsAttention = bellAttention.has(
@@ -903,10 +903,10 @@ export function WorkspaceSidebar({
                                   variant="ghost"
                                   type="button"
                                   className={cn(
-                                    'terminal-row grid h-auto min-h-11 w-full min-w-0 grid-cols-[1.25rem_minmax(0,1fr)_0.5rem] gap-1.5 rounded-md px-2 py-1.5 text-left text-base/5 font-normal min-[701px]:min-h-7 min-[701px]:grid-cols-[1rem_minmax(0,1fr)_0.5rem] min-[701px]:py-0.5 min-[701px]:text-xs/4',
+                                    'terminal-row grid h-auto min-h-11 w-full min-w-0 grid-cols-[1.25rem_minmax(0,1fr)_0.5rem] gap-1.5 rounded-md px-2 py-1.5 text-left text-base/5 font-normal min-[701px]:min-h-7 min-[701px]:grid-cols-[1rem_minmax(0,1fr)_0.5rem] min-[701px]:gap-1 min-[701px]:py-0 min-[701px]:text-xs/4',
                                     selectedTerminalId === terminal.id
                                       ? 'selected bg-cyan-400/8 text-cyan-50'
-                                      : 'text-zinc-400 hover:bg-white/5 hover:text-zinc-100'
+                                      : 'text-zinc-300 hover:bg-white/5 hover:text-zinc-100'
                                   )}
                                   onClick={() => selectTerminal(terminal)}
                                   aria-label={`${
@@ -916,7 +916,7 @@ export function WorkspaceSidebar({
                                 >
                                   <TerminalIcon
                                     className={cn(
-                                      'size-4 shrink-0 stroke-zinc-600 stroke-[1.5]',
+                                      'size-4 shrink-0 stroke-zinc-500 stroke-[1.5] min-[701px]:size-3.5',
                                       progress &&
                                         !needsAttention &&
                                         progress.state !== 'paused' &&
@@ -977,7 +977,7 @@ export function WorkspaceSidebar({
                             pending
                             icon={
                               <GitBranchIcon
-                                className="worktree-progress-icon size-4 shrink-0 stroke-cyan-400 stroke-[1.5]"
+                                className="worktree-progress-icon size-4 shrink-0 stroke-cyan-400 stroke-[1.5] min-[701px]:size-3.5"
                                 aria-hidden="true"
                               />
                             }
@@ -988,7 +988,7 @@ export function WorkspaceSidebar({
                       <Button
                         type="button"
                         variant="ghost"
-                        className="h-auto min-h-11 w-full justify-start gap-1.5 px-2 py-1.5 text-base/5 font-normal text-zinc-500 hover:bg-white/5 hover:text-zinc-100 min-[701px]:min-h-8 min-[701px]:py-1 min-[701px]:text-[0.8125rem]/4"
+                        className="h-auto min-h-11 w-full justify-start gap-1.5 px-2 py-1.5 text-base/5 font-normal text-zinc-500 hover:bg-white/5 hover:text-zinc-100 min-[701px]:min-h-8 min-[701px]:py-0.5 min-[701px]:text-sm/5"
                         disabled={project.availability.state === 'unavailable'}
                         aria-keyshortcuts={
                           newWorktreeShortcut
@@ -1009,7 +1009,7 @@ export function WorkspaceSidebar({
                           )
                         }
                       >
-                        <PlusIcon />
+                        <PlusIcon className="min-[701px]:size-3.5" />
                         <span>New worktree</span>
                         {newWorktreeShortcut ? (
                           <kbd

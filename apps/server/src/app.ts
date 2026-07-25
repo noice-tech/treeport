@@ -530,7 +530,9 @@ export function createApp({
     serveStatic({ root: staticRoot, path: 'manifest.webmanifest' })
   )
 
-  app.get('/sw.js', serveStatic({ root: staticRoot, path: 'sw.js' }))
+  // A 404 here makes browsers unregister service workers left over from
+  // when the web app shipped one; the SPA fallback would keep them alive.
+  app.get('/sw.js', (c) => c.body(null, 404))
 
   app.get('*', serveStatic({ root: staticRoot, path: 'index.html' }))
 
