@@ -9,7 +9,7 @@ import {
   type TaskTTYService,
   type TmuxAdapter,
   type TmuxSessionTitleState
-} from '@tasktty/core'
+} from './core/index.js'
 import {
   TerminalMetadataManager,
   TERMINAL_METADATA_POLL_MS,

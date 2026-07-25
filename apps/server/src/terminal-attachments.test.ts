@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { IPty } from 'node-pty'
-import type { TmuxAdapter, TaskTTYService } from '@tasktty/core'
+import type { TmuxAdapter, TaskTTYService } from './core/index.js'
 import {
   TERMINAL_OUTPUT_HIGH_WATERMARK,
   TERMINAL_OUTPUT_STALL_TIMEOUT_MS,

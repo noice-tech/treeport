@@ -14,7 +14,7 @@ import {
   type TerminalServerEvent,
   type TerminalServerPayload
 } from '@tasktty/shared'
-import type { AppConfig, TaskTTYService, TmuxAdapter } from '@tasktty/core'
+import type { AppConfig, TaskTTYService, TmuxAdapter } from './core/index.js'
 import {
   TerminalAttachmentManager,
   type TerminalTransport

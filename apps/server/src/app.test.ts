@@ -9,7 +9,7 @@ import {
   type AppConfig,
   type TmuxAdapter,
   type TaskTTYService
-} from '@tasktty/core'
+} from './core/index.js'
 import { createApp } from './app.js'
 import type { TerminalMetadataManager } from './terminal-metadata.js'
 

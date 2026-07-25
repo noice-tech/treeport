@@ -3,7 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { execFile, spawn } from 'node:child_process'
 import { promisify } from 'node:util'
-import { SpawnCommandRunner, TmuxAdapter } from '@tasktty/core'
+import { SpawnCommandRunner, TmuxAdapter } from './core/index.js'
 import { afterAll, describe, expect, it } from 'vitest'
 import {
   TerminalMetadataParser,

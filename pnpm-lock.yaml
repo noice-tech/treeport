@@ -74,21 +74,24 @@ importers:
       '@hono/node-server':
         specifier: ^2.0.10
         version: 2.0.10(hono@4.12.30)
-      '@tasktty/core':
-        specifier: workspace:*
-        version: link:../../packages/core
       '@tasktty/shared':
         specifier: workspace:*
         version: link:../../packages/shared
       '@xterm/headless':
         specifier: ^6.0.0
         version: 6.0.0
+      better-sqlite3:
+        specifier: ^12.11.1
+        version: 12.11.1
       effect:
         specifier: ^3.22.0
         version: 3.22.0
       hono:
         specifier: ^4.11.7
         version: 4.12.30
+      jsonc-parser:
+        specifier: ^3.3.1
+        version: 3.3.1
       node-pty:
         specifier: 1.2.0-beta.14
         version: 1.2.0-beta.14
@@ -99,6 +102,9 @@ importers:
         specifier: ^4.3.6
         version: 4.4.3
     devDependencies:
+      '@types/better-sqlite3':
+        specifier: ^7.6.13
+        version: 7.6.13
       socket.io-client:
         specifier: 4.8.3
         version: 4.8.3(supports-color@8.1.1)
@@ -206,28 +212,6 @@ importers:
       socket.io:
         specifier: 4.8.3
         version: 4.8.3(supports-color@8.1.1)
-
-  packages/core:
-    dependencies:
-      '@tasktty/shared':
-        specifier: workspace:*
-        version: link:../shared
-      better-sqlite3:
-        specifier: ^12.11.1
-        version: 12.11.1
-      effect:
-        specifier: ^3.22.0
-        version: 3.22.0
-      jsonc-parser:
-        specifier: ^3.3.1
-        version: 3.3.1
-    devDependencies:
-      '@types/better-sqlite3':
-        specifier: ^7.6.13
-        version: 7.6.13
-      node-pty:
-        specifier: 1.2.0-beta.14
-        version: 1.2.0-beta.14
 
   packages/shared:
     dependencies:

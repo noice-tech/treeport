@@ -20,8 +20,8 @@ import {
   updateTerminalPresetSchema,
   updateTerminalSchema
 } from '@tasktty/shared'
-import type { AppConfig, TmuxAdapter, TaskTTYService } from '@tasktty/core'
-import { DomainError } from '@tasktty/core'
+import type { AppConfig, TmuxAdapter, TaskTTYService } from './core/index.js'
+import { DomainError } from './core/index.js'
 import { TerminalMetadataManager } from './terminal-metadata.js'
 
 const UPLOAD_MIME_EXTENSIONS: Readonly<Record<string, string>> = {

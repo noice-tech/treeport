@@ -9,8 +9,8 @@ import type {
   TaskTTYService,
   TmuxAdapter,
   TmuxSessionTitleState
-} from '@tasktty/core'
-import { DomainError, resolveExecutablePath } from '@tasktty/core'
+} from './core/index.js'
+import { DomainError, resolveExecutablePath } from './core/index.js'
 import * as Effect from 'effect/Effect'
 import * as Fiber from 'effect/Fiber'
 import type * as Scope from 'effect/Scope'
