@@ -1,9 +1,11 @@
 import { FitAddon } from '@xterm/addon-fit'
+import { ImageAddon } from '@xterm/addon-image'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { Terminal } from '@xterm/xterm'
 import { io, type Socket } from 'socket.io-client'
 import { apiClient } from './api'
 import {
+  isTerminalSizeReport,
   parseTerminalServerEvent,
   SOCKET_IO_PATH,
   TERMINAL_MAX_INPUT_BYTES,
@@ -34,6 +36,9 @@ const TERMINAL_MAX_COLS = 1_000
 const TERMINAL_MIN_ROWS = 2
 const TERMINAL_MAX_ROWS = 500
 const TERMINAL_RESIZE_SETTLE_MS = 150
+const TERMINAL_IMAGE_PIXEL_LIMIT = 512 * 1024
+const TERMINAL_IMAGE_SEQUENCE_LIMIT = 5_000_000
+const TERMINAL_IMAGE_STORAGE_LIMIT_MB = 32
 
 function normalizeTerminalDimensions(
   dimensions: { cols: number; rows: number },
@@ -592,6 +597,19 @@ export class TerminalSession {
     const terminal = new Terminal(terminalOptions())
     const fitAddon = new FitAddon()
     terminal.loadAddon(fitAddon)
+    terminal.loadAddon(
+      new ImageAddon({
+        enableSizeReports: true,
+        pixelLimit: TERMINAL_IMAGE_PIXEL_LIMIT,
+        storageLimit: TERMINAL_IMAGE_STORAGE_LIMIT_MB,
+        showPlaceholder: false,
+        sixelSupport: true,
+        sixelScrolling: true,
+        sixelPaletteLimit: 256,
+        sixelSizeLimit: TERMINAL_IMAGE_SEQUENCE_LIMIT,
+        iipSupport: false
+      })
+    )
     terminal.loadAddon(new WebLinksAddon(activateTerminalLink))
     terminal.open(this.wrapper)
     this.wrapper.addEventListener(
@@ -724,10 +742,11 @@ export class TerminalSession {
     })
     terminal.onKey(() => this.prepareScrollExit())
     terminal.onData((data) => {
-      if (this.canInput()) {
+      const sizeReport = isTerminalSizeReport(data)
+      if (sizeReport || this.canInput()) {
         this.send('input', {
           generation: this.controllerGeneration,
-          data: this.withScrollExit(data)
+          data: sizeReport ? data : this.withScrollExit(data)
         })
       }
     })

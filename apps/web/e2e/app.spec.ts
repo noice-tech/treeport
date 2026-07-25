@@ -1530,6 +1530,54 @@ test.describe('desktop worktree terminal UI', () => {
     expect(mocked.closeRequests()).toBe(3)
   })
 
+  test('renders SIXEL output inline before acknowledging it', async ({
+    page
+  }) => {
+    await mockApp(page)
+    await page.getByRole('button', { name: 'Pi, running', exact: true }).click()
+
+    const imageLayer = page.locator('.xterm-image-layer')
+    await expect(imageLayer).toHaveCount(0)
+    await page.evaluate(() => {
+      const socket = (window as any).__wsInstances.find((item: any) =>
+        item.url.includes('term_pi')
+      )
+      socket.onmessage?.({
+        data: JSON.stringify({
+          version: 1,
+          type: 'output',
+          streamId: socket.streamId,
+          sequence: 2,
+          data: '\x1b[14t\x1b[18t\x1bP0;0;q"1;1;8;6#0;2;100;0;0#0!8~\x1b\\'
+        })
+      })
+    })
+
+    await expect(imageLayer).toHaveCount(1)
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          ((window as any).__wsSent ?? []).some(
+            (message: any) =>
+              message.type === 'input' &&
+              message.data.charCodeAt(0) === 27 &&
+              /^\[(?:4|8);\d+;\d+t$/.test(message.data.slice(1))
+          )
+        )
+      )
+      .toBe(true)
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          ((window as any).__wsSent ?? []).some(
+            (message: any) =>
+              message.type === 'output_ack' && message.sequence === 2
+          )
+        )
+      )
+      .toBe(true)
+  })
+
   test('detects plain web URLs and opens them only on platform modifier-click', async ({
     page
   }) => {

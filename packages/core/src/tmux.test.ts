@@ -229,6 +229,56 @@ describe('TmuxAdapter', () => {
     })
   })
 
+  it.each([
+    ['3.6a\t1\n', 'sixel'],
+    ['3.10\t1\n', 'sixel'],
+    ['3.5a\t1\n', undefined],
+    ['3.6a\t0\n', undefined]
+  ])(
+    'advertises only the image protocol supported by the managed tmux server: %s',
+    async (capabilities, expectedProtocol) => {
+      const runtime = await fs.mkdtemp(
+        path.join(os.tmpdir(), 'tasktty-runtime-')
+      )
+      temporary.push(runtime)
+      const runner = new RecordingRunner()
+      runner.responses.push(
+        { stdout: 'off\n', stderr: '', exitCode: 0 },
+        { stdout: '', stderr: '', exitCode: 0 },
+        { stdout: '', stderr: '', exitCode: 0 },
+        { stdout: capabilities, stderr: '', exitCode: 0 }
+      )
+      const adapter = new TmuxAdapter(runner, runtime, 'tmux', '/launcher.js', {
+        environment: {},
+        platform: 'linux'
+      })
+
+      await adapter.createSession({
+        socketName: 'socket',
+        sessionName: 'session',
+        terminalId: 'term',
+        worktreeId: 'wt',
+        name: 'Terminal',
+        createdAt: '2026-01-02T03:04:05.000Z',
+        cwd: '/tmp',
+        argv: ['pi'],
+        env: { TASKTTY_IMAGE_PROTOCOL: 'untrusted' }
+      })
+
+      const spec = await fs
+        .readFile(path.join(adapter.specsDir, 'term.json'), 'utf8')
+        .then(JSON.parse)
+      expect(spec.env.TASKTTY_IMAGE_PROTOCOL).toBe(expectedProtocol)
+      expect(runner.calls.map((call) => call.args.at(4)).slice(0, 5)).toEqual([
+        'show-options',
+        'start-server',
+        'source-file',
+        'display-message',
+        'new-session'
+      ])
+    }
+  )
+
   it('preserves an inherited SSH agent socket without consulting launchd', async () => {
     const runtime = await fs.mkdtemp(path.join(os.tmpdir(), 'tasktty-runtime-'))
     temporary.push(runtime)
@@ -300,6 +350,10 @@ describe('TmuxAdapter', () => {
     temporary.push(runtime)
     const runner = new RecordingRunner()
     runner.responses.push(
+      { stdout: 'off\n', stderr: '', exitCode: 0 },
+      { stdout: '', stderr: '', exitCode: 0 },
+      { stdout: '', stderr: '', exitCode: 0 },
+      { stdout: '', stderr: '', exitCode: 0 },
       { stdout: '', stderr: '', exitCode: 0 },
       { stdout: '', stderr: 'setup failed', exitCode: 1 }
     )
@@ -320,6 +374,39 @@ describe('TmuxAdapter', () => {
     await expect(
       fs.access(path.join(adapter.specsDir, 'term.json'))
     ).rejects.toThrow()
+    expect(
+      runner.calls.some((call) => call.args.includes('kill-session'))
+    ).toBe(true)
+  })
+
+  it('stops a newly started empty server when setup fails before session creation', async () => {
+    const runtime = await fs.mkdtemp(path.join(os.tmpdir(), 'tasktty-runtime-'))
+    temporary.push(runtime)
+    const runner = new RecordingRunner()
+    runner.responses.push(
+      { stdout: '', stderr: 'no server running', exitCode: 1 },
+      { stdout: '', stderr: '', exitCode: 0 },
+      { stdout: '', stderr: 'invalid config', exitCode: 1 },
+      { stdout: '', stderr: '', exitCode: 0 }
+    )
+    const adapter = new TmuxAdapter(runner, runtime, 'tmux', '/launcher.js')
+
+    await expect(
+      adapter.createSession({
+        socketName: 'socket',
+        sessionName: 'session',
+        terminalId: 'term',
+        worktreeId: 'wt',
+        name: 'Terminal',
+        createdAt: '2026-01-02T03:04:05.000Z',
+        cwd: '/tmp',
+        argv: ['pi'],
+        env: {}
+      })
+    ).rejects.toThrow('invalid config')
+
+    expect(runner.calls.at(-1)?.args).toContain('if-shell')
+    expect(runner.calls.at(-1)?.args).toContain('kill-server')
   })
 
   it('reads the live pane title, foreground command, and remembered shell title from tmux', async () => {

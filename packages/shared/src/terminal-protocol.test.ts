@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  isTerminalSizeReport,
   parseEventsSnapshot,
   parseProductEvent,
   parseTerminalAuth,
@@ -12,6 +13,14 @@ import {
 } from './index.js'
 
 describe('Socket.IO contracts', () => {
+  it('recognizes only bounded terminal size reports', () => {
+    expect(isTerminalSizeReport('\x1b[8;24;80t')).toBe(true)
+    expect(isTerminalSizeReport('\x1b[4;432;720t\x1b[6;18;9t')).toBe(true)
+    expect(isTerminalSizeReport('\x1b[8;24;80tinput')).toBe(false)
+    expect(isTerminalSizeReport('\x1b[8;24;9999999t')).toBe(false)
+    expect(isTerminalSizeReport('\x1b[5;24;80t')).toBe(false)
+  })
+
   it('strictly validates terminal auth and controller generations', () => {
     expect(
       parseTerminalAuth({
