@@ -268,6 +268,10 @@ export function TerminalView({
                 const title = runtimeTitles.get(item.id) || item.name
                 const needsAttention = bellAttention.has(item.id)
                 const progress = terminalProgress.get(item.id)
+                const working =
+                  !!progress &&
+                  progress.state !== 'paused' &&
+                  progress.state !== 'error'
                 const status = [
                   item.status,
                   selected && snapshot.degraded ? 'reconnecting' : null,
@@ -301,19 +305,30 @@ export function TerminalView({
                       title={title}
                     >
                       {progress ? (
-                        <TerminalIcon
+                        <span
                           className={cn(
-                            'size-4 shrink-0 stroke-[1.5]',
-                            progress.state !== 'paused' &&
-                              progress.state !== 'error' &&
-                              'terminal-progress-icon stroke-cyan-400',
-                            progress.state === 'error' && 'stroke-rose-300',
-                            progress.state === 'paused' && 'stroke-amber-300',
+                            'grid size-4 shrink-0',
                             needsAttention &&
                               'drop-shadow-[0_0_0.35rem_#fcd34d]'
                           )}
                           aria-hidden="true"
-                        />
+                        >
+                          <TerminalIcon
+                            className={cn(
+                              'col-start-1 row-start-1 size-full stroke-[1.5] transition-[opacity,transform] duration-300',
+                              working &&
+                                'stroke-cyan-400 opacity-0 rotate-90 scale-75 motion-reduce:opacity-100 motion-reduce:transform-none',
+                              progress.state === 'error' && 'stroke-rose-300',
+                              progress.state === 'paused' && 'stroke-amber-300'
+                            )}
+                          />
+                          <ArrowPathIcon
+                            className={cn(
+                              'col-start-1 row-start-1 size-[70%] place-self-center fill-cyan-300 opacity-0 transition-opacity duration-300 motion-reduce:hidden',
+                              working && 'animate-spin opacity-100'
+                            )}
+                          />
+                        </span>
                       ) : item.status !== 'running' || needsAttention ? (
                         <span
                           className={cn(
@@ -325,7 +340,12 @@ export function TerminalView({
                           aria-hidden="true"
                         />
                       ) : null}
-                      <span className="min-w-0 flex-1 truncate text-base sm:text-[0.734375rem]">
+                      <span
+                        className={cn(
+                          'min-w-0 flex-1 truncate text-base sm:text-[0.734375rem]',
+                          working && !needsAttention && 'text-cyan-300'
+                        )}
+                      >
                         {title}
                       </span>
                       {index < 9 && (

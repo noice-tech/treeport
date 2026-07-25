@@ -808,17 +808,17 @@ export function WorkspaceSidebar({
                               pendingRemovals[worktree.id] ||
                               worktree.status === 'cleaning' ? (
                                 <GitBranchIcon
-                                  className="worktree-progress-icon worktree-removing-icon size-4 shrink-0 stroke-rose-400 stroke-[1.5] min-[701px]:size-3.5"
+                                  className="worktree-progress-icon worktree-removing-icon size-4 shrink-0 stroke-rose-400 stroke-[1.5] min-[701px]:size-3.5!"
                                   aria-hidden="true"
                                 />
                               ) : worktree.kind === 'main' ? (
                                 <CrownIcon
-                                  className="size-4 shrink-0 stroke-zinc-600 stroke-[1.5] min-[701px]:size-3.5"
+                                  className="size-4 shrink-0 stroke-zinc-600 stroke-[1.5] min-[701px]:size-3.5!"
                                   aria-hidden="true"
                                 />
                               ) : (
                                 <GitBranchIcon
-                                  className="shrink-0 stroke-zinc-600 stroke-[1.5] min-[701px]:size-3.5"
+                                  className="shrink-0 stroke-zinc-600 stroke-[1.5] min-[701px]:size-3.5!"
                                   aria-hidden="true"
                                 />
                               )
@@ -889,6 +889,11 @@ export function WorkspaceSidebar({
                               terminal.id
                             )
                             const progress = terminalProgress.get(terminal.id)
+                            const working =
+                              !!progress &&
+                              !needsAttention &&
+                              progress.state !== 'paused' &&
+                              progress.state !== 'error'
                             const status = [
                               progress
                                 ? terminalProgressLabel(progress)
@@ -914,27 +919,35 @@ export function WorkspaceSidebar({
                                     terminal.name
                                   }, ${status}`}
                                 >
-                                  <TerminalIcon
-                                    className={cn(
-                                      'size-4 shrink-0 stroke-zinc-500 stroke-[1.5] min-[701px]:size-3.5',
-                                      progress &&
-                                        !needsAttention &&
-                                        progress.state !== 'paused' &&
-                                        progress.state !== 'error' &&
-                                        'terminal-progress-icon stroke-cyan-400',
-                                      progress?.state === 'error' &&
-                                        !needsAttention &&
-                                        'stroke-rose-300',
-                                      progress?.state === 'paused' &&
-                                        !needsAttention &&
-                                        'stroke-amber-300',
-                                      needsAttention && 'stroke-amber-300'
-                                    )}
+                                  <span
+                                    className="grid size-4 shrink-0 min-[701px]:size-3.5"
                                     aria-hidden="true"
-                                  />
+                                  >
+                                    <TerminalIcon
+                                      className={cn(
+                                        'col-start-1 row-start-1 size-full! stroke-zinc-500 stroke-[1.5] transition-[opacity,transform] duration-300',
+                                        working &&
+                                          'stroke-cyan-400 opacity-0 rotate-90 scale-75 motion-reduce:opacity-100 motion-reduce:transform-none',
+                                        progress?.state === 'error' &&
+                                          !needsAttention &&
+                                          'stroke-rose-300',
+                                        progress?.state === 'paused' &&
+                                          !needsAttention &&
+                                          'stroke-amber-300',
+                                        needsAttention && 'stroke-amber-300'
+                                      )}
+                                    />
+                                    <ArrowPathIcon
+                                      className={cn(
+                                        'col-start-1 row-start-1 size-[70%]! place-self-center fill-cyan-300 opacity-0 transition-opacity duration-300 motion-reduce:hidden',
+                                        working && 'animate-spin opacity-100'
+                                      )}
+                                    />
+                                  </span>
                                   <span
                                     className={cn(
                                       'truncate',
+                                      working && 'text-cyan-300',
                                       needsAttention && 'text-amber-200'
                                     )}
                                     aria-hidden="true"
@@ -977,7 +990,7 @@ export function WorkspaceSidebar({
                             pending
                             icon={
                               <GitBranchIcon
-                                className="worktree-progress-icon size-4 shrink-0 stroke-cyan-400 stroke-[1.5] min-[701px]:size-3.5"
+                                className="worktree-progress-icon size-4 shrink-0 stroke-cyan-400 stroke-[1.5] min-[701px]:size-3.5!"
                                 aria-hidden="true"
                               />
                             }
@@ -1009,7 +1022,7 @@ export function WorkspaceSidebar({
                           )
                         }
                       >
-                        <PlusIcon className="min-[701px]:size-3.5" />
+                        <PlusIcon className="min-[701px]:size-3.5!" />
                         <span>New worktree</span>
                         {newWorktreeShortcut ? (
                           <kbd
