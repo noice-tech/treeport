@@ -6,6 +6,13 @@
   --font-sans: 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
   --font-sans--font-feature-settings:
     'cv02', 'cv03', 'cv04', 'cv11', 'ss01', 'ss03';
+  --animate-comet: comet 1.1s linear infinite;
+
+  @keyframes comet {
+    to {
+      stroke-dashoffset: -100;
+    }
+  }
 }
 
 @custom-variant dark (&:is(.dark *));

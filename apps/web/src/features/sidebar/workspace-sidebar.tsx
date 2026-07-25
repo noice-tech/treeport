@@ -920,29 +920,235 @@ export function WorkspaceSidebar({
                                   }, ${status}`}
                                 >
                                   <span
-                                    className="grid size-4 shrink-0 min-[701px]:size-3.5"
-                                    aria-hidden="true"
+                                    data-uidotsh-pick="Working icon"
+                                    className="contents"
                                   >
-                                    <TerminalIcon
-                                      className={cn(
-                                        'col-start-1 row-start-1 size-full! stroke-zinc-500 stroke-[1.5] transition-[opacity,transform] duration-300',
-                                        working &&
-                                          'stroke-cyan-400 opacity-0 rotate-90 scale-75 motion-reduce:opacity-100 motion-reduce:transform-none',
-                                        progress?.state === 'error' &&
-                                          !needsAttention &&
-                                          'stroke-rose-300',
-                                        progress?.state === 'paused' &&
-                                          !needsAttention &&
-                                          'stroke-amber-300',
-                                        needsAttention && 'stroke-amber-300'
-                                      )}
-                                    />
-                                    <ArrowPathIcon
-                                      className={cn(
-                                        'col-start-1 row-start-1 size-[70%]! place-self-center fill-cyan-300 opacity-0 transition-opacity duration-300 motion-reduce:hidden',
-                                        working && 'animate-spin opacity-100'
-                                      )}
-                                    />
+                                    <span
+                                      data-uidotsh-option="Crossfade to arrows (current)"
+                                      className="contents"
+                                    >
+                                      <span
+                                        className="grid size-4 shrink-0 min-[701px]:size-3.5"
+                                        aria-hidden="true"
+                                      >
+                                        <TerminalIcon
+                                          className={cn(
+                                            'col-start-1 row-start-1 size-full! stroke-zinc-500 stroke-[1.5] transition-[opacity,transform] duration-300',
+                                            working &&
+                                              'stroke-cyan-400 opacity-0 rotate-90 scale-75 motion-reduce:opacity-100 motion-reduce:transform-none',
+                                            progress?.state === 'error' &&
+                                              !needsAttention &&
+                                              'stroke-rose-300',
+                                            progress?.state === 'paused' &&
+                                              !needsAttention &&
+                                              'stroke-amber-300',
+                                            needsAttention && 'stroke-amber-300'
+                                          )}
+                                        />
+                                        <ArrowPathIcon
+                                          className={cn(
+                                            'col-start-1 row-start-1 size-[70%]! place-self-center fill-cyan-300 opacity-0 transition-opacity duration-300 motion-reduce:hidden',
+                                            working && 'animate-spin opacity-100'
+                                          )}
+                                        />
+                                      </span>
+                                    </span>
+                                    <span
+                                      data-uidotsh-option="Cursor takes orbit"
+                                      className="contents"
+                                      hidden
+                                    >
+                                      <span
+                                        className="grid size-4 shrink-0 min-[701px]:size-3.5"
+                                        aria-hidden="true"
+                                      >
+                                        <svg
+                                          viewBox="0 0 24 24"
+                                          fill="none"
+                                          stroke="currentColor"
+                                          strokeWidth="1.5"
+                                          strokeLinecap="round"
+                                          strokeLinejoin="round"
+                                          className={cn(
+                                            'col-start-1 row-start-1 size-full! stroke-zinc-500 transition-colors duration-300',
+                                            working && 'stroke-cyan-400',
+                                            progress?.state === 'error' &&
+                                              !needsAttention &&
+                                              'stroke-rose-300',
+                                            progress?.state === 'paused' &&
+                                              !needsAttention &&
+                                              'stroke-amber-300',
+                                            needsAttention && 'stroke-amber-300'
+                                          )}
+                                        >
+                                          <polyline
+                                            points="4 17 10 11 4 5"
+                                            className={cn(
+                                              'transition-transform duration-500',
+                                              working &&
+                                                '[transform:translate(4px,1px)]'
+                                            )}
+                                          />
+                                          <line
+                                            x1="12"
+                                            y1="19"
+                                            x2="20"
+                                            y2="19"
+                                            className={cn(
+                                              'transition-[opacity,transform] duration-300',
+                                              working &&
+                                                'opacity-0 [transform:translate(-2px,-3px)]'
+                                            )}
+                                          />
+                                          <circle
+                                            cx="12"
+                                            cy="12"
+                                            r="9"
+                                            pathLength="100"
+                                            strokeDasharray="30 70"
+                                            className={cn(
+                                              'origin-center opacity-0 transition-opacity duration-500',
+                                              working &&
+                                                'opacity-100 animate-[spin_1.2s_linear_infinite] motion-reduce:animate-none'
+                                            )}
+                                          />
+                                        </svg>
+                                      </span>
+                                    </span>
+                                    <span
+                                      data-uidotsh-option="Chevron rotor"
+                                      className="contents"
+                                      hidden
+                                    >
+                                      <span
+                                        className="grid size-4 shrink-0 min-[701px]:size-3.5"
+                                        aria-hidden="true"
+                                      >
+                                        <svg
+                                          viewBox="0 0 24 24"
+                                          fill="none"
+                                          stroke="currentColor"
+                                          strokeWidth="1.5"
+                                          strokeLinecap="round"
+                                          strokeLinejoin="round"
+                                          className={cn(
+                                            'col-start-1 row-start-1 size-full! stroke-zinc-500 transition-colors duration-300',
+                                            working && 'stroke-cyan-400',
+                                            progress?.state === 'error' &&
+                                              !needsAttention &&
+                                              'stroke-rose-300',
+                                            progress?.state === 'paused' &&
+                                              !needsAttention &&
+                                              'stroke-amber-300',
+                                            needsAttention && 'stroke-amber-300'
+                                          )}
+                                        >
+                                          <line
+                                            x1="12"
+                                            y1="19"
+                                            x2="20"
+                                            y2="19"
+                                            className={cn(
+                                              'transition-opacity duration-300',
+                                              working && 'opacity-0'
+                                            )}
+                                          />
+                                          <g
+                                            className={cn(
+                                              'origin-center',
+                                              working &&
+                                                'animate-[spin_1.4s_linear_infinite] motion-reduce:animate-none'
+                                            )}
+                                          >
+                                            <polyline points="4 17 10 11 4 5" />
+                                            <polyline
+                                              points="4 17 10 11 4 5"
+                                              className={cn(
+                                                'origin-center rotate-[120deg] opacity-0 transition-opacity duration-500',
+                                                working && 'opacity-100'
+                                              )}
+                                            />
+                                            <polyline
+                                              points="4 17 10 11 4 5"
+                                              className={cn(
+                                                'origin-center rotate-[240deg] opacity-0 transition-opacity duration-500',
+                                                working && 'opacity-100'
+                                              )}
+                                            />
+                                          </g>
+                                        </svg>
+                                      </span>
+                                    </span>
+                                    <span
+                                      data-uidotsh-option="Frame comet"
+                                      className="contents"
+                                      hidden
+                                    >
+                                      <span
+                                        className="grid size-4 shrink-0 min-[701px]:size-3.5"
+                                        aria-hidden="true"
+                                      >
+                                        <svg
+                                          viewBox="0 0 24 24"
+                                          fill="none"
+                                          stroke="currentColor"
+                                          strokeWidth="1.5"
+                                          strokeLinecap="round"
+                                          strokeLinejoin="round"
+                                          className={cn(
+                                            'col-start-1 row-start-1 size-full! stroke-zinc-500 transition-colors duration-300',
+                                            working && 'stroke-cyan-400',
+                                            progress?.state === 'error' &&
+                                              !needsAttention &&
+                                              'stroke-rose-300',
+                                            progress?.state === 'paused' &&
+                                              !needsAttention &&
+                                              'stroke-amber-300',
+                                            needsAttention && 'stroke-amber-300'
+                                          )}
+                                        >
+                                          <g
+                                            className={cn(
+                                              'origin-center transition-transform duration-500',
+                                              working && 'scale-[0.62]'
+                                            )}
+                                          >
+                                            <polyline points="4 17 10 11 4 5" />
+                                            <line
+                                              x1="12"
+                                              y1="19"
+                                              x2="20"
+                                              y2="19"
+                                            />
+                                          </g>
+                                          <rect
+                                            x="3"
+                                            y="3"
+                                            width="18"
+                                            height="18"
+                                            rx="5"
+                                            className={cn(
+                                              'opacity-0 transition-opacity duration-500',
+                                              working && 'opacity-25'
+                                            )}
+                                          />
+                                          <rect
+                                            x="3"
+                                            y="3"
+                                            width="18"
+                                            height="18"
+                                            rx="5"
+                                            pathLength="100"
+                                            strokeDasharray="30 70"
+                                            className={cn(
+                                              'opacity-0 transition-opacity duration-500',
+                                              working &&
+                                                'opacity-100 animate-comet motion-reduce:animate-none'
+                                            )}
+                                          />
+                                        </svg>
+                                      </span>
+                                    </span>
                                   </span>
                                   <span
                                     className={cn(
