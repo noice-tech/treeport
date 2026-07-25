@@ -18,6 +18,7 @@
   "dependencies": {
     "@tasktty/shared": "workspace:*",
     "better-sqlite3": "^12.11.1",
+    "effect": "^3.22.0",
     "jsonc-parser": "^3.3.1"
   },
   "devDependencies": {
