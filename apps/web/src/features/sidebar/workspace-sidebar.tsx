@@ -235,14 +235,16 @@ function ProjectSwitcher({
         .includes(normalizedProjectSearch)
   )
   const openProjectIds = new Set(projects.map((project) => project.id))
-  const filteredRecentProjects = (recentProjectsQuery.data ?? []).filter(
+  const recentProjects = (recentProjectsQuery.data ?? []).filter(
+    (project) => !openProjectIds.has(project.id)
+  )
+  const filteredRecentProjects = recentProjects.filter(
     (project) =>
-      !openProjectIds.has(project.id) &&
-      (!normalizedProjectSearch ||
-        project.name.toLocaleLowerCase().includes(normalizedProjectSearch) ||
-        project.repositoryPath
-          .toLocaleLowerCase()
-          .includes(normalizedProjectSearch))
+      !normalizedProjectSearch ||
+      project.name.toLocaleLowerCase().includes(normalizedProjectSearch) ||
+      project.repositoryPath
+        .toLocaleLowerCase()
+        .includes(normalizedProjectSearch)
   )
   const projectSwitcherOptions = [
     ...filteredOpenProjects.map((project) => ({
@@ -472,79 +474,81 @@ function ProjectSwitcher({
               No open projects found.
             </p>
           )}
-          <section
-            className="grid gap-0.5"
-            aria-labelledby="recent-projects-switcher-title"
-          >
-            <div className="flex items-center justify-between gap-2 px-2 py-1">
-              <h3
-                id="recent-projects-switcher-title"
-                className="text-xs font-medium text-zinc-500"
-              >
-                Recent projects
-              </h3>
-              {recentProjectsQuery.isFetching ? (
-                <ArrowPathIcon
-                  className="size-4 shrink-0 animate-spin fill-zinc-600"
-                  aria-label="Refreshing recent projects"
-                />
-              ) : null}
-            </div>
-            {recentProjectsQuery.isError ? (
+          {!recentProjectsQuery.isSuccess || recentProjects.length ? (
+            <section
+              className="grid gap-0.5"
+              aria-labelledby="recent-projects-switcher-title"
+            >
               <div className="flex items-center justify-between gap-2 px-2 py-1">
-                <p className="text-sm text-zinc-500">
-                  Recent projects unavailable.
-                </p>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => void recentProjectsQuery.refetch()}
+                <h3
+                  id="recent-projects-switcher-title"
+                  className="text-xs font-medium text-zinc-500"
                 >
-                  Retry
-                </Button>
+                  Recent projects
+                </h3>
+                {recentProjectsQuery.isFetching ? (
+                  <ArrowPathIcon
+                    className="size-4 shrink-0 animate-spin fill-zinc-600"
+                    aria-label="Refreshing recent projects"
+                  />
+                ) : null}
               </div>
-            ) : null}
-            {recentProjectsQuery.isSuccess && filteredRecentProjects.length ? (
-              <ul role="list" className="grid gap-0.5">
-                {filteredRecentProjects.map((project) => (
-                  <li
-                    key={project.id}
-                    onMouseEnter={() => setHighlightedProjectId(project.id)}
+              {recentProjectsQuery.isError ? (
+                <div className="flex items-center justify-between gap-2 px-2 py-1">
+                  <p className="text-sm text-zinc-500">
+                    Recent projects unavailable.
+                  </p>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => void recentProjectsQuery.refetch()}
                   >
-                    <Button
-                      id={`project-switcher-option-${project.id}`}
-                      type="button"
-                      variant="ghost"
-                      className={cn(
-                        'h-8 w-full min-w-0 justify-start px-2 text-left',
-                        highlightedProjectOption?.project.id === project.id &&
-                          'bg-white/8'
-                      )}
-                      data-highlighted={
-                        highlightedProjectOption?.project.id === project.id
-                          ? true
-                          : undefined
-                      }
-                      disabled={reopenProject.isPending}
-                      onClick={() => reopenProject.mutate(project)}
+                    Retry
+                  </Button>
+                </div>
+              ) : null}
+              {recentProjectsQuery.isSuccess &&
+              filteredRecentProjects.length ? (
+                <ul role="list" className="grid gap-0.5">
+                  {filteredRecentProjects.map((project) => (
+                    <li
+                      key={project.id}
+                      onMouseEnter={() => setHighlightedProjectId(project.id)}
                     >
-                      <span className="truncate text-sm font-medium text-zinc-200">
-                        {project.name}
-                      </span>
-                    </Button>
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-            {recentProjectsQuery.isSuccess && !filteredRecentProjects.length ? (
-              <p className="px-2 py-1 text-sm text-zinc-500">
-                {normalizedProjectSearch
-                  ? 'No recent projects found.'
-                  : 'Closed projects appear here.'}
-              </p>
-            ) : null}
-          </section>
+                      <Button
+                        id={`project-switcher-option-${project.id}`}
+                        type="button"
+                        variant="ghost"
+                        className={cn(
+                          'h-8 w-full min-w-0 justify-start px-2 text-left',
+                          highlightedProjectOption?.project.id === project.id &&
+                            'bg-white/8'
+                        )}
+                        data-highlighted={
+                          highlightedProjectOption?.project.id === project.id
+                            ? true
+                            : undefined
+                        }
+                        disabled={reopenProject.isPending}
+                        onClick={() => reopenProject.mutate(project)}
+                      >
+                        <span className="truncate text-sm font-medium text-zinc-200">
+                          {project.name}
+                        </span>
+                      </Button>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+              {recentProjectsQuery.isSuccess &&
+              !filteredRecentProjects.length ? (
+                <p className="px-2 py-1 text-sm text-zinc-500">
+                  No recent projects found.
+                </p>
+              ) : null}
+            </section>
+          ) : null}
         </div>
         <Button
           type="button"

@@ -1433,6 +1433,14 @@ test.describe('desktop worktree terminal UI', () => {
       /\/projects\/proj_1\/worktrees\/wt_main\/terminals\/term_shell$/
     )
 
+    await page
+      .getByRole('button', {
+        name: 'Switch project, current project example'
+      })
+      .click()
+    await expect(page.getByText('Recent projects')).toHaveCount(0)
+    await expect(page.getByText('Closed projects appear here.')).toHaveCount(0)
+
     const openSwitcher = () =>
       page
         .getByRole('button', {
