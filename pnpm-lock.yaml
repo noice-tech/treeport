@@ -212,6 +212,9 @@ importers:
       better-sqlite3:
         specifier: ^12.11.1
         version: 12.11.1
+      effect:
+        specifier: ^3.22.0
+        version: 3.22.0
       jsonc-parser:
         specifier: ^3.3.1
         version: 3.3.1
