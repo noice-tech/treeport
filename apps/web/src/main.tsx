@@ -2,9 +2,9 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { RouterProvider } from '@tanstack/react-router'
-import { TooltipProvider } from './components/ui/tooltip.js'
-import { TerminalFocusProvider } from './terminal-focus.js'
-import { router } from './router.js'
+import { TooltipProvider } from './components/ui/tooltip'
+import { TerminalFocusProvider } from './terminal-focus'
+import { router } from './router'
 import './styles.css'
 
 const isIOS =

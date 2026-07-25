@@ -156,6 +156,22 @@
         "browser": true,
         "node": true
       }
+    },
+    {
+      "files": ["apps/web/**/*.ts", "apps/web/**/*.tsx"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "regex": "^\\.{1,2}/.*\\.js$",
+                "message": "Web imports are bundled; omit the .js extension."
+              }
+            ]
+          }
+        ]
+      }
     }
   ]
 }

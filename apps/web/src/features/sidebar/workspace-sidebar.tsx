@@ -23,29 +23,29 @@ import type {
   TerminalRecord,
   WorktreeRecord
 } from '@tasktty/shared'
-import { apiClient } from '../../api.js'
-import { Button } from '../../components/ui/button.js'
-import { Input } from '../../components/ui/input.js'
-import { NativeSelect } from '../../components/ui/native-select.js'
+import { apiClient } from '../../api'
+import { Button } from '../../components/ui/button'
+import { Input } from '../../components/ui/input'
+import { NativeSelect } from '../../components/ui/native-select'
 import {
   Popover,
   PopoverContent,
   PopoverTrigger
-} from '../../components/ui/popover.js'
+} from '../../components/ui/popover'
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger
-} from '../../components/ui/tooltip.js'
-import type { ActionModalState, RemovalStage } from '../dialogs/action-modal.js'
-import type { PendingWorktreeCreation } from '../worktrees/worktree-workflows.js'
-import { cn } from '../../lib/utils.js'
-import { TerminalStatusIcon } from '../../components/terminal-status-icon.js'
-import { recentProjectsQueryOptions } from '../../project-metadata.js'
+} from '../../components/ui/tooltip'
+import type { ActionModalState, RemovalStage } from '../dialogs/action-modal'
+import type { PendingWorktreeCreation } from '../worktrees/worktree-workflows'
+import { cn } from '../../lib/utils'
+import { TerminalStatusIcon } from '../../components/terminal-status-icon'
+import { recentProjectsQueryOptions } from '../../project-metadata'
 import {
   terminalProgressLabel,
   type TerminalProgress
-} from '../../terminal-session.js'
+} from '../../terminal-session'
 
 const MANUAL_CLEANUP_PREFIX = 'Manual cleanup required:'
 

@@ -1,7 +1,7 @@
 import { useCallback } from 'react'
 import { useNavigate } from '@tanstack/react-router'
-import { useRequestTerminalFocus } from './terminal-focus.js'
-import type { WorkspaceTarget } from './workspace-navigation.js'
+import { useRequestTerminalFocus } from './terminal-focus'
+import type { WorkspaceTarget } from './workspace-navigation'
 
 export function useWorkspaceNavigate(): (
   target: WorkspaceTarget,

@@ -8,12 +8,12 @@ import type {
   TerminalSize,
   WorktreeRecord
 } from '@tasktty/shared'
-import { apiClient } from '../../api.js'
-import { projectsQueryKey } from '../../project-metadata.js'
-import { terminalSessions } from '../../terminal-session.js'
-import { TerminalView } from '../../terminal-view.js'
-import { terminalTarget, worktreeTarget } from '../../workspace-navigation.js'
-import { useWorkspaceNavigate } from '../../workspace-router-navigation.js'
+import { apiClient } from '../../api'
+import { projectsQueryKey } from '../../project-metadata'
+import { terminalSessions } from '../../terminal-session'
+import { TerminalView } from '../../terminal-view'
+import { terminalTarget, worktreeTarget } from '../../workspace-navigation'
+import { useWorkspaceNavigate } from '../../workspace-router-navigation'
 
 export function TerminalWorkspace({
   projects,
