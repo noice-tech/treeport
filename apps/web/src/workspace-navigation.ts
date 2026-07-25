@@ -31,7 +31,7 @@ export type WorkspaceTarget =
       terminalId: string
     }
 
-export interface WorkspaceSelection {
+interface WorkspaceSelection {
   project: ProjectRecord | null
   worktree: WorktreeRecord | null
   terminal: TerminalRecord | null
@@ -111,7 +111,7 @@ export function targetForProject(
   return deepestProjectTarget(project)
 }
 
-export function deepestWorktreeTarget(
+function deepestWorktreeTarget(
   project: ProjectRecord,
   worktree: WorktreeRecord
 ): WorkspaceTarget {

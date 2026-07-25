@@ -41,7 +41,7 @@ interface SocketServerDependencies {
   attachmentManager?: TerminalAttachmentManager
 }
 
-export function isAllowedSocketOrigin(
+function isAllowedSocketOrigin(
   request: IncomingMessage,
   apiUrl: string
 ): boolean {

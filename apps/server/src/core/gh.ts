@@ -30,7 +30,7 @@ export function mapPrState(pr: GhPrJson | null): PrState {
   return 'unknown'
 }
 
-export const unknownPr = (): PrInfo => ({
+const unknownPr = (): PrInfo => ({
   state: 'unknown',
   number: null,
   url: null,

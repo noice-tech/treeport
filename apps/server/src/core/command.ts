@@ -9,8 +9,8 @@ import * as Effect from 'effect/Effect'
 import * as Exit from 'effect/Exit'
 import * as Option from 'effect/Option'
 
-export const DEFAULT_MAX_OUTPUT_BYTES = 10 * 1024 * 1024
-export const DEFAULT_KILL_GRACE_MS = 1_000
+const DEFAULT_MAX_OUTPUT_BYTES = 10 * 1024 * 1024
+const DEFAULT_KILL_GRACE_MS = 1_000
 
 export interface CommandRequest {
   executable: string
@@ -163,7 +163,7 @@ function errorMessage(error: unknown): string {
  * SIGTERM, escalated to SIGKILL when needed, and observed the direct child
  * exit. Descendant process groups are intentionally outside this contract.
  */
-export function runCommandEffect(
+function runCommandEffect(
   request: CommandRequest
 ): Effect.Effect<CommandResult, CommandExecutionError> {
   const stdoutLimit = request.maxStdoutBytes ?? DEFAULT_MAX_OUTPUT_BYTES
@@ -497,19 +497,4 @@ export function resolveExecutablePath(
     }
   }
   return executable
-}
-
-export async function commandAvailable(
-  runner: CommandRunner,
-  executable: string,
-  args: string[]
-): Promise<{ available: boolean; version: string | null }> {
-  try {
-    const result = await runner.run({ executable, args, timeoutMs: 5_000 })
-    const output =
-      `${result.stdout}\n${result.stderr}`.trim().split('\n')[0]?.trim() || null
-    return { available: result.exitCode === 0, version: output }
-  } catch {
-    return { available: false, version: null }
-  }
 }
