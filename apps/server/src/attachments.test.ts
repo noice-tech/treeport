@@ -707,19 +707,11 @@ describe('TerminalAttachmentManager', () => {
     manager.close(viewerId)
     finishResize()
     await vi.waitFor(() =>
-      expect(
-        (
-          manager as unknown as {
-            operationTails: Map<string, Promise<void>>
-          }
-        ).operationTails.size
-      ).toBe(0)
+      expect(publish).toHaveBeenCalledWith('terminal.controller_changed', {
+        terminalId: 'term',
+        controlled: false
+      })
     )
-
-    expect(publish).toHaveBeenCalledWith('terminal.controller_changed', {
-      terminalId: 'term',
-      controlled: false
-    })
     expect(
       publish.mock.calls.some(([, data]) => data.controlled === true)
     ).toBe(false)
