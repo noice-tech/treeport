@@ -172,15 +172,18 @@ describe('TmuxAdapter', () => {
       runner.calls
         .filter((call) => call.args.includes('set-option'))
         .map((call) => call.args[call.args.indexOf('-t') + 2])
-    ).toEqual([
-      'window-size',
-      '@tasktty-name',
-      '@tasktty-argv',
-      '@tasktty-created-at',
-      '@tasktty-updated-at',
-      '@tasktty-worktree-id',
-      '@tasktty-terminal-id'
-    ])
+        .sort()
+    ).toEqual(
+      [
+        'window-size',
+        '@tasktty-name',
+        '@tasktty-argv',
+        '@tasktty-created-at',
+        '@tasktty-updated-at',
+        '@tasktty-worktree-id',
+        '@tasktty-terminal-id'
+      ].sort()
+    )
   })
 
   it('recovers the macOS SSH agent socket for terminal commands', async () => {

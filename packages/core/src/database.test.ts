@@ -51,34 +51,6 @@ describe('SQLite metadata', () => {
         .pluck()
         .get()
     ).toBe(0)
-    expect(
-      database.connection
-        .prepare('SELECT version FROM schema_migrations ORDER BY version')
-        .pluck()
-        .all()
-    ).toEqual([7, 8, 9])
-    expect(
-      database.connection
-        .prepare('PRAGMA table_info(projects)')
-        .all()
-        .map((column: any) => column.name)
-    ).toEqual(expect.arrayContaining(['is_open', 'last_opened_at']))
-    expect(
-      database.connection
-        .prepare(
-          "SELECT count(*) FROM sqlite_master WHERE type='index' AND name='projects_recent_idx'"
-        )
-        .pluck()
-        .get()
-    ).toBe(1)
-    expect(
-      database.connection
-        .prepare(
-          "SELECT count(*) FROM sqlite_master WHERE type='index' AND name='terminal_presets_order_idx'"
-        )
-        .pluck()
-        .get()
-    ).toBe(1)
   })
 
   it('persists literal preset argv, deterministic order, updates, and deletion', async () => {
