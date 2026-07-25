@@ -1,5 +1,5 @@
 import type { PrInfo, PrState } from '@tasktty/shared'
-import type { CommandRunner } from './command.js'
+import type { CommandRunner } from './command'
 
 interface GhPrJson {
   number?: number

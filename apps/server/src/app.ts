@@ -20,9 +20,9 @@ import {
   updateTerminalPresetSchema,
   updateTerminalSchema
 } from '@tasktty/shared'
-import type { AppConfig, TmuxAdapter, TaskTTYService } from './core/index.js'
-import { DomainError } from './core/index.js'
-import { TerminalMetadataManager } from './terminal-metadata.js'
+import type { AppConfig, TmuxAdapter, TaskTTYService } from './core/index'
+import { DomainError } from './core/index'
+import { TerminalMetadataManager } from './terminal-metadata'
 
 const UPLOAD_MIME_EXTENSIONS: Readonly<Record<string, string>> = {
   'application/pdf': 'pdf',

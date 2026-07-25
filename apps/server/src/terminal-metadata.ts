@@ -9,17 +9,17 @@ import type {
   TaskTTYService,
   TmuxAdapter,
   TmuxSessionTitleState
-} from './core/index.js'
-import { DomainError, resolveExecutablePath } from './core/index.js'
+} from './core/index'
+import { DomainError, resolveExecutablePath } from './core/index'
 import * as Effect from 'effect/Effect'
 import * as Fiber from 'effect/Fiber'
 import type * as Scope from 'effect/Scope'
-import { progressControlAttachArgs } from './tmux-control.js'
+import { progressControlAttachArgs } from './tmux-control'
 import {
   createTmuxProgressObserver,
   type TerminalProgressObserver,
   type TerminalProgressObserverFactory
-} from './tmux-progress.js'
+} from './tmux-progress'
 
 export const TERMINAL_METADATA_POLL_MS = 2_000
 export const TERMINAL_PROGRESS_STALE_MS = 5 * 60_000

@@ -9,16 +9,16 @@ import {
   type TaskTTYService,
   type TmuxAdapter,
   type TmuxSessionTitleState
-} from './core/index.js'
+} from './core/index'
 import {
   TerminalMetadataManager,
   TERMINAL_METADATA_POLL_MS,
   TERMINAL_PROGRESS_STALE_MS
-} from './terminal-metadata.js'
+} from './terminal-metadata'
 import type {
   TerminalProgressObserver,
   TmuxProgressObserverOptions
-} from './tmux-progress.js'
+} from './tmux-progress'
 
 class FakeObserver implements TerminalProgressObserver {
   disposed = false

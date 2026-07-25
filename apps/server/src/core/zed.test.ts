@@ -2,7 +2,7 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import type { CommandRequest, CommandResult, CommandRunner } from './command.js'
+import type { CommandRequest, CommandResult, CommandRunner } from './command'
 import {
   inferWorktreeName,
   loadCreateWorktreeTasks,
@@ -10,7 +10,7 @@ import {
   resolveCreateWorktreeSetupTasks,
   resolveZedWorktreePath,
   runCreateWorktreeTasks
-} from './zed.js'
+} from './zed'
 
 const temporary: string[] = []
 afterEach(async () =>

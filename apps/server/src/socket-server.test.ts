@@ -8,7 +8,7 @@ import {
   type AppConfig,
   type TaskTTYService,
   type TmuxAdapter
-} from './core/index.js'
+} from './core/index'
 import type {
   EventsClientToServerEvents,
   EventsServerToClientEvents,
@@ -17,9 +17,9 @@ import type {
   TerminalServerToClientEvents
 } from '@tasktty/shared'
 import { SOCKET_IO_PATH, TERMINAL_PROTOCOL_VERSION } from '@tasktty/shared'
-import { TerminalAttachmentManager } from './terminal-attachments.js'
-import { createSocketServer } from './socket-server.js'
-import type { TerminalMetadataManager } from './terminal-metadata.js'
+import { TerminalAttachmentManager } from './terminal-attachments'
+import { createSocketServer } from './socket-server'
+import type { TerminalMetadataManager } from './terminal-metadata'
 
 class FakePty {
   readonly pid = 1

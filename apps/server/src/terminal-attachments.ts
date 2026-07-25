@@ -26,9 +26,9 @@ import {
   type TerminalServerEvent,
   type TerminalServerPayload
 } from '@tasktty/shared'
-import type { TaskTTYService, TmuxAdapter } from './core/index.js'
-import { resolveExecutablePath } from './core/index.js'
-import type { TerminalMetadataManager } from './terminal-metadata.js'
+import type { TaskTTYService, TmuxAdapter } from './core/index'
+import { resolveExecutablePath } from './core/index'
+import type { TerminalMetadataManager } from './terminal-metadata'
 
 type PtySpawner = typeof pty.spawn
 type ConnectionState = 'initializing' | 'ready' | 'closed'

@@ -9,9 +9,9 @@ import {
   type AppConfig,
   type TmuxAdapter,
   type TaskTTYService
-} from './core/index.js'
-import { createApp } from './app.js'
-import type { TerminalMetadataManager } from './terminal-metadata.js'
+} from './core/index'
+import { createApp } from './app'
+import type { TerminalMetadataManager } from './terminal-metadata'
 
 function fixture(webDist = '/missing') {
   const config: AppConfig = {

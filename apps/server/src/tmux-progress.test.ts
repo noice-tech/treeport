@@ -6,7 +6,7 @@ import {
   TerminalMetadataParser,
   TmuxProgressObserver,
   type TerminalMetadataUpdate
-} from './tmux-progress.js'
+} from './tmux-progress'
 
 const { Terminal } = xtermHeadless
 // Fixed by @xterm/headless 5.5's public string-handler implementation.

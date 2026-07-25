@@ -4,7 +4,7 @@ import xtermHeadless, { type IDisposable } from '@xterm/headless'
 import * as Effect from 'effect/Effect'
 import * as Fiber from 'effect/Fiber'
 import * as Scope from 'effect/Scope'
-import { TmuxControlParser } from './tmux-control.js'
+import { TmuxControlParser } from './tmux-control'
 
 const { Terminal } = xtermHeadless
 const PROCESS_TERMINATION_GRACE_MS = 250

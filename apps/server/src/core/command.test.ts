@@ -13,7 +13,7 @@ import {
   StdinCommandError,
   TimeoutCommandError,
   runCheckedEffect
-} from './command.js'
+} from './command'
 
 const roots: string[] = []
 

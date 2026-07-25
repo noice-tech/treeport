@@ -1,11 +1,10 @@
 import crypto from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
 import type { TerminalSize, TerminalStatus } from '@tasktty/shared'
-import type { CommandRunner } from './command.js'
-import { runChecked } from './command.js'
-import type { WorktreeSetupTask } from './setup.js'
+import type { CommandRunner } from './command'
+import { runChecked } from './command'
+import type { WorktreeSetupTask } from './setup'
 
 export const generateTmuxSocketName = (): string =>
   `tasktty-wt-${crypto.randomBytes(8).toString('hex')}`
@@ -106,7 +105,7 @@ bind-key -T root WheelUpPane if-shell -F '#{||:#{alternate_on},#{pane_in_mode},#
 export class TmuxAdapter {
   readonly configPath: string
   readonly specsDir: string
-  private readonly launcherPath: string
+  private readonly launcherPath: string | undefined
   private readonly hostEnvironment: NodeJS.ProcessEnv
   private readonly platform: NodeJS.Platform
   private readonly uid: number | undefined
@@ -116,7 +115,7 @@ export class TmuxAdapter {
     private readonly runner: CommandRunner,
     private readonly runtimeDir: string,
     private readonly executable = 'tmux',
-    launcherPath = fileURLToPath(new URL('./launcher.js', import.meta.url)),
+    launcherPath?: string,
     host: {
       environment?: NodeJS.ProcessEnv
       platform?: NodeJS.Platform
@@ -162,6 +161,10 @@ export class TmuxAdapter {
     setupTasks?: WorktreeSetupTask[]
     setupError?: string
   }): Promise<void> {
+    if (!this.launcherPath) {
+      throw new Error('A launcher path is required to create a tmux session')
+    }
+
     const previousCreation =
       this.creationTails.get(input.socketName) ?? Promise.resolve()
     let releaseCreation!: () => void

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { IPty } from 'node-pty'
-import type { TmuxAdapter, TaskTTYService } from './core/index.js'
+import type { TmuxAdapter, TaskTTYService } from './core/index'
 import {
   TERMINAL_OUTPUT_HIGH_WATERMARK,
   TERMINAL_OUTPUT_STALL_TIMEOUT_MS,
@@ -10,12 +10,12 @@ import {
 import {
   TerminalAttachmentManager,
   type TerminalTransport
-} from './terminal-attachments.js'
-import { TerminalMetadataManager } from './terminal-metadata.js'
+} from './terminal-attachments'
+import { TerminalMetadataManager } from './terminal-metadata'
 import type {
   TerminalProgressObserver,
   TmuxProgressObserverOptions
-} from './tmux-progress.js'
+} from './tmux-progress'
 
 class FakePty {
   readonly pid = 1

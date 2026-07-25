@@ -1,8 +1,8 @@
 import { EventEmitter } from 'node:events'
 import type { ChildProcess, spawn } from 'node:child_process'
 import { describe, expect, it, vi } from 'vitest'
-import { runLaunchSpec } from './launcher.js'
-import type { LaunchSpec } from './tmux.js'
+import { runLaunchSpec } from './launcher'
+import type { LaunchSpec } from './tmux'
 
 class FakeChild extends EventEmitter {
   readonly kill = vi.fn((signal?: NodeJS.Signals | number) => {

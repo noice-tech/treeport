@@ -13,25 +13,25 @@ import type {
   TerminalSize,
   WorktreeRecord
 } from '@tasktty/shared'
-import type { AppConfig } from './config.js'
-import type { CommandRunner } from './command.js'
-import type { TaskTTYDatabase } from './database.js'
-import { serializeOperation } from './database.js'
-import { assertCleanupTransition, DomainError } from './domain.js'
-import { ProductEventBus } from './events.js'
-import type { GhAdapter } from './gh.js'
-import type { GitAdapter } from './git.js'
-import type { WorktreeSetupTask } from './setup.js'
-import { KeyedTaskQueue } from './task-queue.js'
-import type { TmuxAdapter } from './tmux.js'
-import { generateTmuxSessionName, generateTmuxSocketName } from './tmux.js'
+import type { AppConfig } from './config'
+import type { CommandRunner } from './command'
+import type { TaskTTYDatabase } from './database'
+import { serializeOperation } from './database'
+import { assertCleanupTransition, DomainError } from './domain'
+import { ProductEventBus } from './events'
+import type { GhAdapter } from './gh'
+import type { GitAdapter } from './git'
+import type { WorktreeSetupTask } from './setup'
+import { KeyedTaskQueue } from './task-queue'
+import type { TmuxAdapter } from './tmux'
+import { generateTmuxSessionName, generateTmuxSocketName } from './tmux'
 import {
   normalizeWorktreeName,
   prepareZedWorktreeWrapper,
   resolveCreateWorktreeSetupTasks,
   resolveZedWorktreePath,
   runCreateWorktreeTasks
-} from './zed.js'
+} from './zed'
 
 const now = (): string => new Date().toISOString()
 const id = (prefix: string): string =>

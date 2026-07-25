@@ -14,12 +14,12 @@ import {
   type TerminalServerEvent,
   type TerminalServerPayload
 } from '@tasktty/shared'
-import type { AppConfig, TaskTTYService, TmuxAdapter } from './core/index.js'
+import type { AppConfig, TaskTTYService, TmuxAdapter } from './core/index'
 import {
   TerminalAttachmentManager,
   type TerminalTransport
-} from './terminal-attachments.js'
-import type { TerminalMetadataManager } from './terminal-metadata.js'
+} from './terminal-attachments'
+import type { TerminalMetadataManager } from './terminal-metadata'
 
 type ClientToServerEvents = TerminalClientToServerEvents
 

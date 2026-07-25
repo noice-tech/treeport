@@ -9,13 +9,13 @@ import {
   resolveExecutablePath,
   SpawnCommandRunner,
   runChecked
-} from './command.js'
-import { loadConfig } from './config.js'
-import { TaskTTYDatabase } from './database.js'
-import { GhAdapter } from './gh.js'
-import { GitAdapter } from './git.js'
-import { TaskTTYService } from './service.js'
-import { TMUX_SCROLL_EXIT_SEQUENCE, TmuxAdapter } from './tmux.js'
+} from './command'
+import { loadConfig } from './config'
+import { TaskTTYDatabase } from './database'
+import { GhAdapter } from './gh'
+import { GitAdapter } from './git'
+import { TaskTTYService } from './service'
+import { TMUX_SCROLL_EXIT_SEQUENCE, TmuxAdapter } from './tmux'
 
 const enabled = process.env.TASKTTY_REAL_INTEGRATION === '1'
 const root = path.join(os.tmpdir(), `tasktty real integration ${process.pid}`)
@@ -75,7 +75,7 @@ async function makeService(databasePath: string, runtimeDir: string) {
   const database = new TaskTTYDatabase(databasePath)
   const git = new GitAdapter(runner)
   const launcherPath = fileURLToPath(
-    new URL('../dist/launcher.js', import.meta.url)
+    new URL('../../dist/core/launcher.js', import.meta.url)
   )
   const tmux = new TmuxAdapter(runner, runtimeDir, 'tmux', launcherPath)
   const gh = new GhAdapter(runner)
@@ -548,7 +548,7 @@ describe.skipIf(!enabled)(
       const outputPath = path.join(root, 'initial-size.json')
       const runner = new SpawnCommandRunner()
       const launcherPath = fileURLToPath(
-        new URL('../dist/launcher.js', import.meta.url)
+        new URL('../../dist/core/launcher.js', import.meta.url)
       )
       const tmux = new TmuxAdapter(runner, runtimeDir, 'tmux', launcherPath)
       const socket = `tasktty-initial-size-${process.pid}`
@@ -595,7 +595,7 @@ describe.skipIf(!enabled)(
       const runtimeDir = path.join(root, 'sixel-runtime')
       const runner = new SpawnCommandRunner()
       const launcherPath = fileURLToPath(
-        new URL('../dist/launcher.js', import.meta.url)
+        new URL('../../dist/core/launcher.js', import.meta.url)
       )
       const tmux = new TmuxAdapter(runner, runtimeDir, 'tmux', launcherPath)
       const socket = `tasktty-sixel-${process.pid}`
