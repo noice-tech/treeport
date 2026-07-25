@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
-import { BellIcon } from 'lucide-react'
 import { toast } from 'sonner'
 import type { ProjectRecord, TerminalRecord } from '@tasktty/shared'
+import { Button } from '../../components/ui/button'
 import {
   terminalSessions,
   type TerminalBellEvent,
@@ -158,61 +158,83 @@ export function useBellNotifications({
       }
 
       const id = toastId(event.terminalId, event.sequence)
-      toast(context.title, {
-        id,
-        icon: <BellIcon aria-hidden="true" />,
-        description: retry
-          ? `Couldn’t dismiss. Terminal bell · ${context.projectName} · ${context.worktreeName}`
-          : `Terminal bell · ${context.projectName} · ${context.worktreeName}`,
-        duration: Infinity,
-        dismissible: true,
-        action: {
-          label: 'View',
-          onClick: () => {
-            toast.dismiss(id)
-            const target = targetForTerminal(
-              latest.current.projects,
-              context.terminal
-            )
-            if (target) {
-              void latest.current.navigateToWorkspace(target)
+      const description = `${context.projectName} · ${context.worktreeName}`
+      toast.custom(
+        () => (
+          <div className="w-(--width) max-w-[calc(100vw-2rem)] rounded-lg border border-white/10 bg-zinc-900 p-3.5 text-zinc-100">
+            <p className="m-0 truncate text-sm font-medium">{context.title}</p>
+            <div className="flex flex-col gap-0.5">
+              <p className="m-0 truncate text-sm text-zinc-400">
+                {description}
+              </p>
+              {retry ? (
+                <p className="m-0 text-sm text-amber-300">
+                  Couldn’t dismiss this notification.
+                </p>
+              ) : null}
+              <div className="flex justify-end gap-1.5 pt-2.5">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => {
+                    toast.dismiss(id)
+                    void terminalSessions
+                      .acknowledgeBell(event.terminalId, event.sequence)
+                      .catch((error: unknown) => {
+                        latest.current.onError(error)
+                        const currentBell = terminalSessions
+                          .getBellSnapshot()
+                          .get(event.terminalId)
+                        const currentContext = findTerminalContext(
+                          latest.current.projects,
+                          latest.current.runtimeTitles,
+                          event.terminalId
+                        )
+                        if (
+                          currentBell?.unread &&
+                          currentBell.sequence === event.sequence &&
+                          currentContext
+                        ) {
+                          showToast(currentContext, event, true)
+                        }
+                      })
+                  }}
+                >
+                  {retry ? 'Try again' : 'Dismiss'}
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={() => {
+                    toast.dismiss(id)
+                    const target = targetForTerminal(
+                      latest.current.projects,
+                      context.terminal
+                    )
+                    if (target) {
+                      void latest.current.navigateToWorkspace(target)
+                    }
+                  }}
+                >
+                  View
+                </Button>
+              </div>
+            </div>
+          </div>
+        ),
+        {
+          id,
+          duration: Infinity,
+          dismissible: true,
+          onDismiss: () => {
+            if (
+              presentedSequences.current.get(event.terminalId) ===
+              event.sequence
+            ) {
+              presentedSequences.current.delete(event.terminalId)
             }
           }
-        },
-        cancel: {
-          label: retry ? 'Try again' : 'Dismiss',
-          onClick: () => {
-            toast.dismiss(id)
-            void terminalSessions
-              .acknowledgeBell(event.terminalId, event.sequence)
-              .catch((error: unknown) => {
-                latest.current.onError(error)
-                const currentBell = terminalSessions
-                  .getBellSnapshot()
-                  .get(event.terminalId)
-                const currentContext = findTerminalContext(
-                  latest.current.projects,
-                  latest.current.runtimeTitles,
-                  event.terminalId
-                )
-                if (
-                  currentBell?.unread &&
-                  currentBell.sequence === event.sequence &&
-                  currentContext
-                ) {
-                  showToast(currentContext, event, true)
-                }
-              })
-          }
-        },
-        onDismiss: () => {
-          if (
-            presentedSequences.current.get(event.terminalId) === event.sequence
-          ) {
-            presentedSequences.current.delete(event.terminalId)
-          }
         }
-      })
+      )
     }
 
     const deliver = (event: TerminalBellEvent) => {
@@ -268,17 +290,4 @@ export function useBellNotifications({
       }
     }
   }, [bells, projectsLoaded])
-
-  useEffect(() => {
-    for (const [terminalId, sequence] of presentedSequences.current) {
-      const bell = bells.get(terminalId)
-      const context = findTerminalContext(projects, runtimeTitles, terminalId)
-      if (bell?.unread && bell.sequence === sequence && context) {
-        continue
-      }
-
-      presentedSequences.current.delete(terminalId)
-      toast.dismiss(toastId(terminalId, sequence))
-    }
-  }, [bells, projects, runtimeTitles])
 }
