@@ -5,7 +5,6 @@ import {
   ipcMain,
   Menu,
   shell,
-  type IpcMainEvent,
   type MenuItemConstructorOptions
 } from 'electron'
 import { filePathFromUrl } from './file-url.js'
@@ -65,16 +64,6 @@ function requestBellAttention(): void {
     window.flashFrame(true)
     frameFlashing = true
   }
-}
-
-function isTrustedRendererEvent(event: IpcMainEvent): boolean {
-  return Boolean(
-    mainWindow &&
-    event.sender === mainWindow.webContents &&
-    event.senderFrame === event.sender.mainFrame &&
-    event.senderFrame &&
-    isRendererUrl(event.senderFrame.url)
-  )
 }
 
 function isRendererUrl(value: string): boolean {
@@ -374,7 +363,12 @@ if (!hasSingleInstanceLock) {
   })
 
   ipcMain.on('bell-attention:request', (event) => {
-    if (isTrustedRendererEvent(event)) {
+    if (
+      mainWindow &&
+      event.sender === mainWindow.webContents &&
+      event.senderFrame === event.sender.mainFrame &&
+      isRendererUrl(event.senderFrame.url)
+    ) {
       requestBellAttention()
     }
   })

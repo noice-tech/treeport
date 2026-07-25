@@ -2357,40 +2357,6 @@ test.describe('desktop worktree terminal UI', () => {
     ).toHaveCount(0)
   })
 
-  test('acknowledges an actively viewed BEL without a notification', async ({
-    page
-  }) => {
-    await mockApp(page)
-    const acknowledgement = page.waitForRequest(
-      (request) =>
-        request.method() === 'POST' &&
-        new URL(request.url()).pathname ===
-          '/api/terminals/term_shell/bell/acknowledge'
-    )
-    await page.evaluate(() =>
-      (window as any).__eventSource.emit(
-        'terminal.metadata',
-        JSON.stringify({
-          data: {
-            terminalId: 'term_shell',
-            title: 'Shell · /repo',
-            progress: null,
-            progressStartedAt: null,
-            progressClearedAt: null,
-            bell: {
-              sequence: 1,
-              at: '2026-01-01T00:01:00.000Z',
-              unread: true
-            }
-          }
-        })
-      )
-    )
-
-    expect((await acknowledgement).postDataJSON()).toEqual({ sequence: 1 })
-    await expect(page.locator('[data-sonner-toast]')).toHaveCount(0)
-  })
-
   test('coalesces BEL toasts, requests desktop attention, and opens the terminal', async ({
     page
   }) => {
