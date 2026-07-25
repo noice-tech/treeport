@@ -274,6 +274,33 @@ describe('TmuxProgressObserver', () => {
     observer.dispose()
   })
 
+  it('escalates observer termination when tmux does not exit', async () => {
+    vi.useFakeTimers()
+    const child = Object.assign(fakeChild(), {
+      pid: 123,
+      exitCode: null,
+      signalCode: null
+    })
+    const observer = new TmuxProgressObserver(
+      {
+        executable: 'tmux',
+        args: ['-C', 'attach'],
+        cwd: '/tmp',
+        env: {},
+        onProgress: vi.fn(),
+        onExit: vi.fn()
+      },
+      vi.fn(() => child) as never
+    )
+
+    observer.dispose()
+    expect(child.kill).toHaveBeenCalledWith('SIGTERM')
+    await vi.advanceTimersByTimeAsync(250)
+    expect(child.kill).toHaveBeenLastCalledWith('SIGKILL')
+    child.emit('exit', null, 'SIGKILL')
+    vi.useRealTimers()
+  })
+
   it('does not publish queued metadata after disposal', async () => {
     const child = fakeChild()
     const onTitle = vi.fn()

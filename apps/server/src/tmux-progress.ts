@@ -1,14 +1,34 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { parseTerminalProgress, type TerminalProgress } from '@tasktty/shared'
 import xtermHeadless, { type IDisposable } from '@xterm/headless'
+import * as Effect from 'effect/Effect'
+import * as Fiber from 'effect/Fiber'
+import * as Scope from 'effect/Scope'
 import { TmuxControlParser } from './tmux-control.js'
 
 const { Terminal } = xtermHeadless
+const PROCESS_TERMINATION_GRACE_MS = 250
 
 export type TerminalMetadataUpdate =
   | { type: 'title'; title: string }
   | { type: 'progress'; progress: TerminalProgress | null }
   | { type: 'bell' }
+
+type TmuxObserverPhase =
+  | 'spawn'
+  | 'control_parse'
+  | 'terminal_parse'
+  | 'metadata_callback'
+  | 'process'
+
+export class TmuxObserverError {
+  readonly _tag = 'TmuxObserverError'
+
+  constructor(
+    readonly phase: TmuxObserverPhase,
+    readonly cause: unknown
+  ) {}
+}
 
 /** Observes terminal metadata through xterm's public parser APIs. */
 export class TerminalMetadataParser {
@@ -22,6 +42,7 @@ export class TerminalMetadataParser {
     logLevel: 'off'
   })
   private readonly subscriptions: IDisposable[]
+  private writeTail: Promise<void> = Promise.resolve()
   private disposed = false
 
   constructor(
@@ -48,13 +69,20 @@ export class TerminalMetadataParser {
       return Promise.resolve()
     }
 
-    // xterm 6.0 still drops a three-byte character split after its second byte.
-    // Normalize through a streaming decoder before feeding ordered bytes into
-    // xterm's terminal parser.
-    const decoded = this.decoder.decode(data, { stream: true })
-    return new Promise((resolve) =>
-      this.terminal.write(Buffer.from(decoded), resolve)
-    )
+    const write = this.writeTail.then(() => {
+      if (this.disposed) {
+        return
+      }
+
+      // xterm 6.0 still drops a three-byte character split after its second
+      // byte. Decode in stream order before feeding xterm.
+      const decoded = this.decoder.decode(data, { stream: true })
+      return new Promise<void>((resolve) =>
+        this.terminal.write(Buffer.from(decoded), resolve)
+      )
+    })
+    this.writeTail = write.catch(() => undefined)
+    return write
   }
 
   dispose(): void {
@@ -97,62 +125,213 @@ export type TerminalProgressObserverFactory = (
 
 type ProcessSpawner = typeof spawn
 
+function waitForProcessExit(
+  child: ChildProcessWithoutNullStreams
+): Promise<boolean> {
+  return new Promise((resolve) => {
+    const onExit = () => finish(true)
+    const timer = setTimeout(() => finish(false), PROCESS_TERMINATION_GRACE_MS)
+    const finish = (exited: boolean) => {
+      clearTimeout(timer)
+      child.off('exit', onExit)
+      resolve(exited)
+    }
+    child.once('exit', onExit)
+  })
+}
+
+async function terminateProcess(
+  child: ChildProcessWithoutNullStreams,
+  terminationStarted: boolean
+): Promise<void> {
+  if (child.exitCode != null || child.signalCode != null) {
+    return
+  }
+
+  // Test doubles and a synchronously failed spawn do not necessarily have a
+  // pid. There is no OS process to wait for or escalate in that case.
+  if (!child.pid) {
+    if (!terminationStarted) {
+      child.kill('SIGTERM')
+    }
+    return
+  }
+
+  const terminated = waitForProcessExit(child)
+  if (!terminationStarted) {
+    try {
+      child.kill('SIGTERM')
+    } catch {
+      await terminated
+      return
+    }
+  }
+  if (await terminated) {
+    return
+  }
+
+  const killed = waitForProcessExit(child)
+  try {
+    child.kill('SIGKILL')
+  } catch {
+    await killed
+    return
+  }
+  await killed
+}
+
 export class TmuxProgressObserver implements TerminalProgressObserver {
-  private readonly process: ChildProcessWithoutNullStreams
-  private readonly controlParser = new TmuxControlParser()
-  private readonly metadataParser: TerminalMetadataParser
-  private pendingWrites = 0
+  private readonly lifecycleFiber: Fiber.RuntimeFiber<void, never>
+  private process: ChildProcessWithoutNullStreams | null = null
+  private metadataParser: TerminalMetadataParser | null = null
   private failed = false
   private disposed = false
+  private notified = false
+  private terminationStarted = false
+  private failLifecycle: ((error: TmuxObserverError) => void) | null = null
 
   constructor(
     private readonly options: TmuxProgressObserverOptions,
-    spawnProcess: ProcessSpawner = spawn
+    private readonly spawnProcess: ProcessSpawner = spawn
   ) {
-    this.metadataParser = new TerminalMetadataParser((update) =>
-      this.handleMetadata(update)
+    this.lifecycleFiber = Effect.runFork(
+      Effect.scoped(this.lifecycle()).pipe(
+        Effect.catchAll(() => Effect.sync(() => this.notifyExit()))
+      )
     )
-    try {
-      this.process = spawnProcess(options.executable, options.args, {
-        cwd: options.cwd,
-        env: options.env,
-        stdio: ['pipe', 'pipe', 'pipe']
-      })
-    } catch (error) {
-      this.metadataParser.dispose()
-      throw error
-    }
-    this.process.stdout.on('data', (chunk: Buffer) => this.handleData(chunk))
-    this.process.stderr.resume()
-    this.process.once('error', () => this.stop(true))
-    this.process.once('exit', () => this.stop(true))
   }
 
   dispose(): void {
-    this.stop(false)
-  }
-
-  private handleData(chunk: Buffer): void {
-    if (this.disposed || this.failed) {
+    if (this.disposed) {
       return
     }
 
-    try {
-      for (const event of this.controlParser.push(chunk)) {
-        if (event.type !== 'output') {
-          continue
-        }
+    this.disposed = true
+    this.beginTermination()
+    Effect.runFork(Fiber.interrupt(this.lifecycleFiber))
+  }
 
-        this.process.stdout.pause()
-        this.pendingWrites += 1
-        void this.metadataParser.push(event.data).then(
-          () => this.handleWriteParsed(),
-          () => this.stop(true)
-        )
+  private lifecycle(): Effect.Effect<void, TmuxObserverError, Scope.Scope> {
+    return Effect.gen(this, function* () {
+      const parser = yield* Effect.acquireRelease(
+        Effect.sync(() => {
+          const acquired = new TerminalMetadataParser((update) =>
+            this.handleMetadata(update)
+          )
+          this.metadataParser = acquired
+          return acquired
+        }),
+        (acquired) =>
+          Effect.sync(() => {
+            if (this.metadataParser === acquired) {
+              this.metadataParser = null
+            }
+            acquired.dispose()
+          })
+      )
+      const child = yield* Effect.acquireRelease(
+        Effect.try({
+          try: () => {
+            const acquired = this.spawnProcess(
+              this.options.executable,
+              this.options.args,
+              {
+                cwd: this.options.cwd,
+                env: this.options.env,
+                stdio: ['pipe', 'pipe', 'pipe']
+              }
+            )
+            this.process = acquired
+            return acquired
+          },
+          catch: (cause) => new TmuxObserverError('spawn', cause)
+        }),
+        (acquired) =>
+          Effect.promise(async () => {
+            acquired.stdout.pause()
+            await terminateProcess(acquired, this.terminationStarted)
+            if (this.process === acquired) {
+              this.process = null
+            }
+          })
+      )
+
+      yield* Effect.async<void, TmuxObserverError>((resume) => {
+        const fail = (error: TmuxObserverError) => {
+          if (this.failed || this.disposed) {
+            return
+          }
+          this.failed = true
+          this.beginTermination()
+          this.notifyExit()
+          resume(Effect.fail(error))
+        }
+        this.failLifecycle = fail
+        const onData = (chunk: Buffer) => {
+          if (this.failed || this.disposed) {
+            return
+          }
+
+          let writes: Promise<void>[]
+          try {
+            // Keep control and terminal parser state across every stdout chunk.
+            writes = this.handleData(chunk, parser)
+          } catch (cause) {
+            fail(new TmuxObserverError('control_parse', cause))
+            return
+          }
+
+          if (!writes.length) {
+            return
+          }
+          child.stdout.pause()
+          void Promise.all(writes).then(
+            () => {
+              if (!this.failed && !this.disposed) {
+                child.stdout.resume()
+              }
+            },
+            (cause) => fail(new TmuxObserverError('terminal_parse', cause))
+          )
+        }
+        const onError = (cause: Error) =>
+          fail(new TmuxObserverError('process', cause))
+        const onExit = () =>
+          fail(
+            new TmuxObserverError(
+              'process',
+              new Error('tmux metadata observer exited')
+            )
+          )
+        child.stdout.on('data', onData)
+        child.stderr.resume()
+        child.once('error', onError)
+        child.once('exit', onExit)
+
+        return Effect.sync(() => {
+          this.failLifecycle = null
+          child.stdout.off('data', onData)
+          child.off('error', onError)
+          child.off('exit', onExit)
+          child.stdout.pause()
+        })
+      })
+    })
+  }
+
+  private readonly controlParser = new TmuxControlParser()
+
+  private handleData(
+    chunk: Buffer,
+    parser: TerminalMetadataParser
+  ): Promise<void>[] {
+    const writes: Promise<void>[] = []
+    for (const event of this.controlParser.push(chunk)) {
+      if (event.type === 'output') {
+        writes.push(parser.push(event.data))
       }
-    } catch {
-      this.stop(true)
     }
+    return writes
   }
 
   private handleMetadata(update: TerminalMetadataUpdate): void {
@@ -168,39 +347,35 @@ export class TmuxProgressObserver implements TerminalProgressObserver {
       } else {
         this.options.onBell?.()
       }
-    } catch {
-      this.failed = true
-      queueMicrotask(() => this.stop(true))
+    } catch (cause) {
+      this.failLifecycle?.(new TmuxObserverError('metadata_callback', cause))
     }
   }
 
-  private handleWriteParsed(): void {
-    if (this.disposed) {
+  private beginTermination(): void {
+    const child = this.process
+    if (this.terminationStarted || !child) {
       return
     }
 
-    this.pendingWrites -= 1
-    if (this.pendingWrites === 0) {
-      this.process.stdout.resume()
-    }
-  }
-
-  private stop(notify: boolean): void {
-    if (this.disposed) {
+    this.terminationStarted = true
+    if (child.exitCode != null || child.signalCode != null) {
       return
     }
-
-    this.disposed = true
-    this.metadataParser.dispose()
-    this.process.stdout.pause()
     try {
-      this.process.kill()
+      child.kill('SIGTERM')
     } catch {
-      // The control client may already have exited.
+      // The process may have exited between the status check and signal.
     }
-    if (notify) {
-      this.options.onExit()
+  }
+
+  private notifyExit(): void {
+    if (this.disposed || this.notified) {
+      return
     }
+
+    this.notified = true
+    this.options.onExit()
   }
 }
 
