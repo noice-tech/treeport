@@ -673,6 +673,30 @@ describe('TerminalAttachmentManager', () => {
     expect(ptys[1]!.writes).toHaveLength(0)
   })
 
+  it('forwards bounded terminal size reports from viewers without granting input control', async () => {
+    const { manager, ptys } = fixture()
+    const controller = new FakeTransport()
+    const viewer = new FakeTransport()
+    attach(manager, controller, 'tab-controller')
+    await ready(controller)
+    const viewerId = attach(manager, viewer, 'tab-viewer')
+    const viewerReady = await ready(viewer)
+
+    manager.message(viewerId, 'input', {
+      generation: viewerReady.generation,
+      data: '\x1b[4;432;720t\x1b[8;24;80t'
+    })
+    await vi.waitFor(() => expect(ptys[1]!.writes).toHaveLength(1))
+    expect(ptys[1]!.writes).toEqual(['\x1b[4;432;720t\x1b[8;24;80t'])
+
+    manager.message(viewerId, 'input', {
+      generation: viewerReady.generation,
+      data: '\x1b[8;24;80tuser input'
+    })
+    await new Promise((resolve) => setTimeout(resolve))
+    expect(ptys[1]!.writes).toHaveLength(1)
+  })
+
   it('preserves binary bytes and rejects stale controller generations', async () => {
     const { manager, ptys, publish } = fixture()
     const first = new FakeTransport()

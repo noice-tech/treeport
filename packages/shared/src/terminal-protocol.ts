@@ -9,6 +9,17 @@ export const TERMINAL_OUTPUT_STALL_TIMEOUT_MS = 30_000
 export const TERMINAL_MAX_CLIENT_MESSAGE_BYTES = 128 * 1024
 export const TERMINAL_MAX_INPUT_BYTES = 64 * 1024
 
+export function isTerminalSizeReport(data: string): boolean {
+  const reports = data.split(String.fromCharCode(27))
+  return (
+    reports.length > 1 &&
+    reports[0] === '' &&
+    reports
+      .slice(1)
+      .every((report) => /^\[(?:4|6|8);\d{1,6};\d{1,6}t$/.test(report))
+  )
+}
+
 const terminalId = z.string().min(1).max(128)
 const clientId = z.string().min(1).max(128)
 const streamId = z.string().min(1).max(128)

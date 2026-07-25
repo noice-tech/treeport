@@ -5,6 +5,7 @@ import * as Effect from 'effect/Effect'
 import * as Fiber from 'effect/Fiber'
 import type * as Scope from 'effect/Scope'
 import {
+  isTerminalSizeReport,
   terminalBinarySchema,
   terminalInputSchema,
   terminalLegacyTakeControlSchema,
@@ -299,7 +300,8 @@ export class TerminalAttachmentManager {
         return
       }
 
-      if (!this.canControl(connection, parsed.data.generation)) {
+      const sizeReport = isTerminalSizeReport(parsed.data.data)
+      if (!sizeReport && !this.canControl(connection, parsed.data.generation)) {
         return
       }
 
@@ -307,7 +309,8 @@ export class TerminalAttachmentManager {
         connection,
         parsed.data.generation,
         parsed.data.data,
-        Buffer.byteLength(parsed.data.data)
+        Buffer.byteLength(parsed.data.data),
+        sizeReport
       )
       return
     }
@@ -900,7 +903,8 @@ export class TerminalAttachmentManager {
     connection: ClientConnection,
     generation: number,
     data: string | Buffer,
-    bytes: number
+    bytes: number,
+    terminalResponse = false
   ): void {
     if (
       connection.queuedInputBytes + bytes > TERMINAL_MAX_QUEUED_INPUT_BYTES ||
@@ -927,7 +931,7 @@ export class TerminalAttachmentManager {
       )
       if (
         this.isActive(connection) &&
-        this.canControl(connection, generation)
+        (terminalResponse || this.canControl(connection, generation))
       ) {
         connection.pty?.write(data)
       }
