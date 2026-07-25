@@ -2369,35 +2369,41 @@ test.describe('desktop worktree terminal UI', () => {
     page
   }) => {
     await mockApp(page, [], { desktopBridge: true })
-    const emitBell = (sequence: number) =>
-      page.evaluate((nextSequence) => {
-        ;(window as any).__eventSource.emit(
-          'terminal.metadata',
-          JSON.stringify({
-            data: {
-              terminalId: 'term_pi',
-              title: 'Pi build · /worktrees/topic',
-              progress: null,
-              progressStartedAt: null,
-              progressClearedAt: null,
-              bell: {
-                sequence: nextSequence,
-                at: `2026-01-01T00:0${nextSequence}:00.000Z`,
-                unread: true
+    const emitBell = (sequence: number, unread = true) =>
+      page.evaluate(
+        ({ nextSequence, nextUnread }) => {
+          ;(window as any).__eventSource.emit(
+            'terminal.metadata',
+            JSON.stringify({
+              data: {
+                terminalId: 'term_pi',
+                title: 'Pi build · /worktrees/topic',
+                progress: null,
+                progressStartedAt: null,
+                progressClearedAt: null,
+                bell: {
+                  sequence: nextSequence,
+                  at: `2026-01-01T00:0${nextSequence}:00.000Z`,
+                  unread: nextUnread
+                }
               }
-            }
-          })
-        )
-      }, sequence)
+            })
+          )
+        },
+        { nextSequence: sequence, nextUnread: unread }
+      )
 
     await emitBell(1)
     const toast = page.locator('[data-sonner-toast]')
     await expect(toast).toHaveCount(1)
     await expect(toast).toContainText('Pi build · /worktrees/topic')
-    await expect(toast).toContainText('Terminal bell · example · topic')
+    await expect(toast).toContainText('example · topic')
     await expect
       .poll(() => page.evaluate(() => (window as any).__attentionRequests))
       .toBe(1)
+
+    await emitBell(1, false)
+    await expect(toast).toHaveCount(1)
 
     await emitBell(2)
     await expect(toast).toHaveCount(1)
