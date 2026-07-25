@@ -15,6 +15,6 @@ export default defineConfig({
   dts: false,
   deps: {
     neverBundle: true,
-    alwaysBundle: ['@tasktty/shared']
+    alwaysBundle: ['@treeport/shared']
   }
 })

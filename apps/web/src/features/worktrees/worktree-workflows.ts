@@ -6,7 +6,7 @@ import type {
   RemovePreview,
   TerminalSize,
   WorktreeRecord
-} from '@tasktty/shared'
+} from '@treeport/shared'
 import { ApiError, apiClient } from '../../api'
 import type { ActionModalState, RemovalStage } from '../dialogs/action-modal'
 import { projectsQueryKey } from '../../project-metadata'

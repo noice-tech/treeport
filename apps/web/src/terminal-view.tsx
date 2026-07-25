@@ -10,7 +10,7 @@ import type {
   TerminalPreset,
   TerminalRecord,
   WorktreeRecord
-} from '@tasktty/shared'
+} from '@treeport/shared'
 import { Button } from './components/ui/button'
 import {
   DropdownMenu,
@@ -21,12 +21,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger
 } from './components/ui/dropdown-menu'
-import {
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger
-} from './components/ui/tabs'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from './components/ui/tabs'
 import {
   Tooltip,
   TooltipContent,
@@ -34,10 +29,7 @@ import {
 } from './components/ui/tooltip'
 import { cn } from './lib/utils'
 import { TerminalStatusIcon } from './components/terminal-status-icon'
-import {
-  useRequestTerminalFocus,
-  useTerminalAutoFocus
-} from './terminal-focus'
+import { useRequestTerminalFocus, useTerminalAutoFocus } from './terminal-focus'
 import {
   terminalProgressLabel,
   terminalSessions,
@@ -312,8 +304,7 @@ export function TerminalView({
                             working && 'stroke-cyan-400',
                             progress.state === 'error' && 'stroke-rose-300',
                             progress.state === 'paused' && 'stroke-amber-300',
-                            needsAttention &&
-                              'stroke-amber-300'
+                            needsAttention && 'stroke-amber-300'
                           )}
                         />
                       ) : item.status !== 'running' || needsAttention ? (

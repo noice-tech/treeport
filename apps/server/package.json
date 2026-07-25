@@ -1,5 +1,5 @@
 {
-  "name": "@tasktty/server",
+  "name": "@treeport/server",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -25,7 +25,7 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@tasktty/shared": "workspace:*",
+    "@treeport/shared": "workspace:*",
     "@types/better-sqlite3": "^7.6.13",
     "socket.io-client": "4.8.3",
     "tsdown": "0.22.14"

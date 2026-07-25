@@ -19,8 +19,8 @@ import {
   updateProjectSchema,
   updateTerminalPresetSchema,
   updateTerminalSchema
-} from '@tasktty/shared'
-import type { AppConfig, TmuxAdapter, TaskTTYService } from './core/index'
+} from '@treeport/shared'
+import type { AppConfig, TmuxAdapter, TreeportService } from './core/index'
 import { DomainError } from './core/index'
 import { TerminalMetadataManager } from './terminal-metadata'
 
@@ -51,7 +51,10 @@ async function pruneTerminalUploads(
     await Promise.all(
       entries
         .filter(
-          (entry) => entry.isFile() && entry.name.startsWith('tasktty-upload-')
+          (entry) =>
+            entry.isFile() &&
+            (entry.name.startsWith('treeport-upload-') ||
+              entry.name.startsWith('tasktty-upload-'))
         )
         .map(async (entry): Promise<UploadFileInfo | null> => {
           const filePath = path.join(directory, entry.name)
@@ -94,7 +97,7 @@ async function pruneTerminalUploads(
 }
 
 interface AppDependencies {
-  service: TaskTTYService
+  service: TreeportService
   config: AppConfig
   tmux: TmuxAdapter
   terminalMetadata?: TerminalMetadataManager
@@ -138,7 +141,7 @@ export function createApp({
     new TerminalMetadataManager(service, tmux, config.tmuxPath)
   const metadataReady = metadata.initialize().catch((error: unknown) => {
     console.error(
-      '[TaskTTY] Terminal metadata initialization failed:',
+      '[Treeport] Terminal metadata initialization failed:',
       error instanceof Error ? error.message : String(error)
     )
   })
@@ -159,7 +162,7 @@ export function createApp({
     }
 
     console.error(
-      '[TaskTTY]',
+      '[Treeport]',
       error instanceof Error ? error.message : String(error)
     )
     return context.json(
@@ -404,9 +407,10 @@ export function createApp({
       }
     }
 
-    const requestedExtension = context.req
-      .header('x-tasktty-file-extension')
-      ?.toLowerCase()
+    const requestedExtension = (
+      context.req.header('x-treeport-file-extension') ||
+      context.req.header('x-tasktty-file-extension')
+    )?.toLowerCase()
     if (requestedExtension && !/^[a-z0-9]{1,16}$/.test(requestedExtension)) {
       throw new DomainError(
         'VALIDATION_ERROR',
@@ -434,7 +438,7 @@ export function createApp({
       await pruneTerminalUploads(uploadDirectory)
       const filePath = path.join(
         uploadDirectory,
-        `tasktty-upload-${crypto.randomUUID()}${extension ? `.${extension}` : ''}`
+        `treeport-upload-${crypto.randomUUID()}${extension ? `.${extension}` : ''}`
       )
       const file = await fs.open(filePath, 'wx', 0o600)
       let complete = false

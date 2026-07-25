@@ -1,14 +1,14 @@
 ---
-name: tasktty
-description: Understand TaskTTY-managed terminal context and safely create persistent, observable terminals and child worktrees with the TaskTTY CLI. Use when an agent or extension needs to inspect its TaskTTY environment, open another session, or spawn work in a separate worktree.
-compatibility: Requires the tasktty CLI on PATH and a reachable TaskTTY daemon. Creation commands also require the requested child executable to be installed.
+name: treeport
+description: Understand Treeport-managed terminal context and safely create persistent, observable terminals and child worktrees with the Treeport CLI. Use when an agent or extension needs to inspect its Treeport environment, open another session, or spawn work in a separate worktree.
+compatibility: Requires the treeport CLI on PATH and a reachable Treeport daemon. Creation commands also require the requested child executable to be installed.
 ---
 
-# TaskTTY
+# Treeport
 
-TaskTTY is a generic terminal and worktree layer. Its terminals are persistent tmux sessions that appear in the TaskTTY UI. A user can open a created terminal, take control of the normal application TUI, and continue working in the same session.
+Treeport is a generic terminal and worktree layer. Its terminals are persistent tmux sessions that appear in the Treeport UI. A user can open a created terminal, take control of the normal application TUI, and continue working in the same session.
 
-TaskTTY does not define task sources, planning or approval states, agent tool policies, or provider-specific workflows. The caller owns names, commands, prompts, and higher-level orchestration.
+Treeport does not define task sources, planning or approval states, agent tool policies, or provider-specific workflows. The caller owns names, commands, prompts, and higher-level orchestration.
 
 ## Operating rules
 
@@ -24,12 +24,12 @@ TaskTTY does not define task sources, planning or approval states, agent tool po
 Run:
 
 ```sh
-tasktty context
+treeport context
 ```
 
 Inside a managed terminal, this reports the current project, worktree, terminal, paths, statuses, IDs, and daemon URL. It resolves the injected IDs strictly; it does not guess identity from the current path.
 
-Outside TaskTTY it reports that the terminal is not managed and exits successfully. `TASKTTY_API_URL` may be configured outside a managed terminal; if any context ID is present, however, all injected values are required. Partial IDs or IDs that no longer belong together fail instead of falling back to path inference.
+Outside Treeport it reports that the terminal is not managed and exits successfully. `TREEPORT_API_URL` may be configured outside a managed terminal; if any context ID is present, however, all injected values are required. Partial IDs or IDs that no longer belong together fail instead of falling back to path inference.
 
 Use the exact IDs from this command for subsequent operations. `.` is a convenient shorthand for the current project or worktree, but exact IDs are clearer once context has been resolved.
 
@@ -38,34 +38,34 @@ Use the exact IDs from this command for subsequent operations. `.` is a convenie
 Create a persistent login shell:
 
 ```sh
-tasktty terminal create --worktree <worktree-id> --name <terminal-name>
+treeport terminal create --worktree <worktree-id> --name <terminal-name>
 ```
 
 Launch a program directly:
 
 ```sh
-tasktty terminal create --worktree <worktree-id> --name <terminal-name> -- <program> <arg> ...
+treeport terminal create --worktree <worktree-id> --name <terminal-name> -- <program> <arg> ...
 ```
 
-The command returns after TaskTTY creates the tmux session. The program continues independently of the browser and of the caller that created it.
+The command returns after Treeport creates the tmux session. The program continues independently of the browser and of the caller that created it.
 
 ## Create a child worktree and terminal
 
 Create a linked worktree and its first persistent terminal together:
 
 ```sh
-tasktty spawn \
+treeport spawn \
   --project <project-id> \
   --worktree-name <worktree-name> \
   --name <terminal-name> \
   -- <program> <arg> ...
 ```
 
-The child program and its arguments are entirely caller-owned. TaskTTY preserves them but does not add prompts, modes, capability restrictions, or lifecycle policy.
+The child program and its arguments are entirely caller-owned. Treeport preserves them but does not add prompts, modes, capability restrictions, or lifecycle policy.
 
-By default, TaskTTY bases the worktree on the fetched remote default branch. Add `--from-current` only when the caller wants the current worktree's committed `HEAD` as the base. Uncommitted changes are not copied.
+By default, Treeport bases the worktree on the fetched remote default branch. Add `--from-current` only when the caller wants the current worktree's committed `HEAD` as the base. Uncommitted changes are not copied.
 
-TaskTTY serializes worktree mutations per project. If a caller needs several child worktrees, create them one at a time; their terminal programs can run concurrently after creation.
+Treeport serializes worktree mutations per project. If a caller needs several child worktrees, create them one at a time; their terminal programs can run concurrently after creation.
 
 ## Interpret creation results
 
@@ -83,25 +83,25 @@ Report partial creation with the returned worktree and terminal IDs. Do not blin
 Inspect terminal inventory later with:
 
 ```sh
-tasktty terminal list --worktree <worktree-id>
+treeport terminal list --worktree <worktree-id>
 ```
 
 Inspect one terminal's refreshed process status and volatile runtime metadata with:
 
 ```sh
-tasktty terminal inspect <terminal-id>
-tasktty terminal inspect <terminal-id> --json
+treeport terminal inspect <terminal-id>
+treeport terminal inspect <terminal-id> --json
 ```
 
-Runtime metadata includes the title, current OSC `9;4` progress, last progress start and clear timestamps, and latest daemon-observed real BEL. BEL metadata also reports daemon-lifetime unread attention shared by every browser; inspection and waits never acknowledge it, while viewing the terminal acknowledges the exact observed BEL sequence. `.` resolves to the exact `TASKTTY_TERMINAL_ID` inside a managed terminal; it is not a name or path lookup.
+Runtime metadata includes the title, current OSC `9;4` progress, last progress start and clear timestamps, and latest daemon-observed real BEL. BEL metadata also reports daemon-lifetime unread attention shared by every browser; inspection and waits never acknowledge it, while viewing the terminal acknowledges the exact observed BEL sequence. `.` resolves to the exact `TREEPORT_TERMINAL_ID` inside a managed terminal; it is not a name or path lookup.
 
 Wait for raw terminal conditions without polling or scraping output:
 
 ```sh
-tasktty terminal wait <terminal-id> --until working
-tasktty terminal wait <terminal-id> --until idle --timeout 30m
-tasktty terminal wait <terminal-id> --until bell
-tasktty terminal wait <terminal-id> --until exit
+treeport terminal wait <terminal-id> --until working
+treeport terminal wait <terminal-id> --until idle --timeout 30m
+treeport terminal wait <terminal-id> --until bell
+treeport terminal wait <terminal-id> --until exit
 ```
 
 - `idle` means no daemon-owned OSC progress is currently observed and can return immediately.
@@ -110,21 +110,21 @@ tasktty terminal wait <terminal-id> --until exit
 - `exit` means the retained terminal process has exited.
 - Waits have no default timeout. Use a positive `ms`, `s`, `m`, or `h` duration when a deadline is required; Ctrl+C cancels.
 
-TaskTTY does not infer agent settlement. An orchestrator can inspect first, wait for `working` if no progress cycle has been observed, and then wait for `idle`. Progress depends on the child application emitting OSC `9;4`; for Pi, `terminal.showTerminalProgress` must be enabled. Applications should clear progress or refresh active progress more frequently than the five-minute lease. A null progress value is not proof that every application supports progress reporting.
+Treeport does not infer agent settlement. An orchestrator can inspect first, wait for `working` if no progress cycle has been observed, and then wait for `idle`. Progress depends on the child application emitting OSC `9;4`; for Pi, `terminal.showTerminalProgress` must be enabled. Applications should clear progress or refresh active progress more frequently than the five-minute lease. A null progress value is not proof that every application supports progress reporting.
 
 ## Automation and integrations
 
 Extensions and scripts should add `--json` before the `--` command separator:
 
 ```sh
-tasktty context --json
+treeport context --json
 
-tasktty terminal create \
+treeport terminal create \
   --worktree <worktree-id> \
   --name <terminal-name> \
   --json -- <program> <arg> ...
 
-tasktty spawn \
+treeport spawn \
   --project <project-id> \
   --worktree-name <worktree-name> \
   --name <terminal-name> \
@@ -140,4 +140,4 @@ JSON success output is written to stdout. JSON errors use `{ "error": { "code", 
 - `5`: API, domain, or invalid-context refusal.
 - `130`: a terminal wait was interrupted with Ctrl+C.
 
-TaskTTY currently has no authentication. Use it only through a trusted local or private-network listener; do not invent credentials or put secrets in command arguments or URLs.
+Treeport currently has no authentication. Use it only through a trusted local or private-network listener; do not invent credentials or put secrets in command arguments or URLs.

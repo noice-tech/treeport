@@ -15,7 +15,7 @@ import type {
   ProjectRecord,
   TerminalRecord,
   WorktreeRecord
-} from '@tasktty/shared'
+} from '@treeport/shared'
 import { Button } from './components/ui/button'
 import {
   ActionModal,
@@ -40,6 +40,8 @@ import {
   LAST_WORKSPACE_ROUTE_STORAGE_KEY,
   LEGACY_ACTIVE_PROJECT_STORAGE_KEY,
   LEGACY_TERMINAL_STORAGE_KEY,
+  TASKTTY_LAST_PROJECT_TERMINAL_STORAGE_PREFIX,
+  TASKTTY_LAST_WORKSPACE_ROUTE_STORAGE_KEY,
   legacyResumePath,
   resolveWorkspaceRoute,
   targetForProject,
@@ -62,15 +64,16 @@ function clampSidebarWidth(width: number): number {
 }
 
 export default function App() {
+  const desktopBridge = window.treeportDesktop ?? window.taskttyDesktop
   const navigateToWorkspace = useWorkspaceNavigate()
   const location = useLocation()
   const projectsQuery = useQuery(projectsQueryOptions)
   const projects = projectsQuery.data ?? []
   const presetsQuery = useQuery(terminalPresetsQueryOptions)
   const presets = presetsQuery.data ?? []
-  const storedResumePath = localStorage.getItem(
-    LAST_WORKSPACE_ROUTE_STORAGE_KEY
-  )
+  const storedResumePath =
+    localStorage.getItem(LAST_WORKSPACE_ROUTE_STORAGE_KEY) ??
+    localStorage.getItem(TASKTTY_LAST_WORKSPACE_ROUTE_STORAGE_KEY)
   const legacyPath = legacyResumePath(
     projects,
     localStorage.getItem(LEGACY_TERMINAL_STORAGE_KEY),
@@ -92,17 +95,22 @@ export default function App() {
   const [projectSwitcherOpen, setProjectSwitcherOpen] = useState(false)
   const [isMobile, setIsMobile] = useState(false)
   const [desktopFullscreen, setDesktopFullscreen] = useState(false)
-  const desktopPlatform = window.taskttyDesktop?.platform
+  const desktopPlatform = desktopBridge?.platform
   const showDesktopTitlebar =
-    window.taskttyDesktop !== undefined &&
+    desktopBridge !== undefined &&
     !(desktopPlatform === 'darwin' && desktopFullscreen)
   const [error, setError] = useState<string | null>(null)
   const [modal, setModal] = useState<ActionModalState>(null)
   const [sidebarWidth, setSidebarWidth] = useState(() => {
-    const savedWidth = Number.parseInt(
-      localStorage.getItem('tasktty-sidebar-width') ?? '',
-      10
-    )
+    const storedWidth =
+      localStorage.getItem('treeport-sidebar-width') ??
+      localStorage.getItem('tasktty-sidebar-width')
+    if (storedWidth !== null) {
+      localStorage.setItem('treeport-sidebar-width', storedWidth)
+      localStorage.setItem('tasktty-sidebar-width', storedWidth)
+    }
+
+    const savedWidth = Number.parseInt(storedWidth ?? '', 10)
     return Number.isFinite(savedWidth)
       ? clampSidebarWidth(savedWidth)
       : DEFAULT_SIDEBAR_WIDTH
@@ -188,9 +196,14 @@ export default function App() {
     localStorage.removeItem(LEGACY_TERMINAL_STORAGE_KEY)
     if (workspaceResolution.target.kind === 'root') {
       localStorage.removeItem(LAST_WORKSPACE_ROUTE_STORAGE_KEY)
+      localStorage.removeItem(TASKTTY_LAST_WORKSPACE_ROUTE_STORAGE_KEY)
     } else {
       localStorage.setItem(
         LAST_WORKSPACE_ROUTE_STORAGE_KEY,
+        workspaceResolution.target.pathname
+      )
+      localStorage.setItem(
+        TASKTTY_LAST_WORKSPACE_ROUTE_STORAGE_KEY,
         workspaceResolution.target.pathname
       )
     }
@@ -198,6 +211,10 @@ export default function App() {
     if (workspaceResolution.target.kind === 'terminal') {
       localStorage.setItem(
         `${LAST_PROJECT_TERMINAL_STORAGE_PREFIX}${workspaceResolution.target.projectId}`,
+        workspaceResolution.target.terminalId
+      )
+      localStorage.setItem(
+        `${TASKTTY_LAST_PROJECT_TERMINAL_STORAGE_PREFIX}${workspaceResolution.target.projectId}`,
         workspaceResolution.target.terminalId
       )
     }
@@ -227,17 +244,14 @@ export default function App() {
     return () => media.removeEventListener('change', update)
   }, [])
 
-  useEffect(
-    () => window.taskttyDesktop?.onFullscreenChange(setDesktopFullscreen),
-    []
-  )
+  useEffect(() => desktopBridge?.onFullscreenChange(setDesktopFullscreen), [])
 
   useEffect(() => {
-    if (!window.taskttyDesktop) {
+    if (!desktopBridge) {
       return
     }
 
-    return window.taskttyDesktop.onCommand((command) => {
+    return desktopBridge.onCommand((command) => {
       if (
         command !== 'new-worktree' ||
         !activeProject ||
@@ -357,7 +371,10 @@ export default function App() {
       project,
       localStorage.getItem(
         `${LAST_PROJECT_TERMINAL_STORAGE_PREFIX}${project.id}`
-      )
+      ) ??
+        localStorage.getItem(
+          `${TASKTTY_LAST_PROJECT_TERMINAL_STORAGE_PREFIX}${project.id}`
+        )
     )
 
   const selectProject = (project: ProjectRecord) => {
@@ -395,6 +412,7 @@ export default function App() {
   const setAndSaveSidebarWidth = (width: number) => {
     const nextWidth = clampSidebarWidth(width)
     setSidebarWidth(nextWidth)
+    localStorage.setItem('treeport-sidebar-width', String(nextWidth))
     localStorage.setItem('tasktty-sidebar-width', String(nextWidth))
   }
 
@@ -461,7 +479,7 @@ export default function App() {
       {showDesktopTitlebar && (
         <div
           className="desktop-titlebar col-span-full h-8 bg-zinc-950"
-          data-tasktty-desktop-titlebar
+          data-treeport-desktop-titlebar
           aria-hidden="true"
         />
       )}

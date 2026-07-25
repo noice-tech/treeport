@@ -1,9 +1,9 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
-import { parseTerminalProgress, type TerminalProgress } from '@tasktty/shared'
+import { parseTerminalProgress, type TerminalProgress } from '@treeport/shared'
 import xtermHeadless, { type IDisposable } from '@xterm/headless'
 import * as Effect from 'effect/Effect'
 import * as Fiber from 'effect/Fiber'
-import * as Scope from 'effect/Scope'
+import type * as Scope from 'effect/Scope'
 import { TmuxControlParser } from './tmux-control'
 
 const { Terminal } = xtermHeadless
@@ -154,6 +154,7 @@ async function terminateProcess(
     if (!terminationStarted) {
       child.kill('SIGTERM')
     }
+
     return
   }
 
@@ -166,6 +167,7 @@ async function terminateProcess(
       return
     }
   }
+
   if (await terminated) {
     return
   }
@@ -226,6 +228,7 @@ export class TmuxProgressObserver implements TerminalProgressObserver {
             if (this.metadataParser === acquired) {
               this.metadataParser = null
             }
+
             acquired.dispose()
           })
       )
@@ -261,6 +264,7 @@ export class TmuxProgressObserver implements TerminalProgressObserver {
           if (this.failed || this.disposed) {
             return
           }
+
           this.failed = true
           this.beginTermination()
           this.notifyExit()
@@ -284,6 +288,7 @@ export class TmuxProgressObserver implements TerminalProgressObserver {
           if (!writes.length) {
             return
           }
+
           child.stdout.pause()
           void Promise.all(writes).then(
             () => {
@@ -362,6 +367,7 @@ export class TmuxProgressObserver implements TerminalProgressObserver {
     if (child.exitCode != null || child.signalCode != null) {
       return
     }
+
     try {
       child.kill('SIGTERM')
     } catch {

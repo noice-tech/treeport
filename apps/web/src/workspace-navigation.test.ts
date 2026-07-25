@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { ProjectRecord } from '@tasktty/shared'
+import type { ProjectRecord } from '@treeport/shared'
 import {
   deepestProjectTarget,
   legacyResumePath,

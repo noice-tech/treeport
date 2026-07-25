@@ -12,17 +12,37 @@ import {
   type EventsServerToClientEvents,
   type ProjectRecord,
   type RemovePreview,
-  type TaskTTYContext,
+  type TreeportContext,
   type TerminalRecord,
   type TerminalRuntimeMetadata,
   type WorktreeRecord
-} from '@tasktty/shared'
+} from '@treeport/shared'
 import { extractJsonOutput } from './args.js'
 
-const apiUrl = (process.env.TASKTTY_API_URL || 'http://127.0.0.1:4780').replace(
-  /\/$/,
-  ''
-)
+const configuredApiUrl =
+  process.env.TREEPORT_API_URL?.trim() || process.env.TASKTTY_API_URL?.trim()
+const apiUrl = (configuredApiUrl || 'http://127.0.0.1:4780').replace(/\/$/, '')
+const usesCanonicalContext = [
+  process.env.TREEPORT_PROJECT_ID,
+  process.env.TREEPORT_WORKTREE_ID,
+  process.env.TREEPORT_TERMINAL_ID
+].some((value) => Boolean(value?.trim()))
+const contextPrefix = usesCanonicalContext ? 'TREEPORT' : 'TASKTTY'
+const contextProjectId = (
+  usesCanonicalContext
+    ? process.env.TREEPORT_PROJECT_ID
+    : process.env.TASKTTY_PROJECT_ID
+)?.trim()
+const contextWorktreeId = (
+  usesCanonicalContext
+    ? process.env.TREEPORT_WORKTREE_ID
+    : process.env.TASKTTY_WORKTREE_ID
+)?.trim()
+const contextTerminalId = (
+  usesCanonicalContext
+    ? process.env.TREEPORT_TERMINAL_ID
+    : process.env.TASKTTY_TERMINAL_ID
+)?.trim()
 const rawArgs = process.argv.slice(2)
 const jsonOutput = extractJsonOutput(rawArgs)
 
@@ -94,7 +114,7 @@ async function request<T>(
     }
 
     throw new CliError(
-      `Cannot reach TaskTTY daemon at ${apiUrl}: ${error instanceof Error ? error.message : String(error)}`,
+      `Cannot reach Treeport daemon at ${apiUrl}: ${error instanceof Error ? error.message : String(error)}`,
       3,
       'DAEMON_UNREACHABLE'
     )
@@ -178,9 +198,9 @@ async function resolveProject(identifier: string): Promise<ProjectRecord> {
     return direct
   }
 
-  if (identifier === '.' && process.env.TASKTTY_PROJECT_ID) {
+  if (identifier === '.' && contextProjectId) {
     const environmentMatch = list.find(
-      (project) => project.id === process.env.TASKTTY_PROJECT_ID
+      (project) => project.id === contextProjectId
     )
     if (environmentMatch) {
       return environmentMatch
@@ -209,9 +229,9 @@ async function resolveWorktree(identifier: string): Promise<WorktreeRecord> {
     return direct
   }
 
-  if (identifier === '.' && process.env.TASKTTY_WORKTREE_ID) {
+  if (identifier === '.' && contextWorktreeId) {
     const environmentMatch = all.find(
-      (worktree) => worktree.id === process.env.TASKTTY_WORKTREE_ID
+      (worktree) => worktree.id === contextWorktreeId
     )
     if (environmentMatch) {
       return environmentMatch
@@ -246,13 +266,14 @@ function resolveTerminalId(identifier: string): string {
     return identifier
   }
 
-  const terminalId = process.env.TASKTTY_TERMINAL_ID?.trim()
+  const terminalId = contextTerminalId
   if (!terminalId) {
+    const variable = `${contextPrefix}_TERMINAL_ID`
     throw new CliError(
-      'Cannot resolve . without TASKTTY_TERMINAL_ID',
+      `Cannot resolve . without ${variable}`,
       5,
       'TASKTTY_CONTEXT_INCOMPLETE',
-      { missing: ['TASKTTY_TERMINAL_ID'] }
+      { missing: [variable] }
     )
   }
 
@@ -394,7 +415,7 @@ async function waitForTerminal(
           const snapshot = parseEventsSnapshot(value)
           if (!snapshot || !observation) {
             throw new CliError(
-              'TaskTTY daemon sent an invalid event snapshot',
+              'Treeport daemon sent an invalid event snapshot',
               3,
               'DAEMON_PROTOCOL_ERROR'
             )
@@ -429,7 +450,7 @@ async function waitForTerminal(
           const event = parseProductEvent(value)
           if (!event) {
             throw new CliError(
-              'TaskTTY daemon sent an invalid product event',
+              'Treeport daemon sent an invalid product event',
               3,
               'DAEMON_PROTOCOL_ERROR'
             )
@@ -460,7 +481,7 @@ async function waitForTerminal(
             const metadata = parseTerminalRuntimeMetadata(event.data)
             if (!metadata || !observation) {
               throw new CliError(
-                'TaskTTY daemon sent invalid terminal metadata',
+                'Treeport daemon sent invalid terminal metadata',
                 3,
                 'DAEMON_PROTOCOL_ERROR'
               )
@@ -483,7 +504,7 @@ async function waitForTerminal(
       events!.on('connect_error', (error) =>
         fail(
           new CliError(
-            `Cannot reach TaskTTY daemon at ${apiUrl}: ${error.message}`,
+            `Cannot reach Treeport daemon at ${apiUrl}: ${error.message}`,
             3,
             'DAEMON_UNREACHABLE'
           )
@@ -492,7 +513,7 @@ async function waitForTerminal(
       events!.on('disconnect', () =>
         fail(
           new CliError(
-            'TaskTTY daemon event channel disconnected before the condition was observed',
+            'Treeport daemon event channel disconnected before the condition was observed',
             3,
             'DAEMON_DISCONNECTED'
           )
@@ -524,7 +545,7 @@ async function waitForTerminal(
     }
 
     throw new CliError(
-      `TaskTTY daemon event channel failed: ${error instanceof Error ? error.message : String(error)}`,
+      `Treeport daemon event channel failed: ${error instanceof Error ? error.message : String(error)}`,
       3,
       'DAEMON_DISCONNECTED'
     )
@@ -551,18 +572,18 @@ function print(value: unknown, human?: () => string): void {
 function usage(): never {
   throw new CliError(
     `Usage:
-  tasktty context [--json]
-  tasktty project add <path> [--json]
-  tasktty project list [--json]
-  tasktty worktree list [--project <id-or-path>] [--json]
-  tasktty worktree create --project <id-or-path> --name <name> [--from-current] [--json]
-  tasktty worktree remove <id-or-path-or-dot> [--force] [--json]
-  tasktty terminal list [--worktree <id-or-path>] [--json]
-  tasktty terminal create --worktree <id-or-path-or-dot> --name <name> [-- <command> args...] [--json]
-  tasktty terminal inspect <terminal-id-or-dot> [--json]
-  tasktty terminal wait <terminal-id-or-dot> --until <idle|working|bell|exit> [--timeout <duration>] [--json]
-  tasktty terminal delete <terminal-id> [--json]
-  tasktty spawn --project <id-or-path-or-dot> --worktree-name <name> --name <terminal-name> [--from-current] [-- <command> args...] [--json]`,
+  treeport context [--json]
+  treeport project add <path> [--json]
+  treeport project list [--json]
+  treeport worktree list [--project <id-or-path>] [--json]
+  treeport worktree create --project <id-or-path> --name <name> [--from-current] [--json]
+  treeport worktree remove <id-or-path-or-dot> [--force] [--json]
+  treeport terminal list [--worktree <id-or-path>] [--json]
+  treeport terminal create --worktree <id-or-path-or-dot> --name <name> [-- <command> args...] [--json]
+  treeport terminal inspect <terminal-id-or-dot> [--json]
+  treeport terminal wait <terminal-id-or-dot> --until <idle|working|bell|exit> [--timeout <duration>] [--json]
+  treeport terminal delete <terminal-id> [--json]
+  treeport spawn --project <id-or-path-or-dot> --worktree-name <name> --name <terminal-name> [--from-current] [-- <command> args...] [--json]`,
     2
   )
 }
@@ -574,28 +595,28 @@ async function main(args: string[]): Promise<void> {
       usage()
     }
 
-    const projectId = process.env.TASKTTY_PROJECT_ID?.trim()
-    const worktreeId = process.env.TASKTTY_WORKTREE_ID?.trim()
-    const terminalId = process.env.TASKTTY_TERMINAL_ID?.trim()
+    const projectId = contextProjectId
+    const worktreeId = contextWorktreeId
+    const terminalId = contextTerminalId
     const presentIds = [projectId, worktreeId, terminalId].filter(Boolean)
     if (!presentIds.length) {
-      const context: TaskTTYContext = {
+      const context: TreeportContext = {
         managed: false,
         reason: 'outside_tasktty'
       }
-      print(context, () => 'Not running in a TaskTTY-managed terminal.')
+      print(context, () => 'Not running in a Treeport-managed terminal.')
       return
     }
 
     const missing = [
-      ...(!process.env.TASKTTY_API_URL?.trim() ? ['TASKTTY_API_URL'] : []),
-      ...(!projectId ? ['TASKTTY_PROJECT_ID'] : []),
-      ...(!worktreeId ? ['TASKTTY_WORKTREE_ID'] : []),
-      ...(!terminalId ? ['TASKTTY_TERMINAL_ID'] : [])
+      ...(!configuredApiUrl ? [`${contextPrefix}_API_URL`] : []),
+      ...(!projectId ? [`${contextPrefix}_PROJECT_ID`] : []),
+      ...(!worktreeId ? [`${contextPrefix}_WORKTREE_ID`] : []),
+      ...(!terminalId ? [`${contextPrefix}_TERMINAL_ID`] : [])
     ]
     if (missing.length) {
       throw new CliError(
-        `Incomplete TaskTTY context; missing ${missing.join(', ')}`,
+        `Incomplete Treeport context; missing ${missing.join(', ')}`,
         5,
         'TASKTTY_CONTEXT_INCOMPLETE',
         { missing }
@@ -612,7 +633,7 @@ async function main(args: string[]): Promise<void> {
     )
     if (!worktree) {
       throw new CliError(
-        'TaskTTY context worktree does not belong to the current project',
+        'Treeport context worktree does not belong to the current project',
         5,
         'TASKTTY_CONTEXT_INVALID',
         { projectId, worktreeId }
@@ -624,14 +645,14 @@ async function main(args: string[]): Promise<void> {
     )
     if (!terminal) {
       throw new CliError(
-        'TaskTTY context terminal does not belong to the current worktree',
+        'Treeport context terminal does not belong to the current worktree',
         5,
         'TASKTTY_CONTEXT_INVALID',
         { worktreeId, terminalId }
       )
     }
 
-    const context: TaskTTYContext = {
+    const context: TreeportContext = {
       managed: true,
       apiUrl,
       project: {
@@ -664,7 +685,7 @@ async function main(args: string[]): Promise<void> {
     print(
       context,
       () =>
-        `TaskTTY context\n\nProject:  ${context.project.name} (${context.project.id})\nWorktree: ${context.worktree.name} (${context.worktree.id})\nPath:     ${context.worktree.path}\nTerminal: ${context.terminal.name} (${context.terminal.id}) — ${context.terminal.status}\nAPI:      ${context.apiUrl}`
+        `Treeport context\n\nProject:  ${context.project.name} (${context.project.id})\nWorktree: ${context.worktree.name} (${context.worktree.id})\nPath:     ${context.worktree.path}\nTerminal: ${context.terminal.name} (${context.terminal.id}) — ${context.terminal.status}\nAPI:      ${context.apiUrl}`
     )
     return
   }

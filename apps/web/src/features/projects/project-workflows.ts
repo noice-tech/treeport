@@ -1,7 +1,7 @@
 import type { RefObject } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useLocation } from '@tanstack/react-router'
-import type { ProjectRecord, RecentProjectRecord } from '@tasktty/shared'
+import type { ProjectRecord, RecentProjectRecord } from '@treeport/shared'
 import { ApiError, apiClient } from '../../api'
 import {
   projectsQueryKey,
@@ -104,7 +104,7 @@ export function useProjectWorkflows({
       !window.confirm(
         `Close “${
           project.name
-        }”? This will terminate ${terminalCount} TaskTTY terminal ${
+        }”? This will terminate ${terminalCount} Treeport terminal ${
           terminalCount === 1
             ? 'session and its process'
             : 'sessions and their processes'

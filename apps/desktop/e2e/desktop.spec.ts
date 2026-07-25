@@ -6,7 +6,9 @@ import { pathToFileURL } from 'node:url'
 import { _electron as electron, expect, test } from '@playwright/test'
 
 test('dispatches native commands and opens local file URLs', async () => {
-  const userData = await fs.mkdtemp(path.join(os.tmpdir(), 'tasktty-electron-'))
+  const userData = await fs.mkdtemp(
+    path.join(os.tmpdir(), 'treeport-electron-')
+  )
   const server = http.createServer((request, response) => {
     if (request.url === '/api/health') {
       response.setHeader('content-type', 'application/json')
@@ -16,9 +18,9 @@ test('dispatches native commands and opens local file URLs', async () => {
 
     response.setHeader('content-type', 'text/html')
     response.end(`<!doctype html>
-      <body data-command="none">TaskTTY desktop test</body>
+      <body data-command="none">Treeport desktop test</body>
       <script>
-        window.taskttyDesktop.onCommand((command) => {
+        window.treeportDesktop.onCommand((command) => {
           document.body.dataset.command = command
         })
       </script>`)
@@ -37,7 +39,7 @@ test('dispatches native commands and opens local file URLs', async () => {
       cwd: process.cwd(),
       env: {
         ...process.env,
-        TASKTTY_DESKTOP_URL: `http://127.0.0.1:${address.port}`
+        TREEPORT_DESKTOP_URL: `http://127.0.0.1:${address.port}`
       }
     })
 
@@ -59,18 +61,18 @@ test('dispatches native commands and opens local file URLs', async () => {
 
     await electronApp.evaluate(({ shell }) => {
       const scope = globalThis as typeof globalThis & {
-        __openedTaskTTYFilePaths?: string[]
+        __openedTreeportFilePaths?: string[]
       }
-      scope.__openedTaskTTYFilePaths = []
+      scope.__openedTreeportFilePaths = []
       shell.openPath = async (filePath) => {
-        scope.__openedTaskTTYFilePaths!.push(filePath)
+        scope.__openedTreeportFilePaths!.push(filePath)
         return ''
       }
     })
     const filePath = path.join(userData, 'résumé draft.txt')
     await expect(
       window.evaluate(
-        (url) => (window as any).taskttyDesktop.openFileUrl(url),
+        (url) => (window as any).treeportDesktop.openFileUrl(url),
         pathToFileURL(filePath).href
       )
     ).resolves.toBe(true)
@@ -84,9 +86,9 @@ test('dispatches native commands and opens local file URLs', async () => {
         () =>
           (
             globalThis as typeof globalThis & {
-              __openedTaskTTYFilePaths?: string[]
+              __openedTreeportFilePaths?: string[]
             }
-          ).__openedTaskTTYFilePaths
+          ).__openedTreeportFilePaths
       )
     ).toEqual([filePath])
 

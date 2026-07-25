@@ -6,7 +6,7 @@ const config: ForgeConfig = {
     onlyModules: []
   },
   packagerConfig: {
-    name: 'TaskTTY'
+    name: 'Treeport'
   },
   makers: [],
   plugins: [

@@ -4,27 +4,31 @@ import type { AddressInfo } from 'node:net'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Server as SocketIOServer } from 'socket.io'
-import { SOCKET_IO_PATH } from '@tasktty/shared'
+import { SOCKET_IO_PATH } from '@treeport/shared'
 import type {
   ProjectRecord,
   TerminalRecord,
   TerminalRuntimeMetadata,
   WorktreeRecord
-} from '@tasktty/shared'
+} from '@treeport/shared'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 const repositoryRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   '../../..'
 )
-const cliExecutable = path.join(repositoryRoot, 'node_modules/.bin/tasktty')
+const cliExecutable = path.join(repositoryRoot, 'node_modules/.bin/treeport')
+const legacyCliExecutable = path.join(
+  repositoryRoot,
+  'node_modules/.bin/tasktty'
+)
 const timestamp = '2026-01-01T00:00:00.000Z'
 
 const terminal: TerminalRecord = {
   id: 'term_context',
   worktreeId: 'wt_context',
   name: 'Pi',
-  tmuxSessionName: 'tasktty-term-context',
+  tmuxSessionName: 'treeport-term-context',
   argv: ['pi'],
   status: 'running',
   exitCode: null,
@@ -44,7 +48,7 @@ const worktree: WorktreeRecord = {
   lockReason: null,
   prunable: false,
   kind: 'linked',
-  tmuxSocketName: 'tasktty-wt-context',
+  tmuxSocketName: 'treeport-wt-context',
   status: 'active',
   cleanupError: null,
   managedWrapperPath: null,
@@ -65,9 +69,9 @@ const worktree: WorktreeRecord = {
 
 const project: ProjectRecord = {
   id: 'proj_context',
-  name: 'tasktty',
-  repositoryPath: '/repo/tasktty',
-  mainWorktreePath: '/repo/tasktty',
+  name: 'treeport',
+  repositoryPath: '/repo/treeport',
+  mainWorktreePath: '/repo/treeport',
   defaultBranch: 'main',
   color: null,
   availability: { state: 'available', message: null },
@@ -84,10 +88,15 @@ interface CliResult {
 
 async function runCli(
   args: string[],
-  overrides: NodeJS.ProcessEnv = {}
+  overrides: NodeJS.ProcessEnv = {},
+  executable = cliExecutable
 ): Promise<CliResult> {
   const env = { ...process.env }
   for (const name of [
+    'TREEPORT_API_URL',
+    'TREEPORT_PROJECT_ID',
+    'TREEPORT_WORKTREE_ID',
+    'TREEPORT_TERMINAL_ID',
     'TASKTTY_API_URL',
     'TASKTTY_PROJECT_ID',
     'TASKTTY_WORKTREE_ID',
@@ -98,7 +107,7 @@ async function runCli(
   Object.assign(env, overrides)
 
   return new Promise((resolve, reject) => {
-    const child = spawn(cliExecutable, args, {
+    const child = spawn(executable, args, {
       cwd: repositoryRoot,
       env,
       stdio: ['ignore', 'pipe', 'pipe']
@@ -349,27 +358,40 @@ describe('CLI context and machine output', () => {
 
   it('prints concise context text by default', async () => {
     const result = await runCli(['context'], {
-      TASKTTY_API_URL: apiUrl,
-      TASKTTY_PROJECT_ID: project.id,
-      TASKTTY_WORKTREE_ID: worktree.id,
-      TASKTTY_TERMINAL_ID: terminal.id
+      TREEPORT_API_URL: apiUrl,
+      TREEPORT_PROJECT_ID: project.id,
+      TREEPORT_WORKTREE_ID: worktree.id,
+      TREEPORT_TERMINAL_ID: terminal.id
     })
 
     expect(result.code).toBe(0)
     expect(result.stderr).toBe('')
-    expect(result.stdout).toContain('TaskTTY context')
-    expect(result.stdout).toContain('Project:  tasktty (proj_context)')
+    expect(result.stdout).toContain('Treeport context')
+    expect(result.stdout).toContain('Project:  treeport (proj_context)')
     expect(result.stdout).toContain('Worktree: agent-tools (wt_context)')
     expect(result.stdout).toContain('Terminal: Pi (term_context) — running')
     expect(result.stdout.trimStart().startsWith('{')).toBe(false)
+
+    const legacy = await runCli(
+      ['context'],
+      {
+        TASKTTY_API_URL: apiUrl,
+        TASKTTY_PROJECT_ID: project.id,
+        TASKTTY_WORKTREE_ID: worktree.id,
+        TASKTTY_TERMINAL_ID: terminal.id
+      },
+      legacyCliExecutable
+    )
+    expect(legacy.code).toBe(0)
+    expect(legacy.stdout).toContain('Treeport context')
   })
 
   it('returns compact structured context only when requested', async () => {
     const result = await runCli(['context', '--json'], {
-      TASKTTY_API_URL: apiUrl,
-      TASKTTY_PROJECT_ID: project.id,
-      TASKTTY_WORKTREE_ID: worktree.id,
-      TASKTTY_TERMINAL_ID: terminal.id
+      TREEPORT_API_URL: apiUrl,
+      TREEPORT_PROJECT_ID: project.id,
+      TREEPORT_WORKTREE_ID: worktree.id,
+      TREEPORT_TERMINAL_ID: terminal.id
     })
 
     expect(result.code).toBe(0)
@@ -378,7 +400,7 @@ describe('CLI context and machine output', () => {
     expect(JSON.parse(result.stdout)).toMatchObject({
       managed: true,
       apiUrl,
-      project: { id: project.id, name: 'tasktty' },
+      project: { id: project.id, name: 'treeport' },
       worktree: { id: worktree.id, name: 'agent-tools' },
       terminal: { id: terminal.id, name: 'Pi', status: 'running' }
     })
@@ -387,7 +409,7 @@ describe('CLI context and machine output', () => {
   it('detects an unmanaged terminal without contacting the daemon', async () => {
     const requestCount = requests.length
     const result = await runCli(['context', '--json'], {
-      TASKTTY_API_URL: apiUrl
+      TREEPORT_API_URL: apiUrl
     })
 
     expect(result).toEqual({
@@ -401,8 +423,11 @@ describe('CLI context and machine output', () => {
   it('refuses incomplete and inconsistent injected context', async () => {
     const requestCount = requests.length
     const incomplete = await runCli(['context', '--json'], {
-      TASKTTY_API_URL: apiUrl,
-      TASKTTY_PROJECT_ID: project.id
+      TREEPORT_API_URL: apiUrl,
+      TREEPORT_PROJECT_ID: project.id,
+      TASKTTY_PROJECT_ID: project.id,
+      TASKTTY_WORKTREE_ID: worktree.id,
+      TASKTTY_TERMINAL_ID: terminal.id
     })
     expect(incomplete.code).toBe(5)
     expect(incomplete.stdout).toBe('')
@@ -410,19 +435,19 @@ describe('CLI context and machine output', () => {
       error: {
         code: 'TASKTTY_CONTEXT_INCOMPLETE',
         message:
-          'Incomplete TaskTTY context; missing TASKTTY_WORKTREE_ID, TASKTTY_TERMINAL_ID',
+          'Incomplete Treeport context; missing TREEPORT_WORKTREE_ID, TREEPORT_TERMINAL_ID',
         details: {
-          missing: ['TASKTTY_WORKTREE_ID', 'TASKTTY_TERMINAL_ID']
+          missing: ['TREEPORT_WORKTREE_ID', 'TREEPORT_TERMINAL_ID']
         }
       }
     })
     expect(requests).toHaveLength(requestCount)
 
     const inconsistent = await runCli(['context', '--json'], {
-      TASKTTY_API_URL: apiUrl,
-      TASKTTY_PROJECT_ID: project.id,
-      TASKTTY_WORKTREE_ID: 'wt_other',
-      TASKTTY_TERMINAL_ID: terminal.id
+      TREEPORT_API_URL: apiUrl,
+      TREEPORT_PROJECT_ID: project.id,
+      TREEPORT_WORKTREE_ID: 'wt_other',
+      TREEPORT_TERMINAL_ID: terminal.id
     })
     expect(inconsistent.code).toBe(5)
     expect(JSON.parse(inconsistent.stderr)).toMatchObject({
@@ -432,10 +457,10 @@ describe('CLI context and machine output', () => {
 
   it('preserves API domain errors in JSON mode', async () => {
     const result = await runCli(['context', '--json'], {
-      TASKTTY_API_URL: apiUrl,
-      TASKTTY_PROJECT_ID: 'proj_domain',
-      TASKTTY_WORKTREE_ID: worktree.id,
-      TASKTTY_TERMINAL_ID: terminal.id
+      TREEPORT_API_URL: apiUrl,
+      TREEPORT_PROJECT_ID: 'proj_domain',
+      TREEPORT_WORKTREE_ID: worktree.id,
+      TREEPORT_TERMINAL_ID: terminal.id
     })
 
     expect(result.code).toBe(5)
@@ -460,10 +485,10 @@ describe('CLI context and machine output', () => {
     })
 
     const result = await runCli(['context', '--json'], {
-      TASKTTY_API_URL: `http://127.0.0.1:${address.port}`,
-      TASKTTY_PROJECT_ID: project.id,
-      TASKTTY_WORKTREE_ID: worktree.id,
-      TASKTTY_TERMINAL_ID: terminal.id
+      TREEPORT_API_URL: `http://127.0.0.1:${address.port}`,
+      TREEPORT_PROJECT_ID: project.id,
+      TREEPORT_WORKTREE_ID: worktree.id,
+      TREEPORT_TERMINAL_ID: terminal.id
     })
 
     expect(result.code).toBe(3)
@@ -489,7 +514,7 @@ describe('CLI context and machine output', () => {
         'semi;colon',
         '$HOME'
       ],
-      { TASKTTY_API_URL: apiUrl }
+      { TREEPORT_API_URL: apiUrl }
     )
 
     expect(result.code).toBe(0)
@@ -518,7 +543,7 @@ describe('CLI context and machine output', () => {
         '--',
         'pi'
       ],
-      { TASKTTY_API_URL: apiUrl }
+      { TREEPORT_API_URL: apiUrl }
     )
 
     expect(result.code).toBe(0)
@@ -528,7 +553,7 @@ describe('CLI context and machine output', () => {
 
   it('inspects terminals by exact ID and managed dot context', async () => {
     const human = await runCli(['terminal', 'inspect', terminal.id], {
-      TASKTTY_API_URL: apiUrl
+      TREEPORT_API_URL: apiUrl
     })
     expect(human.code).toBe(0)
     expect(human.stderr).toBe('')
@@ -537,8 +562,8 @@ describe('CLI context and machine output', () => {
     expect(human.stdout).toContain('Title:    Pi · /repo')
 
     const json = await runCli(['terminal', 'inspect', '.', '--json'], {
-      TASKTTY_API_URL: apiUrl,
-      TASKTTY_TERMINAL_ID: terminal.id
+      TREEPORT_API_URL: apiUrl,
+      TREEPORT_TERMINAL_ID: terminal.id
     })
     expect(json.code).toBe(0)
     expect(JSON.parse(json.stdout)).toEqual({
@@ -550,7 +575,7 @@ describe('CLI context and machine output', () => {
   it('returns immediately when a raw wait condition already matches', async () => {
     const result = await runCli(
       ['terminal', 'wait', terminal.id, '--until', 'idle', '--json'],
-      { TASKTTY_API_URL: apiUrl }
+      { TREEPORT_API_URL: apiUrl }
     )
 
     expect(result.code).toBe(0)
@@ -565,7 +590,7 @@ describe('CLI context and machine output', () => {
     eventScenario = 'working'
     const working = await runCli(
       ['terminal', 'wait', terminal.id, '--until', 'working', '--json'],
-      { TASKTTY_API_URL: apiUrl }
+      { TREEPORT_API_URL: apiUrl }
     )
     expect(working.code).toBe(0)
     expect(JSON.parse(working.stdout)).toMatchObject({
@@ -585,7 +610,7 @@ describe('CLI context and machine output', () => {
     eventScenario = 'bell'
     const bell = await runCli(
       ['terminal', 'wait', terminal.id, '--until', 'bell', '--json'],
-      { TASKTTY_API_URL: apiUrl }
+      { TREEPORT_API_URL: apiUrl }
     )
     expect(bell.code).toBe(0)
     expect(JSON.parse(bell.stdout)).toMatchObject({
@@ -599,7 +624,7 @@ describe('CLI context and machine output', () => {
     eventScenario = 'bell-snapshot'
     const result = await runCli(
       ['terminal', 'wait', terminal.id, '--until', 'bell', '--json'],
-      { TASKTTY_API_URL: apiUrl }
+      { TREEPORT_API_URL: apiUrl }
     )
     expect(result.code).toBe(0)
     expect(JSON.parse(result.stdout)).toMatchObject({
@@ -613,7 +638,7 @@ describe('CLI context and machine output', () => {
     eventScenario = 'exit'
     const result = await runCli(
       ['terminal', 'wait', terminal.id, '--until', 'exit', '--json'],
-      { TASKTTY_API_URL: apiUrl }
+      { TREEPORT_API_URL: apiUrl }
     )
 
     expect(result.code).toBe(0)
@@ -636,7 +661,7 @@ describe('CLI context and machine output', () => {
         '50ms',
         '--json'
       ],
-      { TASKTTY_API_URL: apiUrl }
+      { TREEPORT_API_URL: apiUrl }
     )
 
     expect(result.code).toBe(4)
@@ -666,12 +691,12 @@ describe('CLI context and machine output', () => {
         '30',
         '--json'
       ],
-      { TASKTTY_API_URL: apiUrl }
+      { TREEPORT_API_URL: apiUrl }
     )
     expect(duration.code).toBe(2)
 
     const dot = await runCli(['terminal', 'inspect', '.', '--json'], {
-      TASKTTY_API_URL: apiUrl
+      TREEPORT_API_URL: apiUrl
     })
     expect(dot.code).toBe(5)
     expect(JSON.parse(dot.stderr)).toMatchObject({

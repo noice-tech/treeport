@@ -24,7 +24,7 @@ afterEach(async () => {
 })
 
 async function temporaryRoot(): Promise<string> {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'tasktty-command-'))
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'treeport-command-'))
   roots.push(root)
   return root
 }
@@ -77,7 +77,7 @@ describe('SpawnCommandRunner', () => {
     const request = {
       executable: path.join(
         os.tmpdir(),
-        `missing-tasktty-command-${process.pid}`
+        `missing-treeport-command-${process.pid}`
       ),
       args: []
     }

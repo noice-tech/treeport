@@ -20,7 +20,7 @@ importers:
       '@stylistic/eslint-plugin':
         specifier: ^5.10.0
         version: 5.10.0(eslint@10.7.0(jiti@2.7.0)(supports-color@8.1.1))
-      '@tasktty/cli':
+      '@treeport/cli':
         specifier: workspace:*
         version: link:packages/cli
       '@types/node':
@@ -102,7 +102,7 @@ importers:
         specifier: ^4.3.6
         version: 4.4.3
     devDependencies:
-      '@tasktty/shared':
+      '@treeport/shared':
         specifier: workspace:*
         version: link:../../packages/shared
       '@types/better-sqlite3':
@@ -144,7 +144,7 @@ importers:
       '@tanstack/react-router':
         specifier: ^1.170.18
         version: 1.170.18(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
-      '@tasktty/shared':
+      '@treeport/shared':
         specifier: workspace:*
         version: link:../../packages/shared
       '@xterm/addon-fit':
@@ -202,7 +202,7 @@ importers:
 
   packages/cli:
     dependencies:
-      '@tasktty/shared':
+      '@treeport/shared':
         specifier: workspace:*
         version: link:../shared
       socket.io-client:

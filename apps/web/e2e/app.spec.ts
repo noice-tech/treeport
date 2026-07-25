@@ -4,7 +4,7 @@ import type {
   RecentProjectRecord,
   TerminalPreset,
   TerminalRuntimeMetadata
-} from '@tasktty/shared'
+} from '@treeport/shared'
 
 const TERMINAL_SCROLL_EXIT_SEQUENCE = '\u001b[9000~'
 
@@ -45,7 +45,7 @@ const project = {
       locked: false,
       lockReason: null,
       kind: 'main',
-      tmuxSocketName: 'tasktty-wt-main',
+      tmuxSocketName: 'treeport-wt-main',
       status: 'active',
       cleanupError: null,
       managedWrapperPath: null,
@@ -73,7 +73,7 @@ const project = {
           id: 'term_shell',
           worktreeId: 'wt_main',
           name: 'Shell',
-          tmuxSessionName: 'tasktty-term-shell',
+          tmuxSessionName: 'treeport-term-shell',
           argv: ['/bin/zsh', '-l'],
           status: 'running',
           exitCode: null,
@@ -93,7 +93,7 @@ const project = {
       locked: false,
       lockReason: null,
       kind: 'linked',
-      tmuxSocketName: 'tasktty-wt-topic',
+      tmuxSocketName: 'treeport-wt-topic',
       status: 'active',
       cleanupError: null,
       managedWrapperPath: null,
@@ -121,7 +121,7 @@ const project = {
           id: 'term_pi',
           worktreeId: 'wt_topic',
           name: 'Pi',
-          tmuxSessionName: 'tasktty-term-pi',
+          tmuxSessionName: 'treeport-term-pi',
           argv: ['pi'],
           status: 'running',
           exitCode: null,
@@ -164,7 +164,7 @@ async function mockApp(
       let fullscreenListener: ((fullscreen: boolean) => void) | null = null
       scope.__attentionRequests = 0
       scope.__openedDesktopFileUrls = []
-      scope.taskttyDesktop = Object.freeze({
+      scope.treeportDesktop = Object.freeze({
         platform: 'darwin',
         openFileUrl(url: string) {
           scope.__openedDesktopFileUrls.push(url)
@@ -194,7 +194,7 @@ async function mockApp(
   }
 
   await page.addInitScript((initialMetadata) => {
-    const terminalStatePrefix = '__tasktty_terminal_state__:'
+    const terminalStatePrefix = '__treeport_terminal_state__:'
     const readTerminalState = (terminalId: string) => {
       const stored = localStorage.getItem(`${terminalStatePrefix}${terminalId}`)
       return stored ? JSON.parse(stored) : null
@@ -397,7 +397,7 @@ async function mockApp(
             sequence: 1,
             data:
               this.terminalId === 'term_new'
-                ? '[TaskTTY setup] bootstrap\\r\\nSETUP_OUTPUT\\r\\n[TaskTTY setup] bootstrap complete\\r\\nSHELL_READY\\r\\n'
+                ? '[Treeport setup] bootstrap\\r\\nSETUP_OUTPUT\\r\\n[Treeport setup] bootstrap complete\\r\\nSHELL_READY\\r\\n'
                 : 'same persistent terminal session\\r\\n'
           })
           if (!scope.__suppressInitialTitle) {
@@ -886,7 +886,7 @@ async function mockApp(
         id: 'term_new',
         worktreeId: 'wt_new',
         name: body.initialTerminal?.name ?? 'Shell',
-        tmuxSessionName: 'tasktty-term-new',
+        tmuxSessionName: 'treeport-term-new',
         argv: body.initialTerminal?.argv ?? ['/bin/zsh', '-l'],
         status: 'running' as const,
         exitCode: null,
@@ -938,7 +938,7 @@ async function mockApp(
             : `term_dev_${terminalCreations}`,
         worktreeId: 'wt_topic',
         name: body.name,
-        tmuxSessionName: 'tasktty-term-dev',
+        tmuxSessionName: 'treeport-term-dev',
         argv: body.argv || ['/bin/zsh', '-l'],
         status: 'running',
         exitCode: null,
@@ -956,12 +956,12 @@ async function mockApp(
     ) {
       fileUploadRequests += 1
       const extension =
-        route.request().headers()['x-tasktty-file-extension'] || 'bin'
+        route.request().headers()['x-treeport-file-extension'] || 'bin'
       await route.fulfill({
         status: 201,
         json: {
           file: {
-            path: `/tmp/tasktty-upload-${fileUploadRequests}.${extension}`
+            path: `/tmp/treeport-upload-${fileUploadRequests}.${extension}`
           }
         }
       })
@@ -1086,7 +1086,7 @@ async function waitForTerminalControl(page: Page) {
         const state = terminalId
           ? JSON.parse(
               localStorage.getItem(
-                `__tasktty_terminal_state__:${terminalId}`
+                `__treeport_terminal_state__:${terminalId}`
               ) || '{}'
             )
           : null
@@ -1127,12 +1127,15 @@ test.describe('desktop worktree terminal UI', () => {
       .toBe(1)
   })
 
-  test('migrates legacy workspace storage into one validated route hint', async ({
+  test('migrates and dual-writes legacy workspace storage', async ({
     page
   }) => {
     await page.addInitScript(() => {
+      const route = '/projects/proj_1/worktrees/wt_topic/terminals/term_pi'
       localStorage.setItem('tasktty-active-project', 'proj_1')
       localStorage.setItem('tasktty-terminal', 'term_pi')
+      localStorage.setItem('tasktty-last-workspace-route', route)
+      localStorage.setItem('tasktty-last-project-terminal:proj_1', 'term_pi')
     })
     await mockApp(page)
 
@@ -1144,13 +1147,23 @@ test.describe('desktop worktree terminal UI', () => {
         page.evaluate(() => ({
           activeProject: localStorage.getItem('tasktty-active-project'),
           terminal: localStorage.getItem('tasktty-terminal'),
-          route: localStorage.getItem('tasktty-last-workspace-route')
+          treeportRoute: localStorage.getItem('treeport-last-workspace-route'),
+          taskttyRoute: localStorage.getItem('tasktty-last-workspace-route'),
+          treeportProjectTerminal: localStorage.getItem(
+            'treeport-last-project-terminal:proj_1'
+          ),
+          taskttyProjectTerminal: localStorage.getItem(
+            'tasktty-last-project-terminal:proj_1'
+          )
         }))
       )
       .toEqual({
         activeProject: null,
         terminal: null,
-        route: '/projects/proj_1/worktrees/wt_topic/terminals/term_pi'
+        treeportRoute: '/projects/proj_1/worktrees/wt_topic/terminals/term_pi',
+        taskttyRoute: '/projects/proj_1/worktrees/wt_topic/terminals/term_pi',
+        treeportProjectTerminal: 'term_pi',
+        taskttyProjectTerminal: 'term_pi'
       })
   })
 
@@ -1335,7 +1348,7 @@ test.describe('desktop worktree terminal UI', () => {
     await expect
       .poll(() =>
         page.evaluate(() =>
-          localStorage.getItem('tasktty-last-workspace-route')
+          localStorage.getItem('treeport-last-workspace-route')
         )
       )
       .toBe(
@@ -1460,7 +1473,7 @@ test.describe('desktop worktree terminal UI', () => {
       await page.getByRole('button', { name: 'Close project example' }).click()
     }
     page.once('dialog', async (dialog) => {
-      expect(dialog.message()).toContain('2 TaskTTY terminal sessions')
+      expect(dialog.message()).toContain('2 Treeport terminal sessions')
       expect(dialog.message()).toContain('Recent projects')
       await dialog.dismiss()
     })
@@ -1489,7 +1502,7 @@ test.describe('desktop worktree terminal UI', () => {
     await expect
       .poll(() =>
         page.evaluate(() =>
-          localStorage.getItem('tasktty-last-workspace-route')
+          localStorage.getItem('treeport-last-workspace-route')
         )
       )
       .toBeNull()
@@ -1980,6 +1993,14 @@ test.describe('desktop worktree terminal UI', () => {
     {
       await page.getByRole('button', { name: 'New worktree' }).click()
       await page.getByLabel('Initial terminal').selectOption({ label: 'Hunk' })
+      await expect
+        .poll(() =>
+          page.evaluate(() => [
+            localStorage.getItem('treeport-initial-terminal-preset'),
+            localStorage.getItem('tasktty-initial-terminal-preset')
+          ])
+        )
+        .toEqual(['preset_hunk', 'preset_hunk'])
       await page.keyboard.press('Escape')
       await page.reload()
       await page.getByRole('button', { name: 'New worktree' }).click()
@@ -2156,7 +2177,7 @@ test.describe('desktop worktree terminal UI', () => {
     await page.waitForTimeout(250)
     const beforeControllerResize = await page.evaluate(() =>
       JSON.parse(
-        localStorage.getItem('__tasktty_terminal_state__:term_pi') || '{}'
+        localStorage.getItem('__treeport_terminal_state__:term_pi') || '{}'
       )
     )
     await page.setViewportSize({ width: 1_100, height: 720 })
@@ -2165,14 +2186,15 @@ test.describe('desktop worktree terminal UI', () => {
         page.evaluate(
           () =>
             JSON.parse(
-              localStorage.getItem('__tasktty_terminal_state__:term_pi') || '{}'
+              localStorage.getItem('__treeport_terminal_state__:term_pi') ||
+                '{}'
             ).revision
         )
       )
       .toBeGreaterThan(beforeControllerResize.revision)
     const afterControllerResize = await page.evaluate(() =>
       JSON.parse(
-        localStorage.getItem('__tasktty_terminal_state__:term_pi') || '{}'
+        localStorage.getItem('__treeport_terminal_state__:term_pi') || '{}'
       )
     )
     const viewerSocketState = await viewer.evaluate(() => {
@@ -2193,7 +2215,7 @@ test.describe('desktop worktree terminal UI', () => {
     await viewer.waitForTimeout(250)
     const afterViewerResize = await page.evaluate(() =>
       JSON.parse(
-        localStorage.getItem('__tasktty_terminal_state__:term_pi') || '{}'
+        localStorage.getItem('__treeport_terminal_state__:term_pi') || '{}'
       )
     )
     expect(afterViewerResize).toEqual(afterControllerResize)
@@ -2205,7 +2227,7 @@ test.describe('desktop worktree terminal UI', () => {
       const socket = (window as any).__lastWs
       return {
         state: JSON.parse(
-          localStorage.getItem('__tasktty_terminal_state__:term_pi') || '{}'
+          localStorage.getItem('__treeport_terminal_state__:term_pi') || '{}'
         ),
         clientId: socket.clientId
       }
@@ -2221,14 +2243,15 @@ test.describe('desktop worktree terminal UI', () => {
         viewer.evaluate(
           () =>
             JSON.parse(
-              localStorage.getItem('__tasktty_terminal_state__:term_pi') || '{}'
+              localStorage.getItem('__treeport_terminal_state__:term_pi') ||
+                '{}'
             ).revision
         )
       )
       .toBeGreaterThan(takeoverState.state.revision)
     const finalState = await viewer.evaluate(() =>
       JSON.parse(
-        localStorage.getItem('__tasktty_terminal_state__:term_pi') || '{}'
+        localStorage.getItem('__treeport_terminal_state__:term_pi') || '{}'
       )
     )
     for (const target of [page, viewer]) {
@@ -2667,7 +2690,7 @@ test.describe('desktop worktree terminal UI', () => {
     page
   }) => {
     const mocked = await mockApp(page, [], { desktopBridge: true })
-    const desktopTitlebar = page.locator('[data-tasktty-desktop-titlebar]')
+    const desktopTitlebar = page.locator('[data-treeport-desktop-titlebar]')
     await expect(desktopTitlebar).toBeVisible()
     await page.evaluate(() => (window as any).__dispatchDesktopFullscreen(true))
     await expect(desktopTitlebar).toHaveCount(0)
@@ -2858,7 +2881,7 @@ test.describe('desktop worktree terminal UI', () => {
             .join('')
         )
       )
-      .toContain('\u001b[200~/tmp/tasktty-upload-1.png\u001b[201~')
+      .toContain('\u001b[200~/tmp/treeport-upload-1.png\u001b[201~')
 
     const drop = await page
       .locator('.terminal-session-host')
@@ -2898,7 +2921,7 @@ test.describe('desktop worktree terminal UI', () => {
             .join('')
         )
       )
-      .toContain('/tmp/tasktty-upload-2.txt')
+      .toContain('/tmp/treeport-upload-2.txt')
   })
 
   test('selects with Mac Option-drag and forwards application wheel events', async ({
@@ -3455,7 +3478,7 @@ test.describe('mobile terminal UI', () => {
       await page.evaluate(() => {
         const socket = (window as any).__lastWs
         const state = JSON.parse(
-          localStorage.getItem('__tasktty_terminal_state__:term_pi') || '{}'
+          localStorage.getItem('__treeport_terminal_state__:term_pi') || '{}'
         )
         return state.controllerClientId === socket.clientId
       })

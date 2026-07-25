@@ -1,4 +1,4 @@
-import type { PrInfo, PrState } from '@tasktty/shared'
+import type { PrInfo, PrState } from '@treeport/shared'
 import type { CommandRunner } from './command'
 
 interface GhPrJson {

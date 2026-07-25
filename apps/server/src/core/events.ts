@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events'
 import crypto from 'node:crypto'
-import type { ProductEvent, ProductEventType } from '@tasktty/shared'
+import type { ProductEvent, ProductEventType } from '@treeport/shared'
 
 export class ProductEventBus {
   private readonly emitter = new EventEmitter()

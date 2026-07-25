@@ -8,7 +8,7 @@ import type {
   RecentProjectRecord,
   TerminalPreset,
   WorktreeRecord
-} from '@tasktty/shared'
+} from '@treeport/shared'
 import { inferWorktreeName } from './zed'
 
 interface Migration {
@@ -192,7 +192,7 @@ export function deserializeOperation(
   return value === null ? null : (JSON.parse(value) as Record<string, unknown>)
 }
 
-export class TaskTTYDatabase {
+export class TreeportDatabase {
   readonly connection: Database.Database
 
   constructor(readonly filePath: string) {

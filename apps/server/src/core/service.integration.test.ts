@@ -3,15 +3,15 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { CommandRequest, CommandResult, CommandRunner } from './command'
-import { TaskTTYDatabase } from './database'
+import { TreeportDatabase } from './database'
 import { GhAdapter } from './gh'
 import { GitAdapter } from './git'
-import { TaskTTYService } from './service'
+import { TreeportService } from './service'
 import { TmuxAdapter } from './tmux'
 import type { AppConfig } from './config'
 
 const directories: string[] = []
-const databases: TaskTTYDatabase[] = []
+const databases: TreeportDatabase[] = []
 afterEach(async () => {
   databases.splice(0).forEach((database) => database.close())
   await Promise.all(
@@ -281,7 +281,7 @@ class SystemDouble implements CommandRunner {
       return ok()
     }
 
-    if (args.includes('source-file')) {
+    if (args.includes('start-server') || args.includes('source-file')) {
       return ok()
     }
 
@@ -301,12 +301,12 @@ class SystemDouble implements CommandRunner {
           const session = key.slice(socket.length + 1)
           return [
             session,
-            state.options['@tasktty-terminal-id'] ?? '',
-            state.options['@tasktty-worktree-id'] ?? '',
-            state.options['@tasktty-name'] ?? '',
-            state.options['@tasktty-argv'] ?? '',
-            state.options['@tasktty-created-at'] ?? '',
-            state.options['@tasktty-updated-at'] ?? '',
+            state.options['@treeport-terminal-id'] ?? '',
+            state.options['@treeport-worktree-id'] ?? '',
+            state.options['@treeport-name'] ?? '',
+            state.options['@treeport-argv'] ?? '',
+            state.options['@treeport-created-at'] ?? '',
+            state.options['@treeport-updated-at'] ?? '',
             String(state.created),
             state.alive ? '0' : '1',
             state.exitCode === null ? '' : String(state.exitCode)
@@ -364,14 +364,14 @@ class SystemDouble implements CommandRunner {
 
 async function fixture() {
   const root = await fs.mkdtemp(
-    path.join(os.tmpdir(), 'tasktty integration with spaces ')
+    path.join(os.tmpdir(), 'treeport integration with spaces ')
   )
   directories.push(root)
   const main = path.join(root, 'main checkout')
   const runtime = path.join(root, 'runtime')
   await fs.mkdir(main, { recursive: true })
   const runner = new SystemDouble(main)
-  const database = new TaskTTYDatabase(path.join(root, 'tasktty.db'))
+  const database = new TreeportDatabase(path.join(root, 'treeport.db'))
   databases.push(database)
   const config: AppConfig = {
     host: '127.0.0.1',
@@ -393,7 +393,7 @@ async function fixture() {
     '/launcher with spaces.js'
   )
   const gh = new GhAdapter(runner)
-  const service = new TaskTTYService({
+  const service = new TreeportService({
     config,
     database,
     runner,
@@ -405,7 +405,7 @@ async function fixture() {
   return { root, main, runner, service, database, config }
 }
 
-async function waitForOperation(service: TaskTTYService, operationId: string) {
+async function waitForOperation(service: TreeportService, operationId: string) {
   for (let attempt = 0; attempt < 50; attempt += 1) {
     const operation = service.getOperation(operationId)
     if (operation.status === 'completed' || operation.status === 'failed') {
@@ -417,7 +417,7 @@ async function waitForOperation(service: TaskTTYService, operationId: string) {
   throw new Error('operation timeout')
 }
 
-async function beginFromPreview(service: TaskTTYService, worktreeId: string) {
+async function beginFromPreview(service: TreeportService, worktreeId: string) {
   const preview = await service.removePreview(worktreeId)
   return service.beginRemove(worktreeId, {
     confirmationToken: preview.confirmationToken,
@@ -425,7 +425,7 @@ async function beginFromPreview(service: TaskTTYService, worktreeId: string) {
   })
 }
 
-describe('TaskTTYService with injected command adapters', () => {
+describe('TreeportService with injected command adapters', () => {
   it('persists ordered terminal preset CRUD across service reconstruction', async () => {
     const { runner, service, database, config } = await fixture()
     const first = service.createTerminalPreset({
@@ -499,9 +499,9 @@ describe('TaskTTYService with injected command adapters', () => {
 
     database.close()
     databases.splice(databases.indexOf(database), 1)
-    const reopenedDatabase = new TaskTTYDatabase(config.databasePath)
+    const reopenedDatabase = new TreeportDatabase(config.databasePath)
     databases.push(reopenedDatabase)
-    const reconstructed = new TaskTTYService({
+    const reconstructed = new TreeportService({
       config,
       database: reopenedDatabase,
       runner,
@@ -978,9 +978,9 @@ describe('TaskTTYService with injected command adapters', () => {
       (worktree) => worktree.gitWorktreeKey === linkedGitKey
     )!.path = movedLinked
 
-    const restartedDatabase = new TaskTTYDatabase(config.databasePath)
+    const restartedDatabase = new TreeportDatabase(config.databasePath)
     databases.push(restartedDatabase)
-    const restarted = new TaskTTYService({
+    const restarted = new TreeportService({
       config,
       database: restartedDatabase,
       runner,
@@ -1647,12 +1647,23 @@ describe('TaskTTYService with injected command adapters', () => {
       argv: string[]
       fallbackArgv: string[]
       setupTasks: Array<{ label: string; argv: string[] }>
+      env: Record<string, string>
     }
     expect(launchSpec.argv).toEqual(['pi'])
     expect(launchSpec.fallbackArgv).toEqual(['/bin/zsh', '-l'])
     expect(launchSpec.setupTasks).toEqual([
       expect.objectContaining({ label: 'setup', argv: ['fail-setup'] })
     ])
+    expect(launchSpec.env).toMatchObject({
+      TREEPORT_API_URL: config.apiUrl,
+      TREEPORT_PROJECT_ID: project.id,
+      TREEPORT_WORKTREE_ID: result.worktree.id,
+      TREEPORT_TERMINAL_ID: result.terminal!.id,
+      TASKTTY_API_URL: config.apiUrl,
+      TASKTTY_PROJECT_ID: project.id,
+      TASKTTY_WORKTREE_ID: result.worktree.id,
+      TASKTTY_TERMINAL_ID: result.terminal!.id
+    })
     expect(runner.calls.some((call) => call.executable === 'fail-setup')).toBe(
       false
     )
@@ -1910,7 +1921,7 @@ describe('TaskTTYService with injected command adapters', () => {
         gitWorktreeKey: expect.any(String),
         gitMarker: expect.stringMatching(/^gitdir: /),
         managedWrapperPath: linked.managedWrapperPath,
-        quarantinePath: expect.stringContaining('.tasktty-removing-op_')
+        quarantinePath: expect.stringContaining('.treeport-removing-op_')
       }
     })
     await deregisteredPromise
@@ -2184,7 +2195,8 @@ describe('TaskTTYService with injected command adapters', () => {
     const insertInterrupted = async (
       operationId: string,
       worktree: typeof recoverable,
-      includeIdentity: boolean
+      includeIdentity: boolean,
+      legacyQuarantine = false
     ) => {
       const preview = await service.removePreview(worktree.id)
       const checkout = await fs.lstat(worktree.path, { bigint: true })
@@ -2219,7 +2231,7 @@ describe('TaskTTYService with injected command adapters', () => {
                     managedWrapperPath: worktree.managedWrapperPath,
                     quarantinePath: path.join(
                       path.dirname(worktree.path),
-                      `.${path.basename(worktree.path)}.tasktty-removing-${operationId}`
+                      `.${path.basename(worktree.path)}.${legacyQuarantine ? 'tasktty' : 'treeport'}-removing-${operationId}`
                     )
                   }
                 }
@@ -2235,7 +2247,7 @@ describe('TaskTTYService with injected command adapters', () => {
         .run(timestamp, worktree.id)
     }
     await insertInterrupted('op_recoverable_root', recoverable, true)
-    await insertInterrupted('op_quarantined_root', quarantined, true)
+    await insertInterrupted('op_quarantined_root', quarantined, true, true)
     await insertInterrupted('op_replaced_root', replaced, true)
     await insertInterrupted('op_repurposed_root', repurposed, true)
     await insertInterrupted('op_legacy_root', legacy, false)
@@ -2249,6 +2261,7 @@ describe('TaskTTYService with injected command adapters', () => {
         quarantinePath: string
       }
     ).quarantinePath
+    expect(path.basename(quarantinePath)).toContain('.tasktty-removing-')
     await fs.rename(quarantined.path, quarantinePath)
     await expect(fs.stat(quarantined.path)).rejects.toMatchObject({
       code: 'ENOENT'
@@ -2274,7 +2287,7 @@ describe('TaskTTYService with injected command adapters', () => {
       (await fs.lstat(repurposed.path, { bigint: true })).ino.toString()
     ).toBe(repurposedInode)
 
-    const restarted = new TaskTTYService({
+    const restarted = new TreeportService({
       config,
       database,
       runner,
@@ -2304,7 +2317,7 @@ describe('TaskTTYService with injected command adapters', () => {
     ).resolves.toBe('preserve wrapper')
     expect(
       (await fs.readdir(path.dirname(recoverable.path))).some((entry) =>
-        entry.includes('.tasktty-removing-')
+        entry.includes('.treeport-removing-')
       )
     ).toBe(false)
     expect(database.worktree(recoverable.id)).toBeNull()
@@ -2425,7 +2438,7 @@ describe('TaskTTYService with injected command adapters', () => {
     )
     await fs.writeFile(preservedMarker, 'preserve')
 
-    const restarted = new TaskTTYService({
+    const restarted = new TreeportService({
       config,
       database,
       runner,

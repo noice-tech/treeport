@@ -1,19 +1,20 @@
 {
-  "name": "@tasktty/cli",
+  "name": "@treeport/cli",
   "version": "0.1.0",
   "private": true,
   "bin": {
+    "treeport": "bin/treeport.mjs",
     "tasktty": "bin/tasktty.mjs"
   },
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc -b && chmod +x bin/tasktty.mjs dist/index.js",
+    "build": "tsc -b && chmod +x bin/treeport.mjs bin/tasktty.mjs dist/index.js",
     "dev": "tsc -b --watch --preserveWatchOutput",
     "typecheck": "tsc --noEmit -p tsconfig.json --pretty"
   },
   "dependencies": {
-    "@tasktty/shared": "workspace:*",
+    "@treeport/shared": "workspace:*",
     "socket.io-client": "4.8.3"
   },
   "devDependencies": {

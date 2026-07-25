@@ -264,7 +264,7 @@ describe('terminal options', () => {
     vi.stubGlobal('navigator', { platform: 'MacIntel' })
     vi.stubGlobal('window', {
       open,
-      taskttyDesktop: { openFileUrl }
+      treeportDesktop: { openFileUrl }
     })
     const handler = terminalOptions().linkHandler
     const url = 'file:///Users/example/project/readme%20draft.md'
@@ -290,7 +290,7 @@ describe('terminal options', () => {
       'https://',
       'javascript:alert(1)',
       'data:text/plain,hello',
-      'file:///tmp/tasktty',
+      'file:///tmp/treeport',
       'ssh://example.test'
     ]) {
       handler.activate(click, url)
@@ -401,15 +401,13 @@ describe('TerminalSession', () => {
   })
 
   it('uses an independent WebSocket-only Socket.IO connection with bounded auth', () => {
+    const clientId = '12121212-1212-4212-9212-121212121212'
     const setItem = vi.fn()
     vi.stubGlobal('sessionStorage', {
-      getItem: () => null,
+      getItem: (key: string) =>
+        key === 'tasktty-terminal-client-id' ? clientId : null,
       setItem
     })
-    vi.stubGlobal('crypto', {
-      getRandomValues: (bytes: Uint8Array) => bytes.fill(0x12)
-    })
-
     const session = new TerminalSession('terminal-one')
     ;(session as unknown as { terminal: unknown }).terminal = {
       cols: 5_000,
@@ -435,11 +433,14 @@ describe('TerminalSession', () => {
     options.auth(authorize)
     expect(authorize).toHaveBeenCalledWith({
       terminalId: 'terminal-one',
-      clientId: '12121212-1212-4212-9212-121212121212',
+      clientId,
       cols: 1_000,
       rows: 2
     })
-    expect(setItem).toHaveBeenCalledOnce()
+    expect(setItem.mock.calls).toEqual([
+      ['treeport-terminal-client-id', clientId],
+      ['tasktty-terminal-client-id', clientId]
+    ])
     session.dispose()
   })
 

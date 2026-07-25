@@ -158,14 +158,14 @@ export async function runLaunchSpec(
 
   if (spec.setupError) {
     stderr.write(
-      `[TaskTTY setup] ${safeDiagnostic(spec.setupError) || 'setup preparation failed'}\n`
+      `[Treeport setup] ${safeDiagnostic(spec.setupError) || 'setup preparation failed'}\n`
     )
     return 1
   }
 
   for (const task of spec.setupTasks ?? []) {
     const label = safeLabel(task.label)
-    stdout.write(`[TaskTTY setup] ${label}\n`)
+    stdout.write(`[Treeport setup] ${label}\n`)
     const result = await runChild(task.argv, {
       cwd: task.cwd,
       env: { ...process.env, ...spec.env, ...task.env },
@@ -175,14 +175,14 @@ export async function runLaunchSpec(
     })
     if (result.spawnError) {
       stderr.write(
-        `[TaskTTY setup] ${label} failed: ${safeDiagnostic(result.spawnError.message) || 'spawn error'}\n`
+        `[Treeport setup] ${label} failed: ${safeDiagnostic(result.spawnError.message) || 'spawn error'}\n`
       )
       return 127
     }
 
     if (result.timedOut) {
       stderr.write(
-        `[TaskTTY setup] ${label} failed: timed out after ${task.timeoutMs}ms\n`
+        `[Treeport setup] ${label} failed: timed out after ${task.timeoutMs}ms\n`
       )
       return 124
     }
@@ -190,23 +190,23 @@ export async function runLaunchSpec(
     const terminationSignal = result.forwardedSignal ?? result.signal
     if (terminationSignal) {
       stderr.write(
-        `[TaskTTY setup] ${label} failed: terminated by ${terminationSignal}\n`
+        `[Treeport setup] ${label} failed: terminated by ${terminationSignal}\n`
       )
       return 1
     }
 
     if (result.code !== 0) {
       stderr.write(
-        `[TaskTTY setup] ${label} failed: exit ${result.code ?? 1}\n`
+        `[Treeport setup] ${label} failed: exit ${result.code ?? 1}\n`
       )
       return result.code ?? 1
     }
 
-    stdout.write(`[TaskTTY setup] ${label} complete\n`)
+    stdout.write(`[Treeport setup] ${label} complete\n`)
   }
 
   if (!spec.argv[0]) {
-    stderr.write('TaskTTY launcher: argv is empty\n')
+    stderr.write('Treeport launcher: argv is empty\n')
     return 127
   }
 
@@ -218,7 +218,7 @@ export async function runLaunchSpec(
   })
   if (result.spawnError) {
     stderr.write(
-      `TaskTTY launcher: ${safeDiagnostic(result.spawnError.message) || 'spawn error'}\n`
+      `Treeport launcher: ${safeDiagnostic(result.spawnError.message) || 'spawn error'}\n`
     )
   }
 
@@ -238,7 +238,7 @@ export async function runLaunchSpec(
     })
     if (fallbackResult.spawnError) {
       stderr.write(
-        `TaskTTY launcher: ${safeDiagnostic(fallbackResult.spawnError.message) || 'spawn error'}\n`
+        `Treeport launcher: ${safeDiagnostic(fallbackResult.spawnError.message) || 'spawn error'}\n`
       )
       return 127
     }
@@ -264,7 +264,7 @@ export async function runLaunchSpec(
 async function main(): Promise<void> {
   const specPath = process.argv[2]
   if (!specPath) {
-    process.stderr.write('TaskTTY launcher: missing launch spec\n')
+    process.stderr.write('Treeport launcher: missing launch spec\n')
     process.exit(127)
   }
 
@@ -273,7 +273,7 @@ async function main(): Promise<void> {
     spec = JSON.parse(await fs.readFile(specPath, 'utf8')) as LaunchSpec
   } catch (error) {
     process.stderr.write(
-      `TaskTTY launcher: cannot read launch spec: ${error instanceof Error ? error.message : String(error)}\n`
+      `Treeport launcher: cannot read launch spec: ${error instanceof Error ? error.message : String(error)}\n`
     )
     process.exit(127)
   }

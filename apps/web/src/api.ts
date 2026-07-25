@@ -9,7 +9,7 @@ import type {
   TerminalRecord,
   TerminalSize,
   WorktreeRecord
-} from '@tasktty/shared'
+} from '@treeport/shared'
 
 export class ApiError extends Error {
   constructor(
@@ -182,7 +182,7 @@ export const apiClient = {
           headers: {
             'content-type': file.type || 'application/octet-stream',
             ...(extension
-              ? { 'x-tasktty-file-extension': extension.toLowerCase() }
+              ? { 'x-treeport-file-extension': extension.toLowerCase() }
               : {})
           },
           body: file

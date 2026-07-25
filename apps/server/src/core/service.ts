@@ -12,10 +12,10 @@ import type {
   TerminalRecord,
   TerminalSize,
   WorktreeRecord
-} from '@tasktty/shared'
+} from '@treeport/shared'
 import type { AppConfig } from './config'
 import type { CommandRunner } from './command'
-import type { TaskTTYDatabase } from './database'
+import type { TreeportDatabase } from './database'
 import { serializeOperation } from './database'
 import { assertCleanupTransition, DomainError } from './domain'
 import { ProductEventBus } from './events'
@@ -130,7 +130,7 @@ function removeConfirmationToken(
 
 interface ServiceDependencies {
   config: AppConfig
-  database: TaskTTYDatabase
+  database: TreeportDatabase
   runner: CommandRunner
   git: GitAdapter
   tmux: TmuxAdapter
@@ -145,7 +145,7 @@ export interface CreateWorktreeResult {
   setupError: string | null
 }
 
-export class TaskTTYService {
+export class TreeportService {
   readonly events: ProductEventBus
   private readonly worktreeLocks = new Set<string>()
   private readonly projectLocks = new Set<string>()
@@ -162,7 +162,7 @@ export class TaskTTYService {
     this.events = deps.events ?? new ProductEventBus()
   }
 
-  get database(): TaskTTYDatabase {
+  get database(): TreeportDatabase {
     return this.deps.database
   }
 
@@ -261,7 +261,7 @@ export class TaskTTYService {
       : null
     return marker !== identity.gitMarker ||
       !gitMarkerMatchesKey(acceptedPath, marker ?? '', identity.gitWorktreeKey)
-      ? 'Manual cleanup required: the checkout Git marker no longer proves that TaskTTY owns this removal'
+      ? 'Manual cleanup required: the checkout Git marker no longer proves that Treeport owns this removal'
       : null
   }
 
@@ -2194,6 +2194,10 @@ export class TaskTTYService {
           : {}),
         ...(options?.initialSize ? { initialSize: options.initialSize } : {}),
         env: {
+          TREEPORT_API_URL: this.deps.config.apiUrl,
+          TREEPORT_PROJECT_ID: project.id,
+          TREEPORT_WORKTREE_ID: worktree.id,
+          TREEPORT_TERMINAL_ID: terminalId,
           TASKTTY_API_URL: this.deps.config.apiUrl,
           TASKTTY_PROJECT_ID: project.id,
           TASKTTY_WORKTREE_ID: worktree.id,
@@ -2725,7 +2729,7 @@ export class TaskTTYService {
         managedWrapperPath: checkoutBinding.managed_wrapper_path,
         quarantinePath: path.join(
           path.dirname(preview.path),
-          `.${path.basename(preview.path)}.tasktty-removing-${operationId}`
+          `.${path.basename(preview.path)}.treeport-removing-${operationId}`
         )
       }
       assertCleanupTransition(worktree.status, 'cleaning')
