@@ -134,6 +134,11 @@ export function useBellNotifications({
       return
     }
 
+    const presentedSequence = presentedSequences.current.get(selectedTerminalId)
+    if (presentedSequence !== undefined) {
+      toast.dismiss(toastId(selectedTerminalId, presentedSequence))
+    }
+
     const bell = bells.get(selectedTerminalId)
     if (bell?.unread) {
       void terminalSessions

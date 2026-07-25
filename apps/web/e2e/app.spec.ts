@@ -2365,7 +2365,7 @@ test.describe('desktop worktree terminal UI', () => {
     ).toHaveCount(0)
   })
 
-  test('coalesces BEL toasts, requests desktop attention, and opens the terminal', async ({
+  test('coalesces BEL toasts, requests desktop attention, and dismisses when the terminal opens', async ({
     page
   }) => {
     await mockApp(page, [], { desktopBridge: true })
@@ -2413,7 +2413,9 @@ test.describe('desktop worktree terminal UI', () => {
         new URL(request.url()).pathname ===
           '/api/terminals/term_pi/bell/acknowledge'
     )
-    await toast.getByRole('button', { name: 'View' }).click()
+    await page
+      .getByRole('button', { name: /Pi build · \/worktrees\/topic.*bell/ })
+      .click()
     expect((await acknowledgement).postDataJSON()).toEqual({ sequence: 2 })
     await expect(page).toHaveURL(
       /\/projects\/proj_1\/worktrees\/wt_topic\/terminals\/term_pi$/
