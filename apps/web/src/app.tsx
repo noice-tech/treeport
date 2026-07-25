@@ -108,34 +108,6 @@ export default function App() {
       : DEFAULT_SIDEBAR_WIDTH
   })
   const [resizingSidebar, setResizingSidebar] = useState(false)
-  const bellAttention = useSyncExternalStore(
-    terminalSessions.subscribe,
-    terminalSessions.getAttentionSnapshot,
-    () => EMPTY_BELL_ATTENTION
-  )
-  const runtimeTitles = useSyncExternalStore(
-    terminalSessions.subscribe,
-    terminalSessions.getTitleSnapshot,
-    () => EMPTY_RUNTIME_TITLES
-  )
-  const foregroundProcesses = useSyncExternalStore(
-    terminalSessions.subscribe,
-    terminalSessions.getForegroundProcessSnapshot,
-    () => EMPTY_FOREGROUND_PROCESSES
-  )
-  const terminalProgress = useSyncExternalStore(
-    terminalSessions.subscribe,
-    terminalSessions.getProgressSnapshot,
-    () => EMPTY_TERMINAL_PROGRESS
-  )
-  useBellNotifications({
-    projects,
-    projectsLoaded: projectsQuery.data !== undefined,
-    selectedTerminalId,
-    runtimeTitles,
-    navigateToWorkspace,
-    onError: showError(setError)
-  })
   const eventsDisconnected = useProjectEventsBridge(projectsQuery.data)
   const [showSyncDegraded, setShowSyncDegraded] = useState(false)
   const resizeOrigin = useRef<{ pointerX: number; width: number } | null>(null)
@@ -334,6 +306,34 @@ export default function App() {
       activeProject?.worktrees.flatMap((worktree) => worktree.terminals) ?? [],
     [activeProject]
   )
+  const bellAttention = useSyncExternalStore(
+    terminalSessions.subscribe,
+    terminalSessions.getAttentionSnapshot,
+    () => EMPTY_BELL_ATTENTION
+  )
+  const runtimeTitles = useSyncExternalStore(
+    terminalSessions.subscribe,
+    terminalSessions.getTitleSnapshot,
+    () => EMPTY_RUNTIME_TITLES
+  )
+  const foregroundProcesses = useSyncExternalStore(
+    terminalSessions.subscribe,
+    terminalSessions.getForegroundProcessSnapshot,
+    () => EMPTY_FOREGROUND_PROCESSES
+  )
+  const terminalProgress = useSyncExternalStore(
+    terminalSessions.subscribe,
+    terminalSessions.getProgressSnapshot,
+    () => EMPTY_TERMINAL_PROGRESS
+  )
+  useBellNotifications({
+    projects,
+    projectsLoaded: projectsQuery.data !== undefined,
+    selectedTerminalId,
+    runtimeTitles,
+    navigateToWorkspace,
+    onError: showError(setError)
+  })
   const selectTerminal = (terminal: TerminalRecord) => {
     const target = targetForTerminal(projects, terminal)
     if (target) {

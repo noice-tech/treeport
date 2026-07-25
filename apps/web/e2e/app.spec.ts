@@ -162,21 +162,7 @@ async function mockApp(
       type DesktopCommand = 'new-worktree' | 'new-terminal' | 'close-terminal'
       const listeners = new Set<(command: DesktopCommand) => void>()
       let fullscreenListener: ((fullscreen: boolean) => void) | null = null
-      let bellFallbackListener:
-        | ((notification: { terminalId: string; sequence: number }) => void)
-        | null = null
-      let bellNativeListener:
-        | ((notification: { terminalId: string; sequence: number }) => void)
-        | null = null
-      let bellActionListener:
-        | ((action: {
-            type: 'view' | 'dismiss'
-            terminalId: string
-            sequence: number
-          }) => void)
-        | null = null
-      scope.__bellNotifications = []
-      scope.__clearedBellNotifications = []
+      scope.__attentionRequests = 0
       scope.__openedDesktopFileUrls = []
       scope.taskttyDesktop = Object.freeze({
         platform: 'darwin',
@@ -196,64 +182,14 @@ async function mockApp(
           listeners.add(next)
           return () => listeners.delete(next)
         },
-        showBellNotification(notification: unknown) {
-          scope.__bellNotifications.push(notification)
-        },
-        clearBellNotification(notification: unknown) {
-          scope.__clearedBellNotifications.push(notification)
-        },
-        onBellNotificationFallback(
-          next: (notification: { terminalId: string; sequence: number }) => void
-        ) {
-          bellFallbackListener = next
-          return () => {
-            if (bellFallbackListener === next) {
-              bellFallbackListener = null
-            }
-          }
-        },
-        onBellNotificationNative(
-          next: (notification: { terminalId: string; sequence: number }) => void
-        ) {
-          bellNativeListener = next
-          return () => {
-            if (bellNativeListener === next) {
-              bellNativeListener = null
-            }
-          }
-        },
-        onBellNotificationAction(
-          next: (action: {
-            type: 'view' | 'dismiss'
-            terminalId: string
-            sequence: number
-          }) => void
-        ) {
-          bellActionListener = next
-          return () => {
-            if (bellActionListener === next) {
-              bellActionListener = null
-            }
-          }
+        requestAttention() {
+          scope.__attentionRequests += 1
         }
       })
       scope.__dispatchDesktopCommand = (command: DesktopCommand) =>
         listeners.forEach((listener) => listener(command))
       scope.__dispatchDesktopFullscreen = (fullscreen: boolean) =>
         fullscreenListener?.(fullscreen)
-      scope.__dispatchBellNotificationFallback = (notification: {
-        terminalId: string
-        sequence: number
-      }) => bellFallbackListener?.(notification)
-      scope.__dispatchBellNotificationNative = (notification: {
-        terminalId: string
-        sequence: number
-      }) => bellNativeListener?.(notification)
-      scope.__dispatchBellNotificationAction = (action: {
-        type: 'view' | 'dismiss'
-        terminalId: string
-        sequence: number
-      }) => bellActionListener?.(action)
     })
   }
 
@@ -2455,10 +2391,10 @@ test.describe('desktop worktree terminal UI', () => {
     await expect(page.locator('[data-sonner-toast]')).toHaveCount(0)
   })
 
-  test('coalesces browser BEL toasts and views the exact terminal', async ({
+  test('coalesces BEL toasts, requests desktop attention, and opens the terminal', async ({
     page
   }) => {
-    await mockApp(page)
+    await mockApp(page, [], { desktopBridge: true })
     const emitBell = (sequence: number) =>
       page.evaluate((nextSequence) => {
         ;(window as any).__eventSource.emit(
@@ -2485,6 +2421,9 @@ test.describe('desktop worktree terminal UI', () => {
     await expect(toast).toHaveCount(1)
     await expect(toast).toContainText('Pi build · /worktrees/topic')
     await expect(toast).toContainText('Terminal bell · example · topic')
+    await expect
+      .poll(() => page.evaluate(() => (window as any).__attentionRequests))
+      .toBe(1)
 
     await emitBell(2)
     await expect(toast).toHaveCount(1)
@@ -2500,93 +2439,6 @@ test.describe('desktop worktree terminal UI', () => {
       /\/projects\/proj_1\/worktrees\/wt_topic\/terminals\/term_pi$/
     )
     await expect(toast).toHaveCount(0)
-  })
-
-  test('clears a stale toast when an authoritative snapshot resets its sequence', async ({
-    page
-  }) => {
-    await mockApp(page)
-    await page.evaluate(() =>
-      (window as any).__eventSource.emit(
-        'terminal.metadata',
-        JSON.stringify({
-          data: {
-            terminalId: 'term_pi',
-            title: 'Pi',
-            progress: null,
-            progressStartedAt: null,
-            progressClearedAt: null,
-            bell: {
-              sequence: 5,
-              at: '2026-01-01T00:05:00.000Z',
-              unread: true
-            }
-          }
-        })
-      )
-    )
-    await expect(page.locator('[data-sonner-toast]')).toBeVisible()
-
-    await page.evaluate(() =>
-      (window as any).__eventSource.emit(
-        'connected',
-        JSON.stringify({
-          at: '2026-01-01T00:06:00.000Z',
-          terminalMetadata: [
-            {
-              terminalId: 'term_pi',
-              title: 'Pi',
-              progress: null,
-              progressStartedAt: null,
-              progressClearedAt: null,
-              bell: {
-                sequence: 1,
-                at: '2026-01-01T00:06:00.000Z',
-                unread: true
-              }
-            }
-          ]
-        })
-      )
-    )
-    await expect(page.locator('[data-sonner-toast]')).toHaveCount(0)
-    await expect(
-      page.getByRole('button', { name: /Pi.*bell/, exact: false })
-    ).toBeVisible()
-  })
-
-  test('delivers a BEL that arrives while project context is loading', async ({
-    page
-  }) => {
-    const mocked = await mockApp(page, [], { delayProjects: true })
-    await expect
-      .poll(() => page.evaluate(() => Boolean((window as any).__eventSource)))
-      .toBe(true)
-    await page.evaluate(() =>
-      (window as any).__eventSource.emit(
-        'terminal.metadata',
-        JSON.stringify({
-          data: {
-            terminalId: 'term_pi',
-            title: 'Pi queued',
-            progress: null,
-            progressStartedAt: null,
-            progressClearedAt: null,
-            bell: {
-              sequence: 1,
-              at: '2026-01-01T00:01:00.000Z',
-              unread: true
-            }
-          }
-        })
-      )
-    )
-    await expect(page.locator('[data-sonner-toast]')).toHaveCount(0)
-
-    mocked.releaseProjects()
-    const toast = page.locator('[data-sonner-toast]')
-    await expect(toast).toBeVisible()
-    await expect(toast).toContainText('Pi queued')
   })
 
   test('dismisses a browser BEL toast without navigating', async ({ page }) => {
@@ -2624,203 +2476,6 @@ test.describe('desktop worktree terminal UI', () => {
     expect((await acknowledgement).postDataJSON()).toEqual({ sequence: 3 })
     expect(page.url()).toBe(startingUrl)
     await expect(toast).toHaveCount(0)
-  })
-
-  test('does not show an Electron toast unless main requests fallback', async ({
-    page
-  }) => {
-    await mockApp(page, [], { desktopBridge: true })
-    await page.evaluate(() =>
-      (window as any).__eventSource.emit(
-        'terminal.metadata',
-        JSON.stringify({
-          data: {
-            terminalId: 'term_pi',
-            title: 'Pi · /worktrees/topic',
-            progress: null,
-            progressStartedAt: null,
-            progressClearedAt: null,
-            bell: {
-              sequence: 1,
-              at: '2026-01-01T00:01:00.000Z',
-              unread: true
-            }
-          }
-        })
-      )
-    )
-
-    await expect(page.locator('[data-sonner-toast]')).toHaveCount(0)
-    await expect
-      .poll(() => page.evaluate(() => (window as any).__bellNotifications))
-      .toEqual([
-        {
-          terminalId: 'term_pi',
-          sequence: 1,
-          title: 'Pi · /worktrees/topic',
-          projectName: 'example',
-          worktreeName: 'topic'
-        }
-      ])
-
-    await page.evaluate(() => {
-      Object.defineProperty(document, 'hasFocus', {
-        configurable: true,
-        value: () => false
-      })
-      window.dispatchEvent(new Event('blur'))
-      ;(window as any).__eventSource.emit(
-        'terminal.metadata',
-        JSON.stringify({
-          data: {
-            terminalId: 'term_shell',
-            title: 'Shell · /repo',
-            progress: null,
-            progressStartedAt: null,
-            progressClearedAt: null,
-            bell: {
-              sequence: 1,
-              at: '2026-01-01T00:02:00.000Z',
-              unread: true
-            }
-          }
-        })
-      )
-    })
-    await expect
-      .poll(() =>
-        page.evaluate(() => (window as any).__bellNotifications.length)
-      )
-      .toBe(2)
-    await expect(page.locator('[data-sonner-toast]')).toHaveCount(0)
-  })
-
-  test('keeps an exact Electron fallback toast through focus and rejects stale fallback races', async ({
-    page
-  }) => {
-    await mockApp(page, [], { desktopBridge: true })
-    const emitBell = (sequence: number) =>
-      page.evaluate((nextSequence) => {
-        Object.defineProperty(document, 'hasFocus', {
-          configurable: true,
-          value: () => false
-        })
-        Object.defineProperty(document, 'visibilityState', {
-          configurable: true,
-          value: 'hidden'
-        })
-        window.dispatchEvent(new Event('blur'))
-        ;(window as any).__eventSource.emit(
-          'terminal.metadata',
-          JSON.stringify({
-            data: {
-              terminalId: 'term_pi',
-              title: `Pi ${nextSequence}`,
-              progress: null,
-              progressStartedAt: null,
-              progressClearedAt: null,
-              bell: {
-                sequence: nextSequence,
-                at: `2026-01-01T00:0${nextSequence}:00.000Z`,
-                unread: true
-              }
-            }
-          })
-        )
-      }, sequence)
-
-    await emitBell(1)
-    await page.evaluate(() =>
-      (window as any).__dispatchBellNotificationFallback({
-        terminalId: 'term_pi',
-        sequence: 1
-      })
-    )
-    const toast = page.locator('[data-sonner-toast]')
-    await expect(toast).toHaveCount(1)
-    await expect(toast).toContainText('Pi 1')
-
-    await emitBell(2)
-    await page.evaluate(() => {
-      ;(window as any).__dispatchBellNotificationNative({
-        terminalId: 'term_pi',
-        sequence: 2
-      })
-      Object.defineProperty(document, 'hasFocus', {
-        configurable: true,
-        value: () => true
-      })
-      Object.defineProperty(document, 'visibilityState', {
-        configurable: true,
-        value: 'visible'
-      })
-      window.dispatchEvent(new Event('focus'))
-    })
-    await expect(toast).toHaveCount(0)
-
-    await page.evaluate(() => {
-      Object.defineProperty(document, 'hasFocus', {
-        configurable: true,
-        value: () => false
-      })
-      Object.defineProperty(document, 'visibilityState', {
-        configurable: true,
-        value: 'hidden'
-      })
-      window.dispatchEvent(new Event('blur'))
-      ;(window as any).__dispatchBellNotificationFallback({
-        terminalId: 'term_pi',
-        sequence: 2
-      })
-    })
-    await expect(toast).toHaveCount(1)
-    await expect(toast).toContainText('Pi 2')
-
-    await page.evaluate(() =>
-      (window as any).__dispatchBellNotificationFallback({
-        terminalId: 'term_pi',
-        sequence: 1
-      })
-    )
-    await expect(toast).toHaveCount(1)
-    await expect(toast).toContainText('Pi 2')
-
-    await page.evaluate(() => {
-      ;(window as any).__dispatchBellNotificationNative({
-        terminalId: 'term_pi',
-        sequence: 2
-      })
-      ;(window as any).__dispatchBellNotificationFallback({
-        terminalId: 'term_pi',
-        sequence: 2
-      })
-    })
-    await expect(toast).toHaveCount(1)
-    await expect(toast).toContainText('Pi 2')
-
-    await page.evaluate(() => {
-      Object.defineProperty(document, 'hasFocus', {
-        configurable: true,
-        value: () => true
-      })
-      window.dispatchEvent(new Event('focus'))
-    })
-    await expect(toast).toBeVisible()
-
-    const acknowledgement = page.waitForRequest(
-      (request) =>
-        request.method() === 'POST' &&
-        new URL(request.url()).pathname ===
-          '/api/terminals/term_pi/bell/acknowledge'
-    )
-    await toast.getByRole('button', { name: 'Dismiss' }).click()
-    expect((await acknowledgement).postDataJSON()).toEqual({ sequence: 2 })
-    await expect(toast).toHaveCount(0)
-    await expect
-      .poll(() =>
-        page.evaluate(() => (window as any).__clearedBellNotifications)
-      )
-      .toContainEqual({ terminalId: 'term_pi', sequence: 2 })
   })
 
   test('manages global terminal presets without a selected worktree', async ({

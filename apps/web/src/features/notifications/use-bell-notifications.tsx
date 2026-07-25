@@ -14,15 +14,6 @@ import {
 
 const EMPTY_BELLS: ReadonlyMap<string, TerminalBellMetadata> = new Map()
 
-type BellReference = {
-  terminalId: string
-  sequence: number
-}
-
-type BellAction = BellReference & {
-  type: 'view' | 'dismiss'
-}
-
 type Presence = {
   focused: boolean
   visible: boolean
@@ -35,7 +26,7 @@ type TerminalContext = {
   title: string
 }
 
-function browserToastId(terminalId: string, sequence: number): string {
+function toastId(terminalId: string, sequence: number): string {
   return `bell:${terminalId}:${sequence}`
 }
 
@@ -109,18 +100,10 @@ export function useBellNotifications({
     presence
   }
   const presentedSequences = useRef(new Map<string, number>())
-  const fallbackSequences = useRef(new Map<string, number>())
-  const fallbackToastIds = useRef(new Map<string, string>())
-  const fallbackToastSerial = useRef(0)
-  const pendingBellEvents = useRef(new Map<string, TerminalBellEvent>())
-  const pendingFallbacks = useRef(new Map<string, BellReference>())
-  const deliverBellEvent = useRef<(event: TerminalBellEvent) => void>(
+  const pendingEvents = useRef(new Map<string, TerminalBellEvent>())
+  const deliverEvent = useRef<(event: TerminalBellEvent) => void>(
     () => undefined
   )
-  const deliverFallback = useRef<(notification: BellReference) => void>(
-    () => undefined
-  )
-  const pendingViewAction = useRef<BellAction | null>(null)
 
   useEffect(() => {
     const updatePresence = () => {
@@ -160,36 +143,21 @@ export function useBellNotifications({
   }, [bells, presence.focused, presence.visible, selectedTerminalId])
 
   useEffect(() => {
-    const showBrowserToast = (
+    const showToast = (
       context: TerminalContext,
       event: TerminalBellEvent,
-      retry = false,
-      electronFallback = false
+      retry = false
     ) => {
       const previousSequence = presentedSequences.current.get(event.terminalId)
+      presentedSequences.current.set(event.terminalId, event.sequence)
       if (
-        !electronFallback &&
         previousSequence !== undefined &&
         previousSequence !== event.sequence
       ) {
-        toast.dismiss(browserToastId(event.terminalId, previousSequence))
+        toast.dismiss(toastId(event.terminalId, previousSequence))
       }
 
-      const previousFallbackToastId = electronFallback
-        ? fallbackToastIds.current.get(event.terminalId)
-        : undefined
-      const id = electronFallback
-        ? `bell:${event.terminalId}:electron-fallback:${++fallbackToastSerial.current}`
-        : browserToastId(event.terminalId, event.sequence)
-      if (electronFallback) {
-        fallbackToastIds.current.set(event.terminalId, id)
-      }
-
-      if (previousFallbackToastId) {
-        toast.dismiss(previousFallbackToastId)
-      }
-
-      presentedSequences.current.set(event.terminalId, event.sequence)
+      const id = toastId(event.terminalId, event.sequence)
       toast(context.title, {
         id,
         icon: <BellIcon aria-hidden="true" />,
@@ -201,26 +169,6 @@ export function useBellNotifications({
         action: {
           label: 'View',
           onClick: () => {
-            const currentElectronFallback =
-              electronFallback &&
-              fallbackToastIds.current.get(event.terminalId) === id
-            if (
-              (!electronFallback || currentElectronFallback) &&
-              presentedSequences.current.get(event.terminalId) ===
-                event.sequence
-            ) {
-              presentedSequences.current.delete(event.terminalId)
-            }
-
-            if (currentElectronFallback) {
-              fallbackToastIds.current.delete(event.terminalId)
-              fallbackSequences.current.delete(event.terminalId)
-              window.taskttyDesktop?.clearBellNotification({
-                terminalId: event.terminalId,
-                sequence: event.sequence
-              })
-            }
-
             toast.dismiss(id)
             const target = targetForTerminal(
               latest.current.projects,
@@ -234,26 +182,6 @@ export function useBellNotifications({
         cancel: {
           label: retry ? 'Try again' : 'Dismiss',
           onClick: () => {
-            const currentElectronFallback =
-              electronFallback &&
-              fallbackToastIds.current.get(event.terminalId) === id
-            if (
-              (!electronFallback || currentElectronFallback) &&
-              presentedSequences.current.get(event.terminalId) ===
-                event.sequence
-            ) {
-              presentedSequences.current.delete(event.terminalId)
-            }
-
-            if (currentElectronFallback) {
-              fallbackToastIds.current.delete(event.terminalId)
-              fallbackSequences.current.delete(event.terminalId)
-              window.taskttyDesktop?.clearBellNotification({
-                terminalId: event.terminalId,
-                sequence: event.sequence
-              })
-            }
-
             toast.dismiss(id)
             void terminalSessions
               .acknowledgeBell(event.terminalId, event.sequence)
@@ -272,84 +200,19 @@ export function useBellNotifications({
                   currentBell.sequence === event.sequence &&
                   currentContext
                 ) {
-                  if (electronFallback && window.taskttyDesktop) {
-                    window.taskttyDesktop.showBellNotification({
-                      terminalId: event.terminalId,
-                      sequence: event.sequence,
-                      title: currentContext.title,
-                      projectName: currentContext.projectName,
-                      worktreeName: currentContext.worktreeName
-                    })
-                  } else {
-                    showBrowserToast(currentContext, event, true)
-                  }
+                  showToast(currentContext, event, true)
                 }
               })
           }
         },
         onDismiss: () => {
-          const currentElectronFallback =
-            electronFallback &&
-            fallbackToastIds.current.get(event.terminalId) === id
           if (
-            (!electronFallback || currentElectronFallback) &&
             presentedSequences.current.get(event.terminalId) === event.sequence
           ) {
             presentedSequences.current.delete(event.terminalId)
           }
-
-          if (currentElectronFallback) {
-            fallbackToastIds.current.delete(event.terminalId)
-            fallbackSequences.current.delete(event.terminalId)
-            window.taskttyDesktop?.clearBellNotification({
-              terminalId: event.terminalId,
-              sequence: event.sequence
-            })
-          }
         }
       })
-    }
-
-    deliverFallback.current = (notification) => {
-      const bell = terminalSessions
-        .getBellSnapshot()
-        .get(notification.terminalId)
-      if (!bell?.unread || bell.sequence !== notification.sequence) {
-        window.taskttyDesktop?.clearBellNotification(notification)
-        pendingFallbacks.current.delete(notification.terminalId)
-        return
-      }
-
-      const current = latest.current
-      const context = findTerminalContext(
-        current.projects,
-        terminalSessions.getTitleSnapshot(),
-        notification.terminalId
-      )
-      if (!context) {
-        if (!current.projectsLoaded) {
-          pendingFallbacks.current.set(notification.terminalId, notification)
-        } else {
-          window.taskttyDesktop?.clearBellNotification(notification)
-        }
-
-        return
-      }
-
-      pendingFallbacks.current.delete(notification.terminalId)
-      fallbackSequences.current.set(
-        notification.terminalId,
-        notification.sequence
-      )
-      showBrowserToast(
-        context,
-        {
-          ...notification,
-          at: bell.at
-        },
-        false,
-        true
-      )
     }
 
     const deliver = (event: TerminalBellEvent) => {
@@ -361,15 +224,13 @@ export function useBellNotifications({
       )
       if (!context) {
         if (!current.projectsLoaded) {
-          pendingBellEvents.current.set(event.terminalId, event)
-        } else {
-          pendingBellEvents.current.delete(event.terminalId)
+          pendingEvents.current.set(event.terminalId, event)
         }
 
         return
       }
 
-      pendingBellEvents.current.delete(event.terminalId)
+      pendingEvents.current.delete(event.terminalId)
       const activelyViewed =
         current.selectedTerminalId === event.terminalId &&
         current.presence.focused &&
@@ -381,27 +242,14 @@ export function useBellNotifications({
         return
       }
 
-      if (window.taskttyDesktop) {
-        presentedSequences.current.set(event.terminalId, event.sequence)
-        window.taskttyDesktop.showBellNotification({
-          terminalId: event.terminalId,
-          sequence: event.sequence,
-          title: context.title,
-          projectName: context.projectName,
-          worktreeName: context.worktreeName
-        })
-        return
-      }
-
-      if (current.presence.focused && current.presence.visible) {
-        showBrowserToast(context, event)
-      }
+      showToast(context, event)
+      window.taskttyDesktop?.requestAttention()
     }
-    deliverBellEvent.current = deliver
+
+    deliverEvent.current = deliver
     const unsubscribe = terminalSessions.subscribeBellEvents(deliver)
     return () => {
-      deliverBellEvent.current = () => undefined
-      deliverFallback.current = () => undefined
+      deliverEvent.current = () => undefined
       unsubscribe()
     }
   }, [])
@@ -411,15 +259,12 @@ export function useBellNotifications({
       return
     }
 
-    for (const notification of pendingFallbacks.current.values()) {
-      deliverFallback.current(notification)
-    }
-    for (const event of pendingBellEvents.current.values()) {
+    for (const event of pendingEvents.current.values()) {
       const bell = bells.get(event.terminalId)
       if (bell?.unread && bell.sequence === event.sequence) {
-        deliverBellEvent.current(event)
+        deliverEvent.current(event)
       } else {
-        pendingBellEvents.current.delete(event.terminalId)
+        pendingEvents.current.delete(event.terminalId)
       }
     }
   }, [bells, projectsLoaded])
@@ -432,165 +277,8 @@ export function useBellNotifications({
         continue
       }
 
-      if (window.taskttyDesktop) {
-        window.taskttyDesktop.clearBellNotification({ terminalId, sequence })
-        if (fallbackSequences.current.get(terminalId) === sequence) {
-          const fallbackToastId = fallbackToastIds.current.get(terminalId)
-          fallbackSequences.current.delete(terminalId)
-          fallbackToastIds.current.delete(terminalId)
-          if (fallbackToastId) {
-            toast.dismiss(fallbackToastId)
-          }
-        }
-      } else {
-        toast.dismiss(browserToastId(terminalId, sequence))
-      }
-
       presentedSequences.current.delete(terminalId)
-    }
-
-    if (window.taskttyDesktop) {
-      for (const [terminalId, bell] of bells) {
-        if (!bell.unread) {
-          window.taskttyDesktop.clearBellNotification({
-            terminalId,
-            sequence: bell.sequence
-          })
-        }
-      }
+      toast.dismiss(toastId(terminalId, sequence))
     }
   }, [bells, projects, runtimeTitles])
-
-  useEffect(() => {
-    const desktop = window.taskttyDesktop
-    if (!desktop) {
-      return
-    }
-
-    const handleAction = (action: BellAction) => {
-      const bell = terminalSessions.getBellSnapshot().get(action.terminalId)
-      if (!bell?.unread || bell.sequence !== action.sequence) {
-        desktop.clearBellNotification({
-          terminalId: action.terminalId,
-          sequence: action.sequence
-        })
-        return
-      }
-
-      if (action.type === 'dismiss') {
-        void terminalSessions
-          .acknowledgeBell(action.terminalId, action.sequence)
-          .catch((error: unknown) => {
-            latest.current.onError(error)
-            const bell = terminalSessions
-              .getBellSnapshot()
-              .get(action.terminalId)
-            const context = findTerminalContext(
-              latest.current.projects,
-              terminalSessions.getTitleSnapshot(),
-              action.terminalId
-            )
-            if (bell?.unread && bell.sequence === action.sequence && context) {
-              desktop.showBellNotification({
-                terminalId: action.terminalId,
-                sequence: action.sequence,
-                title: context.title,
-                projectName: context.projectName,
-                worktreeName: context.worktreeName
-              })
-            }
-          })
-        return
-      }
-
-      const current = latest.current
-      if (!current.projectsLoaded) {
-        pendingViewAction.current = action
-        return
-      }
-
-      const context = findTerminalContext(
-        current.projects,
-        current.runtimeTitles,
-        action.terminalId
-      )
-      const target = context
-        ? targetForTerminal(current.projects, context.terminal)
-        : null
-      if (target) {
-        void current.navigateToWorkspace(target)
-      } else {
-        desktop.clearBellNotification({
-          terminalId: action.terminalId,
-          sequence: action.sequence
-        })
-      }
-    }
-
-    const removeFallbackListener = desktop.onBellNotificationFallback(
-      (notification) => deliverFallback.current(notification)
-    )
-    const removeNativeListener = desktop.onBellNotificationNative(
-      (notification) => {
-        const bell = terminalSessions
-          .getBellSnapshot()
-          .get(notification.terminalId)
-        if (!bell?.unread || bell.sequence !== notification.sequence) {
-          return
-        }
-
-        pendingFallbacks.current.delete(notification.terminalId)
-        if (fallbackSequences.current.has(notification.terminalId)) {
-          const fallbackToastId = fallbackToastIds.current.get(
-            notification.terminalId
-          )
-          fallbackSequences.current.delete(notification.terminalId)
-          fallbackToastIds.current.delete(notification.terminalId)
-          if (fallbackToastId) {
-            toast.dismiss(fallbackToastId)
-          }
-        }
-      }
-    )
-    const removeActionListener = desktop.onBellNotificationAction(handleAction)
-    return () => {
-      removeFallbackListener()
-      removeNativeListener()
-      removeActionListener()
-    }
-  }, [])
-
-  useEffect(() => {
-    const action = pendingViewAction.current
-    if (!projectsLoaded || !action) {
-      return
-    }
-
-    pendingViewAction.current = null
-    const bell = bells.get(action.terminalId)
-    if (!bell?.unread || bell.sequence !== action.sequence) {
-      window.taskttyDesktop?.clearBellNotification({
-        terminalId: action.terminalId,
-        sequence: action.sequence
-      })
-      return
-    }
-
-    const context = findTerminalContext(
-      projects,
-      runtimeTitles,
-      action.terminalId
-    )
-    const target = context
-      ? targetForTerminal(projects, context.terminal)
-      : null
-    if (target) {
-      void navigateToWorkspace(target)
-    } else {
-      window.taskttyDesktop?.clearBellNotification({
-        terminalId: action.terminalId,
-        sequence: action.sequence
-      })
-    }
-  }, [bells, navigateToWorkspace, projects, projectsLoaded, runtimeTitles])
 }
