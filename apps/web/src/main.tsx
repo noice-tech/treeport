@@ -32,7 +32,7 @@ createRoot(document.getElementById('root')!).render(
       <TooltipProvider>
         <TerminalFocusProvider>
           <RouterProvider router={router} />
-          {!window.taskttyDesktop && <Toaster />}
+          <Toaster />
         </TerminalFocusProvider>
       </TooltipProvider>
     </QueryClientProvider>

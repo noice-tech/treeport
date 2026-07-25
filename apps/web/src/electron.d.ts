@@ -23,6 +23,16 @@ interface Window {
     clearBellNotification: (
       notification: Pick<TaskTTYBellNotification, 'terminalId' | 'sequence'>
     ) => void
+    onBellNotificationFallback: (
+      listener: (
+        notification: Pick<TaskTTYBellNotification, 'terminalId' | 'sequence'>
+      ) => void
+    ) => () => void
+    onBellNotificationNative: (
+      listener: (
+        notification: Pick<TaskTTYBellNotification, 'terminalId' | 'sequence'>
+      ) => void
+    ) => () => void
     onBellNotificationAction: (
       listener: (action: TaskTTYBellNotificationAction) => void
     ) => () => void

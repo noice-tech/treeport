@@ -48,18 +48,57 @@ type BellNotificationAction = {
   terminalId: string
   sequence: number
 }
-type NativeBellNotification = {
-  sequence: number
-  notification: Notification
+type BellNotificationEntry =
+  | {
+      sequence: number
+      mode: 'native'
+      notification: Notification
+    }
+  | {
+      sequence: number
+      mode: 'fallback'
+    }
+
+const bellNotifications = new Map<string, BellNotificationEntry>()
+let dockBounceId: number | null = null
+let frameFlashing = false
+
+function stopBellAttention(): void {
+  if (dockBounceId !== null) {
+    app.dock?.cancelBounce(dockBounceId)
+    dockBounceId = null
+  }
+
+  if (frameFlashing) {
+    mainWindow?.flashFrame(false)
+    frameFlashing = false
+  }
 }
 
-const bellNotifications = new Map<string, NativeBellNotification>()
+function requestBellAttention(): void {
+  const window = mainWindow
+  if (!window || window.isFocused()) {
+    return
+  }
+
+  if (process.platform === 'darwin') {
+    if (dockBounceId === null && app.dock) {
+      dockBounceId = app.dock.bounce('informational')
+    }
+  } else if (!frameFlashing) {
+    window.flashFrame(true)
+    frameFlashing = true
+  }
+}
 
 function clearBellNotifications(): void {
   for (const entry of bellNotifications.values()) {
-    entry.notification.close()
+    if (entry.mode === 'native') {
+      entry.notification.close()
+    }
   }
   bellNotifications.clear()
+  stopBellAttention()
 }
 
 function isTrustedRendererEvent(event: IpcMainEvent): boolean {
@@ -141,6 +180,24 @@ function parseBellNotificationClear(
   }
 
   return request as Pick<BellNotificationRequest, 'terminalId' | 'sequence'>
+}
+
+function sendBellNotificationPresentation(
+  channel: 'bell-notification:fallback' | 'bell-notification:native',
+  notification: Pick<BellNotificationRequest, 'terminalId' | 'sequence'>
+): void {
+  const window = mainWindow
+  if (!window || !isRendererUrl(window.webContents.getURL())) {
+    return
+  }
+
+  window.webContents.send(channel, {
+    terminalId: notification.terminalId,
+    sequence: notification.sequence
+  })
+  if (channel === 'bell-notification:fallback') {
+    requestBellAttention()
+  }
 }
 
 function sendBellNotificationAction(action: BellNotificationAction): void {
@@ -408,6 +465,7 @@ function createWindow(): BrowserWindow {
     }
   )
   window.webContents.on('render-process-gone', clearBellNotifications)
+  window.on('focus', stopBellAttention)
   window.on('closed', () => {
     if (mainWindow === window) {
       mainWindow = null
@@ -443,7 +501,7 @@ if (!hasSingleInstanceLock) {
   })
 
   ipcMain.on('bell-notification:show', (event, value: unknown) => {
-    if (!isTrustedRendererEvent(event) || !Notification.isSupported()) {
+    if (!isTrustedRendererEvent(event)) {
       return
     }
 
@@ -453,7 +511,20 @@ if (!hasSingleInstanceLock) {
     }
 
     const previous = bellNotifications.get(request.terminalId)
-    previous?.notification.close()
+    if (previous && previous.sequence > request.sequence) {
+      return
+    }
+
+    if (previous?.mode === 'native') {
+      previous.notification.close()
+    }
+
+    if (!app.isPackaged || !Notification.isSupported()) {
+      const entry = { sequence: request.sequence, mode: 'fallback' as const }
+      bellNotifications.set(request.terminalId, entry)
+      sendBellNotificationPresentation('bell-notification:fallback', request)
+      return
+    }
 
     const notification = new Notification({
       title: request.title,
@@ -468,8 +539,22 @@ if (!hasSingleInstanceLock) {
             ]
           })
     })
-    const entry = { sequence: request.sequence, notification }
+    const entry = {
+      sequence: request.sequence,
+      mode: 'native' as const,
+      notification
+    }
     bellNotifications.set(request.terminalId, entry)
+
+    if (
+      ![...bellNotifications.values()].some(
+        (candidate) => candidate.mode === 'fallback'
+      )
+    ) {
+      stopBellAttention()
+    }
+
+    sendBellNotificationPresentation('bell-notification:native', request)
     const activate = (type: BellNotificationAction['type']) => {
       if (bellNotifications.get(request.terminalId) !== entry) {
         return
@@ -491,6 +576,23 @@ if (!hasSingleInstanceLock) {
         activate('dismiss')
       }
     })
+    notification.on('failed', () => {
+      if (bellNotifications.get(request.terminalId) !== entry) {
+        return
+      }
+
+      bellNotifications.set(request.terminalId, {
+        sequence: request.sequence,
+        mode: 'fallback'
+      })
+      notification.close()
+      sendBellNotificationPresentation('bell-notification:fallback', request)
+    })
+    notification.on('close', () => {
+      if (bellNotifications.get(request.terminalId) === entry) {
+        bellNotifications.delete(request.terminalId)
+      }
+    })
     notification.show()
   })
 
@@ -510,7 +612,17 @@ if (!hasSingleInstanceLock) {
     }
 
     bellNotifications.delete(request.terminalId)
-    current.notification.close()
+    if (current.mode === 'native') {
+      current.notification.close()
+    }
+
+    if (
+      ![...bellNotifications.values()].some(
+        (notification) => notification.mode === 'fallback'
+      )
+    ) {
+      stopBellAttention()
+    }
   })
 
   void app.whenReady().then(() => {

@@ -13,6 +13,31 @@ type BellNotificationAction = {
   terminalId: string
   sequence: number
 }
+type BellNotificationFallback = Pick<
+  BellNotification,
+  'terminalId' | 'sequence'
+>
+
+function isBellNotificationFallback(
+  value: unknown
+): value is BellNotificationFallback {
+  if (typeof value !== 'object' || value === null) {
+    return false
+  }
+
+  const notification = value as Record<string, unknown>
+  const keys = Object.keys(notification).sort()
+  return (
+    keys.length === 2 &&
+    keys[0] === 'sequence' &&
+    keys[1] === 'terminalId' &&
+    typeof notification.terminalId === 'string' &&
+    notification.terminalId.length > 0 &&
+    notification.terminalId.length <= 128 &&
+    Number.isSafeInteger(notification.sequence) &&
+    (notification.sequence as number) > 0
+  )
+}
 
 function isBellNotificationAction(
   value: unknown
@@ -61,6 +86,30 @@ contextBridge.exposeInMainWorld(
       notification: Pick<BellNotification, 'terminalId' | 'sequence'>
     ) {
       ipcRenderer.send('bell-notification:clear', notification)
+    },
+    onBellNotificationFallback(
+      listener: (notification: BellNotificationFallback) => void
+    ) {
+      const receive = (_event: IpcRendererEvent, value: unknown) => {
+        if (isBellNotificationFallback(value)) {
+          listener(value)
+        }
+      }
+      ipcRenderer.on('bell-notification:fallback', receive)
+      return () =>
+        ipcRenderer.removeListener('bell-notification:fallback', receive)
+    },
+    onBellNotificationNative(
+      listener: (notification: BellNotificationFallback) => void
+    ) {
+      const receive = (_event: IpcRendererEvent, value: unknown) => {
+        if (isBellNotificationFallback(value)) {
+          listener(value)
+        }
+      }
+      ipcRenderer.on('bell-notification:native', receive)
+      return () =>
+        ipcRenderer.removeListener('bell-notification:native', receive)
     },
     onBellNotificationAction(
       listener: (action: BellNotificationAction) => void

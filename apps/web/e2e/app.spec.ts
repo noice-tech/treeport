@@ -163,6 +163,12 @@ async function mockApp(
         | ((command: 'new-terminal' | 'close-terminal') => void)
         | null = null
       let fullscreenListener: ((fullscreen: boolean) => void) | null = null
+      let bellFallbackListener:
+        | ((notification: { terminalId: string; sequence: number }) => void)
+        | null = null
+      let bellNativeListener:
+        | ((notification: { terminalId: string; sequence: number }) => void)
+        | null = null
       let bellActionListener:
         | ((action: {
             type: 'view' | 'dismiss'
@@ -198,6 +204,26 @@ async function mockApp(
         clearBellNotification(notification: unknown) {
           scope.__clearedBellNotifications.push(notification)
         },
+        onBellNotificationFallback(
+          next: (notification: { terminalId: string; sequence: number }) => void
+        ) {
+          bellFallbackListener = next
+          return () => {
+            if (bellFallbackListener === next) {
+              bellFallbackListener = null
+            }
+          }
+        },
+        onBellNotificationNative(
+          next: (notification: { terminalId: string; sequence: number }) => void
+        ) {
+          bellNativeListener = next
+          return () => {
+            if (bellNativeListener === next) {
+              bellNativeListener = null
+            }
+          }
+        },
         onBellNotificationAction(
           next: (action: {
             type: 'view' | 'dismiss'
@@ -218,6 +244,14 @@ async function mockApp(
       ) => listener?.(command)
       scope.__dispatchDesktopFullscreen = (fullscreen: boolean) =>
         fullscreenListener?.(fullscreen)
+      scope.__dispatchBellNotificationFallback = (notification: {
+        terminalId: string
+        sequence: number
+      }) => bellFallbackListener?.(notification)
+      scope.__dispatchBellNotificationNative = (notification: {
+        terminalId: string
+        sequence: number
+      }) => bellNativeListener?.(notification)
       scope.__dispatchBellNotificationAction = (action: {
         type: 'view' | 'dismiss'
         terminalId: string
@@ -2439,7 +2473,7 @@ test.describe('desktop worktree terminal UI', () => {
     await expect(toast).toHaveCount(0)
   })
 
-  test('uses only native notifications for BELs in Electron', async ({
+  test('does not show an Electron toast unless main requests fallback', async ({
     page
   }) => {
     await mockApp(page, [], { desktopBridge: true })
@@ -2506,6 +2540,134 @@ test.describe('desktop worktree terminal UI', () => {
       )
       .toBe(2)
     await expect(page.locator('[data-sonner-toast]')).toHaveCount(0)
+  })
+
+  test('keeps an exact Electron fallback toast through focus and rejects stale fallback races', async ({
+    page
+  }) => {
+    await mockApp(page, [], { desktopBridge: true })
+    const emitBell = (sequence: number) =>
+      page.evaluate((nextSequence) => {
+        Object.defineProperty(document, 'hasFocus', {
+          configurable: true,
+          value: () => false
+        })
+        Object.defineProperty(document, 'visibilityState', {
+          configurable: true,
+          value: 'hidden'
+        })
+        window.dispatchEvent(new Event('blur'))
+        ;(window as any).__eventSource.emit(
+          'terminal.metadata',
+          JSON.stringify({
+            data: {
+              terminalId: 'term_pi',
+              title: `Pi ${nextSequence}`,
+              progress: null,
+              progressStartedAt: null,
+              progressClearedAt: null,
+              bell: {
+                sequence: nextSequence,
+                at: `2026-01-01T00:0${nextSequence}:00.000Z`,
+                unread: true
+              }
+            }
+          })
+        )
+      }, sequence)
+
+    await emitBell(1)
+    await page.evaluate(() =>
+      (window as any).__dispatchBellNotificationFallback({
+        terminalId: 'term_pi',
+        sequence: 1
+      })
+    )
+    const toast = page.locator('[data-sonner-toast]')
+    await expect(toast).toHaveCount(1)
+    await expect(toast).toContainText('Pi 1')
+
+    await emitBell(2)
+    await page.evaluate(() => {
+      ;(window as any).__dispatchBellNotificationNative({
+        terminalId: 'term_pi',
+        sequence: 2
+      })
+      Object.defineProperty(document, 'hasFocus', {
+        configurable: true,
+        value: () => true
+      })
+      Object.defineProperty(document, 'visibilityState', {
+        configurable: true,
+        value: 'visible'
+      })
+      window.dispatchEvent(new Event('focus'))
+    })
+    await expect(toast).toHaveCount(0)
+
+    await page.evaluate(() => {
+      Object.defineProperty(document, 'hasFocus', {
+        configurable: true,
+        value: () => false
+      })
+      Object.defineProperty(document, 'visibilityState', {
+        configurable: true,
+        value: 'hidden'
+      })
+      window.dispatchEvent(new Event('blur'))
+      ;(window as any).__dispatchBellNotificationFallback({
+        terminalId: 'term_pi',
+        sequence: 2
+      })
+    })
+    await expect(toast).toHaveCount(1)
+    await expect(toast).toContainText('Pi 2')
+
+    await page.evaluate(() =>
+      (window as any).__dispatchBellNotificationFallback({
+        terminalId: 'term_pi',
+        sequence: 1
+      })
+    )
+    await expect(toast).toHaveCount(1)
+    await expect(toast).toContainText('Pi 2')
+
+    await page.evaluate(() => {
+      ;(window as any).__dispatchBellNotificationNative({
+        terminalId: 'term_pi',
+        sequence: 2
+      })
+      ;(window as any).__dispatchBellNotificationFallback({
+        terminalId: 'term_pi',
+        sequence: 2
+      })
+    })
+    await expect(toast).toHaveCount(1)
+    await expect(toast).toContainText('Pi 2')
+
+    await page.evaluate(() => {
+      Object.defineProperty(document, 'hasFocus', {
+        configurable: true,
+        value: () => true
+      })
+      window.dispatchEvent(new Event('focus'))
+    })
+    await expect(toast).toBeVisible()
+
+    const acknowledgement = page.waitForRequest(
+      (request) =>
+        request.method() === 'POST' &&
+        new URL(request.url()).pathname ===
+          '/api/terminals/term_pi/bell/acknowledge'
+    )
+    await toast.getByRole('button', { name: 'Dismiss' }).click()
+    expect((await acknowledgement).postDataJSON()).toEqual({ sequence: 2 })
+    await expect(toast).toHaveCount(0)
+    await expect
+      .poll(() =>
+        page.evaluate(() => (window as any).__clearedBellNotifications)
+      )
+      .toContainEqual({ terminalId: 'term_pi', sequence: 2 })
   })
 
   test('manages global terminal presets without a selected worktree', async ({
