@@ -8,7 +8,7 @@ import {
   targetForWorktree,
   terminalTarget,
   worktreeTarget
-} from './workspace-navigation.js'
+} from './workspace-navigation'
 
 function projectGraph(): ProjectRecord[] {
   return [

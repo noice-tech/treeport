@@ -2,7 +2,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { Terminal } from '@xterm/xterm'
 import { io, type Socket } from 'socket.io-client'
-import { apiClient } from './api.js'
+import { apiClient } from './api'
 import {
   parseTerminalServerEvent,
   SOCKET_IO_PATH,

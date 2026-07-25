@@ -14,7 +14,7 @@ import type {
   TerminalSession as TerminalSessionInstance,
   TerminalSessionManager as TerminalSessionManagerInstance,
   TerminalSessionSnapshot
-} from './terminal-session.js'
+} from './terminal-session'
 
 const socketClient = vi.hoisted(() => ({ io: vi.fn() }))
 vi.mock('socket.io-client', () => ({ io: socketClient.io }))
@@ -125,7 +125,7 @@ beforeAll(async () => {
     terminalKeyboardInput,
     terminalOptions,
     terminalProgressLabel
-  } = await import('./terminal-session.js'))
+  } = await import('./terminal-session'))
 })
 
 beforeEach(() => {

@@ -3,7 +3,7 @@ import {
   createRoute,
   createRouter
 } from '@tanstack/react-router'
-import App from './app.js'
+import App from './app'
 
 const rootRoute = createRootRoute({ component: App })
 

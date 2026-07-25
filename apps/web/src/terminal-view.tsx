@@ -11,7 +11,7 @@ import type {
   TerminalRecord,
   WorktreeRecord
 } from '@tasktty/shared'
-import { Button } from './components/ui/button.js'
+import { Button } from './components/ui/button'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -20,24 +20,24 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger
-} from './components/ui/dropdown-menu.js'
+} from './components/ui/dropdown-menu'
 import {
   Tabs,
   TabsContent,
   TabsList,
   TabsTrigger
-} from './components/ui/tabs.js'
+} from './components/ui/tabs'
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger
-} from './components/ui/tooltip.js'
-import { cn } from './lib/utils.js'
-import { TerminalStatusIcon } from './components/terminal-status-icon.js'
+} from './components/ui/tooltip'
+import { cn } from './lib/utils'
+import { TerminalStatusIcon } from './components/terminal-status-icon'
 import {
   useRequestTerminalFocus,
   useTerminalAutoFocus
-} from './terminal-focus.js'
+} from './terminal-focus'
 import {
   terminalProgressLabel,
   terminalSessions,
@@ -45,7 +45,7 @@ import {
   type TerminalProgress,
   type TerminalSession,
   type TerminalSessionSnapshot
-} from './terminal-session.js'
+} from './terminal-session'
 
 interface TerminalViewProps {
   worktree: WorktreeRecord | null

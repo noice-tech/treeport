@@ -1,4 +1,4 @@
-import { ApiError } from './api.js'
+import { ApiError } from './api'
 
 export const METADATA_STALE_TIME_MS = 30_000
 export const METADATA_INVALIDATION_DELAY_MS = 75

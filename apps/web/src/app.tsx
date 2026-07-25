@@ -16,24 +16,24 @@ import type {
   TerminalRecord,
   WorktreeRecord
 } from '@tasktty/shared'
-import { Button } from './components/ui/button.js'
+import { Button } from './components/ui/button'
 import {
   ActionModal,
   type ActionModalState
-} from './features/dialogs/action-modal.js'
-import { useProjectWorkflows } from './features/projects/project-workflows.js'
-import { WorkspaceSidebar } from './features/sidebar/workspace-sidebar.js'
-import { TerminalWorkspace } from './features/terminals/terminal-workspace.js'
-import { useWorktreeWorkflows } from './features/worktrees/worktree-workflows.js'
-import { focusableElements, trapTabKey } from './lib/focus.js'
-import { cn } from './lib/utils.js'
-import { METADATA_DEGRADED_GRACE_MS } from './metadata-sync.js'
-import { useProjectEventsBridge } from './project-events-bridge.js'
+} from './features/dialogs/action-modal'
+import { useProjectWorkflows } from './features/projects/project-workflows'
+import { WorkspaceSidebar } from './features/sidebar/workspace-sidebar'
+import { TerminalWorkspace } from './features/terminals/terminal-workspace'
+import { useWorktreeWorkflows } from './features/worktrees/worktree-workflows'
+import { focusableElements, trapTabKey } from './lib/focus'
+import { cn } from './lib/utils'
+import { METADATA_DEGRADED_GRACE_MS } from './metadata-sync'
+import { useProjectEventsBridge } from './project-events-bridge'
 import {
   projectsQueryOptions,
   terminalPresetsQueryOptions
-} from './project-metadata.js'
-import { terminalSessions, type TerminalProgress } from './terminal-session.js'
+} from './project-metadata'
+import { terminalSessions, type TerminalProgress } from './terminal-session'
 import {
   LAST_PROJECT_TERMINAL_STORAGE_PREFIX,
   LAST_WORKSPACE_ROUTE_STORAGE_KEY,
@@ -44,8 +44,8 @@ import {
   targetForProject,
   targetForTerminal,
   targetForWorktree
-} from './workspace-navigation.js'
-import { useWorkspaceNavigate } from './workspace-router-navigation.js'
+} from './workspace-navigation'
+import { useWorkspaceNavigate } from './workspace-router-navigation'
 
 const MIN_SIDEBAR_WIDTH = 240
 const MAX_SIDEBAR_WIDTH = 420

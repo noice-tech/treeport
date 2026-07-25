@@ -7,17 +7,17 @@ import type {
   TerminalSize,
   WorktreeRecord
 } from '@tasktty/shared'
-import { ApiError, apiClient } from '../../api.js'
-import type { ActionModalState, RemovalStage } from '../dialogs/action-modal.js'
-import { projectsQueryKey } from '../../project-metadata.js'
-import { terminalSessions } from '../../terminal-session.js'
+import { ApiError, apiClient } from '../../api'
+import type { ActionModalState, RemovalStage } from '../dialogs/action-modal'
+import { projectsQueryKey } from '../../project-metadata'
+import { terminalSessions } from '../../terminal-session'
 import {
   projectTarget,
   terminalTarget,
   worktreeTarget
-} from '../../workspace-navigation.js'
-import { useWorkspaceNavigate } from '../../workspace-router-navigation.js'
-import type { WorktreeDestination } from './worktree-form.js'
+} from '../../workspace-navigation'
+import { useWorkspaceNavigate } from '../../workspace-router-navigation'
+import type { WorktreeDestination } from './worktree-form'
 
 const MANUAL_CLEANUP_PREFIX = 'Manual cleanup required:'
 

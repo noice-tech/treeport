@@ -1,10 +1,10 @@
 import { queryOptions } from '@tanstack/react-query'
-import { apiClient } from './api.js'
+import { apiClient } from './api'
 import {
   METADATA_STALE_TIME_MS,
   metadataRetryDelay,
   shouldRetryMetadataQuery
-} from './metadata-sync.js'
+} from './metadata-sync'
 
 export const projectsQueryKey = ['projects'] as const
 export const recentProjectsQueryKey = ['recent-projects'] as const
