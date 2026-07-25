@@ -8,5 +8,6 @@ interface Window {
     onCommand: (
       listener: (command: TaskTTYDesktopCommand) => void
     ) => () => void
+    requestAttention: () => void
   }>
 }

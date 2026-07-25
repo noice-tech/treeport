@@ -35,6 +35,37 @@ const rendererOrigin = rendererUrl.origin
 let mainWindow: BrowserWindow | null = null
 let loadGeneration = 0
 
+let dockBounceId: number | null = null
+let frameFlashing = false
+
+function stopBellAttention(): void {
+  if (dockBounceId !== null) {
+    app.dock?.cancelBounce(dockBounceId)
+    dockBounceId = null
+  }
+
+  if (frameFlashing) {
+    mainWindow?.flashFrame(false)
+    frameFlashing = false
+  }
+}
+
+function requestBellAttention(): void {
+  const window = mainWindow
+  if (!window || window.isFocused()) {
+    return
+  }
+
+  if (process.platform === 'darwin') {
+    if (dockBounceId === null && app.dock) {
+      dockBounceId = app.dock.bounce('informational')
+    }
+  } else if (!frameFlashing) {
+    window.flashFrame(true)
+    frameFlashing = true
+  }
+}
+
 function isRendererUrl(value: string): boolean {
   return URL.canParse(value) && new URL(value).origin === rendererOrigin
 }
@@ -283,7 +314,9 @@ function createWindow(): BrowserWindow {
   window.webContents.session.setPermissionRequestHandler(
     (_webContents, _permission, callback) => callback(false)
   )
+  window.on('focus', stopBellAttention)
   window.on('closed', () => {
+    stopBellAttention()
     if (mainWindow === window) {
       mainWindow = null
     }
@@ -327,6 +360,17 @@ if (!hasSingleInstanceLock) {
 
     const filePath = filePathFromUrl(value)
     return filePath ? (await shell.openPath(filePath)) === '' : false
+  })
+
+  ipcMain.on('bell-attention:request', (event) => {
+    if (
+      mainWindow &&
+      event.sender === mainWindow.webContents &&
+      event.senderFrame === event.sender.mainFrame &&
+      isRendererUrl(event.senderFrame.url)
+    ) {
+      requestBellAttention()
+    }
   })
 
   void app.whenReady().then(() => {

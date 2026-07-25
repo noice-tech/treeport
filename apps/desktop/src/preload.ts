@@ -32,6 +32,9 @@ contextBridge.exposeInMainWorld(
       }
       ipcRenderer.on('desktop-command', receive)
       return () => ipcRenderer.removeListener('desktop-command', receive)
+    },
+    requestAttention() {
+      ipcRenderer.send('bell-attention:request')
     }
   })
 )

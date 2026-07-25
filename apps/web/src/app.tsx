@@ -21,6 +21,7 @@ import {
   ActionModal,
   type ActionModalState
 } from './features/dialogs/action-modal'
+import { useBellNotifications } from './features/notifications/use-bell-notifications'
 import { useProjectWorkflows } from './features/projects/project-workflows'
 import { WorkspaceSidebar } from './features/sidebar/workspace-sidebar'
 import { TerminalWorkspace } from './features/terminals/terminal-workspace'
@@ -325,6 +326,14 @@ export default function App() {
     terminalSessions.getProgressSnapshot,
     () => EMPTY_TERMINAL_PROGRESS
   )
+  useBellNotifications({
+    projects,
+    projectsLoaded: projectsQuery.data !== undefined,
+    selectedTerminalId,
+    runtimeTitles,
+    navigateToWorkspace,
+    onError: showError(setError)
+  })
   const selectTerminal = (terminal: TerminalRecord) => {
     const target = targetForTerminal(projects, terminal)
     if (target) {

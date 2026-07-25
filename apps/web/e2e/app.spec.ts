@@ -162,6 +162,7 @@ async function mockApp(
       type DesktopCommand = 'new-worktree' | 'new-terminal' | 'close-terminal'
       const listeners = new Set<(command: DesktopCommand) => void>()
       let fullscreenListener: ((fullscreen: boolean) => void) | null = null
+      scope.__attentionRequests = 0
       scope.__openedDesktopFileUrls = []
       scope.taskttyDesktop = Object.freeze({
         platform: 'darwin',
@@ -180,6 +181,9 @@ async function mockApp(
         onCommand(next: (command: DesktopCommand) => void) {
           listeners.add(next)
           return () => listeners.delete(next)
+        },
+        requestAttention() {
+          scope.__attentionRequests += 1
         }
       })
       scope.__dispatchDesktopCommand = (command: DesktopCommand) =>
@@ -2291,6 +2295,7 @@ test.describe('desktop worktree terminal UI', () => {
       }
     } satisfies TerminalRuntimeMetadata
     await mockApp(page, [bellMetadata])
+    await expect(page.locator('[data-sonner-toast]')).toHaveCount(0)
 
     const piTreeRow = page.getByRole('button', {
       name: /zsh · \/worktrees\/topic.*bell/
@@ -2350,6 +2355,93 @@ test.describe('desktop worktree terminal UI', () => {
     await expect(
       page.getByRole('button', { name: /zsh · \/worktrees\/topic.*bell/ })
     ).toHaveCount(0)
+  })
+
+  test('coalesces BEL toasts, requests desktop attention, and opens the terminal', async ({
+    page
+  }) => {
+    await mockApp(page, [], { desktopBridge: true })
+    const emitBell = (sequence: number) =>
+      page.evaluate((nextSequence) => {
+        ;(window as any).__eventSource.emit(
+          'terminal.metadata',
+          JSON.stringify({
+            data: {
+              terminalId: 'term_pi',
+              title: 'Pi build · /worktrees/topic',
+              progress: null,
+              progressStartedAt: null,
+              progressClearedAt: null,
+              bell: {
+                sequence: nextSequence,
+                at: `2026-01-01T00:0${nextSequence}:00.000Z`,
+                unread: true
+              }
+            }
+          })
+        )
+      }, sequence)
+
+    await emitBell(1)
+    const toast = page.locator('[data-sonner-toast]')
+    await expect(toast).toHaveCount(1)
+    await expect(toast).toContainText('Pi build · /worktrees/topic')
+    await expect(toast).toContainText('Terminal bell · example · topic')
+    await expect
+      .poll(() => page.evaluate(() => (window as any).__attentionRequests))
+      .toBe(1)
+
+    await emitBell(2)
+    await expect(toast).toHaveCount(1)
+    const acknowledgement = page.waitForRequest(
+      (request) =>
+        request.method() === 'POST' &&
+        new URL(request.url()).pathname ===
+          '/api/terminals/term_pi/bell/acknowledge'
+    )
+    await toast.getByRole('button', { name: 'View' }).click()
+    expect((await acknowledgement).postDataJSON()).toEqual({ sequence: 2 })
+    await expect(page).toHaveURL(
+      /\/projects\/proj_1\/worktrees\/wt_topic\/terminals\/term_pi$/
+    )
+    await expect(toast).toHaveCount(0)
+  })
+
+  test('dismisses a browser BEL toast without navigating', async ({ page }) => {
+    await mockApp(page)
+    await page.evaluate(() =>
+      (window as any).__eventSource.emit(
+        'terminal.metadata',
+        JSON.stringify({
+          data: {
+            terminalId: 'term_pi',
+            title: 'Pi',
+            progress: null,
+            progressStartedAt: null,
+            progressClearedAt: null,
+            bell: {
+              sequence: 3,
+              at: '2026-01-01T00:03:00.000Z',
+              unread: true
+            }
+          }
+        })
+      )
+    )
+
+    const toast = page.locator('[data-sonner-toast]')
+    await expect(toast).toBeVisible()
+    const startingUrl = page.url()
+    const acknowledgement = page.waitForRequest(
+      (request) =>
+        request.method() === 'POST' &&
+        new URL(request.url()).pathname ===
+          '/api/terminals/term_pi/bell/acknowledge'
+    )
+    await toast.getByRole('button', { name: 'Dismiss' }).click()
+    expect((await acknowledgement).postDataJSON()).toEqual({ sequence: 3 })
+    expect(page.url()).toBe(startingUrl)
+    await expect(toast).toHaveCount(0)
   })
 
   test('manages global terminal presets without a selected worktree', async ({
