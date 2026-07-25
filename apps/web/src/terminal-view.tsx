@@ -6,7 +6,6 @@ import {
   PlusIcon,
   XMarkIcon
 } from '@heroicons/react/16/solid'
-import { TerminalIcon } from 'lucide-react'
 import type {
   TerminalPreset,
   TerminalRecord,
@@ -34,6 +33,7 @@ import {
   TooltipTrigger
 } from './components/ui/tooltip.js'
 import { cn } from './lib/utils.js'
+import { TerminalStatusIcon } from './components/terminal-status-icon.js'
 import {
   useRequestTerminalFocus,
   useTerminalAutoFocus
@@ -305,30 +305,17 @@ export function TerminalView({
                       title={title}
                     >
                       {progress ? (
-                        <span
+                        <TerminalStatusIcon
+                          working={working}
                           className={cn(
-                            'grid size-4 shrink-0',
+                            'size-4 shrink-0 stroke-zinc-500',
+                            working && 'stroke-cyan-400',
+                            progress.state === 'error' && 'stroke-rose-300',
+                            progress.state === 'paused' && 'stroke-amber-300',
                             needsAttention &&
-                              'drop-shadow-[0_0_0.35rem_#fcd34d]'
+                              'stroke-amber-300'
                           )}
-                          aria-hidden="true"
-                        >
-                          <TerminalIcon
-                            className={cn(
-                              'col-start-1 row-start-1 size-full stroke-[1.5] transition-[opacity,transform] duration-300',
-                              working &&
-                                'stroke-cyan-400 opacity-0 rotate-90 scale-75 motion-reduce:opacity-100 motion-reduce:transform-none',
-                              progress.state === 'error' && 'stroke-rose-300',
-                              progress.state === 'paused' && 'stroke-amber-300'
-                            )}
-                          />
-                          <ArrowPathIcon
-                            className={cn(
-                              'col-start-1 row-start-1 size-[70%] place-self-center fill-cyan-300 opacity-0 transition-opacity duration-300 motion-reduce:hidden',
-                              working && 'animate-spin opacity-100'
-                            )}
-                          />
-                        </span>
+                        />
                       ) : item.status !== 'running' || needsAttention ? (
                         <span
                           className={cn(
