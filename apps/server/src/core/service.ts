@@ -1,7 +1,9 @@
 import crypto from 'node:crypto'
 import fs from 'node:fs/promises'
+import os from 'node:os'
 import path from 'node:path'
 import type {
+  DirectoryBrowseResponse,
   OperationRecord,
   PrInfo,
   ProjectColor,
@@ -857,6 +859,175 @@ export class TreeportService {
 
     this.requireOpenProject(match.projectId)
     return match
+  }
+
+  async browseDirectory(
+    inputPath: string,
+    showHidden = false
+  ): Promise<DirectoryBrowseResponse> {
+    const homePath = os.homedir()
+    const expandedPath =
+      inputPath === '~'
+        ? homePath
+        : /^~[\\/]/u.test(inputPath)
+          ? path.join(homePath, inputPath.slice(2))
+          : inputPath
+    if (!path.isAbsolute(expandedPath)) {
+      throw new DomainError(
+        'DIRECTORY_PATH_NOT_ABSOLUTE',
+        'Enter an absolute path on the Treeport server',
+        400
+      )
+    }
+
+    const requestedPath = path.resolve(expandedPath)
+    let exact = true
+    let entryQuery = ''
+    const directoryPath = await fs
+      .realpath(requestedPath)
+      .catch(async (error) => {
+        const code = (error as NodeJS.ErrnoException).code
+        if (code !== 'ENOENT') {
+          throw new DomainError(
+            'DIRECTORY_UNREADABLE',
+            'That folder cannot be read on the Treeport server',
+            403
+          )
+        }
+
+        exact = false
+        entryQuery ||= path.basename(requestedPath)
+        return fs.realpath(path.dirname(requestedPath)).catch((parentError) => {
+          const parentCode = (parentError as NodeJS.ErrnoException).code
+          throw new DomainError(
+            parentCode === 'ENOENT'
+              ? 'DIRECTORY_NOT_FOUND'
+              : 'DIRECTORY_UNREADABLE',
+            parentCode === 'ENOENT'
+              ? 'That folder does not exist on the Treeport server'
+              : 'That folder cannot be read on the Treeport server',
+            parentCode === 'ENOENT' ? 404 : 403
+          )
+        })
+      })
+    const directoryStat = await fs.stat(directoryPath).catch((error) => {
+      const code = (error as NodeJS.ErrnoException).code
+      throw new DomainError(
+        code === 'ENOENT' ? 'DIRECTORY_NOT_FOUND' : 'DIRECTORY_UNREADABLE',
+        code === 'ENOENT'
+          ? 'That folder does not exist on the Treeport server'
+          : 'That folder cannot be read on the Treeport server',
+        code === 'ENOENT' ? 404 : 403
+      )
+    })
+    if (!directoryStat.isDirectory()) {
+      throw new DomainError(
+        'DIRECTORY_NOT_A_DIRECTORY',
+        'That path is not a folder',
+        400
+      )
+    }
+
+    const rawEntries = await fs
+      .readdir(directoryPath, {
+        withFileTypes: true
+      })
+      .catch(() => {
+        throw new DomainError(
+          'DIRECTORY_UNREADABLE',
+          'That folder cannot be read on the Treeport server',
+          403
+        )
+      })
+    const normalizedQuery = entryQuery.toLocaleLowerCase()
+    const candidates = rawEntries
+      .filter(
+        (entry) =>
+          (showHidden ||
+            normalizedQuery.startsWith('.') ||
+            !entry.name.startsWith('.')) &&
+          (!normalizedQuery ||
+            entry.name.toLocaleLowerCase().startsWith(normalizedQuery))
+      )
+      .sort((left, right) =>
+        left.name.localeCompare(right.name, undefined, {
+          sensitivity: 'base',
+          numeric: true
+        })
+      )
+
+    const entries: DirectoryBrowseResponse['directory']['entries'] = []
+    let truncated = false
+    for (const entry of candidates) {
+      const entryPath = path.join(directoryPath, entry.name)
+      const isDirectory =
+        entry.isDirectory() ||
+        (entry.isSymbolicLink() &&
+          (await fs
+            .stat(entryPath)
+            .then((stat) => stat.isDirectory())
+            .catch(() => false)))
+      if (!isDirectory) {
+        continue
+      }
+
+      if (entries.length === 200) {
+        truncated = true
+        break
+      }
+
+      entries.push({ name: entry.name, path: entryPath })
+    }
+
+    const rootPath = path.parse(directoryPath).root
+    const breadcrumbs: DirectoryBrowseResponse['directory']['breadcrumbs'] = [
+      { name: rootPath, path: rootPath }
+    ]
+    let breadcrumbPath = rootPath
+    for (const segment of directoryPath
+      .slice(rootPath.length)
+      .split(path.sep)) {
+      if (!segment) {
+        continue
+      }
+
+      breadcrumbPath = path.join(breadcrumbPath, segment)
+      breadcrumbs.push({ name: segment, path: breadcrumbPath })
+    }
+
+    const repositoryPath = exact
+      ? await this.deps.git
+          .canonicalizeRepositoryPath(directoryPath)
+          .then((checkout) => this.deps.git.resolveMainCheckout(checkout))
+          .then((mainCheckout) => fs.realpath(mainCheckout))
+          .catch(() => null)
+      : null
+
+    return {
+      input: inputPath,
+      exact,
+      directory: {
+        path: directoryPath,
+        parentPath:
+          directoryPath === rootPath ? null : path.dirname(directoryPath),
+        homePath,
+        rootPath,
+        breadcrumbs,
+        entries,
+        truncated
+      },
+      repository: repositoryPath
+        ? { state: 'valid', repositoryPath }
+        : exact
+          ? {
+              state: 'not-repository',
+              message: 'This folder is not inside a Git repository.'
+            }
+          : {
+              state: 'incomplete',
+              message: 'Choose a matching folder to continue.'
+            }
+    }
   }
 
   async registerProject(

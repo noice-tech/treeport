@@ -545,6 +545,8 @@ async function mockApp(
       ]
     : []
   let projectRequests = 0
+  let failDirectoryBrowse = false
+  const registeredProjectPaths: string[] = []
   let releaseProjects: (() => void) | null = null
   const projectsGate = options.delayProjects
     ? new Promise<void>((resolve) => {
@@ -697,6 +699,90 @@ async function mockApp(
       return
     }
 
+    if (
+      pathname === '/api/filesystem/directories' &&
+      route.request().method() === 'GET'
+    ) {
+      if (failDirectoryBrowse) {
+        failDirectoryBrowse = false
+        await route.fulfill({
+          status: 503,
+          json: {
+            error: {
+              code: 'DIRECTORY_UNREADABLE',
+              message: 'That folder cannot be read on the Treeport server'
+            }
+          }
+        })
+        return
+      }
+
+      const input = url.searchParams.get('input') ?? '~'
+      const showHidden = url.searchParams.get('hidden') === 'true'
+      const exactPaths: Record<string, string[]> = {
+        '~': ['Projects'],
+        '/home/test': ['Projects'],
+        '/home/test/Projects': ['example'],
+        '/repo': ['src']
+      }
+      const exact = input in exactPaths
+      const partialProjects = input === '/home/test/Pro'
+      const directoryPath = partialProjects
+        ? '/home/test'
+        : input === '~'
+          ? '/home/test'
+          : input
+      const entryNames = partialProjects
+        ? ['Projects']
+        : [...(exactPaths[input] ?? []), ...(showHidden ? ['.hidden'] : [])]
+      await route.fulfill({
+        json: {
+          input,
+          exact,
+          directory: {
+            path: directoryPath,
+            parentPath:
+              directoryPath === '/'
+                ? null
+                : directoryPath.slice(0, directoryPath.lastIndexOf('/')) || '/',
+            homePath: '/home/test',
+            rootPath: '/',
+            breadcrumbs:
+              directoryPath === '/'
+                ? [{ name: '/', path: '/' }]
+                : [
+                    { name: '/', path: '/' },
+                    ...directoryPath
+                      .split('/')
+                      .filter(Boolean)
+                      .map((name, index, segments) => ({
+                        name,
+                        path: `/${segments.slice(0, index + 1).join('/')}`
+                      }))
+                  ],
+            entries: entryNames.map((name) => ({
+              name,
+              path: `${directoryPath === '/' ? '' : directoryPath}/${name}`
+            })),
+            truncated: false
+          },
+          repository:
+            input === '/repo'
+              ? { state: 'valid', repositoryPath: '/repo' }
+              : exact
+                ? {
+                    state: 'not-repository',
+                    message: 'This folder is not inside a Git repository.'
+                  }
+                : {
+                    state: 'incomplete',
+                    message: 'Choose a matching folder to continue.'
+                  }
+        }
+      })
+      return
+    }
+
     if (pathname === '/api/projects' && route.request().method() === 'GET') {
       projectRequests += 1
       if (projectsGate) {
@@ -708,6 +794,9 @@ async function mockApp(
     }
 
     if (pathname === '/api/projects' && route.request().method() === 'POST') {
+      registeredProjectPaths.push(
+        (route.request().postDataJSON() as { path: string }).path
+      )
       if (!openProjects.some((candidate) => candidate.id === state.id)) {
         openProjects.push(state)
       }
@@ -1013,6 +1102,10 @@ async function mockApp(
     terminalPresets,
     recentProjects,
     projectRequests: () => projectRequests,
+    registeredProjectPaths: () => [...registeredProjectPaths],
+    failNextDirectoryBrowse: () => {
+      failDirectoryBrowse = true
+    },
     releaseProjects: () => releaseProjects?.(),
     closeRequests: () => closeRequests,
     failNextClose: () => {
@@ -1466,9 +1559,52 @@ test.describe('desktop worktree terminal UI', () => {
     await page.getByRole('button', { name: 'Open project' }).click()
     await page.getByRole('button', { name: 'Open project…' }).click()
     const dialog = page.getByRole('dialog')
-    await dialog.getByLabel('Open by repository path').fill('/repo')
-    await dialog.getByRole('button', { name: 'Open project' }).click()
+    const serverPath = dialog.getByLabel('Server folder path')
+    const openButton = dialog.getByRole('button', { name: 'Open project' })
+    await expect(
+      dialog.getByText('Browse folders on the Treeport server.')
+    ).toBeVisible()
+    await expect(openButton).toBeDisabled()
+
+    await serverPath.fill('/home/test/Pro')
+    await expect(
+      dialog.getByText('Choose a matching folder to continue.')
+    ).toBeVisible()
+    await serverPath.press('ArrowDown')
+    const projectsFolder = dialog.getByRole('button', {
+      name: 'Projects',
+      exact: true
+    })
+    await expect(projectsFolder).toBeFocused()
+    await projectsFolder.press('Enter')
+    await expect(serverPath).toHaveValue('/home/test/Projects')
+    await expect(serverPath).toBeFocused()
+    await expect(
+      dialog.getByText('This folder is not inside a Git repository.')
+    ).toBeVisible()
+    await expect(openButton).toBeDisabled()
+
+    await serverPath.fill('/repo')
+    await serverPath.press('ArrowDown')
+    await expect(serverPath).toBeFocused()
+    await expect(openButton).toBeDisabled()
+    await expect(dialog.getByText('Will open repository: /repo')).toBeVisible()
+
+    const showHidden = dialog.getByLabel('Show hidden folders')
+    await showHidden.check()
+    await expect(openButton).toBeEnabled()
+    mocked.failNextDirectoryBrowse()
+    await showHidden.uncheck()
+    await expect(dialog.getByRole('alert')).toContainText(
+      'That folder cannot be read on the Treeport server'
+    )
+    await expect(openButton).toBeDisabled()
+
+    await dialog.getByRole('button', { name: 'Retry' }).click()
+    await expect(dialog.getByText('Will open repository: /repo')).toBeVisible()
+    await serverPath.press('Enter')
     await expect(dialog).toHaveCount(0)
+    expect(mocked.registeredProjectPaths()).toEqual(['/repo'])
     await expect(
       page.getByRole('button', {
         name: 'Switch project, current project example'

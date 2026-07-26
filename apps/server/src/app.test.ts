@@ -38,6 +38,20 @@ function fixture(webDist = '/missing') {
       }
     ]),
     openProject: vi.fn(async (id: string) => ({ id })),
+    browseDirectory: vi.fn(async (input: string, _hidden: boolean) => ({
+      input,
+      exact: true,
+      directory: {
+        path: input,
+        parentPath: '/',
+        homePath: '/home/test',
+        rootPath: '/',
+        breadcrumbs: [{ name: '/', path: '/' }],
+        entries: [],
+        truncated: false
+      },
+      repository: { state: 'not-repository' as const, message: 'Not a repo' }
+    })),
     closeProject: vi.fn(async () => undefined),
     deleteProject: vi.fn(async () => undefined),
     updateProjectColor: vi.fn((id: string, color: string | null) => ({
@@ -176,6 +190,24 @@ describe('HTTP API validation', () => {
       ['diff', 'main', '--mode', 'split'],
       { returnToShell: true, initialSize: { cols: 132, rows: 47 } }
     )
+  })
+
+  it('validates and forwards server directory browsing', async () => {
+    const { app, service } = fixture()
+    const browsed = await app.request(
+      '/api/filesystem/directories?input=%2Frepos%2Fwith%20spaces&hidden=true'
+    )
+    expect(browsed.status).toBe(200)
+    expect(service.browseDirectory).toHaveBeenCalledWith(
+      '/repos/with spaces',
+      true
+    )
+
+    const invalid = await app.request(
+      '/api/filesystem/directories?input=&hidden=yes'
+    )
+    expect(invalid.status).toBe(400)
+    expect(service.browseDirectory).toHaveBeenCalledTimes(1)
   })
 
   it('keeps recent, open, close, and destructive delete as distinct routes', async () => {

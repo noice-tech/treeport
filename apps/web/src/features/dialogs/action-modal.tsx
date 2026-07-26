@@ -119,9 +119,11 @@ export function ActionModal({
           'modal relative max-h-[calc(100dvh-2rem)] w-full overflow-y-auto rounded-xl bg-zinc-900 p-6 shadow-2xl ring-1 ring-white/10 max-[700px]:max-h-[90dvh] max-[700px]:max-w-none max-[700px]:rounded-b-none max-[700px]:p-5 max-[700px]:pb-[calc(1.25rem+env(safe-area-inset-bottom))]',
           modal.type === 'presets'
             ? 'max-w-3xl'
-            : modal.type === 'worktree'
-              ? 'max-w-md'
-              : 'max-w-lg'
+            : modal.type === 'project'
+              ? 'max-w-2xl'
+              : modal.type === 'worktree'
+                ? 'max-w-md'
+                : 'max-w-lg'
         )}
         role="dialog"
         aria-modal="true"

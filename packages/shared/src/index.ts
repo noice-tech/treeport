@@ -199,6 +199,45 @@ export interface ApiErrorBody {
   error: { code: string; message: string; details?: unknown }
 }
 
+export interface DirectoryBreadcrumb {
+  name: string
+  path: string
+}
+
+export interface DirectoryEntry {
+  name: string
+  path: string
+}
+
+export type DirectoryRepositoryStatus =
+  | { state: 'valid'; repositoryPath: string }
+  | { state: 'incomplete'; message: string }
+  | { state: 'not-repository'; message: string }
+
+export interface DirectoryBrowseResponse {
+  input: string
+  exact: boolean
+  directory: {
+    path: string
+    parentPath: string | null
+    homePath: string
+    rootPath: string
+    breadcrumbs: DirectoryBreadcrumb[]
+    entries: DirectoryEntry[]
+    truncated: boolean
+  }
+  repository: DirectoryRepositoryStatus
+}
+
+export const browseDirectoryQuerySchema = z.object({
+  input: z.string().trim().min(1).max(4096),
+  hidden: z
+    .enum(['true', 'false'])
+    .optional()
+    .default('false')
+    .transform((value) => value === 'true')
+})
+
 export const registerProjectSchema = z.object({
   path: z.string().trim().min(1),
   name: z.string().trim().min(1).max(120).optional()

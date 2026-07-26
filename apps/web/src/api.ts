@@ -1,5 +1,6 @@
 import type {
   ApiErrorBody,
+  DirectoryBrowseResponse,
   OperationRecord,
   ProjectColor,
   ProjectRecord,
@@ -51,6 +52,15 @@ export const apiClient = {
   recentProjects: async () =>
     (await api<{ projects: RecentProjectRecord[] }>('/api/projects/recent'))
       .projects,
+  browseDirectories: async (input: string, hidden = false) => {
+    const search = new URLSearchParams({
+      input,
+      ...(hidden ? { hidden: 'true' } : {})
+    })
+    return api<DirectoryBrowseResponse>(
+      `/api/filesystem/directories?${search.toString()}`
+    )
+  },
   terminalPresets: async () =>
     (await api<{ presets: TerminalPreset[] }>('/api/terminal-presets')).presets,
   createTerminalPreset: async (

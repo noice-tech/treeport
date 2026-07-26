@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  browseDirectoryQuerySchema,
   createTerminalPresetSchema,
   createTerminalSchema,
   createWorktreeSchema,
@@ -20,6 +21,21 @@ describe('API input validation', () => {
     expect(registerProjectSchema.parse({ path: '/repo with spaces' })).toEqual({
       path: '/repo with spaces'
     })
+  })
+
+  it('parses directory browsing query flags explicitly', () => {
+    expect(
+      browseDirectoryQuerySchema.parse({
+        input: ' ~/Projects ',
+        hidden: 'false'
+      })
+    ).toEqual({ input: '~/Projects', hidden: false })
+    expect(
+      browseDirectoryQuerySchema.parse({ input: '/srv/repos', hidden: 'true' })
+    ).toEqual({ input: '/srv/repos', hidden: true })
+    expect(
+      browseDirectoryQuerySchema.safeParse({ input: '', hidden: 'yes' }).success
+    ).toBe(false)
   })
 
   it('accepts only curated project colors and neutral', () => {

@@ -7,6 +7,7 @@ import type { Context } from 'hono'
 import type { ZodType } from 'zod'
 import { serveStatic } from '@hono/node-server/serve-static'
 import {
+  browseDirectoryQuerySchema,
   createTerminalPresetSchema,
   createTerminalSchema,
   deleteTerminalPresetSchema,
@@ -213,6 +214,22 @@ export function createApp({
   app.get('/api/projects/recent', (context) =>
     context.json({ projects: service.listRecentProjects() })
   )
+
+  app.get('/api/filesystem/directories', async (context) => {
+    const result = browseDirectoryQuerySchema.safeParse(context.req.query())
+    if (!result.success) {
+      throw new DomainError(
+        'VALIDATION_ERROR',
+        'Request validation failed',
+        400,
+        result.error.flatten()
+      )
+    }
+
+    return context.json(
+      await service.browseDirectory(result.data.input, result.data.hidden)
+    )
+  })
 
   app.post('/api/projects', async (context) => {
     const body = await input(context, registerProjectSchema)
