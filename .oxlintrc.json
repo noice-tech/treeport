@@ -1,7 +1,10 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
   "plugins": ["typescript"],
-  "jsPlugins": ["@stylistic/eslint-plugin"],
+  "jsPlugins": [
+    "@stylistic/eslint-plugin",
+    "eslint-plugin-react-you-might-not-need-an-effect"
+  ],
   "categories": {
     "correctness": "off"
   },
@@ -18,6 +21,15 @@
     "test-results/**"
   ],
   "rules": {
+    "react-you-might-not-need-an-effect/no-derived-state": "warn",
+    "react-you-might-not-need-an-effect/no-chain-state-updates": "warn",
+    "react-you-might-not-need-an-effect/no-event-handler": "warn",
+    "react-you-might-not-need-an-effect/no-adjust-state-on-prop-change": "warn",
+    "react-you-might-not-need-an-effect/no-reset-all-state-on-prop-change": "warn",
+    "react-you-might-not-need-an-effect/no-pass-live-state-to-parent": "warn",
+    "react-you-might-not-need-an-effect/no-pass-data-to-parent": "warn",
+    "react-you-might-not-need-an-effect/no-external-store-subscription": "warn",
+    "react-you-might-not-need-an-effect/no-initialize-state": "warn",
     "curly": "error",
     "@stylistic/padding-line-between-statements": [
       "error",
