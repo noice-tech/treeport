@@ -26,6 +26,8 @@ export type TerminalFileTransfer = {
 }
 
 const TERMINAL_SCROLL_EXIT_SEQUENCE = '\u001b[9000~'
+const TERMINAL_SELECTION_START_SEQUENCE = '\u0002['
+const TERMINAL_SELECTION_SCROLL_INTERVAL_MS = 50
 const TERMINAL_MAX_FILES_PER_TRANSFER = 8
 const TERMINAL_FONT_SIZE = 14
 const TERMINAL_MIN_VIEWER_FONT_SIZE = 4
@@ -356,10 +358,7 @@ export function terminalOptions() {
       '"SFMono-Regular", "Cascadia Code", "Liberation Mono", monospace',
     fontSize: TERMINAL_FONT_SIZE,
     lineHeight: 1.15,
-    // Keep a local history for xterm's native selection drag autoscroll. Mouse
-    // wheel scrolling is still forwarded to tmux, which owns persistent history.
-    scrollback: 10_000,
-    overviewRuler: { width: 1 },
+    scrollback: 0,
     allowProposedApi: false,
     macOptionClickForcesSelection: true,
     linkHandler: {
@@ -432,6 +431,9 @@ export class TerminalSession {
   private readonly parsedSequences = new Set<number>()
   private scrollExitPending = false
   private resumeOnNextInput = false
+  private selectionDragCleanup: (() => void) | null = null
+  private tmuxSelectionPending = false
+  private tmuxSelectionText: string | null = null
   private lastBellAt = 0
 
   constructor(terminalId: string) {
@@ -577,6 +579,8 @@ export class TerminalSession {
     this.disposed = true
     this.reconnectAllowed = false
     this.clearTimers()
+    this.selectionDragCleanup?.()
+    this.selectionDragCleanup = null
     this.resizeObserver?.disconnect()
     this.socket?.disconnect()
     this.socket = null
@@ -598,11 +602,192 @@ export class TerminalSession {
     terminal.loadAddon(fitAddon)
     terminal.loadAddon(new WebLinksAddon(activateTerminalLink))
     terminal.open(this.wrapper)
+
+    let selectionDrag: {
+      startCol: number
+      startRow: number
+      clientX: number
+      clientY: number
+      tmux: boolean
+      scrollTimer: number | null
+    } | null = null
+    const selectionCell = (clientX: number, clientY: number) => {
+      const screen = terminal.element?.querySelector('.xterm-screen')
+      const bounds = screen?.getBoundingClientRect()
+      if (!bounds?.width || !bounds.height) {
+        return null
+      }
+
+      return {
+        col: Math.max(
+          1,
+          Math.min(
+            terminal.cols,
+            Math.floor(
+              ((clientX - bounds.left) / bounds.width) * terminal.cols
+            ) + 1
+          )
+        ),
+        row: Math.max(
+          1,
+          Math.min(
+            terminal.rows,
+            Math.floor(
+              ((clientY - bounds.top) / bounds.height) * terminal.rows
+            ) + 1
+          )
+        ),
+        bounds
+      }
+    }
+    const sendSelectionMouse = (
+      button: 0 | 32,
+      clientX: number,
+      clientY: number,
+      release = false
+    ) => {
+      const cell = selectionCell(clientX, clientY)
+      if (!cell || !this.canInput()) {
+        return
+      }
+
+      this.send('input', {
+        generation: this.controllerGeneration,
+        data: `\u001b[<${button};${cell.col};${cell.row}${release ? 'm' : 'M'}`
+      })
+    }
+    const stopSelectionScroll = () => {
+      const drag = selectionDrag
+      if (drag && drag.scrollTimer !== null) {
+        window.clearInterval(drag.scrollTimer)
+        drag.scrollTimer = null
+      }
+    }
+    const continueSelectionScroll = () => {
+      if (!selectionDrag?.tmux) {
+        return
+      }
+
+      const cell = selectionCell(selectionDrag.clientX, selectionDrag.clientY)
+      if (!cell) {
+        return
+      }
+
+      const outside =
+        selectionDrag.clientY < cell.bounds.top ||
+        selectionDrag.clientY > cell.bounds.bottom
+
+      if (!outside) {
+        stopSelectionScroll()
+        return
+      }
+
+      if (selectionDrag.scrollTimer !== null) {
+        return
+      }
+
+      selectionDrag.scrollTimer = window.setInterval(() => {
+        if (selectionDrag?.tmux) {
+          sendSelectionMouse(32, selectionDrag.clientX, selectionDrag.clientY)
+        }
+      }, TERMINAL_SELECTION_SCROLL_INTERVAL_MS)
+    }
+    const handleSelectionMove = (event: MouseEvent) => {
+      if (!selectionDrag || !(event.buttons & 1)) {
+        return
+      }
+
+      selectionDrag.clientX = event.clientX
+      selectionDrag.clientY = event.clientY
+
+      const cell = selectionCell(event.clientX, event.clientY)
+      if (!cell) {
+        return
+      }
+
+      const outside =
+        event.clientY < cell.bounds.top || event.clientY > cell.bounds.bottom
+
+      if (!selectionDrag.tmux && !outside) {
+        return
+      }
+
+      event.preventDefault()
+      event.stopImmediatePropagation()
+      if (!selectionDrag.tmux) {
+        selectionDrag.tmux = true
+        this.scrollExitPending = true
+        this.tmuxSelectionPending = true
+        if (this.canInput()) {
+          this.send('input', {
+            generation: this.controllerGeneration,
+            data: `${TERMINAL_SELECTION_START_SEQUENCE}\u001b[<0;${selectionDrag.startCol};${selectionDrag.startRow}M`
+          })
+        }
+      }
+
+      sendSelectionMouse(32, event.clientX, event.clientY)
+      continueSelectionScroll()
+    }
+    const handleSelectionEnd = (event: MouseEvent) => {
+      if (!selectionDrag) {
+        return
+      }
+
+      if (selectionDrag.tmux) {
+        event.preventDefault()
+        event.stopImmediatePropagation()
+        sendSelectionMouse(0, event.clientX, event.clientY, true)
+      }
+
+      stopSelectionScroll()
+      selectionDrag = null
+    }
+    document.addEventListener('mousemove', handleSelectionMove, true)
+    document.addEventListener('mouseup', handleSelectionEnd, true)
+    this.selectionDragCleanup = () => {
+      stopSelectionScroll()
+      selectionDrag = null
+      document.removeEventListener('mousemove', handleSelectionMove, true)
+      document.removeEventListener('mouseup', handleSelectionEnd, true)
+    }
+
     this.wrapper.addEventListener(
       'mousedown',
       (event) => {
         this.requestControl()
+        this.tmuxSelectionPending = false
+        this.tmuxSelectionText = null
+        const cell = selectionCell(event.clientX, event.clientY)
+        selectionDrag =
+          cell &&
+          terminal.element?.classList.contains('enable-mouse-events') &&
+          event.button === 0 &&
+          !event.ctrlKey &&
+          !event.metaKey
+            ? {
+                startCol: cell.col,
+                startRow: cell.row,
+                clientX: event.clientX,
+                clientY: event.clientY,
+                tmux: false,
+                scrollTimer: null
+              }
+            : null
         forcePlainSelectionWhileMouseReporting(event, terminal)
+      },
+      true
+    )
+    this.wrapper.addEventListener(
+      'copy',
+      (event) => {
+        if (!this.tmuxSelectionText || !event.clipboardData) {
+          return
+        }
+
+        event.preventDefault()
+        event.stopImmediatePropagation()
+        event.clipboardData.setData('text/plain', this.tmuxSelectionText)
       },
       true
     )
@@ -711,6 +896,24 @@ export class TerminalSession {
     this.terminal = terminal
     this.fitAddon = fitAddon
     this.opened = true
+    terminal.parser.registerOscHandler(52, (payload) => {
+      if (!this.tmuxSelectionPending) {
+        return false
+      }
+
+      this.tmuxSelectionPending = false
+      const separator = payload.indexOf(';')
+      const encoded = separator === -1 ? '' : payload.slice(separator + 1)
+      if (!encoded || encoded === '?') {
+        return true
+      }
+
+      const binary = atob(encoded)
+      this.tmuxSelectionText = new TextDecoder().decode(
+        Uint8Array.from(binary, (character) => character.charCodeAt(0))
+      )
+      return true
+    })
     terminal.attachCustomKeyEventHandler((event) => {
       const input = terminalKeyboardInput(
         event,

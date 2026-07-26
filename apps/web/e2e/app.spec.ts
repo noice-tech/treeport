@@ -2948,12 +2948,14 @@ test.describe('desktop worktree terminal UI', () => {
           streamId: socket.streamId,
           sequence: 3,
           data:
+            '\u001b[?1049h\u001b[2J\u001b[H' +
             Array.from(
               { length: 80 },
               (_, index) => `selection-line-${String(index).padStart(3, '0')}`
-            ).join('\r\n') + '\r\n'
+            ).join('\r\n')
         })
       })
+      ;(window as any).__wsSent = []
     })
     await expect(page.locator('.xterm-rows')).toContainText(
       'selection-line-079'
@@ -2969,50 +2971,59 @@ test.describe('desktop worktree terminal UI', () => {
     await page.mouse.move(historyBounds!.x + 8, historyBounds!.y - 60, {
       steps: 5
     })
-    await page.waitForTimeout(350)
+    await page.waitForTimeout(160)
     await page.mouse.up()
 
-    const upwardSelection = await page
-      .locator('.xterm-helper-textarea')
-      .evaluate((textarea) => {
-        const clipboard = new DataTransfer()
-        textarea.dispatchEvent(
-          new ClipboardEvent('copy', {
-            bubbles: true,
-            cancelable: true,
-            clipboardData: clipboard
-          })
-        )
-        return clipboard.getData('text/plain')
-      })
-    expect(upwardSelection).toContain('selection-line-000')
-    expect(upwardSelection).toContain('selection-line-078')
-
-    await page.mouse.move(historyBounds!.x + 8, historyBounds!.y + 16)
-    await page.mouse.down()
-    await page.mouse.move(
-      historyBounds!.x + 180,
-      historyBounds!.y + historyBounds!.height + 60,
-      { steps: 5 }
+    const selectionInput = await page.evaluate(() =>
+      (window as any).__wsSent
+        .filter((message: any) => message.type === 'input')
+        .map((message: any) => message.data)
+        .join('')
     )
-    await page.waitForTimeout(350)
-    await page.mouse.up()
+    expect(selectionInput).toContain('\u0002[')
+    const readableSelectionInput = selectionInput.replaceAll('\u001b', 'ESC')
+    expect(readableSelectionInput).toMatch(/ESC\[<0;\d+;\d+M/)
+    expect(readableSelectionInput).toMatch(/ESC\[<32;\d+;1M/)
+    expect(readableSelectionInput).toMatch(/ESC\[<0;\d+;1m/)
 
-    const downwardSelection = await page
-      .locator('.xterm-helper-textarea')
-      .evaluate((textarea) => {
-        const clipboard = new DataTransfer()
-        textarea.dispatchEvent(
-          new ClipboardEvent('copy', {
-            bubbles: true,
-            cancelable: true,
-            clipboardData: clipboard
-          })
-        )
-        return clipboard.getData('text/plain')
+    const tmuxSelection = [
+      'selection-line-010',
+      'selection-line-011',
+      'selection-line-012'
+    ].join('\n')
+    await page.evaluate((selection) => {
+      const socket = (window as any).__lastWs
+      const bytes = new TextEncoder().encode(selection)
+      let binary = ''
+      for (const byte of bytes) {
+        binary += String.fromCharCode(byte)
+      }
+      socket.onmessage?.({
+        data: JSON.stringify({
+          version: 1,
+          type: 'output',
+          streamId: socket.streamId,
+          sequence: 4,
+          data: `\u001b]52;;${btoa(binary)}\u001b\\`
+        })
       })
-    expect(downwardSelection).toContain('selection-line-001')
-    expect(downwardSelection).toContain('selection-line-079')
+    }, tmuxSelection)
+
+    await expect
+      .poll(() =>
+        page.locator('.xterm-helper-textarea').evaluate((textarea) => {
+          const clipboard = new DataTransfer()
+          textarea.dispatchEvent(
+            new ClipboardEvent('copy', {
+              bubbles: true,
+              cancelable: true,
+              clipboardData: clipboard
+            })
+          )
+          return clipboard.getData('text/plain')
+        })
+      )
+      .toBe(tmuxSelection)
 
     await page.reload()
     await expect(page.locator('.xterm')).toBeVisible()

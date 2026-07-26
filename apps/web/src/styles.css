@@ -97,12 +97,6 @@ code {
   background-color: var(--color-zinc-950);
 }
 
-/* xterm needs local scrollback for selection drag autoscroll, but tmux owns the
-   user-facing history and scrollbar. */
-.xterm-host .xterm-scrollable-element > .scrollbar.vertical {
-  display: none;
-}
-
 .terminal-session-host {
   position: relative;
 }
