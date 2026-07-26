@@ -1832,24 +1832,6 @@ export class TreeportService {
     }
   }
 
-  async previewWorktreePath(
-    projectId: string,
-    inputName: string
-  ): Promise<{ name: string; path: string }> {
-    const project = this.requireOpenProject(projectId)
-    const resolved = await resolveZedWorktreePath(
-      project.mainWorktreePath,
-      inputName
-    ).catch((error: unknown) => {
-      throw new DomainError(
-        'INVALID_WORKTREE_PATH',
-        error instanceof Error ? error.message : String(error),
-        400
-      )
-    })
-    return { name: resolved.name, path: resolved.path }
-  }
-
   async createWorktree(
     projectId: string,
     inputName: string,

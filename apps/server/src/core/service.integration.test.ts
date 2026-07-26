@@ -8,6 +8,7 @@ import { GhAdapter } from './gh'
 import { GitAdapter } from './git'
 import { TreeportService } from './service'
 import { TmuxAdapter } from './tmux'
+import { resolveZedWorktreePath } from './zed'
 import type { AppConfig } from './config'
 
 const directories: string[] = []
@@ -1450,12 +1451,9 @@ describe('TreeportService with injected command adapters', () => {
   it('serializes same-project creation lifecycles and drains queued work', async () => {
     const { main, runner, service } = await fixture()
     const project = await service.registerProject(main)
-    const firstDestination = await service.previewWorktreePath(
-      project.id,
-      'queued-first'
-    )
-    const secondDestination = await service.previewWorktreePath(
-      project.id,
+    const firstDestination = await resolveZedWorktreePath(main, 'queued-first')
+    const secondDestination = await resolveZedWorktreePath(
+      main,
       'queued-second'
     )
     let releaseFirst!: () => void

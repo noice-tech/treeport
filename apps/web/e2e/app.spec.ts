@@ -837,21 +837,6 @@ async function mockApp(
       return
     }
 
-    if (pathname.endsWith('/worktree-destination')) {
-      const name = (url.searchParams.get('name') ?? '')
-        .trim()
-        .replace(/\s+/g, '-')
-      await route.fulfill({
-        json: {
-          destination: {
-            name,
-            path: `/worktrees/${name}/repo`
-          }
-        }
-      })
-      return
-    }
-
     if (
       pathname === '/api/projects/proj_1/worktrees' &&
       route.request().method() === 'POST'
@@ -1868,9 +1853,6 @@ test.describe('desktop worktree terminal UI', () => {
       mocked.failNextCreate()
       await page.getByRole('button', { name: 'New worktree' }).click()
       await page.getByLabel('Worktree name').fill('will fail')
-      await expect(
-        page.getByText('Destination: /worktrees/will-fail/repo')
-      ).toBeVisible()
       await page.getByRole('button', { name: 'Create worktree' }).click()
       await expect(
         page.getByRole('heading', { name: 'Create worktree' })
@@ -1888,9 +1870,6 @@ test.describe('desktop worktree terminal UI', () => {
       const releaseCreate = mocked.delayNextCreate()
       await page.getByRole('button', { name: 'New worktree' }).click()
       await page.getByLabel('Worktree name').fill('new topic')
-      await expect(
-        page.getByText('Destination: /worktrees/new-topic/repo')
-      ).toBeVisible()
       const requestPromise = page.waitForRequest(
         (request) =>
           request.method() === 'POST' &&
@@ -1967,9 +1946,6 @@ test.describe('desktop worktree terminal UI', () => {
         'preset_hunk'
       )
       await page.getByLabel('Worktree name').fill('preset topic')
-      await expect(
-        page.getByText('Destination: /worktrees/preset-topic/repo')
-      ).toBeVisible()
       const requestPromise = page.waitForRequest(
         (request) =>
           request.method() === 'POST' &&
@@ -3348,9 +3324,7 @@ test.describe('mobile terminal UI', () => {
     ).toBeVisible()
   })
 
-  test('submits a mobile worktree before its preview debounce settles', async ({
-    page
-  }) => {
+  test('submits a mobile worktree immediately', async ({ page }) => {
     await mockApp(page)
     await page.getByLabel('Open worktree drawer').click()
     await page.getByRole('button', { name: 'New worktree' }).click()
@@ -3396,9 +3370,6 @@ test.describe('mobile terminal UI', () => {
     await page.getByLabel('Open worktree drawer').click()
     await trigger.click()
     await page.getByLabel('Worktree name').fill('mobile failure')
-    await expect(
-      page.getByText('Destination: /worktrees/mobile-failure/repo')
-    ).toBeVisible()
     await page.getByRole('button', { name: 'Create worktree' }).click()
     const alert = page.getByRole('alert')
     await expect(alert).toContainText('create failed')

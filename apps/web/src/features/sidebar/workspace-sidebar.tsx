@@ -971,20 +971,13 @@ export function WorkspaceSidebar({
                       </li>
                     ))}
                     {pendingWorktrees
-                      .filter(
-                        (pending) =>
-                          pending.projectId === project.id &&
-                          !project.worktrees.some(
-                            (worktree) =>
-                              worktree.path === pending.destinationPath
-                          )
-                      )
+                      .filter((pending) => pending.projectId === project.id)
                       .map((pending) => (
                         <li key={pending.id} className="min-w-0">
                           <WorktreeShell
                             id={`pending-worktree-${pending.id}`}
                             name={pending.typedName}
-                            title={pending.destinationPath}
+                            title={`Creating ${pending.typedName}`}
                             pending
                             icon={
                               <GitBranchIcon

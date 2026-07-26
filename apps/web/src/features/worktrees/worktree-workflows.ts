@@ -17,8 +17,6 @@ import {
   worktreeTarget
 } from '../../workspace-navigation'
 import { useWorkspaceNavigate } from '../../workspace-router-navigation'
-import type { WorktreeDestination } from './worktree-form'
-
 const MANUAL_CLEANUP_PREFIX = 'Manual cleanup required:'
 
 function needsManualCleanup(worktree: WorktreeRecord): boolean {
@@ -29,7 +27,6 @@ export interface PendingWorktreeCreation {
   id: string
   projectId: string
   typedName: string
-  destinationPath: string
   base: 'default' | 'current'
   initialTerminal: {
     name: string
@@ -92,6 +89,9 @@ export function useWorktreeWorkflows({
           : result.worktree
       const replacesEmptyProject =
         location.pathname === projectTarget(pending.projectId).pathname
+      setPendingWorktrees((current) =>
+        current.filter((item) => item.id !== pending.id)
+      )
       queryClient.setQueryData<ProjectRecord[]>(projectsQueryKey, (current) =>
         current?.map((project) =>
           project.id === pending.projectId
@@ -113,9 +113,6 @@ export function useWorktreeWorkflows({
       await navigateToWorkspace(target, replacesEmptyProject)
       setDrawerOpen(false)
 
-      setPendingWorktrees((current) =>
-        current.filter((item) => item.id !== pending.id)
-      )
       if (result.setupError) {
         setError(
           `Worktree created, but setup could not start: ${result.setupError}`
@@ -141,7 +138,6 @@ export function useWorktreeWorkflows({
     project: ProjectRecord,
     name: string,
     base: 'default' | 'current',
-    destination: WorktreeDestination,
     initialTerminal: {
       name: string
       argv?: string[]
@@ -156,7 +152,6 @@ export function useWorktreeWorkflows({
       id: crypto.randomUUID(),
       projectId: project.id,
       typedName: name,
-      destinationPath: destination.path,
       base,
       initialTerminal: {
         name: initialTerminal.name,

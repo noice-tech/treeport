@@ -105,12 +105,6 @@ export const apiClient = {
         body: JSON.stringify({ color })
       })
     ).project,
-  worktreeDestination: async (projectId: string, name: string) =>
-    (
-      await api<{ destination: { name: string; path: string } }>(
-        `/api/projects/${projectId}/worktree-destination?name=${encodeURIComponent(name)}`
-      )
-    ).destination,
   createWorktree: async (
     projectId: string,
     name: string,

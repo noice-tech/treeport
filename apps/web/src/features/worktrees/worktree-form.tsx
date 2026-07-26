@@ -1,20 +1,12 @@
 import { useEffect, useState } from 'react'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
 import type { ProjectRecord, TerminalPreset } from '@treeport/shared'
-import { apiClient } from '../../api'
 import { Button } from '../../components/ui/button'
 import { Input } from '../../components/ui/input'
 import { Label } from '../../components/ui/label'
 import { NativeSelect } from '../../components/ui/native-select'
-import { cn } from '../../lib/utils'
 import { FormField, ModalHeading } from '../dialogs/dialog-parts'
 
 const INITIAL_TERMINAL_PRESET_STORAGE_KEY = 'treeport-initial-terminal-preset'
-
-export interface WorktreeDestination {
-  name: string
-  path: string
-}
 
 export function WorktreeForm({
   project,
@@ -34,7 +26,6 @@ export function WorktreeForm({
   onSubmit: (
     name: string,
     base: 'default' | 'current',
-    destination: WorktreeDestination,
     initialTerminal: {
       name: string
       argv?: string[]
@@ -43,10 +34,7 @@ export function WorktreeForm({
     sourceWorktreeId?: string
   ) => void
 }) {
-  const queryClient = useQueryClient()
   const [name, setName] = useState('')
-  const [debouncedName, setDebouncedName] = useState('')
-  const [resolvingSubmission, setResolvingSubmission] = useState(false)
   const [baseValue, setBaseValue] = useState('default')
   const [initialPresetId, setInitialPresetId] = useState(() => {
     const stored = localStorage.getItem(INITIAL_TERMINAL_PRESET_STORAGE_KEY)
@@ -64,63 +52,20 @@ export function WorktreeForm({
   const effectiveInitialPresetId =
     initialPresetUnavailable && !presetsLoading ? 'shell' : initialPresetId
   useEffect(() => {
-    const timeout = window.setTimeout(() => setDebouncedName(name), 250)
-    return () => window.clearTimeout(timeout)
-  }, [name])
-  useEffect(() => {
     if (initialPresetMissing) {
       localStorage.setItem(INITIAL_TERMINAL_PRESET_STORAGE_KEY, 'shell')
     }
   }, [initialPresetMissing])
-  const destinationQuery = useQuery({
-    queryKey: ['worktree-destination', project.id, debouncedName],
-    queryFn: () => apiClient.worktreeDestination(project.id, debouncedName),
-    enabled: Boolean(debouncedName.trim()),
-    placeholderData: (previous) => previous,
-    retry: false
-  })
   const base = baseValue === 'default' ? 'default' : 'current'
   return (
     <form
-      className="flex flex-col gap-4"
-      onSubmit={async (event) => {
+      className="flex flex-col gap-5"
+      autoComplete="off"
+      onSubmit={(event) => {
         event.preventDefault()
-        if (busy || resolvingSubmission) {
+        const submittedName = name.trim()
+        if (busy || !submittedName) {
           return
-        }
-
-        const submittedName = String(
-          new FormData(event.currentTarget).get('worktree-name') ?? ''
-        )
-        if (!submittedName.trim()) {
-          return
-        }
-
-        setName(submittedName)
-        setDebouncedName(submittedName)
-        setResolvingSubmission(true)
-
-        const readyDestination =
-          submittedName === debouncedName &&
-          !destinationQuery.isFetching &&
-          !destinationQuery.isError
-            ? destinationQuery.data
-            : undefined
-        let destination: WorktreeDestination
-        if (readyDestination) {
-          destination = readyDestination
-        } else {
-          try {
-            destination = await queryClient.fetchQuery({
-              queryKey: ['worktree-destination', project.id, submittedName],
-              queryFn: () =>
-                apiClient.worktreeDestination(project.id, submittedName),
-              retry: false
-            })
-          } catch {
-            setResolvingSubmission(false)
-            return
-          }
         }
 
         const selectedPreset = presets.find(
@@ -129,7 +74,6 @@ export function WorktreeForm({
         onSubmit(
           submittedName,
           base,
-          destination,
           selectedPreset
             ? {
                 name: selectedPreset.name,
@@ -141,7 +85,7 @@ export function WorktreeForm({
         )
       }}
     >
-      <ModalHeading eyebrow={project.name} title="New worktree" />
+      <ModalHeading eyebrow={project.name} title="Create worktree" />
       <FormField>
         <Label htmlFor="worktree-name">Name</Label>
         <Input
@@ -149,30 +93,33 @@ export function WorktreeForm({
           name="worktree-name"
           value={name}
           onChange={(event) => setName(event.target.value)}
-          placeholder="investigate-cache"
+          placeholder="feature-name"
           aria-label="Worktree name"
+          autoCapitalize="none"
+          spellCheck={false}
           required
           autoFocus
           data-modal-autofocus
-          aria-invalid={destinationQuery.isError}
+          disabled={busy}
         />
       </FormField>
       <FormField>
-        <Label htmlFor="worktree-base">Base</Label>
+        <Label htmlFor="worktree-base">Start from</Label>
         <NativeSelect
           id="worktree-base"
           name="worktree-base"
           value={baseValue}
           onChange={(event) => setBaseValue(event.target.value)}
+          disabled={busy}
         >
           <option value="default">
-            {project.defaultBranch} (latest from origin)
+            {project.defaultBranch} · latest from origin
           </option>
           {project.worktrees
             .filter((worktree) => worktree.status === 'active')
             .map((worktree) => (
               <option key={worktree.id} value={worktree.id}>
-                {worktree.name} (current commit)
+                {worktree.name} · current commit
               </option>
             ))}
         </NativeSelect>
@@ -190,6 +137,7 @@ export function WorktreeForm({
               event.target.value
             )
           }}
+          disabled={busy}
         >
           {waitingForInitialPreset && (
             <option value={initialPresetId}>Loading saved preset…</option>
@@ -227,31 +175,18 @@ export function WorktreeForm({
           </div>
         )}
       </FormField>
-      <p
-        className={cn(
-          'form-note min-h-5 truncate',
-          destinationQuery.isError && 'text-rose-300'
-        )}
-        title={destinationQuery.data?.path}
-        aria-live="polite"
-      >
-        {destinationQuery.data
-          ? `Destination: ${destinationQuery.data.path}`
-          : destinationQuery.error
-            ? destinationQuery.error.message
-            : name.trim()
-              ? 'Resolving destination…'
-              : 'Enter a name to preview the destination.'}
-      </p>
-      <Button
-        type="submit"
-        className="self-end"
-        disabled={
-          busy || resolvingSubmission || waitingForInitialPreset || !name.trim()
-        }
-      >
-        {busy || resolvingSubmission ? 'Creating…' : 'Create worktree'}
-      </Button>
+      <div className="flex items-center justify-between gap-4 pt-1">
+        <p className="hidden text-xs text-zinc-600 sm:block">
+          Press Enter to create
+        </p>
+        <Button
+          type="submit"
+          className="ml-auto"
+          disabled={busy || waitingForInitialPreset || !name.trim()}
+        >
+          {busy ? 'Creating…' : 'Create worktree'}
+        </Button>
+      </div>
     </form>
   )
 }
