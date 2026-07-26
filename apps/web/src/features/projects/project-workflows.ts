@@ -128,11 +128,11 @@ export function useProjectWorkflows({
       (current) => current?.filter((candidate) => candidate.id !== project.id)
     )
     await navigateToWorkspace(targetForProject(project), replacesEmptyRoot)
-    openedProjectUi()
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: projectsQueryKey }),
       queryClient.invalidateQueries({ queryKey: recentProjectsQueryKey })
     ])
+    openedProjectUi()
   }
 
   return {

@@ -553,6 +553,8 @@ async function mockApp(
         releaseProjects = resolve
       })
     : null
+  let nextProjectsGate: Promise<void> | null = null
+  let releaseNextProjects: (() => void) | null = null
   let closeRequests = 0
   let failClose = false
   let removePreviewRequests = 0
@@ -787,6 +789,11 @@ async function mockApp(
       projectRequests += 1
       if (projectsGate) {
         await projectsGate
+      }
+      if (nextProjectsGate) {
+        const gate = nextProjectsGate
+        nextProjectsGate = null
+        await gate
       }
 
       await route.fulfill({ json: { projects: openProjects } })
@@ -1107,6 +1114,12 @@ async function mockApp(
       failDirectoryBrowse = true
     },
     releaseProjects: () => releaseProjects?.(),
+    delayNextProjects: () => {
+      nextProjectsGate = new Promise<void>((resolve) => {
+        releaseNextProjects = resolve
+      })
+      return () => releaseNextProjects?.()
+    },
     closeRequests: () => closeRequests,
     failNextClose: () => {
       failClose = true
@@ -1602,7 +1615,10 @@ test.describe('desktop worktree terminal UI', () => {
 
     await dialog.getByRole('button', { name: 'Retry' }).click()
     await expect(dialog.getByText('Will open repository: /repo')).toBeVisible()
+    const releaseProjectsRefresh = mocked.delayNextProjects()
     await serverPath.press('Enter')
+    await expect(dialog.getByRole('button', { name: 'Opening…' })).toBeVisible()
+    releaseProjectsRefresh()
     await expect(dialog).toHaveCount(0)
     expect(mocked.registeredProjectPaths()).toEqual(['/repo'])
     await expect(
