@@ -1,4 +1,10 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore
+} from 'react'
 import {
   ArrowPathIcon,
   Cog6ToothIcon,
@@ -104,7 +110,7 @@ export function TerminalView({
   const lastExitSessionId = useRef<string | null>(null)
   const requestTerminalFocus = useRequestTerminalFocus()
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!terminal) {
       setSession(null)
       return
@@ -137,7 +143,7 @@ export function TerminalView({
     () => EMPTY_PROGRESS
   )
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const host = hostRef.current
     if (!host || !activeSession) {
       return

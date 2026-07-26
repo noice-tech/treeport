@@ -140,78 +140,82 @@ export function ProjectForm({
         />
       </FormField>
 
-      {data && (
-        <div className="flex flex-wrap items-center gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => navigate(data.directory.homePath)}
-            disabled={busy}
-          >
-            <HomeIcon data-icon="inline-start" />
-            Home
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => navigate(data.directory.rootPath)}
-            disabled={busy}
-          >
-            Root
-          </Button>
-          <label className="ml-auto flex cursor-pointer items-center gap-2 text-sm text-zinc-400">
-            <input
-              type="checkbox"
-              checked={showHidden}
-              onChange={(event) => setShowHidden(event.target.checked)}
+      <div className="flex min-h-8 flex-wrap items-center gap-2">
+        {data && (
+          <>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => navigate(data.directory.homePath)}
               disabled={busy}
-            />
-            Show hidden folders
-          </label>
-        </div>
-      )}
+            >
+              <HomeIcon data-icon="inline-start" />
+              Home
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => navigate(data.directory.rootPath)}
+              disabled={busy}
+            >
+              Root
+            </Button>
+            <label className="ml-auto flex cursor-pointer items-center gap-2 text-sm text-zinc-400">
+              <input
+                type="checkbox"
+                checked={showHidden}
+                onChange={(event) => setShowHidden(event.target.checked)}
+                disabled={busy}
+              />
+              Show hidden folders
+            </label>
+          </>
+        )}
+      </div>
 
       <div className="overflow-hidden rounded-lg bg-zinc-950/50 ring-1 ring-white/10">
-        {data && (
-          <div className="flex min-h-10 items-center gap-1 overflow-x-auto border-b border-white/8 px-2 py-1.5">
-            {data.directory.parentPath && (
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                aria-label="Parent folder"
-                onClick={() => navigate(data.directory.parentPath!)}
-                disabled={busy}
-              >
-                <ArrowUpIcon />
-              </Button>
-            )}
-            {data.directory.breadcrumbs.map((breadcrumb, index) => (
-              <div key={breadcrumb.path} className="flex items-center gap-1">
-                {index > 0 && (
-                  <ChevronRightIcon className="size-3.5 shrink-0 fill-zinc-600" />
-                )}
+        <div className="flex min-h-10 items-center gap-1 overflow-x-auto border-b border-white/8 px-2 py-1.5">
+          {data && (
+            <>
+              {data.directory.parentPath && (
                 <Button
                   type="button"
                   variant="ghost"
-                  size="sm"
-                  className="max-w-48"
-                  title={breadcrumb.path}
-                  onClick={() => navigate(breadcrumb.path)}
+                  size="icon-sm"
+                  aria-label="Parent folder"
+                  onClick={() => navigate(data.directory.parentPath!)}
                   disabled={busy}
                 >
-                  <span className="truncate">{breadcrumb.name}</span>
+                  <ArrowUpIcon />
                 </Button>
-              </div>
-            ))}
-          </div>
-        )}
+              )}
+              {data.directory.breadcrumbs.map((breadcrumb, index) => (
+                <div key={breadcrumb.path} className="flex items-center gap-1">
+                  {index > 0 && (
+                    <ChevronRightIcon className="size-3.5 shrink-0 fill-zinc-600" />
+                  )}
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="max-w-48"
+                    title={breadcrumb.path}
+                    onClick={() => navigate(breadcrumb.path)}
+                    disabled={busy}
+                  >
+                    <span className="truncate">{breadcrumb.name}</span>
+                  </Button>
+                </div>
+              ))}
+            </>
+          )}
+        </div>
 
         <div
           id="project-directory-list"
-          className="grid max-h-72 min-h-48 content-start gap-0.5 overflow-y-auto p-1.5 [scrollbar-color:var(--color-zinc-700)_transparent]"
+          className="grid h-72 content-start gap-0.5 overflow-y-auto p-1.5 [scrollbar-color:var(--color-zinc-700)_transparent]"
           aria-label="Folders"
         >
           {directoryQuery.isFetching && (
