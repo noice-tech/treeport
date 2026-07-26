@@ -251,8 +251,7 @@ function createWindow(): BrowserWindow {
       : {}),
     webPreferences: {
       preload: path.join(dirname, 'preload.js'),
-      // Without `persist:` this partition is in-memory.
-      partition: 'treeport-desktop',
+      partition: 'persist:treeport-desktop',
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: true
