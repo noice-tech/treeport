@@ -1,0 +1,8 @@
+{
+  "apps": {
+    "apps/web": { "proxy": false },
+    "apps/server": { "name": "api.treeport" },
+    "apps/desktop": { "proxy": false },
+    "packages/cli": { "proxy": false }
+  }
+}

@@ -15,6 +15,18 @@ describe('configuration', () => {
     expect(config.shell).toBe('/bin/zsh')
   })
 
+  it('uses conventional listener variables when Treeport overrides are absent', () => {
+    const config = loadConfig({
+      HOST: '127.0.0.1',
+      PORT: '4567',
+      TREEPORT_API_URL: 'https://feature.api.treeport.localhost'
+    })
+
+    expect(config.host).toBe('127.0.0.1')
+    expect(config.port).toBe(4567)
+    expect(config.apiUrl).toBe('https://feature.api.treeport.localhost')
+  })
+
   it('uses explicit Treeport configuration', () => {
     const config = loadConfig({
       TREEPORT_DATA_DIR: '~/treeport-data',

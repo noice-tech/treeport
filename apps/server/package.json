@@ -9,6 +9,7 @@
   ],
   "scripts": {
     "dev": "tsdown --watch --on-success \"node --enable-source-maps dist/index.js\"",
+    "watch": "tsdown --watch --on-success \"node --enable-source-maps dist/index.js\"",
     "build": "tsdown",
     "start": "node --enable-source-maps dist/index.js",
     "typecheck": "tsc --noEmit -p tsconfig.json --pretty"

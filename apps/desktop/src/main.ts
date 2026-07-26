@@ -4,10 +4,12 @@ import {
   BrowserWindow,
   ipcMain,
   Menu,
+  net,
   shell,
   type MenuItemConstructorOptions
 } from 'electron'
 import { filePathFromUrl } from './file-url.js'
+import { parseRendererUrl } from './renderer-url.js'
 
 const dirname = __dirname
 if (app.isPackaged) {
@@ -20,21 +22,7 @@ const defaultRendererUrl = app.isPackaged
 const configuredRendererUrl =
   process.env.TREEPORT_DESKTOP_URL?.trim() || defaultRendererUrl
 
-if (!URL.canParse(configuredRendererUrl)) {
-  throw new Error('TREEPORT_DESKTOP_URL must be a valid loopback HTTP URL')
-}
-
-const rendererUrl = new URL(configuredRendererUrl)
-if (
-  rendererUrl.protocol !== 'http:' ||
-  !['127.0.0.1', 'localhost', '[::1]'].includes(rendererUrl.hostname)
-) {
-  throw new Error('TREEPORT_DESKTOP_URL must use HTTP on a loopback host')
-}
-
-rendererUrl.pathname = '/'
-rendererUrl.search = ''
-rendererUrl.hash = ''
+const rendererUrl = parseRendererUrl(configuredRendererUrl)
 const rendererOrigin = rendererUrl.origin
 let mainWindow: BrowserWindow | null = null
 let loadGeneration = 0
@@ -121,9 +109,11 @@ const connectionPageUrl = `data:text/html;charset=utf-8,${encodeURIComponent(
 )}`
 
 async function rendererIsReady(): Promise<boolean> {
-  const response = await fetch(new URL('/api/health', rendererUrl), {
-    signal: AbortSignal.timeout(1_500)
-  }).catch(() => null)
+  const response = await net
+    .fetch(new URL('/api/health', rendererUrl).toString(), {
+      signal: AbortSignal.timeout(1_500)
+    })
+    .catch(() => null)
   if (!response?.ok) {
     return false
   }
@@ -141,7 +131,7 @@ async function rendererIsReady(): Promise<boolean> {
 
 async function loadTreeport(window: BrowserWindow): Promise<void> {
   const generation = ++loadGeneration
-  for (let attempt = 0; attempt < 20; attempt += 1) {
+  for (let attempt = 0; attempt < 120; attempt += 1) {
     if (window.isDestroyed() || generation !== loadGeneration) {
       return
     }
