@@ -2883,7 +2883,7 @@ test.describe('desktop worktree terminal UI', () => {
       .toContain('/tmp/treeport-upload-2.txt')
   })
 
-  test('selects with Mac Option-drag and forwards application wheel events', async ({
+  test('autoscrolls terminal selections and forwards application wheel events', async ({
     page
   }) => {
     await mockApp(page, [], { keyboardPlatform: 'MacIntel' })
@@ -2938,6 +2938,81 @@ test.describe('desktop worktree terminal UI', () => {
     expect(
       sent.some((message: any) => String(message.data).includes('\u001b[<'))
     ).toBe(false)
+
+    await page.evaluate(() => {
+      const socket = (window as any).__lastWs
+      socket.onmessage?.({
+        data: JSON.stringify({
+          version: 1,
+          type: 'output',
+          streamId: socket.streamId,
+          sequence: 3,
+          data:
+            Array.from(
+              { length: 80 },
+              (_, index) => `selection-line-${String(index).padStart(3, '0')}`
+            ).join('\r\n') + '\r\n'
+        })
+      })
+    })
+    await expect(page.locator('.xterm-rows')).toContainText(
+      'selection-line-079'
+    )
+
+    const historyBounds = await screen.boundingBox()
+    expect(historyBounds).not.toBeNull()
+    await page.mouse.move(
+      historyBounds!.x + 180,
+      historyBounds!.y + historyBounds!.height - 16
+    )
+    await page.mouse.down()
+    await page.mouse.move(historyBounds!.x + 8, historyBounds!.y - 60, {
+      steps: 5
+    })
+    await page.waitForTimeout(350)
+    await page.mouse.up()
+
+    const upwardSelection = await page
+      .locator('.xterm-helper-textarea')
+      .evaluate((textarea) => {
+        const clipboard = new DataTransfer()
+        textarea.dispatchEvent(
+          new ClipboardEvent('copy', {
+            bubbles: true,
+            cancelable: true,
+            clipboardData: clipboard
+          })
+        )
+        return clipboard.getData('text/plain')
+      })
+    expect(upwardSelection).toContain('selection-line-000')
+    expect(upwardSelection).toContain('selection-line-078')
+
+    await page.mouse.move(historyBounds!.x + 8, historyBounds!.y + 16)
+    await page.mouse.down()
+    await page.mouse.move(
+      historyBounds!.x + 180,
+      historyBounds!.y + historyBounds!.height + 60,
+      { steps: 5 }
+    )
+    await page.waitForTimeout(350)
+    await page.mouse.up()
+
+    const downwardSelection = await page
+      .locator('.xterm-helper-textarea')
+      .evaluate((textarea) => {
+        const clipboard = new DataTransfer()
+        textarea.dispatchEvent(
+          new ClipboardEvent('copy', {
+            bubbles: true,
+            cancelable: true,
+            clipboardData: clipboard
+          })
+        )
+        return clipboard.getData('text/plain')
+      })
+    expect(downwardSelection).toContain('selection-line-001')
+    expect(downwardSelection).toContain('selection-line-079')
 
     await page.reload()
     await expect(page.locator('.xterm')).toBeVisible()

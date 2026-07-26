@@ -356,7 +356,10 @@ export function terminalOptions() {
       '"SFMono-Regular", "Cascadia Code", "Liberation Mono", monospace',
     fontSize: TERMINAL_FONT_SIZE,
     lineHeight: 1.15,
-    scrollback: 0,
+    // Keep a local history for xterm's native selection drag autoscroll. Mouse
+    // wheel scrolling is still forwarded to tmux, which owns persistent history.
+    scrollback: 10_000,
+    overviewRuler: { width: 1 },
     allowProposedApi: false,
     macOptionClickForcesSelection: true,
     linkHandler: {
