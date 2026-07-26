@@ -160,19 +160,11 @@ treeport terminal create --worktree . --name dev -- pnpm dev
 
 ## Desktop app
 
-Development requires Node.js 24+ because it uses [Portless](https://portless.sh/) to give every Git worktree its own local URL. Run the server, web app, CLI watcher, and Electron companion together:
+Development requires Node.js 24+. Run the complete development stack with:
 
 ```sh
 pnpm dev
 ```
-
-The primary checkout is available at `https://treeport.localhost`. When Tailscale is installed and connected, Portless also prints a stable Tailscale URL for access from your tailnet. Linked worktrees use a branch-prefixed local URL such as `https://fix-ui.treeport.localhost`; only the primary checkout claims the stable Tailscale endpoint. Portless may ask to trust its local certificate authority on the first run; `pnpm portless:trust` performs that one-time setup explicitly.
-
-Each checkout keeps development-only database and runtime state under `apps/server/.treeport-dev/`; `pnpm dev` never reads Treeport's packaged application data. Initialize the primary checkout's development database once during repository setup. Treeport's Zed-compatible `create_worktree` tasks then install dependencies and make a SQLite-safe snapshot of that database for each linked worktree, with new tmux socket names.
-
-Snapshots retain real repository and worktree paths so development can operate on those checkouts, while database, runtime, ports, and terminal servers remain isolated per checkout.
-
-Use `pnpm dev:direct` to bypass Portless and run the previous fixed-port development workflow. It still uses the checkout-local development database and runtime directory.
 
 Useful shortcuts include:
 

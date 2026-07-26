@@ -10,7 +10,6 @@
   "scripts": {
     "build": "tsc -b && chmod +x bin/treeport.mjs dist/index.js",
     "dev": "pnpm build && tsc -b --watch --preserveWatchOutput",
-    "watch": "pnpm build && tsc -b --watch --preserveWatchOutput",
     "typecheck": "tsc --noEmit -p tsconfig.json --pretty"
   },
   "dependencies": {

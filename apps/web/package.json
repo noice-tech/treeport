@@ -4,8 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite --port 5173",
-    "watch": "pnpm --dir ../.. run watch:web",
+    "dev": "if [ \"$TREEPORT_DIRECT_DEV\" = 1 ]; then vite --port 5173; elif tailscale status >/dev/null 2>&1; then portless treeport --tailscale vite; else portless treeport vite; fi",
     "dev:desktop": "vite --port 5173",
     "build": "vite build",
     "typecheck": "tsc --noEmit --emitDeclarationOnly false -p tsconfig.json --pretty"

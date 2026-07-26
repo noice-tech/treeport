@@ -8,8 +8,7 @@
     "dist"
   ],
   "scripts": {
-    "dev": "TREEPORT_DATA_DIR=.treeport-dev/data TREEPORT_RUNTIME_DIR=.treeport-dev/runtime tsdown --watch --on-success \"node --enable-source-maps dist/index.js\"",
-    "watch": "TREEPORT_DATA_DIR=.treeport-dev/data TREEPORT_RUNTIME_DIR=.treeport-dev/runtime tsdown --watch --on-success \"node --enable-source-maps dist/index.js\"",
+    "dev": "export TREEPORT_DATA_DIR=.treeport-dev/data TREEPORT_RUNTIME_DIR=.treeport-dev/runtime; if [ \"$TREEPORT_DIRECT_DEV\" = 1 ]; then tsdown --watch --on-success \"node --enable-source-maps dist/index.js\"; else portless api.treeport tsdown --watch --on-success \"node --enable-source-maps dist/index.js\"; fi",
     "build": "tsdown",
     "start": "node --enable-source-maps dist/index.js",
     "typecheck": "tsc --noEmit -p tsconfig.json --pretty"
