@@ -4,8 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "TREEPORT_DATA_DIR=\"$PWD/.treeport-dev/data\" TREEPORT_DATABASE_PATH=\"$PWD/.treeport-dev/data/treeport.db\" TREEPORT_RUNTIME_DIR=\"$PWD/.treeport-dev/runtime\" TREEPORT_API_URL=\"$(pnpm exec portless get api.treeport)\" TREEPORT_DESKTOP_URL=\"$(pnpm exec portless get treeport)\" NODE_EXTRA_CA_CERTS=\"${PORTLESS_STATE_DIR:-$HOME/.portless}/ca.pem\" pnpm exec portless --script watch",
-    "dev:direct": "TREEPORT_DATA_DIR=\"$PWD/.treeport-dev/data\" TREEPORT_DATABASE_PATH=\"$PWD/.treeport-dev/data/treeport.db\" TREEPORT_RUNTIME_DIR=\"$PWD/.treeport-dev/runtime\" TREEPORT_HOST=127.0.0.1 TREEPORT_PORT=4780 TREEPORT_API_URL=http://127.0.0.1:4780 TREEPORT_DESKTOP_URL=http://127.0.0.1:5173 pnpm exec turbo run dev",
+    "dev": "TREEPORT_API_URL=\"$(portless get api.treeport)\" TREEPORT_DESKTOP_URL=\"$(portless get treeport)\" portless --script watch",
+    "dev:direct": "TREEPORT_HOST=127.0.0.1 TREEPORT_PORT=4780 turbo run dev",
     "dev:desktop": "pnpm --parallel --filter @treeport/web --filter @treeport/desktop dev:desktop",
     "watch:web": "cd apps/web && if [ \"$(git rev-parse --path-format=absolute --git-dir)\" = \"$(git rev-parse --path-format=absolute --git-common-dir)\" ] && tailscale status >/dev/null 2>&1; then portless treeport --tailscale vite; else portless treeport vite; fi",
     "portless:trust": "portless trust",
