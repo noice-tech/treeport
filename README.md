@@ -160,7 +160,7 @@ treeport terminal create --worktree . --name dev -- pnpm dev
 
 ## Desktop app
 
-Run the server, web app, and Electron companion together during development:
+Development requires Node.js 24+. Run the complete development stack with:
 
 ```sh
 pnpm dev

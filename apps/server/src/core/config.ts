@@ -47,8 +47,11 @@ function defaultRuntimeDir(env: NodeJS.ProcessEnv): string {
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
-  const host = env.TREEPORT_HOST?.trim() || '127.0.0.1'
-  const portValue = Number.parseInt(env.TREEPORT_PORT?.trim() || '4780', 10)
+  const host = env.TREEPORT_HOST?.trim() || env.HOST?.trim() || '127.0.0.1'
+  const portValue = Number.parseInt(
+    env.TREEPORT_PORT?.trim() || env.PORT?.trim() || '4780',
+    10
+  )
   if (!Number.isInteger(portValue) || portValue < 1 || portValue > 65_535) {
     throw new Error('TREEPORT_PORT must be an integer between 1 and 65535')
   }

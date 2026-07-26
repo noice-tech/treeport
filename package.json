@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "pnpm --filter @treeport/cli build && turbo run dev",
+    "dev": "TREEPORT_API_URL=\"$(portless get api.treeport)\" TREEPORT_DESKTOP_URL=\"$(portless get treeport)\" turbo run dev",
+    "dev:direct": "TREEPORT_DIRECT_DEV=1 TREEPORT_HOST=127.0.0.1 TREEPORT_PORT=4780 turbo run dev",
     "dev:desktop": "pnpm --parallel --filter @treeport/web --filter @treeport/desktop dev:desktop",
     "build": "turbo run build",
     "start": "node scripts/start.mjs",
@@ -30,6 +31,7 @@
     "knip": "^6.29.0",
     "oxfmt": "^0.59.0",
     "oxlint": "^1.74.0",
+    "portless": "^0.15.4",
     "tsx": "^4.21.0",
     "turbo": "^2.10.5",
     "typescript": "^5.9.3",

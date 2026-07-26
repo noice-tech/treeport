@@ -1,0 +1,22 @@
+[
+  {
+    "label": "Install dependencies",
+    "command": "pnpm",
+    "args": ["install", "--frozen-lockfile"],
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "hooks": ["create_worktree"]
+  },
+  {
+    "label": "Clone Treeport development database",
+    "command": "node",
+    "args": [
+      "$ZED_WORKTREE_ROOT/apps/server/scripts/development-database.mjs",
+      "--from",
+      "$ZED_MAIN_GIT_WORKTREE/apps/server/.treeport-dev/data/treeport.db",
+      "--to",
+      "$ZED_WORKTREE_ROOT/apps/server/.treeport-dev/data/treeport.db"
+    ],
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "hooks": ["create_worktree"]
+  }
+]

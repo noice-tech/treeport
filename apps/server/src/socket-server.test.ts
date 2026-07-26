@@ -295,7 +295,7 @@ describe('Socket.IO real network', () => {
     await closeClient(second)
   })
 
-  it('accepts same-origin and originless clients but rejects foreign browser origins', async () => {
+  it('accepts direct and reverse-proxied local clients but rejects foreign browser origins', async () => {
     const value = await fixture()
     const allowed = eventClient(value.url, {
       extraHeaders: { Origin: value.url }
@@ -303,6 +303,17 @@ describe('Socket.IO real network', () => {
     await new Promise<void>((resolve, reject) => {
       allowed.once('connect', () => resolve())
       allowed.once('connect_error', reject)
+    })
+
+    const proxied = eventClient(value.url, {
+      extraHeaders: {
+        Origin: 'https://feature.treeport.localhost',
+        'X-Forwarded-Host': 'feature.treeport.localhost'
+      }
+    })
+    await new Promise<void>((resolve, reject) => {
+      proxied.once('connect', () => resolve())
+      proxied.once('connect_error', reject)
     })
 
     const rejected = eventClient(value.url, {
@@ -319,6 +330,7 @@ describe('Socket.IO real network', () => {
       originless.once('connect_error', reject)
     })
     await closeClient(allowed)
+    await closeClient(proxied)
     await closeClient(rejected)
     await closeClient(originless)
   })
