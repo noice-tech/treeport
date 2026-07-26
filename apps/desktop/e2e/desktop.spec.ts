@@ -5,7 +5,7 @@ import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { _electron as electron, expect, test } from '@playwright/test'
 
-test('dispatches native commands and opens local file URLs', async () => {
+test('dispatches native commands, opens local file URLs, and restores renderer state', async () => {
   const userData = await fs.mkdtemp(
     path.join(os.tmpdir(), 'treeport-electron-')
   )
@@ -96,7 +96,7 @@ test('dispatches native commands and opens local file URLs', async () => {
       await electronApp.evaluate(
         ({ BrowserWindow, session }) =>
           BrowserWindow.getAllWindows()[0]?.webContents.session ===
-          session.fromPartition('treeport-desktop')
+          session.fromPartition('persist:treeport-desktop')
       )
     ).toBe(true)
 
@@ -178,6 +178,31 @@ test('dispatches native commands and opens local file URLs', async () => {
       'close-terminal'
     )
     expect(electronApp.windows()).toHaveLength(1)
+
+    await window.evaluate(() =>
+      localStorage.setItem(
+        'treeport-last-workspace-route',
+        '/projects/project-1/worktrees/worktree-1/terminals/terminal-1'
+      )
+    )
+    await electronApp.close()
+    electronApp = await electron.launch({
+      args: [`--user-data-dir=${userData}`, '.'],
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        TREEPORT_DESKTOP_URL: `http://127.0.0.1:${address.port}`
+      }
+    })
+
+    const reopenedWindow = await electronApp.firstWindow()
+    await expect
+      .poll(() =>
+        reopenedWindow.evaluate(() =>
+          localStorage.getItem('treeport-last-workspace-route')
+        )
+      )
+      .toBe('/projects/project-1/worktrees/worktree-1/terminals/terminal-1')
   } finally {
     await electronApp?.close().catch(() => undefined)
     await new Promise<void>((resolve) => server.close(() => resolve()))
