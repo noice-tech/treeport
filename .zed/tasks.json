@@ -12,9 +12,9 @@
     "args": [
       "$ZED_WORKTREE_ROOT/apps/server/scripts/development-database.mjs",
       "--from",
-      "$ZED_MAIN_GIT_WORKTREE/.treeport-dev/data/treeport.db",
+      "$ZED_MAIN_GIT_WORKTREE/apps/server/.treeport-dev/data/treeport.db",
       "--to",
-      "$ZED_WORKTREE_ROOT/.treeport-dev/data/treeport.db"
+      "$ZED_WORKTREE_ROOT/apps/server/.treeport-dev/data/treeport.db"
     ],
     "cwd": "$ZED_WORKTREE_ROOT",
     "hooks": ["create_worktree"]
