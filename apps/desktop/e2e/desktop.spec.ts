@@ -78,7 +78,7 @@ test('dispatches native commands and opens local file URLs', async () => {
     ).resolves.toBe(true)
     await expect(
       window.evaluate(() =>
-        (window as any).taskttyDesktop.openFileUrl('file:relative.txt')
+        (window as any).treeportDesktop.openFileUrl('file:relative.txt')
       )
     ).resolves.toBe(false)
     expect(
@@ -96,7 +96,7 @@ test('dispatches native commands and opens local file URLs', async () => {
       await electronApp.evaluate(
         ({ BrowserWindow, session }) =>
           BrowserWindow.getAllWindows()[0]?.webContents.session ===
-          session.fromPartition('tasktty-desktop')
+          session.fromPartition('treeport-desktop')
       )
     ).toBe(true)
 

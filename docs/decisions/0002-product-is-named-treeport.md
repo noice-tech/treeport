@@ -6,7 +6,7 @@
 
 ## Context
 
-The original TaskTTY name emphasized terminals, but Decision 0001 established Git worktrees—not terminal emulation or a separate task model—as the product's primary unit of work.
+The original TaskTTY name emphasized terminals, but Decision 0001 established Git worktrees—not terminal emulation or a separate task model—as the product's primary unit of work. The original name was never released.
 
 ## Decision
 
@@ -20,16 +20,8 @@ Repository
 
 This rename does not introduce task, tree, workspace, or provider-specific lifecycle abstractions.
 
-## Compatibility boundary
+## Pre-release cutover
 
-Treeport is canonical in the UI, documentation, package scope, CLI, environment variables, storage keys, and newly created runtime identifiers.
+This is a hard pre-release rename, not a supported compatibility transition. Production code, configuration, metadata, APIs, storage, and newly created runtime identifiers use only Treeport names.
 
-During the transition, Treeport also:
-
-- ships `tasktty` as a deprecated CLI alias;
-- accepts legacy `TASKTTY_*` configuration and managed-terminal context variables;
-- reuses a lone legacy default database in place instead of copying live SQLite state;
-- discovers existing tmux sessions and browser state under legacy identifiers;
-- retains stable legacy machine-readable values where changing them would break automation.
-
-When both forms are supplied, canonical Treeport configuration wins. Compatibility identifiers are not part of the outward product name and may be removed by a future decision after users have migrated.
+Existing local development data requires a one-time operational migration before the renamed server starts. That migration moves the database and data directories and rewrites persisted tmux metadata while retaining persisted tmux socket and session names exactly as stored; those values are opaque identifiers. No permanent fallback, dual read, or dual write is provided.

@@ -37,7 +37,6 @@ const desktopBridge = Object.freeze({
 })
 
 contextBridge.exposeInMainWorld('treeportDesktop', desktopBridge)
-contextBridge.exposeInMainWorld('taskttyDesktop', desktopBridge)
 
 window.addEventListener('DOMContentLoaded', () => {
   document

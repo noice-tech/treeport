@@ -11,5 +11,4 @@ type TreeportDesktopBridge = Readonly<{
 interface Window {
   readonly treeportDesktop?: TreeportDesktopBridge
   /** @deprecated Compatibility alias for desktop shells from before the rename. */
-  readonly taskttyDesktop?: TreeportDesktopBridge
 }

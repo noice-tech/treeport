@@ -122,8 +122,7 @@ export interface RecentProjectRecord {
 export type TreeportContext =
   | {
       managed: false
-      /** Stable automation value retained from the former product name. */
-      reason: 'outside_tasktty'
+      reason: 'outside_treeport'
     }
   | {
       managed: true
@@ -154,9 +153,6 @@ export type TreeportContext =
         'id' | 'worktreeId' | 'name' | 'status' | 'exitCode'
       >
     }
-
-/** @deprecated Use TreeportContext. */
-export type TaskTTYContext = TreeportContext
 
 export interface DirtyState {
   dirty: boolean

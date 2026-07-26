@@ -1,6 +1,6 @@
 ---
 name: solve-task-treeport
-description: Delegate a Treeport repository task from the current coordinating agent to a new persistent worktree and Pi terminal. Use when the user explicitly asks the current agent to start a task in a separate Treeport worktree. Never use when the prompt contains TREEPORT_DIRECT_WORKER or the legacy TASKTTY_DIRECT_WORKER marker; that agent must work directly in its existing worktree.
+description: Delegate a Treeport repository task from the current coordinating agent to a new persistent worktree and Pi terminal. Use when the user explicitly asks the current agent to start a task in a separate Treeport worktree. Never use when the prompt contains TREEPORT_DIRECT_WORKER; that agent must work directly in its existing worktree.
 compatibility: Requires the treeport CLI and Pi to be installed, with a reachable Treeport daemon.
 ---
 
@@ -8,7 +8,7 @@ compatibility: Requires the treeport CLI and Pi to be installed, with a reachabl
 
 ## Recursion guard
 
-If the current request contains `TREEPORT_DIRECT_WORKER` or the legacy `TASKTTY_DIRECT_WORKER`, do not use this workflow. The agent is already the delegated worker: it must solve the task directly in its current worktree and must not create another worktree or agent.
+If the current request contains `TREEPORT_DIRECT_WORKER`, do not use this workflow. The agent is already the delegated worker: it must solve the task directly in its current worktree and must not create another worktree or agent.
 
 Otherwise, use the `treeport` skill.
 

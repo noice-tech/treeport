@@ -51,10 +51,7 @@ async function pruneTerminalUploads(
     await Promise.all(
       entries
         .filter(
-          (entry) =>
-            entry.isFile() &&
-            (entry.name.startsWith('treeport-upload-') ||
-              entry.name.startsWith('tasktty-upload-'))
+          (entry) => entry.isFile() && entry.name.startsWith('treeport-upload-')
         )
         .map(async (entry): Promise<UploadFileInfo | null> => {
           const filePath = path.join(directory, entry.name)
@@ -407,10 +404,9 @@ export function createApp({
       }
     }
 
-    const requestedExtension = (
-      context.req.header('x-treeport-file-extension') ||
-      context.req.header('x-tasktty-file-extension')
-    )?.toLowerCase()
+    const requestedExtension = context.req
+      .header('x-treeport-file-extension')
+      ?.toLowerCase()
     if (requestedExtension && !/^[a-z0-9]{1,16}$/.test(requestedExtension)) {
       throw new DomainError(
         'VALIDATION_ERROR',

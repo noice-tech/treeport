@@ -19,30 +19,12 @@ import {
 } from '@treeport/shared'
 import { extractJsonOutput } from './args.js'
 
-const configuredApiUrl =
-  process.env.TREEPORT_API_URL?.trim() || process.env.TASKTTY_API_URL?.trim()
+const configuredApiUrl = process.env.TREEPORT_API_URL?.trim()
 const apiUrl = (configuredApiUrl || 'http://127.0.0.1:4780').replace(/\/$/, '')
-const usesCanonicalContext = [
-  process.env.TREEPORT_PROJECT_ID,
-  process.env.TREEPORT_WORKTREE_ID,
-  process.env.TREEPORT_TERMINAL_ID
-].some((value) => Boolean(value?.trim()))
-const contextPrefix = usesCanonicalContext ? 'TREEPORT' : 'TASKTTY'
-const contextProjectId = (
-  usesCanonicalContext
-    ? process.env.TREEPORT_PROJECT_ID
-    : process.env.TASKTTY_PROJECT_ID
-)?.trim()
-const contextWorktreeId = (
-  usesCanonicalContext
-    ? process.env.TREEPORT_WORKTREE_ID
-    : process.env.TASKTTY_WORKTREE_ID
-)?.trim()
-const contextTerminalId = (
-  usesCanonicalContext
-    ? process.env.TREEPORT_TERMINAL_ID
-    : process.env.TASKTTY_TERMINAL_ID
-)?.trim()
+const contextPrefix = 'TREEPORT'
+const contextProjectId = process.env.TREEPORT_PROJECT_ID?.trim()
+const contextWorktreeId = process.env.TREEPORT_WORKTREE_ID?.trim()
+const contextTerminalId = process.env.TREEPORT_TERMINAL_ID?.trim()
 const rawArgs = process.argv.slice(2)
 const jsonOutput = extractJsonOutput(rawArgs)
 
@@ -272,7 +254,7 @@ function resolveTerminalId(identifier: string): string {
     throw new CliError(
       `Cannot resolve . without ${variable}`,
       5,
-      'TASKTTY_CONTEXT_INCOMPLETE',
+      'TREEPORT_CONTEXT_INCOMPLETE',
       { missing: [variable] }
     )
   }
@@ -602,7 +584,7 @@ async function main(args: string[]): Promise<void> {
     if (!presentIds.length) {
       const context: TreeportContext = {
         managed: false,
-        reason: 'outside_tasktty'
+        reason: 'outside_treeport'
       }
       print(context, () => 'Not running in a Treeport-managed terminal.')
       return
@@ -618,7 +600,7 @@ async function main(args: string[]): Promise<void> {
       throw new CliError(
         `Incomplete Treeport context; missing ${missing.join(', ')}`,
         5,
-        'TASKTTY_CONTEXT_INCOMPLETE',
+        'TREEPORT_CONTEXT_INCOMPLETE',
         { missing }
       )
     }
@@ -635,7 +617,7 @@ async function main(args: string[]): Promise<void> {
       throw new CliError(
         'Treeport context worktree does not belong to the current project',
         5,
-        'TASKTTY_CONTEXT_INVALID',
+        'TREEPORT_CONTEXT_INVALID',
         { projectId, worktreeId }
       )
     }
@@ -647,7 +629,7 @@ async function main(args: string[]): Promise<void> {
       throw new CliError(
         'Treeport context terminal does not belong to the current worktree',
         5,
-        'TASKTTY_CONTEXT_INVALID',
+        'TREEPORT_CONTEXT_INVALID',
         { worktreeId, terminalId }
       )
     }

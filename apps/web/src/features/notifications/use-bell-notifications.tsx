@@ -270,7 +270,7 @@ export function useBellNotifications({
       }
 
       showToast(context, event)
-      void (window.treeportDesktop ?? window.taskttyDesktop)?.requestAttention()
+      void window.treeportDesktop?.requestAttention()
     }
 
     deliverEvent.current = deliver

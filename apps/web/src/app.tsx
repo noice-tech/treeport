@@ -38,11 +38,6 @@ import { terminalSessions, type TerminalProgress } from './terminal-session'
 import {
   LAST_PROJECT_TERMINAL_STORAGE_PREFIX,
   LAST_WORKSPACE_ROUTE_STORAGE_KEY,
-  LEGACY_ACTIVE_PROJECT_STORAGE_KEY,
-  LEGACY_TERMINAL_STORAGE_KEY,
-  TASKTTY_LAST_PROJECT_TERMINAL_STORAGE_PREFIX,
-  TASKTTY_LAST_WORKSPACE_ROUTE_STORAGE_KEY,
-  legacyResumePath,
   resolveWorkspaceRoute,
   targetForProject,
   targetForTerminal,
@@ -64,27 +59,18 @@ function clampSidebarWidth(width: number): number {
 }
 
 export default function App() {
-  const desktopBridge = window.treeportDesktop ?? window.taskttyDesktop
+  const desktopBridge = window.treeportDesktop
   const navigateToWorkspace = useWorkspaceNavigate()
   const location = useLocation()
   const projectsQuery = useQuery(projectsQueryOptions)
   const projects = projectsQuery.data ?? []
   const presetsQuery = useQuery(terminalPresetsQueryOptions)
   const presets = presetsQuery.data ?? []
-  const storedResumePath =
-    localStorage.getItem(LAST_WORKSPACE_ROUTE_STORAGE_KEY) ??
-    localStorage.getItem(TASKTTY_LAST_WORKSPACE_ROUTE_STORAGE_KEY)
-  const legacyPath = legacyResumePath(
-    projects,
-    localStorage.getItem(LEGACY_TERMINAL_STORAGE_KEY),
-    localStorage.getItem(LEGACY_ACTIVE_PROJECT_STORAGE_KEY)
+  const storedResumePath = localStorage.getItem(
+    LAST_WORKSPACE_ROUTE_STORAGE_KEY
   )
   const workspaceResolution = projectsQuery.data
-    ? resolveWorkspaceRoute(
-        projects,
-        location.pathname,
-        storedResumePath ?? legacyPath
-      )
+    ? resolveWorkspaceRoute(projects, location.pathname, storedResumePath)
     : null
   const selectedProject = workspaceResolution?.selection.project ?? null
   const selectedWorktree = workspaceResolution?.selection.worktree ?? null
@@ -102,13 +88,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null)
   const [modal, setModal] = useState<ActionModalState>(null)
   const [sidebarWidth, setSidebarWidth] = useState(() => {
-    const storedWidth =
-      localStorage.getItem('treeport-sidebar-width') ??
-      localStorage.getItem('tasktty-sidebar-width')
-    if (storedWidth !== null) {
-      localStorage.setItem('treeport-sidebar-width', storedWidth)
-      localStorage.setItem('tasktty-sidebar-width', storedWidth)
-    }
+    const storedWidth = localStorage.getItem('treeport-sidebar-width')
 
     const savedWidth = Number.parseInt(storedWidth ?? '', 10)
     return Number.isFinite(savedWidth)
@@ -192,18 +172,11 @@ export default function App() {
       return
     }
 
-    localStorage.removeItem(LEGACY_ACTIVE_PROJECT_STORAGE_KEY)
-    localStorage.removeItem(LEGACY_TERMINAL_STORAGE_KEY)
     if (workspaceResolution.target.kind === 'root') {
       localStorage.removeItem(LAST_WORKSPACE_ROUTE_STORAGE_KEY)
-      localStorage.removeItem(TASKTTY_LAST_WORKSPACE_ROUTE_STORAGE_KEY)
     } else {
       localStorage.setItem(
         LAST_WORKSPACE_ROUTE_STORAGE_KEY,
-        workspaceResolution.target.pathname
-      )
-      localStorage.setItem(
-        TASKTTY_LAST_WORKSPACE_ROUTE_STORAGE_KEY,
         workspaceResolution.target.pathname
       )
     }
@@ -211,10 +184,6 @@ export default function App() {
     if (workspaceResolution.target.kind === 'terminal') {
       localStorage.setItem(
         `${LAST_PROJECT_TERMINAL_STORAGE_PREFIX}${workspaceResolution.target.projectId}`,
-        workspaceResolution.target.terminalId
-      )
-      localStorage.setItem(
-        `${TASKTTY_LAST_PROJECT_TERMINAL_STORAGE_PREFIX}${workspaceResolution.target.projectId}`,
         workspaceResolution.target.terminalId
       )
     }
@@ -371,10 +340,7 @@ export default function App() {
       project,
       localStorage.getItem(
         `${LAST_PROJECT_TERMINAL_STORAGE_PREFIX}${project.id}`
-      ) ??
-        localStorage.getItem(
-          `${TASKTTY_LAST_PROJECT_TERMINAL_STORAGE_PREFIX}${project.id}`
-        )
+      )
     )
 
   const selectProject = (project: ProjectRecord) => {
@@ -413,7 +379,6 @@ export default function App() {
     const nextWidth = clampSidebarWidth(width)
     setSidebarWidth(nextWidth)
     localStorage.setItem('treeport-sidebar-width', String(nextWidth))
-    localStorage.setItem('tasktty-sidebar-width', String(nextWidth))
   }
 
   const startSidebarResize = (event: ReactPointerEvent<HTMLDivElement>) => {

@@ -19,9 +19,7 @@ import {
   type TmuxControlEvent
 } from './tmux-control'
 
-const enabled =
-  (process.env.TREEPORT_REAL_INTEGRATION ??
-    process.env.TASKTTY_REAL_INTEGRATION) === '1'
+const enabled = process.env.TREEPORT_REAL_INTEGRATION === '1'
 const root = path.join(
   os.tmpdir(),
   `treeport control characterization ${process.pid}`

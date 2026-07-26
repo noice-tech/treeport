@@ -8,9 +8,7 @@ const worktreePort =
     16
   ) %
     20_000)
-const e2ePort = Number(
-  process.env.TREEPORT_E2E_PORT ?? process.env.TASKTTY_E2E_PORT ?? worktreePort
-)
+const e2ePort = Number(process.env.TREEPORT_E2E_PORT ?? worktreePort)
 const e2eUrl = `http://127.0.0.1:${e2ePort}`
 
 export default defineConfig({

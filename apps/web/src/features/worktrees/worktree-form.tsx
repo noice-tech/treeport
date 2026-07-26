@@ -10,8 +10,6 @@ import { cn } from '../../lib/utils'
 import { FormField, ModalHeading } from '../dialogs/dialog-parts'
 
 const INITIAL_TERMINAL_PRESET_STORAGE_KEY = 'treeport-initial-terminal-preset'
-const TASKTTY_INITIAL_TERMINAL_PRESET_STORAGE_KEY =
-  'tasktty-initial-terminal-preset'
 
 export interface WorktreeDestination {
   name: string
@@ -51,13 +49,7 @@ export function WorktreeForm({
   const [resolvingSubmission, setResolvingSubmission] = useState(false)
   const [baseValue, setBaseValue] = useState('default')
   const [initialPresetId, setInitialPresetId] = useState(() => {
-    const stored =
-      localStorage.getItem(INITIAL_TERMINAL_PRESET_STORAGE_KEY) ??
-      localStorage.getItem(TASKTTY_INITIAL_TERMINAL_PRESET_STORAGE_KEY)
-    if (stored) {
-      localStorage.setItem(INITIAL_TERMINAL_PRESET_STORAGE_KEY, stored)
-      localStorage.setItem(TASKTTY_INITIAL_TERMINAL_PRESET_STORAGE_KEY, stored)
-    }
+    const stored = localStorage.getItem(INITIAL_TERMINAL_PRESET_STORAGE_KEY)
 
     return stored ?? 'shell'
   })
@@ -78,7 +70,6 @@ export function WorktreeForm({
   useEffect(() => {
     if (initialPresetMissing) {
       localStorage.setItem(INITIAL_TERMINAL_PRESET_STORAGE_KEY, 'shell')
-      localStorage.setItem(TASKTTY_INITIAL_TERMINAL_PRESET_STORAGE_KEY, 'shell')
     }
   }, [initialPresetMissing])
   const destinationQuery = useQuery({
@@ -196,10 +187,6 @@ export function WorktreeForm({
             setInitialPresetId(event.target.value)
             localStorage.setItem(
               INITIAL_TERMINAL_PRESET_STORAGE_KEY,
-              event.target.value
-            )
-            localStorage.setItem(
-              TASKTTY_INITIAL_TERMINAL_PRESET_STORAGE_KEY,
               event.target.value
             )
           }}

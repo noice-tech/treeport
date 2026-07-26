@@ -18,10 +18,6 @@ const repositoryRoot = path.resolve(
   '../../..'
 )
 const cliExecutable = path.join(repositoryRoot, 'node_modules/.bin/treeport')
-const legacyCliExecutable = path.join(
-  repositoryRoot,
-  'node_modules/.bin/tasktty'
-)
 const timestamp = '2026-01-01T00:00:00.000Z'
 
 const terminal: TerminalRecord = {
@@ -96,11 +92,7 @@ async function runCli(
     'TREEPORT_API_URL',
     'TREEPORT_PROJECT_ID',
     'TREEPORT_WORKTREE_ID',
-    'TREEPORT_TERMINAL_ID',
-    'TASKTTY_API_URL',
-    'TASKTTY_PROJECT_ID',
-    'TASKTTY_WORKTREE_ID',
-    'TASKTTY_TERMINAL_ID'
+    'TREEPORT_TERMINAL_ID'
   ]) {
     delete env[name]
   }
@@ -371,19 +363,6 @@ describe('CLI context and machine output', () => {
     expect(result.stdout).toContain('Worktree: agent-tools (wt_context)')
     expect(result.stdout).toContain('Terminal: Pi (term_context) — running')
     expect(result.stdout.trimStart().startsWith('{')).toBe(false)
-
-    const legacy = await runCli(
-      ['context'],
-      {
-        TASKTTY_API_URL: apiUrl,
-        TASKTTY_PROJECT_ID: project.id,
-        TASKTTY_WORKTREE_ID: worktree.id,
-        TASKTTY_TERMINAL_ID: terminal.id
-      },
-      legacyCliExecutable
-    )
-    expect(legacy.code).toBe(0)
-    expect(legacy.stdout).toContain('Treeport context')
   })
 
   it('returns compact structured context only when requested', async () => {
@@ -414,7 +393,7 @@ describe('CLI context and machine output', () => {
 
     expect(result).toEqual({
       code: 0,
-      stdout: '{"managed":false,"reason":"outside_tasktty"}\n',
+      stdout: '{"managed":false,"reason":"outside_treeport"}\n',
       stderr: ''
     })
     expect(requests).toHaveLength(requestCount)
@@ -424,16 +403,13 @@ describe('CLI context and machine output', () => {
     const requestCount = requests.length
     const incomplete = await runCli(['context', '--json'], {
       TREEPORT_API_URL: apiUrl,
-      TREEPORT_PROJECT_ID: project.id,
-      TASKTTY_PROJECT_ID: project.id,
-      TASKTTY_WORKTREE_ID: worktree.id,
-      TASKTTY_TERMINAL_ID: terminal.id
+      TREEPORT_PROJECT_ID: project.id
     })
     expect(incomplete.code).toBe(5)
     expect(incomplete.stdout).toBe('')
     expect(JSON.parse(incomplete.stderr)).toEqual({
       error: {
-        code: 'TASKTTY_CONTEXT_INCOMPLETE',
+        code: 'TREEPORT_CONTEXT_INCOMPLETE',
         message:
           'Incomplete Treeport context; missing TREEPORT_WORKTREE_ID, TREEPORT_TERMINAL_ID',
         details: {
@@ -451,7 +427,7 @@ describe('CLI context and machine output', () => {
     })
     expect(inconsistent.code).toBe(5)
     expect(JSON.parse(inconsistent.stderr)).toMatchObject({
-      error: { code: 'TASKTTY_CONTEXT_INVALID' }
+      error: { code: 'TREEPORT_CONTEXT_INVALID' }
     })
   })
 
@@ -700,7 +676,7 @@ describe('CLI context and machine output', () => {
     })
     expect(dot.code).toBe(5)
     expect(JSON.parse(dot.stderr)).toMatchObject({
-      error: { code: 'TASKTTY_CONTEXT_INCOMPLETE' }
+      error: { code: 'TREEPORT_CONTEXT_INCOMPLETE' }
     })
   })
 

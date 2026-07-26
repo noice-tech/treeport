@@ -405,7 +405,7 @@ describe('TerminalSession', () => {
     const setItem = vi.fn()
     vi.stubGlobal('sessionStorage', {
       getItem: (key: string) =>
-        key === 'tasktty-terminal-client-id' ? clientId : null,
+        key === 'treeport-terminal-client-id' ? clientId : null,
       setItem
     })
     const session = new TerminalSession('terminal-one')
@@ -438,8 +438,7 @@ describe('TerminalSession', () => {
       rows: 2
     })
     expect(setItem.mock.calls).toEqual([
-      ['treeport-terminal-client-id', clientId],
-      ['tasktty-terminal-client-id', clientId]
+      ['treeport-terminal-client-id', clientId]
     ])
     session.dispose()
   })

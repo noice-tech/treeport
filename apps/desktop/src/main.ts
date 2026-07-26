@@ -11,17 +11,14 @@ import { filePathFromUrl } from './file-url.js'
 
 const dirname = __dirname
 if (app.isPackaged) {
-  // Keep the existing packaged profile instead of creating an empty Treeport one.
-  app.setPath('userData', path.join(app.getPath('appData'), 'TaskTTY'))
+  app.setPath('userData', path.join(app.getPath('appData'), 'Treeport'))
 }
 
 const defaultRendererUrl = app.isPackaged
   ? 'http://127.0.0.1:4780'
   : 'http://127.0.0.1:5173'
 const configuredRendererUrl =
-  process.env.TREEPORT_DESKTOP_URL?.trim() ||
-  process.env.TASKTTY_DESKTOP_URL?.trim() ||
-  defaultRendererUrl
+  process.env.TREEPORT_DESKTOP_URL?.trim() || defaultRendererUrl
 
 if (!URL.canParse(configuredRendererUrl)) {
   throw new Error('TREEPORT_DESKTOP_URL must be a valid loopback HTTP URL')
@@ -254,8 +251,8 @@ function createWindow(): BrowserWindow {
       : {}),
     webPreferences: {
       preload: path.join(dirname, 'preload.js'),
-      // Opaque compatibility name; without `persist:` this partition is in-memory.
-      partition: 'tasktty-desktop',
+      // Without `persist:` this partition is in-memory.
+      partition: 'treeport-desktop',
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: true

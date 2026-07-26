@@ -17,9 +17,7 @@ import { GitAdapter } from './git'
 import { TreeportService } from './service'
 import { TMUX_SCROLL_EXIT_SEQUENCE, TmuxAdapter } from './tmux'
 
-const enabled =
-  (process.env.TREEPORT_REAL_INTEGRATION ??
-    process.env.TASKTTY_REAL_INTEGRATION) === '1'
+const enabled = process.env.TREEPORT_REAL_INTEGRATION === '1'
 const root = path.join(os.tmpdir(), `treeport real integration ${process.pid}`)
 afterAll(async () => fs.rm(root, { recursive: true, force: true }))
 

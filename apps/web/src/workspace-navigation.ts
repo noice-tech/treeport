@@ -7,12 +7,6 @@ import type {
 export const LAST_WORKSPACE_ROUTE_STORAGE_KEY = 'treeport-last-workspace-route'
 export const LAST_PROJECT_TERMINAL_STORAGE_PREFIX =
   'treeport-last-project-terminal:'
-export const TASKTTY_LAST_WORKSPACE_ROUTE_STORAGE_KEY =
-  'tasktty-last-workspace-route'
-export const TASKTTY_LAST_PROJECT_TERMINAL_STORAGE_PREFIX =
-  'tasktty-last-project-terminal:'
-export const LEGACY_ACTIVE_PROJECT_STORAGE_KEY = 'tasktty-active-project'
-export const LEGACY_TERMINAL_STORAGE_KEY = 'tasktty-terminal'
 
 export type WorkspaceTarget =
   | { kind: 'root'; pathname: '/' }
@@ -323,23 +317,4 @@ export function resolveWorkspaceRoute(
     selection: selectionForTarget(projects, target),
     canonical: target.pathname === pathname
   }
-}
-
-export function legacyResumePath(
-  projects: ProjectRecord[],
-  terminalId: string | null,
-  projectId: string | null
-): string | null {
-  if (terminalId) {
-    const terminal = projects
-      .flatMap((project) => project.worktrees)
-      .flatMap((worktree) => worktree.terminals)
-      .find((candidate) => candidate.id === terminalId)
-    if (terminal) {
-      return targetForTerminal(projects, terminal)?.pathname ?? null
-    }
-  }
-
-  const project = projects.find((candidate) => candidate.id === projectId)
-  return project ? deepestProjectTarget(project).pathname : null
 }

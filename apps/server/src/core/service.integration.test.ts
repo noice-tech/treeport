@@ -1658,11 +1658,7 @@ describe('TreeportService with injected command adapters', () => {
       TREEPORT_API_URL: config.apiUrl,
       TREEPORT_PROJECT_ID: project.id,
       TREEPORT_WORKTREE_ID: result.worktree.id,
-      TREEPORT_TERMINAL_ID: result.terminal!.id,
-      TASKTTY_API_URL: config.apiUrl,
-      TASKTTY_PROJECT_ID: project.id,
-      TASKTTY_WORKTREE_ID: result.worktree.id,
-      TASKTTY_TERMINAL_ID: result.terminal!.id
+      TREEPORT_TERMINAL_ID: result.terminal!.id
     })
     expect(runner.calls.some((call) => call.executable === 'fail-setup')).toBe(
       false
@@ -2188,15 +2184,18 @@ describe('TreeportService with injected command adapters', () => {
     const repurposed = (
       await service.createWorktree(project.id, 'repurposed-root', 'default')
     ).worktree
-    const legacy = (
-      await service.createWorktree(project.id, 'legacy-root', 'default')
+    const missingIdentity = (
+      await service.createWorktree(
+        project.id,
+        'missing-identity-root',
+        'default'
+      )
     ).worktree
     const timestamp = new Date().toISOString()
     const insertInterrupted = async (
       operationId: string,
       worktree: typeof recoverable,
-      includeIdentity: boolean,
-      legacyQuarantine = false
+      includeIdentity: boolean
     ) => {
       const preview = await service.removePreview(worktree.id)
       const checkout = await fs.lstat(worktree.path, { bigint: true })
@@ -2231,7 +2230,7 @@ describe('TreeportService with injected command adapters', () => {
                     managedWrapperPath: worktree.managedWrapperPath,
                     quarantinePath: path.join(
                       path.dirname(worktree.path),
-                      `.${path.basename(worktree.path)}.${legacyQuarantine ? 'tasktty' : 'treeport'}-removing-${operationId}`
+                      `.${path.basename(worktree.path)}.treeport-removing-${operationId}`
                     )
                   }
                 }
@@ -2247,10 +2246,10 @@ describe('TreeportService with injected command adapters', () => {
         .run(timestamp, worktree.id)
     }
     await insertInterrupted('op_recoverable_root', recoverable, true)
-    await insertInterrupted('op_quarantined_root', quarantined, true, true)
+    await insertInterrupted('op_quarantined_root', quarantined, true)
     await insertInterrupted('op_replaced_root', replaced, true)
     await insertInterrupted('op_repurposed_root', repurposed, true)
-    await insertInterrupted('op_legacy_root', legacy, false)
+    await insertInterrupted('op_missing_identity_root', missingIdentity, false)
     runner.worktrees.splice(1, runner.worktrees.length - 1)
     await fs.writeFile(
       path.join(path.dirname(recoverable.path), 'preserve.txt'),
@@ -2261,7 +2260,7 @@ describe('TreeportService with injected command adapters', () => {
         quarantinePath: string
       }
     ).quarantinePath
-    expect(path.basename(quarantinePath)).toContain('.tasktty-removing-')
+    expect(path.basename(quarantinePath)).toContain('.treeport-removing-')
     await fs.rename(quarantined.path, quarantinePath)
     await expect(fs.stat(quarantined.path)).rejects.toMatchObject({
       code: 'ENOENT'
@@ -2362,12 +2361,14 @@ describe('TreeportService with injected command adapters', () => {
       error: expect.stringMatching(/Git marker/i)
     })
 
-    await expect(fs.stat(legacy.path)).resolves.toBeTruthy()
-    expect(database.worktree(legacy.id)).toMatchObject({
+    await expect(fs.stat(missingIdentity.path)).resolves.toBeTruthy()
+    expect(database.worktree(missingIdentity.id)).toMatchObject({
       status: 'cleanup_failed',
-      cleanupError: expect.stringMatching(/legacy removal/i)
+      cleanupError: expect.stringMatching(/verifiable accepted preview/i)
     })
-    expect(restarted.getOperation('op_legacy_root').status).toBe('failed')
+    expect(restarted.getOperation('op_missing_identity_root').status).toBe(
+      'failed'
+    )
     const failuresBeforeSecondPoll = events.filter(
       (event) => event.type === 'remove.failed'
     ).length
@@ -2376,10 +2377,12 @@ describe('TreeportService with injected command adapters', () => {
       events.filter((event) => event.type === 'remove.failed')
     ).toHaveLength(failuresBeforeSecondPoll)
 
-    await fs.rm(legacy.path, { recursive: true, force: true })
+    await fs.rm(missingIdentity.path, { recursive: true, force: true })
     await restarted.getProjectSnapshot(project.id)
-    expect(database.worktree(legacy.id)).toBeNull()
-    expect(restarted.getOperation('op_legacy_root').status).toBe('completed')
+    expect(database.worktree(missingIdentity.id)).toBeNull()
+    expect(restarted.getOperation('op_missing_identity_root').status).toBe(
+      'completed'
+    )
     expect(
       events.filter(
         (event) =>
@@ -2390,7 +2393,8 @@ describe('TreeportService with injected command adapters', () => {
     expect(
       events.filter(
         (event) =>
-          event.type === 'remove.completed' && event.worktreeId === legacy.id
+          event.type === 'remove.completed' &&
+          event.worktreeId === missingIdentity.id
       )
     ).toHaveLength(1)
     unsubscribe()

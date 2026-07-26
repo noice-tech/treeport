@@ -1127,46 +1127,6 @@ test.describe('desktop worktree terminal UI', () => {
       .toBe(1)
   })
 
-  test('migrates and dual-writes legacy workspace storage', async ({
-    page
-  }) => {
-    await page.addInitScript(() => {
-      const route = '/projects/proj_1/worktrees/wt_topic/terminals/term_pi'
-      localStorage.setItem('tasktty-active-project', 'proj_1')
-      localStorage.setItem('tasktty-terminal', 'term_pi')
-      localStorage.setItem('tasktty-last-workspace-route', route)
-      localStorage.setItem('tasktty-last-project-terminal:proj_1', 'term_pi')
-    })
-    await mockApp(page)
-
-    await expect(page).toHaveURL(
-      /\/projects\/proj_1\/worktrees\/wt_topic\/terminals\/term_pi$/
-    )
-    await expect
-      .poll(() =>
-        page.evaluate(() => ({
-          activeProject: localStorage.getItem('tasktty-active-project'),
-          terminal: localStorage.getItem('tasktty-terminal'),
-          treeportRoute: localStorage.getItem('treeport-last-workspace-route'),
-          taskttyRoute: localStorage.getItem('tasktty-last-workspace-route'),
-          treeportProjectTerminal: localStorage.getItem(
-            'treeport-last-project-terminal:proj_1'
-          ),
-          taskttyProjectTerminal: localStorage.getItem(
-            'tasktty-last-project-terminal:proj_1'
-          )
-        }))
-      )
-      .toEqual({
-        activeProject: null,
-        terminal: null,
-        treeportRoute: '/projects/proj_1/worktrees/wt_topic/terminals/term_pi',
-        taskttyRoute: '/projects/proj_1/worktrees/wt_topic/terminals/term_pi',
-        treeportProjectTerminal: 'term_pi',
-        taskttyProjectTerminal: 'term_pi'
-      })
-  })
-
   test('keeps a direct terminal route while project metadata loads', async ({
     page
   }) => {
@@ -1995,12 +1955,11 @@ test.describe('desktop worktree terminal UI', () => {
       await page.getByLabel('Initial terminal').selectOption({ label: 'Hunk' })
       await expect
         .poll(() =>
-          page.evaluate(() => [
-            localStorage.getItem('treeport-initial-terminal-preset'),
-            localStorage.getItem('tasktty-initial-terminal-preset')
-          ])
+          page.evaluate(() =>
+            localStorage.getItem('treeport-initial-terminal-preset')
+          )
         )
-        .toEqual(['preset_hunk', 'preset_hunk'])
+        .toBe('preset_hunk')
       await page.keyboard.press('Escape')
       await page.reload()
       await page.getByRole('button', { name: 'New worktree' }).click()

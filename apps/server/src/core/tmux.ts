@@ -340,13 +340,7 @@ export class TmuxAdapter {
       ['@treeport-created-at', encodeMetadata(metadata.createdAt)],
       ['@treeport-updated-at', encodeMetadata(metadata.updatedAt)],
       ['@treeport-worktree-id', metadata.worktreeId],
-      ['@treeport-terminal-id', metadata.terminalId],
-      ['@tasktty-name', encodeMetadata(metadata.name)],
-      ['@tasktty-argv', encodeMetadata(metadata.argv)],
-      ['@tasktty-created-at', encodeMetadata(metadata.createdAt)],
-      ['@tasktty-updated-at', encodeMetadata(metadata.updatedAt)],
-      ['@tasktty-worktree-id', metadata.worktreeId],
-      ['@tasktty-terminal-id', metadata.terminalId]
+      ['@treeport-terminal-id', metadata.terminalId]
     ] as const
     for (const [key, value] of values) {
       await runChecked(this.runner, {
@@ -373,9 +367,7 @@ export class TmuxAdapter {
   ): Promise<void> {
     for (const [key, value] of [
       ['@treeport-updated-at', encodeMetadata(updatedAt)],
-      ['@treeport-name', encodeMetadata(name)],
-      ['@tasktty-updated-at', encodeMetadata(updatedAt)],
-      ['@tasktty-name', encodeMetadata(name)]
+      ['@treeport-name', encodeMetadata(name)]
     ] as const) {
       await runChecked(this.runner, {
         executable: this.executable,
@@ -401,7 +393,7 @@ export class TmuxAdapter {
         'list-panes',
         '-a',
         '-F',
-        '#{session_name}\t#{@treeport-terminal-id}\t#{@treeport-worktree-id}\t#{@treeport-name}\t#{@treeport-argv}\t#{@treeport-created-at}\t#{@treeport-updated-at}\t#{@tasktty-terminal-id}\t#{@tasktty-worktree-id}\t#{@tasktty-name}\t#{@tasktty-argv}\t#{@tasktty-created-at}\t#{@tasktty-updated-at}\t#{session_created}\t#{pane_dead}\t#{pane_dead_status}'
+        '#{session_name}\t#{@treeport-terminal-id}\t#{@treeport-worktree-id}\t#{@treeport-name}\t#{@treeport-argv}\t#{@treeport-created-at}\t#{@treeport-updated-at}\t#{session_created}\t#{pane_dead}\t#{pane_dead_status}'
       ],
       env: this.environment(),
       timeoutMs: 10_000
@@ -423,67 +415,60 @@ export class TmuxAdapter {
       }
 
       const fields = line.split('\t')
-      const [sessionName] = fields
-      const expanded = fields.length >= 16
-      const [sessionCreated, paneDead, paneDeadStatus] = expanded
-        ? fields.slice(13, 16)
-        : fields.slice(7, 10)
-      if (!sessionName || sessions.has(sessionName)) {
+      const [
+        sessionName,
+        terminalId,
+        worktreeId,
+        encodedName,
+        encodedArgv,
+        encodedCreatedAt,
+        encodedUpdatedAt,
+        sessionCreated,
+        paneDead,
+        paneDeadStatus
+      ] = fields
+      if (
+        !sessionName ||
+        sessions.has(sessionName) ||
+        !terminalId ||
+        !worktreeId
+      ) {
         continue
       }
 
-      const metadataFamilies = (expanded ? [1, 7] : [1]).flatMap((offset) => {
-        const terminalId = fields[offset]
-        const worktreeId = fields[offset + 1]
-        if (!terminalId || !worktreeId) {
-          return []
-        }
-
-        try {
-          const name = decodeMetadata(fields[offset + 2] ?? '')
-          const argv = decodeMetadata(fields[offset + 3] ?? '')
-          const createdAt = decodeMetadata(fields[offset + 4] ?? '')
-          const updatedAt = decodeMetadata(fields[offset + 5] ?? '')
-          if (
-            (name !== undefined && typeof name !== 'string') ||
-            (argv !== undefined &&
-              (!Array.isArray(argv) ||
-                !argv.every((value) => typeof value === 'string'))) ||
-            (createdAt !== undefined && typeof createdAt !== 'string') ||
-            (updatedAt !== undefined && typeof updatedAt !== 'string')
-          ) {
-            return []
-          }
-
-          return [
-            {
-              terminalId,
-              worktreeId,
-              name,
-              argv: argv as string[] | undefined,
-              createdAt,
-              updatedAt,
-              updatedAtMs:
-                typeof updatedAt === 'string' ? Date.parse(updatedAt) : NaN
-            }
-          ]
-        } catch {
-          return []
-        }
-      })
-      let metadata = metadataFamilies[0]
-      const legacyMetadata = metadataFamilies[1]
-      if (
-        legacyMetadata &&
-        (!metadata ||
-          (Number.isFinite(legacyMetadata.updatedAtMs) &&
-            (!Number.isFinite(metadata.updatedAtMs) ||
-              legacyMetadata.updatedAtMs > metadata.updatedAtMs)))
-      ) {
-        metadata = legacyMetadata
+      let metadata: {
+        terminalId: string
+        worktreeId: string
+        name: string | undefined
+        argv: string[] | undefined
+        createdAt: string | undefined
+        updatedAt: string | undefined
       }
+      try {
+        const name = decodeMetadata(encodedName ?? '')
+        const argv = decodeMetadata(encodedArgv ?? '')
+        const createdAt = decodeMetadata(encodedCreatedAt ?? '')
+        const updatedAt = decodeMetadata(encodedUpdatedAt ?? '')
+        if (
+          (name !== undefined && typeof name !== 'string') ||
+          (argv !== undefined &&
+            (!Array.isArray(argv) ||
+              !argv.every((value) => typeof value === 'string'))) ||
+          (createdAt !== undefined && typeof createdAt !== 'string') ||
+          (updatedAt !== undefined && typeof updatedAt !== 'string')
+        ) {
+          continue
+        }
 
-      if (!metadata) {
+        metadata = {
+          terminalId,
+          worktreeId,
+          name,
+          argv: argv as string[] | undefined,
+          createdAt,
+          updatedAt
+        }
+      } catch {
         continue
       }
 
@@ -621,7 +606,7 @@ export class TmuxAdapter {
         '-p',
         '-t',
         sessionName,
-        '#{@treeport-shell-title}\t#{@tasktty-shell-title}\t#{pane_current_command}\t#{pane_title}'
+        '#{@treeport-shell-title}\t#{pane_current_command}\t#{pane_title}'
       ],
       env: this.environment(),
       timeoutMs: 10_000
@@ -632,43 +617,23 @@ export class TmuxAdapter {
 
     const firstSeparator = result.stdout.indexOf('\t')
     const secondSeparator = result.stdout.indexOf('\t', firstSeparator + 1)
-    const thirdSeparator = result.stdout.indexOf('\t', secondSeparator + 1)
     if (firstSeparator === -1 || secondSeparator === -1) {
-      if (firstSeparator === -1) {
-        return {
-          paneTitle: result.stdout.trim() || null,
-          currentCommand: null,
-          shellTitle: null
-        }
-      }
-
-      return {
-        paneTitle: result.stdout.slice(firstSeparator + 1).trim() || null,
-        currentCommand: result.stdout.slice(0, firstSeparator).trim() || null,
-        shellTitle: null
-      }
+      return null
     }
 
-    const expanded = thirdSeparator !== -1
-    const encodedShellTitle = expanded
-      ? result.stdout.slice(firstSeparator + 1, secondSeparator).trim() ||
-        result.stdout.slice(0, firstSeparator).trim()
-      : result.stdout.slice(0, firstSeparator).trim()
+    const encodedShellTitle = result.stdout.slice(0, firstSeparator).trim()
     let shellTitle: string | null = null
     try {
       const decoded = decodeMetadata(encodedShellTitle)
       shellTitle = typeof decoded === 'string' ? decoded : null
     } catch {
-      // Ignore malformed optional metadata from an older or external session.
+      // Ignore malformed optional metadata from an external session.
     }
 
-    const currentCommand = expanded
-      ? result.stdout.slice(secondSeparator + 1, thirdSeparator).trim() || null
-      : result.stdout.slice(firstSeparator + 1, secondSeparator).trim() || null
-    const paneTitle = result.stdout
-      .slice(expanded ? thirdSeparator + 1 : secondSeparator + 1)
-      .trim()
-    return { paneTitle: paneTitle || null, currentCommand, shellTitle }
+    const currentCommand =
+      result.stdout.slice(firstSeparator + 1, secondSeparator).trim() || null
+    const paneTitle = result.stdout.slice(secondSeparator + 1).trim() || null
+    return { paneTitle, currentCommand, shellTitle }
   }
 
   async setSessionShellTitle(
@@ -676,21 +641,19 @@ export class TmuxAdapter {
     sessionName: string,
     title: string | null
   ): Promise<void> {
-    for (const key of ['@treeport-shell-title', '@tasktty-shell-title']) {
-      await runChecked(this.runner, {
-        executable: this.executable,
-        args: [
-          ...this.base(socketName),
-          'set-option',
-          '-t',
-          sessionName,
-          key,
-          encodeMetadata(title)
-        ],
-        env: this.environment(),
-        timeoutMs: 10_000
-      })
-    }
+    await runChecked(this.runner, {
+      executable: this.executable,
+      args: [
+        ...this.base(socketName),
+        'set-option',
+        '-t',
+        sessionName,
+        '@treeport-shell-title',
+        encodeMetadata(title)
+      ],
+      env: this.environment(),
+      timeoutMs: 10_000
+    })
   }
 
   async sessionTitle(

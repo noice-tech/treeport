@@ -611,7 +611,7 @@ export function WorkspaceSidebar({
   onResizeSidebarWithKeyboard: resizeSidebarWithKeyboard,
   onSetSidebarWidth: setAndSaveSidebarWidth
 }: WorkspaceSidebarProps) {
-  const desktopBridge = window.treeportDesktop ?? window.taskttyDesktop
+  const desktopBridge = window.treeportDesktop
   const newWorktreeShortcut = desktopBridge
     ? desktopBridge.platform === 'darwin'
       ? '⌘N'

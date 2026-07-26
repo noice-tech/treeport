@@ -11,14 +11,8 @@ if (!fs.existsSync(serverEntry)) {
   process.exit(1)
 }
 
-const host =
-  process.env.TREEPORT_HOST?.trim() ||
-  process.env.TASKTTY_HOST?.trim() ||
-  '0.0.0.0'
-const port =
-  process.env.TREEPORT_PORT?.trim() ||
-  process.env.TASKTTY_PORT?.trim() ||
-  '4780'
+const host = process.env.TREEPORT_HOST?.trim() || '0.0.0.0'
+const port = process.env.TREEPORT_PORT?.trim() || '4780'
 const loopback = host === '127.0.0.1' || host === '::1' || host === 'localhost'
 
 console.log(`Treeport network listener: http://${host}:${port}`)
@@ -39,9 +33,7 @@ const child = spawn(process.execPath, [serverEntry], {
     TREEPORT_HOST: host,
     TREEPORT_PORT: port,
     TREEPORT_API_URL:
-      process.env.TREEPORT_API_URL?.trim() ||
-      process.env.TASKTTY_API_URL?.trim() ||
-      `http://127.0.0.1:${port}`
+      process.env.TREEPORT_API_URL?.trim() || `http://127.0.0.1:${port}`
   },
   stdio: 'inherit'
 })

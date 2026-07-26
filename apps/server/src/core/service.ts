@@ -2197,11 +2197,7 @@ export class TreeportService {
           TREEPORT_API_URL: this.deps.config.apiUrl,
           TREEPORT_PROJECT_ID: project.id,
           TREEPORT_WORKTREE_ID: worktree.id,
-          TREEPORT_TERMINAL_ID: terminalId,
-          TASKTTY_API_URL: this.deps.config.apiUrl,
-          TASKTTY_PROJECT_ID: project.id,
-          TASKTTY_WORKTREE_ID: worktree.id,
-          TASKTTY_TERMINAL_ID: terminalId
+          TREEPORT_TERMINAL_ID: terminalId
         },
         ...(options?.setup?.tasks.length
           ? { setupTasks: options.setup.tasks }

@@ -189,13 +189,7 @@ describe('TmuxAdapter', () => {
         '@treeport-created-at',
         '@treeport-updated-at',
         '@treeport-worktree-id',
-        '@treeport-terminal-id',
-        '@tasktty-name',
-        '@tasktty-argv',
-        '@tasktty-created-at',
-        '@tasktty-updated-at',
-        '@tasktty-worktree-id',
-        '@tasktty-terminal-id'
+        '@treeport-terminal-id'
       ].sort()
     )
   })
@@ -392,7 +386,7 @@ describe('TmuxAdapter', () => {
     const encode = (value: string) =>
       Buffer.from(JSON.stringify(value), 'utf8').toString('base64url')
     runner.responses.push({
-      stdout: `${encode('stale title')}\t${encode(shellTitle)}\tnano\t${shellTitle}\n`,
+      stdout: `${encode(shellTitle)}\tnano\t${shellTitle}\n`,
       stderr: '',
       exitCode: 0
     })
@@ -406,7 +400,7 @@ describe('TmuxAdapter', () => {
       shellTitle
     })
     expect(runner.calls[0]!.args).toContain(
-      '#{@treeport-shell-title}\t#{@tasktty-shell-title}\t#{pane_current_command}\t#{pane_title}'
+      '#{@treeport-shell-title}\t#{pane_current_command}\t#{pane_title}'
     )
   })
 
@@ -423,7 +417,7 @@ describe('TmuxAdapter', () => {
 
     expect(
       runner.calls.map((call) => call.args[call.args.indexOf('-t') + 2])
-    ).toEqual(['@treeport-shell-title', '@tasktty-shell-title'])
+    ).toEqual(['@treeport-shell-title'])
   })
 
   it('discovers live tmux terminals from encoded session metadata', async () => {
@@ -461,38 +455,14 @@ describe('TmuxAdapter', () => {
           '17'
         ].join('\t'),
         [
-          'tasktty-term-legacy',
-          '',
-          '',
-          '',
-          '',
-          '',
-          '',
-          'term_legacy',
+          'opaque-persisted-session-7f31',
+          'term_persisted',
           'wt_one',
-          encode('Legacy'),
+          encode('Persisted'),
           encode(['bash']),
           encode('2025-12-01T00:00:00.000Z'),
           encode('2025-12-02T00:00:00.000Z'),
           '1764547200',
-          '0',
-          ''
-        ].join('\t'),
-        [
-          'treeport-term-rolling',
-          'term_rolling',
-          'wt_one',
-          encode('Stale'),
-          encode(['old']),
-          encode('2026-01-04T00:00:00.000Z'),
-          encode('2026-01-04T00:01:00.000Z'),
-          'term_rolling',
-          'wt_one',
-          encode('Updated by old daemon'),
-          encode(['new']),
-          encode('2026-01-04T00:00:00.000Z'),
-          encode('2026-01-04T00:02:00.000Z'),
-          '1767484800',
           '0',
           ''
         ].join('\t'),
@@ -527,26 +497,15 @@ describe('TmuxAdapter', () => {
         updatedAt: '2026-01-03T00:00:00.000Z'
       },
       {
-        id: 'term_legacy',
+        id: 'term_persisted',
         worktreeId: 'wt_one',
-        name: 'Legacy',
-        sessionName: 'tasktty-term-legacy',
+        name: 'Persisted',
+        sessionName: 'opaque-persisted-session-7f31',
         argv: ['bash'],
         status: 'running',
         exitCode: null,
         createdAt: '2025-12-01T00:00:00.000Z',
         updatedAt: '2025-12-02T00:00:00.000Z'
-      },
-      {
-        id: 'term_rolling',
-        worktreeId: 'wt_one',
-        name: 'Updated by old daemon',
-        sessionName: 'treeport-term-rolling',
-        argv: ['new'],
-        status: 'running',
-        exitCode: null,
-        createdAt: '2026-01-04T00:00:00.000Z',
-        updatedAt: '2026-01-04T00:02:00.000Z'
       }
     ])
   })

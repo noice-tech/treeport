@@ -446,7 +446,7 @@ describe('HTTP API validation', () => {
     const { app, config, service } = fixture()
     const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47])
     const uploadDirectory = path.join(config.runtimeDir, 'uploads')
-    const stalePath = path.join(uploadDirectory, 'tasktty-upload-stale.png')
+    const stalePath = path.join(uploadDirectory, 'treeport-upload-stale.png')
     try {
       await fs.mkdir(uploadDirectory, { recursive: true })
       await fs.writeFile(stalePath, 'stale')
@@ -475,7 +475,7 @@ describe('HTTP API validation', () => {
 
       const legacyHeader = await app.request('/api/terminals/term_1/files', {
         method: 'POST',
-        headers: { 'x-tasktty-file-extension': 'txt' },
+        headers: { 'x-treeport-file-extension': 'txt' },
         body: new TextEncoder().encode('legacy')
       })
       expect(legacyHeader.status).toBe(201)

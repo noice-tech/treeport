@@ -238,7 +238,7 @@ export function TerminalWorkspace({
   }
 
   useEffect(() => {
-    const desktopBridge = window.treeportDesktop ?? window.taskttyDesktop
+    const desktopBridge = window.treeportDesktop
     if (!desktopBridge) {
       return
     }

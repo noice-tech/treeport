@@ -7,7 +7,6 @@
     "SHELL",
     "TMPDIR",
     "TREEPORT_*",
-    "TASKTTY_*",
     "XDG_*"
   ],
   "tasks": {
