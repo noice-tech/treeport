@@ -536,14 +536,6 @@ export default function App() {
           aria-hidden={isMobile && drawerOpen ? true : undefined}
         >
           <span>Updates paused; showing the last known project state.</span>
-          <Button
-            type="button"
-            variant="secondary"
-            size="sm"
-            onClick={() => void projectsQuery.refetch()}
-          >
-            Retry
-          </Button>
         </div>
       )}
       {error && (
