@@ -13,10 +13,7 @@ import { cn } from '../../lib/utils'
 import { ProjectForm } from '../projects/project-form'
 import { TerminalPresetsManager } from '../terminal-presets/presets-manager'
 import { RemoveConfirm } from '../worktrees/remove-confirm'
-import {
-  WorktreeForm,
-  type WorktreeDestination
-} from '../worktrees/worktree-form'
+import { WorktreeForm } from '../worktrees/worktree-form'
 
 export type ActionModalState =
   | { type: 'project' }
@@ -53,7 +50,6 @@ export function ActionModal({
     project: ProjectRecord,
     name: string,
     base: 'default' | 'current',
-    destination: WorktreeDestination,
     initialTerminal: {
       name: string
       argv?: string[]
@@ -154,18 +150,11 @@ export function ActionModal({
             presetsError={presetsError}
             onRetryPresets={onRetryPresets}
             busy={false}
-            onSubmit={(
-              name,
-              base,
-              destination,
-              initialTerminal,
-              sourceWorktreeId
-            ) =>
+            onSubmit={(name, base, initialTerminal, sourceWorktreeId) =>
               onCreateWorktree(
                 modal.project,
                 name,
                 base,
-                destination,
                 initialTerminal,
                 sourceWorktreeId
               )

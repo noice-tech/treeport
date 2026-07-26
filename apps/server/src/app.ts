@@ -270,24 +270,6 @@ export function createApp({
     })
   )
 
-  app.get('/api/projects/:projectId/worktree-destination', async (context) => {
-    const name = context.req.query('name')
-    if (!name) {
-      throw new DomainError(
-        'VALIDATION_ERROR',
-        'Worktree name is required',
-        400
-      )
-    }
-
-    return context.json({
-      destination: await service.previewWorktreePath(
-        context.req.param('projectId'),
-        name
-      )
-    })
-  })
-
   app.post('/api/projects/:projectId/worktrees', async (context) => {
     const body = await input(context, createWorktreeSchema)
     const initialTerminal = body.initialTerminal
