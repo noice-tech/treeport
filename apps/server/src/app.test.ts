@@ -2,13 +2,13 @@ import crypto from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
-import type { TerminalRuntimeMetadata } from '@tasktty/shared'
+import type { TerminalRuntimeMetadata } from '@treeport/shared'
 import {
   DomainError,
   ProductEventBus,
   type AppConfig,
   type TmuxAdapter,
-  type TaskTTYService
+  type TreeportService
 } from './core/index'
 import { createApp } from './app'
 import type { TerminalMetadataManager } from './terminal-metadata'
@@ -17,9 +17,9 @@ function fixture(webDist = '/missing') {
   const config: AppConfig = {
     host: '127.0.0.1',
     port: 4780,
-    databasePath: '/tmp/tasktty-test.db',
+    databasePath: '/tmp/treeport-test.db',
     dataDir: '/tmp',
-    runtimeDir: path.join('/tmp', `tasktty-test-${crypto.randomUUID()}`),
+    runtimeDir: path.join('/tmp', `treeport-test-${crypto.randomUUID()}`),
     shell: '/bin/zsh',
     tmuxPath: 'tmux',
     gitPath: 'git',
@@ -81,7 +81,7 @@ function fixture(webDist = '/missing') {
       id,
       worktreeId: 'wt_1',
       name: 'Pi',
-      tmuxSessionName: 'tasktty-term-1',
+      tmuxSessionName: 'treeport-term-1',
       argv: ['pi'],
       status: 'running',
       exitCode: null,
@@ -101,7 +101,7 @@ function fixture(webDist = '/missing') {
     })),
     removePreview: vi.fn(async () => ({ worktreeId: 'wt_1' })),
     beginRemove: vi.fn(async () => ({ id: 'op_1' }))
-  } as unknown as TaskTTYService
+  } as unknown as TreeportService
   const runtimeMetadata: TerminalRuntimeMetadata = {
     terminalId: 'term',
     title: 'pi · /repo',
@@ -446,7 +446,7 @@ describe('HTTP API validation', () => {
     const { app, config, service } = fixture()
     const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47])
     const uploadDirectory = path.join(config.runtimeDir, 'uploads')
-    const stalePath = path.join(uploadDirectory, 'tasktty-upload-stale.png')
+    const stalePath = path.join(uploadDirectory, 'treeport-upload-stale.png')
     try {
       await fs.mkdir(uploadDirectory, { recursive: true })
       await fs.writeFile(stalePath, 'stale')
@@ -457,7 +457,7 @@ describe('HTTP API validation', () => {
         method: 'POST',
         headers: {
           'content-type': 'image/png',
-          'x-tasktty-file-extension': 'png'
+          'x-treeport-file-extension': 'png'
         },
         body: bytes
       })
@@ -473,9 +473,21 @@ describe('HTTP API validation', () => {
       expect((await fs.stat(result.file.path)).mode & 0o777).toBe(0o600)
       await expect(fs.stat(stalePath)).rejects.toMatchObject({ code: 'ENOENT' })
 
+      const legacyHeader = await app.request('/api/terminals/term_1/files', {
+        method: 'POST',
+        headers: { 'x-treeport-file-extension': 'txt' },
+        body: new TextEncoder().encode('legacy')
+      })
+      expect(legacyHeader.status).toBe(201)
+      expect(
+        path.extname(
+          ((await legacyHeader.json()) as { file: { path: string } }).file.path
+        )
+      ).toBe('.txt')
+
       const invalid = await app.request('/api/terminals/term_1/files', {
         method: 'POST',
-        headers: { 'x-tasktty-file-extension': '../png' },
+        headers: { 'x-treeport-file-extension': '../png' },
         body: new Uint8Array()
       })
       expect(invalid.status).toBe(400)
@@ -545,11 +557,14 @@ describe('HTTP API validation', () => {
   })
 
   it('serves the web entry point for deep links without masking API 404s', async () => {
-    const webDist = path.join('/tmp', `tasktty-web-dist-${crypto.randomUUID()}`)
+    const webDist = path.join(
+      '/tmp',
+      `treeport-web-dist-${crypto.randomUUID()}`
+    )
     await fs.mkdir(webDist, { recursive: true })
     await fs.writeFile(
       path.join(webDist, 'index.html'),
-      '<!doctype html><title>TaskTTY route fallback</title>'
+      '<!doctype html><title>Treeport route fallback</title>'
     )
 
     try {
@@ -558,7 +573,7 @@ describe('HTTP API validation', () => {
         '/projects/project/worktrees/worktree/terminals/terminal'
       )
       expect(deepLink.status).toBe(200)
-      expect(await deepLink.text()).toContain('TaskTTY route fallback')
+      expect(await deepLink.text()).toContain('Treeport route fallback')
 
       const missingApi = await app.request('/api/missing')
       expect(missingApi.status).toBe(404)

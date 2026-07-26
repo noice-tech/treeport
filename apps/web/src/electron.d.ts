@@ -1,13 +1,14 @@
-type TaskTTYDesktopCommand = 'new-worktree' | 'new-terminal' | 'close-terminal'
+type TreeportDesktopCommand = 'new-worktree' | 'new-terminal' | 'close-terminal'
+
+type TreeportDesktopBridge = Readonly<{
+  platform: NodeJS.Platform
+  openFileUrl: (url: string) => Promise<boolean>
+  onFullscreenChange: (listener: (fullscreen: boolean) => void) => () => void
+  onCommand: (listener: (command: TreeportDesktopCommand) => void) => () => void
+  requestAttention: () => void
+}>
 
 interface Window {
-  readonly taskttyDesktop?: Readonly<{
-    platform: NodeJS.Platform
-    openFileUrl: (url: string) => Promise<boolean>
-    onFullscreenChange: (listener: (fullscreen: boolean) => void) => () => void
-    onCommand: (
-      listener: (command: TaskTTYDesktopCommand) => void
-    ) => () => void
-    requestAttention: () => void
-  }>
+  readonly treeportDesktop?: TreeportDesktopBridge
+  /** @deprecated Compatibility alias for desktop shells from before the rename. */
 }

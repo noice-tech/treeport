@@ -1,4 +1,4 @@
-import type { RemovePreview, WorktreeRecord } from '@tasktty/shared'
+import type { RemovePreview, WorktreeRecord } from '@treeport/shared'
 import { Button } from '../../components/ui/button'
 import { ModalHeading } from '../dialogs/dialog-parts'
 

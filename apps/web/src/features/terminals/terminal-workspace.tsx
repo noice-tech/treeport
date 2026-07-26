@@ -7,7 +7,7 @@ import type {
   TerminalRecord,
   TerminalSize,
   WorktreeRecord
-} from '@tasktty/shared'
+} from '@treeport/shared'
 import { apiClient } from '../../api'
 import { projectsQueryKey } from '../../project-metadata'
 import { terminalSessions } from '../../terminal-session'
@@ -238,11 +238,12 @@ export function TerminalWorkspace({
   }
 
   useEffect(() => {
-    if (!window.taskttyDesktop) {
+    const desktopBridge = window.treeportDesktop
+    if (!desktopBridge) {
       return
     }
 
-    return window.taskttyDesktop.onCommand((command) => {
+    return desktopBridge.onCommand((command) => {
       if (
         command === 'new-worktree' ||
         modalOpen ||

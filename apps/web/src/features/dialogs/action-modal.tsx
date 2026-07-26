@@ -6,7 +6,7 @@ import type {
   RemovePreview,
   TerminalPreset,
   WorktreeRecord
-} from '@tasktty/shared'
+} from '@treeport/shared'
 import { Button } from '../../components/ui/button'
 import { focusableElements, trapTabKey } from '../../lib/focus'
 import { cn } from '../../lib/utils'

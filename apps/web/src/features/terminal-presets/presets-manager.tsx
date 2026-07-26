@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { PlusIcon, TrashIcon } from '@heroicons/react/16/solid'
-import { TERMINAL_NAME_MAX_LENGTH, type TerminalPreset } from '@tasktty/shared'
+import { TERMINAL_NAME_MAX_LENGTH, type TerminalPreset } from '@treeport/shared'
 import { apiClient } from '../../api'
 import { formatCommandLine, parseCommandLine } from '../../command-line'
 import { Button } from '../../components/ui/button'

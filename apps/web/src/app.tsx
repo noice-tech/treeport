@@ -15,7 +15,7 @@ import type {
   ProjectRecord,
   TerminalRecord,
   WorktreeRecord
-} from '@tasktty/shared'
+} from '@treeport/shared'
 import { Button } from './components/ui/button'
 import {
   ActionModal,
@@ -38,9 +38,6 @@ import { terminalSessions, type TerminalProgress } from './terminal-session'
 import {
   LAST_PROJECT_TERMINAL_STORAGE_PREFIX,
   LAST_WORKSPACE_ROUTE_STORAGE_KEY,
-  LEGACY_ACTIVE_PROJECT_STORAGE_KEY,
-  LEGACY_TERMINAL_STORAGE_KEY,
-  legacyResumePath,
   resolveWorkspaceRoute,
   targetForProject,
   targetForTerminal,
@@ -62,6 +59,7 @@ function clampSidebarWidth(width: number): number {
 }
 
 export default function App() {
+  const desktopBridge = window.treeportDesktop
   const navigateToWorkspace = useWorkspaceNavigate()
   const location = useLocation()
   const projectsQuery = useQuery(projectsQueryOptions)
@@ -71,17 +69,8 @@ export default function App() {
   const storedResumePath = localStorage.getItem(
     LAST_WORKSPACE_ROUTE_STORAGE_KEY
   )
-  const legacyPath = legacyResumePath(
-    projects,
-    localStorage.getItem(LEGACY_TERMINAL_STORAGE_KEY),
-    localStorage.getItem(LEGACY_ACTIVE_PROJECT_STORAGE_KEY)
-  )
   const workspaceResolution = projectsQuery.data
-    ? resolveWorkspaceRoute(
-        projects,
-        location.pathname,
-        storedResumePath ?? legacyPath
-      )
+    ? resolveWorkspaceRoute(projects, location.pathname, storedResumePath)
     : null
   const selectedProject = workspaceResolution?.selection.project ?? null
   const selectedWorktree = workspaceResolution?.selection.worktree ?? null
@@ -92,17 +81,16 @@ export default function App() {
   const [projectSwitcherOpen, setProjectSwitcherOpen] = useState(false)
   const [isMobile, setIsMobile] = useState(false)
   const [desktopFullscreen, setDesktopFullscreen] = useState(false)
-  const desktopPlatform = window.taskttyDesktop?.platform
+  const desktopPlatform = desktopBridge?.platform
   const showDesktopTitlebar =
-    window.taskttyDesktop !== undefined &&
+    desktopBridge !== undefined &&
     !(desktopPlatform === 'darwin' && desktopFullscreen)
   const [error, setError] = useState<string | null>(null)
   const [modal, setModal] = useState<ActionModalState>(null)
   const [sidebarWidth, setSidebarWidth] = useState(() => {
-    const savedWidth = Number.parseInt(
-      localStorage.getItem('tasktty-sidebar-width') ?? '',
-      10
-    )
+    const storedWidth = localStorage.getItem('treeport-sidebar-width')
+
+    const savedWidth = Number.parseInt(storedWidth ?? '', 10)
     return Number.isFinite(savedWidth)
       ? clampSidebarWidth(savedWidth)
       : DEFAULT_SIDEBAR_WIDTH
@@ -184,8 +172,6 @@ export default function App() {
       return
     }
 
-    localStorage.removeItem(LEGACY_ACTIVE_PROJECT_STORAGE_KEY)
-    localStorage.removeItem(LEGACY_TERMINAL_STORAGE_KEY)
     if (workspaceResolution.target.kind === 'root') {
       localStorage.removeItem(LAST_WORKSPACE_ROUTE_STORAGE_KEY)
     } else {
@@ -227,17 +213,14 @@ export default function App() {
     return () => media.removeEventListener('change', update)
   }, [])
 
-  useEffect(
-    () => window.taskttyDesktop?.onFullscreenChange(setDesktopFullscreen),
-    []
-  )
+  useEffect(() => desktopBridge?.onFullscreenChange(setDesktopFullscreen), [])
 
   useEffect(() => {
-    if (!window.taskttyDesktop) {
+    if (!desktopBridge) {
       return
     }
 
-    return window.taskttyDesktop.onCommand((command) => {
+    return desktopBridge.onCommand((command) => {
       if (
         command !== 'new-worktree' ||
         !activeProject ||
@@ -395,7 +378,7 @@ export default function App() {
   const setAndSaveSidebarWidth = (width: number) => {
     const nextWidth = clampSidebarWidth(width)
     setSidebarWidth(nextWidth)
-    localStorage.setItem('tasktty-sidebar-width', String(nextWidth))
+    localStorage.setItem('treeport-sidebar-width', String(nextWidth))
   }
 
   const startSidebarResize = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -461,7 +444,7 @@ export default function App() {
       {showDesktopTitlebar && (
         <div
           className="desktop-titlebar col-span-full h-8 bg-zinc-950"
-          data-tasktty-desktop-titlebar
+          data-treeport-desktop-titlebar
           aria-hidden="true"
         />
       )}

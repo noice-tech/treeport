@@ -6,7 +6,7 @@
     "PATH",
     "SHELL",
     "TMPDIR",
-    "TASKTTY_*",
+    "TREEPORT_*",
     "XDG_*"
   ],
   "tasks": {

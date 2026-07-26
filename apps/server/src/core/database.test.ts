@@ -5,10 +5,10 @@ import { afterEach, describe, expect, it } from 'vitest'
 import {
   deserializeOperation,
   serializeOperation,
-  TaskTTYDatabase
+  TreeportDatabase
 } from './database'
 
-const databases: TaskTTYDatabase[] = []
+const databases: TreeportDatabase[] = []
 const directories: string[] = []
 afterEach(async () => {
   databases.splice(0).forEach((database) => database.close())
@@ -21,9 +21,9 @@ afterEach(async () => {
 
 describe('SQLite metadata', () => {
   it('migrates an empty database and serializes operation payloads', async () => {
-    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'tasktty-db-'))
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'treeport-db-'))
     directories.push(directory)
-    const database = new TaskTTYDatabase(path.join(directory, 'metadata.db'))
+    const database = new TreeportDatabase(path.join(directory, 'metadata.db'))
     databases.push(database)
     const request = {
       branch: 'feature/üñîçødé',
@@ -54,10 +54,10 @@ describe('SQLite metadata', () => {
   })
 
   it('persists literal preset argv, deterministic order, updates, and deletion', async () => {
-    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'tasktty-db-'))
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'treeport-db-'))
     directories.push(directory)
     const filePath = path.join(directory, 'metadata.db')
-    const database = new TaskTTYDatabase(filePath)
+    const database = new TreeportDatabase(filePath)
     databases.push(database)
     database.insertTerminalPreset({
       id: 'preset_b',
@@ -110,7 +110,7 @@ describe('SQLite metadata', () => {
     database.close()
     databases.splice(databases.indexOf(database), 1)
 
-    const reopened = new TaskTTYDatabase(filePath)
+    const reopened = new TreeportDatabase(filePath)
     databases.push(reopened)
     expect(reopened.terminalPresets()).toEqual([
       updated,
@@ -123,9 +123,9 @@ describe('SQLite metadata', () => {
   })
 
   it('filters open projects and orders lightweight recent registrations by open time', async () => {
-    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'tasktty-db-'))
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'treeport-db-'))
     directories.push(directory)
-    const database = new TaskTTYDatabase(path.join(directory, 'metadata.db'))
+    const database = new TreeportDatabase(path.join(directory, 'metadata.db'))
     databases.push(database)
     const insert = database.connection.prepare(
       `INSERT INTO projects(
@@ -216,9 +216,9 @@ describe('SQLite metadata', () => {
   })
 
   it('keeps the main worktree first and linked worktrees in creation order', async () => {
-    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'tasktty-db-'))
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'treeport-db-'))
     directories.push(directory)
-    const database = new TaskTTYDatabase(path.join(directory, 'metadata.db'))
+    const database = new TreeportDatabase(path.join(directory, 'metadata.db'))
     databases.push(database)
     database.connection
       .prepare(
@@ -262,10 +262,12 @@ describe('SQLite metadata', () => {
   })
 
   it('upgrades a version-7 database without reapplying the baseline', async () => {
-    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'tasktty-db-v7-'))
+    const directory = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'treeport-db-v7-')
+    )
     directories.push(directory)
     const filePath = path.join(directory, 'metadata.db')
-    const initial = new TaskTTYDatabase(filePath)
+    const initial = new TreeportDatabase(filePath)
     initial.connection.exec(
       'DROP INDEX terminal_presets_order_idx; DROP TABLE terminal_presets; DELETE FROM schema_migrations WHERE version IN (8, 9);'
     )
@@ -291,7 +293,7 @@ describe('SQLite metadata', () => {
       )
     initial.close()
 
-    const reopened = new TaskTTYDatabase(filePath)
+    const reopened = new TreeportDatabase(filePath)
     databases.push(reopened)
     expect(
       reopened.connection
@@ -321,16 +323,18 @@ describe('SQLite metadata', () => {
   })
 
   it('repairs a missing preset table when version 8 was already recorded', async () => {
-    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'tasktty-db-v8-'))
+    const directory = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'treeport-db-v8-')
+    )
     directories.push(directory)
     const filePath = path.join(directory, 'metadata.db')
-    const initial = new TaskTTYDatabase(filePath)
+    const initial = new TreeportDatabase(filePath)
     initial.connection.exec(
       'DROP INDEX terminal_presets_order_idx; DROP TABLE terminal_presets; DELETE FROM schema_migrations WHERE version = 9;'
     )
     initial.close()
 
-    const reopened = new TaskTTYDatabase(filePath)
+    const reopened = new TreeportDatabase(filePath)
     databases.push(reopened)
     expect(
       reopened.connection

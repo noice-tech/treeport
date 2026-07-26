@@ -3,10 +3,10 @@ import type {
   TerminalProgress,
   TerminalRecord,
   WorktreeRecord
-} from '@tasktty/shared'
+} from '@treeport/shared'
 import {
   ProductEventBus,
-  type TaskTTYService,
+  type TreeportService,
   type TmuxAdapter,
   type TmuxSessionTitleState
 } from './core/index'
@@ -102,7 +102,7 @@ function fixture(initialTerminals: TerminalRecord[]) {
       return item
     }),
     refreshTerminalStatus
-  } as unknown as TaskTTYService
+  } as unknown as TreeportService
   const sessionTitleState = vi.fn(
     async (
       _socket: string,
@@ -248,14 +248,14 @@ describe('TerminalMetadataManager', () => {
     const { manager, sessionTitleState } = fixture([item])
     managers.push(manager)
     sessionTitleState.mockResolvedValue({
-      paneTitle: 'tasktty',
+      paneTitle: 'treeport',
       currentCommand: 'zsh'
     })
     await manager.initialize()
     expect(manager.get(item.id).hasForegroundProcess).toBe(false)
 
     sessionTitleState.mockResolvedValue({
-      paneTitle: 'tasktty',
+      paneTitle: 'treeport',
       currentCommand: 'nano'
     })
     await vi.advanceTimersByTimeAsync(TERMINAL_METADATA_POLL_MS)
@@ -263,11 +263,11 @@ describe('TerminalMetadataManager', () => {
     expect(manager.get(item.id).hasForegroundProcess).toBe(true)
 
     sessionTitleState.mockResolvedValue({
-      paneTitle: 'tasktty',
+      paneTitle: 'treeport',
       currentCommand: 'zsh'
     })
     await vi.advanceTimersByTimeAsync(TERMINAL_METADATA_POLL_MS)
-    expect(manager.get(item.id).title).toBe('tasktty')
+    expect(manager.get(item.id).title).toBe('treeport')
     expect(manager.get(item.id).hasForegroundProcess).toBe(false)
   })
 
@@ -279,7 +279,7 @@ describe('TerminalMetadataManager', () => {
     sessionTitleState.mockResolvedValue({
       paneTitle: 'π',
       currentCommand: 'node',
-      shellTitle: 'tasktty'
+      shellTitle: 'treeport'
     })
     await manager.initialize()
     expect(manager.get(item.id).title).toBe('π')
@@ -287,7 +287,7 @@ describe('TerminalMetadataManager', () => {
     sessionTitleState.mockResolvedValue({
       paneTitle: 'π',
       currentCommand: 'rg',
-      shellTitle: 'tasktty'
+      shellTitle: 'treeport'
     })
     await vi.advanceTimersByTimeAsync(TERMINAL_METADATA_POLL_MS)
     expect(manager.get(item.id).title).toBe('π')
@@ -295,10 +295,10 @@ describe('TerminalMetadataManager', () => {
     sessionTitleState.mockResolvedValue({
       paneTitle: 'π',
       currentCommand: 'zsh',
-      shellTitle: 'tasktty'
+      shellTitle: 'treeport'
     })
     await vi.advanceTimersByTimeAsync(TERMINAL_METADATA_POLL_MS)
-    expect(manager.get(item.id).title).toBe('tasktty')
+    expect(manager.get(item.id).title).toBe('treeport')
   })
 
   it('prefers the existing pane title when no remembered shell title can identify it as stale', async () => {
@@ -306,13 +306,13 @@ describe('TerminalMetadataManager', () => {
     const { manager, sessionTitleState } = fixture([item])
     managers.push(manager)
     sessionTitleState.mockResolvedValue({
-      paneTitle: 'tasktty',
+      paneTitle: 'treeport',
       currentCommand: 'nano'
     })
 
     await manager.initialize()
 
-    expect(manager.get(item.id).title).toBe('tasktty')
+    expect(manager.get(item.id).title).toBe('treeport')
   })
 
   it('waits for a fresh shell title after an application started without a remembered shell title', async () => {
@@ -336,16 +336,16 @@ describe('TerminalMetadataManager', () => {
     expect(setSessionShellTitle).not.toHaveBeenCalled()
 
     sessionTitleState.mockResolvedValue({
-      paneTitle: 'tasktty',
+      paneTitle: 'treeport',
       currentCommand: 'zsh'
     })
     await vi.advanceTimersByTimeAsync(TERMINAL_METADATA_POLL_MS)
-    expect(manager.get(item.id).title).toBe('tasktty')
+    expect(manager.get(item.id).title).toBe('treeport')
     await vi.waitFor(() =>
       expect(setSessionShellTitle).toHaveBeenCalledWith(
         'socket',
         item.tmuxSessionName,
-        'tasktty'
+        'treeport'
       )
     )
   })
@@ -356,20 +356,20 @@ describe('TerminalMetadataManager', () => {
     const { manager, sessionTitleState } = fixture([item])
     managers.push(manager)
     sessionTitleState.mockResolvedValue({
-      paneTitle: 'tasktty',
+      paneTitle: 'treeport',
       currentCommand: 'npm',
-      shellTitle: 'tasktty'
+      shellTitle: 'treeport'
     })
     await manager.initialize()
     expect(manager.get(item.id).title).toBe('npm')
 
     sessionTitleState.mockResolvedValue({
-      paneTitle: 'tasktty',
+      paneTitle: 'treeport',
       currentCommand: 'zsh',
-      shellTitle: 'tasktty'
+      shellTitle: 'treeport'
     })
     await vi.advanceTimersByTimeAsync(TERMINAL_METADATA_POLL_MS)
-    expect(manager.get(item.id).title).toBe('tasktty')
+    expect(manager.get(item.id).title).toBe('treeport')
   })
 
   it('coalesces shell title writes without losing a title observed in flight', async () => {
@@ -450,7 +450,7 @@ describe('TerminalMetadataManager', () => {
     managers.push(manager)
     setSessionShellTitle.mockRejectedValueOnce(new Error('tmux unavailable'))
     sessionTitleState.mockResolvedValue({
-      paneTitle: 'tasktty',
+      paneTitle: 'treeport',
       currentCommand: 'zsh'
     })
     await manager.initialize()
@@ -459,7 +459,7 @@ describe('TerminalMetadataManager', () => {
     )
 
     sessionTitleState.mockResolvedValue({
-      paneTitle: 'tasktty',
+      paneTitle: 'treeport',
       currentCommand: 'nano'
     })
     await vi.advanceTimersByTimeAsync(TERMINAL_METADATA_POLL_MS)
@@ -476,7 +476,7 @@ describe('TerminalMetadataManager', () => {
     const { manager, observers, sessionTitleState } = fixture([item])
     managers.push(manager)
     sessionTitleState.mockResolvedValue({
-      paneTitle: 'tasktty',
+      paneTitle: 'treeport',
       currentCommand: 'zsh'
     })
     await manager.initialize()
@@ -501,7 +501,7 @@ describe('TerminalMetadataManager', () => {
       currentCommand: 'zsh'
     })
     await vi.advanceTimersByTimeAsync(TERMINAL_METADATA_POLL_MS)
-    expect(manager.get(item.id).title).toBe('tasktty')
+    expect(manager.get(item.id).title).toBe('treeport')
   })
 
   it('does not overwrite observer titles with an older tmux lookup', async () => {

@@ -1,7 +1,7 @@
 import crypto from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import type { DirtyState } from '@tasktty/shared'
+import type { DirtyState } from '@treeport/shared'
 import type { CommandRunner } from './command'
 import { runChecked } from './command'
 

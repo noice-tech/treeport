@@ -1,8 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import type { ProjectRecord } from '@tasktty/shared'
+import type { ProjectRecord } from '@treeport/shared'
 import {
   deepestProjectTarget,
-  legacyResumePath,
   resolveWorkspaceRoute,
   targetForProject,
   targetForWorktree,
@@ -131,18 +130,6 @@ describe('workspace route resolution', () => {
     expect(targetForWorktree(projects, secondWorktree, 'terminal-b')).toEqual(
       terminalTarget('project-b', 'worktree-b', 'terminal-c')
     )
-  })
-
-  it('migrates legacy terminal selection before project selection', () => {
-    const projects = projectGraph()
-
-    expect(legacyResumePath(projects, 'terminal-c', 'project-a')).toBe(
-      terminalTarget('project-b', 'worktree-b', 'terminal-c').pathname
-    )
-    expect(legacyResumePath(projects, 'missing', 'project-empty')).toBe(
-      '/projects/project-empty'
-    )
-    expect(legacyResumePath(projects, null, 'missing')).toBeNull()
   })
 
   it('keeps an empty worktree route canonical', () => {

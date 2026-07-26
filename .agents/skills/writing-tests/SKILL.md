@@ -1,6 +1,6 @@
 ---
 name: writing-tests
-description: Rules for writing and reviewing tests in TaskTTY. Use whenever adding, editing, or reviewing tests, especially UI/E2E tests, to keep assertions on user-visible behavior and contracts instead of implementation details like CSS classes, styles, attributes, or markup structure, and to prefer few long workflow tests over many small ones.
+description: Rules for writing and reviewing tests in Treeport. Use whenever adding, editing, or reviewing tests, especially UI/E2E tests, to keep assertions on user-visible behavior and contracts instead of implementation details like CSS classes, styles, attributes, or markup structure, and to prefer few long workflow tests over many small ones.
 ---
 
 # Writing Tests
@@ -24,7 +24,7 @@ Good assertions observe outcomes a user or integrator can observe:
 - Tailwind utility or state-hook classes (`animate-*`, `latched`, `.selected`, `terminal-*`)
 - Library-private attributes (`data-state`, `data-highlighted`, `data-disabled`)
 - Markup structure: tag names, `kbd`/`svg`/icon presence, `ul > li` ordering selectors, `option:checked`
-- Layout geometry as an assertion target (`clientWidth`/`scrollWidth` comparisons, pixel opacity). Bounding boxes are fine as *inputs* for pointer/touch coordinates.
+- Layout geometry as an assertion target (`clientWidth`/`scrollWidth` comparisons, pixel opacity). Bounding boxes are fine as _inputs_ for pointer/touch coordinates.
 - Snapshots of class lists, style strings, or whole component markup
 
 If a visual state genuinely matters (a spinner, a highlight, a flash), either it has an accessible representation worth asserting (role, name, `aria-*`) or it is styling and does not need a test.

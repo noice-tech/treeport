@@ -22,7 +22,7 @@ afterEach(async () =>
 )
 
 async function repository(name = 'example') {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'tasktty-zed-'))
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'treeport-zed-'))
   temporary.push(root)
   const main = path.join(root, name)
   await fs.mkdir(path.join(main, '.zed'), { recursive: true })
@@ -97,7 +97,7 @@ describe('Zed worktree compatibility', () => {
 
     const { root, main } = await repository()
     const outside = await fs.mkdtemp(
-      path.join(os.tmpdir(), 'tasktty-zed-outside-')
+      path.join(os.tmpdir(), 'treeport-zed-outside-')
     )
     temporary.push(outside)
     await fs.symlink(outside, path.join(root, 'linked-trees'), 'dir')

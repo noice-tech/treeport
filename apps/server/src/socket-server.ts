@@ -4,7 +4,7 @@ import type {
   EventsServerToClientEvents,
   TerminalClientToServerEvents,
   TerminalServerToClientEvents
-} from '@tasktty/shared'
+} from '@treeport/shared'
 import {
   parseTerminalAuth,
   SOCKET_IO_PATH,
@@ -13,8 +13,8 @@ import {
   type TerminalAuth,
   type TerminalServerEvent,
   type TerminalServerPayload
-} from '@tasktty/shared'
-import type { AppConfig, TaskTTYService, TmuxAdapter } from './core/index'
+} from '@treeport/shared'
+import type { AppConfig, TreeportService, TmuxAdapter } from './core/index'
 import {
   TerminalAttachmentManager,
   type TerminalTransport
@@ -34,7 +34,7 @@ interface SocketData {
 type InterServerEvents = Record<never, never>
 
 interface SocketServerDependencies {
-  service: TaskTTYService
+  service: TreeportService
   config: AppConfig
   tmux: TmuxAdapter
   terminalMetadata: TerminalMetadataManager
@@ -146,7 +146,7 @@ export function createSocketServer(
       },
       (error: unknown) => {
         console.error(
-          '[TaskTTY] Socket.IO event snapshot failed:',
+          '[Treeport] Socket.IO event snapshot failed:',
           error instanceof Error ? error.message : String(error)
         )
         socket.disconnect(true)

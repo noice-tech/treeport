@@ -4,7 +4,7 @@ import { terminalSizeSchema } from './terminal-protocol.js'
 export * from './socket-protocol.js'
 export * from './terminal-protocol.js'
 
-export const PRODUCT_NAME = 'TaskTTY'
+export const PRODUCT_NAME = 'Treeport'
 export const API_VERSION = 1
 export const TERMINAL_MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 export const TERMINAL_NAME_MAX_LENGTH = 120
@@ -119,10 +119,10 @@ export interface RecentProjectRecord {
   lastOpenedAt: string
 }
 
-export type TaskTTYContext =
+export type TreeportContext =
   | {
       managed: false
-      reason: 'outside_tasktty'
+      reason: 'outside_treeport'
     }
   | {
       managed: true

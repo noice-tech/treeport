@@ -11,14 +11,14 @@ import {
   runChecked
 } from './command'
 import { loadConfig } from './config'
-import { TaskTTYDatabase } from './database'
+import { TreeportDatabase } from './database'
 import { GhAdapter } from './gh'
 import { GitAdapter } from './git'
-import { TaskTTYService } from './service'
+import { TreeportService } from './service'
 import { TMUX_SCROLL_EXIT_SEQUENCE, TmuxAdapter } from './tmux'
 
-const enabled = process.env.TASKTTY_REAL_INTEGRATION === '1'
-const root = path.join(os.tmpdir(), `tasktty real integration ${process.pid}`)
+const enabled = process.env.TREEPORT_REAL_INTEGRATION === '1'
+const root = path.join(os.tmpdir(), `treeport real integration ${process.pid}`)
 afterAll(async () => fs.rm(root, { recursive: true, force: true }))
 
 async function executable(command: string, args: string[]) {
@@ -38,7 +38,7 @@ function ptyEnvironment(): Record<string, string> {
   ) as Record<string, string>
 }
 
-async function waitOperation(service: TaskTTYService, operationId: string) {
+async function waitOperation(service: TreeportService, operationId: string) {
   for (let attempt = 0; attempt < 200; attempt += 1) {
     const operation = service.getOperation(operationId)
     if (operation.status === 'completed' || operation.status === 'failed') {
@@ -66,20 +66,20 @@ async function waitFor(
 
 async function makeService(databasePath: string, runtimeDir: string) {
   const config = loadConfig({
-    TASKTTY_DATABASE_PATH: databasePath,
-    TASKTTY_RUNTIME_DIR: runtimeDir,
-    TASKTTY_DATA_DIR: root,
-    TASKTTY_SHELL: process.env.SHELL || '/bin/sh'
+    TREEPORT_DATABASE_PATH: databasePath,
+    TREEPORT_RUNTIME_DIR: runtimeDir,
+    TREEPORT_DATA_DIR: root,
+    TREEPORT_SHELL: process.env.SHELL || '/bin/sh'
   })
   const runner = new SpawnCommandRunner()
-  const database = new TaskTTYDatabase(databasePath)
+  const database = new TreeportDatabase(databasePath)
   const git = new GitAdapter(runner)
   const launcherPath = fileURLToPath(
     new URL('../../dist/core/launcher.js', import.meta.url)
   )
   const tmux = new TmuxAdapter(runner, runtimeDir, 'tmux', launcherPath)
   const gh = new GhAdapter(runner)
-  const service = new TaskTTYService({
+  const service = new TreeportService({
     config,
     database,
     runner,
@@ -106,7 +106,7 @@ describe.skipIf(!enabled)(
       await fs.mkdir(root, { recursive: true })
       let main = path.join(root, 'main checkout with spaces')
       const remote = path.join(root, 'remote origin.git')
-      const databasePath = path.join(root, 'metadata', 'tasktty.db')
+      const databasePath = path.join(root, 'metadata', 'treeport.db')
       const runtimeDir = path.join(root, 'runtime')
       const command = new SpawnCommandRunner()
       await runChecked(command, {
@@ -119,12 +119,12 @@ describe.skipIf(!enabled)(
       })
       await runChecked(command, {
         executable: 'git',
-        args: ['config', 'user.email', 'tasktty@example.test'],
+        args: ['config', 'user.email', 'treeport@example.test'],
         cwd: main
       })
       await runChecked(command, {
         executable: 'git',
-        args: ['config', 'user.name', 'tasktty test'],
+        args: ['config', 'user.name', 'treeport test'],
         cwd: main
       })
       await fs.writeFile(path.join(main, 'README.md'), 'fixture\n')
@@ -551,7 +551,7 @@ describe.skipIf(!enabled)(
         new URL('../../dist/core/launcher.js', import.meta.url)
       )
       const tmux = new TmuxAdapter(runner, runtimeDir, 'tmux', launcherPath)
-      const socket = `tasktty-initial-size-${process.pid}`
+      const socket = `treeport-initial-size-${process.pid}`
       await fs.mkdir(root, { recursive: true })
       try {
         await tmux.createSession({
@@ -596,7 +596,7 @@ describe.skipIf(!enabled)(
       const inputPath = path.join(root, 'scroll-input')
       const runner = new SpawnCommandRunner()
       const tmux = new TmuxAdapter(runner, runtimeDir)
-      const socket = `tasktty-scroll-${process.pid}`
+      const socket = `treeport-scroll-${process.pid}`
       const session = 'scroll'
       await tmux.initialize()
       const base = ['-L', socket, '-f', tmux.configPath]

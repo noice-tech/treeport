@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import type { ProjectRecord, TerminalPreset } from '@tasktty/shared'
+import type { ProjectRecord, TerminalPreset } from '@treeport/shared'
 import { apiClient } from '../../api'
 import { Button } from '../../components/ui/button'
 import { Input } from '../../components/ui/input'
@@ -9,7 +9,7 @@ import { NativeSelect } from '../../components/ui/native-select'
 import { cn } from '../../lib/utils'
 import { FormField, ModalHeading } from '../dialogs/dialog-parts'
 
-const INITIAL_TERMINAL_PRESET_STORAGE_KEY = 'tasktty-initial-terminal-preset'
+const INITIAL_TERMINAL_PRESET_STORAGE_KEY = 'treeport-initial-terminal-preset'
 
 export interface WorktreeDestination {
   name: string
@@ -48,9 +48,11 @@ export function WorktreeForm({
   const [debouncedName, setDebouncedName] = useState('')
   const [resolvingSubmission, setResolvingSubmission] = useState(false)
   const [baseValue, setBaseValue] = useState('default')
-  const [initialPresetId, setInitialPresetId] = useState(
-    () => localStorage.getItem(INITIAL_TERMINAL_PRESET_STORAGE_KEY) ?? 'shell'
-  )
+  const [initialPresetId, setInitialPresetId] = useState(() => {
+    const stored = localStorage.getItem(INITIAL_TERMINAL_PRESET_STORAGE_KEY)
+
+    return stored ?? 'shell'
+  })
   const initialPresetAvailable = presets.some(
     (preset) => preset.id === initialPresetId
   )

@@ -22,7 +22,7 @@ import type {
   ProjectRecord,
   TerminalRecord,
   WorktreeRecord
-} from '@tasktty/shared'
+} from '@treeport/shared'
 import { apiClient } from '../../api'
 import { Button } from '../../components/ui/button'
 import { Input } from '../../components/ui/input'
@@ -611,8 +611,9 @@ export function WorkspaceSidebar({
   onResizeSidebarWithKeyboard: resizeSidebarWithKeyboard,
   onSetSidebarWidth: setAndSaveSidebarWidth
 }: WorkspaceSidebarProps) {
-  const newWorktreeShortcut = window.taskttyDesktop
-    ? window.taskttyDesktop.platform === 'darwin'
+  const desktopBridge = window.treeportDesktop
+  const newWorktreeShortcut = desktopBridge
+    ? desktopBridge.platform === 'darwin'
       ? '⌘N'
       : 'Ctrl+N'
     : null
@@ -1002,7 +1003,7 @@ export function WorkspaceSidebar({
                         disabled={project.availability.state === 'unavailable'}
                         aria-keyshortcuts={
                           newWorktreeShortcut
-                            ? window.taskttyDesktop?.platform === 'darwin'
+                            ? desktopBridge?.platform === 'darwin'
                               ? 'Meta+N'
                               : 'Control+N'
                             : undefined

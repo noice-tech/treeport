@@ -4,9 +4,9 @@ import type {
   TerminalRecord,
   TerminalRuntimeMetadata,
   WorktreeRecord
-} from '@tasktty/shared'
+} from '@treeport/shared'
 import type {
-  TaskTTYService,
+  TreeportService,
   TmuxAdapter,
   TmuxSessionTitleState
 } from './core/index'
@@ -105,7 +105,7 @@ export class TerminalMetadataManager {
   private disposed = false
 
   constructor(
-    private readonly service: TaskTTYService,
+    private readonly service: TreeportService,
     private readonly tmux: TmuxAdapter,
     tmuxExecutable: string,
     private readonly createObserver: TerminalProgressObserverFactory = createTmuxProgressObserver
@@ -394,6 +394,7 @@ export class TerminalMetadataManager {
             yield* this.persistShellTitle(entry, runtimeGeneration)
           }
         }
+
         markReady()
 
         while (isCurrent()) {
@@ -438,6 +439,7 @@ export class TerminalMetadataManager {
           if (terminal) {
             entry.status = terminal.status
           }
+
           if (polledTitleState) {
             this.updateForegroundProcess(entry, polledTitleState.currentCommand)
             if (entry.titleRevision === polledTitleRevision) {
@@ -445,10 +447,12 @@ export class TerminalMetadataManager {
               yield* this.persistShellTitle(entry, runtimeGeneration)
             }
           }
+
           if (terminal?.status !== undefined && terminal.status !== 'running') {
             this.update(entry, { hasForegroundProcess: false })
             return
           }
+
           yield* this.ensureObserver(entry, runtimeGeneration)
         }
       })
@@ -515,6 +519,7 @@ export class TerminalMetadataManager {
               clearTimeout(entry.progressLease)
               entry.progressLease = null
             }
+
             if (progress !== null) {
               entry.progressLease = setTimeout(() => {
                 if (
@@ -525,12 +530,14 @@ export class TerminalMetadataManager {
                 ) {
                   return
                 }
+
                 entry.progressLease = null
                 entry.progressActivityGeneration += 1
                 this.update(entry, { progress: null })
               }, TERMINAL_PROGRESS_STALE_MS)
               entry.progressLease.unref()
             }
+
             this.update(entry, { progress })
           },
           onBell: () => {
@@ -556,6 +563,7 @@ export class TerminalMetadataManager {
             ) {
               return
             }
+
             entry.observerVersion += 1
             entry.observer = null
             entry.progressActivityGeneration += 1
@@ -563,6 +571,7 @@ export class TerminalMetadataManager {
               clearTimeout(entry.progressLease)
               entry.progressLease = null
             }
+
             this.update(entry, { progress: null })
           }
         })
@@ -600,6 +609,7 @@ export class TerminalMetadataManager {
     if (runtimeFiber) {
       Effect.runFork(Fiber.interrupt(runtimeFiber))
     }
+
     this.releaseRuntimeResources(entry)
     this.update(entry, {
       progress: null,
@@ -613,6 +623,7 @@ export class TerminalMetadataManager {
       clearTimeout(entry.progressLease)
       entry.progressLease = null
     }
+
     this.update(entry, { progress: null })
   }
 
@@ -652,7 +663,6 @@ export class TerminalMetadataManager {
 
     if (currentCommand === entry.shellCommand) {
       const applicationTitleWasActive = entry.applicationTitleActive
-      const previousShellTitle = entry.shellTitle
       const freshShellTitle =
         observedTitlePending || (previousCommand !== null && paneTitleChanged)
       entry.applicationTitleActive = false
@@ -768,6 +778,7 @@ export class TerminalMetadataManager {
             if (!written) {
               return
             }
+
             if (
               this.entries.get(entry.terminalId) === entry &&
               entry.runtimeGeneration === runtimeGeneration

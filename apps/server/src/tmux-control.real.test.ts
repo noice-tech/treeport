@@ -19,10 +19,10 @@ import {
   type TmuxControlEvent
 } from './tmux-control'
 
-const enabled = process.env.TASKTTY_REAL_INTEGRATION === '1'
+const enabled = process.env.TREEPORT_REAL_INTEGRATION === '1'
 const root = path.join(
   os.tmpdir(),
-  `tasktty control characterization ${process.pid}`
+  `treeport control characterization ${process.pid}`
 )
 const execute = promisify(execFile)
 afterAll(async () => fs.rm(root, { recursive: true, force: true }))
@@ -62,7 +62,7 @@ describe.skipIf(!enabled)('real tmux control-mode characterization', () => {
     }
 
     await fs.mkdir(root, { recursive: true })
-    const socket = `tasktty-control-${process.pid}`
+    const socket = `treeport-control-${process.pid}`
     const session = 'control-characterization'
     const tmux = new TmuxAdapter(new SpawnCommandRunner(), root)
     await tmux.initialize()

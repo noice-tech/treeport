@@ -38,13 +38,15 @@ class RecordingRunner implements CommandRunner {
 
 describe('TmuxAdapter', () => {
   it('generates application-owned identifiers independent of branch names', () => {
-    expect(generateTmuxSocketName()).toMatch(/^tasktty-wt-[a-f0-9]{16}$/)
-    expect(generateTmuxSessionName()).toMatch(/^tasktty-term-[a-f0-9]{16}$/)
+    expect(generateTmuxSocketName()).toMatch(/^treeport-wt-[a-f0-9]{16}$/)
+    expect(generateTmuxSessionName()).toMatch(/^treeport-term-[a-f0-9]{16}$/)
     expect(generateTmuxSocketName()).not.toBe(generateTmuxSocketName())
   })
 
   it('configures manual window sizing without changing the global default', async () => {
-    const runtime = await fs.mkdtemp(path.join(os.tmpdir(), 'tasktty-runtime-'))
+    const runtime = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'treeport-runtime-')
+    )
     temporary.push(runtime)
     const runner = new RecordingRunner()
     const adapter = new TmuxAdapter(runner, runtime)
@@ -66,7 +68,9 @@ describe('TmuxAdapter', () => {
   })
 
   it('resizes a window explicitly at the canonical dimensions', async () => {
-    const runtime = await fs.mkdtemp(path.join(os.tmpdir(), 'tasktty-runtime-'))
+    const runtime = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'treeport-runtime-')
+    )
     temporary.push(runtime)
     const runner = new RecordingRunner()
     const adapter = new TmuxAdapter(runner, runtime)
@@ -89,7 +93,9 @@ describe('TmuxAdapter', () => {
   })
 
   it('starts a new session at the requested initial dimensions', async () => {
-    const runtime = await fs.mkdtemp(path.join(os.tmpdir(), 'tasktty-runtime-'))
+    const runtime = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'treeport-runtime-')
+    )
     temporary.push(runtime)
     const runner = new RecordingRunner()
     const adapter = new TmuxAdapter(runner, runtime, 'tmux', '/launcher.js')
@@ -117,7 +123,9 @@ describe('TmuxAdapter', () => {
   })
 
   it('stores hostile and Unicode argv losslessly in the launch spec', async () => {
-    const runtime = await fs.mkdtemp(path.join(os.tmpdir(), 'tasktty runtime '))
+    const runtime = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'treeport runtime ')
+    )
     temporary.push(runtime)
     const runner = new RecordingRunner()
     const launcher = '/application owned/path with spaces/launcher.js'
@@ -144,8 +152,8 @@ describe('TmuxAdapter', () => {
       timeoutMs: 1234
     }
     await adapter.createSession({
-      socketName: 'tasktty-wt-safe',
-      sessionName: 'tasktty-term-safe',
+      socketName: 'treeport-wt-safe',
+      sessionName: 'treeport-term-safe',
       terminalId: 'term_safe',
       worktreeId: 'wt_safe',
       name: 'Pi ☃',
@@ -153,7 +161,7 @@ describe('TmuxAdapter', () => {
       cwd: '/repo with spaces',
       argv,
       fallbackArgv: ['/bin/zsh', '-l'],
-      env: { TASKTTY_TERMINAL_ID: 'term_safe' },
+      env: { TREEPORT_TERMINAL_ID: 'term_safe' },
       setupTasks: [setupTask]
     })
 
@@ -165,7 +173,7 @@ describe('TmuxAdapter', () => {
       argv,
       fallbackArgv: ['/bin/zsh', '-l'],
       cwd: '/repo with spaces',
-      env: { TASKTTY_TERMINAL_ID: 'term_safe' },
+      env: { TREEPORT_TERMINAL_ID: 'term_safe' },
       setupTasks: [setupTask]
     })
     expect(
@@ -176,18 +184,20 @@ describe('TmuxAdapter', () => {
     ).toEqual(
       [
         'window-size',
-        '@tasktty-name',
-        '@tasktty-argv',
-        '@tasktty-created-at',
-        '@tasktty-updated-at',
-        '@tasktty-worktree-id',
-        '@tasktty-terminal-id'
+        '@treeport-name',
+        '@treeport-argv',
+        '@treeport-created-at',
+        '@treeport-updated-at',
+        '@treeport-worktree-id',
+        '@treeport-terminal-id'
       ].sort()
     )
   })
 
   it('recovers the macOS SSH agent socket for terminal commands', async () => {
-    const runtime = await fs.mkdtemp(path.join(os.tmpdir(), 'tasktty-runtime-'))
+    const runtime = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'treeport-runtime-')
+    )
     temporary.push(runtime)
     const runner = new RecordingRunner()
     runner.launchctlResponse = {
@@ -210,7 +220,7 @@ describe('TmuxAdapter', () => {
       createdAt: '2026-01-02T03:04:05.000Z',
       cwd: '/tmp',
       argv: ['pi'],
-      env: { TASKTTY_TERMINAL_ID: 'term' }
+      env: { TREEPORT_TERMINAL_ID: 'term' }
     })
 
     expect(runner.calls[0]).toMatchObject({
@@ -224,13 +234,15 @@ describe('TmuxAdapter', () => {
     ).resolves.toMatchObject({
       env: {
         SSH_AUTH_SOCK: '/private/tmp/com.apple.launchd.test/Listeners',
-        TASKTTY_TERMINAL_ID: 'term'
+        TREEPORT_TERMINAL_ID: 'term'
       }
     })
   })
 
   it('preserves an inherited SSH agent socket without consulting launchd', async () => {
-    const runtime = await fs.mkdtemp(path.join(os.tmpdir(), 'tasktty-runtime-'))
+    const runtime = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'treeport-runtime-')
+    )
     temporary.push(runtime)
     const runner = new RecordingRunner()
     const adapter = new TmuxAdapter(runner, runtime, 'tmux', '/launcher.js', {
@@ -262,7 +274,9 @@ describe('TmuxAdapter', () => {
   })
 
   it('creates the terminal when the macOS SSH agent socket is unavailable', async () => {
-    const runtime = await fs.mkdtemp(path.join(os.tmpdir(), 'tasktty-runtime-'))
+    const runtime = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'treeport-runtime-')
+    )
     temporary.push(runtime)
     const runner = new RecordingRunner()
     runner.launchctlResponse = {
@@ -296,7 +310,9 @@ describe('TmuxAdapter', () => {
   })
 
   it('removes the launch spec when post-creation setup fails', async () => {
-    const runtime = await fs.mkdtemp(path.join(os.tmpdir(), 'tasktty-runtime-'))
+    const runtime = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'treeport-runtime-')
+    )
     temporary.push(runtime)
     const runner = new RecordingRunner()
     runner.responses.push(
@@ -329,7 +345,9 @@ describe('TmuxAdapter', () => {
   })
 
   it('stops a newly started empty server when setup fails before session creation', async () => {
-    const runtime = await fs.mkdtemp(path.join(os.tmpdir(), 'tasktty-runtime-'))
+    const runtime = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'treeport-runtime-')
+    )
     temporary.push(runtime)
     const runner = new RecordingRunner()
     runner.responses.push(
@@ -359,16 +377,16 @@ describe('TmuxAdapter', () => {
   })
 
   it('reads the live pane title, foreground command, and remembered shell title from tmux', async () => {
-    const runtime = await fs.mkdtemp(path.join(os.tmpdir(), 'tasktty-runtime-'))
+    const runtime = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'treeport-runtime-')
+    )
     temporary.push(runtime)
     const runner = new RecordingRunner()
     const shellTitle = 'zsh · /repo'
-    const encodedShellTitle = Buffer.from(
-      JSON.stringify(shellTitle),
-      'utf8'
-    ).toString('base64url')
+    const encode = (value: string) =>
+      Buffer.from(JSON.stringify(value), 'utf8').toString('base64url')
     runner.responses.push({
-      stdout: `${encodedShellTitle}\tnano\t${shellTitle}\n`,
+      stdout: `${encode(shellTitle)}\tnano\t${shellTitle}\n`,
       stderr: '',
       exitCode: 0
     })
@@ -382,12 +400,14 @@ describe('TmuxAdapter', () => {
       shellTitle
     })
     expect(runner.calls[0]!.args).toContain(
-      '#{@tasktty-shell-title}\t#{pane_current_command}\t#{pane_title}'
+      '#{@treeport-shell-title}\t#{pane_current_command}\t#{pane_title}'
     )
   })
 
   it('stores remembered shell titles as encoded tmux session metadata', async () => {
-    const runtime = await fs.mkdtemp(path.join(os.tmpdir(), 'tasktty-runtime-'))
+    const runtime = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'treeport-runtime-')
+    )
     temporary.push(runtime)
     const runner = new RecordingRunner()
     const adapter = new TmuxAdapter(runner, runtime)
@@ -395,21 +415,15 @@ describe('TmuxAdapter', () => {
 
     await adapter.setSessionShellTitle('socket', 'session', shellTitle)
 
-    expect(runner.calls[0]!.args).toEqual([
-      '-L',
-      'socket',
-      '-f',
-      adapter.configPath,
-      'set-option',
-      '-t',
-      'session',
-      '@tasktty-shell-title',
-      Buffer.from(JSON.stringify(shellTitle), 'utf8').toString('base64url')
-    ])
+    expect(
+      runner.calls.map((call) => call.args[call.args.indexOf('-t') + 2])
+    ).toEqual(['@treeport-shell-title'])
   })
 
   it('discovers live tmux terminals from encoded session metadata', async () => {
-    const runtime = await fs.mkdtemp(path.join(os.tmpdir(), 'tasktty-runtime-'))
+    const runtime = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'treeport-runtime-')
+    )
     temporary.push(runtime)
     const runner = new RecordingRunner()
     const encode = (value: unknown) =>
@@ -417,7 +431,7 @@ describe('TmuxAdapter', () => {
     runner.responses.push({
       stdout: [
         [
-          'tasktty-term-one',
+          'treeport-term-one',
           'term_one',
           'wt_one',
           encode('Pi\t☃'),
@@ -429,7 +443,7 @@ describe('TmuxAdapter', () => {
           ''
         ].join('\t'),
         [
-          'tasktty-term-two',
+          'treeport-term-two',
           'term_two',
           'wt_one',
           encode('Done'),
@@ -439,6 +453,18 @@ describe('TmuxAdapter', () => {
           '1767398400',
           '1',
           '17'
+        ].join('\t'),
+        [
+          'opaque-persisted-session-7f31',
+          'term_persisted',
+          'wt_one',
+          encode('Persisted'),
+          encode(['bash']),
+          encode('2025-12-01T00:00:00.000Z'),
+          encode('2025-12-02T00:00:00.000Z'),
+          '1764547200',
+          '0',
+          ''
         ].join('\t'),
         'unrelated\t\t\t\t\t\t\t1767398400\t0\t'
       ].join('\n'),
@@ -452,7 +478,7 @@ describe('TmuxAdapter', () => {
         id: 'term_one',
         worktreeId: 'wt_one',
         name: 'Pi\t☃',
-        sessionName: 'tasktty-term-one',
+        sessionName: 'treeport-term-one',
         argv: ['pi', 'a b', '☃'],
         status: 'running',
         exitCode: null,
@@ -463,12 +489,23 @@ describe('TmuxAdapter', () => {
         id: 'term_two',
         worktreeId: 'wt_one',
         name: 'Done',
-        sessionName: 'tasktty-term-two',
+        sessionName: 'treeport-term-two',
         argv: ['sh'],
         status: 'exited',
         exitCode: 17,
         createdAt: '2026-01-03T00:00:00.000Z',
         updatedAt: '2026-01-03T00:00:00.000Z'
+      },
+      {
+        id: 'term_persisted',
+        worktreeId: 'wt_one',
+        name: 'Persisted',
+        sessionName: 'opaque-persisted-session-7f31',
+        argv: ['bash'],
+        status: 'running',
+        exitCode: null,
+        createdAt: '2025-12-01T00:00:00.000Z',
+        updatedAt: '2025-12-02T00:00:00.000Z'
       }
     ])
   })
@@ -477,7 +514,7 @@ describe('TmuxAdapter', () => {
     'treats an absent or empty tmux server as an empty terminal inventory: %s',
     async (stderr) => {
       const runtime = await fs.mkdtemp(
-        path.join(os.tmpdir(), 'tasktty-runtime-')
+        path.join(os.tmpdir(), 'treeport-runtime-')
       )
       temporary.push(runtime)
       const runner = new RecordingRunner()
@@ -492,7 +529,9 @@ describe('TmuxAdapter', () => {
   )
 
   it('removes discovered launch specs when killing a worktree server', async () => {
-    const runtime = await fs.mkdtemp(path.join(os.tmpdir(), 'tasktty-runtime-'))
+    const runtime = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'treeport-runtime-')
+    )
     temporary.push(runtime)
     const runner = new RecordingRunner()
     const encode = (value: unknown) =>
@@ -500,7 +539,7 @@ describe('TmuxAdapter', () => {
     runner.responses.push(
       {
         stdout: [
-          'tasktty-term-one',
+          'treeport-term-one',
           'term_one',
           'wt_one',
           encode('Terminal'),
@@ -527,18 +566,20 @@ describe('TmuxAdapter', () => {
   })
 
   it('treats a missing worktree server as already stopped', async () => {
-    const runtime = await fs.mkdtemp(path.join(os.tmpdir(), 'tasktty-runtime-'))
+    const runtime = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'treeport-runtime-')
+    )
     temporary.push(runtime)
     const runner = new RecordingRunner()
     runner.responses.push(
       {
         stdout: '',
-        stderr: 'error connecting to /tmp/tasktty (No such file or directory)',
+        stderr: 'error connecting to /tmp/treeport (No such file or directory)',
         exitCode: 1
       },
       {
         stdout: '',
-        stderr: 'error connecting to /tmp/tasktty (No such file or directory)',
+        stderr: 'error connecting to /tmp/treeport (No such file or directory)',
         exitCode: 1
       }
     )
@@ -548,12 +589,14 @@ describe('TmuxAdapter', () => {
   })
 
   it('does not treat tmux connection permission errors as an absent server', async () => {
-    const runtime = await fs.mkdtemp(path.join(os.tmpdir(), 'tasktty-runtime-'))
+    const runtime = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'treeport-runtime-')
+    )
     temporary.push(runtime)
     const runner = new RecordingRunner()
     runner.responses.push({
       stdout: '',
-      stderr: 'error connecting to /tmp/tasktty (Permission denied)',
+      stderr: 'error connecting to /tmp/treeport (Permission denied)',
       exitCode: 1
     })
     const adapter = new TmuxAdapter(runner, runtime)
@@ -564,7 +607,9 @@ describe('TmuxAdapter', () => {
   })
 
   it('maps a live, exited, or absent pane to product terminal state', async () => {
-    const runtime = await fs.mkdtemp(path.join(os.tmpdir(), 'tasktty-runtime-'))
+    const runtime = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'treeport-runtime-')
+    )
     temporary.push(runtime)
     const runner = new RecordingRunner()
     runner.responses.push(

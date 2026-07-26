@@ -6,7 +6,7 @@ import type { IPty } from 'node-pty'
 import {
   ProductEventBus,
   type AppConfig,
-  type TaskTTYService,
+  type TreeportService,
   type TmuxAdapter
 } from './core/index'
 import type {
@@ -15,8 +15,8 @@ import type {
   TerminalClientToServerEvents,
   TerminalRuntimeMetadata,
   TerminalServerToClientEvents
-} from '@tasktty/shared'
-import { SOCKET_IO_PATH, TERMINAL_PROTOCOL_VERSION } from '@tasktty/shared'
+} from '@treeport/shared'
+import { SOCKET_IO_PATH, TERMINAL_PROTOCOL_VERSION } from '@treeport/shared'
 import { TerminalAttachmentManager } from './terminal-attachments'
 import { createSocketServer } from './socket-server'
 import type { TerminalMetadataManager } from './terminal-metadata'
@@ -66,7 +66,7 @@ interface NetworkFixture {
   metadata: TerminalMetadataManager
   metadataSnapshot: ReturnType<typeof vi.fn<() => TerminalRuntimeMetadata[]>>
   ptys: FakePty[]
-  service: TaskTTYService
+  service: TreeportService
   close(): Promise<void>
 }
 
@@ -89,7 +89,7 @@ async function fixture(): Promise<NetworkFixture> {
       path: '/tmp',
       tmuxSocketName: 'socket'
     }))
-  } as unknown as TaskTTYService
+  } as unknown as TreeportService
   const tmux = {
     configureServer: vi.fn(async () => undefined),
     useManualWindowSize: vi.fn(async () => undefined),
@@ -133,7 +133,7 @@ async function fixture(): Promise<NetworkFixture> {
   const config = {
     host: '127.0.0.1',
     port: 0,
-    databasePath: '/tmp/tasktty-socket-test.db',
+    databasePath: '/tmp/treeport-socket-test.db',
     dataDir: '/tmp',
     runtimeDir: '/tmp',
     shell: '/bin/sh',

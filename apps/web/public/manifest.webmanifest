@@ -1,6 +1,6 @@
 {
-  "name": "TaskTTY — worktree terminal driver",
-  "short_name": "TaskTTY",
+  "name": "Treeport — worktree terminal driver",
+  "short_name": "Treeport",
   "description": "Persistent terminals organized by Git worktree",
   "theme_color": "#09090b",
   "background_color": "#09090b",

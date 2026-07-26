@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { toast } from 'sonner'
-import type { ProjectRecord, TerminalRecord } from '@tasktty/shared'
+import type { ProjectRecord, TerminalRecord } from '@treeport/shared'
 import { Button } from '../../components/ui/button'
 import {
   terminalSessions,
@@ -270,7 +270,7 @@ export function useBellNotifications({
       }
 
       showToast(context, event)
-      window.taskttyDesktop?.requestAttention()
+      void window.treeportDesktop?.requestAttention()
     }
 
     deliverEvent.current = deliver

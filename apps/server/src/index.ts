@@ -7,8 +7,8 @@ import {
   loadConfig,
   SpawnCommandRunner,
   TmuxAdapter,
-  TaskTTYDatabase,
-  TaskTTYService
+  TreeportDatabase,
+  TreeportService
 } from './core/index'
 import { createApp } from './app'
 import { createSocketServer } from './socket-server'
@@ -16,7 +16,7 @@ import { TerminalMetadataManager } from './terminal-metadata'
 
 const config = loadConfig()
 const runner = new SpawnCommandRunner()
-const database = new TaskTTYDatabase(config.databasePath)
+const database = new TreeportDatabase(config.databasePath)
 const git = new GitAdapter(runner, config.gitPath)
 const launcherPath = fileURLToPath(
   new URL('./core/launcher.js', import.meta.url)
@@ -28,7 +28,7 @@ const tmux = new TmuxAdapter(
   launcherPath
 )
 const gh = new GhAdapter(runner, config.ghPath)
-const service = new TaskTTYService({ config, database, runner, git, tmux, gh })
+const service = new TreeportService({ config, database, runner, git, tmux, gh })
 await service.initialize()
 const terminalMetadata = new TerminalMetadataManager(
   service,
@@ -50,7 +50,7 @@ const { io, attachments } = createSocketServer(server as HttpServer, {
   terminalMetadata
 })
 
-console.log(`TaskTTY listening on ${config.apiUrl}`)
+console.log(`Treeport listening on ${config.apiUrl}`)
 console.log(`database: ${config.databasePath}`)
 
 let shuttingDown = false

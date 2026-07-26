@@ -24,8 +24,8 @@ import {
   type TerminalRuntimeMetadata,
   type TerminalServerEvent,
   type TerminalServerPayload
-} from '@tasktty/shared'
-import type { TaskTTYService, TmuxAdapter } from './core/index'
+} from '@treeport/shared'
+import type { TreeportService, TmuxAdapter } from './core/index'
 import { resolveExecutablePath } from './core/index'
 import type { TerminalMetadataManager } from './terminal-metadata'
 
@@ -131,7 +131,7 @@ export class TerminalAttachmentManager {
   private readonly tmuxExecutable: string
 
   constructor(
-    private readonly service: TaskTTYService,
+    private readonly service: TreeportService,
     private readonly tmux: TmuxAdapter,
     tmuxExecutable: string,
     private readonly metadata: TerminalMetadataManager,

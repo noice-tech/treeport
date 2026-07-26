@@ -1,12 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { IPty } from 'node-pty'
-import type { TmuxAdapter, TaskTTYService } from './core/index'
+import type { TmuxAdapter, TreeportService } from './core/index'
 import {
   TERMINAL_OUTPUT_HIGH_WATERMARK,
   TERMINAL_OUTPUT_STALL_TIMEOUT_MS,
   type TerminalServerEvent,
   type TerminalServerPayload
-} from '@tasktty/shared'
+} from '@treeport/shared'
 import {
   TerminalAttachmentManager,
   type TerminalTransport
@@ -157,7 +157,7 @@ function fixture() {
       tmuxSocketName: 'socket'
     })),
     events: { publish }
-  } as unknown as TaskTTYService
+  } as unknown as TreeportService
   const tmux = {
     configPath: '/runtime/tmux.conf',
     configureServer: vi.fn(async () => undefined),

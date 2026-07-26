@@ -14,9 +14,9 @@ import {
   type TerminalServerEvent,
   type TerminalSize,
   type TerminalServerToClientEvents
-} from '@tasktty/shared'
+} from '@treeport/shared'
 
-export type { TerminalProgress } from '@tasktty/shared'
+export type { TerminalProgress } from '@treeport/shared'
 
 type ConnectionPhase = 'connecting' | 'ready' | 'reconnecting' | 'closed'
 export type ArrowDirection = 'up' | 'down' | 'left' | 'right'
@@ -155,7 +155,7 @@ function activateTerminalLink(event: MouseEvent, url: string): void {
     return
   }
   if (parsedUrl.protocol === 'file:') {
-    const opening = window.taskttyDesktop?.openFileUrl(url)
+    const opening = window.treeportDesktop?.openFileUrl(url)
     if (opening) {
       void opening.catch(() => undefined)
     }
@@ -317,8 +317,9 @@ function getClientId(): string {
   }
 
   try {
-    const stored = sessionStorage.getItem('tasktty-terminal-client-id')
+    const stored = sessionStorage.getItem('treeport-terminal-client-id')
     if (stored) {
+      sessionStorage.setItem('treeport-terminal-client-id', stored)
       return (fallbackClientId = stored)
     }
   } catch {
@@ -340,7 +341,7 @@ function getClientId(): string {
   const created = `${hex.slice(0, 4).join('')}-${hex.slice(4, 6).join('')}-${hex.slice(6, 8).join('')}-${hex.slice(8, 10).join('')}-${hex.slice(10).join('')}`
 
   try {
-    sessionStorage.setItem('tasktty-terminal-client-id', created)
+    sessionStorage.setItem('treeport-terminal-client-id', created)
   } catch {
     // The in-memory ID still keeps reconnects stable for this page load.
   }

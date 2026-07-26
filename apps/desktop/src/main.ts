@@ -10,14 +10,18 @@ import {
 import { filePathFromUrl } from './file-url.js'
 
 const dirname = __dirname
+if (app.isPackaged) {
+  app.setPath('userData', path.join(app.getPath('appData'), 'Treeport'))
+}
+
 const defaultRendererUrl = app.isPackaged
   ? 'http://127.0.0.1:4780'
   : 'http://127.0.0.1:5173'
 const configuredRendererUrl =
-  process.env.TASKTTY_DESKTOP_URL?.trim() || defaultRendererUrl
+  process.env.TREEPORT_DESKTOP_URL?.trim() || defaultRendererUrl
 
 if (!URL.canParse(configuredRendererUrl)) {
-  throw new Error('TASKTTY_DESKTOP_URL must be a valid loopback HTTP URL')
+  throw new Error('TREEPORT_DESKTOP_URL must be a valid loopback HTTP URL')
 }
 
 const rendererUrl = new URL(configuredRendererUrl)
@@ -25,7 +29,7 @@ if (
   rendererUrl.protocol !== 'http:' ||
   !['127.0.0.1', 'localhost', '[::1]'].includes(rendererUrl.hostname)
 ) {
-  throw new Error('TASKTTY_DESKTOP_URL must use HTTP on a loopback host')
+  throw new Error('TREEPORT_DESKTOP_URL must use HTTP on a loopback host')
 }
 
 rendererUrl.pathname = '/'
@@ -86,7 +90,7 @@ function connectionPage(message: string): string {
   <meta charset="UTF-8">
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>TaskTTY unavailable</title>
+  <title>Treeport unavailable</title>
   <style>
     :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, sans-serif; background: #09090b; color: #f4f4f5; }
     body { min-height: 100vh; margin: 0; display: grid; place-items: center; }
@@ -101,10 +105,10 @@ function connectionPage(message: string): string {
 <body>
   <div class="titlebar" aria-hidden="true"></div>
   <main>
-    <h1>TaskTTY is unavailable</h1>
+    <h1>Treeport is unavailable</h1>
     <p>${escapedMessage}</p>
-    <p>Start the TaskTTY daemon, then reconnect to <code>${escapedUrl}</code>.</p>
-    <button type="button" data-tasktty-retry>Retry connection</button>
+    <p>Start the Treeport daemon, then reconnect to <code>${escapedUrl}</code>.</p>
+    <button type="button" data-treeport-retry>Retry connection</button>
   </main>
 </body>
 </html>`
@@ -112,7 +116,7 @@ function connectionPage(message: string): string {
 
 const connectionPageUrl = `data:text/html;charset=utf-8,${encodeURIComponent(
   connectionPage(
-    'The desktop companion could not reach a compatible TaskTTY server.'
+    'The desktop companion could not reach a compatible Treeport server.'
   )
 )}`
 
@@ -135,7 +139,7 @@ async function rendererIsReady(): Promise<boolean> {
   )
 }
 
-async function loadTaskTTY(window: BrowserWindow): Promise<void> {
+async function loadTreeport(window: BrowserWindow): Promise<void> {
   const generation = ++loadGeneration
   for (let attempt = 0; attempt < 20; attempt += 1) {
     if (window.isDestroyed() || generation !== loadGeneration) {
@@ -247,7 +251,8 @@ function createWindow(): BrowserWindow {
       : {}),
     webPreferences: {
       preload: path.join(dirname, 'preload.js'),
-      partition: 'tasktty-desktop',
+      // Without `persist:` this partition is in-memory.
+      partition: 'treeport-desktop',
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: true
@@ -321,7 +326,7 @@ function createWindow(): BrowserWindow {
       mainWindow = null
     }
   })
-  void loadTaskTTY(window)
+  void loadTreeport(window)
   return window
 }
 
@@ -345,7 +350,7 @@ if (!hasSingleInstanceLock) {
       event.senderFrame === event.sender.mainFrame &&
       event.senderFrame.url === connectionPageUrl
     ) {
-      void loadTaskTTY(mainWindow)
+      void loadTreeport(mainWindow)
     }
   })
   ipcMain.handle('open-file-url', async (event, value: unknown) => {

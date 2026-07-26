@@ -1,3 +1,4 @@
+import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { loadConfig } from './config'
 
@@ -9,11 +10,32 @@ describe('configuration', () => {
       SHELL: '/bin/zsh'
     })
     expect(config.host).toBe('127.0.0.1')
-    expect(config.databasePath).toBe('/tmp/data home/tasktty/tasktty.db')
+    expect(config.databasePath).toBe('/tmp/data home/treeport/treeport.db')
+    expect(config.runtimeDir).toBe('/tmp/run/treeport')
     expect(config.shell).toBe('/bin/zsh')
   })
 
-  it('allows a non-loopback binding', () => {
-    expect(loadConfig({ TASKTTY_HOST: '0.0.0.0' }).host).toBe('0.0.0.0')
+  it('uses explicit Treeport configuration', () => {
+    const config = loadConfig({
+      TREEPORT_DATA_DIR: '~/treeport-data',
+      TREEPORT_DATABASE_PATH: '/tmp/custom/treeport.db',
+      TREEPORT_HOST: '0.0.0.0',
+      TREEPORT_PORT: '5000',
+      TREEPORT_API_URL: 'http://example.test:5000',
+      TREEPORT_SHELL: '/bin/bash'
+    })
+
+    expect(config.dataDir).toBe(path.join(process.env.HOME!, 'treeport-data'))
+    expect(config.databasePath).toBe('/tmp/custom/treeport.db')
+    expect(config.host).toBe('0.0.0.0')
+    expect(config.port).toBe(5000)
+    expect(config.apiUrl).toBe('http://example.test:5000')
+    expect(config.shell).toBe('/bin/bash')
+  })
+
+  it('rejects an invalid port', () => {
+    expect(() => loadConfig({ TREEPORT_PORT: '70000' })).toThrow(
+      'TREEPORT_PORT must be an integer between 1 and 65535'
+    )
   })
 })

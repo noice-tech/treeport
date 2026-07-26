@@ -6,12 +6,12 @@ import {
   parseProductEvent,
   parseTerminalRuntimeMetadata,
   SOCKET_IO_PATH
-} from '@tasktty/shared'
+} from '@treeport/shared'
 import type {
   EventsClientToServerEvents,
   EventsServerToClientEvents,
   ProjectRecord
-} from '@tasktty/shared'
+} from '@treeport/shared'
 import { createInvalidationCoalescer } from './metadata-sync'
 import { projectsQueryKey, recentProjectsQueryKey } from './project-metadata'
 import { terminalSessions } from './terminal-session'

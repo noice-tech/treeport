@@ -27,7 +27,7 @@ class FakeRunner implements CommandRunner {
 
 describe('GitAdapter', () => {
   it('canonicalizes a repository path through realpath and rev-parse', async () => {
-    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'tasktty repo '))
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'treeport repo '))
     temporary.push(directory)
     const nested = path.join(directory, 'nested')
     await fs.mkdir(nested)
@@ -45,8 +45,8 @@ describe('GitAdapter', () => {
   })
 
   it('uses the first porcelain worktree as the main checkout', async () => {
-    const main = await fs.mkdtemp(path.join(os.tmpdir(), 'tasktty main '))
-    const linked = await fs.mkdtemp(path.join(os.tmpdir(), 'tasktty linked '))
+    const main = await fs.mkdtemp(path.join(os.tmpdir(), 'treeport main '))
+    const linked = await fs.mkdtemp(path.join(os.tmpdir(), 'treeport linked '))
     temporary.push(main, linked)
     const runner = new FakeRunner(() => ({
       stdout: `worktree ${main}\nHEAD a\nbranch refs/heads/trunk\n\nworktree ${linked}\nHEAD b\nbranch refs/heads/topic\n`,

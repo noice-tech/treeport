@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useMutation } from '@tanstack/react-query'
-import type { ProjectRecord } from '@tasktty/shared'
+import type { ProjectRecord } from '@treeport/shared'
 import { apiClient } from '../../api'
 import { Button } from '../../components/ui/button'
 import { Input } from '../../components/ui/input'
