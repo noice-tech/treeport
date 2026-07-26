@@ -12,8 +12,11 @@ import { filePathFromUrl } from './file-url.js'
 import { parseRendererUrl } from './renderer-url.js'
 
 const dirname = __dirname
+const developmentUserData = process.env.TREEPORT_DESKTOP_USER_DATA?.trim()
 if (app.isPackaged) {
   app.setPath('userData', path.join(app.getPath('appData'), 'Treeport'))
+} else if (developmentUserData) {
+  app.setPath('userData', path.resolve(developmentUserData))
 }
 
 const defaultRendererUrl = app.isPackaged

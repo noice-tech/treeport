@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "if [ \"$TREEPORT_DIRECT_DEV\" = 1 ]; then vite --port 5173; elif tailscale status >/dev/null 2>&1; then portless run --name treeport --tailscale vite; else portless run --name treeport vite; fi",
+    "dev": "vite",
     "dev:desktop": "vite --port 5173",
     "build": "vite build",
     "typecheck": "tsc --noEmit --emitDeclarationOnly false -p tsconfig.json --pretty"

@@ -160,7 +160,7 @@ treeport terminal create --worktree . --name dev -- pnpm dev
 
 ## Desktop app
 
-Development requires Node.js 24+. Run the complete development stack with:
+Run the complete development stack with:
 
 ```sh
 pnpm dev
