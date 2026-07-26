@@ -426,6 +426,79 @@ async function beginFromPreview(service: TreeportService, worktreeId: string) {
 }
 
 describe('TreeportService with injected command adapters', () => {
+  it('browses bounded server directories and resolves repository roots', async () => {
+    const { root, main, service } = await fixture()
+    const browserRoot = path.join(root, 'folder browser')
+    const spaced = path.join(browserRoot, 'space folder')
+    const unicode = path.join(browserRoot, '世界')
+    const hidden = path.join(browserRoot, '.hidden')
+    await fs.mkdir(browserRoot)
+    await Promise.all([
+      fs.mkdir(spaced, { recursive: true }),
+      fs.mkdir(unicode, { recursive: true }),
+      fs.mkdir(hidden, { recursive: true }),
+      fs.writeFile(path.join(browserRoot, 'ordinary.txt'), 'not a folder')
+    ])
+    await fs.symlink(spaced, path.join(browserRoot, 'linked folder'))
+    const canonicalBrowserRoot = await fs.realpath(browserRoot)
+    const canonicalSpaced = await fs.realpath(spaced)
+
+    const visible = await service.browseDirectory(browserRoot)
+    expect(visible.exact).toBe(true)
+    expect(visible.directory.entries.map((entry) => entry.name)).toEqual(
+      expect.arrayContaining(['linked folder', 'space folder', '世界'])
+    )
+    expect(visible.directory.entries).toHaveLength(3)
+    expect(visible.directory.breadcrumbs.at(-1)).toEqual({
+      name: 'folder browser',
+      path: canonicalBrowserRoot
+    })
+
+    const partial = await service.browseDirectory(path.join(browserRoot, 'spa'))
+    expect(partial).toMatchObject({
+      exact: false,
+      repository: { state: 'incomplete' },
+      directory: {
+        entries: [{ name: 'space folder', path: canonicalSpaced }]
+      }
+    })
+
+    const withHidden = await service.browseDirectory(browserRoot, true)
+    expect(withHidden.directory.entries.map((entry) => entry.name)).toContain(
+      '.hidden'
+    )
+    await expect(
+      service.browseDirectory(path.join(browserRoot, 'missing', 'child'))
+    ).rejects.toMatchObject({ code: 'DIRECTORY_NOT_FOUND', status: 404 })
+    await expect(
+      service.browseDirectory(path.join(browserRoot, 'ordinary.txt'))
+    ).rejects.toMatchObject({
+      code: 'DIRECTORY_NOT_A_DIRECTORY',
+      status: 400
+    })
+
+    const nested = path.join(main, 'nested folder')
+    await fs.mkdir(nested)
+    await expect(service.browseDirectory(nested)).resolves.toMatchObject({
+      exact: true,
+      repository: {
+        state: 'valid',
+        repositoryPath: await fs.realpath(main)
+      }
+    })
+
+    await Promise.all(
+      Array.from({ length: 201 }, (_, index) =>
+        fs.mkdir(
+          path.join(browserRoot, `many-${String(index).padStart(3, '0')}`)
+        )
+      )
+    )
+    const bounded = await service.browseDirectory(browserRoot)
+    expect(bounded.directory.entries).toHaveLength(200)
+    expect(bounded.directory.truncated).toBe(true)
+  })
+
   it('persists ordered terminal preset CRUD across service reconstruction', async () => {
     const { runner, service, database, config } = await fixture()
     const first = service.createTerminalPreset({
