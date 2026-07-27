@@ -13,12 +13,11 @@ import { FormField } from '../../components/ui/form-field'
 import { Input } from '../../components/ui/input'
 import { Label } from '../../components/ui/label'
 import { cn } from '../../lib/utils'
+import { notifyError } from '../notifications/error-notifications'
 
 export function ProjectForm({
-  setError,
   onOpened
 }: {
-  setError: (value: string | null) => void
   onOpened: (project: ProjectRecord) => Promise<void>
 }) {
   const pathInputRef = useRef<HTMLInputElement>(null)
@@ -43,8 +42,7 @@ export function ProjectForm({
   const openProject = useMutation({
     mutationFn: (path: string) => apiClient.addProject(path),
     onSuccess: onOpened,
-    onError: (value) =>
-      setError(value instanceof Error ? value.message : String(value))
+    onError: notifyError
   })
 
   const inputSettled = pathValue.trim() === debouncedPath
@@ -79,7 +77,6 @@ export function ProjectForm({
           return
         }
 
-        setError(null)
         openProject.mutate(validRepository.repositoryPath)
       }}
     >

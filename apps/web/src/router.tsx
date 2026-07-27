@@ -4,8 +4,13 @@ import {
   createRouter
 } from '@tanstack/react-router'
 import App from './app'
+import { AppErrorFallback } from './app-error-fallback'
 
-const rootRoute = createRootRoute({ component: App })
+const rootRoute = createRootRoute({
+  component: App,
+  errorComponent: AppErrorFallback,
+  onCatch: (error) => console.error('Unexpected application crash', error)
+})
 
 const indexRoute = createRoute({
   getParentRoute: () => rootRoute,

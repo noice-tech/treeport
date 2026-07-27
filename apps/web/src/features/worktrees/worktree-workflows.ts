@@ -16,6 +16,8 @@ import {
   worktreeTarget
 } from '../../workspace-navigation'
 import { useWorkspaceNavigate } from '../../workspace-router-navigation'
+import { notifyError } from '../notifications/error-notifications'
+
 const MANUAL_CLEANUP_PREFIX = 'Manual cleanup required:'
 
 export type RemovalStage = 'checking' | 'removing'
@@ -43,7 +45,6 @@ export function useWorktreeWorkflows({
   onWorktreeSubmitted,
   onRemovalNeedsConfirmation,
   onRemovalCompleted,
-  setError,
   selectedTerminalId
 }: {
   setDrawerOpen: (open: boolean) => void
@@ -54,7 +55,6 @@ export function useWorktreeWorkflows({
     trigger?: HTMLElement
   ) => void
   onRemovalCompleted: (worktreeId: string) => void
-  setError: (value: string | null) => void
   selectedTerminalId: string | null
 }) {
   const queryClient = useQueryClient()
@@ -67,8 +67,6 @@ export function useWorktreeWorkflows({
     Record<string, RemovalStage>
   >({})
   const removalGuardsRef = useRef(new Set<string>())
-  const showError = (value: unknown) =>
-    setError(value instanceof Error ? value.message : String(value))
 
   const createWorktree = useMutation({
     mutationFn: (pending: PendingWorktreeCreation) =>
@@ -118,11 +116,11 @@ export function useWorktreeWorkflows({
       setDrawerOpen(false)
 
       if (result.setupError) {
-        setError(
+        notifyError(
           `Worktree created, but setup could not start: ${result.setupError}`
         )
       } else if (result.terminalError) {
-        setError(
+        notifyError(
           `Worktree created, but its terminal could not start: ${result.terminalError}`
         )
       }
@@ -134,7 +132,7 @@ export function useWorktreeWorkflows({
         current.filter((item) => item.id !== pending.id)
       )
       setDrawerOpen(false)
-      showError(mutationError)
+      notifyError(mutationError)
     }
   })
 
@@ -241,13 +239,13 @@ export function useWorktreeWorkflows({
           return
         } catch (refreshError) {
           releaseRemoval(worktree.id)
-          showError(refreshError)
+          notifyError(refreshError)
           return
         }
       }
 
       releaseRemoval(worktree.id)
-      showError(
+      notifyError(
         error instanceof ApiError && error.code === 'REMOVE_PREVIEW_STALE'
           ? new Error(
               'The worktree kept changing during removal. Review it and try again.'
@@ -282,7 +280,7 @@ export function useWorktreeWorkflows({
       onRemovalNeedsConfirmation(worktree, preview, trigger)
     } catch (error) {
       releaseRemoval(worktree.id)
-      showError(error)
+      notifyError(error)
     }
   }
 

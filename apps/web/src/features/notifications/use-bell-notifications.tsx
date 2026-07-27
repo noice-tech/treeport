@@ -7,6 +7,7 @@ import {
   type TerminalBellEvent
 } from '../../terminal-session'
 import { useTerminalBellMetadata } from '../../terminal-runtime-metadata-react'
+import { notifyError } from './error-notifications'
 import {
   targetForTerminal,
   type WorkspaceTarget
@@ -56,8 +57,7 @@ export function TerminalBellNotifications({
   projects,
   projectsLoaded,
   selectedTerminalId,
-  navigateToWorkspace,
-  onError
+  navigateToWorkspace
 }: {
   projects: ProjectRecord[]
   projectsLoaded: boolean
@@ -66,7 +66,6 @@ export function TerminalBellNotifications({
     target: WorkspaceTarget,
     replace?: boolean
   ) => Promise<void>
-  onError: (error: unknown) => void
 }) {
   const { bells, titles: runtimeTitles } = useTerminalBellMetadata()
   const [presence, setPresence] = useState<Presence>(() => ({
@@ -79,7 +78,6 @@ export function TerminalBellNotifications({
     selectedTerminalId,
     runtimeTitles,
     navigateToWorkspace,
-    onError,
     presence
   })
   latest.current = {
@@ -88,7 +86,6 @@ export function TerminalBellNotifications({
     selectedTerminalId,
     runtimeTitles,
     navigateToWorkspace,
-    onError,
     presence
   }
   const presentedSequences = useRef(new Map<string, number>())
@@ -135,7 +132,7 @@ export function TerminalBellNotifications({
     if (bell?.unread) {
       void terminalSessions
         .acknowledgeBell(selectedTerminalId, bell.sequence)
-        .catch((error: unknown) => latest.current.onError(error))
+        .catch(notifyError)
     }
   }, [bells, presence.focused, presence.visible, selectedTerminalId])
 
@@ -178,7 +175,7 @@ export function TerminalBellNotifications({
                     void terminalSessions
                       .acknowledgeBell(event.terminalId, event.sequence)
                       .catch((error: unknown) => {
-                        latest.current.onError(error)
+                        notifyError(error)
                         const currentBell = terminalSessions
                           .getBellSnapshot()
                           .get(event.terminalId)
@@ -257,7 +254,7 @@ export function TerminalBellNotifications({
       if (activelyViewed) {
         void terminalSessions
           .acknowledgeBell(event.terminalId, event.sequence)
-          .catch((error: unknown) => latest.current.onError(error))
+          .catch(notifyError)
         return
       }
 

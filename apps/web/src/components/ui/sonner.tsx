@@ -7,7 +7,7 @@ function Toaster(props: ToasterProps) {
       position="top-right"
       visibleToasts={3}
       expand
-      containerAriaLabel="Terminal notifications"
+      containerAriaLabel="Notifications"
       toastOptions={{
         classNames: {
           toast:
