@@ -114,6 +114,9 @@ export class TmuxAdapter {
   private readonly platform: NodeJS.Platform
   private readonly uid: number | undefined
   private readonly creationTails = new Map<string, Promise<void>>()
+  private readonly configuredSockets = new Set<string>()
+  private initializationPromise: Promise<boolean> | null = null
+  private sshAuthSockPromise: Promise<string | undefined> | null = null
 
   constructor(
     private readonly runner: CommandRunner,
@@ -135,16 +138,23 @@ export class TmuxAdapter {
     this.uid = host.uid ?? process.getuid?.()
   }
 
-  async initialize(): Promise<boolean> {
-    await fs.mkdir(this.specsDir, { recursive: true, mode: 0o700 })
-    const [, shellIntegrationReady] = await Promise.all([
-      fs.writeFile(this.configPath, TMUX_CONFIG, { mode: 0o600 }),
-      prepareShellIntegration(this.shellIntegrationDir).then(
-        () => true,
-        () => false
-      )
-    ])
-    return shellIntegrationReady
+  initialize(): Promise<boolean> {
+    if (!this.initializationPromise) {
+      this.initializationPromise = fs
+        .mkdir(this.specsDir, { recursive: true, mode: 0o700 })
+        .then(() =>
+          Promise.all([
+            fs.writeFile(this.configPath, TMUX_CONFIG, { mode: 0o600 }),
+            prepareShellIntegration(this.shellIntegrationDir).then(
+              () => true,
+              () => false
+            )
+          ])
+        )
+        .then(([, shellIntegrationReady]) => shellIntegrationReady)
+    }
+
+    return this.initializationPromise
   }
 
   private base(socketName: string): string[] {
@@ -189,55 +199,63 @@ export class TmuxAdapter {
 
     try {
       const shellIntegrationReady = await this.initialize()
-      let sshAuthSock = this.hostEnvironment.SSH_AUTH_SOCK?.trim()
-      if (
-        !sshAuthSock &&
-        this.platform === 'darwin' &&
-        this.uid !== undefined
-      ) {
-        const result = await this.runner
-          .run({
-            executable: '/bin/launchctl',
-            args: [
-              'asuser',
-              String(this.uid),
-              '/bin/launchctl',
-              'getenv',
-              'SSH_AUTH_SOCK'
-            ],
-            env: this.environment(),
-            timeoutMs: 10_000
-          })
-          .catch(() => null)
-        if (result?.exitCode === 0) {
-          sshAuthSock = result.stdout.trim() || undefined
-        }
+      if (!this.sshAuthSockPromise) {
+        const inherited = this.hostEnvironment.SSH_AUTH_SOCK?.trim()
+        this.sshAuthSockPromise = inherited
+          ? Promise.resolve(inherited)
+          : this.platform === 'darwin' && this.uid !== undefined
+            ? this.runner
+                .run({
+                  executable: '/bin/launchctl',
+                  args: [
+                    'asuser',
+                    String(this.uid),
+                    '/bin/launchctl',
+                    'getenv',
+                    'SSH_AUTH_SOCK'
+                  ],
+                  env: this.environment(),
+                  timeoutMs: 10_000
+                })
+                .then((result) =>
+                  result.exitCode === 0
+                    ? result.stdout.trim() || undefined
+                    : undefined
+                )
+                .catch(() => undefined)
+            : Promise.resolve(undefined)
       }
 
-      const serverProbe = await this.runner.run({
-        executable: this.executable,
-        args: [
-          ...this.base(input.socketName),
-          'show-options',
-          '-gv',
-          'exit-empty'
-        ],
-        env: this.environment(),
-        timeoutMs: 10_000
-      })
-      const startedServer =
-        serverProbe.exitCode !== 0 && isAbsentTmuxServer(serverProbe.stderr)
+      const sshAuthSock = await this.sshAuthSockPromise
+
+      let startedServer = false
       const specPath = path.join(this.specsDir, `${input.terminalId}.json`)
       let created = false
       let wroteSpec = false
       try {
-        await runChecked(this.runner, {
-          executable: this.executable,
-          args: [...this.base(input.socketName), 'start-server'],
-          env: this.environment(),
-          timeoutMs: 10_000
-        })
-        await this.configureServer(input.socketName)
+        if (!this.configuredSockets.has(input.socketName)) {
+          const serverProbe = await this.runner.run({
+            executable: this.executable,
+            args: [
+              ...this.base(input.socketName),
+              'show-options',
+              '-gv',
+              'exit-empty'
+            ],
+            env: this.environment(),
+            timeoutMs: 10_000
+          })
+          startedServer =
+            serverProbe.exitCode !== 0 && isAbsentTmuxServer(serverProbe.stderr)
+          await runChecked(this.runner, {
+            executable: this.executable,
+            args: [...this.base(input.socketName), 'start-server'],
+            env: this.environment(),
+            timeoutMs: 10_000
+          })
+          await this.configureServer(input.socketName)
+        }
+
         const spec: LaunchSpec = {
           argv: [...input.argv],
           ...(input.fallbackArgv
@@ -297,8 +315,7 @@ export class TmuxAdapter {
           timeoutMs: 30_000
         })
         created = true
-        await this.useManualWindowSize(input.socketName, input.sessionName)
-        await this.setTerminalMetadata(input.socketName, input.sessionName, {
+        await this.configureSession(input.socketName, input.sessionName, {
           terminalId: input.terminalId,
           worktreeId: input.worktreeId,
           name: input.name,
@@ -349,9 +366,10 @@ export class TmuxAdapter {
       env: this.environment(),
       timeoutMs: 10_000
     })
+    this.configuredSockets.add(socketName)
   }
 
-  private async setTerminalMetadata(
+  private async configureSession(
     socketName: string,
     sessionName: string,
     metadata: TmuxTerminalMetadata
@@ -364,21 +382,28 @@ export class TmuxAdapter {
       ['@treeport-worktree-id', metadata.worktreeId],
       ['@treeport-terminal-id', metadata.terminalId]
     ] as const
-    for (const [key, value] of values) {
-      await runChecked(this.runner, {
-        executable: this.executable,
-        args: [
-          ...this.base(socketName),
+    await runChecked(this.runner, {
+      executable: this.executable,
+      args: [
+        ...this.base(socketName),
+        'set-option',
+        '-w',
+        '-t',
+        sessionName,
+        'window-size',
+        'manual',
+        ...values.flatMap(([key, value]) => [
+          ';',
           'set-option',
           '-t',
           sessionName,
           key,
           value
-        ],
-        env: this.environment(),
-        timeoutMs: 10_000
-      })
-    }
+        ])
+      ],
+      env: this.environment(),
+      timeoutMs: 10_000
+    })
   }
 
   async renameTerminal(
@@ -701,7 +726,8 @@ export class TmuxAdapter {
   async killSession(
     socketName: string,
     sessionName: string,
-    terminalId?: string
+    terminalId?: string,
+    options: { preserveServer?: boolean } = {}
   ): Promise<void> {
     const result = await this.runner.run({
       executable: this.executable,
@@ -722,14 +748,16 @@ export class TmuxAdapter {
         .catch(() => undefined)
     }
 
-    const list = await this.runner.run({
-      executable: this.executable,
-      args: [...this.base(socketName), 'list-sessions'],
-      env: this.environment(),
-      timeoutMs: 10_000
-    })
-    if (list.exitCode !== 0 || !list.stdout.trim()) {
-      await this.killServer(socketName)
+    if (!options.preserveServer) {
+      const list = await this.runner.run({
+        executable: this.executable,
+        args: [...this.base(socketName), 'list-sessions'],
+        env: this.environment(),
+        timeoutMs: 10_000
+      })
+      if (list.exitCode !== 0 || !list.stdout.trim()) {
+        await this.killServer(socketName)
+      }
     }
   }
 
@@ -756,6 +784,7 @@ export class TmuxAdapter {
           .catch(() => undefined)
       )
     )
+    this.configuredSockets.delete(socketName)
     return terminalIds
   }
 }

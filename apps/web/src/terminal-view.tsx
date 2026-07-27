@@ -45,18 +45,24 @@ import {
   type TerminalSessionSnapshot
 } from './terminal-session'
 
+export interface PendingTerminalTab {
+  id: string
+  name: string
+}
+
 interface TerminalViewProps {
   worktree: WorktreeRecord | null
   terminal: TerminalRecord | null
+  pendingTerminals: PendingTerminalTab[]
+  selectedPendingTerminalId: string | null
   loading: boolean
   autoFocusBlocked: boolean
   presets: TerminalPreset[]
   presetsLoading: boolean
   presetsError: boolean
-  creatingTerminal: boolean
   mutationsDisabled: boolean
-  closingTerminalId: string | null
   onSelectTerminal: (terminal: TerminalRecord) => void
+  onSelectPendingTerminal: (terminalId: string) => void
   onCreateTerminal: (input: {
     name: string
     argv?: string[]
@@ -88,15 +94,16 @@ const EMPTY_SNAPSHOT: TerminalSessionSnapshot = {
 export function TerminalView({
   worktree,
   terminal,
+  pendingTerminals,
+  selectedPendingTerminalId,
   loading,
   autoFocusBlocked,
   presets,
   presetsLoading,
   presetsError,
-  creatingTerminal,
   mutationsDisabled,
-  closingTerminalId,
   onSelectTerminal,
+  onSelectPendingTerminal,
   onCreateTerminal,
   onManagePresets,
   onCloseTerminal,
@@ -239,11 +246,14 @@ export function TerminalView({
     )
   }
 
+  const selectedPendingTerminal = pendingTerminals.find(
+    (candidate) => candidate.id === selectedPendingTerminalId
+  )
   const visibleTitle = terminal
     ? runtimeTitles.get(terminal.id) || terminal.name
-    : ''
+    : (selectedPendingTerminal?.name ?? '')
   const terminals = worktree?.terminals ?? []
-  const launchDisabled = !worktree || mutationsDisabled || creatingTerminal
+  const launchDisabled = !worktree || mutationsDisabled
 
   useEffect(() => {
     // Mod+W stays browser-owned here; reserve it for Electron, where we can override the window accelerator.
@@ -264,12 +274,22 @@ export function TerminalView({
       }
 
       const nextTerminal = terminals[index]
-      if (!nextTerminal) {
+      const nextPendingTerminal = pendingTerminals[index - terminals.length]
+      if (!nextTerminal && !nextPendingTerminal) {
         return
       }
 
       event.preventDefault()
       event.stopPropagation()
+      if (nextPendingTerminal) {
+        onSelectPendingTerminal(nextPendingTerminal.id)
+        return
+      }
+
+      if (!nextTerminal) {
+        return
+      }
+
       if (activeSession && activeSession.terminalId === nextTerminal.id) {
         activeSession.focus()
       }
@@ -278,12 +298,26 @@ export function TerminalView({
     }
     document.addEventListener('keydown', keydown, true)
     return () => document.removeEventListener('keydown', keydown, true)
-  }, [activeSession, onSelectTerminal, terminals])
+  }, [
+    activeSession,
+    onSelectPendingTerminal,
+    onSelectTerminal,
+    pendingTerminals,
+    terminals
+  ])
 
   return (
     <Tabs
-      value={terminal?.id ?? ''}
+      value={selectedPendingTerminalId ?? terminal?.id ?? ''}
       onValueChange={(terminalId) => {
+        const pendingTerminal = pendingTerminals.find(
+          (item) => item.id === terminalId
+        )
+        if (pendingTerminal) {
+          onSelectPendingTerminal(pendingTerminal.id)
+          return
+        }
+
         const nextTerminal = terminals.find((item) => item.id === terminalId)
         if (nextTerminal) {
           onSelectTerminal(nextTerminal)
@@ -297,7 +331,13 @@ export function TerminalView({
           'terminal-shell grid min-h-0 min-w-0 grid-rows-[2.5rem_minmax(0,1fr)] bg-zinc-950 max-[700px]:grid-rows-[2.75rem_minmax(0,1fr)_3.25rem]',
           snapshot.bellActive && 'terminal-bell'
         )}
-        aria-label={terminal ? `${visibleTitle} terminal` : 'Terminal panel'}
+        aria-label={
+          selectedPendingTerminal
+            ? `Starting ${selectedPendingTerminal.name} terminal`
+            : terminal
+              ? `${visibleTitle} terminal`
+              : 'Terminal panel'
+        }
       >
         <header className="terminal-header flex min-w-0 items-stretch border-b border-white/8 bg-zinc-900/70">
           <div className="min-w-0 max-w-full flex-1 overflow-x-auto">
@@ -322,7 +362,6 @@ export function TerminalView({
                 ]
                   .filter(Boolean)
                   .join(', ')
-                const closing = closingTerminalId === item.id
                 return (
                   <div
                     key={item.id}
@@ -399,14 +438,10 @@ export function TerminalView({
                             selected && 'text-zinc-400'
                           )}
                           aria-label={`Close ${title}`}
-                          disabled={closing || terminals.length === 1}
+                          disabled={terminals.length === 1}
                           onClick={() => onCloseTerminal(item)}
                         >
-                          {closing ? (
-                            <ArrowPathIcon className="animate-spin" />
-                          ) : (
-                            <XMarkIcon />
-                          )}
+                          <XMarkIcon />
                         </Button>
                       </TooltipTrigger>
                       <TooltipContent side="bottom">
@@ -415,6 +450,36 @@ export function TerminalView({
                           : 'Close terminal'}
                       </TooltipContent>
                     </Tooltip>
+                  </div>
+                )
+              })}
+              {pendingTerminals.map((item, pendingIndex) => {
+                const index = terminals.length + pendingIndex
+                return (
+                  <div
+                    key={item.id}
+                    className="group/tab relative flex min-w-36 flex-1 basis-0 items-center border-r border-white/6 hover:bg-white/4"
+                  >
+                    <TabsTrigger
+                      value={item.id}
+                      className="flex h-full min-w-0 flex-1 items-center gap-1.5 py-0 pr-2 pl-3 text-[0.8125rem] font-normal text-zinc-400 outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-cyan-400 data-[state=active]:bg-zinc-800 data-[state=active]:text-zinc-50"
+                      aria-label={`${item.name}, starting`}
+                      aria-keyshortcuts={
+                        index < 9 ? `Meta+${index + 1}` : undefined
+                      }
+                      title={`${item.name} is starting`}
+                    >
+                      <ArrowPathIcon
+                        className="size-3.5 shrink-0 animate-spin fill-zinc-500"
+                        aria-hidden="true"
+                      />
+                      <span className="min-w-0 flex-1 truncate text-base sm:text-[0.734375rem]">
+                        {item.name}
+                      </span>
+                      <span className="shrink-0 text-[0.6875rem]/4 text-zinc-500">
+                        Starting…
+                      </span>
+                    </TabsTrigger>
                   </div>
                 )
               })}
@@ -431,13 +496,8 @@ export function TerminalView({
                     size="icon-sm"
                     className="m-0 size-11 shrink-0 text-zinc-500 hover:bg-white/5 hover:text-zinc-100 min-[701px]:m-1 min-[701px]:size-7"
                     aria-label="New terminal"
-                    disabled={creatingTerminal}
                   >
-                    {creatingTerminal ? (
-                      <ArrowPathIcon className="animate-spin" />
-                    ) : (
-                      <PlusIcon />
-                    )}
+                    <PlusIcon />
                   </Button>
                 </DropdownMenuTrigger>
               </TooltipTrigger>
@@ -507,7 +567,20 @@ export function TerminalView({
             </span>
           )}
         </header>
-        {terminal ? (
+        {selectedPendingTerminal ? (
+          <div className="grid min-h-0 place-items-center bg-[radial-gradient(circle_at_center,var(--color-zinc-900)_0,var(--color-zinc-950)_55%)] p-8">
+            <div
+              className="flex items-center gap-2 text-sm text-zinc-300"
+              role="status"
+            >
+              <ArrowPathIcon
+                className="size-4 animate-spin fill-zinc-500"
+                aria-hidden="true"
+              />
+              Starting {selectedPendingTerminal.name}…
+            </div>
+          </div>
+        ) : terminal ? (
           <div className="relative min-h-0 min-w-0 overflow-hidden">
             <TabsContent
               value={terminal.id}

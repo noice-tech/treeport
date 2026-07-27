@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useLocation } from '@tanstack/react-router'
 import type {
@@ -11,7 +11,7 @@ import type {
 import { apiClient } from '../../api'
 import { projectsQueryKey } from '../../project-metadata'
 import { terminalSessions } from '../../terminal-session'
-import { TerminalView } from '../../terminal-view'
+import { TerminalView, type PendingTerminalTab } from '../../terminal-view'
 import { terminalTarget, worktreeTarget } from '../../workspace-navigation'
 import { useWorkspaceNavigate } from '../../workspace-router-navigation'
 
@@ -57,8 +57,28 @@ export function TerminalWorkspace({
   const queryClient = useQueryClient()
   const location = useLocation()
   const navigateToWorkspace = useWorkspaceNavigate()
-  const createTerminalGuardRef = useRef(false)
-  const closeTerminalGuardRef = useRef(false)
+  const closingTerminalIdsRef = useRef(new Set<string>())
+  const nextPendingTerminalIdRef = useRef(0)
+  const selectedPendingTerminalIdRef = useRef<string | null>(null)
+  const locationPathRef = useRef(location.pathname)
+  const [pendingTerminals, setPendingTerminals] = useState<
+    Array<
+      PendingTerminalTab & {
+        projectId: string
+        worktreeId: string
+        originPath: string
+      }
+    >
+  >([])
+  const [selectedPendingTerminalId, setSelectedPendingTerminalId] = useState<
+    string | null
+  >(null)
+  locationPathRef.current = location.pathname
+  const selectedPendingTerminal = pendingTerminals.find(
+    (terminal) =>
+      terminal.id === selectedPendingTerminalId &&
+      terminal.worktreeId === selectedWorktree?.id
+  )
   const selectedTerminalId = selectedTerminal?.id ?? null
   const mutationsDisabled =
     Boolean(selectedWorktree?.prunable) ||
@@ -80,6 +100,11 @@ export function TerminalWorkspace({
       argv?: string[]
       returnToShell?: boolean
       initialSize?: TerminalSize
+      pendingTerminal: PendingTerminalTab & {
+        projectId: string
+        worktreeId: string
+        originPath: string
+      }
     }) =>
       apiClient.createTerminal(
         worktreeId,
@@ -88,14 +113,23 @@ export function TerminalWorkspace({
         returnToShell,
         initialSize
       ),
-    onSuccess: async (terminal) => {
-      const project = projects.find((candidate) =>
-        candidate.worktrees.some(
-          (worktree) => worktree.id === terminal.worktreeId
-        )
+    onSuccess: async (terminal, { pendingTerminal }) => {
+      const wasSelected =
+        selectedPendingTerminalIdRef.current === pendingTerminal.id &&
+        locationPathRef.current === pendingTerminal.originPath
+      setPendingTerminals((current) =>
+        current.filter((candidate) => candidate.id !== pendingTerminal.id)
+      )
+      if (wasSelected) {
+        selectedPendingTerminalIdRef.current = null
+        setSelectedPendingTerminalId(null)
+      }
+
+      const project = projects.find(
+        (candidate) => candidate.id === pendingTerminal.projectId
       )
       const worktree = project?.worktrees.find(
-        (candidate) => candidate.id === terminal.worktreeId
+        (candidate) => candidate.id === pendingTerminal.worktreeId
       )
       if (!project || !worktree) {
         await queryClient.invalidateQueries({ queryKey: projectsQueryKey })
@@ -103,7 +137,8 @@ export function TerminalWorkspace({
       }
 
       const replacesEmptyWorktree =
-        location.pathname === worktreeTarget(project.id, worktree.id).pathname
+        pendingTerminal.originPath ===
+        worktreeTarget(project.id, worktree.id).pathname
       queryClient.setQueryData<ProjectRecord[]>(projectsQueryKey, (current) =>
         current?.map((candidateProject) => ({
           ...candidateProject,
@@ -122,67 +157,59 @@ export function TerminalWorkspace({
           )
         }))
       )
-      await navigateToWorkspace(
-        terminalTarget(project.id, worktree.id, terminal.id),
-        replacesEmptyWorktree
-      )
-      setDrawerOpen(false)
+      if (wasSelected) {
+        await navigateToWorkspace(
+          terminalTarget(project.id, worktree.id, terminal.id),
+          replacesEmptyWorktree
+        )
+      }
+
       await queryClient.invalidateQueries({ queryKey: projectsQueryKey })
     },
-    onError: async (error) => {
+    onError: async (error, { pendingTerminal }) => {
+      setPendingTerminals((current) =>
+        current.filter((candidate) => candidate.id !== pendingTerminal.id)
+      )
+      if (selectedPendingTerminalIdRef.current === pendingTerminal.id) {
+        selectedPendingTerminalIdRef.current = null
+        setSelectedPendingTerminalId(null)
+      }
+
       showError(error)
       await queryClient.invalidateQueries({ queryKey: projectsQueryKey })
-    },
-    onSettled: () => {
-      createTerminalGuardRef.current = false
     }
   })
 
   const closeTerminal = useMutation({
-    mutationFn: (terminal: TerminalRecord) =>
+    mutationFn: ({ terminal }: { terminal: TerminalRecord; index: number }) =>
       apiClient.deleteTerminal(terminal.id),
-    onSuccess: async (_, closedTerminal) => {
-      if (
-        selectedTerminalId === closedTerminal.id &&
-        selectedProject &&
-        selectedWorktree
-      ) {
-        const closedIndex = selectedWorktree.terminals.findIndex(
-          (terminal) => terminal.id === closedTerminal.id
-        )
-        const nextTerminal =
-          selectedWorktree.terminals[closedIndex + 1] ??
-          selectedWorktree.terminals[closedIndex - 1] ??
-          null
-        await navigateToWorkspace(
-          nextTerminal
-            ? terminalTarget(
-                selectedProject.id,
-                selectedWorktree.id,
-                nextTerminal.id
-              )
-            : worktreeTarget(selectedProject.id, selectedWorktree.id),
-          true
-        )
-      }
-
-      terminalSessions.forget(closedTerminal.id)
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: projectsQueryKey })
+    },
+    onError: (error, closed) => {
       queryClient.setQueryData<ProjectRecord[]>(projectsQueryKey, (current) =>
         current?.map((project) => ({
           ...project,
-          worktrees: project.worktrees.map((worktree) => ({
-            ...worktree,
-            terminals: worktree.terminals.filter(
-              (terminal) => terminal.id !== closedTerminal.id
-            )
-          }))
+          worktrees: project.worktrees.map((worktree) => {
+            if (
+              worktree.id !== closed.terminal.worktreeId ||
+              worktree.terminals.some(
+                (terminal) => terminal.id === closed.terminal.id
+              )
+            ) {
+              return worktree
+            }
+
+            const terminals = [...worktree.terminals]
+            terminals.splice(closed.index, 0, closed.terminal)
+            return { ...worktree, terminals }
+          })
         }))
       )
-      await queryClient.invalidateQueries({ queryKey: projectsQueryKey })
+      showError(error)
     },
-    onError: showError,
-    onSettled: () => {
-      closeTerminalGuardRef.current = false
+    onSettled: (_, __, closed) => {
+      closingTerminalIdsRef.current.delete(closed.terminal.id)
     }
   })
 
@@ -191,33 +218,53 @@ export function TerminalWorkspace({
     argv?: string[]
     returnToShell?: boolean
   }) => {
-    if (
-      !selectedWorktree ||
-      mutationsDisabled ||
-      createTerminal.isPending ||
-      createTerminalGuardRef.current
-    ) {
+    if (!selectedProject || !selectedWorktree || mutationsDisabled) {
       return
     }
 
-    createTerminalGuardRef.current = true
     const initialSize = selectedTerminal
       ? terminalSessions.getInitialSize(selectedTerminal.id)
       : null
+    const pendingTerminal = {
+      id: `pending-terminal-${++nextPendingTerminalIdRef.current}`,
+      projectId: selectedProject.id,
+      worktreeId: selectedWorktree.id,
+      name: input.name,
+      originPath: location.pathname
+    }
+    selectedPendingTerminalIdRef.current = pendingTerminal.id
+    setPendingTerminals((current) => [...current, pendingTerminal])
+    setSelectedPendingTerminalId(pendingTerminal.id)
+    setDrawerOpen(false)
     createTerminal.mutate({
       worktreeId: selectedWorktree.id,
       name: input.name,
       ...(input.argv ? { argv: [...input.argv] } : {}),
       ...(input.returnToShell ? { returnToShell: true } : {}),
-      ...(initialSize ? { initialSize } : {})
+      ...(initialSize ? { initialSize } : {}),
+      pendingTerminal
     })
   }
 
   const requestCloseTerminal = (terminal: TerminalRecord) => {
+    const project = projects.find((candidate) =>
+      candidate.worktrees.some(
+        (worktree) => worktree.id === terminal.worktreeId
+      )
+    )
+    const worktree = project?.worktrees.find(
+      (candidate) => candidate.id === terminal.worktreeId
+    )
+    const remainingTerminals = worktree?.terminals.filter(
+      (candidate) =>
+        candidate.id !== terminal.id &&
+        !closingTerminalIdsRef.current.has(candidate.id)
+    )
     if (
-      closeTerminal.isPending ||
-      closeTerminalGuardRef.current ||
-      selectedWorktree?.terminals.length === 1
+      !project ||
+      !worktree ||
+      closingTerminalIdsRef.current.has(terminal.id) ||
+      !remainingTerminals?.length
     ) {
       return
     }
@@ -233,8 +280,47 @@ export function TerminalWorkspace({
       return
     }
 
-    closeTerminalGuardRef.current = true
-    closeTerminal.mutate(terminal)
+    const index = worktree.terminals.findIndex(
+      (candidate) => candidate.id === terminal.id
+    )
+    closingTerminalIdsRef.current.add(terminal.id)
+    void queryClient.cancelQueries({ queryKey: projectsQueryKey })
+    if (selectedTerminalId === terminal.id) {
+      const nextTerminal =
+        worktree.terminals
+          .slice(index + 1)
+          .find(
+            (candidate) => !closingTerminalIdsRef.current.has(candidate.id)
+          ) ??
+        worktree.terminals
+          .slice(0, index)
+          .reverse()
+          .find((candidate) => !closingTerminalIdsRef.current.has(candidate.id))
+      if (nextTerminal) {
+        void navigateToWorkspace(
+          terminalTarget(project.id, worktree.id, nextTerminal.id),
+          true
+        )
+      }
+    }
+
+    terminalSessions.forget(terminal.id)
+    queryClient.setQueryData<ProjectRecord[]>(projectsQueryKey, (current) =>
+      current?.map((candidateProject) => ({
+        ...candidateProject,
+        worktrees: candidateProject.worktrees.map((candidateWorktree) =>
+          candidateWorktree.id === worktree.id
+            ? {
+                ...candidateWorktree,
+                terminals: candidateWorktree.terminals.filter(
+                  (candidate) => candidate.id !== terminal.id
+                )
+              }
+            : candidateWorktree
+        )
+      }))
+    )
+    closeTerminal.mutate({ terminal, index })
   }
 
   useEffect(() => {
@@ -255,19 +341,18 @@ export function TerminalWorkspace({
 
       if (command === 'new-terminal') {
         createTerminalInSelectedWorktree({ name: 'Shell' })
-      } else if (selectedTerminal) {
+      } else if (!selectedPendingTerminal && selectedTerminal) {
         requestCloseTerminal(selectedTerminal)
       }
     })
   }, [
-    closeTerminal.isPending,
-    createTerminal.isPending,
     drawerOpen,
     foregroundProcesses,
     isMobile,
     modalOpen,
     projectSwitcherOpen,
     runtimeTitles,
+    selectedPendingTerminal,
     selectedTerminal,
     selectedWorktree,
     mutationsDisabled
@@ -276,7 +361,11 @@ export function TerminalWorkspace({
   return (
     <TerminalView
       worktree={selectedWorktree}
-      terminal={selectedTerminal}
+      terminal={selectedPendingTerminal ? null : selectedTerminal}
+      pendingTerminals={pendingTerminals.filter(
+        (terminal) => terminal.worktreeId === selectedWorktree?.id
+      )}
+      selectedPendingTerminalId={selectedPendingTerminal?.id ?? null}
       loading={loading}
       autoFocusBlocked={
         modalOpen || projectSwitcherOpen || (isMobile && drawerOpen)
@@ -284,18 +373,19 @@ export function TerminalWorkspace({
       presets={presets}
       presetsLoading={presetsLoading}
       presetsError={presetsError}
-      onSelectTerminal={onSelectTerminal}
+      onSelectTerminal={(terminal) => {
+        selectedPendingTerminalIdRef.current = null
+        setSelectedPendingTerminalId(null)
+        onSelectTerminal(terminal)
+      }}
+      onSelectPendingTerminal={(terminalId) => {
+        selectedPendingTerminalIdRef.current = terminalId
+        setSelectedPendingTerminalId(terminalId)
+      }}
       onCreateTerminal={createTerminalInSelectedWorktree}
       onManagePresets={onManagePresets}
-      creatingTerminal={
-        createTerminal.isPending &&
-        createTerminal.variables?.worktreeId === selectedWorktree?.id
-      }
       mutationsDisabled={mutationsDisabled}
       onCloseTerminal={requestCloseTerminal}
-      closingTerminalId={
-        closeTerminal.isPending ? closeTerminal.variables?.id : null
-      }
       onStatusChange={() =>
         void queryClient.invalidateQueries({ queryKey: projectsQueryKey })
       }
