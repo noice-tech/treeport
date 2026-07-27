@@ -2024,7 +2024,7 @@ describe('TreeportService with injected command adapters', () => {
     unsubscribe()
   })
 
-  it('removes same-project worktrees in FIFO order and queues later user mutations', async () => {
+  it('removes same-project worktrees in FIFO order without blocking another worktree terminal', async () => {
     const { main, runner, service } = await fixture()
     const project = await service.registerProject(main)
     const first = (
@@ -2083,18 +2083,16 @@ describe('TreeportService with injected command adapters', () => {
         confirmDestructive: firstPreview.warnings.length > 0
       })
     ).rejects.toMatchObject({ code: 'REMOVE_IN_PROGRESS' })
-    let terminalCreationSettled = false
-    const terminalCreation = service
-      .createTerminal(second.id, 'Queued while pending', ['pi'])
-      .then(
-        (terminal) => ({ terminal, error: null }),
-        (error: unknown) => ({ terminal: null, error })
-      )
-      .finally(() => {
-        terminalCreationSettled = true
-      })
-    await Promise.resolve()
-    expect(terminalCreationSettled).toBe(false)
+    const mainWorktree = service
+      .getProject(project.id)
+      .worktrees.find((worktree) => worktree.kind === 'main')!
+    await expect(
+      service.createTerminal(mainWorktree.id, 'Created during removal', ['pi'])
+    ).resolves.toMatchObject({
+      worktreeId: mainWorktree.id,
+      name: 'Created during removal'
+    })
+    expect(service.getOperation(firstOperation.id).status).toBe('running')
     await expect(service.closeProject(project.id)).rejects.toMatchObject({
       code: 'PROJECT_BUSY'
     })
@@ -2107,9 +2105,6 @@ describe('TreeportService with injected command adapters', () => {
       'completed'
     )
     const secondOperation = await secondRemoval
-    await expect(terminalCreation).resolves.toMatchObject({
-      error: { code: 'WORKTREE_BUSY' }
-    })
     await vi.waitFor(() =>
       expect(deregistered).toEqual(new Set([first.path, second.path]))
     )
