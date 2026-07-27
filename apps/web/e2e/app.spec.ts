@@ -1257,6 +1257,44 @@ test.describe('desktop worktree terminal UI', () => {
       .toBe(1)
   })
 
+  test('recovers from an unexpected component crash', async ({ page }) => {
+    await page.addInitScript(() => {
+      const originalGetItem = Storage.prototype.getItem
+      ;(window as any).__restoreStorageGetItem = () => {
+        Storage.prototype.getItem = originalGetItem
+      }
+      Storage.prototype.getItem = function (key) {
+        if (key === 'treeport-last-workspace-route') {
+          throw new Error('Unexpected render failure')
+        }
+
+        return originalGetItem.call(this, key)
+      }
+    })
+    await mockApp(page)
+
+    const fallback = page.getByRole('alert')
+    await expect(
+      fallback.getByRole('heading', {
+        name: 'Treeport couldn’t display this workspace'
+      })
+    ).toBeVisible()
+    await expect(
+      fallback.getByText('your persistent terminal sessions will keep running')
+    ).toBeVisible()
+    await expect(
+      fallback.getByRole('button', { name: 'Reload Treeport' })
+    ).toBeVisible()
+
+    await page.evaluate(() => (window as any).__restoreStorageGetItem())
+    await fallback.getByRole('button', { name: 'Try again' }).click()
+    await expect(
+      page.getByRole('button', {
+        name: 'Switch project, current project example'
+      })
+    ).toBeVisible()
+  })
+
   test('keeps a direct terminal route while project metadata loads', async ({
     page
   }) => {
@@ -1573,9 +1611,9 @@ test.describe('desktop worktree terminal UI', () => {
     mocked.failNextClose()
     page.once('dialog', (dialog) => dialog.accept())
     await closeProject()
-    await expect(page.getByRole('alert')).toContainText(
-      'Some terminal sessions could not be stopped'
-    )
+    await expect(
+      page.getByText(/Some terminal sessions could not be stopped/)
+    ).toBeVisible()
     await expect(
       page.getByRole('button', {
         name: 'Switch project, current project example'
@@ -1610,7 +1648,7 @@ test.describe('desktop worktree terminal UI', () => {
 
     await page.getByRole('button', { name: 'Open project' }).click()
     await page.getByRole('button', { name: 'Open project…' }).click()
-    const dialog = page.getByRole('dialog')
+    const dialog = page.getByRole('dialog', { name: 'Open project' })
     const serverPath = dialog.getByLabel('Server folder path')
     const openButton = dialog.getByRole('button', { name: 'Open project' })
     await expect(
@@ -1876,11 +1914,9 @@ test.describe('desktop worktree terminal UI', () => {
         .getByRole('button', { name: 'runtime · /repo, running', exact: true })
         .last()
     ).toBeVisible()
-    page.once('dialog', async (dialog) => {
-      expect(dialog.message()).toContain('runtime · /repo')
-      await dialog.dismiss()
-    })
-    await page.getByRole('button', { name: 'Close runtime · /repo' }).click()
+    await expect(
+      page.getByRole('button', { name: 'Close runtime · /repo' })
+    ).toBeDisabled()
 
     await page.evaluate(() => {
       const socket = (window as any).__wsInstances.find((item: any) =>
@@ -1892,11 +1928,7 @@ test.describe('desktop worktree terminal UI', () => {
     })
     await expect(page.getByRole('tab', { name: 'Pi, running' })).toBeVisible()
     await expect(page.getByRole('main', { name: 'Pi terminal' })).toBeVisible()
-    page.once('dialog', async (dialog) => {
-      expect(dialog.message()).toContain('Pi')
-      await dialog.dismiss()
-    })
-    await page.getByRole('button', { name: 'Close Pi' }).click()
+    await expect(page.getByRole('button', { name: 'Close Pi' })).toBeDisabled()
   })
 
   test('reconciles terminal metadata in chronological order', async ({
@@ -2026,7 +2058,7 @@ test.describe('desktop worktree terminal UI', () => {
     {
       const trigger = page.getByRole('button', { name: 'New worktree' })
       await trigger.click()
-      const dialog = page.getByRole('dialog')
+      const dialog = page.getByRole('dialog', { name: 'Create worktree' })
       await expect(dialog).toBeVisible()
       await expect(dialog.getByLabel('Worktree name')).toBeFocused()
       await dialog.getByLabel('Worktree name').fill('focus-test')
@@ -2055,7 +2087,7 @@ test.describe('desktop worktree terminal UI', () => {
 
       releaseCreate()
       await expect(pending).toHaveCount(0)
-      await expect(page.getByRole('alert')).toContainText('create failed')
+      await expect(page.getByText('create failed')).toBeVisible()
     }
     {
       const releaseCreate = mocked.delayNextCreate()
@@ -2527,8 +2559,9 @@ test.describe('desktop worktree terminal UI', () => {
               data: {
                 terminalId: 'term_pi',
                 title: 'Pi build · /worktrees/topic',
-                progress: null,
-                progressStartedAt: null,
+                hasForegroundProcess: true,
+                progress: { state: 'normal', value: 61 },
+                progressStartedAt: '2026-01-01T00:00:00.000Z',
                 progressClearedAt: null,
                 bell: {
                   sequence: nextSequence,
@@ -2547,6 +2580,11 @@ test.describe('desktop worktree terminal UI', () => {
     await expect(toast).toHaveCount(1)
     await expect(toast).toContainText('Pi build · /worktrees/topic')
     await expect(toast).toContainText('example · topic')
+    await expect(
+      page.getByRole('button', {
+        name: /Pi build · \/worktrees\/topic.*61% complete.*bell/
+      })
+    ).toBeVisible()
     await expect
       .poll(() => page.evaluate(() => (window as any).__attentionRequests))
       .toBe(1)
@@ -2919,9 +2957,7 @@ test.describe('desktop worktree terminal UI', () => {
       /\/projects\/proj_1\/worktrees\/wt_topic\/terminals\/term_pi$/
     )
     releaseFailedDelete()
-    await expect(page.getByRole('alert')).toContainText(
-      'Terminal could not be closed'
-    )
+    await expect(page.getByText('Terminal could not be closed')).toBeVisible()
     await expect(topicTabs).toHaveCount(2)
     await expect(page).toHaveURL(
       /\/projects\/proj_1\/worktrees\/wt_topic\/terminals\/term_pi$/
@@ -2936,9 +2972,7 @@ test.describe('desktop worktree terminal UI', () => {
       page.getByRole('tab', { name: 'Shell, starting' })
     ).toBeVisible()
     releaseFailedCreate()
-    await expect(page.getByRole('alert')).toContainText(
-      'Terminal could not be created'
-    )
+    await expect(page.getByText('Terminal could not be created')).toBeVisible()
     await expect(
       page.getByRole('tab', { name: 'Shell, starting' })
     ).toHaveCount(0)
@@ -3261,7 +3295,7 @@ test.describe('desktop worktree terminal UI', () => {
     await page.locator('.worktree-row').filter({ hasText: 'topic' }).hover()
     await page.getByRole('button', { name: 'Remove topic' }).click()
     await expect(
-      page.getByRole('heading', { name: 'Remove worktree' })
+      page.getByRole('alertdialog', { name: 'Remove worktree' })
     ).toBeVisible()
     await expect(
       page.getByText('/worktrees/topic', { exact: true })
@@ -3629,7 +3663,9 @@ test.describe('mobile terminal UI', () => {
     await page.getByLabel('Open worktree drawer').click()
     const trigger = page.getByRole('button', { name: 'New worktree' })
     await trigger.click()
-    await expect(page.getByRole('dialog')).toHaveCount(2)
+    await expect(
+      page.getByRole('dialog', { name: 'Create worktree' })
+    ).toBeVisible()
     await page.keyboard.press('Escape')
     await expect(
       page.getByRole('heading', { name: 'Create worktree' })
@@ -3642,8 +3678,7 @@ test.describe('mobile terminal UI', () => {
     await trigger.click()
     await page.getByLabel('Worktree name').fill('mobile failure')
     await page.getByRole('button', { name: 'Create worktree' }).click()
-    const alert = page.getByRole('alert')
-    await expect(alert).toContainText('create failed')
+    await expect(page.getByText('create failed')).toBeVisible()
   })
 
   test('scrolls tmux history with a one-finger swipe across mouse modes', async ({

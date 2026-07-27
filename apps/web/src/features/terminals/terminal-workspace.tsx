@@ -14,6 +14,7 @@ import { terminalSessions } from '../../terminal-session'
 import { TerminalView, type PendingTerminalTab } from '../../terminal-view'
 import { terminalTarget, worktreeTarget } from '../../workspace-navigation'
 import { useWorkspaceNavigate } from '../../workspace-router-navigation'
+import { notifyError } from '../notifications/error-notifications'
 
 export function TerminalWorkspace({
   projects,
@@ -24,14 +25,11 @@ export function TerminalWorkspace({
   presets,
   presetsLoading,
   presetsError,
-  foregroundProcesses,
-  runtimeTitles,
-  modalOpen,
+  dialogOpen,
   projectSwitcherOpen,
   isMobile,
   drawerOpen,
   setDrawerOpen,
-  setError,
   onSelectTerminal,
   onManagePresets
 }: {
@@ -43,14 +41,11 @@ export function TerminalWorkspace({
   presets: TerminalPreset[]
   presetsLoading: boolean
   presetsError: boolean
-  foregroundProcesses: ReadonlySet<string>
-  runtimeTitles: ReadonlyMap<string, string>
-  modalOpen: boolean
+  dialogOpen: boolean
   projectSwitcherOpen: boolean
   isMobile: boolean
   drawerOpen: boolean
   setDrawerOpen: (open: boolean) => void
-  setError: (value: string | null) => void
   onSelectTerminal: (terminal: TerminalRecord) => void
   onManagePresets: (trigger?: HTMLElement | null) => void
 }) {
@@ -84,9 +79,6 @@ export function TerminalWorkspace({
     Boolean(selectedWorktree?.prunable) ||
     selectedWorktree?.status !== 'active' ||
     selectedProject?.availability.state === 'unavailable'
-  const showError = (value: unknown) =>
-    setError(value instanceof Error ? value.message : String(value))
-
   const createTerminal = useMutation({
     mutationFn: ({
       worktreeId,
@@ -175,7 +167,7 @@ export function TerminalWorkspace({
         setSelectedPendingTerminalId(null)
       }
 
-      showError(error)
+      notifyError(error)
       await queryClient.invalidateQueries({ queryKey: projectsQueryKey })
     }
   })
@@ -206,7 +198,7 @@ export function TerminalWorkspace({
           })
         }))
       )
-      showError(error)
+      notifyError(error)
     },
     onSettled: (_, __, closed) => {
       closingTerminalIdsRef.current.delete(closed.terminal.id)
@@ -246,7 +238,10 @@ export function TerminalWorkspace({
     })
   }
 
-  const requestCloseTerminal = (terminal: TerminalRecord) => {
+  const requestCloseTerminal = (
+    terminal: TerminalRecord,
+    runtimeMetadata?: { title: string | null; hasForegroundProcess: boolean }
+  ) => {
     const project = projects.find((candidate) =>
       candidate.worktrees.some(
         (worktree) => worktree.id === terminal.worktreeId
@@ -269,12 +264,17 @@ export function TerminalWorkspace({
       return
     }
 
+    const title =
+      runtimeMetadata?.title ??
+      terminalSessions.getTitleSnapshot().get(terminal.id) ??
+      terminal.name
+    const hasForegroundProcess =
+      runtimeMetadata?.hasForegroundProcess ??
+      terminalSessions.getForegroundProcessSnapshot().has(terminal.id)
     if (
-      foregroundProcesses.has(terminal.id) &&
+      hasForegroundProcess &&
       !window.confirm(
-        `Close terminal “${
-          runtimeTitles.get(terminal.id) || terminal.name
-        }”? Its foreground process will be terminated.`
+        `Close terminal “${title}”? Its foreground process will be terminated.`
       )
     ) {
       return
@@ -332,7 +332,7 @@ export function TerminalWorkspace({
     return desktopBridge.onCommand((command) => {
       if (
         command === 'new-worktree' ||
-        modalOpen ||
+        dialogOpen ||
         projectSwitcherOpen ||
         (isMobile && drawerOpen)
       ) {
@@ -347,11 +347,9 @@ export function TerminalWorkspace({
     })
   }, [
     drawerOpen,
-    foregroundProcesses,
     isMobile,
-    modalOpen,
+    dialogOpen,
     projectSwitcherOpen,
-    runtimeTitles,
     selectedPendingTerminal,
     selectedTerminal,
     selectedWorktree,
@@ -368,7 +366,7 @@ export function TerminalWorkspace({
       selectedPendingTerminalId={selectedPendingTerminal?.id ?? null}
       loading={loading}
       autoFocusBlocked={
-        modalOpen || projectSwitcherOpen || (isMobile && drawerOpen)
+        dialogOpen || projectSwitcherOpen || (isMobile && drawerOpen)
       }
       presets={presets}
       presetsLoading={presetsLoading}

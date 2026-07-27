@@ -1,18 +1,17 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import type { ProjectRecord, TerminalRecord } from '@treeport/shared'
 import { Button } from '../../components/ui/button'
 import {
   terminalSessions,
-  type TerminalBellEvent,
-  type TerminalBellMetadata
+  type TerminalBellEvent
 } from '../../terminal-session'
+import { useTerminalBellMetadata } from '../../terminal-runtime-metadata-react'
+import { notifyError } from './error-notifications'
 import {
   targetForTerminal,
   type WorkspaceTarget
 } from '../../workspace-navigation'
-
-const EMPTY_BELLS: ReadonlyMap<string, TerminalBellMetadata> = new Map()
 
 type Presence = {
   focused: boolean
@@ -54,29 +53,21 @@ function findTerminalContext(
   return null
 }
 
-export function useBellNotifications({
+export function TerminalBellNotifications({
   projects,
   projectsLoaded,
   selectedTerminalId,
-  runtimeTitles,
-  navigateToWorkspace,
-  onError
+  navigateToWorkspace
 }: {
   projects: ProjectRecord[]
   projectsLoaded: boolean
   selectedTerminalId: string | null
-  runtimeTitles: ReadonlyMap<string, string>
   navigateToWorkspace: (
     target: WorkspaceTarget,
     replace?: boolean
   ) => Promise<void>
-  onError: (error: unknown) => void
 }) {
-  const bells = useSyncExternalStore(
-    terminalSessions.subscribe,
-    terminalSessions.getBellSnapshot,
-    () => EMPTY_BELLS
-  )
+  const { bells, titles: runtimeTitles } = useTerminalBellMetadata()
   const [presence, setPresence] = useState<Presence>(() => ({
     focused: document.hasFocus(),
     visible: document.visibilityState === 'visible'
@@ -87,7 +78,6 @@ export function useBellNotifications({
     selectedTerminalId,
     runtimeTitles,
     navigateToWorkspace,
-    onError,
     presence
   })
   latest.current = {
@@ -96,7 +86,6 @@ export function useBellNotifications({
     selectedTerminalId,
     runtimeTitles,
     navigateToWorkspace,
-    onError,
     presence
   }
   const presentedSequences = useRef(new Map<string, number>())
@@ -143,7 +132,7 @@ export function useBellNotifications({
     if (bell?.unread) {
       void terminalSessions
         .acknowledgeBell(selectedTerminalId, bell.sequence)
-        .catch((error: unknown) => latest.current.onError(error))
+        .catch(notifyError)
     }
   }, [bells, presence.focused, presence.visible, selectedTerminalId])
 
@@ -186,7 +175,7 @@ export function useBellNotifications({
                     void terminalSessions
                       .acknowledgeBell(event.terminalId, event.sequence)
                       .catch((error: unknown) => {
-                        latest.current.onError(error)
+                        notifyError(error)
                         const currentBell = terminalSessions
                           .getBellSnapshot()
                           .get(event.terminalId)
@@ -265,7 +254,7 @@ export function useBellNotifications({
       if (activelyViewed) {
         void terminalSessions
           .acknowledgeBell(event.terminalId, event.sequence)
-          .catch((error: unknown) => latest.current.onError(error))
+          .catch(notifyError)
         return
       }
 
@@ -295,4 +284,6 @@ export function useBellNotifications({
       }
     }
   }, [bells, projectsLoaded])
+
+  return null
 }

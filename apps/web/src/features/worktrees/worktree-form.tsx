@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react'
 import type { ProjectRecord, TerminalPreset } from '@treeport/shared'
 import { Button } from '../../components/ui/button'
+import { FormField } from '../../components/ui/form-field'
 import { Input } from '../../components/ui/input'
 import { Label } from '../../components/ui/label'
 import { NativeSelect } from '../../components/ui/native-select'
-import { FormField, ModalHeading } from '../dialogs/dialog-parts'
 
 const INITIAL_TERMINAL_PRESET_STORAGE_KEY = 'treeport-initial-terminal-preset'
 
@@ -85,7 +85,6 @@ export function WorktreeForm({
         )
       }}
     >
-      <ModalHeading eyebrow={project.name} title="Create worktree" />
       <FormField>
         <Label htmlFor="worktree-name">Name</Label>
         <Input
@@ -99,7 +98,6 @@ export function WorktreeForm({
           spellCheck={false}
           required
           autoFocus
-          data-modal-autofocus
           disabled={busy}
         />
       </FormField>
