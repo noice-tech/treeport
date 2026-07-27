@@ -29,6 +29,8 @@ export class TerminalRuntimeMetadataStore {
   private bellAcknowledgementTargets = new Map<string, number>()
   private bellAcknowledgementQueues = new Map<string, Promise<void>>()
   private bellAcknowledgementEpoch = 0
+  private notificationBatchDepth = 0
+  private notificationPending = false
 
   constructor(
     private readonly sendBellAcknowledgement: (
@@ -60,6 +62,7 @@ export class TerminalRuntimeMetadataStore {
     this.progressSnapshot
 
   applyRuntimeMetadata(metadata: TerminalRuntimeMetadata): void {
+    this.notificationBatchDepth += 1
     const currentBell = this.bellMetadata.get(metadata.terminalId)
     const incomingBell = metadata.bell
     const bellIsCurrent =
@@ -106,6 +109,12 @@ export class TerminalRuntimeMetadataStore {
       metadata.hasForegroundProcess === true
     )
     this.setProgress(metadata.terminalId, metadata.progress)
+    this.notificationBatchDepth -= 1
+    if (this.notificationBatchDepth === 0 && this.notificationPending) {
+      this.notificationPending = false
+      this.listeners.forEach((listener) => listener())
+    }
+
     if (bellEvent) {
       this.bellEventListeners.forEach((listener) => listener(bellEvent))
     }
@@ -128,7 +137,14 @@ export class TerminalRuntimeMetadataStore {
       }
 
       if (item.progress) {
-        progress.set(item.terminalId, item.progress)
+        const current = this.progressSnapshot.get(item.terminalId)
+        progress.set(
+          item.terminalId,
+          current?.state === item.progress.state &&
+            current.value === item.progress.value
+            ? current
+            : item.progress
+        )
       }
 
       if (item.bell) {
@@ -173,7 +189,10 @@ export class TerminalRuntimeMetadataStore {
           current?.unread !== value.unread
         )
       })
-    this.bellMetadata = bells
+    if (bellsChanged) {
+      this.bellMetadata = bells
+    }
+
     this.bellAcknowledgementEpoch += 1
     this.bellAcknowledgementTargets.clear()
 
@@ -426,6 +445,11 @@ export class TerminalRuntimeMetadataStore {
   }
 
   private emit(): void {
+    if (this.notificationBatchDepth > 0) {
+      this.notificationPending = true
+      return
+    }
+
     this.listeners.forEach((listener) => listener())
   }
 }

@@ -1876,11 +1876,9 @@ test.describe('desktop worktree terminal UI', () => {
         .getByRole('button', { name: 'runtime · /repo, running', exact: true })
         .last()
     ).toBeVisible()
-    page.once('dialog', async (dialog) => {
-      expect(dialog.message()).toContain('runtime · /repo')
-      await dialog.dismiss()
-    })
-    await page.getByRole('button', { name: 'Close runtime · /repo' }).click()
+    await expect(
+      page.getByRole('button', { name: 'Close runtime · /repo' })
+    ).toBeDisabled()
 
     await page.evaluate(() => {
       const socket = (window as any).__wsInstances.find((item: any) =>
@@ -1892,11 +1890,7 @@ test.describe('desktop worktree terminal UI', () => {
     })
     await expect(page.getByRole('tab', { name: 'Pi, running' })).toBeVisible()
     await expect(page.getByRole('main', { name: 'Pi terminal' })).toBeVisible()
-    page.once('dialog', async (dialog) => {
-      expect(dialog.message()).toContain('Pi')
-      await dialog.dismiss()
-    })
-    await page.getByRole('button', { name: 'Close Pi' }).click()
+    await expect(page.getByRole('button', { name: 'Close Pi' })).toBeDisabled()
   })
 
   test('reconciles terminal metadata in chronological order', async ({
@@ -2527,8 +2521,9 @@ test.describe('desktop worktree terminal UI', () => {
               data: {
                 terminalId: 'term_pi',
                 title: 'Pi build · /worktrees/topic',
-                progress: null,
-                progressStartedAt: null,
+                hasForegroundProcess: true,
+                progress: { state: 'normal', value: 61 },
+                progressStartedAt: '2026-01-01T00:00:00.000Z',
                 progressClearedAt: null,
                 bell: {
                   sequence: nextSequence,
@@ -2547,6 +2542,11 @@ test.describe('desktop worktree terminal UI', () => {
     await expect(toast).toHaveCount(1)
     await expect(toast).toContainText('Pi build · /worktrees/topic')
     await expect(toast).toContainText('example · topic')
+    await expect(
+      page.getByRole('button', {
+        name: /Pi build · \/worktrees\/topic.*61% complete.*bell/
+      })
+    ).toBeVisible()
     await expect
       .poll(() => page.evaluate(() => (window as any).__attentionRequests))
       .toBe(1)

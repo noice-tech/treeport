@@ -1,18 +1,16 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import type { ProjectRecord, TerminalRecord } from '@treeport/shared'
 import { Button } from '../../components/ui/button'
 import {
   terminalSessions,
-  type TerminalBellEvent,
-  type TerminalBellMetadata
+  type TerminalBellEvent
 } from '../../terminal-session'
+import { useTerminalBellMetadata } from '../../terminal-runtime-metadata-react'
 import {
   targetForTerminal,
   type WorkspaceTarget
 } from '../../workspace-navigation'
-
-const EMPTY_BELLS: ReadonlyMap<string, TerminalBellMetadata> = new Map()
 
 type Presence = {
   focused: boolean
@@ -54,29 +52,23 @@ function findTerminalContext(
   return null
 }
 
-export function useBellNotifications({
+export function TerminalBellNotifications({
   projects,
   projectsLoaded,
   selectedTerminalId,
-  runtimeTitles,
   navigateToWorkspace,
   onError
 }: {
   projects: ProjectRecord[]
   projectsLoaded: boolean
   selectedTerminalId: string | null
-  runtimeTitles: ReadonlyMap<string, string>
   navigateToWorkspace: (
     target: WorkspaceTarget,
     replace?: boolean
   ) => Promise<void>
   onError: (error: unknown) => void
 }) {
-  const bells = useSyncExternalStore(
-    terminalSessions.subscribe,
-    terminalSessions.getBellSnapshot,
-    () => EMPTY_BELLS
-  )
+  const { bells, titles: runtimeTitles } = useTerminalBellMetadata()
   const [presence, setPresence] = useState<Presence>(() => ({
     focused: document.hasFocus(),
     visible: document.visibilityState === 'visible'
@@ -295,4 +287,6 @@ export function useBellNotifications({
       }
     }
   }, [bells, projectsLoaded])
+
+  return null
 }

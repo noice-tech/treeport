@@ -40,10 +40,13 @@ import {
   terminalProgressLabel,
   terminalSessions,
   type ArrowDirection,
-  type TerminalProgress,
   type TerminalSession,
   type TerminalSessionSnapshot
 } from './terminal-session'
+import {
+  useTerminalForegroundProcess,
+  useTerminalNavigationMetadata
+} from './terminal-runtime-metadata-react'
 
 export interface PendingTerminalTab {
   id: string
@@ -69,13 +72,13 @@ interface TerminalViewProps {
     returnToShell?: boolean
   }) => void
   onManagePresets: (trigger: HTMLButtonElement | null) => void
-  onCloseTerminal: (terminal: TerminalRecord) => void
+  onCloseTerminal: (
+    terminal: TerminalRecord,
+    runtimeMetadata: { title: string | null; hasForegroundProcess: boolean }
+  ) => void
   onStatusChange: () => void
 }
 
-const EMPTY_ATTENTION: ReadonlySet<string> = new Set()
-const EMPTY_TITLES: ReadonlyMap<string, string> = new Map()
-const EMPTY_PROGRESS: ReadonlyMap<string, TerminalProgress> = new Map()
 const EMPTY_SNAPSHOT: TerminalSessionSnapshot = {
   phase: 'closed',
   degraded: false,
@@ -89,6 +92,50 @@ const EMPTY_SNAPSHOT: TerminalSessionSnapshot = {
   hasSelection: false,
   pasteRequestSerial: 0,
   error: null
+}
+
+function TerminalCloseButton({
+  terminal,
+  title,
+  disabled,
+  selected,
+  onCloseTerminal
+}: {
+  terminal: TerminalRecord
+  title: string
+  disabled: boolean
+  selected: boolean
+  onCloseTerminal: TerminalViewProps['onCloseTerminal']
+}) {
+  const hasForegroundProcess = useTerminalForegroundProcess(terminal.id)
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          className={cn(
+            'mr-1 shrink-0 self-center text-zinc-600 group-hover/tab:text-zinc-400 hover:bg-transparent hover:text-zinc-200',
+            selected && 'text-zinc-400'
+          )}
+          aria-label={`Close ${title}`}
+          disabled={disabled}
+          onClick={() =>
+            onCloseTerminal(terminal, { title, hasForegroundProcess })
+          }
+        >
+          <XMarkIcon />
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent side="bottom">
+        {disabled
+          ? 'Every worktree keeps at least one terminal'
+          : 'Close terminal'}
+      </TooltipContent>
+    </Tooltip>
+  )
 }
 
 export function TerminalView({
@@ -140,21 +187,11 @@ export function TerminalView({
     activeSession?.getSnapshot ?? (() => EMPTY_SNAPSHOT),
     () => EMPTY_SNAPSHOT
   )
-  const bellAttention = useSyncExternalStore(
-    terminalSessions.subscribe,
-    terminalSessions.getAttentionSnapshot,
-    () => EMPTY_ATTENTION
-  )
-  const runtimeTitles = useSyncExternalStore(
-    terminalSessions.subscribe,
-    terminalSessions.getTitleSnapshot,
-    () => EMPTY_TITLES
-  )
-  const terminalProgress = useSyncExternalStore(
-    terminalSessions.subscribe,
-    terminalSessions.getProgressSnapshot,
-    () => EMPTY_PROGRESS
-  )
+  const {
+    attention: bellAttention,
+    titles: runtimeTitles,
+    progress: terminalProgress
+  } = useTerminalNavigationMetadata()
 
   useLayoutEffect(() => {
     const host = hostRef.current
@@ -427,29 +464,13 @@ export function TerminalView({
                         </span>
                       )}
                     </TabsTrigger>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon-sm"
-                          className={cn(
-                            'mr-1 shrink-0 self-center text-zinc-600 group-hover/tab:text-zinc-400 hover:bg-transparent hover:text-zinc-200',
-                            selected && 'text-zinc-400'
-                          )}
-                          aria-label={`Close ${title}`}
-                          disabled={terminals.length === 1}
-                          onClick={() => onCloseTerminal(item)}
-                        >
-                          <XMarkIcon />
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent side="bottom">
-                        {terminals.length === 1
-                          ? 'Every worktree keeps at least one terminal'
-                          : 'Close terminal'}
-                      </TooltipContent>
-                    </Tooltip>
+                    <TerminalCloseButton
+                      terminal={item}
+                      title={title}
+                      disabled={terminals.length === 1}
+                      selected={selected}
+                      onCloseTerminal={onCloseTerminal}
+                    />
                   </div>
                 )
               })}

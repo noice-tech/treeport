@@ -42,10 +42,8 @@ import type { PendingWorktreeCreation } from '../worktrees/worktree-workflows'
 import { cn } from '../../lib/utils'
 import { TerminalStatusIcon } from '../../components/terminal-status-icon'
 import { recentProjectsQueryOptions } from '../../project-metadata'
-import {
-  terminalProgressLabel,
-  type TerminalProgress
-} from '../../terminal-session'
+import { terminalProgressLabel } from '../../terminal-session'
+import { useTerminalNavigationMetadata } from '../../terminal-runtime-metadata-react'
 
 const MANUAL_CLEANUP_PREFIX = 'Manual cleanup required:'
 
@@ -132,9 +130,6 @@ export interface WorkspaceSidebarProps {
   selectedWorktree: WorktreeRecord | null
   selectedTerminalId: string | null
   projectTerminals: TerminalRecord[]
-  runtimeTitles: ReadonlyMap<string, string>
-  bellAttention: ReadonlySet<string>
-  terminalProgress: ReadonlyMap<string, TerminalProgress>
   pendingWorktrees: PendingWorktreeCreation[]
   pendingRemovals: Record<string, RemovalStage>
   closingProjectId: string | null
@@ -176,8 +171,6 @@ export interface WorkspaceSidebarProps {
 interface ProjectSwitcherProps {
   projects: ProjectRecord[]
   activeProject: ProjectRecord | null
-  bellAttention: ReadonlySet<string>
-  terminalProgress: ReadonlyMap<string, TerminalProgress>
   closingProjectId: string | null
   isMobile: boolean
   projectSwitcherOpen: boolean
@@ -210,7 +203,10 @@ function ProjectSwitcher({
   onError,
   onRequestProjectClose: requestProjectClose,
   onOpenModal: openModal
-}: ProjectSwitcherProps) {
+}: ProjectSwitcherProps & {
+  bellAttention: ReturnType<typeof useTerminalNavigationMetadata>['attention']
+  terminalProgress: ReturnType<typeof useTerminalNavigationMetadata>['progress']
+}) {
   const usesMacKeyboard = /Mac|iPhone|iPad|iPod/.test(navigator.platform)
   const [projectSearch, setProjectSearch] = useState('')
   const [highlightedProjectId, setHighlightedProjectId] = useState<
@@ -577,9 +573,6 @@ export function WorkspaceSidebar({
   selectedWorktree,
   selectedTerminalId,
   projectTerminals,
-  runtimeTitles,
-  bellAttention,
-  terminalProgress,
   pendingWorktrees,
   pendingRemovals,
   closingProjectId,
@@ -611,6 +604,11 @@ export function WorkspaceSidebar({
   onResizeSidebarWithKeyboard: resizeSidebarWithKeyboard,
   onSetSidebarWidth: setAndSaveSidebarWidth
 }: WorkspaceSidebarProps) {
+  const {
+    attention: bellAttention,
+    titles: runtimeTitles,
+    progress: terminalProgress
+  } = useTerminalNavigationMetadata()
   const desktopBridge = window.treeportDesktop
   const newWorktreeShortcut = desktopBridge
     ? desktopBridge.platform === 'darwin'

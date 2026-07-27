@@ -24,8 +24,6 @@ export function TerminalWorkspace({
   presets,
   presetsLoading,
   presetsError,
-  foregroundProcesses,
-  runtimeTitles,
   modalOpen,
   projectSwitcherOpen,
   isMobile,
@@ -43,8 +41,6 @@ export function TerminalWorkspace({
   presets: TerminalPreset[]
   presetsLoading: boolean
   presetsError: boolean
-  foregroundProcesses: ReadonlySet<string>
-  runtimeTitles: ReadonlyMap<string, string>
   modalOpen: boolean
   projectSwitcherOpen: boolean
   isMobile: boolean
@@ -246,7 +242,10 @@ export function TerminalWorkspace({
     })
   }
 
-  const requestCloseTerminal = (terminal: TerminalRecord) => {
+  const requestCloseTerminal = (
+    terminal: TerminalRecord,
+    runtimeMetadata?: { title: string | null; hasForegroundProcess: boolean }
+  ) => {
     const project = projects.find((candidate) =>
       candidate.worktrees.some(
         (worktree) => worktree.id === terminal.worktreeId
@@ -269,12 +268,17 @@ export function TerminalWorkspace({
       return
     }
 
+    const title =
+      runtimeMetadata?.title ??
+      terminalSessions.getTitleSnapshot().get(terminal.id) ??
+      terminal.name
+    const hasForegroundProcess =
+      runtimeMetadata?.hasForegroundProcess ??
+      terminalSessions.getForegroundProcessSnapshot().has(terminal.id)
     if (
-      foregroundProcesses.has(terminal.id) &&
+      hasForegroundProcess &&
       !window.confirm(
-        `Close terminal “${
-          runtimeTitles.get(terminal.id) || terminal.name
-        }”? Its foreground process will be terminated.`
+        `Close terminal “${title}”? Its foreground process will be terminated.`
       )
     ) {
       return
@@ -347,11 +351,9 @@ export function TerminalWorkspace({
     })
   }, [
     drawerOpen,
-    foregroundProcesses,
     isMobile,
     modalOpen,
     projectSwitcherOpen,
-    runtimeTitles,
     selectedPendingTerminal,
     selectedTerminal,
     selectedWorktree,

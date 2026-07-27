@@ -1204,6 +1204,112 @@ describe('TerminalSessionManager', () => {
     expect(manager.getTitleSnapshot().get('other')).toBe('shell')
   })
 
+  it('publishes each runtime update once with complete snapshots before its BEL event', () => {
+    const { manager, sessions } = fixture()
+    const order: string[] = []
+    const observed: Array<{
+      title: string | undefined
+      foreground: boolean
+      progress: { state: string; value: number | null } | undefined
+      attention: boolean
+      bell: { sequence: number; unread: boolean } | undefined
+    }> = []
+    manager.subscribe(() => {
+      order.push('store')
+      observed.push({
+        title: manager.getTitleSnapshot().get('background'),
+        foreground: manager.getForegroundProcessSnapshot().has('background'),
+        progress: manager.getProgressSnapshot().get('background'),
+        attention: manager.getAttentionSnapshot().has('background'),
+        bell: manager.getBellSnapshot().get('background')
+      })
+    })
+    manager.subscribeBellEvents(() => {
+      order.push('bell')
+      expect(manager.getTitleSnapshot().get('background')).toBe('Pi build')
+      expect(manager.getAttentionSnapshot().has('background')).toBe(true)
+      expect(manager.getForegroundProcessSnapshot().has('background')).toBe(
+        true
+      )
+      expect(manager.getProgressSnapshot().get('background')).toEqual({
+        state: 'normal',
+        value: 61
+      })
+      expect(manager.getBellSnapshot().get('background')).toMatchObject({
+        sequence: 1,
+        unread: true
+      })
+    })
+
+    manager.applyRuntimeMetadata({
+      terminalId: 'background',
+      title: 'Pi build',
+      hasForegroundProcess: true,
+      progress: { state: 'normal', value: 61 },
+      progressStartedAt: '2026-01-01T00:00:00.000Z',
+      progressClearedAt: null,
+      bell: {
+        sequence: 1,
+        at: '2026-01-01T00:01:00.000Z',
+        unread: true
+      }
+    })
+
+    expect(order).toEqual(['store', 'bell'])
+    expect(observed).toEqual([
+      {
+        title: 'Pi build',
+        foreground: true,
+        progress: { state: 'normal', value: 61 },
+        attention: true,
+        bell: { sequence: 1, at: '2026-01-01T00:01:00.000Z', unread: true }
+      }
+    ])
+
+    manager.acquire('background')
+    sessions.get('background')?.setTitle('live session title')
+    expect(order).toEqual(['store', 'bell', 'store'])
+    expect(observed.at(-1)?.title).toBe('live session title')
+  })
+
+  it('retains equal per-terminal progress identity across collection updates', () => {
+    const { manager } = fixture()
+    const first = {
+      terminalId: 'one',
+      title: 'One',
+      progress: { state: 'normal' as const, value: 25 },
+      progressStartedAt: '2026-01-01T00:00:00.000Z',
+      progressClearedAt: null,
+      bell: null
+    }
+    manager.replaceRuntimeMetadata([
+      first,
+      {
+        ...first,
+        terminalId: 'two',
+        title: 'Two',
+        progress: { state: 'normal', value: 50 }
+      }
+    ])
+    const firstProgress = manager.getProgressSnapshot().get('one')
+
+    manager.replaceRuntimeMetadata([
+      { ...first, progress: { ...first.progress } },
+      {
+        ...first,
+        terminalId: 'two',
+        title: 'Two',
+        progress: { state: 'normal', value: 75 }
+      }
+    ])
+
+    expect(manager.getProgressSnapshot().get('one')).toBe(firstProgress)
+    expect(manager.getProgressSnapshot().get('two')).toEqual({
+      state: 'normal',
+      value: 75
+    })
+  })
+
   it('emits only newer incremental BELs and keeps snapshots presentation-silent', () => {
     const { manager } = fixture()
     const events: Array<{ terminalId: string; sequence: number; at: string }> =

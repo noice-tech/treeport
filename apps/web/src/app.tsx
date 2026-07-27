@@ -3,7 +3,6 @@ import {
   useMemo,
   useRef,
   useState,
-  useSyncExternalStore,
   type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent
@@ -21,7 +20,7 @@ import {
   ActionModal,
   type ActionModalState
 } from './features/dialogs/action-modal'
-import { useBellNotifications } from './features/notifications/use-bell-notifications'
+import { TerminalBellNotifications } from './features/notifications/use-bell-notifications'
 import { useProjectWorkflows } from './features/projects/project-workflows'
 import { WorkspaceSidebar } from './features/sidebar/workspace-sidebar'
 import { TerminalWorkspace } from './features/terminals/terminal-workspace'
@@ -34,7 +33,6 @@ import {
   projectsQueryOptions,
   terminalPresetsQueryOptions
 } from './project-metadata'
-import { terminalSessions, type TerminalProgress } from './terminal-session'
 import {
   LAST_PROJECT_TERMINAL_STORAGE_PREFIX,
   LAST_WORKSPACE_ROUTE_STORAGE_KEY,
@@ -48,10 +46,6 @@ import { useWorkspaceNavigate } from './workspace-router-navigation'
 const MIN_SIDEBAR_WIDTH = 240
 const MAX_SIDEBAR_WIDTH = 420
 const DEFAULT_SIDEBAR_WIDTH = 272
-const EMPTY_BELL_ATTENTION: ReadonlySet<string> = new Set()
-const EMPTY_FOREGROUND_PROCESSES: ReadonlySet<string> = new Set()
-const EMPTY_RUNTIME_TITLES: ReadonlyMap<string, string> = new Map()
-const EMPTY_TERMINAL_PROGRESS: ReadonlyMap<string, TerminalProgress> = new Map()
 const ERROR_TOAST_DURATION_MS = 5_000
 
 function clampSidebarWidth(width: number): number {
@@ -289,34 +283,6 @@ export default function App() {
       activeProject?.worktrees.flatMap((worktree) => worktree.terminals) ?? [],
     [activeProject]
   )
-  const bellAttention = useSyncExternalStore(
-    terminalSessions.subscribe,
-    terminalSessions.getAttentionSnapshot,
-    () => EMPTY_BELL_ATTENTION
-  )
-  const runtimeTitles = useSyncExternalStore(
-    terminalSessions.subscribe,
-    terminalSessions.getTitleSnapshot,
-    () => EMPTY_RUNTIME_TITLES
-  )
-  const foregroundProcesses = useSyncExternalStore(
-    terminalSessions.subscribe,
-    terminalSessions.getForegroundProcessSnapshot,
-    () => EMPTY_FOREGROUND_PROCESSES
-  )
-  const terminalProgress = useSyncExternalStore(
-    terminalSessions.subscribe,
-    terminalSessions.getProgressSnapshot,
-    () => EMPTY_TERMINAL_PROGRESS
-  )
-  useBellNotifications({
-    projects,
-    projectsLoaded: projectsQuery.data !== undefined,
-    selectedTerminalId,
-    runtimeTitles,
-    navigateToWorkspace,
-    onError: showError(setError)
-  })
   const selectTerminal = (terminal: TerminalRecord) => {
     const target = targetForTerminal(projects, terminal)
     if (target) {
@@ -441,6 +407,13 @@ export default function App() {
       )}
       style={{ '--sidebar-width': `${sidebarWidth}px` } as CSSProperties}
     >
+      <TerminalBellNotifications
+        projects={projects}
+        projectsLoaded={projectsQuery.data !== undefined}
+        selectedTerminalId={selectedTerminalId}
+        navigateToWorkspace={navigateToWorkspace}
+        onError={showError(setError)}
+      />
       {showDesktopTitlebar && (
         <div
           className="desktop-titlebar col-span-full h-8 bg-zinc-950"
@@ -458,9 +431,6 @@ export default function App() {
         selectedWorktree={selectedWorktree}
         selectedTerminalId={selectedTerminalId}
         projectTerminals={activeProjectTerminals}
-        runtimeTitles={runtimeTitles}
-        bellAttention={bellAttention}
-        terminalProgress={terminalProgress}
         pendingWorktrees={pendingWorktrees}
         pendingRemovals={pendingRemovals}
         closingProjectId={closingProjectId}
@@ -514,8 +484,6 @@ export default function App() {
           presets={presets}
           presetsLoading={presetsQuery.isPending}
           presetsError={presetsQuery.isError}
-          foregroundProcesses={foregroundProcesses}
-          runtimeTitles={runtimeTitles}
           modalOpen={modal !== null}
           projectSwitcherOpen={projectSwitcherOpen}
           isMobile={isMobile}
