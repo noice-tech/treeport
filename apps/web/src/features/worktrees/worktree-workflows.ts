@@ -1,4 +1,4 @@
-import { useRef, useState, type Dispatch, type SetStateAction } from 'react'
+import { useRef, useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useLocation } from '@tanstack/react-router'
 import type {
@@ -8,7 +8,6 @@ import type {
   WorktreeRecord
 } from '@treeport/shared'
 import { ApiError, apiClient } from '../../api'
-import type { ActionModalState, RemovalStage } from '../dialogs/action-modal'
 import { projectsQueryKey } from '../../project-metadata'
 import { terminalSessions } from '../../terminal-session'
 import {
@@ -18,6 +17,8 @@ import {
 } from '../../workspace-navigation'
 import { useWorkspaceNavigate } from '../../workspace-router-navigation'
 const MANUAL_CLEANUP_PREFIX = 'Manual cleanup required:'
+
+export type RemovalStage = 'checking' | 'removing'
 
 function needsManualCleanup(worktree: WorktreeRecord): boolean {
   return Boolean(worktree.cleanupError?.startsWith(MANUAL_CLEANUP_PREFIX))
@@ -39,17 +40,20 @@ export interface PendingWorktreeCreation {
 
 export function useWorktreeWorkflows({
   setDrawerOpen,
-  setModal,
-  openModal,
+  onWorktreeSubmitted,
+  onRemovalNeedsConfirmation,
+  onRemovalCompleted,
   setError,
   selectedTerminalId
 }: {
   setDrawerOpen: (open: boolean) => void
-  setModal: Dispatch<SetStateAction<ActionModalState>>
-  openModal: (
-    modal: Exclude<ActionModalState, null>,
+  onWorktreeSubmitted: () => void
+  onRemovalNeedsConfirmation: (
+    worktree: WorktreeRecord,
+    preview: RemovePreview,
     trigger?: HTMLElement
   ) => void
+  onRemovalCompleted: (worktreeId: string) => void
   setError: (value: string | null) => void
   selectedTerminalId: string | null
 }) {
@@ -162,7 +166,7 @@ export function useWorktreeWorkflows({
       ...(sourceWorktreeId ? { sourceWorktreeId } : {})
     }
     setPendingWorktrees((current) => [...current, pending])
-    setModal(null)
+    onWorktreeSubmitted()
     window.requestAnimationFrame(() => {
       document.getElementById(`pending-worktree-${pending.id}`)?.focus()
     })
@@ -208,11 +212,7 @@ export function useWorktreeWorkflows({
       await apiClient.removeWorktree(worktree.id, preview, confirmDestructive)
       markWorktreeCleaning(worktree.id)
       releaseRemoval(worktree.id)
-      setModal((current) =>
-        current?.type === 'remove' && current.worktree.id === worktree.id
-          ? null
-          : current
-      )
+      onRemovalCompleted(worktree.id)
       void queryClient.invalidateQueries(
         { queryKey: projectsQueryKey },
         { cancelRefetch: false }
@@ -237,7 +237,7 @@ export function useWorktreeWorkflows({
           }
 
           releaseRemoval(worktree.id)
-          openModal({ type: 'remove', worktree, preview: freshPreview })
+          onRemovalNeedsConfirmation(worktree, freshPreview)
           return
         } catch (refreshError) {
           releaseRemoval(worktree.id)
@@ -279,7 +279,7 @@ export function useWorktreeWorkflows({
       }
 
       releaseRemoval(worktree.id)
-      openModal({ type: 'remove', worktree, preview }, trigger)
+      onRemovalNeedsConfirmation(worktree, preview, trigger)
     } catch (error) {
       releaseRemoval(worktree.id)
       showError(error)

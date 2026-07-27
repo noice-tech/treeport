@@ -562,9 +562,10 @@ export function TerminalView({
               <DropdownMenuSeparator />
               <DropdownMenuGroup>
                 <DropdownMenuItem
-                  onSelect={() =>
-                    onManagePresets(newTerminalTriggerRef.current)
-                  }
+                  onSelect={() => {
+                    const trigger = newTerminalTriggerRef.current
+                    queueMicrotask(() => onManagePresets(trigger))
+                  }}
                 >
                   <Cog6ToothIcon />
                   Manage presets

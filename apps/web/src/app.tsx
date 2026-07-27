@@ -12,18 +12,19 @@ import { useLocation } from '@tanstack/react-router'
 import { XMarkIcon } from '@heroicons/react/16/solid'
 import type {
   ProjectRecord,
+  RemovePreview,
   TerminalRecord,
   WorktreeRecord
 } from '@treeport/shared'
 import { Button } from './components/ui/button'
-import {
-  ActionModal,
-  type ActionModalState
-} from './features/dialogs/action-modal'
 import { TerminalBellNotifications } from './features/notifications/use-bell-notifications'
+import { OpenProjectDialog } from './features/projects/open-project-dialog'
 import { useProjectWorkflows } from './features/projects/project-workflows'
 import { WorkspaceSidebar } from './features/sidebar/workspace-sidebar'
+import { TerminalPresetsDialog } from './features/terminal-presets/terminal-presets-dialog'
 import { TerminalWorkspace } from './features/terminals/terminal-workspace'
+import { CreateWorktreeDialog } from './features/worktrees/create-worktree-dialog'
+import { RemoveWorktreeDialog } from './features/worktrees/remove-worktree-dialog'
 import { useWorktreeWorkflows } from './features/worktrees/worktree-workflows'
 import { focusableElements, trapTabKey } from './lib/focus'
 import { cn } from './lib/utils'
@@ -47,6 +48,13 @@ const MIN_SIDEBAR_WIDTH = 240
 const MAX_SIDEBAR_WIDTH = 420
 const DEFAULT_SIDEBAR_WIDTH = 272
 const ERROR_TOAST_DURATION_MS = 5_000
+
+type AppDialog =
+  | { type: 'project' }
+  | { type: 'worktree'; project: ProjectRecord }
+  | { type: 'presets' }
+  | { type: 'remove'; worktree: WorktreeRecord; preview: RemovePreview }
+  | null
 
 function clampSidebarWidth(width: number): number {
   return Math.min(MAX_SIDEBAR_WIDTH, Math.max(MIN_SIDEBAR_WIDTH, width))
@@ -80,7 +88,7 @@ export default function App() {
     desktopBridge !== undefined &&
     !(desktopPlatform === 'darwin' && desktopFullscreen)
   const [error, setError] = useState<string | null>(null)
-  const [modal, setModal] = useState<ActionModalState>(null)
+  const [dialog, setDialog] = useState<AppDialog>(null)
   const [sidebarWidth, setSidebarWidth] = useState(() => {
     const storedWidth = localStorage.getItem('treeport-sidebar-width')
 
@@ -97,14 +105,14 @@ export default function App() {
   const drawerTriggerRef = useRef<HTMLButtonElement | null>(null)
   const projectSwitcherTriggerRef = useRef<HTMLButtonElement | null>(null)
   const projectSwitcherDismissedIntoTerminalRef = useRef(false)
-  const modalTriggerRef = useRef<HTMLElement | null>(null)
-  const openModal = (
-    nextModal: Exclude<ActionModalState, null>,
+  const dialogTriggerRef = useRef<HTMLElement | null>(null)
+  const openDialog = (
+    nextDialog: Exclude<AppDialog, null>,
     trigger?: HTMLElement
   ) => {
-    modalTriggerRef.current =
+    dialogTriggerRef.current =
       trigger ?? (document.activeElement as HTMLElement | null)
-    setModal(nextModal)
+    setDialog(nextDialog)
   }
 
   useEffect(() => {
@@ -132,7 +140,7 @@ export default function App() {
         !event.shiftKey ||
         event.altKey ||
         !modifierPressed ||
-        modal
+        dialog
       ) {
         return
       }
@@ -147,7 +155,7 @@ export default function App() {
     }
     document.addEventListener('keydown', keydown, true)
     return () => document.removeEventListener('keydown', keydown, true)
-  }, [isMobile, modal])
+  }, [isMobile, dialog])
 
   useEffect(() => {
     if (!workspaceResolution || workspaceResolution.canonical) {
@@ -219,17 +227,16 @@ export default function App() {
         command !== 'new-worktree' ||
         !activeProject ||
         activeProject.availability.state === 'unavailable' ||
-        modal ||
+        dialog ||
         projectSwitcherOpen ||
         (isMobile && drawerOpen)
       ) {
         return
       }
 
-      modalTriggerRef.current = document.activeElement as HTMLElement | null
-      setModal({ type: 'worktree', project: activeProject })
+      openDialog({ type: 'worktree', project: activeProject })
     })
-  }, [activeProject, drawerOpen, isMobile, modal, projectSwitcherOpen])
+  }, [activeProject, drawerOpen, isMobile, dialog, projectSwitcherOpen])
 
   useEffect(() => {
     if (!isMobile || !drawerOpen) {
@@ -256,7 +263,7 @@ export default function App() {
   }, [drawerOpen, isMobile])
 
   useEffect(() => {
-    if (!isMobile || !drawerOpen || modal || projectSwitcherOpen) {
+    if (!isMobile || !drawerOpen || dialog || projectSwitcherOpen) {
       return
     }
 
@@ -266,6 +273,10 @@ export default function App() {
     }
 
     const keydown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) {
+        return
+      }
+
       if (event.key === 'Escape') {
         event.preventDefault()
         setDrawerOpen(false)
@@ -276,7 +287,7 @@ export default function App() {
     }
     document.addEventListener('keydown', keydown)
     return () => document.removeEventListener('keydown', keydown)
-  }, [drawerOpen, isMobile, modal, projectSwitcherOpen])
+  }, [drawerOpen, isMobile, dialog, projectSwitcherOpen])
 
   const activeProjectTerminals = useMemo(
     () =>
@@ -323,7 +334,7 @@ export default function App() {
       closeProjectUi: () => setProjectSwitcherOpen(false),
       openedProjectUi: () => {
         setProjectSwitcherOpen(false)
-        setModal(null)
+        setDialog(null)
       },
       setError
     })
@@ -335,8 +346,15 @@ export default function App() {
     confirmRemoval
   } = useWorktreeWorkflows({
     setDrawerOpen,
-    setModal,
-    openModal,
+    onWorktreeSubmitted: () => setDialog(null),
+    onRemovalNeedsConfirmation: (worktree, preview, trigger) =>
+      openDialog({ type: 'remove', worktree, preview }, trigger),
+    onRemovalCompleted: (worktreeId) =>
+      setDialog((current) =>
+        current?.type === 'remove' && current.worktree.id === worktreeId
+          ? null
+          : current
+      ),
     setError,
     selectedTerminalId
   })
@@ -454,7 +472,12 @@ export default function App() {
         onError={showError(setError)}
         onRequestProjectClose={requestProjectClose}
         onPrepareRemoval={prepareRemoval}
-        onOpenModal={openModal}
+        onOpenProjectDialog={(trigger) =>
+          openDialog({ type: 'project' }, trigger)
+        }
+        onOpenWorktreeDialog={(project, trigger) =>
+          openDialog({ type: 'worktree', project }, trigger)
+        }
         minSidebarWidth={MIN_SIDEBAR_WIDTH}
         maxSidebarWidth={MAX_SIDEBAR_WIDTH}
         defaultSidebarWidth={DEFAULT_SIDEBAR_WIDTH}
@@ -484,7 +507,7 @@ export default function App() {
           presets={presets}
           presetsLoading={presetsQuery.isPending}
           presetsError={presetsQuery.isError}
-          modalOpen={modal !== null}
+          dialogOpen={dialog !== null}
           projectSwitcherOpen={projectSwitcherOpen}
           isMobile={isMobile}
           drawerOpen={drawerOpen}
@@ -492,7 +515,7 @@ export default function App() {
           setError={setError}
           onSelectTerminal={selectTerminal}
           onManagePresets={(trigger) =>
-            openModal({ type: 'presets' }, trigger ?? undefined)
+            openDialog({ type: 'presets' }, trigger ?? undefined)
           }
         />
       </div>
@@ -526,26 +549,44 @@ export default function App() {
           </Button>
         </div>
       )}
-      {modal && (
-        <ActionModal
-          modal={modal}
-          close={() => setModal(null)}
-          restoreFocusTo={modalTriggerRef.current}
-          setError={setError}
-          presets={presets}
-          presetsLoading={presetsQuery.isPending}
-          presetsError={presetsQuery.isError}
-          onRetryPresets={() => void presetsQuery.refetch()}
-          onCreateWorktree={submitWorktreeCreation}
-          removalStage={
-            modal.type === 'remove'
-              ? (pendingRemovals[modal.worktree.id] ?? null)
-              : null
-          }
-          onConfirmRemoval={confirmRemoval}
-          onProjectOpened={projectOpened}
-        />
-      )}
+      <OpenProjectDialog
+        open={dialog?.type === 'project'}
+        onOpenChange={(open) => !open && setDialog(null)}
+        restoreFocusTo={dialogTriggerRef.current}
+        setError={setError}
+        onOpened={projectOpened}
+      />
+      <CreateWorktreeDialog
+        project={dialog?.type === 'worktree' ? dialog.project : null}
+        onOpenChange={(open) => !open && setDialog(null)}
+        restoreFocusTo={dialogTriggerRef.current}
+        presets={presets}
+        presetsLoading={presetsQuery.isPending}
+        presetsError={presetsQuery.isError}
+        onRetryPresets={() => void presetsQuery.refetch()}
+        onSubmit={submitWorktreeCreation}
+      />
+      <TerminalPresetsDialog
+        open={dialog?.type === 'presets'}
+        onOpenChange={(open) => !open && setDialog(null)}
+        restoreFocusTo={dialogTriggerRef.current}
+        presets={presets}
+        loading={presetsQuery.isPending}
+        loadError={presetsQuery.isError}
+        onRetry={() => void presetsQuery.refetch()}
+        setError={setError}
+      />
+      <RemoveWorktreeDialog
+        worktree={dialog?.type === 'remove' ? dialog.worktree : null}
+        preview={dialog?.type === 'remove' ? dialog.preview : null}
+        busy={
+          dialog?.type === 'remove' &&
+          pendingRemovals[dialog.worktree.id] !== undefined
+        }
+        onOpenChange={(open) => !open && setDialog(null)}
+        restoreFocusTo={dialogTriggerRef.current}
+        onConfirm={confirmRemoval}
+      />
     </div>
   )
 }

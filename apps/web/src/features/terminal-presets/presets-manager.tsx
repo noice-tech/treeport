@@ -5,11 +5,11 @@ import { TERMINAL_NAME_MAX_LENGTH, type TerminalPreset } from '@treeport/shared'
 import { apiClient } from '../../api'
 import { formatCommandLine, parseCommandLine } from '../../command-line'
 import { Button } from '../../components/ui/button'
+import { FormField } from '../../components/ui/form-field'
 import { Input } from '../../components/ui/input'
 import { Label } from '../../components/ui/label'
 import { cn } from '../../lib/utils'
 import { terminalPresetsQueryKey } from '../../project-metadata'
-import { FormField, ModalHeading } from '../dialogs/dialog-parts'
 
 export function TerminalPresetsManager({
   presets,
@@ -133,11 +133,7 @@ export function TerminalPresetsManager({
 
   const busy = savePreset.isPending || deletePreset.isPending
   return (
-    <div className="flex flex-col gap-4">
-      <ModalHeading title="Terminal presets" />
-      <p className="form-note max-w-[60ch]">
-        Create reusable commands. Arguments are passed exactly as entered.
-      </p>
+    <>
       <div className="grid min-h-0 gap-5 border-t border-white/8 pt-4 md:grid-cols-[minmax(12rem,0.8fr)_minmax(0,1.35fr)]">
         <section
           className="flex min-w-0 flex-col gap-2"
@@ -331,6 +327,6 @@ export function TerminalPresetsManager({
           </Button>
         </form>
       </div>
-    </div>
+    </>
   )
 }

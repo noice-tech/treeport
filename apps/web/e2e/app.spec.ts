@@ -1610,7 +1610,7 @@ test.describe('desktop worktree terminal UI', () => {
 
     await page.getByRole('button', { name: 'Open project' }).click()
     await page.getByRole('button', { name: 'Open project…' }).click()
-    const dialog = page.getByRole('dialog')
+    const dialog = page.getByRole('dialog', { name: 'Open project' })
     const serverPath = dialog.getByLabel('Server folder path')
     const openButton = dialog.getByRole('button', { name: 'Open project' })
     await expect(
@@ -2020,7 +2020,7 @@ test.describe('desktop worktree terminal UI', () => {
     {
       const trigger = page.getByRole('button', { name: 'New worktree' })
       await trigger.click()
-      const dialog = page.getByRole('dialog')
+      const dialog = page.getByRole('dialog', { name: 'Create worktree' })
       await expect(dialog).toBeVisible()
       await expect(dialog.getByLabel('Worktree name')).toBeFocused()
       await dialog.getByLabel('Worktree name').fill('focus-test')
@@ -3261,7 +3261,7 @@ test.describe('desktop worktree terminal UI', () => {
     await page.locator('.worktree-row').filter({ hasText: 'topic' }).hover()
     await page.getByRole('button', { name: 'Remove topic' }).click()
     await expect(
-      page.getByRole('heading', { name: 'Remove worktree' })
+      page.getByRole('alertdialog', { name: 'Remove worktree' })
     ).toBeVisible()
     await expect(
       page.getByText('/worktrees/topic', { exact: true })
@@ -3629,7 +3629,9 @@ test.describe('mobile terminal UI', () => {
     await page.getByLabel('Open worktree drawer').click()
     const trigger = page.getByRole('button', { name: 'New worktree' })
     await trigger.click()
-    await expect(page.getByRole('dialog')).toHaveCount(2)
+    await expect(
+      page.getByRole('dialog', { name: 'Create worktree' })
+    ).toBeVisible()
     await page.keyboard.press('Escape')
     await expect(
       page.getByRole('heading', { name: 'Create worktree' })

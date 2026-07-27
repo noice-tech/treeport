@@ -24,7 +24,7 @@ export function TerminalWorkspace({
   presets,
   presetsLoading,
   presetsError,
-  modalOpen,
+  dialogOpen,
   projectSwitcherOpen,
   isMobile,
   drawerOpen,
@@ -41,7 +41,7 @@ export function TerminalWorkspace({
   presets: TerminalPreset[]
   presetsLoading: boolean
   presetsError: boolean
-  modalOpen: boolean
+  dialogOpen: boolean
   projectSwitcherOpen: boolean
   isMobile: boolean
   drawerOpen: boolean
@@ -336,7 +336,7 @@ export function TerminalWorkspace({
     return desktopBridge.onCommand((command) => {
       if (
         command === 'new-worktree' ||
-        modalOpen ||
+        dialogOpen ||
         projectSwitcherOpen ||
         (isMobile && drawerOpen)
       ) {
@@ -352,7 +352,7 @@ export function TerminalWorkspace({
   }, [
     drawerOpen,
     isMobile,
-    modalOpen,
+    dialogOpen,
     projectSwitcherOpen,
     selectedPendingTerminal,
     selectedTerminal,
@@ -370,7 +370,7 @@ export function TerminalWorkspace({
       selectedPendingTerminalId={selectedPendingTerminal?.id ?? null}
       loading={loading}
       autoFocusBlocked={
-        modalOpen || projectSwitcherOpen || (isMobile && drawerOpen)
+        dialogOpen || projectSwitcherOpen || (isMobile && drawerOpen)
       }
       presets={presets}
       presetsLoading={presetsLoading}

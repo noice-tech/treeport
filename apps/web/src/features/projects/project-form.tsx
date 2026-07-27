@@ -9,10 +9,10 @@ import {
 import type { ProjectRecord } from '@treeport/shared'
 import { apiClient } from '../../api'
 import { Button } from '../../components/ui/button'
+import { FormField } from '../../components/ui/form-field'
 import { Input } from '../../components/ui/input'
 import { Label } from '../../components/ui/label'
 import { cn } from '../../lib/utils'
-import { FormField, ModalHeading } from '../dialogs/dialog-parts'
 
 export function ProjectForm({
   setError,
@@ -83,12 +83,6 @@ export function ProjectForm({
         openProject.mutate(validRepository.repositoryPath)
       }}
     >
-      <ModalHeading title="Open project" />
-      <p className="form-note">
-        Browse folders on the Treeport server. Paths refer to the server’s
-        filesystem.
-      </p>
-
       <FormField>
         <Label htmlFor="repository-path">Server folder</Label>
         <Input
@@ -135,7 +129,6 @@ export function ProjectForm({
           aria-describedby="repository-path-status"
           aria-invalid={directoryQuery.isError}
           autoFocus
-          data-modal-autofocus
           disabled={busy}
         />
       </FormField>
