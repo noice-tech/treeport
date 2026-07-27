@@ -2399,8 +2399,8 @@ export class TreeportService {
       initialSize?: TerminalSize
     }
   ): Promise<TerminalRecord> {
-    const projectId = this.getWorktree(worktreeId).projectId
-    return this.worktreeMutations.enqueue(projectId, () =>
+    this.getWorktree(worktreeId)
+    return this.terminalMutations.enqueue(worktreeId, () =>
       this.executeCreateTerminal(worktreeId, name, argv, options)
     )
   }
@@ -2418,32 +2418,30 @@ export class TreeportService {
   ): Promise<TerminalRecord> {
     await this.requireAvailableWorktree(worktreeId)
     try {
-      return await this.terminalMutations.enqueue(worktreeId, async () => {
-        const worktree = this.deps.database.worktree(worktreeId)
-        if (!worktree) {
-          throw new DomainError('WORKTREE_NOT_FOUND', 'Worktree not found', 404)
-        }
+      const worktree = this.deps.database.worktree(worktreeId)
+      if (!worktree) {
+        throw new DomainError('WORKTREE_NOT_FOUND', 'Worktree not found', 404)
+      }
 
-        if (
-          (!allowProjectLock && this.projectLocks.has(worktree.projectId)) ||
-          this.worktreeLocks.has(worktreeId) ||
-          worktree.status !== 'active' ||
-          worktree.prunable
-        ) {
-          throw new DomainError(
-            'WORKTREE_BUSY',
-            'Cannot create a terminal while the worktree is cleaning or failed',
-            409
-          )
-        }
+      if (
+        (!allowProjectLock && this.projectLocks.has(worktree.projectId)) ||
+        this.worktreeLocks.has(worktreeId) ||
+        worktree.status !== 'active' ||
+        worktree.prunable
+      ) {
+        throw new DomainError(
+          'WORKTREE_BUSY',
+          'Cannot create a terminal while the worktree is cleaning or failed',
+          409
+        )
+      }
 
-        this.worktreeLocks.add(worktreeId)
-        try {
-          return await this.createTerminalSession(worktree, name, argv, options)
-        } finally {
-          this.worktreeLocks.delete(worktreeId)
-        }
-      })
+      this.worktreeLocks.add(worktreeId)
+      try {
+        return await this.createTerminalSession(worktree, name, argv, options)
+      } finally {
+        this.worktreeLocks.delete(worktreeId)
+      }
     } catch (error) {
       this.invalidateProjectsSnapshot()
       throw error
@@ -2775,6 +2773,18 @@ export class TreeportService {
         'The worktree is already being removed',
         409
       )
+    }
+
+    if (this.terminalMutations.has(worktreeId)) {
+      return this.terminalMutations.enqueue(worktreeId, () => {
+        if (this.worktreeMutations.has(worktree.projectId)) {
+          return this.worktreeMutations.enqueue(worktree.projectId, () =>
+            this.acceptRemove(worktreeId, request)
+          )
+        }
+
+        return this.acceptRemove(worktreeId, request)
+      })
     }
 
     if (this.worktreeMutations.has(worktree.projectId)) {
