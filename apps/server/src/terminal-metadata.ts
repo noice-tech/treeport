@@ -68,6 +68,7 @@ interface TerminalMetadataEntry extends TerminalRuntimeMetadata {
   status: TerminalRecord['status']
   paneTitle: string | null
   currentCommand: string | null
+  commandLine: string | null
   shellCommand: string | null
   shellTitle: string | null
   persistedShellTitle: string | null
@@ -202,6 +203,7 @@ export class TerminalMetadataManager {
         bell: null,
         paneTitle: null,
         currentCommand: null,
+        commandLine: null,
         shellCommand: SHELL_COMMANDS.has(
           path.basename(terminal.argv?.[0] ?? '').replace(/^-/, '')
         )
@@ -641,9 +643,12 @@ export class TerminalMetadataManager {
   ): void {
     const paneTitle = state.paneTitle?.trim().slice(0, 256) || null
     const currentCommand = state.currentCommand?.trim().slice(0, 256) || null
+    const commandLine = state.commandLine?.trim().slice(0, 256) || null
     const previousCommand = entry.currentCommand
+    const previousCommandLine = entry.commandLine
     const paneTitleChanged = paneTitle !== entry.paneTitle
     const commandChanged = currentCommand !== previousCommand
+    const commandLineChanged = commandLine !== previousCommandLine
     const observedTitlePending = entry.observedTitlePending
     if (previousCommand === null && entry.shellTitle === null) {
       const shellTitle = state.shellTitle?.trim().slice(0, 256) || null
@@ -653,11 +658,12 @@ export class TerminalMetadataManager {
 
     entry.paneTitle = paneTitle
     entry.currentCommand = currentCommand
+    entry.commandLine = commandLine
     entry.observedTitlePending = false
     this.updateForegroundProcess(entry, currentCommand)
 
     if (!entry.shellCommand) {
-      this.update(entry, { title: paneTitle ?? currentCommand })
+      this.update(entry, { title: paneTitle ?? commandLine ?? currentCommand })
       return
     }
 
@@ -679,6 +685,24 @@ export class TerminalMetadataManager {
 
       this.update(entry, {
         title: entry.shellTitle ?? currentCommand
+      })
+      return
+    }
+
+    if (commandLine) {
+      if (observedTitlePending) {
+        entry.applicationTitleActive =
+          paneTitle !== null && paneTitle !== commandLine
+      } else if (commandLineChanged) {
+        entry.applicationTitleActive = false
+      } else if (paneTitleChanged && paneTitle !== commandLine) {
+        entry.applicationTitleActive = true
+      }
+
+      this.update(entry, {
+        title: entry.applicationTitleActive
+          ? (paneTitle ?? entry.title ?? commandLine)
+          : commandLine
       })
       return
     }

@@ -3,6 +3,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
+import { integrateShellLaunch } from './shell-integration'
 import type { LaunchSpec } from './tmux'
 
 const FORWARDED_SIGNALS = ['SIGTERM', 'SIGINT', 'SIGHUP'] as const
@@ -210,9 +211,16 @@ export async function runLaunchSpec(
     return 127
   }
 
-  const result = await runChild(spec.argv, {
+  const commandEnvironment = { ...process.env, ...spec.env }
+  const command = integrateShellLaunch(
+    spec.argv,
+    commandEnvironment,
+    spec.shellIntegrationDir,
+    spec.tmuxExecutable
+  )
+  const result = await runChild(command.argv, {
     cwd: spec.cwd,
-    env: { ...process.env, ...spec.env },
+    env: command.env,
     spawnProcess,
     signalSource
   })
@@ -230,9 +238,15 @@ export async function runLaunchSpec(
   }
 
   if (spec.fallbackArgv) {
-    const fallbackResult = await runChild(spec.fallbackArgv, {
+    const fallback = integrateShellLaunch(
+      spec.fallbackArgv,
+      commandEnvironment,
+      spec.shellIntegrationDir,
+      spec.tmuxExecutable
+    )
+    const fallbackResult = await runChild(fallback.argv, {
       cwd: spec.cwd,
-      env: { ...process.env, ...spec.env },
+      env: fallback.env,
       spawnProcess,
       signalSource
     })

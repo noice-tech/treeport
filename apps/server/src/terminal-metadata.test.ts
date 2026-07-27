@@ -242,29 +242,43 @@ describe('TerminalMetadataManager', () => {
     expect(observers[0]!.disposed).toBe(true)
   })
 
-  it('shows a foreground command and restores the shell pane title when it exits', async () => {
+  it('shows the captured command, permits an application title, and restores the shell title', async () => {
     vi.useFakeTimers()
     const item = { ...terminal('one'), argv: ['/bin/zsh', '-l'] }
-    const { manager, sessionTitleState } = fixture([item])
+    const { manager, observers, sessionTitleState } = fixture([item])
     managers.push(manager)
     sessionTitleState.mockResolvedValue({
       paneTitle: 'treeport',
-      currentCommand: 'zsh'
+      currentCommand: 'zsh',
+      commandLine: null
     })
     await manager.initialize()
+    expect(manager.get(item.id).title).toBe('treeport')
     expect(manager.get(item.id).hasForegroundProcess).toBe(false)
 
+    observers[0]!.title('pnpm dev')
     sessionTitleState.mockResolvedValue({
-      paneTitle: 'treeport',
-      currentCommand: 'nano'
+      paneTitle: 'pnpm dev',
+      currentCommand: 'node',
+      commandLine: 'pnpm dev'
     })
     await vi.advanceTimersByTimeAsync(TERMINAL_METADATA_POLL_MS)
-    expect(manager.get(item.id).title).toBe('nano')
+    expect(manager.get(item.id).title).toBe('pnpm dev')
     expect(manager.get(item.id).hasForegroundProcess).toBe(true)
+
+    observers[0]!.title('Vite development server')
+    sessionTitleState.mockResolvedValue({
+      paneTitle: 'Vite development server',
+      currentCommand: 'node',
+      commandLine: 'pnpm dev'
+    })
+    await vi.advanceTimersByTimeAsync(TERMINAL_METADATA_POLL_MS)
+    expect(manager.get(item.id).title).toBe('Vite development server')
 
     sessionTitleState.mockResolvedValue({
       paneTitle: 'treeport',
-      currentCommand: 'zsh'
+      currentCommand: 'zsh',
+      commandLine: null
     })
     await vi.advanceTimersByTimeAsync(TERMINAL_METADATA_POLL_MS)
     expect(manager.get(item.id).title).toBe('treeport')
@@ -357,11 +371,12 @@ describe('TerminalMetadataManager', () => {
     managers.push(manager)
     sessionTitleState.mockResolvedValue({
       paneTitle: 'treeport',
-      currentCommand: 'npm',
+      currentCommand: 'node',
+      commandLine: 'pnpm dev',
       shellTitle: 'treeport'
     })
     await manager.initialize()
-    expect(manager.get(item.id).title).toBe('npm')
+    expect(manager.get(item.id).title).toBe('pnpm dev')
 
     sessionTitleState.mockResolvedValue({
       paneTitle: 'treeport',

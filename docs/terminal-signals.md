@@ -20,9 +20,13 @@ No application integration is required.
 
 ### Terminal title
 
-Applications may set the terminal title using standard terminal title sequences.
+Interactive zsh, Bash, and fish sessions capture the command entered at the shell execution boundary. This lets Treeport display `pnpm dev` while the foreground process visible to tmux is only `node`. The captured value can include command arguments, is limited to 256 characters, and is cleared when the prompt returns.
 
-Treeport can display the observed title as contextual information.
+Treeport preserves the user's shell startup files while installing these hooks. Nushell retains its native title behavior. Unsupported shells, non-interactive invocations, and Bash configurations that replace Treeport's one-time prompt bootstrap fall back to the foreground executable name because the original command cannot be reconstructed reliably from a process tree.
+
+Applications may also set the terminal title using standard terminal title sequences. A fresh application title takes priority over the shell-captured command so applications such as editors and agents can publish more useful semantic state.
+
+Treeport can display the resolved title as contextual information.
 
 Useful examples include:
 
@@ -36,7 +40,7 @@ Development server
 
 Titles should be concise and describe the most useful current state of the terminal.
 
-Applications should not assume that the title is durable. It is runtime metadata and may be reset after the daemon or observer restarts.
+Application titles are runtime metadata and may be reset after the daemon or observer restarts. Shell-captured commands are also stored as pane-scoped tmux metadata while they run, allowing Treeport to recover the command after an observer restart.
 
 ### BEL attention
 

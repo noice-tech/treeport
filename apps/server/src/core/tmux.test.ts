@@ -174,6 +174,8 @@ describe('TmuxAdapter', () => {
       fallbackArgv: ['/bin/zsh', '-l'],
       cwd: '/repo with spaces',
       env: { TREEPORT_TERMINAL_ID: 'term_safe' },
+      shellIntegrationDir: path.join(runtime, 'shell-integration'),
+      tmuxExecutable: '/tmux path/tmux',
       setupTasks: [setupTask]
     })
     expect(
@@ -376,7 +378,7 @@ describe('TmuxAdapter', () => {
     expect(runner.calls.at(-1)?.args).toContain('kill-server')
   })
 
-  it('reads the live pane title, foreground command, and remembered shell title from tmux', async () => {
+  it('reads the captured command, process, pane title, and remembered shell title from tmux', async () => {
     const runtime = await fs.mkdtemp(
       path.join(os.tmpdir(), 'treeport-runtime-')
     )
@@ -386,7 +388,7 @@ describe('TmuxAdapter', () => {
     const encode = (value: string) =>
       Buffer.from(JSON.stringify(value), 'utf8').toString('base64url')
     runner.responses.push({
-      stdout: `${encode(shellTitle)}\tnano\t${shellTitle}\n`,
+      stdout: `${encode(shellTitle)}\tnode\tpnpm dev\t${shellTitle}\n`,
       stderr: '',
       exitCode: 0
     })
@@ -396,11 +398,12 @@ describe('TmuxAdapter', () => {
       adapter.sessionTitleState('socket', 'session')
     ).resolves.toEqual({
       paneTitle: shellTitle,
-      currentCommand: 'nano',
+      currentCommand: 'node',
+      commandLine: 'pnpm dev',
       shellTitle
     })
     expect(runner.calls[0]!.args).toContain(
-      '#{@treeport-shell-title}\t#{pane_current_command}\t#{pane_title}'
+      '#{@treeport-shell-title}\t#{pane_current_command}\t#{@treeport-command}\t#{pane_title}'
     )
   })
 

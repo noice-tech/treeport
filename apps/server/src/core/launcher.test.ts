@@ -94,12 +94,19 @@ describe('terminal launcher setup pipeline', () => {
     expect(error.value()).toBe('')
   })
 
-  it('starts a fallback shell after the final command exits', async () => {
-    const calls: string[][] = []
+  it('starts a title-integrated fallback shell after the final command exits', async () => {
+    const calls: Array<{
+      argv: string[]
+      env: NodeJS.ProcessEnv
+    }> = []
     const results = [23, 0]
     const spawnProcess = vi.fn(
-      (executable: string, args: readonly string[]) => {
-        calls.push([executable, ...args])
+      (
+        executable: string,
+        args: readonly string[],
+        options: { env: NodeJS.ProcessEnv }
+      ) => {
+        calls.push({ argv: [executable, ...args], env: options.env })
         const child = new FakeChild()
         queueMicrotask(() => child.emit('exit', results.shift(), null))
         return child as unknown as ChildProcess
@@ -107,15 +114,102 @@ describe('terminal launcher setup pipeline', () => {
     ) as unknown as typeof spawn
 
     await expect(
-      runLaunchSpec(spec({ fallbackArgv: ['/bin/zsh', '-l'] }), {
-        spawnProcess,
-        signalSource: new EventEmitter()
-      })
+      runLaunchSpec(
+        spec({
+          fallbackArgv: ['/bin/zsh', '-l'],
+          env: { HOME: '/home/user', ZDOTDIR: '/home/user/.config/zsh' },
+          shellIntegrationDir: '/treeport/integration',
+          tmuxExecutable: '/opt/treeport/tmux'
+        }),
+        {
+          spawnProcess,
+          signalSource: new EventEmitter()
+        }
+      )
     ).resolves.toBe(0)
-    expect(calls).toEqual([
+    expect(calls.map((call) => call.argv)).toEqual([
       ['final', 'hostile;argument'],
       ['/bin/zsh', '-l']
     ])
+    expect(calls[0]?.env).not.toHaveProperty('TREEPORT_USER_ZDOTDIR')
+    expect(calls[1]?.env).toMatchObject({
+      TREEPORT_USER_ZDOTDIR: '/home/user/.config/zsh',
+      TREEPORT_TMUX_EXECUTABLE: '/opt/treeport/tmux',
+      ZDOTDIR: '/treeport/integration/zsh'
+    })
+  })
+
+  it('integrates supported shells without changing direct or unsupported commands', async () => {
+    const calls: Array<{ argv: string[]; env: NodeJS.ProcessEnv }> = []
+    const spawnProcess = vi.fn(
+      (
+        executable: string,
+        args: readonly string[],
+        options: { env: NodeJS.ProcessEnv }
+      ) => {
+        calls.push({ argv: [executable, ...args], env: options.env })
+        const child = new FakeChild()
+        queueMicrotask(() => child.emit('exit', 0, null))
+        return child as unknown as ChildProcess
+      }
+    ) as unknown as typeof spawn
+    const dependencies = {
+      spawnProcess,
+      signalSource: new EventEmitter()
+    }
+    const integration = {
+      shellIntegrationDir: '/treeport/integration',
+      tmuxExecutable: '/opt/treeport/tmux'
+    }
+
+    await runLaunchSpec(
+      spec({
+        argv: ['/bin/bash', '-l'],
+        env: { PROMPT_COMMAND: 'user_prompt' },
+        ...integration
+      }),
+      dependencies
+    )
+    await runLaunchSpec(
+      spec({
+        argv: ['/opt/homebrew/bin/fish', '-l'],
+        env: { XDG_DATA_DIRS: '/usr/local/share:/usr/share' },
+        ...integration
+      }),
+      dependencies
+    )
+    await runLaunchSpec(
+      spec({ argv: ['/bin/bash', '-c', 'echo okay'], ...integration }),
+      dependencies
+    )
+    await runLaunchSpec(
+      spec({ argv: ['/bin/nu', '-l'], ...integration }),
+      dependencies
+    )
+
+    expect(calls[0]).toMatchObject({
+      argv: ['/bin/bash', '-l'],
+      env: {
+        PROMPT_COMMAND: 'source "${TREEPORT_BASH_INTEGRATION_FILE}"',
+        TREEPORT_BASH_INTEGRATION_FILE:
+          '/treeport/integration/bash/treeport.bash',
+        TREEPORT_BASH_PROMPT_COMMAND: 'user_prompt',
+        TREEPORT_BASH_PROMPT_COMMAND_SET: '1',
+        TREEPORT_TMUX_EXECUTABLE: '/opt/treeport/tmux'
+      }
+    })
+    expect(calls[1]).toMatchObject({
+      argv: ['/opt/homebrew/bin/fish', '-l'],
+      env: {
+        TREEPORT_FISH_XDG_DATA_DIR: '/treeport/integration/fish',
+        TREEPORT_TMUX_EXECUTABLE: '/opt/treeport/tmux',
+        XDG_DATA_DIRS: '/treeport/integration/fish:/usr/local/share:/usr/share'
+      }
+    })
+    expect(calls[2]?.argv).toEqual(['/bin/bash', '-c', 'echo okay'])
+    expect(calls[2]?.env).not.toHaveProperty('TREEPORT_TMUX_EXECUTABLE')
+    expect(calls[3]?.argv).toEqual(['/bin/nu', '-l'])
+    expect(calls[3]?.env).not.toHaveProperty('TREEPORT_TMUX_EXECUTABLE')
   })
 
   it('starts a fallback shell after the final command cannot be spawned', async () => {
