@@ -2548,16 +2548,20 @@ export class TreeportService {
   }
 
   async deleteTerminal(terminalId: string): Promise<void> {
-    const terminal = await this.getTerminal(terminalId)
+    const terminal =
+      this.terminalStates.get(terminalId) ??
+      (await this.getTerminalFromBindings(terminalId))
     const projectId = this.getWorktree(terminal.worktreeId).projectId
     return this.worktreeMutations.enqueue(projectId, () =>
-      this.executeDeleteTerminal(terminalId)
+      this.executeDeleteTerminal(terminalId, terminal.worktreeId)
     )
   }
 
-  private async executeDeleteTerminal(terminalId: string): Promise<void> {
-    const terminal = await this.getTerminal(terminalId)
-    const worktree = this.deps.database.worktree(terminal.worktreeId)
+  private async executeDeleteTerminal(
+    terminalId: string,
+    worktreeId: string
+  ): Promise<void> {
+    const worktree = this.deps.database.worktree(worktreeId)
     if (!worktree) {
       throw new DomainError('WORKTREE_NOT_FOUND', 'Worktree not found', 404)
     }
@@ -2577,6 +2581,13 @@ export class TreeportService {
     this.worktreeLocks.add(worktree.id)
     try {
       const terminals = await this.listWorktreeTerminals(worktree)
+      const terminal = terminals.find(
+        (candidate) => candidate.id === terminalId
+      )
+      if (!terminal) {
+        throw new DomainError('TERMINAL_NOT_FOUND', 'Terminal not found', 404)
+      }
+
       if (terminals.length <= 1) {
         throw new DomainError(
           'LAST_TERMINAL',
@@ -2588,7 +2599,8 @@ export class TreeportService {
       await this.deps.tmux.killSession(
         worktree.tmuxSocketName,
         terminal.tmuxSessionName,
-        terminal.id
+        terminal.id,
+        { preserveServer: true }
       )
     } finally {
       this.worktreeLocks.delete(worktree.id)

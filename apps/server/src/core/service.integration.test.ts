@@ -269,16 +269,23 @@ class SystemDouble implements CommandRunner {
     }
 
     if (args.includes('set-option')) {
-      const session = args[args.indexOf('-t') + 1]!
       const socket = args[args.indexOf('-L') + 1]!
-      const state = this.sessions.get(`${socket}/${session}`)
-      if (!state) {
-        return fail('missing')
-      }
+      for (let index = 0; index < args.length; index += 1) {
+        if (args[index] !== 'set-option') {
+          continue
+        }
 
-      const key = args[args.indexOf('-t') + 2]!
-      const value = args[args.indexOf('-t') + 3]!
-      state.options[key] = value
+        const targetIndex = args.indexOf('-t', index)
+        const session = args[targetIndex + 1]!
+        const state = this.sessions.get(`${socket}/${session}`)
+        if (!state) {
+          return fail('missing')
+        }
+
+        const key = args[targetIndex + 2]!
+        const value = args[targetIndex + 3]!
+        state.options[key] = value
+      }
       return ok()
     }
 

@@ -564,6 +564,10 @@ async function mockApp(
   let terminalCreations = 0
   let terminalCreateGate: Promise<void> | null = null
   let releaseTerminalCreate: (() => void) | null = null
+  let failTerminalCreate = false
+  let terminalDeleteGate: Promise<void> | null = null
+  let releaseTerminalDelete: (() => void) | null = null
+  let failTerminalDelete = false
   let staleRemovePreview: Record<string, unknown> | null = null
   let removeRequests = 0
   const removeRequestBodies: unknown[] = []
@@ -790,6 +794,7 @@ async function mockApp(
       if (projectsGate) {
         await projectsGate
       }
+
       if (nextProjectsGate) {
         const gate = nextProjectsGate
         nextProjectsGate = null
@@ -1006,17 +1011,24 @@ async function mockApp(
         argv?: string[]
       }
       terminalCreations += 1
+      const creationNumber = terminalCreations
       if (terminalCreateGate) {
         await terminalCreateGate
       }
 
       terminalCreateGate = null
       releaseTerminalCreate = null
+      if (failTerminalCreate) {
+        failTerminalCreate = false
+        await route.fulfill({
+          status: 500,
+          json: { error: { message: 'Terminal could not be created' } }
+        })
+        return
+      }
+
       const terminal = {
-        id:
-          terminalCreations === 1
-            ? 'term_dev'
-            : `term_dev_${terminalCreations}`,
+        id: creationNumber === 1 ? 'term_dev' : `term_dev_${creationNumber}`,
         worktreeId: 'wt_topic',
         name: body.name,
         tmuxSessionName: 'treeport-term-dev',
@@ -1053,6 +1065,21 @@ async function mockApp(
       pathname.startsWith('/api/terminals/') &&
       route.request().method() === 'DELETE'
     ) {
+      if (terminalDeleteGate) {
+        await terminalDeleteGate
+      }
+
+      terminalDeleteGate = null
+      releaseTerminalDelete = null
+      if (failTerminalDelete) {
+        failTerminalDelete = false
+        await route.fulfill({
+          status: 500,
+          json: { error: { message: 'Terminal could not be closed' } }
+        })
+        return
+      }
+
       const terminalId = pathname.split('/').at(-1)
       for (const worktree of state.worktrees) {
         worktree.terminals = worktree.terminals.filter(
@@ -1132,6 +1159,18 @@ async function mockApp(
         releaseTerminalCreate = resolve
       })
       return () => releaseTerminalCreate?.()
+    },
+    failNextTerminalCreate: () => {
+      failTerminalCreate = true
+    },
+    delayNextTerminalDelete: () => {
+      terminalDeleteGate = new Promise<void>((resolve) => {
+        releaseTerminalDelete = resolve
+      })
+      return () => releaseTerminalDelete?.()
+    },
+    failNextTerminalDelete: () => {
+      failTerminalDelete = true
     },
     setRemovePreview: (value: Record<string, unknown>) => {
       removePreviewOverride = value
@@ -2747,6 +2786,9 @@ test.describe('desktop worktree terminal UI', () => {
       }
     ])
     await page.locator('.worktree-row').filter({ hasText: 'topic' }).click()
+    await page.getByRole('button', { name: 'New terminal' }).click()
+    await page.getByRole('menuitem', { name: 'Shell' }).click()
+    await page.getByRole('tab', { name: /^zsh · \/worktrees\/topic,/ }).click()
     const closeButton = page.getByRole('button', {
       name: /^Close zsh · \/worktrees\/topic$/
     })
@@ -2770,7 +2812,9 @@ test.describe('desktop worktree terminal UI', () => {
     await closeButton.click()
     await closeRequest
     await expect(closeButton).toHaveCount(0)
-    await expect(page).toHaveURL(/\/projects\/proj_1\/worktrees\/wt_topic$/)
+    await expect(page).toHaveURL(
+      /\/projects\/proj_1\/worktrees\/wt_topic\/terminals\/term_dev$/
+    )
   })
 
   test('handles Electron commands through the existing worktree and tab flows', async ({
@@ -2788,6 +2832,9 @@ test.describe('desktop worktree terminal UI', () => {
 
     await page.locator('.worktree-row').filter({ hasText: 'topic' }).click()
 
+    const topicTabs = page
+      .getByRole('tablist', { name: 'topic terminals' })
+      .getByRole('tab')
     const releaseCreate = mocked.delayNextTerminalCreate()
     const createRequest = page.waitForRequest(
       (request) =>
@@ -2800,17 +2847,35 @@ test.describe('desktop worktree terminal UI', () => {
     expect((await createRequest).postDataJSON()).toMatchObject({
       name: 'Shell'
     })
+    await expect(
+      page.getByRole('tab', { name: 'Shell, starting' })
+    ).toBeVisible()
+    await expect(page.getByRole('status')).toHaveText('Starting Shell…')
     await page.evaluate(() =>
       (window as any).__dispatchDesktopCommand('new-terminal')
     )
-    await expect.poll(() => mocked.terminalCreations()).toBe(1)
+    await expect.poll(() => mocked.terminalCreations()).toBe(2)
+    await expect(
+      page.getByRole('tab', { name: 'Shell, starting' })
+    ).toHaveCount(2)
     releaseCreate()
 
-    await expect(
-      page.getByRole('tab', { name: /^dev · \/worktrees\/topic,/ })
-    ).toBeVisible()
+    const createdTerminalTab = page.getByRole('tab', {
+      name: /^Shell, running/
+    })
+    const createdDevTab = page.getByRole('tab', {
+      name: /^dev · \/worktrees\/topic,/
+    })
+    await expect(topicTabs).toHaveCount(3)
+    await expect(createdTerminalTab).toBeVisible()
+    await createdTerminalTab.click()
+    await expect(createdDevTab).toBeVisible()
+    await expect(page).toHaveURL(
+      /\/projects\/proj_1\/worktrees\/wt_topic\/terminals\/term_dev$/
+    )
     await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
 
+    const releaseDelete = mocked.delayNextTerminalDelete()
     const closeRequest = page.waitForRequest(
       (request) =>
         request.method() === 'DELETE' &&
@@ -2820,8 +2885,62 @@ test.describe('desktop worktree terminal UI', () => {
       (window as any).__dispatchDesktopCommand('close-terminal')
     )
     await closeRequest
+    await expect(createdDevTab).toHaveCount(0)
+    await expect(topicTabs).toHaveCount(2)
+    await expect(page).toHaveURL(
+      /\/projects\/proj_1\/worktrees\/wt_topic\/terminals\/term_dev_2$/
+    )
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            (window as any).__wsInstances.find(
+              (socket: any) => socket.terminalId === 'term_dev'
+            )?.readyState
+        )
+      )
+      .toBe(3)
+    releaseDelete()
+    await expect(topicTabs).toHaveCount(2)
+
+    mocked.failNextTerminalDelete()
+    const releaseFailedDelete = mocked.delayNextTerminalDelete()
+    const failedCloseRequest = page.waitForRequest(
+      (request) =>
+        request.method() === 'DELETE' &&
+        new URL(request.url()).pathname === '/api/terminals/term_dev_2'
+    )
+    await page.evaluate(() =>
+      (window as any).__dispatchDesktopCommand('close-terminal')
+    )
+    await failedCloseRequest
+    await expect(topicTabs).toHaveCount(1)
+    await expect(page).toHaveURL(
+      /\/projects\/proj_1\/worktrees\/wt_topic\/terminals\/term_pi$/
+    )
+    releaseFailedDelete()
+    await expect(page.getByRole('alert')).toContainText(
+      'Terminal could not be closed'
+    )
+    await expect(topicTabs).toHaveCount(2)
+    await expect(page).toHaveURL(
+      /\/projects\/proj_1\/worktrees\/wt_topic\/terminals\/term_pi$/
+    )
+
+    mocked.failNextTerminalCreate()
+    const releaseFailedCreate = mocked.delayNextTerminalCreate()
+    await page.evaluate(() =>
+      (window as any).__dispatchDesktopCommand('new-terminal')
+    )
     await expect(
-      page.getByRole('tab', { name: /^dev · \/worktrees\/topic,/ })
+      page.getByRole('tab', { name: 'Shell, starting' })
+    ).toBeVisible()
+    releaseFailedCreate()
+    await expect(page.getByRole('alert')).toContainText(
+      'Terminal could not be created'
+    )
+    await expect(
+      page.getByRole('tab', { name: 'Shell, starting' })
     ).toHaveCount(0)
     await expect(page).toHaveURL(
       /\/projects\/proj_1\/worktrees\/wt_topic\/terminals\/term_pi$/
@@ -2831,7 +2950,7 @@ test.describe('desktop worktree terminal UI', () => {
       (window as any).__dispatchDesktopCommand('new-worktree')
     )
     await expect(
-      page.getByRole('heading', { name: 'New worktree' })
+      page.getByRole('dialog', { name: 'Create worktree' })
     ).toBeVisible()
   })
 

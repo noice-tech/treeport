@@ -178,13 +178,12 @@ describe('TmuxAdapter', () => {
       tmuxExecutable: '/tmux path/tmux',
       setupTasks: [setupTask]
     })
-    expect(
-      runner.calls
-        .filter((call) => call.args.includes('set-option'))
-        .map((call) => call.args[call.args.indexOf('-t') + 2])
-        .sort()
-    ).toEqual(
-      [
+    const configure = runner.calls.filter((call) =>
+      call.args.includes('set-option')
+    )
+    expect(configure).toHaveLength(1)
+    expect(configure[0]!.args).toEqual(
+      expect.arrayContaining([
         'window-size',
         '@treeport-name',
         '@treeport-argv',
@@ -192,7 +191,7 @@ describe('TmuxAdapter', () => {
         '@treeport-updated-at',
         '@treeport-worktree-id',
         '@treeport-terminal-id'
-      ].sort()
+      ])
     )
   })
 
@@ -225,20 +224,48 @@ describe('TmuxAdapter', () => {
       env: { TREEPORT_TERMINAL_ID: 'term' }
     })
 
+    await adapter.createSession({
+      socketName: 'socket',
+      sessionName: 'session-2',
+      terminalId: 'term-2',
+      worktreeId: 'wt',
+      name: 'Second terminal',
+      createdAt: '2026-01-02T03:04:06.000Z',
+      cwd: '/tmp',
+      argv: ['pi'],
+      env: { TREEPORT_TERMINAL_ID: 'term-2' }
+    })
+
     expect(runner.calls[0]).toMatchObject({
       executable: '/bin/launchctl',
       args: ['asuser', '501', '/bin/launchctl', 'getenv', 'SSH_AUTH_SOCK']
     })
+    expect(
+      runner.calls.filter((call) => call.executable === '/bin/launchctl')
+    ).toHaveLength(1)
+    expect(
+      runner.calls.filter((call) => call.args.includes('start-server'))
+    ).toHaveLength(1)
     await expect(
-      fs
-        .readFile(path.join(adapter.specsDir, 'term.json'), 'utf8')
-        .then(JSON.parse)
-    ).resolves.toMatchObject({
-      env: {
-        SSH_AUTH_SOCK: '/private/tmp/com.apple.launchd.test/Listeners',
-        TREEPORT_TERMINAL_ID: 'term'
-      }
-    })
+      Promise.all(
+        ['term', 'term-2'].map((terminalId) =>
+          fs
+            .readFile(path.join(adapter.specsDir, `${terminalId}.json`), 'utf8')
+            .then(JSON.parse)
+        )
+      )
+    ).resolves.toEqual([
+      expect.objectContaining({
+        env: expect.objectContaining({
+          SSH_AUTH_SOCK: '/private/tmp/com.apple.launchd.test/Listeners'
+        })
+      }),
+      expect.objectContaining({
+        env: expect.objectContaining({
+          SSH_AUTH_SOCK: '/private/tmp/com.apple.launchd.test/Listeners'
+        })
+      })
+    ])
   })
 
   it('preserves an inherited SSH agent socket without consulting launchd', async () => {
@@ -530,6 +557,35 @@ describe('TmuxAdapter', () => {
       await expect(adapter.listSessions('socket')).resolves.toEqual([])
     }
   )
+
+  it('preserves a known non-empty server when killing one session', async () => {
+    const runtime = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'treeport-runtime-')
+    )
+    temporary.push(runtime)
+    const runner = new RecordingRunner()
+    const adapter = new TmuxAdapter(runner, runtime)
+    await adapter.initialize()
+    const specPath = path.join(adapter.specsDir, 'term_one.json')
+    await fs.writeFile(specPath, '{}')
+
+    await adapter.killSession('socket', 'session', 'term_one', {
+      preserveServer: true
+    })
+
+    expect(runner.calls.map((call) => call.args)).toEqual([
+      [
+        '-L',
+        'socket',
+        '-f',
+        adapter.configPath,
+        'kill-session',
+        '-t',
+        'session'
+      ]
+    ])
+    await expect(fs.access(specPath)).rejects.toThrow()
+  })
 
   it('removes discovered launch specs when killing a worktree server', async () => {
     const runtime = await fs.mkdtemp(
