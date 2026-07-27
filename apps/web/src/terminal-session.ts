@@ -34,6 +34,8 @@ const TERMINAL_MAX_COLS = 1_000
 const TERMINAL_MIN_ROWS = 2
 const TERMINAL_MAX_ROWS = 500
 const TERMINAL_RESIZE_SETTLE_MS = 150
+const IOS_KEYBOARD_TOOLBAR_CLEARANCE = 24
+const IOS_BROWSER_TOOLBAR_CLEARANCE = 44
 
 function normalizeTerminalDimensions(
   dimensions: { cols: number; rows: number },
@@ -392,6 +394,7 @@ export class TerminalSession {
   private wrapper: HTMLDivElement | null = null
   private host: HTMLElement | null = null
   private resizeObserver: ResizeObserver | null = null
+  private keyboardViewportCleanup: (() => void) | null = null
   private socket: Socket<
     TerminalServerToClientEvents,
     TerminalClientToServerEvents
@@ -471,6 +474,79 @@ export class TerminalSession {
       this.openTerminal()
     }
 
+    this.keyboardViewportCleanup?.()
+    this.keyboardViewportCleanup = null
+    const isIOS =
+      /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+      (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+    const viewport = window.visualViewport
+    if (isIOS && viewport) {
+      // WebKit shrinks the visual viewport for the keyboard but leaves the
+      // layout viewport (and 100dvh) unchanged. Its keyboard and browser
+      // toolbars then overlay the page without exposing their dimensions.
+      // A temporary bottom spacer gives scrollIntoView enough range to pan
+      // Treeport's accessory row above those native controls.
+      let keyboardToolbarSpacer: HTMLDivElement | null = null
+      let revealFrame: number | null = null
+      const revealTerminalControls = () => {
+        if (revealFrame !== null) {
+          window.cancelAnimationFrame(revealFrame)
+        }
+
+        revealFrame = window.requestAnimationFrame(() => {
+          revealFrame = null
+          const textarea = this.wrapper?.querySelector<HTMLTextAreaElement>(
+            '.xterm-helper-textarea'
+          )
+          const keyboardOpen =
+            document.activeElement === textarea &&
+            viewport.height < document.documentElement.clientHeight - 100
+          if (!keyboardOpen) {
+            keyboardToolbarSpacer?.remove()
+            keyboardToolbarSpacer = null
+            document
+              .querySelector<HTMLElement>('.app-frame')
+              ?.scrollIntoView({ block: 'start', inline: 'nearest' })
+            return
+          }
+
+          const accessory =
+            document.querySelector<HTMLElement>('.accessory-row')
+          if (!accessory) {
+            return
+          }
+
+          keyboardToolbarSpacer ??= document.createElement('div')
+          keyboardToolbarSpacer.className = 'ios-keyboard-viewport-spacer'
+          keyboardToolbarSpacer.setAttribute('aria-hidden', 'true')
+          const standalone =
+            window.matchMedia('(display-mode: standalone)').matches ||
+            Boolean(
+              (navigator as Navigator & { standalone?: boolean }).standalone
+            )
+          const browserToolbarGap = standalone
+            ? 0
+            : IOS_BROWSER_TOOLBAR_CLEARANCE
+          keyboardToolbarSpacer.style.height = `${accessory.getBoundingClientRect().height + IOS_KEYBOARD_TOOLBAR_CLEARANCE + browserToolbarGap}px`
+          document.body.appendChild(keyboardToolbarSpacer)
+          keyboardToolbarSpacer.scrollIntoView({
+            block: 'end',
+            inline: 'nearest'
+          })
+        })
+      }
+      viewport.addEventListener('resize', revealTerminalControls)
+      revealTerminalControls()
+      this.keyboardViewportCleanup = () => {
+        viewport.removeEventListener('resize', revealTerminalControls)
+        if (revealFrame !== null) {
+          window.cancelAnimationFrame(revealFrame)
+        }
+
+        keyboardToolbarSpacer?.remove()
+      }
+    }
+
     this.resizeObserver?.disconnect()
     this.resizeObserver = new ResizeObserver(() => this.scheduleFit())
     this.resizeObserver.observe(host)
@@ -487,6 +563,8 @@ export class TerminalSession {
 
     this.resizeObserver?.disconnect()
     this.resizeObserver = null
+    this.keyboardViewportCleanup?.()
+    this.keyboardViewportCleanup = null
     this.cancelControllerResizeIntent(false)
     this.wrapper?.remove()
     this.host = null
@@ -575,6 +653,8 @@ export class TerminalSession {
     this.reconnectAllowed = false
     this.clearTimers()
     this.resizeObserver?.disconnect()
+    this.keyboardViewportCleanup?.()
+    this.keyboardViewportCleanup = null
     this.socket?.disconnect()
     this.socket = null
     this.wrapper?.remove()
