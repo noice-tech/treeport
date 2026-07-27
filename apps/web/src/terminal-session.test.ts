@@ -426,6 +426,9 @@ describe('TerminalSession', () => {
         transports: ['websocket'],
         forceNew: true,
         multiplex: false,
+        reconnectionDelay: 100,
+        reconnectionDelayMax: 1_000,
+        randomizationFactor: 0.2,
         retries: 0,
         query: { terminalProtocol: '2' }
       })
