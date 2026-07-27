@@ -9,14 +9,12 @@ import {
 } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useLocation } from '@tanstack/react-router'
-import { XMarkIcon } from '@heroicons/react/16/solid'
 import type {
   ProjectRecord,
   RemovePreview,
   TerminalRecord,
   WorktreeRecord
 } from '@treeport/shared'
-import { Button } from './components/ui/button'
 import { TerminalBellNotifications } from './features/notifications/use-bell-notifications'
 import { OpenProjectDialog } from './features/projects/open-project-dialog'
 import { useProjectWorkflows } from './features/projects/project-workflows'
@@ -47,7 +45,6 @@ import { useWorkspaceNavigate } from './workspace-router-navigation'
 const MIN_SIDEBAR_WIDTH = 240
 const MAX_SIDEBAR_WIDTH = 420
 const DEFAULT_SIDEBAR_WIDTH = 272
-const ERROR_TOAST_DURATION_MS = 5_000
 
 type AppDialog =
   | { type: 'project' }
@@ -87,7 +84,6 @@ export default function App() {
   const showDesktopTitlebar =
     desktopBridge !== undefined &&
     !(desktopPlatform === 'darwin' && desktopFullscreen)
-  const [error, setError] = useState<string | null>(null)
   const [dialog, setDialog] = useState<AppDialog>(null)
   const [sidebarWidth, setSidebarWidth] = useState(() => {
     const storedWidth = localStorage.getItem('treeport-sidebar-width')
@@ -114,18 +110,6 @@ export default function App() {
       trigger ?? (document.activeElement as HTMLElement | null)
     setDialog(nextDialog)
   }
-
-  useEffect(() => {
-    if (!error) {
-      return
-    }
-
-    const timer = window.setTimeout(
-      () => setError(null),
-      ERROR_TOAST_DURATION_MS
-    )
-    return () => window.clearTimeout(timer)
-  }, [error])
 
   useEffect(() => {
     const keydown = (event: KeyboardEvent) => {
@@ -335,8 +319,7 @@ export default function App() {
       openedProjectUi: () => {
         setProjectSwitcherOpen(false)
         setDialog(null)
-      },
-      setError
+      }
     })
   const {
     pendingWorktrees,
@@ -355,7 +338,6 @@ export default function App() {
           ? null
           : current
       ),
-    setError,
     selectedTerminalId
   })
 
@@ -430,7 +412,6 @@ export default function App() {
         projectsLoaded={projectsQuery.data !== undefined}
         selectedTerminalId={selectedTerminalId}
         navigateToWorkspace={navigateToWorkspace}
-        onError={showError(setError)}
       />
       {showDesktopTitlebar && (
         <div
@@ -469,7 +450,6 @@ export default function App() {
         onSelectWorktree={selectWorktree}
         onSelectProject={selectProject}
         onProjectOpened={projectOpened}
-        onError={showError(setError)}
         onRequestProjectClose={requestProjectClose}
         onPrepareRemoval={prepareRemoval}
         onOpenProjectDialog={(trigger) =>
@@ -512,7 +492,6 @@ export default function App() {
           isMobile={isMobile}
           drawerOpen={drawerOpen}
           setDrawerOpen={setDrawerOpen}
-          setError={setError}
           onSelectTerminal={selectTerminal}
           onManagePresets={(trigger) =>
             openDialog({ type: 'presets' }, trigger ?? undefined)
@@ -529,31 +508,10 @@ export default function App() {
           <span>Updates paused; showing the last known project state.</span>
         </div>
       )}
-      {error && (
-        <div
-          className="toast fixed right-4 bottom-4 z-80 flex max-w-[min(27.5rem,calc(100vw-2rem))] items-start gap-3 rounded-lg bg-rose-950 p-3 text-sm text-pretty text-rose-200 shadow-2xl ring-1 ring-rose-800/80"
-          role="alert"
-          inert={isMobile && drawerOpen ? true : undefined}
-          aria-hidden={isMobile && drawerOpen ? true : undefined}
-        >
-          {error}
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            type="button"
-            className="text-rose-300 hover:bg-rose-900 hover:text-rose-100"
-            aria-label="Dismiss error"
-            onClick={() => setError(null)}
-          >
-            <XMarkIcon />
-          </Button>
-        </div>
-      )}
       <OpenProjectDialog
         open={dialog?.type === 'project'}
         onOpenChange={(open) => !open && setDialog(null)}
         restoreFocusTo={dialogTriggerRef.current}
-        setError={setError}
         onOpened={projectOpened}
       />
       <CreateWorktreeDialog
@@ -574,7 +532,6 @@ export default function App() {
         loading={presetsQuery.isPending}
         loadError={presetsQuery.isError}
         onRetry={() => void presetsQuery.refetch()}
-        setError={setError}
       />
       <RemoveWorktreeDialog
         worktree={dialog?.type === 'remove' ? dialog.worktree : null}
@@ -589,9 +546,4 @@ export default function App() {
       />
     </div>
   )
-}
-
-function showError(setError: (value: string | null) => void) {
-  return (value: unknown) =>
-    setError(value instanceof Error ? value.message : String(value))
 }

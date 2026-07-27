@@ -12,13 +12,11 @@ export function OpenProjectDialog({
   open,
   onOpenChange,
   restoreFocusTo,
-  setError,
   onOpened
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   restoreFocusTo: HTMLElement | null
-  setError: (value: string | null) => void
   onOpened: (project: ProjectRecord) => Promise<void>
 }) {
   return (
@@ -31,7 +29,7 @@ export function OpenProjectDialog({
             filesystem.
           </DialogDescription>
         </DialogHeader>
-        <ProjectForm setError={setError} onOpened={onOpened} />
+        <ProjectForm onOpened={onOpened} />
       </DialogContent>
     </Dialog>
   )

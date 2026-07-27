@@ -15,8 +15,7 @@ export function TerminalPresetsDialog({
   presets,
   loading,
   loadError,
-  onRetry,
-  setError
+  onRetry
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -25,7 +24,6 @@ export function TerminalPresetsDialog({
   loading: boolean
   loadError: boolean
   onRetry: () => void
-  setError: (value: string | null) => void
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -41,7 +39,6 @@ export function TerminalPresetsDialog({
           loading={loading}
           loadError={loadError}
           onRetry={onRetry}
-          setError={setError}
         />
       </DialogContent>
     </Dialog>

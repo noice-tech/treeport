@@ -10,19 +10,18 @@ import { Input } from '../../components/ui/input'
 import { Label } from '../../components/ui/label'
 import { cn } from '../../lib/utils'
 import { terminalPresetsQueryKey } from '../../project-metadata'
+import { notifyError } from '../notifications/error-notifications'
 
 export function TerminalPresetsManager({
   presets,
   loading,
   loadError,
-  onRetry,
-  setError
+  onRetry
 }: {
   presets: TerminalPreset[]
   loading: boolean
   loadError: boolean
   onRetry: () => void
-  setError: (value: string | null) => void
 }) {
   const queryClient = useQueryClient()
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -69,9 +68,6 @@ export function TerminalPresetsManager({
       }
     }
   }, [editingId, loadedUpdatedAt, presets])
-
-  const showError = (value: unknown) =>
-    setError(value instanceof Error ? value.message : String(value))
   const savePreset = useMutation({
     mutationFn: ({
       presetId,
@@ -104,7 +100,7 @@ export function TerminalPresetsManager({
     },
     onError: (mutationError) => {
       void queryClient.invalidateQueries({ queryKey: terminalPresetsQueryKey })
-      showError(mutationError)
+      notifyError(mutationError)
     },
     onSettled: () =>
       queryClient.invalidateQueries({ queryKey: terminalPresetsQueryKey })
@@ -125,7 +121,7 @@ export function TerminalPresetsManager({
     },
     onError: (mutationError) => {
       void queryClient.invalidateQueries({ queryKey: terminalPresetsQueryKey })
-      showError(mutationError)
+      notifyError(mutationError)
     },
     onSettled: () =>
       queryClient.invalidateQueries({ queryKey: terminalPresetsQueryKey })

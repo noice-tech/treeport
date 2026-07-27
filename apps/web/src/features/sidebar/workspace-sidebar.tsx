@@ -46,6 +46,7 @@ import { TerminalStatusIcon } from '../../components/terminal-status-icon'
 import { recentProjectsQueryOptions } from '../../project-metadata'
 import { terminalProgressLabel } from '../../terminal-session'
 import { useTerminalNavigationMetadata } from '../../terminal-runtime-metadata-react'
+import { notifyError } from '../notifications/error-notifications'
 
 const MANUAL_CLEANUP_PREFIX = 'Manual cleanup required:'
 
@@ -150,7 +151,6 @@ export interface WorkspaceSidebarProps {
   onSelectWorktree: (worktree: WorktreeRecord) => void
   onSelectProject: (project: ProjectRecord) => void
   onProjectOpened: (project: ProjectRecord) => Promise<void>
-  onError: (error: unknown) => void
   onRequestProjectClose: (project: ProjectRecord) => void
   onPrepareRemoval: (
     worktree: WorktreeRecord,
@@ -179,7 +179,6 @@ interface ProjectSwitcherProps {
   projectSwitcherDismissedIntoTerminalRef: MutableRefObject<boolean>
   onSelectProject: (project: ProjectRecord) => void
   onProjectOpened: (project: ProjectRecord) => Promise<void>
-  onError: (error: unknown) => void
   onRequestProjectClose: (project: ProjectRecord) => void
   onOpenProjectDialog: (trigger: HTMLElement) => void
 }
@@ -197,7 +196,6 @@ function ProjectSwitcher({
   projectSwitcherDismissedIntoTerminalRef,
   onSelectProject: selectProject,
   onProjectOpened,
-  onError,
   onRequestProjectClose: requestProjectClose,
   onOpenProjectDialog
 }: ProjectSwitcherProps & {
@@ -216,7 +214,7 @@ function ProjectSwitcher({
   const reopenProject = useMutation({
     mutationFn: (project: { id: string }) => apiClient.openProject(project.id),
     onSuccess: onProjectOpened,
-    onError
+    onError: notifyError
   })
   const normalizedProjectSearch = projectSearch.trim().toLocaleLowerCase()
   const filteredOpenProjects = projects.filter(
@@ -590,7 +588,6 @@ export function WorkspaceSidebar({
   onSelectWorktree: selectWorktree,
   onSelectProject: selectProject,
   onProjectOpened,
-  onError,
   onRequestProjectClose: requestProjectClose,
   onPrepareRemoval: prepareRemoval,
   onOpenProjectDialog,
@@ -731,7 +728,6 @@ export function WorkspaceSidebar({
             }
             onSelectProject={selectProject}
             onProjectOpened={onProjectOpened}
-            onError={onError}
             onRequestProjectClose={requestProjectClose}
             onOpenProjectDialog={onOpenProjectDialog}
           />

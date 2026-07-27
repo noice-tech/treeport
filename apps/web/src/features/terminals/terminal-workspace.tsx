@@ -14,6 +14,7 @@ import { terminalSessions } from '../../terminal-session'
 import { TerminalView, type PendingTerminalTab } from '../../terminal-view'
 import { terminalTarget, worktreeTarget } from '../../workspace-navigation'
 import { useWorkspaceNavigate } from '../../workspace-router-navigation'
+import { notifyError } from '../notifications/error-notifications'
 
 export function TerminalWorkspace({
   projects,
@@ -29,7 +30,6 @@ export function TerminalWorkspace({
   isMobile,
   drawerOpen,
   setDrawerOpen,
-  setError,
   onSelectTerminal,
   onManagePresets
 }: {
@@ -46,7 +46,6 @@ export function TerminalWorkspace({
   isMobile: boolean
   drawerOpen: boolean
   setDrawerOpen: (open: boolean) => void
-  setError: (value: string | null) => void
   onSelectTerminal: (terminal: TerminalRecord) => void
   onManagePresets: (trigger?: HTMLElement | null) => void
 }) {
@@ -80,9 +79,6 @@ export function TerminalWorkspace({
     Boolean(selectedWorktree?.prunable) ||
     selectedWorktree?.status !== 'active' ||
     selectedProject?.availability.state === 'unavailable'
-  const showError = (value: unknown) =>
-    setError(value instanceof Error ? value.message : String(value))
-
   const createTerminal = useMutation({
     mutationFn: ({
       worktreeId,
@@ -171,7 +167,7 @@ export function TerminalWorkspace({
         setSelectedPendingTerminalId(null)
       }
 
-      showError(error)
+      notifyError(error)
       await queryClient.invalidateQueries({ queryKey: projectsQueryKey })
     }
   })
@@ -202,7 +198,7 @@ export function TerminalWorkspace({
           })
         }))
       )
-      showError(error)
+      notifyError(error)
     },
     onSettled: (_, __, closed) => {
       closingTerminalIdsRef.current.delete(closed.terminal.id)
