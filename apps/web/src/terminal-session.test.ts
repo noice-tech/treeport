@@ -87,6 +87,8 @@ class FakeSession {
     bellSerial: 0,
     exitSerial: 0,
     fileTransfer: null,
+    hasSelection: false,
+    pasteRequestSerial: 0,
     error: null
   }
 
@@ -199,6 +201,8 @@ function controllerSessionFixture() {
       bellSerial: 0,
       exitSerial: 0,
       fileTransfer: null,
+      hasSelection: false,
+      pasteRequestSerial: 0,
       error: null
     }
   })
@@ -941,6 +945,8 @@ describe('TerminalSession', () => {
         bellSerial: 0,
         exitSerial: 0,
         fileTransfer: null,
+        hasSelection: false,
+        pasteRequestSerial: 0,
         error: null
       }
     })

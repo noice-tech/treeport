@@ -3529,7 +3529,7 @@ test.describe('mobile terminal UI', () => {
 
   test('scrolls tmux history with a one-finger swipe across mouse modes', async ({
     page
-  }) => {
+  }, testInfo) => {
     await mockApp(page)
     await page.getByLabel('Open worktree drawer').click()
     await page.getByRole('button', { name: 'Pi, running', exact: true }).click()
@@ -3542,6 +3542,34 @@ test.describe('mobile terminal UI', () => {
     const x = bounds!.x + bounds!.width / 2
     const startY = bounds!.y + row!.height * 2
     const positions = [0, 4, 8, 12].map((rows) => startY + row!.height * rows)
+
+    if (testInfo.project.name === 'mobile-chromium') {
+      await page
+        .context()
+        .grantPermissions(['clipboard-read', 'clipboard-write'])
+      const selectionX = bounds!.x + bounds!.width / 100
+      const selectionY = bounds!.y + row!.height / 2
+      await client.send('Input.dispatchTouchEvent', {
+        type: 'touchStart',
+        touchPoints: [{ x: selectionX, y: selectionY }]
+      })
+      await page.waitForTimeout(500)
+      await client.send('Input.dispatchTouchEvent', {
+        type: 'touchMove',
+        touchPoints: [{ x: selectionX + row!.height * 4, y: selectionY }]
+      })
+      await client.send('Input.dispatchTouchEvent', {
+        type: 'touchEnd',
+        touchPoints: []
+      })
+      const selectionActions = page.getByLabel('Terminal text selection')
+      await expect(selectionActions).toBeVisible()
+      await selectionActions.getByRole('button', { name: 'Copy' }).click()
+      await expect(selectionActions).toHaveCount(0)
+      await expect
+        .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+        .not.toBe('')
+    }
 
     await client.send('Input.dispatchTouchEvent', {
       type: 'touchStart',
@@ -3677,5 +3705,48 @@ test.describe('mobile terminal UI', () => {
         )
       )
       .toBe(`${TERMINAL_SCROLL_EXIT_SEQUENCE}q`)
+
+    if (testInfo.project.name === 'mobile-chromium') {
+      const selectionX = bounds!.x + bounds!.width / 100
+      const selectionY = bounds!.y + row!.height / 2
+      await client.send('Input.dispatchTouchEvent', {
+        type: 'touchStart',
+        touchPoints: [
+          { x: selectionX, y: selectionY },
+          { x: selectionX + 40, y: selectionY }
+        ]
+      })
+      await page.waitForTimeout(600)
+      await client.send('Input.dispatchTouchEvent', {
+        type: 'touchEnd',
+        touchPoints: []
+      })
+      const pasteDialog = page.getByRole('dialog', {
+        name: 'Paste into terminal'
+      })
+      await expect(pasteDialog).toBeVisible()
+      await pasteDialog.getByLabel('Paste text here').evaluate((element) => {
+        const clipboardData = new DataTransfer()
+        clipboardData.setData('text/plain', 'pasted on iOS')
+        element.dispatchEvent(
+          new ClipboardEvent('paste', {
+            bubbles: true,
+            cancelable: true,
+            clipboardData
+          })
+        )
+      })
+      await expect(pasteDialog).toHaveCount(0)
+      await expect
+        .poll(() =>
+          page.evaluate(
+            () =>
+              (window as any).__wsSent
+                .filter((message: any) => message.type === 'input')
+                .at(-1)?.data
+          )
+        )
+        .toBe('pasted on iOS')
+    }
   })
 })

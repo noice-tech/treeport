@@ -61,6 +61,9 @@ function normalizeTerminalDimensions(
 // rows of finger travel keeps the gesture responsive without restoring the
 // original excessive gain.
 const TERMINAL_TOUCH_ROWS_PER_WHEEL = 3
+const TERMINAL_TOUCH_SELECTION_DELAY_MS = 450
+const TERMINAL_TOUCH_PASTE_DELAY_MS = 550
+const TERMINAL_TOUCH_SELECTION_SLOP = 10
 
 export function terminalProgressLabel(progress: TerminalProgress): string {
   const percentage =
@@ -195,10 +198,57 @@ function trackTerminalScrolling(
   wrapper: HTMLElement,
   terminal: Terminal,
   onScroll: () => void,
-  onResumeInput: () => void
+  onResumeInput: () => void,
+  onPasteRequest: () => void
 ): void {
   let lastTouchY: number | null = null
   let touchScrollRemainder = 0
+  let touchStart: { x: number; y: number } | null = null
+  let touchSelectionTimer: number | null = null
+  let touchSelectionAnchor: { column: number; row: number } | null = null
+  let touchPasteTimer: number | null = null
+  let touchPasteStart: Array<{ identifier: number; x: number; y: number }> = []
+
+  const terminalCellAt = (clientX: number, clientY: number) => {
+    const element = terminal.element
+    if (!element) {
+      return null
+    }
+
+    const bounds = element.getBoundingClientRect()
+    return {
+      column: Math.min(
+        terminal.cols - 1,
+        Math.max(
+          0,
+          Math.floor(((clientX - bounds.left) / bounds.width) * terminal.cols)
+        )
+      ),
+      row:
+        terminal.buffer.active.viewportY +
+        Math.min(
+          terminal.rows - 1,
+          Math.max(
+            0,
+            Math.floor(((clientY - bounds.top) / bounds.height) * terminal.rows)
+          )
+        )
+    }
+  }
+
+  const clearTouchSelectionTimer = () => {
+    if (touchSelectionTimer !== null) {
+      window.clearTimeout(touchSelectionTimer)
+      touchSelectionTimer = null
+    }
+  }
+  const clearTouchPasteTimer = () => {
+    if (touchPasteTimer !== null) {
+      window.clearTimeout(touchPasteTimer)
+      touchPasteTimer = null
+    }
+    touchPasteStart = []
+  }
 
   wrapper.addEventListener(
     'wheel',
@@ -211,23 +261,92 @@ function trackTerminalScrolling(
   wrapper.addEventListener(
     'touchstart',
     (event) => {
-      if (event.touches.length !== 1) {
+      if (event.touches.length === 2) {
+        clearTouchSelectionTimer()
+        clearTouchPasteTimer()
         lastTouchY = null
         touchScrollRemainder = 0
+        touchStart = null
+        touchSelectionAnchor = null
+        touchPasteStart = Array.from(event.touches, (touch) => ({
+          identifier: touch.identifier,
+          x: touch.clientX,
+          y: touch.clientY
+        }))
+        touchPasteTimer = window.setTimeout(() => {
+          touchPasteTimer = null
+          touchPasteStart = []
+          navigator.vibrate?.(10)
+          onPasteRequest()
+        }, TERMINAL_TOUCH_PASTE_DELAY_MS)
         return
       }
 
-      lastTouchY = event.touches[0]!.clientY
+      if (event.touches.length !== 1) {
+        clearTouchSelectionTimer()
+        clearTouchPasteTimer()
+        lastTouchY = null
+        touchScrollRemainder = 0
+        touchStart = null
+        touchSelectionAnchor = null
+        return
+      }
+
+      clearTouchPasteTimer()
+      const touch = event.touches[0]!
+      lastTouchY = touch.clientY
       touchScrollRemainder = 0
+      touchStart = { x: touch.clientX, y: touch.clientY }
+      touchSelectionAnchor = null
+      clearTouchSelectionTimer()
+      touchSelectionTimer = window.setTimeout(() => {
+        touchSelectionTimer = null
+        if (!touchStart) {
+          return
+        }
+
+        touchSelectionAnchor = terminalCellAt(touchStart.x, touchStart.y)
+        if (touchSelectionAnchor) {
+          terminal.select(
+            touchSelectionAnchor.column,
+            touchSelectionAnchor.row,
+            1
+          )
+          navigator.vibrate?.(10)
+        }
+      }, TERMINAL_TOUCH_SELECTION_DELAY_MS)
     },
     { capture: true, passive: true }
   )
   wrapper.addEventListener(
     'touchmove',
     (event) => {
+      if (event.touches.length === 2 && touchPasteStart.length === 2) {
+        const moved = touchPasteStart.some((start) => {
+          const touch = Array.from(event.touches).find(
+            (candidate) => candidate.identifier === start.identifier
+          )
+          return (
+            !touch ||
+            Math.hypot(touch.clientX - start.x, touch.clientY - start.y) >
+              TERMINAL_TOUCH_SELECTION_SLOP
+          )
+        })
+        if (moved) {
+          clearTouchPasteTimer()
+        } else {
+          event.preventDefault()
+        }
+        return
+      }
+
       if (event.touches.length !== 1 || lastTouchY === null) {
+        clearTouchSelectionTimer()
+        clearTouchPasteTimer()
         lastTouchY = null
         touchScrollRemainder = 0
+        touchStart = null
+        touchSelectionAnchor = null
         return
       }
 
@@ -237,6 +356,34 @@ function trackTerminalScrolling(
       }
 
       const touch = event.touches[0]!
+      if (touchSelectionAnchor) {
+        event.preventDefault()
+        const end = terminalCellAt(touch.clientX, touch.clientY)
+        if (!end) {
+          return
+        }
+
+        const anchorOffset =
+          touchSelectionAnchor.row * terminal.cols + touchSelectionAnchor.column
+        const endOffset = end.row * terminal.cols + end.column
+        const startOffset = Math.min(anchorOffset, endOffset)
+        terminal.select(
+          startOffset % terminal.cols,
+          Math.floor(startOffset / terminal.cols),
+          Math.abs(endOffset - anchorOffset) + 1
+        )
+        return
+      }
+
+      if (
+        touchStart &&
+        Math.hypot(touch.clientX - touchStart.x, touch.clientY - touchStart.y) >
+          TERMINAL_TOUCH_SELECTION_SLOP
+      ) {
+        clearTouchSelectionTimer()
+        touchStart = null
+      }
+
       touchScrollRemainder += lastTouchY - touch.clientY
       lastTouchY = touch.clientY
       event.preventDefault()
@@ -277,12 +424,26 @@ function trackTerminalScrolling(
     },
     { capture: true, passive: false }
   )
-  const resetTouchScroll = () => {
+  const resetTouchScroll = (event: TouchEvent) => {
+    if (touchSelectionAnchor) {
+      event.preventDefault()
+    }
+
+    clearTouchSelectionTimer()
+    clearTouchPasteTimer()
     lastTouchY = null
     touchScrollRemainder = 0
+    touchStart = null
+    touchSelectionAnchor = null
   }
-  wrapper.addEventListener('touchend', resetTouchScroll, true)
-  wrapper.addEventListener('touchcancel', resetTouchScroll, true)
+  wrapper.addEventListener('touchend', resetTouchScroll, {
+    capture: true,
+    passive: false
+  })
+  wrapper.addEventListener('touchcancel', resetTouchScroll, {
+    capture: true,
+    passive: false
+  })
   wrapper.addEventListener('paste', onResumeInput, true)
 }
 
@@ -296,6 +457,8 @@ export interface TerminalSessionSnapshot {
   bellSerial: number
   exitSerial: number
   fileTransfer: TerminalFileTransfer | null
+  hasSelection: boolean
+  pasteRequestSerial: number
   error: string | null
 }
 
@@ -309,6 +472,8 @@ const DEFAULT_SNAPSHOT: TerminalSessionSnapshot = {
   bellSerial: 0,
   exitSerial: 0,
   fileTransfer: null,
+  hasSelection: false,
+  pasteRequestSerial: 0,
   error: null
 }
 
@@ -432,6 +597,7 @@ export class TerminalSession {
   private readonly parsedSequences = new Set<number>()
   private scrollExitPending = false
   private resumeOnNextInput = false
+  private pendingPaste = ''
   private lastBellAt = 0
 
   constructor(terminalId: string) {
@@ -636,12 +802,65 @@ export class TerminalSession {
     this.focus()
   }
 
+  pasteText(data: string): void {
+    if (!data) {
+      return
+    }
+
+    this.requestControl()
+    this.prepareScrollExit()
+    if (this.canInput()) {
+      this.terminal?.paste(data)
+    } else {
+      this.pendingPaste += data
+    }
+    this.focus()
+  }
+
   sendArrow(direction: ArrowDirection, alt = false): void {
     const final = { up: 'A', down: 'B', right: 'C', left: 'D' }[direction]
     const prefix = this.terminal?.modes.applicationCursorKeysMode
       ? '\u001bO'
       : '\u001b['
     this.sendText(`${alt ? '\u001b' : ''}${prefix}${final}`)
+  }
+
+  copySelection(): void {
+    const selection = this.terminal?.getSelection()
+    if (!selection) {
+      return
+    }
+
+    // Clipboard.writeText is unavailable on non-HTTPS iOS installations.
+    // execCommand remains the reliable synchronous path from a user gesture
+    // there, provided the selected value lives in a real form control.
+    const copyBuffer = document.createElement('textarea')
+    copyBuffer.value = selection
+    copyBuffer.readOnly = true
+    copyBuffer.style.position = 'fixed'
+    copyBuffer.style.left = '-9999px'
+    copyBuffer.style.opacity = '0'
+    document.body.appendChild(copyBuffer)
+    copyBuffer.focus({ preventScroll: true })
+    copyBuffer.select()
+    copyBuffer.setSelectionRange(0, selection.length)
+    const copied = document.execCommand('copy')
+    copyBuffer.remove()
+
+    if (copied) {
+      this.terminal?.clearSelection()
+      return
+    }
+
+    if (navigator.clipboard) {
+      void navigator.clipboard.writeText(selection).then(() => {
+        this.terminal?.clearSelection()
+      })
+    }
+  }
+
+  clearSelection(): void {
+    this.terminal?.clearSelection()
   }
 
   dispose(): void {
@@ -675,6 +894,9 @@ export class TerminalSession {
     terminal.loadAddon(fitAddon)
     terminal.loadAddon(new WebLinksAddon(activateTerminalLink))
     terminal.open(this.wrapper)
+    terminal.onSelectionChange(() => {
+      this.update({ hasSelection: terminal.hasSelection() })
+    })
     this.wrapper.addEventListener(
       'mousedown',
       (event) => {
@@ -721,6 +943,12 @@ export class TerminalSession {
       () => {
         this.requestControl()
         this.prepareScrollExit()
+      },
+      () => {
+        this.requestControl()
+        this.update({
+          pasteRequestSerial: this.snapshotValue.pasteRequestSerial + 1
+        })
       }
     )
     const wrapper = this.wrapper
@@ -1211,6 +1439,11 @@ export class TerminalSession {
         controller: message.controller,
         controlPending: false
       })
+      if (message.controller && this.pendingPaste) {
+        const pendingPaste = this.pendingPaste
+        this.pendingPaste = ''
+        this.terminal?.paste(pendingPaste)
+      }
       if (controllerChanged) {
         this.scheduleFit()
       }
