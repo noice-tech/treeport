@@ -46,6 +46,27 @@ async function waitForTitleState(
   return state
 }
 
+async function waitForPaneContent(
+  tmux: string,
+  socket: string,
+  expected: (content: string) => boolean
+): Promise<string> {
+  const deadline = Date.now() + 10_000
+  let content = ''
+  while (Date.now() < deadline) {
+    content = (
+      await execute(tmux, ['-L', socket, 'capture-pane', '-p', '-t', 'title'])
+    ).stdout
+    if (expected(content)) {
+      return content
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 50))
+  }
+
+  return content
+}
+
 async function verifyCommandLifecycle(
   tmux: string,
   executable: string,
@@ -72,7 +93,10 @@ async function verifyCommandLifecycle(
     '-l'
   ])
 
-  await waitForTitleState(tmux, socket, (state) => state.includes(`|${shell}|`))
+  const initialState = await waitForTitleState(tmux, socket, (state) =>
+    state.startsWith(`|${shell}|`)
+  )
+  const initialPaneTitle = initialState.slice(initialState.indexOf('|', 1) + 1)
   await execute(tmux, [
     '-L',
     socket,
@@ -83,15 +107,55 @@ async function verifyCommandLifecycle(
     'Enter'
   ])
   await expect(
-    waitForTitleState(tmux, socket, (state) =>
-      state.startsWith('sleep 30|sleep|sleep 30')
+    waitForTitleState(
+      tmux,
+      socket,
+      (state) => state === `sleep 30|sleep|${initialPaneTitle}`
     )
-  ).resolves.toBe('sleep 30|sleep|sleep 30')
+  ).resolves.toBe(`sleep 30|sleep|${initialPaneTitle}`)
 
   await execute(tmux, ['-L', socket, 'send-keys', '-t', 'title', 'C-c'])
   await expect(
-    waitForTitleState(tmux, socket, (state) => state.startsWith(`|${shell}|`))
-  ).resolves.toMatch(new RegExp(`^\\|${shell}\\|`))
+    waitForTitleState(
+      tmux,
+      socket,
+      (state) => state === `|${shell}|${initialPaneTitle}`
+    )
+  ).resolves.toBe(`|${shell}|${initialPaneTitle}`)
+
+  const marker = `treeport-before-clear-${crypto.randomBytes(4).toString('hex')}`
+  await execute(tmux, [
+    '-L',
+    socket,
+    'send-keys',
+    '-t',
+    'title',
+    `printf '${marker}\\n'`,
+    'Enter'
+  ])
+  await expect(
+    waitForPaneContent(tmux, socket, (content) => content.includes(marker))
+  ).resolves.toContain(marker)
+
+  await execute(tmux, [
+    '-L',
+    socket,
+    'send-keys',
+    '-t',
+    'title',
+    'clear',
+    'Enter'
+  ])
+  await expect(
+    waitForPaneContent(tmux, socket, (content) => !content.includes(marker))
+  ).resolves.not.toContain(marker)
+  await expect(
+    waitForTitleState(
+      tmux,
+      socket,
+      (state) => state === `|${shell}|${initialPaneTitle}`
+    )
+  ).resolves.toBe(`|${shell}|${initialPaneTitle}`)
 }
 
 afterEach(async () => {

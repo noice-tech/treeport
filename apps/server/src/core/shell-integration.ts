@@ -23,7 +23,6 @@ if [[ -n "$TMUX_PANE" && -n "$TREEPORT_TMUX_EXECUTABLE" ]]; then
     local title=\${1//[[:cntrl:]]/}
     title=\${title[1,256]}
     "$_treeport_tmux_executable" set-option -p -t "$TMUX_PANE" -- @treeport-command "$title" >/dev/null 2>&1
-    print -rn -- $'\\e]2;'"$title"$'\\a' > /dev/tty 2>/dev/null
   }
   _treeport_command_title_precmd() {
     emulate -L zsh
@@ -67,7 +66,6 @@ _treeport_command_title_preexec() {
   title="\${title:0:256}"
   [[ -n "$TMUX_PANE" && -n "$_treeport_tmux_executable" ]] || return
   "$_treeport_tmux_executable" set-option -p -t "$TMUX_PANE" -- @treeport-command "$title" >/dev/null 2>&1
-  printf '\\e]2;%s\\a' "$title" > /dev/tty 2>/dev/null
 }
 _treeport_command_title_prompt() {
   if [[ -n "$TMUX_PANE" && -n "$_treeport_tmux_executable" ]]; then
@@ -122,7 +120,6 @@ function _treeport_command_title_preexec --on-event fish_preexec
   set -l title (string replace -ar '[[:cntrl:]]' '' -- "$argv[1]" | string sub -l 256)
   if test -n "$TMUX_PANE"; and test -n "$_treeport_tmux_executable"
     command "$_treeport_tmux_executable" set-option -p -t "$TMUX_PANE" -- @treeport-command "$title" >/dev/null 2>&1
-    printf '\\e]2;%s\\a' "$title" > /dev/tty 2>/dev/null
   end
 end
 
