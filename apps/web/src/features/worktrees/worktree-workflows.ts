@@ -1,4 +1,4 @@
-import { useRef, useState, type Dispatch, type SetStateAction } from 'react'
+import { useRef, useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useLocation } from '@tanstack/react-router'
 import type {
@@ -8,7 +8,6 @@ import type {
   WorktreeRecord
 } from '@treeport/shared'
 import { ApiError, apiClient } from '../../api'
-import type { ActionModalState, RemovalStage } from '../dialogs/action-modal'
 import { projectsQueryKey } from '../../project-metadata'
 import { terminalSessions } from '../../terminal-session'
 import {
@@ -17,7 +16,11 @@ import {
   worktreeTarget
 } from '../../workspace-navigation'
 import { useWorkspaceNavigate } from '../../workspace-router-navigation'
+import { notifyError } from '../notifications/error-notifications'
+
 const MANUAL_CLEANUP_PREFIX = 'Manual cleanup required:'
+
+export type RemovalStage = 'checking' | 'removing'
 
 function needsManualCleanup(worktree: WorktreeRecord): boolean {
   return Boolean(worktree.cleanupError?.startsWith(MANUAL_CLEANUP_PREFIX))
@@ -39,18 +42,19 @@ export interface PendingWorktreeCreation {
 
 export function useWorktreeWorkflows({
   setDrawerOpen,
-  setModal,
-  openModal,
-  setError,
+  onWorktreeSubmitted,
+  onRemovalNeedsConfirmation,
+  onRemovalCompleted,
   selectedTerminalId
 }: {
   setDrawerOpen: (open: boolean) => void
-  setModal: Dispatch<SetStateAction<ActionModalState>>
-  openModal: (
-    modal: Exclude<ActionModalState, null>,
+  onWorktreeSubmitted: () => void
+  onRemovalNeedsConfirmation: (
+    worktree: WorktreeRecord,
+    preview: RemovePreview,
     trigger?: HTMLElement
   ) => void
-  setError: (value: string | null) => void
+  onRemovalCompleted: (worktreeId: string) => void
   selectedTerminalId: string | null
 }) {
   const queryClient = useQueryClient()
@@ -63,8 +67,6 @@ export function useWorktreeWorkflows({
     Record<string, RemovalStage>
   >({})
   const removalGuardsRef = useRef(new Set<string>())
-  const showError = (value: unknown) =>
-    setError(value instanceof Error ? value.message : String(value))
 
   const createWorktree = useMutation({
     mutationFn: (pending: PendingWorktreeCreation) =>
@@ -114,11 +116,11 @@ export function useWorktreeWorkflows({
       setDrawerOpen(false)
 
       if (result.setupError) {
-        setError(
+        notifyError(
           `Worktree created, but setup could not start: ${result.setupError}`
         )
       } else if (result.terminalError) {
-        setError(
+        notifyError(
           `Worktree created, but its terminal could not start: ${result.terminalError}`
         )
       }
@@ -130,7 +132,7 @@ export function useWorktreeWorkflows({
         current.filter((item) => item.id !== pending.id)
       )
       setDrawerOpen(false)
-      showError(mutationError)
+      notifyError(mutationError)
     }
   })
 
@@ -162,7 +164,7 @@ export function useWorktreeWorkflows({
       ...(sourceWorktreeId ? { sourceWorktreeId } : {})
     }
     setPendingWorktrees((current) => [...current, pending])
-    setModal(null)
+    onWorktreeSubmitted()
     window.requestAnimationFrame(() => {
       document.getElementById(`pending-worktree-${pending.id}`)?.focus()
     })
@@ -208,11 +210,7 @@ export function useWorktreeWorkflows({
       await apiClient.removeWorktree(worktree.id, preview, confirmDestructive)
       markWorktreeCleaning(worktree.id)
       releaseRemoval(worktree.id)
-      setModal((current) =>
-        current?.type === 'remove' && current.worktree.id === worktree.id
-          ? null
-          : current
-      )
+      onRemovalCompleted(worktree.id)
       void queryClient.invalidateQueries(
         { queryKey: projectsQueryKey },
         { cancelRefetch: false }
@@ -237,17 +235,17 @@ export function useWorktreeWorkflows({
           }
 
           releaseRemoval(worktree.id)
-          openModal({ type: 'remove', worktree, preview: freshPreview })
+          onRemovalNeedsConfirmation(worktree, freshPreview)
           return
         } catch (refreshError) {
           releaseRemoval(worktree.id)
-          showError(refreshError)
+          notifyError(refreshError)
           return
         }
       }
 
       releaseRemoval(worktree.id)
-      showError(
+      notifyError(
         error instanceof ApiError && error.code === 'REMOVE_PREVIEW_STALE'
           ? new Error(
               'The worktree kept changing during removal. Review it and try again.'
@@ -279,10 +277,10 @@ export function useWorktreeWorkflows({
       }
 
       releaseRemoval(worktree.id)
-      openModal({ type: 'remove', worktree, preview }, trigger)
+      onRemovalNeedsConfirmation(worktree, preview, trigger)
     } catch (error) {
       releaseRemoval(worktree.id)
-      showError(error)
+      notifyError(error)
     }
   }
 

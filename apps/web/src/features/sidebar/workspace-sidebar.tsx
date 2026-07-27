@@ -37,13 +37,16 @@ import {
   TooltipContent,
   TooltipTrigger
 } from '../../components/ui/tooltip'
-import type { ActionModalState, RemovalStage } from '../dialogs/action-modal'
-import type { PendingWorktreeCreation } from '../worktrees/worktree-workflows'
+import type {
+  PendingWorktreeCreation,
+  RemovalStage
+} from '../worktrees/worktree-workflows'
 import { cn } from '../../lib/utils'
 import { TerminalStatusIcon } from '../../components/terminal-status-icon'
 import { recentProjectsQueryOptions } from '../../project-metadata'
 import { terminalProgressLabel } from '../../terminal-session'
 import { useTerminalNavigationMetadata } from '../../terminal-runtime-metadata-react'
+import { notifyError } from '../notifications/error-notifications'
 
 const MANUAL_CLEANUP_PREFIX = 'Manual cleanup required:'
 
@@ -148,16 +151,13 @@ export interface WorkspaceSidebarProps {
   onSelectWorktree: (worktree: WorktreeRecord) => void
   onSelectProject: (project: ProjectRecord) => void
   onProjectOpened: (project: ProjectRecord) => Promise<void>
-  onError: (error: unknown) => void
   onRequestProjectClose: (project: ProjectRecord) => void
   onPrepareRemoval: (
     worktree: WorktreeRecord,
     trigger: HTMLElement
   ) => Promise<void>
-  onOpenModal: (
-    modal: Exclude<ActionModalState, null>,
-    trigger?: HTMLElement
-  ) => void
+  onOpenProjectDialog: (trigger: HTMLElement) => void
+  onOpenWorktreeDialog: (project: ProjectRecord, trigger: HTMLElement) => void
   minSidebarWidth: number
   maxSidebarWidth: number
   defaultSidebarWidth: number
@@ -179,12 +179,8 @@ interface ProjectSwitcherProps {
   projectSwitcherDismissedIntoTerminalRef: MutableRefObject<boolean>
   onSelectProject: (project: ProjectRecord) => void
   onProjectOpened: (project: ProjectRecord) => Promise<void>
-  onError: (error: unknown) => void
   onRequestProjectClose: (project: ProjectRecord) => void
-  onOpenModal: (
-    modal: Exclude<ActionModalState, null>,
-    trigger?: HTMLElement
-  ) => void
+  onOpenProjectDialog: (trigger: HTMLElement) => void
 }
 
 function ProjectSwitcher({
@@ -200,9 +196,8 @@ function ProjectSwitcher({
   projectSwitcherDismissedIntoTerminalRef,
   onSelectProject: selectProject,
   onProjectOpened,
-  onError,
   onRequestProjectClose: requestProjectClose,
-  onOpenModal: openModal
+  onOpenProjectDialog
 }: ProjectSwitcherProps & {
   bellAttention: ReturnType<typeof useTerminalNavigationMetadata>['attention']
   terminalProgress: ReturnType<typeof useTerminalNavigationMetadata>['progress']
@@ -219,7 +214,7 @@ function ProjectSwitcher({
   const reopenProject = useMutation({
     mutationFn: (project: { id: string }) => apiClient.openProject(project.id),
     onSuccess: onProjectOpened,
-    onError
+    onError: notifyError
   })
   const normalizedProjectSearch = projectSearch.trim().toLocaleLowerCase()
   const filteredOpenProjects = projects.filter(
@@ -553,7 +548,9 @@ function ProjectSwitcher({
           className="mt-0.5 h-8 w-full justify-start border-t border-white/8 py-1 text-sm font-normal text-zinc-500 hover:text-zinc-100"
           onClick={(event) => {
             setProjectSwitcherOpen(false)
-            openModal({ type: 'project' }, event.currentTarget)
+            onOpenProjectDialog(
+              projectSwitcherTriggerRef.current ?? event.currentTarget
+            )
           }}
         >
           <PlusIcon /> Open project…
@@ -591,10 +588,10 @@ export function WorkspaceSidebar({
   onSelectWorktree: selectWorktree,
   onSelectProject: selectProject,
   onProjectOpened,
-  onError,
   onRequestProjectClose: requestProjectClose,
   onPrepareRemoval: prepareRemoval,
-  onOpenModal: openModal,
+  onOpenProjectDialog,
+  onOpenWorktreeDialog,
   minSidebarWidth,
   maxSidebarWidth,
   defaultSidebarWidth,
@@ -731,9 +728,8 @@ export function WorkspaceSidebar({
             }
             onSelectProject={selectProject}
             onProjectOpened={onProjectOpened}
-            onError={onError}
             onRequestProjectClose={requestProjectClose}
-            onOpenModal={openModal}
+            onOpenProjectDialog={onOpenProjectDialog}
           />
         </div>
         <nav
@@ -1005,10 +1001,7 @@ export function WorkspaceSidebar({
                             : undefined
                         }
                         onClick={(event) =>
-                          openModal(
-                            { type: 'worktree', project },
-                            event.currentTarget
-                          )
+                          onOpenWorktreeDialog(project, event.currentTarget)
                         }
                       >
                         <PlusIcon className="min-[701px]:size-3.5!" />

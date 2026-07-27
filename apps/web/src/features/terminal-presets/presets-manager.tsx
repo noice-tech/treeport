@@ -5,24 +5,23 @@ import { TERMINAL_NAME_MAX_LENGTH, type TerminalPreset } from '@treeport/shared'
 import { apiClient } from '../../api'
 import { formatCommandLine, parseCommandLine } from '../../command-line'
 import { Button } from '../../components/ui/button'
+import { FormField } from '../../components/ui/form-field'
 import { Input } from '../../components/ui/input'
 import { Label } from '../../components/ui/label'
 import { cn } from '../../lib/utils'
 import { terminalPresetsQueryKey } from '../../project-metadata'
-import { FormField, ModalHeading } from '../dialogs/dialog-parts'
+import { notifyError } from '../notifications/error-notifications'
 
 export function TerminalPresetsManager({
   presets,
   loading,
   loadError,
-  onRetry,
-  setError
+  onRetry
 }: {
   presets: TerminalPreset[]
   loading: boolean
   loadError: boolean
   onRetry: () => void
-  setError: (value: string | null) => void
 }) {
   const queryClient = useQueryClient()
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -69,9 +68,6 @@ export function TerminalPresetsManager({
       }
     }
   }, [editingId, loadedUpdatedAt, presets])
-
-  const showError = (value: unknown) =>
-    setError(value instanceof Error ? value.message : String(value))
   const savePreset = useMutation({
     mutationFn: ({
       presetId,
@@ -104,7 +100,7 @@ export function TerminalPresetsManager({
     },
     onError: (mutationError) => {
       void queryClient.invalidateQueries({ queryKey: terminalPresetsQueryKey })
-      showError(mutationError)
+      notifyError(mutationError)
     },
     onSettled: () =>
       queryClient.invalidateQueries({ queryKey: terminalPresetsQueryKey })
@@ -125,7 +121,7 @@ export function TerminalPresetsManager({
     },
     onError: (mutationError) => {
       void queryClient.invalidateQueries({ queryKey: terminalPresetsQueryKey })
-      showError(mutationError)
+      notifyError(mutationError)
     },
     onSettled: () =>
       queryClient.invalidateQueries({ queryKey: terminalPresetsQueryKey })
@@ -133,11 +129,7 @@ export function TerminalPresetsManager({
 
   const busy = savePreset.isPending || deletePreset.isPending
   return (
-    <div className="flex flex-col gap-4">
-      <ModalHeading title="Terminal presets" />
-      <p className="form-note max-w-[60ch]">
-        Create reusable commands. Arguments are passed exactly as entered.
-      </p>
+    <>
       <div className="grid min-h-0 gap-5 border-t border-white/8 pt-4 md:grid-cols-[minmax(12rem,0.8fr)_minmax(0,1.35fr)]">
         <section
           className="flex min-w-0 flex-col gap-2"
@@ -331,6 +323,6 @@ export function TerminalPresetsManager({
           </Button>
         </form>
       </div>
-    </div>
+    </>
   )
 }

@@ -10,6 +10,7 @@ import {
 import { terminalSessions } from '../../terminal-session'
 import type { WorkspaceTarget } from '../../workspace-navigation'
 import { useWorkspaceNavigate } from '../../workspace-router-navigation'
+import { notifyError } from '../notifications/error-notifications'
 
 export function useProjectWorkflows({
   projects,
@@ -17,8 +18,7 @@ export function useProjectWorkflows({
   targetForProject,
   projectSwitcherTriggerRef,
   closeProjectUi,
-  openedProjectUi,
-  setError
+  openedProjectUi
 }: {
   projects: ProjectRecord[]
   selectedProject: ProjectRecord | null
@@ -26,14 +26,10 @@ export function useProjectWorkflows({
   projectSwitcherTriggerRef: RefObject<HTMLButtonElement | null>
   closeProjectUi: () => void
   openedProjectUi: () => void
-  setError: (value: string | null) => void
 }) {
   const queryClient = useQueryClient()
   const location = useLocation()
   const navigateToWorkspace = useWorkspaceNavigate()
-  const showError = (value: unknown) =>
-    setError(value instanceof Error ? value.message : String(value))
-
   const closeProject = useMutation({
     mutationFn: (project: ProjectRecord) => apiClient.closeProject(project.id),
     onSuccess: async (_, closedProject) => {
@@ -84,7 +80,7 @@ export function useProjectWorkflows({
       }
     },
     onError: (mutationError) => {
-      showError(mutationError)
+      notifyError(mutationError)
       if (
         mutationError instanceof ApiError &&
         mutationError.code === 'PROJECT_CLOSE_FAILED'
