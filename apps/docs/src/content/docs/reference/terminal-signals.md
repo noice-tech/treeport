@@ -13,13 +13,19 @@ Every Treeport terminal provides persistent execution, running or exited status,
 
 ### Terminal title
 
-Interactive zsh, Bash, and fish sessions capture the command entered at the shell execution boundary. Applications can publish a more useful title with OSC `0` or `2`; a fresh application title takes priority over the shell-captured command.
+Interactive zsh, Bash, and fish sessions capture the command entered at the shell execution boundary. This lets Treeport display `pnpm dev` while the foreground process visible to tmux is only `node`. The captured value can include arguments, is limited to 256 characters, and is cleared when the prompt returns.
+
+Treeport preserves the user's shell startup files while installing these hooks. Nushell retains its native title behavior. Unsupported shells, non-interactive invocations, and Bash configurations that replace Treeport's one-time prompt bootstrap fall back to the foreground executable name because the original command cannot be reconstructed reliably from a process tree.
+
+Applications can publish a more useful title with OSC `0` or `2`; a fresh application title takes priority over the shell-captured command.
 
 ```sh
 printf '\033]2;Waiting for review\007'
 ```
 
 Keep titles concise. Useful examples include `Implementing authentication`, `PR #123`, `PR MERGED`, and `Development server`.
+
+Application titles are runtime metadata and may be reset after the daemon or observer restarts. Shell-captured commands are also stored as pane-scoped tmux metadata while they run, allowing Treeport to recover the command after an observer restart.
 
 ### BEL attention
 
@@ -75,6 +81,14 @@ Title + progress
 Title + progress + BEL
 └── Pi — PR #123 · needs attention
 ```
+
+## Application responsibilities
+
+Applications and extensions should publish semantic state they understand better than Treeport does. For example, a coding-agent extension may update the title when a pull request is created or merged, emit progress while working, clear progress while waiting, and emit BEL when user action is required.
+
+## Treeport responsibilities
+
+Treeport observes supported terminal signals, presents them consistently, synchronizes attention across clients, avoids stale state where possible, and degrades gracefully when signals are absent. It does not guarantee that terminal applications publish accurate semantic state.
 
 ## Integration guidance
 

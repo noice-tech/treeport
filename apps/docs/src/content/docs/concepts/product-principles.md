@@ -1,4 +1,7 @@
-# Product principles
+---
+title: Product principles
+description: Principles that define Treeport's product boundary.
+---
 
 Treeport is a persistent terminal workspace built around Git worktrees.
 
