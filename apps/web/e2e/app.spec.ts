@@ -1423,6 +1423,48 @@ test.describe('desktop worktree terminal UI', () => {
     await expect(
       page.getByRole('button', { name: /^(main worktree|topic)$/ })
     ).toHaveText(['main worktree', 'topic'])
+
+    const sidebarResize = page.getByRole('separator', {
+      name: 'Resize sidebar'
+    })
+    await sidebarResize.press('End')
+    await expect
+      .poll(() =>
+        page.evaluate(() => localStorage.getItem('treeport-sidebar-width'))
+      )
+      .toBe('420')
+    await sidebarResize.press('Home')
+    await expect
+      .poll(() =>
+        page.evaluate(() => localStorage.getItem('treeport-sidebar-width'))
+      )
+      .toBe('240')
+    await sidebarResize.dblclick()
+    await expect
+      .poll(() =>
+        page.evaluate(() => localStorage.getItem('treeport-sidebar-width'))
+      )
+      .toBe('272')
+    const resizeBounds = await sidebarResize.boundingBox()
+    expect(resizeBounds).not.toBeNull()
+    await page.mouse.move(
+      resizeBounds!.x + resizeBounds!.width / 2,
+      resizeBounds!.y + resizeBounds!.height / 2
+    )
+    await page.mouse.down()
+    await page.mouse.move(
+      resizeBounds!.x + resizeBounds!.width / 2 + 32,
+      resizeBounds!.y + resizeBounds!.height / 2
+    )
+    await page.mouse.up()
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          Number(localStorage.getItem('treeport-sidebar-width'))
+        )
+      )
+      .toBeGreaterThan(272)
+
     await page.getByRole('button', { name: 'Pi, running', exact: true }).click()
     await expect(page.locator('.xterm')).toBeVisible()
     await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
@@ -3615,10 +3657,11 @@ test.describe('mobile terminal UI', () => {
     expect((await presetRequest).postDataJSON()).toMatchObject({ name: 'Hunk' })
     await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
 
-    await trigger.click()
-    await page
-      .getByRole('button', { name: 'Switch project, current project example' })
-      .click()
+    const shortcutModifier = await page.evaluate(() =>
+      /Mac|iPhone|iPad|iPod/.test(navigator.platform) ? 'Meta' : 'Control'
+    )
+    await page.keyboard.press(`${shortcutModifier}+Shift+P`)
+    await expect(page.getByLabel('Search projects')).toBeVisible()
     await expect(page.getByLabel('Search projects')).not.toBeFocused()
     const close = page.getByRole('button', { name: 'Close project example' })
     await expect(close).toBeVisible()

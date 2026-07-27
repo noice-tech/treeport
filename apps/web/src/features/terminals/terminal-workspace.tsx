@@ -9,12 +9,14 @@ import type {
   WorktreeRecord
 } from '@treeport/shared'
 import { apiClient } from '../../api'
+import { useSidebar } from '../../components/ui/sidebar'
 import { projectsQueryKey } from '../../project-metadata'
 import { terminalSessions } from '../../terminal-session'
 import { TerminalView, type PendingTerminalTab } from '../../terminal-view'
 import { terminalTarget, worktreeTarget } from '../../workspace-navigation'
 import { useWorkspaceNavigate } from '../../workspace-router-navigation'
 import { notifyError } from '../notifications/error-notifications'
+import { useProjectSwitcher } from '../sidebar/workspace-shell'
 
 export function TerminalWorkspace({
   projects,
@@ -26,10 +28,6 @@ export function TerminalWorkspace({
   presetsLoading,
   presetsError,
   dialogOpen,
-  projectSwitcherOpen,
-  isMobile,
-  drawerOpen,
-  setDrawerOpen,
   onSelectTerminal,
   onManagePresets
 }: {
@@ -42,14 +40,16 @@ export function TerminalWorkspace({
   presetsLoading: boolean
   presetsError: boolean
   dialogOpen: boolean
-  projectSwitcherOpen: boolean
-  isMobile: boolean
-  drawerOpen: boolean
-  setDrawerOpen: (open: boolean) => void
   onSelectTerminal: (terminal: TerminalRecord) => void
   onManagePresets: (trigger?: HTMLElement | null) => void
 }) {
   const queryClient = useQueryClient()
+  const {
+    isMobile,
+    openMobile: drawerOpen,
+    closeMobileWithoutFocusRestore
+  } = useSidebar()
+  const { open: projectSwitcherOpen } = useProjectSwitcher()
   const location = useLocation()
   const navigateToWorkspace = useWorkspaceNavigate()
   const closingTerminalIdsRef = useRef(new Set<string>())
@@ -227,7 +227,7 @@ export function TerminalWorkspace({
     selectedPendingTerminalIdRef.current = pendingTerminal.id
     setPendingTerminals((current) => [...current, pendingTerminal])
     setSelectedPendingTerminalId(pendingTerminal.id)
-    setDrawerOpen(false)
+    closeMobileWithoutFocusRestore()
     createTerminal.mutate({
       worktreeId: selectedWorktree.id,
       name: input.name,

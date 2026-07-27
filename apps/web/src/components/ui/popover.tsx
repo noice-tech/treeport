@@ -16,20 +16,27 @@ function PopoverContent({
   className,
   align = 'start',
   sideOffset = 6,
+  portalled = true,
   ...props
-}: React.ComponentProps<typeof PopoverPrimitive.Content>) {
-  return (
-    <PopoverPrimitive.Portal>
-      <PopoverPrimitive.Content
-        align={align}
-        sideOffset={sideOffset}
-        className={cn(
-          'z-100 w-52 rounded-lg bg-zinc-900 p-3 text-zinc-200 shadow-xl ring-1 ring-white/10 outline-none',
-          className
-        )}
-        {...props}
-      />
-    </PopoverPrimitive.Portal>
+}: React.ComponentProps<typeof PopoverPrimitive.Content> & {
+  portalled?: boolean
+}) {
+  const content = (
+    <PopoverPrimitive.Content
+      align={align}
+      sideOffset={sideOffset}
+      className={cn(
+        'z-100 w-52 rounded-lg bg-zinc-900 p-3 text-zinc-200 shadow-xl ring-1 ring-white/10 outline-none',
+        className
+      )}
+      {...props}
+    />
+  )
+
+  return portalled ? (
+    <PopoverPrimitive.Portal>{content}</PopoverPrimitive.Portal>
+  ) : (
+    content
   )
 }
 
