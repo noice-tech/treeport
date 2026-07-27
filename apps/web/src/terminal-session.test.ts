@@ -1105,6 +1105,37 @@ describe('TerminalSessionManager', () => {
     expect(sessions.get('one')?.disposed).toBe(true)
   })
 
+  it('keeps retained sessions alive until their final release without dropping daemon metadata', async () => {
+    const { manager, sessions } = fixture()
+    manager.applyRuntimeMetadata({
+      terminalId: 'one',
+      title: 'Pi',
+      progress: { state: 'normal', value: 25 },
+      progressStartedAt: '2026-01-01T00:00:00.000Z',
+      progressClearedAt: null,
+      bell: null
+    })
+    const first = manager.acquire('one')
+    const second = manager.acquire('one')
+
+    manager.release('one')
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(first).toBe(second)
+    expect(sessions.get('one')?.disposed).toBe(false)
+    expect(manager.getProgressSnapshot().get('one')).toEqual({
+      state: 'normal',
+      value: 25
+    })
+
+    manager.release('one')
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(sessions.get('one')?.disposed).toBe(true)
+    expect(manager.getProgressSnapshot().get('one')).toEqual({
+      state: 'normal',
+      value: 25
+    })
+  })
+
   it('does not derive durable attention from browser-observed BEL output', () => {
     const { acknowledgeBell, manager, sessions } = fixture()
     manager.acquire('one')
