@@ -2060,6 +2060,7 @@ export class TreeportService {
     }
 
     this.projectLocks.add(projectId)
+    let projectLockHeld = true
     let worktreePath: string
     let wrapperPath: string
     let project!: ProjectRecord
@@ -2202,6 +2203,10 @@ export class TreeportService {
         projectId,
         worktreeId: worktree.id
       })
+
+      this.projectLocks.delete(projectId)
+      projectLockHeld = false
+
       let terminal: TerminalRecord | null = null
       let terminalError: string | null = null
       let setupError: string | null = null
@@ -2229,8 +2234,7 @@ export class TreeportService {
               ...(initialTerminal.initialSize
                 ? { initialSize: initialTerminal.initialSize }
                 : {})
-            },
-            true
+            }
           )
         } catch (error) {
           terminalError = error instanceof Error ? error.message : String(error)
@@ -2267,7 +2271,9 @@ export class TreeportService {
         setupError
       }
     } finally {
-      this.projectLocks.delete(projectId)
+      if (projectLockHeld) {
+        this.projectLocks.delete(projectId)
+      }
     }
   }
 
@@ -2413,8 +2419,7 @@ export class TreeportService {
       setup?: { tasks: WorktreeSetupTask[]; error: string | null }
       returnToShell?: boolean
       initialSize?: TerminalSize
-    },
-    allowProjectLock = false
+    }
   ): Promise<TerminalRecord> {
     await this.requireAvailableWorktree(worktreeId)
     try {
@@ -2424,7 +2429,7 @@ export class TreeportService {
       }
 
       if (
-        (!allowProjectLock && this.projectLocks.has(worktree.projectId)) ||
+        this.projectLocks.has(worktree.projectId) ||
         this.worktreeLocks.has(worktreeId) ||
         worktree.status !== 'active' ||
         worktree.prunable

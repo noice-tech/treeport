@@ -1816,6 +1816,9 @@ describe('TreeportService with injected command adapters', () => {
     expect(service.getWorktree(linked.id).cleanupError).toMatch(
       /Terminals were stopped/
     )
+    await expect(
+      service.createTerminal(linked.id, 'Blocked after failed cleanup')
+    ).rejects.toMatchObject({ code: 'WORKTREE_BUSY' })
   })
 
   it('rejects removal when reachability, dirty categories, or terminal impact changed', async () => {
@@ -2004,6 +2007,9 @@ describe('TreeportService with injected command adapters', () => {
       duringRemoval.worktrees.find((worktree) => worktree.id === linked.id)
     ).toMatchObject({ status: 'cleaning' })
     expect(service.getOperation(operation.id).status).toBe('running')
+    await expect(
+      service.createTerminal(linked.id, 'Blocked during removal')
+    ).rejects.toMatchObject({ code: 'WORKTREE_BUSY' })
     await expect(fs.stat(linked.path)).resolves.toBeTruthy()
     expect(events.filter((event) => event === 'remove.completed')).toHaveLength(
       0
@@ -2015,6 +2021,9 @@ describe('TreeportService with injected command adapters', () => {
     )
     await expect(fs.stat(linked.path)).rejects.toMatchObject({ code: 'ENOENT' })
     expect(service.database.worktree(linked.id)).toBeNull()
+    await expect(
+      service.createTerminal(linked.id, 'Blocked after removal')
+    ).rejects.toMatchObject({ code: 'WORKTREE_NOT_FOUND' })
     expect(events.filter((event) => event === 'remove.completed')).toHaveLength(
       1
     )
@@ -2600,7 +2609,7 @@ describe('TreeportService with injected command adapters', () => {
     await expect(fs.readFile(marker, 'utf8')).resolves.toBe('external')
   })
 
-  it('queues removal while headless setup is still running', async () => {
+  it('creates terminals in active worktrees and queues removal while headless setup is running', async () => {
     const { main, runner, service } = await fixture()
     await fs.mkdir(path.join(main, '.zed'), { recursive: true })
     await fs.writeFile(
@@ -2619,19 +2628,32 @@ describe('TreeportService with injected command adapters', () => {
       releaseSetup = resolve
     })
 
-    const creating = service.createWorktree(
-      project.id,
-      'setup-locked',
-      'default'
-    )
+    let creationSettled = false
+    const creating = service
+      .createWorktree(project.id, 'setup-locked', 'default')
+      .finally(() => {
+        creationSettled = true
+      })
     await vi.waitFor(() =>
       expect(
         runner.calls.some((call) => call.executable === 'hold-setup')
       ).toBe(true)
     )
-    const linked = service
-      .getProject(project.id)
-      .worktrees.find((worktree) => worktree.name === 'setup-locked')!
+    const setupProject = service.getProject(project.id)
+    const linked = setupProject.worktrees.find(
+      (worktree) => worktree.name === 'setup-locked'
+    )!
+    const mainWorktree = setupProject.worktrees.find(
+      (worktree) => worktree.kind === 'main'
+    )!
+    const terminalOutcome = await service
+      .createTerminal(mainWorktree.id, 'Created during setup', ['pi'])
+      .then(
+        (terminal) => ({ terminal, error: null }),
+        (error: unknown) => ({ terminal: null, error })
+      )
+    expect(creationSettled).toBe(false)
+
     const preview = await service.removePreview(linked.id)
     let removalSettled = false
     const removing = service
@@ -2658,6 +2680,14 @@ describe('TreeportService with injected command adapters', () => {
       error: { code: 'REMOVE_PREVIEW_STALE' }
     })
     expect(service.getWorktree(linked.id).status).toBe('active')
+    expect(terminalOutcome).toMatchObject({
+      terminal: {
+        worktreeId: mainWorktree.id,
+        name: 'Created during setup',
+        argv: ['pi']
+      },
+      error: null
+    })
   })
 
   it("does not release another mutation's project lock after path registration is refused", async () => {
