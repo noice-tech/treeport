@@ -80,6 +80,8 @@ const EMPTY_SNAPSHOT: TerminalSessionSnapshot = {
   bellSerial: 0,
   exitSerial: 0,
   fileTransfer: null,
+  hasSelection: false,
+  pasteRequestSerial: 0,
   error: null
 }
 
@@ -106,7 +108,11 @@ export function TerminalView({
   const [session, setSession] = useState<TerminalSession | null>(null)
   const [ctrl, setCtrl] = useState(false)
   const [alt, setAlt] = useState(false)
+  const [pasteOpen, setPasteOpen] = useState(false)
+  const [pasteValue, setPasteValue] = useState('')
   const lastExitSerial = useRef(0)
+  const lastPasteRequestSerial = useRef(0)
+  const lastPasteRequestSessionId = useRef<string | null>(null)
   const lastExitSessionId = useRef<string | null>(null)
   const requestTerminalFocus = useRequestTerminalFocus()
 
@@ -160,6 +166,21 @@ export function TerminalView({
   })
 
   useEffect(() => {
+    if (lastPasteRequestSessionId.current !== terminal?.id) {
+      lastPasteRequestSessionId.current = terminal?.id ?? null
+      lastPasteRequestSerial.current = snapshot.pasteRequestSerial
+      setPasteOpen(false)
+      setPasteValue('')
+      return
+    }
+
+    if (snapshot.pasteRequestSerial > lastPasteRequestSerial.current) {
+      lastPasteRequestSerial.current = snapshot.pasteRequestSerial
+      setPasteOpen(true)
+    }
+  }, [snapshot.pasteRequestSerial, terminal?.id])
+
+  useEffect(() => {
     if (lastExitSessionId.current !== terminal?.id) {
       lastExitSessionId.current = terminal?.id ?? null
       lastExitSerial.current = snapshot.exitSerial
@@ -193,6 +214,29 @@ export function TerminalView({
     activeSession?.sendArrow(direction, alt)
     setCtrl(false)
     setAlt(false)
+  }
+
+  const pasteIntoTerminal = (text: string) => {
+    if (!text) {
+      return
+    }
+
+    activeSession?.pasteText(text)
+    setPasteValue('')
+    setPasteOpen(false)
+  }
+
+  const requestPaste = () => {
+    activeSession?.requestControl()
+    setPasteOpen(true)
+    if (!navigator.clipboard) {
+      return
+    }
+
+    void navigator.clipboard.readText().then(
+      (text) => pasteIntoTerminal(text),
+      () => undefined
+    )
   }
 
   const visibleTitle = terminal
@@ -473,6 +517,84 @@ export function TerminalView({
               ref={hostRef}
               onMouseDown={() => activeSession?.focus({ requestControl: true })}
             />
+            {pasteOpen && (
+              <div
+                className="absolute inset-x-3 bottom-3 z-20 grid gap-2 rounded-lg bg-zinc-900 p-3 shadow-xl ring-1 ring-white/15"
+                role="dialog"
+                aria-label="Paste into terminal"
+              >
+                <label
+                  htmlFor="terminal-paste-input"
+                  className="text-xs font-medium text-zinc-200"
+                >
+                  Paste text here
+                </label>
+                <textarea
+                  id="terminal-paste-input"
+                  autoFocus
+                  rows={2}
+                  value={pasteValue}
+                  placeholder="Touch and hold here, then choose Paste"
+                  className="min-h-16 resize-none rounded-md border border-white/10 bg-zinc-950 px-3 py-2 text-base text-zinc-100 outline-none focus:border-cyan-500"
+                  onChange={(event) => setPasteValue(event.target.value)}
+                  onPaste={(event) => {
+                    const text = event.clipboardData.getData('text')
+                    if (!text) {
+                      return
+                    }
+
+                    event.preventDefault()
+                    pasteIntoTerminal(text)
+                  }}
+                />
+                <div className="flex justify-end gap-2">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      setPasteValue('')
+                      setPasteOpen(false)
+                    }}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={!pasteValue}
+                    onClick={() => pasteIntoTerminal(pasteValue)}
+                  >
+                    Send
+                  </Button>
+                </div>
+              </div>
+            )}
+            {snapshot.hasSelection && !pasteOpen && (
+              <div
+                className="terminal-selection-actions absolute right-3 bottom-3 z-10 overflow-hidden rounded-md bg-zinc-800 shadow-lg ring-1 ring-white/15 max-[700px]:bottom-2"
+                aria-label="Terminal text selection"
+              >
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="rounded-none border-r border-white/10 px-3 text-zinc-100"
+                  onClick={() => activeSession?.copySelection()}
+                >
+                  Copy
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="rounded-none px-3 text-zinc-300"
+                  onClick={() => activeSession?.clearSelection()}
+                >
+                  Clear
+                </Button>
+              </div>
+            )}
             {(snapshot.degraded || snapshot.fileTransfer) && (
               <div className="pointer-events-none absolute inset-x-0 top-3 z-10 flex flex-col items-center gap-2">
                 {snapshot.degraded && (
@@ -556,7 +678,7 @@ export function TerminalView({
         )}
         {terminal && (
           <div
-            className="accessory-row hidden min-w-0 overflow-x-auto border-t border-white/8 bg-zinc-900 pt-1 pr-[env(safe-area-inset-right)] pb-[calc(0.25rem+env(safe-area-inset-bottom))] pl-[env(safe-area-inset-left)] max-[700px]:flex [&_button]:h-11 [&_button]:min-w-11 [&_button]:grow [&_button]:rounded-none [&_button]:border-r [&_button]:border-white/8 [&_button]:text-sm [&_button:last-child]:border-r-0"
+            className="accessory-row hidden min-w-0 touch-pan-x overflow-x-auto overflow-y-hidden border-t border-white/8 bg-zinc-900 pt-1 pr-[env(safe-area-inset-right)] pb-[calc(0.25rem+env(safe-area-inset-bottom))] pl-[env(safe-area-inset-left)] max-[700px]:flex [&_button]:h-11 [&_button]:min-w-11 [&_button]:grow [&_button]:rounded-none [&_button]:border-r [&_button]:border-white/8 [&_button]:text-sm [&_button:last-child]:border-r-0"
             aria-label="Terminal accessory keys"
             onPointerDownCapture={() => activeSession?.requestControl()}
           >
@@ -582,6 +704,9 @@ export function TerminalView({
               onClick={() => setAlt((value) => !value)}
             >
               Alt
+            </Button>
+            <Button variant="ghost" type="button" onClick={requestPaste}>
+              Paste
             </Button>
             <Button
               variant="ghost"

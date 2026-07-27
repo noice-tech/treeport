@@ -105,6 +105,16 @@ code {
   visibility: hidden;
 }
 
+.terminal-selection-actions {
+  display: none;
+}
+
+@media (pointer: coarse) {
+  .terminal-selection-actions {
+    display: flex;
+  }
+}
+
 .terminal-session-host.terminal-file-drag::after {
   position: absolute;
   z-index: 10;
