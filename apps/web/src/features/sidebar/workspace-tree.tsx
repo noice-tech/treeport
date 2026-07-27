@@ -64,7 +64,7 @@ function WorktreeShell({
     pending
       ? 'text-zinc-300'
       : selected
-        ? 'selected text-zinc-50 min-[701px]:bg-white/8'
+        ? 'selected text-zinc-50 min-[701px]:bg-white/8!'
         : 'text-zinc-300 hover:bg-white/5 hover:text-zinc-50',
     'max-[700px]:flex-1 max-[700px]:hover:bg-transparent',
     (pending || busy) && 'motion-safe:animate-pulse',
@@ -303,7 +303,7 @@ export function WorkspaceTree({
                         </div>
                       )}
                     </div>
-                    <SidebarMenuSub className="terminal-list ml-4 gap-px border-white/6 pl-2 min-[701px]:ml-2.5 min-[701px]:pl-1.5">
+                    <SidebarMenuSub className="terminal-list mr-0 ml-4 gap-px border-white/6 pr-0 pl-2 min-[701px]:ml-2.5 min-[701px]:pl-1.5">
                       {worktree.terminals.map((terminal) => {
                         const needsAttention = bellAttention.has(terminal.id)
                         const progress = terminalProgress.get(terminal.id)
@@ -335,7 +335,7 @@ export function WorkspaceTree({
                                 className={cn(
                                   'terminal-row grid h-auto min-h-11 w-full min-w-0 grid-cols-[1.25rem_minmax(0,1fr)_0.5rem] gap-1.5 rounded-md px-2 py-1.5 text-left text-base/5 font-normal min-[701px]:min-h-7 min-[701px]:grid-cols-[1rem_minmax(0,1fr)_0.5rem] min-[701px]:gap-1 min-[701px]:py-0 min-[701px]:text-xs/4',
                                   selectedTerminalId === terminal.id
-                                    ? 'selected bg-cyan-400/8 text-cyan-50'
+                                    ? 'selected bg-cyan-400/8! text-cyan-50'
                                     : 'text-zinc-300 hover:bg-white/5 hover:text-zinc-100'
                                 )}
                                 onClick={() => selectTerminal(terminal)}

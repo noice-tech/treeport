@@ -18,7 +18,7 @@ import {
   PopoverContent,
   PopoverTrigger
 } from '../../components/ui/popover'
-import { SidebarMenuButton, useSidebar } from '../../components/ui/sidebar'
+import { useSidebar } from '../../components/ui/sidebar'
 import { cn } from '../../lib/utils'
 import { recentProjectsQueryOptions } from '../../project-metadata'
 import { terminalProgressLabel } from '../../terminal-session'
@@ -149,9 +149,10 @@ export function ProjectSwitcher({
       }}
     >
       <PopoverTrigger asChild>
-        <SidebarMenuButton
+        <Button
           ref={projectSwitcher.triggerRef}
           type="button"
+          variant="ghost"
           className="h-9 min-w-0 flex-1 justify-start gap-2 px-2 text-sm text-zinc-100 hover:bg-white/5"
           aria-label={
             activeProject
@@ -169,7 +170,7 @@ export function ProjectSwitcher({
             {activeProject?.name ?? 'Open project'}
           </span>
           <ChevronUpDownIcon className="ml-auto shrink-0 fill-zinc-600" />
-        </SidebarMenuButton>
+        </Button>
       </PopoverTrigger>
       <PopoverContent
         align="start"

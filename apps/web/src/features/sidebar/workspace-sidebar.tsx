@@ -6,8 +6,6 @@ import {
   Sidebar,
   SidebarContent,
   SidebarHeader,
-  SidebarMenu,
-  SidebarMenuItem,
   SidebarTrigger,
   useSidebar
 } from '../../components/ui/sidebar'
@@ -31,8 +29,8 @@ export function WorkspaceSidebar({
       mobileDescription="Navigate projects, worktrees, and terminals."
       className="sidebar relative min-h-0 border-r border-white/8 bg-zinc-900/80 text-zinc-200 backdrop-blur-xl"
     >
-      <SidebarHeader className="gap-0 border-b border-white/8 p-2 max-[700px]:pt-0">
-        <div className="hidden justify-end py-2 max-[700px]:flex">
+      <SidebarHeader className="gap-0 border-b border-white/8 p-0">
+        <div className="hidden justify-end p-2 max-[700px]:flex">
           <SidebarTrigger
             type="button"
             size="icon-sm"
@@ -43,9 +41,9 @@ export function WorkspaceSidebar({
             <span className="touch-target" aria-hidden="true" />
           </SidebarTrigger>
         </div>
-        <SidebarMenu>
-          <SidebarMenuItem>{projectSwitcher}</SidebarMenuItem>
-        </SidebarMenu>
+        <div className="flex items-center gap-1 p-2 max-[700px]:pt-0">
+          {projectSwitcher}
+        </div>
       </SidebarHeader>
       <SidebarContent className="gap-0 overflow-hidden">
         {children}
