@@ -3,7 +3,8 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import type { TerminalSize, TerminalStatus } from '@treeport/shared'
 import type { CommandRunner } from './command'
-import { runChecked } from './command'
+import { resolveExecutablePath, runChecked } from './command'
+import { prepareShellIntegration } from './shell-integration'
 import type { WorktreeSetupTask } from './setup'
 
 export const generateTmuxSocketName = (): string =>
@@ -16,6 +17,8 @@ export interface LaunchSpec {
   fallbackArgv?: string[]
   cwd: string
   env: Record<string, string>
+  shellIntegrationDir?: string
+  tmuxExecutable?: string
   setupTasks?: WorktreeSetupTask[]
   setupError?: string
 }
@@ -28,6 +31,7 @@ export interface TmuxSessionState {
 export interface TmuxSessionTitleState {
   paneTitle: string | null
   currentCommand: string | null
+  commandLine?: string | null
   shellTitle?: string | null
 }
 
@@ -104,6 +108,7 @@ bind-key -T root WheelUpPane if-shell -F '#{||:#{alternate_on},#{pane_in_mode},#
 export class TmuxAdapter {
   readonly configPath: string
   readonly specsDir: string
+  readonly shellIntegrationDir: string
   private readonly launcherPath: string | undefined
   private readonly hostEnvironment: NodeJS.ProcessEnv
   private readonly platform: NodeJS.Platform
@@ -123,15 +128,23 @@ export class TmuxAdapter {
   ) {
     this.configPath = path.join(runtimeDir, 'tmux.conf')
     this.specsDir = path.join(runtimeDir, 'launch-specs')
+    this.shellIntegrationDir = path.join(runtimeDir, 'shell-integration')
     this.launcherPath = launcherPath
     this.hostEnvironment = host.environment ?? process.env
     this.platform = host.platform ?? process.platform
     this.uid = host.uid ?? process.getuid?.()
   }
 
-  async initialize(): Promise<void> {
+  async initialize(): Promise<boolean> {
     await fs.mkdir(this.specsDir, { recursive: true, mode: 0o700 })
-    await fs.writeFile(this.configPath, TMUX_CONFIG, { mode: 0o600 })
+    const [, shellIntegrationReady] = await Promise.all([
+      fs.writeFile(this.configPath, TMUX_CONFIG, { mode: 0o600 }),
+      prepareShellIntegration(this.shellIntegrationDir).then(
+        () => true,
+        () => false
+      )
+    ])
+    return shellIntegrationReady
   }
 
   private base(socketName: string): string[] {
@@ -175,7 +188,7 @@ export class TmuxAdapter {
     await previousCreation
 
     try {
-      await this.initialize()
+      const shellIntegrationReady = await this.initialize()
       let sshAuthSock = this.hostEnvironment.SSH_AUTH_SOCK?.trim()
       if (
         !sshAuthSock &&
@@ -235,6 +248,15 @@ export class TmuxAdapter {
             ...(sshAuthSock ? { SSH_AUTH_SOCK: sshAuthSock } : {}),
             ...input.env
           },
+          ...(shellIntegrationReady
+            ? {
+                shellIntegrationDir: this.shellIntegrationDir,
+                tmuxExecutable: resolveExecutablePath(
+                  this.executable,
+                  this.hostEnvironment
+                )
+              }
+            : {}),
           ...(input.setupTasks?.length
             ? {
                 setupTasks: input.setupTasks.map((task) => ({
@@ -606,7 +628,7 @@ export class TmuxAdapter {
         '-p',
         '-t',
         sessionName,
-        '#{@treeport-shell-title}\t#{pane_current_command}\t#{pane_title}'
+        '#{@treeport-shell-title}\t#{pane_current_command}\t#{@treeport-command}\t#{pane_title}'
       ],
       env: this.environment(),
       timeoutMs: 10_000
@@ -617,7 +639,12 @@ export class TmuxAdapter {
 
     const firstSeparator = result.stdout.indexOf('\t')
     const secondSeparator = result.stdout.indexOf('\t', firstSeparator + 1)
-    if (firstSeparator === -1 || secondSeparator === -1) {
+    const thirdSeparator = result.stdout.indexOf('\t', secondSeparator + 1)
+    if (
+      firstSeparator === -1 ||
+      secondSeparator === -1 ||
+      thirdSeparator === -1
+    ) {
       return null
     }
 
@@ -632,8 +659,10 @@ export class TmuxAdapter {
 
     const currentCommand =
       result.stdout.slice(firstSeparator + 1, secondSeparator).trim() || null
-    const paneTitle = result.stdout.slice(secondSeparator + 1).trim() || null
-    return { paneTitle, currentCommand, shellTitle }
+    const commandLine =
+      result.stdout.slice(secondSeparator + 1, thirdSeparator).trim() || null
+    const paneTitle = result.stdout.slice(thirdSeparator + 1).trim() || null
+    return { paneTitle, currentCommand, commandLine, shellTitle }
   }
 
   async setSessionShellTitle(
