@@ -1,12 +1,4 @@
-import {
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type CSSProperties,
-  type KeyboardEvent as ReactKeyboardEvent,
-  type PointerEvent as ReactPointerEvent
-} from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useLocation } from '@tanstack/react-router'
 import type {
@@ -18,14 +10,26 @@ import type {
 import { TerminalBellNotifications } from './features/notifications/use-bell-notifications'
 import { OpenProjectDialog } from './features/projects/open-project-dialog'
 import { useProjectWorkflows } from './features/projects/project-workflows'
-import { WorkspaceSidebar } from './features/sidebar/workspace-sidebar'
+import {
+  ProjectSwitcher,
+  ProjectSwitcherShortcut
+} from './features/sidebar/project-switcher'
+import {
+  WorkspaceMobileHeader,
+  WorkspaceSidebar
+} from './features/sidebar/workspace-sidebar'
+import { WorkspaceTree } from './features/sidebar/workspace-tree'
+import {
+  useProjectSwitcher,
+  WorkspaceMain,
+  WorkspaceShell
+} from './features/sidebar/workspace-shell'
 import { TerminalPresetsDialog } from './features/terminal-presets/terminal-presets-dialog'
 import { TerminalWorkspace } from './features/terminals/terminal-workspace'
 import { CreateWorktreeDialog } from './features/worktrees/create-worktree-dialog'
 import { RemoveWorktreeDialog } from './features/worktrees/remove-worktree-dialog'
 import { useWorktreeWorkflows } from './features/worktrees/worktree-workflows'
-import { focusableElements, trapTabKey } from './lib/focus'
-import { cn } from './lib/utils'
+import { useSidebar } from './components/ui/sidebar'
 import { METADATA_DEGRADED_GRACE_MS } from './metadata-sync'
 import { useProjectEventsBridge } from './project-events-bridge'
 import {
@@ -42,10 +46,6 @@ import {
 } from './workspace-navigation'
 import { useWorkspaceNavigate } from './workspace-router-navigation'
 
-const MIN_SIDEBAR_WIDTH = 240
-const MAX_SIDEBAR_WIDTH = 420
-const DEFAULT_SIDEBAR_WIDTH = 272
-
 type AppDialog =
   | { type: 'project' }
   | { type: 'worktree'; project: ProjectRecord }
@@ -53,11 +53,15 @@ type AppDialog =
   | { type: 'remove'; worktree: WorktreeRecord; preview: RemovePreview }
   | null
 
-function clampSidebarWidth(width: number): number {
-  return Math.min(MAX_SIDEBAR_WIDTH, Math.max(MIN_SIDEBAR_WIDTH, width))
+export default function App() {
+  return (
+    <WorkspaceShell>
+      <WorkspaceApp />
+    </WorkspaceShell>
+  )
 }
 
-export default function App() {
+function WorkspaceApp() {
   const desktopBridge = window.treeportDesktop
   const navigateToWorkspace = useWorkspaceNavigate()
   const location = useLocation()
@@ -76,31 +80,17 @@ export default function App() {
   const selectedTerminal = workspaceResolution?.selection.terminal ?? null
   const selectedTerminalId = selectedTerminal?.id ?? null
   const activeProject = selectedProject
-  const [drawerOpen, setDrawerOpen] = useState(false)
-  const [projectSwitcherOpen, setProjectSwitcherOpen] = useState(false)
-  const [isMobile, setIsMobile] = useState(false)
-  const [desktopFullscreen, setDesktopFullscreen] = useState(false)
-  const desktopPlatform = desktopBridge?.platform
-  const showDesktopTitlebar =
-    desktopBridge !== undefined &&
-    !(desktopPlatform === 'darwin' && desktopFullscreen)
+  const {
+    isMobile,
+    openMobile: drawerOpen,
+    setOpenMobile: setDrawerOpen,
+    closeMobileWithoutFocusRestore: closeDrawerAfterNavigation
+  } = useSidebar()
+  const projectSwitcher = useProjectSwitcher()
+  const projectSwitcherOpen = projectSwitcher.open
   const [dialog, setDialog] = useState<AppDialog>(null)
-  const [sidebarWidth, setSidebarWidth] = useState(() => {
-    const storedWidth = localStorage.getItem('treeport-sidebar-width')
-
-    const savedWidth = Number.parseInt(storedWidth ?? '', 10)
-    return Number.isFinite(savedWidth)
-      ? clampSidebarWidth(savedWidth)
-      : DEFAULT_SIDEBAR_WIDTH
-  })
-  const [resizingSidebar, setResizingSidebar] = useState(false)
   const eventsDisconnected = useProjectEventsBridge(projectsQuery.data)
   const [showSyncDegraded, setShowSyncDegraded] = useState(false)
-  const resizeOrigin = useRef<{ pointerX: number; width: number } | null>(null)
-  const drawerRef = useRef<HTMLElement | null>(null)
-  const drawerTriggerRef = useRef<HTMLButtonElement | null>(null)
-  const projectSwitcherTriggerRef = useRef<HTMLButtonElement | null>(null)
-  const projectSwitcherDismissedIntoTerminalRef = useRef(false)
   const dialogTriggerRef = useRef<HTMLElement | null>(null)
   const openDialog = (
     nextDialog: Exclude<AppDialog, null>,
@@ -110,36 +100,6 @@ export default function App() {
       trigger ?? (document.activeElement as HTMLElement | null)
     setDialog(nextDialog)
   }
-
-  useEffect(() => {
-    const keydown = (event: KeyboardEvent) => {
-      const usesMacKeyboard = /Mac|iPhone|iPad|iPod/.test(navigator.platform)
-      const modifierPressed = usesMacKeyboard
-        ? event.metaKey && !event.ctrlKey
-        : event.ctrlKey && !event.metaKey
-
-      if (
-        event.isComposing ||
-        event.key.toLocaleLowerCase() !== 'p' ||
-        !event.shiftKey ||
-        event.altKey ||
-        !modifierPressed ||
-        dialog
-      ) {
-        return
-      }
-
-      event.preventDefault()
-      event.stopPropagation()
-      if (isMobile) {
-        setDrawerOpen(true)
-      }
-
-      setProjectSwitcherOpen(true)
-    }
-    document.addEventListener('keydown', keydown, true)
-    return () => document.removeEventListener('keydown', keydown, true)
-  }, [isMobile, dialog])
 
   useEffect(() => {
     if (!workspaceResolution || workspaceResolution.canonical) {
@@ -192,16 +152,6 @@ export default function App() {
   }, [eventsDisconnected, projectsQuery.data, projectsQuery.isRefetchError])
 
   useEffect(() => {
-    const media = window.matchMedia('(max-width: 700px)')
-    const update = () => setIsMobile(media.matches)
-    update()
-    media.addEventListener('change', update)
-    return () => media.removeEventListener('change', update)
-  }, [])
-
-  useEffect(() => desktopBridge?.onFullscreenChange(setDesktopFullscreen), [])
-
-  useEffect(() => {
     if (!desktopBridge) {
       return
     }
@@ -222,57 +172,6 @@ export default function App() {
     })
   }, [activeProject, drawerOpen, isMobile, dialog, projectSwitcherOpen])
 
-  useEffect(() => {
-    if (!isMobile || !drawerOpen) {
-      return
-    }
-
-    const drawer = drawerRef.current
-    if (!drawer) {
-      return
-    }
-
-    const previouslyFocused = document.activeElement as HTMLElement | null
-    const frame = window.requestAnimationFrame(() => {
-      focusableElements(drawer)[0]?.focus()
-    })
-    return () => {
-      window.cancelAnimationFrame(frame)
-      if (previouslyFocused?.isConnected) {
-        previouslyFocused.focus()
-      } else {
-        drawerTriggerRef.current?.focus()
-      }
-    }
-  }, [drawerOpen, isMobile])
-
-  useEffect(() => {
-    if (!isMobile || !drawerOpen || dialog || projectSwitcherOpen) {
-      return
-    }
-
-    const drawer = drawerRef.current
-    if (!drawer) {
-      return
-    }
-
-    const keydown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented) {
-        return
-      }
-
-      if (event.key === 'Escape') {
-        event.preventDefault()
-        setDrawerOpen(false)
-        return
-      }
-
-      trapTabKey(event, drawer)
-    }
-    document.addEventListener('keydown', keydown)
-    return () => document.removeEventListener('keydown', keydown)
-  }, [drawerOpen, isMobile, dialog, projectSwitcherOpen])
-
   const activeProjectTerminals = useMemo(
     () =>
       activeProject?.worktrees.flatMap((worktree) => worktree.terminals) ?? [],
@@ -284,7 +183,7 @@ export default function App() {
       void navigateToWorkspace(target)
     }
 
-    setDrawerOpen(false)
+    closeDrawerAfterNavigation()
   }
 
   const selectWorktree = (worktree: WorktreeRecord) => {
@@ -293,7 +192,7 @@ export default function App() {
       void navigateToWorkspace(target)
     }
 
-    setDrawerOpen(false)
+    closeDrawerAfterNavigation()
   }
 
   const rememberedTargetForProject = (project: ProjectRecord) =>
@@ -306,7 +205,8 @@ export default function App() {
 
   const selectProject = (project: ProjectRecord) => {
     void navigateToWorkspace(rememberedTargetForProject(project))
-    setProjectSwitcherOpen(false)
+    projectSwitcher.setOpen(false)
+    closeDrawerAfterNavigation()
   }
 
   const { closingProjectId, requestProjectClose, projectOpened } =
@@ -314,10 +214,11 @@ export default function App() {
       projects,
       selectedProject,
       targetForProject: rememberedTargetForProject,
-      projectSwitcherTriggerRef,
-      closeProjectUi: () => setProjectSwitcherOpen(false),
+      projectSwitcherTriggerRef: projectSwitcher.triggerRef,
+      closeProjectUi: () => projectSwitcher.setOpen(false),
       openedProjectUi: () => {
-        setProjectSwitcherOpen(false)
+        projectSwitcher.setOpen(false)
+        closeDrawerAfterNavigation()
         setDialog(null)
       }
     })
@@ -328,7 +229,13 @@ export default function App() {
     prepareRemoval,
     confirmRemoval
   } = useWorktreeWorkflows({
-    setDrawerOpen,
+    setDrawerOpen: (open) => {
+      if (open) {
+        setDrawerOpen(true)
+      } else {
+        closeDrawerAfterNavigation()
+      }
+    },
     onWorktreeSubmitted: () => setDialog(null),
     onRemovalNeedsConfirmation: (worktree, preview, trigger) =>
       openDialog({ type: 'remove', worktree, preview }, trigger),
@@ -341,143 +248,55 @@ export default function App() {
     selectedTerminalId
   })
 
-  const setAndSaveSidebarWidth = (width: number) => {
-    const nextWidth = clampSidebarWidth(width)
-    setSidebarWidth(nextWidth)
-    localStorage.setItem('treeport-sidebar-width', String(nextWidth))
-  }
-
-  const startSidebarResize = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (event.button !== 0) {
-      return
-    }
-
-    resizeOrigin.current = { pointerX: event.clientX, width: sidebarWidth }
-    event.currentTarget.setPointerCapture(event.pointerId)
-    setResizingSidebar(true)
-  }
-
-  const resizeSidebar = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (!resizeOrigin.current) {
-      return
-    }
-
-    setAndSaveSidebarWidth(
-      resizeOrigin.current.width + event.clientX - resizeOrigin.current.pointerX
-    )
-  }
-
-  const stopSidebarResize = (event: ReactPointerEvent<HTMLDivElement>) => {
-    resizeOrigin.current = null
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId)
-    }
-
-    setResizingSidebar(false)
-  }
-
-  const resizeSidebarWithKeyboard = (
-    event: ReactKeyboardEvent<HTMLDivElement>
-  ) => {
-    let nextWidth = sidebarWidth
-    if (event.key === 'ArrowLeft') {
-      nextWidth -= event.shiftKey ? 32 : 16
-    } else if (event.key === 'ArrowRight') {
-      nextWidth += event.shiftKey ? 32 : 16
-    } else if (event.key === 'Home') {
-      nextWidth = MIN_SIDEBAR_WIDTH
-    } else if (event.key === 'End') {
-      nextWidth = MAX_SIDEBAR_WIDTH
-    } else {
-      return
-    }
-
-    event.preventDefault()
-    setAndSaveSidebarWidth(nextWidth)
-  }
-
   return (
-    <div
-      className={cn(
-        'app-frame isolate grid h-dvh grid-cols-[var(--sidebar-width)_minmax(0,1fr)] bg-zinc-950 max-[700px]:grid-cols-1',
-        showDesktopTitlebar
-          ? 'grid-rows-[2rem_minmax(0,1fr)] max-[700px]:grid-rows-[2rem_3.25rem_minmax(0,1fr)]'
-          : 'max-[700px]:grid-rows-[3.25rem_minmax(0,1fr)]',
-        resizingSidebar && 'select-none'
-      )}
-      style={{ '--sidebar-width': `${sidebarWidth}px` } as CSSProperties}
-    >
+    <>
       <TerminalBellNotifications
         projects={projects}
         projectsLoaded={projectsQuery.data !== undefined}
         selectedTerminalId={selectedTerminalId}
         navigateToWorkspace={navigateToWorkspace}
       />
-      {showDesktopTitlebar && (
-        <div
-          className="desktop-titlebar col-span-full h-8 bg-zinc-950"
-          data-treeport-desktop-titlebar
-          aria-hidden="true"
-        />
-      )}
-      <WorkspaceSidebar
-        projects={projects}
-        projectsPending={projectsQuery.isPending}
-        projectsError={projectsQuery.isError}
-        projectsLoaded={projectsQuery.data !== undefined}
-        onRetryProjects={() => void projectsQuery.refetch()}
-        activeProject={activeProject}
-        selectedWorktree={selectedWorktree}
+      <ProjectSwitcherShortcut blocked={dialog !== null} />
+      <WorkspaceMobileHeader
         selectedTerminalId={selectedTerminalId}
-        projectTerminals={activeProjectTerminals}
-        pendingWorktrees={pendingWorktrees}
-        pendingRemovals={pendingRemovals}
-        closingProjectId={closingProjectId}
-        drawerOpen={drawerOpen}
-        setDrawerOpen={setDrawerOpen}
-        isMobile={isMobile}
-        sidebarWidth={sidebarWidth}
-        resizingSidebar={resizingSidebar}
-        projectSwitcherOpen={projectSwitcherOpen}
-        setProjectSwitcherOpen={setProjectSwitcherOpen}
-        drawerRef={drawerRef}
-        drawerTriggerRef={drawerTriggerRef}
-        projectSwitcherTriggerRef={projectSwitcherTriggerRef}
-        projectSwitcherDismissedIntoTerminalRef={
-          projectSwitcherDismissedIntoTerminalRef
-        }
+        terminals={activeProjectTerminals}
         onSelectTerminal={selectTerminal}
-        onSelectWorktree={selectWorktree}
-        onSelectProject={selectProject}
-        onProjectOpened={projectOpened}
-        onRequestProjectClose={requestProjectClose}
-        onPrepareRemoval={prepareRemoval}
-        onOpenProjectDialog={(trigger) =>
-          openDialog({ type: 'project' }, trigger)
-        }
-        onOpenWorktreeDialog={(project, trigger) =>
-          openDialog({ type: 'worktree', project }, trigger)
-        }
-        minSidebarWidth={MIN_SIDEBAR_WIDTH}
-        maxSidebarWidth={MAX_SIDEBAR_WIDTH}
-        defaultSidebarWidth={DEFAULT_SIDEBAR_WIDTH}
-        onStartSidebarResize={startSidebarResize}
-        onResizeSidebar={resizeSidebar}
-        onStopSidebarResize={stopSidebarResize}
-        onResizeSidebarWithKeyboard={resizeSidebarWithKeyboard}
-        onSetSidebarWidth={setAndSaveSidebarWidth}
       />
-      <div
-        className="contents"
-        inert={isMobile && drawerOpen ? true : undefined}
-        aria-hidden={isMobile && drawerOpen ? true : undefined}
-        onPointerDownCapture={() => {
-          if (projectSwitcherOpen) {
-            projectSwitcherDismissedIntoTerminalRef.current = true
-            setProjectSwitcherOpen(false)
-          }
-        }}
+      <WorkspaceSidebar
+        projectSwitcher={
+          <ProjectSwitcher
+            projects={projects}
+            activeProject={activeProject}
+            closingProjectId={closingProjectId}
+            onSelectProject={selectProject}
+            onProjectOpened={projectOpened}
+            onRequestProjectClose={requestProjectClose}
+            onOpenProjectDialog={(trigger) =>
+              openDialog({ type: 'project' }, trigger)
+            }
+          />
+        }
       >
+        <WorkspaceTree
+          projects={projects}
+          projectsPending={projectsQuery.isPending}
+          projectsError={projectsQuery.isError}
+          projectsLoaded={projectsQuery.data !== undefined}
+          activeProject={activeProject}
+          selectedWorktree={selectedWorktree}
+          selectedTerminalId={selectedTerminalId}
+          pendingWorktrees={pendingWorktrees}
+          pendingRemovals={pendingRemovals}
+          onRetryProjects={() => void projectsQuery.refetch()}
+          onSelectTerminal={selectTerminal}
+          onSelectWorktree={selectWorktree}
+          onPrepareRemoval={prepareRemoval}
+          onOpenWorktreeDialog={(project, trigger) =>
+            openDialog({ type: 'worktree', project }, trigger)
+          }
+        />
+      </WorkspaceSidebar>
+      <WorkspaceMain>
         <TerminalWorkspace
           projects={projects}
           selectedProject={selectedProject}
@@ -488,17 +307,13 @@ export default function App() {
           presetsLoading={presetsQuery.isPending}
           presetsError={presetsQuery.isError}
           dialogOpen={dialog !== null}
-          projectSwitcherOpen={projectSwitcherOpen}
-          isMobile={isMobile}
-          drawerOpen={drawerOpen}
-          setDrawerOpen={setDrawerOpen}
           onSelectTerminal={selectTerminal}
           onManagePresets={(trigger) =>
             openDialog({ type: 'presets' }, trigger ?? undefined)
           }
         />
-      </div>
-      {showSyncDegraded && (
+      </WorkspaceMain>
+      {showSyncDegraded ? (
         <div
           className="fixed right-4 bottom-4 z-70 flex max-w-[min(30rem,calc(100vw-2rem))] items-center gap-3 rounded-lg bg-zinc-800 p-3 text-sm text-zinc-300 shadow-2xl ring-1 ring-white/10"
           role="status"
@@ -507,7 +322,7 @@ export default function App() {
         >
           <span>Updates paused; showing the last known project state.</span>
         </div>
-      )}
+      ) : null}
       <OpenProjectDialog
         open={dialog?.type === 'project'}
         onOpenChange={(open) => !open && setDialog(null)}
@@ -544,6 +359,6 @@ export default function App() {
         restoreFocusTo={dialogTriggerRef.current}
         onConfirm={confirmRemoval}
       />
-    </div>
+    </>
   )
 }
