@@ -1,0 +1,24 @@
+:root {
+  --sl-color-accent-low: #0f302d;
+  --sl-color-accent: #53dbc8;
+  --sl-color-accent-high: #b8fff2;
+  --sl-font: 'IBM Plex Sans', 'Avenir Next', Avenir, system-ui, sans-serif;
+  --sl-font-mono: 'IBM Plex Mono', 'SFMono-Regular', Consolas, monospace;
+}
+
+:root[data-theme='light'] {
+  --sl-color-accent-low: #c8f6ef;
+  --sl-color-accent: #087c70;
+  --sl-color-accent-high: #0a403b;
+}
+
+.hero > img,
+.hero .hero-html {
+  filter: drop-shadow(
+    0 1.5rem 3rem color-mix(in srgb, var(--sl-color-accent) 22%, transparent)
+  );
+}
+
+.sl-markdown-content code:not(:where(.not-content *)) {
+  border-radius: 0.3rem;
+}

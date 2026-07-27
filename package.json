@@ -7,6 +7,7 @@
     "dev": "node scripts/development.mjs",
     "dev:direct": "TREEPORT_HOST=127.0.0.1 TREEPORT_PORT=4780 TREEPORT_API_URL=http://127.0.0.1:4780 TREEPORT_WEB_PORT=5173 TREEPORT_DESKTOP_URL=http://127.0.0.1:5173 turbo run dev",
     "dev:desktop": "pnpm --parallel --filter @treeport/web --filter @treeport/desktop dev:desktop",
+    "dev:docs": "pnpm --filter @treeport/docs start",
     "build": "turbo run build",
     "start": "node scripts/start.mjs",
     "start:local": "pnpm --filter @treeport/server start",

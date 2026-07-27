@@ -12,3 +12,4 @@ allowBuilds:
   better-sqlite3: true
   esbuild: true
   node-pty: true
+  sharp: true

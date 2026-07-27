@@ -125,6 +125,16 @@ Treeport is intentionally opinionated. See:
 - [Decision 0001: Worktrees are the unit of work](docs/decisions/0001-worktrees-are-the-unit-of-work.md)
 - [Decision 0002: The product is named Treeport](docs/decisions/0002-product-is-named-treeport.md)
 
+## Documentation
+
+The public documentation site is an Astro Starlight app in [`apps/docs`](apps/docs). Run it locally with:
+
+```sh
+pnpm dev:docs
+```
+
+Documentation covers installation, worktree-first concepts, product features, agent workflows, security, configuration, terminal signals, and the complete CLI.
+
 ## Quick start
 
 Requirements: Node.js 22+, Git, and tmux 3.2+. `gh` is optional for pull request status.
