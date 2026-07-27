@@ -599,6 +599,13 @@ export class TerminalSession {
   private resumeOnNextInput = false
   private pendingPaste = ''
   private lastBellAt = 0
+  private wakeListenersAttached = false
+  private readonly reconnectWhenOnline = () => this.reconnectImmediately()
+  private readonly reconnectWhenVisible = () => {
+    if (document.visibilityState === 'visible') {
+      this.reconnectImmediately()
+    }
+  }
 
   constructor(terminalId: string) {
     this.terminalId = terminalId
@@ -716,9 +723,16 @@ export class TerminalSession {
     this.resizeObserver?.disconnect()
     this.resizeObserver = new ResizeObserver(() => this.scheduleFit())
     this.resizeObserver.observe(host)
+    if (!this.wakeListenersAttached) {
+      window.addEventListener('online', this.reconnectWhenOnline)
+      document.addEventListener('visibilitychange', this.reconnectWhenVisible)
+      this.wakeListenersAttached = true
+    }
     this.scheduleFit()
     if (!this.socket && this.opened) {
       this.connect()
+    } else {
+      this.reconnectImmediately()
     }
   }
 
@@ -729,6 +743,14 @@ export class TerminalSession {
 
     this.resizeObserver?.disconnect()
     this.resizeObserver = null
+    if (this.wakeListenersAttached) {
+      window.removeEventListener('online', this.reconnectWhenOnline)
+      document.removeEventListener(
+        'visibilitychange',
+        this.reconnectWhenVisible
+      )
+      this.wakeListenersAttached = false
+    }
     this.keyboardViewportCleanup?.()
     this.keyboardViewportCleanup = null
     this.cancelControllerResizeIntent(false)
@@ -872,6 +894,14 @@ export class TerminalSession {
     this.reconnectAllowed = false
     this.clearTimers()
     this.resizeObserver?.disconnect()
+    if (this.wakeListenersAttached) {
+      window.removeEventListener('online', this.reconnectWhenOnline)
+      document.removeEventListener(
+        'visibilitychange',
+        this.reconnectWhenVisible
+      )
+      this.wakeListenersAttached = false
+    }
     this.keyboardViewportCleanup?.()
     this.keyboardViewportCleanup = null
     this.socket?.disconnect()
@@ -1176,6 +1206,30 @@ export class TerminalSession {
     return `${TERMINAL_SCROLL_EXIT_SEQUENCE}${data}`
   }
 
+  private reconnectImmediately(): void {
+    if (
+      !this.host ||
+      this.disposed ||
+      !this.reconnectAllowed ||
+      this.ready ||
+      this.socket?.connected
+    ) {
+      return
+    }
+
+    const staleSocket = this.socket
+    if (staleSocket) {
+      staleSocket.disconnect()
+      if (this.socket === staleSocket) {
+        this.socket = null
+      }
+    }
+
+    if (this.opened) {
+      this.connect()
+    }
+  }
+
   private connect(): void {
     if (this.disposed || !this.reconnectAllowed || this.socket) {
       return
@@ -1200,6 +1254,9 @@ export class TerminalSession {
       multiplex: false,
       autoConnect: false,
       reconnection: true,
+      reconnectionDelay: 100,
+      reconnectionDelayMax: 1_000,
+      randomizationFactor: 0.2,
       retries: 0,
       query: { terminalProtocol: String(TERMINAL_PROTOCOL_VERSION) },
       auth: (authorize) => {
@@ -1957,7 +2014,7 @@ export class TerminalSessionManager {
   private bellAcknowledgementEpoch = 0
 
   constructor(
-    private readonly maxSessions = 3,
+    private readonly maxSessions = 8,
     private readonly idleMs = 5 * 60_000,
     private readonly createSession: (terminalId: string) => TerminalSession = (
       terminalId
