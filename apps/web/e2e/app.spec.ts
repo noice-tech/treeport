@@ -1526,6 +1526,13 @@ test.describe('desktop worktree terminal UI', () => {
         '/projects/proj_2/worktrees/second_wt_main/terminals/second_term_shell'
       )
 
+    await page
+      .getByRole('button', {
+        name: 'Switch project, current project another-project'
+      })
+      .click()
+    await expect(page.getByLabel('Search projects')).toHaveValue('')
+
     await page.reload()
     await expect(page).toHaveURL(
       /\/projects\/proj_2\/worktrees\/second_wt_main\/terminals\/second_term_shell$/
