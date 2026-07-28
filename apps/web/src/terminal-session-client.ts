@@ -176,6 +176,11 @@ export class TerminalSession {
   private scrollExitPending = false
   private resumeOnNextInput = false
   private pendingPaste = ''
+  private inputModifiers: {
+    ctrl: boolean
+    alt: boolean
+    onConsumed: () => void
+  } | null = null
   private lastBellAt = 0
   private wakeListenersAttached = false
   private readonly reconnectWhenOnline = () => this.reconnectImmediately()
@@ -391,6 +396,10 @@ export class TerminalSession {
     } else {
       this.connect()
     }
+  }
+
+  setInputModifiers(ctrl: boolean, alt: boolean, onConsumed: () => void): void {
+    this.inputModifiers = ctrl || alt ? { ctrl, alt, onConsumed } : null
   }
 
   sendText(data: string): void {
@@ -646,6 +655,21 @@ export class TerminalSession {
     terminal.onKey(() => this.prepareScrollExit())
     terminal.onData((data) => {
       if (this.canInput()) {
+        const modifiers = this.inputModifiers
+        if (modifiers) {
+          this.inputModifiers = null
+
+          if (modifiers.ctrl && data.length === 1) {
+            data = String.fromCharCode(data.toUpperCase().charCodeAt(0) & 31)
+          }
+
+          if (modifiers.alt) {
+            data = `\u001b${data}`
+          }
+
+          modifiers.onConsumed()
+        }
+
         this.send('input', {
           generation: this.controllerGeneration,
           data: this.withScrollExit(data)
