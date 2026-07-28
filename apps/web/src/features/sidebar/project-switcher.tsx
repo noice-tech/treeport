@@ -102,6 +102,16 @@ export function ProjectSwitcher({
     onSuccess: onProjectOpened,
     onError: notifyError
   })
+  const selectOpenProject = (project: ProjectRecord) => {
+    selectProject(project)
+    setProjectSearch('')
+    setHighlightedProjectId(null)
+  }
+  const selectRecentProject = (project: { id: string }) => {
+    reopenProject.mutate(project)
+    setProjectSearch('')
+    setHighlightedProjectId(null)
+  }
   const normalizedProjectSearch = projectSearch.trim().toLocaleLowerCase()
   const filteredOpenProjects = projects.filter(
     (project) =>
@@ -212,12 +222,12 @@ export function ProjectSwitcher({
               if (event.key === 'Enter') {
                 event.preventDefault()
                 if (highlightedProjectOption?.kind === 'open') {
-                  selectProject(highlightedProjectOption.project)
+                  selectOpenProject(highlightedProjectOption.project)
                 } else if (
                   highlightedProjectOption?.kind === 'recent' &&
                   !reopenProject.isPending
                 ) {
-                  reopenProject.mutate(highlightedProjectOption.project)
+                  selectRecentProject(highlightedProjectOption.project)
                 }
 
                 return
@@ -297,7 +307,7 @@ export function ProjectSwitcher({
                           ? true
                           : undefined
                       }
-                      onClick={() => selectProject(project)}
+                      onClick={() => selectOpenProject(project)}
                     >
                       <span className="flex min-w-0 items-center gap-1.5">
                         <span className="truncate font-medium text-zinc-100">
@@ -414,7 +424,7 @@ export function ProjectSwitcher({
                             : undefined
                         }
                         disabled={reopenProject.isPending}
-                        onClick={() => reopenProject.mutate(project)}
+                        onClick={() => selectRecentProject(project)}
                       >
                         <span className="truncate font-medium text-zinc-200">
                           {project.name}
