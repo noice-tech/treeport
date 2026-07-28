@@ -14,20 +14,16 @@ Treeport works with worktrees created by Git, editors, agents, scripts, and othe
 
 ## Quick start
 
-Requirements: Node.js 22+, pnpm 11, Git, and tmux 3.2+. `gh` is optional.
+Treeport is not distributed yet, so run it from source. Its local development database can be used to work on other projects.
+
+Requirements: Node.js 24+, pnpm 11, Git, and tmux 3.2+.
 
 ```sh
 pnpm install
-pnpm build
-pnpm --global add ./packages/cli
-pnpm start:local
+pnpm dev
 ```
 
-Open <http://127.0.0.1:4780> and register a repository:
-
-```sh
-treeport project add ~/Projects/example
-```
+The Electron app opens automatically.
 
 ## Documentation
 
@@ -36,8 +32,6 @@ Documentation lives in [`apps/docs`](apps/docs). Start the documentation site lo
 ```sh
 pnpm dev:docs
 ```
-
-See [Install Treeport](apps/docs/src/content/docs/getting-started/installation.md) for setup and [Your first workspace](apps/docs/src/content/docs/getting-started/first-workspace.md) to get started.
 
 ## Development
 
