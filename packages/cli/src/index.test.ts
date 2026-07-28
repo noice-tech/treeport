@@ -748,6 +748,28 @@ describe('CLI context and machine output', () => {
     })
   })
 
+  it('advertises and prints the agent usage guide', async () => {
+    const help = await runCli(['--help'])
+
+    expect(help.code).toBe(0)
+    expect(help.stderr).toBe('')
+    expect(help.stdout).toContain(
+      "If you're an AI agent, use `treeport skills` to see the usage guide."
+    )
+    expect(help.stdout.indexOf('AI agents:')).toBeLessThan(
+      help.stdout.indexOf('Usage:')
+    )
+
+    const skills = await runCli(['skills'])
+
+    expect(skills.code).toBe(0)
+    expect(skills.stderr).toBe('')
+    expect(skills.stdout).toContain('# Treeport')
+    expect(skills.stdout).toContain('## Operating rules')
+    expect(skills.stdout).toContain('treeport context')
+    expect(skills.stdout).toContain('treeport spawn')
+  })
+
   it('rejects unexpected context arguments as usage errors', async () => {
     const result = await runCli(['context', 'unexpected', '--json'])
 

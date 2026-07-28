@@ -573,9 +573,11 @@ function print(value: unknown, human?: () => string): void {
   }
 }
 
-function usage(): never {
-  throw new CliError(
-    `Usage:
+const usageText = `AI agents:
+  If you're an AI agent, use \`treeport skills\` to see the usage guide.
+
+Usage:
+  treeport skills
   treeport context [--json]
   treeport project add <path> [--json]
   treeport project list [--json]
@@ -588,13 +590,30 @@ function usage(): never {
   treeport terminal capture <terminal-id-or-dot> [--lines <count>] [--json]
   treeport terminal wait <terminal-id-or-dot> --until <idle|working|bell|exit> [--timeout <duration>] [--json]
   treeport terminal delete <terminal-id> [--json]
-  treeport spawn --project <id-or-path-or-dot> --worktree-name <name> --name <terminal-name> [--from-current] [-- <command> args...] [--json]`,
-    2
-  )
+  treeport spawn --project <id-or-path-or-dot> --worktree-name <name> --name <terminal-name> [--from-current] [-- <command> args...] [--json]`
+
+function usage(): never {
+  throw new CliError(usageText, 2)
 }
 
 async function main(args: string[]): Promise<void> {
+  if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) {
+    console.log(usageText)
+    return
+  }
+
   const [group, action] = args.splice(0, 2)
+  if (group === 'skills') {
+    if (action || args.length) {
+      usage()
+    }
+
+    process.stdout.write(
+      await fs.readFile(new URL('./treeport-skill.md', import.meta.url), 'utf8')
+    )
+    return
+  }
+
   if (group === 'context') {
     if (action || args.length) {
       usage()
