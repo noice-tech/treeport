@@ -13,6 +13,7 @@ import { apiClient } from '../../api'
 import { TerminalStatusIcon } from '../../components/terminal-status-icon'
 import { Button } from '../../components/ui/button'
 import { Input } from '../../components/ui/input'
+import { Separator } from '../../components/ui/separator'
 import {
   Popover,
   PopoverContent,
@@ -153,7 +154,7 @@ export function ProjectSwitcher({
           ref={projectSwitcher.triggerRef}
           type="button"
           variant="ghost"
-          className="h-9 min-w-0 flex-1 justify-start gap-2 px-2 text-sm text-zinc-100 hover:bg-white/5"
+          className="h-11 min-w-0 flex-1 justify-start gap-2 px-2 text-base text-zinc-100 hover:bg-white/5 min-[701px]:h-8 min-[701px]:text-sm"
           aria-label={
             activeProject
               ? `Switch project, current project ${activeProject.name}`
@@ -169,13 +170,16 @@ export function ProjectSwitcher({
           <span className="truncate font-medium">
             {activeProject?.name ?? 'Open project'}
           </span>
-          <ChevronUpDownIcon className="ml-auto shrink-0 fill-zinc-600" />
+          <ChevronUpDownIcon
+            className="ml-auto shrink-0 fill-zinc-600"
+            data-icon="inline-end"
+          />
         </Button>
       </PopoverTrigger>
       <PopoverContent
         align="start"
         portalled={!isMobile}
-        className="w-[min(17rem,calc(100vw-1rem))] p-1"
+        className="grid w-[min(17rem,calc(100vw-1rem))] gap-1 p-1 min-[701px]:w-60"
         onOpenAutoFocus={(event) => {
           if (isMobile) {
             event.preventDefault()
@@ -188,9 +192,10 @@ export function ProjectSwitcher({
           }
         }}
       >
-        <div className="relative mb-1">
+        <div className="relative">
           <MagnifyingGlassIcon className="pointer-events-none absolute top-1/2 left-2 size-4 -translate-y-1/2 fill-zinc-600" />
           <Input
+            name="project-search"
             value={projectSearch}
             onChange={(event) => {
               setProjectSearch(event.target.value)
@@ -247,7 +252,7 @@ export function ProjectSwitcher({
                   ?.scrollIntoView({ block: 'nearest' })
               )
             }}
-            className="h-8 bg-zinc-950/50 pt-0.5 pr-2 pb-1 pl-7 ring-white/8 sm:h-7 sm:text-[0.8125rem]/4 sm:placeholder:text-[0.84375rem]"
+            className="h-11! bg-zinc-950/50 pr-2 pl-8 text-base! ring-white/8 focus-visible:ring-1! focus-visible:ring-white/20! min-[701px]:h-7! min-[701px]:py-1 min-[701px]:pr-2 min-[701px]:pl-7 min-[701px]:text-sm! min-[701px]:placeholder:text-sm"
             placeholder="Search projects…"
             aria-label="Search projects"
             aria-activedescendant={
@@ -258,9 +263,9 @@ export function ProjectSwitcher({
             autoFocus={!isMobile}
           />
         </div>
-        <div className="grid max-h-[min(28rem,70vh)] gap-0.5 overflow-y-auto p-0.5 [scrollbar-color:var(--color-zinc-700)_transparent]">
+        <div className="grid max-h-[min(28rem,70vh)] gap-1 overflow-y-auto p-0.5 min-[701px]:max-h-[min(22rem,70vh)] min-[701px]:gap-0.5 min-[701px]:p-0 [scrollbar-color:var(--color-zinc-700)_transparent]">
           {filteredOpenProjects.length ? (
-            <ul role="list" className="grid gap-0.5">
+            <ul role="list" className="grid gap-1 min-[701px]:gap-0.5">
               {filteredOpenProjects.map((project) => {
                 const terminals = project.worktrees.flatMap(
                   (worktree) => worktree.terminals
@@ -276,7 +281,7 @@ export function ProjectSwitcher({
                   <li
                     key={project.id}
                     className={cn(
-                      'group/project-option relative flex h-8 min-w-0 items-center gap-0.5 rounded-md pr-1 has-[button:hover]:bg-white/5 focus-within:bg-white/5',
+                      'group/project-option relative flex h-11 min-w-0 items-center gap-0.5 rounded-md pr-1 has-[button:hover]:bg-white/5 focus-within:bg-white/5 min-[701px]:h-7',
                       highlightedProjectOption?.project.id === project.id &&
                         'bg-white/8'
                     )}
@@ -286,7 +291,7 @@ export function ProjectSwitcher({
                       id={`project-switcher-option-${project.id}`}
                       type="button"
                       variant="ghost"
-                      className="h-8 min-w-0 flex-1 justify-start px-2 text-left hover:bg-transparent max-[700px]:pr-8"
+                      className="h-11 min-w-0 flex-1 justify-start px-2 text-left text-base hover:bg-transparent min-[701px]:h-7 min-[701px]:px-1.5 min-[701px]:text-sm max-[700px]:pr-8"
                       data-highlighted={
                         highlightedProjectOption?.project.id === project.id
                           ? true
@@ -295,7 +300,7 @@ export function ProjectSwitcher({
                       onClick={() => selectProject(project)}
                     >
                       <span className="flex min-w-0 items-center gap-1.5">
-                        <span className="truncate text-sm font-medium text-zinc-100">
+                        <span className="truncate font-medium text-zinc-100">
                           {project.name}
                         </span>
                         {activeProject?.id === project.id ? (
@@ -347,19 +352,19 @@ export function ProjectSwitcher({
               })}
             </ul>
           ) : (
-            <p className="px-2 py-1 text-sm text-zinc-500">
+            <p className="px-2 py-1.5 text-base text-pretty text-zinc-500 min-[701px]:px-1.5 min-[701px]:py-1 min-[701px]:text-sm">
               No open projects found.
             </p>
           )}
           {!recentProjectsQuery.isSuccess || recentProjects.length ? (
             <section
-              className="grid gap-0.5"
+              className="grid gap-1 min-[701px]:gap-0.5"
               aria-labelledby="recent-projects-switcher-title"
             >
-              <div className="flex items-center justify-between gap-2 px-2 py-1">
+              <div className="flex items-center justify-between gap-2 px-2 py-1.5 min-[701px]:px-1.5 min-[701px]:py-1">
                 <h3
                   id="recent-projects-switcher-title"
-                  className="text-xs font-medium text-zinc-500"
+                  className="text-sm font-medium text-balance text-zinc-500 min-[701px]:text-xs"
                 >
                   Recent projects
                 </h3>
@@ -371,14 +376,15 @@ export function ProjectSwitcher({
                 ) : null}
               </div>
               {recentProjectsQuery.isError ? (
-                <div className="flex items-center justify-between gap-2 px-2 py-1">
-                  <p className="text-sm text-zinc-500">
+                <div className="flex items-center justify-between gap-2 px-2 py-1.5 min-[701px]:px-1.5 min-[701px]:py-1">
+                  <p className="text-base text-pretty text-zinc-500 min-[701px]:text-sm">
                     Recent projects unavailable.
                   </p>
                   <Button
                     type="button"
                     variant="ghost"
                     size="sm"
+                    className="h-9 text-base min-[701px]:h-7 min-[701px]:text-sm"
                     onClick={() => void recentProjectsQuery.refetch()}
                   >
                     Retry
@@ -387,7 +393,7 @@ export function ProjectSwitcher({
               ) : null}
               {recentProjectsQuery.isSuccess &&
               filteredRecentProjects.length ? (
-                <ul role="list" className="grid gap-0.5">
+                <ul role="list" className="grid gap-1 min-[701px]:gap-0.5">
                   {filteredRecentProjects.map((project) => (
                     <li
                       key={project.id}
@@ -398,7 +404,7 @@ export function ProjectSwitcher({
                         type="button"
                         variant="ghost"
                         className={cn(
-                          'h-8 w-full min-w-0 justify-start px-2 text-left',
+                          'h-11 w-full min-w-0 justify-start px-2 text-left text-base min-[701px]:h-7 min-[701px]:px-1.5 min-[701px]:text-sm',
                           highlightedProjectOption?.project.id === project.id &&
                             'bg-white/8'
                         )}
@@ -410,7 +416,7 @@ export function ProjectSwitcher({
                         disabled={reopenProject.isPending}
                         onClick={() => reopenProject.mutate(project)}
                       >
-                        <span className="truncate text-sm font-medium text-zinc-200">
+                        <span className="truncate font-medium text-zinc-200">
                           {project.name}
                         </span>
                       </Button>
@@ -420,18 +426,19 @@ export function ProjectSwitcher({
               ) : null}
               {recentProjectsQuery.isSuccess &&
               !filteredRecentProjects.length ? (
-                <p className="px-2 py-1 text-sm text-zinc-500">
+                <p className="px-2 py-1.5 text-base text-pretty text-zinc-500 min-[701px]:px-1.5 min-[701px]:py-1 min-[701px]:text-sm">
                   No recent projects found.
                 </p>
               ) : null}
             </section>
           ) : null}
         </div>
+        <Separator className="bg-white/8" />
         <Button
           type="button"
           variant="ghost"
           size="sm"
-          className="mt-0.5 h-8 w-full justify-start border-t border-white/8 py-1 text-sm font-normal text-zinc-500 hover:text-zinc-100"
+          className="h-11 w-full justify-start text-base font-normal text-zinc-500 hover:text-zinc-100 min-[701px]:h-7 min-[701px]:text-sm"
           onClick={(event) => {
             projectSwitcher.setOpen(false)
             onOpenProjectDialog(
@@ -439,7 +446,7 @@ export function ProjectSwitcher({
             )
           }}
         >
-          <PlusIcon /> Open project…
+          <PlusIcon data-icon="inline-start" /> Open project…
         </Button>
       </PopoverContent>
     </Popover>

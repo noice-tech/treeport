@@ -21,12 +21,16 @@ export function OpenProjectDialog({
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl" restoreFocusTo={restoreFocusTo}>
+      <DialogContent
+        className="max-w-xl gap-3 p-4 max-[700px]:gap-4"
+        restoreFocusTo={restoreFocusTo}
+      >
         <DialogHeader>
-          <DialogTitle>Open project</DialogTitle>
+          <DialogTitle className="text-lg tracking-normal sm:text-lg">
+            Open project
+          </DialogTitle>
           <DialogDescription>
-            Browse folders on the Treeport server. Paths refer to the server’s
-            filesystem.
+            Browse folders on the Treeport server.
           </DialogDescription>
         </DialogHeader>
         <ProjectForm onOpened={onOpened} />
