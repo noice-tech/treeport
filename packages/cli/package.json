@@ -8,7 +8,7 @@
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc -b && chmod +x bin/treeport.mjs dist/index.js",
+    "build": "tsc -b && cp ../../skills/treeport/SKILL.md dist/treeport-skill.md && chmod +x bin/treeport.mjs dist/index.js",
     "dev": "pnpm build && tsc -b --watch --preserveWatchOutput",
     "typecheck": "tsc --noEmit -p tsconfig.json --pretty"
   },

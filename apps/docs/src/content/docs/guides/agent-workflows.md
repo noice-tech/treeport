@@ -74,13 +74,12 @@ treeport terminal wait <terminal-id> --until exit
 
 These conditions reflect standard terminal progress, BEL, and process state. Treeport does not parse arbitrary output or infer that an agent's task is complete.
 
-## Install the Agent Skill
+## Show the Agent Usage Guide
 
-Treeport includes an [Agent Skills](https://agentskills.io/)-compatible skill:
+Treeport includes an [Agent Skills](https://agentskills.io/)-compatible usage guide directly in the CLI:
 
 ```sh
-mkdir -p .agents/skills
-cp -R /path/to/treeport/skills/treeport .agents/skills/treeport
+treeport skills
 ```
 
-For a user-wide installation, copy it to `~/.agents/skills/treeport` instead. The skill teaches compatible agents the CLI's context, creation, observation, JSON, and safety contracts.
+Agents can run this command without installing a skill. The guide describes the CLI's context, creation, observation, JSON, and safety contracts. `treeport --help` points agents to it before listing the available commands.
