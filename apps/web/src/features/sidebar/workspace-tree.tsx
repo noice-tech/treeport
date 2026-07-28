@@ -184,7 +184,7 @@ export function WorkspaceTree({
         {projects
           .filter((project) => project.id === activeProject?.id)
           .map((project) => (
-            <div className="project-tree" key={project.id}>
+            <div className="project-tree min-w-0" key={project.id}>
               {project.availability.state === 'unavailable' ? (
                 <p
                   className="mx-1 mb-2 rounded-md bg-amber-400/8 px-2 py-1.5 text-sm text-amber-200"
