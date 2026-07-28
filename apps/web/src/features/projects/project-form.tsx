@@ -70,7 +70,7 @@ export function ProjectForm({
 
   return (
     <form
-      className="flex flex-col gap-4"
+      className="flex flex-col gap-3 max-[700px]:gap-4"
       onSubmit={(event) => {
         event.preventDefault()
         if (!validRepository || busy) {
@@ -130,7 +130,7 @@ export function ProjectForm({
         />
       </FormField>
 
-      <div className="flex min-h-8 flex-wrap items-center gap-2">
+      <div className="flex min-h-8 flex-wrap items-center gap-2 min-[701px]:min-h-7">
         {data && (
           <>
             <Button
@@ -152,7 +152,7 @@ export function ProjectForm({
             >
               Root
             </Button>
-            <label className="ml-auto flex cursor-pointer items-center gap-2 text-sm text-zinc-400">
+            <label className="ml-auto flex cursor-pointer items-center gap-2 text-base text-zinc-400 min-[701px]:text-sm">
               <input
                 type="checkbox"
                 checked={showHidden}
@@ -166,7 +166,7 @@ export function ProjectForm({
       </div>
 
       <div className="overflow-hidden rounded-lg bg-zinc-950/50 ring-1 ring-white/10">
-        <div className="flex min-h-10 items-center gap-1 overflow-x-auto border-b border-white/8 px-2 py-1.5">
+        <div className="flex min-h-10 items-center gap-1 overflow-x-auto border-b border-white/8 px-2 py-1.5 min-[701px]:min-h-8 min-[701px]:p-1">
           {data && (
             <>
               {data.directory.parentPath && (
@@ -205,7 +205,7 @@ export function ProjectForm({
 
         <div
           id="project-directory-list"
-          className="grid h-72 content-start gap-0.5 overflow-y-auto p-1.5 [scrollbar-color:var(--color-zinc-700)_transparent]"
+          className="grid h-64 content-start gap-0.5 overflow-y-auto p-1.5 min-[701px]:h-56 min-[701px]:p-1 [scrollbar-color:var(--color-zinc-700)_transparent]"
           aria-label="Folders"
         >
           {directoryQuery.isFetching && (
@@ -215,7 +215,10 @@ export function ProjectForm({
           )}
           {directoryQuery.isError && (
             <div className="flex items-center justify-between gap-3 p-3">
-              <p className="text-sm text-rose-300" role="alert">
+              <p
+                className="text-base text-rose-300 min-[701px]:text-sm"
+                role="alert"
+              >
                 {directoryQuery.error.message}
               </p>
               <Button
@@ -233,7 +236,7 @@ export function ProjectForm({
               <button
                 key={entry.path}
                 type="button"
-                className="flex min-w-0 items-center gap-2 rounded-md px-2.5 py-2 text-left text-sm text-zinc-200 outline-none hover:bg-white/6 focus-visible:bg-white/6 focus-visible:outline-2 focus-visible:outline-cyan-400"
+                className="flex min-w-0 items-center gap-2 rounded-md px-2.5 py-2 text-left text-base text-zinc-200 outline-none hover:bg-white/6 focus-visible:bg-white/6 focus-visible:outline-2 focus-visible:outline-cyan-400 min-[701px]:px-2 min-[701px]:py-1.5 min-[701px]:text-sm"
                 title={entry.path}
                 onClick={() => navigate(entry.path)}
                 onKeyDown={(event) => {
