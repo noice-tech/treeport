@@ -166,6 +166,39 @@ describe('CLI context and machine output', () => {
 
       if (
         request.method === 'GET' &&
+        request.url?.startsWith('/api/terminals/') &&
+        request.url.includes('/capture?')
+      ) {
+        const url = new URL(request.url, 'http://treeport.test')
+        const terminalId = decodeURIComponent(
+          url.pathname.slice('/api/terminals/'.length).replace(/\/capture$/, '')
+        )
+        if (terminalId !== observedTerminal.id) {
+          response.statusCode = 404
+          response.end(
+            JSON.stringify({
+              error: {
+                code: 'TERMINAL_NOT_FOUND',
+                message: 'Terminal not found'
+              }
+            })
+          )
+          return
+        }
+
+        response.end(
+          JSON.stringify({
+            terminalId,
+            capturedAt: timestamp,
+            lineLimit: Number(url.searchParams.get('lines')),
+            content: 'Preparing changes\nRunning tests'
+          })
+        )
+        return
+      }
+
+      if (
+        request.method === 'GET' &&
         request.url?.startsWith('/api/terminals/')
       ) {
         const terminalId = decodeURIComponent(
@@ -546,6 +579,41 @@ describe('CLI context and machine output', () => {
       terminal,
       metadata: observedMetadata
     })
+  })
+
+  it('captures terminal output by exact ID and managed dot context', async () => {
+    const human = await runCli(
+      ['terminal', 'capture', terminal.id, '--lines', '12'],
+      { TREEPORT_API_URL: apiUrl }
+    )
+    expect(human).toEqual({
+      code: 0,
+      stdout: 'Preparing changes\nRunning tests\n',
+      stderr: ''
+    })
+    expect(requests.at(-1)).toBe(
+      'GET /api/terminals/term_context/capture?lines=12'
+    )
+
+    const json = await runCli(['terminal', 'capture', '.', '--json'], {
+      TREEPORT_API_URL: apiUrl,
+      TREEPORT_TERMINAL_ID: terminal.id
+    })
+    expect(json.code).toBe(0)
+    expect(JSON.parse(json.stdout)).toEqual({
+      terminalId: terminal.id,
+      capturedAt: timestamp,
+      lineLimit: 200,
+      content: 'Preparing changes\nRunning tests'
+    })
+
+    const requestCount = requests.length
+    const invalid = await runCli(
+      ['terminal', 'capture', terminal.id, '--lines', '5001'],
+      { TREEPORT_API_URL: apiUrl }
+    )
+    expect(invalid.code).toBe(2)
+    expect(requests).toHaveLength(requestCount)
   })
 
   it('returns immediately when a raw wait condition already matches', async () => {

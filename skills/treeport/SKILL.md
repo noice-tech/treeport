@@ -95,6 +95,16 @@ treeport terminal inspect <terminal-id> --json
 
 Runtime metadata includes the title, current OSC `9;4` progress, last progress start and clear timestamps, and latest daemon-observed real BEL. BEL metadata also reports daemon-lifetime unread attention shared by every browser; inspection and waits never acknowledge it, while viewing the terminal acknowledges the exact observed BEL sequence. `.` resolves to the exact `TREEPORT_TERMINAL_ID` inside a managed terminal; it is not a name or path lookup.
 
+Read recent terminal contents with:
+
+```sh
+treeport terminal capture <terminal-id>
+treeport terminal capture <terminal-id> --lines 500
+treeport terminal capture <terminal-id> --json
+```
+
+Capture returns up to 200 pane rows by default. Plain output is the terminal text; JSON output includes the terminal ID, capture time, line limit, and content. `.` can be used for the current managed terminal.
+
 Wait for raw terminal conditions without polling or scraping output:
 
 ```sh

@@ -580,6 +580,44 @@ export class TmuxAdapter {
     return { status: 'running', exitCode: null }
   }
 
+  async capturePane(
+    socketName: string,
+    sessionName: string,
+    lines: number
+  ): Promise<string | null> {
+    const result = await this.runner.run({
+      executable: this.executable,
+      args: [
+        ...this.base(socketName),
+        'capture-pane',
+        '-p',
+        '-S',
+        `-${lines}`,
+        '-t',
+        sessionName
+      ],
+      env: this.environment(),
+      timeoutMs: 10_000
+    })
+    if (result.exitCode !== 0) {
+      if (
+        isAbsentTmuxServer(result.stderr) ||
+        /can't find (?:pane|session|window)/i.test(result.stderr)
+      ) {
+        return null
+      }
+
+      throw new Error(result.stderr.trim() || 'Failed to capture terminal pane')
+    }
+
+    const rows = result.stdout.split('\n')
+    while (rows.length && /^[\t\r ]*$/.test(rows.at(-1)!)) {
+      rows.pop()
+    }
+
+    return rows.slice(-lines).join('\n')
+  }
+
   async useManualWindowSize(
     socketName: string,
     sessionName: string

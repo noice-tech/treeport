@@ -566,6 +566,46 @@ describe('TmuxAdapter', () => {
     }
   )
 
+  it('captures recent pane rows and reports a missing target', async () => {
+    const runtime = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'treeport-runtime-')
+    )
+    temporary.push(runtime)
+    const runner = new RecordingRunner()
+    runner.responses.push(
+      {
+        stdout: 'old output\nPreparing changes\nRunning tests\n\n\n',
+        stderr: '',
+        exitCode: 0
+      },
+      {
+        stdout: '',
+        stderr: "can't find session: missing",
+        exitCode: 1
+      }
+    )
+    const adapter = new TmuxAdapter(runner, runtime)
+
+    await expect(adapter.capturePane('socket', 'session', 2)).resolves.toBe(
+      'Preparing changes\nRunning tests'
+    )
+    expect(runner.calls[0]?.args).toEqual([
+      '-L',
+      'socket',
+      '-f',
+      adapter.configPath,
+      'capture-pane',
+      '-p',
+      '-S',
+      '-2',
+      '-t',
+      'session'
+    ])
+    await expect(
+      adapter.capturePane('socket', 'missing', 20)
+    ).resolves.toBeNull()
+  })
+
   it('preserves a known non-empty server when killing one session', async () => {
     const runtime = await fs.mkdtemp(
       path.join(os.tmpdir(), 'treeport-runtime-')

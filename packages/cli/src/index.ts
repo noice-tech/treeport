@@ -7,12 +7,15 @@ import {
   parseProductEvent,
   parseTerminalRuntimeMetadata,
   SOCKET_IO_PATH,
+  TERMINAL_CAPTURE_DEFAULT_LINES,
+  TERMINAL_CAPTURE_MAX_LINES,
   type ApiErrorBody,
   type EventsClientToServerEvents,
   type EventsServerToClientEvents,
   type ProjectRecord,
   type RemovePreview,
   type TreeportContext,
+  type TerminalCapture,
   type TerminalRecord,
   type TerminalRuntimeMetadata,
   type WorktreeRecord
@@ -260,6 +263,25 @@ function resolveTerminalId(identifier: string): string {
   }
 
   return terminalId
+}
+
+function parseCaptureLines(value: string): number {
+  if (!/^[1-9]\d*$/.test(value)) {
+    throw new CliError(
+      `--lines must be an integer between 1 and ${TERMINAL_CAPTURE_MAX_LINES}`,
+      2
+    )
+  }
+
+  const lines = Number(value)
+  if (!Number.isSafeInteger(lines) || lines > TERMINAL_CAPTURE_MAX_LINES) {
+    throw new CliError(
+      `--lines must be an integer between 1 and ${TERMINAL_CAPTURE_MAX_LINES}`,
+      2
+    )
+  }
+
+  return lines
 }
 
 function parseDuration(value: string): number {
@@ -563,6 +585,7 @@ function usage(): never {
   treeport terminal list [--worktree <id-or-path>] [--json]
   treeport terminal create --worktree <id-or-path-or-dot> --name <name> [-- <command> args...] [--json]
   treeport terminal inspect <terminal-id-or-dot> [--json]
+  treeport terminal capture <terminal-id-or-dot> [--lines <count>] [--json]
   treeport terminal wait <terminal-id-or-dot> --until <idle|working|bell|exit> [--timeout <duration>] [--json]
   treeport terminal delete <terminal-id> [--json]
   treeport spawn --project <id-or-path-or-dot> --worktree-name <name> --name <terminal-name> [--from-current] [-- <command> args...] [--json]`,
@@ -839,6 +862,38 @@ async function main(args: string[]): Promise<void> {
           : terminal.status
       return `Terminal: ${terminal.name} (${terminal.id})\nStatus:   ${status}\nTitle:    ${metadata.title ?? '—'}\nProgress: ${progress}\nStarted:  ${metadata.progressStartedAt ?? '—'}\nCleared:  ${metadata.progressClearedAt ?? '—'}\nBell:     ${metadata.bell ? `${metadata.bell.at} (#${metadata.bell.sequence})` : '—'}`
     })
+    return
+  }
+
+  if (group === 'terminal' && action === 'capture') {
+    const identifier = args.shift()
+    if (!identifier || args.filter((value) => value === '--lines').length > 1) {
+      usage()
+    }
+
+    const rawLines = option(args, '--lines')
+    if (args.length) {
+      usage()
+    }
+
+    const lines =
+      rawLines === undefined
+        ? TERMINAL_CAPTURE_DEFAULT_LINES
+        : parseCaptureLines(rawLines)
+    const terminalId = resolveTerminalId(identifier)
+    const capture = await request<TerminalCapture>(
+      `/api/terminals/${encodeURIComponent(terminalId)}/capture?lines=${lines}`
+    )
+    if (jsonOutput) {
+      print(capture)
+    } else {
+      process.stdout.write(capture.content)
+
+      if (capture.content && !capture.content.endsWith('\n')) {
+        process.stdout.write('\n')
+      }
+    }
+
     return
   }
 

@@ -12,6 +12,8 @@ export const TERMINAL_ARGV_MAX_COUNT = 128
 export const TERMINAL_EXECUTABLE_MAX_LENGTH = 4_096
 export const TERMINAL_ARGUMENT_MAX_LENGTH = 4_096
 export const TERMINAL_PRESET_ARGUMENT_MAX_COUNT = TERMINAL_ARGV_MAX_COUNT - 1
+export const TERMINAL_CAPTURE_DEFAULT_LINES = 200
+export const TERMINAL_CAPTURE_MAX_LINES = 5_000
 
 export type WorktreeKind = 'main' | 'linked'
 export type WorktreeStatus =
@@ -59,6 +61,13 @@ export interface TerminalPreset {
   closeOnSuccess: boolean
   createdAt: string
   updatedAt: string
+}
+
+export interface TerminalCapture {
+  terminalId: string
+  capturedAt: string
+  lineLimit: number
+  content: string
 }
 
 export interface WorktreeRecord {
@@ -237,6 +246,16 @@ export const browseDirectoryQuerySchema = z.object({
     .optional()
     .default('false')
     .transform((value) => value === 'true')
+})
+
+export const terminalCaptureQuerySchema = z.object({
+  lines: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(TERMINAL_CAPTURE_MAX_LINES)
+    .optional()
+    .default(TERMINAL_CAPTURE_DEFAULT_LINES)
 })
 
 export const registerProjectSchema = z.object({

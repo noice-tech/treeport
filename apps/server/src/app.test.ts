@@ -116,8 +116,16 @@ function fixture(webDist = '/missing') {
     database: {
       worktree: vi.fn(() => ({ id: 'wt_1', path: '/repo' }))
     },
+    getWorktree: vi.fn(() => ({
+      id: 'wt_1',
+      tmuxSocketName: 'treeport-wt-1'
+    })),
     createTerminal: vi.fn(),
-    getTerminal: vi.fn(async (id: string) => ({ id, worktreeId: 'wt_1' })),
+    getTerminal: vi.fn(async (id: string) => ({
+      id,
+      worktreeId: 'wt_1',
+      tmuxSessionName: 'treeport-term-1'
+    })),
     createWorktree: vi.fn(async () => ({
       worktree: {},
       terminal: null,
@@ -149,15 +157,19 @@ function fixture(webDist = '/missing') {
     trackTerminal: metadataTrack,
     acknowledgeBell: metadataAcknowledgeBell
   } as unknown as TerminalMetadataManager
+  const capturePane = vi.fn(
+    async (): Promise<string | null> => 'Preparing changes\nRunning tests'
+  )
   const app = createApp({
     service,
     config,
-    tmux: {} as TmuxAdapter,
+    tmux: { capturePane } as unknown as TmuxAdapter,
     terminalMetadata,
     webDist
   })
   return {
     app,
+    capturePane,
     config,
     metadataAcknowledgeBell,
     metadataGet,
@@ -598,6 +610,46 @@ describe('HTTP API validation', () => {
         bell: null
       }
     })
+  })
+
+  it('captures recent terminal output with a bounded line count', async () => {
+    const { app, capturePane, service } = fixture()
+    const response = await app.request('/api/terminals/term/capture?lines=12')
+
+    expect(response.status).toBe(200)
+    expect(service.getTerminal).toHaveBeenCalledWith('term')
+    expect(service.getWorktree).toHaveBeenCalledWith('wt_1')
+    expect(capturePane).toHaveBeenCalledWith(
+      'treeport-wt-1',
+      'treeport-term-1',
+      12
+    )
+    expect(await response.json()).toMatchObject({
+      terminalId: 'term',
+      capturedAt: expect.any(String),
+      lineLimit: 12,
+      content: 'Preparing changes\nRunning tests'
+    })
+
+    const invalid = await app.request('/api/terminals/term/capture?lines=5001')
+    expect(invalid.status).toBe(400)
+    expect(service.getTerminal).toHaveBeenCalledTimes(1)
+
+    capturePane.mockResolvedValueOnce(null)
+    const unavailable = await app.request('/api/terminals/term/capture')
+    expect(unavailable.status).toBe(409)
+    expect(await unavailable.json()).toEqual({
+      error: {
+        code: 'TERMINAL_CAPTURE_UNAVAILABLE',
+        message: 'Terminal pane is unavailable',
+        details: { terminalId: 'term' }
+      }
+    })
+    expect(capturePane).toHaveBeenLastCalledWith(
+      'treeport-wt-1',
+      'treeport-term-1',
+      200
+    )
   })
 
   it('does not expose removed diagnostics and finish/discard routes', async () => {

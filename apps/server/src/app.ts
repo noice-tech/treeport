@@ -17,6 +17,7 @@ import {
   removeWorktreeSchema,
   spawnSchema,
   terminalBellAcknowledgementSchema,
+  terminalCaptureQuerySchema,
   updateProjectSchema,
   updateTerminalPresetSchema,
   updateTerminalSchema
@@ -362,6 +363,41 @@ export function createApp({
       pr: await service.refreshPr(context.req.param('worktreeId'), true)
     })
   )
+
+  app.get('/api/terminals/:terminalId/capture', async (context) => {
+    const query = terminalCaptureQuerySchema.safeParse(context.req.query())
+    if (!query.success) {
+      throw new DomainError(
+        'VALIDATION_ERROR',
+        'Request validation failed',
+        400,
+        query.error.flatten()
+      )
+    }
+
+    const terminal = await service.getTerminal(context.req.param('terminalId'))
+    const worktree = service.getWorktree(terminal.worktreeId)
+    const content = await tmux.capturePane(
+      worktree.tmuxSocketName,
+      terminal.tmuxSessionName,
+      query.data.lines
+    )
+    if (content === null) {
+      throw new DomainError(
+        'TERMINAL_CAPTURE_UNAVAILABLE',
+        'Terminal pane is unavailable',
+        409,
+        { terminalId: terminal.id }
+      )
+    }
+
+    return context.json({
+      terminalId: terminal.id,
+      capturedAt: new Date().toISOString(),
+      lineLimit: query.data.lines,
+      content
+    })
+  })
 
   app.get('/api/terminals/:terminalId', async (context) => {
     const terminal = await service.refreshTerminalStatus(
