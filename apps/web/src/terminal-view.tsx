@@ -211,6 +211,18 @@ export function TerminalView({
   })
 
   useEffect(() => {
+    if (!activeSession) {
+      return
+    }
+
+    activeSession.setInputModifiers(ctrl, alt, () => {
+      setCtrl(false)
+      setAlt(false)
+    })
+    return () => activeSession.setInputModifiers(false, false, () => undefined)
+  }, [activeSession, alt, ctrl])
+
+  useEffect(() => {
     if (lastPasteRequestSessionId.current !== terminal?.id) {
       lastPasteRequestSessionId.current = terminal?.id ?? null
       lastPasteRequestSerial.current = snapshot.pasteRequestSerial
@@ -791,7 +803,11 @@ export function TerminalView({
               variant="ghost"
               type="button"
               className={ctrl ? 'latched bg-cyan-950 text-cyan-100' : ''}
-              onClick={() => setCtrl((value) => !value)}
+              aria-pressed={ctrl}
+              onClick={() => {
+                setCtrl((value) => !value)
+                activeSession?.focus()
+              }}
             >
               Ctrl
             </Button>
@@ -799,7 +815,11 @@ export function TerminalView({
               variant="ghost"
               type="button"
               className={alt ? 'latched bg-cyan-950 text-cyan-100' : ''}
-              onClick={() => setAlt((value) => !value)}
+              aria-pressed={alt}
+              onClick={() => {
+                setAlt((value) => !value)
+                activeSession?.focus()
+              }}
             >
               Alt
             </Button>

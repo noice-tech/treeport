@@ -3677,6 +3677,25 @@ test.describe('mobile terminal UI', () => {
       name: 'Shift+Tab',
       exact: true
     })
+    await page.evaluate(() => {
+      ;(window as any).__wsSent = []
+    })
+    await ctrl.click()
+    await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
+    await page.keyboard.type('c')
+    await alt.click()
+    await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
+    await page.keyboard.type('x')
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          (window as any).__wsSent
+            .filter((message: any) => message.type === 'input')
+            .map((message: any) => message.data)
+        )
+      )
+      .toEqual(['\u0003', '\u001bx'])
+
     await alt.click()
     await ctrl.click()
     await page.evaluate(() => {
