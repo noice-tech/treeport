@@ -85,12 +85,14 @@ export function TerminalWorkspace({
       name,
       argv,
       returnToShell,
+      closeOnSuccess,
       initialSize
     }: {
       worktreeId: string
       name: string
       argv?: string[]
       returnToShell?: boolean
+      closeOnSuccess?: boolean
       initialSize?: TerminalSize
       pendingTerminal: PendingTerminalTab & {
         projectId: string
@@ -103,6 +105,7 @@ export function TerminalWorkspace({
         name,
         argv,
         returnToShell,
+        closeOnSuccess,
         initialSize
       ),
     onSuccess: async (terminal, { pendingTerminal }) => {
@@ -209,6 +212,7 @@ export function TerminalWorkspace({
     name: string
     argv?: string[]
     returnToShell?: boolean
+    closeOnSuccess?: boolean
   }) => {
     if (!selectedProject || !selectedWorktree || mutationsDisabled) {
       return
@@ -233,6 +237,7 @@ export function TerminalWorkspace({
       name: input.name,
       ...(input.argv ? { argv: [...input.argv] } : {}),
       ...(input.returnToShell ? { returnToShell: true } : {}),
+      ...(input.closeOnSuccess ? { closeOnSuccess: true } : {}),
       ...(initialSize ? { initialSize } : {}),
       pendingTerminal
     })

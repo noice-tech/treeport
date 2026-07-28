@@ -64,12 +64,18 @@ function fixture(webDist = '/missing') {
         name: 'Existing',
         executable: 'pi',
         args: [],
+        closeOnSuccess: false,
         createdAt: '2026-01-01T00:00:00.000Z',
         updatedAt: '2026-01-01T00:00:00.000Z'
       }
     ]),
     createTerminalPreset: vi.fn(
-      (input: { name: string; executable: string; args: string[] }) => ({
+      (input: {
+        name: string
+        executable: string
+        args: string[]
+        closeOnSuccess: boolean
+      }) => ({
         id: 'preset_new',
         ...input,
         createdAt: '2026-01-01T00:00:00.000Z',
@@ -79,7 +85,12 @@ function fixture(webDist = '/missing') {
     updateTerminalPreset: vi.fn(
       (
         id: string,
-        input: { name: string; executable: string; args: string[] },
+        input: {
+          name: string
+          executable: string
+          args: string[]
+          closeOnSuccess: boolean
+        },
         _expectedUpdatedAt: string
       ) => ({
         id,
@@ -171,7 +182,7 @@ describe('HTTP API validation', () => {
     expect(service.createTerminal).not.toHaveBeenCalled()
   })
 
-  it('forwards return-to-shell terminal launches without changing argv', async () => {
+  it('forwards terminal completion behavior without changing argv', async () => {
     const { app, service } = fixture()
     const response = await app.request('/api/worktrees/wt_1/terminals', {
       method: 'POST',
@@ -189,6 +200,23 @@ describe('HTTP API validation', () => {
       'Diff',
       ['diff', 'main', '--mode', 'split'],
       { returnToShell: true, initialSize: { cols: 132, rows: 47 } }
+    )
+
+    const oneOff = await app.request('/api/worktrees/wt_1/terminals', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        name: 'Open editor',
+        argv: ['code', '.'],
+        closeOnSuccess: true
+      })
+    })
+    expect(oneOff.status).toBe(201)
+    expect(service.createTerminal).toHaveBeenLastCalledWith(
+      'wt_1',
+      'Open editor',
+      ['code', '.'],
+      { closeOnSuccess: true }
     )
   })
 
@@ -305,7 +333,8 @@ describe('HTTP API validation', () => {
         'semi;colon',
         '$HOME',
         'Unicode 世界'
-      ]
+      ],
+      closeOnSuccess: true
     }
     const created = await app.request('/api/terminal-presets', {
       method: 'POST',

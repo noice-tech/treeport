@@ -70,6 +70,7 @@ interface TerminalViewProps {
     name: string
     argv?: string[]
     returnToShell?: boolean
+    closeOnSuccess?: boolean
   }) => void
   onManagePresets: (trigger: HTMLButtonElement | null) => void
   onCloseTerminal: (
@@ -542,7 +543,9 @@ export function TerminalView({
                       onCreateTerminal({
                         name: preset.name,
                         argv: [preset.executable, ...preset.args],
-                        returnToShell: true
+                        ...(preset.closeOnSuccess
+                          ? { closeOnSuccess: true }
+                          : { returnToShell: true })
                       })
                     }
                   >

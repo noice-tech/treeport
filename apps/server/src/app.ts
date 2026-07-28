@@ -327,9 +327,10 @@ export function createApp({
       context.req.param('worktreeId'),
       body.name,
       body.argv,
-      body.returnToShell || body.initialSize
+      body.returnToShell || body.closeOnSuccess || body.initialSize
         ? {
             ...(body.returnToShell ? { returnToShell: true } : {}),
+            ...(body.closeOnSuccess ? { closeOnSuccess: true } : {}),
             ...(body.initialSize ? { initialSize: body.initialSize } : {})
           }
         : undefined

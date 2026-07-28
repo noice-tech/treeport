@@ -502,6 +502,7 @@ async function mockApp(
       name: 'Hunk',
       executable: 'npx',
       args: ['--yes', 'hunkdiff@0.17.3', 'diff', 'HEAD', '--watch'],
+      closeOnSuccess: false,
       createdAt: '2026-01-01T00:00:00.000Z',
       updatedAt: '2026-01-01T00:00:00.000Z'
     }
@@ -593,7 +594,7 @@ async function mockApp(
     ) {
       const body = route.request().postDataJSON() as Pick<
         TerminalPreset,
-        'name' | 'executable' | 'args'
+        'name' | 'executable' | 'args' | 'closeOnSuccess'
       >
       const preset: TerminalPreset = {
         id: `preset_${terminalPresets.length + 1}`,
@@ -613,7 +614,7 @@ async function mockApp(
       const presetId = pathname.split('/').at(-1)!
       const body = route.request().postDataJSON() as Pick<
         TerminalPreset,
-        'name' | 'executable' | 'args'
+        'name' | 'executable' | 'args' | 'closeOnSuccess'
       > & { expectedUpdatedAt: string }
       const { expectedUpdatedAt, ...input } = body
       const index = terminalPresets.findIndex(
@@ -2716,7 +2717,8 @@ test.describe('desktop worktree terminal UI', () => {
     expect((await createRequest).postDataJSON()).toEqual({
       name: 'Review tool',
       executable: 'npx',
-      args: ['semi;$HOME', '--yes']
+      args: ['semi;$HOME', '--yes'],
+      closeOnSuccess: false
     })
     const presetRow = dialog.getByRole('button', { name: /^Review tool/ })
     await expect(presetRow).toBeVisible()
@@ -2724,6 +2726,7 @@ test.describe('desktop worktree terminal UI', () => {
 
     await dialog.getByLabel('Name').fill('Review updated')
     await dialog.getByLabel('Command').fill('npx "semi;$HOME"')
+    await dialog.getByLabel('Close on success').click()
     const updateRequest = page.waitForRequest(
       (request) =>
         request.method() === 'PATCH' &&
@@ -2734,6 +2737,7 @@ test.describe('desktop worktree terminal UI', () => {
       name: 'Review updated',
       executable: 'npx',
       args: ['semi;$HOME'],
+      closeOnSuccess: true,
       expectedUpdatedAt: '2026-01-02T00:00:00.000Z'
     })
 
@@ -2755,8 +2759,10 @@ test.describe('desktop worktree terminal UI', () => {
       page.getByRole('button', { name: 'New terminal' })
     ).toBeFocused()
   })
-  test('launches Shell and a configured terminal preset', async ({ page }) => {
-    await mockApp(page, [
+  test('launches Shell and configured persistent and one-off presets', async ({
+    page
+  }) => {
+    const mocked = await mockApp(page, [
       {
         terminalId: 'term_dev',
         title: null,
@@ -2849,6 +2855,43 @@ test.describe('desktop worktree terminal UI', () => {
       }
     })
     await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
+
+    mocked.terminalPresets[0] = {
+      ...mocked.terminalPresets[0]!,
+      name: 'Open editor',
+      executable: 'code',
+      args: ['.'],
+      closeOnSuccess: true,
+      updatedAt: '2026-01-04T00:00:00.000Z'
+    }
+    await page.reload()
+    await page.getByRole('button', { name: 'New worktree' }).click()
+    await expect(
+      page.getByLabel('Initial terminal').getByRole('option', {
+        name: 'Open editor'
+      })
+    ).toHaveCount(0)
+    await page
+      .getByRole('dialog')
+      .getByRole('button', { name: 'Close', exact: true })
+      .click()
+    await page.locator('.worktree-row').filter({ hasText: 'topic' }).click()
+    const oneOffRequestPromise = page.waitForRequest(
+      (request) =>
+        request.method() === 'POST' &&
+        new URL(request.url()).pathname === '/api/worktrees/wt_topic/terminals'
+    )
+    await page.getByRole('button', { name: 'New terminal' }).click()
+    await page.getByRole('menuitem', { name: 'Open editor' }).click()
+    expect((await oneOffRequestPromise).postDataJSON()).toEqual({
+      name: 'Open editor',
+      argv: ['code', '.'],
+      closeOnSuccess: true,
+      initialSize: {
+        cols: expect.any(Number),
+        rows: expect.any(Number)
+      }
+    })
   })
 
   test('confirms before closing a terminal with a foreground process', async ({
@@ -3059,7 +3102,7 @@ test.describe('desktop worktree terminal UI', () => {
     await expect(
       page
         .getByRole('status')
-        .filter({ hasText: 'selected preset was deleted' })
+        .filter({ hasText: 'selected preset cannot be used' })
     ).toBeVisible()
     await expect(page.getByLabel('Initial terminal')).toHaveValue('shell')
     await page
@@ -3071,7 +3114,7 @@ test.describe('desktop worktree terminal UI', () => {
     await expect(
       page
         .getByRole('status')
-        .filter({ hasText: 'selected preset was deleted' })
+        .filter({ hasText: 'selected preset cannot be used' })
     ).toHaveCount(0)
   })
   test('preserves modified terminal keys used by macOS and Pi', async ({

@@ -41,7 +41,10 @@ export function WorktreeForm({
 
     return stored ?? 'shell'
   })
-  const initialPresetAvailable = presets.some(
+  const initialTerminalPresets = presets.filter(
+    (preset) => !preset.closeOnSuccess
+  )
+  const initialPresetAvailable = initialTerminalPresets.some(
     (preset) => preset.id === initialPresetId
   )
   const initialPresetUnavailable =
@@ -68,7 +71,7 @@ export function WorktreeForm({
           return
         }
 
-        const selectedPreset = presets.find(
+        const selectedPreset = initialTerminalPresets.find(
           (preset) => preset.id === effectiveInitialPresetId
         )
         onSubmit(
@@ -141,7 +144,7 @@ export function WorktreeForm({
             <option value={initialPresetId}>Loading saved preset…</option>
           )}
           <option value="shell">Shell</option>
-          {presets.map((preset) => (
+          {initialTerminalPresets.map((preset) => (
             <option key={preset.id} value={preset.id}>
               {preset.name}
             </option>
@@ -149,7 +152,8 @@ export function WorktreeForm({
         </NativeSelect>
         {initialPresetMissing && (
           <p className="form-note" role="status">
-            The selected preset was deleted. Initial terminal changed to Shell.
+            The selected preset cannot be used as an initial terminal. Initial
+            terminal changed to Shell.
           </p>
         )}
         {presetsLoading && (
