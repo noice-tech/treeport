@@ -151,7 +151,7 @@ function fixture() {
       status: 'running',
       exitCode: null
     })),
-    getWorktree: vi.fn(() => ({
+    getWorktree: vi.fn(async () => ({
       id: 'wt',
       path: '/tmp',
       tmuxSocketName: 'socket'

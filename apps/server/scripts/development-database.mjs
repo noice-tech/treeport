@@ -2,8 +2,10 @@
 import crypto from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
-import Database from 'better-sqlite3'
+import { fileURLToPath, pathToFileURL } from 'node:url'
+import { createClient } from '@libsql/client'
+import { sql } from 'drizzle-orm'
+import { drizzle } from 'drizzle-orm/libsql'
 
 export async function cloneDevelopmentDatabase(
   source,
@@ -47,45 +49,41 @@ export async function cloneDevelopmentDatabase(
   )
 
   try {
-    const sourceDatabase = new Database(sourcePath, {
-      readonly: true,
-      fileMustExist: true
-    })
+    const sourceClient = createClient({ url: pathToFileURL(sourcePath).href })
     try {
-      await sourceDatabase.backup(temporaryPath)
+      await drizzle(sourceClient).run(
+        sql.raw(`VACUUM INTO '${temporaryPath.replaceAll("'", "''")}'`)
+      )
     } finally {
-      sourceDatabase.close()
+      sourceClient.close()
     }
 
-    const destinationDatabase = new Database(temporaryPath)
+    const destinationClient = createClient({
+      url: pathToFileURL(temporaryPath).href
+    })
+    const destinationDatabase = drizzle(destinationClient)
     try {
       const worktrees = preserveTmuxSockets
         ? []
-        : destinationDatabase.prepare('SELECT id FROM worktrees').all()
-      const updateSocket = preserveTmuxSockets
-        ? null
-        : destinationDatabase.prepare(
-            'UPDATE worktrees SET tmux_socket_name = ? WHERE id = ?'
-          )
-      destinationDatabase.transaction(() => {
-        destinationDatabase.prepare('DELETE FROM operations').run()
-        destinationDatabase
-          .prepare(
-            `UPDATE worktrees
-             SET status = 'active', cleanup_error = NULL
-             WHERE status IN ('cleaning', 'cleanup_failed')`
-          )
-          .run()
+        : await destinationDatabase.all(sql`SELECT id FROM worktrees`)
+      await destinationDatabase.transaction(async (tx) => {
+        await tx.run(sql`DELETE FROM operations`)
+        await tx.run(sql`
+          UPDATE worktrees
+          SET status = 'active', cleanup_error = NULL
+          WHERE status IN ('cleaning', 'cleanup_failed')
+        `)
         for (const worktree of worktrees) {
-          updateSocket.run(
-            `treeport-wt-${crypto.randomBytes(8).toString('hex')}`,
-            worktree.id
-          )
+          await tx.run(sql`
+            UPDATE worktrees
+            SET tmux_socket_name = ${`treeport-wt-${crypto.randomBytes(8).toString('hex')}`}
+            WHERE id = ${String(worktree.id)}
+          `)
         }
-      })()
-      destinationDatabase.pragma('wal_checkpoint(TRUNCATE)')
+      })
+      await destinationDatabase.run(sql`PRAGMA wal_checkpoint(TRUNCATE)`)
     } finally {
-      destinationDatabase.close()
+      destinationClient.close()
     }
 
     await fs.chmod(temporaryPath, 0o600)

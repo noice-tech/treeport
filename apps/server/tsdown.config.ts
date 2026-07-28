@@ -13,6 +13,7 @@ export default defineConfig({
   clean: true,
   sourcemap: true,
   dts: false,
+  copy: [{ from: 'drizzle/**/*', to: 'dist/drizzle', flatten: false }],
   deps: {
     neverBundle: true,
     alwaysBundle: ['@treeport/shared']

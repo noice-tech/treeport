@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import { sql } from 'drizzle-orm'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { CommandRequest, CommandResult, CommandRunner } from './command'
 import { TreeportDatabase } from './database'
@@ -385,7 +386,7 @@ async function fixture() {
   const runtime = path.join(root, 'runtime')
   await fs.mkdir(main, { recursive: true })
   const runner = new SystemDouble(main)
-  const database = new TreeportDatabase(path.join(root, 'treeport.db'))
+  const database = await TreeportDatabase.open(path.join(root, 'treeport.db'))
   databases.push(database)
   const config: AppConfig = {
     host: '127.0.0.1',
@@ -421,7 +422,7 @@ async function fixture() {
 
 async function waitForOperation(service: TreeportService, operationId: string) {
   for (let attempt = 0; attempt < 50; attempt += 1) {
-    const operation = service.getOperation(operationId)
+    const operation = await service.getOperation(operationId)
     if (operation.status === 'completed' || operation.status === 'failed') {
       return operation
     }
@@ -515,25 +516,24 @@ describe('TreeportService with injected command adapters', () => {
 
   it('persists ordered terminal preset CRUD across service reconstruction', async () => {
     const { runner, service, database, config } = await fixture()
-    const first = service.createTerminalPreset({
+    const first = await service.createTerminalPreset({
       name: 'Pi 世界',
       executable: '/Applications/Tools with spaces/pi',
       args: ['a b', 'semi;colon', '$HOME', '"quote"', ''],
       closeOnSuccess: true
     })
     await new Promise((resolve) => setTimeout(resolve, 2))
-    const second = service.createTerminalPreset({
+    const second = await service.createTerminalPreset({
       name: 'Hunk',
       executable: 'npx',
       args: ['--yes', 'hunkdiff@0.17.3', 'diff', 'HEAD', '--watch']
     })
     expect(first.id).toMatch(/^preset_[0-9a-f]{32}$/)
-    expect(service.listTerminalPresets().map((preset) => preset.id)).toEqual([
-      first.id,
-      second.id
-    ])
+    expect(
+      (await service.listTerminalPresets()).map((preset) => preset.id)
+    ).toEqual([first.id, second.id])
 
-    const updated = service.updateTerminalPreset(
+    const updated = await service.updateTerminalPreset(
       first.id,
       {
         name: 'Pi updated',
@@ -543,7 +543,7 @@ describe('TreeportService with injected command adapters', () => {
       first.updatedAt
     )
     expect(updated.closeOnSuccess).toBe(true)
-    expect(() =>
+    await expect(
       service.updateTerminalPreset(
         first.id,
         {
@@ -553,42 +553,34 @@ describe('TreeportService with injected command adapters', () => {
         },
         first.updatedAt
       )
-    ).toThrow(
-      expect.objectContaining({
-        code: 'TERMINAL_PRESET_CHANGED',
-        status: 409
-      })
-    )
-    service.deleteTerminalPreset(second.id, second.updatedAt)
-    expect(service.listTerminalPresets()).toEqual([updated])
-    expect(() =>
+    ).rejects.toMatchObject({
+      code: 'TERMINAL_PRESET_CHANGED',
+      status: 409
+    })
+    await service.deleteTerminalPreset(second.id, second.updatedAt)
+    expect(await service.listTerminalPresets()).toEqual([updated])
+    await expect(
       service.updateTerminalPreset('preset_missing', updated, updated.updatedAt)
-    ).toThrow(
-      expect.objectContaining({
-        code: 'TERMINAL_PRESET_NOT_FOUND',
-        status: 404
-      })
-    )
-    expect(() =>
+    ).rejects.toMatchObject({
+      code: 'TERMINAL_PRESET_NOT_FOUND',
+      status: 404
+    })
+    await expect(
       service.deleteTerminalPreset('preset_missing', updated.updatedAt)
-    ).toThrow(
-      expect.objectContaining({
-        code: 'TERMINAL_PRESET_NOT_FOUND',
-        status: 404
-      })
-    )
-    expect(() =>
+    ).rejects.toMatchObject({
+      code: 'TERMINAL_PRESET_NOT_FOUND',
+      status: 404
+    })
+    await expect(
       service.deleteTerminalPreset(first.id, first.updatedAt)
-    ).toThrow(
-      expect.objectContaining({
-        code: 'TERMINAL_PRESET_CHANGED',
-        status: 409
-      })
-    )
+    ).rejects.toMatchObject({
+      code: 'TERMINAL_PRESET_CHANGED',
+      status: 409
+    })
 
     database.close()
     databases.splice(databases.indexOf(database), 1)
-    const reopenedDatabase = new TreeportDatabase(config.databasePath)
+    const reopenedDatabase = await TreeportDatabase.open(config.databasePath)
     databases.push(reopenedDatabase)
     const reconstructed = new TreeportService({
       config,
@@ -603,7 +595,7 @@ describe('TreeportService with injected command adapters', () => {
       ),
       gh: new GhAdapter(runner)
     })
-    expect(reconstructed.listTerminalPresets()).toEqual([updated])
+    expect(await reconstructed.listTerminalPresets()).toEqual([updated])
   })
 
   it('shares overlapping project snapshot reconciliation', async () => {
@@ -640,7 +632,7 @@ describe('TreeportService with injected command adapters', () => {
         runner.calls.filter((call) => call.args[0] === 'status').length
       ).toBeGreaterThan(0)
     )
-    service.updateProjectColor(project.id, 'violet')
+    await service.updateProjectColor(project.id, 'violet')
     const fresh = service.listProjects()
     expect(fresh).not.toBe(stale)
     release()
@@ -658,11 +650,13 @@ describe('TreeportService with injected command adapters', () => {
       events.push(event.type)
     )
 
-    expect(service.updateProjectColor(project.id, 'violet').color).toBe(
+    expect((await service.updateProjectColor(project.id, 'violet')).color).toBe(
       'violet'
     )
-    expect(service.getProject(project.id).color).toBe('violet')
-    expect(service.updateProjectColor(project.id, null).color).toBeNull()
+    expect((await service.getProject(project.id)).color).toBe('violet')
+    expect(
+      (await service.updateProjectColor(project.id, null)).color
+    ).toBeNull()
 
     unsubscribe()
     expect(events).toEqual(['project.updated', 'project.updated'])
@@ -724,7 +718,9 @@ describe('TreeportService with injected command adapters', () => {
       message: expect.stringContaining('tmux create failed')
     })
     expect(unavailable.worktrees[0]?.terminals).toEqual([])
-    expect(service.database.isProjectOpen(unavailable.id)).toBe(true)
+    await expect(service.database.isProjectOpen(unavailable.id)).resolves.toBe(
+      true
+    )
 
     runner.tmuxCreateFails = false
     const recovered = await service.getProjectSnapshot(unavailable.id)
@@ -1086,7 +1082,7 @@ describe('TreeportService with injected command adapters', () => {
       tmuxSocketName: linked.tmuxSocketName
     })
     expect(moved.terminals.map((item) => item.id)).toContain(terminal.id)
-    expect(service.getWorktree(linked.id).path).toBe(
+    expect((await service.getWorktree(linked.id)).path).toBe(
       await fs.realpath(movedPath)
     )
     expect(events).toEqual(['worktree.updated'])
@@ -1181,7 +1177,7 @@ describe('TreeportService with injected command adapters', () => {
       (worktree) => worktree.gitWorktreeKey === linkedGitKey
     )!.path = movedLinked
 
-    const restartedDatabase = new TreeportDatabase(config.databasePath)
+    const restartedDatabase = await TreeportDatabase.open(config.databasePath)
     databases.push(restartedDatabase)
     const restarted = new TreeportService({
       config,
@@ -1234,10 +1230,10 @@ describe('TreeportService with injected command adapters', () => {
       state: 'unavailable',
       message: expect.stringContaining('worktree repair failed')
     })
-    expect(database.project(project.id)?.repositoryPath).toBe(
+    expect((await database.project(project.id))?.repositoryPath).toBe(
       project.repositoryPath
     )
-    expect(database.worktree(linked.id)).toMatchObject({
+    expect(await database.worktree(linked.id)).toMatchObject({
       path: linked.path,
       tmuxSocketName: linked.tmuxSocketName
     })
@@ -1284,7 +1280,7 @@ describe('TreeportService with injected command adapters', () => {
       code: 'PROJECT_PATH_CONFLICT',
       status: 409
     })
-    expect(database.project(project.id)).toMatchObject({
+    expect(await database.project(project.id)).toMatchObject({
       id: project.id,
       repositoryPath: project.repositoryPath,
       mainWorktreePath: project.mainWorktreePath
@@ -1316,7 +1312,7 @@ describe('TreeportService with injected command adapters', () => {
       repositoryPath: project.repositoryPath,
       availability: { state: 'unavailable' }
     })
-    expect(database.project(project.id)?.repositoryPath).toBe(
+    expect((await database.project(project.id))?.repositoryPath).toBe(
       project.repositoryPath
     )
     expect(
@@ -1369,16 +1365,16 @@ describe('TreeportService with injected command adapters', () => {
     expect(refreshed.worktrees.map((worktree) => worktree.id)).not.toContain(
       linked.id
     )
-    expect(database.worktree(linked.id)).toBeNull()
+    expect(await database.worktree(linked.id)).toBeNull()
     expect(
       [...runner.sessions.keys()].some((key) =>
         key.startsWith(`${linked.tmuxSocketName}/`)
       )
     ).toBe(false)
-    const externalOperation = database.connection
-      .prepare("SELECT id FROM operations WHERE kind='external_remove'")
-      .get() as { id: string }
-    expect(service.getOperation(externalOperation.id)).toMatchObject({
+    const externalOperation = (await database.db.get<{ id: string }>(sql`
+      SELECT id FROM operations WHERE kind='external_remove'
+    `))!
+    expect(await service.getOperation(externalOperation.id)).toMatchObject({
       status: 'completed',
       result: expect.objectContaining({
         external: true,
@@ -1404,7 +1400,7 @@ describe('TreeportService with injected command adapters', () => {
     await expect(service.getTerminal(terminal.id)).rejects.toMatchObject({
       code: 'TERMINAL_NOT_FOUND'
     })
-    expect(database.worktree(linked.id)).toBeNull()
+    expect(await database.worktree(linked.id)).toBeNull()
   })
 
   it('preserves bindings and history when external terminal shutdown fails', async () => {
@@ -1430,12 +1426,13 @@ describe('TreeportService with injected command adapters', () => {
       state: 'unavailable',
       message: expect.stringContaining('tmux shutdown failed')
     })
-    expect(database.worktree(linked.id)).not.toBeNull()
+    expect(await database.worktree(linked.id)).not.toBeNull()
     expect(
-      database.connection
-        .prepare("SELECT count(*) FROM operations WHERE kind='external_remove'")
-        .pluck()
-        .get()
+      (
+        await database.db.get<{ count: number }>(sql`
+          SELECT count(*) AS count FROM operations WHERE kind='external_remove'
+        `)
+      )?.count
     ).toBe(0)
     expect(events).not.toContain('worktree.removed')
     expect(events).not.toContain('terminal.removed')
@@ -1444,7 +1441,7 @@ describe('TreeportService with injected command adapters', () => {
     await expect(service.getProjectSnapshot(project.id)).resolves.toMatchObject(
       { availability: { state: 'available' } }
     )
-    expect(database.worktree(linked.id)).toBeNull()
+    expect(await database.worktree(linked.id)).toBeNull()
     unsubscribe()
   })
 
@@ -1485,13 +1482,13 @@ describe('TreeportService with injected command adapters', () => {
 
     const unavailable = await service.getProjectSnapshot(project.id)
     expect(unavailable.availability).toMatchObject({ state: 'unavailable' })
-    expect(database.worktree(first.id)).toBeNull()
-    expect(database.worktree(second.id)).not.toBeNull()
-    const externalOperations = database.connection
-      .prepare(
-        "SELECT result_json FROM operations WHERE kind='external_remove'"
-      )
-      .all() as Array<{ result_json: string }>
+    expect(await database.worktree(first.id)).toBeNull()
+    expect(await database.worktree(second.id)).not.toBeNull()
+    const externalOperations = await database.db.all<{
+      result_json: string
+    }>(sql`
+      SELECT result_json FROM operations WHERE kind='external_remove'
+    `)
     expect(
       externalOperations.map(({ result_json }) => JSON.parse(result_json))
     ).toEqual([
@@ -1515,7 +1512,7 @@ describe('TreeportService with injected command adapters', () => {
 
     runner.tmuxKillFailureSockets.delete(second.tmuxSocketName)
     await service.getProjectSnapshot(project.id)
-    expect(database.worktree(second.id)).toBeNull()
+    expect(await database.worktree(second.id)).toBeNull()
     unsubscribe()
   })
 
@@ -1544,19 +1541,18 @@ describe('TreeportService with injected command adapters', () => {
         state: 'unavailable',
         message: expect.stringContaining('inventory is incomplete')
       })
-      expect(database.worktree(linked.id)).not.toBeNull()
+      expect(await database.worktree(linked.id)).not.toBeNull()
       expect(
         [...runner.sessions.keys()].some((key) =>
           key.startsWith(`${linked.tmuxSocketName}/`)
         )
       ).toBe(true)
       expect(
-        database.connection
-          .prepare(
-            "SELECT count(*) FROM operations WHERE kind='external_remove'"
-          )
-          .pluck()
-          .get()
+        (
+          await database.db.get<{ count: number }>(sql`
+            SELECT count(*) AS count FROM operations WHERE kind='external_remove'
+          `)
+        )?.count
       ).toBe(0)
     }
   })
@@ -1597,7 +1593,7 @@ describe('TreeportService with injected command adapters', () => {
     releaseObservation()
     await Promise.all([older, newer])
     runner.worktreeListGate = null
-    expect(service.getWorktree(linked.id).head).toBe('newer-head')
+    expect((await service.getWorktree(linked.id)).head).toBe('newer-head')
   })
 
   it('keeps cached bindings and rejects mutations while Git is unavailable', async () => {
@@ -1617,7 +1613,7 @@ describe('TreeportService with injected command adapters', () => {
     expect(unavailable.worktrees.map((worktree) => worktree.id)).toContain(
       linked.id
     )
-    expect(database.worktree(linked.id)).not.toBeNull()
+    expect(await database.worktree(linked.id)).not.toBeNull()
     expect(
       [...runner.sessions.keys()].some((key) =>
         key.endsWith(`/${terminal.tmuxSessionName}`)
@@ -1778,7 +1774,7 @@ describe('TreeportService with injected command adapters', () => {
       'completed'
     )
     expect(runner.sessions.size).toBe(1)
-    expect(service.getProject(project.id).worktrees).toHaveLength(1)
+    expect((await service.getProject(project.id)).worktrees).toHaveLength(1)
     expect(
       runner.calls.some(
         (call) => call.args.includes('branch') && call.args.includes('-D')
@@ -1820,9 +1816,9 @@ describe('TreeportService with injected command adapters', () => {
     expect(result.terminal).not.toBeNull()
     expect(result.worktree.name).toBe('hook-failure')
     expect(
-      service
-        .getProject(project.id)
-        .worktrees.some((item) => item.id === result.worktree.id)
+      (await service.getProject(project.id)).worktrees.some(
+        (item) => item.id === result.worktree.id
+      )
     ).toBe(true)
     expect(runner.sessions.size).toBe(2)
     const initialTerminalCreate = runner.calls
@@ -1931,11 +1927,11 @@ describe('TreeportService with injected command adapters', () => {
       (await beginFromPreview(service, linked.id)).id
     )
     expect(failed.status).toBe('failed')
-    expect(service.getWorktree(linked.id).status).toBe('cleanup_failed')
+    expect((await service.getWorktree(linked.id)).status).toBe('cleanup_failed')
     await expect(service.getTerminal(terminal.id)).rejects.toMatchObject({
       code: 'TERMINAL_NOT_FOUND'
     })
-    expect(service.getWorktree(linked.id).cleanupError).toMatch(
+    expect((await service.getWorktree(linked.id)).cleanupError).toMatch(
       /Terminals were stopped/
     )
     await expect(
@@ -2039,7 +2035,7 @@ describe('TreeportService with injected command adapters', () => {
       ).status
     ).toBe('completed')
     await expect(fs.readFile(marker, 'utf8')).resolves.toBe('preserve')
-    expect(service.getProject(project.id).worktrees).toHaveLength(1)
+    expect((await service.getProject(project.id)).worktrees).toHaveLength(1)
   })
 
   it('refreshes live Git worktrees before checking inferred-name collisions', async () => {
@@ -2128,7 +2124,7 @@ describe('TreeportService with injected command adapters', () => {
     expect(
       duringRemoval.worktrees.find((worktree) => worktree.id === linked.id)
     ).toMatchObject({ status: 'cleaning' })
-    expect(service.getOperation(operation.id).status).toBe('running')
+    expect((await service.getOperation(operation.id)).status).toBe('running')
     await expect(
       service.createTerminal(linked.id, 'Blocked during removal')
     ).rejects.toMatchObject({ code: 'WORKTREE_BUSY' })
@@ -2142,7 +2138,7 @@ describe('TreeportService with injected command adapters', () => {
       'completed'
     )
     await expect(fs.stat(linked.path)).rejects.toMatchObject({ code: 'ENOENT' })
-    expect(service.database.worktree(linked.id)).toBeNull()
+    expect(await service.database.worktree(linked.id)).toBeNull()
     await expect(
       service.createTerminal(linked.id, 'Blocked after removal')
     ).rejects.toMatchObject({ code: 'WORKTREE_NOT_FOUND' })
@@ -2204,9 +2200,11 @@ describe('TreeportService with injected command adapters', () => {
     await Promise.resolve()
 
     expect(secondRemovalSettled).toBe(false)
-    expect(service.getOperation(firstOperation.id).status).toBe('running')
-    expect(service.getWorktree(first.id).status).toBe('cleaning')
-    expect(service.getWorktree(second.id).status).toBe('active')
+    expect((await service.getOperation(firstOperation.id)).status).toBe(
+      'running'
+    )
+    expect((await service.getWorktree(first.id)).status).toBe('cleaning')
+    expect((await service.getWorktree(second.id)).status).toBe('active')
     expect(deregistered).toEqual(new Set([first.path]))
     await expect(
       service.beginRemove(first.id, {
@@ -2214,16 +2212,18 @@ describe('TreeportService with injected command adapters', () => {
         confirmDestructive: firstPreview.warnings.length > 0
       })
     ).rejects.toMatchObject({ code: 'REMOVE_IN_PROGRESS' })
-    const mainWorktree = service
-      .getProject(project.id)
-      .worktrees.find((worktree) => worktree.kind === 'main')!
+    const mainWorktree = (await service.getProject(project.id)).worktrees.find(
+      (worktree) => worktree.kind === 'main'
+    )!
     await expect(
       service.createTerminal(mainWorktree.id, 'Created during removal', ['pi'])
     ).resolves.toMatchObject({
       worktreeId: mainWorktree.id,
       name: 'Created during removal'
     })
-    expect(service.getOperation(firstOperation.id).status).toBe('running')
+    expect((await service.getOperation(firstOperation.id)).status).toBe(
+      'running'
+    )
     await expect(service.closeProject(project.id)).rejects.toMatchObject({
       code: 'PROJECT_BUSY'
     })
@@ -2239,8 +2239,10 @@ describe('TreeportService with injected command adapters', () => {
     await vi.waitFor(() =>
       expect(deregistered).toEqual(new Set([first.path, second.path]))
     )
-    expect(service.getOperation(secondOperation.id).status).toBe('running')
-    expect(service.getWorktree(second.id).status).toBe('cleaning')
+    expect((await service.getOperation(secondOperation.id)).status).toBe(
+      'running'
+    )
+    expect((await service.getWorktree(second.id)).status).toBe('cleaning')
     await expect(service.deleteProject(project.id)).rejects.toMatchObject({
       code: 'PROJECT_BUSY'
     })
@@ -2249,7 +2251,7 @@ describe('TreeportService with injected command adapters', () => {
     expect((await waitForOperation(service, secondOperation.id)).status).toBe(
       'completed'
     )
-    expect(service.getProject(project.id).worktrees).toEqual([
+    expect((await service.getProject(project.id)).worktrees).toEqual([
       expect.objectContaining({ kind: 'main' })
     ])
   })
@@ -2403,51 +2405,47 @@ describe('TreeportService with injected command adapters', () => {
     ) => {
       const preview = await service.removePreview(worktree.id)
       const checkout = await fs.lstat(worktree.path, { bigint: true })
-      const gitWorktreeKey = (
-        database.connection
-          .prepare('SELECT git_worktree_key FROM worktrees WHERE id=?')
-          .get(worktree.id) as { git_worktree_key: string }
-      ).git_worktree_key
+      const gitWorktreeKey = (await database.db.get<{
+        git_worktree_key: string
+      }>(sql`
+          SELECT git_worktree_key FROM worktrees WHERE id=${worktree.id}
+        `))!.git_worktree_key
       const gitMarker = await fs.readFile(
         path.join(worktree.path, '.git'),
         'utf8'
       )
-      database.connection
-        .prepare(
-          `INSERT INTO operations(id,kind,project_id,worktree_id,status,request_json,result_json,error,created_at,updated_at)
-           VALUES(?,'remove',?,?,'running',?,NULL,NULL,?,?)`
-        )
-        .run(
-          operationId,
-          project.id,
-          worktree.id,
-          JSON.stringify(
-            includeIdentity
-              ? {
-                  preview,
-                  checkoutIdentity: {
-                    path: worktree.path,
-                    device: checkout.dev.toString(),
-                    inode: checkout.ino.toString(),
-                    gitWorktreeKey,
-                    gitMarker,
-                    managedWrapperPath: worktree.managedWrapperPath,
-                    quarantinePath: path.join(
-                      path.dirname(worktree.path),
-                      `.${path.basename(worktree.path)}.treeport-removing-${operationId}`
-                    )
+      await database.db.transaction(async (tx) => {
+        await tx.run(sql`
+          INSERT INTO operations(
+            id,kind,project_id,worktree_id,status,request_json,result_json,error,created_at,updated_at
+          ) VALUES(
+            ${operationId},'remove',${project.id},${worktree.id},'running',
+            ${JSON.stringify(
+              includeIdentity
+                ? {
+                    preview,
+                    checkoutIdentity: {
+                      path: worktree.path,
+                      device: checkout.dev.toString(),
+                      inode: checkout.ino.toString(),
+                      gitWorktreeKey,
+                      gitMarker,
+                      managedWrapperPath: worktree.managedWrapperPath,
+                      quarantinePath: path.join(
+                        path.dirname(worktree.path),
+                        `.${path.basename(worktree.path)}.treeport-removing-${operationId}`
+                      )
+                    }
                   }
-                }
-              : {}
-          ),
-          timestamp,
-          timestamp
-        )
-      database.connection
-        .prepare(
-          "UPDATE worktrees SET status='cleaning',updated_at=? WHERE id=?"
-        )
-        .run(timestamp, worktree.id)
+                : {}
+            )},NULL,NULL,${timestamp},${timestamp}
+          )
+        `)
+        await tx.run(sql`
+          UPDATE worktrees SET status='cleaning',updated_at=${timestamp}
+          WHERE id=${worktree.id}
+        `)
+      })
     }
     await insertInterrupted('op_recoverable_root', recoverable, true)
     await insertInterrupted('op_quarantined_root', quarantined, true)
@@ -2460,7 +2458,8 @@ describe('TreeportService with injected command adapters', () => {
       'preserve wrapper'
     )
     const quarantinePath = (
-      service.getOperation('op_quarantined_root').request.checkoutIdentity as {
+      (await service.getOperation('op_quarantined_root')).request
+        .checkoutIdentity as {
         quarantinePath: string
       }
     ).quarantinePath
@@ -2523,8 +2522,8 @@ describe('TreeportService with injected command adapters', () => {
         entry.includes('.treeport-removing-')
       )
     ).toBe(false)
-    expect(database.worktree(recoverable.id)).toBeNull()
-    expect(restarted.getOperation('op_recoverable_root')).toMatchObject({
+    expect(await database.worktree(recoverable.id)).toBeNull()
+    expect(await restarted.getOperation('op_recoverable_root')).toMatchObject({
       status: 'completed',
       result: expect.objectContaining({ removed: true, recovered: true })
     })
@@ -2535,8 +2534,8 @@ describe('TreeportService with injected command adapters', () => {
     await expect(fs.stat(quarantined.path)).rejects.toMatchObject({
       code: 'ENOENT'
     })
-    expect(database.worktree(quarantined.id)).toBeNull()
-    expect(restarted.getOperation('op_quarantined_root')).toMatchObject({
+    expect(await database.worktree(quarantined.id)).toBeNull()
+    expect(await restarted.getOperation('op_quarantined_root')).toMatchObject({
       status: 'completed',
       result: expect.objectContaining({ removed: true, recovered: true })
     })
@@ -2544,11 +2543,11 @@ describe('TreeportService with injected command adapters', () => {
     await expect(fs.readFile(replacementMarker, 'utf8')).resolves.toBe(
       'replacement'
     )
-    expect(database.worktree(replaced.id)).toMatchObject({
+    expect(await database.worktree(replaced.id)).toMatchObject({
       status: 'cleanup_failed',
       cleanupError: expect.stringMatching(/different filesystem object/i)
     })
-    expect(restarted.getOperation('op_replaced_root')).toMatchObject({
+    expect(await restarted.getOperation('op_replaced_root')).toMatchObject({
       status: 'failed',
       error: expect.stringMatching(/different filesystem object/i)
     })
@@ -2556,23 +2555,23 @@ describe('TreeportService with injected command adapters', () => {
     await expect(fs.readFile(repurposedMarker, 'utf8')).resolves.toBe(
       'replacement in the same directory'
     )
-    expect(database.worktree(repurposed.id)).toMatchObject({
+    expect(await database.worktree(repurposed.id)).toMatchObject({
       status: 'cleanup_failed',
       cleanupError: expect.stringMatching(/Git marker/i)
     })
-    expect(restarted.getOperation('op_repurposed_root')).toMatchObject({
+    expect(await restarted.getOperation('op_repurposed_root')).toMatchObject({
       status: 'failed',
       error: expect.stringMatching(/Git marker/i)
     })
 
     await expect(fs.stat(missingIdentity.path)).resolves.toBeTruthy()
-    expect(database.worktree(missingIdentity.id)).toMatchObject({
+    expect(await database.worktree(missingIdentity.id)).toMatchObject({
       status: 'cleanup_failed',
       cleanupError: expect.stringMatching(/verifiable accepted preview/i)
     })
-    expect(restarted.getOperation('op_missing_identity_root').status).toBe(
-      'failed'
-    )
+    expect(
+      (await restarted.getOperation('op_missing_identity_root')).status
+    ).toBe('failed')
     const failuresBeforeSecondPoll = events.filter(
       (event) => event.type === 'remove.failed'
     ).length
@@ -2583,10 +2582,10 @@ describe('TreeportService with injected command adapters', () => {
 
     await fs.rm(missingIdentity.path, { recursive: true, force: true })
     await restarted.getProjectSnapshot(project.id)
-    expect(database.worktree(missingIdentity.id)).toBeNull()
-    expect(restarted.getOperation('op_missing_identity_root').status).toBe(
-      'completed'
-    )
+    expect(await database.worktree(missingIdentity.id)).toBeNull()
+    expect(
+      (await restarted.getOperation('op_missing_identity_root')).status
+    ).toBe('completed')
     expect(
       events.filter(
         (event) =>
@@ -2617,22 +2616,28 @@ describe('TreeportService with injected command adapters', () => {
       await service.createWorktree(project.id, 'after-git-non-empty', 'default')
     ).worktree
     const timestamp = new Date().toISOString()
-    const insertInterrupted = (operationId: string, worktreeId: string) => {
-      database.connection
-        .prepare(
-          `INSERT INTO operations(id,kind,project_id,worktree_id,status,request_json,result_json,error,created_at,updated_at)
-           VALUES(?,'remove',?,?,'running','{}',NULL,NULL,?,?)`
-        )
-        .run(operationId, project.id, worktreeId, timestamp, timestamp)
-      database.connection
-        .prepare(
-          "UPDATE worktrees SET status='cleaning',updated_at=? WHERE id=?"
-        )
-        .run(timestamp, worktreeId)
+    const insertInterrupted = async (
+      operationId: string,
+      worktreeId: string
+    ) => {
+      await database.db.transaction(async (tx) => {
+        await tx.run(sql`
+          INSERT INTO operations(
+            id,kind,project_id,worktree_id,status,request_json,result_json,error,created_at,updated_at
+          ) VALUES(
+            ${operationId},'remove',${project.id},${worktreeId},'running','{}',
+            NULL,NULL,${timestamp},${timestamp}
+          )
+        `)
+        await tx.run(sql`
+          UPDATE worktrees SET status='cleaning',updated_at=${timestamp}
+          WHERE id=${worktreeId}
+        `)
+      })
     }
-    insertInterrupted('op_before_git', beforeGit.id)
-    insertInterrupted('op_after_git', afterGit.id)
-    insertInterrupted('op_after_git_non_empty', afterGitNonEmpty.id)
+    await insertInterrupted('op_before_git', beforeGit.id)
+    await insertInterrupted('op_after_git', afterGit.id)
+    await insertInterrupted('op_after_git_non_empty', afterGitNonEmpty.id)
     for (const worktree of [afterGit, afterGitNonEmpty]) {
       runner.worktrees.splice(
         runner.worktrees.findIndex((item) => item.path === worktree.path),
@@ -2661,12 +2666,14 @@ describe('TreeportService with injected command adapters', () => {
     })
     await restarted.initialize()
 
-    expect(restarted.getWorktree(beforeGit.id).status).toBe('cleanup_failed')
-    expect(restarted.getOperation('op_before_git')).toMatchObject({
+    expect((await restarted.getWorktree(beforeGit.id)).status).toBe(
+      'cleanup_failed'
+    )
+    expect(await restarted.getOperation('op_before_git')).toMatchObject({
       status: 'failed'
     })
-    expect(database.worktree(afterGit.id)).toBeNull()
-    expect(restarted.getOperation('op_after_git')).toMatchObject({
+    expect(await database.worktree(afterGit.id)).toBeNull()
+    expect(await restarted.getOperation('op_after_git')).toMatchObject({
       status: 'completed',
       result: expect.objectContaining({ recovered: true, removed: true }),
       error: null
@@ -2674,15 +2681,17 @@ describe('TreeportService with injected command adapters', () => {
     await expect(fs.stat(path.dirname(afterGit.path))).rejects.toMatchObject({
       code: 'ENOENT'
     })
-    expect(database.worktree(afterGit.id)).toBeNull()
-    expect(database.worktree(afterGitNonEmpty.id)).toBeNull()
-    expect(restarted.getOperation('op_after_git_non_empty')).toMatchObject({
+    expect(await database.worktree(afterGit.id)).toBeNull()
+    expect(await database.worktree(afterGitNonEmpty.id)).toBeNull()
+    expect(
+      await restarted.getOperation('op_after_git_non_empty')
+    ).toMatchObject({
       status: 'completed',
       result: expect.objectContaining({ recovered: true, removed: true }),
       error: null
     })
     await expect(fs.readFile(preservedMarker, 'utf8')).resolves.toBe('preserve')
-    expect(database.worktree(afterGitNonEmpty.id)).toBeNull()
+    expect(await database.worktree(afterGitNonEmpty.id)).toBeNull()
   })
 
   it('clears managed-wrapper provenance when an external worktree revives a removed path', async () => {
@@ -2718,9 +2727,9 @@ describe('TreeportService with injected command adapters', () => {
       branch: null
     })
     await service.refreshProject(project.id)
-    const revived = service
-      .getProject(project.id)
-      .worktrees.find((worktree) => worktree.path === managed.path)!
+    const revived = (await service.getProject(project.id)).worktrees.find(
+      (worktree) => worktree.path === managed.path
+    )!
     expect(revived.id).not.toBe(managed.id)
     expect(revived.managedWrapperPath).toBeNull()
 
@@ -2761,7 +2770,7 @@ describe('TreeportService with injected command adapters', () => {
         runner.calls.some((call) => call.executable === 'hold-setup')
       ).toBe(true)
     )
-    const setupProject = service.getProject(project.id)
+    const setupProject = await service.getProject(project.id)
     const linked = setupProject.worktrees.find(
       (worktree) => worktree.name === 'setup-locked'
     )!
@@ -2801,7 +2810,7 @@ describe('TreeportService with injected command adapters', () => {
     await expect(removing).resolves.toMatchObject({
       error: { code: 'REMOVE_PREVIEW_STALE' }
     })
-    expect(service.getWorktree(linked.id).status).toBe('active')
+    expect((await service.getWorktree(linked.id)).status).toBe('active')
     expect(terminalOutcome).toMatchObject({
       terminal: {
         worktreeId: mainWorktree.id,
@@ -2876,7 +2885,7 @@ describe('TreeportService with injected command adapters', () => {
       (await beginFromPreview(service, linked.id)).id
     )
 
-    const mainWorktree = service.getProject(project.id).worktrees[0]!
+    const mainWorktree = (await service.getProject(project.id)).worktrees[0]!
     runner.calls.length = 0
     let releaseTerminal!: () => void
     runner.tmuxCreateGate = new Promise<void>((resolve) => {
@@ -2918,7 +2927,7 @@ describe('TreeportService with injected command adapters', () => {
     await service.closeProject(project.id)
 
     expect(await service.listProjects()).toEqual([])
-    expect(service.listRecentProjects()).toEqual([
+    expect(await service.listRecentProjects()).toEqual([
       expect.objectContaining({
         id: project.id,
         repositoryPath: project.repositoryPath
@@ -2926,7 +2935,9 @@ describe('TreeportService with injected command adapters', () => {
     ])
     expect(runner.sessions.size).toBe(0)
     expect(
-      service.database.project(project.id)?.worktrees.map(({ id }) => id)
+      (await service.database.project(project.id))?.worktrees.map(
+        ({ id }) => id
+      )
     ).toEqual(expect.arrayContaining([mainWorktree.id, linked.id]))
 
     const reopened = await service.openProject(project.id)
@@ -2944,12 +2955,12 @@ describe('TreeportService with injected command adapters', () => {
           worktree.terminals[0]?.name === 'Shell'
       )
     ).toBe(true)
-    expect(service.listRecentProjects()).toEqual([])
+    expect(await service.listRecentProjects()).toEqual([])
 
     await service.closeProject(project.id)
     const pathReopened = await service.registerProject(main)
     expect(pathReopened.id).toBe(project.id)
-    expect(service.database.isProjectOpen(project.id)).toBe(true)
+    await expect(service.database.isProjectOpen(project.id)).resolves.toBe(true)
   })
 
   it('keeps a project open after partial terminal shutdown and retries the close', async () => {
@@ -2983,7 +2994,7 @@ describe('TreeportService with injected command adapters', () => {
         terminalsMayHaveStopped: true
       }
     })
-    expect(service.database.isProjectOpen(project.id)).toBe(true)
+    await expect(service.database.isProjectOpen(project.id)).resolves.toBe(true)
     expect(removed).toContain(mainTerminal.id)
     expect(runner.sessions.size).toBe(1)
     expect(
@@ -2995,7 +3006,9 @@ describe('TreeportService with injected command adapters', () => {
     runner.tmuxKillFailureSockets.clear()
     await expect(service.closeProject(project.id)).resolves.toBeUndefined()
     unsubscribe()
-    expect(service.database.isProjectOpen(project.id)).toBe(false)
+    await expect(service.database.isProjectOpen(project.id)).resolves.toBe(
+      false
+    )
     expect(runner.sessions.size).toBe(0)
   })
 
@@ -3010,12 +3023,12 @@ describe('TreeportService with injected command adapters', () => {
     )
     const setProjectOpen = database.setProjectOpen.bind(database)
     vi.spyOn(database, 'setProjectOpen').mockImplementation(
-      (projectId, open, timestamp) => {
+      async (projectId, open, timestamp) => {
         if (!open) {
           throw new Error('database write failed')
         }
 
-        setProjectOpen(projectId, open, timestamp)
+        await setProjectOpen(projectId, open, timestamp)
       }
     )
     const events: string[] = []
@@ -3031,7 +3044,7 @@ describe('TreeportService with injected command adapters', () => {
       }
     })
     unsubscribe()
-    expect(database.isProjectOpen(project.id)).toBe(true)
+    await expect(database.isProjectOpen(project.id)).resolves.toBe(true)
     expect(runner.sessions.size).toBe(0)
     expect(events).toContain(`terminal.removed:${terminal.id}`)
     expect(events.some((event) => event.startsWith('project.updated'))).toBe(
@@ -3115,14 +3128,16 @@ describe('TreeportService with injected command adapters', () => {
     const { main, runner, service } = await fixture()
     const project = await service.registerProject(main)
     await service.closeProject(project.id)
-    const recentBefore = service.listRecentProjects()[0]!
+    const recentBefore = (await service.listRecentProjects())[0]!
     runner.listWorktreesFails = true
 
     await expect(service.registerProject(main)).rejects.toThrow(
       'repository unavailable'
     )
-    expect(service.database.isProjectOpen(project.id)).toBe(false)
-    expect(service.listRecentProjects()).toEqual([recentBefore])
+    await expect(service.database.isProjectOpen(project.id)).resolves.toBe(
+      false
+    )
+    expect(await service.listRecentProjects()).toEqual([recentBefore])
     expect(await service.listProjects()).toEqual([])
   })
 
@@ -3141,14 +3156,14 @@ describe('TreeportService with injected command adapters', () => {
     await expect(
       service.createTerminal(mainWorktree.id, 'Closed', ['pi'])
     ).rejects.toMatchObject({ code: 'PROJECT_CLOSED' })
-    expect(() => service.updateProjectColor(project.id, 'violet')).toThrowError(
-      expect.objectContaining({ code: 'PROJECT_CLOSED' })
-    )
+    await expect(
+      service.updateProjectColor(project.id, 'violet')
+    ).rejects.toMatchObject({ code: 'PROJECT_CLOSED' })
 
     runner.listWorktreesFails = true
     const reopened = await service.openProject(project.id)
     expect(reopened.availability.state).toBe('unavailable')
-    expect(service.database.isProjectOpen(project.id)).toBe(true)
+    await expect(service.database.isProjectOpen(project.id)).resolves.toBe(true)
   })
 
   it('keeps destructive unregister available for a closed registration', async () => {
@@ -3158,8 +3173,8 @@ describe('TreeportService with injected command adapters', () => {
 
     await service.deleteProject(project.id)
 
-    expect(service.database.project(project.id)).toBeNull()
-    expect(service.listRecentProjects()).toEqual([])
+    expect(await service.database.project(project.id)).toBeNull()
+    expect(await service.listRecentProjects()).toEqual([])
   })
 
   it('closes unavailable projects without observing Git', async () => {
@@ -3170,7 +3185,9 @@ describe('TreeportService with injected command adapters', () => {
 
     await service.closeProject(project.id)
 
-    expect(service.database.isProjectOpen(project.id)).toBe(false)
+    await expect(service.database.isProjectOpen(project.id)).resolves.toBe(
+      false
+    )
     expect(
       runner.calls.some(
         (call) => call.args[0] === 'worktree' && call.args[1] === 'list'

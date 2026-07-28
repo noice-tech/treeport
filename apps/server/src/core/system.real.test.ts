@@ -40,7 +40,7 @@ function ptyEnvironment(): Record<string, string> {
 
 async function waitOperation(service: TreeportService, operationId: string) {
   for (let attempt = 0; attempt < 200; attempt += 1) {
-    const operation = service.getOperation(operationId)
+    const operation = await service.getOperation(operationId)
     if (operation.status === 'completed' || operation.status === 'failed') {
       return operation
     }
@@ -72,7 +72,7 @@ async function makeService(databasePath: string, runtimeDir: string) {
     TREEPORT_SHELL: process.env.SHELL || '/bin/sh'
   })
   const runner = new SpawnCommandRunner()
-  const database = new TreeportDatabase(databasePath)
+  const database = await TreeportDatabase.open(databasePath)
   const git = new GitAdapter(runner)
   const launcherPath = fileURLToPath(
     new URL('../../dist/core/launcher.js', import.meta.url)
@@ -385,9 +385,9 @@ describe.skipIf(!enabled)(
       expect(captured.stdout).not.toContain('SHOULD_NOT_RUN')
       expect(captured.stdout).not.toContain('FINAL_SHOULD_NOT_RUN')
       expect(
-        fixture.service
-          .getProject(project.id)
-          .worktrees.some((worktree) => worktree.id === failedWorktree.id)
+        (await fixture.service.getProject(project.id)).worktrees.some(
+          (worktree) => worktree.id === failedWorktree.id
+        )
       ).toBe(true)
       expect(
         (await fixture.service.refreshTerminalStatus(failedTerminal.id)).status
@@ -429,7 +429,7 @@ describe.skipIf(!enabled)(
         )
       ).toBe(false)
       expect(
-        fixture.database.worktree(externallyRemoved.worktree.id)
+        await fixture.database.worktree(externallyRemoved.worktree.id)
       ).toBeNull()
 
       await fixture.service.deleteTerminal(first.id)
@@ -496,8 +496,11 @@ describe.skipIf(!enabled)(
       await expect(fs.stat(noServer.worktree.path)).rejects.toMatchObject({
         code: 'ENOENT'
       })
-      expect(fixture.service.getProject(project.id).worktrees).toHaveLength(1)
-      const mainWorktree = fixture.service.getProject(project.id).worktrees[0]!
+      expect(
+        (await fixture.service.getProject(project.id)).worktrees
+      ).toHaveLength(1)
+      const mainWorktree = (await fixture.service.getProject(project.id))
+        .worktrees[0]!
       expect(
         (await fixture.service.removePreview(mainWorktree.id)).eligible
       ).toBe(false)
@@ -520,7 +523,7 @@ describe.skipIf(!enabled)(
         ).status
       ).toBe('missing')
       expect(await fixture.service.listProjects()).toEqual([])
-      expect(fixture.service.listRecentProjects()).toEqual([
+      expect(await fixture.service.listRecentProjects()).toEqual([
         expect.objectContaining({ id: project.id })
       ])
 
@@ -532,9 +535,18 @@ describe.skipIf(!enabled)(
       expect(reopened.worktrees.map((worktree) => worktree.id)).toContain(
         mainWorktree.id
       )
-      expect(
-        reopened.worktrees.flatMap((worktree) => worktree.terminals)
-      ).toEqual([])
+      const reopenedTerminals = reopened.worktrees.flatMap(
+        (worktree) => worktree.terminals
+      )
+      expect(reopenedTerminals).toEqual([
+        expect.objectContaining({
+          name: 'Shell',
+          worktreeId: mainWorktree.id
+        })
+      ])
+      expect(reopenedTerminals.map((terminal) => terminal.id)).not.toContain(
+        closingTerminal.id
+      )
       fixture.database.close()
     })
 
