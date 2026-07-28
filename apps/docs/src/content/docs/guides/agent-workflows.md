@@ -48,12 +48,19 @@ An agent can create another worktree and persistent terminal using `treeport spa
 
 Commands after `--` are passed as an argv array. Avoid an implicit `sh -lc`; launch a shell explicitly only when shell semantics are intentional.
 
-## Observe without scraping output
+## Observe terminal activity
 
 Inspect runtime status and terminal signals:
 
 ```sh
 treeport terminal inspect <terminal-id>
+```
+
+Read recent terminal contents:
+
+```sh
+treeport terminal capture <terminal-id>
+treeport terminal capture <terminal-id> --lines 500
 ```
 
 Wait for a raw condition over Treeport's event stream:

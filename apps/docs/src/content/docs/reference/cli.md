@@ -51,6 +51,8 @@ treeport terminal create \
 
 treeport terminal inspect <terminal-id-or-dot> [--json]
 
+treeport terminal capture <terminal-id-or-dot> [--lines <count>] [--json]
+
 treeport terminal wait <terminal-id-or-dot> \
   --until <idle|working|bell|exit> \
   [--timeout <duration>] [--json]
@@ -59,6 +61,8 @@ treeport terminal delete <terminal-id> [--json]
 ```
 
 Omitting a command from `terminal create` starts a login shell. Arguments after `--` are passed directly as an argv array.
+
+`terminal capture` returns recent terminal contents. It returns up to 200 pane rows by default; use `--lines` to request between 1 and 5,000. Plain output is the captured text. JSON output includes `terminalId`, `capturedAt`, `lineLimit`, and `content`.
 
 Wait conditions mean:
 
