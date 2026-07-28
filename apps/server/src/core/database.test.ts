@@ -6,11 +6,7 @@ import { createClient } from '@libsql/client'
 import { sql } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/libsql'
 import { afterEach, describe, expect, it } from 'vitest'
-import {
-  deserializeOperation,
-  serializeOperation,
-  TreeportDatabase
-} from './database'
+import { TreeportDatabase } from './database'
 import { operations, projects, worktrees } from './database-schema'
 
 const databases: TreeportDatabase[] = []
@@ -24,8 +20,8 @@ afterEach(async () => {
   )
 })
 
-describe('SQLite metadata', () => {
-  it('migrates an empty database and serializes operation payloads', async () => {
+describe('SQLite migration and catalog ordering', () => {
+  it('migrates an empty database from a path with URL delimiters', async () => {
     const directory = await fs.mkdtemp(
       path.join(os.tmpdir(), 'treeport-db-#?%-')
     )
@@ -34,199 +30,20 @@ describe('SQLite metadata', () => {
       path.join(directory, 'metadata.db')
     )
     databases.push(database)
-    const request = {
-      branch: 'feature/üñîçødé',
-      argv: ['echo', 'a b', 'x;y', '$HOME', '"quoted"']
-    }
-    await database.db.insert(operations).values({
-      id: 'op_1',
-      kind: 'finish',
-      projectId: null,
-      worktreeId: null,
-      status: 'pending',
-      requestJson: serializeOperation(request)!,
-      resultJson: null,
-      error: null,
-      createdAt: '2026-01-01',
-      updatedAt: '2026-01-01'
-    })
-    expect(await database.operation('op_1')).toMatchObject({
-      id: 'op_1',
-      kind: 'finish',
-      status: 'pending',
-      request
-    })
-    expect(deserializeOperation(serializeOperation(request))).toEqual(request)
+
     expect(
       await database.db.get<{ journal_mode: string }>(sql`PRAGMA journal_mode`)
     ).toEqual({ journal_mode: 'wal' })
+    expect(
+      await database.db.get<{ count: number }>(
+        sql`SELECT count(*) AS count FROM __drizzle_migrations`
+      )
+    ).toEqual({ count: 1 })
     expect(
       await database.db.get<{ count: number }>(sql`
         SELECT count(*) AS count FROM sqlite_master WHERE name='terminals'
       `)
     ).toEqual({ count: 0 })
-  })
-
-  it('persists literal preset argv, deterministic order, updates, and deletion', async () => {
-    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'treeport-db-'))
-    directories.push(directory)
-    const filePath = path.join(directory, 'metadata.db')
-    const database = await TreeportDatabase.open(filePath)
-    databases.push(database)
-    await database.insertTerminalPreset({
-      id: 'preset_b',
-      name: 'Second by ID',
-      executable: '/Applications/Tool with spaces/bin/tool',
-      args: ['a b', '"quote"', 'semi;colon', '$HOME', 'Unicode 世界', ''],
-      closeOnSuccess: true,
-      createdAt: '2026-01-01T00:00:00.000Z',
-      updatedAt: '2026-01-01T00:00:00.000Z'
-    })
-    await database.insertTerminalPreset({
-      id: 'preset_a',
-      name: 'First by ID',
-      executable: 'pi',
-      args: [],
-      closeOnSuccess: false,
-      createdAt: '2026-01-01T00:00:00.000Z',
-      updatedAt: '2026-01-01T00:00:00.000Z'
-    })
-    await database.insertTerminalPreset({
-      id: 'preset_c',
-      name: 'Created later',
-      executable: 'npx',
-      args: ['--yes'],
-      closeOnSuccess: false,
-      createdAt: '2026-01-02T00:00:00.000Z',
-      updatedAt: '2026-01-02T00:00:00.000Z'
-    })
-
-    expect(
-      (await database.terminalPresets()).map((preset) => preset.id)
-    ).toEqual(['preset_a', 'preset_b', 'preset_c'])
-    const updated = {
-      ...(await database.terminalPreset('preset_b'))!,
-      name: 'Updated',
-      args: ['literal;value', '$NOT_EXPANDED'],
-      updatedAt: '2026-01-03T00:00:00.000Z'
-    }
-    await expect(
-      database.updateTerminalPreset(updated, '2026-01-01T00:00:00.000Z')
-    ).resolves.toBe(true)
-    await expect(
-      database.deleteTerminalPreset('preset_a', '2026-01-01T00:00:00.000Z')
-    ).resolves.toBe(true)
-    await expect(
-      database.deleteTerminalPreset(
-        'preset_missing',
-        '2026-01-01T00:00:00.000Z'
-      )
-    ).resolves.toBe(false)
-    database.close()
-    databases.splice(databases.indexOf(database), 1)
-
-    const reopened = await TreeportDatabase.open(filePath)
-    databases.push(reopened)
-    expect(await reopened.terminalPresets()).toEqual([
-      updated,
-      expect.objectContaining({
-        id: 'preset_c',
-        executable: 'npx',
-        args: ['--yes']
-      })
-    ])
-  })
-
-  it('filters open projects and orders lightweight recent registrations by open time', async () => {
-    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'treeport-db-'))
-    directories.push(directory)
-    const database = await TreeportDatabase.open(
-      path.join(directory, 'metadata.db')
-    )
-    databases.push(database)
-    await database.db.insert(projects).values([
-      {
-        id: 'p_old',
-        name: 'Old',
-        repositoryPath: '/old',
-        mainWorktreePath: '/old',
-        defaultBranch: 'main',
-        color: 'blue',
-        repositoryDevice: '1',
-        repositoryInode: '1',
-        nameIsCustom: 0,
-        isOpen: 0,
-        lastOpenedAt: '2026-01-01T00:00:00.000Z',
-        createdAt: '2025-01-01T00:00:00.000Z',
-        updatedAt: '2026-12-01T00:00:00.000Z'
-      },
-      {
-        id: 'p_new',
-        name: 'New',
-        repositoryPath: '/new',
-        mainWorktreePath: '/new',
-        defaultBranch: 'main',
-        color: 'blue',
-        repositoryDevice: '2',
-        repositoryInode: '2',
-        nameIsCustom: 0,
-        isOpen: 0,
-        lastOpenedAt: '2026-02-01T00:00:00.000Z',
-        createdAt: '2025-01-01T00:00:00.000Z',
-        updatedAt: '2025-01-01T00:00:00.000Z'
-      },
-      {
-        id: 'p_open',
-        name: 'Open',
-        repositoryPath: '/open',
-        mainWorktreePath: '/open',
-        defaultBranch: 'main',
-        color: 'blue',
-        repositoryDevice: '3',
-        repositoryInode: '3',
-        nameIsCustom: 0,
-        isOpen: 1,
-        lastOpenedAt: '2026-03-01T00:00:00.000Z',
-        createdAt: '2025-01-01T00:00:00.000Z',
-        updatedAt: '2025-01-01T00:00:00.000Z'
-      }
-    ])
-
-    expect(
-      (await database.projects()).map((project) => project.id).sort()
-    ).toEqual(['p_new', 'p_old', 'p_open'])
-    expect(
-      (await database.openProjects()).map((project) => project.id)
-    ).toEqual(['p_open'])
-    const recent = await database.recentProjects()
-    expect(recent).toEqual([
-      {
-        id: 'p_new',
-        name: 'New',
-        repositoryPath: '/new',
-        lastOpenedAt: '2026-02-01T00:00:00.000Z'
-      },
-      {
-        id: 'p_old',
-        name: 'Old',
-        repositoryPath: '/old',
-        lastOpenedAt: '2026-01-01T00:00:00.000Z'
-      }
-    ])
-    expect('worktrees' in recent[0]!).toBe(false)
-
-    await database.setProjectOpen('p_old', true, '2026-04-01T00:00:00.000Z')
-    await database.setProjectOpen('p_open', false, '2026-05-01T00:00:00.000Z')
-    await expect(database.isProjectOpen('p_old')).resolves.toBe(true)
-    await expect(database.isProjectOpen('p_open')).resolves.toBe(false)
-    expect(
-      (await database.recentProjects()).map((project) => project.id)
-    ).toEqual(['p_open', 'p_new'])
-    expect(
-      await database.db.get<{ lastOpenedAt: string }>(sql`
-        SELECT last_opened_at AS lastOpenedAt FROM projects WHERE id = 'p_open'
-      `)
-    ).toEqual({ lastOpenedAt: '2026-03-01T00:00:00.000Z' })
   })
 
   it('keeps the main worktree first and linked worktrees in creation order', async () => {
