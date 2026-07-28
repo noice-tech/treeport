@@ -41,6 +41,7 @@ export interface TmuxTerminalSession {
   name: string
   sessionName: string
   argv: string[]
+  closeOnSuccess: boolean
   status: Exclude<TerminalStatus, 'missing'>
   exitCode: number | null
   createdAt: string
@@ -52,6 +53,7 @@ export interface TmuxTerminalMetadata {
   worktreeId: string
   name: string
   argv: string[]
+  closeOnSuccess: boolean
   createdAt: string
   updatedAt: string
 }
@@ -178,6 +180,7 @@ export class TmuxAdapter {
     cwd: string
     argv: string[]
     fallbackArgv?: string[]
+    closeOnSuccess?: boolean
     initialSize?: TerminalSize
     env: Record<string, string>
     setupTasks?: WorktreeSetupTask[]
@@ -320,6 +323,7 @@ export class TmuxAdapter {
           worktreeId: input.worktreeId,
           name: input.name,
           argv: input.argv,
+          closeOnSuccess: input.closeOnSuccess ?? false,
           createdAt: input.createdAt,
           updatedAt: input.createdAt
         })
@@ -377,6 +381,7 @@ export class TmuxAdapter {
     const values = [
       ['@treeport-name', encodeMetadata(metadata.name)],
       ['@treeport-argv', encodeMetadata(metadata.argv)],
+      ['@treeport-close-on-success', metadata.closeOnSuccess ? '1' : '0'],
       ['@treeport-created-at', encodeMetadata(metadata.createdAt)],
       ['@treeport-updated-at', encodeMetadata(metadata.updatedAt)],
       ['@treeport-worktree-id', metadata.worktreeId],
@@ -440,7 +445,7 @@ export class TmuxAdapter {
         'list-panes',
         '-a',
         '-F',
-        '#{session_name}\t#{@treeport-terminal-id}\t#{@treeport-worktree-id}\t#{@treeport-name}\t#{@treeport-argv}\t#{@treeport-created-at}\t#{@treeport-updated-at}\t#{session_created}\t#{pane_dead}\t#{pane_dead_status}'
+        '#{session_name}\t#{@treeport-terminal-id}\t#{@treeport-worktree-id}\t#{@treeport-name}\t#{@treeport-argv}\t#{@treeport-close-on-success}\t#{@treeport-created-at}\t#{@treeport-updated-at}\t#{session_created}\t#{pane_dead}\t#{pane_dead_status}'
       ],
       env: this.environment(),
       timeoutMs: 10_000
@@ -468,6 +473,7 @@ export class TmuxAdapter {
         worktreeId,
         encodedName,
         encodedArgv,
+        closeOnSuccess,
         encodedCreatedAt,
         encodedUpdatedAt,
         sessionCreated,
@@ -531,6 +537,7 @@ export class TmuxAdapter {
         name: metadata.name ?? sessionName,
         sessionName,
         argv: metadata.argv ?? [],
+        closeOnSuccess: closeOnSuccess === '1',
         status: dead ? 'exited' : 'running',
         exitCode: Number.isNaN(exitCode) ? null : exitCode,
         createdAt: fallbackCreatedAt,

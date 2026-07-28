@@ -5,6 +5,7 @@ import { TERMINAL_NAME_MAX_LENGTH, type TerminalPreset } from '@treeport/shared'
 import { apiClient } from '../../api'
 import { formatCommandLine, parseCommandLine } from '../../command-line'
 import { Button } from '../../components/ui/button'
+import { Checkbox } from '../../components/ui/checkbox'
 import { FormField } from '../../components/ui/form-field'
 import { Input } from '../../components/ui/input'
 import { Label } from '../../components/ui/label'
@@ -28,6 +29,7 @@ export function TerminalPresetsManager({
   const [loadedUpdatedAt, setLoadedUpdatedAt] = useState<string | null>(null)
   const [name, setName] = useState('')
   const [command, setCommand] = useState('')
+  const [closeOnSuccess, setCloseOnSuccess] = useState(false)
   const [commandError, setCommandError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
 
@@ -36,6 +38,7 @@ export function TerminalPresetsManager({
     setLoadedUpdatedAt(null)
     setName('')
     setCommand('')
+    setCloseOnSuccess(false)
     setCommandError(null)
     setNotice(null)
   }
@@ -51,6 +54,7 @@ export function TerminalPresetsManager({
       setLoadedUpdatedAt(null)
       setName('')
       setCommand('')
+      setCloseOnSuccess(false)
       setCommandError(null)
       setNotice('That preset was deleted. You can create a new one.')
       return
@@ -60,6 +64,7 @@ export function TerminalPresetsManager({
       setLoadedUpdatedAt(preset.updatedAt)
       setName(preset.name)
       setCommand(formatCommandLine([preset.executable, ...preset.args]))
+      setCloseOnSuccess(preset.closeOnSuccess)
       setCommandError(null)
       if (loadedUpdatedAt) {
         setNotice(
@@ -75,7 +80,10 @@ export function TerminalPresetsManager({
       expectedUpdatedAt
     }: {
       presetId: string | null
-      input: Pick<TerminalPreset, 'name' | 'executable' | 'args'>
+      input: Pick<
+        TerminalPreset,
+        'name' | 'executable' | 'args' | 'closeOnSuccess'
+      >
       expectedUpdatedAt: string | null
     }) =>
       presetId
@@ -95,6 +103,7 @@ export function TerminalPresetsManager({
       setLoadedUpdatedAt(preset.updatedAt)
       setName(preset.name)
       setCommand(formatCommandLine([preset.executable, ...preset.args]))
+      setCloseOnSuccess(preset.closeOnSuccess)
       setCommandError(null)
       setNotice('Preset saved.')
     },
@@ -181,6 +190,7 @@ export function TerminalPresetsManager({
                     setCommand(
                       formatCommandLine([preset.executable, ...preset.args])
                     )
+                    setCloseOnSuccess(preset.closeOnSuccess)
                     setCommandError(null)
                     setNotice(null)
                   }}
@@ -244,7 +254,12 @@ export function TerminalPresetsManager({
             const [executable, ...args] = parsed.argv
             savePreset.mutate({
               presetId: editingId,
-              input: { name, executable: executable!, args },
+              input: {
+                name,
+                executable: executable!,
+                args,
+                closeOnSuccess
+              },
               expectedUpdatedAt: loadedUpdatedAt
             })
           }}
@@ -304,6 +319,28 @@ export function TerminalPresetsManager({
                 {commandError}
               </p>
             )}
+          </FormField>
+          <FormField>
+            <div className="flex items-start gap-2.5">
+              <Checkbox
+                id="preset-close-on-success"
+                checked={closeOnSuccess}
+                disabled={busy}
+                onCheckedChange={(checked) => {
+                  setCloseOnSuccess(checked === true)
+                  setNotice(null)
+                }}
+              />
+              <div className="grid gap-1">
+                <Label htmlFor="preset-close-on-success">
+                  Close on success
+                </Label>
+                <p className="form-note">
+                  Use for one-off commands such as opening an editor. Failed
+                  commands remain open for inspection.
+                </p>
+              </div>
+            </div>
           </FormField>
           <Button
             type="submit"

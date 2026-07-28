@@ -56,6 +56,7 @@ export interface TerminalPreset {
   name: string
   executable: string
   args: string[]
+  closeOnSuccess: boolean
   createdAt: string
   updatedAt: string
 }
@@ -271,7 +272,8 @@ const terminalPresetFields = {
   executable: terminalPresetExecutableSchema,
   args: z
     .array(terminalPresetArgumentSchema)
-    .max(TERMINAL_PRESET_ARGUMENT_MAX_COUNT)
+    .max(TERMINAL_PRESET_ARGUMENT_MAX_COUNT),
+  closeOnSuccess: z.boolean().default(false)
 }
 const terminalPresetRevisionSchema = z.string().min(1).max(64)
 
@@ -299,12 +301,17 @@ export const createWorktreeSchema = z
     }
   })
 
-export const createTerminalSchema = z.object({
-  name: terminalNameSchema,
-  argv: terminalArgvSchema.optional(),
-  returnToShell: z.boolean().optional(),
-  initialSize: terminalSizeSchema.optional()
-})
+export const createTerminalSchema = z
+  .object({
+    name: terminalNameSchema,
+    argv: terminalArgvSchema.optional(),
+    returnToShell: z.boolean().optional(),
+    closeOnSuccess: z.boolean().optional(),
+    initialSize: terminalSizeSchema.optional()
+  })
+  .refine((value) => !(value.returnToShell && value.closeOnSuccess), {
+    message: 'A terminal cannot return to a shell and close on success'
+  })
 
 export const updateTerminalSchema = z.object({
   name: terminalNameSchema
@@ -314,6 +321,7 @@ export const createTerminalPresetSchema = z.object(terminalPresetFields)
 
 export const updateTerminalPresetSchema = z.object({
   ...terminalPresetFields,
+  closeOnSuccess: z.boolean().optional(),
   expectedUpdatedAt: terminalPresetRevisionSchema
 })
 

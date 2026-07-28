@@ -64,7 +64,10 @@ export const apiClient = {
   terminalPresets: async () =>
     (await api<{ presets: TerminalPreset[] }>('/api/terminal-presets')).presets,
   createTerminalPreset: async (
-    input: Pick<TerminalPreset, 'name' | 'executable' | 'args'>
+    input: Pick<
+      TerminalPreset,
+      'name' | 'executable' | 'args' | 'closeOnSuccess'
+    >
   ) =>
     (
       await api<{ preset: TerminalPreset }>('/api/terminal-presets', {
@@ -74,7 +77,10 @@ export const apiClient = {
     ).preset,
   updateTerminalPreset: async (
     presetId: string,
-    input: Pick<TerminalPreset, 'name' | 'executable' | 'args'>,
+    input: Pick<
+      TerminalPreset,
+      'name' | 'executable' | 'args' | 'closeOnSuccess'
+    >,
     expectedUpdatedAt: string
   ) =>
     (
@@ -146,6 +152,7 @@ export const apiClient = {
     name: string,
     argv?: string[],
     returnToShell = false,
+    closeOnSuccess = false,
     initialSize?: TerminalSize
   ) =>
     (
@@ -157,6 +164,7 @@ export const apiClient = {
             name,
             ...(argv ? { argv } : {}),
             ...(returnToShell ? { returnToShell: true } : {}),
+            ...(closeOnSuccess ? { closeOnSuccess: true } : {}),
             ...(initialSize ? { initialSize } : {})
           })
         }

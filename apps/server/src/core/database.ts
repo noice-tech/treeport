@@ -115,6 +115,14 @@ const MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS terminal_presets_order_idx
         ON terminal_presets(created_at, id);
     `
+  },
+  {
+    version: 10,
+    sql: `
+      ALTER TABLE terminal_presets
+        ADD COLUMN close_on_success INTEGER NOT NULL DEFAULT 0
+        CHECK(close_on_success IN (0,1));
+    `
   }
 ]
 
@@ -164,6 +172,7 @@ interface TerminalPresetRow {
   name: string
   executable: string
   args_json: string
+  close_on_success: number
   created_at: string
   updated_at: string
 }
@@ -288,14 +297,15 @@ export class TreeportDatabase {
     this.connection
       .prepare(
         `INSERT INTO terminal_presets(
-           id,name,executable,args_json,created_at,updated_at
-         ) VALUES(?,?,?,?,?,?)`
+           id,name,executable,args_json,close_on_success,created_at,updated_at
+         ) VALUES(?,?,?,?,?,?,?)`
       )
       .run(
         preset.id,
         preset.name,
         preset.executable,
         JSON.stringify(preset.args),
+        Number(preset.closeOnSuccess),
         preset.createdAt,
         preset.updatedAt
       )
@@ -308,13 +318,14 @@ export class TreeportDatabase {
     const result = this.connection
       .prepare(
         `UPDATE terminal_presets
-         SET name = ?, executable = ?, args_json = ?, updated_at = ?
+         SET name = ?, executable = ?, args_json = ?, close_on_success = ?, updated_at = ?
          WHERE id = ? AND updated_at = ?`
       )
       .run(
         preset.name,
         preset.executable,
         JSON.stringify(preset.args),
+        Number(preset.closeOnSuccess),
         preset.updatedAt,
         preset.id,
         expectedUpdatedAt
@@ -507,6 +518,7 @@ export class TreeportDatabase {
       name: row.name,
       executable: row.executable,
       args: JSON.parse(row.args_json) as string[],
+      closeOnSuccess: Boolean(row.close_on_success),
       createdAt: row.created_at,
       updatedAt: row.updated_at
     }

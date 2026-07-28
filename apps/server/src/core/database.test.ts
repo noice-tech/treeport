@@ -64,6 +64,7 @@ describe('SQLite metadata', () => {
       name: 'Second by ID',
       executable: '/Applications/Tool with spaces/bin/tool',
       args: ['a b', '"quote"', 'semi;colon', '$HOME', 'Unicode 世界', ''],
+      closeOnSuccess: true,
       createdAt: '2026-01-01T00:00:00.000Z',
       updatedAt: '2026-01-01T00:00:00.000Z'
     })
@@ -72,6 +73,7 @@ describe('SQLite metadata', () => {
       name: 'First by ID',
       executable: 'pi',
       args: [],
+      closeOnSuccess: false,
       createdAt: '2026-01-01T00:00:00.000Z',
       updatedAt: '2026-01-01T00:00:00.000Z'
     })
@@ -80,6 +82,7 @@ describe('SQLite metadata', () => {
       name: 'Created later',
       executable: 'npx',
       args: ['--yes'],
+      closeOnSuccess: false,
       createdAt: '2026-01-02T00:00:00.000Z',
       updatedAt: '2026-01-02T00:00:00.000Z'
     })
@@ -300,7 +303,7 @@ describe('SQLite metadata', () => {
         .prepare('SELECT version FROM schema_migrations ORDER BY version')
         .pluck()
         .all()
-    ).toEqual([7, 8, 9])
+    ).toEqual([7, 8, 9, 10])
     expect(
       reopened.connection
         .prepare(
@@ -330,7 +333,7 @@ describe('SQLite metadata', () => {
     const filePath = path.join(directory, 'metadata.db')
     const initial = new TreeportDatabase(filePath)
     initial.connection.exec(
-      'DROP INDEX terminal_presets_order_idx; DROP TABLE terminal_presets; DELETE FROM schema_migrations WHERE version = 9;'
+      'DROP INDEX terminal_presets_order_idx; DROP TABLE terminal_presets; DELETE FROM schema_migrations WHERE version >= 9;'
     )
     initial.close()
 
@@ -341,7 +344,7 @@ describe('SQLite metadata', () => {
         .prepare('SELECT version FROM schema_migrations ORDER BY version')
         .pluck()
         .all()
-    ).toEqual([7, 8, 9])
+    ).toEqual([7, 8, 9, 10])
     expect(
       reopened.connection
         .prepare(

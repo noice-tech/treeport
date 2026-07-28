@@ -50,6 +50,7 @@ class SystemDouble implements CommandRunner {
   listWorktreesFails = false
   worktreeRepairFails = false
   tmuxKillFails = false
+  tmuxKillSessionFails = false
   readonly tmuxKillFailureSockets = new Set<string>()
   statusGate: Promise<void> | null = null
   worktreeListGate: Promise<void> | null = null
@@ -313,6 +314,7 @@ class SystemDouble implements CommandRunner {
             state.options['@treeport-worktree-id'] ?? '',
             state.options['@treeport-name'] ?? '',
             state.options['@treeport-argv'] ?? '',
+            state.options['@treeport-close-on-success'] ?? '',
             state.options['@treeport-created-at'] ?? '',
             state.options['@treeport-updated-at'] ?? '',
             String(state.created),
@@ -337,6 +339,10 @@ class SystemDouble implements CommandRunner {
     }
 
     if (args.includes('kill-session')) {
+      if (this.tmuxKillSessionFails) {
+        return fail('tmux session cleanup failed')
+      }
+
       const session = args[args.indexOf('-t') + 1]!
       const socket = args[args.indexOf('-L') + 1]!
       this.sessions.delete(`${socket}/${session}`)
@@ -512,7 +518,8 @@ describe('TreeportService with injected command adapters', () => {
     const first = service.createTerminalPreset({
       name: 'Pi 世界',
       executable: '/Applications/Tools with spaces/pi',
-      args: ['a b', 'semi;colon', '$HOME', '"quote"', '']
+      args: ['a b', 'semi;colon', '$HOME', '"quote"', ''],
+      closeOnSuccess: true
     })
     await new Promise((resolve) => setTimeout(resolve, 2))
     const second = service.createTerminalPreset({
@@ -535,6 +542,7 @@ describe('TreeportService with injected command adapters', () => {
       },
       first.updatedAt
     )
+    expect(updated.closeOnSuccess).toBe(true)
     expect(() =>
       service.updateTerminalPreset(
         first.id,
@@ -907,6 +915,120 @@ describe('TreeportService with injected command adapters', () => {
     })
     unsubscribe()
     expect(events).toEqual(['terminal.updated', 'terminal.removed'])
+  })
+
+  it('removes successful one-off terminals and retains their failures', async () => {
+    const { main, runner, service } = await fixture()
+    const project = await service.registerProject(main)
+    const worktree = project.worktrees[0]!
+    const successful = await service.createTerminal(
+      worktree.id,
+      'Open editor',
+      ['code', '.'],
+      { closeOnSuccess: true }
+    )
+    await expect(
+      service.deleteTerminal(worktree.terminals[0]!.id)
+    ).rejects.toMatchObject({ code: 'LAST_TERMINAL' })
+
+    const successfulSessionKey = `${worktree.tmuxSocketName}/${successful.tmuxSessionName}`
+    const successfulState = runner.sessions.get(successfulSessionKey)!
+    successfulState.alive = false
+    successfulState.exitCode = 0
+
+    expect(
+      (await service.getWorktreeSnapshot(worktree.id)).terminals.map(
+        (terminal) => terminal.id
+      )
+    ).not.toContain(successful.id)
+    expect(runner.sessions.has(successfulSessionKey)).toBe(false)
+    await expect(
+      service.refreshTerminalStatus(successful.id)
+    ).rejects.toMatchObject({ code: 'TERMINAL_NOT_FOUND' })
+
+    const failed = await service.createTerminal(
+      worktree.id,
+      'Open editor',
+      ['code', '.'],
+      { closeOnSuccess: true }
+    )
+    const failedState = runner.sessions.get(
+      `${worktree.tmuxSocketName}/${failed.tmuxSessionName}`
+    )!
+    failedState.alive = false
+    failedState.exitCode = 7
+
+    await expect(
+      service.refreshTerminalStatus(failed.id)
+    ).resolves.toMatchObject({ status: 'exited', exitCode: 7 })
+    expect(
+      (await service.getWorktreeSnapshot(worktree.id)).terminals.map(
+        (terminal) => terminal.id
+      )
+    ).toContain(failed.id)
+
+    await service.deleteTerminal(failed.id)
+    const retained = await service.createTerminal(
+      worktree.id,
+      'Only terminal',
+      ['true'],
+      { closeOnSuccess: true }
+    )
+    runner.sessions.delete(
+      `${worktree.tmuxSocketName}/${worktree.terminals[0]!.tmuxSessionName}`
+    )
+    const updatedEvents: string[] = []
+    const unsubscribe = service.events.subscribe((event) => {
+      if (event.type === 'terminal.updated') {
+        updatedEvents.push(String(event.data.terminalId))
+      }
+    })
+    const retainedState = runner.sessions.get(
+      `${worktree.tmuxSocketName}/${retained.tmuxSessionName}`
+    )!
+    retainedState.alive = false
+    retainedState.exitCode = 0
+
+    await expect(
+      service.refreshTerminalStatus(retained.id)
+    ).resolves.toMatchObject({
+      status: 'exited',
+      exitCode: 0
+    })
+    unsubscribe()
+    expect(updatedEvents).toEqual([retained.id])
+    expect(
+      (await service.getWorktreeSnapshot(worktree.id)).terminals
+    ).toContainEqual(
+      expect.objectContaining({ id: retained.id, status: 'exited' })
+    )
+  })
+
+  it('reports failed one-off cleanup at the project snapshot boundary', async () => {
+    const { main, runner, service } = await fixture()
+    const project = await service.registerProject(main)
+    const worktree = project.worktrees[0]!
+    const terminal = await service.createTerminal(
+      worktree.id,
+      'Open editor',
+      ['code', '.'],
+      { closeOnSuccess: true }
+    )
+    const sessionKey = `${worktree.tmuxSocketName}/${terminal.tmuxSessionName}`
+    const state = runner.sessions.get(sessionKey)!
+    state.alive = false
+    state.exitCode = 0
+    runner.tmuxKillSessionFails = true
+
+    await expect(service.getProjectSnapshot(project.id)).resolves.toMatchObject(
+      {
+        availability: {
+          state: 'unavailable',
+          message: 'tmux session cleanup failed'
+        }
+      }
+    )
+    expect(runner.sessions.has(sessionKey)).toBe(true)
   })
 
   it('keeps metadata polling tmux-only while direct status reads observe Git', async () => {

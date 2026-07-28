@@ -73,6 +73,14 @@ describe('API input validation', () => {
       initialSize: { cols: 132, rows: 47 }
     })
     expect(
+      createTerminalSchema.safeParse({
+        name: 'invalid lifecycle',
+        argv,
+        returnToShell: true,
+        closeOnSuccess: true
+      }).success
+    ).toBe(false)
+    expect(
       spawnSchema.parse({
         project: '.',
         worktreeName: 'topic',
@@ -141,7 +149,8 @@ describe('API input validation', () => {
     }
     const expected = {
       ...input,
-      name: 'Hunk review'
+      name: 'Hunk review',
+      closeOnSuccess: false
     }
     expect(createTerminalPresetSchema.parse(input)).toEqual(expected)
     expect(
@@ -150,9 +159,17 @@ describe('API input validation', () => {
         expectedUpdatedAt: '2026-01-01T00:00:00.000Z'
       })
     ).toEqual({
-      ...expected,
+      ...input,
+      name: 'Hunk review',
       expectedUpdatedAt: '2026-01-01T00:00:00.000Z'
     })
+    expect(
+      updateTerminalPresetSchema.parse({
+        ...input,
+        closeOnSuccess: true,
+        expectedUpdatedAt: '2026-01-01T00:00:00.000Z'
+      }).closeOnSuccess
+    ).toBe(true)
     expect(
       createTerminalPresetSchema.safeParse({
         name: 'bad',

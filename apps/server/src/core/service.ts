@@ -155,6 +155,7 @@ export class TreeportService {
   private readonly terminalMutations = new KeyedTaskQueue<string>()
   private readonly removeConfirmationKey = crypto.randomBytes(32)
   private readonly terminalStates = new Map<string, TerminalRecord>()
+  private readonly closeOnSuccessTerminalIds = new Set<string>()
   private readonly terminalIdsByWorktree = new Map<string, Set<string>>()
   private readonly projectObservationTails = new Map<string, Promise<void>>()
   private projectsSnapshotInFlight: Promise<ProjectRecord[]> | null = null
@@ -219,6 +220,7 @@ export class TreeportService {
     ])
     for (const terminalId of terminalIds) {
       this.terminalStates.delete(terminalId)
+      this.closeOnSuccessTerminalIds.delete(terminalId)
       this.events.publish('terminal.removed', { worktreeId, terminalId })
     }
     this.terminalIdsByWorktree.delete(worktreeId)
@@ -475,21 +477,50 @@ export class TreeportService {
   private async listWorktreeTerminals(
     worktree: WorktreeRecord
   ): Promise<TerminalRecord[]> {
-    const terminals = (
+    let sessions = (
       await this.deps.tmux.listSessions(worktree.tmuxSocketName)
-    )
-      .filter((terminal) => terminal.worktreeId === worktree.id)
-      .map((terminal) => ({
-        id: terminal.id,
-        worktreeId: terminal.worktreeId,
-        name: terminal.name,
-        tmuxSessionName: terminal.sessionName,
-        argv: terminal.argv,
-        status: terminal.status,
-        exitCode: terminal.exitCode,
-        createdAt: terminal.createdAt,
-        updatedAt: terminal.updatedAt
-      }))
+    ).filter((terminal) => terminal.worktreeId === worktree.id)
+    if (!this.worktreeLocks.has(worktree.id)) {
+      for (const terminal of sessions) {
+        if (
+          sessions.length <= 1 ||
+          !terminal.closeOnSuccess ||
+          terminal.status !== 'exited' ||
+          terminal.exitCode !== 0
+        ) {
+          continue
+        }
+
+        await this.deps.tmux.killSession(
+          worktree.tmuxSocketName,
+          terminal.sessionName,
+          terminal.id,
+          { preserveServer: true }
+        )
+        sessions = sessions.filter((candidate) => candidate.id !== terminal.id)
+      }
+    }
+
+    const terminals = sessions
+      .map((terminal) => {
+        if (terminal.closeOnSuccess) {
+          this.closeOnSuccessTerminalIds.add(terminal.id)
+        } else {
+          this.closeOnSuccessTerminalIds.delete(terminal.id)
+        }
+
+        return {
+          id: terminal.id,
+          worktreeId: terminal.worktreeId,
+          name: terminal.name,
+          tmuxSessionName: terminal.sessionName,
+          argv: terminal.argv,
+          status: terminal.status,
+          exitCode: terminal.exitCode,
+          createdAt: terminal.createdAt,
+          updatedAt: terminal.updatedAt
+        }
+      })
       .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
     if (this.worktreeLocks.has(worktree.id)) {
       return terminals
@@ -514,6 +545,7 @@ export class TreeportService {
     for (const terminalId of previousIds ?? []) {
       if (!currentIds.has(terminalId)) {
         this.terminalStates.delete(terminalId)
+        this.closeOnSuccessTerminalIds.delete(terminalId)
         this.events.publish('terminal.removed', {
           worktreeId: worktree.id,
           terminalId
@@ -630,7 +662,8 @@ export class TreeportService {
   }
 
   createTerminalPreset(
-    input: Pick<TerminalPreset, 'name' | 'executable' | 'args'>
+    input: Pick<TerminalPreset, 'name' | 'executable' | 'args'> &
+      Partial<Pick<TerminalPreset, 'closeOnSuccess'>>
   ): TerminalPreset {
     const timestamp = now()
     const preset: TerminalPreset = {
@@ -638,6 +671,7 @@ export class TreeportService {
       name: input.name,
       executable: input.executable,
       args: [...input.args],
+      closeOnSuccess: input.closeOnSuccess ?? false,
       createdAt: timestamp,
       updatedAt: timestamp
     }
@@ -647,7 +681,9 @@ export class TreeportService {
 
   updateTerminalPreset(
     presetId: string,
-    input: Pick<TerminalPreset, 'name' | 'executable' | 'args'>,
+    input: Pick<TerminalPreset, 'name' | 'executable' | 'args'> & {
+      closeOnSuccess?: boolean | undefined
+    },
     expectedUpdatedAt: string
   ): TerminalPreset {
     const existing = this.deps.database.terminalPreset(presetId)
@@ -673,6 +709,7 @@ export class TreeportService {
       name: input.name,
       executable: input.executable,
       args: [...input.args],
+      closeOnSuccess: input.closeOnSuccess ?? existing.closeOnSuccess,
       updatedAt:
         timestamp > existing.updatedAt
           ? timestamp
@@ -2330,6 +2367,7 @@ export class TreeportService {
     options?: {
       setup?: { tasks: WorktreeSetupTask[]; error: string | null }
       returnToShell?: boolean
+      closeOnSuccess?: boolean
       initialSize?: TerminalSize
     }
   ): Promise<TerminalRecord> {
@@ -2351,6 +2389,7 @@ export class TreeportService {
         ...(options?.returnToShell && argv
           ? { fallbackArgv: [this.deps.config.shell, '-l'] }
           : {}),
+        ...(options?.closeOnSuccess ? { closeOnSuccess: true } : {}),
         ...(options?.initialSize ? { initialSize: options.initialSize } : {}),
         env: {
           TREEPORT_API_URL: this.deps.config.apiUrl,
@@ -2383,6 +2422,10 @@ export class TreeportService {
       updatedAt: timestamp
     }
     this.terminalStates.set(terminalId, terminal)
+    if (options?.closeOnSuccess) {
+      this.closeOnSuccessTerminalIds.add(terminalId)
+    }
+
     const terminalIds = this.terminalIdsByWorktree.get(worktree.id) ?? new Set()
     terminalIds.add(terminalId)
     this.terminalIdsByWorktree.set(worktree.id, terminalIds)
@@ -2402,6 +2445,7 @@ export class TreeportService {
     options?: {
       setup?: { tasks: WorktreeSetupTask[]; error: string | null }
       returnToShell?: boolean
+      closeOnSuccess?: boolean
       initialSize?: TerminalSize
     }
   ): Promise<TerminalRecord> {
@@ -2418,6 +2462,7 @@ export class TreeportService {
     options?: {
       setup?: { tasks: WorktreeSetupTask[]; error: string | null }
       returnToShell?: boolean
+      closeOnSuccess?: boolean
       initialSize?: TerminalSize
     }
   ): Promise<TerminalRecord> {
@@ -2472,6 +2517,7 @@ export class TreeportService {
 
     if (state.status === 'missing') {
       this.terminalStates.delete(terminalId)
+      this.closeOnSuccessTerminalIds.delete(terminalId)
       this.terminalIdsByWorktree.get(worktree.id)?.delete(terminalId)
       this.invalidateProjectsSnapshot()
       this.events.publish('terminal.removed', {
@@ -2496,6 +2542,24 @@ export class TreeportService {
         worktreeId: worktree.id,
         terminalId
       })
+    }
+
+    if (
+      state.status === 'exited' &&
+      state.exitCode === 0 &&
+      this.closeOnSuccessTerminalIds.has(terminalId)
+    ) {
+      try {
+        await this.deleteTerminal(terminalId)
+      } catch (error) {
+        if (!(error instanceof DomainError) || error.code !== 'LAST_TERMINAL') {
+          throw error
+        }
+
+        return refreshed
+      }
+
+      throw new DomainError('TERMINAL_NOT_FOUND', 'Terminal not found', 404)
     }
 
     return refreshed
@@ -2591,7 +2655,14 @@ export class TreeportService {
         throw new DomainError('TERMINAL_NOT_FOUND', 'Terminal not found', 404)
       }
 
-      if (terminals.length <= 1) {
+      if (
+        terminals.length <= 1 ||
+        terminals.every(
+          (candidate) =>
+            candidate.id === terminalId ||
+            this.closeOnSuccessTerminalIds.has(candidate.id)
+        )
+      ) {
         throw new DomainError(
           'LAST_TERMINAL',
           'Every open worktree must keep at least one terminal',
@@ -2609,6 +2680,7 @@ export class TreeportService {
       this.worktreeLocks.delete(worktree.id)
     }
     this.terminalStates.delete(terminalId)
+    this.closeOnSuccessTerminalIds.delete(terminalId)
     this.terminalIdsByWorktree.get(worktree.id)?.delete(terminalId)
     this.invalidateProjectsSnapshot()
     this.events.publish('terminal.removed', {
