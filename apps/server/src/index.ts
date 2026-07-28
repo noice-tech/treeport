@@ -1,4 +1,5 @@
 import type { Server as HttpServer } from 'node:http'
+import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { serve } from '@hono/node-server'
 import {
@@ -16,7 +17,9 @@ import { TerminalMetadataManager } from './terminal-metadata'
 
 const config = loadConfig()
 const runner = new SpawnCommandRunner()
-const database = new TreeportDatabase(config.databasePath)
+const database = await TreeportDatabase.open(config.databasePath, {
+  backupDirectory: path.join(config.dataDir, 'database-backups')
+})
 const git = new GitAdapter(runner, config.gitPath)
 const launcherPath = fileURLToPath(
   new URL('./core/launcher.js', import.meta.url)

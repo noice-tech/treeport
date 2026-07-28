@@ -15,6 +15,7 @@ import type {
   TerminalSize,
   WorktreeRecord
 } from '@treeport/shared'
+import { sql } from 'drizzle-orm'
 import type { AppConfig } from './config'
 import type { CommandRunner } from './command'
 import type { TreeportDatabase } from './database'
@@ -171,37 +172,35 @@ export class TreeportService {
 
   async initialize(): Promise<void> {
     await this.deps.tmux.initialize()
-    const interrupted = this.deps.database.connection
-      .prepare(
-        "SELECT id, worktree_id FROM operations WHERE status IN ('pending','running')"
-      )
-      .all() as Array<{ id: string; worktree_id: string | null }>
+    const interrupted = await this.deps.database.db.all<{
+      id: string
+      worktreeId: string | null
+    }>(sql`
+      SELECT id, worktree_id AS worktreeId
+      FROM operations
+      WHERE status IN ('pending','running')
+    `)
     const timestamp = now()
-    const transaction = this.deps.database.connection.transaction(() => {
+    await this.deps.database.db.transaction(async (tx) => {
       for (const operation of interrupted) {
-        this.deps.database.connection
-          .prepare(
-            "UPDATE operations SET status = 'failed', error = ?, updated_at = ? WHERE id = ?"
-          )
-          .run(
-            'Daemon restarted before the operation completed; external state was preserved for retry',
-            timestamp,
-            operation.id
-          )
-        if (operation.worktree_id) {
-          this.deps.database.connection
-            .prepare(
-              "UPDATE worktrees SET status = 'cleanup_failed', cleanup_error = ?, updated_at = ? WHERE id = ? AND status = 'cleaning'"
-            )
-            .run(
-              'Cleanup was interrupted by a daemon restart; inspect and retry',
-              timestamp,
-              operation.worktree_id
-            )
+        await tx.run(sql`
+          UPDATE operations
+          SET status = 'failed',
+              error = 'Daemon restarted before the operation completed; external state was preserved for retry',
+              updated_at = ${timestamp}
+          WHERE id = ${operation.id}
+        `)
+        if (operation.worktreeId) {
+          await tx.run(sql`
+            UPDATE worktrees
+            SET status = 'cleanup_failed',
+                cleanup_error = 'Cleanup was interrupted by a daemon restart; inspect and retry',
+                updated_at = ${timestamp}
+            WHERE id = ${operation.worktreeId} AND status = 'cleaning'
+          `)
         }
       }
     })
-    transaction()
     await this.reconcile()
   }
 
@@ -410,7 +409,7 @@ export class TreeportService {
     return snapshot
   }
 
-  listRecentProjects(): RecentProjectRecord[] {
+  listRecentProjects(): Promise<RecentProjectRecord[]> {
     return this.deps.database.recentProjects()
   }
 
@@ -426,7 +425,7 @@ export class TreeportService {
 
   private async collectProjectsSnapshot(): Promise<ProjectRecord[]> {
     const projects = await Promise.all(
-      this.deps.database.openProjects().map(async (storedProject) => {
+      (await this.deps.database.openProjects()).map(async (storedProject) => {
         let project = storedProject
         try {
           await this.importWorktrees(
@@ -435,7 +434,7 @@ export class TreeportService {
             project.mainWorktreePath
           )
           await this.ensureProjectTerminals(project.id)
-          project = this.deps.database.project(project.id) ?? project
+          project = (await this.deps.database.project(project.id)) ?? project
         } catch (error) {
           project.availability = {
             state: 'unavailable',
@@ -443,7 +442,7 @@ export class TreeportService {
           }
         }
 
-        if (this.deps.database.isProjectOpen(project.id) !== true) {
+        if ((await this.deps.database.isProjectOpen(project.id)) !== true) {
           return null
         }
 
@@ -557,7 +556,7 @@ export class TreeportService {
   }
 
   async getProjectSnapshot(projectId: string): Promise<ProjectRecord> {
-    this.requireOpenProject(projectId)
+    await this.requireOpenProject(projectId)
     const project = (await this.listProjects()).find(
       (candidate) => candidate.id === projectId
     )
@@ -569,8 +568,8 @@ export class TreeportService {
   }
 
   async getWorktreeSnapshot(worktreeId: string): Promise<WorktreeRecord> {
-    const binding = this.getWorktree(worktreeId)
-    this.requireOpenProject(binding.projectId)
+    const binding = await this.getWorktree(worktreeId)
+    await this.requireOpenProject(binding.projectId)
     const worktree = (await this.listProjects())
       .flatMap((project) => project.worktrees)
       .find((candidate) => candidate.id === worktreeId)
@@ -584,13 +583,13 @@ export class TreeportService {
   private async requireAvailableWorktree(
     worktreeId: string
   ): Promise<WorktreeRecord> {
-    const binding = this.deps.database.worktree(worktreeId)
+    const binding = await this.deps.database.worktree(worktreeId)
     if (!binding) {
       throw new DomainError('WORKTREE_NOT_FOUND', 'Worktree not found', 404)
     }
 
     const project = await this.observeAvailableProject(
-      this.requireOpenProject(binding.projectId)
+      await this.requireOpenProject(binding.projectId)
     )
 
     const worktree = project.worktrees.find(
@@ -611,8 +610,8 @@ export class TreeportService {
     return worktree
   }
 
-  getProject(projectId: string): ProjectRecord {
-    const project = this.deps.database.project(projectId)
+  async getProject(projectId: string): Promise<ProjectRecord> {
+    const project = await this.deps.database.project(projectId)
     if (!project) {
       throw new DomainError('PROJECT_NOT_FOUND', 'Project not found', 404)
     }
@@ -620,9 +619,9 @@ export class TreeportService {
     return project
   }
 
-  private requireOpenProject(projectId: string): ProjectRecord {
-    const project = this.getProject(projectId)
-    if (this.deps.database.isProjectOpen(projectId) !== true) {
+  private async requireOpenProject(projectId: string): Promise<ProjectRecord> {
+    const project = await this.getProject(projectId)
+    if ((await this.deps.database.isProjectOpen(projectId)) !== true) {
       throw new DomainError(
         'PROJECT_CLOSED',
         'Project is closed; open it before modifying it',
@@ -633,11 +632,11 @@ export class TreeportService {
     return project
   }
 
-  updateProjectColor(
+  async updateProjectColor(
     projectId: string,
     color: ProjectColor | null
-  ): ProjectRecord {
-    this.requireOpenProject(projectId)
+  ): Promise<ProjectRecord> {
+    await this.requireOpenProject(projectId)
     if (
       this.projectLocks.has(projectId) ||
       this.worktreeMutations.has(projectId)
@@ -649,22 +648,23 @@ export class TreeportService {
       )
     }
 
-    this.deps.database.connection
-      .prepare('UPDATE projects SET color = ?, updated_at = ? WHERE id = ?')
-      .run(color, now(), projectId)
+    await this.deps.database.db.run(sql`
+      UPDATE projects SET color = ${color}, updated_at = ${now()}
+      WHERE id = ${projectId}
+    `)
     this.invalidateProjectsSnapshot()
     this.events.publish('project.updated', { projectId })
-    return this.getProject(projectId)
+    return await this.getProject(projectId)
   }
 
-  listTerminalPresets(): TerminalPreset[] {
+  listTerminalPresets(): Promise<TerminalPreset[]> {
     return this.deps.database.terminalPresets()
   }
 
-  createTerminalPreset(
+  async createTerminalPreset(
     input: Pick<TerminalPreset, 'name' | 'executable' | 'args'> &
       Partial<Pick<TerminalPreset, 'closeOnSuccess'>>
-  ): TerminalPreset {
+  ): Promise<TerminalPreset> {
     const timestamp = now()
     const preset: TerminalPreset = {
       id: id('preset'),
@@ -675,18 +675,18 @@ export class TreeportService {
       createdAt: timestamp,
       updatedAt: timestamp
     }
-    this.deps.database.insertTerminalPreset(preset)
+    await this.deps.database.insertTerminalPreset(preset)
     return preset
   }
 
-  updateTerminalPreset(
+  async updateTerminalPreset(
     presetId: string,
     input: Pick<TerminalPreset, 'name' | 'executable' | 'args'> & {
       closeOnSuccess?: boolean | undefined
     },
     expectedUpdatedAt: string
-  ): TerminalPreset {
-    const existing = this.deps.database.terminalPreset(presetId)
+  ): Promise<TerminalPreset> {
+    const existing = await this.deps.database.terminalPreset(presetId)
     if (!existing) {
       throw new DomainError(
         'TERMINAL_PRESET_NOT_FOUND',
@@ -715,7 +715,12 @@ export class TreeportService {
           ? timestamp
           : new Date(Date.parse(existing.updatedAt) + 1).toISOString()
     }
-    if (!this.deps.database.updateTerminalPreset(preset, expectedUpdatedAt)) {
+    if (
+      !(await this.deps.database.updateTerminalPreset(
+        preset,
+        expectedUpdatedAt
+      ))
+    ) {
       throw new DomainError(
         'TERMINAL_PRESET_CHANGED',
         'Terminal preset changed; review the latest values and try again',
@@ -726,8 +731,11 @@ export class TreeportService {
     return preset
   }
 
-  deleteTerminalPreset(presetId: string, expectedUpdatedAt: string): void {
-    const existing = this.deps.database.terminalPreset(presetId)
+  async deleteTerminalPreset(
+    presetId: string,
+    expectedUpdatedAt: string
+  ): Promise<void> {
+    const existing = await this.deps.database.terminalPreset(presetId)
     if (!existing) {
       throw new DomainError(
         'TERMINAL_PRESET_NOT_FOUND',
@@ -738,7 +746,10 @@ export class TreeportService {
 
     if (
       existing.updatedAt !== expectedUpdatedAt ||
-      !this.deps.database.deleteTerminalPreset(presetId, expectedUpdatedAt)
+      !(await this.deps.database.deleteTerminalPreset(
+        presetId,
+        expectedUpdatedAt
+      ))
     ) {
       throw new DomainError(
         'TERMINAL_PRESET_CHANGED',
@@ -748,8 +759,8 @@ export class TreeportService {
     }
   }
 
-  getWorktree(worktreeId: string): WorktreeRecord {
-    const worktree = this.deps.database.worktree(worktreeId)
+  async getWorktree(worktreeId: string): Promise<WorktreeRecord> {
+    const worktree = await this.deps.database.worktree(worktreeId)
     if (!worktree || worktree.status === 'removed') {
       throw new DomainError('WORKTREE_NOT_FOUND', 'Worktree not found', 404)
     }
@@ -783,9 +794,9 @@ export class TreeportService {
   ): Promise<TerminalRecord> {
     const known = this.terminalStates.get(terminalId)
     if (known) {
-      const worktree = this.deps.database.worktree(known.worktreeId)
+      const worktree = await this.deps.database.worktree(known.worktreeId)
       if (worktree) {
-        this.requireOpenProject(worktree.projectId)
+        await this.requireOpenProject(worktree.projectId)
         const terminal = (await this.listWorktreeTerminals(worktree)).find(
           (candidate) => candidate.id === terminalId
         )
@@ -796,8 +807,7 @@ export class TreeportService {
     }
 
     const inventories = await Promise.allSettled(
-      this.deps.database
-        .openProjects()
+      (await this.deps.database.openProjects())
         .flatMap((project) => project.worktrees)
         .map((worktree) => this.listWorktreeTerminals(worktree))
     )
@@ -832,8 +842,8 @@ export class TreeportService {
     throw new DomainError('TERMINAL_NOT_FOUND', 'Terminal not found', 404)
   }
 
-  getOperation(operationId: string): OperationRecord {
-    const operation = this.deps.database.operation(operationId)
+  async getOperation(operationId: string): Promise<OperationRecord> {
+    const operation = await this.deps.database.operation(operationId)
     if (!operation) {
       throw new DomainError('OPERATION_NOT_FOUND', 'Operation not found', 404)
     }
@@ -842,15 +852,15 @@ export class TreeportService {
   }
 
   async resolveProject(identifier: string): Promise<ProjectRecord> {
-    const direct = this.deps.database.project(identifier)
+    const direct = await this.deps.database.project(identifier)
     if (direct) {
-      return this.requireOpenProject(direct.id)
+      return await this.requireOpenProject(direct.id)
     }
 
     const canonical = await fs
       .realpath(path.resolve(identifier))
       .catch(() => path.resolve(identifier))
-    const projects = this.deps.database.projects()
+    const projects = await this.deps.database.projects()
     const match = projects.find(
       (project) =>
         isPathWithin(canonical, project.repositoryPath) ||
@@ -866,22 +876,21 @@ export class TreeportService {
       )
     }
 
-    this.requireOpenProject(match.id)
+    await this.requireOpenProject(match.id)
     return match
   }
 
   async resolveWorktree(identifier: string): Promise<WorktreeRecord> {
-    const direct = this.deps.database.worktree(identifier)
+    const direct = await this.deps.database.worktree(identifier)
     if (direct && direct.status !== 'removed') {
-      this.requireOpenProject(direct.projectId)
+      await this.requireOpenProject(direct.projectId)
       return direct
     }
 
     const canonical = await fs
       .realpath(path.resolve(identifier))
       .catch(() => path.resolve(identifier))
-    const matches = this.deps.database
-      .projects()
+    const matches = (await this.deps.database.projects())
       .flatMap((project) => project.worktrees)
       .filter((worktree) => isPathWithin(canonical, worktree.path))
       .sort((a, b) => b.path.length - a.path.length)
@@ -894,7 +903,7 @@ export class TreeportService {
       )
     }
 
-    this.requireOpenProject(match.projectId)
+    await this.requireOpenProject(match.projectId)
     return match
   }
 
@@ -1085,13 +1094,13 @@ export class TreeportService {
     const repositoryStat = await fs.stat(repositoryPath, { bigint: true })
     const repositoryDevice = repositoryStat.dev.toString()
     const repositoryInode = repositoryStat.ino.toString()
-    const pathMatch = this.deps.database.projectByPath(repositoryPath)
-    const identityMatch = this.deps.database.projectByFilesystemIdentity(
+    const pathMatch = await this.deps.database.projectByPath(repositoryPath)
+    const identityMatch = await this.deps.database.projectByFilesystemIdentity(
       repositoryDevice,
       repositoryInode
     )
     const pathMetadata = pathMatch
-      ? this.deps.database.projectFilesystemMetadata(pathMatch.id)
+      ? await this.deps.database.projectFilesystemMetadata(pathMatch.id)
       : null
     if (pathMatch && !pathMetadata) {
       throw new DomainError(
@@ -1160,7 +1169,7 @@ export class TreeportService {
       const defaultBranch = await this.deps.git.defaultBranch(repositoryPath)
       const requested = requestedName?.trim() || null
       const existingMetadata = existing
-        ? this.deps.database.projectFilesystemMetadata(existing.id)
+        ? await this.deps.database.projectFilesystemMetadata(existing.id)
         : null
       if (existing && !existingMetadata) {
         throw new DomainError(
@@ -1184,31 +1193,26 @@ export class TreeportService {
           ? path.basename(repositoryPath)
           : existing?.name) ||
         path.basename(repositoryPath)
-      this.deps.database.connection
-        .prepare(
-          `INSERT INTO projects(
-               id,name,repository_path,main_worktree_path,default_branch,
-               repository_device,repository_inode,name_is_custom,is_open,last_opened_at,
-               created_at,updated_at
-             ) VALUES(?,?,?,?,?,?,?,?,1,?,?,?)
-             ON CONFLICT(id) DO UPDATE SET name=excluded.name, repository_path=excluded.repository_path,
-               main_worktree_path=excluded.main_worktree_path, default_branch=excluded.default_branch,
-               repository_device=excluded.repository_device, repository_inode=excluded.repository_inode,
-               name_is_custom=excluded.name_is_custom,updated_at=excluded.updated_at`
+      await this.deps.database.db.run(sql`
+        INSERT INTO projects(
+          id,name,repository_path,main_worktree_path,default_branch,
+          repository_device,repository_inode,name_is_custom,is_open,last_opened_at,
+          created_at,updated_at
+        ) VALUES(
+          ${projectId},${name},${repositoryPath},${mainPath},${defaultBranch},
+          ${repositoryDevice},${repositoryInode},${nameIsCustom ? 1 : 0},1,
+          ${timestamp},${existing?.createdAt ?? timestamp},${timestamp}
         )
-        .run(
-          projectId,
-          name,
-          repositoryPath,
-          mainPath,
-          defaultBranch,
-          repositoryDevice,
-          repositoryInode,
-          nameIsCustom ? 1 : 0,
-          timestamp,
-          existing?.createdAt ?? timestamp,
-          timestamp
-        )
+        ON CONFLICT(id) DO UPDATE SET
+          name=excluded.name,
+          repository_path=excluded.repository_path,
+          main_worktree_path=excluded.main_worktree_path,
+          default_branch=excluded.default_branch,
+          repository_device=excluded.repository_device,
+          repository_inode=excluded.repository_inode,
+          name_is_custom=excluded.name_is_custom,
+          updated_at=excluded.updated_at
+      `)
       await this.reconcileProjectWorktrees(
         projectId,
         repositoryPath,
@@ -1234,7 +1238,7 @@ export class TreeportService {
         this.projectLocks.add(projectId)
         try {
           await updateRegistration()
-          this.deps.database.setProjectOpen(projectId, true, now())
+          await this.deps.database.setProjectOpen(projectId, true, now())
           await this.ensureProjectTerminals(projectId).catch(() => undefined)
           this.invalidateProjectsSnapshot()
           this.events.publish('project.updated', { projectId })
@@ -1272,11 +1276,11 @@ export class TreeportService {
       )
     }
 
-    return this.getProject(project.id)
+    return await this.getProject(project.id)
   }
 
   async refreshProject(projectId: string): Promise<ProjectRecord> {
-    this.requireOpenProject(projectId)
+    await this.requireOpenProject(projectId)
     if (
       this.projectLocks.has(projectId) ||
       this.worktreeMutations.has(projectId)
@@ -1291,21 +1295,21 @@ export class TreeportService {
     this.projectLocks.add(projectId)
     try {
       const project = await this.observeAvailableProject(
-        this.getProject(projectId)
+        await this.getProject(projectId)
       )
       await this.ensureProjectTerminals(projectId)
       const defaultBranch = await this.deps.git.defaultBranch(
         project.repositoryPath
       )
-      this.deps.database.connection
-        .prepare(
-          'UPDATE projects SET default_branch = ?, updated_at = ? WHERE id = ?'
-        )
-        .run(defaultBranch, now(), projectId)
+      await this.deps.database.db.run(sql`
+        UPDATE projects
+        SET default_branch = ${defaultBranch}, updated_at = ${now()}
+        WHERE id = ${projectId}
+      `)
       await this.reconcile()
       this.invalidateProjectsSnapshot()
       this.events.publish('project.updated', { projectId })
-      return this.getProject(projectId)
+      return await this.getProject(projectId)
     } finally {
       this.projectLocks.delete(projectId)
     }
@@ -1313,7 +1317,7 @@ export class TreeportService {
 
   async openProject(projectId: string): Promise<ProjectRecord> {
     await this.serializeProjectObservation(projectId, async () => {
-      this.getProject(projectId)
+      await this.getProject(projectId)
       if (
         this.projectLocks.has(projectId) ||
         this.worktreeMutations.has(projectId)
@@ -1327,7 +1331,7 @@ export class TreeportService {
 
       this.projectLocks.add(projectId)
       try {
-        this.deps.database.setProjectOpen(projectId, true, now())
+        await this.deps.database.setProjectOpen(projectId, true, now())
         this.invalidateProjectsSnapshot()
         this.events.publish('project.updated', { projectId })
       } finally {
@@ -1340,8 +1344,8 @@ export class TreeportService {
 
   async closeProject(projectId: string): Promise<void> {
     await this.serializeProjectObservation(projectId, async () => {
-      const project = this.getProject(projectId)
-      if (this.deps.database.isProjectOpen(projectId) !== true) {
+      const project = await this.getProject(projectId)
+      if ((await this.deps.database.isProjectOpen(projectId)) !== true) {
         return
       }
 
@@ -1405,7 +1409,7 @@ export class TreeportService {
         }
 
         try {
-          this.deps.database.setProjectOpen(projectId, false, now())
+          await this.deps.database.setProjectOpen(projectId, false, now())
         } catch (error) {
           throw new DomainError(
             'PROJECT_CLOSE_FAILED',
@@ -1480,14 +1484,15 @@ export class TreeportService {
       (!allowProjectLock &&
         (this.projectLocks.has(projectId) ||
           this.worktreeMutations.has(projectId))) ||
-      (!allowClosed && this.deps.database.isProjectOpen(projectId) !== true)
+      (!allowClosed &&
+        (await this.deps.database.isProjectOpen(projectId)) !== true)
     ) {
       return
     }
 
-    const storedProject = this.getProject(projectId)
+    const storedProject = await this.getProject(projectId)
     const storedIdentity =
-      this.deps.database.projectFilesystemMetadata(projectId)
+      await this.deps.database.projectFilesystemMetadata(projectId)
     if (!storedIdentity) {
       throw new Error('Registered project is missing its filesystem identity')
     }
@@ -1585,7 +1590,8 @@ export class TreeportService {
       (!allowProjectLock &&
         (this.projectLocks.has(projectId) ||
           this.worktreeMutations.has(projectId))) ||
-      (!allowClosed && this.deps.database.isProjectOpen(projectId) !== true)
+      (!allowClosed &&
+        (await this.deps.database.isProjectOpen(projectId)) !== true)
     ) {
       return
     }
@@ -1612,13 +1618,7 @@ export class TreeportService {
 
     const projectIdentityChanged = repositoryRenamed
     const timestamp = now()
-    const known = this.deps.database.connection
-      .prepare(
-        `SELECT id,path,git_worktree_key,kind,tmux_socket_name,status,cleanup_error,
-                managed_wrapper_path,created_at,head,branch,detached,locked,lock_reason,prunable
-         FROM worktrees WHERE project_id=?`
-      )
-      .all(projectId) as Array<{
+    const known = await this.deps.database.db.all<{
       id: string
       path: string
       git_worktree_key: string | null
@@ -1634,7 +1634,11 @@ export class TreeportService {
       locked: number
       lock_reason: string | null
       prunable: number
-    }>
+    }>(sql`
+      SELECT id,path,git_worktree_key,kind,tmux_socket_name,status,cleanup_error,
+             managed_wrapper_path,created_at,head,branch,detached,locked,lock_reason,prunable
+      FROM worktrees WHERE project_id=${projectId}
+    `)
     const keyed = new Map(
       known.flatMap((worktree) =>
         worktree.git_worktree_key
@@ -1697,20 +1701,18 @@ export class TreeportService {
       const recoveringRemoval =
         worktree.status === 'cleaning' || worktree.status === 'cleanup_failed'
       const removeOperation = recoveringRemoval
-        ? (this.deps.database.connection
-            .prepare(
-              `SELECT id,status,request_json,error FROM operations
-               WHERE worktree_id=? AND kind='remove'
-               ORDER BY created_at DESC,id DESC LIMIT 1`
-            )
-            .get(worktree.id) as
-            | {
-                id: string
-                status: OperationRecord['status']
-                request_json: string
-                error: string | null
-              }
-            | undefined)
+        ? (
+            await this.deps.database.db.all<{
+              id: string
+              status: OperationRecord['status']
+              request_json: string
+              error: string | null
+            }>(sql`
+              SELECT id,status,request_json,error FROM operations
+              WHERE worktree_id=${worktree.id} AND kind='remove'
+              ORDER BY created_at DESC,id DESC LIMIT 1
+            `)
+          )[0]
         : undefined
       const removeRequest = removeOperation
         ? (JSON.parse(removeOperation.request_json) as Record<string, unknown>)
@@ -1768,25 +1770,20 @@ export class TreeportService {
                 removeOperation.error !== message))
           ) {
             const failedAt = now()
-            const failRecovery = this.deps.database.connection.transaction(
-              () => {
-                this.deps.database.connection
-                  .prepare(
-                    `UPDATE worktrees SET status='cleanup_failed',cleanup_error=?,updated_at=?
-                     WHERE id=?`
-                  )
-                  .run(message, failedAt, worktree.id)
-                if (removeOperation) {
-                  this.deps.database.connection
-                    .prepare(
-                      `UPDATE operations SET status='failed',result_json=NULL,error=?,updated_at=?
-                       WHERE id=?`
-                    )
-                    .run(message, failedAt, removeOperation.id)
-                }
+            await this.deps.database.db.transaction(async (tx) => {
+              await tx.run(sql`
+                UPDATE worktrees
+                SET status='cleanup_failed',cleanup_error=${message},updated_at=${failedAt}
+                WHERE id=${worktree.id}
+              `)
+              if (removeOperation) {
+                await tx.run(sql`
+                  UPDATE operations
+                  SET status='failed',result_json=NULL,error=${message},updated_at=${failedAt}
+                  WHERE id=${removeOperation.id}
+                `)
               }
-            )
-            failRecovery()
+            })
             this.invalidateProjectsSnapshot()
             this.events.publish('worktree.updated', {
               worktreeId: worktree.id
@@ -1837,25 +1834,20 @@ export class TreeportService {
                 removeOperation.error !== message))
           ) {
             const failedAt = now()
-            const failRecovery = this.deps.database.connection.transaction(
-              () => {
-                this.deps.database.connection
-                  .prepare(
-                    `UPDATE worktrees SET status='cleanup_failed',cleanup_error=?,updated_at=?
-                     WHERE id=?`
-                  )
-                  .run(message, failedAt, worktree.id)
-                if (removeOperation) {
-                  this.deps.database.connection
-                    .prepare(
-                      `UPDATE operations SET status='failed',result_json=NULL,error=?,updated_at=?
-                       WHERE id=?`
-                    )
-                    .run(message, failedAt, removeOperation.id)
-                }
+            await this.deps.database.db.transaction(async (tx) => {
+              await tx.run(sql`
+                UPDATE worktrees
+                SET status='cleanup_failed',cleanup_error=${message},updated_at=${failedAt}
+                WHERE id=${worktree.id}
+              `)
+              if (removeOperation) {
+                await tx.run(sql`
+                  UPDATE operations
+                  SET status='failed',result_json=NULL,error=${message},updated_at=${failedAt}
+                  WHERE id=${removeOperation.id}
+                `)
               }
-            )
-            failRecovery()
+            })
             this.invalidateProjectsSnapshot()
             this.events.publish('worktree.updated', {
               worktreeId: worktree.id
@@ -1874,55 +1866,43 @@ export class TreeportService {
       }
 
       const retiredAt = now()
-      const retire = this.deps.database.connection.transaction(() => {
+      await this.deps.database.db.transaction(async (tx) => {
         if (recoveringRemoval && removeOperation) {
-          this.deps.database.connection
-            .prepare(
-              `UPDATE operations
-               SET status='completed', result_json=?, error=NULL, updated_at=?
-               WHERE id=?`
-            )
-            .run(
-              serializeOperation({
-                removed: true,
-                recovered: true,
-                path: worktree.path,
-                message:
-                  'Git no longer reports the worktree and the checkout root is absent; removal was recovered during reconciliation'
-              }),
-              retiredAt,
-              removeOperation.id
-            )
+          await tx.run(sql`
+            UPDATE operations
+            SET status='completed',
+                result_json=${serializeOperation({
+                  removed: true,
+                  recovered: true,
+                  path: worktree.path,
+                  message:
+                    'Git no longer reports the worktree and the checkout root is absent; removal was recovered during reconciliation'
+                })},
+                error=NULL,
+                updated_at=${retiredAt}
+            WHERE id=${removeOperation.id}
+          `)
         } else if (!recoveringRemoval && worktree.status !== 'removed') {
-          this.deps.database.connection
-            .prepare(
-              `INSERT INTO operations(
-                 id,kind,project_id,worktree_id,status,request_json,result_json,error,created_at,updated_at
-               ) VALUES(?,'external_remove',?,?, 'completed',?,?,NULL,?,?)`
-            )
-            .run(
-              id('op'),
-              projectId,
-              worktree.id,
-              serializeOperation({ source: 'git' }),
-              serializeOperation({
+          await tx.run(sql`
+            INSERT INTO operations(
+              id,kind,project_id,worktree_id,status,request_json,result_json,error,created_at,updated_at
+            ) VALUES(
+              ${id('op')},'external_remove',${projectId},${worktree.id},'completed',
+              ${serializeOperation({ source: 'git' })},
+              ${serializeOperation({
                 removed: true,
                 external: true,
                 worktreeId: worktree.id,
                 path: worktree.path,
                 head: worktree.head,
                 branch: worktree.branch
-              }),
-              retiredAt,
-              retiredAt
+              })},NULL,${retiredAt},${retiredAt}
             )
+          `)
         }
 
-        this.deps.database.connection
-          .prepare('DELETE FROM worktrees WHERE id=?')
-          .run(worktree.id)
+        await tx.run(sql`DELETE FROM worktrees WHERE id=${worktree.id}`)
       })
-      retire()
       this.terminalIdsByWorktree.set(worktree.id, terminalIds)
       this.clearWorktreeTerminalState(worktree.id)
       this.invalidateProjectsSnapshot()
@@ -1943,7 +1923,7 @@ export class TreeportService {
       }
     }
 
-    const transaction = this.deps.database.connection.transaction(() => {
+    await this.deps.database.db.transaction(async (tx) => {
       if (projectIdentityChanged) {
         const projectName =
           repositoryRenamed &&
@@ -1951,20 +1931,13 @@ export class TreeportService {
           storedProject.name === path.basename(storedProject.repositoryPath)
             ? path.basename(repositoryPath)
             : storedProject.name
-        this.deps.database.connection
-          .prepare(
-            `UPDATE projects SET name=?,repository_path=?,main_worktree_path=?,
-               repository_device=?,repository_inode=?,updated_at=? WHERE id=?`
-          )
-          .run(
-            projectName,
-            repositoryPath,
-            mainPath,
-            repositoryDevice,
-            repositoryInode,
-            timestamp,
-            projectId
-          )
+        await tx.run(sql`
+          UPDATE projects
+          SET name=${projectName},repository_path=${repositoryPath},
+              main_worktree_path=${mainPath},repository_device=${repositoryDevice},
+              repository_inode=${repositoryInode},updated_at=${timestamp}
+          WHERE id=${projectId}
+        `)
       }
 
       for (const { item, existing } of matched) {
@@ -1974,56 +1947,35 @@ export class TreeportService {
             continue
           }
 
-          this.deps.database.connection
-            .prepare(
-              `UPDATE worktrees SET path=?,git_worktree_key=?,head=?,branch=?,detached=?,locked=?,
-                 lock_reason=?,prunable=?,kind=?,
-                 status=CASE WHEN status IN ('cleaning','cleanup_failed') THEN status ELSE 'active' END,
-                 cleanup_error=CASE WHEN status='cleanup_failed' THEN cleanup_error ELSE NULL END,
-                 updated_at=? WHERE id=?`
-            )
-            .run(
-              item.path,
-              item.gitWorktreeKey ?? existing.git_worktree_key,
-              item.head ?? '',
-              item.branch,
-              item.detached ? 1 : 0,
-              item.locked ? 1 : 0,
-              item.lockReason,
-              item.prunable ? 1 : 0,
-              kind,
-              timestamp,
-              existing.id
-            )
+          await tx.run(sql`
+            UPDATE worktrees
+            SET path=${item.path},
+                git_worktree_key=${item.gitWorktreeKey ?? existing.git_worktree_key},
+                head=${item.head ?? ''},branch=${item.branch},
+                detached=${item.detached ? 1 : 0},locked=${item.locked ? 1 : 0},
+                lock_reason=${item.lockReason},prunable=${item.prunable ? 1 : 0},
+                kind=${kind},
+                status=CASE WHEN status IN ('cleaning','cleanup_failed') THEN status ELSE 'active' END,
+                cleanup_error=CASE WHEN status='cleanup_failed' THEN cleanup_error ELSE NULL END,
+                updated_at=${timestamp}
+            WHERE id=${existing.id}
+          `)
           continue
         }
 
-        this.deps.database.connection
-          .prepare(
-            `INSERT INTO worktrees(
-               id,project_id,path,git_worktree_key,head,branch,detached,locked,lock_reason,
-               prunable,kind,tmux_socket_name,status,cleanup_error,created_at,updated_at
-             ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,'active',NULL,?,?)`
+        await tx.run(sql`
+          INSERT INTO worktrees(
+            id,project_id,path,git_worktree_key,head,branch,detached,locked,lock_reason,
+            prunable,kind,tmux_socket_name,status,cleanup_error,created_at,updated_at
+          ) VALUES(
+            ${id('wt')},${projectId},${item.path},${item.gitWorktreeKey},
+            ${item.head ?? ''},${item.branch},${item.detached ? 1 : 0},
+            ${item.locked ? 1 : 0},${item.lockReason},${item.prunable ? 1 : 0},
+            ${kind},${generateTmuxSocketName()},'active',NULL,${timestamp},${timestamp}
           )
-          .run(
-            id('wt'),
-            projectId,
-            item.path,
-            item.gitWorktreeKey,
-            item.head ?? '',
-            item.branch,
-            item.detached ? 1 : 0,
-            item.locked ? 1 : 0,
-            item.lockReason,
-            item.prunable ? 1 : 0,
-            kind,
-            generateTmuxSocketName(),
-            timestamp,
-            timestamp
-          )
+        `)
       }
     })
-    transaction()
 
     if (projectIdentityChanged || changed.length > 0) {
       this.invalidateProjectsSnapshot()
@@ -2052,7 +2004,7 @@ export class TreeportService {
     },
     sourceWorktreeId?: string
   ): Promise<CreateWorktreeResult> {
-    this.requireOpenProject(projectId)
+    await this.requireOpenProject(projectId)
     if (
       this.projectLocks.has(projectId) &&
       !this.worktreeMutations.has(projectId)
@@ -2087,7 +2039,7 @@ export class TreeportService {
     },
     sourceWorktreeId?: string
   ): Promise<CreateWorktreeResult> {
-    this.requireOpenProject(projectId)
+    await this.requireOpenProject(projectId)
     if (this.projectLocks.has(projectId)) {
       throw new DomainError(
         'PROJECT_BUSY',
@@ -2104,7 +2056,7 @@ export class TreeportService {
     let wrapperCreated = false
     try {
       project = await this.observeAvailableProject(
-        this.requireOpenProject(projectId)
+        await this.requireOpenProject(projectId)
       )
       let name: string
       try {
@@ -2166,7 +2118,7 @@ export class TreeportService {
           )
         }
 
-        const source = this.getWorktree(sourceWorktreeId)
+        const source = await this.getWorktree(sourceWorktreeId)
         if (
           source.projectId !== projectId ||
           source.status !== 'active' ||
@@ -2224,10 +2176,12 @@ export class TreeportService {
         project.mainWorktreePath,
         true
       )
-      this.deps.database.connection
-        .prepare('UPDATE worktrees SET managed_wrapper_path = ? WHERE path = ?')
-        .run(wrapperCreated ? wrapperPath : null, worktreePath)
-      const worktree = this.deps.database.worktreeByPath(worktreePath!)
+      await this.deps.database.db.run(sql`
+        UPDATE worktrees
+        SET managed_wrapper_path=${wrapperCreated ? wrapperPath : null}
+        WHERE path=${worktreePath}
+      `)
+      const worktree = await this.deps.database.worktreeByPath(worktreePath!)
       if (!worktree) {
         throw new DomainError(
           'WORKTREE_DISCOVERY_FAILED',
@@ -2302,7 +2256,7 @@ export class TreeportService {
 
       this.invalidateProjectsSnapshot()
       return {
-        worktree: this.getWorktree(worktree.id),
+        worktree: await this.getWorktree(worktree.id),
         terminal,
         terminalError,
         setupError
@@ -2315,8 +2269,8 @@ export class TreeportService {
   }
 
   private async ensureProjectTerminals(projectId: string): Promise<void> {
-    const project = this.getProject(projectId)
-    if (this.deps.database.isProjectOpen(projectId) !== true) {
+    const project = await this.getProject(projectId)
+    if ((await this.deps.database.isProjectOpen(projectId)) !== true) {
       return
     }
 
@@ -2335,10 +2289,10 @@ export class TreeportService {
     }
 
     return this.terminalMutations.enqueue(worktreeId, async () => {
-      const worktree = this.deps.database.worktree(worktreeId)
+      const worktree = await this.deps.database.worktree(worktreeId)
       if (
         !worktree ||
-        this.deps.database.isProjectOpen(worktree.projectId) !== true ||
+        (await this.deps.database.isProjectOpen(worktree.projectId)) !== true ||
         worktree.status !== 'active' ||
         worktree.prunable ||
         this.worktreeLocks.has(worktreeId)
@@ -2371,7 +2325,7 @@ export class TreeportService {
       initialSize?: TerminalSize
     }
   ): Promise<TerminalRecord> {
-    const project = this.requireOpenProject(worktree.projectId)
+    const project = await this.requireOpenProject(worktree.projectId)
     const terminalId = id('term')
     const sessionName = generateTmuxSessionName()
     const commandArgv = argv ? [...argv] : [this.deps.config.shell, '-l']
@@ -2449,7 +2403,7 @@ export class TreeportService {
       initialSize?: TerminalSize
     }
   ): Promise<TerminalRecord> {
-    this.getWorktree(worktreeId)
+    await this.getWorktree(worktreeId)
     return this.terminalMutations.enqueue(worktreeId, () =>
       this.executeCreateTerminal(worktreeId, name, argv, options)
     )
@@ -2468,7 +2422,7 @@ export class TreeportService {
   ): Promise<TerminalRecord> {
     await this.requireAvailableWorktree(worktreeId)
     try {
-      const worktree = this.deps.database.worktree(worktreeId)
+      const worktree = await this.deps.database.worktree(worktreeId)
       if (!worktree) {
         throw new DomainError('WORKTREE_NOT_FOUND', 'Worktree not found', 404)
       }
@@ -2505,12 +2459,12 @@ export class TreeportService {
     const terminal = observeGit
       ? await this.getTerminal(terminalId)
       : await this.getTerminalFromBindings(terminalId)
-    const worktree = this.getWorktree(terminal.worktreeId)
+    const worktree = await this.getWorktree(terminal.worktreeId)
     const state = await this.deps.tmux.sessionState(
       worktree.tmuxSocketName,
       terminal.tmuxSessionName
     )
-    this.requireOpenProject(worktree.projectId)
+    await this.requireOpenProject(worktree.projectId)
     if (!this.terminalStates.has(terminalId)) {
       throw new DomainError('TERMINAL_NOT_FOUND', 'Terminal not found', 404)
     }
@@ -2570,7 +2524,7 @@ export class TreeportService {
     name: string
   ): Promise<TerminalRecord> {
     const terminal = await this.getTerminal(terminalId)
-    const projectId = this.getWorktree(terminal.worktreeId).projectId
+    const projectId = (await this.getWorktree(terminal.worktreeId)).projectId
     return this.worktreeMutations.enqueue(projectId, () =>
       this.executeRenameTerminal(terminalId, name)
     )
@@ -2581,8 +2535,8 @@ export class TreeportService {
     name: string
   ): Promise<TerminalRecord> {
     const terminal = await this.getTerminal(terminalId)
-    const worktree = this.getWorktree(terminal.worktreeId)
-    this.requireOpenProject(worktree.projectId)
+    const worktree = await this.getWorktree(terminal.worktreeId)
+    await this.requireOpenProject(worktree.projectId)
     if (
       this.projectLocks.has(worktree.projectId) ||
       this.worktreeLocks.has(worktree.id)
@@ -2618,7 +2572,7 @@ export class TreeportService {
     const terminal =
       this.terminalStates.get(terminalId) ??
       (await this.getTerminalFromBindings(terminalId))
-    const projectId = this.getWorktree(terminal.worktreeId).projectId
+    const projectId = (await this.getWorktree(terminal.worktreeId)).projectId
     return this.worktreeMutations.enqueue(projectId, () =>
       this.executeDeleteTerminal(terminalId, terminal.worktreeId)
     )
@@ -2628,12 +2582,12 @@ export class TreeportService {
     terminalId: string,
     worktreeId: string
   ): Promise<void> {
-    const worktree = this.deps.database.worktree(worktreeId)
+    const worktree = await this.deps.database.worktree(worktreeId)
     if (!worktree) {
       throw new DomainError('WORKTREE_NOT_FOUND', 'Worktree not found', 404)
     }
 
-    this.requireOpenProject(worktree.projectId)
+    await this.requireOpenProject(worktree.projectId)
     if (
       this.projectLocks.has(worktree.projectId) ||
       this.worktreeLocks.has(worktree.id)
@@ -2702,9 +2656,9 @@ export class TreeportService {
       return worktree.pr
     }
 
-    this.requireOpenProject(worktree.projectId)
+    await this.requireOpenProject(worktree.projectId)
     const pr = await this.deps.gh.pullRequest(worktree.path, worktree.branch)
-    const current = this.deps.database.worktree(worktreeId)
+    const current = await this.deps.database.worktree(worktreeId)
 
     if (!current) {
       throw new DomainError('WORKTREE_NOT_FOUND', 'Worktree not found', 404)
@@ -2718,21 +2672,14 @@ export class TreeportService {
       )
     }
 
-    this.deps.database.connection
-      .prepare(
-        `UPDATE worktrees SET pr_state=?,pr_number=?,pr_url=?,pr_base_branch=?,pr_head_branch=?,pr_merged_at=?,pr_refreshed_at=?,updated_at=? WHERE id=?`
-      )
-      .run(
-        pr.state,
-        pr.number,
-        pr.url,
-        pr.baseBranch,
-        pr.headBranch,
-        pr.mergedAt,
-        pr.refreshedAt,
-        now(),
-        worktreeId
-      )
+    await this.deps.database.db.run(sql`
+      UPDATE worktrees
+      SET pr_state=${pr.state},pr_number=${pr.number},pr_url=${pr.url},
+          pr_base_branch=${pr.baseBranch},pr_head_branch=${pr.headBranch},
+          pr_merged_at=${pr.mergedAt},pr_refreshed_at=${pr.refreshedAt},
+          updated_at=${now()}
+      WHERE id=${worktreeId}
+    `)
     this.invalidateProjectsSnapshot()
     this.events.publish('worktree.updated', { worktreeId })
     return pr
@@ -2743,7 +2690,7 @@ export class TreeportService {
   ): Promise<{ preview: RemovePreview; statusFingerprint: string }> {
     const worktree = await this.requireAvailableWorktree(worktreeId)
     worktree.terminals = await this.listWorktreeTerminals(worktree)
-    const project = this.getProject(worktree.projectId)
+    const project = await this.getProject(worktree.projectId)
     const live = (
       await this.deps.git.listWorktrees(project.repositoryPath)
     ).find((item) => item.path === worktree.path)
@@ -2842,8 +2789,8 @@ export class TreeportService {
     worktreeId: string,
     request: { confirmationToken: string; confirmDestructive: boolean }
   ): Promise<OperationRecord> {
-    const worktree = this.getWorktree(worktreeId)
-    this.requireOpenProject(worktree.projectId)
+    const worktree = await this.getWorktree(worktreeId)
+    await this.requireOpenProject(worktree.projectId)
     if (worktree.status === 'cleaning') {
       throw new DomainError(
         'REMOVE_IN_PROGRESS',
@@ -2888,8 +2835,8 @@ export class TreeportService {
     worktreeId: string,
     request: { confirmationToken: string; confirmDestructive: boolean }
   ): Promise<OperationRecord> {
-    const worktree = this.getWorktree(worktreeId)
-    this.requireOpenProject(worktree.projectId)
+    const worktree = await this.getWorktree(worktreeId)
+    await this.requireOpenProject(worktree.projectId)
     if (
       this.worktreeLocks.has(worktreeId) ||
       this.projectLocks.has(worktree.projectId) ||
@@ -2934,16 +2881,13 @@ export class TreeportService {
       }
 
       const checkout = await this.checkoutStat(preview.path)
-      const checkoutBinding = this.deps.database.connection
-        .prepare(
-          `SELECT git_worktree_key,managed_wrapper_path FROM worktrees WHERE id=?`
-        )
-        .get(worktreeId) as
-        | {
-            git_worktree_key: string | null
-            managed_wrapper_path: string | null
-          }
-        | undefined
+      const [checkoutBinding] = await this.deps.database.db.all<{
+        git_worktree_key: string | null
+        managed_wrapper_path: string | null
+      }>(sql`
+        SELECT git_worktree_key,managed_wrapper_path
+        FROM worktrees WHERE id=${worktreeId}
+      `)
       const markerPath = path.join(preview.path, '.git')
       const markerStat = await this.checkoutStat(markerPath)
       const gitMarker = markerStat?.isFile()
@@ -2982,27 +2926,22 @@ export class TreeportService {
       }
       assertCleanupTransition(worktree.status, 'cleaning')
       const timestamp = now()
-      const transaction = this.deps.database.connection.transaction(() => {
-        this.deps.database.connection
-          .prepare(
-            `INSERT INTO operations(id,kind,project_id,worktree_id,status,request_json,result_json,error,created_at,updated_at)
-             VALUES(?,'remove',?,?, 'pending',?,NULL,NULL,?,?)`
+      await this.deps.database.db.transaction(async (tx) => {
+        await tx.run(sql`
+          INSERT INTO operations(
+            id,kind,project_id,worktree_id,status,request_json,result_json,error,created_at,updated_at
+          ) VALUES(
+            ${operationId},'remove',${worktree.projectId},${worktreeId},'pending',
+            ${serializeOperation({ ...request, preview, checkoutIdentity })},
+            NULL,NULL,${timestamp},${timestamp}
           )
-          .run(
-            operationId,
-            worktree.projectId,
-            worktreeId,
-            serializeOperation({ ...request, preview, checkoutIdentity }),
-            timestamp,
-            timestamp
-          )
-        this.deps.database.connection
-          .prepare(
-            "UPDATE worktrees SET status='cleaning', cleanup_error=NULL, updated_at=? WHERE id=?"
-          )
-          .run(timestamp, worktreeId)
+        `)
+        await tx.run(sql`
+          UPDATE worktrees
+          SET status='cleaning',cleanup_error=NULL,updated_at=${timestamp}
+          WHERE id=${worktreeId}
+        `)
       })
-      transaction()
       this.invalidateProjectsSnapshot()
       operationStarted = true
       void this.worktreeMutations
@@ -3017,7 +2956,7 @@ export class TreeportService {
         worktreeId,
         kind: 'remove'
       })
-      return this.getOperation(operationId)
+      return await this.getOperation(operationId)
     } finally {
       if (!operationStarted) {
         this.worktreeLocks.delete(worktreeId)
@@ -3030,22 +2969,23 @@ export class TreeportService {
     lockedWorktreeId: string,
     force: boolean
   ): Promise<void> {
-    const operation = this.getOperation(operationId)
+    const operation = await this.getOperation(operationId)
     if (operation.worktreeId !== lockedWorktreeId) {
       this.worktreeLocks.delete(lockedWorktreeId)
       return
     }
 
-    const worktree = this.deps.database.worktree(lockedWorktreeId)
+    const worktree = await this.deps.database.worktree(lockedWorktreeId)
     if (!worktree) {
       this.worktreeLocks.delete(lockedWorktreeId)
       return
     }
 
-    const project = this.getProject(worktree.projectId)
-    this.deps.database.connection
-      .prepare("UPDATE operations SET status='running',updated_at=? WHERE id=?")
-      .run(now(), operationId)
+    const project = await this.getProject(worktree.projectId)
+    await this.deps.database.db.run(sql`
+      UPDATE operations SET status='running',updated_at=${now()}
+      WHERE id=${operationId}
+    `)
     let removalRevalidated = false
     let terminalsStopped = false
     let gitRemoved = false
@@ -3091,27 +3031,22 @@ export class TreeportService {
       }
 
       const timestamp = now()
-      const transaction = this.deps.database.connection.transaction(() => {
+      await this.deps.database.db.transaction(async (tx) => {
         assertCleanupTransition('cleaning', 'removed')
-        this.deps.database.connection
-          .prepare(
-            "UPDATE operations SET status='completed',result_json=?,updated_at=? WHERE id=?"
-          )
-          .run(
-            serializeOperation({
-              removed: true,
-              name: worktree.name,
-              branchPreserved: worktree.branch,
-              path: worktree.path
-            }),
-            timestamp,
-            operationId
-          )
-        this.deps.database.connection
-          .prepare('DELETE FROM worktrees WHERE id=?')
-          .run(worktree.id)
+        await tx.run(sql`
+          UPDATE operations
+          SET status='completed',
+              result_json=${serializeOperation({
+                removed: true,
+                name: worktree.name,
+                branchPreserved: worktree.branch,
+                path: worktree.path
+              })},
+              updated_at=${timestamp}
+          WHERE id=${operationId}
+        `)
+        await tx.run(sql`DELETE FROM worktrees WHERE id=${worktree.id}`)
       })
-      transaction()
       this.clearWorktreeTerminalState(worktree.id)
       this.invalidateProjectsSnapshot()
       if (worktree.managedWrapperPath) {
@@ -3138,20 +3073,19 @@ export class TreeportService {
               : `Terminals were stopped, but Git removal failed: ${base}`
       ).slice(0, 4_096)
       const timestamp = now()
-      const transaction = this.deps.database.connection.transaction(() => {
+      await this.deps.database.db.transaction(async (tx) => {
         assertCleanupTransition('cleaning', 'cleanup_failed')
-        this.deps.database.connection
-          .prepare(
-            "UPDATE worktrees SET status='cleanup_failed',cleanup_error=?,updated_at=? WHERE id=?"
-          )
-          .run(message, timestamp, worktree.id)
-        this.deps.database.connection
-          .prepare(
-            "UPDATE operations SET status='failed',error=?,updated_at=? WHERE id=?"
-          )
-          .run(message, timestamp, operationId)
+        await tx.run(sql`
+          UPDATE worktrees
+          SET status='cleanup_failed',cleanup_error=${message},updated_at=${timestamp}
+          WHERE id=${worktree.id}
+        `)
+        await tx.run(sql`
+          UPDATE operations
+          SET status='failed',error=${message},updated_at=${timestamp}
+          WHERE id=${operationId}
+        `)
       })
-      transaction()
       this.invalidateProjectsSnapshot()
       this.events.publish('remove.failed', {
         operationId,
@@ -3175,7 +3109,7 @@ export class TreeportService {
       )
     }
 
-    let project = this.getProject(projectId)
+    let project = await this.getProject(projectId)
     if (
       project.worktrees.some((worktree) => this.worktreeLocks.has(worktree.id))
     ) {
@@ -3207,7 +3141,7 @@ export class TreeportService {
         this.worktreeLocks.add(worktree.id)
         lockedWorktrees.push(worktree.id)
       }
-      project = this.getProject(projectId)
+      project = await this.getProject(projectId)
       const linked = project.worktrees.filter(
         (worktree) => worktree.kind === 'linked'
       )
@@ -3226,9 +3160,9 @@ export class TreeportService {
           await this.deps.tmux.killServer(worktree.tmuxSocketName)
         )
       }
-      this.deps.database.connection
-        .prepare('DELETE FROM projects WHERE id=?')
-        .run(projectId)
+      await this.deps.database.db.run(
+        sql`DELETE FROM projects WHERE id=${projectId}`
+      )
       for (const worktree of project.worktrees) {
         this.clearWorktreeTerminalState(
           worktree.id,
@@ -3254,7 +3188,7 @@ export class TreeportService {
 
   async reconcile(): Promise<void> {
     const availableProjects = new Set<string>()
-    for (const project of this.deps.database.openProjects()) {
+    for (const project of await this.deps.database.openProjects()) {
       try {
         await this.importWorktrees(
           project.id,
@@ -3266,7 +3200,7 @@ export class TreeportService {
         // Keep metadata and tmux untouched while Git is unavailable.
       }
     }
-    for (const project of this.deps.database.openProjects()) {
+    for (const project of await this.deps.database.openProjects()) {
       if (!availableProjects.has(project.id)) {
         continue
       }

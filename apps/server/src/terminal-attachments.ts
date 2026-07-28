@@ -449,11 +449,9 @@ export class TerminalAttachmentManager {
         )
       }
 
-      const worktree = yield* Effect.try({
-        try: () => this.service.getWorktree(terminal.worktreeId),
-        catch: (cause) =>
-          new AttachmentInitializationError('resolve_worktree', cause)
-      })
+      const worktree = yield* promisePhase('resolve_worktree', () =>
+        this.service.getWorktree(terminal.worktreeId)
+      )
       yield* Effect.all(
         [
           promisePhase('configure_server', () =>

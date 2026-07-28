@@ -10,13 +10,15 @@
   "scripts": {
     "dev": "TREEPORT_DATA_DIR=.treeport-dev/data TREEPORT_RUNTIME_DIR=.treeport-dev/runtime tsdown --watch --on-success \"node --enable-source-maps dist/index.js\"",
     "build": "tsdown",
+    "db:generate": "drizzle-kit generate",
     "start": "node --enable-source-maps dist/index.js",
     "typecheck": "tsc --noEmit -p tsconfig.json --pretty"
   },
   "dependencies": {
     "@hono/node-server": "^2.0.10",
+    "@libsql/client": "^0.17.4",
     "@xterm/headless": "^6.0.0",
-    "better-sqlite3": "^12.11.1",
+    "drizzle-orm": "^0.45.2",
     "effect": "^3.22.0",
     "hono": "^4.11.7",
     "jsonc-parser": "^3.3.1",
@@ -26,7 +28,7 @@
   },
   "devDependencies": {
     "@treeport/shared": "workspace:*",
-    "@types/better-sqlite3": "^7.6.13",
+    "drizzle-kit": "^0.31.10",
     "socket.io-client": "4.8.3",
     "tsdown": "0.22.14"
   }

@@ -178,20 +178,23 @@ export function createApp({
 
   app.get('/api/health', (context) => context.json({ ok: true, version: 1 }))
 
-  app.get('/api/terminal-presets', (context) =>
-    context.json({ presets: service.listTerminalPresets() })
+  app.get('/api/terminal-presets', async (context) =>
+    context.json({ presets: await service.listTerminalPresets() })
   )
 
   app.post('/api/terminal-presets', async (context) => {
     const body = await input(context, createTerminalPresetSchema)
-    return context.json({ preset: service.createTerminalPreset(body) }, 201)
+    return context.json(
+      { preset: await service.createTerminalPreset(body) },
+      201
+    )
   })
 
   app.patch('/api/terminal-presets/:presetId', async (context) => {
     const body = await input(context, updateTerminalPresetSchema)
     const { expectedUpdatedAt, ...presetInput } = body
     return context.json({
-      preset: service.updateTerminalPreset(
+      preset: await service.updateTerminalPreset(
         context.req.param('presetId'),
         presetInput,
         expectedUpdatedAt
@@ -201,7 +204,7 @@ export function createApp({
 
   app.delete('/api/terminal-presets/:presetId', async (context) => {
     const body = await input(context, deleteTerminalPresetSchema)
-    service.deleteTerminalPreset(
+    await service.deleteTerminalPreset(
       context.req.param('presetId'),
       body.expectedUpdatedAt
     )
@@ -212,8 +215,8 @@ export function createApp({
     context.json({ projects: await service.listProjects() })
   )
 
-  app.get('/api/projects/recent', (context) =>
-    context.json({ projects: service.listRecentProjects() })
+  app.get('/api/projects/recent', async (context) =>
+    context.json({ projects: await service.listRecentProjects() })
   )
 
   app.get('/api/filesystem/directories', async (context) => {
@@ -261,7 +264,7 @@ export function createApp({
   app.patch('/api/projects/:projectId', async (context) => {
     const body = await input(context, updateProjectSchema)
     const projectId = context.req.param('projectId')
-    service.updateProjectColor(projectId, body.color)
+    await service.updateProjectColor(projectId, body.color)
     return context.json({
       project: await service.getProjectSnapshot(projectId)
     })
@@ -376,7 +379,7 @@ export function createApp({
     }
 
     const terminal = await service.getTerminal(context.req.param('terminalId'))
-    const worktree = service.getWorktree(terminal.worktreeId)
+    const worktree = await service.getWorktree(terminal.worktreeId)
     const content = await tmux.capturePane(
       worktree.tmuxSocketName,
       terminal.tmuxSessionName,
@@ -404,7 +407,7 @@ export function createApp({
       context.req.param('terminalId')
     )
     await metadataReady
-    const worktree = service.database.worktree(terminal.worktreeId)
+    const worktree = await service.database.worktree(terminal.worktreeId)
     if (worktree) {
       await metadata.trackTerminal(terminal, worktree)
     }
@@ -544,9 +547,9 @@ export function createApp({
     return context.json(result, 201)
   })
 
-  app.get('/api/operations/:operationId', (context) =>
+  app.get('/api/operations/:operationId', async (context) =>
     context.json({
-      operation: service.getOperation(context.req.param('operationId'))
+      operation: await service.getOperation(context.req.param('operationId'))
     })
   )
 

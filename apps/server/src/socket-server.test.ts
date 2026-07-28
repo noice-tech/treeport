@@ -84,7 +84,7 @@ async function fixture(): Promise<NetworkFixture> {
       status: 'running',
       exitCode: null
     })),
-    getWorktree: vi.fn(() => ({
+    getWorktree: vi.fn(async () => ({
       id: 'wt',
       path: '/tmp',
       tmuxSocketName: 'socket'
