@@ -1,5 +1,11 @@
 # Treeport
 
+> **Early alpha**
+>
+> **Local/trusted-network use only; no authentication yet.** Do not expose Treeport directly to the internet. See the [security guide](apps/docs/src/content/docs/security.md).
+>
+> Treeport was built quickly because I needed the tool myself. Some parts were scaffolded in the fastest way that worked, so please don’t laugh at the code too hard. I’ll clean up the mess as the core workflow stabilizes.
+
 **Use Git worktrees as your development task system.**
 
 Treeport turns every Git worktree into a persistent workspace. Run coding agents, shells, development servers, test watchers, and normal TUIs, then reconnect to the same sessions from the desktop app, browser, or phone.
@@ -42,5 +48,3 @@ pnpm typecheck
 pnpm lint
 pnpm build
 ```
-
-Treeport provides arbitrary terminal access and currently has no authentication. Keep it on loopback or a trusted private network; do not expose it directly to the internet. See the [security guide](apps/docs/src/content/docs/security.md).
