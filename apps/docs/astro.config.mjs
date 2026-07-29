@@ -22,11 +22,7 @@ export default defineConfig({
         {
           label: 'Getting started',
           items: [
-            { label: 'Install Treeport', slug: 'getting-started/installation' },
-            {
-              label: 'Your first workspace',
-              slug: 'getting-started/first-workspace'
-            }
+            { label: 'Install Treeport', slug: 'getting-started/installation' }
           ]
         },
         {
