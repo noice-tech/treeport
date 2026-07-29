@@ -6,7 +6,8 @@
   "scripts": {
     "start": "astro dev",
     "build": "astro build",
-    "preview": "astro preview",
+    "preview": "pnpm build && wrangler dev",
+    "deploy": "pnpm build && wrangler deploy",
     "typecheck": "astro check"
   },
   "dependencies": {
@@ -16,6 +17,7 @@
   },
   "devDependencies": {
     "@astrojs/check": "^0.9.6",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "wrangler": "^4.115.0"
   }
 }
