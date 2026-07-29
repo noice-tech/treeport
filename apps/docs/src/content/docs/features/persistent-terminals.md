@@ -11,7 +11,17 @@ Closing the desktop app, browser, or terminal view only detaches that client. Co
 
 Treeport tracks the terminal as running or exited and reports an exit code when available. If a command returns to an interactive shell, the terminal remains running because the shell is still alive.
 
-Terminal presets can instead **close on success** for one-off commands such as `code .`. Treeport removes the temporary terminal after a successful exit and retains failures so their output can be inspected. These presets run on the Treeport host and are not offered as the initial terminal for a new worktree.
+## Reconnect from another device
+
+Open the same terminal from the browser or desktop app. On a trusted private network, you can also reconnect from a phone using Treeport's responsive web app.
+
+## Shared terminal size
+
+A terminal has one shared size across its attached clients. Treeport resizes it automatically to fit the client you are using, and synchronizes that size with other attachments. Opening or resizing it on a phone can therefore reflow the terminal on a desktop, and vice versa.
+
+:::caution
+Remote access grants terminal control. Treeport currently has no authentication. Follow the [private-network guide](/guides/private-network-access/) and [security guidance](/security/).
+:::
 
 ## Normal terminal applications
 
