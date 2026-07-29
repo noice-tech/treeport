@@ -127,6 +127,7 @@ describe('CLI context and machine output', () => {
   let apiUrl: string
   const requests: string[] = []
   const spawnBodies: unknown[] = []
+  const terminalCreateBodies: unknown[] = []
   let observedTerminal = terminal
   let observedMetadata: TerminalRuntimeMetadata = {
     terminalId: terminal.id,
@@ -258,6 +259,20 @@ describe('CLI context and machine output', () => {
             }
           })
         )
+        return
+      }
+
+      if (
+        request.method === 'POST' &&
+        request.url === '/api/worktrees/wt_context/terminals'
+      ) {
+        let source = ''
+        for await (const chunk of request) {
+          source += chunk
+        }
+        terminalCreateBodies.push(JSON.parse(source))
+        response.statusCode = 201
+        response.end(JSON.stringify({ terminal }))
         return
       }
 
@@ -507,7 +522,30 @@ describe('CLI context and machine output', () => {
     })
   })
 
-  it('keeps spawn argv structured and exposes partial creation', async () => {
+  it('keeps terminal and spawn argv structured and exposes partial creation', async () => {
+    const created = await runCli(
+      [
+        'terminal',
+        'create',
+        '--worktree',
+        worktree.id,
+        '--name',
+        'Agent',
+        '--json',
+        '--',
+        'pi',
+        '--json',
+        'semi;colon'
+      ],
+      { TREEPORT_API_URL: apiUrl }
+    )
+    expect(created.code).toBe(0)
+    expect(JSON.parse(created.stdout)).toMatchObject({ id: terminal.id })
+    expect(terminalCreateBodies.at(-1)).toEqual({
+      name: 'Agent',
+      argv: ['pi', '--json', 'semi;colon']
+    })
+
     const result = await runCli(
       [
         'spawn',
@@ -760,6 +798,37 @@ describe('CLI context and machine output', () => {
       help.stdout.indexOf('Usage:')
     )
 
+    const commandPaths = [
+      ['skills'],
+      ['context'],
+      ['project'],
+      ['project', 'add'],
+      ['project', 'list'],
+      ['worktree'],
+      ['worktree', 'list'],
+      ['worktree', 'create'],
+      ['worktree', 'remove'],
+      ['terminal'],
+      ['terminal', 'list'],
+      ['terminal', 'create'],
+      ['terminal', 'inspect'],
+      ['terminal', 'capture'],
+      ['terminal', 'wait'],
+      ['terminal', 'delete'],
+      ['spawn']
+    ]
+    const commandHelp = await Promise.all(
+      commandPaths.map((command) => runCli([...command, '--help']))
+    )
+    for (const [index, result] of commandHelp.entries()) {
+      expect(result.code).toBe(0)
+      expect(result.stderr).toBe('')
+      expect(result.stdout).toContain(
+        `Usage: treeport ${commandPaths[index]!.join(' ')}`
+      )
+      expect(result.stdout).toContain('-h, --help')
+    }
+
     const skills = await runCli(['skills'])
 
     expect(skills.code).toBe(0)
@@ -770,12 +839,26 @@ describe('CLI context and machine output', () => {
     expect(skills.stdout).toContain('treeport spawn')
   })
 
-  it('rejects unexpected context arguments as usage errors', async () => {
-    const result = await runCli(['context', 'unexpected', '--json'])
+  it('rejects extra arguments and unknown options as usage errors', async () => {
+    const extraArgument = await runCli(['context', 'unexpected', '--json'])
 
-    expect(result.code).toBe(2)
-    expect(JSON.parse(result.stderr)).toMatchObject({
+    expect(extraArgument.code).toBe(2)
+    expect(JSON.parse(extraArgument.stderr)).toMatchObject({
       error: { code: 'USAGE_ERROR', message: expect.stringContaining('Usage:') }
+    })
+
+    const unknownOption = await runCli([
+      'project',
+      'list',
+      '--unknown',
+      '--json'
+    ])
+    expect(unknownOption.code).toBe(2)
+    expect(JSON.parse(unknownOption.stderr)).toMatchObject({
+      error: {
+        code: 'USAGE_ERROR',
+        message: expect.stringContaining("unknown option '--unknown'")
+      }
     })
   })
 })

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import { Command, CommanderError } from 'commander'
 import { io, type Socket } from 'socket.io-client'
 import {
   parseEventsSnapshot,
@@ -107,39 +108,6 @@ async function request<T>(
     clearTimeout(timeout)
     externalSignal?.removeEventListener('abort', abort)
   }
-}
-
-function removeFlag(args: string[], flag: string): boolean {
-  const index = args.indexOf(flag)
-  if (index === -1) {
-    return false
-  }
-
-  args.splice(index, 1)
-  return true
-}
-
-function option(
-  args: string[],
-  name: string,
-  required = false
-): string | undefined {
-  const index = args.indexOf(name)
-  if (index === -1) {
-    if (required) {
-      throw new CliError(`Missing required option ${name}`, 2)
-    }
-
-    return undefined
-  }
-
-  const value = args[index + 1]
-  if (!value || value === '--') {
-    throw new CliError(`Missing value for ${name}`, 2)
-  }
-
-  args.splice(index, 2)
-  return value
 }
 
 function commandArgv(args: string[]): string[] | undefined {
@@ -573,52 +541,47 @@ function print(value: unknown, human?: () => string): void {
   }
 }
 
-const usageText = `AI agents:
+const agentGuidance = `AI agents:
   If you're an AI agent, use \`treeport skills\` to see the usage guide.
-
-Usage:
-  treeport skills
-  treeport context [--json]
-  treeport project add <path> [--json]
-  treeport project list [--json]
-  treeport worktree list [--project <id-or-path>] [--json]
-  treeport worktree create --project <id-or-path> --name <name> [--from-current] [--json]
-  treeport worktree remove <id-or-path-or-dot> [--force] [--json]
-  treeport terminal list [--worktree <id-or-path>] [--json]
-  treeport terminal create --worktree <id-or-path-or-dot> --name <name> [-- <command> args...] [--json]
-  treeport terminal inspect <terminal-id-or-dot> [--json]
-  treeport terminal capture <terminal-id-or-dot> [--lines <count>] [--json]
-  treeport terminal wait <terminal-id-or-dot> --until <idle|working|bell|exit> [--timeout <duration>] [--json]
-  treeport terminal delete <terminal-id> [--json]
-  treeport spawn --project <id-or-path-or-dot> --worktree-name <name> --name <terminal-name> [--from-current] [-- <command> args...] [--json]`
-
-function usage(): never {
-  throw new CliError(usageText, 2)
-}
+`
 
 async function main(args: string[]): Promise<void> {
-  if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) {
-    console.log(usageText)
-    return
-  }
+  const argv =
+    args[0] === 'spawn' || (args[0] === 'terminal' && args[1] === 'create')
+      ? commandArgv(args)
+      : undefined
+  let parserError = ''
+  const program = new Command()
+    .name('treeport')
+    .description('Manage Treeport projects, worktrees, and terminals.')
+    .option('--json', 'emit machine-readable JSON')
+    .addHelpText('beforeAll', agentGuidance)
+    .configureOutput({
+      writeErr: (value) => {
+        parserError += value
+      }
+    })
+    .showHelpAfterError()
+    .exitOverride()
 
-  const [group, action] = args.splice(0, 2)
-  if (group === 'skills') {
-    if (action || args.length) {
-      usage()
-    }
+  program.action(() => {
+    throw new CliError(program.helpInformation(), 2)
+  })
 
+  const skillsCommand = program
+    .command('skills')
+    .description('Print the Treeport usage guide for AI agents')
+  skillsCommand.action(async () => {
     process.stdout.write(
       await fs.readFile(new URL('./treeport-skill.md', import.meta.url), 'utf8')
     )
-    return
-  }
+  })
 
-  if (group === 'context') {
-    if (action || args.length) {
-      usage()
-    }
-
+  const contextCommand = program
+    .command('context')
+    .description('Show the current Treeport-managed terminal context')
+    .option('--json', 'emit machine-readable JSON')
+  contextCommand.action(async () => {
     const projectId = contextProjectId
     const worktreeId = contextWorktreeId
     const terminalId = contextTerminalId
@@ -711,15 +674,21 @@ async function main(args: string[]): Promise<void> {
       () =>
         `Treeport context\n\nProject:  ${context.project.name} (${context.project.id})\nWorktree: ${context.worktree.name} (${context.worktree.id})\nPath:     ${context.worktree.path}\nTerminal: ${context.terminal.name} (${context.terminal.id}) — ${context.terminal.status}\nAPI:      ${context.apiUrl}`
     )
-    return
-  }
+  })
 
-  if (group === 'project' && action === 'add') {
-    const repository = args.shift()
-    if (!repository) {
-      usage()
-    }
+  const projectCommand = program
+    .command('project')
+    .description('Register and list projects')
+  projectCommand.action(() => {
+    throw new CliError(projectCommand.helpInformation(), 2)
+  })
 
+  const projectAddCommand = projectCommand
+    .command('add')
+    .description('Register a Git repository')
+    .argument('<path>', 'repository path')
+    .option('--json', 'emit machine-readable JSON')
+  projectAddCommand.action(async (repository: string) => {
     const body = await request<{ project: ProjectRecord }>('/api/projects', {
       method: 'POST',
       body: JSON.stringify({ path: await canonical(repository) })
@@ -729,10 +698,13 @@ async function main(args: string[]): Promise<void> {
       () =>
         `Registered ${body.project.name} (${body.project.id})\n${body.project.repositoryPath}`
     )
-    return
-  }
+  })
 
-  if (group === 'project' && action === 'list') {
+  const projectListCommand = projectCommand
+    .command('list')
+    .description('List registered projects')
+    .option('--json', 'emit machine-readable JSON')
+  projectListCommand.action(async () => {
     const list = await projects()
     print(list, () =>
       list
@@ -742,11 +714,24 @@ async function main(args: string[]): Promise<void> {
         )
         .join('\n')
     )
-    return
-  }
+  })
 
-  if (group === 'worktree' && action === 'list') {
-    const projectIdentifier = option(args, '--project')
+  const worktreeCommand = program
+    .command('worktree')
+    .description('List, create, and remove worktrees')
+  worktreeCommand.action(() => {
+    throw new CliError(worktreeCommand.helpInformation(), 2)
+  })
+
+  const worktreeListCommand = worktreeCommand
+    .command('list')
+    .description('List discovered worktrees')
+    .option('--project <id-or-path>', 'limit results to a project')
+    .option('--json', 'emit machine-readable JSON')
+  worktreeListCommand.action(async () => {
+    const { project: projectIdentifier } = worktreeListCommand.opts<{
+      project?: string
+    }>()
     const list = projectIdentifier
       ? (await resolveProject(projectIdentifier)).worktrees
       : (await projects()).flatMap((project) => project.worktrees)
@@ -758,15 +743,23 @@ async function main(args: string[]): Promise<void> {
         )
         .join('\n')
     )
-    return
-  }
+  })
 
-  if (group === 'worktree' && action === 'create') {
-    const projectIdentifier = option(args, '--project', true)!
-    const name = option(args, '--name', true)!
-    const fromCurrent = removeFlag(args, '--from-current')
-    const project = await resolveProject(projectIdentifier)
-    const sourceWorktreeId = fromCurrent
+  const worktreeCreateCommand = worktreeCommand
+    .command('create')
+    .description('Create a linked worktree')
+    .requiredOption('--project <id-or-path>', 'project to create from')
+    .requiredOption('--name <name>', 'worktree name')
+    .option('--from-current', 'base the worktree on the current worktree')
+    .option('--json', 'emit machine-readable JSON')
+  worktreeCreateCommand.action(async () => {
+    const options = worktreeCreateCommand.opts<{
+      project: string
+      name: string
+      fromCurrent?: boolean
+    }>()
+    const project = await resolveProject(options.project)
+    const sourceWorktreeId = options.fromCurrent
       ? (await resolveWorktree('.')).id
       : undefined
     const result = await request<{
@@ -775,8 +768,8 @@ async function main(args: string[]): Promise<void> {
     }>(`/api/projects/${project.id}/worktrees`, {
       method: 'POST',
       body: JSON.stringify({
-        name,
-        base: fromCurrent ? 'current' : 'default',
+        name: options.name,
+        base: options.fromCurrent ? 'current' : 'default',
         ...(sourceWorktreeId ? { sourceWorktreeId } : {})
       })
     })
@@ -785,16 +778,18 @@ async function main(args: string[]): Promise<void> {
       () =>
         `Created ${result.worktree.name} (${result.worktree.id})\n${result.worktree.path}${result.setupError ? `\nSetup error: ${result.setupError}` : ''}`
     )
-    return
-  }
+  })
 
-  if (group === 'worktree' && action === 'remove') {
-    const identifier = args.shift()
-    if (!identifier) {
-      usage()
-    }
-
-    const confirmed = removeFlag(args, '--force')
+  const worktreeRemoveCommand = worktreeCommand
+    .command('remove')
+    .description('Remove a linked worktree')
+    .argument('<id-or-path-or-dot>', 'worktree to remove')
+    .option('--force', 'confirm destructive removal warnings')
+    .option('--json', 'emit machine-readable JSON')
+  worktreeRemoveCommand.action(async (identifier: string) => {
+    const { force: confirmed } = worktreeRemoveCommand.opts<{
+      force?: boolean
+    }>()
     const worktree = await resolveWorktree(identifier)
     const preview = (
       await request<{ preview: RemovePreview }>(
@@ -823,11 +818,24 @@ async function main(args: string[]): Promise<void> {
       }
     )
     print(result.operation, () => `Remove accepted: ${result.operation.id}`)
-    return
-  }
+  })
 
-  if (group === 'terminal' && action === 'list') {
-    const identifier = option(args, '--worktree')
+  const terminalCommand = program
+    .command('terminal')
+    .description('Manage persistent worktree terminals')
+  terminalCommand.action(() => {
+    throw new CliError(terminalCommand.helpInformation(), 2)
+  })
+
+  const terminalListCommand = terminalCommand
+    .command('list')
+    .description('List terminals')
+    .option('--worktree <id-or-path>', 'limit results to a worktree')
+    .option('--json', 'emit machine-readable JSON')
+  terminalListCommand.action(async () => {
+    const { worktree: identifier } = terminalListCommand.opts<{
+      worktree?: string
+    }>()
     const list: TerminalRecord[] = identifier
       ? (await resolveWorktree(identifier)).terminals
       : (await projects()).flatMap((project) =>
@@ -841,34 +849,44 @@ async function main(args: string[]): Promise<void> {
         )
         .join('\n')
     )
-    return
-  }
+  })
 
-  if (group === 'terminal' && action === 'create') {
-    const argv = commandArgv(args)
-    const identifier = option(args, '--worktree', true)!
-    const name = option(args, '--name', true)!
-    const worktree = await resolveWorktree(identifier)
+  const terminalCreateCommand = terminalCommand
+    .command('create')
+    .description('Create a persistent terminal')
+    .usage('[options] [-- <command> args...]')
+    .requiredOption('--worktree <id-or-path-or-dot>', 'owning worktree')
+    .requiredOption('--name <name>', 'terminal name')
+    .option('--json', 'emit machine-readable JSON')
+    .addHelpText('after', '\nCommand arguments may be passed after --.\n')
+  terminalCreateCommand.action(async () => {
+    const options = terminalCreateCommand.opts<{
+      worktree: string
+      name: string
+    }>()
+    const worktree = await resolveWorktree(options.worktree)
     const result = await request<{ terminal: TerminalRecord }>(
       `/api/worktrees/${worktree.id}/terminals`,
       {
         method: 'POST',
-        body: JSON.stringify({ name, ...(argv ? { argv } : {}) })
+        body: JSON.stringify({
+          name: options.name,
+          ...(argv ? { argv } : {})
+        })
       }
     )
     print(
       result.terminal,
       () => `Created ${result.terminal.name} (${result.terminal.id})`
     )
-    return
-  }
+  })
 
-  if (group === 'terminal' && action === 'inspect') {
-    const identifier = args.shift()
-    if (!identifier || args.length) {
-      usage()
-    }
-
+  const terminalInspectCommand = terminalCommand
+    .command('inspect')
+    .description('Inspect terminal status and runtime metadata')
+    .argument('<terminal-id-or-dot>', 'terminal to inspect')
+    .option('--json', 'emit machine-readable JSON')
+  terminalInspectCommand.action(async (identifier: string) => {
     const observation = await inspectTerminal(resolveTerminalId(identifier))
     print(observation, () => {
       const { terminal, metadata } = observation
@@ -881,20 +899,18 @@ async function main(args: string[]): Promise<void> {
           : terminal.status
       return `Terminal: ${terminal.name} (${terminal.id})\nStatus:   ${status}\nTitle:    ${metadata.title ?? '—'}\nProgress: ${progress}\nStarted:  ${metadata.progressStartedAt ?? '—'}\nCleared:  ${metadata.progressClearedAt ?? '—'}\nBell:     ${metadata.bell ? `${metadata.bell.at} (#${metadata.bell.sequence})` : '—'}`
     })
-    return
-  }
+  })
 
-  if (group === 'terminal' && action === 'capture') {
-    const identifier = args.shift()
-    if (!identifier || args.filter((value) => value === '--lines').length > 1) {
-      usage()
-    }
-
-    const rawLines = option(args, '--lines')
-    if (args.length) {
-      usage()
-    }
-
+  const terminalCaptureCommand = terminalCommand
+    .command('capture')
+    .description('Capture recent terminal output')
+    .argument('<terminal-id-or-dot>', 'terminal to capture')
+    .option('--lines <count>', 'number of lines to capture')
+    .option('--json', 'emit machine-readable JSON')
+  terminalCaptureCommand.action(async (identifier: string) => {
+    const { lines: rawLines } = terminalCaptureCommand.opts<{
+      lines?: string
+    }>()
     const lines =
       rawLines === undefined
         ? TERMINAL_CAPTURE_DEFAULT_LINES
@@ -912,27 +928,21 @@ async function main(args: string[]): Promise<void> {
         process.stdout.write('\n')
       }
     }
+  })
 
-    return
-  }
-
-  if (group === 'terminal' && action === 'wait') {
-    const identifier = args.shift()
-    if (
-      !identifier ||
-      args.filter((value) => value === '--until').length !== 1 ||
-      args.filter((value) => value === '--timeout').length > 1
-    ) {
-      usage()
-    }
-
-    const rawCondition = option(args, '--until', true)!
-    const rawTimeout = option(args, '--timeout')
-    if (args.length) {
-      usage()
-    }
-
-    if (!['idle', 'working', 'bell', 'exit'].includes(rawCondition)) {
+  const terminalWaitCommand = terminalCommand
+    .command('wait')
+    .description('Wait for a terminal runtime condition')
+    .argument('<terminal-id-or-dot>', 'terminal to observe')
+    .requiredOption('--until <idle|working|bell|exit>', 'condition to wait for')
+    .option('--timeout <duration>', 'maximum wait, such as 30s or 5m')
+    .option('--json', 'emit machine-readable JSON')
+  terminalWaitCommand.action(async (identifier: string) => {
+    const options = terminalWaitCommand.opts<{
+      until: string
+      timeout?: string
+    }>()
+    if (!['idle', 'working', 'bell', 'exit'].includes(options.until)) {
       throw new CliError(
         '--until must be one of idle, working, bell, or exit',
         2
@@ -941,41 +951,45 @@ async function main(args: string[]): Promise<void> {
 
     const result = await waitForTerminal(
       resolveTerminalId(identifier),
-      rawCondition as WaitCondition,
-      rawTimeout === undefined ? undefined : parseDuration(rawTimeout)
+      options.until as WaitCondition,
+      options.timeout === undefined ? undefined : parseDuration(options.timeout)
     )
     print(
       result,
       () =>
         `${result.terminal.name} (${result.terminal.id}) reached ${result.condition} at ${result.observedAt}`
     )
-    return
-  }
+  })
 
-  if (group === 'terminal' && action === 'delete') {
-    const terminalId = args.shift()
-    if (!terminalId) {
-      usage()
-    }
-
+  const terminalDeleteCommand = terminalCommand
+    .command('delete')
+    .description('Delete a terminal')
+    .argument('<terminal-id>', 'terminal to delete')
+    .option('--json', 'emit machine-readable JSON')
+  terminalDeleteCommand.action(async (terminalId: string) => {
     await request(`/api/terminals/${terminalId}`, { method: 'DELETE' })
     print({ ok: true, terminalId }, () => `Deleted ${terminalId}`)
-    return
-  }
+  })
 
-  if (group === 'spawn') {
-    args.unshift(action ?? '')
-    if (!args[0]) {
-      args.shift()
-    }
-
-    const argv = commandArgv(args)
-    const projectIdentifier = option(args, '--project', true)!
-    const worktreeName = option(args, '--worktree-name', true)!
-    const name = option(args, '--name', true)!
-    const fromCurrent = removeFlag(args, '--from-current')
-    const project = await resolveProject(projectIdentifier)
-    const sourceWorktreeId = fromCurrent
+  const spawnCommand = program
+    .command('spawn')
+    .description('Create a worktree and its first terminal')
+    .usage('[options] [-- <command> args...]')
+    .requiredOption('--project <id-or-path-or-dot>', 'project to create from')
+    .requiredOption('--worktree-name <name>', 'worktree name')
+    .requiredOption('--name <terminal-name>', 'terminal name')
+    .option('--from-current', 'base the worktree on the current worktree')
+    .option('--json', 'emit machine-readable JSON')
+    .addHelpText('after', '\nCommand arguments may be passed after --.\n')
+  spawnCommand.action(async () => {
+    const options = spawnCommand.opts<{
+      project: string
+      worktreeName: string
+      name: string
+      fromCurrent?: boolean
+    }>()
+    const project = await resolveProject(options.project)
+    const sourceWorktreeId = options.fromCurrent
       ? (await resolveWorktree('.')).id
       : undefined
     const result = await request<{
@@ -987,9 +1001,9 @@ async function main(args: string[]): Promise<void> {
       method: 'POST',
       body: JSON.stringify({
         project: project.id,
-        worktreeName,
-        name,
-        base: fromCurrent ? 'current' : 'default',
+        worktreeName: options.worktreeName,
+        name: options.name,
+        base: options.fromCurrent ? 'current' : 'default',
         ...(sourceWorktreeId ? { sourceWorktreeId } : {}),
         ...(argv ? { argv } : {})
       })
@@ -999,10 +1013,21 @@ async function main(args: string[]): Promise<void> {
       () =>
         `Created worktree ${result.worktree.name} (${result.worktree.id})\nPath: ${result.worktree.path}\n${result.terminal ? `Terminal: ${result.terminal.name} (${result.terminal.id}) — ${result.terminal.status}` : 'Terminal: not created'}${result.setupError ? `\nSetup error: ${result.setupError}` : ''}${result.terminalError ? `\nTerminal error: ${result.terminalError}` : ''}`
     )
-    return
-  }
+  })
 
-  usage()
+  try {
+    await program.parseAsync(args, { from: 'user' })
+  } catch (error) {
+    if (error instanceof CommanderError) {
+      if (error.exitCode === 0) {
+        return
+      }
+
+      throw new CliError(parserError.trim() || error.message, 2, 'USAGE_ERROR')
+    }
+
+    throw error
+  }
 }
 
 main(rawArgs).catch((error: unknown) => {
