@@ -2,8 +2,8 @@
   --sl-color-accent-low: #083344;
   --sl-color-accent: #22d3ee;
   --sl-color-accent-high: #cffafe;
-  --sl-font: 'IBM Plex Sans', 'Avenir Next', Avenir, system-ui, sans-serif;
-  --sl-font-mono: 'IBM Plex Mono', 'SFMono-Regular', Consolas, monospace;
+  --sl-font: var(--sl-font-system);
+  --sl-font-mono: var(--sl-font-system-mono);
 }
 
 :root[data-theme='light'] {
