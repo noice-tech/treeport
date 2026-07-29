@@ -22,9 +22,19 @@ import {
   type WorktreeRecord
 } from '@treeport/shared'
 import { extractJsonOutput } from './args.js'
+import {
+  daemonDown,
+  daemonStatus,
+  daemonUp,
+  openTreeport,
+  readDaemonLogs,
+  resolveLocalApiUrl,
+  runDoctor,
+  treeportVersion
+} from './lifecycle.js'
 
 const configuredApiUrl = process.env.TREEPORT_API_URL?.trim()
-const apiUrl = (configuredApiUrl || 'http://127.0.0.1:4780').replace(/\/$/, '')
+const apiUrl = (await resolveLocalApiUrl()).replace(/\/$/, '')
 const contextPrefix = 'TREEPORT'
 const contextProjectId = process.env.TREEPORT_PROJECT_ID?.trim()
 const contextWorktreeId = process.env.TREEPORT_WORKTREE_ID?.trim()
@@ -565,7 +575,166 @@ async function main(args: string[]): Promise<void> {
     .exitOverride()
 
   program.action(() => {
-    throw new CliError(program.helpInformation(), 2)
+    process.stdout.write(program.helpInformation())
+  })
+
+  const upCommand = program
+    .command('up')
+    .description('Ensure the local Treeport daemon is running')
+    .option('--host <address>', 'listener address')
+    .option('--port <port>', 'listener port')
+    .option('--foreground', 'run in the foreground')
+    .option('--json', 'emit machine-readable JSON')
+  upCommand.action(async () => {
+    const options = upCommand.opts<{
+      host?: string
+      port?: string
+      foreground?: boolean
+    }>()
+    const port = options.port === undefined ? undefined : Number(options.port)
+    const result = await daemonUp({
+      ...(options.host === undefined ? {} : { host: options.host }),
+      ...(port === undefined ? {} : { port }),
+      ...(options.foreground === undefined
+        ? {}
+        : { foreground: options.foreground })
+    })
+    if (options.foreground) {
+      return
+    }
+
+    print(result, () => `Treeport is up\n${result.apiUrl}`)
+    const listenerHost = new URL(result.apiUrl).hostname
+    if (!['127.0.0.1', '::1', '[::1]', 'localhost'].includes(listenerHost)) {
+      process.stderr.write(
+        'Warning: Treeport has no authentication. Use only a trusted private network.\n'
+      )
+    }
+  })
+
+  const downCommand = program
+    .command('down')
+    .description('Stop the local daemon and preserve terminal sessions')
+    .option(
+      '--terminate-terminals',
+      'terminate every Treeport-owned tmux server'
+    )
+    .option('--force', 'confirm termination of all terminals')
+    .option('--json', 'emit machine-readable JSON')
+  downCommand.action(async () => {
+    const options = downCommand.opts<{
+      terminateTerminals?: boolean
+      force?: boolean
+    }>()
+    if (options.terminateTerminals && !options.force) {
+      throw new CliError(
+        'Re-run with --terminate-terminals --force to confirm termination of every terminal.',
+        2
+      )
+    }
+
+    if (options.terminateTerminals) {
+      await request('/api/admin/terminate-terminals', { method: 'POST' })
+    }
+
+    const result = await daemonDown()
+    print(result, () =>
+      result.wasRunning ? 'Treeport is down' : 'Treeport is already down'
+    )
+  })
+
+  const statusCommand = program
+    .command('status')
+    .description('Show local daemon status')
+    .option('--json', 'emit machine-readable JSON')
+  statusCommand.action(async () => {
+    const status = await daemonStatus()
+    const projectList = status.verified ? await projects() : []
+    const result = {
+      ...status,
+      projects: projectList.length,
+      worktrees: projectList.reduce(
+        (count, project) => count + project.worktrees.length,
+        0
+      ),
+      terminals: projectList.reduce(
+        (count, project) =>
+          count +
+          project.worktrees.reduce(
+            (worktreeCount, worktree) =>
+              worktreeCount + worktree.terminals.length,
+            0
+          ),
+        0
+      )
+    }
+    print(result, () => {
+      if (!status.state) {
+        return 'Treeport is down'
+      }
+
+      if (!status.running || !status.verified) {
+        return `Treeport is unhealthy (PID ${status.state.pid})\nLogs: ${path.join(status.state.dataDir, 'logs', 'daemon.log')}`
+      }
+
+      return `Treeport is up\n${status.state.apiUrl}\nVersion: ${status.health?.version}\nPID: ${status.state.pid}\nProjects: ${result.projects}\nWorktrees: ${result.worktrees}\nTerminals: ${result.terminals}`
+    })
+  })
+
+  const openCommand = program
+    .command('open')
+    .description('Open the Treeport web interface')
+  openCommand.action(async () => {
+    const url = await openTreeport()
+    console.log(url)
+  })
+
+  const logsCommand = program
+    .command('logs')
+    .description('Show recent daemon logs')
+    .option('--lines <count>', 'number of lines', '100')
+  logsCommand.action(async () => {
+    const lines = Number(logsCommand.opts<{ lines: string }>().lines)
+    if (!Number.isInteger(lines) || lines < 1 || lines > 10_000) {
+      throw new CliError('--lines must be an integer between 1 and 10000', 2)
+    }
+
+    process.stdout.write(await readDaemonLogs(lines))
+  })
+
+  const doctorCommand = program
+    .command('doctor')
+    .description('Diagnose local requirements and paths')
+    .option('--json', 'emit machine-readable JSON')
+  doctorCommand.action(async () => {
+    const checks = await runDoctor()
+    print(checks, () =>
+      checks
+        .map(
+          (check) =>
+            `${check.ok ? 'ok' : 'error'}\t${check.name}\t${check.detail}`
+        )
+        .join('\n')
+    )
+    if (checks.some((check) => !check.ok)) {
+      process.exitCode = 1
+    }
+  })
+
+  const versionCommand = program
+    .command('version')
+    .description('Show CLI and daemon versions')
+    .option('--json', 'emit machine-readable JSON')
+  versionCommand.action(async () => {
+    const [cli, status] = await Promise.all([treeportVersion(), daemonStatus()])
+    const result = {
+      cli,
+      daemon: status.verified ? (status.health?.version ?? null) : null
+    }
+    print(
+      result,
+      () => `CLI: ${result.cli}\nDaemon: ${result.daemon ?? 'not running'}`
+    )
   })
 
   const skillsCommand = program

@@ -1,6 +1,8 @@
 import { spawn } from 'node:child_process'
+import { chmod, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import http, { type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
+import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Server as SocketIOServer } from 'socket.io'
@@ -18,6 +20,9 @@ const repositoryRoot = path.resolve(
   '../../..'
 )
 const cliExecutable = path.join(repositoryRoot, 'node_modules/.bin/treeport')
+const packageVersion = JSON.parse(
+  await readFile(path.join(repositoryRoot, 'packages/cli/package.json'), 'utf8')
+).version
 const timestamp = '2026-01-01T00:00:00.000Z'
 
 const terminal: TerminalRecord = {
@@ -860,5 +865,119 @@ describe('CLI context and machine output', () => {
         message: expect.stringContaining("unknown option '--unknown'")
       }
     })
+  })
+})
+
+describe('CLI daemon lifecycle', () => {
+  it('starts one packaged daemon, serves the app, reports it, and stops without deleting data', async () => {
+    const temporaryDirectory = await mkdtemp(
+      path.join(os.tmpdir(), 'treeport-cli-lifecycle-')
+    )
+    const dataDirectory = path.join(temporaryDirectory, 'data')
+    const runtimeDirectory = path.join(temporaryDirectory, 'runtime')
+    const tmuxPath = path.join(temporaryDirectory, 'tmux')
+    const gitPath = path.join(temporaryDirectory, 'git')
+    await Promise.all([
+      writeFile(
+        tmuxPath,
+        '#!/bin/sh\n[ "$1" = "-V" ] && echo "tmux 3.6a"\nexit 0\n'
+      ),
+      writeFile(
+        gitPath,
+        '#!/bin/sh\n[ "$1" = "--version" ] && echo "git version 2.39.5"\nexit 0\n'
+      )
+    ])
+    await Promise.all([chmod(tmuxPath, 0o755), chmod(gitPath, 0o755)])
+
+    const reservation = http.createServer()
+    await new Promise<void>((resolve, reject) => {
+      reservation.once('error', reject)
+      reservation.listen(0, '127.0.0.1', resolve)
+    })
+    const address = reservation.address() as AddressInfo
+    const port = address.port
+    await new Promise<void>((resolve, reject) =>
+      reservation.close((error) => (error ? reject(error) : resolve()))
+    )
+
+    const environment = {
+      TREEPORT_API_URL: '',
+      TREEPORT_HOST: '127.0.0.1',
+      TREEPORT_PORT: String(port),
+      TREEPORT_DATA_DIR: dataDirectory,
+      TREEPORT_RUNTIME_DIR: runtimeDirectory,
+      TREEPORT_TMUX_PATH: tmuxPath,
+      TREEPORT_GIT_PATH: gitPath
+    }
+
+    try {
+      const help = await runCli([], environment)
+      expect(help.code).toBe(0)
+      expect(help.stdout).toContain('up [options]')
+
+      const unconfirmed = await runCli(
+        ['down', '--terminate-terminals'],
+        environment
+      )
+      expect(unconfirmed.code).toBe(2)
+      expect(unconfirmed.stderr).toContain('--terminate-terminals --force')
+
+      const firstUp = await runCli(['up'], environment)
+      expect(firstUp.code).toBe(0)
+      expect(firstUp.stdout).toContain(`http://127.0.0.1:${port}`)
+
+      const firstStatus = await runCli(['status', '--json'], environment)
+      expect(firstStatus.code).toBe(0)
+      const firstState = JSON.parse(firstStatus.stdout) as {
+        running: boolean
+        verified: boolean
+        state: { pid: number }
+      }
+      expect(firstState).toMatchObject({ running: true, verified: true })
+
+      const secondUp = await runCli(['up'], environment)
+      const secondStatus = await runCli(['status', '--json'], environment)
+      expect(secondUp.code).toBe(0)
+      expect(JSON.parse(secondStatus.stdout).state.pid).toBe(
+        firstState.state.pid
+      )
+
+      const health = await fetch(`http://127.0.0.1:${port}/api/health`).then(
+        (response) => response.json()
+      )
+      expect(health).toMatchObject({
+        ok: true,
+        version: packageVersion,
+        pid: firstState.state.pid
+      })
+      const app = await fetch(`http://127.0.0.1:${port}/`).then((response) =>
+        response.text()
+      )
+      expect(app).toContain('<div id="root"></div>')
+
+      const down = await runCli(['down'], environment)
+      expect(down.code).toBe(0)
+      expect(down.stdout).toContain('Treeport is down')
+      const stopped = await runCli(['status'], environment)
+      expect(stopped.stdout.trim()).toBe('Treeport is down')
+      await expect(
+        stat(path.join(dataDirectory, 'treeport.db'))
+      ).resolves.toBeTruthy()
+
+      await writeFile(
+        tmuxPath,
+        '#!/bin/sh\n[ "$1" = "-V" ] && echo "tmux 3.1"\nexit 0\n',
+        { mode: 0o755 }
+      )
+      const doctor = await runCli(['doctor'], environment)
+      expect(doctor.code).toBe(1)
+      expect(doctor.stdout).toContain('Treeport requires tmux 3.2 or newer')
+      const refused = await runCli(['up'], environment)
+      expect(refused.code).toBe(1)
+      expect(refused.stderr).toContain('Treeport requires tmux 3.2 or newer')
+    } finally {
+      await runCli(['down'], environment)
+      await rm(temporaryDirectory, { recursive: true, force: true })
+    }
   })
 })

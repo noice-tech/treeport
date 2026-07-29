@@ -151,7 +151,7 @@ async function waitForStackPorts(apiPort, webPort, childExit) {
 
 export async function main() {
   const releaseStartupLock = await acquireStartupLock()
-  const apiPort = await findAvailablePort(4780, loopbackHost)
+  const apiPort = await findAvailablePort(8733, loopbackHost)
   const webPort = await findAvailablePort(
     5173,
     [webHost, loopbackHost],

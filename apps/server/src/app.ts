@@ -176,7 +176,17 @@ export function createApp({
     )
   })
 
-  app.get('/api/health', (context) => context.json({ ok: true, version: 1 }))
+  app.get('/api/health', (context) =>
+    context.json({
+      ok: true,
+      version: config.appVersion ?? 'development',
+      protocolVersion: 1,
+      pid: process.pid,
+      instanceId: config.instanceId ?? null,
+      installationMethod: config.installationMethod ?? 'development',
+      url: config.apiUrl
+    })
+  )
 
   app.get('/api/terminal-presets', async (context) =>
     context.json({ presets: await service.listTerminalPresets() })
@@ -553,6 +563,10 @@ export function createApp({
     })
   )
 
+  app.post('/api/admin/terminate-terminals', async (context) =>
+    context.json({ terminated: await service.terminateAllTerminals() })
+  )
+
   app.all('/api/*', (context) =>
     context.json(
       { error: { code: 'NOT_FOUND', message: 'API endpoint not found' } },
@@ -562,6 +576,7 @@ export function createApp({
 
   const staticRoot =
     webDist ??
+    config.webDist ??
     path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../web/dist')
   app.use('/assets/*', serveStatic({ root: staticRoot }))
   app.get(

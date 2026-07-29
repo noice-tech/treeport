@@ -1,10 +1,7 @@
 import { defineConfig } from 'tsdown'
 
 export default defineConfig({
-  entry: {
-    index: 'src/index.ts',
-    'core/launcher': 'src/core/launcher.ts'
-  },
+  entry: { index: 'src/index.ts' },
   format: 'esm',
   platform: 'node',
   target: 'node24',
@@ -13,7 +10,6 @@ export default defineConfig({
   clean: true,
   sourcemap: false,
   dts: false,
-  copy: [{ from: 'drizzle/**/*', to: 'dist/drizzle', flatten: false }],
   deps: {
     neverBundle: true,
     alwaysBundle: ['@treeport/shared']

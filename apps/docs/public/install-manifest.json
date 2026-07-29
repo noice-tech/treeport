@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "package": "@treeport/treeport",
+  "treeportVersion": "0.1.0",
+  "nodeVersion": "24.13.0",
+  "platforms": {
+    "darwin-arm64": {
+      "nodeArchiveSha256": "d595961e563fcae057d4a0fb992f175a54d97fcc4a14dc2d474d92ddeea3b9f8"
+    },
+    "darwin-x64": {
+      "nodeArchiveSha256": "6f03c1b48ddbe1b129a6f8038be08e0899f05f17185b4d3e4350180ab669a7f3"
+    }
+  }
+}

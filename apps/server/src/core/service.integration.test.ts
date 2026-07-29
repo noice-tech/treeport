@@ -390,7 +390,7 @@ async function fixture() {
   databases.push(database)
   const config: AppConfig = {
     host: '127.0.0.1',
-    port: 4780,
+    port: 8733,
     databasePath: database.filePath,
     dataDir: root,
     runtimeDir: runtime,
@@ -398,7 +398,7 @@ async function fixture() {
     tmuxPath: 'tmux',
     gitPath: 'git',
     ghPath: 'gh',
-    apiUrl: 'http://127.0.0.1:4780'
+    apiUrl: 'http://127.0.0.1:8733'
   }
   const git = new GitAdapter(runner)
   const tmux = new TmuxAdapter(

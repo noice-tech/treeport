@@ -1,3 +1,4 @@
+import crypto from 'node:crypto'
 import os from 'node:os'
 import path from 'node:path'
 
@@ -12,6 +13,10 @@ export interface AppConfig {
   gitPath: string
   ghPath: string
   apiUrl: string
+  appVersion?: string
+  instanceId?: string
+  installationMethod?: string
+  webDist?: string
 }
 
 function expandHome(value: string): string {
@@ -49,13 +54,15 @@ function defaultRuntimeDir(env: NodeJS.ProcessEnv): string {
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const host = env.TREEPORT_HOST?.trim() || env.HOST?.trim() || '127.0.0.1'
   const portValue = Number.parseInt(
-    env.TREEPORT_PORT?.trim() || env.PORT?.trim() || '4780',
+    env.TREEPORT_PORT?.trim() || env.PORT?.trim() || '8733',
     10
   )
   if (!Number.isInteger(portValue) || portValue < 1 || portValue > 65_535) {
     throw new Error('TREEPORT_PORT must be an integer between 1 and 65535')
   }
 
+  const urlHost =
+    host.includes(':') && !host.startsWith('[') ? `[${host}]` : host
   const dataDir = path.resolve(
     expandHome(env.TREEPORT_DATA_DIR?.trim() || defaultDataDir(env))
   )
@@ -79,6 +86,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     tmuxPath: env.TREEPORT_TMUX_PATH?.trim() || 'tmux',
     gitPath: env.TREEPORT_GIT_PATH?.trim() || 'git',
     ghPath: env.TREEPORT_GH_PATH?.trim() || 'gh',
-    apiUrl: env.TREEPORT_API_URL?.trim() || `http://${host}:${portValue}`
+    apiUrl: env.TREEPORT_API_URL?.trim() || `http://${urlHost}:${portValue}`,
+    appVersion: env.TREEPORT_APP_VERSION?.trim() || 'development',
+    instanceId: env.TREEPORT_INSTANCE_ID?.trim() || crypto.randomUUID(),
+    installationMethod:
+      env.TREEPORT_INSTALLATION_METHOD?.trim() || 'development',
+    ...(env.TREEPORT_WEB_DIST?.trim()
+      ? { webDist: env.TREEPORT_WEB_DIST.trim() }
+      : {})
   }
 }

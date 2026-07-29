@@ -1,12 +1,12 @@
 {
-	"$schema": "./node_modules/wrangler/config-schema.json",
-	"compatibility_date": "2026-07-29",
-	"compatibility_flags": ["global_fetch_strictly_public"],
-	"name": "treeport-docs",
-	"assets": {
-		"directory": "./dist"
-	},
-	"observability": {
-		"enabled": true
-	}
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "compatibility_date": "2026-07-29",
+  "compatibility_flags": ["global_fetch_strictly_public"],
+  "name": "treeport-docs",
+  "assets": {
+    "directory": "./dist"
+  },
+  "observability": {
+    "enabled": true
+  }
 }

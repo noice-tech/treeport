@@ -2,10 +2,23 @@
   "$schema": "https://unpkg.com/knip@6/schema.json",
   "workspaces": {
     ".": {
-      "ignoreDependencies": ["@treeport/cli"]
+      "ignoreDependencies": ["@treeport/treeport"]
     },
     "apps/desktop": {
       "entry": ["forge.config.ts", "src/main.ts", "src/preload.ts"]
+    },
+    "packages/cli": {
+      "ignoreDependencies": [
+        "@hono/node-server",
+        "@libsql/client",
+        "@xterm/headless",
+        "drizzle-orm",
+        "effect",
+        "hono",
+        "jsonc-parser",
+        "node-pty",
+        "zod"
+      ]
     }
   }
 }

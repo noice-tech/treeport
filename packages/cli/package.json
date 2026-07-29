@@ -1,23 +1,60 @@
 {
-  "name": "@treeport/cli",
+  "name": "@treeport/treeport",
   "version": "0.1.0",
-  "private": true,
+  "description": "A worktree-first terminal driver for persistent development workspaces.",
+  "type": "module",
   "bin": {
     "treeport": "bin/treeport.mjs"
   },
-  "type": "module",
   "main": "dist/index.js",
+  "files": [
+    "bin",
+    "dist",
+    "LICENSE",
+    "README.md"
+  ],
   "scripts": {
-    "build": "tsc -b && cp ../../skills/treeport/SKILL.md dist/treeport-skill.md && chmod +x bin/treeport.mjs dist/index.js",
-    "dev": "pnpm build && tsc -b --watch --preserveWatchOutput",
+    "build": "tsdown && node scripts/stage-package.mjs && node scripts/check-package.mjs",
+    "prepack": "pnpm --dir=../.. exec turbo run build --filter=@treeport/treeport 1>&2",
+    "check:package": "node scripts/check-package.mjs",
+    "test:package": "node scripts/smoke-package.mjs",
+    "dev": "pnpm build && tsdown --watch",
     "typecheck": "tsc --noEmit -p tsconfig.json --pretty"
   },
+  "engines": {
+    "node": ">=24"
+  },
+  "os": [
+    "darwin"
+  ],
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/noice-tech/treeport.git"
+  },
+  "bugs": {
+    "url": "https://github.com/noice-tech/treeport/issues"
+  },
+  "homepage": "https://treeport.app",
+  "publishConfig": {
+    "access": "public"
+  },
   "dependencies": {
-    "@treeport/shared": "workspace:*",
+    "@hono/node-server": "^2.0.10",
+    "@libsql/client": "^0.17.4",
+    "@xterm/headless": "^6.0.0",
     "commander": "14.0.3",
-    "socket.io-client": "4.8.3"
+    "drizzle-orm": "^0.45.2",
+    "effect": "^3.22.0",
+    "hono": "^4.11.7",
+    "jsonc-parser": "^3.3.1",
+    "node-pty": "1.2.0-beta.14",
+    "socket.io": "4.8.3",
+    "socket.io-client": "4.8.3",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
-    "socket.io": "4.8.3"
+    "@treeport/shared": "workspace:*",
+    "tsdown": "0.22.14"
   }
 }

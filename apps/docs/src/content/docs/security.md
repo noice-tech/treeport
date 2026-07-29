@@ -7,20 +7,22 @@ Treeport provides arbitrary terminal access and currently has **no authenticatio
 
 ## Safe default
 
-Run the daemon on loopback:
+Start the daemon with its loopback default:
 
 ```sh
-pnpm start:local
+treeport up
 ```
 
-This listens at `127.0.0.1:4780` and limits access to the local machine.
+This listens at `127.0.0.1:8733` and limits access to the local machine.
 
 ## Remote access
 
 If you need browser or phone access, expose Treeport only through a trusted private network such as [Tailscale](https://tailscale.com/). Bind deliberately and ensure untrusted devices cannot reach the port.
 
+Prefer binding a specific private-network address instead of every interface:
+
 ```sh
-TREEPORT_HOST=0.0.0.0 pnpm start
+treeport up --host <tailscale-address>
 ```
 
 :::danger

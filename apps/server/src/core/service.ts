@@ -3179,6 +3179,22 @@ export class TreeportService {
     }
   }
 
+  async terminateAllTerminals(): Promise<number> {
+    await this.drainMutations()
+    let terminated = 0
+    for (const project of await this.listProjects()) {
+      for (const worktree of project.worktrees) {
+        const terminalIds = await this.deps.tmux.killServer(
+          worktree.tmuxSocketName
+        )
+        terminated += terminalIds.length
+        this.clearWorktreeTerminalState(worktree.id, terminalIds)
+      }
+    }
+    this.invalidateProjectsSnapshot()
+    return terminated
+  }
+
   async drainMutations(): Promise<void> {
     await Promise.all([
       this.worktreeMutations.drain(),

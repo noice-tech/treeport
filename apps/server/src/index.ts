@@ -3,6 +3,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { serve } from '@hono/node-server'
 import {
+  checkRuntimePrerequisites,
   GhAdapter,
   GitAdapter,
   loadConfig,
@@ -12,10 +13,13 @@ import {
   TreeportService
 } from './core/index'
 import { createApp } from './app'
+import { acquireDaemonOwnership } from './daemon-ownership'
 import { createSocketServer } from './socket-server'
 import { TerminalMetadataManager } from './terminal-metadata'
 
 const config = loadConfig()
+const ownership = await acquireDaemonOwnership(config)
+const prerequisites = await checkRuntimePrerequisites(config)
 const runner = new SpawnCommandRunner()
 const database = await TreeportDatabase.open(config.databasePath, {
   backupDirectory: path.join(config.dataDir, 'database-backups')
@@ -52,9 +56,17 @@ const { io, attachments } = createSocketServer(server as HttpServer, {
   tmux,
   terminalMetadata
 })
+await ownership.publish()
 
-console.log(`Treeport listening on ${config.apiUrl}`)
+console.log(`Treeport ${config.appVersion} listening on ${config.apiUrl}`)
 console.log(`database: ${config.databasePath}`)
+console.log(`git: ${prerequisites.gitVersion}`)
+console.log(`tmux: ${prerequisites.tmuxVersion}`)
+if (!['127.0.0.1', '::1', 'localhost'].includes(config.host)) {
+  console.warn(
+    'Authentication is disabled; anyone who can reach this address has full terminal access.'
+  )
+}
 
 let shuttingDown = false
 function shutdown(): void {
@@ -66,8 +78,9 @@ function shutdown(): void {
   attachments.dispose()
   terminalMetadata.dispose()
   io.close(() => {
-    void service.drainMutations().then(() => {
+    void service.drainMutations().then(async () => {
       database.close()
+      await ownership.release()
       process.exit(0)
     })
   })
