@@ -18,7 +18,7 @@ const [manifest, packageManifest, installer] = await Promise.all([
     .readFile(path.join(docsDirectory, 'public/install-manifest.json'), 'utf8')
     .then(JSON.parse),
   fs
-    .readFile(path.join(repositoryRoot, 'packages/cli/package.json'), 'utf8')
+    .readFile(path.join(repositoryRoot, 'apps/treeport/package.json'), 'utf8')
     .then(JSON.parse),
   fs.readFile(path.join(docsDirectory, 'public/install.sh'), 'utf8')
 ])

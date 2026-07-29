@@ -5,7 +5,16 @@ import { fileURLToPath } from 'node:url'
 import { spawn } from 'node:child_process'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const serverEntry = path.join(root, 'apps', 'server', 'dist', 'index.js')
+const serverEntry = path.join(
+  root,
+  'apps',
+  'treeport',
+  'dist',
+  'node',
+  'server',
+  'index.js'
+)
+const webDist = path.join(root, 'apps', 'treeport', 'dist', 'web')
 if (!fs.existsSync(serverEntry)) {
   console.error('Treeport is not built. Run `pnpm build` first.')
   process.exit(1)
@@ -33,7 +42,8 @@ const child = spawn(process.execPath, [serverEntry], {
     TREEPORT_HOST: host,
     TREEPORT_PORT: port,
     TREEPORT_API_URL:
-      process.env.TREEPORT_API_URL?.trim() || `http://127.0.0.1:${port}`
+      process.env.TREEPORT_API_URL?.trim() || `http://127.0.0.1:${port}`,
+    TREEPORT_WEB_DIST: process.env.TREEPORT_WEB_DIST?.trim() || webDist
   },
   stdio: 'inherit'
 })

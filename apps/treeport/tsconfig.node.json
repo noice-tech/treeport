@@ -6,6 +6,11 @@
     "composite": false,
     "noEmit": true
   },
-  "include": ["src/**/*.ts", "drizzle.config.ts", "tsdown.config.ts"],
+  "include": [
+    "src/cli/**/*.ts",
+    "src/server/**/*.ts",
+    "drizzle.config.ts",
+    "tsdown.config.ts"
+  ],
   "references": [{ "path": "../../packages/shared" }]
 }

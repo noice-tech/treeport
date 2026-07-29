@@ -29,6 +29,7 @@ import {
   openTreeport,
   readDaemonLogs,
   resolveLocalApiUrl,
+  resolvePackagePath,
   runDoctor,
   treeportVersion
 } from './lifecycle.js'
@@ -742,7 +743,10 @@ async function main(args: string[]): Promise<void> {
     .description('Print the Treeport usage guide for AI agents')
   skillsCommand.action(async () => {
     process.stdout.write(
-      await fs.readFile(new URL('./treeport-skill.md', import.meta.url), 'utf8')
+      await fs.readFile(
+        await resolvePackagePath('skills', 'treeport', 'SKILL.md'),
+        'utf8'
+      )
     )
   })
 

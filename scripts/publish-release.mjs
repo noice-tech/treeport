@@ -12,7 +12,7 @@ import {
 } from './release-utils.mjs'
 
 const githubRepository = 'noice-tech/treeport'
-const packageDirectory = 'packages/cli'
+const packageDirectory = 'apps/treeport'
 const packageManifest = JSON.parse(
   readFileSync(`${packageDirectory}/package.json`, 'utf8')
 )

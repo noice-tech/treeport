@@ -2,9 +2,7 @@
   "files": [],
   "references": [
     { "path": "packages/shared" },
-    { "path": "packages/cli" },
-    { "path": "apps/server" },
-    { "path": "apps/web" },
+    { "path": "apps/treeport" },
     { "path": "apps/desktop" }
   ]
 }

@@ -173,7 +173,7 @@ export async function main() {
     TREEPORT_DESKTOP_URL: webUrl,
     TREEPORT_DESKTOP_USER_DATA: path.join(
       repositoryRoot,
-      'apps/server/.treeport-dev/desktop'
+      'apps/treeport/.treeport-dev/desktop'
     )
   }
 

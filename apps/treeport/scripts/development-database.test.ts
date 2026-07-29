@@ -3,8 +3,12 @@ import os from 'node:os'
 import path from 'node:path'
 import { eq, sql } from 'drizzle-orm'
 import { afterEach, describe, expect, it } from 'vitest'
-import { TreeportDatabase } from '../src/core/database'
-import { operations, projects, worktrees } from '../src/core/database-schema'
+import { TreeportDatabase } from '../src/server/core/database'
+import {
+  operations,
+  projects,
+  worktrees
+} from '../src/server/core/database-schema'
 import { cloneDevelopmentDatabase } from './development-database.mjs'
 
 const directories: string[] = []

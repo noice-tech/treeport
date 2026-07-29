@@ -12,11 +12,11 @@ const e2ePort = Number(process.env.TREEPORT_E2E_PORT ?? worktreePort)
 const e2eUrl = `http://127.0.0.1:${e2ePort}`
 
 export default defineConfig({
-  testDir: 'apps/web/e2e',
+  testDir: 'apps/treeport/e2e',
   timeout: 20_000,
   use: { baseURL: e2eUrl, trace: 'retain-on-failure' },
   webServer: {
-    command: `pnpm --filter @treeport/web exec vite --host 127.0.0.1 --port ${e2ePort} --strictPort`,
+    command: `pnpm --filter @treeport/treeport exec vite --host 127.0.0.1 --port ${e2ePort} --strictPort`,
     url: e2eUrl,
     reuseExistingServer: false,
     timeout: 120_000

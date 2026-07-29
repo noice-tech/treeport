@@ -17,11 +17,14 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 const repositoryRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
-  '../../..'
+  '../../../..'
 )
 const cliExecutable = path.join(repositoryRoot, 'node_modules/.bin/treeport')
 const packageVersion = JSON.parse(
-  await readFile(path.join(repositoryRoot, 'packages/cli/package.json'), 'utf8')
+  await readFile(
+    path.join(repositoryRoot, 'apps/treeport/package.json'),
+    'utf8'
+  )
 ).version
 const timestamp = '2026-01-01T00:00:00.000Z'
 

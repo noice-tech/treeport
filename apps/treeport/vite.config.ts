@@ -11,7 +11,12 @@ const webPort = Number.parseInt(
 )
 
 export default defineConfig({
+  publicDir: 'web/public',
   plugins: [react(), tailwindcss()],
+  build: {
+    outDir: 'dist/web',
+    emptyOutDir: true
+  },
   server: {
     host: webHost,
     port: webPort,

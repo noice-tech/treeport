@@ -14,14 +14,6 @@
       "dependsOn": ["^build"],
       "outputs": ["dist/**", "dist-types/**"]
     },
-    "@treeport/treeport#build": {
-      "dependsOn": [
-        "@treeport/server#build",
-        "@treeport/shared#build",
-        "@treeport/web#build"
-      ],
-      "outputs": ["dist/**"]
-    },
     "dev": {
       "dependsOn": ["^build"],
       "cache": false,
