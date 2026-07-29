@@ -11,8 +11,8 @@ if (!fs.existsSync(serverEntry)) {
   process.exit(1)
 }
 
-const host = process.env.TREEPORT_HOST?.trim() || '0.0.0.0'
-const port = process.env.TREEPORT_PORT?.trim() || '4780'
+const host = process.env.TREEPORT_HOST?.trim() || '127.0.0.1'
+const port = process.env.TREEPORT_PORT?.trim() || '8733'
 const loopback = host === '127.0.0.1' || host === '::1' || host === 'localhost'
 
 console.log(`Treeport network listener: http://${host}:${port}`)

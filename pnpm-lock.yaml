@@ -20,7 +20,7 @@ importers:
       '@stylistic/eslint-plugin':
         specifier: ^5.10.0
         version: 5.10.0(eslint@10.7.0(jiti@2.7.0)(supports-color@10.2.2))
-      '@treeport/cli':
+      '@treeport/treeport':
         specifier: workspace:*
         version: link:packages/cli
       '@types/node':
@@ -242,19 +242,49 @@ importers:
 
   packages/cli:
     dependencies:
-      '@treeport/shared':
-        specifier: workspace:*
-        version: link:../shared
+      '@hono/node-server':
+        specifier: ^2.0.10
+        version: 2.0.10(hono@4.12.30)
+      '@libsql/client':
+        specifier: ^0.17.4
+        version: 0.17.4
+      '@xterm/headless':
+        specifier: ^6.0.0
+        version: 6.0.0
       commander:
         specifier: 14.0.3
         version: 14.0.3
-      socket.io-client:
-        specifier: 4.8.3
-        version: 4.8.3(supports-color@10.2.2)
-    devDependencies:
+      drizzle-orm:
+        specifier: ^0.45.2
+        version: 0.45.2(@libsql/client@0.17.4)(@types/better-sqlite3@7.6.13)(better-sqlite3@12.11.1)
+      effect:
+        specifier: ^3.22.0
+        version: 3.22.0
+      hono:
+        specifier: ^4.11.7
+        version: 4.12.30
+      jsonc-parser:
+        specifier: ^3.3.1
+        version: 3.3.1
+      node-pty:
+        specifier: 1.2.0-beta.14
+        version: 1.2.0-beta.14
       socket.io:
         specifier: 4.8.3
         version: 4.8.3(supports-color@10.2.2)
+      socket.io-client:
+        specifier: 4.8.3
+        version: 4.8.3(supports-color@10.2.2)
+      zod:
+        specifier: ^4.3.6
+        version: 4.4.3
+    devDependencies:
+      '@treeport/shared':
+        specifier: workspace:*
+        version: link:../shared
+      tsdown:
+        specifier: 0.22.14
+        version: 0.22.14(@volar/typescript@2.4.28)(oxc-resolver@11.24.2)(tsx@4.23.1)(typescript@5.9.3)
 
   packages/shared:
     dependencies:

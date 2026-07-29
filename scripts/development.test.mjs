@@ -71,7 +71,7 @@ describe('development environment allocation', () => {
   })
 
   it('starts concurrent checkouts on sequential ports and stops their process groups', async () => {
-    await listen(4780)
+    await listen(8733)
     await listen(5173)
 
     const directory = await mkdtemp(
@@ -163,8 +163,8 @@ process.on('SIGHUP', () => stop('SIGHUP'))
       )
     )
     expect(environments.map(({ apiPort }) => apiPort).sort()).toEqual([
-      '4781',
-      '4782'
+      '8734',
+      '8735'
     ])
     expect(environments.map(({ webPort }) => webPort).sort()).toEqual([
       '5174',

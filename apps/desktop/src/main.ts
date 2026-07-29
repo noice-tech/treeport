@@ -20,7 +20,7 @@ if (app.isPackaged) {
 }
 
 const defaultRendererUrl = app.isPackaged
-  ? 'http://127.0.0.1:4780'
+  ? 'http://127.0.0.1:8733'
   : 'http://127.0.0.1:5173'
 const configuredRendererUrl =
   process.env.TREEPORT_DESKTOP_URL?.trim() || defaultRendererUrl

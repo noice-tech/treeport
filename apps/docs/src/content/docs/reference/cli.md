@@ -3,7 +3,25 @@ title: CLI reference
 description: Commands for projects, worktrees, terminals, context, and automation.
 ---
 
-The `treeport` CLI talks to a running daemon. Identifiers can usually be exact IDs or paths inside a registered project or worktree.
+Running `treeport` without a command shows help. Identifiers can usually be exact IDs or paths inside a registered project or worktree.
+
+## Lifecycle
+
+```sh
+treeport up [--host <address>] [--port <port>]
+treeport down
+treeport status
+treeport open
+treeport logs [--lines <count>]
+treeport doctor
+treeport version
+```
+
+`treeport up` starts the daemon in the background, waits until it is ready, and prints its URL. Repeating it is safe: it reports the existing healthy daemon rather than starting another. It does not open the browser; use `treeport open` explicitly.
+
+`treeport down` stops only a verified Treeport-owned daemon. It preserves Treeport's tmux sessions so they can be reconciled by the next `treeport up`. `treeport down --terminate-terminals --force` is the explicit destructive alternative used by a complete uninstall.
+
+The default listener is `http://127.0.0.1:8733`. Host and port options are persisted for later starts. Binding beyond loopback is unauthenticated and is suitable only for a trusted private network.
 
 ## Context
 

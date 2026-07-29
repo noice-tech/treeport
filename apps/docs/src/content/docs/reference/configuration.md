@@ -3,14 +3,14 @@ title: Configuration
 description: Environment variables, paths, and defaults for the Treeport daemon and CLI.
 ---
 
-Treeport is configured with environment variables.
+`treeport up --host/--port` persists listener preferences. Environment variables override those preferences for advanced and contributor use.
 
 ## Daemon
 
 | Variable                 | Default                    | Purpose                                                              |
 | ------------------------ | -------------------------- | -------------------------------------------------------------------- |
 | `TREEPORT_HOST`          | `127.0.0.1`                | Network interface on which the daemon listens. `HOST` is a fallback. |
-| `TREEPORT_PORT`          | `4780`                     | Daemon and web-app port. `PORT` is a fallback.                       |
+| `TREEPORT_PORT`          | `8733`                     | Daemon and web-app port. `PORT` is a fallback.                       |
 | `TREEPORT_DATA_DIR`      | Platform data directory    | Treeport's durable application data.                                 |
 | `TREEPORT_DATABASE_PATH` | `<data-dir>/treeport.db`   | SQLite database path.                                                |
 | `TREEPORT_RUNTIME_DIR`   | Platform runtime directory | Runtime files, including Treeport-owned tmux state.                  |
@@ -36,10 +36,10 @@ Treeport uses `$XDG_RUNTIME_DIR/treeport` when `XDG_RUNTIME_DIR` is set. Otherwi
 The CLI connects to:
 
 ```text
-TREEPORT_API_URL=http://127.0.0.1:4780
+TREEPORT_API_URL=http://127.0.0.1:8733
 ```
 
-If the variable is unset, it defaults to `http://127.0.0.1:4780`.
+If the variable is unset, it uses the listener saved by `treeport up`, or defaults to `http://127.0.0.1:8733`.
 
 Managed terminals receive these variables automatically:
 
@@ -57,7 +57,7 @@ Managed terminals receive these variables automatically:
 Keep Treeport local on a custom port:
 
 ```sh
-TREEPORT_PORT=4900 pnpm start:local
+treeport up --port 4900
 ```
 
 Use an alternate shell and database:
@@ -65,7 +65,7 @@ Use an alternate shell and database:
 ```sh
 TREEPORT_SHELL=/bin/bash \
 TREEPORT_DATABASE_PATH=~/Backups/treeport.db \
-pnpm start:local
+treeport up
 ```
 
 Bind beyond loopback only on a trusted private network; see [Security](/security/).

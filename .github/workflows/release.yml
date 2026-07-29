@@ -1,0 +1,70 @@
+name: Release npm package
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish after verification
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  verify:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-15, macos-15-intel]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.15.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+      - run: brew install tmux
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build
+      - run: pnpm --filter @treeport/treeport check:package
+      - run: pnpm --filter @treeport/treeport test:package
+      - run: pnpm --filter @treeport/treeport pack --dry-run
+      - run: sh -n apps/docs/public/install.sh
+      - run: sh -n apps/docs/public/uninstall.sh
+      - run: test -f apps/docs/dist/install.sh
+
+  publish:
+    needs: verify
+    if: github.event_name == 'release' || inputs.publish
+    runs-on: macos-15
+    environment: npm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.15.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - name: Publish exact package
+        working-directory: packages/cli
+        run: |
+          case "$(node -p 'require("./package.json").version')" in
+            *-*) npm publish --provenance --access public --tag next ;;
+            *) npm publish --provenance --access public --tag latest ;;
+          esac

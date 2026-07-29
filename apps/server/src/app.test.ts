@@ -16,7 +16,7 @@ import type { TerminalMetadataManager } from './terminal-metadata'
 function fixture(webDist = '/missing') {
   const config: AppConfig = {
     host: '127.0.0.1',
-    port: 4780,
+    port: 8733,
     databasePath: '/tmp/treeport-test.db',
     dataDir: '/tmp',
     runtimeDir: path.join('/tmp', `treeport-test-${crypto.randomUUID()}`),
@@ -24,7 +24,7 @@ function fixture(webDist = '/missing') {
     tmuxPath: 'tmux',
     gitPath: 'git',
     ghPath: 'gh',
-    apiUrl: 'http://127.0.0.1:4780'
+    apiUrl: 'http://127.0.0.1:8733'
   }
   const service = {
     events: new ProductEventBus(),

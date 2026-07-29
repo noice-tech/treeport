@@ -10,6 +10,7 @@ describe('configuration', () => {
       SHELL: '/bin/zsh'
     })
     expect(config.host).toBe('127.0.0.1')
+    expect(config.port).toBe(8733)
     expect(config.databasePath).toBe('/tmp/data home/treeport/treeport.db')
     expect(config.runtimeDir).toBe('/tmp/run/treeport')
     expect(config.shell).toBe('/bin/zsh')

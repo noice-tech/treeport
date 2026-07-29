@@ -39,6 +39,7 @@ test('dispatches native commands, opens local file URLs, and restores renderer s
       cwd: process.cwd(),
       env: {
         ...process.env,
+        TREEPORT_DESKTOP_USER_DATA: '',
         TREEPORT_DESKTOP_URL: `http://127.0.0.1:${address.port}`
       }
     })
@@ -191,6 +192,7 @@ test('dispatches native commands, opens local file URLs, and restores renderer s
       cwd: process.cwd(),
       env: {
         ...process.env,
+        TREEPORT_DESKTOP_USER_DATA: '',
         TREEPORT_DESKTOP_URL: `http://127.0.0.1:${address.port}`
       }
     })

@@ -1,7 +1,5 @@
 # Treeport
 
-> **Early alpha**
->
 > **Local/trusted-network use only; no authentication yet.** Do not expose Treeport directly to the internet. See the [security guide](apps/docs/src/content/docs/security.md).
 >
 > Treeport was built quickly because I needed the tool myself. Some parts were scaffolded in the fastest way that worked, so please don’t laugh at the code too hard. I’ll clean up the mess as the core workflow stabilizes.
@@ -14,16 +12,21 @@ Treeport works with worktrees created by Git, editors, agents, scripts, and othe
 
 ## Quick start
 
-Treeport is not distributed yet, so run it from source. Its local development database can be used to work on other projects.
-
-Requirements: Node.js 24+, pnpm 11, Git, and tmux 3.2+.
+Requirements: macOS, Git, and tmux 3.2+.
 
 ```sh
-pnpm install
-pnpm dev
+curl -fsSL https://treeport.app/install.sh | sh
+treeport up
 ```
 
-The Electron app opens automatically.
+The installer provides a private Node.js runtime. If Node.js 24+ is already installed, npm can install the same package:
+
+```sh
+npm install --global @treeport/treeport
+treeport up
+```
+
+Treeport prints its local URL, `http://127.0.0.1:8733`. Run `treeport open` to open it.
 
 ## Documentation
 
@@ -31,7 +34,10 @@ Read the documentation at [treeport.app](https://treeport.app).
 
 ## Development
 
+Contributor requirements: Node.js 24+, pnpm 11, Git, and tmux 3.2+.
+
 ```sh
+pnpm install
 pnpm dev
 pnpm test
 pnpm typecheck
