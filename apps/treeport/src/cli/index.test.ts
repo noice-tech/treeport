@@ -802,6 +802,7 @@ describe('CLI context and machine output', () => {
     expect(help.stdout).toContain(
       "If you're an AI agent, use `treeport skills` to see the usage guide."
     )
+    expect(help.stdout).not.toContain('\n  open')
     expect(help.stdout.indexOf('AI agents:')).toBeLessThan(
       help.stdout.indexOf('Usage:')
     )

@@ -3,17 +3,17 @@ title: Install Treeport
 description: Install and run Treeport with curl or npm.
 ---
 
-Treeport currently supports macOS. It requires Git and tmux 3.2 or newer.
+Treeport supports macOS and Linux. It requires Node.js 24 or newer, npm, Git, and tmux 3.2 or newer.
 
 ## Install with curl
 
-The recommended installer provides a private Node.js runtime and installs the Treeport npm package without changing an existing Node installation:
+The recommended installer checks your existing Node.js installation and installs the Treeport npm package into a Treeport-managed directory:
 
 ```sh
 curl -fsSL https://treeport.app/install.sh | sh
 ```
 
-If tmux is unavailable, the installer can use an existing Homebrew or MacPorts installation after asking for confirmation. Treeport does not require or install either package manager; you can install tmux 3.2 or newer by any method before rerunning the installer. If Git is unavailable, install the Xcode Command Line Tools and rerun the installer.
+The installer requires Node.js 24 or newer and npm on `PATH`; it never installs Node.js or a package manager. If tmux is unavailable, it can use a recognized package manager already on the system after asking for confirmation. Supported package managers include Homebrew and MacPorts on macOS and APT, DNF, YUM, pacman, Zypper, and apk on Linux. You can instead install tmux 3.2 or newer yourself before rerunning the installer. Install Git with your preferred package manager if it is unavailable.
 
 Add `~/.local/bin` to `PATH` if requested, then start Treeport:
 
@@ -28,13 +28,11 @@ Treeport is up
 http://127.0.0.1:8733
 ```
 
-Run `treeport open` when you want Treeport to open the browser.
-
 Rerun the same curl command to install a newer version. The installer preserves whether the local daemon was running.
 
 ## Install with npm
 
-If Node.js 24 or newer is already installed:
+To install directly through npm:
 
 ```sh
 npm install --global @treeport/treeport

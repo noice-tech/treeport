@@ -11,13 +11,12 @@ Running `treeport` without a command shows help. Identifiers can usually be exac
 treeport up [--host <address>] [--port <port>]
 treeport down
 treeport status
-treeport open
 treeport logs [--lines <count>]
 treeport doctor
 treeport version
 ```
 
-`treeport up` starts the daemon in the background, waits until it is ready, and prints its URL. Repeating it is safe: it reports the existing healthy daemon rather than starting another. It does not open the browser; use `treeport open` explicitly.
+`treeport up` starts the daemon in the background, waits until it is ready, and prints its URL. Repeating it is safe: it reports the existing healthy daemon rather than starting another.
 
 `treeport down` stops only a verified Treeport-owned daemon. It preserves Treeport's tmux sessions so they can be reconciled by the next `treeport up`. `treeport down --terminate-terminals --force` is the explicit destructive alternative used by a complete uninstall.
 

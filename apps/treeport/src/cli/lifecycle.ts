@@ -507,26 +507,6 @@ export async function daemonDown(): Promise<{ wasRunning: boolean }> {
   return { wasRunning: true }
 }
 
-export async function openTreeport(): Promise<string> {
-  const status = await daemonStatus()
-  if (!status.running || !status.verified || !status.state) {
-    throw new Error('Treeport is down. Run `treeport up` first.')
-  }
-
-  if (process.platform !== 'darwin') {
-    throw new Error(
-      `Opening a browser is not supported on ${process.platform}.`
-    )
-  }
-
-  const child = spawn('open', [status.state.apiUrl], {
-    detached: true,
-    stdio: 'ignore'
-  })
-  child.unref()
-  return status.state.apiUrl
-}
-
 export async function readDaemonLogs(lines = 100): Promise<string> {
   const value = await fs
     .readFile(localPaths().logPath, 'utf8')

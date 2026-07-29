@@ -26,7 +26,6 @@ import {
   daemonDown,
   daemonStatus,
   daemonUp,
-  openTreeport,
   readDaemonLogs,
   resolveLocalApiUrl,
   resolvePackagePath,
@@ -680,14 +679,6 @@ async function main(args: string[]): Promise<void> {
 
       return `Treeport is up\n${status.state.apiUrl}\nVersion: ${status.health?.version}\nPID: ${status.state.pid}\nProjects: ${result.projects}\nWorktrees: ${result.worktrees}\nTerminals: ${result.terminals}`
     })
-  })
-
-  const openCommand = program
-    .command('open')
-    .description('Open the Treeport web interface')
-  openCommand.action(async () => {
-    const url = await openTreeport()
-    console.log(url)
   })
 
   const logsCommand = program
