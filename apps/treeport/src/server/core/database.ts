@@ -63,16 +63,10 @@ export class TreeportDatabase {
     options: DatabaseOpenOptions = {}
   ): Promise<TreeportDatabase> {
     const absoluteFilePath = path.resolve(filePath)
-    const migrationCandidates = [
-      fileURLToPath(new URL('../../drizzle', import.meta.url)),
-      fileURLToPath(new URL('./drizzle', import.meta.url))
-    ]
-    const migrationsFolder =
-      options.migrationsFolder ??
-      migrationCandidates.find((candidate) =>
-        fs.existsSync(path.join(candidate, 'meta', '_journal.json'))
-      ) ??
-      migrationCandidates[1]!
+    const packagedMigrations = fileURLToPath(
+      new URL('../../../drizzle', import.meta.url)
+    )
+    const migrationsFolder = options.migrationsFolder ?? packagedMigrations
     const migrations = readMigrationFiles({ migrationsFolder })
     const latestMigration = migrations.at(-1)
     if (!latestMigration) {

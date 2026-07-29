@@ -322,7 +322,7 @@ describe('SQLite migration and catalog ordering', () => {
     initial.close()
 
     const validMigrations = fileURLToPath(
-      new URL('../../drizzle', import.meta.url)
+      new URL('../../../drizzle', import.meta.url)
     )
     const brokenMigrations = path.join(directory, 'broken-migrations')
     await fs.cp(validMigrations, brokenMigrations, { recursive: true })

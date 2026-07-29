@@ -36,6 +36,8 @@ Read the documentation at [treeport.app](https://treeport.app).
 
 Contributor requirements: Node.js 24+, pnpm 11, Git, and tmux 3.2+.
 
+`pnpm dev` starts the daemon, web UI, and Electron app together using available per-worktree ports.
+
 ```sh
 pnpm install
 pnpm dev

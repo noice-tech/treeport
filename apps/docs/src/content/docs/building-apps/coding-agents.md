@@ -35,4 +35,4 @@ Every Treeport CLI includes the skill. An agent can read it directly without ins
 treeport skills
 ```
 
-To load it automatically, add [`skills/treeport/SKILL.md`](https://github.com/noice-tech/treeport/blob/main/skills/treeport/SKILL.md) to the location where your coding agent discovers Agent Skills. The skill requires the `treeport` command on `PATH` and a reachable Treeport daemon. It also tells agents to preserve user control: they must not delete terminals or worktrees unless explicitly asked.
+To load it automatically, add [`apps/treeport/skills/treeport/SKILL.md`](https://github.com/noice-tech/treeport/blob/main/apps/treeport/skills/treeport/SKILL.md) to the location where your coding agent discovers Agent Skills. The skill requires the `treeport` command on `PATH` and a reachable Treeport daemon. It also tells agents to preserve user control: they must not delete terminals or worktrees unless explicitly asked.

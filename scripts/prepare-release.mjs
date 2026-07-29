@@ -49,7 +49,7 @@ if (
   fail('Local main must exactly match origin/main before preparing a release')
 }
 
-const packageManifestPath = 'packages/cli/package.json'
+const packageManifestPath = 'apps/treeport/package.json'
 const installerManifestPath = 'apps/docs/public/install-manifest.json'
 const installerPath = 'apps/docs/public/install.sh'
 const packageManifest = JSON.parse(readFileSync(packageManifestPath, 'utf8'))

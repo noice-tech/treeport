@@ -22,13 +22,13 @@ for (const [name, version] of Object.entries(dependencies)) {
 
 const required = [
   'bin/treeport.mjs',
-  'dist/index.js',
-  'dist/server/index.js',
-  'dist/server/core/launcher.js',
-  'dist/server/drizzle/0000_public_baseline.sql',
-  'dist/server/drizzle/meta/_journal.json',
+  'dist/node/cli/index.js',
+  'dist/node/server/index.js',
+  'dist/node/server/core/launcher.js',
   'dist/web/index.html',
-  'dist/treeport-skill.md',
+  'drizzle/0000_public_baseline.sql',
+  'drizzle/meta/_journal.json',
+  'skills/treeport/SKILL.md',
   'LICENSE',
   'README.md'
 ]

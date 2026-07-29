@@ -12,7 +12,9 @@ test('dispatches native commands, opens local file URLs, and restores renderer s
   const server = http.createServer((request, response) => {
     if (request.url === '/api/health') {
       response.setHeader('content-type', 'application/json')
-      response.end(JSON.stringify({ ok: true, version: 1 }))
+      response.end(
+        JSON.stringify({ ok: true, version: '0.1.0', protocolVersion: 1 })
+      )
       return
     }
 

@@ -100,7 +100,7 @@ printf 'Installing %s...\n' "$package_spec"
   --registry "${TREEPORT_NPM_REGISTRY:-https://registry.npmjs.org}" \
   "$package_spec"
 "$stage/node/bin/node" \
-  "$stage/npm/lib/node_modules/@treeport/treeport/dist/index.js" version >/dev/null
+  "$stage/npm/lib/node_modules/@treeport/treeport/dist/node/cli/index.js" version >/dev/null
 
 cat >"$stage/install.json" <<EOF
 {
@@ -132,7 +132,7 @@ shim="$BIN_DIR/.treeport-$$"
 cat >"$shim" <<EOF
 #!/bin/sh
 export TREEPORT_INSTALLATION_METHOD=curl
-exec "$INSTALL_ROOT/current/node/bin/node" "$INSTALL_ROOT/current/npm/lib/node_modules/@treeport/treeport/dist/index.js" "\$@"
+exec "$INSTALL_ROOT/current/node/bin/node" "$INSTALL_ROOT/current/npm/lib/node_modules/@treeport/treeport/dist/node/cli/index.js" "\$@"
 EOF
 chmod 755 "$shim"
 mv -f "$shim" "$BIN_DIR/treeport"

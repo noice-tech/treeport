@@ -127,8 +127,8 @@ async function rendererIsReady(): Promise<boolean> {
     body !== null &&
     'ok' in body &&
     body.ok === true &&
-    'version' in body &&
-    body.version === 1
+    'protocolVersion' in body &&
+    body.protocolVersion === 1
   )
 }
 

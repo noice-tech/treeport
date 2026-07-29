@@ -1,0 +1,101 @@
+{
+  "name": "@treeport/treeport",
+  "version": "0.1.0",
+  "description": "A worktree-first terminal driver for persistent development workspaces.",
+  "type": "module",
+  "bin": {
+    "treeport": "bin/treeport.mjs"
+  },
+  "main": "dist/node/cli/index.js",
+  "files": [
+    "bin",
+    "dist",
+    "drizzle",
+    "skills",
+    "LICENSE",
+    "README.md"
+  ],
+  "scripts": {
+    "clean": "rm -rf dist dist-types",
+    "build": "pnpm clean && pnpm build:node && pnpm build:web && pnpm check:package",
+    "build:node": "tsdown",
+    "build:web": "vite build",
+    "prepack": "pnpm --dir=../.. exec turbo run build --filter=@treeport/treeport 1>&2",
+    "check:package": "node scripts/check-package.mjs",
+    "test:package": "node scripts/smoke-package.mjs",
+    "dev": "node scripts/development.mjs",
+    "dev:server": "TREEPORT_DATA_DIR=.treeport-dev/data TREEPORT_RUNTIME_DIR=.treeport-dev/runtime tsdown --watch --on-success \"node --enable-source-maps dist/node/server/index.js\"",
+    "dev:web": "vite",
+    "start": "TREEPORT_WEB_DIST=dist/web node dist/node/server/index.js",
+    "db:generate": "drizzle-kit generate",
+    "typecheck": "pnpm typecheck:node && pnpm typecheck:web",
+    "typecheck:node": "tsc --noEmit -p tsconfig.node.json --pretty",
+    "typecheck:web": "tsc --noEmit -p tsconfig.web.json --pretty"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "os": [
+    "darwin"
+  ],
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/noice-tech/treeport.git"
+  },
+  "bugs": {
+    "url": "https://github.com/noice-tech/treeport/issues"
+  },
+  "homepage": "https://treeport.app",
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.0.10",
+    "@libsql/client": "^0.17.4",
+    "@xterm/headless": "^6.0.0",
+    "commander": "14.0.3",
+    "drizzle-orm": "^0.45.2",
+    "effect": "^3.22.0",
+    "hono": "^4.11.7",
+    "jsonc-parser": "^3.3.1",
+    "node-pty": "1.2.0-beta.14",
+    "socket.io": "4.8.3",
+    "socket.io-client": "4.8.3",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@fontsource-variable/inter": "^5.2.8",
+    "@heroicons/react": "^2.2.0",
+    "@radix-ui/react-alert-dialog": "^1.1.23",
+    "@radix-ui/react-checkbox": "^1.3.11",
+    "@radix-ui/react-dialog": "^1.1.23",
+    "@radix-ui/react-dropdown-menu": "^2.1.21",
+    "@radix-ui/react-popover": "^1.1.19",
+    "@radix-ui/react-separator": "^1.1.15",
+    "@radix-ui/react-slot": "^1.3.0",
+    "@radix-ui/react-tabs": "^1.1.17",
+    "@radix-ui/react-tooltip": "^1.2.12",
+    "@tailwindcss/vite": "^4.3.3",
+    "@tanstack/react-query": "^5.101.2",
+    "@tanstack/react-router": "^1.170.18",
+    "@treeport/shared": "workspace:*",
+    "@types/react": "^19.2.10",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.1.4",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/addon-web-links": "^0.12.0",
+    "@xterm/xterm": "^6.0.0",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "drizzle-kit": "^0.31.10",
+    "lucide-react": "^1.25.0",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "sonner": "^2.0.7",
+    "tailwind-merge": "^3.6.0",
+    "tailwindcss": "^4.3.3",
+    "tsdown": "0.22.14",
+    "vite": "^8.1.5"
+  }
+}

@@ -18,11 +18,11 @@ Prepare one stable Treeport release and create its GitHub Release. Leave npm pub
 
 ## Choose the version
 
-If the user supplied `X.Y.Z`, verify that it is greater than `packages/cli/package.json`'s current version.
+If the user supplied `X.Y.Z`, verify that it is greater than `apps/treeport/package.json`'s current version.
 
 If no version was supplied:
 
-1. Read `packages/cli/package.json` and find the latest `vX.Y.Z` tag.
+1. Read `apps/treeport/package.json` and find the latest `vX.Y.Z` tag.
 2. Inspect commits and the diff from that tag through `HEAD`.
 3. Recommend a SemVer bump: breaking behavior is major, backward-compatible functionality is minor, and fixes or maintenance are patch.
 4. Ask the user to confirm the exact version.

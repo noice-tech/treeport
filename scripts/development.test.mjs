@@ -95,7 +95,10 @@ const web = net.createServer().listen(
     apiHost: process.env.TREEPORT_HOST,
     apiPort: process.env.TREEPORT_PORT,
     webHost: process.env.TREEPORT_WEB_HOST,
-    webPort: process.env.TREEPORT_WEB_PORT
+    webPort: process.env.TREEPORT_WEB_PORT,
+    desktopUrl: process.env.TREEPORT_DESKTOP_URL,
+    desktopUserData: process.env.TREEPORT_DESKTOP_USER_DATA,
+    arguments: process.argv.slice(2)
   }))
 )
 const stop = (signal) => {
@@ -170,6 +173,21 @@ process.on('SIGHUP', () => stop('SIGHUP'))
       '5174',
       '5175'
     ])
+    expect(environments[0].desktopUrl).toBe(
+      `http://127.0.0.1:${environments[0].webPort}`
+    )
+    expect(environments[0].desktopUserData).toBe(
+      path.resolve('apps/treeport/.treeport-dev/desktop')
+    )
+    expect(environments[0].arguments).toEqual([
+      '--parallel',
+      '--filter',
+      '@treeport/treeport',
+      '--filter',
+      '@treeport/desktop',
+      'dev'
+    ])
+    expect(environments[1].arguments).toEqual(environments[0].arguments)
     for (let index = 0; index < environments.length; index += 1) {
       const environment = environments[index]
       const development = [first, second][index]

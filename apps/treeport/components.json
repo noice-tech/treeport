@@ -4,7 +4,7 @@
   "rsc": false,
   "tsx": true,
   "tailwind": {
-    "css": "src/styles.css",
+    "css": "src/web/styles.css",
     "baseColor": "zinc",
     "cssVariables": true
   },

@@ -9,11 +9,11 @@
     "moduleResolution": "Bundler",
     "baseUrl": ".",
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/web/*"]
     },
     "emitDeclarationOnly": true,
     "composite": true
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx", "vite.config.ts"],
+  "include": ["src/web/**/*.ts", "src/web/**/*.tsx", "vite.config.ts"],
   "references": [{ "path": "../../packages/shared" }]
 }

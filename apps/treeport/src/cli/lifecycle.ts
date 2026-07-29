@@ -118,9 +118,29 @@ export async function resolveLocalApiUrl(): Promise<string> {
   return listenerUrl(host, port)
 }
 
+export async function resolvePackagePath(
+  ...segments: string[]
+): Promise<string> {
+  const candidates = [
+    fileURLToPath(new URL('../../../', import.meta.url)),
+    fileURLToPath(new URL('../../', import.meta.url))
+  ]
+  for (const candidate of candidates) {
+    const manifest = await fs
+      .access(path.join(candidate, 'package.json'))
+      .then(() => true)
+      .catch(() => false)
+    if (manifest) {
+      return path.join(candidate, ...segments)
+    }
+  }
+
+  throw new Error('Could not locate the Treeport package directory')
+}
+
 export async function treeportVersion(): Promise<string> {
   const manifest = await readJson<{ version?: string }>(
-    fileURLToPath(new URL('../package.json', import.meta.url))
+    await resolvePackagePath('package.json')
   )
   return manifest?.version ?? 'development'
 }
@@ -383,10 +403,13 @@ export async function daemonUp(options: {
     )
   }
 
-  const serverEntry = fileURLToPath(
-    new URL('./server/index.js', import.meta.url)
+  const serverEntry = await resolvePackagePath(
+    'dist',
+    'node',
+    'server',
+    'index.js'
   )
-  const webDist = fileURLToPath(new URL('./web', import.meta.url))
+  const webDist = await resolvePackagePath('dist', 'web')
   await fs.access(serverEntry)
   await fs.mkdir(path.dirname(paths.logPath), {
     recursive: true,

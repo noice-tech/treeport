@@ -173,7 +173,7 @@ export async function main() {
     TREEPORT_DESKTOP_URL: webUrl,
     TREEPORT_DESKTOP_USER_DATA: path.join(
       repositoryRoot,
-      'apps/server/.treeport-dev/desktop'
+      'apps/treeport/.treeport-dev/desktop'
     )
   }
 
@@ -185,12 +185,23 @@ export async function main() {
     console.log(`Network:   ${url}`)
   }
 
-  const child = spawn('pnpm', ['exec', 'turbo', 'run', 'dev'], {
-    cwd: repositoryRoot,
-    env: environment,
-    stdio: 'inherit',
-    detached: process.platform !== 'win32'
-  })
+  const child = spawn(
+    'pnpm',
+    [
+      '--parallel',
+      '--filter',
+      '@treeport/treeport',
+      '--filter',
+      '@treeport/desktop',
+      'dev'
+    ],
+    {
+      cwd: repositoryRoot,
+      env: environment,
+      stdio: 'inherit',
+      detached: process.platform !== 'win32'
+    }
+  )
   const childExit = new Promise((resolve) => {
     child.once('error', (error) => resolve({ code: 1, signal: null, error }))
     child.once('exit', (code, signal) => resolve({ code, signal, error: null }))

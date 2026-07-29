@@ -16,20 +16,20 @@ SQLite remains a small local Treeport catalog under the configured data director
 
 The server uses Drizzle for the complete catalog boundary:
 
-- `apps/server/src/core/database-schema.ts` describes the schema in TypeScript;
-- `apps/server/drizzle` contains explicit, ordered SQL migrations and Drizzle metadata;
-- `pnpm --filter @treeport/server db:generate` generates the next migration after a schema change;
+- `apps/treeport/src/server/core/database-schema.ts` describes the schema in TypeScript;
+- `apps/treeport/drizzle` contains explicit, ordered SQL migrations and Drizzle metadata;
+- `pnpm --filter @treeport/treeport db:generate` generates the next migration after a schema change;
 - `@libsql/client` provides the local-file SQLite driver through `drizzle-orm/libsql`;
 - reads, writes, and transactions use Drizzle rather than a second database API;
 - only the daemon opens and migrates the production database;
 - pending migrations run before service initialization and before the server listens.
 
-Migration files are copied to `apps/server/dist/drizzle` by the server build. Runtime migration discovery uses those packaged assets and does not depend on a monorepo checkout.
+Migration files are published directly from `apps/treeport/drizzle`. Runtime migration discovery uses those package-owned assets and does not depend on a monorepo checkout.
 
 ## Migration workflow
 
 1. Change the TypeScript schema.
-2. Run `pnpm --filter @treeport/server db:generate`.
+2. Run `pnpm --filter @treeport/treeport db:generate`.
 3. Review the generated SQL and add behavioral upgrade coverage.
 4. Commit the schema, SQL migration, Drizzle metadata, and tests together.
 5. Exercise an upgrade through the daemon/runtime migrator.
