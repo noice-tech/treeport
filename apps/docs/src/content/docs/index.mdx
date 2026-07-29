@@ -4,8 +4,6 @@ description: Use Git worktrees as your development task system.
 template: splash
 hero:
   tagline: Persistent terminals for every Git worktree. Leave, reconnect, and keep working from desktop, browser, or phone.
-  image:
-    file: ../../assets/workspaces.svg
   actions:
     - text: Get started
       link: /getting-started/installation/
@@ -18,43 +16,21 @@ hero:
 
 import { Card, CardGrid } from '@astrojs/starlight/components'
 
-## A worktree is a piece of work
+## Every task starts with a worktree
 
-Treeport turns each Git worktree into a persistent workspace. Run coding agents, shells, development servers, test watchers, and normal TUIs side by side without adding another task database on top of Git.
+Treeport turns each Git worktree into a persistent workspace for coding agents, shells, and development servers.
 
 <CardGrid>
   <Card title="Worktree-first" icon="seti:git">
-    Treeport discovers the main checkout and every linked worktree reported by
-    Git—even worktrees created by another tool.
+    Finds the main checkout and linked worktrees.
   </Card>
-  <Card title="Real, persistent terminals" icon="seti:shell">
-    Applications run unchanged in an application-owned tmux server. Closing a
-    client detaches it; the process keeps running.
+  <Card title="Persistent terminals" icon="seti:shell">
+    Terminals keep running when you disconnect.
   </Card>
   <Card title="Open from anywhere" icon="laptop">
-    Use the desktop companion, browser, or responsive PWA to return to the same
-    repositories, worktrees, and sessions.
+    Reconnect from the desktop app or browser.
   </Card>
   <Card title="Built for agents and humans" icon="puzzle">
-    Start Pi, Claude Code, Codex, a shell, or any other terminal program. Use
-    the CLI and standard terminal signals for automation.
+    Run Pi, Claude Code, Codex, shells, and development servers.
   </Card>
 </CardGrid>
-
-## Git stays authoritative
-
-Treeport does not hide worktree paths, branches, revisions, or dirty state. It continuously reconciles with Git and uses conservative safety checks before cleanup.
-
-```text
-Repository
-├── main
-│   ├── shell
-│   └── dev server
-├── investigate-terminal-resize
-│   ├── Pi
-│   └── test watcher
-└── improve-mobile-layout
-    └── Claude Code
-```
-
-[Learn why Treeport is worktree-first →](/concepts/worktree-first/)
