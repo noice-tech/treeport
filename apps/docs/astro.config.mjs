@@ -31,6 +31,10 @@ export default defineConfig({
             {
               label: 'Projects, worktrees, and terminals',
               slug: 'concepts/projects-worktrees-terminals'
+            },
+            {
+              label: 'Fits around your tools',
+              slug: 'concepts/fits-around-your-tools'
             }
           ]
         },
@@ -43,23 +47,19 @@ export default defineConfig({
             },
             { label: 'Terminal presets', slug: 'features/terminal-presets' },
             {
+              label: 'Attention and progress',
+              slug: 'features/attention-and-progress'
+            },
+            {
               label: 'Worktree setup hooks',
               slug: 'features/worktree-setup-hooks'
             }
           ]
         },
         {
-          label: 'Guides',
+          label: 'Building apps',
           items: [
-            {
-              label: 'Removing a worktree',
-              slug: 'guides/removing-a-worktree'
-            },
-            { label: 'Coding-agent workflows', slug: 'guides/agent-workflows' },
-            {
-              label: 'Private-network access',
-              slug: 'guides/private-network-access'
-            }
+            { label: 'Coding agents', slug: 'building-apps/coding-agents' }
           ]
         },
         {

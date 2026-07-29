@@ -27,6 +27,4 @@ Terminals belong to a worktree and run in Treeport-managed tmux sessions. Closin
 
 ## Fits around your tools
 
-Treeport is intentionally small. Git remains authoritative for branches, commits, and worktrees. Your editor, agent, shell, and other terminal tools keep their normal interfaces.
-
-Beyond that, it stays out of the way.
+Treeport is intentionally small. Git remains authoritative for branches, commits, and worktrees, while your editor, agent, shell, and other terminal tools keep their normal interfaces. Learn how Treeport [fits around your tools](/concepts/fits-around-your-tools/).

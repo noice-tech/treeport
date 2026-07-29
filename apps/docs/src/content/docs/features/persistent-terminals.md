@@ -20,7 +20,7 @@ Open the same terminal from the browser or desktop app. On a trusted private net
 A terminal has one shared size across its attached clients. Treeport resizes it automatically to fit the client you are using, and synchronizes that size with other attachments. Opening or resizing it on a phone can therefore reflow the terminal on a desktop, and vice versa.
 
 :::caution
-Remote access grants terminal control. Treeport currently has no authentication. Follow the [private-network guide](/guides/private-network-access/) and [security guidance](/security/).
+Remote access grants terminal control. Treeport currently has no authentication. Use it only on a trusted private network; see the [security guidance](/security/).
 :::
 
 ## Normal terminal applications

@@ -37,7 +37,7 @@ treeport worktree remove <id-or-path-or-dot> [--force] [--json]
 
 By default, creation starts from the fetched remote default branch. `--from-current` uses the current worktree's committed `HEAD`; it does not copy uncommitted changes.
 
-Removal obtains a fresh safety preview. `--force` confirms reported warnings when cleanup is still eligible; see [removing a worktree](/guides/removing-a-worktree/).
+Removal obtains a fresh safety preview. `--force` confirms reported warnings when cleanup is still eligible.
 
 ## Terminals
 
