@@ -29,12 +29,8 @@ export default defineConfig({
           label: 'Concepts',
           items: [
             {
-              label: 'Worktree-first development',
-              slug: 'concepts/worktree-first'
-            },
-            {
-              label: 'Product principles',
-              slug: 'concepts/product-principles'
+              label: 'Projects, worktrees, and terminals',
+              slug: 'concepts/projects-worktrees-terminals'
             }
           ]
         },
