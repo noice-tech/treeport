@@ -44,3 +44,16 @@ pnpm typecheck
 pnpm lint
 pnpm build
 ```
+
+## Releases
+
+Releases are prepared and published from a maintainer's machine. From a clean, up-to-date `main` branch:
+
+```sh
+pnpm release:prepare X.Y.Z
+gh release create vX.Y.Z --verify-tag --title vX.Y.Z --generate-notes
+npm login
+pnpm release:publish X.Y.Z
+```
+
+Preparation updates the npm package and curl installer together, runs the complete checks, commits, tags, and pushes. Publication verifies the tag and published GitHub Release before publishing `@treeport/treeport` with npm tag `latest`.

@@ -13,7 +13,7 @@ The recommended installer provides a private Node.js runtime and installs the Tr
 curl -fsSL https://treeport.app/install.sh | sh
 ```
 
-If tmux is unavailable and Homebrew is installed, the installer offers to run `brew install tmux`. It does not install Homebrew. If Git is unavailable, install the Xcode Command Line Tools and rerun the installer.
+If tmux is unavailable, the installer can use an existing Homebrew or MacPorts installation after asking for confirmation. Treeport does not require or install either package manager; you can install tmux 3.2 or newer by any method before rerunning the installer. If Git is unavailable, install the Xcode Command Line Tools and rerun the installer.
 
 Add `~/.local/bin` to `PATH` if requested, then start Treeport:
 

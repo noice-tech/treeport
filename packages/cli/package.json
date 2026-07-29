@@ -14,7 +14,8 @@
     "README.md"
   ],
   "scripts": {
-    "build": "tsdown && node scripts/assemble.mjs && node scripts/check-package.mjs",
+    "build": "tsdown && node scripts/stage-package.mjs && node scripts/check-package.mjs",
+    "prepack": "pnpm --dir=../.. exec turbo run build --filter=@treeport/treeport 1>&2",
     "check:package": "node scripts/check-package.mjs",
     "test:package": "node scripts/smoke-package.mjs",
     "dev": "pnpm build && tsdown --watch",
@@ -36,8 +37,7 @@
   },
   "homepage": "https://treeport.app",
   "publishConfig": {
-    "access": "public",
-    "provenance": true
+    "access": "public"
   },
   "dependencies": {
     "@hono/node-server": "^2.0.10",

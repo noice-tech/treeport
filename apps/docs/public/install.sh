@@ -37,16 +37,22 @@ tmux_supported() {
 }
 
 if ! tmux_supported; then
-  if ! command -v brew >/dev/null 2>&1; then
-    fail 'tmux 3.2 or newer is required. Install tmux, then retry.'
+  tmux_manager=''
+  if command -v brew >/dev/null 2>&1; then
+    tmux_manager='Homebrew'
+  elif command -v port >/dev/null 2>&1; then
+    tmux_manager='MacPorts'
+  fi
+  if [ -z "$tmux_manager" ]; then
+    fail 'tmux 3.2 or newer is required. Install it with your preferred package manager, then retry. See https://github.com/tmux/tmux/wiki/Installing.'
   fi
 
   install_tmux=${TREEPORT_INSTALL_TMUX:-}
   if [ "$install_tmux" != '1' ]; then
     if [ ! -r /dev/tty ]; then
-      fail 'tmux 3.2 or newer is required. Run `brew install tmux`, then retry.'
+      fail "tmux 3.2 or newer is required. Install it with $tmux_manager, then retry."
     fi
-    printf 'Treeport requires tmux 3.2 or newer. Install it with Homebrew? [y/N] ' >/dev/tty
+    printf 'Treeport requires tmux 3.2 or newer. Install it with %s? [y/N] ' "$tmux_manager" >/dev/tty
     IFS= read -r answer </dev/tty || answer=''
     case "$answer" in
       y|Y|yes|YES) install_tmux='1' ;;
@@ -54,14 +60,20 @@ if ! tmux_supported; then
     esac
   fi
 
-  if [ "$install_tmux" = '1' ]; then
+  if [ "$tmux_manager" = 'Homebrew' ]; then
     if brew list tmux >/dev/null 2>&1; then
       brew upgrade tmux
     else
       brew install tmux
     fi
+  else
+    if port installed tmux 2>/dev/null | grep -q '(active)'; then
+      sudo port upgrade tmux
+    else
+      sudo port install tmux
+    fi
   fi
-  tmux_supported || fail 'Homebrew did not install a supported tmux'
+  tmux_supported || fail "$tmux_manager did not install a supported tmux"
 fi
 
 mkdir -p "$INSTALL_ROOT/versions" "$BIN_DIR"

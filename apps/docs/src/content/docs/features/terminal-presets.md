@@ -7,12 +7,12 @@ Terminal presets are named commands you can start from the **New terminal** menu
 
 For example:
 
-| Preset | Command | Typical behavior |
-| --- | --- | --- |
-| Pi | `pi` | Keep the terminal open to reconnect to the agent. |
-| Development server | `pnpm dev` | Keep the server running in the worktree. |
-| Test watcher | `pnpm test --watch` | Keep watching while you work. |
-| VS Code | `code .` | Open the worktree, then close the terminal after success. |
+| Preset             | Command             | Typical behavior                                          |
+| ------------------ | ------------------- | --------------------------------------------------------- |
+| Pi                 | `pi`                | Keep the terminal open to reconnect to the agent.         |
+| Development server | `pnpm dev`          | Keep the server running in the worktree.                  |
+| Test watcher       | `pnpm test --watch` | Keep watching while you work.                             |
+| VS Code            | `code .`            | Open the worktree, then close the terminal after success. |
 
 ## Create a preset
 

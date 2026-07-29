@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { chmod, mkdtemp, rm, stat, writeFile } from 'node:fs/promises'
+import { chmod, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import http, { type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import os from 'node:os'
@@ -20,6 +20,9 @@ const repositoryRoot = path.resolve(
   '../../..'
 )
 const cliExecutable = path.join(repositoryRoot, 'node_modules/.bin/treeport')
+const packageVersion = JSON.parse(
+  await readFile(path.join(repositoryRoot, 'packages/cli/package.json'), 'utf8')
+).version
 const timestamp = '2026-01-01T00:00:00.000Z'
 
 const terminal: TerminalRecord = {
@@ -944,7 +947,7 @@ describe('CLI daemon lifecycle', () => {
       )
       expect(health).toMatchObject({
         ok: true,
-        version: '0.1.0',
+        version: packageVersion,
         pid: firstState.state.pid
       })
       const app = await fetch(`http://127.0.0.1:${port}/`).then((response) =>
