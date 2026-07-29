@@ -1,15 +1,15 @@
 :root {
-  --sl-color-accent-low: #0f302d;
-  --sl-color-accent: #53dbc8;
-  --sl-color-accent-high: #b8fff2;
+  --sl-color-accent-low: #083344;
+  --sl-color-accent: #22d3ee;
+  --sl-color-accent-high: #cffafe;
   --sl-font: 'IBM Plex Sans', 'Avenir Next', Avenir, system-ui, sans-serif;
   --sl-font-mono: 'IBM Plex Mono', 'SFMono-Regular', Consolas, monospace;
 }
 
 :root[data-theme='light'] {
-  --sl-color-accent-low: #c8f6ef;
-  --sl-color-accent: #087c70;
-  --sl-color-accent-high: #0a403b;
+  --sl-color-accent-low: #cffafe;
+  --sl-color-accent: #0891b2;
+  --sl-color-accent-high: #164e63;
 }
 
 .hero > img,
