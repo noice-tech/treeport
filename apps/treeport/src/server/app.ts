@@ -1,4 +1,5 @@
 import crypto from 'node:crypto'
+import { existsSync } from 'node:fs'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -574,10 +575,13 @@ export function createApp({
     )
   )
 
+  const moduleDirectory = path.dirname(fileURLToPath(import.meta.url))
+  const builtStaticRoot = path.resolve(moduleDirectory, '../../web')
+  const sourceStaticRoot = path.resolve(moduleDirectory, '../../dist/web')
   const staticRoot =
     webDist ??
     config.webDist ??
-    path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../web/dist')
+    (existsSync(builtStaticRoot) ? builtStaticRoot : sourceStaticRoot)
   app.use('/assets/*', serveStatic({ root: staticRoot }))
   app.get(
     '/manifest.webmanifest',

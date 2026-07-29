@@ -2,14 +2,8 @@
 import { spawn } from 'node:child_process'
 
 const children = [
-  spawn('pnpm', ['dev:server'], {
-    stdio: 'inherit',
-    detached: process.platform !== 'win32'
-  }),
-  spawn('pnpm', ['dev:web'], {
-    stdio: 'inherit',
-    detached: process.platform !== 'win32'
-  })
+  spawn('pnpm', ['dev:server'], { stdio: 'inherit' }),
+  spawn('pnpm', ['dev:web'], { stdio: 'inherit' })
 ]
 
 let stopping = false
@@ -21,17 +15,7 @@ function stop(signal = 'SIGTERM') {
 
   stopping = true
   for (const child of children) {
-    if (child.pid && process.platform !== 'win32') {
-      try {
-        process.kill(-child.pid, signal)
-      } catch (error) {
-        if (error?.code !== 'ESRCH') {
-          throw error
-        }
-      }
-    } else {
-      child.kill(signal)
-    }
+    child.kill(signal)
   }
 }
 

@@ -26,7 +26,6 @@
     "dev": "node scripts/development.mjs",
     "dev:server": "TREEPORT_DATA_DIR=.treeport-dev/data TREEPORT_RUNTIME_DIR=.treeport-dev/runtime tsdown --watch --on-success \"node --enable-source-maps dist/node/server/index.js\"",
     "dev:web": "vite",
-    "dev:desktop": "vite --port 5173",
     "start": "TREEPORT_WEB_DIST=dist/web node dist/node/server/index.js",
     "db:generate": "drizzle-kit generate",
     "typecheck": "pnpm typecheck:node && pnpm typecheck:web",
