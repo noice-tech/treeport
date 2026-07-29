@@ -68,4 +68,4 @@ TREEPORT_DATABASE_PATH=~/Backups/treeport.db \
 pnpm start:local
 ```
 
-Bind beyond loopback only on a [trusted private network](/guides/private-network-access/).
+Bind beyond loopback only on a trusted private network; see [Security](/security/).
