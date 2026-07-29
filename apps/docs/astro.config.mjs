@@ -28,6 +28,7 @@ export default defineConfig({
         {
           label: 'Concepts',
           items: [
+            { label: 'Philosophy', slug: 'concepts/philosophy' },
             {
               label: 'Projects, worktrees, and terminals',
               slug: 'concepts/projects-worktrees-terminals'
