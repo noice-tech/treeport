@@ -17,7 +17,7 @@ This listens at `127.0.0.1:4780` and limits access to the local machine.
 
 ## Remote access
 
-If you need browser or phone access, expose Treeport only through a trusted private network such as Tailscale. Bind deliberately and ensure untrusted devices cannot reach the port.
+If you need browser or phone access, expose Treeport only through a trusted private network such as [Tailscale](https://tailscale.com/). Bind deliberately and ensure untrusted devices cannot reach the port.
 
 ```sh
 TREEPORT_HOST=0.0.0.0 pnpm start
