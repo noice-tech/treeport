@@ -7,10 +7,6 @@ export default defineConfig({
       title: 'Treeport',
       description:
         'A worktree-first terminal driver for persistent development workspaces.',
-      logo: {
-        src: './src/assets/treeport-mark.svg',
-        alt: 'Treeport'
-      },
       social: [
         {
           icon: 'github',
