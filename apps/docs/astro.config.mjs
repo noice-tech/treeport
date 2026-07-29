@@ -41,13 +41,20 @@ export default defineConfig({
               label: 'Persistent terminals',
               slug: 'features/persistent-terminals'
             },
-            { label: 'Web, mobile, and desktop', slug: 'features/interfaces' },
-            { label: 'Safe worktree cleanup', slug: 'features/safe-cleanup' }
+            { label: 'Terminal presets', slug: 'features/terminal-presets' },
+            {
+              label: 'Worktree setup hooks',
+              slug: 'features/worktree-setup-hooks'
+            }
           ]
         },
         {
           label: 'Guides',
           items: [
+            {
+              label: 'Removing a worktree',
+              slug: 'guides/removing-a-worktree'
+            },
             { label: 'Coding-agent workflows', slug: 'guides/agent-workflows' },
             {
               label: 'Private-network access',
