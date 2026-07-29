@@ -27,11 +27,7 @@ The Electron app opens automatically.
 
 ## Documentation
 
-Documentation lives in [`apps/docs`](apps/docs). Start the documentation site locally with:
-
-```sh
-pnpm dev:docs
-```
+Read the documentation at [treeport.app](https://treeport.app).
 
 ## Development
 
