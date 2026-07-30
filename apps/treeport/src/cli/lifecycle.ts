@@ -9,9 +9,22 @@ import { fileURLToPath } from 'node:url'
 const DEFAULT_HOST = '127.0.0.1'
 const DEFAULT_PORT = 8733
 
+interface RemotePreference {
+  port: number
+  target: string
+}
+
 interface Preferences {
   host?: string
   port?: number
+  remote?: RemotePreference
+}
+
+export interface TailscaleRemoteStatus {
+  configured: boolean
+  active: boolean
+  port: number | null
+  url: string | null
 }
 
 export interface DaemonRecord {
@@ -95,6 +108,16 @@ async function readJson<T>(filePath: string): Promise<T | null> {
 
 async function preferences(): Promise<Preferences> {
   return (await readJson<Preferences>(localPaths().preferencesPath)) ?? {}
+}
+
+async function savePreferences(value: Preferences): Promise<void> {
+  const paths = localPaths()
+  await fs.mkdir(paths.dataDir, { recursive: true, mode: 0o700 })
+  const temporaryPath = `${paths.preferencesPath}.${process.pid}.tmp`
+  await fs.writeFile(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, {
+    mode: 0o600
+  })
+  await fs.rename(temporaryPath, paths.preferencesPath)
 }
 
 export async function resolveLocalApiUrl(): Promise<string> {
@@ -263,6 +286,270 @@ async function executableCheck(
   })
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+}
+
+async function tailscale(args: string[]): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = spawn('tailscale', args, {
+      stdio: ['ignore', 'pipe', 'pipe']
+    })
+    let stdout = ''
+    let stderr = ''
+    child.stdout.setEncoding('utf8')
+    child.stderr.setEncoding('utf8')
+    child.stdout.on('data', (chunk: string) => {
+      stdout += chunk
+    })
+    child.stderr.on('data', (chunk: string) => {
+      stderr += chunk
+    })
+    child.once('error', (error) =>
+      reject(
+        new Error(
+          (error as NodeJS.ErrnoException).code === 'ENOENT'
+            ? 'Tailscale is required for remote access. Install it from https://tailscale.com/download, run `tailscale up`, then retry.'
+            : `Could not run Tailscale: ${error.message}`
+        )
+      )
+    )
+    child.once('close', (code) => {
+      if (code === 0) {
+        resolve(stdout)
+        return
+      }
+
+      const detail = [stderr.trim(), stdout.trim()].filter(Boolean).join('\n')
+      reject(
+        new Error(
+          `Tailscale ${args[0]} failed${detail ? `: ${detail}` : ` (status ${code ?? 1})`}`
+        )
+      )
+    })
+  })
+}
+
+function tailscaleJson(
+  value: string,
+  command: string
+): Record<string, unknown> {
+  const parsed: unknown = JSON.parse(value)
+  if (!isRecord(parsed)) {
+    throw new Error(`Tailscale ${command} returned an invalid JSON response`)
+  }
+
+  return parsed
+}
+
+function remotePreference(value: Preferences): RemotePreference | null {
+  if (value.remote === undefined) {
+    return null
+  }
+
+  if (
+    !Number.isInteger(value.remote.port) ||
+    value.remote.port < 1 ||
+    value.remote.port > 65_535 ||
+    !value.remote.target
+  ) {
+    throw new Error('Treeport remote access preferences are invalid')
+  }
+
+  return value.remote
+}
+
+function localProxyTarget(apiUrl: string): string {
+  if (!URL.canParse(apiUrl)) {
+    throw new Error('Treeport remote access requires a loopback daemon URL')
+  }
+
+  const url = new URL(apiUrl)
+  if (
+    url.protocol !== 'http:' ||
+    !['127.0.0.1', 'localhost', '::1', '[::1]'].includes(url.hostname)
+  ) {
+    throw new Error(
+      'Treeport remote access requires a loopback daemon. Run `treeport up --host 127.0.0.1`, then try again.'
+    )
+  }
+
+  return `http://${url.host}`
+}
+
+function portIsServed(config: Record<string, unknown>, port: number): boolean {
+  const tcp = config.TCP
+  if (isRecord(tcp) && Object.hasOwn(tcp, String(port))) {
+    return true
+  }
+
+  const foreground = config.Foreground
+  return (
+    isRecord(foreground) &&
+    Object.values(foreground).some(
+      (value) => isRecord(value) && portIsServed(value, port)
+    )
+  )
+}
+
+function rootProxyForPort(
+  config: Record<string, unknown>,
+  port: number
+): string | null {
+  const web = config.Web
+  if (!isRecord(web)) {
+    return null
+  }
+
+  for (const [hostPort, server] of Object.entries(web)) {
+    if (!hostPort.endsWith(`:${port}`) || !isRecord(server)) {
+      continue
+    }
+
+    const handlers = server.Handlers
+    if (!isRecord(handlers) || !isRecord(handlers['/'])) {
+      continue
+    }
+
+    const proxy = handlers['/'].Proxy
+    if (typeof proxy === 'string') {
+      return proxy
+    }
+  }
+
+  return null
+}
+
+function proxyMatches(
+  actual: string | null,
+  expected: string | undefined
+): boolean {
+  return (
+    actual !== null &&
+    expected !== undefined &&
+    actual.replace(/\/$/, '') === expected.replace(/\/$/, '')
+  )
+}
+
+async function tailscaleServeConfig(): Promise<Record<string, unknown>> {
+  return tailscaleJson(
+    await tailscale(['serve', 'status', '--json']),
+    'serve status'
+  )
+}
+
+async function tailscaleRemoteUrl(port: number): Promise<string> {
+  const status = tailscaleJson(await tailscale(['status', '--json']), 'status')
+  if (status.BackendState !== 'Running') {
+    throw new Error(
+      'Tailscale is not connected. Run `tailscale up` then try again.'
+    )
+  }
+
+  const self = status.Self
+  const dnsName = isRecord(self) ? self.DNSName : undefined
+  if (typeof dnsName !== 'string' || !dnsName.trim()) {
+    throw new Error(
+      'Tailscale did not report a DNS name. Enable MagicDNS, then try again.'
+    )
+  }
+
+  return `https://${dnsName.trim().replace(/\.$/, '')}${port === 443 ? '' : `:${port}`}`
+}
+
+export async function enableTailscaleRemote(options: {
+  port?: number
+}): Promise<{ alreadyEnabled: boolean; port: number; url: string }> {
+  if (
+    options.port !== undefined &&
+    (!Number.isInteger(options.port) ||
+      options.port < 1 ||
+      options.port > 65_535)
+  ) {
+    throw new Error('--port must be an integer between 1 and 65535')
+  }
+
+  const saved = await preferences()
+  const remote = remotePreference(saved)
+  const port = options.port ?? remote?.port ?? DEFAULT_PORT
+  if (remote && remote.port !== port) {
+    throw new Error(
+      `Treeport remote access is already configured on port ${remote.port}. Run \`treeport remote disable\` before choosing another port.`
+    )
+  }
+
+  const current = await daemonStatus()
+  const expectedTarget = localProxyTarget(
+    current.state?.apiUrl ?? (await resolveLocalApiUrl())
+  )
+  const [url, config] = await Promise.all([
+    tailscaleRemoteUrl(port),
+    tailscaleServeConfig()
+  ])
+  const existingTarget = rootProxyForPort(config, port)
+  if (
+    (portIsServed(config, port) || existingTarget !== null) &&
+    !proxyMatches(existingTarget, expectedTarget) &&
+    !proxyMatches(existingTarget, remote?.target)
+  ) {
+    throw new Error(
+      `Tailscale Serve already uses port ${port}. Choose another port with \`treeport remote enable --port <port>\`.`
+    )
+  }
+
+  const daemon = await daemonUp({})
+  const target = localProxyTarget(daemon.apiUrl)
+  const alreadyEnabled = proxyMatches(existingTarget, target)
+  if (!alreadyEnabled) {
+    await tailscale(['serve', '--bg', `--https=${port}`, target])
+  }
+
+  await savePreferences({ ...saved, remote: { port, target } })
+  return { alreadyEnabled, port, url }
+}
+
+export async function tailscaleRemoteStatus(): Promise<TailscaleRemoteStatus> {
+  const saved = await preferences()
+  const remote = remotePreference(saved)
+  if (!remote) {
+    return { configured: false, active: false, port: null, url: null }
+  }
+
+  const [url, config] = await Promise.all([
+    tailscaleRemoteUrl(remote.port),
+    tailscaleServeConfig()
+  ])
+  return {
+    configured: true,
+    active: proxyMatches(rootProxyForPort(config, remote.port), remote.target),
+    port: remote.port,
+    url
+  }
+}
+
+export async function disableTailscaleRemote(): Promise<{
+  wasEnabled: boolean
+  changedTailscale: boolean
+}> {
+  const saved = await preferences()
+  const remote = remotePreference(saved)
+  if (!remote) {
+    return { wasEnabled: false, changedTailscale: false }
+  }
+
+  const config = await tailscaleServeConfig()
+  if (proxyMatches(rootProxyForPort(config, remote.port), remote.target)) {
+    await tailscale(['serve', `--https=${remote.port}`, 'off'])
+    delete saved.remote
+    await savePreferences(saved)
+    return { wasEnabled: true, changedTailscale: true }
+  }
+
+  delete saved.remote
+  await savePreferences(saved)
+  return { wasEnabled: false, changedTailscale: false }
+}
+
 export async function runDoctor(): Promise<DoctorCheck[]> {
   const paths = localPaths()
   const gitPath = process.env.TREEPORT_GIT_PATH?.trim() || 'git'
@@ -349,16 +636,12 @@ export async function daemonUp(options: {
   const paths = localPaths()
   const saved = await preferences()
   const next: Preferences = {
+    ...saved,
     host: options.host?.trim() || saved.host || DEFAULT_HOST,
     port: options.port ?? saved.port ?? DEFAULT_PORT
   }
   if (options.host !== undefined || options.port !== undefined) {
-    await fs.mkdir(paths.dataDir, { recursive: true, mode: 0o700 })
-    const temporaryPath = `${paths.preferencesPath}.${process.pid}.tmp`
-    await fs.writeFile(temporaryPath, `${JSON.stringify(next, null, 2)}\n`, {
-      mode: 0o600
-    })
-    await fs.rename(temporaryPath, paths.preferencesPath)
+    await savePreferences(next)
   }
 
   const host =

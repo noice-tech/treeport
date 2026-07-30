@@ -14,6 +14,10 @@ treeport status
 treeport logs [--lines <count>]
 treeport doctor
 treeport version
+
+treeport remote enable [--port <port>]
+treeport remote status
+treeport remote disable
 ```
 
 `treeport up` starts the daemon in the background, waits until it is ready, and prints its URL. Repeating it is safe: it reports the existing healthy daemon rather than starting another.
@@ -21,6 +25,8 @@ treeport version
 `treeport down` stops only a verified Treeport-owned daemon. It preserves Treeport's tmux sessions so they can be reconciled by the next `treeport up`. `treeport down --terminate-terminals --force` is the explicit destructive alternative used by a complete uninstall.
 
 The default listener is `http://127.0.0.1:8733`. Host and port options are persisted for later starts. Binding beyond loopback is unauthenticated and is suitable only for a trusted private network.
+
+`remote enable` starts the loopback daemon if needed, then configures a persistent private HTTPS [Tailscale Serve](https://tailscale.com/docs/features/tailscale-serve) endpoint. It uses port `8733` by default and prints its MagicDNS URL. The selected remote port is persisted independently from Treeport's local listener. Treeport refuses to replace an existing Serve endpoint; choose another port with `--port`. `remote disable` removes only Treeport's root Serve route and leaves other Tailscale routes alone.
 
 ## Context
 

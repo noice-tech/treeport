@@ -26,10 +26,13 @@ import {
   daemonDown,
   daemonStatus,
   daemonUp,
+  disableTailscaleRemote,
+  enableTailscaleRemote,
   readDaemonLogs,
   resolveLocalApiUrl,
   resolvePackagePath,
   runDoctor,
+  tailscaleRemoteStatus,
   treeportVersion
 } from './lifecycle.js'
 
@@ -641,6 +644,72 @@ async function main(args: string[]): Promise<void> {
     print(result, () =>
       result.wasRunning ? 'Treeport is down' : 'Treeport is already down'
     )
+  })
+
+  const remoteCommand = program
+    .command('remote')
+    .description('Expose Treeport privately through Tailscale Serve')
+  remoteCommand.action(() => {
+    process.stdout.write(remoteCommand.helpInformation())
+  })
+
+  const remoteEnableCommand = remoteCommand
+    .command('enable')
+    .description('Enable private HTTPS access through Tailscale')
+    .option('--port <port>', 'Tailscale HTTPS port (default: 8733)')
+    .option('--json', 'emit machine-readable JSON')
+  remoteEnableCommand.action(async () => {
+    const options = remoteEnableCommand.opts<{ port?: string }>()
+    const port = options.port === undefined ? undefined : Number(options.port)
+    if (
+      port !== undefined &&
+      (!Number.isInteger(port) || port < 1 || port > 65_535)
+    ) {
+      throw new CliError('--port must be an integer between 1 and 65535', 2)
+    }
+
+    const result = await enableTailscaleRemote(
+      port === undefined ? {} : { port }
+    )
+    print(
+      result,
+      () =>
+        `Treeport remote access is ${result.alreadyEnabled ? 'already enabled' : 'enabled'}\n${result.url}\nAccess is limited by your Tailscale policy.`
+    )
+  })
+
+  const remoteStatusCommand = remoteCommand
+    .command('status')
+    .description('Show Tailscale remote access status')
+    .option('--json', 'emit machine-readable JSON')
+  remoteStatusCommand.action(async () => {
+    const result = await tailscaleRemoteStatus()
+    print(result, () => {
+      if (!result.configured) {
+        return 'Treeport remote access is disabled'
+      }
+
+      return result.active
+        ? `Treeport remote access is enabled\n${result.url}`
+        : `Treeport remote access is unavailable\nExpected: ${result.url}\nThe Tailscale Serve route no longer points to Treeport.`
+    })
+  })
+
+  const remoteDisableCommand = remoteCommand
+    .command('disable')
+    .description('Disable Treeport Tailscale remote access')
+    .option('--json', 'emit machine-readable JSON')
+  remoteDisableCommand.action(async () => {
+    const result = await disableTailscaleRemote()
+    print(result, () => {
+      if (result.changedTailscale) {
+        return 'Treeport remote access is disabled'
+      }
+
+      return result.wasEnabled
+        ? 'Treeport remote access is disabled'
+        : 'Treeport remote access was already disabled; the current Tailscale route was left unchanged.'
+    })
   })
 
   const statusCommand = program
