@@ -281,6 +281,11 @@ export async function main() {
     mode.webHost,
     new Set([apiPort])
   )
+  const desktopRendererPort = await findAvailablePort(
+    6173,
+    loopbackHost,
+    new Set([apiPort, webPort])
+  )
   const apiUrl = urlFor(loopbackHost, apiPort)
   const webUrl = urlFor(mode.webHost, webPort)
   let tailscaleRemote = null
@@ -314,6 +319,7 @@ export async function main() {
     TREEPORT_WEB_HOST: mode.webHost,
     TREEPORT_WEB_PORT: String(webPort),
     TREEPORT_DESKTOP_URL: webUrl,
+    TREEPORT_DESKTOP_RENDERER_PORT: String(desktopRendererPort),
     TREEPORT_DESKTOP_USER_DATA: path.join(
       repositoryRoot,
       'apps/treeport/.treeport-dev/desktop'
@@ -328,6 +334,7 @@ export async function main() {
 
   console.log(`API:       ${apiUrl}`)
   console.log(`Web port:  ${webPort}`)
+  console.log(`Desktop renderer port: ${desktopRendererPort}`)
 
   if (mode.name === 'lan') {
     console.warn(

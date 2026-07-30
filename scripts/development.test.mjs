@@ -102,13 +102,18 @@ const api = net.createServer().listen(
 )
 const web = net.createServer().listen(
   Number(process.env.TREEPORT_WEB_PORT),
-  process.env.TREEPORT_WEB_HOST,
+  process.env.TREEPORT_WEB_HOST
+)
+const desktop = net.createServer().listen(
+  Number(process.env.TREEPORT_DESKTOP_RENDERER_PORT),
+  '127.0.0.1',
   () => fs.writeFileSync(process.env.FAKE_ENVIRONMENT_FILE, JSON.stringify({
     apiHost: process.env.TREEPORT_HOST,
     apiPort: process.env.TREEPORT_PORT,
     webHost: process.env.TREEPORT_WEB_HOST,
     webPort: process.env.TREEPORT_WEB_PORT,
     desktopUrl: process.env.TREEPORT_DESKTOP_URL,
+    desktopRendererPort: process.env.TREEPORT_DESKTOP_RENDERER_PORT,
     desktopUserData: process.env.TREEPORT_DESKTOP_USER_DATA,
     arguments: process.argv.slice(2)
   }))
@@ -116,7 +121,8 @@ const web = net.createServer().listen(
 const stop = (signal) => {
   fs.writeFileSync(process.env.FAKE_SIGNAL_FILE, signal)
   api.close()
-  web.close(() => process.exit(0))
+  web.close()
+  desktop.close(() => process.exit(0))
 }
 process.on('SIGINT', () => stop('SIGINT'))
 process.on('SIGTERM', () => stop('SIGTERM'))
@@ -198,6 +204,15 @@ process.stdout.write(process.env.FAKE_TAILSCALE_STATUS || '')
       String(expectedWebPort),
       String(expectedWebPort + 1)
     ])
+    expect(
+      new Set(
+        environments.map(({ desktopRendererPort }) => desktopRendererPort)
+      )
+    ).toHaveProperty('size', 2)
+    for (const environment of environments) {
+      expect(environment.desktopRendererPort).not.toBe(environment.apiPort)
+      expect(environment.desktopRendererPort).not.toBe(environment.webPort)
+    }
     expect(environments[0].desktopUrl).toBe(
       `http://127.0.0.1:${environments[0].webPort}`
     )
@@ -223,6 +238,9 @@ process.stdout.write(process.env.FAKE_TAILSCALE_STATUS || '')
       )
       expect(development.output()).toContain(
         `API:       http://127.0.0.1:${environment.apiPort}`
+      )
+      expect(development.output()).toContain(
+        `Desktop renderer port: ${environment.desktopRendererPort}`
       )
     }
 

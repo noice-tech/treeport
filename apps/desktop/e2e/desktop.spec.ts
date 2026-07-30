@@ -5,7 +5,24 @@ import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { _electron as electron, expect, test } from '@playwright/test'
 
-test('dispatches native commands, opens local file URLs, and restores renderer state', async () => {
+async function waitForGuest(
+  electronApp: Awaited<ReturnType<typeof electron.launch>>,
+  origin: string
+): Promise<void> {
+  await expect
+    .poll(() =>
+      electronApp.evaluate(
+        ({ webContents }, expectedOrigin) =>
+          webContents
+            .getAllWebContents()
+            .some((contents) => contents.getURL().startsWith(expectedOrigin)),
+        origin
+      )
+    )
+    .toBe(true)
+}
+
+test('connects the desktop shell, preserves native behavior, and restores renderer state', async () => {
   const userData = await fs.mkdtemp(
     path.join(os.tmpdir(), 'treeport-electron-')
   )
@@ -13,7 +30,12 @@ test('dispatches native commands, opens local file URLs, and restores renderer s
     if (request.url === '/api/health') {
       response.setHeader('content-type', 'application/json')
       response.end(
-        JSON.stringify({ ok: true, version: '0.1.0', protocolVersion: 1 })
+        JSON.stringify({
+          ok: true,
+          version: '0.1.0',
+          protocolVersion: 2,
+          hostname: 'desktop-test'
+        })
       )
       return
     }
@@ -36,25 +58,44 @@ test('dispatches native commands, opens local file URLs, and restores renderer s
       throw new Error('Test server did not expose a port')
     }
 
+    const origin = `http://127.0.0.1:${address.port}`
+
     electronApp = await electron.launch({
       args: [`--user-data-dir=${userData}`, '.'],
       cwd: process.cwd(),
       env: {
         ...process.env,
+        TREEPORT_DESKTOP_E2E: '1',
         TREEPORT_DESKTOP_USER_DATA: '',
-        TREEPORT_DESKTOP_URL: `http://127.0.0.1:${address.port}`
+        TREEPORT_DESKTOP_URL: origin
       }
     })
 
-    const window = await electronApp.firstWindow()
-    await electronApp.evaluate(({ app, BrowserWindow }) => {
-      app.focus({ steal: true })
-      BrowserWindow.getAllWindows()[0]?.focus()
-    })
-    await window.bringToFront()
-    await expect(window.locator('body')).toHaveAttribute('data-command', 'none')
-    const preferences = await electronApp.evaluate(({ BrowserWindow }) =>
-      BrowserWindow.getAllWindows()[0]?.webContents.getLastWebPreferences()
+    const selector = await electronApp.firstWindow()
+    await expect(
+      selector.getByRole('button', {
+        name: 'Connected computer: This computer'
+      })
+    ).toBeVisible()
+    await waitForGuest(electronApp, origin)
+    await expect
+      .poll(() =>
+        electronApp!.evaluate(({ webContents }, expectedOrigin) => {
+          const guest = webContents
+            .getAllWebContents()
+            .find((contents) => contents.getURL().startsWith(expectedOrigin))
+          return guest?.executeJavaScript('document.body.textContent')
+        }, origin)
+      )
+      .toContain('Treeport desktop test')
+
+    const preferences = await electronApp.evaluate(
+      ({ webContents }, expectedOrigin) =>
+        webContents
+          .getAllWebContents()
+          .find((contents) => contents.getURL().startsWith(expectedOrigin))
+          ?.getLastWebPreferences(),
+      origin
     )
     expect(preferences).toMatchObject({
       nodeIntegration: false,
@@ -73,17 +114,31 @@ test('dispatches native commands, opens local file URLs, and restores renderer s
       }
     })
     const filePath = path.join(userData, 'résumé draft.txt')
-    await expect(
-      window.evaluate(
-        (url) => (window as any).treeportDesktop.openFileUrl(url),
-        pathToFileURL(filePath).href
+    expect(
+      await electronApp.evaluate(
+        async ({ webContents }, input) => {
+          const guest = webContents
+            .getAllWebContents()
+            .find((contents) => contents.getURL().startsWith(input.origin))
+          return guest?.executeJavaScript(
+            `window.treeportDesktop.openFileUrl(${JSON.stringify(input.url)})`
+          )
+        },
+        { origin, url: pathToFileURL(filePath).href }
       )
-    ).resolves.toBe(true)
-    await expect(
-      window.evaluate(() =>
-        (window as any).treeportDesktop.openFileUrl('file:relative.txt')
+    ).toBe('opened')
+    expect(
+      await electronApp.evaluate(
+        ({ webContents }, expectedOrigin) =>
+          webContents
+            .getAllWebContents()
+            .find((contents) => contents.getURL().startsWith(expectedOrigin))
+            ?.executeJavaScript(
+              "window.treeportDesktop.openFileUrl('file:relative.txt')"
+            ),
+        origin
       )
-    ).resolves.toBe(false)
+    ).toBe('rejected')
     expect(
       await electronApp.evaluate(
         () =>
@@ -97,9 +152,12 @@ test('dispatches native commands, opens local file URLs, and restores renderer s
 
     expect(
       await electronApp.evaluate(
-        ({ BrowserWindow, session }) =>
-          BrowserWindow.getAllWindows()[0]?.webContents.session ===
-          session.fromPartition('persist:treeport-desktop')
+        ({ session, webContents }, expectedOrigin) =>
+          webContents
+            .getAllWebContents()
+            .find((contents) => contents.getURL().startsWith(expectedOrigin))
+            ?.session === session.fromPartition('persist:treeport-desktop'),
+        origin
       )
     ).toBe(true)
 
@@ -118,95 +176,271 @@ test('dispatches native commands, opens local file URLs, and restores renderer s
     })
 
     const commandModifier = process.platform === 'darwin' ? 'meta' : 'control'
-    await electronApp.evaluate(
-      ({ BrowserWindow }, input) => {
-        const webContents = BrowserWindow.getAllWindows()[0]?.webContents
-        webContents?.sendInputEvent({
-          type: 'keyDown',
-          keyCode: input.key,
-          modifiers: [input.modifier]
-        })
-        webContents?.sendInputEvent({
-          type: 'keyUp',
-          keyCode: input.key,
-          modifiers: [input.modifier]
-        })
-      },
-      { key: 'N', modifier: commandModifier }
-    )
-    await expect(window.locator('body')).toHaveAttribute(
-      'data-command',
-      'new-worktree'
-    )
-
-    await electronApp.evaluate(
-      ({ BrowserWindow }, input) => {
-        const webContents = BrowserWindow.getAllWindows()[0]?.webContents
-        webContents?.sendInputEvent({
-          type: 'keyDown',
-          keyCode: input.key,
-          modifiers: [input.modifier]
-        })
-        webContents?.sendInputEvent({
-          type: 'keyUp',
-          keyCode: input.key,
-          modifiers: [input.modifier]
-        })
-      },
-      { key: 'T', modifier: commandModifier }
-    )
-    await expect(window.locator('body')).toHaveAttribute(
-      'data-command',
-      'new-terminal'
-    )
-
-    await electronApp.evaluate(
-      ({ BrowserWindow }, input) => {
-        const webContents = BrowserWindow.getAllWindows()[0]?.webContents
-        webContents?.sendInputEvent({
-          type: 'keyDown',
-          keyCode: input.key,
-          modifiers: [input.modifier]
-        })
-        webContents?.sendInputEvent({
-          type: 'keyUp',
-          keyCode: input.key,
-          modifiers: [input.modifier]
-        })
-      },
-      { key: 'W', modifier: commandModifier }
-    )
-    await expect(window.locator('body')).toHaveAttribute(
-      'data-command',
-      'close-terminal'
-    )
-    expect(electronApp.windows()).toHaveLength(1)
-
-    await window.evaluate(() =>
-      localStorage.setItem(
-        'treeport-last-workspace-route',
-        '/projects/project-1/worktrees/worktree-1/terminals/terminal-1'
+    for (const [key, command] of [
+      ['N', 'new-worktree'],
+      ['T', 'new-terminal'],
+      ['W', 'close-terminal']
+    ] as const) {
+      await electronApp.evaluate(
+        ({ webContents }, input) => {
+          const guest = webContents
+            .getAllWebContents()
+            .find((contents) => contents.getURL().startsWith(input.origin))
+          guest?.sendInputEvent({
+            type: 'keyDown',
+            keyCode: input.key,
+            modifiers: [input.modifier]
+          })
+          guest?.sendInputEvent({
+            type: 'keyUp',
+            keyCode: input.key,
+            modifiers: [input.modifier]
+          })
+        },
+        { origin, key, modifier: commandModifier }
       )
-    )
+      await expect
+        .poll(() =>
+          electronApp!.evaluate(
+            ({ webContents }, input) => {
+              const guest = webContents
+                .getAllWebContents()
+                .find((contents) => contents.getURL().startsWith(input.origin))
+              return guest?.executeJavaScript('document.body.dataset.command')
+            },
+            { origin }
+          )
+        )
+        .toBe(command)
+    }
+    expect(
+      await electronApp.evaluate(
+        ({ BrowserWindow }) => BrowserWindow.getAllWindows().length
+      )
+    ).toBe(1)
+
+    await electronApp.evaluate(({ webContents }, expectedOrigin) => {
+      const guest = webContents
+        .getAllWebContents()
+        .find((contents) => contents.getURL().startsWith(expectedOrigin))
+      return guest?.executeJavaScript(
+        `localStorage.setItem('treeport-last-workspace-route', '/projects/project-1/worktrees/worktree-1/terminals/terminal-1')`
+      )
+    }, origin)
     await electronApp.close()
     electronApp = await electron.launch({
       args: [`--user-data-dir=${userData}`, '.'],
       cwd: process.cwd(),
       env: {
         ...process.env,
+        TREEPORT_DESKTOP_E2E: '1',
+        TREEPORT_DESKTOP_USER_DATA: '',
+        TREEPORT_DESKTOP_URL: origin
+      }
+    })
+    await electronApp.firstWindow()
+    await waitForGuest(electronApp, origin)
+    await expect
+      .poll(() =>
+        electronApp!.evaluate(({ webContents }, expectedOrigin) => {
+          const guest = webContents
+            .getAllWebContents()
+            .find((contents) => contents.getURL().startsWith(expectedOrigin))
+          return guest?.executeJavaScript(
+            `localStorage.getItem('treeport-last-workspace-route')`
+          )
+        }, origin)
+      )
+      .toBe('/projects/project-1/worktrees/worktree-1/terminals/terminal-1')
+  } finally {
+    await electronApp?.close().catch(() => undefined)
+    await new Promise<void>((resolve) => server.close(() => resolve()))
+    await fs.rm(userData, { recursive: true, force: true })
+  }
+})
+
+test('adds, renames, and switches computers through the desktop-owned selector', async () => {
+  const userData = await fs.mkdtemp(
+    path.join(os.tmpdir(), 'treeport-electron-selector-')
+  )
+  const createServer = (label: string) =>
+    http.createServer((request, response) => {
+      if (request.url === '/api/health') {
+        response.setHeader('content-type', 'application/json')
+        response.end(
+          JSON.stringify({
+            ok: true,
+            version: '0.1.0',
+            protocolVersion: 2,
+            hostname: label
+          })
+        )
+        return
+      }
+
+      response.setHeader('content-type', 'text/html')
+      response.end(`<body>${label} workspace</body>`)
+    })
+  const firstServer = createServer('first-computer')
+  const secondServer = createServer('second-computer')
+  let electronApp: Awaited<ReturnType<typeof electron.launch>> | null = null
+
+  try {
+    await Promise.all([
+      new Promise<void>((resolve) =>
+        firstServer.listen(0, '127.0.0.1', resolve)
+      ),
+      new Promise<void>((resolve) =>
+        secondServer.listen(0, '127.0.0.1', resolve)
+      )
+    ])
+    const firstAddress = firstServer.address()
+    const secondAddress = secondServer.address()
+    if (
+      !firstAddress ||
+      typeof firstAddress === 'string' ||
+      !secondAddress ||
+      typeof secondAddress === 'string'
+    ) {
+      throw new Error('Test servers did not expose ports')
+    }
+
+    const firstOrigin = `http://127.0.0.1:${firstAddress.port}`
+    const secondOrigin = `http://127.0.0.1:${secondAddress.port}`
+
+    electronApp = await electron.launch({
+      args: [`--user-data-dir=${userData}`, '.'],
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        TREEPORT_DESKTOP_E2E: '1',
+        TREEPORT_DESKTOP_USER_DATA: '',
+        TREEPORT_DESKTOP_URL: firstOrigin
+      }
+    })
+    const window = await electronApp.firstWindow()
+    const selector = window
+    await waitForGuest(electronApp, firstOrigin)
+
+    const computerTrigger = selector.getByRole('button', {
+      name: 'Connected computer: This computer'
+    })
+    await computerTrigger.click()
+    await expect(selector.getByRole('menu')).toBeVisible()
+    await computerTrigger.click()
+    await expect(selector.getByRole('menu')).not.toBeVisible()
+    await computerTrigger.click()
+    await selector
+      .getByRole('menuitem', { name: 'Connect to another computer…' })
+      .click()
+    const connect = window.getByRole('dialog', {
+      name: 'Connect to another computer'
+    })
+    await expect(connect).toBeVisible()
+    await connect.getByLabel('Computer URL').fill(`${secondOrigin}/project/1`)
+    await connect.getByRole('button', { name: 'Connect' }).click()
+    await waitForGuest(electronApp, secondOrigin)
+
+    await selector
+      .getByRole('button', { name: 'Connected computer: This computer' })
+      .click()
+    await expect(selector.getByRole('menu')).toBeVisible()
+    await selector.getByRole('menuitem', { name: 'Manage computers…' }).click()
+    const manage = window.getByRole('dialog', { name: 'Manage computers' })
+    await expect(manage).toBeVisible()
+    const secondForm = manage.getByRole('form', {
+      name: `Edit This computer at ${secondOrigin}`
+    })
+    await expect(secondForm.getByLabel('URL')).toHaveValue(secondOrigin)
+    await secondForm.getByLabel('Name').fill('Work VPS')
+    await secondForm.getByRole('button', { name: 'Save' }).click()
+    await expect(
+      manage
+        .getByRole('form', { name: `Edit Work VPS at ${secondOrigin}` })
+        .getByLabel('Name')
+    ).toHaveValue('Work VPS')
+    await manage.getByRole('button', { name: 'Close' }).click()
+    await expect(
+      selector.getByRole('button', { name: 'Connected computer: Work VPS' })
+    ).toBeVisible()
+
+    await selector
+      .getByRole('button', { name: 'Connected computer: Work VPS' })
+      .click()
+    await expect(selector.getByRole('menu')).toBeVisible()
+    await selector
+      .getByRole('menuitemradio', {
+        name: new RegExp(firstOrigin.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+      })
+      .click()
+    await waitForGuest(electronApp, firstOrigin)
+    await expect(
+      selector.getByRole('button', {
+        name: 'Connected computer: This computer'
+      })
+    ).toBeVisible()
+  } finally {
+    await electronApp?.close().catch(() => undefined)
+    await Promise.all([
+      new Promise<void>((resolve) => firstServer.close(() => resolve())),
+      new Promise<void>((resolve) => secondServer.close(() => resolve()))
+    ])
+    await fs.rm(userData, { recursive: true, force: true })
+  }
+})
+
+test('keeps an incompatible computer in the shell without loading its web app', async () => {
+  const userData = await fs.mkdtemp(
+    path.join(os.tmpdir(), 'treeport-electron-incompatible-')
+  )
+  let applicationRequests = 0
+  const server = http.createServer((request, response) => {
+    if (request.url === '/api/health') {
+      response.setHeader('content-type', 'application/json')
+      response.end(
+        JSON.stringify({
+          ok: true,
+          version: '0.0.1',
+          protocolVersion: 1,
+          hostname: 'old-treeport'
+        })
+      )
+      return
+    }
+
+    applicationRequests += 1
+    response.end('<body>Old Treeport</body>')
+  })
+  let electronApp: Awaited<ReturnType<typeof electron.launch>> | null = null
+
+  try {
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    const address = server.address()
+    if (!address || typeof address === 'string') {
+      throw new Error('Test server did not expose a port')
+    }
+
+    electronApp = await electron.launch({
+      args: [`--user-data-dir=${userData}`, '.'],
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        TREEPORT_DESKTOP_E2E: '1',
         TREEPORT_DESKTOP_USER_DATA: '',
         TREEPORT_DESKTOP_URL: `http://127.0.0.1:${address.port}`
       }
     })
+    const window = await electronApp.firstWindow()
 
-    const reopenedWindow = await electronApp.firstWindow()
-    await expect
-      .poll(() =>
-        reopenedWindow.evaluate(() =>
-          localStorage.getItem('treeport-last-workspace-route')
-        )
-      )
-      .toBe('/projects/project-1/worktrees/worktree-1/terminals/terminal-1')
+    await expect(
+      window.getByRole('heading', {
+        name: 'This Treeport version is incompatible'
+      })
+    ).toBeVisible()
+    await expect(
+      window.getByText('Desktop 0.1.0 · Treeport 0.0.1')
+    ).toBeVisible()
+    expect(applicationRequests).toBe(0)
   } finally {
     await electronApp?.close().catch(() => undefined)
     await new Promise<void>((resolve) => server.close(() => resolve()))

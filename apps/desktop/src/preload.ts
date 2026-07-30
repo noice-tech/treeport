@@ -1,13 +1,17 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
-
-type DesktopCommand = 'new-worktree' | 'new-terminal' | 'close-terminal'
+import type {
+  DesktopCommand,
+  DesktopFileActionResult
+} from './desktop-contract.js'
 
 const desktopBridge = Object.freeze({
   platform: process.platform,
-  openFileUrl(url: string): Promise<boolean> {
+  openFileUrl(url: string): Promise<DesktopFileActionResult> {
     return ipcRenderer
       .invoke('open-file-url', url)
-      .then((opened) => opened === true)
+      .then((result: unknown) =>
+        result === 'opened' || result === 'copied' ? result : 'rejected'
+      )
   },
   onFullscreenChange(listener: (fullscreen: boolean) => void) {
     const receive = (_event: IpcRendererEvent, value: unknown) => {
@@ -37,9 +41,3 @@ const desktopBridge = Object.freeze({
 })
 
 contextBridge.exposeInMainWorld('treeportDesktop', desktopBridge)
-
-window.addEventListener('DOMContentLoaded', () => {
-  document
-    .querySelector('[data-treeport-retry]')
-    ?.addEventListener('click', () => ipcRenderer.send('retry-connection'))
-})

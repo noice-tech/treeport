@@ -6,6 +6,7 @@ export * from './terminal-protocol.js'
 
 export const PRODUCT_NAME = 'Treeport'
 export const API_VERSION = 1
+export const DESKTOP_PROTOCOL_VERSION = 2
 export const TERMINAL_MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 export const TERMINAL_NAME_MAX_LENGTH = 120
 export const TERMINAL_ARGV_MAX_COUNT = 128

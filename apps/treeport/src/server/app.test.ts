@@ -1,8 +1,12 @@
 import crypto from 'node:crypto'
 import fs from 'node:fs/promises'
+import os from 'node:os'
 import path from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
-import type { TerminalRuntimeMetadata } from '@treeport/shared'
+import {
+  DESKTOP_PROTOCOL_VERSION,
+  type TerminalRuntimeMetadata
+} from '@treeport/shared'
 import {
   DomainError,
   ProductEventBus,
@@ -180,6 +184,18 @@ function fixture(webDist = '/missing') {
 }
 
 describe('HTTP API validation', () => {
+  it('advertises the desktop compatibility and computer identity contract', async () => {
+    const { app } = fixture()
+    const response = await app.request('/api/health')
+
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({
+      ok: true,
+      protocolVersion: DESKTOP_PROTOCOL_VERSION,
+      hostname: os.hostname()
+    })
+  })
+
   it('returns consistent validation errors without calling domain services', async () => {
     const { app, service } = fixture()
     const response = await app.request('/api/worktrees/wt_1/terminals', {

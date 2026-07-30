@@ -1,7 +1,6 @@
 import {
   createContext,
   useContext,
-  useEffect,
   useRef,
   useState,
   type CSSProperties,
@@ -57,8 +56,6 @@ export function useProjectSwitcher() {
 }
 
 export function WorkspaceShell({ children }: { children: ReactNode }) {
-  const desktopBridge = window.treeportDesktop
-  const [desktopFullscreen, setDesktopFullscreen] = useState(false)
   const [projectSwitcherOpen, setProjectSwitcherOpen] = useState(false)
   const projectSwitcherTriggerRef = useRef<HTMLButtonElement | null>(null)
   const projectSwitcherDismissedIntoTerminalRef = useRef(false)
@@ -72,11 +69,6 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
       : DEFAULT_SIDEBAR_WIDTH
   })
   const [resizingSidebar, setResizingSidebar] = useState(false)
-  const showDesktopTitlebar =
-    desktopBridge !== undefined &&
-    !(desktopBridge.platform === 'darwin' && desktopFullscreen)
-
-  useEffect(() => desktopBridge?.onFullscreenChange(setDesktopFullscreen), [])
 
   const setAndSaveSidebarWidth = (width: number) => {
     const nextWidth = clampSidebarWidth(width)
@@ -103,10 +95,7 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
       >
         <SidebarProvider
           className={cn(
-            'app-frame isolate grid h-dvh min-h-0 grid-cols-[var(--sidebar-width)_minmax(0,1fr)] bg-zinc-950 max-[700px]:grid-cols-1',
-            showDesktopTitlebar
-              ? 'grid-rows-[2rem_minmax(0,1fr)] max-[700px]:grid-rows-[2rem_3.25rem_minmax(0,1fr)]'
-              : 'max-[700px]:grid-rows-[3.25rem_minmax(0,1fr)]',
+            'app-frame isolate grid h-dvh min-h-0 grid-cols-[var(--sidebar-width)_minmax(0,1fr)] bg-zinc-950 max-[700px]:grid-cols-1 max-[700px]:grid-rows-[3.25rem_minmax(0,1fr)]',
             resizingSidebar && 'select-none'
           )}
           style={
@@ -116,13 +105,6 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
             } as CSSProperties
           }
         >
-          {showDesktopTitlebar ? (
-            <div
-              className="desktop-titlebar col-span-full h-8 bg-zinc-950"
-              data-treeport-desktop-titlebar
-              aria-hidden="true"
-            />
-          ) : null}
           {children}
         </SidebarProvider>
       </SidebarResizeContext.Provider>

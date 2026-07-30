@@ -1,5 +1,6 @@
 import type { Terminal } from '@xterm/xterm'
 import type { TerminalProgress } from '@treeport/shared'
+import { toast } from 'sonner'
 
 export const TERMINAL_FONT_SIZE = 14
 
@@ -108,7 +109,13 @@ export function activateTerminalLink(event: MouseEvent, url: string): void {
   if (parsedUrl.protocol === 'file:') {
     const opening = window.treeportDesktop?.openFileUrl(url)
     if (opening) {
-      void opening.catch(() => undefined)
+      void opening
+        .then((result) => {
+          if (result === 'copied') {
+            toast('Remote path copied')
+          }
+        })
+        .catch(() => undefined)
     }
 
     return

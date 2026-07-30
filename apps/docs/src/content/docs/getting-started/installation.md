@@ -47,6 +47,16 @@ npm install --global @treeport/treeport@latest
 treeport up
 ```
 
+## Open the desktop app
+
+On first launch, the desktop app tries **This computer** at `http://127.0.0.1:8733`. If Treeport is already running, your projects open without a setup flow. Otherwise, start it and retry:
+
+```sh
+treeport up
+```
+
+You can instead choose **Connect to another computer…** and enter a private HTTPS Treeport URL. The last computer you deliberately select is restored on later launches. See [Remote access](/features/remote-access/) for the recommended Tailscale Serve setup.
+
 ## Check the installation
 
 ```sh
