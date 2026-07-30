@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { ComputerSelector } from './computer-selector'
 import { ConnectDialog } from './connect-dialog'
 import { ConnectionPage } from './connection-page'
@@ -20,14 +20,6 @@ export function App() {
   const state = useShellState()
   const [dialog, setDialog] = useState<'connect' | 'manage' | null>(null)
   const [selectorOpen, setSelectorOpen] = useState(false)
-
-  useEffect(
-    () =>
-      window.treeportShell.onComputerSelectorDismiss(() =>
-        setSelectorOpen(false)
-      ),
-    []
-  )
 
   const openDialog = (nextDialog: 'connect' | 'manage') => {
     setSelectorOpen(false)

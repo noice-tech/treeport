@@ -28,8 +28,3 @@ export function parseComputerUrl(value: string): URL {
   url.hash = ''
   return url
 }
-
-/** @deprecated Use parseComputerUrl. */
-export function parseRendererUrl(value: string): URL {
-  return parseComputerUrl(value)
-}

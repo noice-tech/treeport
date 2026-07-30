@@ -220,9 +220,6 @@ function installGuestSecurity(guest: WebContents, origin: string): void {
   guest.session.setPermissionRequestHandler(
     (_contents, _permission, callback) => callback(false)
   )
-  guest.on('focus', () =>
-    mainWindow?.webContents.send('shell:selector-dismiss')
-  )
   guest.on('did-finish-load', () => {
     guest.send('fullscreen-change', fullscreen)
   })
@@ -541,7 +538,6 @@ function createWindow(): BrowserWindow {
     broadcastState()
   })
   window.on('focus', stopBellAttention)
-  window.on('blur', () => window.webContents.send('shell:selector-dismiss'))
   window.on('close', disposeGuest)
   window.on('closed', () => {
     stopBellAttention()

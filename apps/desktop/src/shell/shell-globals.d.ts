@@ -9,7 +9,6 @@ declare global {
     readonly treeportShell: Readonly<{
       getState: () => Promise<DesktopShellState>
       onState: (listener: (state: DesktopShellState) => void) => () => void
-      onComputerSelectorDismiss: (listener: () => void) => () => void
       selectComputer: (id: string) => Promise<boolean>
       addComputer: (origin: string) => Promise<ComputerMutationResult>
       updateComputer: (
