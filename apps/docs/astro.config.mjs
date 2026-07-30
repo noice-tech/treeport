@@ -47,6 +47,7 @@ export default defineConfig({
               slug: 'features/persistent-terminals'
             },
             { label: 'Terminal presets', slug: 'features/terminal-presets' },
+            { label: 'Remote access', slug: 'features/remote-access' },
             {
               label: 'Attention and progress',
               slug: 'features/attention-and-progress'

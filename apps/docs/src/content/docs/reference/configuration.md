@@ -68,4 +68,4 @@ TREEPORT_DATABASE_PATH=~/Backups/treeport.db \
 treeport up
 ```
 
-For private remote browser access, prefer `treeport remote enable`, which keeps the daemon on loopback and exposes it through Tailscale Serve. Bind beyond loopback only on a trusted private network; see [Security](/security/).
+For private remote browser access, prefer `treeport remote enable`, which keeps the daemon on loopback and exposes it through Tailscale Serve; see [Remote access](/features/remote-access/). Bind beyond loopback only on a trusted private network; see [Security](/security/).

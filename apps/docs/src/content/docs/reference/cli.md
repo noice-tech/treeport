@@ -26,7 +26,7 @@ treeport remote disable
 
 The default listener is `http://127.0.0.1:8733`. Host and port options are persisted for later starts. Binding beyond loopback is unauthenticated and is suitable only for a trusted private network.
 
-`remote enable` starts the loopback daemon if needed, then configures a persistent private HTTPS [Tailscale Serve](https://tailscale.com/docs/features/tailscale-serve) endpoint. It uses port `8733` by default and prints its MagicDNS URL. The selected remote port is persisted independently from Treeport's local listener. Treeport refuses to replace an existing Serve endpoint; choose another port with `--port`. `remote disable` removes only Treeport's root Serve route and leaves other Tailscale routes alone.
+`remote enable` starts the loopback daemon if needed, then configures a persistent private HTTPS [Tailscale Serve](https://tailscale.com/docs/features/tailscale-serve) endpoint. It uses port `8733` by default. See [Remote access](/features/remote-access/) for prerequisites, persistence, and access-policy guidance.
 
 ## Context
 

@@ -17,19 +17,7 @@ This listens at `127.0.0.1:8733` and limits access to the local machine.
 
 ## Remote access
 
-If you need browser or phone access, use [Tailscale](https://tailscale.com/) Serve. Install Tailscale and connect it with `tailscale up` first. Treeport stays bound to loopback while Tailscale provides a private HTTPS endpoint:
-
-```sh
-treeport remote enable
-```
-
-Treeport prints a URL such as `https://laptop.tailnet.ts.net:8733`. The command uses a dedicated Tailscale HTTPS port so it does not replace another app's root Serve route. If that port is already used, choose another one:
-
-```sh
-treeport remote enable --port 8734
-```
-
-Tailscale access controls decide who can open the URL. Check or remove the endpoint with `treeport remote status` and `treeport remote disable`.
+For browser or phone access, use [private remote access through Tailscale Serve](/features/remote-access/). It keeps Treeport bound to loopback and relies on your tailnet access policy.
 
 :::danger
 Do not port-forward Treeport from your router, place it on a public host, publish it through Tailscale Funnel, or use an unauthenticated public tunnel or reverse proxy.
