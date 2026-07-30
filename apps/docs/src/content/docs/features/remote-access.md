@@ -37,12 +37,6 @@ A VPS is supported when Treeport listens only on its loopback interface and Tail
 
 The desktop app starts with **This computer** at `http://127.0.0.1:8733`. Click the computer name in its title bar, choose **Connect to another computer…**, and enter the HTTPS URL printed by `treeport remote enable`.
 
-The desktop app saves computer URLs locally and reconnects to the last computer you selected. Switching computers replaces the displayed projects, worktrees, and terminals, but only detaches the client from the previous computer; its terminal processes keep running.
-
-Remote computer URLs require HTTPS with a certificate trusted by the operating system. The desktop app does not allow plaintext remote HTTP or certificate-error bypasses. It contacts a saved computer only when you select or explicitly retry it.
-
-File links from a remote terminal are remote paths. The desktop app copies those paths to the clipboard instead of trying to open the same path on the client computer.
-
 ## Ports and other Serve apps
 
 Treeport uses HTTPS port `8733` by default. A dedicated port prevents it from replacing another application's shared HTTPS root route. If that port is occupied, choose a different one:
