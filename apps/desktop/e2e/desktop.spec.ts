@@ -166,38 +166,45 @@ test('connects the desktop shell, preserves native behavior, and restores render
       return {
         newWorktree: menu?.getMenuItemById('new-worktree')?.accelerator,
         newTerminal: menu?.getMenuItemById('new-terminal')?.accelerator,
+        newTerminalMenu:
+          menu?.getMenuItemById('new-terminal-menu')?.accelerator,
         closeTerminal: menu?.getMenuItemById('close-terminal')?.accelerator
       }
     })
     expect(accelerators).toEqual({
       newWorktree: 'CommandOrControl+N',
       newTerminal: 'CommandOrControl+T',
+      newTerminalMenu: 'CommandOrControl+Shift+T',
       closeTerminal: 'CommandOrControl+W'
     })
 
     const commandModifier = process.platform === 'darwin' ? 'meta' : 'control'
-    for (const [key, command] of [
-      ['N', 'new-worktree'],
-      ['T', 'new-terminal'],
-      ['W', 'close-terminal']
+    for (const [key, command, shift] of [
+      ['N', 'new-worktree', false],
+      ['T', 'new-terminal', false],
+      ['T', 'new-terminal-menu', true],
+      ['W', 'close-terminal', false]
     ] as const) {
       await electronApp.evaluate(
         ({ webContents }, input) => {
           const guest = webContents
             .getAllWebContents()
             .find((contents) => contents.getURL().startsWith(input.origin))
+          const modifiers = input.shift
+            ? [input.modifier, 'shift']
+            : [input.modifier]
           guest?.sendInputEvent({
             type: 'keyDown',
             keyCode: input.key,
-            modifiers: [input.modifier]
+            modifiers
           })
           guest?.sendInputEvent({
             type: 'keyUp',
             keyCode: input.key,
-            modifiers: [input.modifier]
+            modifiers
           })
         },
-        { origin, key, modifier: commandModifier }
+        { origin, key, modifier: commandModifier, shift }
       )
       await expect
         .poll(() =>

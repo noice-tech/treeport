@@ -27,6 +27,7 @@ const desktopBridge = Object.freeze({
       if (
         value === 'new-worktree' ||
         value === 'new-terminal' ||
+        value === 'new-terminal-menu' ||
         value === 'close-terminal'
       ) {
         listener(value)

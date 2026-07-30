@@ -1,4 +1,8 @@
-type TreeportDesktopCommand = 'new-worktree' | 'new-terminal' | 'close-terminal'
+type TreeportDesktopCommand =
+  | 'new-worktree'
+  | 'new-terminal'
+  | 'new-terminal-menu'
+  | 'close-terminal'
 type TreeportDesktopFileAction = 'opened' | 'copied' | 'rejected'
 
 type TreeportDesktopBridge = Readonly<{

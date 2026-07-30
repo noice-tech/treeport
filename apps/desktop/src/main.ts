@@ -174,17 +174,23 @@ function installGuestSecurity(guest: WebContents, origin: string): void {
   guest.on('before-input-event', (event, input) => {
     const commandModifier =
       process.platform === 'darwin' ? input.meta : input.control
-    const command = {
-      n: 'new-worktree',
-      t: 'new-terminal',
-      w: 'close-terminal'
-    }[input.key.toLowerCase()] as DesktopCommand | undefined
+    const key = input.key.toLowerCase()
+    const command: DesktopCommand | undefined = input.shift
+      ? key === 't'
+        ? 'new-terminal-menu'
+        : undefined
+      : key === 'n'
+        ? 'new-worktree'
+        : key === 't'
+          ? 'new-terminal'
+          : key === 'w'
+            ? 'close-terminal'
+            : undefined
     if (
       input.type !== 'keyDown' ||
       input.isAutoRepeat ||
       !commandModifier ||
       input.alt ||
-      input.shift ||
       !command
     ) {
       return
@@ -395,6 +401,12 @@ function installMenu(): void {
           label: 'New Terminal',
           accelerator: 'CommandOrControl+T',
           click: () => sendDesktopCommand('new-terminal')
+        },
+        {
+          id: 'new-terminal-menu',
+          label: 'Choose Terminal Preset…',
+          accelerator: 'CommandOrControl+Shift+T',
+          click: () => sendDesktopCommand('new-terminal-menu')
         },
         { type: 'separator' },
         {

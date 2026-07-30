@@ -1,4 +1,8 @@
-export type DesktopCommand = 'new-worktree' | 'new-terminal' | 'close-terminal'
+export type DesktopCommand =
+  | 'new-worktree'
+  | 'new-terminal'
+  | 'new-terminal-menu'
+  | 'close-terminal'
 
 export type DesktopFileActionResult = 'opened' | 'copied' | 'rejected'
 
