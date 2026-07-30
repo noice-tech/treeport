@@ -23,7 +23,6 @@ import {
   DropdownMenuContent,
   DropdownMenuGroup,
   DropdownMenuItem,
-  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger
 } from './components/ui/dropdown-menu'
@@ -557,7 +556,6 @@ export function TerminalView({
               <TooltipContent side="bottom">New terminal</TooltipContent>
             </Tooltip>
             <DropdownMenuContent align="end" side="bottom">
-              <DropdownMenuLabel>New terminal</DropdownMenuLabel>
               <DropdownMenuGroup>
                 <DropdownMenuItem
                   ref={firstNewTerminalItemRef}
