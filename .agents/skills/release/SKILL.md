@@ -18,7 +18,7 @@ Prepare one stable Treeport release and create its GitHub Release. Leave npm pub
 
 ## Choose the version
 
-If the user supplied `X.Y.Z`, verify that it is greater than `apps/treeport/package.json`'s current version.
+If the user supplied `X.Y.Z`, verify that it is not lower than `apps/treeport/package.json`'s current version. An equal version is valid when preparing an initial or already-versioned release whose tag and GitHub Release do not exist yet.
 
 If no version was supplied:
 
@@ -45,7 +45,7 @@ Set `version` to the confirmed version and `tag` to `v${version}`. Run:
 pnpm release:prepare "$version"
 ```
 
-This updates the npm package and installer versions, runs the complete repository checks, commits `Release X.Y.Z`, creates an annotated tag, and atomically pushes `main` and the tag. It does not publish to npm.
+This updates the npm package and installer versions when needed, runs the complete repository checks, commits `Release X.Y.Z` (using an empty release commit when every version surface is already aligned), creates an annotated tag, and atomically pushes `main` and the tag. It does not publish to npm.
 
 If it fails, stop and preserve the state for diagnosis. Follow the recovery instructions from the script rather than rerunning blindly.
 

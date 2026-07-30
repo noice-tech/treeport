@@ -60,9 +60,9 @@ if (!currentVersion) {
   )
 }
 
-if (compareVersions(requestedVersion, currentVersion) <= 0) {
+if (compareVersions(requestedVersion, currentVersion) < 0) {
   fail(
-    `Requested version ${version} must be greater than ${packageManifest.version}`
+    `Requested version ${version} must not be lower than ${packageManifest.version}`
   )
 }
 
@@ -84,29 +84,41 @@ try {
   }
 }
 
-packageManifest.version = version
-writeFileSync(
-  packageManifestPath,
-  `${JSON.stringify(packageManifest, null, 2)}\n`
-)
+const expectedFiles = []
+if (packageManifest.version !== version) {
+  expectedFiles.push(packageManifestPath)
+  packageManifest.version = version
+  writeFileSync(
+    packageManifestPath,
+    `${JSON.stringify(packageManifest, null, 2)}\n`
+  )
+}
+
 const installerManifest = JSON.parse(
   readFileSync(installerManifestPath, 'utf8')
 )
-installerManifest.treeportVersion = version
-writeFileSync(
-  installerManifestPath,
-  `${JSON.stringify(installerManifest, null, 2)}\n`
-)
-const installer = readFileSync(installerPath, 'utf8')
-const updatedInstaller = installer.replace(
-  /TREEPORT_VERSION="\$\{TREEPORT_VERSION:-[^}]+\}"/,
-  `TREEPORT_VERSION="\${TREEPORT_VERSION:-${version}}"`
-)
-if (updatedInstaller === installer) {
-  fail(`Could not update TREEPORT_VERSION in ${installerPath}`)
+if (installerManifest.treeportVersion !== version) {
+  expectedFiles.push(installerManifestPath)
+  installerManifest.treeportVersion = version
+  writeFileSync(
+    installerManifestPath,
+    `${JSON.stringify(installerManifest, null, 2)}\n`
+  )
 }
 
-writeFileSync(installerPath, updatedInstaller)
+const installer = readFileSync(installerPath, 'utf8')
+const installerVersionPattern =
+  /TREEPORT_VERSION="\$\{TREEPORT_VERSION:-[^}]+\}"/
+const updatedInstaller = installer.replace(
+  installerVersionPattern,
+  `TREEPORT_VERSION="\${TREEPORT_VERSION:-${version}}"`
+)
+if (!installerVersionPattern.test(installer)) {
+  fail(`Could not find TREEPORT_VERSION in ${installerPath}`)
+} else if (updatedInstaller !== installer) {
+  expectedFiles.push(installerPath)
+  writeFileSync(installerPath, updatedInstaller)
+}
 
 try {
   run('pnpm', ['check'], { stdio: 'inherit' })
@@ -116,11 +128,7 @@ try {
   )
 }
 
-const expectedFiles = [
-  packageManifestPath,
-  installerManifestPath,
-  installerPath
-].sort()
+expectedFiles.sort()
 const changedFiles = new Set([
   ...git(['diff', '--name-only']).split('\n').filter(Boolean),
   ...git(['diff', '--cached', '--name-only']).split('\n').filter(Boolean),
@@ -138,8 +146,10 @@ if (
   )
 }
 
-git(['add', '--', ...expectedFiles])
-git(['commit', '-m', `Release ${version}`], { stdio: 'inherit' })
+git(['add', '--all'])
+git(['commit', '--allow-empty', '-m', `Release ${version}`], {
+  stdio: 'inherit'
+})
 git(['tag', '-a', tag, '-m', `Release ${version}`])
 try {
   git(['push', '--atomic', 'origin', 'main', tag], { stdio: 'inherit' })
