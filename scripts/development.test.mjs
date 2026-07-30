@@ -71,8 +71,20 @@ describe('development environment allocation', () => {
   })
 
   it('starts concurrent checkouts on sequential ports and stops their process groups', async () => {
-    await listen(8733)
-    await listen(5173)
+    const occupiedApiPort = await findAvailablePort(8733, '127.0.0.1')
+    await listen(occupiedApiPort)
+    const expectedApiPort = await findAvailablePort(8733, '127.0.0.1')
+    const occupiedWebPort = await findAvailablePort(
+      5173,
+      ['0.0.0.0', '127.0.0.1'],
+      new Set([expectedApiPort])
+    )
+    await listen(occupiedWebPort)
+    const expectedWebPort = await findAvailablePort(
+      5173,
+      ['0.0.0.0', '127.0.0.1'],
+      new Set([expectedApiPort])
+    )
 
     const directory = await mkdtemp(
       path.join(os.tmpdir(), 'treeport-development-test-')
@@ -166,12 +178,12 @@ process.on('SIGHUP', () => stop('SIGHUP'))
       )
     )
     expect(environments.map(({ apiPort }) => apiPort).sort()).toEqual([
-      '8734',
-      '8735'
+      String(expectedApiPort),
+      String(expectedApiPort + 1)
     ])
     expect(environments.map(({ webPort }) => webPort).sort()).toEqual([
-      '5174',
-      '5175'
+      String(expectedWebPort),
+      String(expectedWebPort + 1)
     ])
     expect(environments[0].desktopUrl).toBe(
       `http://127.0.0.1:${environments[0].webPort}`
