@@ -47,7 +47,7 @@ pnpm lint
 pnpm build
 ```
 
-For private tailnet testing, run `tailscale up` and then `pnpm dev:tailscale`. It binds the web server only to the machine's Tailscale address while keeping the API on loopback; it does not use Serve or Funnel. `pnpm dev:lan` is an explicit, unauthenticated trusted-LAN escape hatch. See the [contributor development guide](apps/docs/src/content/docs/building-apps/contributing.md) for the security model.
+For private tailnet testing, run `tailscale up` and then `pnpm dev:tailscale`. The development stack stays on loopback for local browser and Electron use, while a temporary Tailscale Serve route provides remote access. Tailscale Funnel is never used. `pnpm dev:lan` is an explicit, unauthenticated trusted-LAN escape hatch. See the [contributor development guide](apps/docs/src/content/docs/building-apps/contributing.md) for the security model.
 
 ## Releases
 
