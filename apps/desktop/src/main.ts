@@ -159,9 +159,13 @@ async function loadTreeport(window: BrowserWindow): Promise<void> {
   await window.loadURL(connectionPageUrl).catch(() => undefined)
 }
 
-function sendDesktopCommand(
-  command: 'new-worktree' | 'new-terminal' | 'close-terminal'
-): void {
+type DesktopCommand =
+  | 'new-worktree'
+  | 'new-terminal'
+  | 'new-terminal-menu'
+  | 'close-terminal'
+
+function sendDesktopCommand(command: DesktopCommand): void {
   const focusedWindow = BrowserWindow.getFocusedWindow()
   if (!focusedWindow || !isRendererUrl(focusedWindow.webContents.getURL())) {
     return
@@ -189,6 +193,12 @@ function installMenu(): void {
           label: 'New Terminal',
           accelerator: 'CommandOrControl+T',
           click: () => sendDesktopCommand('new-terminal')
+        },
+        {
+          id: 'new-terminal-menu',
+          label: 'Choose Terminal Preset…',
+          accelerator: 'CommandOrControl+Shift+T',
+          click: () => sendDesktopCommand('new-terminal-menu')
         },
         { type: 'separator' },
         {
@@ -261,21 +271,23 @@ function createWindow(): BrowserWindow {
   window.webContents.on('before-input-event', (event, input) => {
     const commandModifier =
       process.platform === 'darwin' ? input.meta : input.control
-    const command = {
-      n: 'new-worktree',
-      t: 'new-terminal',
-      w: 'close-terminal'
-    }[input.key.toLowerCase()] as
-      | 'new-worktree'
-      | 'new-terminal'
-      | 'close-terminal'
-      | undefined
+    const key = input.key.toLowerCase()
+    const command: DesktopCommand | undefined = input.shift
+      ? key === 't'
+        ? 'new-terminal-menu'
+        : undefined
+      : key === 'n'
+        ? 'new-worktree'
+        : key === 't'
+          ? 'new-terminal'
+          : key === 'w'
+            ? 'close-terminal'
+            : undefined
     if (
       input.type !== 'keyDown' ||
       input.isAutoRepeat ||
       !commandModifier ||
       input.alt ||
-      input.shift ||
       !command ||
       !isRendererUrl(window.webContents.getURL())
     ) {

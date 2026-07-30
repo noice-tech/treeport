@@ -63,6 +63,7 @@ interface TerminalViewProps {
   presets: TerminalPreset[]
   presetsLoading: boolean
   presetsError: boolean
+  newTerminalMenuOpen: boolean
   mutationsDisabled: boolean
   onSelectTerminal: (terminal: TerminalRecord) => void
   onSelectPendingTerminal: (terminalId: string) => void
@@ -73,6 +74,7 @@ interface TerminalViewProps {
     closeOnSuccess?: boolean
   }) => void
   onManagePresets: (trigger: HTMLButtonElement | null) => void
+  onNewTerminalMenuOpenChange: (open: boolean) => void
   onCloseTerminal: (
     terminal: TerminalRecord,
     runtimeMetadata: { title: string | null; hasForegroundProcess: boolean }
@@ -149,17 +151,20 @@ export function TerminalView({
   presets,
   presetsLoading,
   presetsError,
+  newTerminalMenuOpen,
   mutationsDisabled,
   onSelectTerminal,
   onSelectPendingTerminal,
   onCreateTerminal,
   onManagePresets,
+  onNewTerminalMenuOpenChange,
   onCloseTerminal,
   onStatusChange
 }: TerminalViewProps) {
   const shellRef = useRef<HTMLElement>(null)
   const hostRef = useRef<HTMLDivElement>(null)
   const newTerminalTriggerRef = useRef<HTMLButtonElement>(null)
+  const firstNewTerminalItemRef = useRef<HTMLDivElement>(null)
   const [session, setSession] = useState<TerminalSession | null>(null)
   const [ctrl, setCtrl] = useState(false)
   const [alt, setAlt] = useState(false)
@@ -304,6 +309,17 @@ export function TerminalView({
     : (selectedPendingTerminal?.name ?? '')
   const terminals = worktree?.terminals ?? []
   const launchDisabled = !worktree || mutationsDisabled
+
+  useEffect(() => {
+    if (!newTerminalMenuOpen || launchDisabled) {
+      return
+    }
+
+    const frame = requestAnimationFrame(() =>
+      firstNewTerminalItemRef.current?.focus()
+    )
+    return () => cancelAnimationFrame(frame)
+  }, [launchDisabled, newTerminalMenuOpen])
 
   useEffect(() => {
     // Mod+W stays browser-owned here; reserve it for Electron, where we can override the window accelerator.
@@ -519,7 +535,10 @@ export function TerminalView({
               })}
             </TabsList>
           </div>
-          <DropdownMenu>
+          <DropdownMenu
+            open={newTerminalMenuOpen}
+            onOpenChange={onNewTerminalMenuOpenChange}
+          >
             <Tooltip>
               <TooltipTrigger asChild>
                 <DropdownMenuTrigger asChild>
@@ -541,6 +560,7 @@ export function TerminalView({
               <DropdownMenuLabel>New terminal</DropdownMenuLabel>
               <DropdownMenuGroup>
                 <DropdownMenuItem
+                  ref={firstNewTerminalItemRef}
                   disabled={launchDisabled}
                   onSelect={() => onCreateTerminal({ name: 'Shell' })}
                 >

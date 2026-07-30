@@ -108,12 +108,15 @@ test('dispatches native commands, opens local file URLs, and restores renderer s
       return {
         newWorktree: menu?.getMenuItemById('new-worktree')?.accelerator,
         newTerminal: menu?.getMenuItemById('new-terminal')?.accelerator,
+        newTerminalMenu:
+          menu?.getMenuItemById('new-terminal-menu')?.accelerator,
         closeTerminal: menu?.getMenuItemById('close-terminal')?.accelerator
       }
     })
     expect(accelerators).toEqual({
       newWorktree: 'CommandOrControl+N',
       newTerminal: 'CommandOrControl+T',
+      newTerminalMenu: 'CommandOrControl+Shift+T',
       closeTerminal: 'CommandOrControl+W'
     })
 
@@ -158,6 +161,27 @@ test('dispatches native commands, opens local file URLs, and restores renderer s
     await expect(window.locator('body')).toHaveAttribute(
       'data-command',
       'new-terminal'
+    )
+
+    await electronApp.evaluate(
+      ({ BrowserWindow }, input) => {
+        const webContents = BrowserWindow.getAllWindows()[0]?.webContents
+        webContents?.sendInputEvent({
+          type: 'keyDown',
+          keyCode: input.key,
+          modifiers: [input.modifier, 'shift']
+        })
+        webContents?.sendInputEvent({
+          type: 'keyUp',
+          keyCode: input.key,
+          modifiers: [input.modifier, 'shift']
+        })
+      },
+      { key: 'T', modifier: commandModifier }
+    )
+    await expect(window.locator('body')).toHaveAttribute(
+      'data-command',
+      'new-terminal-menu'
     )
 
     await electronApp.evaluate(
