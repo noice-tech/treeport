@@ -1,4 +1,8 @@
-type TreeportDesktopCommand = 'new-worktree' | 'new-terminal' | 'close-terminal'
+type TreeportDesktopCommand =
+  | 'new-worktree'
+  | 'new-terminal'
+  | 'new-terminal-menu'
+  | 'close-terminal'
 
 type TreeportDesktopBridge = Readonly<{
   platform: NodeJS.Platform

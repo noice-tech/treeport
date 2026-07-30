@@ -68,6 +68,7 @@ export function TerminalWorkspace({
   const [selectedPendingTerminalId, setSelectedPendingTerminalId] = useState<
     string | null
   >(null)
+  const [newTerminalMenuOpen, setNewTerminalMenuOpen] = useState(false)
   locationPathRef.current = location.pathname
   const selectedPendingTerminal = pendingTerminals.find(
     (terminal) =>
@@ -346,6 +347,8 @@ export function TerminalWorkspace({
 
       if (command === 'new-terminal') {
         createTerminalInSelectedWorktree({ name: 'Shell' })
+      } else if (command === 'new-terminal-menu') {
+        setNewTerminalMenuOpen(true)
       } else if (!selectedPendingTerminal && selectedTerminal) {
         requestCloseTerminal(selectedTerminal)
       }
@@ -376,6 +379,8 @@ export function TerminalWorkspace({
       presets={presets}
       presetsLoading={presetsLoading}
       presetsError={presetsError}
+      newTerminalMenuOpen={newTerminalMenuOpen}
+      onNewTerminalMenuOpenChange={setNewTerminalMenuOpen}
       onSelectTerminal={(terminal) => {
         selectedPendingTerminalIdRef.current = null
         setSelectedPendingTerminalId(null)

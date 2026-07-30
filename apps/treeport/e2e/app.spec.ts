@@ -159,7 +159,11 @@ async function mockApp(
   if (options.desktopBridge) {
     await page.addInitScript(() => {
       const scope = window as any
-      type DesktopCommand = 'new-worktree' | 'new-terminal' | 'close-terminal'
+      type DesktopCommand =
+        | 'new-worktree'
+        | 'new-terminal'
+        | 'new-terminal-menu'
+        | 'close-terminal'
       const listeners = new Set<(command: DesktopCommand) => void>()
       let fullscreenListener: ((fullscreen: boolean) => void) | null = null
       scope.__attentionRequests = 0
@@ -3071,6 +3075,22 @@ test.describe('desktop worktree terminal UI', () => {
     await expect(page).toHaveURL(
       /\/projects\/proj_1\/worktrees\/wt_topic\/terminals\/term_pi$/
     )
+
+    await page.evaluate(() =>
+      (window as any).__dispatchDesktopCommand('new-terminal-menu')
+    )
+    await expect(page.getByRole('menuitem', { name: 'Shell' })).toBeFocused()
+    await page.keyboard.press('ArrowDown')
+    await expect(
+      page.getByRole('menuitem', { name: 'Hunk', exact: true })
+    ).toBeFocused()
+    const presetRequest = page.waitForRequest(
+      (request) =>
+        request.method() === 'POST' &&
+        new URL(request.url()).pathname === '/api/worktrees/wt_topic/terminals'
+    )
+    await page.keyboard.press('Enter')
+    expect((await presetRequest).postDataJSON()).toMatchObject({ name: 'Hunk' })
 
     await page.evaluate(() =>
       (window as any).__dispatchDesktopCommand('new-worktree')

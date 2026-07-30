@@ -1,6 +1,10 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
 
-type DesktopCommand = 'new-worktree' | 'new-terminal' | 'close-terminal'
+type DesktopCommand =
+  | 'new-worktree'
+  | 'new-terminal'
+  | 'new-terminal-menu'
+  | 'close-terminal'
 
 const desktopBridge = Object.freeze({
   platform: process.platform,
@@ -23,6 +27,7 @@ const desktopBridge = Object.freeze({
       if (
         value === 'new-worktree' ||
         value === 'new-terminal' ||
+        value === 'new-terminal-menu' ||
         value === 'close-terminal'
       ) {
         listener(value)
