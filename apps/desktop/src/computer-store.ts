@@ -1,8 +1,24 @@
 import crypto from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import { z } from 'zod'
 import type { ComputerSummary, SavedComputer } from './desktop-contract.js'
 import { isLoopbackUrl, parseComputerUrl } from './renderer-url.js'
+
+const desktopSettingsSchema = z.object({
+  version: z.literal(1),
+  selectedComputerId: z.string().optional(),
+  computers: z.array(
+    z.object({
+      id: z.string(),
+      origin: z.string(),
+      nameOverride: z.string().optional(),
+      advertisedHostname: z.string().optional(),
+      createdAt: z.string(),
+      lastSelectedAt: z.string().optional()
+    })
+  )
+})
 
 interface DesktopSettings {
   version: 1
@@ -10,61 +26,16 @@ interface DesktopSettings {
   computers: SavedComputer[]
 }
 
-function isOptionalString(value: unknown): value is string | undefined {
-  return value === undefined || typeof value === 'string'
-}
-
 function parseSettings(value: unknown): DesktopSettings | null {
-  if (
-    typeof value !== 'object' ||
-    value === null ||
-    !('version' in value) ||
-    value.version !== 1 ||
-    !('computers' in value) ||
-    !Array.isArray(value.computers)
-  ) {
-    return null
-  }
-
-  const selectedComputerId =
-    'selectedComputerId' in value ? value.selectedComputerId : undefined
-  if (!isOptionalString(selectedComputerId)) {
+  const result = desktopSettingsSchema.safeParse(value)
+  if (!result.success) {
     return null
   }
 
   const computers: SavedComputer[] = []
   const origins = new Set<string>()
   const ids = new Set<string>()
-  for (const candidate of value.computers) {
-    if (
-      typeof candidate !== 'object' ||
-      candidate === null ||
-      !('id' in candidate) ||
-      typeof candidate.id !== 'string' ||
-      !('origin' in candidate) ||
-      typeof candidate.origin !== 'string' ||
-      !('createdAt' in candidate) ||
-      typeof candidate.createdAt !== 'string'
-    ) {
-      return null
-    }
-
-    const nameOverride =
-      'nameOverride' in candidate ? candidate.nameOverride : undefined
-    const advertisedHostname =
-      'advertisedHostname' in candidate
-        ? candidate.advertisedHostname
-        : undefined
-    const lastSelectedAt =
-      'lastSelectedAt' in candidate ? candidate.lastSelectedAt : undefined
-    if (
-      !isOptionalString(nameOverride) ||
-      !isOptionalString(advertisedHostname) ||
-      !isOptionalString(lastSelectedAt)
-    ) {
-      return null
-    }
-
+  for (const candidate of result.data.computers) {
     let origin: string
     try {
       origin = parseComputerUrl(candidate.origin).origin
@@ -81,14 +52,19 @@ function parseSettings(value: unknown): DesktopSettings | null {
       id: candidate.id,
       origin,
       createdAt: candidate.createdAt,
-      ...(nameOverride?.trim() ? { nameOverride: nameOverride.trim() } : {}),
-      ...(advertisedHostname?.trim()
-        ? { advertisedHostname: advertisedHostname.trim() }
+      ...(candidate.nameOverride?.trim()
+        ? { nameOverride: candidate.nameOverride.trim() }
         : {}),
-      ...(lastSelectedAt ? { lastSelectedAt } : {})
+      ...(candidate.advertisedHostname?.trim()
+        ? { advertisedHostname: candidate.advertisedHostname.trim() }
+        : {}),
+      ...(candidate.lastSelectedAt
+        ? { lastSelectedAt: candidate.lastSelectedAt }
+        : {})
     })
   }
 
+  const { selectedComputerId } = result.data
   return {
     version: 1,
     computers,

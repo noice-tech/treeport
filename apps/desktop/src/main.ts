@@ -16,6 +16,7 @@ import {
   type MenuItemConstructorOptions,
   type WebContents
 } from 'electron'
+import { z } from 'zod'
 import { ComputerStore } from './computer-store.js'
 import type {
   ComputerMutationResult,
@@ -249,12 +250,20 @@ function installGuestSecurity(guest: WebContents, origin: string): void {
   guest.on('render-process-gone', showGuestFailure)
 }
 
-interface HealthResponse {
-  ok: true
-  version: string
-  protocolVersion: number
-  hostname?: string
-}
+const healthResponseSchema = z.object({
+  ok: z.literal(true),
+  version: z.string(),
+  protocolVersion: z.number(),
+  hostname: z.string().optional()
+})
+
+const computerUpdateSchema = z.object({
+  id: z.string(),
+  origin: z.string(),
+  nameOverride: z.string().optional()
+})
+
+type HealthResponse = z.infer<typeof healthResponseSchema>
 
 async function checkHealth(
   origin: string,
@@ -271,21 +280,8 @@ async function checkHealth(
   }
 
   const body = await response.json().catch(() => null)
-  if (
-    typeof body !== 'object' ||
-    body === null ||
-    !('ok' in body) ||
-    body.ok !== true ||
-    !('version' in body) ||
-    typeof body.version !== 'string' ||
-    !('protocolVersion' in body) ||
-    typeof body.protocolVersion !== 'number' ||
-    ('hostname' in body && typeof body.hostname !== 'string')
-  ) {
-    return null
-  }
-
-  return body as HealthResponse
+  const result = healthResponseSchema.safeParse(body)
+  return result.success ? result.data : null
 }
 
 async function connectSelected(): Promise<void> {
@@ -612,23 +608,25 @@ function registerIpc(): void {
       return mutationError(error)
     }
   })
-  ipcMain.handle('shell:update-computer', async (event, update: unknown) => {
-    if (
-      !isAuthorizedShellEvent(event) ||
-      !store ||
-      typeof update !== 'object' ||
-      update === null ||
-      !('id' in update) ||
-      typeof update.id !== 'string' ||
-      !('origin' in update) ||
-      typeof update.origin !== 'string' ||
-      ('nameOverride' in update && typeof update.nameOverride !== 'string')
-    ) {
+  ipcMain.handle('shell:update-computer', async (event, value: unknown) => {
+    if (!isAuthorizedShellEvent(event) || !store) {
       return { ok: false, error: 'Could not save the computer.' }
     }
 
+    const parsed = computerUpdateSchema.safeParse(value)
+    if (!parsed.success) {
+      return { ok: false, error: 'Could not save the computer.' }
+    }
+
+    const update: ComputerUpdate = {
+      id: parsed.data.id,
+      origin: parsed.data.origin,
+      ...(parsed.data.nameOverride !== undefined
+        ? { nameOverride: parsed.data.nameOverride }
+        : {})
+    }
     try {
-      const result = await store.update(update.id, update as ComputerUpdate)
+      const result = await store.update(update.id, update)
       if (!result) {
         return { ok: false, error: 'That computer no longer exists.' }
       }
