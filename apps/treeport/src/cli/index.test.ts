@@ -1,5 +1,14 @@
 import { spawn } from 'node:child_process'
-import { chmod, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  symlink,
+  writeFile
+} from 'node:fs/promises'
 import http, { type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import os from 'node:os'
@@ -881,6 +890,10 @@ describe('CLI daemon lifecycle', () => {
     const runtimeDirectory = path.join(temporaryDirectory, 'runtime')
     const tmuxPath = path.join(temporaryDirectory, 'tmux')
     const gitPath = path.join(temporaryDirectory, 'git')
+    const tailscalePath = path.join(temporaryDirectory, 'tailscale')
+    const tailscaleStatePath = path.join(temporaryDirectory, 'tailscale.json')
+    const tailscaleCallsPath = path.join(temporaryDirectory, 'tailscale-calls')
+    const nodeOnlyPath = path.join(temporaryDirectory, 'node-only-bin')
     await Promise.all([
       writeFile(
         tmuxPath,
@@ -889,9 +902,48 @@ describe('CLI daemon lifecycle', () => {
       writeFile(
         gitPath,
         '#!/bin/sh\n[ "$1" = "--version" ] && echo "git version 2.39.5"\nexit 0\n'
+      ),
+      mkdir(nodeOnlyPath),
+      writeFile(
+        tailscalePath,
+        `#!/bin/sh
+printf '%s\\n' "$*" >> "$TREEPORT_TAILSCALE_CALLS"
+if [ "$1" = "status" ] && [ "$2" = "--json" ]; then
+  printf '%s\\n' '{"BackendState":"Running","Self":{"DNSName":"treeport.tailnet.ts.net."}}'
+  exit 0
+fi
+if [ "$1" = "serve" ] && [ "$2" = "status" ] && [ "$3" = "--json" ]; then
+  [ -f "$TREEPORT_TAILSCALE_STATE" ] && cat "$TREEPORT_TAILSCALE_STATE" || printf '{}\\n'
+  exit 0
+fi
+if [ "$1" = "serve" ]; then
+  port=''
+  target=''
+  disabled=false
+  for argument in "$@"; do
+    case "$argument" in
+      --https=*) port="\${argument#--https=}" ;;
+      http://*) target="$argument" ;;
+      off) disabled=true ;;
+    esac
+  done
+  if [ "$disabled" = true ]; then
+    printf '{}\\n' > "$TREEPORT_TAILSCALE_STATE"
+  else
+    printf '{"TCP":{"%s":{"HTTPS":true}},"Web":{"treeport.tailnet.ts.net:%s":{"Handlers":{"/":{"Proxy":"%s"}}}}}\\n' "$port" "$port" "$target" > "$TREEPORT_TAILSCALE_STATE"
+  fi
+  exit 0
+fi
+exit 1
+`
       )
     ])
-    await Promise.all([chmod(tmuxPath, 0o755), chmod(gitPath, 0o755)])
+    await Promise.all([
+      chmod(tmuxPath, 0o755),
+      chmod(gitPath, 0o755),
+      chmod(tailscalePath, 0o755),
+      symlink(process.execPath, path.join(nodeOnlyPath, 'node'))
+    ])
 
     const reservation = http.createServer()
     await new Promise<void>((resolve, reject) => {
@@ -911,7 +963,10 @@ describe('CLI daemon lifecycle', () => {
       TREEPORT_DATA_DIR: dataDirectory,
       TREEPORT_RUNTIME_DIR: runtimeDirectory,
       TREEPORT_TMUX_PATH: tmuxPath,
-      TREEPORT_GIT_PATH: gitPath
+      TREEPORT_GIT_PATH: gitPath,
+      TREEPORT_TAILSCALE_STATE: tailscaleStatePath,
+      TREEPORT_TAILSCALE_CALLS: tailscaleCallsPath,
+      PATH: `${temporaryDirectory}:${process.env.PATH ?? ''}`
     }
 
     try {
@@ -945,6 +1000,63 @@ describe('CLI daemon lifecycle', () => {
       expect(JSON.parse(secondStatus.stdout).state.pid).toBe(
         firstState.state.pid
       )
+
+      const missingTailscale = await runCli(
+        ['remote', 'enable'],
+        {
+          ...environment,
+          PATH: nodeOnlyPath
+        },
+        path.join(repositoryRoot, 'apps/treeport/bin/treeport.mjs')
+      )
+      expect(missingTailscale.code).toBe(1)
+      expect(missingTailscale.stderr).toContain(
+        'Tailscale is required for remote access. Install it from https://tailscale.com/download, run `tailscale up`, then retry.'
+      )
+
+      const remoteEnable = await runCli(['remote', 'enable'], environment)
+      expect(remoteEnable.code).toBe(0)
+      expect(remoteEnable.stdout).toContain(
+        'https://treeport.tailnet.ts.net:8733'
+      )
+      const remoteStatus = await runCli(['remote', 'status'], environment)
+      expect(remoteStatus.code).toBe(0)
+      expect(remoteStatus.stdout).toContain('Treeport remote access is enabled')
+      const remoteDisable = await runCli(['remote', 'disable'], environment)
+      expect(remoteDisable.code).toBe(0)
+      expect(remoteDisable.stdout).toContain(
+        'Treeport remote access is disabled'
+      )
+      expect(await readFile(tailscaleCallsPath, 'utf8')).toContain(
+        `serve --bg --https=8733 http://127.0.0.1:${port}`
+      )
+
+      await writeFile(
+        tailscaleStatePath,
+        '{"TCP":{"8733":{"HTTPS":true}},"Web":{"other.tailnet.ts.net:8733":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:3000"}}}}}\n'
+      )
+      const occupiedRemotePort = await runCli(['remote', 'enable'], environment)
+      expect(occupiedRemotePort.code).toBe(1)
+      expect(occupiedRemotePort.stderr).toContain(
+        'Tailscale Serve already uses port 8733'
+      )
+      expect(await readFile(tailscaleStatePath, 'utf8')).toContain(
+        'http://127.0.0.1:3000'
+      )
+
+      const alternateRemote = await runCli(
+        ['remote', 'enable', '--port', '8734'],
+        environment
+      )
+      expect(alternateRemote.code).toBe(0)
+      expect(alternateRemote.stdout).toContain(
+        'https://treeport.tailnet.ts.net:8734'
+      )
+      const alternateRemoteDisable = await runCli(
+        ['remote', 'disable'],
+        environment
+      )
+      expect(alternateRemoteDisable.code).toBe(0)
 
       const health = await fetch(`http://127.0.0.1:${port}/api/health`).then(
         (response) => response.json()

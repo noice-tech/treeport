@@ -17,17 +17,17 @@ This listens at `127.0.0.1:8733` and limits access to the local machine.
 
 ## Remote access
 
-If you need browser or phone access, expose Treeport only through a trusted private network such as [Tailscale](https://tailscale.com/). Bind deliberately and ensure untrusted devices cannot reach the port.
-
-Prefer binding a specific private-network address instead of every interface:
-
-```sh
-treeport up --host <tailscale-address>
-```
+For browser or phone access, use [private remote access through Tailscale Serve](/features/remote-access/). It keeps Treeport bound to loopback and relies on your tailnet access policy.
 
 :::danger
-Do not port-forward Treeport from your router, place it on a public host, or publish it through an unauthenticated public tunnel or reverse proxy.
+Do not port-forward Treeport from your router, place it on a public host, publish it through Tailscale Funnel, or use an unauthenticated public tunnel or reverse proxy.
 :::
+
+For advanced direct private-network binding, prefer a specific Tailscale address over every interface:
+
+```sh
+treeport up --host "$(tailscale ip -4)"
+```
 
 ## Operational guidance
 
@@ -37,4 +37,4 @@ Do not port-forward Treeport from your router, place it on a public host, or pub
 - Keep Git, tmux, Node.js, Treeport, and your private-network software updated.
 - Stop the daemon when remote access is no longer needed.
 
-`TREEPORT_API_URL` tells launched terminals and the CLI how to reach the daemon. It does not add authentication or encryption.
+`TREEPORT_API_URL` tells launched terminals and the CLI how to reach the daemon. It does not add authentication or encryption. Tailscale Serve is the recommended remote-access path because the daemon remains loopback-only.

@@ -3,7 +3,7 @@ title: Configuration
 description: Environment variables, paths, and defaults for the Treeport daemon and CLI.
 ---
 
-`treeport up --host/--port` persists listener preferences. Environment variables override those preferences for advanced and contributor use.
+`treeport up --host/--port` persists listener preferences. `treeport remote enable` separately persists its Tailscale HTTPS port. Environment variables override listener preferences for advanced and contributor use.
 
 ## Daemon
 
@@ -68,4 +68,4 @@ TREEPORT_DATABASE_PATH=~/Backups/treeport.db \
 treeport up
 ```
 
-Bind beyond loopback only on a trusted private network; see [Security](/security/).
+For private remote browser access, prefer `treeport remote enable`, which keeps the daemon on loopback and exposes it through Tailscale Serve; see [Remote access](/features/remote-access/). Bind beyond loopback only on a trusted private network; see [Security](/security/).
