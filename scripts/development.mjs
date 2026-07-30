@@ -16,10 +16,8 @@ function urlFor(host, port) {
   return `http://${host.includes(':') ? `[${host}]` : host}:${port}`
 }
 
-function tailscaleHost() {
-  const result = spawnSync('tailscale', ['status', '--json'], {
-    encoding: 'utf8'
-  })
+function tailscale(args) {
+  const result = spawnSync('tailscale', args, { encoding: 'utf8' })
   if (result.error?.code === 'ENOENT') {
     throw new Error(
       'Tailscale is required for `pnpm dev:tailscale`. Install it from https://tailscale.com/download, run `tailscale up`, then retry.'
@@ -31,41 +29,96 @@ function tailscaleHost() {
   }
 
   if (result.status !== 0) {
+    const detail = [result.stderr.trim(), result.stdout.trim()]
+      .filter(Boolean)
+      .join('\n')
     throw new Error(
-      'Tailscale is not connected. Run `tailscale up`, then retry `pnpm dev:tailscale`.'
+      `Tailscale ${args[0]} failed${detail ? `: ${detail}` : ` (status ${result.status})`}`
     )
   }
 
-  let status
+  return result.stdout
+}
+
+function tailscaleJson(args) {
   try {
-    status = JSON.parse(result.stdout)
-  } catch {
-    throw new Error(
-      'Tailscale returned an invalid status response. Run `tailscale up`, then retry.'
-    )
+    const value = JSON.parse(tailscale(args))
+    if (typeof value === 'object' && value !== null) {
+      return value
+    }
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      throw new Error(`Tailscale ${args.join(' ')} returned invalid JSON`)
+    }
+
+    throw error
   }
 
-  if (status?.BackendState !== 'Running') {
+  throw new Error(`Tailscale ${args.join(' ')} returned invalid JSON`)
+}
+
+function tailscaleDnsName() {
+  const status = tailscaleJson(['status', '--json'])
+  if (status.BackendState !== 'Running') {
     throw new Error(
       'Tailscale is not connected. Run `tailscale up`, then retry `pnpm dev:tailscale`.'
     )
   }
 
-  const address =
-    status.Self?.TailscaleIPs?.find(
-      (value) => typeof value === 'string' && net.isIP(value) === 4
-    ) ??
-    status.Self?.TailscaleIPs?.find(
-      (value) => typeof value === 'string' && net.isIP(value) === 6
-    )
-
-  if (!address) {
+  const dnsName = status.Self?.DNSName
+  if (typeof dnsName !== 'string' || !dnsName.trim()) {
     throw new Error(
-      'Tailscale is connected but has no Tailscale IP address. Run `tailscale up`, then retry `pnpm dev:tailscale`.'
+      'Tailscale did not report a DNS name. Enable MagicDNS, then retry `pnpm dev:tailscale`.'
     )
   }
 
-  return address
+  return dnsName.trim().replace(/\.$/, '')
+}
+
+function tailscalePortIsServed(config, port) {
+  if (
+    typeof config.TCP === 'object' &&
+    config.TCP !== null &&
+    Object.hasOwn(config.TCP, String(port))
+  ) {
+    return true
+  }
+
+  if (
+    typeof config.Web === 'object' &&
+    config.Web !== null &&
+    Object.keys(config.Web).some((hostPort) => hostPort.endsWith(`:${port}`))
+  ) {
+    return true
+  }
+
+  return (
+    typeof config.Foreground === 'object' &&
+    config.Foreground !== null &&
+    Object.values(config.Foreground).some(
+      (value) =>
+        typeof value === 'object' &&
+        value !== null &&
+        tailscalePortIsServed(value, port)
+    )
+  )
+}
+
+function tailscaleProxyForPort(config, port) {
+  if (typeof config.Web !== 'object' || config.Web === null) {
+    return null
+  }
+
+  for (const [hostPort, server] of Object.entries(config.Web)) {
+    if (
+      hostPort.endsWith(`:${port}`) &&
+      typeof server?.Handlers?.['/']?.Proxy === 'string'
+    ) {
+      return server.Handlers['/'].Proxy
+    }
+  }
+
+  return null
 }
 
 function developmentMode() {
@@ -75,7 +128,11 @@ function developmentMode() {
   }
 
   if (mode === '--tailscale') {
-    return { name: 'tailscale', webHost: tailscaleHost() }
+    return {
+      name: 'tailscale',
+      webHost: loopbackHost,
+      tailscaleDnsName: tailscaleDnsName()
+    }
   }
 
   if (mode === '--lan') {
@@ -226,6 +283,25 @@ export async function main() {
   )
   const apiUrl = urlFor(loopbackHost, apiPort)
   const webUrl = urlFor(mode.webHost, webPort)
+  let tailscaleRemote = null
+  if (mode.name === 'tailscale') {
+    const serveConfig = tailscaleJson(['serve', 'status', '--json'])
+    let port = webPort
+    while (port <= 65_535 && tailscalePortIsServed(serveConfig, port)) {
+      port += 1
+    }
+    if (port > 65_535) {
+      throw new Error('Tailscale Serve has no available port')
+    }
+
+    tailscale(['serve', '--bg', `--https=${port}`, webUrl])
+    tailscaleRemote = {
+      port,
+      target: webUrl,
+      url: `https://${mode.tailscaleDnsName}:${port}`
+    }
+  }
+
   const repositoryRoot = path.resolve(
     path.dirname(fileURLToPath(import.meta.url)),
     '..'
@@ -245,16 +321,13 @@ export async function main() {
   }
 
   console.log('\nTreeport development')
-  console.log(
-    `${mode.name === 'tailscale' ? 'Tailscale' : 'Local'}:     ${webUrl}`
-  )
+  console.log(`Local:     ${webUrl}`)
+  if (tailscaleRemote) {
+    console.log(`Tailscale: ${tailscaleRemote.url}`)
+  }
+
   console.log(`API:       ${apiUrl}`)
   console.log(`Web port:  ${webPort}`)
-  if (mode.name === 'tailscale') {
-    console.log(
-      'Bound only to this machine’s Tailscale address; Tailscale Funnel is not used.'
-    )
-  }
 
   if (mode.name === 'lan') {
     console.warn(
@@ -321,6 +394,22 @@ export async function main() {
   }
 
   const result = await childExit
+  if (tailscaleRemote) {
+    try {
+      const serveConfig = tailscaleJson(['serve', 'status', '--json'])
+      if (
+        tailscaleProxyForPort(serveConfig, tailscaleRemote.port)?.replace(
+          /\/$/,
+          ''
+        ) === tailscaleRemote.target
+      ) {
+        tailscale(['serve', `--https=${tailscaleRemote.port}`, 'off'])
+      }
+    } catch (error) {
+      console.warn(`Could not remove Tailscale development route: ${error}`)
+    }
+  }
+
   if (forceKillTimer) {
     clearTimeout(forceKillTimer)
   }

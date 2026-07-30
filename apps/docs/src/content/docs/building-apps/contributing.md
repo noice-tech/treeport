@@ -22,13 +22,13 @@ tailscale up
 pnpm dev:tailscale
 ```
 
-This command reads the connected machine's Tailscale address and binds **only** Vite to that address. The API remains on loopback and is reachable solely through Vite's API and WebSocket proxy. It prints the tailnet URL to open from another device.
+This command keeps Vite, the API, and the Electron app on loopback, just like ordinary local development. It adds a temporary Tailscale Serve route in front of Vite and prints both URLs: use the local URL on the development machine and the HTTPS Tailscale URL from another device. The route is removed when the development command stops.
 
-It fails before starting if Tailscale is missing, disconnected, or has no Tailscale address, with the next step (`tailscale up`) in the error. It does not configure Tailscale Serve and never uses Tailscale Funnel or another public tunnel.
+It fails before starting if Tailscale is missing, disconnected, or does not report a MagicDNS name, with the next step in the error. It never uses Tailscale Funnel or another public tunnel.
 
 Tailscale encrypts the network path, but Treeport currently has no application authentication. Give tailnet access only to people who may control terminals and worktrees. Do not expose this URL through a public proxy.
 
-This contributor-only mode is independent of `treeport remote enable`. That production workflow uses Tailscale Serve to proxy a loopback daemon and retains its own saved settings; starting or stopping `pnpm dev:tailscale` does not alter them.
+This contributor-only mode is independent of `treeport remote enable`. Both use Tailscale Serve, but the production workflow retains its saved route while development chooses an unused port and owns only its temporary route.
 
 ## Intentional LAN testing
 

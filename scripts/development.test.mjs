@@ -234,12 +234,14 @@ process.stdout.write(process.env.FAKE_TAILSCALE_STATUS || '')
     await expect(readFile(second.signalFile, 'utf8')).resolves.toBe('SIGHUP')
   }, 10_000)
 
-  it('binds remote development only to the Tailscale address while keeping the API local', async () => {
+  it('keeps Tailscale development local and adds a temporary remote route', async () => {
     const directory = await mkdtemp(
       path.join(os.tmpdir(), 'treeport-development-tailscale-test-')
     )
     temporaryDirectories.push(directory)
     const environmentFile = path.join(directory, 'environment')
+    const tailscaleStateFile = path.join(directory, 'tailscale-state')
+    const tailscaleCallsFile = path.join(directory, 'tailscale-calls')
     const fakePnpm = path.join(directory, 'pnpm')
     await writeFile(
       fakePnpm,
@@ -257,11 +259,34 @@ process.on('SIGINT', stop)
     await writeFile(
       path.join(directory, 'tailscale'),
       `#!/usr/bin/env node
-process.stdout.write(JSON.stringify({ BackendState: 'Running', Self: { TailscaleIPs: ['127.0.0.1'] } }))
+const fs = require('node:fs')
+const args = process.argv.slice(2)
+fs.appendFileSync(process.env.FAKE_TAILSCALE_CALLS_FILE, JSON.stringify(args) + '\\n')
+if (args[0] === 'status') {
+  process.stdout.write(JSON.stringify({ BackendState: 'Running', Self: { DNSName: 'treeport-dev.example.ts.net.' } }))
+} else if (args[0] === 'serve' && args[1] === 'status') {
+  if (fs.existsSync(process.env.FAKE_TAILSCALE_STATE_FILE)) {
+    const state = JSON.parse(fs.readFileSync(process.env.FAKE_TAILSCALE_STATE_FILE, 'utf8'))
+    process.stdout.write(JSON.stringify({
+      TCP: { [state.port]: { HTTPS: true } },
+      Web: { ['treeport-dev.example.ts.net:' + state.port]: { Handlers: { '/': { Proxy: state.target } } } }
+    }))
+  } else {
+    process.stdout.write('{}')
+  }
+} else if (args[0] === 'serve' && args.includes('--bg')) {
+  fs.writeFileSync(process.env.FAKE_TAILSCALE_STATE_FILE, JSON.stringify({
+    port: args.find((arg) => arg.startsWith('--https=')).slice('--https='.length),
+    target: args.at(-1)
+  }))
+} else if (args[0] === 'serve' && args.at(-1) === 'off') {
+  fs.rmSync(process.env.FAKE_TAILSCALE_STATE_FILE, { force: true })
+}
 `
     )
     await chmod(path.join(directory, 'tailscale'), 0o755)
 
+    let output = ''
     const child = spawn(
       process.execPath,
       ['scripts/development.mjs', '--tailscale'],
@@ -270,12 +295,20 @@ process.stdout.write(JSON.stringify({ BackendState: 'Running', Self: { Tailscale
         env: {
           ...process.env,
           PATH: `${directory}:${process.env.PATH}`,
-          FAKE_ENVIRONMENT_FILE: environmentFile
+          FAKE_ENVIRONMENT_FILE: environmentFile,
+          FAKE_TAILSCALE_STATE_FILE: tailscaleStateFile,
+          FAKE_TAILSCALE_CALLS_FILE: tailscaleCallsFile
         },
-        stdio: 'ignore'
+        stdio: ['ignore', 'pipe', 'pipe']
       }
     )
     children.push(child)
+    child.stdout.on('data', (chunk) => {
+      output += chunk
+    })
+    child.stderr.on('data', (chunk) => {
+      output += chunk
+    })
     await waitUntil(
       () =>
         readFile(environmentFile).then(
@@ -285,13 +318,25 @@ process.stdout.write(JSON.stringify({ BackendState: 'Running', Self: { Tailscale
       'the Tailscale development process'
     )
     const environment = JSON.parse(await readFile(environmentFile, 'utf8'))
+    const tailscaleState = JSON.parse(
+      await readFile(tailscaleStateFile, 'utf8')
+    )
+    const localUrl = `http://127.0.0.1:${environment.TREEPORT_WEB_PORT}`
     expect(environment.TREEPORT_HOST).toBe('127.0.0.1')
     expect(environment.TREEPORT_WEB_HOST).toBe('127.0.0.1')
-    expect(environment.TREEPORT_DESKTOP_URL).toBe(
-      `http://127.0.0.1:${environment.TREEPORT_WEB_PORT}`
+    expect(environment.TREEPORT_DESKTOP_URL).toBe(localUrl)
+    expect(tailscaleState.target).toBe(localUrl)
+    expect(output).toContain(`Local:     ${localUrl}`)
+    expect(output).toContain(
+      `Tailscale: https://treeport-dev.example.ts.net:${tailscaleState.port}`
     )
+
     const exited = new Promise((resolve) => child.once('exit', resolve))
     child.kill('SIGTERM')
     await exited
+    await expect(readFile(tailscaleStateFile, 'utf8')).rejects.toThrow()
+    expect(await readFile(tailscaleCallsFile, 'utf8')).toContain(
+      `["serve","--https=${tailscaleState.port}","off"]`
+    )
   }, 10_000)
 })
