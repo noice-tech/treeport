@@ -4,7 +4,7 @@ import tailwindcss from '@tailwindcss/vite'
 
 const apiTarget =
   process.env.TREEPORT_API_URL?.trim() || 'http://127.0.0.1:8733'
-const webHost = process.env.TREEPORT_WEB_HOST?.trim() || '0.0.0.0'
+const webHost = process.env.TREEPORT_WEB_HOST?.trim() || '127.0.0.1'
 const webPort = Number.parseInt(
   process.env.TREEPORT_WEB_PORT?.trim() || '5173',
   10

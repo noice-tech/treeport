@@ -76,13 +76,13 @@ describe('development environment allocation', () => {
     const expectedApiPort = await findAvailablePort(8733, '127.0.0.1')
     const occupiedWebPort = await findAvailablePort(
       5173,
-      ['0.0.0.0', '127.0.0.1'],
+      '127.0.0.1',
       new Set([expectedApiPort])
     )
     await listen(occupiedWebPort)
     const expectedWebPort = await findAvailablePort(
       5173,
-      ['0.0.0.0', '127.0.0.1'],
+      '127.0.0.1',
       new Set([expectedApiPort])
     )
 
@@ -125,20 +125,33 @@ process.on('SIGHUP', () => stop('SIGHUP'))
     )
     await chmod(fakePnpm, 0o755)
 
-    const startDevelopment = (name) => {
+    await writeFile(
+      path.join(directory, 'tailscale'),
+      `#!/usr/bin/env node
+process.stdout.write(process.env.FAKE_TAILSCALE_STATUS || '')
+`
+    )
+    await chmod(path.join(directory, 'tailscale'), 0o755)
+
+    const startDevelopment = (name, args = [], environment = {}) => {
       const environmentFile = path.join(directory, `${name}-environment`)
       const signalFile = path.join(directory, `${name}-signal`)
       let output = ''
-      const child = spawn(process.execPath, ['scripts/development.mjs'], {
-        cwd: path.resolve('.'),
-        env: {
-          ...process.env,
-          PATH: `${directory}:${process.env.PATH}`,
-          FAKE_ENVIRONMENT_FILE: environmentFile,
-          FAKE_SIGNAL_FILE: signalFile
-        },
-        stdio: ['ignore', 'pipe', 'pipe']
-      })
+      const child = spawn(
+        process.execPath,
+        ['scripts/development.mjs', ...args],
+        {
+          cwd: path.resolve('.'),
+          env: {
+            ...process.env,
+            PATH: `${directory}:${process.env.PATH}`,
+            FAKE_ENVIRONMENT_FILE: environmentFile,
+            FAKE_SIGNAL_FILE: signalFile,
+            ...environment
+          },
+          stdio: ['ignore', 'pipe', 'pipe']
+        }
+      )
       children.push(child)
       child.stdout.on('data', (chunk) => {
         output += chunk
@@ -204,7 +217,7 @@ process.on('SIGHUP', () => stop('SIGHUP'))
       const environment = environments[index]
       const development = [first, second][index]
       expect(environment.apiHost).toBe('127.0.0.1')
-      expect(environment.webHost).toBe('0.0.0.0')
+      expect(environment.webHost).toBe('127.0.0.1')
       expect(development.output()).toContain(
         `Local:     http://127.0.0.1:${environment.webPort}`
       )
@@ -219,5 +232,66 @@ process.on('SIGHUP', () => stop('SIGHUP'))
     await expect(second.exited).resolves.toEqual({ code: 129, signal: null })
     await expect(readFile(first.signalFile, 'utf8')).resolves.toBe('SIGINT')
     await expect(readFile(second.signalFile, 'utf8')).resolves.toBe('SIGHUP')
+  }, 10_000)
+
+  it('binds remote development only to the Tailscale address while keeping the API local', async () => {
+    const directory = await mkdtemp(
+      path.join(os.tmpdir(), 'treeport-development-tailscale-test-')
+    )
+    temporaryDirectories.push(directory)
+    const environmentFile = path.join(directory, 'environment')
+    const fakePnpm = path.join(directory, 'pnpm')
+    await writeFile(
+      fakePnpm,
+      `#!/usr/bin/env node
+const fs = require('node:fs')
+const net = require('node:net')
+const api = net.createServer().listen(Number(process.env.TREEPORT_PORT), process.env.TREEPORT_HOST)
+const web = net.createServer().listen(Number(process.env.TREEPORT_WEB_PORT), process.env.TREEPORT_WEB_HOST, () => fs.writeFileSync(process.env.FAKE_ENVIRONMENT_FILE, JSON.stringify(process.env)))
+const stop = () => api.close(() => web.close(() => process.exit(0)))
+process.on('SIGTERM', stop)
+process.on('SIGINT', stop)
+`
+    )
+    await chmod(fakePnpm, 0o755)
+    await writeFile(
+      path.join(directory, 'tailscale'),
+      `#!/usr/bin/env node
+process.stdout.write(JSON.stringify({ BackendState: 'Running', Self: { TailscaleIPs: ['127.0.0.1'] } }))
+`
+    )
+    await chmod(path.join(directory, 'tailscale'), 0o755)
+
+    const child = spawn(
+      process.execPath,
+      ['scripts/development.mjs', '--tailscale'],
+      {
+        cwd: path.resolve('.'),
+        env: {
+          ...process.env,
+          PATH: `${directory}:${process.env.PATH}`,
+          FAKE_ENVIRONMENT_FILE: environmentFile
+        },
+        stdio: 'ignore'
+      }
+    )
+    children.push(child)
+    await waitUntil(
+      () =>
+        readFile(environmentFile).then(
+          () => true,
+          () => false
+        ),
+      'the Tailscale development process'
+    )
+    const environment = JSON.parse(await readFile(environmentFile, 'utf8'))
+    expect(environment.TREEPORT_HOST).toBe('127.0.0.1')
+    expect(environment.TREEPORT_WEB_HOST).toBe('127.0.0.1')
+    expect(environment.TREEPORT_DESKTOP_URL).toBe(
+      `http://127.0.0.1:${environment.TREEPORT_WEB_PORT}`
+    )
+    const exited = new Promise((resolve) => child.once('exit', resolve))
+    child.kill('SIGTERM')
+    await exited
   }, 10_000)
 })

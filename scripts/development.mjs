@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { open, readFile, unlink } from 'node:fs/promises'
 import net from 'node:net'
 import os from 'node:os'
@@ -6,11 +6,84 @@ import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const loopbackHost = '127.0.0.1'
-const webHost = '0.0.0.0'
+const lanHost = '0.0.0.0'
 const startupLockPath = path.join(
   os.tmpdir(),
   `treeport-development-${typeof process.getuid === 'function' ? process.getuid() : 'user'}.lock`
 )
+
+function urlFor(host, port) {
+  return `http://${host.includes(':') ? `[${host}]` : host}:${port}`
+}
+
+function tailscaleHost() {
+  const result = spawnSync('tailscale', ['status', '--json'], {
+    encoding: 'utf8'
+  })
+  if (result.error?.code === 'ENOENT') {
+    throw new Error(
+      'Tailscale is required for `pnpm dev:tailscale`. Install it from https://tailscale.com/download, run `tailscale up`, then retry.'
+    )
+  }
+
+  if (result.error) {
+    throw new Error(`Could not run Tailscale: ${result.error.message}`)
+  }
+
+  if (result.status !== 0) {
+    throw new Error(
+      'Tailscale is not connected. Run `tailscale up`, then retry `pnpm dev:tailscale`.'
+    )
+  }
+
+  let status
+  try {
+    status = JSON.parse(result.stdout)
+  } catch {
+    throw new Error(
+      'Tailscale returned an invalid status response. Run `tailscale up`, then retry.'
+    )
+  }
+
+  if (status?.BackendState !== 'Running') {
+    throw new Error(
+      'Tailscale is not connected. Run `tailscale up`, then retry `pnpm dev:tailscale`.'
+    )
+  }
+
+  const address =
+    status.Self?.TailscaleIPs?.find(
+      (value) => typeof value === 'string' && net.isIP(value) === 4
+    ) ??
+    status.Self?.TailscaleIPs?.find(
+      (value) => typeof value === 'string' && net.isIP(value) === 6
+    )
+
+  if (!address) {
+    throw new Error(
+      'Tailscale is connected but has no Tailscale IP address. Run `tailscale up`, then retry `pnpm dev:tailscale`.'
+    )
+  }
+
+  return address
+}
+
+function developmentMode() {
+  const mode = process.argv[2]
+  if (!mode) {
+    return { name: 'local', webHost: loopbackHost }
+  }
+
+  if (mode === '--tailscale') {
+    return { name: 'tailscale', webHost: tailscaleHost() }
+  }
+
+  if (mode === '--lan') {
+    return { name: 'lan', webHost: lanHost }
+  }
+
+  throw new Error(`Unknown development mode: ${mode}`)
+}
 
 async function processIsRunning(pid) {
   try {
@@ -120,14 +193,7 @@ function sendSignalToChild(child, signal) {
   }
 }
 
-function networkUrls(port) {
-  return Object.values(os.networkInterfaces())
-    .flatMap((addresses) => addresses ?? [])
-    .filter((address) => address.family === 'IPv4' && !address.internal)
-    .map((address) => `http://${address.address}:${port}`)
-}
-
-async function waitForStackPorts(apiPort, webPort, childExit) {
+async function waitForStackPorts(apiPort, webPort, webHost, childExit) {
   for (let attempt = 0; attempt < 120; attempt += 1) {
     const [apiAvailable, webAvailable] = await Promise.all([
       portIsAvailable(apiPort, loopbackHost),
@@ -150,15 +216,16 @@ async function waitForStackPorts(apiPort, webPort, childExit) {
 }
 
 export async function main() {
+  const mode = developmentMode()
   const releaseStartupLock = await acquireStartupLock()
   const apiPort = await findAvailablePort(8733, loopbackHost)
   const webPort = await findAvailablePort(
     5173,
-    [webHost, loopbackHost],
+    mode.webHost,
     new Set([apiPort])
   )
-  const apiUrl = `http://${loopbackHost}:${apiPort}`
-  const webUrl = `http://${loopbackHost}:${webPort}`
+  const apiUrl = urlFor(loopbackHost, apiPort)
+  const webUrl = urlFor(mode.webHost, webPort)
   const repositoryRoot = path.resolve(
     path.dirname(fileURLToPath(import.meta.url)),
     '..'
@@ -168,7 +235,7 @@ export async function main() {
     TREEPORT_HOST: loopbackHost,
     TREEPORT_PORT: String(apiPort),
     TREEPORT_API_URL: apiUrl,
-    TREEPORT_WEB_HOST: webHost,
+    TREEPORT_WEB_HOST: mode.webHost,
     TREEPORT_WEB_PORT: String(webPort),
     TREEPORT_DESKTOP_URL: webUrl,
     TREEPORT_DESKTOP_USER_DATA: path.join(
@@ -178,11 +245,21 @@ export async function main() {
   }
 
   console.log('\nTreeport development')
-  console.log(`Local:     ${webUrl}`)
+  console.log(
+    `${mode.name === 'tailscale' ? 'Tailscale' : 'Local'}:     ${webUrl}`
+  )
   console.log(`API:       ${apiUrl}`)
   console.log(`Web port:  ${webPort}`)
-  for (const url of networkUrls(webPort)) {
-    console.log(`Network:   ${url}`)
+  if (mode.name === 'tailscale') {
+    console.log(
+      'Bound only to this machine’s Tailscale address; Tailscale Funnel is not used.'
+    )
+  }
+
+  if (mode.name === 'lan') {
+    console.warn(
+      'LAN mode exposes an unauthenticated development server on every network interface. Use only on a trusted LAN.'
+    )
   }
 
   const child = spawn(
@@ -230,7 +307,12 @@ export async function main() {
   process.on('SIGTERM', stopOnSigterm)
   process.on('SIGHUP', stopOnSighup)
 
-  const portsClaimed = await waitForStackPorts(apiPort, webPort, childExit)
+  const portsClaimed = await waitForStackPorts(
+    apiPort,
+    webPort,
+    mode.webHost,
+    childExit
+  )
   await releaseStartupLock()
   if (!portsClaimed && child.exitCode === null && child.signalCode === null) {
     console.warn(
