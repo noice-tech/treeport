@@ -36,7 +36,7 @@ Read the documentation at [treeport.app](https://treeport.app).
 
 Contributor requirements: Node.js 24+, pnpm 11, Git, and tmux 3.2+.
 
-`pnpm dev` starts the daemon, web UI, and Electron app together using available per-worktree ports.
+`pnpm dev` starts the daemon, web UI, and Electron app together using available per-worktree ports. It binds both development services to loopback by default.
 
 ```sh
 pnpm install
@@ -46,6 +46,8 @@ pnpm typecheck
 pnpm lint
 pnpm build
 ```
+
+For private tailnet testing, run `tailscale up` and then `pnpm dev:tailscale`. It binds the web server only to the machine's Tailscale address while keeping the API on loopback; it does not use Serve or Funnel. `pnpm dev:lan` is an explicit, unauthenticated trusted-LAN escape hatch. See the [contributor development guide](apps/docs/src/content/docs/building-apps/contributing.md) for the security model.
 
 ## Releases
 

@@ -61,7 +61,11 @@ export default defineConfig({
         {
           label: 'Building apps',
           items: [
-            { label: 'Coding agents', slug: 'building-apps/coding-agents' }
+            { label: 'Coding agents', slug: 'building-apps/coding-agents' },
+            {
+              label: 'Contributor development',
+              slug: 'building-apps/contributing'
+            }
           ]
         },
         {
