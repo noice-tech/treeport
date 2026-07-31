@@ -1,11 +1,19 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
+  "ignoreBinaries": ["tailscale"],
   "workspaces": {
     ".": {
       "ignoreDependencies": ["@treeport/treeport"]
     },
     "apps/desktop": {
-      "entry": ["forge.config.ts", "src/main.ts", "src/preload.ts"]
+      "entry": [
+        "forge.config.ts",
+        "src/main.ts",
+        "src/preload.ts",
+        "src/shell-preload.ts",
+        "src/shell/shell.tsx",
+        "src/shell/tailwind.css"
+      ]
     }
   }
 }
