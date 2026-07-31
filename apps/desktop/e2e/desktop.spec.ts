@@ -50,7 +50,10 @@ test('connects the desktop shell, preserves native behavior, and restores render
 
     response.setHeader('content-type', 'text/html')
     response.end(`<!doctype html>
-      <body data-command="none">Treeport desktop test</body>
+      <body data-command="none">
+        Treeport desktop test
+        <a href="https://example.test/docs" target="_blank" rel="noopener noreferrer">Open docs</a>
+      </body>
       <script>
         window.treeportDesktop.onCommand((command) => {
           document.body.dataset.command = command
@@ -114,11 +117,16 @@ test('connects the desktop shell, preserves native behavior, and restores render
     await electronApp.evaluate(({ shell }) => {
       const scope = globalThis as typeof globalThis & {
         __openedTreeportFilePaths?: string[]
+        __openedTreeportExternalUrls?: string[]
       }
       scope.__openedTreeportFilePaths = []
+      scope.__openedTreeportExternalUrls = []
       shell.openPath = async (filePath) => {
         scope.__openedTreeportFilePaths!.push(filePath)
         return ''
+      }
+      shell.openExternal = async (url) => {
+        scope.__openedTreeportExternalUrls!.push(url)
       }
     })
     const filePath = path.join(userData, 'résumé draft.txt')
@@ -157,6 +165,25 @@ test('connects the desktop shell, preserves native behavior, and restores render
           ).__openedTreeportFilePaths
       )
     ).toEqual([filePath])
+
+    await electronApp.evaluate(({ webContents }, expectedOrigin) => {
+      const guest = webContents
+        .getAllWebContents()
+        .find((contents) => contents.getURL().startsWith(expectedOrigin))
+      return guest?.executeJavaScript(`document.querySelector('a')?.click()`)
+    }, origin)
+    await expect
+      .poll(() =>
+        electronApp!.evaluate(
+          () =>
+            (
+              globalThis as typeof globalThis & {
+                __openedTreeportExternalUrls?: string[]
+              }
+            ).__openedTreeportExternalUrls
+        )
+      )
+      .toEqual(['https://example.test/docs'])
 
     expect(
       await electronApp.evaluate(

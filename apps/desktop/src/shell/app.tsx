@@ -37,6 +37,9 @@ export function App() {
           key={computer.origin}
           src={computer.origin}
           partition="persist:treeport-desktop"
+          // React removes a boolean allowpopups value, but Electron requires the
+          // attribute to exist before the guest can request a new window.
+          allowpopups={'true' as unknown as boolean}
           className={
             state.platform === 'darwin' && state.fullscreen
               ? 'fixed inset-0 h-full w-full'
