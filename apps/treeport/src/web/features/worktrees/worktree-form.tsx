@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import type { ProjectRecord, TerminalPreset } from '@treeport/shared'
 import { Button } from '../../components/ui/button'
 import { FormField } from '../../components/ui/form-field'
@@ -54,11 +54,6 @@ export function WorktreeForm({
     initialPresetUnavailable && !presetsLoading && !presetsError
   const effectiveInitialPresetId =
     initialPresetUnavailable && !presetsLoading ? 'shell' : initialPresetId
-  useEffect(() => {
-    if (initialPresetMissing) {
-      localStorage.setItem(INITIAL_TERMINAL_PRESET_STORAGE_KEY, 'shell')
-    }
-  }, [initialPresetMissing])
   const base = baseValue === 'default' ? 'default' : 'current'
   return (
     <form
@@ -74,6 +69,10 @@ export function WorktreeForm({
         const selectedPreset = initialTerminalPresets.find(
           (preset) => preset.id === effectiveInitialPresetId
         )
+        if (initialPresetMissing) {
+          localStorage.setItem(INITIAL_TERMINAL_PRESET_STORAGE_KEY, 'shell')
+        }
+
         onSubmit(
           submittedName,
           base,
