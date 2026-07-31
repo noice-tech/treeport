@@ -11,6 +11,7 @@ export function SidebarAction({
   tooltip = label,
   className,
   disabled,
+  keyShortcuts,
   onClick,
   children
 }: {
@@ -18,6 +19,7 @@ export function SidebarAction({
   tooltip?: string
   className?: string
   disabled?: boolean
+  keyShortcuts?: string
   onClick: (trigger: HTMLButtonElement) => void
   children: ReactNode
 }) {
@@ -30,6 +32,7 @@ export function SidebarAction({
           size="icon-sm"
           className={className}
           aria-label={label}
+          aria-keyshortcuts={keyShortcuts}
           disabled={disabled}
           onClick={(event) => onClick(event.currentTarget)}
         >

@@ -42,6 +42,7 @@ const DialogContent = React.forwardRef<
   React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content> & {
     restoreFocusTo?: HTMLElement | null
     mobilePresentation?: 'sheet' | 'dialog'
+    overlayClassName?: string
   }
 >(
   (
@@ -50,6 +51,7 @@ const DialogContent = React.forwardRef<
       children,
       restoreFocusTo,
       mobilePresentation = 'sheet',
+      overlayClassName,
       onCloseAutoFocus,
       style,
       ...props
@@ -67,7 +69,7 @@ const DialogContent = React.forwardRef<
 
     return (
       <DialogPortal>
-        <DialogOverlay />
+        <DialogOverlay className={overlayClassName} />
         <DialogPrimitive.Content
           ref={ref}
           className={cn(

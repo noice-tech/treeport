@@ -25,7 +25,11 @@ import {
   WorkspaceShell
 } from './features/sidebar/workspace-shell'
 import { TerminalPresetsDialog } from './features/terminal-presets/terminal-presets-dialog'
-import { TerminalWorkspace } from './features/terminals/terminal-workspace'
+import { NewTerminalDialog } from './features/terminals/new-terminal-dialog'
+import {
+  TerminalWorkspace,
+  useTerminalWorkflows
+} from './features/terminals/terminal-workspace'
 import { CreateWorktreeDialog } from './features/worktrees/create-worktree-dialog'
 import { RemoveWorktreeDialog } from './features/worktrees/remove-worktree-dialog'
 import { useWorktreeWorkflows } from './features/worktrees/worktree-workflows'
@@ -49,6 +53,7 @@ import { useWorkspaceNavigate } from './workspace-router-navigation'
 type AppDialog =
   | { type: 'project' }
   | { type: 'worktree'; project: ProjectRecord }
+  | { type: 'terminal'; projectId: string; worktreeId: string | null }
   | { type: 'presets' }
   | { type: 'remove'; worktree: WorktreeRecord; preview: RemovePreview }
   | null
@@ -177,7 +182,7 @@ function WorkspaceApp() {
       activeProject?.worktrees.flatMap((worktree) => worktree.terminals) ?? [],
     [activeProject]
   )
-  const selectTerminal = (terminal: TerminalRecord) => {
+  const navigateToTerminal = (terminal: TerminalRecord) => {
     const target = targetForTerminal(projects, terminal)
     if (target) {
       void navigateToWorkspace(target)
@@ -247,6 +252,44 @@ function WorkspaceApp() {
       ),
     selectedTerminalId
   })
+  const terminalWorkflows = useTerminalWorkflows({
+    projects,
+    selectedProject,
+    selectedWorktree,
+    selectedTerminal,
+    dialogOpen: dialog !== null,
+    onOpenNewTerminalDialog: () => {
+      if (!selectedProject) {
+        return
+      }
+
+      openDialog({
+        type: 'terminal',
+        projectId: selectedProject.id,
+        worktreeId: selectedWorktree?.id ?? null
+      })
+    }
+  })
+  const selectTerminal = (terminal: TerminalRecord) => {
+    terminalWorkflows.clearPendingTerminalSelection()
+    navigateToTerminal(terminal)
+  }
+  const terminalDialogProject =
+    dialog?.type === 'terminal'
+      ? (projects.find((project) => project.id === dialog.projectId) ?? null)
+      : null
+  const terminalDialogWorktree =
+    dialog?.type === 'terminal' && dialog.worktreeId
+      ? (terminalDialogProject?.worktrees.find(
+          (worktree) => worktree.id === dialog.worktreeId
+        ) ?? null)
+      : null
+  const terminalLaunchDisabled =
+    !terminalDialogProject ||
+    !terminalDialogWorktree ||
+    terminalDialogProject.availability.state === 'unavailable' ||
+    Boolean(terminalDialogWorktree.prunable) ||
+    terminalDialogWorktree.status !== 'active'
 
   return (
     <>
@@ -258,7 +301,9 @@ function WorkspaceApp() {
       />
       <ProjectSwitcherShortcut blocked={dialog !== null} />
       <WorkspaceMobileHeader
-        selectedTerminalId={selectedTerminalId}
+        selectedTerminalId={
+          terminalWorkflows.selectedPendingTerminal ? null : selectedTerminalId
+        }
         terminals={activeProjectTerminals}
         onSelectTerminal={selectTerminal}
       />
@@ -284,13 +329,33 @@ function WorkspaceApp() {
           projectsLoaded={projectsQuery.data !== undefined}
           activeProject={activeProject}
           selectedWorktree={selectedWorktree}
-          selectedTerminalId={selectedTerminalId}
+          selectedTerminalId={
+            terminalWorkflows.selectedPendingTerminal
+              ? null
+              : selectedTerminalId
+          }
+          selectedPendingTerminalId={
+            terminalWorkflows.selectedPendingTerminal?.id ?? null
+          }
+          pendingTerminals={terminalWorkflows.pendingTerminals}
           pendingWorktrees={pendingWorktrees}
           pendingRemovals={pendingRemovals}
           onRetryProjects={() => void projectsQuery.refetch()}
           onSelectTerminal={selectTerminal}
+          onSelectPendingTerminal={terminalWorkflows.selectPendingTerminal}
+          onCloseTerminal={terminalWorkflows.requestCloseTerminal}
           onSelectWorktree={selectWorktree}
           onPrepareRemoval={prepareRemoval}
+          onOpenTerminalDialog={(project, worktree, trigger) =>
+            openDialog(
+              {
+                type: 'terminal',
+                projectId: project.id,
+                worktreeId: worktree?.id ?? null
+              },
+              trigger
+            )
+          }
           onOpenWorktreeDialog={(project, trigger) =>
             openDialog({ type: 'worktree', project }, trigger)
           }
@@ -298,19 +363,14 @@ function WorkspaceApp() {
       </WorkspaceSidebar>
       <WorkspaceMain>
         <TerminalWorkspace
-          projects={projects}
-          selectedProject={selectedProject}
           selectedWorktree={selectedWorktree}
           selectedTerminal={selectedTerminal}
+          selectedPendingTerminal={terminalWorkflows.selectedPendingTerminal}
+          pendingTerminals={terminalWorkflows.pendingTerminals}
           loading={projectsQuery.isPending}
-          presets={presets}
-          presetsLoading={presetsQuery.isPending}
-          presetsError={presetsQuery.isError}
           dialogOpen={dialog !== null}
           onSelectTerminal={selectTerminal}
-          onManagePresets={(trigger) =>
-            openDialog({ type: 'presets' }, trigger ?? undefined)
-          }
+          onSelectPendingTerminal={terminalWorkflows.selectPendingTerminal}
         />
       </WorkspaceMain>
       {showSyncDegraded ? (
@@ -338,6 +398,29 @@ function WorkspaceApp() {
         presetsError={presetsQuery.isError}
         onRetryPresets={() => void presetsQuery.refetch()}
         onSubmit={submitWorktreeCreation}
+      />
+      <NewTerminalDialog
+        open={dialog?.type === 'terminal'}
+        onOpenChange={(open) => !open && setDialog(null)}
+        restoreFocusTo={dialogTriggerRef.current}
+        worktreeName={terminalDialogWorktree?.name ?? null}
+        presets={presets}
+        presetsLoading={presetsQuery.isPending}
+        presetsError={presetsQuery.isError}
+        launchDisabled={terminalLaunchDisabled}
+        onCreateTerminal={(input) => {
+          if (!terminalDialogProject || !terminalDialogWorktree) {
+            return
+          }
+
+          setDialog(null)
+          terminalWorkflows.createTerminalInWorktree(
+            terminalDialogProject,
+            terminalDialogWorktree,
+            input
+          )
+        }}
+        onManagePresets={() => setDialog({ type: 'presets' })}
       />
       <TerminalPresetsDialog
         open={dialog?.type === 'presets'}
