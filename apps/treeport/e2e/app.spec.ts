@@ -2839,8 +2839,8 @@ test.describe('desktop worktree terminal UI', () => {
         new URL(request.url()).pathname === `/api/terminals/${terminalId}`
     )
     await page
-      .getByRole('button', { name: /^Close dev · \/worktrees\/topic$/ })
-      .click()
+      .getByRole('tab', { name: /^dev · \/worktrees\/topic,/ })
+      .click({ button: 'middle' })
     await closeRequest
     expect(confirmationShown).toBe(false)
     await expect(

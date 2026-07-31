@@ -85,7 +85,7 @@ interface TerminalViewProps {
   onNewTerminalMenuOpenChange: (open: boolean) => void
   onCloseTerminal: (
     terminal: TerminalRecord,
-    runtimeMetadata: { title: string | null; hasForegroundProcess: boolean }
+    runtimeMetadata?: { title: string | null; hasForegroundProcess: boolean }
   ) => void
   onStatusChange: () => void
 }
@@ -514,6 +514,19 @@ export function TerminalView({
                       selected &&
                         'bg-zinc-800 hover:bg-zinc-700/70 after:opacity-100'
                     )}
+                    onMouseDown={(event) => {
+                      if (event.button === 1) {
+                        event.preventDefault()
+                      }
+                    }}
+                    onAuxClick={(event) => {
+                      if (event.button !== 1) {
+                        return
+                      }
+
+                      event.preventDefault()
+                      onCloseTerminal(item)
+                    }}
                   >
                     <TabsTrigger
                       value={item.id}
