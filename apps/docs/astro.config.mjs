@@ -59,8 +59,13 @@ export default defineConfig({
           ]
         },
         {
-          label: 'Building apps',
+          label: 'Tools and workflows',
           items: [
+            {
+              label: 'Worktree-friendly development',
+              slug: 'workflows/worktree-friendly-development'
+            },
+            { label: 'Shell setup', slug: 'workflows/shell-setup' },
             { label: 'Coding agents', slug: 'building-apps/coding-agents' },
             {
               label: 'Contributor development',
