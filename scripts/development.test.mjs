@@ -228,12 +228,13 @@ process.stdout.write(process.env.FAKE_TAILSCALE_STATUS || '')
       path.resolve('apps/treeport/.treeport-dev/desktop')
     )
     expect(environments[0].arguments).toEqual([
-      '--parallel',
-      '--filter',
-      '@treeport/treeport',
-      '--filter',
-      '@treeport/desktop',
-      'dev'
+      'exec',
+      'turbo',
+      'run',
+      'dev',
+      '--ui=stream',
+      '--filter=@treeport/treeport',
+      '--filter=@treeport/desktop'
     ])
     expect(environments[1].arguments).toEqual(environments[0].arguments)
     for (let index = 0; index < environments.length; index += 1) {
@@ -245,7 +246,7 @@ process.stdout.write(process.env.FAKE_TAILSCALE_STATUS || '')
         `Local:     http://127.0.0.1:${environment.webPort}`
       )
       expect(development.output()).toContain(
-        `API:       http://127.0.0.1:${environment.apiPort}`
+        `App server: http://127.0.0.1:${environment.apiPort}`
       )
       expect(development.output()).toContain(
         `Desktop renderer port: ${environment.desktopRendererPort}`
@@ -351,6 +352,7 @@ if (args[0] === 'status') {
     expect(environment.TREEPORT_HOST).toBe('127.0.0.1')
     expect(environment.TREEPORT_WEB_HOST).toBe('127.0.0.1')
     expect(environment.TREEPORT_DESKTOP_URL).toBe(localUrl)
+    expect(tailscaleState.port).toBe(environment.TREEPORT_PORT)
     expect(tailscaleState.target).toBe(localUrl)
     expect(output).toContain(`Local:     ${localUrl}`)
     expect(output).toContain(

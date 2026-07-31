@@ -276,7 +276,17 @@ async function waitForStackPorts(apiPort, webPort, webHost, childExit) {
 export async function main() {
   const mode = developmentMode()
   const releaseStartupLock = await acquireStartupLock()
-  const apiPort = await findAvailablePort(8733, loopbackHost)
+  const tailscaleServeConfig =
+    mode.name === 'tailscale'
+      ? tailscaleJson(['serve', 'status', '--json'])
+      : null
+  let apiPort = await findAvailablePort(8733, loopbackHost)
+  while (
+    tailscaleServeConfig &&
+    tailscalePortIsServed(tailscaleServeConfig, apiPort)
+  ) {
+    apiPort = await findAvailablePort(apiPort + 1, loopbackHost)
+  }
   const webPort = await findAvailablePort(
     5173,
     mode.webHost,
@@ -291,20 +301,11 @@ export async function main() {
   const webUrl = urlFor(mode.webHost, webPort)
   let tailscaleRemote = null
   if (mode.name === 'tailscale') {
-    const serveConfig = tailscaleJson(['serve', 'status', '--json'])
-    let port = webPort
-    while (port <= 65_535 && tailscalePortIsServed(serveConfig, port)) {
-      port += 1
-    }
-    if (port > 65_535) {
-      throw new Error('Tailscale Serve has no available port')
-    }
-
-    tailscale(['serve', '--bg', `--https=${port}`, webUrl])
+    tailscale(['serve', '--bg', `--https=${apiPort}`, webUrl])
     tailscaleRemote = {
-      port,
+      port: apiPort,
       target: webUrl,
-      url: `https://${mode.tailscaleDnsName}:${port}`
+      url: `https://${mode.tailscaleDnsName}:${apiPort}`
     }
   }
 
@@ -333,7 +334,7 @@ export async function main() {
     console.log(`Tailscale: ${tailscaleRemote.url}`)
   }
 
-  console.log(`API:       ${apiUrl}`)
+  console.log(`App server: ${apiUrl}`)
   console.log(`Web port:  ${webPort}`)
   console.log(`Desktop renderer port: ${desktopRendererPort}`)
 
@@ -346,12 +347,13 @@ export async function main() {
   const child = spawn(
     'pnpm',
     [
-      '--parallel',
-      '--filter',
-      '@treeport/treeport',
-      '--filter',
-      '@treeport/desktop',
-      'dev'
+      'exec',
+      'turbo',
+      'run',
+      'dev',
+      '--ui=stream',
+      '--filter=@treeport/treeport',
+      '--filter=@treeport/desktop'
     ],
     {
       cwd: repositoryRoot,
