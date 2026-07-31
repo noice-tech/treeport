@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { PlusIcon, TrashIcon } from '@heroicons/react/16/solid'
 import { TERMINAL_NAME_MAX_LENGTH, type TerminalPreset } from '@treeport/shared'
@@ -25,54 +25,64 @@ export function TerminalPresetsManager({
   onRetry: () => void
 }) {
   const queryClient = useQueryClient()
-  const [editingId, setEditingId] = useState<string | null>(null)
-  const [loadedUpdatedAt, setLoadedUpdatedAt] = useState<string | null>(null)
-  const [name, setName] = useState('')
-  const [command, setCommand] = useState('')
-  const [closeOnSuccess, setCloseOnSuccess] = useState(false)
-  const [commandError, setCommandError] = useState<string | null>(null)
-  const [notice, setNotice] = useState<string | null>(null)
+  const [draft, setDraft] = useState({
+    editingId: null as string | null,
+    loadedUpdatedAt: null as string | null,
+    name: '',
+    command: '',
+    closeOnSuccess: false,
+    commandError: null as string | null,
+    notice: null as string | null
+  })
+  const {
+    editingId,
+    loadedUpdatedAt,
+    name,
+    command,
+    closeOnSuccess,
+    commandError,
+    notice
+  } = draft
 
   const resetForm = () => {
-    setEditingId(null)
-    setLoadedUpdatedAt(null)
-    setName('')
-    setCommand('')
-    setCloseOnSuccess(false)
-    setCommandError(null)
-    setNotice(null)
+    setDraft({
+      editingId: null,
+      loadedUpdatedAt: null,
+      name: '',
+      command: '',
+      closeOnSuccess: false,
+      commandError: null,
+      notice: null
+    })
   }
 
-  useEffect(() => {
-    if (!editingId) {
-      return
-    }
-
+  if (editingId) {
     const preset = presets.find((candidate) => candidate.id === editingId)
     if (!preset) {
-      setEditingId(null)
-      setLoadedUpdatedAt(null)
-      setName('')
-      setCommand('')
-      setCloseOnSuccess(false)
-      setCommandError(null)
-      setNotice('That preset was deleted. You can create a new one.')
-      return
+      setDraft({
+        editingId: null,
+        loadedUpdatedAt: null,
+        name: '',
+        command: '',
+        closeOnSuccess: false,
+        commandError: null,
+        notice: 'That preset was deleted. You can create a new one.'
+      })
+    } else if (preset.updatedAt !== loadedUpdatedAt) {
+      setDraft({
+        editingId: preset.id,
+        loadedUpdatedAt: preset.updatedAt,
+        name: preset.name,
+        command: formatCommandLine([preset.executable, ...preset.args]),
+        closeOnSuccess: preset.closeOnSuccess,
+        commandError: null,
+        notice: loadedUpdatedAt
+          ? 'This preset changed, so the latest saved values were loaded.'
+          : notice
+      })
     }
+  }
 
-    if (preset.updatedAt !== loadedUpdatedAt) {
-      setLoadedUpdatedAt(preset.updatedAt)
-      setName(preset.name)
-      setCommand(formatCommandLine([preset.executable, ...preset.args]))
-      setCloseOnSuccess(preset.closeOnSuccess)
-      setCommandError(null)
-      if (loadedUpdatedAt) {
-        setNotice(
-          'This preset changed, so the latest saved values were loaded.'
-        )
-      }
-    }
-  }, [editingId, loadedUpdatedAt, presets])
   const savePreset = useMutation({
     mutationFn: ({
       presetId,
@@ -99,13 +109,15 @@ export function TerminalPresetsManager({
               )
             : [...(current ?? []), preset]
       )
-      setEditingId(preset.id)
-      setLoadedUpdatedAt(preset.updatedAt)
-      setName(preset.name)
-      setCommand(formatCommandLine([preset.executable, ...preset.args]))
-      setCloseOnSuccess(preset.closeOnSuccess)
-      setCommandError(null)
-      setNotice('Preset saved.')
+      setDraft({
+        editingId: preset.id,
+        loadedUpdatedAt: preset.updatedAt,
+        name: preset.name,
+        command: formatCommandLine([preset.executable, ...preset.args]),
+        closeOnSuccess: preset.closeOnSuccess,
+        commandError: null,
+        notice: 'Preset saved.'
+      })
     },
     onError: (mutationError) => {
       void queryClient.invalidateQueries({ queryKey: terminalPresetsQueryKey })
@@ -124,8 +136,15 @@ export function TerminalPresetsManager({
         (current) => current?.filter((preset) => preset.id !== deletedPreset.id)
       )
       if (editingId === deletedPreset.id) {
-        resetForm()
-        setNotice('Preset deleted.')
+        setDraft({
+          editingId: null,
+          loadedUpdatedAt: null,
+          name: '',
+          command: '',
+          closeOnSuccess: false,
+          commandError: null,
+          notice: 'Preset deleted.'
+        })
       }
     },
     onError: (mutationError) => {
@@ -184,15 +203,18 @@ export function TerminalPresetsManager({
                   aria-current={editingId === preset.id ? 'true' : undefined}
                   disabled={busy}
                   onClick={() => {
-                    setEditingId(preset.id)
-                    setLoadedUpdatedAt(preset.updatedAt)
-                    setName(preset.name)
-                    setCommand(
-                      formatCommandLine([preset.executable, ...preset.args])
-                    )
-                    setCloseOnSuccess(preset.closeOnSuccess)
-                    setCommandError(null)
-                    setNotice(null)
+                    setDraft({
+                      editingId: preset.id,
+                      loadedUpdatedAt: preset.updatedAt,
+                      name: preset.name,
+                      command: formatCommandLine([
+                        preset.executable,
+                        ...preset.args
+                      ]),
+                      closeOnSuccess: preset.closeOnSuccess,
+                      commandError: null,
+                      notice: null
+                    })
                   }}
                 >
                   <span className="truncate text-sm font-medium text-zinc-100">
@@ -247,7 +269,10 @@ export function TerminalPresetsManager({
             event.preventDefault()
             const parsed = parseCommandLine(command)
             if (parsed.argv === null) {
-              setCommandError(parsed.error)
+              setDraft((current) => ({
+                ...current,
+                commandError: parsed.error
+              }))
               return
             }
 
@@ -285,8 +310,11 @@ export function TerminalPresetsManager({
               autoFocus
               required
               onChange={(event) => {
-                setName(event.target.value)
-                setNotice(null)
+                setDraft((current) => ({
+                  ...current,
+                  name: event.target.value,
+                  notice: null
+                }))
               }}
               placeholder="Code review"
             />
@@ -304,9 +332,12 @@ export function TerminalPresetsManager({
                 commandError ? 'preset-command-error' : undefined
               }
               onChange={(event) => {
-                setCommand(event.target.value)
-                setCommandError(null)
-                setNotice(null)
+                setDraft((current) => ({
+                  ...current,
+                  command: event.target.value,
+                  commandError: null,
+                  notice: null
+                }))
               }}
               placeholder="diff main --mode split"
             />
@@ -327,8 +358,11 @@ export function TerminalPresetsManager({
                 checked={closeOnSuccess}
                 disabled={busy}
                 onCheckedChange={(checked) => {
-                  setCloseOnSuccess(checked === true)
-                  setNotice(null)
+                  setDraft((current) => ({
+                    ...current,
+                    closeOnSuccess: checked === true,
+                    notice: null
+                  }))
                 }}
               />
               <div className="grid gap-1">
