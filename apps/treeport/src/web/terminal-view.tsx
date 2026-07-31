@@ -20,6 +20,13 @@ import type {
 } from '@treeport/shared'
 import { Button } from './components/ui/button'
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle
+} from './components/ui/dialog'
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuGroup,
@@ -34,6 +41,7 @@ import {
   TooltipTrigger
 } from './components/ui/tooltip'
 import { cn } from './lib/utils'
+import { useIsMobile } from './hooks/use-mobile'
 import { TerminalStatusIcon } from './components/terminal-status-icon'
 import { useRequestTerminalFocus, useTerminalAutoFocus } from './terminal-focus'
 import {
@@ -163,6 +171,7 @@ export function TerminalView({
 }: TerminalViewProps) {
   const shellRef = useRef<HTMLElement>(null)
   const hostRef = useRef<HTMLDivElement>(null)
+  const pasteTriggerRef = useRef<HTMLButtonElement>(null)
   const newTerminalTriggerRef = useRef<HTMLButtonElement>(null)
   const firstNewTerminalItemRef = useRef<HTMLDivElement>(null)
   const [session, setSession] = useState<TerminalSession | null>(null)
@@ -176,6 +185,7 @@ export function TerminalView({
   const onStatusChangeRef = useRef(onStatusChange)
   onStatusChangeRef.current = onStatusChange
   const requestTerminalFocus = useRequestTerminalFocus()
+  const isMobile = useIsMobile()
 
   useLayoutEffect(() => {
     if (!terminal) {
@@ -311,6 +321,64 @@ export function TerminalView({
     )
   }
 
+  const pasteControls = (
+    <>
+      <label
+        htmlFor="terminal-paste-input"
+        className="text-xs font-medium text-zinc-200"
+      >
+        Paste text here
+      </label>
+      <textarea
+        id="terminal-paste-input"
+        autoFocus
+        rows={2}
+        value={pasteValue}
+        placeholder="Touch and hold here, then choose Paste"
+        className="min-h-16 resize-none rounded-md border border-white/10 bg-zinc-950 px-3 py-2 text-base text-zinc-100 outline-none focus:border-cyan-500"
+        onChange={(event) =>
+          setPaste({
+            terminalId: terminal?.id ?? null,
+            open: true,
+            value: event.target.value
+          })
+        }
+        onPaste={(event) => {
+          const text = event.clipboardData.getData('text')
+          if (!text) {
+            return
+          }
+
+          event.preventDefault()
+          pasteIntoTerminal(text)
+        }}
+      />
+      <div className="flex justify-end gap-2">
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={() =>
+            setPaste({
+              terminalId: terminal?.id ?? null,
+              open: false,
+              value: ''
+            })
+          }
+        >
+          Cancel
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          disabled={!pasteValue}
+          onClick={() => pasteIntoTerminal(pasteValue)}
+        >
+          Send
+        </Button>
+      </div>
+    </>
+  )
   const selectedPendingTerminal = pendingTerminals.find(
     (candidate) => candidate.id === selectedPendingTerminalId
   )
@@ -656,68 +724,45 @@ export function TerminalView({
               ref={hostRef}
               onMouseDown={() => activeSession?.focus({ requestControl: true })}
             />
-            {pasteOpen && (
-              <div
-                className="absolute inset-x-3 bottom-3 z-20 grid gap-2 rounded-lg bg-zinc-900 p-3 shadow-xl ring-1 ring-white/15"
-                role="dialog"
-                aria-label="Paste into terminal"
-              >
-                <label
-                  htmlFor="terminal-paste-input"
-                  className="text-xs font-medium text-zinc-200"
-                >
-                  Paste text here
-                </label>
-                <textarea
-                  id="terminal-paste-input"
-                  autoFocus
-                  rows={2}
-                  value={pasteValue}
-                  placeholder="Touch and hold here, then choose Paste"
-                  className="min-h-16 resize-none rounded-md border border-white/10 bg-zinc-950 px-3 py-2 text-base text-zinc-100 outline-none focus:border-cyan-500"
-                  onChange={(event) =>
-                    setPaste({
-                      terminalId: terminal.id,
-                      open: true,
-                      value: event.target.value
-                    })
-                  }
-                  onPaste={(event) => {
-                    const text = event.clipboardData.getData('text')
-                    if (!text) {
-                      return
-                    }
-
-                    event.preventDefault()
-                    pasteIntoTerminal(text)
-                  }}
-                />
-                <div className="flex justify-end gap-2">
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={() =>
+            {pasteOpen &&
+              (isMobile ? (
+                <Dialog
+                  open
+                  onOpenChange={(open) => {
+                    if (!open) {
                       setPaste({
                         terminalId: terminal.id,
                         open: false,
                         value: ''
                       })
                     }
+                  }}
+                >
+                  <DialogContent
+                    className="max-w-sm gap-3 p-4"
+                    mobilePresentation="dialog"
+                    restoreFocusTo={pasteTriggerRef.current}
                   >
-                    Cancel
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    disabled={!pasteValue}
-                    onClick={() => pasteIntoTerminal(pasteValue)}
-                  >
-                    Send
-                  </Button>
+                    <DialogHeader>
+                      <DialogTitle className="text-lg sm:text-lg">
+                        Paste into terminal
+                      </DialogTitle>
+                      <DialogDescription className="sr-only">
+                        Paste text and send it to the active terminal.
+                      </DialogDescription>
+                    </DialogHeader>
+                    {pasteControls}
+                  </DialogContent>
+                </Dialog>
+              ) : (
+                <div
+                  className="absolute inset-x-3 bottom-3 z-20 grid gap-2 rounded-lg bg-zinc-900 p-3 shadow-xl ring-1 ring-white/15"
+                  role="dialog"
+                  aria-label="Paste into terminal"
+                >
+                  {pasteControls}
                 </div>
-              </div>
-            )}
+              ))}
             {snapshot.hasSelection && !pasteOpen && (
               <div
                 className="terminal-selection-actions absolute right-3 bottom-3 z-10 overflow-hidden rounded-md bg-zinc-800 shadow-lg ring-1 ring-white/15 max-[700px]:bottom-2"
@@ -861,7 +906,12 @@ export function TerminalView({
             >
               Alt
             </Button>
-            <Button variant="ghost" type="button" onClick={requestPaste}>
+            <Button
+              ref={pasteTriggerRef}
+              variant="ghost"
+              type="button"
+              onClick={requestPaste}
+            >
               Paste
             </Button>
             <Button

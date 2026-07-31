@@ -48,6 +48,22 @@ body {
   @apply m-0 antialiased;
 }
 
+@media (max-width: 700px) {
+  .keyboard-safe-dialog {
+    top: calc(
+      var(--dialog-visual-viewport-top, 0px) +
+        var(--dialog-visual-viewport-height, 100dvh) / 2
+    );
+    bottom: auto;
+    left: 50%;
+    width: calc(100% - 2rem);
+    max-height: calc(var(--dialog-visual-viewport-height, 100dvh) - 2rem);
+    transform: translate(-50%, -50%);
+    border-radius: 0.75rem;
+    padding-bottom: 1.25rem;
+  }
+}
+
 /* iOS zooms focused form controls whose rendered text is below 16px. */
 @supports (-webkit-touch-callout: none) {
   [data-slot='input'],
