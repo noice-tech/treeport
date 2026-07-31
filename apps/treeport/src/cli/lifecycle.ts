@@ -41,6 +41,7 @@ export interface HealthRecord {
   ok: true
   version: string
   protocolVersion: number
+  hostname?: string
   pid: number
   instanceId: string | null
   installationMethod: string

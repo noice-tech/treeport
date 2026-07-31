@@ -6,6 +6,7 @@
     "rootDir": ".",
     "outDir": "dist",
     "tsBuildInfoFile": "dist/.tsbuildinfo",
+    "jsx": "react-jsx",
     "lib": ["ES2022", "DOM"],
     "types": ["node", "electron", "@electron-forge/plugin-vite/forge-vite-env"]
   },
@@ -13,6 +14,8 @@
     "forge.config.ts",
     "forge.env.d.ts",
     "src/**/*.ts",
+    "src/**/*.tsx",
+    "src/**/*.d.ts",
     "vite.*.config.ts"
   ]
 }

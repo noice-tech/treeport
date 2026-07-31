@@ -2955,14 +2955,6 @@ test.describe('desktop worktree terminal UI', () => {
     page
   }) => {
     const mocked = await mockApp(page, [], { desktopBridge: true })
-    const desktopTitlebar = page.locator('[data-treeport-desktop-titlebar]')
-    await expect(desktopTitlebar).toBeVisible()
-    await page.evaluate(() => (window as any).__dispatchDesktopFullscreen(true))
-    await expect(desktopTitlebar).toHaveCount(0)
-    await page.evaluate(() =>
-      (window as any).__dispatchDesktopFullscreen(false)
-    )
-    await expect(desktopTitlebar).toBeVisible()
 
     await page.locator('.worktree-row').filter({ hasText: 'topic' }).click()
 

@@ -1,0 +1,82 @@
+import { useState } from 'react'
+import { ComputerSelector } from './computer-selector'
+import { ConnectDialog } from './connect-dialog'
+import { ConnectionPage } from './connection-page'
+import { ManageComputersDialog } from './manage-computers-dialog'
+import { selectedComputer, useShellState } from './shell-state'
+
+function Titlebar() {
+  const state = useShellState()
+  if (!state || (state.platform === 'darwin' && state.fullscreen)) {
+    return null
+  }
+
+  return (
+    <header className="fixed inset-x-0 top-0 z-10 h-8 select-none bg-zinc-950 [-webkit-app-region:drag]" />
+  )
+}
+
+export function App() {
+  const state = useShellState()
+  const [dialog, setDialog] = useState<'connect' | 'manage' | null>(null)
+  const [selectorOpen, setSelectorOpen] = useState(false)
+
+  const openDialog = (nextDialog: 'connect' | 'manage') => {
+    setSelectorOpen(false)
+    setDialog(nextDialog)
+  }
+  const computer = state ? selectedComputer(state) : undefined
+  const showTitlebar =
+    state && !(state.platform === 'darwin' && state.fullscreen)
+
+  return (
+    <>
+      <Titlebar />
+      {state?.connection.status === 'ready' && computer ? (
+        <webview
+          key={computer.origin}
+          src={computer.origin}
+          partition="persist:treeport-desktop"
+          className={
+            state.platform === 'darwin' && state.fullscreen
+              ? 'fixed inset-0 h-full w-full'
+              : 'fixed inset-x-0 top-8 bottom-0 h-[calc(100%-2rem)] w-full'
+          }
+        />
+      ) : (
+        <ConnectionPage
+          onConnect={() => openDialog('connect')}
+          onManage={() => openDialog('manage')}
+          onOpenMenu={() => setSelectorOpen(true)}
+        />
+      )}
+      {showTitlebar ? (
+        <div
+          className={
+            state.platform === 'darwin'
+              ? 'pointer-events-none fixed top-0 right-2 z-20 flex h-8 items-center'
+              : 'pointer-events-none fixed inset-x-0 top-0 z-20 flex h-8 items-center justify-center'
+          }
+        >
+          <ComputerSelector
+            state={state}
+            open={selectorOpen}
+            onOpenChange={setSelectorOpen}
+            onConnect={() => openDialog('connect')}
+            onManage={() => openDialog('manage')}
+          />
+        </div>
+      ) : null}
+      {state && dialog === 'connect' ? (
+        <ConnectDialog state={state} onClose={() => setDialog(null)} />
+      ) : null}
+      {state && dialog === 'manage' ? (
+        <ManageComputersDialog
+          state={state}
+          onClose={() => setDialog(null)}
+          onConnect={() => openDialog('connect')}
+        />
+      ) : null}
+    </>
+  )
+}

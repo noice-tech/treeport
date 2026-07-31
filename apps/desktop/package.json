@@ -5,7 +5,7 @@
   "main": ".vite/build/main.js",
   "scripts": {
     "dev": "node scripts/start.mjs",
-    "build": "vite build --config vite.main.config.ts && vite build --config vite.preload.config.ts",
+    "build": "vite build --config vite.main.config.ts && vite build --config vite.preload.config.ts && vite build --config vite.shell-preload.config.ts && vite build --config vite.renderer.config.ts",
     "test": "pnpm build && playwright test --config playwright.config.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json --pretty"
   },
@@ -13,9 +13,22 @@
     "@electron-forge/core": "7.11.2",
     "@electron-forge/plugin-vite": "7.11.2",
     "@electron-forge/shared-types": "7.11.2",
+    "@fontsource-variable/inter": "catalog:",
+    "@radix-ui/react-dialog": "catalog:",
+    "@radix-ui/react-dropdown-menu": "catalog:",
+    "@tailwindcss/vite": "catalog:",
+    "@treeport/shared": "workspace:*",
     "@types/node": "^24.10.9",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "@vitejs/plugin-react": "catalog:",
     "electron": "43.2.0",
+    "lucide-react": "catalog:",
+    "react": "catalog:",
+    "react-dom": "catalog:",
+    "tailwindcss": "catalog:",
     "typescript": "^5.9.3",
-    "vite": "^8.1.5"
+    "vite": "^8.1.5",
+    "zod": "catalog:"
   }
 }

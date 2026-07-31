@@ -1,6 +1,7 @@
 import crypto from 'node:crypto'
 import { existsSync } from 'node:fs'
 import fs from 'node:fs/promises'
+import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Hono } from 'hono'
@@ -12,6 +13,7 @@ import {
   createTerminalPresetSchema,
   createTerminalSchema,
   deleteTerminalPresetSchema,
+  DESKTOP_PROTOCOL_VERSION,
   createWorktreeSchema,
   registerProjectSchema,
   TERMINAL_MAX_UPLOAD_BYTES,
@@ -181,7 +183,8 @@ export function createApp({
     context.json({
       ok: true,
       version: config.appVersion ?? 'development',
-      protocolVersion: 1,
+      protocolVersion: DESKTOP_PROTOCOL_VERSION,
+      hostname: os.hostname(),
       pid: process.pid,
       instanceId: config.instanceId ?? null,
       installationMethod: config.installationMethod ?? 'development',

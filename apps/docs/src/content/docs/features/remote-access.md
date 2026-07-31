@@ -31,6 +31,12 @@ https://laptop.tailnet.ts.net:8733
 
 Open that URL from a device allowed by your tailnet policy. Local use is unchanged: browsers on the host can continue using `http://127.0.0.1:8733`.
 
+A VPS is supported when Treeport listens only on its loopback interface and Tailscale Serve provides the private HTTPS endpoint. The fact that the VPS itself has a public address does not make the Treeport service public.
+
+## Connect the desktop app
+
+The desktop app starts with **This computer** at `http://127.0.0.1:8733`. Click the computer name in its title bar, choose **Connect to another computer…**, and enter the HTTPS URL printed by `treeport remote enable`.
+
 ## Ports and other Serve apps
 
 Treeport uses HTTPS port `8733` by default. A dedicated port prevents it from replacing another application's shared HTTPS root route. If that port is occupied, choose a different one:

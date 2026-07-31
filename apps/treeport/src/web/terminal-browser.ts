@@ -106,11 +106,7 @@ export function activateTerminalLink(event: MouseEvent, url: string): void {
     return
   }
   if (parsedUrl.protocol === 'file:') {
-    const opening = window.treeportDesktop?.openFileUrl(url)
-    if (opening) {
-      void opening.catch(() => undefined)
-    }
-
+    void window.treeportDesktop?.openFileUrl(url).catch(() => undefined)
     return
   }
 
