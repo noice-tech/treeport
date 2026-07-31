@@ -9,9 +9,7 @@ const desktopBridge = Object.freeze({
   openFileUrl(url: string): Promise<DesktopFileActionResult> {
     return ipcRenderer
       .invoke('open-file-url', url)
-      .then((result: unknown) =>
-        result === 'opened' || result === 'copied' ? result : 'rejected'
-      )
+      .then((result: unknown) => (result === 'opened' ? result : 'rejected'))
   },
   onFullscreenChange(listener: (fullscreen: boolean) => void) {
     const receive = (_event: IpcRendererEvent, value: unknown) => {

@@ -4,7 +4,7 @@ export type DesktopCommand =
   | 'new-terminal-menu'
   | 'close-terminal'
 
-export type DesktopFileActionResult = 'opened' | 'copied' | 'rejected'
+export type DesktopFileActionResult = 'opened' | 'rejected'
 
 export interface SavedComputer {
   id: string

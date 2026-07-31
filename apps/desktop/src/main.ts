@@ -695,12 +695,11 @@ function registerIpc(): void {
       return 'rejected'
     }
 
-    if (isLoopbackUrl(new URL(origin))) {
-      return (await shell.openPath(filePath)) === '' ? 'opened' : 'rejected'
+    if (!isLoopbackUrl(new URL(origin))) {
+      return 'rejected'
     }
 
-    clipboard.writeText(filePath)
-    return 'copied'
+    return (await shell.openPath(filePath)) === '' ? 'opened' : 'rejected'
   })
   ipcMain.on('bell-attention:request', (event) => {
     if (isActiveGuestEvent(event)) {

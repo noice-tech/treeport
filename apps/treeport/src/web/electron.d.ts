@@ -3,7 +3,7 @@ type TreeportDesktopCommand =
   | 'new-terminal'
   | 'new-terminal-menu'
   | 'close-terminal'
-type TreeportDesktopFileAction = 'opened' | 'copied' | 'rejected'
+type TreeportDesktopFileAction = 'opened' | 'rejected'
 
 type TreeportDesktopBridge = Readonly<{
   platform: NodeJS.Platform
