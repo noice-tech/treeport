@@ -7,6 +7,8 @@ Run repository-defined setup when Treeport creates a worktree. Use hooks to inst
 
 Hooks run in the new worktree, in order. If one fails, Treeport stops running the remaining hooks and reports the failure; the worktree remains available for you to inspect or finish setting up manually.
 
+When worktree creation includes an initial terminal, Treeport starts that terminal immediately and runs the hooks alongside it in a separate **Setup** terminal. The Setup terminal closes automatically after every hook succeeds. If preparation or a hook fails, it stays open with the failure output. Worktree creation without an initial terminal continues to run hooks before creating the default shell.
+
 Treeport currently supports **Zed worktree hooks only**. Contributions that add support for other existing formats are welcome. A Treeport-specific format is planned.
 
 ## Zed

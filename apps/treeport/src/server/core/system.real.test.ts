@@ -198,6 +198,49 @@ describe.skipIf(!enabled)(
       )
       const linked = created.worktree
       const first = created.terminal!
+      const successfulSetupTerminal = (
+        await fixture.tmux.listSessions(linked.tmuxSocketName)
+      ).find((terminal) => terminal.name === 'Setup')!
+      await waitFor(
+        async () =>
+          (
+            await fixture.tmux.sessionState(
+              linked.tmuxSocketName,
+              successfulSetupTerminal.sessionName
+            )
+          ).status === 'exited',
+        'setup terminal did not finish'
+      )
+      const setupCapture = await fixture.runner.run({
+        executable: 'tmux',
+        args: [
+          '-L',
+          linked.tmuxSocketName,
+          '-f',
+          fixture.tmux.configPath,
+          'capture-pane',
+          '-p',
+          '-S',
+          '-',
+          '-t',
+          successfulSetupTerminal.sessionName
+        ]
+      })
+      expect(setupCapture.stdout.indexOf('SETUP_ONE')).toBeLessThan(
+        setupCapture.stdout.indexOf('SETUP_TWO')
+      )
+      expect(setupCapture.stdout).not.toContain('PI_LIKE')
+      expect(
+        (await fixture.service.getWorktreeSnapshot(linked.id)).terminals.map(
+          (terminal) => terminal.id
+        )
+      ).toEqual([first.id])
+      expect(
+        (await fixture.tmux.listSessions(linked.tmuxSocketName)).map(
+          (terminal) => terminal.id
+        )
+      ).not.toContain(successfulSetupTerminal.id)
+
       const second = await fixture.service.createTerminal(
         linked.id,
         'Dev-like',
@@ -247,16 +290,12 @@ describe.skipIf(!enabled)(
         expect(output).toContain(expected)
         return output
       }
-      const setupOutput = await attachAndDetach(
+      const initialOutput = await attachAndDetach(
         first.tmuxSessionName,
         'PI_LIKE'
       )
-      expect(setupOutput.indexOf('SETUP_ONE')).toBeLessThan(
-        setupOutput.indexOf('SETUP_TWO')
-      )
-      expect(setupOutput.indexOf('SETUP_TWO')).toBeLessThan(
-        setupOutput.indexOf('PI_LIKE')
-      )
+      expect(initialOutput).not.toContain('SETUP_ONE')
+      expect(initialOutput).not.toContain('SETUP_TWO')
       await attachAndDetach(second.tmuxSessionName, 'DEV_LIKE')
       expect(
         (await fixture.service.refreshTerminalStatus(first.id)).status
@@ -343,14 +382,17 @@ describe.skipIf(!enabled)(
         'default',
         {
           name: 'Failed setup',
-          argv: [process.execPath, '-e', "console.log('FINAL_SHOULD_NOT_RUN')"]
+          argv: [process.execPath, '-e', "console.log('INITIAL_STARTED')"]
         }
       )
       const failedWorktree = failedCreate.worktree
-      const failedTerminal = failedCreate.terminal!
+      const initialTerminal = failedCreate.terminal!
+      const setupTerminal = (
+        await fixture.service.getWorktreeSnapshot(failedWorktree.id)
+      ).terminals.find((terminal) => terminal.name === 'Setup')!
       let failedState = await fixture.tmux.sessionState(
         failedWorktree.tmuxSocketName,
-        failedTerminal.tmuxSessionName
+        setupTerminal.tmuxSessionName
       )
       for (
         let attempt = 0;
@@ -360,10 +402,16 @@ describe.skipIf(!enabled)(
         await new Promise((resolve) => setTimeout(resolve, 30))
         failedState = await fixture.tmux.sessionState(
           failedWorktree.tmuxSocketName,
-          failedTerminal.tmuxSessionName
+          setupTerminal.tmuxSessionName
         )
       }
       expect(failedState).toMatchObject({ status: 'exited', exitCode: 17 })
+      expect(
+        await fixture.tmux.sessionState(
+          failedWorktree.tmuxSocketName,
+          initialTerminal.tmuxSessionName
+        )
+      ).toMatchObject({ status: 'exited', exitCode: 0 })
       const captured = await fixture.runner.run({
         executable: 'tmux',
         args: [
@@ -376,21 +424,37 @@ describe.skipIf(!enabled)(
           '-S',
           '-',
           '-t',
-          failedTerminal.tmuxSessionName
+          setupTerminal.tmuxSessionName
         ]
       })
       expect(captured.exitCode).toBe(0)
       expect(captured.stdout).toContain('FAIL_SETUP_ONE')
       expect(captured.stdout).toContain('FAIL_SETUP_TWO')
       expect(captured.stdout).not.toContain('SHOULD_NOT_RUN')
-      expect(captured.stdout).not.toContain('FINAL_SHOULD_NOT_RUN')
+      expect(captured.stdout).not.toContain('INITIAL_STARTED')
+      const initialCapture = await fixture.runner.run({
+        executable: 'tmux',
+        args: [
+          '-L',
+          failedWorktree.tmuxSocketName,
+          '-f',
+          fixture.tmux.configPath,
+          'capture-pane',
+          '-p',
+          '-S',
+          '-',
+          '-t',
+          initialTerminal.tmuxSessionName
+        ]
+      })
+      expect(initialCapture.stdout).toContain('INITIAL_STARTED')
       expect(
         (await fixture.service.getProject(project.id)).worktrees.some(
           (worktree) => worktree.id === failedWorktree.id
         )
       ).toBe(true)
       expect(
-        (await fixture.service.refreshTerminalStatus(failedTerminal.id)).status
+        (await fixture.service.refreshTerminalStatus(setupTerminal.id)).status
       ).toBe('exited')
       const failedPreview = await fixture.service.removePreview(
         failedWorktree.id

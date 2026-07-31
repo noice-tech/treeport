@@ -1782,7 +1782,7 @@ describe('TreeportService with injected command adapters', () => {
     ).toBe(false)
   })
 
-  it('keeps a created worktree visible and delegates setup to its initial terminal', async () => {
+  it('starts the initial terminal before setup in a separate one-off terminal', async () => {
     const { main, runner, service, config } = await fixture()
     await fs.mkdir(path.join(main, '.zed'), { recursive: true })
     await fs.writeFile(
@@ -1813,24 +1813,47 @@ describe('TreeportService with injected command adapters', () => {
     )
     unsubscribe()
     expect(result.setupError).toBeNull()
-    expect(result.terminal).not.toBeNull()
+    expect(result.terminal).toMatchObject({ name: 'Pi', argv: ['pi'] })
     expect(result.worktree.name).toBe('hook-failure')
     expect(
       (await service.getProject(project.id)).worktrees.some(
         (item) => item.id === result.worktree.id
       )
     ).toBe(true)
-    expect(runner.sessions.size).toBe(2)
-    const initialTerminalCreate = runner.calls
-      .filter((call) => call.args.includes('new-session'))
-      .at(-1)!
-    expect(initialTerminalCreate.args).toEqual(
+
+    const terminals = (await service.getWorktreeSnapshot(result.worktree.id))
+      .terminals
+    const setupTerminal = terminals.find(
+      (terminal) => terminal.name === 'Setup'
+    )!
+    expect(terminals).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: result.terminal!.id, status: 'running' }),
+        expect.objectContaining({ id: setupTerminal.id, status: 'running' })
+      ])
+    )
+    expect(runner.sessions.size).toBe(3)
+    const terminalCreates = runner.calls.filter((call) =>
+      call.args.includes('new-session')
+    )
+    expect(
+      terminalCreates
+        .slice(-2)
+        .map((call) => call.args[call.args.indexOf('-s') + 1])
+    ).toEqual([result.terminal!.tmuxSessionName, setupTerminal.tmuxSessionName])
+    expect(terminalCreates.at(-2)!.args).toEqual(
       expect.arrayContaining(['-x', '132', '-y', '47'])
     )
-    expect(events.indexOf('worktree.created')).toBeLessThan(
-      events.indexOf('terminal.created')
+    expect(terminalCreates.at(-1)!.args).toEqual(
+      expect.arrayContaining(['-x', '132', '-y', '47'])
     )
-    const launchSpec = JSON.parse(
+    expect(events).toEqual([
+      'worktree.created',
+      'terminal.created',
+      'terminal.created'
+    ])
+
+    const initialLaunchSpec = JSON.parse(
       await fs.readFile(
         path.join(
           config.runtimeDir,
@@ -1842,23 +1865,53 @@ describe('TreeportService with injected command adapters', () => {
     ) as {
       argv: string[]
       fallbackArgv: string[]
-      setupTasks: Array<{ label: string; argv: string[] }>
+      setupTasks?: Array<{ label: string; argv: string[] }>
       env: Record<string, string>
     }
-    expect(launchSpec.argv).toEqual(['pi'])
-    expect(launchSpec.fallbackArgv).toEqual(['/bin/zsh', '-l'])
-    expect(launchSpec.setupTasks).toEqual([
-      expect.objectContaining({ label: 'setup', argv: ['fail-setup'] })
-    ])
-    expect(launchSpec.env).toMatchObject({
+    expect(initialLaunchSpec.argv).toEqual(['pi'])
+    expect(initialLaunchSpec.fallbackArgv).toEqual(['/bin/zsh', '-l'])
+    expect(initialLaunchSpec.setupTasks).toBeUndefined()
+    expect(initialLaunchSpec.env).toMatchObject({
       TREEPORT_API_URL: config.apiUrl,
       TREEPORT_PROJECT_ID: project.id,
       TREEPORT_WORKTREE_ID: result.worktree.id,
       TREEPORT_TERMINAL_ID: result.terminal!.id
     })
+
+    const setupLaunchSpec = JSON.parse(
+      await fs.readFile(
+        path.join(
+          config.runtimeDir,
+          'launch-specs',
+          `${setupTerminal.id}.json`
+        ),
+        'utf8'
+      )
+    ) as {
+      argv: string[]
+      setupTasks: Array<{ label: string; argv: string[] }>
+      env: Record<string, string>
+    }
+    expect(setupLaunchSpec.argv).toEqual(['true'])
+    expect(setupLaunchSpec.setupTasks).toEqual([
+      expect.objectContaining({ label: 'setup', argv: ['fail-setup'] })
+    ])
+    expect(setupLaunchSpec.env.TREEPORT_TERMINAL_ID).toBe(setupTerminal.id)
+    const setupSessionKey = `${result.worktree.tmuxSocketName}/${setupTerminal.tmuxSessionName}`
+    const setupSession = runner.sessions.get(setupSessionKey)!
+    expect(setupSession.options['@treeport-close-on-success']).toBe('1')
     expect(runner.calls.some((call) => call.executable === 'fail-setup')).toBe(
       false
     )
+
+    setupSession.alive = false
+    setupSession.exitCode = 0
+    expect(
+      (await service.getWorktreeSnapshot(result.worktree.id)).terminals.map(
+        (terminal) => terminal.id
+      )
+    ).toEqual([result.terminal!.id])
+    expect(runner.sessions.has(setupSessionKey)).toBe(false)
 
     const direct = await service.createTerminal(
       result.worktree.id,
@@ -1874,8 +1927,8 @@ describe('TreeportService with injected command adapters', () => {
     expect(directLaunchSpec.fallbackArgv).toBeUndefined()
   })
 
-  it('retains task preparation errors in an initial terminal launch spec', async () => {
-    const { main, service, config } = await fixture()
+  it('retains task preparation and setup-terminal creation errors', async () => {
+    const { main, runner, service, config } = await fixture()
     await fs.mkdir(path.join(main, '.zed'), { recursive: true })
     await fs.writeFile(path.join(main, '.zed', 'tasks.json'), '{ invalid json')
     const project = await service.registerProject(main)
@@ -1890,18 +1943,48 @@ describe('TreeportService with injected command adapters', () => {
     expect(result.worktree.name).toBe('invalid-setup')
     expect(result.terminal).not.toBeNull()
     expect(result.setupError).toMatch(/Invalid JSONC/)
+    const setupTerminal = (
+      await service.getWorktreeSnapshot(result.worktree.id)
+    ).terminals.find((terminal) => terminal.name === 'Setup')!
     const launchSpec = JSON.parse(
       await fs.readFile(
         path.join(
           config.runtimeDir,
           'launch-specs',
-          `${result.terminal!.id}.json`
+          `${setupTerminal.id}.json`
         ),
         'utf8'
       )
     ) as { setupError: string; argv: string[] }
     expect(launchSpec.setupError).toBe(result.setupError)
-    expect(launchSpec.argv).toEqual(['/bin/zsh', '-l'])
+    expect(launchSpec.argv).toEqual(['true'])
+
+    let terminalCreates = 0
+    const unsubscribe = service.events.subscribe((event) => {
+      if (event.type === 'terminal.created') {
+        terminalCreates += 1
+        runner.tmuxCreateFails = true
+      }
+    })
+    const terminalFailure = await service.createWorktree(
+      project.id,
+      'invalid-setup-terminal',
+      'default',
+      { name: 'Terminal' }
+    )
+    unsubscribe()
+    runner.tmuxCreateFails = false
+
+    expect(terminalCreates).toBe(1)
+    expect(terminalFailure.setupError).toContain('create_worktree setup:')
+    expect(terminalFailure.setupError).toContain(
+      'create_worktree setup terminal [TERMINAL_CREATE_FAILED]:'
+    )
+    expect(
+      (
+        await service.getWorktreeSnapshot(terminalFailure.worktree.id)
+      ).terminals.map((terminal) => terminal.id)
+    ).toEqual([terminalFailure.terminal!.id])
   })
 
   it('requires force for dirty work and preserves explicit failure state', async () => {

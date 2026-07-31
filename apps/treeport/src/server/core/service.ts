@@ -2202,33 +2202,71 @@ export class TreeportService {
       let terminalError: string | null = null
       let setupError: string | null = null
       if (initialTerminal) {
-        let setupTasks: WorktreeSetupTask[] = []
-        try {
-          setupTasks = await resolveCreateWorktreeSetupTasks({
-            shell: this.deps.config.shell,
-            mainWorktreePath: project.mainWorktreePath,
-            worktreePath: worktree.path
+        const initialTerminalCreation = this.executeCreateTerminal(
+          worktree.id,
+          initialTerminal.name,
+          initialTerminal.argv,
+          {
+            ...(initialTerminal.returnToShell ? { returnToShell: true } : {}),
+            ...(initialTerminal.initialSize
+              ? { initialSize: initialTerminal.initialSize }
+              : {})
+          }
+        )
+        const setupResolution = resolveCreateWorktreeSetupTasks({
+          shell: this.deps.config.shell,
+          mainWorktreePath: project.mainWorktreePath,
+          worktreePath: worktree.path
+        }).then(
+          (tasks) => ({ tasks, error: null }),
+          (error: unknown) => ({
+            tasks: [] as WorktreeSetupTask[],
+            error: `create_worktree setup: ${
+              error instanceof Error ? error.message : String(error)
+            }`.slice(0, 4_096)
           })
-        } catch (error) {
-          setupError = `create_worktree setup: ${
-            error instanceof Error ? error.message : String(error)
-          }`.slice(0, 4_096)
-        }
+        )
+
         try {
-          terminal = await this.executeCreateTerminal(
-            worktree.id,
-            initialTerminal.name,
-            initialTerminal.argv,
-            {
-              setup: { tasks: setupTasks, error: setupError },
-              ...(initialTerminal.returnToShell ? { returnToShell: true } : {}),
-              ...(initialTerminal.initialSize
-                ? { initialSize: initialTerminal.initialSize }
-                : {})
-            }
-          )
+          terminal = await initialTerminalCreation
         } catch (error) {
           terminalError = error instanceof Error ? error.message : String(error)
+        }
+        if (!terminal) {
+          try {
+            terminal = await this.ensureWorktreeTerminal(worktree.id)
+          } catch (error) {
+            terminalError ??=
+              error instanceof Error ? error.message : String(error)
+          }
+        }
+
+        const setup = await setupResolution
+        setupError = setup.error
+        if (setup.tasks.length > 0 || setupError) {
+          if (!terminal) {
+            setupError ??=
+              'create_worktree setup: no persistent terminal could be started'
+          } else {
+            try {
+              await this.executeCreateTerminal(worktree.id, 'Setup', ['true'], {
+                setup: { tasks: setup.tasks, error: setupError },
+                closeOnSuccess: true,
+                ...(initialTerminal.initialSize
+                  ? { initialSize: initialTerminal.initialSize }
+                  : {})
+              })
+            } catch (error) {
+              const setupTerminalError = `create_worktree setup terminal${
+                error instanceof DomainError ? ` [${error.code}]` : ''
+              }: ${
+                error instanceof Error ? error.message : String(error)
+              }`.slice(0, 2_048)
+              setupError = setupError
+                ? `${setupError.slice(0, 2_047)}\n${setupTerminalError}`
+                : setupTerminalError
+            }
+          }
         }
       } else {
         const hookResults = await runCreateWorktreeTasks({
