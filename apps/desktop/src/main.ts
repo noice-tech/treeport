@@ -291,7 +291,8 @@ async function connectSelected(): Promise<void> {
   const computer = store?.selectedComputer
   const generation = ++connectionGeneration
   connectionAbort?.abort()
-  connectionAbort = new AbortController()
+  const abortController = new AbortController()
+  connectionAbort = abortController
   disposeGuest()
 
   if (!computer) {
@@ -309,17 +310,17 @@ async function connectSelected(): Promise<void> {
       await new Promise((resolve) => setTimeout(resolve, delay))
     }
 
-    if (connectionAbort.signal.aborted || generation !== connectionGeneration) {
+    if (abortController.signal.aborted || generation !== connectionGeneration) {
       return
     }
 
-    health = await checkHealth(computer.origin, connectionAbort.signal)
+    health = await checkHealth(computer.origin, abortController.signal)
     if (health) {
       break
     }
   }
 
-  if (generation !== connectionGeneration || connectionAbort.signal.aborted) {
+  if (generation !== connectionGeneration || abortController.signal.aborted) {
     return
   }
 
@@ -345,8 +346,12 @@ async function connectSelected(): Promise<void> {
     return
   }
 
-  if (health.hostname) {
-    await store?.rememberHostname(computer.id, health.hostname)
+  if (health.hostname && store) {
+    await store.rememberHostname(computer.id, health.hostname)
+    if (generation !== connectionGeneration || abortController.signal.aborted) {
+      return
+    }
+
     broadcastState()
   }
 

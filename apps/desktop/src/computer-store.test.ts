@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ComputerStore, computerName } from './computer-store'
 
 const directories: string[] = []
@@ -13,6 +13,7 @@ async function settingsPath(): Promise<string> {
 }
 
 afterEach(async () => {
+  vi.restoreAllMocks()
   await Promise.all(
     directories
       .splice(0)
@@ -46,6 +47,46 @@ describe('desktop computer store', () => {
     const reopened = await ComputerStore.load(filePath, 'http://localhost:9999')
     expect(reopened.selectedComputer?.id).toBe(local.id)
 
+    const originalRename = fs.rename.bind(fs)
+    let releaseRename!: () => void
+    const renameReleased = new Promise<void>((resolve) => {
+      releaseRename = resolve
+    })
+    let reportRenameStarted!: () => void
+    const renameStarted = new Promise<void>((resolve) => {
+      reportRenameStarted = resolve
+    })
+    let delayNextRename = true
+    const rename = vi
+      .spyOn(fs, 'rename')
+      .mockImplementation(async (oldPath, newPath) => {
+        if (delayNextRename) {
+          delayNextRename = false
+          reportRenameStarted()
+          await renameReleased
+        }
+
+        await originalRename(oldPath, newPath)
+      })
+
+    const concurrentRemotePromise = reopened.add('https://second.example.test')
+    await renameStarted
+    const selectLocalPromise = reopened.select(local.id)
+    await new Promise((resolve) => setTimeout(resolve, 25))
+    releaseRename()
+    const [concurrentRemote] = await Promise.all([
+      concurrentRemotePromise,
+      selectLocalPromise
+    ])
+    rename.mockRestore()
+
+    const serialized = await ComputerStore.load(
+      filePath,
+      'http://localhost:9999'
+    )
+    expect(serialized.selectedComputer?.id).toBe(local.id)
+
+    await reopened.remove(concurrentRemote.id)
     await reopened.remove(local.id)
     expect(reopened.selectedComputer).toBeUndefined()
     expect(reopened.summaries()).toEqual([])
@@ -62,5 +103,19 @@ describe('desktop computer store', () => {
         name.startsWith('computers.json.invalid-')
       )
     ).toBe(true)
+  })
+
+  it('preserves invalid settings when creating the recovery backup fails', async () => {
+    const filePath = await settingsPath()
+    const invalidContents = '{"version":1,"computers":"invalid"}'
+    const timestamp = 1_700_000_000_000
+    await fs.writeFile(filePath, invalidContents)
+    await fs.mkdir(`${filePath}.invalid-${timestamp}`)
+    vi.spyOn(Date, 'now').mockReturnValue(timestamp)
+
+    await expect(
+      ComputerStore.load(filePath, 'http://localhost:9000')
+    ).rejects.toMatchObject({ code: 'EISDIR' })
+    await expect(fs.readFile(filePath, 'utf8')).resolves.toBe(invalidContents)
   })
 })

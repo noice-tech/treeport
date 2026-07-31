@@ -89,6 +89,7 @@ export function computerName(computer: SavedComputer): string {
 
 export class ComputerStore {
   private settings: DesktopSettings
+  private mutationQueue: Promise<void> = Promise.resolve()
 
   private constructor(
     private readonly filePath: string,
@@ -126,7 +127,7 @@ export class ComputerStore {
       }
 
       const invalidPath = `${filePath}.invalid-${Date.now()}`
-      await fs.rename(filePath, invalidPath).catch(() => undefined)
+      await fs.rename(filePath, invalidPath)
       console.error(
         `[Treeport] Invalid desktop settings moved to ${invalidPath}`
       )
@@ -160,6 +161,24 @@ export class ComputerStore {
       }
     )
     await fs.rename(temporaryPath, this.filePath)
+  }
+
+  private enqueueMutation<T>(mutation: () => Promise<T>): Promise<T> {
+    const result = this.mutationQueue.then(() => {
+      const previousSettings = structuredClone(this.settings)
+      return mutation().then(
+        (value) => value,
+        (error: unknown) => {
+          this.settings = previousSettings
+          throw error
+        }
+      )
+    })
+    this.mutationQueue = result.then(
+      () => undefined,
+      () => undefined
+    )
+    return result
   }
 
   get selectedComputer(): SavedComputer | undefined {
@@ -203,107 +222,121 @@ export class ComputerStore {
   }
 
   async add(origin: string): Promise<SavedComputer> {
-    const normalizedOrigin = parseComputerUrl(origin).origin
-    if (this.findByOrigin(normalizedOrigin)) {
-      throw new Error('That computer is already saved.')
-    }
+    return this.enqueueMutation(async () => {
+      const normalizedOrigin = parseComputerUrl(origin).origin
+      if (this.findByOrigin(normalizedOrigin)) {
+        throw new Error('That computer is already saved.')
+      }
 
-    const now = new Date().toISOString()
-    const computer: SavedComputer = {
-      id: crypto.randomUUID(),
-      origin: normalizedOrigin,
-      createdAt: now,
-      lastSelectedAt: now
-    }
-    this.settings.computers.push(computer)
-    this.settings.selectedComputerId = computer.id
-    await this.persist()
-    return computer
+      const now = new Date().toISOString()
+      const computer: SavedComputer = {
+        id: crypto.randomUUID(),
+        origin: normalizedOrigin,
+        createdAt: now,
+        lastSelectedAt: now
+      }
+      this.settings.computers.push(computer)
+      this.settings.selectedComputerId = computer.id
+      await this.persist()
+      return computer
+    })
   }
 
   async select(id: string): Promise<boolean> {
-    const computer = this.getComputer(id)
-    if (!computer) {
-      return false
-    }
+    return this.enqueueMutation(async () => {
+      const computer = this.getComputer(id)
+      if (!computer) {
+        return false
+      }
 
-    computer.lastSelectedAt = new Date().toISOString()
-    this.settings.selectedComputerId = id
-    await this.persist()
-    return true
+      computer.lastSelectedAt = new Date().toISOString()
+      this.settings.selectedComputerId = id
+      await this.persist()
+      return true
+    })
   }
 
   async update(
     id: string,
     input: { origin: string; nameOverride?: string }
   ): Promise<{ computer: SavedComputer; originChanged: boolean } | null> {
-    const computer = this.getComputer(id)
-    if (!computer) {
-      return null
-    }
+    return this.enqueueMutation(async () => {
+      const computer = this.getComputer(id)
+      if (!computer) {
+        return null
+      }
 
-    const origin = parseComputerUrl(input.origin).origin
-    if (this.findByOrigin(origin, id)) {
-      throw new Error('That computer is already saved.')
-    }
+      const origin = parseComputerUrl(input.origin).origin
+      if (this.findByOrigin(origin, id)) {
+        throw new Error('That computer is already saved.')
+      }
 
-    const originChanged = computer.origin !== origin
-    computer.origin = origin
-    const name = input.nameOverride?.trim()
-    if (name) {
-      computer.nameOverride = name
-    } else {
-      delete computer.nameOverride
-    }
+      const originChanged = computer.origin !== origin
+      computer.origin = origin
+      const name = input.nameOverride?.trim()
+      if (name) {
+        computer.nameOverride = name
+      } else {
+        delete computer.nameOverride
+      }
 
-    if (originChanged) {
-      delete computer.advertisedHostname
-    }
+      if (originChanged) {
+        delete computer.advertisedHostname
+      }
 
-    await this.persist()
-    return { computer, originChanged }
+      await this.persist()
+      return { computer, originChanged }
+    })
   }
 
   async rememberHostname(id: string, hostname: string): Promise<void> {
-    const computer = this.getComputer(id)
-    const normalized = hostname.trim()
-    if (
-      !computer ||
-      !normalized ||
-      computer.advertisedHostname === normalized
-    ) {
-      return
-    }
+    return this.enqueueMutation(async () => {
+      const computer = this.getComputer(id)
+      const normalized = hostname.trim()
+      if (
+        !computer ||
+        !normalized ||
+        computer.advertisedHostname === normalized
+      ) {
+        return
+      }
 
-    computer.advertisedHostname = normalized
-    await this.persist()
+      computer.advertisedHostname = normalized
+      await this.persist()
+    })
   }
 
   async remove(id: string): Promise<{ selectedChanged: boolean }> {
-    const wasSelected = this.settings.selectedComputerId === id
-    this.settings.computers = this.settings.computers.filter(
-      (computer) => computer.id !== id
-    )
-    if (wasSelected) {
-      const local = this.settings.computers
-        .filter((computer) => isLoopbackUrl(new URL(computer.origin)))
-        .sort((left, right) =>
-          (right.lastSelectedAt ?? '').localeCompare(left.lastSelectedAt ?? '')
-        )[0]
-      const replacement =
-        local ??
-        [...this.settings.computers].sort((left, right) =>
-          (right.lastSelectedAt ?? '').localeCompare(left.lastSelectedAt ?? '')
-        )[0]
-      if (replacement) {
-        replacement.lastSelectedAt = new Date().toISOString()
-        this.settings.selectedComputerId = replacement.id
-      } else {
-        delete this.settings.selectedComputerId
+    return this.enqueueMutation(async () => {
+      const wasSelected = this.settings.selectedComputerId === id
+      this.settings.computers = this.settings.computers.filter(
+        (computer) => computer.id !== id
+      )
+      if (wasSelected) {
+        const local = this.settings.computers
+          .filter((computer) => isLoopbackUrl(new URL(computer.origin)))
+          .sort((left, right) =>
+            (right.lastSelectedAt ?? '').localeCompare(
+              left.lastSelectedAt ?? ''
+            )
+          )[0]
+        const replacement =
+          local ??
+          [...this.settings.computers].sort((left, right) =>
+            (right.lastSelectedAt ?? '').localeCompare(
+              left.lastSelectedAt ?? ''
+            )
+          )[0]
+        if (replacement) {
+          replacement.lastSelectedAt = new Date().toISOString()
+          this.settings.selectedComputerId = replacement.id
+        } else {
+          delete this.settings.selectedComputerId
+        }
       }
-    }
 
-    await this.persist()
-    return { selectedChanged: wasSelected }
+      await this.persist()
+      return { selectedChanged: wasSelected }
+    })
   }
 }

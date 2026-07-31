@@ -26,15 +26,23 @@ test('connects the desktop shell, preserves native behavior, and restores render
   const userData = await fs.mkdtemp(
     path.join(os.tmpdir(), 'treeport-electron-')
   )
+  let healthAvailable = true
+  let hostname = 'desktop-test'
   const server = http.createServer((request, response) => {
     if (request.url === '/api/health') {
+      if (!healthAvailable) {
+        response.statusCode = 503
+        response.end()
+        return
+      }
+
       response.setHeader('content-type', 'application/json')
       response.end(
         JSON.stringify({
           ok: true,
           version: '0.1.0',
           protocolVersion: 2,
-          hostname: 'desktop-test'
+          hostname
         })
       )
       return
@@ -71,7 +79,7 @@ test('connects the desktop shell, preserves native behavior, and restores render
       }
     })
 
-    const selector = await electronApp.firstWindow()
+    let selector = await electronApp.firstWindow()
     await expect(
       selector.getByRole('button', {
         name: 'Connected computer: This computer'
@@ -245,7 +253,7 @@ test('connects the desktop shell, preserves native behavior, and restores render
         TREEPORT_DESKTOP_URL: origin
       }
     })
-    await electronApp.firstWindow()
+    selector = await electronApp.firstWindow()
     await waitForGuest(electronApp, origin)
     await expect
       .poll(() =>
@@ -259,6 +267,62 @@ test('connects the desktop shell, preserves native behavior, and restores render
         }, origin)
       )
       .toBe('/projects/project-1/worktrees/worktree-1/terminals/terminal-1')
+
+    await electronApp.evaluate(() => {
+      const filesystem = process.getBuiltinModule('node:fs/promises')
+      const originalRename = filesystem.rename.bind(filesystem)
+      const scope = globalThis as typeof globalThis & {
+        __treeportRenameStarted?: boolean
+        __releaseTreeportRename?: () => void
+        __restoreTreeportRename?: () => void
+      }
+      let delayNextRename = true
+      filesystem.rename = async (oldPath, newPath) => {
+        if (delayNextRename) {
+          delayNextRename = false
+          scope.__treeportRenameStarted = true
+          await new Promise<void>((resolve) => {
+            scope.__releaseTreeportRename = resolve
+          })
+        }
+
+        await originalRename(oldPath, newPath)
+      }
+      scope.__restoreTreeportRename = () => {
+        filesystem.rename = originalRename
+      }
+    })
+    hostname = 'hostname-persisting'
+    await selector.evaluate(() => window.treeportShell.retryConnection())
+    await expect
+      .poll(() =>
+        electronApp!.evaluate(() =>
+          Boolean(
+            (
+              globalThis as typeof globalThis & {
+                __treeportRenameStarted?: boolean
+              }
+            ).__treeportRenameStarted
+          )
+        )
+      )
+      .toBe(true)
+
+    healthAvailable = false
+    await selector.evaluate(() => window.treeportShell.retryConnection())
+    const unavailableHeading = selector.getByRole('heading', {
+      name: 'Treeport isn’t available on this computer'
+    })
+    await expect(unavailableHeading).toBeVisible({ timeout: 8_000 })
+    await electronApp.evaluate(() => {
+      const scope = globalThis as typeof globalThis & {
+        __releaseTreeportRename?: () => void
+        __restoreTreeportRename?: () => void
+      }
+      scope.__releaseTreeportRename?.()
+      scope.__restoreTreeportRename?.()
+    })
+    await expect(unavailableHeading).toBeVisible()
   } finally {
     await electronApp?.close().catch(() => undefined)
     await new Promise<void>((resolve) => server.close(() => resolve()))
