@@ -90,8 +90,8 @@ export function ConnectionPage({
           <ConnectionHeading
             description={
               computer?.loopback
-                ? 'Start Treeport, then retry the connection.'
-                : state.connection.message
+                ? 'Start Treeport. The desktop app will reconnect automatically.'
+                : `${state.connection.message} Retrying automatically.`
             }
           >
             {computer?.loopback
@@ -129,7 +129,7 @@ export function ConnectionPage({
               variant="default"
               onClick={() => window.treeportShell.retryConnection()}
             >
-              Retry
+              Retry now
             </Button>
             <Button onClick={onOpenMenu}>Switch computer</Button>
             <Button variant="outline" onClick={onManage}>

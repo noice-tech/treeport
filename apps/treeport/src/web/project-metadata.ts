@@ -1,10 +1,6 @@
 import { queryOptions } from '@tanstack/react-query'
 import { apiClient } from './api'
-import {
-  METADATA_STALE_TIME_MS,
-  metadataRetryDelay,
-  shouldRetryMetadataQuery
-} from './metadata-sync'
+import { METADATA_STALE_TIME_MS } from './metadata-sync'
 
 export const projectsQueryKey = ['projects'] as const
 export const recentProjectsQueryKey = ['recent-projects'] as const
@@ -14,8 +10,6 @@ export const projectsQueryOptions = queryOptions({
   queryKey: projectsQueryKey,
   queryFn: apiClient.projects,
   staleTime: METADATA_STALE_TIME_MS,
-  retry: shouldRetryMetadataQuery,
-  retryDelay: metadataRetryDelay,
   refetchInterval: 5_000,
   refetchOnReconnect: true,
   refetchOnWindowFocus: true
@@ -23,8 +17,7 @@ export const projectsQueryOptions = queryOptions({
 
 export const recentProjectsQueryOptions = queryOptions({
   queryKey: recentProjectsQueryKey,
-  queryFn: apiClient.recentProjects,
-  retry: false
+  queryFn: apiClient.recentProjects
 })
 
 export const terminalPresetsQueryOptions = queryOptions({

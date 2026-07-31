@@ -145,6 +145,7 @@ async function mockApp(
     desktopBridge?: boolean
     initialPath?: string
     delayProjects?: boolean
+    transientProjectFailures?: number
   } = {}
 ) {
   if (options.keyboardPlatform) {
@@ -550,6 +551,7 @@ async function mockApp(
       ]
     : []
   let projectRequests = 0
+  let transientProjectFailures = options.transientProjectFailures ?? 0
   let failDirectoryBrowse = false
   const registeredProjectPaths: string[] = []
   let releaseProjects: (() => void) | null = null
@@ -796,6 +798,15 @@ async function mockApp(
 
     if (pathname === '/api/projects' && route.request().method() === 'GET') {
       projectRequests += 1
+      if (transientProjectFailures > 0) {
+        transientProjectFailures -= 1
+        await route.fulfill({
+          status: 503,
+          json: { error: { code: 'UNAVAILABLE', message: 'Try again later' } }
+        })
+        return
+      }
+
       if (projectsGate) {
         await projectsGate
       }
@@ -1298,6 +1309,16 @@ test.describe('desktop worktree terminal UI', () => {
         name: 'Switch project, current project example'
       })
     ).toBeVisible()
+  })
+
+  test('recovers project metadata after transient API failures', async ({
+    page
+  }) => {
+    const mocked = await mockApp(page, [], { transientProjectFailures: 2 })
+    await expect(
+      page.getByRole('button', { name: 'Pi, running', exact: true })
+    ).toBeVisible()
+    expect(mocked.projectRequests()).toBe(3)
   })
 
   test('keeps a direct terminal route while project metadata loads', async ({

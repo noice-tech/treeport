@@ -4,7 +4,7 @@ export const METADATA_STALE_TIME_MS = 30_000
 const METADATA_INVALIDATION_DELAY_MS = 75
 export const METADATA_DEGRADED_GRACE_MS = 3_000
 
-export function shouldRetryMetadataQuery(
+export function shouldRetryApiQuery(
   failureCount: number,
   error: unknown
 ): boolean {
@@ -19,7 +19,7 @@ export function shouldRetryMetadataQuery(
   return error.status === 408 || error.status === 429 || error.status >= 500
 }
 
-export function metadataRetryDelay(attemptIndex: number): number {
+export function apiRetryDelay(attemptIndex: number): number {
   return Math.min(2_000, 500 * 2 ** Math.max(0, attemptIndex))
 }
 
