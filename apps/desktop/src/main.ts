@@ -17,16 +17,16 @@ import {
   type WebContents
 } from 'electron'
 import { z } from 'zod'
-import { ComputerStore } from './computer-store.js'
+import { ComputerStore } from './computer-store'
 import type {
   ComputerMutationResult,
   ComputerUpdate,
   ConnectionState,
   DesktopCommand,
   DesktopShellState
-} from './desktop-contract.js'
-import { filePathFromUrl } from './file-url.js'
-import { isLoopbackUrl, parseComputerUrl } from './renderer-url.js'
+} from './desktop-contract'
+import { filePathFromUrl } from './file-url'
+import { isLoopbackUrl, parseComputerUrl } from './renderer-url'
 
 const dirname = __dirname
 const TITLEBAR_HEIGHT = 32

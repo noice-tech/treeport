@@ -1,7 +1,7 @@
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { filePathFromUrl } from './file-url.js'
+import { filePathFromUrl } from './file-url'
 
 describe('filePathFromUrl', () => {
   it('converts canonical absolute file URLs including spaces and Unicode', () => {

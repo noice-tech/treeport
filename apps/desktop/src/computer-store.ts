@@ -2,8 +2,8 @@ import crypto from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { z } from 'zod'
-import type { ComputerSummary, SavedComputer } from './desktop-contract.js'
-import { isLoopbackUrl, parseComputerUrl } from './renderer-url.js'
+import type { ComputerSummary, SavedComputer } from './desktop-contract'
+import { isLoopbackUrl, parseComputerUrl } from './renderer-url'
 
 const desktopSettingsSchema = z.object({
   version: z.literal(1),

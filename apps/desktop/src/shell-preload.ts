@@ -3,7 +3,7 @@ import type {
   ComputerMutationResult,
   ComputerUpdate,
   DesktopShellState
-} from './desktop-contract.js'
+} from './desktop-contract'
 
 const shellBridge = Object.freeze({
   getState(): Promise<DesktopShellState> {

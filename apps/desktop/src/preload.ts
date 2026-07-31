@@ -2,7 +2,7 @@ import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
 import type {
   DesktopCommand,
   DesktopFileActionResult
-} from './desktop-contract.js'
+} from './desktop-contract'
 
 const desktopBridge = Object.freeze({
   platform: process.platform,
