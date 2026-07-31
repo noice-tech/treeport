@@ -69,7 +69,11 @@ test('connects the desktop shell, preserves native behavior, and restores render
       throw new Error('Test server did not expose a port')
     }
 
-    const origin = `http://127.0.0.1:${address.port}`
+    const port = address.port
+    const origin = `http://127.0.0.1:${port}`
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve()))
+    )
 
     electronApp = await electron.launch({
       args: [`--user-data-dir=${userData}`, '.'],
@@ -84,10 +88,23 @@ test('connects the desktop shell, preserves native behavior, and restores render
 
     let selector = await electronApp.firstWindow()
     await expect(
+      selector.getByRole('heading', {
+        name: 'Treeport isn’t available on this computer'
+      })
+    ).toBeVisible({ timeout: 8_000 })
+    await expect(
+      selector.getByText(
+        'Start Treeport. The desktop app will reconnect automatically.'
+      )
+    ).toBeVisible()
+    await new Promise<void>((resolve) =>
+      server.listen(port, '127.0.0.1', resolve)
+    )
+    await expect(
       selector.getByRole('button', {
         name: 'Connected computer: This computer'
       })
-    ).toBeVisible()
+    ).toBeVisible({ timeout: 8_000 })
     await waitForGuest(electronApp, origin)
     await expect
       .poll(() =>
@@ -96,6 +113,36 @@ test('connects the desktop shell, preserves native behavior, and restores render
             .getAllWebContents()
             .find((contents) => contents.getURL().startsWith(expectedOrigin))
           return guest?.executeJavaScript('document.body.textContent')
+        }, origin)
+      )
+      .toContain('Treeport desktop test')
+
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve()))
+    )
+    await electronApp.evaluate(({ webContents }, expectedOrigin) => {
+      webContents
+        .getAllWebContents()
+        .find((contents) => contents.getURL().startsWith(expectedOrigin))
+        ?.reload()
+    }, origin)
+    await expect(
+      selector.getByRole('heading', {
+        name: 'Treeport isn’t available on this computer'
+      })
+    ).toBeVisible({ timeout: 8_000 })
+    await new Promise<void>((resolve) =>
+      server.listen(port, '127.0.0.1', resolve)
+    )
+    await expect
+      .poll(() =>
+        electronApp!.evaluate(({ webContents }, expectedOrigin) => {
+          const guest = webContents
+            .getAllWebContents()
+            .find((contents) => contents.getURL().startsWith(expectedOrigin))
+          return guest
+            ?.executeJavaScript('document.body.textContent')
+            .catch(() => null)
         }, origin)
       )
       .toContain('Treeport desktop test')

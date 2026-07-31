@@ -5,6 +5,7 @@ import { RouterProvider } from '@tanstack/react-router'
 import { Toaster } from './components/ui/sonner'
 import { TooltipProvider } from './components/ui/tooltip'
 import { TerminalFocusProvider } from './terminal-focus'
+import { apiRetryDelay, shouldRetryApiQuery } from './metadata-sync'
 import { router } from './router'
 import './styles.css'
 
@@ -21,7 +22,11 @@ if (isIOS && viewport && !viewport.content.includes('maximum-scale')) {
 
 const queryClient = new QueryClient({
   defaultOptions: {
-    queries: { retry: false },
+    queries: {
+      retry: shouldRetryApiQuery,
+      retryDelay: apiRetryDelay,
+      refetchOnReconnect: true
+    },
     mutations: { retry: false }
   }
 })

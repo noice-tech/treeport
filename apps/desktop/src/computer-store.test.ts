@@ -92,6 +92,52 @@ describe('desktop computer store', () => {
     expect(reopened.summaries()).toEqual([])
   })
 
+  it('synchronizes a selected development server when its dynamic port changes', async () => {
+    const filePath = await settingsPath()
+    const store = await ComputerStore.load(filePath, 'http://localhost:5173')
+    const localId = store.selectedComputer!.id
+    const remote = await store.add('https://vps.example.test')
+    await store.select(localId)
+
+    const reopened = await ComputerStore.load(
+      filePath,
+      'http://127.0.0.1:5174',
+      { synchronizeSelectedLoopback: true }
+    )
+    expect(reopened.selectedComputer).toMatchObject({
+      id: localId,
+      origin: 'http://127.0.0.1:5174'
+    })
+    expect(reopened.summaries()).toHaveLength(2)
+
+    const persisted = await ComputerStore.load(
+      filePath,
+      'http://localhost:9999'
+    )
+    expect(persisted.selectedComputer?.origin).toBe('http://127.0.0.1:5174')
+
+    const existingLocal = await persisted.add('http://127.0.0.1:5175')
+    await persisted.select(localId)
+    const reused = await ComputerStore.load(filePath, 'http://127.0.0.1:5175', {
+      synchronizeSelectedLoopback: true
+    })
+    expect(reused.selectedComputer?.id).toBe(existingLocal.id)
+    expect(
+      reused.summaries().filter((computer) => computer.origin.endsWith(':5175'))
+    ).toHaveLength(1)
+
+    await reused.select(remote.id)
+    const remotePreserved = await ComputerStore.load(
+      filePath,
+      'http://localhost:5176',
+      { synchronizeSelectedLoopback: true }
+    )
+    expect(remotePreserved.selectedComputer).toMatchObject({
+      id: remote.id,
+      origin: 'https://vps.example.test'
+    })
+  })
+
   it('recovers an invalid settings file to the seeded local connection', async () => {
     const filePath = await settingsPath()
     await fs.writeFile(filePath, '{"version":1,"computers":"invalid"}')

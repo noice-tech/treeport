@@ -1,4 +1,5 @@
 import path from 'node:path'
+import { setTimeout as delay } from 'node:timers/promises'
 import { pathToFileURL } from 'node:url'
 import { DESKTOP_PROTOCOL_VERSION } from '@treeport/shared'
 import {
@@ -234,18 +235,15 @@ function installGuestSecurity(guest: WebContents, origin: string): void {
       return
     }
 
-    activeGuest = null
-    connection = {
-      status: 'unavailable',
-      computerId: connection.computerId,
-      message: `The connection to ${origin} was lost.`
-    }
-    broadcastState()
+    void connectSelected({
+      unavailableImmediately: true,
+      unavailableMessage: `The connection to ${origin} was lost.`
+    })
   }
   guest.on(
     'did-fail-load',
-    (_event, _errorCode, _errorDescription, _validatedUrl, isMainFrame) => {
-      if (isMainFrame) {
+    (_event, errorCode, _errorDescription, _validatedUrl, isMainFrame) => {
+      if (isMainFrame && errorCode !== -3) {
         showGuestFailure()
       }
     }
@@ -287,7 +285,12 @@ async function checkHealth(
   return result.success ? result.data : null
 }
 
-async function connectSelected(): Promise<void> {
+async function connectSelected(
+  options: {
+    unavailableImmediately?: boolean
+    unavailableMessage?: string
+  } = {}
+): Promise<void> {
   const computer = store?.selectedComputer
   const generation = ++connectionGeneration
   connectionAbort?.abort()
@@ -301,66 +304,89 @@ async function connectSelected(): Promise<void> {
     return
   }
 
-  connection = { status: 'connecting', computerId: computer.id }
+  const unavailableMessage =
+    options.unavailableMessage ??
+    `The desktop app could not reach ${computer.origin}.`
+  let unavailableVisible = options.unavailableImmediately ?? false
+  connection = unavailableVisible
+    ? {
+        status: 'unavailable',
+        computerId: computer.id,
+        message: unavailableMessage
+      }
+    : { status: 'connecting', computerId: computer.id }
   broadcastState()
-  const delays = [0, 250, 500, 1_000, 2_000]
-  let health: HealthResponse | null = null
-  for (const delay of delays) {
-    if (delay > 0) {
-      await new Promise((resolve) => setTimeout(resolve, delay))
+
+  const startedAt = Date.now()
+  const retryDelays = [0, 250, 500, 1_000, 2_000]
+  let attempt = 0
+  while (
+    !abortController.signal.aborted &&
+    generation === connectionGeneration
+  ) {
+    const retryDelay = retryDelays[Math.min(attempt, retryDelays.length - 1)]!
+    if (retryDelay > 0) {
+      await delay(retryDelay, undefined, {
+        signal: abortController.signal
+      }).catch(() => undefined)
     }
 
     if (abortController.signal.aborted || generation !== connectionGeneration) {
       return
     }
 
-    health = await checkHealth(computer.origin, abortController.signal)
-    if (health) {
-      break
-    }
-  }
-
-  if (generation !== connectionGeneration || abortController.signal.aborted) {
-    return
-  }
-
-  if (!health) {
-    connection = {
-      status: 'unavailable',
-      computerId: computer.id,
-      message: `The desktop app could not reach ${computer.origin}.`
-    }
-    broadcastState()
-    return
-  }
-
-  if (health.protocolVersion !== DESKTOP_PROTOCOL_VERSION) {
-    connection = {
-      status: 'incompatible',
-      computerId: computer.id,
-      serverVersion: health.version,
-      receivedProtocolVersion: health.protocolVersion,
-      expectedProtocolVersion: DESKTOP_PROTOCOL_VERSION
-    }
-    broadcastState()
-    return
-  }
-
-  if (health.hostname && store) {
-    await store.rememberHostname(computer.id, health.hostname)
+    const health = await checkHealth(computer.origin, abortController.signal)
     if (generation !== connectionGeneration || abortController.signal.aborted) {
       return
     }
 
-    broadcastState()
-  }
+    if (!health) {
+      attempt += 1
+      if (!unavailableVisible && Date.now() - startedAt >= 3_000) {
+        unavailableVisible = true
+        connection = {
+          status: 'unavailable',
+          computerId: computer.id,
+          message: unavailableMessage
+        }
+        broadcastState()
+      }
 
-  connection = {
-    status: 'ready',
-    computerId: computer.id,
-    serverVersion: health.version
+      continue
+    }
+
+    if (health.protocolVersion !== DESKTOP_PROTOCOL_VERSION) {
+      connection = {
+        status: 'incompatible',
+        computerId: computer.id,
+        serverVersion: health.version,
+        receivedProtocolVersion: health.protocolVersion,
+        expectedProtocolVersion: DESKTOP_PROTOCOL_VERSION
+      }
+      broadcastState()
+      return
+    }
+
+    if (health.hostname && store) {
+      await store.rememberHostname(computer.id, health.hostname)
+      if (
+        generation !== connectionGeneration ||
+        abortController.signal.aborted
+      ) {
+        return
+      }
+
+      broadcastState()
+    }
+
+    connection = {
+      status: 'ready',
+      computerId: computer.id,
+      serverVersion: health.version
+    }
+    broadcastState()
+    return
   }
-  broadcastState()
 }
 
 function shellWindowPreferences(): Electron.WebPreferences {
@@ -730,7 +756,8 @@ if (!hasSingleInstanceLock) {
   void app.whenReady().then(async () => {
     store = await ComputerStore.load(
       path.join(app.getPath('userData'), 'computers.json'),
-      seedComputerUrl
+      seedComputerUrl,
+      { synchronizeSelectedLoopback: !app.isPackaged }
     )
     installMenu()
     createWindow()
@@ -741,6 +768,7 @@ if (!hasSingleInstanceLock) {
     })
   })
 
+  app.on('before-quit', () => connectionAbort?.abort())
   app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') {
       app.quit()

@@ -100,7 +100,8 @@ export class ComputerStore {
 
   static async load(
     filePath: string,
-    seedOrigin: string
+    seedOrigin: string,
+    options: { synchronizeSelectedLoopback?: boolean } = {}
   ): Promise<ComputerStore> {
     const contents = await fs
       .readFile(filePath, 'utf8')
@@ -123,7 +124,30 @@ export class ComputerStore {
         .then(parseSettings)
         .catch(() => null)
       if (parsed) {
-        return new ComputerStore(filePath, parsed)
+        const store = new ComputerStore(filePath, parsed)
+        const selected = store.selectedComputer
+        if (
+          options.synchronizeSelectedLoopback &&
+          selected &&
+          isLoopbackUrl(new URL(selected.origin))
+        ) {
+          const origin = parseComputerUrl(seedOrigin).origin
+          if (selected.origin !== origin) {
+            const existing = store.findByOrigin(origin, selected.id)
+            if (existing) {
+              await store.select(existing.id)
+            } else {
+              await store.update(selected.id, {
+                origin,
+                ...(selected.nameOverride
+                  ? { nameOverride: selected.nameOverride }
+                  : {})
+              })
+            }
+          }
+        }
+
+        return store
       }
 
       const invalidPath = `${filePath}.invalid-${Date.now()}`
