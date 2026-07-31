@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef } from 'react'
 import { toast } from 'sonner'
 import type { ProjectRecord, TerminalRecord } from '@treeport/shared'
 import { Button } from '../../components/ui/button'
@@ -68,44 +68,55 @@ export function TerminalBellNotifications({
   ) => Promise<void>
 }) {
   const { bells, titles: runtimeTitles } = useTerminalBellMetadata()
-  const [presence, setPresence] = useState<Presence>(() => ({
-    focused: document.hasFocus(),
-    visible: document.visibilityState === 'visible'
-  }))
   const latest = useRef({
     projects,
     projectsLoaded,
     selectedTerminalId,
     runtimeTitles,
     navigateToWorkspace,
-    presence
+    presence: {
+      focused: document.hasFocus(),
+      visible: document.visibilityState === 'visible'
+    } as Presence
   })
-  latest.current = {
-    projects,
-    projectsLoaded,
-    selectedTerminalId,
-    runtimeTitles,
-    navigateToWorkspace,
-    presence
-  }
+  latest.current.projects = projects
+  latest.current.projectsLoaded = projectsLoaded
+  latest.current.selectedTerminalId = selectedTerminalId
+  latest.current.runtimeTitles = runtimeTitles
+  latest.current.navigateToWorkspace = navigateToWorkspace
   const presentedSequences = useRef(new Map<string, number>())
   const pendingEvents = useRef(new Map<string, TerminalBellEvent>())
   const deliverEvent = useRef<(event: TerminalBellEvent) => void>(
     () => undefined
   )
 
+  const acknowledgeSelectedTerminal = () => {
+    const current = latest.current
+    const terminalId = current.selectedTerminalId
+    if (!terminalId || !current.presence.focused || !current.presence.visible) {
+      return
+    }
+
+    const presentedSequence = presentedSequences.current.get(terminalId)
+    if (presentedSequence !== undefined) {
+      toast.dismiss(toastId(terminalId, presentedSequence))
+    }
+
+    const bell = terminalSessions.getBellSnapshot().get(terminalId)
+    if (bell?.unread) {
+      void terminalSessions
+        .acknowledgeBell(terminalId, bell.sequence)
+        .catch(notifyError)
+    }
+  }
+
   useEffect(() => {
     const updatePresence = () => {
-      const next = {
+      latest.current.presence = {
         focused: document.hasFocus(),
         visible: document.visibilityState === 'visible'
       }
-      latest.current.presence = next
-      setPresence((current) =>
-        current.focused === next.focused && current.visible === next.visible
-          ? current
-          : next
-      )
+      acknowledgeSelectedTerminal()
     }
 
     document.addEventListener('visibilitychange', updatePresence)
@@ -118,23 +129,11 @@ export function TerminalBellNotifications({
     }
   }, [])
 
+  /* eslint-disable react-you-might-not-need-an-effect/no-event-handler -- Route and external bell-store changes are not child-owned UI events. */
   useEffect(() => {
-    if (!presence.focused || !presence.visible || !selectedTerminalId) {
-      return
-    }
-
-    const presentedSequence = presentedSequences.current.get(selectedTerminalId)
-    if (presentedSequence !== undefined) {
-      toast.dismiss(toastId(selectedTerminalId, presentedSequence))
-    }
-
-    const bell = bells.get(selectedTerminalId)
-    if (bell?.unread) {
-      void terminalSessions
-        .acknowledgeBell(selectedTerminalId, bell.sequence)
-        .catch(notifyError)
-    }
-  }, [bells, presence.focused, presence.visible, selectedTerminalId])
+    acknowledgeSelectedTerminal()
+  }, [bells, selectedTerminalId])
+  /* eslint-enable react-you-might-not-need-an-effect/no-event-handler */
 
   useEffect(() => {
     const showToast = (
@@ -270,6 +269,7 @@ export function TerminalBellNotifications({
     }
   }, [])
 
+  /* eslint-disable react-you-might-not-need-an-effect/no-event-handler -- Loaded project metadata synchronizes pending external bell events. */
   useEffect(() => {
     if (!projectsLoaded) {
       return
@@ -284,6 +284,7 @@ export function TerminalBellNotifications({
       }
     }
   }, [bells, projectsLoaded])
+  /* eslint-enable react-you-might-not-need-an-effect/no-event-handler */
 
   return null
 }

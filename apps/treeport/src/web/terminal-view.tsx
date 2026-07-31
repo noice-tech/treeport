@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -167,12 +168,13 @@ export function TerminalView({
   const [session, setSession] = useState<TerminalSession | null>(null)
   const [ctrl, setCtrl] = useState(false)
   const [alt, setAlt] = useState(false)
-  const [pasteOpen, setPasteOpen] = useState(false)
-  const [pasteValue, setPasteValue] = useState('')
-  const lastExitSerial = useRef(0)
-  const lastPasteRequestSerial = useRef(0)
-  const lastPasteRequestSessionId = useRef<string | null>(null)
-  const lastExitSessionId = useRef<string | null>(null)
+  const [paste, setPaste] = useState({
+    terminalId: null as string | null,
+    open: false,
+    value: ''
+  })
+  const onStatusChangeRef = useRef(onStatusChange)
+  onStatusChangeRef.current = onStatusChange
   const requestTerminalFocus = useRequestTerminalFocus()
 
   useLayoutEffect(() => {
@@ -187,11 +189,43 @@ export function TerminalView({
   }, [terminal?.id])
 
   const activeSession = session?.terminalId === terminal?.id ? session : null
+  const subscribeToActiveSession = useCallback(
+    (onStoreChange: () => void) => {
+      if (!activeSession) {
+        return () => undefined
+      }
+
+      let previous = activeSession.getSnapshot()
+      return activeSession.subscribe(() => {
+        const next = activeSession.getSnapshot()
+        if (next.pasteRequestSerial > previous.pasteRequestSerial) {
+          setPaste((current) => ({
+            terminalId: activeSession.terminalId,
+            open: true,
+            value:
+              current.terminalId === activeSession.terminalId
+                ? current.value
+                : ''
+          }))
+        }
+
+        if (next.exitSerial > previous.exitSerial) {
+          onStatusChangeRef.current()
+        }
+
+        previous = next
+        onStoreChange()
+      })
+    },
+    [activeSession]
+  )
   const snapshot = useSyncExternalStore(
-    activeSession?.subscribe ?? (() => () => undefined),
+    subscribeToActiveSession,
     activeSession?.getSnapshot ?? (() => EMPTY_SNAPSHOT),
     () => EMPTY_SNAPSHOT
   )
+  const pasteOpen = paste.terminalId === terminal?.id && paste.open
+  const pasteValue = paste.terminalId === terminal?.id ? paste.value : ''
   const {
     attention: bellAttention,
     titles: runtimeTitles,
@@ -226,36 +260,6 @@ export function TerminalView({
     return () => activeSession.setInputModifiers(false, false, () => undefined)
   }, [activeSession, alt, ctrl])
 
-  useEffect(() => {
-    if (lastPasteRequestSessionId.current !== terminal?.id) {
-      lastPasteRequestSessionId.current = terminal?.id ?? null
-      lastPasteRequestSerial.current = snapshot.pasteRequestSerial
-      setPasteOpen(false)
-      setPasteValue('')
-      return
-    }
-
-    if (snapshot.pasteRequestSerial > lastPasteRequestSerial.current) {
-      lastPasteRequestSerial.current = snapshot.pasteRequestSerial
-      setPasteOpen(true)
-    }
-  }, [snapshot.pasteRequestSerial, terminal?.id])
-
-  useEffect(() => {
-    if (lastExitSessionId.current !== terminal?.id) {
-      lastExitSessionId.current = terminal?.id ?? null
-      lastExitSerial.current = snapshot.exitSerial
-      return
-    }
-
-    if (snapshot.exitSerial <= lastExitSerial.current) {
-      return
-    }
-
-    lastExitSerial.current = snapshot.exitSerial
-    onStatusChange()
-  }, [onStatusChange, snapshot.exitSerial, terminal?.id])
-
   const sendInput = (value: string) => {
     let data = value
     if (ctrl && value.length === 1) {
@@ -283,13 +287,20 @@ export function TerminalView({
     }
 
     activeSession?.pasteText(text)
-    setPasteValue('')
-    setPasteOpen(false)
+    setPaste({
+      terminalId: terminal?.id ?? null,
+      open: false,
+      value: ''
+    })
   }
 
   const requestPaste = () => {
     activeSession?.requestControl()
-    setPasteOpen(true)
+    setPaste((current) => ({
+      terminalId: terminal?.id ?? null,
+      open: true,
+      value: current.terminalId === terminal?.id ? current.value : ''
+    }))
     if (!navigator.clipboard) {
       return
     }
@@ -664,7 +675,13 @@ export function TerminalView({
                   value={pasteValue}
                   placeholder="Touch and hold here, then choose Paste"
                   className="min-h-16 resize-none rounded-md border border-white/10 bg-zinc-950 px-3 py-2 text-base text-zinc-100 outline-none focus:border-cyan-500"
-                  onChange={(event) => setPasteValue(event.target.value)}
+                  onChange={(event) =>
+                    setPaste({
+                      terminalId: terminal.id,
+                      open: true,
+                      value: event.target.value
+                    })
+                  }
                   onPaste={(event) => {
                     const text = event.clipboardData.getData('text')
                     if (!text) {
@@ -680,10 +697,13 @@ export function TerminalView({
                     type="button"
                     variant="ghost"
                     size="sm"
-                    onClick={() => {
-                      setPasteValue('')
-                      setPasteOpen(false)
-                    }}
+                    onClick={() =>
+                      setPaste({
+                        terminalId: terminal.id,
+                        open: false,
+                        value: ''
+                      })
+                    }
                   >
                     Cancel
                   </Button>
