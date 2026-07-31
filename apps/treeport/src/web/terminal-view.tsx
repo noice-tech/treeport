@@ -6,18 +6,8 @@ import {
   useState,
   useSyncExternalStore
 } from 'react'
-import {
-  ArrowPathIcon,
-  Cog6ToothIcon,
-  CommandLineIcon,
-  PlusIcon,
-  XMarkIcon
-} from '@heroicons/react/16/solid'
-import type {
-  TerminalPreset,
-  TerminalRecord,
-  WorktreeRecord
-} from '@treeport/shared'
+import { ArrowPathIcon } from '@heroicons/react/16/solid'
+import type { TerminalRecord, WorktreeRecord } from '@treeport/shared'
 import { Button } from './components/ui/button'
 import {
   Dialog,
@@ -26,35 +16,16 @@ import {
   DialogHeader,
   DialogTitle
 } from './components/ui/dialog'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger
-} from './components/ui/dropdown-menu'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from './components/ui/tabs'
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger
-} from './components/ui/tooltip'
 import { cn } from './lib/utils'
 import { useIsMobile } from './hooks/use-mobile'
-import { TerminalStatusIcon } from './components/terminal-status-icon'
-import { useRequestTerminalFocus, useTerminalAutoFocus } from './terminal-focus'
+import { useTerminalAutoFocus } from './terminal-focus'
 import {
-  terminalProgressLabel,
   terminalSessions,
   type ArrowDirection,
   type TerminalSession,
   type TerminalSessionSnapshot
 } from './terminal-session'
-import {
-  useTerminalForegroundProcess,
-  useTerminalNavigationMetadata
-} from './terminal-runtime-metadata-react'
+import { useTerminalNavigationMetadata } from './terminal-runtime-metadata-react'
 
 export interface PendingTerminalTab {
   id: string
@@ -68,25 +39,8 @@ interface TerminalViewProps {
   selectedPendingTerminalId: string | null
   loading: boolean
   autoFocusBlocked: boolean
-  presets: TerminalPreset[]
-  presetsLoading: boolean
-  presetsError: boolean
-  newTerminalMenuOpen: boolean
-  mutationsDisabled: boolean
   onSelectTerminal: (terminal: TerminalRecord) => void
   onSelectPendingTerminal: (terminalId: string) => void
-  onCreateTerminal: (input: {
-    name: string
-    argv?: string[]
-    returnToShell?: boolean
-    closeOnSuccess?: boolean
-  }) => void
-  onManagePresets: (trigger: HTMLButtonElement | null) => void
-  onNewTerminalMenuOpenChange: (open: boolean) => void
-  onCloseTerminal: (
-    terminal: TerminalRecord,
-    runtimeMetadata?: { title: string | null; hasForegroundProcess: boolean }
-  ) => void
   onStatusChange: () => void
 }
 
@@ -105,50 +59,6 @@ const EMPTY_SNAPSHOT: TerminalSessionSnapshot = {
   error: null
 }
 
-function TerminalCloseButton({
-  terminal,
-  title,
-  disabled,
-  selected,
-  onCloseTerminal
-}: {
-  terminal: TerminalRecord
-  title: string
-  disabled: boolean
-  selected: boolean
-  onCloseTerminal: TerminalViewProps['onCloseTerminal']
-}) {
-  const hasForegroundProcess = useTerminalForegroundProcess(terminal.id)
-
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-sm"
-          className={cn(
-            'mr-1 shrink-0 self-center text-zinc-600 group-hover/tab:text-zinc-400 hover:bg-transparent hover:text-zinc-200',
-            selected && 'text-zinc-400'
-          )}
-          aria-label={`Close ${title}`}
-          disabled={disabled}
-          onClick={() =>
-            onCloseTerminal(terminal, { title, hasForegroundProcess })
-          }
-        >
-          <XMarkIcon />
-        </Button>
-      </TooltipTrigger>
-      <TooltipContent side="bottom">
-        {disabled
-          ? 'Every worktree keeps at least one terminal'
-          : 'Close terminal'}
-      </TooltipContent>
-    </Tooltip>
-  )
-}
-
 export function TerminalView({
   worktree,
   terminal,
@@ -156,24 +66,13 @@ export function TerminalView({
   selectedPendingTerminalId,
   loading,
   autoFocusBlocked,
-  presets,
-  presetsLoading,
-  presetsError,
-  newTerminalMenuOpen,
-  mutationsDisabled,
   onSelectTerminal,
   onSelectPendingTerminal,
-  onCreateTerminal,
-  onManagePresets,
-  onNewTerminalMenuOpenChange,
-  onCloseTerminal,
   onStatusChange
 }: TerminalViewProps) {
   const shellRef = useRef<HTMLElement>(null)
   const hostRef = useRef<HTMLDivElement>(null)
   const pasteTriggerRef = useRef<HTMLButtonElement>(null)
-  const newTerminalTriggerRef = useRef<HTMLButtonElement>(null)
-  const firstNewTerminalItemRef = useRef<HTMLDivElement>(null)
   const [session, setSession] = useState<TerminalSession | null>(null)
   const [ctrl, setCtrl] = useState(false)
   const [alt, setAlt] = useState(false)
@@ -184,7 +83,6 @@ export function TerminalView({
   })
   const onStatusChangeRef = useRef(onStatusChange)
   onStatusChangeRef.current = onStatusChange
-  const requestTerminalFocus = useRequestTerminalFocus()
   const isMobile = useIsMobile()
 
   useLayoutEffect(() => {
@@ -236,11 +134,7 @@ export function TerminalView({
   )
   const pasteOpen = paste.terminalId === terminal?.id && paste.open
   const pasteValue = paste.terminalId === terminal?.id ? paste.value : ''
-  const {
-    attention: bellAttention,
-    titles: runtimeTitles,
-    progress: terminalProgress
-  } = useTerminalNavigationMetadata()
+  const { titles: runtimeTitles } = useTerminalNavigationMetadata()
 
   useLayoutEffect(() => {
     const host = hostRef.current
@@ -386,18 +280,6 @@ export function TerminalView({
     ? runtimeTitles.get(terminal.id) || terminal.name
     : (selectedPendingTerminal?.name ?? '')
   const terminals = worktree?.terminals ?? []
-  const launchDisabled = !worktree || mutationsDisabled
-
-  useEffect(() => {
-    if (!newTerminalMenuOpen || launchDisabled) {
-      return
-    }
-
-    const frame = requestAnimationFrame(() =>
-      firstNewTerminalItemRef.current?.focus()
-    )
-    return () => cancelAnimationFrame(frame)
-  }, [launchDisabled, newTerminalMenuOpen])
 
   useEffect(() => {
     // Mod+W stays browser-owned here; reserve it for Electron, where we can override the window accelerator.
@@ -407,6 +289,7 @@ export function TerminalView({
         event.altKey ||
         event.ctrlKey ||
         event.shiftKey ||
+        autoFocusBlocked ||
         shellRef.current?.closest('[inert]')
       ) {
         return
@@ -444,6 +327,7 @@ export function TerminalView({
     return () => document.removeEventListener('keydown', keydown, true)
   }, [
     activeSession,
+    autoFocusBlocked,
     onSelectPendingTerminal,
     onSelectTerminal,
     pendingTerminals,
@@ -451,256 +335,44 @@ export function TerminalView({
   ])
 
   return (
-    <Tabs
-      value={selectedPendingTerminalId ?? terminal?.id ?? ''}
-      onValueChange={(terminalId) => {
-        const pendingTerminal = pendingTerminals.find(
-          (item) => item.id === terminalId
-        )
-        if (pendingTerminal) {
-          onSelectPendingTerminal(pendingTerminal.id)
-          return
-        }
-
-        const nextTerminal = terminals.find((item) => item.id === terminalId)
-        if (nextTerminal) {
-          onSelectTerminal(nextTerminal)
-        }
-      }}
-      asChild
+    <main
+      ref={shellRef}
+      className={cn(
+        'terminal-shell grid min-h-0 min-w-0 grid-rows-[minmax(0,1fr)] bg-zinc-950 max-[700px]:grid-rows-[minmax(0,1fr)_3.25rem]',
+        snapshot.bellActive && 'terminal-bell'
+      )}
+      aria-label={
+        selectedPendingTerminal
+          ? `Starting ${selectedPendingTerminal.name} terminal`
+          : terminal
+            ? `${visibleTitle} terminal`
+            : 'Terminal panel'
+      }
     >
-      <main
-        ref={shellRef}
-        className={cn(
-          'terminal-shell grid min-h-0 min-w-0 grid-rows-[2.5rem_minmax(0,1fr)] bg-zinc-950 max-[700px]:grid-rows-[2.75rem_minmax(0,1fr)_3.25rem]',
-          snapshot.bellActive && 'terminal-bell'
-        )}
-        aria-label={
-          selectedPendingTerminal
-            ? `Starting ${selectedPendingTerminal.name} terminal`
-            : terminal
-              ? `${visibleTitle} terminal`
-              : 'Terminal panel'
-        }
-      >
-        <header className="terminal-header flex min-w-0 items-stretch border-b border-white/8 bg-zinc-900/70">
-          <div className="min-w-0 max-w-full flex-1 overflow-x-auto">
-            <TabsList
-              className="flex h-full min-w-full items-stretch"
-              aria-label={`${worktree?.name ?? 'Worktree'} terminals`}
-            >
-              {terminals.map((item, index) => {
-                const selected = item.id === terminal?.id
-                const title = runtimeTitles.get(item.id) || item.name
-                const needsAttention = bellAttention.has(item.id)
-                const progress = terminalProgress.get(item.id)
-                const working =
-                  !!progress &&
-                  progress.state !== 'paused' &&
-                  progress.state !== 'error'
-                const status = [
-                  item.status,
-                  selected && snapshot.degraded ? 'reconnecting' : null,
-                  progress ? terminalProgressLabel(progress) : null,
-                  needsAttention ? 'bell' : null
-                ]
-                  .filter(Boolean)
-                  .join(', ')
-                return (
-                  <div
-                    key={item.id}
-                    className={cn(
-                      'group/tab relative flex min-w-36 flex-1 basis-0 items-center border-r border-white/6 hover:bg-white/4 after:pointer-events-none after:absolute after:inset-x-0 after:top-0 after:h-0.5 after:bg-cyan-400 after:opacity-0',
-                      selected &&
-                        'bg-zinc-800 hover:bg-zinc-700/70 after:opacity-100'
-                    )}
-                    onMouseDown={(event) => {
-                      if (event.button === 1) {
-                        event.preventDefault()
-                      }
-                    }}
-                    onAuxClick={(event) => {
-                      if (event.button !== 1) {
-                        return
-                      }
-
-                      event.preventDefault()
-                      onCloseTerminal(item)
-                    }}
-                  >
-                    <TabsTrigger
-                      value={item.id}
-                      onClick={() => {
-                        if (selected) {
-                          requestTerminalFocus(item.id)
-                        }
-                      }}
-                      className="flex h-full min-w-0 flex-1 items-center gap-1.5 py-0 pr-0.5 pl-3 text-[0.8125rem] font-normal text-zinc-500 outline-none group-hover/tab:text-zinc-200 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-cyan-400 data-[state=active]:text-zinc-50"
-                      aria-label={`${title}, ${status}`}
-                      aria-keyshortcuts={
-                        index < 9 ? `Meta+${index + 1}` : undefined
-                      }
-                      title={title}
-                    >
-                      {progress ? (
-                        <TerminalStatusIcon
-                          working={working}
-                          className={cn(
-                            'size-4 shrink-0 stroke-zinc-500',
-                            working && 'stroke-cyan-400',
-                            progress.state === 'error' && 'stroke-rose-300',
-                            progress.state === 'paused' && 'stroke-amber-300',
-                            needsAttention && 'stroke-amber-300'
-                          )}
-                        />
-                      ) : item.status !== 'running' || needsAttention ? (
-                        <span
-                          className={cn(
-                            'size-1.5 shrink-0 rounded-full bg-zinc-600',
-                            item.status === 'exited' && 'bg-rose-400',
-                            needsAttention &&
-                              'bg-amber-300 shadow-[0_0_0.5rem] shadow-amber-300/60'
-                          )}
-                          aria-hidden="true"
-                        />
-                      ) : null}
-                      <span
-                        className={cn(
-                          'min-w-0 flex-1 truncate text-base sm:text-[0.734375rem]',
-                          working && !needsAttention && 'text-cyan-300'
-                        )}
-                      >
-                        {title}
-                      </span>
-                      {index < 9 && (
-                        <span
-                          className={cn(
-                            'ml-1 shrink-0 text-[0.6875rem]/4 font-normal text-zinc-600 tabular-nums group-hover/tab:text-zinc-400',
-                            selected && 'text-zinc-400'
-                          )}
-                          aria-hidden="true"
-                        >
-                          ⌘{index + 1}
-                        </span>
-                      )}
-                    </TabsTrigger>
-                    <TerminalCloseButton
-                      terminal={item}
-                      title={title}
-                      disabled={terminals.length === 1}
-                      selected={selected}
-                      onCloseTerminal={onCloseTerminal}
-                    />
-                  </div>
-                )
-              })}
-              {pendingTerminals.map((item, pendingIndex) => {
-                const index = terminals.length + pendingIndex
-                return (
-                  <div
-                    key={item.id}
-                    className="group/tab relative flex min-w-36 flex-1 basis-0 items-center border-r border-white/6 hover:bg-white/4"
-                  >
-                    <TabsTrigger
-                      value={item.id}
-                      className="flex h-full min-w-0 flex-1 items-center gap-1.5 py-0 pr-2 pl-3 text-[0.8125rem] font-normal text-zinc-400 outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-cyan-400 data-[state=active]:bg-zinc-800 data-[state=active]:text-zinc-50"
-                      aria-label={`${item.name}, starting`}
-                      aria-keyshortcuts={
-                        index < 9 ? `Meta+${index + 1}` : undefined
-                      }
-                      title={`${item.name} is starting`}
-                    >
-                      <ArrowPathIcon
-                        className="size-3.5 shrink-0 animate-spin fill-zinc-500"
-                        aria-hidden="true"
-                      />
-                      <span className="min-w-0 flex-1 truncate text-base sm:text-[0.734375rem]">
-                        {item.name}
-                      </span>
-                      <span className="shrink-0 text-[0.6875rem]/4 text-zinc-500">
-                        Starting…
-                      </span>
-                    </TabsTrigger>
-                  </div>
-                )
-              })}
-            </TabsList>
-          </div>
-          <DropdownMenu
-            open={newTerminalMenuOpen}
-            onOpenChange={onNewTerminalMenuOpenChange}
+      {selectedPendingTerminal ? (
+        <div className="grid min-h-0 place-items-center bg-[radial-gradient(circle_at_center,var(--color-zinc-900)_0,var(--color-zinc-950)_55%)] p-8">
+          <div
+            className="flex items-center gap-2 text-sm text-zinc-300"
+            role="status"
           >
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    ref={newTerminalTriggerRef}
-                    type="button"
-                    variant="ghost"
-                    size="icon-sm"
-                    className="m-0 size-11 shrink-0 text-zinc-500 hover:bg-white/5 hover:text-zinc-100 min-[701px]:m-1 min-[701px]:size-7"
-                    aria-label="New terminal"
-                  >
-                    <PlusIcon />
-                  </Button>
-                </DropdownMenuTrigger>
-              </TooltipTrigger>
-              <TooltipContent side="bottom">New terminal</TooltipContent>
-            </Tooltip>
-            <DropdownMenuContent align="end" side="bottom">
-              <DropdownMenuGroup>
-                <DropdownMenuItem
-                  ref={firstNewTerminalItemRef}
-                  disabled={launchDisabled}
-                  onSelect={() => onCreateTerminal({ name: 'Shell' })}
-                >
-                  <CommandLineIcon />
-                  Shell
-                </DropdownMenuItem>
-                {presets.map((preset) => (
-                  <DropdownMenuItem
-                    key={preset.id}
-                    disabled={launchDisabled}
-                    onSelect={() =>
-                      onCreateTerminal({
-                        name: preset.name,
-                        argv: [preset.executable, ...preset.args],
-                        ...(preset.closeOnSuccess
-                          ? { closeOnSuccess: true }
-                          : { returnToShell: true })
-                      })
-                    }
-                  >
-                    <CommandLineIcon />
-                    <span className="truncate">{preset.name}</span>
-                  </DropdownMenuItem>
-                ))}
-                {presetsLoading && (
-                  <DropdownMenuItem disabled>Loading presets…</DropdownMenuItem>
-                )}
-                {presetsError && (
-                  <DropdownMenuItem disabled>
-                    Presets unavailable
-                  </DropdownMenuItem>
-                )}
-              </DropdownMenuGroup>
-              <DropdownMenuSeparator />
-              <DropdownMenuGroup>
-                <DropdownMenuItem
-                  onSelect={() => {
-                    const trigger = newTerminalTriggerRef.current
-                    queueMicrotask(() => onManagePresets(trigger))
-                  }}
-                >
-                  <Cog6ToothIcon />
-                  Manage presets
-                </DropdownMenuItem>
-              </DropdownMenuGroup>
-            </DropdownMenuContent>
-          </DropdownMenu>
-          {terminal && snapshot.phase === 'ready' && !snapshot.controller && (
+            <ArrowPathIcon
+              className="size-4 animate-spin fill-zinc-500"
+              aria-hidden="true"
+            />
+            Starting {selectedPendingTerminal.name}…
+          </div>
+        </div>
+      ) : terminal ? (
+        <div className="relative min-h-0 min-w-0 overflow-hidden">
+          <div
+            key={terminal.id}
+            className="xterm-host absolute inset-0 min-h-0 min-w-0 overflow-hidden p-2.5 outline-none max-[700px]:p-1.5"
+            ref={hostRef}
+            onMouseDown={() => activeSession?.focus({ requestControl: true })}
+          />
+          {snapshot.phase === 'ready' && !snapshot.controller ? (
             <span
-              className="my-1 mr-2 ml-auto inline-flex shrink-0 items-center gap-1.5 self-center rounded-full bg-white/5 px-2 py-1 text-[0.6875rem] font-medium text-zinc-400 ring-1 ring-white/8"
+              className="absolute top-3 right-3 z-10 inline-flex shrink-0 items-center gap-1.5 rounded-full bg-zinc-900/90 px-2 py-1 text-[0.6875rem] font-medium text-zinc-400 shadow ring-1 ring-white/8 backdrop-blur"
               title="Interact with the terminal to control it"
             >
               <span
@@ -712,282 +384,247 @@ export function TerminalView({
               />
               {snapshot.controlPending ? 'Taking control…' : 'Viewing'}
             </span>
-          )}
-        </header>
-        {selectedPendingTerminal ? (
-          <div className="grid min-h-0 place-items-center bg-[radial-gradient(circle_at_center,var(--color-zinc-900)_0,var(--color-zinc-950)_55%)] p-8">
-            <div
-              className="flex items-center gap-2 text-sm text-zinc-300"
-              role="status"
-            >
-              <ArrowPathIcon
-                className="size-4 animate-spin fill-zinc-500"
-                aria-hidden="true"
-              />
-              Starting {selectedPendingTerminal.name}…
-            </div>
-          </div>
-        ) : terminal ? (
-          <div className="relative min-h-0 min-w-0 overflow-hidden">
-            <TabsContent
-              value={terminal.id}
-              key={terminal.id}
-              forceMount
-              className="xterm-host absolute inset-0 min-h-0 min-w-0 overflow-hidden p-2.5 outline-none max-[700px]:p-1.5"
-              ref={hostRef}
-              onMouseDown={() => activeSession?.focus({ requestControl: true })}
-            />
-            {pasteOpen &&
-              (isMobile ? (
-                <Dialog
-                  open
-                  onOpenChange={(open) => {
-                    if (!open) {
-                      setPaste({
-                        terminalId: terminal.id,
-                        open: false,
-                        value: ''
-                      })
-                    }
-                  }}
-                >
-                  <DialogContent
-                    className="max-w-sm gap-3 p-4"
-                    mobilePresentation="dialog"
-                    restoreFocusTo={pasteTriggerRef.current}
-                  >
-                    <DialogHeader>
-                      <DialogTitle className="text-lg sm:text-lg">
-                        Paste into terminal
-                      </DialogTitle>
-                      <DialogDescription className="sr-only">
-                        Paste text and send it to the active terminal.
-                      </DialogDescription>
-                    </DialogHeader>
-                    {pasteControls}
-                  </DialogContent>
-                </Dialog>
-              ) : (
-                <div
-                  className="absolute inset-x-3 bottom-3 z-20 grid gap-2 rounded-lg bg-zinc-900 p-3 shadow-xl ring-1 ring-white/15"
-                  role="dialog"
-                  aria-label="Paste into terminal"
-                >
-                  {pasteControls}
-                </div>
-              ))}
-            {snapshot.hasSelection && !pasteOpen && (
-              <div
-                className="terminal-selection-actions absolute right-3 bottom-3 z-10 overflow-hidden rounded-md bg-zinc-800 shadow-lg ring-1 ring-white/15 max-[700px]:bottom-2"
-                aria-label="Terminal text selection"
+          ) : null}
+          {pasteOpen &&
+            (isMobile ? (
+              <Dialog
+                open
+                onOpenChange={(open) => {
+                  if (!open) {
+                    setPaste({
+                      terminalId: terminal.id,
+                      open: false,
+                      value: ''
+                    })
+                  }
+                }}
               >
+                <DialogContent
+                  className="max-w-sm gap-3 p-4"
+                  mobilePresentation="dialog"
+                  restoreFocusTo={pasteTriggerRef.current}
+                >
+                  <DialogHeader>
+                    <DialogTitle className="text-lg sm:text-lg">
+                      Paste into terminal
+                    </DialogTitle>
+                    <DialogDescription className="sr-only">
+                      Paste text and send it to the active terminal.
+                    </DialogDescription>
+                  </DialogHeader>
+                  {pasteControls}
+                </DialogContent>
+              </Dialog>
+            ) : (
+              <div
+                className="absolute inset-x-3 bottom-3 z-20 grid gap-2 rounded-lg bg-zinc-900 p-3 shadow-xl ring-1 ring-white/15"
+                role="dialog"
+                aria-label="Paste into terminal"
+              >
+                {pasteControls}
+              </div>
+            ))}
+          {snapshot.hasSelection && !pasteOpen && (
+            <div
+              className="terminal-selection-actions absolute right-3 bottom-3 z-10 overflow-hidden rounded-md bg-zinc-800 shadow-lg ring-1 ring-white/15 max-[700px]:bottom-2"
+              aria-label="Terminal text selection"
+            >
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="rounded-none border-r border-white/10 px-3 text-zinc-100"
+                onClick={() => activeSession?.copySelection()}
+              >
+                Copy
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="rounded-none px-3 text-zinc-300"
+                onClick={() => activeSession?.clearSelection()}
+              >
+                Clear
+              </Button>
+            </div>
+          )}
+          {(snapshot.degraded || snapshot.fileTransfer) && (
+            <div className="pointer-events-none absolute inset-x-0 top-3 z-10 flex flex-col items-center gap-2">
+              {snapshot.degraded && (
+                <span className="max-w-[calc(100%-1.5rem)] rounded-full bg-zinc-900/90 px-3 py-1 text-center text-xs text-amber-200 shadow ring-1 ring-amber-400/20 backdrop-blur">
+                  {snapshot.error
+                    ? `${snapshot.error} Retrying…`
+                    : 'Reconnecting…'}
+                </span>
+              )}
+              {snapshot.fileTransfer && (
+                <span
+                  className={cn(
+                    'rounded-full bg-zinc-900/90 px-3 py-1 text-xs shadow ring-1 backdrop-blur',
+                    snapshot.fileTransfer.state === 'error'
+                      ? 'text-rose-100 ring-rose-400/30'
+                      : 'text-cyan-100 ring-cyan-400/20'
+                  )}
+                  role={
+                    snapshot.fileTransfer.state === 'error' ? 'alert' : 'status'
+                  }
+                >
+                  {snapshot.fileTransfer.message}
+                </span>
+              )}
+            </div>
+          )}
+          {snapshot.phase === 'closed' && snapshot.error && (
+            <div className="absolute inset-x-0 top-3 z-10 flex justify-center">
+              <div className="flex items-center gap-2 rounded-full bg-rose-950/95 px-3 py-1 text-xs text-rose-100 shadow ring-1 ring-rose-400/30 backdrop-blur">
+                <span>{snapshot.error}</span>
                 <Button
                   type="button"
                   variant="ghost"
                   size="sm"
-                  className="rounded-none border-r border-white/10 px-3 text-zinc-100"
-                  onClick={() => activeSession?.copySelection()}
+                  className="h-6 px-2 text-xs text-rose-100 hover:bg-rose-900"
+                  onClick={() => activeSession?.retry()}
                 >
-                  Copy
-                </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="rounded-none px-3 text-zinc-300"
-                  onClick={() => activeSession?.clearSelection()}
-                >
-                  Clear
+                  Retry
                 </Button>
               </div>
-            )}
-            {(snapshot.degraded || snapshot.fileTransfer) && (
-              <div className="pointer-events-none absolute inset-x-0 top-3 z-10 flex flex-col items-center gap-2">
-                {snapshot.degraded && (
-                  <span className="max-w-[calc(100%-1.5rem)] rounded-full bg-zinc-900/90 px-3 py-1 text-center text-xs text-amber-200 shadow ring-1 ring-amber-400/20 backdrop-blur">
-                    {snapshot.error
-                      ? `${snapshot.error} Retrying…`
-                      : 'Reconnecting…'}
-                  </span>
-                )}
-                {snapshot.fileTransfer && (
-                  <span
-                    className={cn(
-                      'rounded-full bg-zinc-900/90 px-3 py-1 text-xs shadow ring-1 backdrop-blur',
-                      snapshot.fileTransfer.state === 'error'
-                        ? 'text-rose-100 ring-rose-400/30'
-                        : 'text-cyan-100 ring-cyan-400/20'
-                    )}
-                    role={
-                      snapshot.fileTransfer.state === 'error'
-                        ? 'alert'
-                        : 'status'
-                    }
-                  >
-                    {snapshot.fileTransfer.message}
-                  </span>
-                )}
-              </div>
-            )}
-            {snapshot.phase === 'closed' && snapshot.error && (
-              <div className="absolute inset-x-0 top-3 z-10 flex justify-center">
-                <div className="flex items-center gap-2 rounded-full bg-rose-950/95 px-3 py-1 text-xs text-rose-100 shadow ring-1 ring-rose-400/30 backdrop-blur">
-                  <span>{snapshot.error}</span>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="h-6 px-2 text-xs text-rose-100 hover:bg-rose-900"
-                    onClick={() => activeSession?.retry()}
-                  >
-                    Retry
-                  </Button>
-                </div>
-              </div>
-            )}
-            <span className="sr-only" aria-live="polite">
-              {snapshot.phase === 'ready'
-                ? snapshot.controller
-                  ? 'Controlling terminal'
-                  : snapshot.controlPending
-                    ? 'Taking control of terminal'
-                    : 'Viewing terminal'
-                : ''}
-              {snapshot.bellActive ? ` Bell from ${visibleTitle}` : ''}
-            </span>
-          </div>
-        ) : loading ? (
-          <div className="grid min-h-0 place-items-center bg-[radial-gradient(circle_at_center,var(--color-zinc-900)_0,var(--color-zinc-950)_55%)] p-8">
-            <div role="status" aria-label="Loading workspace">
-              <ArrowPathIcon
-                className="size-6 animate-spin fill-zinc-500"
-                aria-hidden="true"
-              />
             </div>
+          )}
+          <span className="sr-only" aria-live="polite">
+            {snapshot.phase === 'ready'
+              ? snapshot.controller
+                ? 'Controlling terminal'
+                : snapshot.controlPending
+                  ? 'Taking control of terminal'
+                  : 'Viewing terminal'
+              : ''}
+            {snapshot.bellActive ? ` Bell from ${visibleTitle}` : ''}
+          </span>
+        </div>
+      ) : loading ? (
+        <div className="grid min-h-0 place-items-center bg-[radial-gradient(circle_at_center,var(--color-zinc-900)_0,var(--color-zinc-950)_55%)] p-8">
+          <div role="status" aria-label="Loading workspace">
+            <ArrowPathIcon
+              className="size-6 animate-spin fill-zinc-500"
+              aria-hidden="true"
+            />
           </div>
-        ) : (
-          <div className="empty-state grid min-h-0 place-items-center bg-[radial-gradient(circle_at_center,var(--color-zinc-900)_0,var(--color-zinc-950)_55%)] p-8">
-            <div className="grid max-w-lg gap-3">
-              <p className="eyebrow">No terminal open</p>
-              <h1 className="text-balance text-2xl font-semibold tracking-tight text-zinc-50 sm:text-3xl">
-                {worktree
-                  ? 'Start a terminal for this worktree.'
-                  : 'Choose a worktree.'}
-              </h1>
-              <p className="max-w-[52ch] text-base text-pretty text-zinc-400 sm:text-sm">
-                {worktree
-                  ? 'Use the New terminal menu to start a login shell or preset.'
-                  : 'Select a worktree from the sidebar to view its terminals.'}
-              </p>
-            </div>
+        </div>
+      ) : (
+        <div className="empty-state grid min-h-0 place-items-center bg-[radial-gradient(circle_at_center,var(--color-zinc-900)_0,var(--color-zinc-950)_55%)] p-8">
+          <div className="grid max-w-lg gap-3">
+            <p className="eyebrow">No terminal open</p>
+            <h1 className="text-balance text-2xl font-semibold tracking-tight text-zinc-50 sm:text-3xl">
+              {worktree
+                ? 'Start a terminal for this worktree.'
+                : 'Choose a worktree.'}
+            </h1>
+            <p className="max-w-[52ch] text-base text-pretty text-zinc-400 sm:text-sm">
+              {worktree
+                ? 'Use New terminal in the sidebar to start a login shell or preset.'
+                : 'Select a worktree from the sidebar to view its terminals.'}
+            </p>
           </div>
-        )}
-        {terminal && (
-          <div
-            className="accessory-row hidden min-w-0 touch-pan-x overflow-x-auto overflow-y-hidden border-t border-white/8 bg-zinc-900 pt-1 pr-[env(safe-area-inset-right)] pb-[calc(0.25rem+env(safe-area-inset-bottom))] pl-[env(safe-area-inset-left)] max-[700px]:flex [&_button]:h-11 [&_button]:min-w-11 [&_button]:grow [&_button]:rounded-none [&_button]:border-r [&_button]:border-white/8 [&_button]:text-sm [&_button:last-child]:border-r-0"
-            aria-label="Terminal accessory keys"
-            onPointerDownCapture={() => activeSession?.requestControl()}
+        </div>
+      )}
+      {terminal && (
+        <div
+          className="accessory-row hidden min-w-0 touch-pan-x overflow-x-auto overflow-y-hidden border-t border-white/8 bg-zinc-900 pt-1 pr-[env(safe-area-inset-right)] pb-[calc(0.25rem+env(safe-area-inset-bottom))] pl-[env(safe-area-inset-left)] max-[700px]:flex [&_button]:h-11 [&_button]:min-w-11 [&_button]:grow [&_button]:rounded-none [&_button]:border-r [&_button]:border-white/8 [&_button]:text-sm [&_button:last-child]:border-r-0"
+          aria-label="Terminal accessory keys"
+          onPointerDownCapture={() => activeSession?.requestControl()}
+        >
+          <Button
+            variant="ghost"
+            type="button"
+            onClick={() => sendInput('\u001b')}
           >
-            <Button
-              variant="ghost"
-              type="button"
-              onClick={() => sendInput('\u001b')}
-            >
-              Esc
-            </Button>
-            <Button
-              variant="ghost"
-              type="button"
-              className={ctrl ? 'latched bg-cyan-950 text-cyan-100' : ''}
-              aria-pressed={ctrl}
-              onClick={() => {
-                setCtrl((value) => !value)
-                activeSession?.focus()
-              }}
-            >
-              Ctrl
-            </Button>
-            <Button
-              variant="ghost"
-              type="button"
-              className={alt ? 'latched bg-cyan-950 text-cyan-100' : ''}
-              aria-pressed={alt}
-              onClick={() => {
-                setAlt((value) => !value)
-                activeSession?.focus()
-              }}
-            >
-              Alt
-            </Button>
-            <Button
-              ref={pasteTriggerRef}
-              variant="ghost"
-              type="button"
-              onClick={requestPaste}
-            >
-              Paste
-            </Button>
-            <Button
-              variant="ghost"
-              type="button"
-              onClick={() => sendInput('\t')}
-            >
-              Tab
-            </Button>
-            <Button
-              variant="ghost"
-              type="button"
-              onClick={() => {
-                // Shift+Tab has a fixed terminal sequence and ignores modifier latches.
-                activeSession?.sendText('\u001b[Z')
-                setCtrl(false)
-                setAlt(false)
-              }}
-            >
-              Shift+Tab
-            </Button>
-            <Button
-              variant="ghost"
-              type="button"
-              onClick={() => sendInput('\r')}
-            >
-              Enter
-            </Button>
-            <Button
-              variant="ghost"
-              type="button"
-              aria-label="Arrow left"
-              onClick={() => sendArrow('left')}
-            >
-              ←
-            </Button>
-            <Button
-              variant="ghost"
-              type="button"
-              aria-label="Arrow up"
-              onClick={() => sendArrow('up')}
-            >
-              ↑
-            </Button>
-            <Button
-              variant="ghost"
-              type="button"
-              aria-label="Arrow down"
-              onClick={() => sendArrow('down')}
-            >
-              ↓
-            </Button>
-            <Button
-              variant="ghost"
-              type="button"
-              aria-label="Arrow right"
-              onClick={() => sendArrow('right')}
-            >
-              →
-            </Button>
-          </div>
-        )}
-      </main>
-    </Tabs>
+            Esc
+          </Button>
+          <Button
+            variant="ghost"
+            type="button"
+            className={ctrl ? 'latched bg-cyan-950 text-cyan-100' : ''}
+            aria-pressed={ctrl}
+            onClick={() => {
+              setCtrl((value) => !value)
+              activeSession?.focus()
+            }}
+          >
+            Ctrl
+          </Button>
+          <Button
+            variant="ghost"
+            type="button"
+            className={alt ? 'latched bg-cyan-950 text-cyan-100' : ''}
+            aria-pressed={alt}
+            onClick={() => {
+              setAlt((value) => !value)
+              activeSession?.focus()
+            }}
+          >
+            Alt
+          </Button>
+          <Button
+            ref={pasteTriggerRef}
+            variant="ghost"
+            type="button"
+            onClick={requestPaste}
+          >
+            Paste
+          </Button>
+          <Button variant="ghost" type="button" onClick={() => sendInput('\t')}>
+            Tab
+          </Button>
+          <Button
+            variant="ghost"
+            type="button"
+            onClick={() => {
+              // Shift+Tab has a fixed terminal sequence and ignores modifier latches.
+              activeSession?.sendText('\u001b[Z')
+              setCtrl(false)
+              setAlt(false)
+            }}
+          >
+            Shift+Tab
+          </Button>
+          <Button variant="ghost" type="button" onClick={() => sendInput('\r')}>
+            Enter
+          </Button>
+          <Button
+            variant="ghost"
+            type="button"
+            aria-label="Arrow left"
+            onClick={() => sendArrow('left')}
+          >
+            ←
+          </Button>
+          <Button
+            variant="ghost"
+            type="button"
+            aria-label="Arrow up"
+            onClick={() => sendArrow('up')}
+          >
+            ↑
+          </Button>
+          <Button
+            variant="ghost"
+            type="button"
+            aria-label="Arrow down"
+            onClick={() => sendArrow('down')}
+          >
+            ↓
+          </Button>
+          <Button
+            variant="ghost"
+            type="button"
+            aria-label="Arrow right"
+            onClick={() => sendArrow('right')}
+          >
+            →
+          </Button>
+        </div>
+      )}
+    </main>
   )
 }

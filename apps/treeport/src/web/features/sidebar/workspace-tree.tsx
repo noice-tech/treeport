@@ -1,12 +1,24 @@
 import type { ReactNode } from 'react'
 import { CrownIcon, GitBranchIcon } from 'lucide-react'
-import { PlusIcon, TrashIcon } from '@heroicons/react/16/solid'
+import {
+  ArrowPathIcon,
+  PlusIcon,
+  TrashIcon,
+  XMarkIcon
+} from '@heroicons/react/16/solid'
 import type {
   ProjectRecord,
   TerminalRecord,
   WorktreeRecord
 } from '@treeport/shared'
 import { Button } from '../../components/ui/button'
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuGroup,
+  ContextMenuItem,
+  ContextMenuTrigger
+} from '../../components/ui/context-menu'
 import {
   SidebarMenu,
   SidebarMenuButton,
@@ -37,7 +49,6 @@ function WorktreeShell({
   icon,
   status,
   selected = false,
-  linked = false,
   pending = false,
   busy = false,
   id,
@@ -50,7 +61,6 @@ function WorktreeShell({
   icon: ReactNode
   status?: ReactNode
   selected?: boolean
-  linked?: boolean
   pending?: boolean
   busy?: boolean
   id?: string
@@ -60,7 +70,6 @@ function WorktreeShell({
 }) {
   const classes = cn(
     'worktree-row flex h-auto min-h-11 w-full min-w-0 items-center justify-start gap-1.5 rounded-md px-2 py-1.5 text-left text-base/5 font-medium min-[701px]:min-h-8 min-[701px]:py-0.5 min-[701px]:text-sm/5',
-    linked && 'min-[701px]:pr-9',
     pending
       ? 'text-zinc-300'
       : selected
@@ -110,15 +119,29 @@ export interface WorkspaceTreeProps {
   activeProject: ProjectRecord | null
   selectedWorktree: WorktreeRecord | null
   selectedTerminalId: string | null
+  selectedPendingTerminalId: string | null
+  pendingTerminals: Array<{
+    id: string
+    projectId: string
+    worktreeId: string
+    name: string
+  }>
   pendingWorktrees: PendingWorktreeCreation[]
   pendingRemovals: Record<string, RemovalStage>
   onRetryProjects: () => void
   onSelectTerminal: (terminal: TerminalRecord) => void
+  onSelectPendingTerminal: (terminalId: string) => void
+  onCloseTerminal: (terminal: TerminalRecord) => void
   onSelectWorktree: (worktree: WorktreeRecord) => void
   onPrepareRemoval: (
     worktree: WorktreeRecord,
     trigger: HTMLElement
   ) => Promise<void>
+  onOpenTerminalDialog: (
+    project: ProjectRecord,
+    worktree: WorktreeRecord | null,
+    trigger: HTMLElement
+  ) => void
   onOpenWorktreeDialog: (project: ProjectRecord, trigger: HTMLElement) => void
 }
 
@@ -130,12 +153,17 @@ export function WorkspaceTree({
   activeProject,
   selectedWorktree,
   selectedTerminalId,
+  selectedPendingTerminalId,
+  pendingTerminals,
   pendingWorktrees,
   pendingRemovals,
   onRetryProjects,
   onSelectTerminal: selectTerminal,
+  onSelectPendingTerminal: selectPendingTerminal,
+  onCloseTerminal: closeTerminal,
   onSelectWorktree: selectWorktree,
   onPrepareRemoval: prepareRemoval,
+  onOpenTerminalDialog,
   onOpenWorktreeDialog
 }: WorkspaceTreeProps) {
   const {
@@ -148,6 +176,11 @@ export function WorkspaceTree({
     ? desktopBridge.platform === 'darwin'
       ? '⌘N'
       : 'Ctrl+N'
+    : null
+  const newTerminalMenuShortcut = desktopBridge
+    ? desktopBridge.platform === 'darwin'
+      ? '⌘⇧T'
+      : 'Ctrl+Shift+T'
     : null
 
   return (
@@ -199,112 +232,156 @@ export function WorkspaceTree({
                     key={worktree.id}
                     className="group/worktree min-w-0"
                   >
-                    <div
-                      className={cn(
-                        'relative min-w-0 max-[700px]:flex max-[700px]:items-center max-[700px]:gap-0.5 max-[700px]:rounded-md max-[700px]:has-[button:hover]:bg-white/5',
-                        selectedWorktree?.id === worktree.id &&
-                          'max-[700px]:bg-white/8'
-                      )}
-                    >
-                      <WorktreeShell
-                        name={worktree.name}
-                        title={`${worktree.path}${
-                          worktree.branch
-                            ? ` · ${worktree.branch}`
-                            : ` · detached at ${worktree.head.slice(0, 8)}`
-                        }`}
-                        linked={worktree.kind === 'linked'}
-                        selected={selectedWorktree?.id === worktree.id}
-                        busy={
-                          Boolean(pendingRemovals[worktree.id]) ||
-                          worktree.status === 'cleaning'
-                        }
-                        ariaLabel={
-                          pendingRemovals[worktree.id] === 'checking'
-                            ? `${worktree.name}, preparing removal`
-                            : pendingRemovals[worktree.id] ||
-                                worktree.status === 'cleaning'
-                              ? `${worktree.name}, removing`
-                              : undefined
-                        }
-                        onClick={() => selectWorktree(worktree)}
-                        icon={
-                          pendingRemovals[worktree.id] ||
-                          worktree.status === 'cleaning' ? (
-                            <GitBranchIcon
-                              className="worktree-progress-icon worktree-removing-icon size-4 shrink-0 stroke-rose-400 stroke-[1.5] min-[701px]:size-3.5!"
-                              aria-hidden="true"
-                            />
-                          ) : worktree.kind === 'main' ? (
-                            <CrownIcon
-                              className="size-4 shrink-0 stroke-zinc-600 stroke-[1.5] min-[701px]:size-3.5!"
-                              aria-hidden="true"
-                            />
-                          ) : (
-                            <GitBranchIcon
-                              className="shrink-0 stroke-zinc-600 stroke-[1.5] min-[701px]:size-3.5!"
-                              aria-hidden="true"
-                            />
-                          )
-                        }
-                        status={
-                          worktree.status === 'cleanup_failed' ? (
-                            <span
-                              className="truncate text-sm/4 font-normal text-rose-300 min-[701px]:text-[0.6875rem]"
-                              role="status"
-                              title={worktree.cleanupError ?? undefined}
-                            >
-                              Removal failed
-                              {worktree.cleanupError
-                                ? `: ${worktree.cleanupError}`
-                                : ''}
-                            </span>
-                          ) : undefined
-                        }
-                      />
-                      {worktree.kind === 'linked' && (
-                        <div className="worktree-actions absolute top-0 right-0 z-10 flex items-center gap-0.5 opacity-0 group-hover/worktree:opacity-100 group-focus-within/worktree:opacity-100 max-[700px]:static max-[700px]:shrink-0 max-[700px]:opacity-100">
-                          <SidebarAction
-                            label={
-                              needsManualCleanup(worktree)
-                                ? `Manual cleanup required for ${worktree.name}`
-                                : worktree.status === 'cleanup_failed'
-                                  ? `Retry removal for ${worktree.name}`
-                                  : `Remove ${worktree.name}`
+                    <ContextMenu>
+                      <ContextMenuTrigger
+                        asChild
+                        disabled={worktree.kind !== 'linked'}
+                      >
+                        <div
+                          className={cn(
+                            'relative min-w-0 max-[700px]:flex max-[700px]:items-center max-[700px]:gap-0.5 max-[700px]:rounded-md max-[700px]:has-[button:hover]:bg-white/5',
+                            selectedWorktree?.id === worktree.id &&
+                              'max-[700px]:bg-white/8'
+                          )}
+                        >
+                          <WorktreeShell
+                            id={`worktree-${worktree.id}`}
+                            name={worktree.name}
+                            title={`${worktree.path}${
+                              worktree.branch
+                                ? ` · ${worktree.branch}`
+                                : ` · detached at ${worktree.head.slice(0, 8)}`
+                            }`}
+                            selected={selectedWorktree?.id === worktree.id}
+                            className={cn(
+                              selectedWorktree?.id === worktree.id &&
+                                'min-[701px]:pr-6'
+                            )}
+                            busy={
+                              Boolean(pendingRemovals[worktree.id]) ||
+                              worktree.status === 'cleaning'
                             }
-                            tooltip={
-                              project.availability.state === 'unavailable'
+                            ariaLabel={
+                              pendingRemovals[worktree.id] === 'checking'
+                                ? `${worktree.name}, preparing removal`
+                                : pendingRemovals[worktree.id] ||
+                                    worktree.status === 'cleaning'
+                                  ? `${worktree.name}, removing`
+                                  : undefined
+                            }
+                            onClick={() => selectWorktree(worktree)}
+                            icon={
+                              pendingRemovals[worktree.id] ||
+                              worktree.status === 'cleaning' ? (
+                                <GitBranchIcon
+                                  className="worktree-progress-icon worktree-removing-icon size-4 shrink-0 stroke-rose-400 stroke-[1.5] min-[701px]:size-3.5!"
+                                  aria-hidden="true"
+                                />
+                              ) : worktree.kind === 'main' ? (
+                                <CrownIcon
+                                  className="size-4 shrink-0 stroke-zinc-600 stroke-[1.5] min-[701px]:size-3.5!"
+                                  aria-hidden="true"
+                                />
+                              ) : (
+                                <GitBranchIcon
+                                  className="shrink-0 stroke-zinc-600 stroke-[1.5] min-[701px]:size-3.5!"
+                                  aria-hidden="true"
+                                />
+                              )
+                            }
+                            status={
+                              worktree.status === 'cleanup_failed' ? (
+                                <span
+                                  className="truncate text-sm/4 font-normal text-rose-300 min-[701px]:text-[0.6875rem]"
+                                  role="status"
+                                  title={worktree.cleanupError ?? undefined}
+                                >
+                                  Removal failed
+                                  {worktree.cleanupError
+                                    ? `: ${worktree.cleanupError}`
+                                    : ''}
+                                </span>
+                              ) : undefined
+                            }
+                          />
+                          {selectedWorktree?.id === worktree.id ? (
+                            <div className="worktree-actions absolute inset-y-0 right-0 z-10 flex items-center max-[700px]:static max-[700px]:shrink-0">
+                              <SidebarAction
+                                label={`New terminal in ${worktree.name}`}
+                                tooltip={`New terminal in ${worktree.name}${
+                                  newTerminalMenuShortcut
+                                    ? ` — ${newTerminalMenuShortcut}`
+                                    : ''
+                                }`}
+                                {...(newTerminalMenuShortcut
+                                  ? {
+                                      keyShortcuts:
+                                        desktopBridge?.platform === 'darwin'
+                                          ? 'Meta+Shift+T'
+                                          : 'Control+Shift+T'
+                                    }
+                                  : {})}
+                                className="text-zinc-500 hover:bg-transparent hover:text-zinc-100 min-[701px]:size-6"
+                                onClick={(trigger) =>
+                                  onOpenTerminalDialog(
+                                    project,
+                                    worktree,
+                                    trigger
+                                  )
+                                }
+                              >
+                                <PlusIcon />
+                              </SidebarAction>
+                            </div>
+                          ) : null}
+                        </div>
+                      </ContextMenuTrigger>
+                      {worktree.kind === 'linked' ? (
+                        <ContextMenuContent>
+                          <ContextMenuGroup>
+                            <ContextMenuItem
+                              variant="destructive"
+                              disabled={
+                                project.availability.state === 'unavailable' ||
+                                worktree.prunable ||
+                                Boolean(pendingRemovals[worktree.id]) ||
+                                worktree.status === 'cleaning' ||
+                                needsManualCleanup(worktree)
+                              }
+                              onSelect={() =>
+                                void prepareRemoval(
+                                  worktree,
+                                  document.getElementById(
+                                    `worktree-${worktree.id}`
+                                  )!
+                                )
+                              }
+                            >
+                              <TrashIcon />
+                              {project.availability.state === 'unavailable'
                                 ? 'Git repository unavailable'
                                 : worktree.prunable
-                                  ? 'Git reports this worktree as prunable'
+                                  ? 'Removal unavailable'
                                   : pendingRemovals[worktree.id] ||
                                       worktree.status === 'cleaning'
-                                    ? 'Removal is already in progress'
+                                    ? 'Removal in progress'
                                     : needsManualCleanup(worktree)
-                                      ? worktree.cleanupError!
+                                      ? 'Manual cleanup required'
                                       : worktree.status === 'cleanup_failed'
-                                        ? 'Retry removal'
-                                        : 'Remove worktree'
-                            }
-                            disabled={
-                              project.availability.state === 'unavailable' ||
-                              worktree.prunable ||
-                              Boolean(pendingRemovals[worktree.id]) ||
-                              worktree.status === 'cleaning' ||
-                              needsManualCleanup(worktree)
-                            }
-                            className="text-zinc-500 hover:bg-transparent hover:text-rose-300"
-                            onClick={(trigger) =>
-                              void prepareRemoval(worktree, trigger)
-                            }
-                          >
-                            <TrashIcon />
-                          </SidebarAction>
-                        </div>
-                      )}
-                    </div>
-                    <SidebarMenuSub className="terminal-list mr-0 ml-4 gap-px border-white/6 pr-0 pl-2 min-[701px]:ml-2.5 min-[701px]:pl-1.5">
-                      {worktree.terminals.map((terminal) => {
+                                        ? 'Retry removal…'
+                                        : 'Remove worktree…'}
+                            </ContextMenuItem>
+                          </ContextMenuGroup>
+                        </ContextMenuContent>
+                      ) : null}
+                    </ContextMenu>
+                    <SidebarMenuSub
+                      className="terminal-list mr-0 ml-4 gap-px border-white/6 pr-0 pl-2 min-[701px]:ml-2.5 min-[701px]:pl-1.5"
+                      aria-label={`${worktree.name} terminals`}
+                    >
+                      {worktree.terminals.map((terminal, index) => {
+                        const title =
+                          runtimeTitles.get(terminal.id) || terminal.name
                         const needsAttention = bellAttention.has(terminal.id)
                         const progress = terminalProgress.get(terminal.id)
                         const working =
@@ -320,10 +397,14 @@ export function WorkspaceTree({
                         ]
                           .filter(Boolean)
                           .join(', ')
+                        const shortcutIndex =
+                          selectedWorktree?.id === worktree.id && index < 9
+                            ? index + 1
+                            : null
                         return (
                           <SidebarMenuSubItem
                             key={terminal.id}
-                            className="min-w-0"
+                            className="group/terminal relative min-w-0"
                           >
                             <SidebarMenuSubButton
                               asChild
@@ -333,22 +414,40 @@ export function WorkspaceTree({
                                 variant="ghost"
                                 type="button"
                                 className={cn(
-                                  'terminal-row grid h-auto min-h-11 w-full min-w-0 grid-cols-[1.25rem_minmax(0,1fr)_0.5rem] gap-1.5 rounded-md px-2 py-1.5 text-left text-base/5 font-normal min-[701px]:min-h-7 min-[701px]:grid-cols-[1rem_minmax(0,1fr)_0.5rem] min-[701px]:gap-1 min-[701px]:py-0 min-[701px]:text-xs/4',
+                                  'terminal-row grid h-auto min-h-11 w-full min-w-0 grid-cols-[1.25rem_minmax(0,1fr)_2rem] gap-1.5 rounded-md px-2 py-1.5 text-left text-base/5 font-normal min-[701px]:min-h-7 min-[701px]:grid-cols-[1rem_minmax(0,1fr)_1.75rem] min-[701px]:gap-1 min-[701px]:py-0 min-[701px]:text-xs/4',
                                   selectedTerminalId === terminal.id
                                     ? 'selected bg-cyan-400/8! text-cyan-50'
                                     : 'text-zinc-300 hover:bg-white/5 hover:text-zinc-100'
                                 )}
                                 onClick={() => selectTerminal(terminal)}
-                                aria-label={`${
-                                  runtimeTitles.get(terminal.id) ||
-                                  terminal.name
-                                }, ${status}`}
+                                onMouseDown={(event) => {
+                                  if (event.button === 1) {
+                                    event.preventDefault()
+                                  }
+                                }}
+                                onAuxClick={(event) => {
+                                  if (event.button !== 1) {
+                                    return
+                                  }
+
+                                  event.preventDefault()
+                                  closeTerminal(terminal)
+                                }}
+                                aria-label={`${title}, ${status}`}
+                                aria-keyshortcuts={
+                                  shortcutIndex
+                                    ? `Meta+${shortcutIndex}`
+                                    : undefined
+                                }
                               >
                                 <TerminalStatusIcon
                                   working={working}
                                   className={cn(
                                     'size-4! shrink-0 stroke-zinc-500 min-[701px]:size-3.5!',
                                     working && 'stroke-cyan-400',
+                                    terminal.status === 'exited' &&
+                                      !progress &&
+                                      'stroke-rose-300',
                                     progress?.state === 'error' &&
                                       !needsAttention &&
                                       'stroke-rose-300',
@@ -366,27 +465,116 @@ export function WorkspaceTree({
                                   )}
                                   aria-hidden="true"
                                 >
-                                  {runtimeTitles.get(terminal.id) ||
-                                    terminal.name}
+                                  {title}
                                 </span>
-                                {terminal.status !== 'running' && (
-                                  <span
-                                    className={cn(
-                                      'status-dot size-1.5 shrink-0 rounded-full bg-zinc-600',
-                                      terminal.status === 'exited' &&
-                                        'bg-rose-400'
-                                    )}
-                                    title={status}
-                                  />
+                                {shortcutIndex ? (
+                                  <kbd
+                                    className="justify-self-end font-sans text-[0.6875rem] font-normal text-zinc-500 tabular-nums group-hover/terminal:opacity-0 group-focus-within/terminal:opacity-0 max-[700px]:opacity-0"
+                                    aria-hidden="true"
+                                  >
+                                    ⌘{shortcutIndex}
+                                  </kbd>
+                                ) : (
+                                  <span aria-hidden="true" />
                                 )}
                               </Button>
                             </SidebarMenuSubButton>
+                            <div className="absolute inset-y-0 right-0 z-10 flex items-center opacity-0 group-hover/terminal:opacity-100 group-focus-within/terminal:opacity-100 max-[700px]:opacity-100">
+                              <SidebarAction
+                                label={`Close ${title}`}
+                                tooltip={
+                                  worktree.terminals.length === 1
+                                    ? 'Every worktree keeps at least one terminal'
+                                    : 'Close terminal'
+                                }
+                                disabled={worktree.terminals.length === 1}
+                                className="text-zinc-500 hover:bg-transparent hover:text-zinc-200"
+                                onClick={() => closeTerminal(terminal)}
+                              >
+                                <XMarkIcon />
+                              </SidebarAction>
+                            </div>
                           </SidebarMenuSubItem>
                         )
                       })}
+                      {pendingTerminals
+                        .filter((pending) => pending.worktreeId === worktree.id)
+                        .map((pending, pendingIndex) => {
+                          const index = worktree.terminals.length + pendingIndex
+                          return (
+                            <SidebarMenuSubItem
+                              key={pending.id}
+                              className="min-w-0"
+                            >
+                              <SidebarMenuSubButton
+                                asChild
+                                isActive={
+                                  selectedPendingTerminalId === pending.id
+                                }
+                              >
+                                <Button
+                                  variant="ghost"
+                                  type="button"
+                                  className={cn(
+                                    'terminal-row grid h-auto min-h-11 w-full min-w-0 grid-cols-[1.25rem_minmax(0,1fr)_auto] gap-1.5 rounded-md px-2 py-1.5 text-left text-base/5 font-normal min-[701px]:min-h-7 min-[701px]:grid-cols-[1rem_minmax(0,1fr)_auto] min-[701px]:gap-1 min-[701px]:py-0 min-[701px]:text-xs/4',
+                                    selectedPendingTerminalId === pending.id
+                                      ? 'selected bg-cyan-400/8! text-cyan-50'
+                                      : 'text-zinc-300 hover:bg-white/5 hover:text-zinc-100'
+                                  )}
+                                  onClick={() =>
+                                    selectPendingTerminal(pending.id)
+                                  }
+                                  aria-label={`${pending.name}, starting`}
+                                  aria-keyshortcuts={
+                                    selectedWorktree?.id === worktree.id &&
+                                    index < 9
+                                      ? `Meta+${index + 1}`
+                                      : undefined
+                                  }
+                                >
+                                  <ArrowPathIcon
+                                    className="animate-spin fill-zinc-500"
+                                    aria-hidden="true"
+                                  />
+                                  <span className="truncate" aria-hidden="true">
+                                    {pending.name}
+                                  </span>
+                                  <span
+                                    className="text-[0.6875rem] text-zinc-500"
+                                    aria-hidden="true"
+                                  >
+                                    Starting…
+                                  </span>
+                                </Button>
+                              </SidebarMenuSubButton>
+                            </SidebarMenuSubItem>
+                          )
+                        })}
                     </SidebarMenuSub>
                   </SidebarMenuItem>
                 ))}
+                {!selectedWorktree ? (
+                  <SidebarMenuItem className="min-w-0">
+                    <SidebarMenuButton asChild>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        className="h-auto min-h-11 w-full justify-start gap-1.5 px-2 py-1.5 text-base/5 font-normal text-zinc-500 hover:bg-white/5 hover:text-zinc-100 min-[701px]:min-h-8 min-[701px]:py-0.5 min-[701px]:text-sm/5"
+                        aria-label="New terminal"
+                        onClick={(event) =>
+                          onOpenTerminalDialog(
+                            project,
+                            null,
+                            event.currentTarget
+                          )
+                        }
+                      >
+                        <PlusIcon className="min-[701px]:size-3.5!" />
+                        <span>New terminal</span>
+                      </Button>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                ) : null}
                 {pendingWorktrees
                   .filter((pending) => pending.projectId === project.id)
                   .map((pending) => (
