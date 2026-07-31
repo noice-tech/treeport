@@ -45,7 +45,7 @@ export function serializeOperation(
   return value === null ? null : JSON.stringify(value)
 }
 
-export function deserializeOperation(
+function deserializeOperation(
   value: string | null
 ): Record<string, unknown> | null {
   return value === null ? null : (JSON.parse(value) as Record<string, unknown>)

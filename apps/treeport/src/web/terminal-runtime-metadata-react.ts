@@ -46,58 +46,11 @@ function getBellMetadata() {
   return bellMetadata
 }
 
-export function useTerminalTitle(terminalId: string | null): string | null {
-  const getSnapshot = useCallback(
-    () =>
-      terminalId
-        ? (terminalSessions.getTitleSnapshot().get(terminalId) ?? null)
-        : null,
-    [terminalId]
-  )
-  return useSyncExternalStore(
-    terminalSessions.subscribe,
-    getSnapshot,
-    () => null
-  )
-}
-
-export function useTerminalProgress(
-  terminalId: string | null
-): TerminalProgress | null {
-  const getSnapshot = useCallback(
-    () =>
-      terminalId
-        ? (terminalSessions.getProgressSnapshot().get(terminalId) ?? null)
-        : null,
-    [terminalId]
-  )
-  return useSyncExternalStore(
-    terminalSessions.subscribe,
-    getSnapshot,
-    () => null
-  )
-}
-
 export function useTerminalForegroundProcess(terminalId: string | null) {
   const getSnapshot = useCallback(
     () =>
       terminalId
         ? terminalSessions.getForegroundProcessSnapshot().has(terminalId)
-        : false,
-    [terminalId]
-  )
-  return useSyncExternalStore(
-    terminalSessions.subscribe,
-    getSnapshot,
-    () => false
-  )
-}
-
-export function useTerminalAttention(terminalId: string | null) {
-  const getSnapshot = useCallback(
-    () =>
-      terminalId
-        ? terminalSessions.getAttentionSnapshot().has(terminalId)
         : false,
     [terminalId]
   )

@@ -54,21 +54,6 @@ function DropdownMenuItem({
   )
 }
 
-function DropdownMenuLabel({
-  className,
-  ...props
-}: React.ComponentProps<typeof DropdownMenuPrimitive.Label>) {
-  return (
-    <DropdownMenuPrimitive.Label
-      className={cn(
-        'px-2.5 py-1.5 text-xs font-medium text-zinc-500',
-        className
-      )}
-      {...props}
-    />
-  )
-}
-
 function DropdownMenuSeparator({
   className,
   ...props
@@ -86,7 +71,6 @@ export {
   DropdownMenuContent,
   DropdownMenuGroup,
   DropdownMenuItem,
-  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger
 }
