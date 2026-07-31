@@ -6,6 +6,7 @@ import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const loopbackHost = '127.0.0.1'
+const loopbackHosts = [loopbackHost, '::1']
 const lanHost = '0.0.0.0'
 const startupLockPath = path.join(
   os.tmpdir(),
@@ -283,7 +284,7 @@ export async function main() {
   )
   const desktopRendererPort = await findAvailablePort(
     6173,
-    loopbackHost,
+    loopbackHosts,
     new Set([apiPort, webPort])
   )
   const apiUrl = urlFor(loopbackHost, apiPort)

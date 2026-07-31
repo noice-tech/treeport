@@ -31,12 +31,12 @@ afterEach(async () => {
   )
 })
 
-async function listen(port) {
+async function listen(port, host = '127.0.0.1') {
   const server = net.createServer()
   servers.push(server)
   await new Promise((resolve, reject) => {
     server.once('error', reject)
-    server.listen({ host: '127.0.0.1', port }, resolve)
+    server.listen({ host, port }, resolve)
   })
   return server
 }
@@ -71,6 +71,11 @@ describe('development environment allocation', () => {
   })
 
   it('starts concurrent checkouts on sequential ports and stops their process groups', async () => {
+    const occupiedDesktopRendererPort = await findAvailablePort(6173, [
+      '127.0.0.1',
+      '::1'
+    ])
+    await listen(occupiedDesktopRendererPort, '::1')
     const occupiedApiPort = await findAvailablePort(8733, '127.0.0.1')
     await listen(occupiedApiPort)
     const expectedApiPort = await findAvailablePort(8733, '127.0.0.1')
@@ -210,6 +215,9 @@ process.stdout.write(process.env.FAKE_TAILSCALE_STATUS || '')
       )
     ).toHaveProperty('size', 2)
     for (const environment of environments) {
+      expect(Number(environment.desktopRendererPort)).toBeGreaterThan(
+        occupiedDesktopRendererPort
+      )
       expect(environment.desktopRendererPort).not.toBe(environment.apiPort)
       expect(environment.desktopRendererPort).not.toBe(environment.webPort)
     }
