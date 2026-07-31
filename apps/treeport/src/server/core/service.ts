@@ -2257,9 +2257,14 @@ export class TreeportService {
                   : {})
               })
             } catch (error) {
-              setupError ??= `create_worktree setup terminal: ${
+              const setupTerminalError = `create_worktree setup terminal${
+                error instanceof DomainError ? ` [${error.code}]` : ''
+              }: ${
                 error instanceof Error ? error.message : String(error)
-              }`.slice(0, 4_096)
+              }`.slice(0, 2_048)
+              setupError = setupError
+                ? `${setupError.slice(0, 2_047)}\n${setupTerminalError}`
+                : setupTerminalError
             }
           }
         }

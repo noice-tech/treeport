@@ -1927,8 +1927,8 @@ describe('TreeportService with injected command adapters', () => {
     expect(directLaunchSpec.fallbackArgv).toBeUndefined()
   })
 
-  it('retains task preparation errors in an initial terminal launch spec', async () => {
-    const { main, service, config } = await fixture()
+  it('retains task preparation and setup-terminal creation errors', async () => {
+    const { main, runner, service, config } = await fixture()
     await fs.mkdir(path.join(main, '.zed'), { recursive: true })
     await fs.writeFile(path.join(main, '.zed', 'tasks.json'), '{ invalid json')
     const project = await service.registerProject(main)
@@ -1958,6 +1958,33 @@ describe('TreeportService with injected command adapters', () => {
     ) as { setupError: string; argv: string[] }
     expect(launchSpec.setupError).toBe(result.setupError)
     expect(launchSpec.argv).toEqual(['true'])
+
+    let terminalCreates = 0
+    const unsubscribe = service.events.subscribe((event) => {
+      if (event.type === 'terminal.created') {
+        terminalCreates += 1
+        runner.tmuxCreateFails = true
+      }
+    })
+    const terminalFailure = await service.createWorktree(
+      project.id,
+      'invalid-setup-terminal',
+      'default',
+      { name: 'Terminal' }
+    )
+    unsubscribe()
+    runner.tmuxCreateFails = false
+
+    expect(terminalCreates).toBe(1)
+    expect(terminalFailure.setupError).toContain('create_worktree setup:')
+    expect(terminalFailure.setupError).toContain(
+      'create_worktree setup terminal [TERMINAL_CREATE_FAILED]:'
+    )
+    expect(
+      (
+        await service.getWorktreeSnapshot(terminalFailure.worktree.id)
+      ).terminals.map((terminal) => terminal.id)
+    ).toEqual([terminalFailure.terminal!.id])
   })
 
   it('requires force for dirty work and preserves explicit failure state', async () => {
