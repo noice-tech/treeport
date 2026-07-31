@@ -21,6 +21,7 @@ export default defineConfig({
     host: webHost,
     port: webPort,
     strictPort: true,
+    allowedHosts: ['.ts.net'],
     open: false,
     proxy: {
       '/api': {
