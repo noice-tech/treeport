@@ -13,7 +13,21 @@
       </div>
       <button id="refresh" type="button">Refresh</button>
     </header>
-    <main id="review" aria-live="polite"><p>Loading diff…</p></main>
+    <div class="workspace">
+      <aside aria-label="Changed files">
+        <h2>Changed files</h2>
+        <div id="file-tree"></div>
+      </aside>
+      <div
+        id="resize-handle"
+        role="separator"
+        aria-label="Resize changed files"
+        aria-orientation="vertical"
+        aria-valuemin="160"
+        tabindex="0"
+      ></div>
+      <main id="review" aria-live="polite"><p>Loading diff…</p></main>
+    </div>
     <script type="module" src="review.js"></script>
   </body>
 </html>
