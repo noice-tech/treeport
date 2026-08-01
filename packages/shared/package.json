@@ -16,6 +16,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json --pretty"
   },
   "dependencies": {
+    "@treeport/panel-sdk": "workspace:*",
     "zod": "catalog:"
   }
 }

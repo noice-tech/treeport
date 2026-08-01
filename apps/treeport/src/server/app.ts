@@ -149,6 +149,7 @@ export function createApp({
     )
   })
   let terminalUploadQueue = Promise.resolve()
+  let panelSdkModule: Promise<string> | null = null
 
   app.onError((error, context) => {
     if (error instanceof DomainError) {
@@ -381,12 +382,14 @@ export function createApp({
     })
   )
 
-  app.get('/api/web-panel-sdk/v1.js', (context) => {
+  app.get('/api/web-panel-sdk.js', async (context) => {
+    panelSdkModule ??= fs.readFile(
+      fileURLToPath(import.meta.resolve('@treeport/panel-sdk')),
+      'utf8'
+    )
     context.header('content-type', 'text/javascript; charset=utf-8')
     context.header('access-control-allow-origin', '*')
-    return context.body(
-      `const pending=new Map();let serial=0;addEventListener('message',event=>{const message=event.data;if(event.source!==parent||message?.source!=='treeport-host-v1')return;const request=pending.get(message.id);if(!request)return;pending.delete(message.id);message.ok?request.resolve(message.value):request.reject(new Error(message.error||'Treeport request failed'))});function call(method){return new Promise((resolve,reject)=>{const id=String(++serial);pending.set(id,{resolve,reject});parent.postMessage({source:'treeport-panel-v1',id,method},'*')})}export const treeport=Object.freeze({version:1,context:()=>call('context'),diff:()=>call('diff')});`
-    )
+    return context.body(await panelSdkModule)
   })
 
   app.get('/api/web-panels/:panelId/assets/*', async (context) => {
@@ -401,18 +404,25 @@ export function createApp({
       context.req.param('panelId'),
       requestedPath
     )
-    const body = await fs.readFile(assetPath)
     const extension = path.extname(assetPath).toLowerCase()
-    const mime =
-      extension === '.html'
-        ? 'text/html; charset=utf-8'
-        : extension === '.js' || extension === '.mjs'
-          ? 'text/javascript; charset=utf-8'
-          : extension === '.css'
-            ? 'text/css; charset=utf-8'
-            : extension === '.svg'
-              ? 'image/svg+xml'
-              : 'application/octet-stream'
+    const source = await fs.readFile(assetPath)
+    let body: string | Buffer = source
+    let mime = 'application/octet-stream'
+    if (extension === '.html') {
+      const importMap = `<script type="importmap">{"imports":{"@treeport/panel-sdk":"/api/web-panel-sdk.js"}}</script>`
+      const html = source.toString('utf8')
+      body = /<head(?:\s[^>]*)?>/i.test(html)
+        ? html.replace(/<head(?:\s[^>]*)?>/i, (head) => `${head}${importMap}`)
+        : `${importMap}${html}`
+      mime = 'text/html; charset=utf-8'
+    } else if (extension === '.js' || extension === '.mjs') {
+      mime = 'text/javascript; charset=utf-8'
+    } else if (extension === '.css') {
+      mime = 'text/css; charset=utf-8'
+    } else if (extension === '.svg') {
+      mime = 'image/svg+xml'
+    }
+
     context.header('content-type', mime)
     context.header('access-control-allow-origin', '*')
     context.header(

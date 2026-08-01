@@ -264,6 +264,102 @@ describe('HTTP API validation', () => {
     expect(service.deleteWebPanel).toHaveBeenCalledWith('panel_review')
   })
 
+  it('serves an executable SDK that brokers scoped panel requests', async () => {
+    const { app } = fixture()
+    const receive = vi.fn()
+    const panelParent = { postMessage: vi.fn() }
+    vi.stubGlobal('parent', panelParent)
+    vi.stubGlobal('addEventListener', (_type: string, listener: unknown) =>
+      receive.mockImplementation(listener as (...args: unknown[]) => unknown)
+    )
+
+    try {
+      const response = await app.request('/api/web-panel-sdk.js')
+      expect(response.status).toBe(200)
+      expect(response.headers.get('content-type')).toBe(
+        'text/javascript; charset=utf-8'
+      )
+
+      const source = await response.text()
+      const sdk = (await import(
+        /* @vite-ignore */ `data:text/javascript;base64,${Buffer.from(source).toString('base64')}#${crypto.randomUUID()}`
+      )) as {
+        treeport: {
+          version: number
+          context: () => Promise<unknown>
+        }
+      }
+      const context = sdk.treeport.context()
+      const message = panelParent.postMessage.mock.calls[0]![0]
+      receive({
+        source: panelParent,
+        data: {
+          source: 'treeport-host-v1',
+          id: message.id,
+          ok: true,
+          value: { apiVersion: 1, panel: { id: 'panel_review' } }
+        }
+      })
+
+      await expect(context).resolves.toMatchObject({
+        apiVersion: 1,
+        panel: { id: 'panel_review' }
+      })
+      expect(sdk.treeport.version).toBe(1)
+      expect(panelParent.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          source: 'treeport-panel-v1',
+          method: 'context'
+        }),
+        '*'
+      )
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('serves panel HTML with the typed SDK import', async () => {
+    const { app, config, service } = fixture()
+    const panelRoot = path.join(config.runtimeDir, 'typed-panel')
+    const indexPath = path.join(panelRoot, 'index.html')
+    const modulePath = path.join(panelRoot, 'panel.js')
+    await fs.mkdir(panelRoot, { recursive: true })
+    await fs.writeFile(
+      indexPath,
+      '<!doctype html><html><head></head><body><script type="module" src="panel.js"></script></body></html>'
+    )
+    await fs.writeFile(modulePath, 'export const answer = 42')
+    vi.mocked(service.resolveWebPanelAsset).mockImplementation(
+      async (_panelId, requestedPath) =>
+        requestedPath ? path.join(panelRoot, requestedPath) : indexPath
+    )
+
+    try {
+      const documentResponse = await app.request(
+        '/api/web-panels/panel_review/assets/'
+      )
+      expect(documentResponse.status).toBe(200)
+      expect(await documentResponse.text()).toContain(
+        '"@treeport/panel-sdk":"/api/web-panel-sdk.js"'
+      )
+
+      const moduleResponse = await app.request(
+        '/api/web-panels/panel_review/assets/panel.js'
+      )
+      expect(moduleResponse.status).toBe(200)
+      expect(moduleResponse.headers.get('content-type')).toBe(
+        'text/javascript; charset=utf-8'
+      )
+      const moduleSource = await moduleResponse.text()
+      const compiled = (await import(
+        /* @vite-ignore */ `data:text/javascript;base64,${Buffer.from(moduleSource).toString('base64')}`
+      )) as { answer: number }
+      expect(compiled.answer).toBe(42)
+    } finally {
+      await fs.rm(config.runtimeDir, { recursive: true, force: true })
+    }
+  })
+
   it('serves nested panel modules with their browser MIME type', async () => {
     const { app, config, service } = fixture()
     const modulePath = path.join(config.runtimeDir, 'nested', 'review.js')

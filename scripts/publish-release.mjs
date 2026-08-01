@@ -12,9 +12,9 @@ import {
 } from './release-utils.mjs'
 
 const githubRepository = 'noice-tech/treeport'
-const packageDirectory = 'apps/treeport'
-const packageManifest = JSON.parse(
-  readFileSync(`${packageDirectory}/package.json`, 'utf8')
+const packageDirectories = ['packages/panel-sdk', 'apps/treeport']
+const packageManifests = packageDirectories.map((directory) =>
+  JSON.parse(readFileSync(`${directory}/package.json`, 'utf8'))
 )
 const [version, ...extraArguments] = process.argv.slice(2)
 if (!version || extraArguments.length > 0) {
@@ -27,10 +27,10 @@ if (!parseVersion(version)) {
   )
 }
 
-if (packageManifest.version !== version) {
-  fail(
-    `${packageManifest.name} is at ${packageManifest.version}, not ${version}`
-  )
+for (const manifest of packageManifests) {
+  if (manifest.version !== version) {
+    fail(`${manifest.name} is at ${manifest.version}, not ${version}`)
+  }
 }
 
 const tag = `v${version}`
@@ -148,41 +148,49 @@ try {
 }
 console.log(`Authenticated to npm as ${npmUser}.`)
 
-const spec = `${packageManifest.name}@${version}`
-if (npmVersionExists(spec)) {
-  console.log(`${spec} is already published.`)
-  console.log(release.url)
-  process.exit(0)
+const packagesToPublish = []
+for (const manifest of packageManifests) {
+  const spec = `${manifest.name}@${version}`
+  if (npmVersionExists(spec)) {
+    console.log(`${spec} is already published.`)
+    continue
+  }
+
+  const latestResult = spawnSync(
+    'npm',
+    ['view', manifest.name, 'dist-tags.latest', '--json'],
+    { encoding: 'utf8' }
+  )
+  if (latestResult.status === 0) {
+    let latest
+    try {
+      latest = JSON.parse(latestResult.stdout)
+    } catch {
+      fail(`npm returned an unreadable latest version for ${manifest.name}`)
+    }
+    const parsedLatest = parseVersion(latest)
+    if (!parsedLatest) {
+      fail(`${manifest.name}'s latest tag is not canonical: ${latest}`)
+    }
+
+    if (compareVersions(parseVersion(version), parsedLatest) < 0) {
+      fail(
+        `Publishing ${manifest.name}@${version} would move latest backward from ${latest}`
+      )
+    }
+  } else if (!npmNotFound(latestResult)) {
+    fail(
+      `Could not inspect ${manifest.name}'s latest tag:\n${(latestResult.stderr || latestResult.stdout).trim()}`
+    )
+  }
+
+  packagesToPublish.push(manifest)
 }
 
-const latestResult = spawnSync(
-  'npm',
-  ['view', packageManifest.name, 'dist-tags.latest', '--json'],
-  { encoding: 'utf8' }
-)
-if (latestResult.status === 0) {
-  let latest
-  try {
-    latest = JSON.parse(latestResult.stdout)
-  } catch {
-    fail(
-      `npm returned an unreadable latest version for ${packageManifest.name}`
-    )
-  }
-  const parsedLatest = parseVersion(latest)
-  if (!parsedLatest) {
-    fail(
-      `${packageManifest.name}'s latest tag is not a canonical version: ${latest}`
-    )
-  }
-
-  if (compareVersions(parseVersion(version), parsedLatest) < 0) {
-    fail(`Publishing ${version} would move latest backward from ${latest}`)
-  }
-} else if (!npmNotFound(latestResult)) {
-  fail(
-    `Could not inspect npm's latest tag:\n${(latestResult.stderr || latestResult.stdout).trim()}`
-  )
+if (packagesToPublish.length === 0) {
+  console.log('All packages are already published.')
+  console.log(release.url)
+  process.exit(0)
 }
 
 try {
@@ -196,28 +204,32 @@ if (git(['status', '--porcelain'])) {
 
 release = verifyRelease()
 
-console.log(`Publishing ${spec} with npm tag latest...`)
-try {
-  run(
-    'pnpm',
-    [
-      '--filter',
-      packageManifest.name,
-      'publish',
-      '--access',
-      'public',
-      '--tag',
-      'latest',
-      '--publish-branch',
-      'main'
-    ],
-    { stdio: 'inherit' }
-  )
-} catch {
-  fail(
-    `npm publication failed. Inspect npm, then retry \`pnpm release:publish ${version}\`; an existing exact version will be detected safely.`
-  )
+for (const manifest of packagesToPublish) {
+  const spec = `${manifest.name}@${version}`
+  console.log(`Publishing ${spec} with npm tag latest...`)
+  try {
+    run(
+      'pnpm',
+      [
+        '--filter',
+        manifest.name,
+        'publish',
+        '--access',
+        'public',
+        '--tag',
+        'latest',
+        '--publish-branch',
+        'main'
+      ],
+      { stdio: 'inherit' }
+    )
+  } catch {
+    fail(
+      `npm publication failed. Inspect npm, then retry \`pnpm release:publish ${version}\`; existing exact versions will be detected safely.`
+    )
+  }
+
+  console.log(`Published ${spec}.`)
 }
 
-console.log(`\nPublished ${spec}.`)
 console.log(release.url)

@@ -1,6 +1,8 @@
 import { z } from 'zod'
+import type { WebPanel } from '@treeport/panel-sdk'
 import { terminalSizeSchema } from './terminal-protocol.js'
 
+export type { GitDiff, WebPanel, WebPanelContext } from '@treeport/panel-sdk'
 export * from './socket-protocol.js'
 export * from './terminal-protocol.js'
 
@@ -81,38 +83,12 @@ export interface TerminalPanel {
   updatedAt: string
 }
 
-export interface WebPanel {
-  id: string
-  kind: 'web'
-  worktreeId: string
-  extensionId: string
-  contributionId: string
-  title: string
-  createdAt: string
-  updatedAt: string
-}
-
 export type Panel = TerminalPanel | WebPanel
 
 export interface WebPanelContribution {
   extensionId: string
   contributionId: string
   title: string
-}
-
-export interface WebPanelContext {
-  apiVersion: 1
-  panel: WebPanel
-  project: Pick<ProjectRecord, 'id' | 'name' | 'defaultBranch'>
-  worktree: Pick<WorktreeRecord, 'id' | 'name' | 'branch' | 'head'>
-}
-
-export interface GitDiff {
-  baseRef: string
-  baseCommit: string
-  headCommit: string
-  generatedAt: string
-  unified: string
 }
 
 export interface WorktreeRecord {

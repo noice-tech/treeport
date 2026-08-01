@@ -8,13 +8,13 @@ Issue #74 is implemented as an intentionally small end-to-end slice.
 
 ## Local extension format
 
-Trusted repositories may place no-build extensions at `.treeport/extensions/<directory>/`. Each direct child directory containing `index.html` contributes one web panel. The directory name is used as the extension and contribution identity and is humanized for the panel title; local extensions need no manifest.
+Trusted repositories may place no-build extensions at `.treeport/extensions/<directory>/`. Each direct child directory containing `index.html` contributes one web panel. The directory name is used as the extension and contribution identity and is humanized for the panel title; local extensions need no manifest. Panel source is browser-native HTML, CSS, and JavaScript; optional npm libraries may be loaded from pinned browser ESM URLs.
 
 The fixed entry and its relative static assets are served by the daemon. Absolute paths, traversal, and symlinks escaping the extension directory are rejected. This slice discovers extensions from the panel's worktree checkout and serves them to every connected client. Existing experimental panel rows created with manifest-provided IDs may become unavailable after this convention change; they remain closable and can be recreated from the launcher.
 
 ## Runtime boundary
 
-Frames use `sandbox="allow-scripts"` without `allow-same-origin`. Extensions import `/api/web-panel-sdk/v1.js` and call `treeport.context()` or `treeport.diff()`. The host message bridge accepts only messages from that panel's frame and calls panel-ID-scoped daemon endpoints. The extension receives no credential and no general daemon client.
+Frames use `sandbox="allow-scripts"` without `allow-same-origin`. Treeport injects an import map so extensions import `@treeport/panel-sdk` and call `treeport.context()` or `treeport.diff()`. The published SDK package supplies the same-version TypeScript declarations while the daemon serves its browser runtime. The host message bridge accepts only messages from that panel's frame and calls panel-ID-scoped daemon endpoints. The extension receives no credential and no general daemon client.
 
 The diff is unified text plus base/head metadata. It compares `HEAD` and tracked local changes to the default branch merge base and appends untracked files as additions. Refresh is explicit.
 

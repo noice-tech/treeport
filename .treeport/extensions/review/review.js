@@ -1,9 +1,12 @@
-import { treeport } from '/api/web-panel-sdk/v1.js'
+import { treeport } from '@treeport/panel-sdk'
 
-const review = document.querySelector('#review')
-const summary = document.querySelector('#summary')
-const refresh = document.querySelector('#refresh')
+const review = /** @type {HTMLElement} */ (document.querySelector('#review'))
+const summary = /** @type {HTMLElement} */ (document.querySelector('#summary'))
+const refresh = /** @type {HTMLButtonElement} */ (
+  document.querySelector('#refresh')
+)
 
+/** @param {string} unified */
 function render(unified) {
   review.replaceChildren()
   if (!unified) {
@@ -13,7 +16,8 @@ function render(unified) {
     review.append(empty)
     return
   }
-  let section
+
+  let section = null
   for (const line of unified.split('\n')) {
     if (line.startsWith('diff --git ')) {
       section = document.createElement('section')
@@ -23,11 +27,14 @@ function render(unified) {
         .replace(/^diff --git a\//, '')
         .replace(/ b\//, ' → ')
       section.append(heading)
-      const pre = document.createElement('pre')
-      section.append(pre)
+      section.append(document.createElement('pre'))
       review.append(section)
     }
-    if (!section) continue
+
+    if (!section) {
+      continue
+    }
+
     const row = document.createElement('span')
     row.className = `line ${
       line.startsWith('+') && !line.startsWith('+++')
@@ -41,7 +48,7 @@ function render(unified) {
               : ''
     }`
     row.textContent = line || ' '
-    section.querySelector('pre').append(row)
+    section.querySelector('pre')?.append(row)
   }
 }
 
@@ -67,4 +74,4 @@ async function load() {
 }
 
 refresh.addEventListener('click', load)
-load()
+void load()

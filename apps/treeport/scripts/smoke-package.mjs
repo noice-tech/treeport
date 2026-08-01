@@ -12,6 +12,13 @@ const packageDirectory = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   '..'
 )
+const panelSdkDirectory = path.resolve(
+  packageDirectory,
+  '..',
+  '..',
+  'packages',
+  'panel-sdk'
+)
 const temporaryDirectory = await fs.mkdtemp(
   path.join(os.tmpdir(), 'treeport-package-smoke-')
 )
@@ -48,12 +55,20 @@ const environment = {
 }
 
 try {
-  const packed = await execute(
-    'npm',
-    ['pack', '--json', '--pack-destination', temporaryDirectory],
-    { cwd: packageDirectory }
+  await execute('pnpm', ['pack', '--pack-destination', temporaryDirectory], {
+    cwd: panelSdkDirectory
+  })
+  await execute('pnpm', ['pack', '--pack-destination', temporaryDirectory], {
+    cwd: packageDirectory
+  })
+  const panelSdkTarball = path.join(
+    temporaryDirectory,
+    `treeport-panel-sdk-${version}.tgz`
   )
-  const [{ filename }] = JSON.parse(packed.stdout)
+  const treeportTarball = path.join(
+    temporaryDirectory,
+    `treeport-treeport-${version}.tgz`
+  )
   await execute(
     'npm',
     [
@@ -61,7 +76,8 @@ try {
       '--global',
       '--prefix',
       prefix,
-      path.join(temporaryDirectory, filename)
+      panelSdkTarball,
+      treeportTarball
     ],
     { cwd: temporaryDirectory }
   )
@@ -88,6 +104,16 @@ try {
   if (!html.includes('<div id="root"></div>')) {
     throw new Error('Packaged daemon did not serve the Treeport web app')
   }
+
+  await fetch(`http://127.0.0.1:${port}/api/web-panel-sdk.js`).then(
+    async (response) => {
+      if (!response.ok) {
+        throw new Error(`Packaged SDK request returned ${response.status}`)
+      }
+
+      await response.text()
+    }
+  )
 
   const repository = path.join(temporaryDirectory, 'repository')
   await fs.mkdir(repository)
