@@ -1,12 +1,12 @@
 ---
 name: release
-description: Prepare a stable Treeport release, push its release commit and tag, and create the published GitHub Release. Use when asked to cut, prepare, make, or create a Treeport release. Stops before npm publication so the user can publish from their machine.
-compatibility: Repository-specific to noice-tech/treeport. Requires git, gh, Node.js 24, pnpm 11, network access, and permission to push and create GitHub Releases.
+description: Prepare a stable Treeport release, push its release commit and tag, and wait for CI to publish the single GitHub Release with desktop artifacts. Use when asked to cut, prepare, make, or create a Treeport release. Stops before npm publication so the user can publish from their machine.
+compatibility: Repository-specific to noice-tech/treeport. Requires git, gh, Node.js 24, pnpm 11, network access, and permission to push releases.
 ---
 
 # Release Treeport
 
-Prepare one stable Treeport release and create its GitHub Release. Leave npm publication to the user.
+Prepare one stable Treeport release and wait for its desktop workflow to publish exactly one GitHub Release. Leave npm publication to the user.
 
 ## Boundaries
 
@@ -45,31 +45,42 @@ Set `version` to the confirmed version and `tag` to `v${version}`. Run:
 pnpm release:prepare "$version"
 ```
 
-This updates the npm package and installer versions when needed, runs the complete repository checks, commits `Release X.Y.Z` (using an empty release commit when every version surface is already aligned), creates an annotated tag, and atomically pushes `main` and the tag. It does not publish to npm.
+This updates the npm package, desktop client, and installer versions when needed, runs the complete repository checks, commits `Release X.Y.Z` (using an empty release commit when every version surface is already aligned), creates an annotated tag, and atomically pushes `main` and the tag. It does not publish to npm.
 
 If it fails, stop and preserve the state for diagnosis. Follow the recovery instructions from the script rather than rerunning blindly.
 
-## Create and verify the GitHub Release
+## Wait for and verify the GitHub Release
 
-After preparation succeeds:
+The pushed tag triggers `.github/workflows/desktop-release.yml`. Never run `gh release create`: CI creates one draft release, attaches the signed/notarized universal DMG and updater ZIP, verifies them, and publishes that same release.
+
+Find the workflow run for the exact release commit and wait for it:
 
 ```bash
-gh release create "$tag" \
+sha="$(git rev-list -n 1 "$tag")"
+run_id="$(gh run list \
   --repo noice-tech/treeport \
-  --verify-tag \
-  --title "$tag" \
-  --generate-notes
+  --workflow desktop-release.yml \
+  --commit "$sha" \
+  --json databaseId \
+  --jq '.[0].databaseId')"
+test -n "$run_id"
+gh run watch "$run_id" --repo noice-tech/treeport --exit-status
 ```
 
-Do not create a draft or mark the release as a prerelease. Verify it:
+If the workflow fails, stop and report the run URL. Do not create a replacement release manually. After it succeeds, verify the single published release and both exact assets:
 
 ```bash
 gh release view "$tag" \
   --repo noice-tech/treeport \
-  --json isDraft,isPrerelease,tagName,url
+  --json assets,isDraft,isPrerelease,tagName,url
 ```
 
-Verify that the tag is correct, the release is published, and the local and remote tags point to the current `main` commit.
+For version `X.Y.Z`, require exactly:
+
+- `Treeport-X.Y.Z-darwin-universal.dmg`
+- `Treeport-X.Y.Z-darwin-universal.zip`
+
+Verify that the tag is correct, the release is published and stable, and the local and remote tags point to the current `main` commit.
 
 ## Finish
 

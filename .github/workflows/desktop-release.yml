@@ -1,0 +1,210 @@
+name: Desktop release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: desktop-release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build and publish macOS desktop artifacts
+    runs-on: macos-14
+    environment: release
+    env:
+      TAG: ${{ github.ref_name }}
+      GH_TOKEN: ${{ github.token }}
+      MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+      APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+      APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+      APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+    steps:
+      - name: Check out the release tag
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.15.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Validate tag and synchronized versions
+        run: |
+          node <<'NODE'
+          const tag = process.env.TAG
+          if (!/^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(tag)) {
+            throw new Error(`Release tag is not canonical: ${tag}`)
+          }
+          const version = tag.slice(1)
+          for (const manifestPath of [
+            'apps/treeport/package.json',
+            'apps/desktop/package.json'
+          ]) {
+            const manifest = require(`./${manifestPath}`)
+            if (manifest.version !== version) {
+              throw new Error(`${manifestPath} is ${manifest.version}, expected ${version}`)
+            }
+          }
+          require('node:fs').appendFileSync(
+            process.env.GITHUB_ENV,
+            `RELEASE_VERSION=${version}\n`
+          )
+          NODE
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Ensure tmux is available
+        run: command -v tmux >/dev/null || brew install tmux
+
+      - name: Run repository checks
+        run: pnpm check
+
+      - name: Ensure the tag has at most one unpublished release
+        run: |
+          gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/releases?per_page=100" > "$RUNNER_TEMP/releases.json"
+          node <<'NODE'
+          const pages = require(`${process.env.RUNNER_TEMP}/releases.json`)
+          const matches = pages.flat().filter((release) => release.tag_name === process.env.TAG)
+          if (matches.length > 1) {
+            throw new Error(`Found ${matches.length} GitHub Releases for ${process.env.TAG}`)
+          }
+          if (matches[0] && !matches[0].draft) {
+            throw new Error(`GitHub Release ${process.env.TAG} is already published`)
+          }
+          NODE
+
+      - name: Import Apple signing and notarization credentials
+        run: |
+          for name in MACOS_CERTIFICATE_P12 MACOS_CERTIFICATE_PASSWORD APPLE_API_KEY_P8 APPLE_API_KEY_ID APPLE_API_ISSUER APPLE_TEAM_ID; do
+            if [ -z "${!name}" ]; then
+              echo "Missing required release secret: $name" >&2
+              exit 1
+            fi
+          done
+
+          CERTIFICATE_PATH="$RUNNER_TEMP/treeport-developer-id.p12"
+          API_KEY_PATH="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8"
+          KEYCHAIN_PATH="$RUNNER_TEMP/treeport-release.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -hex 24)"
+
+          printf '%s' "$MACOS_CERTIFICATE_P12" | base64 -D > "$CERTIFICATE_PATH"
+          printf '%s' "$APPLE_API_KEY_P8" | base64 -D > "$API_KEY_PATH"
+          chmod 600 "$CERTIFICATE_PATH" "$API_KEY_PATH"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERTIFICATE_PATH" \
+            -k "$KEYCHAIN_PATH" \
+            -P "$MACOS_CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: \
+            -s \
+            -k "$KEYCHAIN_PASSWORD" \
+            "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH"
+
+          IDENTITIES="$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" | awk -v team="$APPLE_TEAM_ID" '/Developer ID Application/ && index($0, "(" team ")") { print $2 }')"
+          IDENTITY_COUNT="$(printf '%s\n' "$IDENTITIES" | awk 'NF { count += 1 } END { print count + 0 }')"
+          if [ "$IDENTITY_COUNT" -ne 1 ]; then
+            echo "Expected one Developer ID Application identity for team $APPLE_TEAM_ID; found $IDENTITY_COUNT" >&2
+            security find-identity -v -p codesigning "$KEYCHAIN_PATH"
+            exit 1
+          fi
+
+          {
+            echo "TREEPORT_DESKTOP_RELEASE=1"
+            echo "TREEPORT_MAC_SIGNING_IDENTITY=$IDENTITIES"
+            echo "APPLE_API_KEY_PATH=$API_KEY_PATH"
+            echo "TREEPORT_RELEASE_KEYCHAIN=$KEYCHAIN_PATH"
+          } >> "$GITHUB_ENV"
+
+      - name: Build signed and notarized universal artifacts
+        working-directory: apps/desktop
+        run: pnpm exec electron-forge publish --dry-run --platform darwin --arch universal
+
+      - name: Validate packaged application and artifacts
+        working-directory: apps/desktop
+        run: |
+          pnpm check:release "$RELEASE_VERSION" out
+          APP_PATH="$(find out -type d -name Treeport.app -print -quit)"
+          DMG_PATH="$(find out -type f -name "Treeport-${RELEASE_VERSION}-darwin-universal.dmg" -print -quit)"
+          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+          spctl --assess --type execute --verbose=4 "$APP_PATH"
+          xcrun stapler validate "$APP_PATH"
+          codesign --verify --verbose=2 "$DMG_PATH"
+          xcrun stapler validate "$DMG_PATH"
+          pnpm smoke:release "$APP_PATH"
+
+      - name: Upload artifacts to the single draft release
+        working-directory: apps/desktop
+        run: pnpm exec electron-forge publish --from-dry-run
+
+      - name: Verify and publish the draft release
+        run: |
+          gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/releases?per_page=100" > "$RUNNER_TEMP/releases-after-upload.json"
+          node <<'NODE'
+          const fs = require('node:fs')
+          const pages = require(`${process.env.RUNNER_TEMP}/releases-after-upload.json`)
+          const matches = pages.flat().filter((release) => release.tag_name === process.env.TAG)
+          if (matches.length !== 1) {
+            throw new Error(`Expected one GitHub Release for ${process.env.TAG}; found ${matches.length}`)
+          }
+          const release = matches[0]
+          if (!release.draft || release.prerelease) {
+            throw new Error('Forge must upload to one stable draft release')
+          }
+          const expected = [
+            `Treeport-${process.env.RELEASE_VERSION}-darwin-universal.dmg`,
+            `Treeport-${process.env.RELEASE_VERSION}-darwin-universal.zip`
+          ].sort()
+          const assets = release.assets.map((asset) => asset.name).sort()
+          if (assets.length !== expected.length || assets.some((name, index) => name !== expected[index])) {
+            throw new Error(`Unexpected release assets: ${assets.join(', ') || 'none'}`)
+          }
+          const invalid = release.assets.find((asset) => asset.state !== 'uploaded' || asset.size <= 0)
+          if (invalid) {
+            throw new Error(`Release asset is incomplete: ${invalid.name}`)
+          }
+          fs.writeFileSync(`${process.env.RUNNER_TEMP}/treeport-release-id`, String(release.id))
+          NODE
+          TREEPORT_RELEASE_ID="$(cat "$RUNNER_TEMP/treeport-release-id")"
+          gh api \
+            --method PATCH \
+            "repos/${GITHUB_REPOSITORY}/releases/${TREEPORT_RELEASE_ID}" \
+            -F draft=false \
+            -F prerelease=false > "$RUNNER_TEMP/published-release.json"
+          node <<'NODE'
+          const release = require(`${process.env.RUNNER_TEMP}/published-release.json`)
+          if (release.draft || release.prerelease || release.tag_name !== process.env.TAG) {
+            throw new Error('The GitHub Release did not become a published stable release')
+          }
+          console.log(`Published one GitHub Release: ${release.html_url}`)
+          NODE
+
+      - name: Remove temporary Apple credentials
+        if: always()
+        run: |
+          rm -f "$RUNNER_TEMP/treeport-developer-id.p12"
+          rm -f "$RUNNER_TEMP"/AuthKey_*.p8
+          if [ -n "${TREEPORT_RELEASE_KEYCHAIN:-}" ] && [ -e "$TREEPORT_RELEASE_KEYCHAIN" ]; then
+            security delete-keychain "$TREEPORT_RELEASE_KEYCHAIN" || true
+          fi

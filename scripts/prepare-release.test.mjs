@@ -4,6 +4,7 @@ import {
   cpSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   writeFileSync
 } from 'node:fs'
@@ -12,7 +13,7 @@ import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 describe('release preparation', () => {
-  it('prepares an initial release whose version is already in the manifests', () => {
+  it('prepares an initial release and synchronizes the next version', () => {
     const temporaryDirectory = mkdtempSync(
       path.join(os.tmpdir(), 'treeport-prepare-release-test-')
     )
@@ -53,6 +54,7 @@ describe('release preparation', () => {
 
       mkdirSync(path.join(repository, 'scripts'))
       mkdirSync(path.join(repository, 'apps/treeport'), { recursive: true })
+      mkdirSync(path.join(repository, 'apps/desktop'), { recursive: true })
       mkdirSync(path.join(repository, 'apps/docs/public'), { recursive: true })
       mkdirSync(path.join(repository, 'packages/panel-sdk'), {
         recursive: true
@@ -68,6 +70,10 @@ describe('release preparation', () => {
       writeFileSync(
         path.join(repository, 'apps/treeport/package.json'),
         '{\n  "name": "@treeport/treeport",\n  "version": "0.1.0"\n}\n'
+      )
+      writeFileSync(
+        path.join(repository, 'apps/desktop/package.json'),
+        '{\n  "name": "@treeport/desktop",\n  "version": "0.1.0"\n}\n'
       )
       writeFileSync(
         path.join(repository, 'packages/panel-sdk/package.json'),
@@ -124,6 +130,43 @@ describe('release preparation', () => {
       expect(
         git(['--git-dir', remote, 'rev-parse', 'refs/tags/v0.1.0^{}'])
       ).toBe(releaseCommit)
+
+      const nextRelease = spawnSync(
+        process.execPath,
+        ['scripts/prepare-release.mjs', '0.2.0'],
+        { cwd: repository, encoding: 'utf8', env: environment }
+      )
+      expect(
+        nextRelease.status,
+        `${nextRelease.stdout}\n${nextRelease.stderr}`
+      ).toBe(0)
+      expect(
+        JSON.parse(
+          readFileSync(
+            path.join(repository, 'apps/desktop/package.json'),
+            'utf8'
+          )
+        ).version
+      ).toBe('0.2.0')
+      expect(
+        JSON.parse(
+          readFileSync(
+            path.join(repository, 'apps/treeport/package.json'),
+            'utf8'
+          )
+        ).version
+      ).toBe('0.2.0')
+      expect(
+        JSON.parse(
+          readFileSync(
+            path.join(repository, 'packages/panel-sdk/package.json'),
+            'utf8'
+          )
+        ).version
+      ).toBe('0.2.0')
+      expect(
+        git(['--git-dir', remote, 'rev-parse', 'refs/tags/v0.2.0^{}'])
+      ).toBe(git(['rev-parse', 'HEAD']))
     } finally {
       rmSync(temporaryDirectory, { recursive: true, force: true })
     }

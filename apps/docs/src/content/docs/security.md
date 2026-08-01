@@ -3,7 +3,7 @@ title: Security
 description: Run Treeport only on a local or trusted private network.
 ---
 
-Treeport provides arbitrary terminal access and currently has **no authentication**. Anyone who can reach the service can read terminal output, send terminal input, create processes, and operate on registered worktrees.
+Treeport provides arbitrary terminal access and currently has **no application authentication**. Anyone who can reach the service can read terminal output, send terminal input, create processes, and operate on registered worktrees. Loopback access relies on the local OS-user boundary; recommended remote access relies on Tailscale identity plus tailnet ACLs and grants.
 
 ## Safe default
 
@@ -23,7 +23,7 @@ For browser or phone access, use [private remote access through Tailscale Serve]
 Do not port-forward Treeport from your router, bind it to a public interface, publish it through Tailscale Funnel, or use an unauthenticated public tunnel or reverse proxy. Running Treeport on a VPS is safe only when the daemon stays on loopback and a trusted private layer such as Tailscale Serve controls access.
 :::
 
-The desktop app applies the same boundary: HTTP is accepted only for loopback computers, while remote computers require HTTPS with a certificate trusted by the operating system. It does not offer a certificate-warning bypass and does not expose its saved computer list to remote Treeport web content.
+The desktop app applies the same boundary: HTTP is accepted only for loopback computers, while remote computers require HTTPS with a certificate trusted by the operating system. It uses the Mac's existing Tailscale access rather than creating a Treeport login session. It does not offer a certificate-warning bypass and does not expose its saved computer list to remote Treeport web content.
 
 For advanced direct private-network binding, prefer a specific Tailscale address over every interface:
 

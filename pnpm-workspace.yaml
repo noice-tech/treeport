@@ -2,6 +2,9 @@ packages:
   - apps/*
   - packages/*
 
+hoistPattern:
+  - update-electron-app
+
 catalog:
   '@fontsource-variable/inter': ^5.2.8
   '@radix-ui/react-dialog': ^1.1.23
@@ -24,7 +27,10 @@ overrides:
 
 allowBuilds:
   better-sqlite3: true
+  electron: true
   esbuild: true
+  fs-xattr: true
+  macos-alias: true
   node-pty: true
   sharp: true
   workerd: true

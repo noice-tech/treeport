@@ -17,6 +17,11 @@ import {
   type MenuItemConstructorOptions,
   type WebContents
 } from 'electron'
+import {
+  makeUserNotifier,
+  updateElectronApp,
+  UpdateSourceType
+} from 'update-electron-app'
 import { z } from 'zod'
 import { ComputerStore } from './computer-store'
 import type {
@@ -32,7 +37,9 @@ import { isLoopbackUrl, parseComputerUrl } from './renderer-url'
 const dirname = __dirname
 const TITLEBAR_HEIGHT = 32
 const developmentUserData = process.env.TREEPORT_DESKTOP_USER_DATA?.trim()
-if (app.isPackaged) {
+if (process.env.TREEPORT_DESKTOP_E2E === '1' && developmentUserData) {
+  app.setPath('userData', path.resolve(developmentUserData))
+} else if (app.isPackaged) {
   app.setPath('userData', path.join(app.getPath('appData'), 'Treeport'))
 } else if (developmentUserData) {
   app.setPath('userData', path.resolve(developmentUserData))
@@ -53,6 +60,7 @@ let connection: ConnectionState = { status: 'empty' }
 let connectionGeneration = 0
 let connectionAbort: AbortController | null = null
 let fullscreen = false
+let stopAutomaticUpdates: (() => void) | null = null
 const shellWebContentsIds = new Set<number>()
 let terminalSelectionGuest: WebContents | null = null
 
@@ -807,6 +815,30 @@ if (!hasSingleInstanceLock) {
     )
     installMenu()
     createWindow()
+    if (
+      app.isPackaged &&
+      process.platform === 'darwin' &&
+      process.env.TREEPORT_DESKTOP_E2E !== '1'
+    ) {
+      const updater = updateElectronApp({
+        updateSource: {
+          type: UpdateSourceType.ElectronPublicUpdateService,
+          repo: 'noice-tech/treeport',
+          host: 'https://update.electronjs.org'
+        },
+        updateInterval: '10 minutes',
+        notifyUser: true,
+        onNotifyUser: makeUserNotifier({
+          title: 'Treeport Update Ready',
+          detail:
+            'Restart Treeport to update the desktop client. Your selected local or remote backend is not changed.',
+          restartButtonText: 'Restart Treeport',
+          laterButtonText: 'Later'
+        })
+      })
+      stopAutomaticUpdates = updater.stopUpdates
+    }
+
     app.on('activate', () => {
       if (!mainWindow) {
         createWindow()
@@ -814,7 +846,10 @@ if (!hasSingleInstanceLock) {
     })
   })
 
-  app.on('before-quit', () => connectionAbort?.abort())
+  app.on('before-quit', () => {
+    stopAutomaticUpdates?.()
+    connectionAbort?.abort()
+  })
   app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') {
       app.quit()

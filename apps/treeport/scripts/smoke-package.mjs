@@ -73,6 +73,21 @@ try {
     temporaryDirectory,
     `treeport-treeport-${version}.tgz`
   )
+  const packageFiles = (
+    await execute('tar', ['-tzf', treeportTarball])
+  ).stdout.split('\n')
+  const forbiddenPackagePath = packageFiles.find(
+    (filePath) =>
+      filePath.startsWith('package/apps/desktop/') ||
+      filePath.includes('/.vite/') ||
+      /(?:^|\/)electron(?:-forge)?(?:\/|$)/.test(filePath)
+  )
+  if (forbiddenPackagePath) {
+    throw new Error(
+      `The npm tarball contains desktop-only content: ${forbiddenPackagePath}`
+    )
+  }
+
   await execute(
     'npm',
     [
@@ -85,6 +100,53 @@ try {
     ],
     { cwd: temporaryDirectory }
   )
+
+  const installedManifestPath = path.join(
+    prefix,
+    'lib',
+    'node_modules',
+    '@treeport',
+    'treeport',
+    'package.json'
+  )
+  const installedManifest = JSON.parse(
+    await fs.readFile(installedManifestPath, 'utf8')
+  )
+  const declaredPackages = {
+    ...installedManifest.dependencies,
+    ...installedManifest.optionalDependencies,
+    ...installedManifest.peerDependencies
+  }
+  if (
+    Object.keys(declaredPackages).some(
+      (name) => name === 'electron' || name.startsWith('@electron-forge/')
+    )
+  ) {
+    throw new Error('The npm package declares an Electron runtime dependency')
+  }
+
+  const installedTree = JSON.parse(
+    (
+      await execute(
+        'npm',
+        ['ls', '--global', '--prefix', prefix, '--all', '--json'],
+        { cwd: temporaryDirectory }
+      )
+    ).stdout
+  )
+  const dependencyQueue = [installedTree.dependencies ?? {}]
+  while (dependencyQueue.length > 0) {
+    const dependencies = dependencyQueue.pop()
+    for (const [name, dependency] of Object.entries(dependencies)) {
+      if (name === 'electron') {
+        throw new Error('Installing the npm package installed Electron')
+      }
+
+      if (dependency && typeof dependency === 'object') {
+        dependencyQueue.push(dependency.dependencies ?? {})
+      }
+    }
+  }
 
   await execute(treeport, ['up'], { env: environment })
   const health = await fetch(`http://127.0.0.1:${port}/api/health`).then(

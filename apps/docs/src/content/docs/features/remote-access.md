@@ -3,7 +3,7 @@ title: Remote access
 description: Open Treeport privately from other devices in your Tailscale network.
 ---
 
-Treeport can expose its local web UI through [Tailscale Serve](https://tailscale.com/docs/features/tailscale-serve). This keeps the daemon bound to loopback while Tailscale provides private HTTPS access within your tailnet.
+Treeport can expose its local web UI through [Tailscale Serve](https://tailscale.com/docs/features/tailscale-serve). This keeps the daemon bound to loopback while Tailscale provides private HTTPS access within your tailnet. Tailscale authenticates the device and user before its ACLs and grants authorize access; Treeport itself does not add a login session.
 
 :::caution
 Treeport has no application authentication. Anyone permitted by your Tailscale access policy can control its terminals and worktrees. Do not use Tailscale Funnel or any public proxy with Treeport.
@@ -36,6 +36,8 @@ A VPS is supported when Treeport listens only on its loopback interface and Tail
 ## Connect the desktop app
 
 The desktop app starts with **This computer** at `http://127.0.0.1:8733`. Click the computer name in its title bar, choose **Connect to another computer…**, and enter the HTTPS URL printed by `treeport remote enable`.
+
+The desktop app uses that URL through the Mac's existing Tailscale connection, just like a browser. There is no separate Treeport credential prompt: the tailnet identity and access policy are the authorization boundary. The app requires an operating-system-trusted HTTPS certificate and does not offer an insecure certificate bypass.
 
 ## Ports and other Serve apps
 
