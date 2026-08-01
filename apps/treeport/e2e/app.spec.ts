@@ -75,6 +75,7 @@ const project = {
       },
       createdAt: '2026-01-01',
       updatedAt: '2026-01-01',
+      panels: [],
       terminals: [
         {
           id: 'term_shell',
@@ -123,6 +124,7 @@ const project = {
       },
       createdAt: '2026-01-01',
       updatedAt: '2026-01-01',
+      panels: [],
       terminals: [
         {
           id: 'term_pi',
@@ -1007,7 +1009,8 @@ async function mockApp(
         id: 'wt_new',
         name: canonicalName,
         path: `/worktrees/${canonicalName}/repo`,
-        terminals: [terminal]
+        terminals: [terminal],
+        panels: []
       }
       const existingIndex = state.worktrees.findIndex(
         (item) => item.id === worktree.id

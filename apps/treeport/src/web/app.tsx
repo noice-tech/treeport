@@ -1,13 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useLocation } from '@tanstack/react-router'
 import type {
   ProjectRecord,
   RemovePreview,
   TerminalRecord,
+  WebPanel,
+  WebPanelContribution,
   WorktreeRecord
 } from '@treeport/shared'
 import { TerminalBellNotifications } from './features/notifications/use-bell-notifications'
+import { WebPanelWorkspace } from './features/web-panels/web-panel-workspace'
+import { apiClient } from './api'
 import { OpenProjectDialog } from './features/projects/open-project-dialog'
 import { useProjectWorkflows } from './features/projects/project-workflows'
 import {
@@ -35,6 +39,7 @@ import { RemoveWorktreeDialog } from './features/worktrees/remove-worktree-dialo
 import { useWorktreeWorkflows } from './features/worktrees/worktree-workflows'
 import { useSidebar } from './components/ui/sidebar'
 import { METADATA_DEGRADED_GRACE_MS } from './metadata-sync'
+import { notifyError } from './features/notifications/error-notifications'
 import { useProjectEventsBridge } from './project-events-bridge'
 import {
   projectsQueryOptions,
@@ -69,6 +74,7 @@ export default function App() {
 function WorkspaceApp() {
   const desktopBridge = window.treeportDesktop
   const navigateToWorkspace = useWorkspaceNavigate()
+  const queryClient = useQueryClient()
   const location = useLocation()
   const projectsQuery = useQuery(projectsQueryOptions)
   const projects = projectsQuery.data ?? []
@@ -84,6 +90,46 @@ function WorkspaceApp() {
   const selectedWorktree = workspaceResolution?.selection.worktree ?? null
   const selectedTerminal = workspaceResolution?.selection.terminal ?? null
   const selectedTerminalId = selectedTerminal?.id ?? null
+  const [selectedWebPanelId, setSelectedWebPanelId] = useState<string | null>(
+    null
+  )
+  const selectedWebPanel =
+    selectedWorktree?.panels.find(
+      (panel): panel is WebPanel =>
+        panel.kind === 'web' && panel.id === selectedWebPanelId
+    ) ?? null
+  const contributionsQuery = useQuery({
+    queryKey: ['web-panel-contributions', selectedWorktree?.id],
+    queryFn: () => apiClient.webPanelContributions(selectedWorktree!.id),
+    enabled: Boolean(selectedWorktree)
+  })
+  const createWebPanel = useMutation({
+    mutationFn: (contribution: WebPanelContribution) =>
+      apiClient.createWebPanel(
+        selectedWorktree!.id,
+        contribution.extensionId,
+        contribution.contributionId
+      ),
+    onSuccess: async (panel) => {
+      await queryClient.invalidateQueries({
+        queryKey: projectsQueryOptions.queryKey
+      })
+      setSelectedWebPanelId(panel.id)
+    },
+    onError: notifyError
+  })
+  const closeWebPanel = useMutation({
+    mutationFn: (panel: WebPanel) => apiClient.deleteWebPanel(panel.id),
+    onSuccess: async (_, panel) => {
+      setSelectedWebPanelId((current) =>
+        current === panel.id ? null : current
+      )
+      await queryClient.invalidateQueries({
+        queryKey: projectsQueryOptions.queryKey
+      })
+    },
+    onError: notifyError
+  })
   const activeProject = selectedProject
   const {
     isMobile,
@@ -183,6 +229,7 @@ function WorkspaceApp() {
     [activeProject]
   )
   const navigateToTerminal = (terminal: TerminalRecord) => {
+    setSelectedWebPanelId(null)
     const target = targetForTerminal(projects, terminal)
     if (target) {
       void navigateToWorkspace(target)
@@ -192,6 +239,7 @@ function WorkspaceApp() {
   }
 
   const selectWorktree = (worktree: WorktreeRecord) => {
+    setSelectedWebPanelId(null)
     const target = targetForWorktree(projects, worktree, selectedTerminalId)
     if (target) {
       void navigateToWorkspace(target)
@@ -334,6 +382,8 @@ function WorkspaceApp() {
               ? null
               : selectedTerminalId
           }
+          selectedWebPanelId={selectedWebPanelId}
+          webPanelContributions={contributionsQuery.data ?? []}
           selectedPendingTerminalId={
             terminalWorkflows.selectedPendingTerminal?.id ?? null
           }
@@ -344,6 +394,15 @@ function WorkspaceApp() {
           onSelectTerminal={selectTerminal}
           onSelectPendingTerminal={terminalWorkflows.selectPendingTerminal}
           onCloseTerminal={terminalWorkflows.requestCloseTerminal}
+          onSelectWebPanel={(panel) => {
+            terminalWorkflows.clearPendingTerminalSelection()
+            setSelectedWebPanelId(panel.id)
+            closeDrawerAfterNavigation()
+          }}
+          onCloseWebPanel={(panel) => closeWebPanel.mutate(panel)}
+          onCreateWebPanel={(contribution) =>
+            createWebPanel.mutate(contribution)
+          }
           onSelectWorktree={selectWorktree}
           onPrepareRemoval={prepareRemoval}
           onOpenTerminalDialog={(project, worktree, trigger) =>
@@ -362,16 +421,20 @@ function WorkspaceApp() {
         />
       </WorkspaceSidebar>
       <WorkspaceMain>
-        <TerminalWorkspace
-          selectedWorktree={selectedWorktree}
-          selectedTerminal={selectedTerminal}
-          selectedPendingTerminal={terminalWorkflows.selectedPendingTerminal}
-          pendingTerminals={terminalWorkflows.pendingTerminals}
-          loading={projectsQuery.isPending}
-          dialogOpen={dialog !== null}
-          onSelectTerminal={selectTerminal}
-          onSelectPendingTerminal={terminalWorkflows.selectPendingTerminal}
-        />
+        {selectedWebPanel ? (
+          <WebPanelWorkspace panel={selectedWebPanel} />
+        ) : (
+          <TerminalWorkspace
+            selectedWorktree={selectedWorktree}
+            selectedTerminal={selectedTerminal}
+            selectedPendingTerminal={terminalWorkflows.selectedPendingTerminal}
+            pendingTerminals={terminalWorkflows.pendingTerminals}
+            loading={projectsQuery.isPending}
+            dialogOpen={dialog !== null}
+            onSelectTerminal={selectTerminal}
+            onSelectPendingTerminal={terminalWorkflows.selectPendingTerminal}
+          />
+        )}
       </WorkspaceMain>
       {showSyncDegraded ? (
         <div

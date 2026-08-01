@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { CrownIcon, GitBranchIcon } from 'lucide-react'
+import { CrownIcon, GitBranchIcon, PanelsTopLeftIcon } from 'lucide-react'
 import {
   ArrowPathIcon,
   PlusIcon,
@@ -9,6 +9,8 @@ import {
 import type {
   ProjectRecord,
   TerminalRecord,
+  WebPanel,
+  WebPanelContribution,
   WorktreeRecord
 } from '@treeport/shared'
 import { Button } from '../../components/ui/button'
@@ -120,6 +122,8 @@ export interface WorkspaceTreeProps {
   selectedWorktree: WorktreeRecord | null
   selectedTerminalId: string | null
   selectedPendingTerminalId: string | null
+  selectedWebPanelId: string | null
+  webPanelContributions: WebPanelContribution[]
   pendingTerminals: Array<{
     id: string
     projectId: string
@@ -132,6 +136,9 @@ export interface WorkspaceTreeProps {
   onSelectTerminal: (terminal: TerminalRecord) => void
   onSelectPendingTerminal: (terminalId: string) => void
   onCloseTerminal: (terminal: TerminalRecord) => void
+  onSelectWebPanel: (panel: WebPanel) => void
+  onCloseWebPanel: (panel: WebPanel) => void
+  onCreateWebPanel: (contribution: WebPanelContribution) => void
   onSelectWorktree: (worktree: WorktreeRecord) => void
   onPrepareRemoval: (
     worktree: WorktreeRecord,
@@ -154,6 +161,8 @@ export function WorkspaceTree({
   selectedWorktree,
   selectedTerminalId,
   selectedPendingTerminalId,
+  selectedWebPanelId,
+  webPanelContributions,
   pendingTerminals,
   pendingWorktrees,
   pendingRemovals,
@@ -161,6 +170,9 @@ export function WorkspaceTree({
   onSelectTerminal: selectTerminal,
   onSelectPendingTerminal: selectPendingTerminal,
   onCloseTerminal: closeTerminal,
+  onSelectWebPanel: selectWebPanel,
+  onCloseWebPanel: closeWebPanel,
+  onCreateWebPanel: createWebPanel,
   onSelectWorktree: selectWorktree,
   onPrepareRemoval: prepareRemoval,
   onOpenTerminalDialog,
@@ -497,6 +509,68 @@ export function WorkspaceTree({
                           </SidebarMenuSubItem>
                         )
                       })}
+                      {worktree.panels
+                        .filter(
+                          (panel): panel is WebPanel => panel.kind === 'web'
+                        )
+                        .map((panel) => (
+                          <SidebarMenuSubItem
+                            key={panel.id}
+                            className="group/terminal relative min-w-0"
+                          >
+                            <SidebarMenuSubButton
+                              asChild
+                              isActive={selectedWebPanelId === panel.id}
+                            >
+                              <Button
+                                variant="ghost"
+                                type="button"
+                                className={cn(
+                                  'terminal-row grid h-auto min-h-11 w-full min-w-0 grid-cols-[1.25rem_minmax(0,1fr)_2rem] gap-1.5 rounded-md px-2 py-1.5 text-left text-base/5 font-normal min-[701px]:min-h-7 min-[701px]:grid-cols-[1rem_minmax(0,1fr)_1.75rem] min-[701px]:gap-1 min-[701px]:py-0 min-[701px]:text-xs/4',
+                                  selectedWebPanelId === panel.id
+                                    ? 'selected bg-cyan-400/8! text-cyan-50'
+                                    : 'text-zinc-300 hover:bg-white/5 hover:text-zinc-100'
+                                )}
+                                onClick={() => selectWebPanel(panel)}
+                                aria-label={`${panel.title}, web panel`}
+                              >
+                                <PanelsTopLeftIcon aria-hidden="true" />
+                                <span className="truncate" aria-hidden="true">
+                                  {panel.title}
+                                </span>
+                                <span aria-hidden="true" />
+                              </Button>
+                            </SidebarMenuSubButton>
+                            <div className="absolute inset-y-0 right-0 z-10 flex items-center opacity-0 group-hover/terminal:opacity-100 group-focus-within/terminal:opacity-100 max-[700px]:opacity-100">
+                              <SidebarAction
+                                label={`Close ${panel.title}`}
+                                tooltip="Close web panel"
+                                className="text-zinc-500 hover:bg-transparent hover:text-zinc-200"
+                                onClick={() => closeWebPanel(panel)}
+                              >
+                                <XMarkIcon />
+                              </SidebarAction>
+                            </div>
+                          </SidebarMenuSubItem>
+                        ))}
+                      {selectedWorktree?.id === worktree.id &&
+                        webPanelContributions.map((contribution) => (
+                          <SidebarMenuSubItem
+                            key={`${contribution.extensionId}:${contribution.contributionId}`}
+                          >
+                            <SidebarMenuSubButton asChild>
+                              <Button
+                                variant="ghost"
+                                type="button"
+                                className="h-auto min-h-11 w-full justify-start gap-1.5 rounded-md px-2 py-1.5 text-base/5 font-normal text-zinc-500 hover:bg-white/5 hover:text-zinc-100 min-[701px]:min-h-7 min-[701px]:py-0 min-[701px]:text-xs/4"
+                                onClick={() => createWebPanel(contribution)}
+                              >
+                                <PlusIcon />
+                                Open {contribution.title}
+                              </Button>
+                            </SidebarMenuSubButton>
+                          </SidebarMenuSubItem>
+                        ))}
                       {pendingTerminals
                         .filter((pending) => pending.worktreeId === worktree.id)
                         .map((pending, pendingIndex) => {

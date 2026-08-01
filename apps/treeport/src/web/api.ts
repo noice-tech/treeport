@@ -9,6 +9,10 @@ import type {
   TerminalPreset,
   TerminalRecord,
   TerminalSize,
+  WebPanel,
+  WebPanelContext,
+  WebPanelContribution,
+  GitDiff,
   WorktreeRecord
 } from '@treeport/shared'
 
@@ -147,6 +151,30 @@ export const apiClient = {
         ...(sourceWorktreeId ? { sourceWorktreeId } : {})
       })
     }),
+  webPanelContributions: async (worktreeId: string) =>
+    (
+      await api<{ contributions: WebPanelContribution[] }>(
+        `/api/worktrees/${worktreeId}/web-panel-contributions`
+      )
+    ).contributions,
+  createWebPanel: async (
+    worktreeId: string,
+    extensionId: string,
+    contributionId: string
+  ) =>
+    (
+      await api<{ panel: WebPanel }>(`/api/worktrees/${worktreeId}/panels`, {
+        method: 'POST',
+        body: JSON.stringify({ extensionId, contributionId })
+      })
+    ).panel,
+  deleteWebPanel: async (panelId: string) =>
+    api<{ ok: true }>(`/api/panels/${panelId}`, { method: 'DELETE' }),
+  webPanelContext: async (panelId: string) =>
+    (await api<{ context: WebPanelContext }>(`/api/panels/${panelId}/context`))
+      .context,
+  webPanelDiff: async (panelId: string) =>
+    (await api<{ diff: GitDiff }>(`/api/panels/${panelId}/diff`)).diff,
   createTerminal: async (
     worktreeId: string,
     name: string,
