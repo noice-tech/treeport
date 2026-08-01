@@ -1,3 +1,7 @@
+import {
+  FileDiff,
+  parsePatchFiles
+} from 'https://esm.sh/@pierre/diffs@1.3.1?bundle'
 import { treeport } from '@treeport/panel-sdk'
 
 const review = /** @type {HTMLElement} */ (document.querySelector('#review'))
@@ -6,9 +10,13 @@ const refresh = /** @type {HTMLButtonElement} */ (
   document.querySelector('#refresh')
 )
 
+/** @type {FileDiff[]} */
+let renderedDiffs = []
+
 /** @param {string} unified */
 function render(unified) {
   review.replaceChildren()
+
   if (!unified) {
     const empty = document.createElement('p')
     empty.className = 'empty'
@@ -17,43 +25,27 @@ function render(unified) {
     return
   }
 
-  let section = null
-  for (const line of unified.split('\n')) {
-    if (line.startsWith('diff --git ')) {
-      section = document.createElement('section')
-      section.className = 'file'
-      const heading = document.createElement('h2')
-      heading.textContent = line
-        .replace(/^diff --git a\//, '')
-        .replace(/ b\//, ' → ')
-      section.append(heading)
-      section.append(document.createElement('pre'))
-      review.append(section)
-    }
+  const files = parsePatchFiles(unified).flatMap((patch) => patch.files)
+  if (files.length === 0) {
+    throw new Error('The worktree diff did not contain any file patches')
+  }
 
-    if (!section) {
-      continue
-    }
-
-    const row = document.createElement('span')
-    row.className = `line ${
-      line.startsWith('+') && !line.startsWith('+++')
-        ? 'add'
-        : line.startsWith('-') && !line.startsWith('---')
-          ? 'del'
-          : line.startsWith('@@')
-            ? 'hunk'
-            : line.startsWith('diff ') || line.startsWith('index ')
-              ? 'meta'
-              : ''
-    }`
-    row.textContent = line || ' '
-    section.querySelector('pre')?.append(row)
+  for (const fileDiff of files) {
+    const renderer = new FileDiff({
+      theme: 'pierre-dark',
+      diffStyle: 'unified'
+    })
+    renderer.render({ fileDiff, containerWrapper: review })
+    renderedDiffs.push(renderer)
   }
 }
 
 async function load() {
   refresh.disabled = true
+  for (const diff of renderedDiffs) {
+    diff.cleanUp()
+  }
+  renderedDiffs = []
   review.innerHTML = '<p class="empty">Reading worktree changes…</p>'
   try {
     const [context, diff] = await Promise.all([
