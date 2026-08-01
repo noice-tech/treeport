@@ -264,6 +264,31 @@ describe('HTTP API validation', () => {
     expect(service.deleteWebPanel).toHaveBeenCalledWith('panel_review')
   })
 
+  it('serves nested panel modules with their browser MIME type', async () => {
+    const { app, config, service } = fixture()
+    const modulePath = path.join(config.runtimeDir, 'nested', 'review.js')
+    await fs.mkdir(path.dirname(modulePath), { recursive: true })
+    await fs.writeFile(modulePath, 'export const loaded = true')
+    vi.mocked(service.resolveWebPanelAsset).mockResolvedValue(modulePath)
+
+    try {
+      const response = await app.request(
+        '/api/web-panels/panel_review/assets/nested/review.js'
+      )
+      expect(response.status).toBe(200)
+      expect(response.headers.get('content-type')).toBe(
+        'text/javascript; charset=utf-8'
+      )
+      expect(await response.text()).toBe('export const loaded = true')
+      expect(service.resolveWebPanelAsset).toHaveBeenCalledWith(
+        'panel_review',
+        'nested/review.js'
+      )
+    } finally {
+      await fs.rm(config.runtimeDir, { recursive: true, force: true })
+    }
+  })
+
   it('returns consistent validation errors without calling domain services', async () => {
     const { app, service } = fixture()
     const response = await app.request('/api/worktrees/wt_1/terminals', {

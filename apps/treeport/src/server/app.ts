@@ -390,10 +390,16 @@ export function createApp({
   })
 
   app.get('/api/web-panels/:panelId/assets/*', async (context) => {
-    const requestedPath = context.req.param('*')
+    const pathname = new URL(context.req.url).pathname
+    const assetMarker = `/api/web-panels/${encodeURIComponent(
+      context.req.param('panelId')
+    )}/assets/`
+    const requestedPath = decodeURI(
+      pathname.slice(pathname.indexOf(assetMarker) + assetMarker.length)
+    )
     const assetPath = await service.resolveWebPanelAsset(
       context.req.param('panelId'),
-      requestedPath ?? ''
+      requestedPath
     )
     const body = await fs.readFile(assetPath)
     const extension = path.extname(assetPath).toLowerCase()
