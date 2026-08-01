@@ -43,6 +43,16 @@ export function useWorkspaceNavigate(): (
             },
             replace
           })
+        case 'panel':
+          return navigate({
+            to: '/projects/$projectId/worktrees/$worktreeId/panels/$panelId',
+            params: {
+              projectId: target.projectId,
+              worktreeId: target.worktreeId,
+              panelId: target.panelId
+            },
+            replace
+          })
       }
     },
     [navigate, requestTerminalFocus]

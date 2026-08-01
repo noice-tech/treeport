@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useLocation } from '@tanstack/react-router'
 import type {
@@ -34,26 +34,15 @@ export interface CreateTerminalInput {
 
 export function useTerminalWorkflows({
   projects,
-  selectedProject,
   selectedWorktree,
-  selectedTerminal,
-  dialogOpen,
-  onOpenNewTerminalDialog
+  selectedTerminal
 }: {
   projects: ProjectRecord[]
-  selectedProject: ProjectRecord | null
   selectedWorktree: WorktreeRecord | null
   selectedTerminal: TerminalRecord | null
-  dialogOpen: boolean
-  onOpenNewTerminalDialog: () => void
 }) {
   const queryClient = useQueryClient()
-  const {
-    isMobile,
-    openMobile: drawerOpen,
-    closeMobileWithoutFocusRestore
-  } = useSidebar()
-  const { open: projectSwitcherOpen } = useProjectSwitcher()
+  const { closeMobileWithoutFocusRestore } = useSidebar()
   const location = useLocation()
   const navigateToWorkspace = useWorkspaceNavigate()
   const closingTerminalIdsRef = useRef(new Set<string>())
@@ -332,45 +321,6 @@ export function useTerminalWorkflows({
     )
     closeTerminal.mutate({ terminal, index })
   }
-
-  useEffect(() => {
-    const desktopBridge = window.treeportDesktop
-    if (!desktopBridge) {
-      return
-    }
-
-    return desktopBridge.onCommand((command) => {
-      if (
-        command === 'new-worktree' ||
-        dialogOpen ||
-        projectSwitcherOpen ||
-        (isMobile && drawerOpen)
-      ) {
-        return
-      }
-
-      if (command === 'new-terminal') {
-        if (selectedProject && selectedWorktree) {
-          createTerminalInWorktree(selectedProject, selectedWorktree, {
-            name: 'Shell'
-          })
-        }
-      } else if (command === 'new-terminal-menu') {
-        onOpenNewTerminalDialog()
-      } else if (!selectedPendingTerminal && selectedTerminal) {
-        requestCloseTerminal(selectedTerminal)
-      }
-    })
-  }, [
-    drawerOpen,
-    isMobile,
-    dialogOpen,
-    projectSwitcherOpen,
-    selectedPendingTerminal,
-    selectedProject,
-    selectedTerminal,
-    selectedWorktree
-  ])
 
   return {
     pendingTerminals,

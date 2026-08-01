@@ -29,7 +29,7 @@ import {
   WorkspaceShell
 } from './features/sidebar/workspace-shell'
 import { TerminalPresetsDialog } from './features/terminal-presets/terminal-presets-dialog'
-import { NewTerminalDialog } from './features/terminals/new-terminal-dialog'
+import { NewPanelDialog } from './features/panels/new-panel-dialog'
 import {
   TerminalWorkspace,
   useTerminalWorkflows
@@ -51,6 +51,7 @@ import {
   resolveWorkspaceRoute,
   targetForProject,
   targetForTerminal,
+  targetForWebPanel,
   targetForWorktree
 } from './workspace-navigation'
 import { useWorkspaceNavigate } from './workspace-router-navigation'
@@ -58,7 +59,7 @@ import { useWorkspaceNavigate } from './workspace-router-navigation'
 type AppDialog =
   | { type: 'project' }
   | { type: 'worktree'; project: ProjectRecord }
-  | { type: 'terminal'; projectId: string; worktreeId: string | null }
+  | { type: 'panel'; projectId: string; worktreeId: string | null }
   | { type: 'presets' }
   | { type: 'remove'; worktree: WorktreeRecord; preview: RemovePreview }
   | null
@@ -90,46 +91,7 @@ function WorkspaceApp() {
   const selectedWorktree = workspaceResolution?.selection.worktree ?? null
   const selectedTerminal = workspaceResolution?.selection.terminal ?? null
   const selectedTerminalId = selectedTerminal?.id ?? null
-  const [selectedWebPanelId, setSelectedWebPanelId] = useState<string | null>(
-    null
-  )
-  const selectedWebPanel =
-    selectedWorktree?.panels.find(
-      (panel): panel is WebPanel =>
-        panel.kind === 'web' && panel.id === selectedWebPanelId
-    ) ?? null
-  const contributionsQuery = useQuery({
-    queryKey: ['web-panel-contributions', selectedWorktree?.id],
-    queryFn: () => apiClient.webPanelContributions(selectedWorktree!.id),
-    enabled: Boolean(selectedWorktree)
-  })
-  const createWebPanel = useMutation({
-    mutationFn: (contribution: WebPanelContribution) =>
-      apiClient.createWebPanel(
-        selectedWorktree!.id,
-        contribution.extensionId,
-        contribution.contributionId
-      ),
-    onSuccess: async (panel) => {
-      await queryClient.invalidateQueries({
-        queryKey: projectsQueryOptions.queryKey
-      })
-      setSelectedWebPanelId(panel.id)
-    },
-    onError: notifyError
-  })
-  const closeWebPanel = useMutation({
-    mutationFn: (panel: WebPanel) => apiClient.deleteWebPanel(panel.id),
-    onSuccess: async (_, panel) => {
-      setSelectedWebPanelId((current) =>
-        current === panel.id ? null : current
-      )
-      await queryClient.invalidateQueries({
-        queryKey: projectsQueryOptions.queryKey
-      })
-    },
-    onError: notifyError
-  })
+  const selectedWebPanel = workspaceResolution?.selection.panel ?? null
   const activeProject = selectedProject
   const {
     isMobile,
@@ -140,6 +102,69 @@ function WorkspaceApp() {
   const projectSwitcher = useProjectSwitcher()
   const projectSwitcherOpen = projectSwitcher.open
   const [dialog, setDialog] = useState<AppDialog>(null)
+  const panelDialogProject =
+    dialog?.type === 'panel'
+      ? (projects.find((project) => project.id === dialog.projectId) ?? null)
+      : null
+  const panelDialogWorktree =
+    dialog?.type === 'panel' && dialog.worktreeId
+      ? (panelDialogProject?.worktrees.find(
+          (worktree) => worktree.id === dialog.worktreeId
+        ) ?? null)
+      : null
+  const contributionsQuery = useQuery({
+    queryKey: ['web-panel-contributions', panelDialogWorktree?.id],
+    queryFn: () => apiClient.webPanelContributions(panelDialogWorktree!.id),
+    enabled: Boolean(panelDialogWorktree)
+  })
+  const createWebPanel = useMutation({
+    mutationFn: ({
+      worktree,
+      contribution
+    }: {
+      worktree: WorktreeRecord
+      contribution: WebPanelContribution
+    }) =>
+      apiClient.createWebPanel(
+        worktree.id,
+        contribution.extensionId,
+        contribution.contributionId
+      ),
+    onSuccess: async (panel) => {
+      await queryClient.invalidateQueries({
+        queryKey: projectsQueryOptions.queryKey
+      })
+      const target = targetForWebPanel(
+        queryClient.getQueryData<ProjectRecord[]>(
+          projectsQueryOptions.queryKey
+        ) ?? projects,
+        panel
+      )
+      if (target) {
+        await navigateToWorkspace(target)
+      }
+    },
+    onError: notifyError
+  })
+  const closeWebPanel = useMutation({
+    mutationFn: (panel: WebPanel) => apiClient.deleteWebPanel(panel.id),
+    onSuccess: async (_, panel) => {
+      if (selectedWebPanel?.id === panel.id) {
+        const worktree = projects
+          .flatMap((project) => project.worktrees)
+          .find((candidate) => candidate.id === panel.worktreeId)
+        const target = worktree ? targetForWorktree(projects, worktree) : null
+        if (target) {
+          await navigateToWorkspace(target, true)
+        }
+      }
+
+      await queryClient.invalidateQueries({
+        queryKey: projectsQueryOptions.queryKey
+      })
+    },
+    onError: notifyError
+  })
   const eventsDisconnected = useProjectEventsBridge(projectsQuery.data)
   const [showSyncDegraded, setShowSyncDegraded] = useState(false)
   const dialogTriggerRef = useRef<HTMLElement | null>(null)
@@ -202,34 +227,12 @@ function WorkspaceApp() {
     return () => window.clearTimeout(timer)
   }, [eventsDisconnected, projectsQuery.data, projectsQuery.isRefetchError])
 
-  useEffect(() => {
-    if (!desktopBridge) {
-      return
-    }
-
-    return desktopBridge.onCommand((command) => {
-      if (
-        command !== 'new-worktree' ||
-        !activeProject ||
-        activeProject.availability.state === 'unavailable' ||
-        dialog ||
-        projectSwitcherOpen ||
-        (isMobile && drawerOpen)
-      ) {
-        return
-      }
-
-      openDialog({ type: 'worktree', project: activeProject })
-    })
-  }, [activeProject, drawerOpen, isMobile, dialog, projectSwitcherOpen])
-
   const activeProjectTerminals = useMemo(
     () =>
       activeProject?.worktrees.flatMap((worktree) => worktree.terminals) ?? [],
     [activeProject]
   )
   const navigateToTerminal = (terminal: TerminalRecord) => {
-    setSelectedWebPanelId(null)
     const target = targetForTerminal(projects, terminal)
     if (target) {
       void navigateToWorkspace(target)
@@ -239,7 +242,6 @@ function WorkspaceApp() {
   }
 
   const selectWorktree = (worktree: WorktreeRecord) => {
-    setSelectedWebPanelId(null)
     const target = targetForWorktree(projects, worktree, selectedTerminalId)
     if (target) {
       void navigateToWorkspace(target)
@@ -302,42 +304,80 @@ function WorkspaceApp() {
   })
   const terminalWorkflows = useTerminalWorkflows({
     projects,
-    selectedProject,
     selectedWorktree,
-    selectedTerminal,
-    dialogOpen: dialog !== null,
-    onOpenNewTerminalDialog: () => {
-      if (!selectedProject) {
-        return
-      }
-
-      openDialog({
-        type: 'terminal',
-        projectId: selectedProject.id,
-        worktreeId: selectedWorktree?.id ?? null
-      })
-    }
+    selectedTerminal
   })
   const selectTerminal = (terminal: TerminalRecord) => {
     terminalWorkflows.clearPendingTerminalSelection()
     navigateToTerminal(terminal)
   }
-  const terminalDialogProject =
-    dialog?.type === 'terminal'
-      ? (projects.find((project) => project.id === dialog.projectId) ?? null)
-      : null
-  const terminalDialogWorktree =
-    dialog?.type === 'terminal' && dialog.worktreeId
-      ? (terminalDialogProject?.worktrees.find(
-          (worktree) => worktree.id === dialog.worktreeId
-        ) ?? null)
-      : null
-  const terminalLaunchDisabled =
-    !terminalDialogProject ||
-    !terminalDialogWorktree ||
-    terminalDialogProject.availability.state === 'unavailable' ||
-    Boolean(terminalDialogWorktree.prunable) ||
-    terminalDialogWorktree.status !== 'active'
+  const panelLaunchDisabled =
+    !panelDialogProject ||
+    !panelDialogWorktree ||
+    panelDialogProject.availability.state === 'unavailable' ||
+    Boolean(panelDialogWorktree.prunable) ||
+    panelDialogWorktree.status !== 'active'
+
+  useEffect(() => {
+    if (!desktopBridge) {
+      return
+    }
+
+    return desktopBridge.onCommand((command) => {
+      if (dialog || projectSwitcherOpen || (isMobile && drawerOpen)) {
+        return
+      }
+
+      if (command === 'new-worktree') {
+        if (
+          activeProject &&
+          activeProject.availability.state !== 'unavailable'
+        ) {
+          openDialog({ type: 'worktree', project: activeProject })
+        }
+
+        return
+      }
+
+      if (!selectedProject || !selectedWorktree) {
+        return
+      }
+
+      if (command === 'new-terminal') {
+        terminalWorkflows.createTerminalInWorktree(
+          selectedProject,
+          selectedWorktree,
+          { name: 'Shell' }
+        )
+      } else if (command === 'new-panel') {
+        openDialog({
+          type: 'panel',
+          projectId: selectedProject.id,
+          worktreeId: selectedWorktree.id
+        })
+      } else if (command === 'close-panel') {
+        if (selectedWebPanel) {
+          closeWebPanel.mutate(selectedWebPanel)
+        } else if (
+          !terminalWorkflows.selectedPendingTerminal &&
+          selectedTerminal
+        ) {
+          terminalWorkflows.requestCloseTerminal(selectedTerminal)
+        }
+      }
+    })
+  }, [
+    activeProject,
+    dialog,
+    drawerOpen,
+    isMobile,
+    projectSwitcherOpen,
+    selectedProject,
+    selectedTerminal,
+    selectedWebPanel,
+    selectedWorktree,
+    terminalWorkflows.selectedPendingTerminal
+  ])
 
   return (
     <>
@@ -350,7 +390,9 @@ function WorkspaceApp() {
       <ProjectSwitcherShortcut blocked={dialog !== null} />
       <WorkspaceMobileHeader
         selectedTerminalId={
-          terminalWorkflows.selectedPendingTerminal ? null : selectedTerminalId
+          terminalWorkflows.selectedPendingTerminal || selectedWebPanel
+            ? null
+            : selectedTerminalId
         }
         terminals={activeProjectTerminals}
         onSelectTerminal={selectTerminal}
@@ -378,12 +420,15 @@ function WorkspaceApp() {
           activeProject={activeProject}
           selectedWorktree={selectedWorktree}
           selectedTerminalId={
-            terminalWorkflows.selectedPendingTerminal
+            terminalWorkflows.selectedPendingTerminal || selectedWebPanel
               ? null
               : selectedTerminalId
           }
-          selectedWebPanelId={selectedWebPanelId}
-          webPanelContributions={contributionsQuery.data ?? []}
+          selectedWebPanelId={
+            terminalWorkflows.selectedPendingTerminal
+              ? null
+              : (selectedWebPanel?.id ?? null)
+          }
           selectedPendingTerminalId={
             terminalWorkflows.selectedPendingTerminal?.id ?? null
           }
@@ -396,19 +441,21 @@ function WorkspaceApp() {
           onCloseTerminal={terminalWorkflows.requestCloseTerminal}
           onSelectWebPanel={(panel) => {
             terminalWorkflows.clearPendingTerminalSelection()
-            setSelectedWebPanelId(panel.id)
+
+            const target = targetForWebPanel(projects, panel)
+            if (target) {
+              void navigateToWorkspace(target)
+            }
+
             closeDrawerAfterNavigation()
           }}
           onCloseWebPanel={(panel) => closeWebPanel.mutate(panel)}
-          onCreateWebPanel={(contribution) =>
-            createWebPanel.mutate(contribution)
-          }
           onSelectWorktree={selectWorktree}
           onPrepareRemoval={prepareRemoval}
-          onOpenTerminalDialog={(project, worktree, trigger) =>
+          onOpenPanelDialog={(project, worktree, trigger) =>
             openDialog(
               {
-                type: 'terminal',
+                type: 'panel',
                 projectId: project.id,
                 worktreeId: worktree?.id ?? null
               },
@@ -421,7 +468,7 @@ function WorkspaceApp() {
         />
       </WorkspaceSidebar>
       <WorkspaceMain>
-        {selectedWebPanel ? (
+        {selectedWebPanel && !terminalWorkflows.selectedPendingTerminal ? (
           <WebPanelWorkspace panel={selectedWebPanel} />
         ) : (
           <TerminalWorkspace
@@ -462,26 +509,42 @@ function WorkspaceApp() {
         onRetryPresets={() => void presetsQuery.refetch()}
         onSubmit={submitWorktreeCreation}
       />
-      <NewTerminalDialog
-        open={dialog?.type === 'terminal'}
+      <NewPanelDialog
+        open={dialog?.type === 'panel'}
         onOpenChange={(open) => !open && setDialog(null)}
         restoreFocusTo={dialogTriggerRef.current}
-        worktreeName={terminalDialogWorktree?.name ?? null}
+        worktreeName={panelDialogWorktree?.name ?? null}
         presets={presets}
         presetsLoading={presetsQuery.isPending}
         presetsError={presetsQuery.isError}
-        launchDisabled={terminalLaunchDisabled}
+        contributions={contributionsQuery.data ?? []}
+        contributionsLoading={
+          Boolean(panelDialogWorktree) && contributionsQuery.isPending
+        }
+        contributionsError={contributionsQuery.isError}
+        launchDisabled={panelLaunchDisabled}
         onCreateTerminal={(input) => {
-          if (!terminalDialogProject || !terminalDialogWorktree) {
+          if (!panelDialogProject || !panelDialogWorktree) {
             return
           }
 
           setDialog(null)
           terminalWorkflows.createTerminalInWorktree(
-            terminalDialogProject,
-            terminalDialogWorktree,
+            panelDialogProject,
+            panelDialogWorktree,
             input
           )
+        }}
+        onCreateWebPanel={(contribution) => {
+          if (!panelDialogWorktree) {
+            return
+          }
+
+          setDialog(null)
+          createWebPanel.mutate({
+            worktree: panelDialogWorktree,
+            contribution
+          })
         }}
         onManagePresets={() => setDialog({ type: 'presets' })}
       />

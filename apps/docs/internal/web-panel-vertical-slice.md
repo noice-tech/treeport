@@ -8,18 +8,9 @@ Issue #74 is implemented as an intentionally small end-to-end slice.
 
 ## Local extension format
 
-Trusted repositories may place no-build extensions at `.treeport/extensions/<directory>/treeport.json`. The implemented manifest shape is:
+Trusted repositories may place no-build extensions at `.treeport/extensions/<directory>/`. Each direct child directory containing `index.html` contributes one web panel. The directory name is used as the extension and contribution identity and is humanized for the panel title; local extensions need no manifest.
 
-```json
-{
-  "id": "example.review",
-  "name": "Review",
-  "version": "0.1.0",
-  "panels": [{ "id": "review", "title": "Review", "entry": "index.html" }]
-}
-```
-
-Entries and their relative static assets are served by the daemon. Invalid IDs, absolute entries, and entries escaping the extension directory are ignored. This slice discovers extensions from the panel's worktree checkout and serves them to every connected client.
+The fixed entry and its relative static assets are served by the daemon. Absolute paths, traversal, and symlinks escaping the extension directory are rejected. This slice discovers extensions from the panel's worktree checkout and serves them to every connected client. Existing experimental panel rows created with manifest-provided IDs may become unavailable after this convention change; they remain closable and can be recreated from the launcher.
 
 ## Runtime boundary
 
@@ -29,4 +20,4 @@ The diff is unified text plus base/head metadata. It compares `HEAD` and tracked
 
 ## Deferred
 
-Global discovery and npm package resolution are not implemented. A package may ultimately ship the same manifest/static directory; package installation, trust settings, and precedence need a focused follow-up. Reordering UI is also deferred, though the daemon supplies deterministic creation order.
+Global discovery and npm package resolution are not implemented. npm extensions will use their required `package.json` for package identity and may eventually contribute terminal presets, while their web entry remains `index.html`. Package installation, contribution metadata, trust settings, and precedence need a focused follow-up. Reordering UI is also deferred, though the daemon supplies deterministic creation order.

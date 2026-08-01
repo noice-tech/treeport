@@ -796,50 +796,36 @@ export class TreeportService {
     const contributions: Array<
       WebPanelContribution & { root: string; entry: string }
     > = []
-    for (const directory of directories) {
+    for (const directory of directories.sort((left, right) =>
+      left.name.localeCompare(right.name)
+    )) {
       if (!directory.isDirectory()) {
         continue
       }
 
       const root = path.join(extensionsRoot, directory.name)
-      const manifest = await fs
-        .readFile(path.join(root, 'treeport.json'), 'utf8')
-        .then((value) => JSON.parse(value) as Record<string, unknown>)
-        .catch(() => null)
-      if (
-        !manifest ||
-        typeof manifest.id !== 'string' ||
-        !/^[a-z0-9][a-z0-9._-]{0,63}$/.test(manifest.id) ||
-        !Array.isArray(manifest.panels)
-      ) {
+      const entry = 'index.html'
+      const entryIsFile = await fs
+        .stat(path.join(root, entry))
+        .then((value) => value.isFile())
+        .catch(() => false)
+      if (!entryIsFile) {
         continue
       }
 
-      for (const value of manifest.panels) {
-        const panel = value as Record<string, unknown>
-        if (
-          typeof panel.id !== 'string' ||
-          !/^[a-z0-9][a-z0-9._-]{0,63}$/.test(panel.id) ||
-          typeof panel.title !== 'string' ||
-          !panel.title.trim() ||
-          typeof panel.entry !== 'string'
-        ) {
-          continue
-        }
-
-        const entry = path.normalize(panel.entry)
-        if (path.isAbsolute(entry) || entry.startsWith(`..${path.sep}`)) {
-          continue
-        }
-
-        contributions.push({
-          extensionId: manifest.id,
-          contributionId: panel.id,
-          title: panel.title.trim(),
-          root,
-          entry
-        })
-      }
+      const words = directory.name
+        .split(/[-_.]+/)
+        .filter(Boolean)
+        .join(' ')
+      contributions.push({
+        extensionId: directory.name,
+        contributionId: directory.name,
+        title: words
+          ? `${words[0]!.toLocaleUpperCase()}${words.slice(1)}`
+          : directory.name,
+        root,
+        entry
+      })
     }
     return contributions
   }
@@ -965,12 +951,28 @@ export class TreeportService {
 
     const relative = requestedPath || contribution.entry
     const asset = path.resolve(contribution.root, relative)
-    const rootPrefix = `${path.resolve(contribution.root)}${path.sep}`
-    if (!asset.startsWith(rootPrefix)) {
+    const root = await fs.realpath(contribution.root)
+    const rootPrefix = `${root}${path.sep}`
+    if (!asset.startsWith(`${path.resolve(contribution.root)}${path.sep}`)) {
       throw new DomainError('INVALID_ASSET_PATH', 'Invalid asset path', 400)
     }
 
-    return asset
+    const realAsset = await fs.realpath(asset).catch((error: unknown) => {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        throw new DomainError(
+          'WEB_PANEL_ASSET_NOT_FOUND',
+          'Web panel asset not found',
+          404
+        )
+      }
+
+      throw error
+    })
+    if (!realAsset.startsWith(rootPrefix)) {
+      throw new DomainError('INVALID_ASSET_PATH', 'Invalid asset path', 400)
+    }
+
+    return realAsset
   }
 
   async listWebPanels(): Promise<WebPanel[]> {

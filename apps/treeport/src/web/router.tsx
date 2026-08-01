@@ -32,9 +32,16 @@ const terminalRoute = createRoute({
   path: 'terminals/$terminalId'
 })
 
+const panelRoute = createRoute({
+  getParentRoute: () => worktreeRoute,
+  path: 'panels/$panelId'
+})
+
 const routeTree = rootRoute.addChildren([
   indexRoute,
-  projectRoute.addChildren([worktreeRoute.addChildren([terminalRoute])])
+  projectRoute.addChildren([
+    worktreeRoute.addChildren([terminalRoute, panelRoute])
+  ])
 ])
 
 export const router = createRouter({

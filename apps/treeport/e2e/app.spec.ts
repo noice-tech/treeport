@@ -172,8 +172,8 @@ async function mockApp(
       type DesktopCommand =
         | 'new-worktree'
         | 'new-terminal'
-        | 'new-terminal-menu'
-        | 'close-terminal'
+        | 'new-panel'
+        | 'close-panel'
       const listeners = new Set<(command: DesktopCommand) => void>()
       let fullscreenListener: ((fullscreen: boolean) => void) | null = null
       scope.__attentionRequests = 0
@@ -585,6 +585,14 @@ async function mockApp(
   let terminalDeleteGate: Promise<void> | null = null
   let releaseTerminalDelete: (() => void) | null = null
   let failTerminalDelete = false
+  let webPanelCreations = 0
+  const webPanelContributions = [
+    {
+      extensionId: 'review',
+      contributionId: 'review',
+      title: 'Review'
+    }
+  ]
   let staleRemovePreview: Record<string, unknown> | null = null
   let removeRequests = 0
   const removeRequestBodies: unknown[] = []
@@ -1026,6 +1034,55 @@ async function mockApp(
         status: 201,
         json: { worktree, terminal, terminalError: null, setupError: null }
       })
+      return
+    }
+
+    if (
+      /^\/api\/worktrees\/[^/]+\/web-panel-contributions$/.test(pathname) &&
+      route.request().method() === 'GET'
+    ) {
+      await route.fulfill({ json: { contributions: webPanelContributions } })
+      return
+    }
+
+    if (
+      /^\/api\/worktrees\/[^/]+\/panels$/.test(pathname) &&
+      route.request().method() === 'POST'
+    ) {
+      const worktreeId = pathname.split('/')[3]!
+      const body = route.request().postDataJSON() as {
+        extensionId: string
+        contributionId: string
+      }
+      const worktree = state.worktrees.find(
+        (candidate) => candidate.id === worktreeId
+      )!
+      const panel = {
+        id: `panel_${++webPanelCreations}`,
+        kind: 'web' as const,
+        worktreeId,
+        extensionId: body.extensionId,
+        contributionId: body.contributionId,
+        title: 'Review',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z'
+      }
+      worktree.panels.push(panel)
+      await route.fulfill({ status: 201, json: { panel } })
+      return
+    }
+
+    if (
+      /^\/api\/panels\/[^/]+$/.test(pathname) &&
+      route.request().method() === 'DELETE'
+    ) {
+      const panelId = pathname.split('/').at(-1)
+      for (const worktree of state.worktrees) {
+        worktree.panels = worktree.panels.filter(
+          (panel) => panel.id !== panelId
+        )
+      }
+      await route.fulfill({ json: { ok: true } })
       return
     }
 
@@ -2734,10 +2791,10 @@ test.describe('desktop worktree terminal UI', () => {
     page
   }) => {
     await mockApp(page, [], { worktreeFree: true })
-    const trigger = page.getByRole('button', { name: /^New terminal/ })
+    const trigger = page.getByRole('button', { name: /^New panel/ })
     await expect(trigger).toBeEnabled()
     await trigger.click()
-    const launcher = page.getByRole('dialog', { name: 'New terminal' })
+    const launcher = page.getByRole('dialog', { name: 'New panel' })
     await expect(launcher.getByRole('button', { name: 'Shell' })).toBeDisabled()
     await launcher.getByRole('button', { name: 'Manage presets' }).click()
     const dialog = page.getByRole('dialog', { name: 'Terminal presets' })
@@ -2796,9 +2853,7 @@ test.describe('desktop worktree terminal UI', () => {
       dialog.getByRole('button', { name: /^Review updated/ })
     ).toHaveCount(0)
     await dialog.getByRole('button', { name: 'Close', exact: true }).click()
-    await expect(
-      page.getByRole('button', { name: /^New terminal/ })
-    ).toBeFocused()
+    await expect(page.getByRole('button', { name: /^New panel/ })).toBeFocused()
   })
   test('launches Shell and configured persistent and one-off presets', async ({
     page
@@ -2824,9 +2879,9 @@ test.describe('desktop worktree terminal UI', () => {
         request.method() === 'POST' &&
         new URL(request.url()).pathname === '/api/worktrees/wt_topic/terminals'
     )
-    await page.getByRole('button', { name: /^New terminal/ }).click()
+    await page.getByRole('button', { name: /^New panel/ }).click()
     await page
-      .getByRole('dialog', { name: 'New terminal' })
+      .getByRole('dialog', { name: 'New panel' })
       .getByRole('button', { name: 'Shell' })
       .click()
     const request = await requestPromise
@@ -2893,9 +2948,9 @@ test.describe('desktop worktree terminal UI', () => {
         request.method() === 'POST' &&
         new URL(request.url()).pathname === '/api/worktrees/wt_topic/terminals'
     )
-    await page.getByRole('button', { name: /^New terminal/ }).click()
+    await page.getByRole('button', { name: /^New panel/ }).click()
     const presetItem = page
-      .getByRole('dialog', { name: 'New terminal' })
+      .getByRole('dialog', { name: 'New panel' })
       .getByRole('button', { name: 'Hunk', exact: true })
     await presetItem.click()
     const presetRequest = await presetRequestPromise
@@ -2935,9 +2990,9 @@ test.describe('desktop worktree terminal UI', () => {
         request.method() === 'POST' &&
         new URL(request.url()).pathname === '/api/worktrees/wt_topic/terminals'
     )
-    await page.getByRole('button', { name: /^New terminal/ }).click()
+    await page.getByRole('button', { name: /^New panel/ }).click()
     await page
-      .getByRole('dialog', { name: 'New terminal' })
+      .getByRole('dialog', { name: 'New panel' })
       .getByRole('button', { name: 'Open editor' })
       .click()
     expect((await oneOffRequestPromise).postDataJSON()).toEqual({
@@ -2966,9 +3021,9 @@ test.describe('desktop worktree terminal UI', () => {
       }
     ])
     await page.locator('.worktree-row').filter({ hasText: 'topic' }).click()
-    await page.getByRole('button', { name: /^New terminal/ }).click()
+    await page.getByRole('button', { name: /^New panel/ }).click()
     await page
-      .getByRole('dialog', { name: 'New terminal' })
+      .getByRole('dialog', { name: 'New panel' })
       .getByRole('button', { name: 'Shell' })
       .click()
     const topicTerminals = page.getByRole('list', {
@@ -3005,7 +3060,7 @@ test.describe('desktop worktree terminal UI', () => {
     )
   })
 
-  test('handles Electron commands through the existing worktree and terminal flows', async ({
+  test('handles Electron commands through worktree, terminal, and web-panel flows', async ({
     page
   }) => {
     const mocked = await mockApp(page, [], { desktopBridge: true })
@@ -3062,7 +3117,7 @@ test.describe('desktop worktree terminal UI', () => {
         new URL(request.url()).pathname === '/api/terminals/term_dev'
     )
     await page.evaluate(() =>
-      (window as any).__dispatchDesktopCommand('close-terminal')
+      (window as any).__dispatchDesktopCommand('close-panel')
     )
     await closeRequest
     await expect(createdDevTerminal).toHaveCount(0)
@@ -3091,7 +3146,7 @@ test.describe('desktop worktree terminal UI', () => {
         new URL(request.url()).pathname === '/api/terminals/term_dev_2'
     )
     await page.evaluate(() =>
-      (window as any).__dispatchDesktopCommand('close-terminal')
+      (window as any).__dispatchDesktopCommand('close-panel')
     )
     await failedCloseRequest
     await expect(topicTerminals).toHaveCount(1)
@@ -3123,9 +3178,9 @@ test.describe('desktop worktree terminal UI', () => {
     )
 
     await page.evaluate(() =>
-      (window as any).__dispatchDesktopCommand('new-terminal-menu')
+      (window as any).__dispatchDesktopCommand('new-panel')
     )
-    const launcherSearch = page.getByLabel('Search terminal actions')
+    const launcherSearch = page.getByLabel('Search panels')
     await expect(launcherSearch).toBeFocused()
     await launcherSearch.fill('Hunk')
     const presetRequest = page.waitForRequest(
@@ -3135,6 +3190,61 @@ test.describe('desktop worktree terminal UI', () => {
     )
     await page.keyboard.press('Enter')
     expect((await presetRequest).postDataJSON()).toMatchObject({ name: 'Hunk' })
+
+    await page.evaluate(() =>
+      (window as any).__dispatchDesktopCommand('new-panel')
+    )
+    await page.getByLabel('Search panels').fill('Review')
+    const panelCreateRequest = page.waitForRequest(
+      (request) =>
+        request.method() === 'POST' &&
+        new URL(request.url()).pathname === '/api/worktrees/wt_topic/panels'
+    )
+    await page.keyboard.press('Enter')
+    expect((await panelCreateRequest).postDataJSON()).toEqual({
+      extensionId: 'review',
+      contributionId: 'review'
+    })
+    await expect(page).toHaveURL(
+      /\/projects\/proj_1\/worktrees\/wt_topic\/panels\/panel_1$/
+    )
+    await page.reload()
+    await expect(page).toHaveURL(
+      /\/projects\/proj_1\/worktrees\/wt_topic\/panels\/panel_1$/
+    )
+
+    const terminalFromPanelRequest = page.waitForRequest(
+      (request) =>
+        request.method() === 'POST' &&
+        new URL(request.url()).pathname === '/api/worktrees/wt_topic/terminals'
+    )
+    await page.evaluate(() =>
+      (window as any).__dispatchDesktopCommand('new-terminal')
+    )
+    await terminalFromPanelRequest
+    await expect(page).toHaveURL(
+      /\/projects\/proj_1\/worktrees\/wt_topic\/terminals\/[^/]+$/
+    )
+
+    await page.getByRole('button', { name: 'Review, web panel' }).click()
+    await expect(page).toHaveURL(
+      /\/projects\/proj_1\/worktrees\/wt_topic\/panels\/panel_1$/
+    )
+    const panelDeleteRequest = page.waitForRequest(
+      (request) =>
+        request.method() === 'DELETE' &&
+        new URL(request.url()).pathname === '/api/panels/panel_1'
+    )
+    await page.evaluate(() =>
+      (window as any).__dispatchDesktopCommand('close-panel')
+    )
+    await panelDeleteRequest
+    await expect(
+      page.getByRole('button', { name: 'Review, web panel' })
+    ).toHaveCount(0)
+    await expect(page).toHaveURL(
+      /\/projects\/proj_1\/worktrees\/wt_topic\/terminals\/[^/]+$/
+    )
 
     await page.evaluate(() =>
       (window as any).__dispatchDesktopCommand('new-worktree')
@@ -3147,9 +3257,9 @@ test.describe('desktop worktree terminal UI', () => {
   test('reconciles remote preset edits and deletion', async ({ page }) => {
     await page.clock.install()
     const mocked = await mockApp(page)
-    await page.getByRole('button', { name: /^New terminal/ }).click()
+    await page.getByRole('button', { name: /^New panel/ }).click()
     await page
-      .getByRole('dialog', { name: 'New terminal' })
+      .getByRole('dialog', { name: 'New panel' })
       .getByRole('button', { name: 'Manage presets' })
       .click()
     const dialog = page.getByRole('dialog', { name: 'Terminal presets' })
@@ -3786,9 +3896,9 @@ test.describe('mobile terminal UI', () => {
         new URL(request.url()).pathname === '/api/worktrees/wt_topic/terminals'
     )
     await page.getByLabel('Open worktree drawer').click()
-    await page.getByRole('button', { name: /^New terminal/ }).click()
+    await page.getByRole('button', { name: /^New panel/ }).click()
     await page
-      .getByRole('dialog', { name: 'New terminal' })
+      .getByRole('dialog', { name: 'New panel' })
       .getByRole('button', { name: 'Hunk' })
       .click()
     expect((await presetRequest).postDataJSON()).toMatchObject({ name: 'Hunk' })
