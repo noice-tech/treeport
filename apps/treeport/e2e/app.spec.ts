@@ -343,7 +343,7 @@ async function mockApp(
 
               const value = JSON.parse(source)
               if (name === 'connected') {
-                this.deliverSocket('snapshot', value)
+                this.deliverSocket('snapshot', { webPanels: [], ...value })
                 return
               }
 
@@ -360,7 +360,8 @@ async function mockApp(
           }
           this.deliverSocket('snapshot', {
             at: new Date().toISOString(),
-            terminalMetadata: initialMetadata
+            terminalMetadata: initialMetadata,
+            webPanels: []
           })
           return
         }
