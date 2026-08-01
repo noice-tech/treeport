@@ -2,9 +2,9 @@ import { useState } from 'react'
 import {
   Cog6ToothIcon,
   CommandLineIcon,
-  MagnifyingGlassIcon
+  MagnifyingGlassIcon,
+  WindowIcon
 } from '@heroicons/react/16/solid'
-import { PanelsTopLeftIcon } from 'lucide-react'
 import type { TerminalPreset, WebPanelContribution } from '@treeport/shared'
 import { Button } from '../../components/ui/button'
 import {
@@ -280,7 +280,10 @@ export function NewPanelDialog({
                     onCreateWebPanel(contribution)
                   }}
                 >
-                  <PanelsTopLeftIcon aria-hidden="true" />
+                  <WindowIcon
+                    className="size-4 shrink-0 fill-zinc-400"
+                    aria-hidden="true"
+                  />
                   <span className="min-w-0 flex-1 truncate text-left">
                     {contribution.title}
                   </span>

@@ -1,9 +1,11 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { WebPanel } from '@treeport/shared'
 import { apiClient } from '../../api'
+import { cn } from '../../lib/utils'
 
 export function WebPanelWorkspace({ panel }: { panel: WebPanel }) {
   const frameRef = useRef<HTMLIFrameElement>(null)
+  const [loadedPanelId, setLoadedPanelId] = useState<string | null>(null)
 
   useEffect(() => {
     const receive = (event: MessageEvent) => {
@@ -50,11 +52,16 @@ export function WebPanelWorkspace({ panel }: { panel: WebPanel }) {
       aria-label={`${panel.title} web panel`}
     >
       <iframe
+        key={panel.id}
         ref={frameRef}
         title={panel.title}
         src={`/api/web-panels/${encodeURIComponent(panel.id)}/assets/`}
         sandbox="allow-scripts"
-        className="h-full w-full border-0 bg-white"
+        className={cn(
+          'h-full w-full border-0 bg-zinc-950',
+          loadedPanelId === panel.id ? 'opacity-100' : 'opacity-0'
+        )}
+        onLoad={() => setLoadedPanelId(panel.id)}
       />
     </main>
   )

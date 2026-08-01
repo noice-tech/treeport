@@ -1,9 +1,10 @@
 import type { ReactNode } from 'react'
-import { CrownIcon, GitBranchIcon, PanelsTopLeftIcon } from 'lucide-react'
+import { CrownIcon, GitBranchIcon } from 'lucide-react'
 import {
   ArrowPathIcon,
   PlusIcon,
   TrashIcon,
+  WindowIcon,
   XMarkIcon
 } from '@heroicons/react/16/solid'
 import type {
@@ -525,7 +526,10 @@ export function WorkspaceTree({
                                 onClick={() => selectWebPanel(panel)}
                                 aria-label={`${panel.title}, web panel`}
                               >
-                                <PanelsTopLeftIcon aria-hidden="true" />
+                                <WindowIcon
+                                  className="size-4! shrink-0 fill-zinc-500 min-[701px]:size-3.5!"
+                                  aria-hidden="true"
+                                />
                                 <span className="truncate" aria-hidden="true">
                                   {panel.title}
                                 </span>
