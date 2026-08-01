@@ -14,6 +14,7 @@ import type {
   ProjectRecord,
   RecentProjectRecord,
   TerminalPreset,
+  WebPanel,
   WorktreeRecord
 } from '@treeport/shared'
 import * as schema from './database-schema'
@@ -21,6 +22,7 @@ import {
   operations,
   projects as projectTable,
   terminalPresets,
+  webPanels,
   worktrees
 } from './database-schema'
 import { inferWorktreeName } from './zed'
@@ -131,7 +133,9 @@ export class TreeportDatabase {
           )
           if (missingTables.length > 0) {
             throw new Error(
-              `Treeport cannot safely adopt the legacy database at ${absoluteFilePath}: missing ${missingTables.join(', ')}.`
+              `Treeport cannot safely adopt the legacy database at ${absoluteFilePath}: missing ${missingTables.join(
+                ', '
+              )}.`
             )
           }
         }
@@ -193,7 +197,9 @@ export class TreeportDatabase {
           const prefix = `${path.basename(absoluteFilePath)}.pre-migration-`
           const backupPath = path.join(
             backupDirectory,
-            `${prefix}${timestamp}-${process.pid}-${crypto.randomBytes(4).toString('hex')}.db`
+            `${prefix}${timestamp}-${process.pid}-${crypto
+              .randomBytes(4)
+              .toString('hex')}.db`
           )
           try {
             await db.run(
@@ -441,6 +447,48 @@ export class TreeportDatabase {
     return row ? { ...row, nameIsCustom: Boolean(row.nameIsCustom) } : null
   }
 
+  async webPanels(worktreeId?: string): Promise<WebPanel[]> {
+    const rows = worktreeId
+      ? await this.db
+          .select()
+          .from(webPanels)
+          .where(eq(webPanels.worktreeId, worktreeId))
+          .orderBy(asc(webPanels.createdAt), asc(webPanels.id))
+      : await this.db
+          .select()
+          .from(webPanels)
+          .orderBy(asc(webPanels.createdAt), asc(webPanels.id))
+    return rows.map((row) => ({ ...row, kind: 'web' as const }))
+  }
+
+  async webPanel(id: string): Promise<WebPanel | null> {
+    const [row] = await this.db
+      .select()
+      .from(webPanels)
+      .where(eq(webPanels.id, id))
+      .limit(1)
+    return row ? { ...row, kind: 'web' } : null
+  }
+
+  async insertWebPanel(panel: WebPanel): Promise<void> {
+    await this.db.insert(webPanels).values({
+      id: panel.id,
+      worktreeId: panel.worktreeId,
+      extensionId: panel.extensionId,
+      contributionId: panel.contributionId,
+      title: panel.title,
+      createdAt: panel.createdAt,
+      updatedAt: panel.updatedAt
+    })
+  }
+
+  async deleteWebPanel(id: string): Promise<boolean> {
+    return (
+      (await this.db.delete(webPanels).where(eq(webPanels.id, id)))
+        .rowsAffected > 0
+    )
+  }
+
   async worktree(id: string): Promise<WorktreeRecord | null> {
     const [row] = await this.db
       .select({
@@ -541,6 +589,7 @@ export class TreeportDatabase {
       },
       dirty: null,
       terminals: [],
+      panels: [],
       createdAt: row.createdAt,
       updatedAt: row.updatedAt
     }

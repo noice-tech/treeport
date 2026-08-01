@@ -12,6 +12,7 @@ import {
   browseDirectoryQuerySchema,
   createTerminalPresetSchema,
   createTerminalSchema,
+  createWebPanelSchema,
   deleteTerminalPresetSchema,
   DESKTOP_PROTOCOL_VERSION,
   createWorktreeSchema,
@@ -339,6 +340,83 @@ export function createApp({
     })
   })
 
+  app.get(
+    '/api/worktrees/:worktreeId/web-panel-contributions',
+    async (context) =>
+      context.json({
+        contributions: await service.listWebPanelContributions(
+          context.req.param('worktreeId')
+        )
+      })
+  )
+
+  app.post('/api/worktrees/:worktreeId/panels', async (context) => {
+    const body = await input(context, createWebPanelSchema)
+    return context.json(
+      {
+        panel: await service.createWebPanel(
+          context.req.param('worktreeId'),
+          body.extensionId,
+          body.contributionId
+        )
+      },
+      201
+    )
+  })
+
+  app.delete('/api/panels/:panelId', async (context) => {
+    await service.deleteWebPanel(context.req.param('panelId'))
+    return context.json({ ok: true })
+  })
+
+  app.get('/api/panels/:panelId/context', async (context) =>
+    context.json({
+      context: await service.getWebPanelContext(context.req.param('panelId'))
+    })
+  )
+
+  app.get('/api/panels/:panelId/diff', async (context) =>
+    context.json({
+      diff: await service.getWebPanelDiff(context.req.param('panelId'))
+    })
+  )
+
+  app.get('/api/web-panel-sdk/v1.js', (context) => {
+    context.header('content-type', 'text/javascript; charset=utf-8')
+    context.header('access-control-allow-origin', '*')
+    return context.body(
+      `const pending=new Map();let serial=0;addEventListener('message',event=>{const message=event.data;if(event.source!==parent||message?.source!=='treeport-host-v1')return;const request=pending.get(message.id);if(!request)return;pending.delete(message.id);message.ok?request.resolve(message.value):request.reject(new Error(message.error||'Treeport request failed'))});function call(method){return new Promise((resolve,reject)=>{const id=String(++serial);pending.set(id,{resolve,reject});parent.postMessage({source:'treeport-panel-v1',id,method},'*')})}export const treeport=Object.freeze({version:1,context:()=>call('context'),diff:()=>call('diff')});`
+    )
+  })
+
+  app.get('/api/web-panels/:panelId/assets/*', async (context) => {
+    const requestedPath = context.req.param('*')
+    const assetPath = await service.resolveWebPanelAsset(
+      context.req.param('panelId'),
+      requestedPath ?? ''
+    )
+    const body = await fs.readFile(assetPath)
+    const extension = path.extname(assetPath).toLowerCase()
+    const mime =
+      extension === '.html'
+        ? 'text/html; charset=utf-8'
+        : extension === '.js' || extension === '.mjs'
+          ? 'text/javascript; charset=utf-8'
+          : extension === '.css'
+            ? 'text/css; charset=utf-8'
+            : extension === '.svg'
+              ? 'image/svg+xml'
+              : 'application/octet-stream'
+    context.header('content-type', mime)
+    context.header('access-control-allow-origin', '*')
+    context.header(
+      'content-security-policy',
+      "default-src 'self'; script-src 'self' 'unsafe-inline' https://esm.sh; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; frame-ancestors 'self'"
+    )
+    context.header('x-content-type-options', 'nosniff')
+    return context.body(body as any)
+  })
+
   app.post('/api/worktrees/:worktreeId/terminals', async (context) => {
     const body = await input(context, createTerminalSchema)
     const terminal = await service.createTerminal(
@@ -487,7 +565,9 @@ export function createApp({
       await pruneTerminalUploads(uploadDirectory)
       const filePath = path.join(
         uploadDirectory,
-        `treeport-upload-${crypto.randomUUID()}${extension ? `.${extension}` : ''}`
+        `treeport-upload-${crypto.randomUUID()}${
+          extension ? `.${extension}` : ''
+        }`
       )
       const file = await fs.open(filePath, 'wx', 0o600)
       let complete = false

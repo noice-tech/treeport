@@ -163,13 +163,15 @@ describe('Socket.IO contracts', () => {
     expect(
       parseEventsSnapshot({
         at: '2026-01-01T00:00:00.000Z',
-        terminalMetadata: [{ terminalId: 'term', title: null, progress: null }]
+        terminalMetadata: [{ terminalId: 'term', title: null, progress: null }],
+        webPanels: []
       })
     ).toMatchObject({ terminalMetadata: [{ terminalId: 'term' }] })
     expect(
       parseEventsSnapshot({
         at: 'not-a-date',
-        terminalMetadata: []
+        terminalMetadata: [],
+        webPanels: []
       })
     ).toBeNull()
     expect(

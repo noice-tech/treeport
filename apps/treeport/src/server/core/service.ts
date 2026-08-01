@@ -13,6 +13,9 @@ import type {
   TerminalPreset,
   TerminalRecord,
   TerminalSize,
+  WebPanel,
+  WebPanelContext,
+  WebPanelContribution,
   WorktreeRecord
 } from '@treeport/shared'
 import { sql } from 'drizzle-orm'
@@ -463,6 +466,23 @@ export class TreeportService {
             ])
             worktree.dirty = dirty
             worktree.terminals = terminals
+            const webPanels = await this.deps.database.webPanels(worktree.id)
+            worktree.panels = [
+              ...terminals.map((terminal) => ({
+                id: `panel_${terminal.id}`,
+                kind: 'terminal' as const,
+                worktreeId: worktree.id,
+                terminalId: terminal.id,
+                title: terminal.name,
+                createdAt: terminal.createdAt,
+                updatedAt: terminal.updatedAt
+              })),
+              ...webPanels
+            ].sort(
+              (left, right) =>
+                left.createdAt.localeCompare(right.createdAt) ||
+                left.id.localeCompare(right.id)
+            )
           })
         )
         return project
@@ -757,6 +777,204 @@ export class TreeportService {
         409
       )
     }
+  }
+
+  private async localWebPanelContributions(
+    worktreeId: string
+  ): Promise<Array<WebPanelContribution & { root: string; entry: string }>> {
+    const worktree = await this.getWorktree(worktreeId)
+    const extensionsRoot = path.join(worktree.path, '.treeport', 'extensions')
+    const directories = await fs
+      .readdir(extensionsRoot, { withFileTypes: true })
+      .catch((error: unknown) => {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+          return []
+        }
+
+        throw error
+      })
+    const contributions: Array<
+      WebPanelContribution & { root: string; entry: string }
+    > = []
+    for (const directory of directories) {
+      if (!directory.isDirectory()) {
+        continue
+      }
+
+      const root = path.join(extensionsRoot, directory.name)
+      const manifest = await fs
+        .readFile(path.join(root, 'treeport.json'), 'utf8')
+        .then((value) => JSON.parse(value) as Record<string, unknown>)
+        .catch(() => null)
+      if (
+        !manifest ||
+        typeof manifest.id !== 'string' ||
+        !/^[a-z0-9][a-z0-9._-]{0,63}$/.test(manifest.id) ||
+        !Array.isArray(manifest.panels)
+      ) {
+        continue
+      }
+
+      for (const value of manifest.panels) {
+        const panel = value as Record<string, unknown>
+        if (
+          typeof panel.id !== 'string' ||
+          !/^[a-z0-9][a-z0-9._-]{0,63}$/.test(panel.id) ||
+          typeof panel.title !== 'string' ||
+          !panel.title.trim() ||
+          typeof panel.entry !== 'string'
+        ) {
+          continue
+        }
+
+        const entry = path.normalize(panel.entry)
+        if (path.isAbsolute(entry) || entry.startsWith(`..${path.sep}`)) {
+          continue
+        }
+
+        contributions.push({
+          extensionId: manifest.id,
+          contributionId: panel.id,
+          title: panel.title.trim(),
+          root,
+          entry
+        })
+      }
+    }
+    return contributions
+  }
+
+  async listWebPanelContributions(
+    worktreeId: string
+  ): Promise<WebPanelContribution[]> {
+    return (await this.localWebPanelContributions(worktreeId)).map(
+      ({ root: _root, entry: _entry, ...contribution }) => contribution
+    )
+  }
+
+  async createWebPanel(
+    worktreeId: string,
+    extensionId: string,
+    contributionId: string
+  ): Promise<WebPanel> {
+    await this.requireAvailableWorktree(worktreeId)
+    const contribution = (
+      await this.localWebPanelContributions(worktreeId)
+    ).find(
+      (candidate) =>
+        candidate.extensionId === extensionId &&
+        candidate.contributionId === contributionId
+    )
+    if (!contribution) {
+      throw new DomainError(
+        'WEB_PANEL_CONTRIBUTION_NOT_FOUND',
+        'Web panel contribution not found',
+        404
+      )
+    }
+
+    const timestamp = now()
+    const panel: WebPanel = {
+      id: id('panel'),
+      kind: 'web',
+      worktreeId,
+      extensionId,
+      contributionId,
+      title: contribution.title,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    }
+    await this.deps.database.insertWebPanel(panel)
+    this.invalidateProjectsSnapshot()
+    this.events.publish('panel.created', { worktreeId, panelId: panel.id })
+    return panel
+  }
+
+  async deleteWebPanel(panelId: string): Promise<void> {
+    const panel = await this.deps.database.webPanel(panelId)
+    if (!panel) {
+      throw new DomainError('PANEL_NOT_FOUND', 'Panel not found', 404)
+    }
+
+    await this.requireAvailableWorktree(panel.worktreeId)
+    await this.deps.database.deleteWebPanel(panelId)
+    this.invalidateProjectsSnapshot()
+    this.events.publish('panel.removed', {
+      worktreeId: panel.worktreeId,
+      panelId
+    })
+  }
+
+  async getWebPanelContext(panelId: string): Promise<WebPanelContext> {
+    const panel = await this.deps.database.webPanel(panelId)
+    if (!panel) {
+      throw new DomainError('PANEL_NOT_FOUND', 'Panel not found', 404)
+    }
+
+    const worktree = await this.getWorktree(panel.worktreeId)
+    const project = await this.getProject(worktree.projectId)
+    return {
+      apiVersion: 1,
+      panel,
+      project: {
+        id: project.id,
+        name: project.name,
+        defaultBranch: project.defaultBranch
+      },
+      worktree: {
+        id: worktree.id,
+        name: worktree.name,
+        branch: worktree.branch,
+        head: worktree.head
+      }
+    }
+  }
+
+  async getWebPanelDiff(panelId: string) {
+    const context = await this.getWebPanelContext(panelId)
+    const worktree = await this.getWorktree(context.panel.worktreeId)
+    return this.deps.git.worktreeDiff(
+      worktree.path,
+      context.project.defaultBranch
+    )
+  }
+
+  async resolveWebPanelAsset(
+    panelId: string,
+    requestedPath: string
+  ): Promise<string> {
+    const panel = await this.deps.database.webPanel(panelId)
+    if (!panel) {
+      throw new DomainError('PANEL_NOT_FOUND', 'Panel not found', 404)
+    }
+
+    const contribution = (
+      await this.localWebPanelContributions(panel.worktreeId)
+    ).find(
+      (candidate) =>
+        candidate.extensionId === panel.extensionId &&
+        candidate.contributionId === panel.contributionId
+    )
+    if (!contribution) {
+      throw new DomainError(
+        'WEB_PANEL_EXTENSION_UNAVAILABLE',
+        'The extension for this panel is unavailable',
+        404
+      )
+    }
+
+    const relative = requestedPath || contribution.entry
+    const asset = path.resolve(contribution.root, relative)
+    const rootPrefix = `${path.resolve(contribution.root)}${path.sep}`
+    if (!asset.startsWith(rootPrefix)) {
+      throw new DomainError('INVALID_ASSET_PATH', 'Invalid asset path', 400)
+    }
+
+    return asset
+  }
+
+  async listWebPanels(): Promise<WebPanel[]> {
+    return this.deps.database.webPanels()
   }
 
   async getWorktree(worktreeId: string): Promise<WorktreeRecord> {
@@ -1887,7 +2105,9 @@ export class TreeportService {
             INSERT INTO operations(
               id,kind,project_id,worktree_id,status,request_json,result_json,error,created_at,updated_at
             ) VALUES(
-              ${id('op')},'external_remove',${projectId},${worktree.id},'completed',
+              ${id('op')},'external_remove',${projectId},${
+                worktree.id
+              },'completed',
               ${serializeOperation({ source: 'git' })},
               ${serializeOperation({
                 removed: true,
@@ -1950,10 +2170,14 @@ export class TreeportService {
           await tx.run(sql`
             UPDATE worktrees
             SET path=${item.path},
-                git_worktree_key=${item.gitWorktreeKey ?? existing.git_worktree_key},
+                git_worktree_key=${
+                  item.gitWorktreeKey ?? existing.git_worktree_key
+                },
                 head=${item.head ?? ''},branch=${item.branch},
                 detached=${item.detached ? 1 : 0},locked=${item.locked ? 1 : 0},
-                lock_reason=${item.lockReason},prunable=${item.prunable ? 1 : 0},
+                lock_reason=${item.lockReason},prunable=${
+                  item.prunable ? 1 : 0
+                },
                 kind=${kind},
                 status=CASE WHEN status IN ('cleaning','cleanup_failed') THEN status ELSE 'active' END,
                 cleanup_error=CASE WHEN status='cleanup_failed' THEN cleanup_error ELSE NULL END,
@@ -2969,7 +3193,9 @@ export class TreeportService {
           INSERT INTO operations(
             id,kind,project_id,worktree_id,status,request_json,result_json,error,created_at,updated_at
           ) VALUES(
-            ${operationId},'remove',${worktree.projectId},${worktreeId},'pending',
+            ${operationId},'remove',${
+              worktree.projectId
+            },${worktreeId},'pending',
             ${serializeOperation({ ...request, preview, checkoutIdentity })},
             NULL,NULL,${timestamp},${timestamp}
           )

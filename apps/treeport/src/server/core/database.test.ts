@@ -38,7 +38,7 @@ describe('SQLite migration and catalog ordering', () => {
       await database.db.get<{ count: number }>(
         sql`SELECT count(*) AS count FROM __drizzle_migrations`
       )
-    ).toEqual({ count: 1 })
+    ).toEqual({ count: 2 })
     expect(
       await database.db.get<{ count: number }>(sql`
         SELECT count(*) AS count FROM sqlite_master WHERE name='terminals'
@@ -89,6 +89,60 @@ describe('SQLite migration and catalog ordering', () => {
         (worktree) => worktree.id
       )
     ).toEqual(['wt_main', 'wt_oldest', 'wt_same_a', 'wt_same_b', 'wt_newest'])
+  })
+
+  it('persists ordered web panels with their worktree lifecycle', async () => {
+    const directory = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'treeport-panels-')
+    )
+    directories.push(directory)
+    const database = await TreeportDatabase.open(
+      path.join(directory, 'metadata.db')
+    )
+    databases.push(database)
+    await database.db.insert(projects).values({
+      id: 'p',
+      name: 'Panels',
+      repositoryPath: '/panels',
+      mainWorktreePath: '/panels',
+      defaultBranch: 'main',
+      repositoryDevice: '1',
+      repositoryInode: '9',
+      lastOpenedAt: '2026-01-01',
+      createdAt: '2026-01-01',
+      updatedAt: '2026-01-01'
+    })
+    await database.db.insert(worktrees).values({
+      id: 'wt',
+      projectId: 'p',
+      path: '/panels',
+      kind: 'main',
+      tmuxSocketName: 'panel-socket',
+      status: 'active',
+      createdAt: '2026-01-01',
+      updatedAt: '2026-01-01'
+    })
+    for (const [id, createdAt] of [
+      ['later', '2026-02-02'],
+      ['earlier', '2026-02-01']
+    ] as const) {
+      await database.insertWebPanel({
+        id,
+        kind: 'web',
+        worktreeId: 'wt',
+        extensionId: 'review',
+        contributionId: 'diff',
+        title: id,
+        createdAt,
+        updatedAt: createdAt
+      })
+    }
+    expect((await database.webPanels('wt')).map((panel) => panel.id)).toEqual([
+      'earlier',
+      'later'
+    ])
+    await database.db.delete(worktrees).where(sql`${worktrees.id} = 'wt'`)
+    expect(await database.webPanels('wt')).toEqual([])
   })
 
   it('adopts a version-7 database, preserves catalog data, and snapshots once', async () => {
@@ -170,7 +224,7 @@ describe('SQLite migration and catalog ordering', () => {
       await reopened.db.get<{ count: number }>(
         sql`SELECT count(*) AS count FROM __drizzle_migrations`
       )
-    ).toEqual({ count: 1 })
+    ).toEqual({ count: 2 })
 
     const backupDirectory = path.join(directory, 'database-backups')
     const [backupName] = await fs.readdir(backupDirectory)
@@ -373,6 +427,6 @@ describe('SQLite migration and catalog ordering', () => {
       await recovered.db.get<{ count: number }>(
         sql`SELECT count(*) AS count FROM __drizzle_migrations`
       )
-    ).toEqual({ count: 1 })
+    ).toEqual({ count: 2 })
   })
 })

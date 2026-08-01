@@ -134,15 +134,28 @@ export function createSocketServer(
 
         const metadataSnapshot = terminalMetadata.snapshot()
         const representedEventCount = queuedEvents.length
-        socket.emit('snapshot', {
-          at: new Date().toISOString(),
-          terminalMetadata: metadataSnapshot
-        })
-        queuedEvents.splice(0, representedEventCount)
-        while (queuedEvents.length && socket.connected) {
-          socket.emit('product_event', queuedEvents.shift()!)
-        }
-        snapshotted = true
+        void service
+          .listWebPanels()
+          .then((webPanels) => {
+            if (!socket.connected) {
+              return
+            }
+
+            socket.emit('snapshot', {
+              at: new Date().toISOString(),
+              terminalMetadata: metadataSnapshot,
+              webPanels
+            })
+            queuedEvents.splice(0, representedEventCount)
+            while (queuedEvents.length && socket.connected) {
+              socket.emit('product_event', queuedEvents.shift()!)
+            }
+            snapshotted = true
+          })
+          .catch((error: unknown) => {
+            console.error('[Treeport] Socket.IO panel snapshot failed:', error)
+            socket.disconnect(true)
+          })
       },
       (error: unknown) => {
         console.error(

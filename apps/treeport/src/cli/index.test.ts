@@ -76,6 +76,7 @@ const worktree: WorktreeRecord = {
   },
   dirty: null,
   terminals: [terminal],
+  panels: [],
   createdAt: timestamp,
   updatedAt: timestamp
 }
@@ -349,7 +350,8 @@ describe('CLI context and machine output', () => {
 
       socket.emit('snapshot', {
         at: timestamp,
-        terminalMetadata: [observedMetadata]
+        terminalMetadata: [observedMetadata],
+        webPanels: []
       })
       if (
         eventScenario === 'none' ||
@@ -862,7 +864,10 @@ describe('CLI context and machine output', () => {
 
     expect(extraArgument.code).toBe(2)
     expect(JSON.parse(extraArgument.stderr)).toMatchObject({
-      error: { code: 'USAGE_ERROR', message: expect.stringContaining('Usage:') }
+      error: {
+        code: 'USAGE_ERROR',
+        message: expect.stringContaining('Usage:')
+      }
     })
 
     const unknownOption = await runCli([

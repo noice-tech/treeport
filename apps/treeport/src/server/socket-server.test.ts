@@ -77,6 +77,7 @@ async function fixture(): Promise<NetworkFixture> {
   const ptys: FakePty[] = []
   const service = {
     events,
+    listWebPanels: vi.fn(async () => []),
     refreshTerminalStatus: vi.fn(async () => ({
       id: 'term',
       worktreeId: 'wt',
@@ -249,6 +250,56 @@ describe('Socket.IO real network', () => {
     await vi.waitFor(() => expect(received).toHaveLength(2))
     expect(received).toEqual(['snapshot:snapshot', 'event:incremental'])
     await closeClient(socket)
+  })
+
+  it('snapshots durable web panels and broadcasts closure to every client', async () => {
+    const value = await fixture()
+    vi.mocked(value.service.listWebPanels).mockResolvedValue([
+      {
+        id: 'panel_review',
+        kind: 'web',
+        worktreeId: 'wt',
+        extensionId: 'treeport.review',
+        contributionId: 'review',
+        title: 'Review',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z'
+      }
+    ])
+    const first = eventClient(value.url)
+    const second = eventClient(value.url)
+    const snapshots = await Promise.all(
+      [first, second].map(
+        (socket) =>
+          new Promise<Parameters<EventsServerToClientEvents['snapshot']>[0]>(
+            (resolve) => socket.once('snapshot', resolve)
+          )
+      )
+    )
+    expect(snapshots.map((snapshot) => snapshot.webPanels[0]?.id)).toEqual([
+      'panel_review',
+      'panel_review'
+    ])
+
+    const closures = [first, second].map(
+      (socket) =>
+        new Promise<string>((resolve) =>
+          socket.on('product_event', (event) => {
+            if (event.type === 'panel.removed') {
+              resolve(String(event.data.panelId))
+            }
+          })
+        )
+    )
+    value.events.publish('panel.removed', {
+      worktreeId: 'wt',
+      panelId: 'panel_review'
+    })
+    await expect(Promise.all(closures)).resolves.toEqual([
+      'panel_review',
+      'panel_review'
+    ])
+    await Promise.all([closeClient(first), closeClient(second)])
   })
 
   it('broadcasts authoritative bell acknowledgement metadata to every client', async () => {

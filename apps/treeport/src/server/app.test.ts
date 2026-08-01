@@ -124,6 +124,33 @@ function fixture(webDist = '/missing') {
       id: 'wt_1',
       tmuxSocketName: 'treeport-wt-1'
     })),
+    listWebPanelContributions: vi.fn(async () => [
+      {
+        extensionId: 'treeport.review',
+        contributionId: 'review',
+        title: 'Review'
+      }
+    ]),
+    createWebPanel: vi.fn(async (worktreeId: string) => ({
+      id: 'panel_review',
+      kind: 'web',
+      worktreeId,
+      extensionId: 'treeport.review',
+      contributionId: 'review',
+      title: 'Review',
+      createdAt: '2026-01-01',
+      updatedAt: '2026-01-01'
+    })),
+    deleteWebPanel: vi.fn(async () => undefined),
+    getWebPanelContext: vi.fn(async () => ({
+      apiVersion: 1,
+      panel: { id: 'panel_review' }
+    })),
+    getWebPanelDiff: vi.fn(async () => ({
+      baseRef: 'origin/trunk',
+      unified: 'diff --git a/a b/a'
+    })),
+    resolveWebPanelAsset: vi.fn(async () => '/missing'),
     createTerminal: vi.fn(),
     getTerminal: vi.fn(async (id: string) => ({
       id,
@@ -194,6 +221,47 @@ describe('HTTP API validation', () => {
       protocolVersion: DESKTOP_PROTOCOL_VERSION,
       hostname: os.hostname()
     })
+  })
+
+  it('routes persistent web-panel lifecycle and scoped runtime reads', async () => {
+    const { app, service } = fixture()
+    const contributions = await app.request(
+      '/api/worktrees/wt_1/web-panel-contributions'
+    )
+    expect(await contributions.json()).toMatchObject({
+      contributions: [
+        { extensionId: 'treeport.review', contributionId: 'review' }
+      ]
+    })
+
+    const created = await app.request('/api/worktrees/wt_1/panels', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        extensionId: 'treeport.review',
+        contributionId: 'review'
+      })
+    })
+    expect(created.status).toBe(201)
+    expect(service.createWebPanel).toHaveBeenCalledWith(
+      'wt_1',
+      'treeport.review',
+      'review'
+    )
+
+    expect((await app.request('/api/panels/panel_review/context')).status).toBe(
+      200
+    )
+    expect((await app.request('/api/panels/panel_review/diff')).status).toBe(
+      200
+    )
+    expect(service.getWebPanelDiff).toHaveBeenCalledWith('panel_review')
+
+    const closed = await app.request('/api/panels/panel_review', {
+      method: 'DELETE'
+    })
+    expect(closed.status).toBe(200)
+    expect(service.deleteWebPanel).toHaveBeenCalledWith('panel_review')
   })
 
   it('returns consistent validation errors without calling domain services', async () => {
@@ -560,7 +628,9 @@ describe('HTTP API validation', () => {
       expect(path.extname(result.file.path)).toBe('.png')
       expect(await fs.readFile(result.file.path)).toEqual(Buffer.from(bytes))
       expect((await fs.stat(result.file.path)).mode & 0o777).toBe(0o600)
-      await expect(fs.stat(stalePath)).rejects.toMatchObject({ code: 'ENOENT' })
+      await expect(fs.stat(stalePath)).rejects.toMatchObject({
+        code: 'ENOENT'
+      })
 
       const legacyHeader = await app.request('/api/terminals/term_1/files', {
         method: 'POST',

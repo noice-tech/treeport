@@ -71,6 +71,50 @@ export interface TerminalCapture {
   content: string
 }
 
+export interface TerminalPanel {
+  id: string
+  kind: 'terminal'
+  worktreeId: string
+  terminalId: string
+  title: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface WebPanel {
+  id: string
+  kind: 'web'
+  worktreeId: string
+  extensionId: string
+  contributionId: string
+  title: string
+  createdAt: string
+  updatedAt: string
+}
+
+export type Panel = TerminalPanel | WebPanel
+
+export interface WebPanelContribution {
+  extensionId: string
+  contributionId: string
+  title: string
+}
+
+export interface WebPanelContext {
+  apiVersion: 1
+  panel: WebPanel
+  project: Pick<ProjectRecord, 'id' | 'name' | 'defaultBranch'>
+  worktree: Pick<WorktreeRecord, 'id' | 'name' | 'branch' | 'head'>
+}
+
+export interface GitDiff {
+  baseRef: string
+  baseCommit: string
+  headCommit: string
+  generatedAt: string
+  unified: string
+}
+
 export interface WorktreeRecord {
   id: string
   projectId: string
@@ -90,6 +134,7 @@ export interface WorktreeRecord {
   pr: PrInfo
   dirty: DirtyState | null
   terminals: TerminalRecord[]
+  panels: Panel[]
   createdAt: string
   updatedAt: string
 }
@@ -337,6 +382,11 @@ export const updateTerminalSchema = z.object({
   name: terminalNameSchema
 })
 
+export const createWebPanelSchema = z.object({
+  extensionId: z.string().regex(/^[a-z0-9][a-z0-9._-]{0,63}$/),
+  contributionId: z.string().regex(/^[a-z0-9][a-z0-9._-]{0,63}$/)
+})
+
 export const createTerminalPresetSchema = z.object(terminalPresetFields)
 
 export const updateTerminalPresetSchema = z.object({
@@ -385,6 +435,8 @@ export type ProductEventType =
   | 'terminal.removed'
   | 'terminal.metadata'
   | 'terminal.controller_changed'
+  | 'panel.created'
+  | 'panel.removed'
   | 'remove.started'
   | 'remove.completed'
   | 'remove.failed'

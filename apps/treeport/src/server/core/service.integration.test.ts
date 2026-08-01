@@ -441,6 +441,60 @@ async function beginFromPreview(service: TreeportService, worktreeId: string) {
 }
 
 describe('TreeportService with injected command adapters', () => {
+  it('discovers local web panels and owns their persistent synchronized lifecycle', async () => {
+    const { main, service, database } = await fixture()
+    const extension = path.join(main, '.treeport', 'extensions', 'review')
+    await fs.mkdir(extension, { recursive: true })
+    await fs.writeFile(
+      path.join(extension, 'treeport.json'),
+      JSON.stringify({
+        id: 'treeport.review',
+        panels: [
+          { id: 'review', title: 'Review', entry: 'index.html' },
+          { id: 'escape', title: 'Escape', entry: '../../secret.html' }
+        ]
+      })
+    )
+    await fs.writeFile(path.join(extension, 'index.html'), '<h1>Review</h1>')
+    const project = await service.registerProject(main)
+    const worktree = project.worktrees[0]!
+    expect(await service.listWebPanelContributions(worktree.id)).toEqual([
+      {
+        extensionId: 'treeport.review',
+        contributionId: 'review',
+        title: 'Review'
+      }
+    ])
+
+    const events: string[] = []
+    const unsubscribe = service.events.subscribe((event) =>
+      events.push(`${event.type}:${String(event.data.panelId)}`)
+    )
+    const panel = await service.createWebPanel(
+      worktree.id,
+      'treeport.review',
+      'review'
+    )
+    expect(
+      (await service.getWorktreeSnapshot(worktree.id)).panels
+    ).toContainEqual(panel)
+    expect(await service.resolveWebPanelAsset(panel.id, '')).toBe(
+      await fs.realpath(path.join(extension, 'index.html'))
+    )
+    await expect(
+      service.resolveWebPanelAsset(panel.id, '../../outside')
+    ).rejects.toMatchObject({ code: 'INVALID_ASSET_PATH' })
+    expect(await database.webPanel(panel.id)).toEqual(panel)
+
+    await service.deleteWebPanel(panel.id)
+    unsubscribe()
+    expect(await database.webPanel(panel.id)).toBeNull()
+    expect(events).toEqual([
+      `panel.created:${panel.id}`,
+      `panel.removed:${panel.id}`
+    ])
+  })
+
   it('browses bounded server directories and resolves repository roots', async () => {
     const { root, main, service } = await fixture()
     const browserRoot = path.join(root, 'folder browser')
