@@ -1,22 +1,27 @@
-import { useEffect, useRef, useState } from 'react'
+import { Activity, useEffect, useRef, useState } from 'react'
 import type { WebPanel } from '@treeport/shared'
 import { apiClient } from '../../api'
 import { cn } from '../../lib/utils'
 
 export function WebPanelWorkspace({
   panel,
+  active,
   onSelectWorkspace
 }: {
   panel: WebPanel
+  active: boolean
   onSelectWorkspace: (index: number) => void
 }) {
   const frameRef = useRef<HTMLIFrameElement>(null)
+  const panelWindowRef = useRef<Window | null>(null)
   const [loadedPanelId, setLoadedPanelId] = useState<string | null>(null)
 
   useEffect(() => {
     const receive = (event: MessageEvent) => {
+      const panelWindow =
+        frameRef.current?.contentWindow ?? panelWindowRef.current
       if (
-        event.source !== frameRef.current?.contentWindow ||
+        event.source !== panelWindow ||
         event.data?.source !== 'treeport-panel-v1'
       ) {
         return
@@ -67,12 +72,12 @@ export function WebPanelWorkspace({
 
       void request.then(
         (value) =>
-          frameRef.current?.contentWindow?.postMessage(
+          panelWindow?.postMessage(
             { source: 'treeport-host-v1', id: event.data.id, ok: true, value },
             '*'
           ),
         (error: unknown) =>
-          frameRef.current?.contentWindow?.postMessage(
+          panelWindow?.postMessage(
             {
               source: 'treeport-host-v1',
               id: event.data.id,
@@ -88,22 +93,27 @@ export function WebPanelWorkspace({
   }, [onSelectWorkspace, panel.id])
 
   return (
-    <main
-      className="min-h-0 min-w-0 bg-zinc-950"
-      aria-label={`${panel.title} web panel`}
-    >
-      <iframe
-        key={panel.id}
-        ref={frameRef}
-        title={panel.title}
-        src={`/api/web-panels/${encodeURIComponent(panel.id)}/assets/`}
-        sandbox="allow-scripts"
-        className={cn(
-          'h-full w-full border-0 bg-zinc-950',
-          loadedPanelId === panel.id ? 'opacity-100' : 'opacity-0'
-        )}
-        onLoad={() => setLoadedPanelId(panel.id)}
-      />
-    </main>
+    <Activity mode={active ? 'visible' : 'hidden'}>
+      <main
+        className="min-h-0 min-w-0 bg-zinc-950"
+        aria-label={`${panel.title} web panel`}
+      >
+        <iframe
+          key={panel.id}
+          ref={frameRef}
+          title={panel.title}
+          src={`/api/web-panels/${encodeURIComponent(panel.id)}/assets/`}
+          sandbox="allow-scripts"
+          className={cn(
+            'h-full w-full border-0 bg-zinc-950',
+            loadedPanelId === panel.id ? 'opacity-100' : 'opacity-0'
+          )}
+          onLoad={() => {
+            panelWindowRef.current = frameRef.current?.contentWindow ?? null
+            setLoadedPanelId(panel.id)
+          }}
+        />
+      </main>
+    </Activity>
   )
 }

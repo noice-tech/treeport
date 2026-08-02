@@ -9,6 +9,8 @@ Repository extensions live under `.treeport/extensions/<name>/`. Each folder con
 
 Open **New panel** from a worktree or press `Cmd/Ctrl+Shift+T` to choose between Shell, terminal presets, and discovered web panels. `Cmd/Ctrl+T` continues to create a Shell directly. Web panels share the numbered workspace shortcuts with terminals, so `Cmd+1` through `Cmd+9` switch to the corresponding sidebar item.
 
+After a panel is visited, Treeport keeps its frame alive while switching among terminals and other panels. In-memory UI state such as scroll position and unfinished form input therefore behaves like a browser tab. Full-page reloads still reset that ephemeral state; use `treeport.storage` for state that must survive reloads or daemon restarts.
+
 ## Browser SDK
 
 Optionally add the SDK package as a development dependency so editors and coding agents can inspect the panel API:

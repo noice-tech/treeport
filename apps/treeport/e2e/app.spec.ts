@@ -3235,6 +3235,10 @@ test.describe('desktop worktree terminal UI', () => {
     const panelFrame = page
       .frames()
       .find((frame) => frame.url().includes('/api/web-panels/panel_1/'))!
+    await panelFrame.evaluate(() => {
+      document.body.textContent = 'Unsaved panel draft'
+    })
+    await expect(panelFrame.getByText('Unsaved panel draft')).toBeVisible()
     await panelFrame.evaluate(() =>
       parent.postMessage(
         {
@@ -3252,6 +3256,7 @@ test.describe('desktop worktree terminal UI', () => {
     await expect(page).toHaveURL(
       /\/projects\/proj_1\/worktrees\/wt_topic\/panels\/panel_1$/
     )
+    await expect(panelFrame.getByText('Unsaved panel draft')).toBeVisible()
 
     const terminalFromPanelRequest = page.waitForRequest(
       (request) =>

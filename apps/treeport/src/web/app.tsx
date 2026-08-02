@@ -94,6 +94,7 @@ function WorkspaceApp() {
   const selectedTerminal = workspaceResolution?.selection.terminal ?? null
   const selectedTerminalId = selectedTerminal?.id ?? null
   const selectedWebPanel = workspaceResolution?.selection.panel ?? null
+  const selectedWebPanelId = selectedWebPanel?.id ?? null
   const activeProject = selectedProject
   const {
     isMobile,
@@ -104,6 +105,9 @@ function WorkspaceApp() {
   const projectSwitcher = useProjectSwitcher()
   const projectSwitcherOpen = projectSwitcher.open
   const [dialog, setDialog] = useState<AppDialog>(null)
+  const [retainedWebPanelIds, setRetainedWebPanelIds] = useState<Set<string>>(
+    () => new Set()
+  )
   const panelDialogProject =
     dialog?.type === 'panel'
       ? (projects.find((project) => project.id === dialog.projectId) ?? null)
@@ -200,6 +204,22 @@ function WorkspaceApp() {
   }
 
   useEffect(() => {
+    if (!selectedWebPanelId) {
+      return
+    }
+
+    setRetainedWebPanelIds((current) => {
+      if (current.has(selectedWebPanelId)) {
+        return current
+      }
+
+      const next = new Set(current)
+      next.add(selectedWebPanelId)
+      return next
+    })
+  }, [selectedWebPanelId])
+
+  useEffect(() => {
     if (!workspaceResolution || workspaceResolution.canonical) {
       return
     }
@@ -253,6 +273,19 @@ function WorkspaceApp() {
     () =>
       activeProject?.worktrees.flatMap((worktree) => worktree.terminals) ?? [],
     [activeProject]
+  )
+  const retainedWebPanels = useMemo(
+    () =>
+      projects
+        .flatMap((project) => project.worktrees)
+        .flatMap((worktree) => worktree.panels)
+        .filter(
+          (panel): panel is WebPanel =>
+            panel.kind === 'web' &&
+            (retainedWebPanelIds.has(panel.id) ||
+              panel.id === selectedWebPanelId)
+        ),
+    [projects, retainedWebPanelIds, selectedWebPanelId]
   )
   const navigateToTerminal = useCallback(
     (terminal: TerminalRecord) => {
@@ -576,12 +609,18 @@ function WorkspaceApp() {
         />
       </WorkspaceSidebar>
       <WorkspaceMain>
-        {selectedWebPanel && !terminalWorkflows.selectedPendingTerminal ? (
+        {retainedWebPanels.map((panel) => (
           <WebPanelWorkspace
-            panel={selectedWebPanel}
+            key={panel.id}
+            panel={panel}
+            active={
+              panel.id === selectedWebPanelId &&
+              !terminalWorkflows.selectedPendingTerminal
+            }
             onSelectWorkspace={selectWorkspaceByIndex}
           />
-        ) : (
+        ))}
+        {(!selectedWebPanel || terminalWorkflows.selectedPendingTerminal) && (
           <TerminalWorkspace
             selectedWorktree={selectedWorktree}
             selectedTerminal={selectedTerminal}
