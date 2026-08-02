@@ -530,6 +530,19 @@ export function WorkspaceTree({
                                       : 'text-zinc-300 hover:bg-white/5 hover:text-zinc-100'
                                   )}
                                   onClick={() => selectWebPanel(panel)}
+                                  onMouseDown={(event) => {
+                                    if (event.button === 1) {
+                                      event.preventDefault()
+                                    }
+                                  }}
+                                  onAuxClick={(event) => {
+                                    if (event.button !== 1) {
+                                      return
+                                    }
+
+                                    event.preventDefault()
+                                    closeWebPanel(panel, event.currentTarget)
+                                  }}
                                   aria-label={`${panel.title}, web panel`}
                                   aria-keyshortcuts={
                                     shortcutIndex
