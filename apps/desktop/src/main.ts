@@ -54,6 +54,7 @@ let connectionGeneration = 0
 let connectionAbort: AbortController | null = null
 let fullscreen = false
 const shellWebContentsIds = new Set<number>()
+let terminalSelectionGuest: WebContents | null = null
 
 let dockBounceId: number | null = null
 let frameFlashing = false
@@ -122,6 +123,27 @@ function isActiveGuestEvent(event: IpcMainEvent | IpcMainInvokeEvent): boolean {
   )
 }
 
+function setTerminalSelectionGuest(guest: WebContents | null): void {
+  terminalSelectionGuest = guest
+  for (const id of [...shellWebContentsIds]) {
+    const contents = webContents.fromId(id)
+    if (!contents || contents.isDestroyed()) {
+      shellWebContentsIds.delete(id)
+      continue
+    }
+
+    contents.send('terminal-selection:active', guest !== null)
+  }
+}
+
+function releaseTerminalSelection(): void {
+  const guest = terminalSelectionGuest
+  setTerminalSelectionGuest(null)
+  if (guest && !guest.isDestroyed()) {
+    guest.send('terminal-selection:release')
+  }
+}
+
 function stopBellAttention(): void {
   if (dockBounceId !== null) {
     app.dock?.cancelBounce(dockBounceId)
@@ -153,6 +175,10 @@ function requestBellAttention(): void {
 function disposeGuest(): void {
   const guest = activeGuest
   activeGuest = null
+  if (terminalSelectionGuest === guest) {
+    setTerminalSelectionGuest(null)
+  }
+
   if (guest && !guest.isDestroyed()) {
     guest.close({ waitForBeforeUnload: false })
   }
@@ -560,6 +586,10 @@ function createWindow(): BrowserWindow {
     disposeGuest()
     activeGuest = guest
     guest.once('destroyed', () => {
+      if (terminalSelectionGuest === guest) {
+        setTerminalSelectionGuest(null)
+      }
+
       if (activeGuest === guest) {
         activeGuest = null
       }
@@ -731,6 +761,22 @@ function registerIpc(): void {
     }
 
     return (await shell.openPath(filePath)) === '' ? 'opened' : 'rejected'
+  })
+  ipcMain.on('terminal-selection:set-active', (event, active: unknown) => {
+    if (!isActiveGuestEvent(event) || typeof active !== 'boolean') {
+      return
+    }
+
+    if (active) {
+      setTerminalSelectionGuest(event.sender)
+    } else if (terminalSelectionGuest === event.sender) {
+      setTerminalSelectionGuest(null)
+    }
+  })
+  ipcMain.on('shell:terminal-selection-release', (event) => {
+    if (shellWebContentsIds.has(event.sender.id)) {
+      releaseTerminalSelection()
+    }
   })
   ipcMain.on('bell-attention:request', (event) => {
     if (isActiveGuestEvent(event)) {

@@ -5,17 +5,20 @@ import { io, type Socket } from 'socket.io-client'
 import { apiClient } from './api'
 import {
   activateTerminalLink,
-  forcePlainSelectionWhileMouseReporting,
   TERMINAL_FONT_SIZE,
   terminalKeyboardInput,
   terminalOptions,
-  trackTerminalScrolling
+  trackTerminalScrolling,
+  trackTerminalSelectionAutoscroll
 } from './terminal-browser'
 import {
   parseTerminalServerEvent,
   SOCKET_IO_PATH,
   TERMINAL_MAX_INPUT_BYTES,
   TERMINAL_PROTOCOL_VERSION,
+  TERMINAL_SCROLL_EXIT_SEQUENCE,
+  TERMINAL_SELECTION_START_SEQUENCE,
+  TERMINAL_SELECTION_STOP_SEQUENCE,
   type TerminalClientToServerEvents,
   type TerminalServerEvent,
   type TerminalSize,
@@ -29,8 +32,8 @@ export type TerminalFileTransfer = {
   message: string
 }
 
-const TERMINAL_SCROLL_EXIT_SEQUENCE = '\u001b[9000~'
 const TERMINAL_MAX_FILES_PER_TRANSFER = 8
+const TERMINAL_MAX_SELECTION_ENCODED_LENGTH = 8 * 1024 * 1024
 const TERMINAL_MIN_VIEWER_FONT_SIZE = 4
 const TERMINAL_MIN_COLS = 2
 const TERMINAL_MAX_COLS = 1_000
@@ -175,6 +178,9 @@ export class TerminalSession {
   private readonly parsedSequences = new Set<number>()
   private scrollExitPending = false
   private resumeOnNextInput = false
+  private selectionDragCancel: (() => void) | null = null
+  private tmuxSelectionPending = false
+  private tmuxSelectionText: string | null = null
   private pendingPaste = ''
   private inputModifiers: {
     ctrl: boolean
@@ -339,6 +345,7 @@ export class TerminalSession {
     this.keyboardViewportCleanup?.()
     this.keyboardViewportCleanup = null
     this.cancelControllerResizeIntent(false)
+    this.selectionDragCancel?.()
     this.wrapper?.remove()
     this.host = null
   }
@@ -404,6 +411,7 @@ export class TerminalSession {
 
   sendText(data: string): void {
     this.requestControl()
+    this.discardTmuxSelection()
     this.prepareScrollExit()
 
     if (this.canInput()) {
@@ -419,6 +427,7 @@ export class TerminalSession {
     }
 
     this.requestControl()
+    this.discardTmuxSelection()
     this.prepareScrollExit()
     if (this.canInput()) {
       this.terminal?.paste(data)
@@ -438,7 +447,8 @@ export class TerminalSession {
   }
 
   copySelection(): void {
-    const selection = this.terminal?.getSelection()
+    const selection =
+      this.tmuxSelectionText ?? this.terminal?.getSelection() ?? ''
     if (!selection) {
       return
     }
@@ -460,19 +470,31 @@ export class TerminalSession {
     copyBuffer.remove()
 
     if (copied) {
-      this.terminal?.clearSelection()
+      this.clearSelection()
       return
     }
 
     if (navigator.clipboard) {
       void navigator.clipboard.writeText(selection).then(() => {
-        this.terminal?.clearSelection()
+        this.clearSelection()
       })
     }
   }
 
   clearSelection(): void {
+    const hadTmuxSelection =
+      this.tmuxSelectionPending || this.tmuxSelectionText !== null
+    if (hadTmuxSelection && this.canInput()) {
+      this.send('input', {
+        generation: this.controllerGeneration,
+        data: TERMINAL_SELECTION_START_SEQUENCE
+      })
+    }
+
+    this.tmuxSelectionPending = false
+    this.tmuxSelectionText = null
     this.terminal?.clearSelection()
+    this.updateSelectionState()
   }
 
   dispose(): void {
@@ -483,6 +505,8 @@ export class TerminalSession {
     this.disposed = true
     this.reconnectAllowed = false
     this.clearTimers()
+    this.selectionDragCancel?.()
+    this.selectionDragCancel = null
     this.resizeObserver?.disconnect()
     if (this.wakeListenersAttached) {
       window.removeEventListener('online', this.reconnectWhenOnline)
@@ -515,14 +539,50 @@ export class TerminalSession {
     terminal.loadAddon(fitAddon)
     terminal.loadAddon(new WebLinksAddon(activateTerminalLink))
     terminal.open(this.wrapper)
-    terminal.onSelectionChange(() => {
-      this.update({ hasSelection: terminal.hasSelection() })
-    })
+    terminal.onSelectionChange(() => this.updateSelectionState())
+    this.selectionDragCancel = trackTerminalSelectionAutoscroll(
+      this.wrapper,
+      terminal,
+      {
+        canInput: () => this.canInput(),
+        sendInput: (data) => {
+          this.send('input', {
+            generation: this.controllerGeneration,
+            data
+          })
+        },
+        requestControl: () => this.requestControl(),
+        onSelectionStart: () => this.clearSelection(),
+        onTmuxSelectionStart: () => {
+          this.scrollExitPending = true
+          this.wrapper?.classList.add('terminal-scrolling')
+        },
+        onTmuxSelectionFinish: () => {
+          this.tmuxSelectionPending = true
+        },
+        onTmuxSelectionCancel: () => {
+          this.send('input', {
+            generation: this.controllerGeneration,
+            data: TERMINAL_SCROLL_EXIT_SEQUENCE
+          })
+          this.scrollExitPending = false
+          this.resumeOnNextInput = false
+          this.wrapper?.classList.remove('terminal-scrolling')
+        },
+        selectionStartSequence: TERMINAL_SELECTION_START_SEQUENCE,
+        selectionStopSequence: TERMINAL_SELECTION_STOP_SEQUENCE
+      }
+    )
     this.wrapper.addEventListener(
-      'mousedown',
+      'copy',
       (event) => {
-        this.requestControl()
-        forcePlainSelectionWhileMouseReporting(event, terminal)
+        if (this.tmuxSelectionText === null || !event.clipboardData) {
+          return
+        }
+
+        event.preventDefault()
+        event.stopImmediatePropagation()
+        event.clipboardData.setData('text/plain', this.tmuxSelectionText)
       },
       true
     )
@@ -550,6 +610,7 @@ export class TerminalSession {
           !browserOwnedMetaShortcut &&
           !copyOrPasteShortcut
         ) {
+          this.discardTmuxSelection()
           this.requestControl()
         }
       },
@@ -637,6 +698,38 @@ export class TerminalSession {
     this.terminal = terminal
     this.fitAddon = fitAddon
     this.opened = true
+    terminal.parser.registerOscHandler(52, (payload) => {
+      if (!this.tmuxSelectionPending) {
+        return false
+      }
+
+      this.tmuxSelectionPending = false
+      const separator = payload.indexOf(';')
+      const encoded = separator === -1 ? '' : payload.slice(separator + 1)
+      const unpadded = encoded.replace(/=+$/, '')
+      if (
+        !encoded ||
+        encoded === '?' ||
+        encoded.length > TERMINAL_MAX_SELECTION_ENCODED_LENGTH ||
+        payload.indexOf(';', separator + 1) !== -1 ||
+        !/^[A-Za-z0-9+/]*={0,2}$/.test(encoded) ||
+        unpadded.length % 4 === 1
+      ) {
+        this.updateSelectionState()
+        return true
+      }
+
+      const normalized = unpadded.padEnd(
+        Math.ceil(unpadded.length / 4) * 4,
+        '='
+      )
+      const binary = atob(normalized)
+      this.tmuxSelectionText = new TextDecoder().decode(
+        Uint8Array.from(binary, (character) => character.charCodeAt(0))
+      )
+      this.updateSelectionState()
+      return true
+    })
     terminal.attachCustomKeyEventHandler((event) => {
       const input = terminalKeyboardInput(
         event,
@@ -920,6 +1013,9 @@ export class TerminalSession {
       const connected = this.ready
       this.ready = false
       this.streamId = null
+      this.selectionDragCancel?.()
+      this.tmuxSelectionPending = false
+      this.tmuxSelectionText = null
       this.controllerGeneration = 0
       this.controlRequestGeneration = null
       this.cancelControllerResizeIntent()
@@ -932,6 +1028,7 @@ export class TerminalSession {
           this.reconnectAllowed && !this.disposed ? 'reconnecting' : 'closed',
         controller: false,
         controlPending: false,
+        hasSelection: false,
         degraded: this.reconnectAllowed ? this.snapshotValue.degraded : false,
         error:
           !connected && !this.snapshotValue.error
@@ -983,6 +1080,9 @@ export class TerminalSession {
       this.expectedSequence = 1
       this.lastParsedSequence = 0
       this.parsedSequences.clear()
+      this.selectionDragCancel?.()
+      this.tmuxSelectionPending = false
+      this.tmuxSelectionText = null
       this.ready = true
       this.renderEpoch += 1
       const epoch = this.renderEpoch
@@ -1009,6 +1109,7 @@ export class TerminalSession {
         phase: 'ready',
         controller: message.controller,
         controlPending: false,
+        hasSelection: false,
         error: null
       })
       return
@@ -1102,6 +1203,12 @@ export class TerminalSession {
         controller: message.controller,
         controlPending: false
       })
+
+      if (controllerChanged && !message.controller) {
+        this.selectionDragCancel?.()
+        this.tmuxSelectionPending = false
+      }
+
       if (message.controller && this.pendingPaste) {
         const pendingPaste = this.pendingPaste
         this.pendingPaste = ''
@@ -1542,6 +1649,24 @@ export class TerminalSession {
       degraded: false,
       controller: false,
       controlPending: false
+    })
+  }
+
+  private discardTmuxSelection(): void {
+    if (!this.tmuxSelectionPending && this.tmuxSelectionText === null) {
+      return
+    }
+
+    this.tmuxSelectionPending = false
+    this.tmuxSelectionText = null
+    this.updateSelectionState()
+  }
+
+  private updateSelectionState(): void {
+    this.update({
+      hasSelection:
+        this.tmuxSelectionText !== null ||
+        Boolean(this.terminal?.hasSelection())
     })
   }
 
