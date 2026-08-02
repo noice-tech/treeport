@@ -15,7 +15,12 @@ import { TreeportDatabase } from './database'
 import { GhAdapter } from './gh'
 import { GitAdapter } from './git'
 import { TreeportService } from './service'
-import { TMUX_SCROLL_EXIT_SEQUENCE, TmuxAdapter } from './tmux'
+import {
+  TMUX_SCROLL_EXIT_SEQUENCE,
+  TMUX_SELECTION_START_SEQUENCE,
+  TMUX_SELECTION_STOP_SEQUENCE,
+  TmuxAdapter
+} from './tmux'
 
 const enabled = process.env.TREEPORT_REAL_INTEGRATION === '1'
 const root = path.join(os.tmpdir(), `treeport real integration ${process.pid}`)
@@ -662,7 +667,7 @@ describe.skipIf(!enabled)(
       }
     })
 
-    it('hides tmux copy mode and forwards the first key typed after scrolling', async (context) => {
+    it('scrolls and selects tmux history while forwarding the first resumed input', async (context) => {
       if (!(await executable('tmux', ['-V']))) {
         context.skip()
         return
@@ -708,21 +713,33 @@ describe.skipIf(!enabled)(
         output += data
       })
 
-      const paneMode = () =>
+      const paneValue = (format: string) =>
         runner
           .run({
             executable: 'tmux',
-            args: [
-              ...base,
-              'display-message',
-              '-p',
-              '-t',
-              session,
-              '#{pane_in_mode}'
-            ]
+            args: [...base, 'display-message', '-p', '-t', session, format]
           })
           .then((result) => result.stdout.trim())
+      const paneMode = () => paneValue('#{pane_in_mode}')
       const input = () => fs.readFile(inputPath, 'utf8').catch(() => '')
+      const clipboardSelection = async () => {
+        await waitFor(
+          () => output.includes('\u001b]52;'),
+          'tmux did not emit the selection'
+        )
+        const clipboardPayload = output.slice(
+          output.indexOf('\u001b]52;') + '\u001b]52;'.length
+        )
+        const encodedSelection = clipboardPayload
+          .slice(clipboardPayload.indexOf(';') + 1)
+          .split('\u0007', 1)[0]
+        expect(encodedSelection).toMatch(/^[A-Za-z0-9+/]+=*$/)
+        if (!encodedSelection) {
+          throw new Error('tmux emitted an empty clipboard selection')
+        }
+
+        return Buffer.from(encodedSelection, 'base64').toString('utf8')
+      }
 
       try {
         await waitFor(
@@ -749,6 +766,85 @@ describe.skipIf(!enabled)(
           async () => (await input()) === '☃z',
           'the scroll-exit key leaked'
         )
+
+        output = ''
+        client.write(
+          `${TMUX_SELECTION_START_SEQUENCE}\u001b[<0;10;18M\u001b[<32;10;18M`
+        )
+        for (let step = 0; step < 15; step += 1) {
+          client.write('\u001b[<32;10;1M')
+          await new Promise((resolve) => setTimeout(resolve, 50))
+        }
+        client.write(
+          `${TMUX_SELECTION_STOP_SEQUENCE}\u001b[<32;10;2M\u001b[<0;10;2m`
+        )
+        const selectedLines = (await clipboardSelection())
+          .split('\n')
+          .filter((line) => line.startsWith('history-'))
+          .map((line) => Number(line.slice('history-'.length)))
+        expect(selectedLines.length).toBeGreaterThan(20)
+        expect(Math.min(...selectedLines)).toBeLessThan(80)
+        expect(Math.max(...selectedLines)).toBe(98)
+        expect(await paneMode()).toBe('1')
+        expect(await paneValue('#{selection_present}')).toBe('1')
+        const releasedScrollPosition = await paneValue('#{scroll_position}')
+        expect(Number(releasedScrollPosition)).toBeGreaterThan(0)
+        await new Promise((resolve) => setTimeout(resolve, 300))
+        await new Promise((resolve) => setTimeout(resolve, 300))
+        expect(await paneValue('#{scroll_position}')).toBe(
+          releasedScrollPosition
+        )
+        expect(await input()).toBe('☃z')
+
+        output = ''
+        client.write(
+          `${TMUX_SELECTION_START_SEQUENCE}\u001b[<0;1;5M\u001b[<32;1;5M\u001b[<32;1;15M${TMUX_SELECTION_STOP_SEQUENCE}\u001b[<32;1;15M\u001b[<0;1;15m`
+        )
+        const secondSelectedLines = (await clipboardSelection())
+          .split('\n')
+          .filter((line) => line.startsWith('history-'))
+          .map((line) => Number(line.slice('history-'.length)))
+        expect(secondSelectedLines.length).toBeGreaterThanOrEqual(9)
+        expect(
+          Math.max(...secondSelectedLines) - Math.min(...secondSelectedLines)
+        ).toBeLessThanOrEqual(10)
+        expect(await paneMode()).toBe('1')
+        expect(await paneValue('#{selection_present}')).toBe('1')
+        const releasedSelection = await paneValue(
+          '#{selection_start_x},#{selection_start_y},#{selection_end_x},#{selection_end_y}'
+        )
+        const releasedCursor = await paneValue(
+          '#{copy_cursor_x},#{copy_cursor_y}'
+        )
+        client.write('\u001b[<32;70;20M')
+        await new Promise((resolve) => setTimeout(resolve, 100))
+        expect(await paneValue('#{copy_cursor_x},#{copy_cursor_y}')).toBe(
+          releasedCursor
+        )
+
+        for (let step = 0; step < 5; step += 1) {
+          client.write('\u001b[<64;10;10M')
+        }
+        await new Promise((resolve) => setTimeout(resolve, 100))
+        expect(
+          await paneValue(
+            '#{selection_start_x},#{selection_start_y},#{selection_end_x},#{selection_end_y}'
+          )
+        ).toBe(releasedSelection)
+
+        client.write(TMUX_SELECTION_START_SEQUENCE)
+        await waitFor(
+          async () => (await paneValue('#{selection_present}')) === '0',
+          'clicking after selection did not clear it'
+        )
+        expect(await paneMode()).toBe('1')
+
+        client.write(`${TMUX_SCROLL_EXIT_SEQUENCE}y`)
+        await waitFor(
+          async () => (await input()) === '☃zy',
+          'the first key after selecting was not forwarded'
+        )
+        expect(await paneMode()).toBe('0')
       } finally {
         client.kill()
         await tmux.killServer(socket).catch(() => undefined)

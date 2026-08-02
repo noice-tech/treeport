@@ -1,12 +1,12 @@
 import { expect, test, type Locator, type Page } from '@playwright/test'
-import type {
-  ProjectColor,
-  RecentProjectRecord,
-  TerminalPreset,
-  TerminalRuntimeMetadata
+import {
+  TERMINAL_SCROLL_EXIT_SEQUENCE,
+  TERMINAL_SELECTION_START_SEQUENCE,
+  type ProjectColor,
+  type RecentProjectRecord,
+  type TerminalPreset,
+  type TerminalRuntimeMetadata
 } from '@treeport/shared'
-
-const TERMINAL_SCROLL_EXIT_SEQUENCE = '\u001b[9000~'
 
 async function terminalTextPoint(
   locator: Locator,
@@ -175,6 +175,7 @@ async function mockApp(
         | 'new-panel'
         | 'close-panel'
       const listeners = new Set<(command: DesktopCommand) => void>()
+      const terminalSelectionReleaseListeners = new Set<() => void>()
       let fullscreenListener: ((fullscreen: boolean) => void) | null = null
       scope.__attentionRequests = 0
       scope.__openedDesktopFileUrls = []
@@ -196,12 +197,19 @@ async function mockApp(
           listeners.add(next)
           return () => listeners.delete(next)
         },
+        setTerminalSelectionActive() {},
+        onTerminalSelectionRelease(next: () => void) {
+          terminalSelectionReleaseListeners.add(next)
+          return () => terminalSelectionReleaseListeners.delete(next)
+        },
         requestAttention() {
           scope.__attentionRequests += 1
         }
       })
       scope.__dispatchDesktopCommand = (command: DesktopCommand) =>
         listeners.forEach((listener) => listener(command))
+      scope.__dispatchTerminalSelectionRelease = () =>
+        terminalSelectionReleaseListeners.forEach((listener) => listener())
       scope.__dispatchDesktopFullscreen = (fullscreen: boolean) =>
         fullscreenListener?.(fullscreen)
     })
@@ -3518,10 +3526,13 @@ test.describe('desktop worktree terminal UI', () => {
       .toContain('/tmp/treeport-upload-2.txt')
   })
 
-  test('selects with Mac Option-drag and forwards application wheel events', async ({
+  test('selects, autoscrolls beyond the viewport, and forwards application wheel events', async ({
     page
   }) => {
-    await mockApp(page, [], { keyboardPlatform: 'MacIntel' })
+    await mockApp(page, [], {
+      keyboardPlatform: 'MacIntel',
+      desktopBridge: true
+    })
     await page.getByRole('button', { name: 'Pi, running', exact: true }).click()
     await requestTerminalControl(page)
     await page.evaluate(() => {
@@ -3552,6 +3563,19 @@ test.describe('desktop worktree terminal UI', () => {
     await page.mouse.up()
     await page.keyboard.up('Alt')
 
+    const inViewportSelection = 'https://example.test/select-me'
+    await page.evaluate((encoded) => {
+      const socket = (window as any).__lastWs
+      socket.onmessage?.({
+        data: JSON.stringify({
+          version: 1,
+          type: 'output',
+          streamId: socket.streamId,
+          sequence: 3,
+          data: `\u001b]52;c;${encoded}\u0007`
+        })
+      })
+    }, Buffer.from(inViewportSelection, 'utf8').toString('base64'))
     const copied = await page
       .locator('.xterm-helper-textarea')
       .evaluate((textarea) => {
@@ -3570,9 +3594,167 @@ test.describe('desktop worktree terminal UI', () => {
       await page.evaluate(() => (window as any).__openedTerminalLinks)
     ).toEqual([])
     const sent = await page.evaluate(() => (window as any).__wsSent)
+    const inViewportSelectionInput = sent
+      .filter((message: any) => message.type === 'input')
+      .map((message: any) => String(message.data))
+    expect(inViewportSelectionInput.join('')).toContain(
+      TERMINAL_SELECTION_START_SEQUENCE
+    )
+    expect(inViewportSelectionInput.at(-1)).toContain('\u001b[<0;')
+    expect(inViewportSelectionInput.at(-1)).toMatch(/m$/)
+
+    await page.evaluate(() => {
+      ;(window as any).__wsSent = []
+    })
+    await page.mouse.move(
+      bounds!.x + bounds!.width / 2,
+      bounds!.y + bounds!.height / 2
+    )
+    await page.mouse.down()
+    await page.mouse.move(bounds!.x + bounds!.width / 2, bounds!.y - 30)
+    await page.waitForTimeout(160)
+    await page.mouse.up()
+
+    const selectionInput = await page.evaluate(() =>
+      (window as any).__wsSent
+        .filter((message: any) => message.type === 'input')
+        .map((message: any) => String(message.data))
+    )
+    expect(selectionInput.join('')).toContain(TERMINAL_SELECTION_START_SEQUENCE)
     expect(
-      sent.some((message: any) => String(message.data).includes('\u001b[<'))
-    ).toBe(false)
+      selectionInput.filter((data: string) => data.includes('\u001b[<32;'))
+        .length
+    ).toBeGreaterThan(1)
+    expect(selectionInput.at(-1)).toContain('\u001b[<0;')
+    expect(selectionInput.at(-1)).toMatch(/m$/)
+    const reportsAtRelease = selectionInput.filter((data: string) =>
+      data.includes('\u001b[<32;')
+    ).length
+    await page.waitForTimeout(160)
+    expect(
+      await page.evaluate(
+        () =>
+          (window as any).__wsSent.filter(
+            (message: any) =>
+              message.type === 'input' &&
+              String(message.data).includes('\u001b[<32;')
+          ).length
+      )
+    ).toBe(reportsAtRelease)
+
+    const tmuxSelection = 'history-17\nhistory-18\nselection-☃'
+    const encodedSelection = Buffer.from(tmuxSelection, 'utf8').toString(
+      'base64'
+    )
+    await page.evaluate((encoded) => {
+      const socket = (window as any).__lastWs
+      socket.onmessage?.({
+        data: JSON.stringify({
+          version: 1,
+          type: 'output',
+          streamId: socket.streamId,
+          sequence: 4,
+          data: `\u001b]52;c;${encoded}\u0007`
+        })
+      })
+    }, encodedSelection)
+    const autoscrolledCopy = await page
+      .locator('.xterm-helper-textarea')
+      .evaluate((textarea) => {
+        const clipboard = new DataTransfer()
+        textarea.dispatchEvent(
+          new ClipboardEvent('copy', {
+            bubbles: true,
+            cancelable: true,
+            clipboardData: clipboard
+          })
+        )
+        return clipboard.getData('text/plain')
+      })
+    expect(autoscrolledCopy).toBe(tmuxSelection)
+
+    await screen.hover()
+    await page.mouse.wheel(0, -120)
+    await page.mouse.wheel(0, 120)
+    await page.waitForTimeout(50)
+    await page.evaluate(() => {
+      ;(window as any).__wsSent = []
+    })
+    await page.mouse.click(
+      bounds!.x + bounds!.width / 2,
+      bounds!.y + bounds!.height / 2
+    )
+    const clickInput = await page.evaluate(() =>
+      (window as any).__wsSent
+        .filter((message: any) => message.type === 'input')
+        .map((message: any) => String(message.data))
+    )
+    expect(clickInput).toEqual([TERMINAL_SELECTION_START_SEQUENCE])
+
+    await page.evaluate(() => {
+      ;(window as any).__wsSent = []
+    })
+    await page.mouse.move(bounds!.x + bounds!.width / 2, bounds!.y + 8)
+    await page.mouse.down()
+    await page.mouse.move(
+      bounds!.x + bounds!.width / 2,
+      bounds!.y + bounds!.height + 30
+    )
+    await page.waitForTimeout(160)
+    await page.evaluate(() => {
+      ;(window as any).__dispatchTerminalSelectionRelease()
+    })
+    await page.waitForTimeout(160)
+    const downwardSelectionInput = await page.evaluate(() =>
+      (window as any).__wsSent
+        .filter((message: any) => message.type === 'input')
+        .map((message: any) => String(message.data))
+    )
+    await page.waitForTimeout(160)
+    const inputCountAfterRelease = await page.evaluate(
+      () =>
+        (window as any).__wsSent.filter(
+          (message: any) => message.type === 'input'
+        ).length
+    )
+    expect(inputCountAfterRelease).toBe(downwardSelectionInput.length)
+    await page.mouse.up()
+    const downwardRows = downwardSelectionInput.flatMap((data: string) =>
+      data
+        .split('\u001b[<32;')
+        .slice(1)
+        .map((report) => Number(report.split('M', 1)[0]?.split(';')[1]))
+    )
+    expect(downwardRows.length).toBeGreaterThan(2)
+    expect(downwardRows[0]).toBe(1)
+    expect(Math.min(...downwardRows.slice(1))).toBeGreaterThan(1)
+    expect(downwardSelectionInput.at(-1)).toContain('\u001b[<0;')
+    expect(downwardSelectionInput.at(-1)).toMatch(/m$/)
+
+    await page.evaluate(() => {
+      ;(window as any).__wsSent = []
+    })
+    await page.mouse.move(
+      bounds!.x + bounds!.width / 2,
+      bounds!.y + bounds!.height / 2
+    )
+    await page.mouse.down()
+    await page.mouse.move(bounds!.x + bounds!.width / 2, bounds!.y - 30)
+    await page.waitForTimeout(100)
+    await page.mouse.move(bounds!.x + bounds!.width + 30, bounds!.y - 30)
+    const dragReports = () =>
+      page.evaluate(
+        () =>
+          (window as any).__wsSent.filter(
+            (message: any) =>
+              message.type === 'input' &&
+              String(message.data).includes('\u001b[<32;')
+          ).length
+      )
+    const reportsAfterLeavingSide = await dragReports()
+    await page.waitForTimeout(160)
+    expect(await dragReports()).toBe(reportsAfterLeavingSide)
+    await page.mouse.up()
 
     await page.reload()
     await expect(page.locator('.xterm')).toBeVisible()

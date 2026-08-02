@@ -10,6 +10,8 @@ type TreeportDesktopBridge = Readonly<{
   openFileUrl: (url: string) => Promise<TreeportDesktopFileAction>
   onFullscreenChange: (listener: (fullscreen: boolean) => void) => () => void
   onCommand: (listener: (command: TreeportDesktopCommand) => void) => () => void
+  setTerminalSelectionActive: (active: boolean) => void
+  onTerminalSelectionRelease: (listener: () => void) => () => void
   requestAttention: () => void
 }>
 

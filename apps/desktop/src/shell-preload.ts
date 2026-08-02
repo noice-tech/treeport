@@ -15,6 +15,16 @@ const shellBridge = Object.freeze({
     ipcRenderer.on('shell:state', receive)
     return () => ipcRenderer.removeListener('shell:state', receive)
   },
+  onTerminalSelectionActive(listener: (active: boolean) => void) {
+    const receive = (_event: IpcRendererEvent, active: boolean) =>
+      listener(active)
+    ipcRenderer.on('terminal-selection:active', receive)
+    return () =>
+      ipcRenderer.removeListener('terminal-selection:active', receive)
+  },
+  releaseTerminalSelection(): void {
+    ipcRenderer.send('shell:terminal-selection-release')
+  },
   selectComputer(id: string): Promise<boolean> {
     return ipcRenderer.invoke('shell:select-computer', id)
   },

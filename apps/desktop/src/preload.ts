@@ -34,6 +34,15 @@ const desktopBridge = Object.freeze({
     ipcRenderer.on('desktop-command', receive)
     return () => ipcRenderer.removeListener('desktop-command', receive)
   },
+  setTerminalSelectionActive(active: boolean) {
+    ipcRenderer.send('terminal-selection:set-active', active)
+  },
+  onTerminalSelectionRelease(listener: () => void) {
+    const receive = () => listener()
+    ipcRenderer.on('terminal-selection:release', receive)
+    return () =>
+      ipcRenderer.removeListener('terminal-selection:release', receive)
+  },
   requestAttention() {
     ipcRenderer.send('bell-attention:request')
   }

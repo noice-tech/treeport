@@ -1,4 +1,8 @@
-import { useState } from 'react'
+import {
+  type PointerEvent as ReactPointerEvent,
+  useEffect,
+  useState
+} from 'react'
 import { ComputerSelector } from './computer-selector'
 import { ConnectDialog } from './connect-dialog'
 import { ConnectionPage } from './connection-page'
@@ -20,18 +24,47 @@ export function App() {
   const state = useShellState()
   const [dialog, setDialog] = useState<'connect' | 'manage' | null>(null)
   const [selectorOpen, setSelectorOpen] = useState(false)
+  const [terminalSelectionActive, setTerminalSelectionActive] = useState(false)
 
+  useEffect(
+    () =>
+      window.treeportShell.onTerminalSelectionActive(
+        setTerminalSelectionActive
+      ),
+    []
+  )
   const openDialog = (nextDialog: 'connect' | 'manage') => {
     setSelectorOpen(false)
     setDialog(nextDialog)
   }
   const computer = state ? selectedComputer(state) : undefined
+  const captureTerminalSelectionPointer = (
+    event: ReactPointerEvent<HTMLDivElement>
+  ) => {
+    if (
+      event.buttons & 1 &&
+      !event.currentTarget.hasPointerCapture(event.pointerId)
+    ) {
+      event.currentTarget.setPointerCapture(event.pointerId)
+    }
+  }
   const showTitlebar =
     state && !(state.platform === 'darwin' && state.fullscreen)
 
   return (
     <>
       <Titlebar />
+      {terminalSelectionActive && showTitlebar ? (
+        <div
+          className="fixed inset-x-0 top-0 z-30 h-8 [-webkit-app-region:no-drag]"
+          onPointerEnter={captureTerminalSelectionPointer}
+          onPointerMove={captureTerminalSelectionPointer}
+          onPointerUp={() => window.treeportShell.releaseTerminalSelection()}
+          onPointerCancel={() =>
+            window.treeportShell.releaseTerminalSelection()
+          }
+        />
+      ) : null}
       {state?.connection.status === 'ready' && computer ? (
         <webview
           key={computer.origin}

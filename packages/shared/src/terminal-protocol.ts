@@ -8,6 +8,9 @@ export const TERMINAL_OUTPUT_LOW_WATERMARK = 64 * 1024
 export const TERMINAL_OUTPUT_STALL_TIMEOUT_MS = 30_000
 export const TERMINAL_MAX_CLIENT_MESSAGE_BYTES = 128 * 1024
 export const TERMINAL_MAX_INPUT_BYTES = 64 * 1024
+export const TERMINAL_SCROLL_EXIT_SEQUENCE = '\u001b[9000~'
+export const TERMINAL_SELECTION_START_SEQUENCE = '\u001b[9001~'
+export const TERMINAL_SELECTION_STOP_SEQUENCE = '\u001b[9002~'
 
 const terminalId = z.string().min(1).max(128)
 const clientId = z.string().min(1).max(128)

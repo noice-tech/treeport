@@ -161,6 +161,36 @@ test('connects the desktop shell, preserves native behavior, and restores render
       sandbox: true
     })
 
+    await electronApp.evaluate(({ webContents }, expectedOrigin) => {
+      const guest = webContents
+        .getAllWebContents()
+        .find((contents) => contents.getURL().startsWith(expectedOrigin))
+      return guest?.executeJavaScript(`
+        window.__terminalSelectionReleased = false
+        window.treeportDesktop.onTerminalSelectionRelease(() => {
+          window.__terminalSelectionReleased = true
+        })
+        window.treeportDesktop.setTerminalSelectionActive(true)
+      `)
+    }, origin)
+    const shellWidth = await selector.evaluate(() => window.innerWidth)
+    await selector.mouse.move(shellWidth / 2, 100)
+    await selector.mouse.down()
+    await selector.mouse.move(shellWidth - 100, 16)
+    await selector.mouse.move(shellWidth + 100, -50)
+    await selector.mouse.up()
+    await expect
+      .poll(() =>
+        electronApp!.evaluate(({ webContents }, expectedOrigin) => {
+          const guest = webContents
+            .getAllWebContents()
+            .find((contents) => contents.getURL().startsWith(expectedOrigin))
+          return guest?.executeJavaScript('window.__terminalSelectionReleased')
+        }, origin)
+      )
+      .toBe(true)
+    await selector.keyboard.press('Escape')
+
     await electronApp.evaluate(({ shell }) => {
       const scope = globalThis as typeof globalThis & {
         __openedTreeportFilePaths?: string[]
