@@ -12,6 +12,19 @@
         <strong>Code review</strong><span id="summary">Loading context…</span>
       </div>
       <div class="actions">
+        <div id="viewed-progress" aria-label="0 of 0 files viewed">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <circle class="viewed-progress-track" cx="12" cy="12" r="9" />
+            <circle
+              id="viewed-progress-value"
+              cx="12"
+              cy="12"
+              r="9"
+              pathLength="100"
+            />
+          </svg>
+          <span><strong id="viewed-count">0 / 0</strong> viewed</span>
+        </div>
         <span id="comment-status" role="status"></span>
         <div class="comment-navigation" aria-label="Comment navigation">
           <span id="comment-position">0 comments</span>

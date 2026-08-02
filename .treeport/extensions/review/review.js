@@ -46,6 +46,15 @@ const commentPosition = /** @type {HTMLElement} */ (
 const commentStatus = /** @type {HTMLElement} */ (
   document.querySelector('#comment-status')
 )
+const viewedProgress = /** @type {HTMLElement} */ (
+  document.querySelector('#viewed-progress')
+)
+const viewedProgressValue = /** @type {SVGCircleElement} */ (
+  document.querySelector('#viewed-progress-value')
+)
+const viewedCount = /** @type {HTMLElement} */ (
+  document.querySelector('#viewed-count')
+)
 
 /** @type {FileDiff[]} */
 let renderedDiffs = []
@@ -62,6 +71,29 @@ let commentElements = new Map()
 /** @type {string | null} */
 let activeCommentId = null
 let commentSerial = 0
+/** @type {Set<string>} */
+let viewedFiles = new Set()
+/** @type {Set<string>} */
+let collapsedFiles = new Set()
+/** @type {string[]} */
+let renderedFileNames = []
+let fileStateLoaded = false
+/** @type {ReturnType<typeof setTimeout> | null} */
+let copyFeedbackTimer = null
+
+function updateViewedProgress() {
+  const viewedCountValue = renderedFileNames.filter((file) =>
+    viewedFiles.has(file)
+  ).length
+  const total = renderedFileNames.length
+  const percentage = total === 0 ? 0 : (viewedCountValue / total) * 100
+  viewedCount.textContent = `${viewedCountValue} / ${total}`
+  viewedProgress.setAttribute(
+    'aria-label',
+    `${viewedCountValue} of ${total} files viewed`
+  )
+  viewedProgressValue.style.strokeDasharray = `${percentage} 100`
+}
 
 function savedComments() {
   return comments.flatMap((comment) => {
@@ -75,6 +107,11 @@ function savedComments() {
 }
 
 function updateCommentActions() {
+  if (copyFeedbackTimer !== null) {
+    clearTimeout(copyFeedbackTimer)
+    copyFeedbackTimer = null
+  }
+
   const saved = savedComments()
   const count = saved.length
   const activeIndex = saved.findIndex(
@@ -101,8 +138,29 @@ function clearCommentSelection(file) {
   })
 }
 
+/**
+ * @param {string} file
+ * @param {boolean} collapsed
+ */
+function setFileCollapsed(file, collapsed) {
+  if (collapsed) {
+    collapsedFiles.add(file)
+  } else {
+    collapsedFiles.delete(file)
+  }
+
+  const renderer = diffRenderers.get(file)
+  if (!renderer || renderer.options.collapsed === collapsed) {
+    return
+  }
+
+  renderer.setOptions({ ...renderer.options, collapsed })
+  renderer.rerender()
+}
+
 /** @param {ReviewComment} comment */
 function navigateToComment(comment) {
+  setFileCollapsed(comment.file, false)
   activeCommentId = comment.id
   updateCommentActions()
   for (const element of commentElements.values()) {
@@ -191,17 +249,33 @@ function updateAnnotations(file) {
   renderer.rerender()
 }
 
+async function persistViewedFiles() {
+  try {
+    if (viewedFiles.size === 0) {
+      await treeport.storage.delete('review-viewed-files-v1')
+    } else {
+      await treeport.storage.set(
+        'review-viewed-files-v1',
+        [...viewedFiles].sort()
+      )
+    }
+  } catch (error) {
+    commentStatus.textContent =
+      error instanceof Error
+        ? `Could not save: ${error.message}`
+        : 'Could not save viewed files'
+  }
+}
+
 async function persistComments() {
   try {
     const saved = savedComments()
     if (saved.length === 0) {
       await treeport.storage.delete('review-comments-v1')
-      commentStatus.textContent = 'Comments cleared'
       return
     }
 
     await treeport.storage.set('review-comments-v1', saved)
-    commentStatus.textContent = 'Comments saved'
   } catch (error) {
     commentStatus.textContent =
       error instanceof Error
@@ -330,7 +404,8 @@ document.addEventListener('click', (event) => {
 })
 
 document.addEventListener('keydown', (event) => {
-  if (event.key !== 'Escape') {
+  const submit = event.key === 'Enter' && (event.metaKey || event.ctrlKey)
+  if (event.key !== 'Escape' && !submit) {
     return
   }
 
@@ -351,6 +426,15 @@ document.addEventListener('keydown', (event) => {
   }
 
   event.preventDefault()
+  if (submit) {
+    container
+      ?.querySelector('[data-comment-action="save"]')
+      ?.dispatchEvent(
+        new MouseEvent('click', { bubbles: true, composed: true })
+      )
+    return
+  }
+
   cancelCommentDraft(comment)
 })
 
@@ -376,9 +460,20 @@ copyComments.addEventListener('click', () => {
   textarea.select()
   const copied = document.execCommand('copy')
   textarea.remove()
-  commentStatus.textContent = copied
-    ? `Copied ${savedComments().length} comments`
+  const count = savedComments().length
+  copyComments.textContent = copied
+    ? `Copied ${count} ${count === 1 ? 'comment' : 'comments'}`
     : 'Could not copy comments'
+
+  if (copyFeedbackTimer !== null) {
+    clearTimeout(copyFeedbackTimer)
+  }
+
+  copyFeedbackTimer = setTimeout(() => {
+    copyFeedbackTimer = null
+    const currentCount = savedComments().length
+    copyComments.textContent = `Copy comments (${currentCount})`
+  }, 1_500)
 })
 
 /** @param {number} requestedWidth */
@@ -455,6 +550,9 @@ function render(unified) {
     throw new Error('The worktree diff did not contain any file patches')
   }
 
+  renderedFileNames = files.map((file) => file.name)
+  updateViewedProgress()
+
   for (const fileDiff of files) {
     const section = document.createElement('section')
     section.className = 'file-diff'
@@ -464,6 +562,48 @@ function render(unified) {
     const renderer = new FileDiff({
       theme: 'pierre-dark',
       diffStyle: 'unified',
+      collapsed: collapsedFiles.has(fileDiff.name),
+      renderHeaderPrefix: () => {
+        const collapsed = collapsedFiles.has(fileDiff.name)
+        const button = document.createElement('button')
+        button.type = 'button'
+        button.className = 'file-collapse'
+        button.setAttribute(
+          'aria-label',
+          `${collapsed ? 'Expand' : 'Collapse'} ${fileDiff.name}`
+        )
+        button.title = `${collapsed ? 'Expand' : 'Collapse'} file`
+        button.setAttribute('aria-expanded', String(!collapsed))
+        button.innerHTML = collapsed
+          ? '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="m6 3 5 5-5 5" /></svg>'
+          : '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="m3 6 5 5 5-5" /></svg>'
+        button.addEventListener('click', () => {
+          setFileCollapsed(fileDiff.name, !collapsed)
+        })
+        return button
+      },
+      renderHeaderMetadata: () => {
+        const label = document.createElement('label')
+        label.className = 'file-viewed'
+        const checkbox = document.createElement('input')
+        checkbox.type = 'checkbox'
+        checkbox.checked = viewedFiles.has(fileDiff.name)
+        checkbox.setAttribute('aria-label', `Viewed ${fileDiff.name}`)
+        checkbox.addEventListener('change', () => {
+          if (checkbox.checked) {
+            viewedFiles.add(fileDiff.name)
+            setFileCollapsed(fileDiff.name, true)
+          } else {
+            viewedFiles.delete(fileDiff.name)
+            setFileCollapsed(fileDiff.name, false)
+          }
+
+          updateViewedProgress()
+          void persistViewedFiles()
+        })
+        label.append(checkbox, 'Viewed')
+        return label
+      },
       enableGutterUtility: true,
       lineHoverHighlight: 'both',
       onGutterUtilityClick: (range) => {
@@ -557,15 +697,19 @@ async function load() {
   renderedTree = null
   fileSections = new Map()
   diffRenderers = new Map()
+  renderedFileNames = []
+  updateViewedProgress()
   fileTreeContainer.replaceChildren()
   review.innerHTML = '<p class="empty">Reading worktree changes…</p>'
 
   try {
-    const [context, diff, storedComments] = await Promise.all([
-      treeport.context(),
-      treeport.diff(),
-      treeport.storage.get('review-comments-v1')
-    ])
+    const [context, diff, storedComments, storedViewedFiles] =
+      await Promise.all([
+        treeport.context(),
+        treeport.diff(),
+        treeport.storage.get('review-comments-v1'),
+        treeport.storage.get('review-viewed-files-v1')
+      ])
     comments = Array.isArray(storedComments)
       ? storedComments.filter(
           (comment) =>
@@ -579,6 +723,16 @@ async function load() {
             typeof comment.body === 'string'
         )
       : []
+    viewedFiles = new Set(
+      Array.isArray(storedViewedFiles)
+        ? storedViewedFiles.filter((file) => typeof file === 'string')
+        : []
+    )
+    if (!fileStateLoaded) {
+      collapsedFiles = new Set(viewedFiles)
+      fileStateLoaded = true
+    }
+
     updateCommentActions()
     commentStatus.textContent = ''
     summary.textContent = `${context.project.name} / ${context.worktree.name} · ${diff.baseRef}`

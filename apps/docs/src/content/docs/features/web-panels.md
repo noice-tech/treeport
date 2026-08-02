@@ -41,6 +41,6 @@ import { FileDiff } from 'https://esm.sh/@pierre/diffs@1.3.1?bundle'
 
 The package declarations and JSDoc are the authoritative editor contract. The corresponding readable browser runtime remains inspectable at `/api/web-panel-sdk.js` on a running daemon.
 
-The included `.treeport/extensions/review` JavaScript example uses pinned esm.sh builds of `@pierre/diffs` and `@pierre/trees` to render a refreshable review panel with changed-file navigation. Its editable inline comments persist through `treeport.storage`, include previous/next navigation, and can be copied as a `file:line` review list suitable for passing to a developer or coding agent. Repositories should be trusted before loading their extensions.
+The included `.treeport/extensions/review` JavaScript example uses pinned esm.sh builds of `@pierre/diffs` and `@pierre/trees` to render a refreshable review panel with changed-file navigation. Each file can be collapsed or expanded and marked as viewed; viewed files persist, collapse when marked, and expand when unmarked. Editable inline comments also persist through `treeport.storage`, include previous/next navigation, and can be copied as a `file:line` review list suitable for passing to a developer or coding agent. Repositories should be trusted before loading their extensions.
 
 Global and npm-installed extension discovery is not yet available. npm extensions will use their required `package.json` for package identity, but repository-local extensions do not need one.

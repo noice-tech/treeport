@@ -37,6 +37,39 @@ header {
   justify-content: flex-end;
   gap: 0.5rem;
 }
+#viewed-progress {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding-right: 0.85rem;
+  border-right: 1px solid #3f3f46;
+  color: #a1a1aa;
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+#viewed-progress svg {
+  width: 1.35rem;
+  height: 1.35rem;
+  overflow: visible;
+  transform: rotate(-90deg);
+}
+#viewed-progress circle {
+  fill: none;
+  stroke: #8b5cf6;
+  stroke-width: 3;
+  stroke-linecap: round;
+}
+#viewed-progress .viewed-progress-track {
+  stroke: #3f3f46;
+}
+#viewed-progress-value {
+  transition: stroke-dasharray 160ms ease-out;
+}
+#viewed-count {
+  color: #e4e4e7;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
 #comment-status,
 #comment-position {
   color: #a1a1aa;
@@ -93,6 +126,51 @@ button {
 button:disabled {
   opacity: 0.55;
   cursor: wait;
+}
+.file-collapse {
+  display: grid;
+  width: 1.75rem;
+  height: 1.75rem;
+  place-items: center;
+  padding: 0;
+  border-color: transparent;
+  background: transparent;
+}
+.file-collapse:hover,
+.file-collapse:focus-visible {
+  border-color: #52525b;
+  background: #3f3f46;
+}
+.file-collapse svg {
+  width: 1rem;
+  height: 1rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.75;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.file-viewed {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.3rem 0.55rem;
+  border: 1px solid #52525b;
+  border-radius: 0.4rem;
+  color: #d4d4d8;
+  font-size: 0.8rem;
+  line-height: 1;
+  cursor: pointer;
+  user-select: none;
+}
+.file-viewed:hover {
+  background: #3f3f46;
+}
+.file-viewed input {
+  width: 1rem;
+  height: 1rem;
+  margin: 0;
+  accent-color: #a1a1aa;
 }
 .workspace {
   --sidebar-width: clamp(12rem, 22vw, 24rem);
