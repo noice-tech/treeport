@@ -7,7 +7,7 @@ Treeport has an experimental web-panel runtime for trusted repository extensions
 
 Repository extensions live under `.treeport/extensions/<name>/`. Each folder contributes one panel whose entry point is `index.html`; the folder name supplies the panel identity and title, so local extensions need no manifest. Treeport serves the folder's browser-native HTML, CSS, JavaScript modules, and assets from the daemon and runs the panel in an isolated frame, so remote browsers and phones do not need the extension files installed locally.
 
-Open **New panel** from a worktree or press `Cmd/Ctrl+Shift+T` to choose between Shell, terminal presets, and discovered web panels. `Cmd/Ctrl+T` continues to create a Shell directly.
+Open **New panel** from a worktree or press `Cmd/Ctrl+Shift+T` to choose between Shell, terminal presets, and discovered web panels. `Cmd/Ctrl+T` continues to create a Shell directly. Web panels share the numbered workspace shortcuts with terminals, so `Cmd+1` through `Cmd+9` switch to the corresponding sidebar item.
 
 ## Browser SDK
 

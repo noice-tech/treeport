@@ -505,55 +505,82 @@ export function WorkspaceTree({
                         .filter(
                           (panel): panel is WebPanel => panel.kind === 'web'
                         )
-                        .map((panel) => (
-                          <SidebarMenuSubItem
-                            key={panel.id}
-                            className="group/terminal relative min-w-0"
-                          >
-                            <SidebarMenuSubButton
-                              asChild
-                              isActive={selectedWebPanelId === panel.id}
+                        .map((panel, panelIndex) => {
+                          const shortcutIndex =
+                            selectedWorktree?.id === worktree.id &&
+                            worktree.terminals.length + panelIndex < 9
+                              ? worktree.terminals.length + panelIndex + 1
+                              : null
+                          return (
+                            <SidebarMenuSubItem
+                              key={panel.id}
+                              className="group/terminal relative min-w-0"
                             >
-                              <Button
-                                variant="ghost"
-                                type="button"
-                                className={cn(
-                                  'terminal-row grid h-auto min-h-11 w-full min-w-0 grid-cols-[1.25rem_minmax(0,1fr)_2rem] gap-1.5 rounded-md px-2 py-1.5 text-left text-base/5 font-normal min-[701px]:min-h-7 min-[701px]:grid-cols-[1rem_minmax(0,1fr)_1.75rem] min-[701px]:gap-1 min-[701px]:py-0 min-[701px]:text-xs/4',
-                                  selectedWebPanelId === panel.id
-                                    ? 'selected bg-cyan-400/8! text-cyan-50'
-                                    : 'text-zinc-300 hover:bg-white/5 hover:text-zinc-100'
-                                )}
-                                onClick={() => selectWebPanel(panel)}
-                                aria-label={`${panel.title}, web panel`}
+                              <SidebarMenuSubButton
+                                asChild
+                                isActive={selectedWebPanelId === panel.id}
                               >
-                                <WindowIcon
-                                  className="size-4! shrink-0 fill-zinc-500 min-[701px]:size-3.5!"
-                                  aria-hidden="true"
-                                />
-                                <span className="truncate" aria-hidden="true">
-                                  {panel.title}
-                                </span>
-                                <span aria-hidden="true" />
-                              </Button>
-                            </SidebarMenuSubButton>
-                            <div className="absolute inset-y-0 right-0 z-10 flex items-center opacity-0 group-hover/terminal:opacity-100 group-focus-within/terminal:opacity-100 max-[700px]:opacity-100">
-                              <SidebarAction
-                                label={`Close ${panel.title}`}
-                                tooltip="Close web panel"
-                                className="text-zinc-500 hover:bg-transparent hover:text-zinc-200"
-                                onClick={(trigger) =>
-                                  closeWebPanel(panel, trigger)
-                                }
-                              >
-                                <XMarkIcon />
-                              </SidebarAction>
-                            </div>
-                          </SidebarMenuSubItem>
-                        ))}
+                                <Button
+                                  variant="ghost"
+                                  type="button"
+                                  className={cn(
+                                    'terminal-row grid h-auto min-h-11 w-full min-w-0 grid-cols-[1.25rem_minmax(0,1fr)_2rem] gap-1.5 rounded-md px-2 py-1.5 text-left text-base/5 font-normal min-[701px]:min-h-7 min-[701px]:grid-cols-[1rem_minmax(0,1fr)_1.75rem] min-[701px]:gap-1 min-[701px]:py-0 min-[701px]:text-xs/4',
+                                    selectedWebPanelId === panel.id
+                                      ? 'selected bg-cyan-400/8! text-cyan-50'
+                                      : 'text-zinc-300 hover:bg-white/5 hover:text-zinc-100'
+                                  )}
+                                  onClick={() => selectWebPanel(panel)}
+                                  aria-label={`${panel.title}, web panel`}
+                                  aria-keyshortcuts={
+                                    shortcutIndex
+                                      ? `Meta+${shortcutIndex}`
+                                      : undefined
+                                  }
+                                >
+                                  <WindowIcon
+                                    className="size-4! shrink-0 fill-zinc-500 min-[701px]:size-3.5!"
+                                    aria-hidden="true"
+                                  />
+                                  <span className="truncate" aria-hidden="true">
+                                    {panel.title}
+                                  </span>
+                                  {shortcutIndex ? (
+                                    <kbd
+                                      className="justify-self-end font-sans text-[0.6875rem] font-normal text-zinc-500 tabular-nums group-hover/terminal:opacity-0 group-focus-within/terminal:opacity-0 max-[700px]:opacity-0"
+                                      aria-hidden="true"
+                                    >
+                                      ⌘{shortcutIndex}
+                                    </kbd>
+                                  ) : (
+                                    <span aria-hidden="true" />
+                                  )}
+                                </Button>
+                              </SidebarMenuSubButton>
+                              <div className="absolute inset-y-0 right-0 z-10 flex items-center opacity-0 group-hover/terminal:opacity-100 group-focus-within/terminal:opacity-100 max-[700px]:opacity-100">
+                                <SidebarAction
+                                  label={`Close ${panel.title}`}
+                                  tooltip="Close web panel"
+                                  className="text-zinc-500 hover:bg-transparent hover:text-zinc-200"
+                                  onClick={(trigger) =>
+                                    closeWebPanel(panel, trigger)
+                                  }
+                                >
+                                  <XMarkIcon />
+                                </SidebarAction>
+                              </div>
+                            </SidebarMenuSubItem>
+                          )
+                        })}
                       {pendingTerminals
                         .filter((pending) => pending.worktreeId === worktree.id)
                         .map((pending, pendingIndex) => {
-                          const index = worktree.terminals.length + pendingIndex
+                          const webPanelCount = worktree.panels.filter(
+                            (panel) => panel.kind === 'web'
+                          ).length
+                          const index =
+                            worktree.terminals.length +
+                            webPanelCount +
+                            pendingIndex
                           return (
                             <SidebarMenuSubItem
                               key={pending.id}

@@ -318,11 +318,12 @@ describe('HTTP API validation', () => {
 
   it('serves an executable SDK that brokers scoped panel requests', async () => {
     const { app } = fixture()
-    const receive = vi.fn()
+    const listeners = new Map<string, (...args: unknown[]) => unknown>()
     const panelParent = { postMessage: vi.fn() }
     vi.stubGlobal('parent', panelParent)
-    vi.stubGlobal('addEventListener', (_type: string, listener: unknown) =>
-      receive.mockImplementation(listener as (...args: unknown[]) => unknown)
+    vi.stubGlobal('self', globalThis)
+    vi.stubGlobal('addEventListener', (type: string, listener: unknown) =>
+      listeners.set(type, listener as (...args: unknown[]) => unknown)
     )
 
     try {
@@ -346,7 +347,7 @@ describe('HTTP API validation', () => {
       }
       const context = sdk.treeport.context()
       const message = panelParent.postMessage.mock.calls[0]![0]
-      receive({
+      listeners.get('message')!({
         source: panelParent,
         data: {
           source: 'treeport-host-v1',
@@ -377,7 +378,7 @@ describe('HTTP API validation', () => {
         key: 'comments',
         value: [{ line: 12 }]
       })
-      receive({
+      listeners.get('message')!({
         source: panelParent,
         data: {
           source: 'treeport-host-v1',
@@ -386,6 +387,28 @@ describe('HTTP API validation', () => {
         }
       })
       await expect(stored).resolves.toBeUndefined()
+
+      const preventDefault = vi.fn()
+      const stopPropagation = vi.fn()
+      listeners.get('keydown')!({
+        key: '2',
+        metaKey: true,
+        altKey: false,
+        ctrlKey: false,
+        shiftKey: false,
+        preventDefault,
+        stopPropagation
+      })
+      expect(panelParent.postMessage).toHaveBeenLastCalledWith(
+        {
+          source: 'treeport-panel-v1',
+          method: 'workspace.select',
+          index: 1
+        },
+        '*'
+      )
+      expect(preventDefault).toHaveBeenCalledOnce()
+      expect(stopPropagation).toHaveBeenCalledOnce()
     } finally {
       vi.unstubAllGlobals()
     }
@@ -412,8 +435,12 @@ describe('HTTP API validation', () => {
         '/api/web-panels/panel_review/assets/'
       )
       expect(documentResponse.status).toBe(200)
-      expect(await documentResponse.text()).toContain(
+      const documentSource = await documentResponse.text()
+      expect(documentSource).toContain(
         '"@treeport/panel-sdk":"/api/web-panel-sdk.js"'
+      )
+      expect(documentSource).toContain(
+        '<script type="module" src="/api/web-panel-sdk.js"></script>'
       )
 
       const moduleResponse = await app.request(

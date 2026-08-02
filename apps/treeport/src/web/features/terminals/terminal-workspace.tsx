@@ -349,9 +349,7 @@ export function TerminalWorkspace({
   selectedPendingTerminal,
   pendingTerminals,
   loading,
-  dialogOpen,
-  onSelectTerminal,
-  onSelectPendingTerminal
+  dialogOpen
 }: {
   selectedWorktree: WorktreeRecord | null
   selectedTerminal: TerminalRecord | null
@@ -359,8 +357,6 @@ export function TerminalWorkspace({
   pendingTerminals: PendingTerminalCreation[]
   loading: boolean
   dialogOpen: boolean
-  onSelectTerminal: (terminal: TerminalRecord) => void
-  onSelectPendingTerminal: (terminalId: string) => void
 }) {
   const queryClient = useQueryClient()
   const { isMobile, openMobile: drawerOpen } = useSidebar()
@@ -378,8 +374,6 @@ export function TerminalWorkspace({
       autoFocusBlocked={
         dialogOpen || projectSwitcherOpen || (isMobile && drawerOpen)
       }
-      onSelectTerminal={onSelectTerminal}
-      onSelectPendingTerminal={onSelectPendingTerminal}
       onStatusChange={() =>
         void queryClient.invalidateQueries({ queryKey: projectsQueryKey })
       }

@@ -3,7 +3,13 @@ import type { WebPanel } from '@treeport/shared'
 import { apiClient } from '../../api'
 import { cn } from '../../lib/utils'
 
-export function WebPanelWorkspace({ panel }: { panel: WebPanel }) {
+export function WebPanelWorkspace({
+  panel,
+  onSelectWorkspace
+}: {
+  panel: WebPanel
+  onSelectWorkspace: (index: number) => void
+}) {
   const frameRef = useRef<HTMLIFrameElement>(null)
   const [loadedPanelId, setLoadedPanelId] = useState<string | null>(null)
 
@@ -11,13 +17,26 @@ export function WebPanelWorkspace({ panel }: { panel: WebPanel }) {
     const receive = (event: MessageEvent) => {
       if (
         event.source !== frameRef.current?.contentWindow ||
-        event.data?.source !== 'treeport-panel-v1' ||
-        typeof event.data.id !== 'string'
+        event.data?.source !== 'treeport-panel-v1'
       ) {
         return
       }
 
       const method = event.data.method
+      if (
+        method === 'workspace.select' &&
+        Number.isInteger(event.data.index) &&
+        event.data.index >= 0 &&
+        event.data.index <= 8
+      ) {
+        onSelectWorkspace(event.data.index)
+        return
+      }
+
+      if (typeof event.data.id !== 'string') {
+        return
+      }
+
       let request: Promise<unknown>
       if (method === 'context') {
         request = apiClient.webPanelContext(panel.id)
@@ -66,7 +85,7 @@ export function WebPanelWorkspace({ panel }: { panel: WebPanel }) {
     }
     window.addEventListener('message', receive)
     return () => window.removeEventListener('message', receive)
-  }, [panel.id])
+  }, [onSelectWorkspace, panel.id])
 
   return (
     <main

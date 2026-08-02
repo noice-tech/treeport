@@ -3225,6 +3225,34 @@ test.describe('desktop worktree terminal UI', () => {
       /\/projects\/proj_1\/worktrees\/wt_topic\/panels\/panel_1$/
     )
 
+    await expect
+      .poll(() =>
+        page
+          .frames()
+          .some((frame) => frame.url().includes('/api/web-panels/panel_1/'))
+      )
+      .toBe(true)
+    const panelFrame = page
+      .frames()
+      .find((frame) => frame.url().includes('/api/web-panels/panel_1/'))!
+    await panelFrame.evaluate(() =>
+      parent.postMessage(
+        {
+          source: 'treeport-panel-v1',
+          method: 'workspace.select',
+          index: 0
+        },
+        '*'
+      )
+    )
+    await expect(page).toHaveURL(
+      /\/projects\/proj_1\/worktrees\/wt_topic\/terminals\/term_pi$/
+    )
+    await page.keyboard.press('Meta+4')
+    await expect(page).toHaveURL(
+      /\/projects\/proj_1\/worktrees\/wt_topic\/panels\/panel_1$/
+    )
+
     const terminalFromPanelRequest = page.waitForRequest(
       (request) =>
         request.method() === 'POST' &&

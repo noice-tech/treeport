@@ -90,6 +90,30 @@ interface PendingRequest {
 const pending = new Map<string, PendingRequest>()
 let serial = 0
 
+if (parent !== self) {
+  addEventListener(
+    'keydown',
+    (event) => {
+      if (!event.metaKey || event.altKey || event.ctrlKey || event.shiftKey) {
+        return
+      }
+
+      const index = Number(event.key) - 1
+      if (!Number.isInteger(index) || index < 0 || index > 8) {
+        return
+      }
+
+      event.preventDefault()
+      event.stopPropagation()
+      parent.postMessage(
+        { source: 'treeport-panel-v1', method: 'workspace.select', index },
+        '*'
+      )
+    },
+    true
+  )
+}
+
 addEventListener('message', (event: MessageEvent<HostResponse>) => {
   const message = event.data
   if (event.source !== parent || message?.source !== 'treeport-host-v1') {
