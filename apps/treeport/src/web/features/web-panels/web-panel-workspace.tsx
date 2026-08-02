@@ -18,12 +18,34 @@ export function WebPanelWorkspace({ panel }: { panel: WebPanel }) {
       }
 
       const method = event.data.method
-      const request =
-        method === 'context'
-          ? apiClient.webPanelContext(panel.id)
-          : method === 'diff'
-            ? apiClient.webPanelDiff(panel.id)
-            : Promise.reject(new Error('Unsupported Treeport SDK method'))
+      let request: Promise<unknown>
+      if (method === 'context') {
+        request = apiClient.webPanelContext(panel.id)
+      } else if (method === 'diff') {
+        request = apiClient.webPanelDiff(panel.id)
+      } else if (
+        method === 'storage.get' &&
+        typeof event.data.key === 'string'
+      ) {
+        request = apiClient.getWebPanelStorage(panel.id, event.data.key)
+      } else if (
+        method === 'storage.set' &&
+        typeof event.data.key === 'string'
+      ) {
+        request = apiClient
+          .setWebPanelStorage(panel.id, event.data.key, event.data.value)
+          .then(() => undefined)
+      } else if (
+        method === 'storage.delete' &&
+        typeof event.data.key === 'string'
+      ) {
+        request = apiClient
+          .deleteWebPanelStorage(panel.id, event.data.key)
+          .then(() => undefined)
+      } else {
+        request = Promise.reject(new Error('Unsupported Treeport SDK method'))
+      }
+
       void request.then(
         (value) =>
           frameRef.current?.contentWindow?.postMessage(

@@ -586,6 +586,7 @@ async function mockApp(
   let releaseTerminalDelete: (() => void) | null = null
   let failTerminalDelete = false
   let webPanelCreations = 0
+  let webPanelHasStorage = false
   const webPanelContributions = [
     {
       extensionId: 'review',
@@ -1073,6 +1074,14 @@ async function mockApp(
     }
 
     if (
+      /^\/api\/panels\/[^/]+\/storage$/.test(pathname) &&
+      route.request().method() === 'GET'
+    ) {
+      await route.fulfill({ json: { hasData: webPanelHasStorage } })
+      return
+    }
+
+    if (
       /^\/api\/panels\/[^/]+$/.test(pathname) &&
       route.request().method() === 'DELETE'
     ) {
@@ -1255,6 +1264,9 @@ async function mockApp(
     },
     failNextTerminalDelete: () => {
       failTerminalDelete = true
+    },
+    setWebPanelHasStorage: (value: boolean) => {
+      webPanelHasStorage = value
     },
     setRemovePreview: (value: Record<string, unknown>) => {
       removePreviewOverride = value
@@ -3230,14 +3242,35 @@ test.describe('desktop worktree terminal UI', () => {
     await expect(page).toHaveURL(
       /\/projects\/proj_1\/worktrees\/wt_topic\/panels\/panel_1$/
     )
-    const panelDeleteRequest = page.waitForRequest(
-      (request) =>
-        request.method() === 'DELETE' &&
-        new URL(request.url()).pathname === '/api/panels/panel_1'
-    )
+    mocked.setWebPanelHasStorage(true)
     await page.evaluate(() =>
       (window as any).__dispatchDesktopCommand('close-panel')
     )
+    const closePanelDialog = page.getByRole('alertdialog', {
+      name: 'Close Review?'
+    })
+    await expect(closePanelDialog).toContainText(
+      'Closing it permanently deletes that data'
+    )
+    await closePanelDialog.getByRole('button', { name: 'Cancel' }).click()
+    await expect(
+      page.getByRole('button', { name: 'Review, web panel' })
+    ).toBeVisible()
+
+    const panelDeleteRequest = page.waitForRequest((request) => {
+      const url = new URL(request.url())
+      return (
+        request.method() === 'DELETE' &&
+        url.pathname === '/api/panels/panel_1' &&
+        url.searchParams.get('discardStoredData') === 'true'
+      )
+    })
+    await page.evaluate(() =>
+      (window as any).__dispatchDesktopCommand('close-panel')
+    )
+    await closePanelDialog
+      .getByRole('button', { name: 'Close and delete data' })
+      .click()
     await panelDeleteRequest
     await expect(
       page.getByRole('button', { name: 'Review, web panel' })

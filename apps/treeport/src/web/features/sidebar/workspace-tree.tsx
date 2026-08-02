@@ -136,7 +136,7 @@ export interface WorkspaceTreeProps {
   onSelectPendingTerminal: (terminalId: string) => void
   onCloseTerminal: (terminal: TerminalRecord) => void
   onSelectWebPanel: (panel: WebPanel) => void
-  onCloseWebPanel: (panel: WebPanel) => void
+  onCloseWebPanel: (panel: WebPanel, trigger?: HTMLElement) => void
   onSelectWorktree: (worktree: WorktreeRecord) => void
   onPrepareRemoval: (
     worktree: WorktreeRecord,
@@ -541,7 +541,9 @@ export function WorkspaceTree({
                                 label={`Close ${panel.title}`}
                                 tooltip="Close web panel"
                                 className="text-zinc-500 hover:bg-transparent hover:text-zinc-200"
-                                onClick={() => closeWebPanel(panel)}
+                                onClick={(trigger) =>
+                                  closeWebPanel(panel, trigger)
+                                }
                               >
                                 <XMarkIcon />
                               </SidebarAction>

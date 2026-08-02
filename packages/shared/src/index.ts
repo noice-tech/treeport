@@ -2,7 +2,12 @@ import { z } from 'zod'
 import type { WebPanel } from '@treeport/panel-sdk'
 import { terminalSizeSchema } from './terminal-protocol.js'
 
-export type { GitDiff, WebPanel, WebPanelContext } from '@treeport/panel-sdk'
+export type {
+  GitDiff,
+  JsonValue,
+  WebPanel,
+  WebPanelContext
+} from '@treeport/panel-sdk'
 export * from './socket-protocol.js'
 export * from './terminal-protocol.js'
 
@@ -361,6 +366,21 @@ export const updateTerminalSchema = z.object({
 export const createWebPanelSchema = z.object({
   extensionId: z.string().regex(/^[a-z0-9][a-z0-9._-]{0,63}$/),
   contributionId: z.string().regex(/^[a-z0-9][a-z0-9._-]{0,63}$/)
+})
+
+export const webPanelStorageKeySchema = z.string().min(1).max(128)
+
+export const getWebPanelStorageSchema = z.object({
+  key: webPanelStorageKeySchema
+})
+
+export const setWebPanelStorageSchema = z.object({
+  key: webPanelStorageKeySchema,
+  value: z.json()
+})
+
+export const deleteWebPanelStorageSchema = z.object({
+  key: webPanelStorageKeySchema
 })
 
 export const createTerminalPresetSchema = z.object(terminalPresetFields)

@@ -112,6 +112,21 @@ export const webPanels = sqliteTable(
   ]
 )
 
+export const webPanelStorage = sqliteTable(
+  'web_panel_storage',
+  {
+    panelId: text('panel_id')
+      .notNull()
+      .references(() => webPanels.id, { onDelete: 'cascade' }),
+    key: text().notNull(),
+    valueJson: text('value_json').notNull(),
+    updatedAt: text('updated_at').notNull()
+  },
+  (table) => [
+    uniqueIndex('web_panel_storage_panel_key_idx').on(table.panelId, table.key)
+  ]
+)
+
 export const operations = sqliteTable(
   'operations',
   {

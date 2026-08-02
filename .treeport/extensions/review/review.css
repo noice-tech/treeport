@@ -28,8 +28,55 @@ header {
   background: #18181b;
   border-bottom: 1px solid #3f3f46;
 }
-header div {
+.heading {
   display: grid;
+}
+.actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+#comment-status,
+#comment-position {
+  color: #a1a1aa;
+  font-size: 0.8rem;
+}
+#comment-position {
+  width: 5rem;
+  text-align: center;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.comment-navigation {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.comment-navigation-buttons {
+  display: flex;
+}
+.comment-navigation button {
+  display: grid;
+  width: 1.8rem;
+  height: 1.8rem;
+  place-items: center;
+  padding: 0;
+}
+.comment-navigation button:first-child {
+  border-radius: 0.4rem 0 0 0.4rem;
+}
+.comment-navigation button:last-child {
+  margin-left: -1px;
+  border-radius: 0 0.4rem 0.4rem 0;
+}
+.comment-navigation svg {
+  width: 1rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 #summary {
   color: #a1a1aa;
@@ -117,6 +164,53 @@ main {
 }
 .file-diff.selected {
   outline-color: #71717a;
+}
+.review-comment {
+  display: grid;
+  gap: 0.6rem;
+  margin: 0.4rem 0.75rem 0.6rem 3.5rem;
+  padding: 0.75rem;
+  border: 1px solid #52525b;
+  border-radius: 0.4rem;
+  background: #27272a;
+  color: #e4e4e7;
+  font:
+    13px/1.45 Inter,
+    ui-sans-serif,
+    system-ui,
+    sans-serif;
+}
+.review-comment.active {
+  border-color: #a1a1aa;
+  box-shadow: 0 0 0 1px #a1a1aa;
+}
+.review-comment p {
+  margin: 0;
+  white-space: pre-wrap;
+}
+.review-comment textarea {
+  width: 100%;
+  min-height: 5rem;
+  resize: vertical;
+  border: 1px solid #52525b;
+  border-radius: 0.3rem;
+  padding: 0.55rem;
+  background: #18181b;
+  color: inherit;
+  font: inherit;
+}
+.review-comment textarea:focus {
+  border-color: #a1a1aa;
+  outline: none;
+}
+.comment-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.4rem;
+}
+.comment-actions button {
+  padding: 0.3rem 0.6rem;
+  font-size: 0.8rem;
 }
 .empty,
 .error {

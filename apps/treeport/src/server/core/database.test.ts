@@ -141,8 +141,33 @@ describe('SQLite migration and catalog ordering', () => {
       'earlier',
       'later'
     ])
+
+    expect(await database.hasWebPanelStorage('earlier')).toBe(false)
+    await database.setWebPanelStorageValue(
+      'earlier',
+      'comments',
+      '[{"line":12}]',
+      '2026-02-03'
+    )
+    expect(await database.webPanelStorageValue('earlier', 'comments')).toBe(
+      '[{"line":12}]'
+    )
+    expect(await database.hasWebPanelStorage('earlier')).toBe(true)
+    await database.setWebPanelStorageValue(
+      'earlier',
+      'comments',
+      '[{"line":13}]',
+      '2026-02-04'
+    )
+    expect(await database.webPanelStorageValue('earlier', 'comments')).toBe(
+      '[{"line":13}]'
+    )
+
     await database.db.delete(worktrees).where(sql`${worktrees.id} = 'wt'`)
     expect(await database.webPanels('wt')).toEqual([])
+    expect(
+      await database.webPanelStorageValue('earlier', 'comments')
+    ).toBeNull()
   })
 
   it('adopts a version-7 database, preserves catalog data, and snapshots once', async () => {

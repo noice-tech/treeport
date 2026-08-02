@@ -150,6 +150,10 @@ function fixture(webDist = '/missing') {
       baseRef: 'origin/trunk',
       unified: 'diff --git a/a b/a'
     })),
+    hasWebPanelStorage: vi.fn(async () => true),
+    getWebPanelStorage: vi.fn(async () => [{ file: 'src/app.ts', line: 12 }]),
+    setWebPanelStorage: vi.fn(async () => undefined),
+    deleteWebPanelStorage: vi.fn(async () => undefined),
     resolveWebPanelAsset: vi.fn(async () => '/missing'),
     createTerminal: vi.fn(),
     getTerminal: vi.fn(async (id: string) => ({
@@ -257,11 +261,59 @@ describe('HTTP API validation', () => {
     )
     expect(service.getWebPanelDiff).toHaveBeenCalledWith('panel_review')
 
+    expect(
+      await (await app.request('/api/panels/panel_review/storage')).json()
+    ).toEqual({ hasData: true })
+    expect(service.hasWebPanelStorage).toHaveBeenCalledWith('panel_review')
+
+    const stored = await app.request('/api/panels/panel_review/storage', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ key: 'comments', value: [{ line: 12 }] })
+    })
+    expect(stored.status).toBe(200)
+    expect(service.setWebPanelStorage).toHaveBeenCalledWith(
+      'panel_review',
+      'comments',
+      [{ line: 12 }]
+    )
+
+    const restored = await app.request('/api/panels/panel_review/storage/get', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ key: 'comments' })
+    })
+    expect(await restored.json()).toEqual({
+      value: [{ file: 'src/app.ts', line: 12 }]
+    })
+
+    const removedStorage = await app.request(
+      '/api/panels/panel_review/storage',
+      {
+        method: 'DELETE',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ key: 'comments' })
+      }
+    )
+    expect(removedStorage.status).toBe(200)
+    expect(service.deleteWebPanelStorage).toHaveBeenCalledWith(
+      'panel_review',
+      'comments'
+    )
+
     const closed = await app.request('/api/panels/panel_review', {
       method: 'DELETE'
     })
     expect(closed.status).toBe(200)
-    expect(service.deleteWebPanel).toHaveBeenCalledWith('panel_review')
+    expect(service.deleteWebPanel).toHaveBeenCalledWith('panel_review', false)
+
+    await app.request('/api/panels/panel_review?discardStoredData=true', {
+      method: 'DELETE'
+    })
+    expect(service.deleteWebPanel).toHaveBeenLastCalledWith(
+      'panel_review',
+      true
+    )
   })
 
   it('serves an executable SDK that brokers scoped panel requests', async () => {
@@ -287,6 +339,9 @@ describe('HTTP API validation', () => {
         treeport: {
           version: number
           context: () => Promise<unknown>
+          storage: {
+            set: (key: string, value: unknown) => Promise<void>
+          }
         }
       }
       const context = sdk.treeport.context()
@@ -313,6 +368,24 @@ describe('HTTP API validation', () => {
         }),
         '*'
       )
+
+      const stored = sdk.treeport.storage.set('comments', [{ line: 12 }])
+      const storageMessage = panelParent.postMessage.mock.calls[1]![0]
+      expect(storageMessage).toMatchObject({
+        source: 'treeport-panel-v1',
+        method: 'storage.set',
+        key: 'comments',
+        value: [{ line: 12 }]
+      })
+      receive({
+        source: panelParent,
+        data: {
+          source: 'treeport-host-v1',
+          id: storageMessage.id,
+          ok: true
+        }
+      })
+      await expect(stored).resolves.toBeUndefined()
     } finally {
       vi.unstubAllGlobals()
     }

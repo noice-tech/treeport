@@ -8,10 +8,43 @@
   </head>
   <body>
     <header>
-      <div>
+      <div class="heading">
         <strong>Code review</strong><span id="summary">Loading context…</span>
       </div>
-      <button id="refresh" type="button">Refresh</button>
+      <div class="actions">
+        <span id="comment-status" role="status"></span>
+        <div class="comment-navigation" aria-label="Comment navigation">
+          <span id="comment-position">0 comments</span>
+          <div class="comment-navigation-buttons">
+            <button
+              id="previous-comment"
+              type="button"
+              aria-label="Previous comment"
+              title="Previous comment"
+              disabled
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="m4.5 15.75 7.5-7.5 7.5 7.5" />
+              </svg>
+            </button>
+            <button
+              id="next-comment"
+              type="button"
+              aria-label="Next comment"
+              title="Next comment"
+              disabled
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="m19.5 8.25-7.5 7.5-7.5-7.5" />
+              </svg>
+            </button>
+          </div>
+        </div>
+        <button id="copy-comments" type="button" disabled>
+          Copy comments (0)
+        </button>
+        <button id="refresh" type="button">Refresh</button>
+      </div>
     </header>
     <div class="workspace">
       <aside aria-label="Changed files">

@@ -4,6 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import type {
   DirectoryBrowseResponse,
+  JsonValue,
   OperationRecord,
   PrInfo,
   ProjectColor,
@@ -42,6 +43,9 @@ import {
 const now = (): string => new Date().toISOString()
 const id = (prefix: string): string =>
   `${prefix}_${crypto.randomUUID().replaceAll('-', '')}`
+const WEB_PANEL_STORAGE_MAX_ENTRIES = 256
+const WEB_PANEL_STORAGE_MAX_TOTAL_BYTES = 1024 * 1024
+const WEB_PANEL_STORAGE_MAX_VALUE_BYTES = 64 * 1024
 
 interface RemovalCheckoutIdentity {
   path: string
@@ -876,13 +880,27 @@ export class TreeportService {
     return panel
   }
 
-  async deleteWebPanel(panelId: string): Promise<void> {
+  async deleteWebPanel(
+    panelId: string,
+    discardStoredData = false
+  ): Promise<void> {
     const panel = await this.deps.database.webPanel(panelId)
     if (!panel) {
       throw new DomainError('PANEL_NOT_FOUND', 'Panel not found', 404)
     }
 
     await this.requireAvailableWorktree(panel.worktreeId)
+    if (
+      !discardStoredData &&
+      (await this.deps.database.hasWebPanelStorage(panelId))
+    ) {
+      throw new DomainError(
+        'PANEL_HAS_STORED_DATA',
+        'Closing this panel requires confirmation because its saved data will be deleted',
+        409
+      )
+    }
+
     await this.deps.database.deleteWebPanel(panelId)
     this.invalidateProjectsSnapshot()
     this.events.publish('panel.removed', {
@@ -923,6 +941,64 @@ export class TreeportService {
       worktree.path,
       context.project.defaultBranch
     )
+  }
+
+  async hasWebPanelStorage(panelId: string): Promise<boolean> {
+    await this.getWebPanelContext(panelId)
+    return this.deps.database.hasWebPanelStorage(panelId)
+  }
+
+  async getWebPanelStorage(
+    panelId: string,
+    key: string
+  ): Promise<JsonValue | undefined> {
+    await this.getWebPanelContext(panelId)
+    const valueJson = await this.deps.database.webPanelStorageValue(
+      panelId,
+      key
+    )
+    return valueJson === null ? undefined : (JSON.parse(valueJson) as JsonValue)
+  }
+
+  async setWebPanelStorage(
+    panelId: string,
+    key: string,
+    value: JsonValue
+  ): Promise<void> {
+    await this.getWebPanelContext(panelId)
+    const valueJson = JSON.stringify(value)
+    const valueBytes = Buffer.byteLength(valueJson)
+    if (valueBytes > WEB_PANEL_STORAGE_MAX_VALUE_BYTES) {
+      throw new DomainError(
+        'WEB_PANEL_STORAGE_VALUE_TOO_LARGE',
+        'Web panel storage values are limited to 64 KiB',
+        413
+      )
+    }
+
+    const usage = await this.deps.database.webPanelStorageUsage(panelId, key)
+    if (
+      usage.entries >= WEB_PANEL_STORAGE_MAX_ENTRIES ||
+      usage.bytes + valueBytes > WEB_PANEL_STORAGE_MAX_TOTAL_BYTES
+    ) {
+      throw new DomainError(
+        'WEB_PANEL_STORAGE_QUOTA_EXCEEDED',
+        'Web panel storage is limited to 256 values and 1 MiB per panel',
+        413
+      )
+    }
+
+    await this.deps.database.setWebPanelStorageValue(
+      panelId,
+      key,
+      valueJson,
+      now()
+    )
+  }
+
+  async deleteWebPanelStorage(panelId: string, key: string): Promise<void> {
+    await this.getWebPanelContext(panelId)
+    await this.deps.database.deleteWebPanelStorageValue(panelId, key)
   }
 
   async resolveWebPanelAsset(

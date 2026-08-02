@@ -490,6 +490,30 @@ describe('TreeportService with injected command adapters', () => {
     ).rejects.toMatchObject({ code: 'INVALID_ASSET_PATH' })
     expect(await database.webPanel(panel.id)).toEqual(panel)
 
+    expect(
+      await service.getWebPanelStorage(panel.id, 'comments')
+    ).toBeUndefined()
+    expect(await service.hasWebPanelStorage(panel.id)).toBe(false)
+    await service.setWebPanelStorage(panel.id, 'comments', [
+      { file: 'src/app.ts', line: 12, body: 'Handle this case' }
+    ])
+    expect(await service.getWebPanelStorage(panel.id, 'comments')).toEqual([
+      { file: 'src/app.ts', line: 12, body: 'Handle this case' }
+    ])
+    expect(await service.hasWebPanelStorage(panel.id)).toBe(true)
+    await expect(service.deleteWebPanel(panel.id)).rejects.toMatchObject({
+      code: 'PANEL_HAS_STORED_DATA'
+    })
+    expect(await database.webPanel(panel.id)).toEqual(panel)
+    await service.deleteWebPanelStorage(panel.id, 'comments')
+    expect(
+      await service.getWebPanelStorage(panel.id, 'comments')
+    ).toBeUndefined()
+    expect(await service.hasWebPanelStorage(panel.id)).toBe(false)
+    await expect(
+      service.setWebPanelStorage(panel.id, 'too-large', 'x'.repeat(65_537))
+    ).rejects.toMatchObject({ code: 'WEB_PANEL_STORAGE_VALUE_TOO_LARGE' })
+
     await service.deleteWebPanel(panel.id)
     unsubscribe()
     expect(await database.webPanel(panel.id)).toBeNull()

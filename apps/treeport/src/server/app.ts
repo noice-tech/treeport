@@ -14,11 +14,14 @@ import {
   createTerminalSchema,
   createWebPanelSchema,
   deleteTerminalPresetSchema,
+  deleteWebPanelStorageSchema,
   DESKTOP_PROTOCOL_VERSION,
+  getWebPanelStorageSchema,
   createWorktreeSchema,
   registerProjectSchema,
   TERMINAL_MAX_UPLOAD_BYTES,
   removeWorktreeSchema,
+  setWebPanelStorageSchema,
   spawnSchema,
   terminalBellAcknowledgementSchema,
   terminalCaptureQuerySchema,
@@ -366,7 +369,10 @@ export function createApp({
   })
 
   app.delete('/api/panels/:panelId', async (context) => {
-    await service.deleteWebPanel(context.req.param('panelId'))
+    await service.deleteWebPanel(
+      context.req.param('panelId'),
+      context.req.query('discardStoredData') === 'true'
+    )
     return context.json({ ok: true })
   })
 
@@ -381,6 +387,38 @@ export function createApp({
       diff: await service.getWebPanelDiff(context.req.param('panelId'))
     })
   )
+
+  app.get('/api/panels/:panelId/storage', async (context) =>
+    context.json({
+      hasData: await service.hasWebPanelStorage(context.req.param('panelId'))
+    })
+  )
+
+  app.post('/api/panels/:panelId/storage/get', async (context) => {
+    const body = await input(context, getWebPanelStorageSchema)
+    return context.json({
+      value: await service.getWebPanelStorage(
+        context.req.param('panelId'),
+        body.key
+      )
+    })
+  })
+
+  app.put('/api/panels/:panelId/storage', async (context) => {
+    const body = await input(context, setWebPanelStorageSchema)
+    await service.setWebPanelStorage(
+      context.req.param('panelId'),
+      body.key,
+      body.value
+    )
+    return context.json({ ok: true })
+  })
+
+  app.delete('/api/panels/:panelId/storage', async (context) => {
+    const body = await input(context, deleteWebPanelStorageSchema)
+    await service.deleteWebPanelStorage(context.req.param('panelId'), body.key)
+    return context.json({ ok: true })
+  })
 
   app.get('/api/web-panel-sdk.js', async (context) => {
     panelSdkModule ??= fs.readFile(

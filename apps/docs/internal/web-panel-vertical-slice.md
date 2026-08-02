@@ -14,7 +14,7 @@ The fixed entry and its relative static assets are served by the daemon. Absolut
 
 ## Runtime boundary
 
-Frames use `sandbox="allow-scripts"` without `allow-same-origin`. Treeport injects an import map so extensions import `@treeport/panel-sdk` and call `treeport.context()` or `treeport.diff()`. The published SDK package supplies the same-version TypeScript declarations while the daemon serves its browser runtime. The host message bridge accepts only messages from that panel's frame and calls panel-ID-scoped daemon endpoints. The extension receives no credential and no general daemon client.
+Frames use `sandbox="allow-scripts"` without `allow-same-origin`. Treeport injects an import map so extensions import `@treeport/panel-sdk` and call `treeport.context()`, `treeport.diff()`, or the panel-scoped `treeport.storage` JSON key-value API. The published SDK package supplies the same-version TypeScript declarations while the daemon serves its browser runtime. The host message bridge accepts only messages from that panel's frame and calls panel-ID-scoped daemon endpoints. The extension receives no credential and no general daemon client. Storage survives navigation and daemon restarts, has bounded key/value/panel quotas, and cascades away with its panel instance. Before deleting a panel with stored data, clients preflight its storage status and require explicit confirmation; the daemon also rejects unconfirmed deletion so a preflight race cannot discard newly saved data.
 
 The diff is unified text plus base/head metadata. It compares `HEAD` and tracked local changes to the default branch merge base and appends untracked files as additions. Refresh is explicit.
 

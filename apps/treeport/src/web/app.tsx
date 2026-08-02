@@ -10,6 +10,7 @@ import type {
   WorktreeRecord
 } from '@treeport/shared'
 import { TerminalBellNotifications } from './features/notifications/use-bell-notifications'
+import { CloseWebPanelDialog } from './features/web-panels/close-web-panel-dialog'
 import { WebPanelWorkspace } from './features/web-panels/web-panel-workspace'
 import { apiClient } from './api'
 import { OpenProjectDialog } from './features/projects/open-project-dialog'
@@ -62,6 +63,7 @@ type AppDialog =
   | { type: 'panel'; projectId: string; worktreeId: string | null }
   | { type: 'presets' }
   | { type: 'remove'; worktree: WorktreeRecord; preview: RemovePreview }
+  | { type: 'close-web-panel'; panel: WebPanel }
   | null
 
 export default function App() {
@@ -147,8 +149,19 @@ function WorkspaceApp() {
     onError: notifyError
   })
   const closeWebPanel = useMutation({
-    mutationFn: (panel: WebPanel) => apiClient.deleteWebPanel(panel.id),
-    onSuccess: async (_, panel) => {
+    mutationFn: ({
+      panel,
+      discardStoredData = false
+    }: {
+      panel: WebPanel
+      discardStoredData?: boolean
+    }) => apiClient.deleteWebPanel(panel.id, discardStoredData),
+    onSuccess: async (_, { panel }) => {
+      setDialog((current) =>
+        current?.type === 'close-web-panel' && current.panel.id === panel.id
+          ? null
+          : current
+      )
       if (selectedWebPanel?.id === panel.id) {
         const worktree = projects
           .flatMap((project) => project.worktrees)
@@ -165,6 +178,15 @@ function WorkspaceApp() {
     },
     onError: notifyError
   })
+  const requestCloseWebPanel = (panel: WebPanel, trigger?: HTMLElement) => {
+    void apiClient.hasWebPanelStorage(panel.id).then((hasData) => {
+      if (hasData) {
+        openDialog({ type: 'close-web-panel', panel }, trigger)
+      } else {
+        closeWebPanel.mutate({ panel })
+      }
+    }, notifyError)
+  }
   const eventsDisconnected = useProjectEventsBridge(projectsQuery.data)
   const [showSyncDegraded, setShowSyncDegraded] = useState(false)
   const dialogTriggerRef = useRef<HTMLElement | null>(null)
@@ -357,7 +379,7 @@ function WorkspaceApp() {
         })
       } else if (command === 'close-panel') {
         if (selectedWebPanel) {
-          closeWebPanel.mutate(selectedWebPanel)
+          requestCloseWebPanel(selectedWebPanel)
         } else if (
           !terminalWorkflows.selectedPendingTerminal &&
           selectedTerminal
@@ -449,7 +471,7 @@ function WorkspaceApp() {
 
             closeDrawerAfterNavigation()
           }}
-          onCloseWebPanel={(panel) => closeWebPanel.mutate(panel)}
+          onCloseWebPanel={requestCloseWebPanel}
           onSelectWorktree={selectWorktree}
           onPrepareRemoval={prepareRemoval}
           onOpenPanelDialog={(project, worktree, trigger) =>
@@ -556,6 +578,15 @@ function WorkspaceApp() {
         loading={presetsQuery.isPending}
         loadError={presetsQuery.isError}
         onRetry={() => void presetsQuery.refetch()}
+      />
+      <CloseWebPanelDialog
+        panel={dialog?.type === 'close-web-panel' ? dialog.panel : null}
+        busy={closeWebPanel.isPending}
+        onOpenChange={(open) => !open && setDialog(null)}
+        restoreFocusTo={dialogTriggerRef.current}
+        onConfirm={(panel) =>
+          closeWebPanel.mutate({ panel, discardStoredData: true })
+        }
       />
       <RemoveWorktreeDialog
         worktree={dialog?.type === 'remove' ? dialog.worktree : null}

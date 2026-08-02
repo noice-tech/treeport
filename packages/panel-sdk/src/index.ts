@@ -43,13 +43,35 @@ export interface GitDiff {
   unified: string
 }
 
-/** The worktree-scoped, read-only API available to a Treeport web panel. */
+export type JsonValue =
+  | null
+  | boolean
+  | number
+  | string
+  | JsonValue[]
+  | { [key: string]: JsonValue }
+
+/** Durable key-value storage scoped to one panel instance. */
+export interface WebPanelStorage {
+  /** Return a stored JSON value, or undefined when the key does not exist. */
+  get<Value extends JsonValue = JsonValue>(
+    key: string
+  ): Promise<Value | undefined>
+  /** Store a JSON value. Values are limited to 64 KiB. */
+  set(key: string, value: JsonValue): Promise<void>
+  /** Remove a stored value. */
+  delete(key: string): Promise<void>
+}
+
+/** The worktree-scoped API available to a Treeport web panel. */
 export interface TreeportPanelSdk {
   readonly version: 1
   /** Return the identity and Git context for the current panel. */
   context(): Promise<WebPanelContext>
   /** Return the current worktree changes as unified diff text. */
   diff(): Promise<GitDiff>
+  /** Durable storage deleted when this panel instance is closed. */
+  readonly storage: WebPanelStorage
 }
 
 interface HostResponse {
@@ -87,14 +109,20 @@ addEventListener('message', (event: MessageEvent<HostResponse>) => {
   }
 })
 
-function call<Result>(method: 'context' | 'diff'): Promise<Result> {
+function call<Result>(
+  method: 'context' | 'diff' | 'storage.get' | 'storage.set' | 'storage.delete',
+  params?: Record<string, unknown>
+): Promise<Result> {
   return new Promise((resolve, reject) => {
     const id = String(++serial)
     pending.set(id, {
       resolve: (value) => resolve(value as Result),
       reject
     })
-    parent.postMessage({ source: 'treeport-panel-v1', id, method }, '*')
+    parent.postMessage(
+      { source: 'treeport-panel-v1', id, method, ...params },
+      '*'
+    )
   })
 }
 
@@ -102,5 +130,12 @@ function call<Result>(method: 'context' | 'diff'): Promise<Result> {
 export const treeport: TreeportPanelSdk = Object.freeze({
   version: 1,
   context: () => call<WebPanelContext>('context'),
-  diff: () => call<GitDiff>('diff')
+  diff: () => call<GitDiff>('diff'),
+  storage: Object.freeze({
+    get: <Value extends JsonValue = JsonValue>(key: string) =>
+      call<Value | undefined>('storage.get', { key }),
+    set: (key: string, value: JsonValue) =>
+      call<void>('storage.set', { key, value }),
+    delete: (key: string) => call<void>('storage.delete', { key })
+  })
 })
