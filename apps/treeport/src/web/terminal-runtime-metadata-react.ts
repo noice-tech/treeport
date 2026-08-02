@@ -1,4 +1,4 @@
-import { useCallback, useSyncExternalStore } from 'react'
+import { useSyncExternalStore } from 'react'
 import type { TerminalProgress } from '@treeport/shared'
 import { terminalSessions } from './terminal-session'
 import type { TerminalBellMetadata } from './terminal-session-manager'
@@ -44,21 +44,6 @@ function getBellMetadata() {
   }
 
   return bellMetadata
-}
-
-export function useTerminalForegroundProcess(terminalId: string | null) {
-  const getSnapshot = useCallback(
-    () =>
-      terminalId
-        ? terminalSessions.getForegroundProcessSnapshot().has(terminalId)
-        : false,
-    [terminalId]
-  )
-  return useSyncExternalStore(
-    terminalSessions.subscribe,
-    getSnapshot,
-    () => false
-  )
 }
 
 export function useTerminalNavigationMetadata() {

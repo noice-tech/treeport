@@ -469,6 +469,12 @@ describe('HTTP API validation', () => {
       )
       expect(documentResponse.status).toBe(200)
       await expect(documentResponse.text()).resolves.toBe(indexSource)
+      expect(
+        documentResponse.headers
+          .get('content-security-policy')
+          ?.split(';')
+          .map((directive) => directive.trim())
+      ).toContain("script-src * 'unsafe-inline'")
 
       const moduleResponse = await app.request(
         '/api/web-panels/panel_review/assets/panel.js'

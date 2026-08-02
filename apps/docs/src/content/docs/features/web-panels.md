@@ -5,7 +5,7 @@ description: Run repository-provided, worktree-scoped web tools inside Treeport.
 
 Treeport has an experimental runtime for trusted repository-provided web panels. A web panel is persistent and worktree-bound: opening or closing it is synchronized across connected Treeport clients, while the selected panel remains local to each device.
 
-Project-local web panels live under `.treeport/web-panels/<name>/`. Each folder containing `index.html` defines one web-panel definition; the folder name supplies its stable definition identity and humanized title, so project-local panels need no manifest. Treeport serves the folder's browser-native HTML, CSS, JavaScript modules, and assets from the daemon and runs the panel in an isolated frame, so remote browsers and phones do not need the panel files installed locally.
+Project-local web panels live under `.treeport/web-panels/<name>/`. Each folder containing `index.html` defines one web-panel definition; the folder name supplies its stable definition identity and humanized title, so project-local panels need no manifest. Treeport serves the folder's browser-native HTML, CSS, JavaScript modules, and assets from the daemon and runs the panel in an isolated frame, so remote browsers and phones do not need the panel files installed locally. Panels may load scripts from any network origin; they are not limited to a Treeport-selected CDN.
 
 Treeport distinguishes an available web-panel definition from the persistent panel instance created when you launch it. Definitions also carry source provenance, allowing future Treeport packages to provide web panels through the same model as project-local definitions. Package installation and discovery are not implemented yet.
 

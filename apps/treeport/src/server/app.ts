@@ -455,7 +455,7 @@ export function createApp({
     context.header('access-control-allow-origin', '*')
     context.header(
       'content-security-policy',
-      "default-src 'self'; script-src 'self' 'unsafe-inline' https://esm.sh; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; frame-ancestors 'self'"
+      "default-src 'self'; script-src * 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; frame-ancestors 'self'"
     )
     context.header('x-content-type-options', 'nosniff')
     return context.body(body as any)

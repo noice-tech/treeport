@@ -27,7 +27,7 @@ import {
 } from './terminal-session'
 import { useTerminalNavigationMetadata } from './terminal-runtime-metadata-react'
 
-export interface PendingTerminalTab {
+interface PendingTerminalTab {
   id: string
   name: string
 }

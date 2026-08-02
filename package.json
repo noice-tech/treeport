@@ -32,7 +32,6 @@
   "devDependencies": {
     "@playwright/test": "^1.58.2",
     "@stylistic/eslint-plugin": "^5.10.0",
-    "@treeport/panel-sdk": "workspace:*",
     "@treeport/treeport": "workspace:*",
     "@types/node": "^24.10.9",
     "eslint-plugin-react-you-might-not-need-an-effect": "^1.0.1",
