@@ -63,6 +63,12 @@ export interface WebPanelStorage {
   delete(key: string): Promise<void>
 }
 
+/** Keyboard shortcuts Treeport can route to an active web panel. */
+export interface WebPanelShortcuts {
+  /** Run a handler when the user invokes Find with Cmd/Ctrl+F. */
+  onFind(handler: () => void): () => void
+}
+
 /** The worktree-scoped API available to a Treeport web panel. */
 export interface TreeportPanelSdk {
   readonly version: 1
@@ -72,6 +78,8 @@ export interface TreeportPanelSdk {
   diff(): Promise<GitDiff>
   /** Durable storage deleted when this panel instance is closed. */
   readonly storage: WebPanelStorage
+  /** Shortcuts delivered whether focus is in the panel or Treeport host. */
+  readonly shortcuts: WebPanelShortcuts
 }
 
 interface HostResponse {
@@ -82,18 +90,41 @@ interface HostResponse {
   error?: string
 }
 
+interface HostShortcut {
+  source: 'treeport-host-v1'
+  method: 'shortcut'
+  shortcut: 'find'
+}
+
 interface PendingRequest {
   resolve(value: unknown): void
   reject(reason: Error): void
 }
 
 const pending = new Map<string, PendingRequest>()
+const shortcutEvents = new EventTarget()
+let findSubscribers = 0
 let serial = 0
+
+function triggerFindShortcut() {
+  shortcutEvents.dispatchEvent(new Event('find'))
+}
 
 if (parent !== self) {
   addEventListener(
     'keydown',
     (event) => {
+      const find =
+        event.key.toLowerCase() === 'f' &&
+        (event.metaKey || event.ctrlKey) &&
+        !event.altKey
+      if (find && findSubscribers > 0) {
+        event.preventDefault()
+        event.stopPropagation()
+        triggerFindShortcut()
+        return
+      }
+
       if (!event.metaKey || event.altKey || event.ctrlKey || event.shiftKey) {
         return
       }
@@ -114,24 +145,35 @@ if (parent !== self) {
   )
 }
 
-addEventListener('message', (event: MessageEvent<HostResponse>) => {
-  const message = event.data
-  if (event.source !== parent || message?.source !== 'treeport-host-v1') {
-    return
-  }
+addEventListener(
+  'message',
+  (event: MessageEvent<HostResponse | HostShortcut>) => {
+    const message = event.data
+    if (event.source !== parent || message?.source !== 'treeport-host-v1') {
+      return
+    }
 
-  const request = pending.get(message.id)
-  if (!request) {
-    return
-  }
+    if ('method' in message) {
+      if (message.method === 'shortcut' && message.shortcut === 'find') {
+        triggerFindShortcut()
+      }
 
-  pending.delete(message.id)
-  if (message.ok) {
-    request.resolve(message.value)
-  } else {
-    request.reject(new Error(message.error || 'Treeport request failed'))
+      return
+    }
+
+    const request = pending.get(message.id)
+    if (!request) {
+      return
+    }
+
+    pending.delete(message.id)
+    if (message.ok) {
+      request.resolve(message.value)
+    } else {
+      request.reject(new Error(message.error || 'Treeport request failed'))
+    }
   }
-})
+)
 
 function call<Result>(
   method: 'context' | 'diff' | 'storage.get' | 'storage.set' | 'storage.delete',
@@ -161,5 +203,23 @@ export const treeport: TreeportPanelSdk = Object.freeze({
     set: (key: string, value: JsonValue) =>
       call<void>('storage.set', { key, value }),
     delete: (key: string) => call<void>('storage.delete', { key })
+  }),
+  shortcuts: Object.freeze({
+    onFind: (handler: () => void) => {
+      const listener = () => handler()
+      let subscribed = true
+      findSubscribers += 1
+      shortcutEvents.addEventListener('find', listener)
+
+      return () => {
+        if (!subscribed) {
+          return
+        }
+
+        subscribed = false
+        findSubscribers -= 1
+        shortcutEvents.removeEventListener('find', listener)
+      }
+    }
   })
 })

@@ -3237,8 +3237,36 @@ test.describe('desktop worktree terminal UI', () => {
       .find((frame) => frame.url().includes('/api/web-panels/panel_1/'))!
     await panelFrame.evaluate(() => {
       document.body.textContent = 'Unsaved panel draft'
+      let findRequests = 0
+      window.addEventListener('message', (event) => {
+        if (
+          event.source !== parent ||
+          event.data?.source !== 'treeport-host-v1' ||
+          event.data.method !== 'shortcut' ||
+          event.data.shortcut !== 'find'
+        ) {
+          return
+        }
+
+        findRequests += 1
+        let status = document.querySelector('[role="status"]')
+        if (!status) {
+          status = document.createElement('div')
+          status.setAttribute('role', 'status')
+          document.body.append(status)
+        }
+
+        status.textContent = `Find requested ${findRequests} time${findRequests === 1 ? '' : 's'}`
+      })
     })
     await expect(panelFrame.getByText('Unsaved panel draft')).toBeVisible()
+
+    await page.getByRole('button', { name: 'Review, web panel' }).focus()
+    await page.keyboard.press('Meta+f')
+    await expect(panelFrame.getByRole('status')).toHaveText(
+      'Find requested 1 time'
+    )
+
     await panelFrame.evaluate(() =>
       parent.postMessage(
         {

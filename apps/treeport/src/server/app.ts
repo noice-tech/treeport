@@ -152,7 +152,6 @@ export function createApp({
     )
   })
   let terminalUploadQueue = Promise.resolve()
-  let panelSdkModule: Promise<string> | null = null
 
   app.onError((error, context) => {
     if (error instanceof DomainError) {
@@ -421,13 +420,13 @@ export function createApp({
   })
 
   app.get('/api/web-panel-sdk.js', async (context) => {
-    panelSdkModule ??= fs.readFile(
+    const panelSdkModule = await fs.readFile(
       fileURLToPath(import.meta.resolve('@treeport/panel-sdk')),
       'utf8'
     )
     context.header('content-type', 'text/javascript; charset=utf-8')
     context.header('access-control-allow-origin', '*')
-    return context.body(await panelSdkModule)
+    return context.body(panelSdkModule)
   })
 
   app.get('/api/web-panels/:panelId/assets/*', async (context) => {

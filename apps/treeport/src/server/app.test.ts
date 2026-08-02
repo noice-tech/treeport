@@ -343,6 +343,9 @@ describe('HTTP API validation', () => {
           storage: {
             set: (key: string, value: unknown) => Promise<void>
           }
+          shortcuts: {
+            onFind: (handler: () => void) => () => void
+          }
         }
       }
       const context = sdk.treeport.context()
@@ -387,6 +390,44 @@ describe('HTTP API validation', () => {
         }
       })
       await expect(stored).resolves.toBeUndefined()
+
+      const findHandler = vi.fn()
+      const unsubscribeFind = sdk.treeport.shortcuts.onFind(findHandler)
+      const preventFindDefault = vi.fn()
+      const stopFindPropagation = vi.fn()
+      listeners.get('keydown')!({
+        key: 'f',
+        metaKey: true,
+        altKey: false,
+        ctrlKey: false,
+        shiftKey: false,
+        preventDefault: preventFindDefault,
+        stopPropagation: stopFindPropagation
+      })
+      expect(findHandler).toHaveBeenCalledOnce()
+      expect(preventFindDefault).toHaveBeenCalledOnce()
+      expect(stopFindPropagation).toHaveBeenCalledOnce()
+
+      listeners.get('message')!({
+        source: panelParent,
+        data: {
+          source: 'treeport-host-v1',
+          method: 'shortcut',
+          shortcut: 'find'
+        }
+      })
+      expect(findHandler).toHaveBeenCalledTimes(2)
+
+      unsubscribeFind()
+      listeners.get('message')!({
+        source: panelParent,
+        data: {
+          source: 'treeport-host-v1',
+          method: 'shortcut',
+          shortcut: 'find'
+        }
+      })
+      expect(findHandler).toHaveBeenCalledTimes(2)
 
       const preventDefault = vi.fn()
       const stopPropagation = vi.fn()

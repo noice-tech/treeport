@@ -19,6 +19,7 @@ body {
   overflow: hidden;
 }
 header {
+  position: relative;
   z-index: 2;
   display: flex;
   align-items: center;
@@ -115,6 +116,73 @@ header {
   color: #a1a1aa;
   font-size: 0.8rem;
 }
+#find-bar {
+  position: absolute;
+  top: calc(100% + 0.5rem);
+  right: 1rem;
+  display: flex;
+  width: min(30rem, calc(100vw - 2rem));
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem;
+  border: 1px solid #52525b;
+  border-radius: 0.5rem;
+  background: #18181b;
+  box-shadow: 0 0.75rem 2rem rgb(0 0 0 / 45%);
+}
+#find-bar[hidden] {
+  display: none;
+}
+#find-input {
+  min-width: 0;
+  height: 2rem;
+  flex: 1;
+  padding: 0 0.6rem;
+  border: 1px solid #52525b;
+  border-radius: 0.35rem;
+  outline: none;
+  background: #09090b;
+  color: inherit;
+  font: inherit;
+}
+#find-input:focus-visible {
+  border-color: #a1a1aa;
+  box-shadow: 0 0 0 1px #a1a1aa;
+}
+#find-position {
+  width: 4.5rem;
+  color: #a1a1aa;
+  font-size: 0.8rem;
+  text-align: center;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.find-navigation {
+  display: flex;
+}
+#find-bar button {
+  display: grid;
+  width: 2rem;
+  height: 2rem;
+  place-items: center;
+  padding: 0;
+}
+.find-navigation button:first-child {
+  border-radius: 0.35rem 0 0 0.35rem;
+}
+.find-navigation button:last-child {
+  margin-left: -1px;
+  border-radius: 0 0.35rem 0.35rem 0;
+}
+#find-bar svg {
+  width: 1rem;
+  height: 1rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
 button {
   border: 1px solid #52525b;
   border-radius: 0.4rem;
@@ -198,6 +266,7 @@ aside h2 {
 }
 #file-tree {
   min-height: 0;
+  --trees-padding-inline-override: 0px;
   --trees-theme-list-bg: #18181b;
   --trees-theme-list-active-selection-bg: #3f3f46;
   --trees-theme-list-hover-bg: #27272a;

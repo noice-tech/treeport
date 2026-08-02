@@ -17,6 +17,40 @@ export function WebPanelWorkspace({
   const [loadedPanelId, setLoadedPanelId] = useState<string | null>(null)
 
   useEffect(() => {
+    if (!active) {
+      return
+    }
+
+    const forwardFindShortcut = (event: KeyboardEvent) => {
+      if (
+        event.key.toLowerCase() !== 'f' ||
+        (!event.metaKey && !event.ctrlKey) ||
+        event.altKey ||
+        document.querySelector('[role="dialog"]')
+      ) {
+        return
+      }
+
+      event.preventDefault()
+      const panelWindow =
+        frameRef.current?.contentWindow ?? panelWindowRef.current
+
+      panelWindow?.postMessage(
+        {
+          source: 'treeport-host-v1',
+          method: 'shortcut',
+          shortcut: 'find'
+        },
+        '*'
+      )
+    }
+
+    window.addEventListener('keydown', forwardFindShortcut, true)
+    return () =>
+      window.removeEventListener('keydown', forwardFindShortcut, true)
+  }, [active])
+
+  useEffect(() => {
     const receive = (event: MessageEvent) => {
       const panelWindow =
         frameRef.current?.contentWindow ?? panelWindowRef.current

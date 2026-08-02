@@ -16,6 +16,16 @@ import { treeport } from '@treeport/panel-sdk'
  * @property {string} [originalBody]
  */
 
+/**
+ * @typedef {object} SearchableLine
+ * @property {string} file
+ * @property {'additions' | 'deletions'} side
+ * @property {number} lineNumber
+ * @property {string} text
+ */
+
+/** @typedef {SearchableLine & { start: number, length: number }} FindMatch */
+
 const workspace = /** @type {HTMLElement} */ (
   document.querySelector('.workspace')
 )
@@ -55,6 +65,22 @@ const viewedProgressValue = /** @type {SVGCircleElement} */ (
 const viewedCount = /** @type {HTMLElement} */ (
   document.querySelector('#viewed-count')
 )
+const findBar = /** @type {HTMLElement} */ (document.querySelector('#find-bar'))
+const findInput = /** @type {HTMLInputElement} */ (
+  document.querySelector('#find-input')
+)
+const findPosition = /** @type {HTMLElement} */ (
+  document.querySelector('#find-position')
+)
+const previousFindMatch = /** @type {HTMLButtonElement} */ (
+  document.querySelector('#previous-find-match')
+)
+const nextFindMatch = /** @type {HTMLButtonElement} */ (
+  document.querySelector('#next-find-match')
+)
+const closeFind = /** @type {HTMLButtonElement} */ (
+  document.querySelector('#close-find')
+)
 
 /** @type {FileDiff[]} */
 let renderedDiffs = []
@@ -80,6 +106,13 @@ let renderedFileNames = []
 let fileStateLoaded = false
 /** @type {ReturnType<typeof setTimeout> | null} */
 let copyFeedbackTimer = null
+/** @type {SearchableLine[]} */
+let searchableLines = []
+/** @type {FindMatch[]} */
+let findMatches = []
+let activeFindMatch = -1
+/** @type {HTMLElement | null} */
+let findReturnFocus = null
 
 function updateViewedProgress() {
   const viewedCountValue = renderedFileNames.filter((file) =>
@@ -156,6 +189,175 @@ function setFileCollapsed(file, collapsed) {
 
   renderer.setOptions({ ...renderer.options, collapsed })
   renderer.rerender()
+}
+
+function clearFindHighlights() {
+  CSS.highlights?.delete('review-find-matches')
+  CSS.highlights?.delete('review-find-active')
+  activeFindMatch = -1
+}
+
+function updateFindActions() {
+  const count = findMatches.length
+
+  findPosition.textContent =
+    activeFindMatch === -1
+      ? `0 of ${count}`
+      : `${activeFindMatch + 1} of ${count}`
+  previousFindMatch.disabled = count === 0
+  nextFindMatch.disabled = count === 0
+}
+
+/**
+ * Pierre does not expose text ranges for rendered lines. Keep its open shadow
+ * DOM adaptation isolated here so the rest of find operates on parsed diffs.
+ * @param {FindMatch | undefined} match
+ */
+function createPierreRenderedMatchRange(match) {
+  if (!match) {
+    return null
+  }
+
+  const section = fileSections.get(match.file)
+  const fileContainer = section?.firstElementChild
+  const sideSelector =
+    match.side === 'deletions'
+      ? '[data-line-type="change-deletion"]'
+      : ':not([data-line-type="change-deletion"])'
+  const line =
+    fileContainer instanceof HTMLElement
+      ? fileContainer.shadowRoot?.querySelector(
+          `[data-line="${match.lineNumber}"]${sideSelector}`
+        )
+      : null
+  if (!(line instanceof HTMLElement)) {
+    return null
+  }
+
+  const range = new Range()
+  const walker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT)
+  let offset = 0
+  let startNode = null
+  let startOffset = 0
+  let endNode = null
+  let endOffset = 0
+  while (walker.nextNode()) {
+    const node = walker.currentNode
+    const length = node.textContent?.length ?? 0
+
+    if (startNode === null && match.start <= offset + length) {
+      startNode = node
+      startOffset = match.start - offset
+    }
+
+    if (match.start + match.length <= offset + length) {
+      endNode = node
+      endOffset = match.start + match.length - offset
+      break
+    }
+
+    offset += length
+  }
+  if (startNode === null || endNode === null) {
+    return null
+  }
+
+  range.setStart(startNode, startOffset)
+  range.setEnd(endNode, endOffset)
+  return range
+}
+
+function updateFindHighlights() {
+  if (!CSS.highlights) {
+    return
+  }
+
+  const ranges = findMatches
+    .map(createPierreRenderedMatchRange)
+    .filter((range) => range !== null)
+  CSS.highlights.set('review-find-matches', new Highlight(...ranges))
+  const activeRange = createPierreRenderedMatchRange(
+    findMatches[activeFindMatch]
+  )
+  if (activeRange) {
+    CSS.highlights.set('review-find-active', new Highlight(activeRange))
+  } else {
+    CSS.highlights.delete('review-find-active')
+  }
+}
+
+/** @param {number} index */
+function navigateToFindMatch(index) {
+  if (findMatches.length === 0) {
+    return
+  }
+
+  activeFindMatch = (index + findMatches.length) % findMatches.length
+  const match = findMatches[activeFindMatch]
+
+  setFileCollapsed(match.file, false)
+
+  const section = fileSections.get(match.file)
+  for (const candidate of fileSections.values()) {
+    candidate.classList.toggle('selected', candidate === section)
+  }
+
+  updateFindActions()
+  requestAnimationFrame(() => {
+    updateFindHighlights()
+    const range = createPierreRenderedMatchRange(match)
+    const line = range?.startContainer.parentElement?.closest('[data-line]')
+    if (line instanceof HTMLElement) {
+      line.scrollIntoView({ block: 'center' })
+    } else {
+      section?.scrollIntoView({ block: 'start' })
+    }
+  })
+}
+
+function updateFindResults() {
+  clearFindHighlights()
+  const query = findInput.value.toLocaleLowerCase()
+  findMatches = query
+    ? searchableLines.flatMap((line) => {
+        const matches = []
+        const text = line.text.toLocaleLowerCase()
+        let start = text.indexOf(query)
+        while (start !== -1) {
+          matches.push({ ...line, start, length: query.length })
+          start = text.indexOf(query, start + query.length)
+        }
+        return matches
+      })
+    : []
+  updateFindActions()
+  if (findMatches.length > 0) {
+    navigateToFindMatch(0)
+  }
+}
+
+function openFindBar() {
+  if (findBar.hidden) {
+    findReturnFocus =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null
+    findBar.hidden = false
+  }
+
+  findInput.focus()
+  findInput.select()
+}
+
+function closeFindBar() {
+  clearFindHighlights()
+  updateFindActions()
+  findBar.hidden = true
+  if (findReturnFocus?.isConnected) {
+    findReturnFocus.focus()
+  }
+
+  findReturnFocus = null
 }
 
 /** @param {ReviewComment} comment */
@@ -403,7 +605,29 @@ document.addEventListener('click', (event) => {
   }
 })
 
+findInput.addEventListener('input', updateFindResults)
+findInput.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') {
+    event.preventDefault()
+    navigateToFindMatch(activeFindMatch + (event.shiftKey ? -1 : 1))
+  }
+})
+previousFindMatch.addEventListener('click', () => {
+  navigateToFindMatch(activeFindMatch - 1)
+})
+nextFindMatch.addEventListener('click', () => {
+  navigateToFindMatch(activeFindMatch + 1)
+})
+closeFind.addEventListener('click', closeFindBar)
+treeport.shortcuts.onFind(openFindBar)
+
 document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && !findBar.hidden) {
+    event.preventDefault()
+    closeFindBar()
+    return
+  }
+
   const submit = event.key === 'Enter' && (event.metaKey || event.ctrlKey)
   if (event.key !== 'Escape' && !submit) {
     return
@@ -570,6 +794,7 @@ requestAnimationFrame(() => {
 /** @param {string} unified */
 function render(unified) {
   review.replaceChildren()
+  searchableLines = []
 
   if (!unified) {
     const empty = document.createElement('p')
@@ -588,6 +813,48 @@ function render(unified) {
   updateViewedProgress()
 
   for (const fileDiff of files) {
+    for (const hunk of fileDiff.hunks) {
+      let additionLineNumber = hunk.additionStart
+      let deletionLineNumber = hunk.deletionStart
+      for (const content of hunk.hunkContent) {
+        if (content.type === 'context') {
+          for (let index = 0; index < content.lines; index += 1) {
+            searchableLines.push({
+              file: fileDiff.name,
+              side: 'additions',
+              lineNumber: additionLineNumber + index,
+              text:
+                fileDiff.additionLines[content.additionLineIndex + index] ?? ''
+            })
+          }
+          additionLineNumber += content.lines
+          deletionLineNumber += content.lines
+          continue
+        }
+
+        for (let index = 0; index < content.deletions; index += 1) {
+          searchableLines.push({
+            file: fileDiff.name,
+            side: 'deletions',
+            lineNumber: deletionLineNumber + index,
+            text:
+              fileDiff.deletionLines[content.deletionLineIndex + index] ?? ''
+          })
+        }
+        for (let index = 0; index < content.additions; index += 1) {
+          searchableLines.push({
+            file: fileDiff.name,
+            side: 'additions',
+            lineNumber: additionLineNumber + index,
+            text:
+              fileDiff.additionLines[content.additionLineIndex + index] ?? ''
+          })
+        }
+        additionLineNumber += content.additions
+        deletionLineNumber += content.deletions
+      }
+    }
+
     const section = document.createElement('section')
     section.className = 'file-diff'
     review.append(section)
@@ -597,6 +864,14 @@ function render(unified) {
       theme: 'pierre-dark',
       diffStyle: 'unified',
       collapsed: collapsedFiles.has(fileDiff.name),
+      unsafeCSS: `
+        ::highlight(review-find-matches) {
+          background: rgb(250 204 21 / 30%);
+        }
+        ::highlight(review-find-active) {
+          background: rgb(251 146 60 / 75%);
+        }
+      `,
       renderHeaderPrefix: () => {
         const collapsed = collapsedFiles.has(fileDiff.name)
         const button = document.createElement('button')
@@ -729,10 +1004,17 @@ function render(unified) {
     }
   })
   renderedTree.render({ fileTreeContainer })
+  if (!findBar.hidden) {
+    updateFindResults()
+  }
 }
 
 async function load() {
   refresh.disabled = true
+  clearFindHighlights()
+  searchableLines = []
+  findMatches = []
+  updateFindActions()
   for (const diff of renderedDiffs) {
     diff.cleanUp()
   }
