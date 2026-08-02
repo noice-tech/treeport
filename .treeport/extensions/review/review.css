@@ -235,6 +235,8 @@ main {
 }
 .file-diff {
   min-width: 0;
+  content-visibility: auto;
+  contain-intrinsic-block-size: auto 8rem;
   scroll-margin-top: 1rem;
   border-radius: 0.5rem;
   outline: 2px solid transparent;

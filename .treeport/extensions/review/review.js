@@ -476,9 +476,14 @@ copyComments.addEventListener('click', () => {
   }, 1_500)
 })
 
-/** @param {number} requestedWidth */
-function setSidebarWidth(requestedWidth) {
-  const maximumWidth = Math.max(160, workspace.clientWidth - 320)
+/**
+ * @param {number} requestedWidth
+ * @param {number} [maximumWidth]
+ */
+function setSidebarWidth(
+  requestedWidth,
+  maximumWidth = Math.max(160, workspace.clientWidth - 320)
+) {
   const width = Math.round(
     Math.min(maximumWidth, Math.max(160, requestedWidth))
   )
@@ -487,11 +492,35 @@ function setSidebarWidth(requestedWidth) {
   resizeHandle.setAttribute('aria-valuemax', String(maximumWidth))
 }
 
+let resizeWorkspaceLeft = 0
+let resizeMaximumWidth = 160
+/** @type {number | null} */
+let pendingSidebarWidth = null
+/** @type {number | null} */
+let sidebarResizeFrame = null
+
+function applyPendingSidebarWidth() {
+  if (sidebarResizeFrame !== null) {
+    cancelAnimationFrame(sidebarResizeFrame)
+    sidebarResizeFrame = null
+  }
+
+  if (pendingSidebarWidth === null) {
+    return
+  }
+
+  setSidebarWidth(pendingSidebarWidth, resizeMaximumWidth)
+  pendingSidebarWidth = null
+}
+
 resizeHandle.addEventListener('pointerdown', (event) => {
   if (event.button !== 0) {
     return
   }
 
+  const bounds = workspace.getBoundingClientRect()
+  resizeWorkspaceLeft = bounds.left
+  resizeMaximumWidth = Math.max(160, bounds.width - 320)
   resizeHandle.setPointerCapture(event.pointerId)
   resizeHandle.classList.add('resizing')
   document.body.classList.add('resizing')
@@ -501,9 +530,14 @@ resizeHandle.addEventListener('pointermove', (event) => {
     return
   }
 
-  setSidebarWidth(event.clientX - workspace.getBoundingClientRect().left)
+  pendingSidebarWidth = event.clientX - resizeWorkspaceLeft
+  if (sidebarResizeFrame === null) {
+    sidebarResizeFrame = requestAnimationFrame(applyPendingSidebarWidth)
+  }
 })
 resizeHandle.addEventListener('pointerup', (event) => {
+  pendingSidebarWidth = event.clientX - resizeWorkspaceLeft
+  applyPendingSidebarWidth()
   resizeHandle.releasePointerCapture(event.pointerId)
 })
 resizeHandle.addEventListener('lostpointercapture', () => {
@@ -665,6 +699,16 @@ function render(unified) {
     initialExpansion: 'open',
     flattenEmptyDirectories: true,
     density: 'compact',
+    unsafeCSS: `
+      [data-truncate-marker] {
+        opacity: 0 !important;
+      }
+      @container measure (height > calc(1lh + 1px)) {
+        [data-truncate-marker] {
+          opacity: 1 !important;
+        }
+      }
+    `,
     search: true,
     fileTreeSearchMode: 'hide-non-matches',
     onSelectionChange: () => {
