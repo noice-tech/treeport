@@ -865,6 +865,15 @@ function render(unified) {
       diffStyle: 'unified',
       collapsed: collapsedFiles.has(fileDiff.name),
       unsafeCSS: `
+        [data-diffs-header] {
+          position: sticky;
+          top: -1rem;
+          z-index: 2;
+        }
+        [data-change-icon] {
+          width: 0.875rem;
+          height: 0.875rem;
+        }
         ::highlight(review-find-matches) {
           background: rgb(250 204 21 / 30%);
         }
