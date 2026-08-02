@@ -3323,9 +3323,10 @@ test.describe('desktop worktree terminal UI', () => {
         url.searchParams.get('discardStoredData') === 'true'
       )
     })
-    await page.evaluate(() =>
-      (window as any).__dispatchDesktopCommand('close-panel')
-    )
+    await page
+      .getByRole('button', { name: 'Review, web panel' })
+      .click({ button: 'middle' })
+    await expect(closePanelDialog).toBeVisible()
     await closePanelDialog
       .getByRole('button', { name: 'Close and delete data' })
       .click()
