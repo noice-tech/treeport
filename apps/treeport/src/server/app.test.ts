@@ -455,16 +455,15 @@ describe('HTTP API validation', () => {
     }
   })
 
-  it('serves panel HTML with the typed SDK import', async () => {
+  it('serves panel HTML unchanged with browser-native modules', async () => {
     const { app, config, service } = fixture()
     const panelRoot = path.join(config.runtimeDir, 'typed-panel')
     const indexPath = path.join(panelRoot, 'index.html')
     const modulePath = path.join(panelRoot, 'panel.js')
+    const indexSource =
+      '<!doctype html><html><head><script type="importmap">{"imports":{"@treeport/panel-sdk":"/api/web-panel-sdk.js"}}</script></head><body><script type="module" src="panel.js"></script></body></html>'
     await fs.mkdir(panelRoot, { recursive: true })
-    await fs.writeFile(
-      indexPath,
-      '<!doctype html><html><head></head><body><script type="module" src="panel.js"></script></body></html>'
-    )
+    await fs.writeFile(indexPath, indexSource)
     await fs.writeFile(modulePath, 'export const answer = 42')
     vi.mocked(service.resolveWebPanelAsset).mockImplementation(
       async (_panelId, requestedPath) =>
@@ -476,13 +475,7 @@ describe('HTTP API validation', () => {
         '/api/web-panels/panel_review/assets/'
       )
       expect(documentResponse.status).toBe(200)
-      const documentSource = await documentResponse.text()
-      expect(documentSource).toContain(
-        '"@treeport/panel-sdk":"/api/web-panel-sdk.js"'
-      )
-      expect(documentSource).toContain(
-        '<script type="module" src="/api/web-panel-sdk.js"></script>'
-      )
+      await expect(documentResponse.text()).resolves.toBe(indexSource)
 
       const moduleResponse = await app.request(
         '/api/web-panels/panel_review/assets/panel.js'

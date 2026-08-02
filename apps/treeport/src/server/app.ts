@@ -442,19 +442,9 @@ export function createApp({
       requestedPath
     )
     const extension = path.extname(assetPath).toLowerCase()
-    const source = await fs.readFile(assetPath)
-    let body: string | Buffer = source
+    const body = await fs.readFile(assetPath)
     let mime = 'application/octet-stream'
     if (extension === '.html') {
-      const importMap = `<script type="importmap">{"imports":{"@treeport/panel-sdk":"/api/web-panel-sdk.js"}}</script>`
-      const panelRuntime = `<script type="module" src="/api/web-panel-sdk.js"></script>`
-      const html = source.toString('utf8')
-      body = /<head(?:\s[^>]*)?>/i.test(html)
-        ? html.replace(
-            /<head(?:\s[^>]*)?>/i,
-            (head) => `${head}${importMap}${panelRuntime}`
-          )
-        : `${importMap}${panelRuntime}${html}`
       mime = 'text/html; charset=utf-8'
     } else if (extension === '.js' || extension === '.mjs') {
       mime = 'text/javascript; charset=utf-8'

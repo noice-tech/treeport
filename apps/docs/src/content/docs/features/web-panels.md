@@ -19,7 +19,20 @@ Optionally add the SDK package as a development dependency so editors and coding
 pnpm add --save-dev @treeport/panel-sdk
 ```
 
-Treeport and `@treeport/panel-sdk` always use the same release version. The package is needed only for editor tooling; Treeport provides the browser runtime. Import it from a JavaScript module:
+Treeport and `@treeport/panel-sdk` always use the same release version. The package supplies editor tooling and types, while Treeport serves the matching browser runtime. Treeport does not modify extension HTML, so map the package import to that runtime explicitly in `index.html`, before loading any module scripts:
+
+```html
+<script type="importmap">
+  {
+    "imports": {
+      "@treeport/panel-sdk": "/api/web-panel-sdk.js"
+    }
+  }
+</script>
+<script type="module" src="./panel.js"></script>
+```
+
+The panel module can then use the same import understood by the installed package and the browser:
 
 ```js
 import { treeport } from '@treeport/panel-sdk'
@@ -47,7 +60,7 @@ Panel source is not transpiled or bundled. Use browser-native JavaScript and dir
 import { FileDiff } from 'https://esm.sh/@pierre/diffs@1.3.1?bundle'
 ```
 
-The package declarations and JSDoc are the authoritative editor contract. The corresponding readable browser runtime remains inspectable at `/api/web-panel-sdk.js` on a running daemon.
+The package declarations and JSDoc are the authoritative editor contract. The corresponding readable browser runtime remains inspectable at `/api/web-panel-sdk.js` on a running daemon. Importing the SDK module activates iframe-local platform shortcuts, including numbered workspace switching, so panels using those facilities must include the import map and import the SDK.
 
 The included `.treeport/extensions/review` JavaScript example uses pinned esm.sh builds of `@pierre/diffs` and `@pierre/trees` to render a refreshable review panel with changed-file navigation. Press `Cmd/Ctrl+F` to find and navigate matching text across changed lines. Each file can be collapsed or expanded and marked as viewed; viewed files persist, collapse when marked, and expand when unmarked. Editable inline comments also persist through `treeport.storage`, include previous/next navigation, and can be copied as a `file:line` review list suitable for passing to a developer or coding agent. Repositories should be trusted before loading their extensions.
 
