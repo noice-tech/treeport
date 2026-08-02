@@ -114,7 +114,7 @@ set -g bell-action any
 set -g visual-bell off
 set -g mouse on
 set -g destroy-unattached off
-set -g mode-style reverse
+set -g mode-style "bg=#1f1f22"
 set -s set-clipboard external
 set -s user-keys[0] "${TMUX_SCROLL_EXIT_KEY}"
 set -s user-keys[1] "${TMUX_SELECTION_START_KEY}"
