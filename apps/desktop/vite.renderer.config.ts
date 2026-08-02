@@ -10,9 +10,6 @@ const configuredRendererPort = Number.parseInt(
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
-  optimizeDeps: {
-    exclude: ['@radix-ui/react-dialog', '@radix-ui/react-dropdown-menu']
-  },
   resolve: {
     preserveSymlinks: false
   },
