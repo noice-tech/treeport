@@ -115,7 +115,7 @@ export function activateTerminalLink(event: MouseEvent, url: string): void {
   }
 }
 
-export function forcePlainSelectionWhileMouseReporting(
+function forcePlainSelectionWhileMouseReporting(
   event: MouseEvent,
   terminal: Terminal
 ): void {
