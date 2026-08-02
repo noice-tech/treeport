@@ -14,6 +14,8 @@ const productEventTypeSchema = z.enum([
   'terminal.removed',
   'terminal.metadata',
   'terminal.controller_changed',
+  'panel.created',
+  'panel.removed',
   'remove.started',
   'remove.completed',
   'remove.failed'
@@ -26,9 +28,20 @@ export const productEventSchema = z.strictObject({
   data: z.record(z.string(), z.unknown())
 })
 
+const webPanelSnapshotSchema = z.strictObject({
+  id: z.string().min(1),
+  kind: z.literal('web'),
+  worktreeId: z.string().min(1),
+  definitionId: z.string().min(1),
+  title: z.string().min(1),
+  createdAt: z.string(),
+  updatedAt: z.string()
+})
+
 export const eventsSnapshotSchema = z.strictObject({
   at: z.string().datetime(),
-  terminalMetadata: z.array(terminalRuntimeMetadataSchema)
+  terminalMetadata: z.array(terminalRuntimeMetadataSchema),
+  webPanels: z.array(webPanelSnapshotSchema)
 })
 
 export type EventsSnapshot = z.infer<typeof eventsSnapshotSchema>

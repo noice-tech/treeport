@@ -9,6 +9,11 @@ import type {
   TerminalPreset,
   TerminalRecord,
   TerminalSize,
+  WebPanel,
+  WebPanelContext,
+  WebPanelDefinition,
+  GitDiff,
+  JsonValue,
   WorktreeRecord
 } from '@treeport/shared'
 
@@ -146,6 +151,48 @@ export const apiClient = {
         initialTerminal,
         ...(sourceWorktreeId ? { sourceWorktreeId } : {})
       })
+    }),
+  webPanelDefinitions: async (worktreeId: string) =>
+    (
+      await api<{ definitions: WebPanelDefinition[] }>(
+        `/api/worktrees/${worktreeId}/web-panel-definitions`
+      )
+    ).definitions,
+  createWebPanel: async (worktreeId: string, definitionId: string) =>
+    (
+      await api<{ panel: WebPanel }>(`/api/worktrees/${worktreeId}/panels`, {
+        method: 'POST',
+        body: JSON.stringify({ definitionId })
+      })
+    ).panel,
+  deleteWebPanel: async (panelId: string, discardStoredData = false) =>
+    api<{ ok: true }>(
+      `/api/panels/${panelId}${discardStoredData ? '?discardStoredData=true' : ''}`,
+      { method: 'DELETE' }
+    ),
+  webPanelContext: async (panelId: string) =>
+    (await api<{ context: WebPanelContext }>(`/api/panels/${panelId}/context`))
+      .context,
+  webPanelDiff: async (panelId: string) =>
+    (await api<{ diff: GitDiff }>(`/api/panels/${panelId}/diff`)).diff,
+  hasWebPanelStorage: async (panelId: string) =>
+    (await api<{ hasData: boolean }>(`/api/panels/${panelId}/storage`)).hasData,
+  getWebPanelStorage: async (panelId: string, key: string) =>
+    (
+      await api<{ value?: JsonValue }>(`/api/panels/${panelId}/storage/get`, {
+        method: 'POST',
+        body: JSON.stringify({ key })
+      })
+    ).value,
+  setWebPanelStorage: async (panelId: string, key: string, value: JsonValue) =>
+    api<{ ok: true }>(`/api/panels/${panelId}/storage`, {
+      method: 'PUT',
+      body: JSON.stringify({ key, value })
+    }),
+  deleteWebPanelStorage: async (panelId: string, key: string) =>
+    api<{ ok: true }>(`/api/panels/${panelId}/storage`, {
+      method: 'DELETE',
+      body: JSON.stringify({ key })
     }),
   createTerminal: async (
     worktreeId: string,

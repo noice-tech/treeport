@@ -90,6 +90,42 @@ export const worktrees = sqliteTable(
   ]
 )
 
+export const webPanels = sqliteTable(
+  'web_panels',
+  {
+    id: text().primaryKey(),
+    worktreeId: text('worktree_id')
+      .notNull()
+      .references(() => worktrees.id, { onDelete: 'cascade' }),
+    definitionId: text('definition_id').notNull(),
+    title: text().notNull(),
+    createdAt: text('created_at').notNull(),
+    updatedAt: text('updated_at').notNull()
+  },
+  (table) => [
+    index('web_panels_worktree_order_idx').on(
+      table.worktreeId,
+      table.createdAt,
+      table.id
+    )
+  ]
+)
+
+export const webPanelStorage = sqliteTable(
+  'web_panel_storage',
+  {
+    panelId: text('panel_id')
+      .notNull()
+      .references(() => webPanels.id, { onDelete: 'cascade' }),
+    key: text().notNull(),
+    valueJson: text('value_json').notNull(),
+    updatedAt: text('updated_at').notNull()
+  },
+  (table) => [
+    uniqueIndex('web_panel_storage_panel_key_idx').on(table.panelId, table.key)
+  ]
+)
+
 export const operations = sqliteTable(
   'operations',
   {

@@ -44,6 +44,58 @@ describe('GitAdapter', () => {
     expect(runner.calls[0]?.cwd).toBe(await fs.realpath(nested))
   })
 
+  it('returns committed, tracked local, and untracked changes from the default merge base', async () => {
+    const runner = new FakeRunner((request) => {
+      const [command, ...args] = request.args
+      if (command === 'rev-parse' && args[0] === '--verify') {
+        return args[0] === '--verify' && args[1] === 'origin/trunk^{commit}'
+          ? { stdout: 'default\n', stderr: '', exitCode: 0 }
+          : { stdout: 'head\n', stderr: '', exitCode: 0 }
+      }
+
+      if (command === 'merge-base') {
+        return { stdout: 'base\n', stderr: '', exitCode: 0 }
+      }
+
+      if (command === 'diff' && args[0] === '--no-ext-diff') {
+        return {
+          stdout: 'diff --git a/tracked b/tracked\n',
+          stderr: '',
+          exitCode: 0
+        }
+      }
+
+      if (command === 'ls-files') {
+        return { stdout: 'new file.txt\0', stderr: '', exitCode: 0 }
+      }
+
+      if (command === 'diff' && args[0] === '--no-index') {
+        return {
+          stdout: 'diff --git a/new file.txt b/new file.txt\n',
+          stderr: '',
+          exitCode: 1
+        }
+      }
+
+      throw new Error(`Unexpected command ${request.args.join(' ')}`)
+    })
+    const result = await new GitAdapter(runner).worktreeDiff('/repo', 'trunk')
+    expect(result).toMatchObject({
+      baseRef: 'origin/trunk',
+      baseCommit: 'base',
+      headCommit: 'head'
+    })
+    expect(result.unified).toContain('diff --git a/tracked b/tracked')
+    expect(result.unified).toContain('diff --git a/new file.txt b/new file.txt')
+    expect(
+      runner.calls
+        .find(
+          (call) => call.args[0] === 'diff' && call.args[1] === '--no-ext-diff'
+        )
+        ?.args.at(-1)
+    ).toBe('base')
+  })
+
   it('uses the first porcelain worktree as the main checkout', async () => {
     const main = await fs.mkdtemp(path.join(os.tmpdir(), 'treeport main '))
     const linked = await fs.mkdtemp(path.join(os.tmpdir(), 'treeport linked '))

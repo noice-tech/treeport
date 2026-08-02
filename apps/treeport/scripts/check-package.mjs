@@ -15,7 +15,11 @@ const dependencies = {
   ...manifest.optionalDependencies
 }
 for (const [name, version] of Object.entries(dependencies)) {
-  if (String(version).startsWith('workspace:')) {
+  if (!String(version).startsWith('workspace:')) {
+    continue
+  }
+
+  if (name !== '@treeport/panel-sdk' || version !== 'workspace:*') {
     throw new Error(`Published dependency ${name} uses ${version}`)
   }
 }

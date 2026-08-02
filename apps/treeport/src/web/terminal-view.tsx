@@ -27,7 +27,7 @@ import {
 } from './terminal-session'
 import { useTerminalNavigationMetadata } from './terminal-runtime-metadata-react'
 
-export interface PendingTerminalTab {
+interface PendingTerminalTab {
   id: string
   name: string
 }
@@ -39,8 +39,6 @@ interface TerminalViewProps {
   selectedPendingTerminalId: string | null
   loading: boolean
   autoFocusBlocked: boolean
-  onSelectTerminal: (terminal: TerminalRecord) => void
-  onSelectPendingTerminal: (terminalId: string) => void
   onStatusChange: () => void
 }
 
@@ -66,8 +64,6 @@ export function TerminalView({
   selectedPendingTerminalId,
   loading,
   autoFocusBlocked,
-  onSelectTerminal,
-  onSelectPendingTerminal,
   onStatusChange
 }: TerminalViewProps) {
   const shellRef = useRef<HTMLElement>(null)
@@ -279,61 +275,6 @@ export function TerminalView({
   const visibleTitle = terminal
     ? runtimeTitles.get(terminal.id) || terminal.name
     : (selectedPendingTerminal?.name ?? '')
-  const terminals = worktree?.terminals ?? []
-
-  useEffect(() => {
-    // Mod+W stays browser-owned here; reserve it for Electron, where we can override the window accelerator.
-    const keydown = (event: KeyboardEvent) => {
-      if (
-        !event.metaKey ||
-        event.altKey ||
-        event.ctrlKey ||
-        event.shiftKey ||
-        autoFocusBlocked ||
-        shellRef.current?.closest('[inert]')
-      ) {
-        return
-      }
-
-      const index = Number(event.key) - 1
-      if (!Number.isInteger(index) || index < 0 || index > 8) {
-        return
-      }
-
-      const nextTerminal = terminals[index]
-      const nextPendingTerminal = pendingTerminals[index - terminals.length]
-      if (!nextTerminal && !nextPendingTerminal) {
-        return
-      }
-
-      event.preventDefault()
-      event.stopPropagation()
-      if (nextPendingTerminal) {
-        onSelectPendingTerminal(nextPendingTerminal.id)
-        return
-      }
-
-      if (!nextTerminal) {
-        return
-      }
-
-      if (activeSession && activeSession.terminalId === nextTerminal.id) {
-        activeSession.focus()
-      }
-
-      onSelectTerminal(nextTerminal)
-    }
-    document.addEventListener('keydown', keydown, true)
-    return () => document.removeEventListener('keydown', keydown, true)
-  }, [
-    activeSession,
-    autoFocusBlocked,
-    onSelectPendingTerminal,
-    onSelectTerminal,
-    pendingTerminals,
-    terminals
-  ])
-
   return (
     <main
       ref={shellRef}
@@ -522,7 +463,7 @@ export function TerminalView({
             </h1>
             <p className="max-w-[52ch] text-base text-pretty text-zinc-400 sm:text-sm">
               {worktree
-                ? 'Use New terminal in the sidebar to start a login shell or preset.'
+                ? 'Use New panel in the sidebar to start a login shell, preset, or web panel.'
                 : 'Select a worktree from the sidebar to view its terminals.'}
             </p>
           </div>

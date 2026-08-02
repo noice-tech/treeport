@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Review</title>
+    <script type="importmap">
+      {
+        "imports": {
+          "@treeport/panel-sdk": "/api/web-panel-sdk.js"
+        }
+      }
+    </script>
+    <link rel="stylesheet" href="review.css" />
+  </head>
+  <body>
+    <header>
+      <div class="heading">
+        <strong>Code review</strong><span id="summary">Loading context…</span>
+      </div>
+      <div class="actions">
+        <div id="viewed-progress" aria-label="0 of 0 files viewed">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <circle class="viewed-progress-track" cx="12" cy="12" r="9" />
+            <circle
+              id="viewed-progress-value"
+              cx="12"
+              cy="12"
+              r="9"
+              pathLength="100"
+            />
+          </svg>
+          <span><strong id="viewed-count">0 / 0</strong> viewed</span>
+        </div>
+        <span id="comment-status" role="status"></span>
+        <div class="comment-navigation" aria-label="Comment navigation">
+          <span id="comment-position">0 comments</span>
+          <div class="comment-navigation-buttons">
+            <button
+              id="previous-comment"
+              type="button"
+              aria-label="Previous comment"
+              title="Previous comment"
+              disabled
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="m4.5 15.75 7.5-7.5 7.5 7.5" />
+              </svg>
+            </button>
+            <button
+              id="next-comment"
+              type="button"
+              aria-label="Next comment"
+              title="Next comment"
+              disabled
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="m19.5 8.25-7.5 7.5-7.5-7.5" />
+              </svg>
+            </button>
+          </div>
+        </div>
+        <button id="copy-comments" type="button" disabled>
+          Copy comments (0)
+        </button>
+        <button id="refresh" type="button">Refresh</button>
+      </div>
+      <div
+        id="find-bar"
+        role="search"
+        aria-label="Find in changed lines"
+        hidden
+      >
+        <input
+          id="find-input"
+          type="search"
+          aria-label="Find in changed lines"
+          placeholder="Find in changed lines"
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <span id="find-position" role="status">0 of 0</span>
+        <div class="find-navigation">
+          <button
+            id="previous-find-match"
+            type="button"
+            aria-label="Previous match"
+            title="Previous match"
+            disabled
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="m4.5 15.75 7.5-7.5 7.5 7.5" />
+            </svg>
+          </button>
+          <button
+            id="next-find-match"
+            type="button"
+            aria-label="Next match"
+            title="Next match"
+            disabled
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="m19.5 8.25-7.5 7.5-7.5-7.5" />
+            </svg>
+          </button>
+        </div>
+        <button
+          id="close-find"
+          type="button"
+          aria-label="Close find"
+          title="Close find"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M6 6l12 12M18 6 6 18" />
+          </svg>
+        </button>
+      </div>
+    </header>
+    <div class="workspace">
+      <aside aria-label="Changed files">
+        <h2>Changed files</h2>
+        <div id="file-tree"></div>
+      </aside>
+      <div
+        id="resize-handle"
+        role="separator"
+        aria-label="Resize changed files"
+        aria-orientation="vertical"
+        aria-valuemin="160"
+        tabindex="0"
+      ></div>
+      <main id="review" aria-live="polite"><p>Loading diff…</p></main>
+    </div>
+    <script type="module" src="review.js"></script>
+  </body>
+</html>

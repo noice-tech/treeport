@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest'
 import type { ProjectRecord } from '@treeport/shared'
 import {
   deepestProjectTarget,
+  panelTarget,
   resolveWorkspaceRoute,
   targetForProject,
+  targetForWebPanel,
   targetForWorktree,
   terminalTarget,
   worktreeTarget
@@ -22,6 +24,15 @@ function projectGraph(): ProjectRecord[] {
           terminals: [
             { id: 'terminal-a', worktreeId: 'worktree-a', name: 'A terminal' },
             { id: 'terminal-b', worktreeId: 'worktree-a', name: 'B terminal' }
+          ],
+          panels: [
+            {
+              id: 'panel-a',
+              kind: 'web',
+              worktreeId: 'worktree-a',
+              definitionId: 'project:review',
+              title: 'Review'
+            }
           ]
         }
       ]
@@ -61,6 +72,27 @@ describe('workspace route resolution', () => {
       canonical: true,
       selection: { project: { id: 'project-empty' }, worktree: null }
     })
+  })
+
+  it('selects a web panel without also selecting a terminal and repairs stale panel routes', () => {
+    const projects = projectGraph()
+    const panel = projects[0]!.worktrees[0]!.panels.find(
+      (candidate) => candidate.kind === 'web'
+    )!
+    const target = panelTarget('project-a', 'worktree-a', 'panel-a')
+
+    expect(resolveWorkspaceRoute(projects, target.pathname)).toMatchObject({
+      canonical: true,
+      target,
+      selection: { terminal: null, panel: { id: 'panel-a' } }
+    })
+    expect(targetForWebPanel(projects, panel)).toEqual(target)
+    expect(
+      resolveWorkspaceRoute(
+        projects,
+        '/projects/project-a/worktrees/worktree-a/panels/missing'
+      ).target
+    ).toEqual(terminalTarget('project-a', 'worktree-a', 'terminal-a'))
   })
 
   it('repairs mismatched descendants within the deepest valid ancestor', () => {
@@ -149,5 +181,11 @@ describe('workspace route resolution', () => {
       canonical: true,
       target
     })
+    expect(
+      resolveWorkspaceRoute(
+        projects,
+        '/projects/project-a/worktrees/worktree-empty/panels/missing'
+      ).target
+    ).toEqual(target)
   })
 })

@@ -3,7 +3,7 @@ title: Terminal presets
 description: Save the terminal commands you use in every worktree.
 ---
 
-Terminal presets are named commands you can start from the **New terminal** menu in any worktree. They make repeated setup quick without changing how your tools work.
+Terminal presets are named commands you can start from the **New panel** picker in any worktree. They make repeated setup quick without changing how your tools work.
 
 For example:
 
@@ -16,7 +16,7 @@ For example:
 
 ## Create a preset
 
-Open **New terminal**, then choose **Manage presets**. Give the preset a name and the command to run. Treeport saves it for future terminals in any project and worktree.
+Open **New panel**, then choose **Manage presets**. Give the preset a name and the command to run. Treeport saves it for future terminals in any project and worktree.
 
 A preset starts as a normal terminal in the selected worktree. Its program keeps its usual terminal interface, and persistent programs remain available to reconnect to.
 

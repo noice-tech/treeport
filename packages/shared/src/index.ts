@@ -1,6 +1,13 @@
 import { z } from 'zod'
+import type { WebPanel } from '@treeport/panel-sdk'
 import { terminalSizeSchema } from './terminal-protocol.js'
 
+export type {
+  GitDiff,
+  JsonValue,
+  WebPanel,
+  WebPanelContext
+} from '@treeport/panel-sdk'
 export * from './socket-protocol.js'
 export * from './terminal-protocol.js'
 
@@ -71,6 +78,28 @@ export interface TerminalCapture {
   content: string
 }
 
+export interface TerminalPanel {
+  id: string
+  kind: 'terminal'
+  worktreeId: string
+  terminalId: string
+  title: string
+  createdAt: string
+  updatedAt: string
+}
+
+export type Panel = TerminalPanel | WebPanel
+
+export type WebPanelSource =
+  | { type: 'project' }
+  | { type: 'package'; packageId: string }
+
+export interface WebPanelDefinition {
+  id: string
+  title: string
+  source: WebPanelSource
+}
+
 export interface WorktreeRecord {
   id: string
   projectId: string
@@ -90,6 +119,7 @@ export interface WorktreeRecord {
   pr: PrInfo
   dirty: DirtyState | null
   terminals: TerminalRecord[]
+  panels: Panel[]
   createdAt: string
   updatedAt: string
 }
@@ -337,6 +367,25 @@ export const updateTerminalSchema = z.object({
   name: terminalNameSchema
 })
 
+export const createWebPanelSchema = z.object({
+  definitionId: z.string().min(1).max(256)
+})
+
+export const webPanelStorageKeySchema = z.string().min(1).max(128)
+
+export const getWebPanelStorageSchema = z.object({
+  key: webPanelStorageKeySchema
+})
+
+export const setWebPanelStorageSchema = z.object({
+  key: webPanelStorageKeySchema,
+  value: z.json()
+})
+
+export const deleteWebPanelStorageSchema = z.object({
+  key: webPanelStorageKeySchema
+})
+
 export const createTerminalPresetSchema = z.object(terminalPresetFields)
 
 export const updateTerminalPresetSchema = z.object({
@@ -385,6 +434,8 @@ export type ProductEventType =
   | 'terminal.removed'
   | 'terminal.metadata'
   | 'terminal.controller_changed'
+  | 'panel.created'
+  | 'panel.removed'
   | 'remove.started'
   | 'remove.completed'
   | 'remove.failed'

@@ -49,6 +49,10 @@ export default defineConfig({
             { label: 'Terminal presets', slug: 'features/terminal-presets' },
             { label: 'Remote access', slug: 'features/remote-access' },
             {
+              label: 'Web panels (experimental)',
+              slug: 'features/web-panels'
+            },
+            {
               label: 'Attention and progress',
               slug: 'features/attention-and-progress'
             },

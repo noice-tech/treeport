@@ -50,13 +50,21 @@ if (
 }
 
 const packageManifestPath = 'apps/treeport/package.json'
+const panelSdkManifestPath = 'packages/panel-sdk/package.json'
 const installerManifestPath = 'apps/docs/public/install-manifest.json'
 const installerPath = 'apps/docs/public/install.sh'
 const packageManifest = JSON.parse(readFileSync(packageManifestPath, 'utf8'))
+const panelSdkManifest = JSON.parse(readFileSync(panelSdkManifestPath, 'utf8'))
 const currentVersion = parseVersion(packageManifest.version)
 if (!currentVersion) {
   fail(
     `The current package version is not canonical: ${packageManifest.version}`
+  )
+}
+
+if (panelSdkManifest.version !== packageManifest.version) {
+  fail(
+    `${panelSdkManifest.name} (${panelSdkManifest.version}) and ${packageManifest.name} (${packageManifest.version}) must have the same version`
   )
 }
 
@@ -86,11 +94,20 @@ try {
 
 const expectedFiles = []
 if (packageManifest.version !== version) {
-  expectedFiles.push(packageManifestPath)
   packageManifest.version = version
+  expectedFiles.push(packageManifestPath)
   writeFileSync(
     packageManifestPath,
     `${JSON.stringify(packageManifest, null, 2)}\n`
+  )
+}
+
+if (panelSdkManifest.version !== version) {
+  expectedFiles.push(panelSdkManifestPath)
+  panelSdkManifest.version = version
+  writeFileSync(
+    panelSdkManifestPath,
+    `${JSON.stringify(panelSdkManifest, null, 2)}\n`
   )
 }
 

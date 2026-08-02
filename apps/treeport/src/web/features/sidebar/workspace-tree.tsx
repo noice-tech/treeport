@@ -4,11 +4,13 @@ import {
   ArrowPathIcon,
   PlusIcon,
   TrashIcon,
+  WindowIcon,
   XMarkIcon
 } from '@heroicons/react/16/solid'
 import type {
   ProjectRecord,
   TerminalRecord,
+  WebPanel,
   WorktreeRecord
 } from '@treeport/shared'
 import { Button } from '../../components/ui/button'
@@ -120,6 +122,7 @@ export interface WorkspaceTreeProps {
   selectedWorktree: WorktreeRecord | null
   selectedTerminalId: string | null
   selectedPendingTerminalId: string | null
+  selectedWebPanelId: string | null
   pendingTerminals: Array<{
     id: string
     projectId: string
@@ -132,12 +135,14 @@ export interface WorkspaceTreeProps {
   onSelectTerminal: (terminal: TerminalRecord) => void
   onSelectPendingTerminal: (terminalId: string) => void
   onCloseTerminal: (terminal: TerminalRecord) => void
+  onSelectWebPanel: (panel: WebPanel) => void
+  onCloseWebPanel: (panel: WebPanel, trigger?: HTMLElement) => void
   onSelectWorktree: (worktree: WorktreeRecord) => void
   onPrepareRemoval: (
     worktree: WorktreeRecord,
     trigger: HTMLElement
   ) => Promise<void>
-  onOpenTerminalDialog: (
+  onOpenPanelDialog: (
     project: ProjectRecord,
     worktree: WorktreeRecord | null,
     trigger: HTMLElement
@@ -154,6 +159,7 @@ export function WorkspaceTree({
   selectedWorktree,
   selectedTerminalId,
   selectedPendingTerminalId,
+  selectedWebPanelId,
   pendingTerminals,
   pendingWorktrees,
   pendingRemovals,
@@ -161,9 +167,11 @@ export function WorkspaceTree({
   onSelectTerminal: selectTerminal,
   onSelectPendingTerminal: selectPendingTerminal,
   onCloseTerminal: closeTerminal,
+  onSelectWebPanel: selectWebPanel,
+  onCloseWebPanel: closeWebPanel,
   onSelectWorktree: selectWorktree,
   onPrepareRemoval: prepareRemoval,
-  onOpenTerminalDialog,
+  onOpenPanelDialog,
   onOpenWorktreeDialog
 }: WorkspaceTreeProps) {
   const {
@@ -177,7 +185,7 @@ export function WorkspaceTree({
       ? '⌘N'
       : 'Ctrl+N'
     : null
-  const newTerminalMenuShortcut = desktopBridge
+  const newPanelShortcut = desktopBridge
     ? desktopBridge.platform === 'darwin'
       ? '⌘⇧T'
       : 'Ctrl+Shift+T'
@@ -307,13 +315,13 @@ export function WorkspaceTree({
                           {selectedWorktree?.id === worktree.id ? (
                             <div className="worktree-actions absolute inset-y-0 right-0 z-10 flex items-center max-[700px]:static max-[700px]:shrink-0">
                               <SidebarAction
-                                label={`New terminal in ${worktree.name}`}
-                                tooltip={`New terminal in ${worktree.name}${
-                                  newTerminalMenuShortcut
-                                    ? ` — ${newTerminalMenuShortcut}`
+                                label={`New panel in ${worktree.name}`}
+                                tooltip={`New panel in ${worktree.name}${
+                                  newPanelShortcut
+                                    ? ` — ${newPanelShortcut}`
                                     : ''
                                 }`}
-                                {...(newTerminalMenuShortcut
+                                {...(newPanelShortcut
                                   ? {
                                       keyShortcuts:
                                         desktopBridge?.platform === 'darwin'
@@ -323,11 +331,7 @@ export function WorkspaceTree({
                                   : {})}
                                 className="text-zinc-500 hover:bg-transparent hover:text-zinc-100 min-[701px]:size-6"
                                 onClick={(trigger) =>
-                                  onOpenTerminalDialog(
-                                    project,
-                                    worktree,
-                                    trigger
-                                  )
+                                  onOpenPanelDialog(project, worktree, trigger)
                                 }
                               >
                                 <PlusIcon />
@@ -497,10 +501,86 @@ export function WorkspaceTree({
                           </SidebarMenuSubItem>
                         )
                       })}
+                      {worktree.panels
+                        .filter(
+                          (panel): panel is WebPanel => panel.kind === 'web'
+                        )
+                        .map((panel, panelIndex) => {
+                          const shortcutIndex =
+                            selectedWorktree?.id === worktree.id &&
+                            worktree.terminals.length + panelIndex < 9
+                              ? worktree.terminals.length + panelIndex + 1
+                              : null
+                          return (
+                            <SidebarMenuSubItem
+                              key={panel.id}
+                              className="group/terminal relative min-w-0"
+                            >
+                              <SidebarMenuSubButton
+                                asChild
+                                isActive={selectedWebPanelId === panel.id}
+                              >
+                                <Button
+                                  variant="ghost"
+                                  type="button"
+                                  className={cn(
+                                    'terminal-row grid h-auto min-h-11 w-full min-w-0 grid-cols-[1.25rem_minmax(0,1fr)_2rem] gap-1.5 rounded-md px-2 py-1.5 text-left text-base/5 font-normal min-[701px]:min-h-7 min-[701px]:grid-cols-[1rem_minmax(0,1fr)_1.75rem] min-[701px]:gap-1 min-[701px]:py-0 min-[701px]:text-xs/4',
+                                    selectedWebPanelId === panel.id
+                                      ? 'selected bg-cyan-400/8! text-cyan-50'
+                                      : 'text-zinc-300 hover:bg-white/5 hover:text-zinc-100'
+                                  )}
+                                  onClick={() => selectWebPanel(panel)}
+                                  aria-label={`${panel.title}, web panel`}
+                                  aria-keyshortcuts={
+                                    shortcutIndex
+                                      ? `Meta+${shortcutIndex}`
+                                      : undefined
+                                  }
+                                >
+                                  <WindowIcon
+                                    className="size-4! shrink-0 fill-zinc-500 min-[701px]:size-3.5!"
+                                    aria-hidden="true"
+                                  />
+                                  <span className="truncate" aria-hidden="true">
+                                    {panel.title}
+                                  </span>
+                                  {shortcutIndex ? (
+                                    <kbd
+                                      className="justify-self-end font-sans text-[0.6875rem] font-normal text-zinc-500 tabular-nums group-hover/terminal:opacity-0 group-focus-within/terminal:opacity-0 max-[700px]:opacity-0"
+                                      aria-hidden="true"
+                                    >
+                                      ⌘{shortcutIndex}
+                                    </kbd>
+                                  ) : (
+                                    <span aria-hidden="true" />
+                                  )}
+                                </Button>
+                              </SidebarMenuSubButton>
+                              <div className="absolute inset-y-0 right-0 z-10 flex items-center opacity-0 group-hover/terminal:opacity-100 group-focus-within/terminal:opacity-100 max-[700px]:opacity-100">
+                                <SidebarAction
+                                  label={`Close ${panel.title}`}
+                                  tooltip="Close web panel"
+                                  className="text-zinc-500 hover:bg-transparent hover:text-zinc-200"
+                                  onClick={(trigger) =>
+                                    closeWebPanel(panel, trigger)
+                                  }
+                                >
+                                  <XMarkIcon />
+                                </SidebarAction>
+                              </div>
+                            </SidebarMenuSubItem>
+                          )
+                        })}
                       {pendingTerminals
                         .filter((pending) => pending.worktreeId === worktree.id)
                         .map((pending, pendingIndex) => {
-                          const index = worktree.terminals.length + pendingIndex
+                          const webPanelCount = worktree.panels.filter(
+                            (panel) => panel.kind === 'web'
+                          ).length
+                          const index =
+                            worktree.terminals.length +
+                            webPanelCount +
+                            pendingIndex
                           return (
                             <SidebarMenuSubItem
                               key={pending.id}
@@ -560,17 +640,13 @@ export function WorkspaceTree({
                         type="button"
                         variant="ghost"
                         className="h-auto min-h-11 w-full justify-start gap-1.5 px-2 py-1.5 text-base/5 font-normal text-zinc-500 hover:bg-white/5 hover:text-zinc-100 min-[701px]:min-h-8 min-[701px]:py-0.5 min-[701px]:text-sm/5"
-                        aria-label="New terminal"
+                        aria-label="New panel"
                         onClick={(event) =>
-                          onOpenTerminalDialog(
-                            project,
-                            null,
-                            event.currentTarget
-                          )
+                          onOpenPanelDialog(project, null, event.currentTarget)
                         }
                       >
                         <PlusIcon className="min-[701px]:size-3.5!" />
-                        <span>New terminal</span>
+                        <span>New panel</span>
                       </Button>
                     </SidebarMenuButton>
                   </SidebarMenuItem>

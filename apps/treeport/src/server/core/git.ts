@@ -1,7 +1,7 @@
 import crypto from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import type { DirtyState } from '@treeport/shared'
+import type { DirtyState, GitDiff } from '@treeport/shared'
 import type { CommandRunner } from './command'
 import { runChecked } from './command'
 
@@ -359,6 +359,65 @@ export class GitAdapter {
 
   async dirtyState(cwd: string): Promise<DirtyState> {
     return (await this.dirtyStatus(cwd)).dirty
+  }
+
+  async worktreeDiff(cwd: string, defaultBranch: string): Promise<GitDiff> {
+    const candidates = [`origin/${defaultBranch}`, defaultBranch]
+    let baseRef = ''
+    for (const candidate of candidates) {
+      const resolved = await this.runner.run({
+        executable: this.executable,
+        args: ['rev-parse', '--verify', `${candidate}^{commit}`],
+        cwd,
+        timeoutMs: 10_000
+      })
+      if (resolved.exitCode === 0) {
+        baseRef = candidate
+        break
+      }
+    }
+    if (!baseRef) {
+      throw new Error(`Default branch ${defaultBranch} is unavailable locally`)
+    }
+
+    const mergeBase = await this.checked(cwd, ['merge-base', baseRef, 'HEAD'])
+    const baseCommit = mergeBase.stdout.trim()
+    const headCommit = await this.resolveCommit(cwd)
+    const diff = await this.checked(cwd, [
+      'diff',
+      '--no-ext-diff',
+      '--binary',
+      '--find-renames',
+      baseCommit
+    ])
+    const untracked = await this.checked(cwd, [
+      'ls-files',
+      '--others',
+      '--exclude-standard',
+      '-z'
+    ])
+    let unified = diff.stdout
+    for (const file of untracked.stdout.split('\0').filter(Boolean)) {
+      const addition = await this.runner.run({
+        executable: this.executable,
+        args: ['diff', '--no-index', '--binary', '--', '/dev/null', file],
+        cwd,
+        timeoutMs: 30_000
+      })
+      if (addition.exitCode !== 0 && addition.exitCode !== 1) {
+        throw new Error(addition.stderr.trim() || `Could not diff ${file}`)
+      }
+
+      unified += addition.stdout
+    }
+
+    return {
+      baseRef,
+      baseCommit,
+      headCommit,
+      generatedAt: new Date().toISOString(),
+      unified
+    }
   }
 
   async isMerged(cwd: string, branch: string): Promise<boolean> {

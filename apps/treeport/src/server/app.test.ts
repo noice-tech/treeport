@@ -124,6 +124,36 @@ function fixture(webDist = '/missing') {
       id: 'wt_1',
       tmuxSocketName: 'treeport-wt-1'
     })),
+    listWebPanelDefinitions: vi.fn(async () => [
+      {
+        id: 'project:review',
+        title: 'Review',
+        source: { type: 'project' }
+      }
+    ]),
+    createWebPanel: vi.fn(async (worktreeId: string) => ({
+      id: 'panel_review',
+      kind: 'web',
+      worktreeId,
+      definitionId: 'project:review',
+      title: 'Review',
+      createdAt: '2026-01-01',
+      updatedAt: '2026-01-01'
+    })),
+    deleteWebPanel: vi.fn(async () => undefined),
+    getWebPanelContext: vi.fn(async () => ({
+      apiVersion: 1,
+      panel: { id: 'panel_review' }
+    })),
+    getWebPanelDiff: vi.fn(async () => ({
+      baseRef: 'origin/trunk',
+      unified: 'diff --git a/a b/a'
+    })),
+    hasWebPanelStorage: vi.fn(async () => true),
+    getWebPanelStorage: vi.fn(async () => [{ file: 'src/app.ts', line: 12 }]),
+    setWebPanelStorage: vi.fn(async () => undefined),
+    deleteWebPanelStorage: vi.fn(async () => undefined),
+    resolveWebPanelAsset: vi.fn(async () => '/missing'),
     createTerminal: vi.fn(),
     getTerminal: vi.fn(async (id: string) => ({
       id,
@@ -194,6 +224,298 @@ describe('HTTP API validation', () => {
       protocolVersion: DESKTOP_PROTOCOL_VERSION,
       hostname: os.hostname()
     })
+  })
+
+  it('routes persistent web-panel lifecycle and scoped runtime reads', async () => {
+    const { app, service } = fixture()
+    const definitions = await app.request(
+      '/api/worktrees/wt_1/web-panel-definitions'
+    )
+    expect(await definitions.json()).toMatchObject({
+      definitions: [{ id: 'project:review', source: { type: 'project' } }]
+    })
+
+    const created = await app.request('/api/worktrees/wt_1/panels', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ definitionId: 'project:review' })
+    })
+    expect(created.status).toBe(201)
+    expect(service.createWebPanel).toHaveBeenCalledWith(
+      'wt_1',
+      'project:review'
+    )
+
+    expect((await app.request('/api/panels/panel_review/context')).status).toBe(
+      200
+    )
+    expect((await app.request('/api/panels/panel_review/diff')).status).toBe(
+      200
+    )
+    expect(service.getWebPanelDiff).toHaveBeenCalledWith('panel_review')
+
+    expect(
+      await (await app.request('/api/panels/panel_review/storage')).json()
+    ).toEqual({ hasData: true })
+    expect(service.hasWebPanelStorage).toHaveBeenCalledWith('panel_review')
+
+    const stored = await app.request('/api/panels/panel_review/storage', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ key: 'comments', value: [{ line: 12 }] })
+    })
+    expect(stored.status).toBe(200)
+    expect(service.setWebPanelStorage).toHaveBeenCalledWith(
+      'panel_review',
+      'comments',
+      [{ line: 12 }]
+    )
+
+    const restored = await app.request('/api/panels/panel_review/storage/get', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ key: 'comments' })
+    })
+    expect(await restored.json()).toEqual({
+      value: [{ file: 'src/app.ts', line: 12 }]
+    })
+
+    const removedStorage = await app.request(
+      '/api/panels/panel_review/storage',
+      {
+        method: 'DELETE',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ key: 'comments' })
+      }
+    )
+    expect(removedStorage.status).toBe(200)
+    expect(service.deleteWebPanelStorage).toHaveBeenCalledWith(
+      'panel_review',
+      'comments'
+    )
+
+    const closed = await app.request('/api/panels/panel_review', {
+      method: 'DELETE'
+    })
+    expect(closed.status).toBe(200)
+    expect(service.deleteWebPanel).toHaveBeenCalledWith('panel_review', false)
+
+    await app.request('/api/panels/panel_review?discardStoredData=true', {
+      method: 'DELETE'
+    })
+    expect(service.deleteWebPanel).toHaveBeenLastCalledWith(
+      'panel_review',
+      true
+    )
+  })
+
+  it('serves an executable SDK that brokers scoped panel requests', async () => {
+    const { app } = fixture()
+    const listeners = new Map<string, (...args: unknown[]) => unknown>()
+    const panelParent = { postMessage: vi.fn() }
+    vi.stubGlobal('parent', panelParent)
+    vi.stubGlobal('self', globalThis)
+    vi.stubGlobal('addEventListener', (type: string, listener: unknown) =>
+      listeners.set(type, listener as (...args: unknown[]) => unknown)
+    )
+
+    try {
+      const response = await app.request('/api/web-panel-sdk.js')
+      expect(response.status).toBe(200)
+      expect(response.headers.get('content-type')).toBe(
+        'text/javascript; charset=utf-8'
+      )
+
+      const source = await response.text()
+      const sdk = (await import(
+        /* @vite-ignore */ `data:text/javascript;base64,${Buffer.from(source).toString('base64')}#${crypto.randomUUID()}`
+      )) as {
+        treeport: {
+          version: number
+          context: () => Promise<unknown>
+          storage: {
+            set: (key: string, value: unknown) => Promise<void>
+          }
+          shortcuts: {
+            onFind: (handler: () => void) => () => void
+          }
+        }
+      }
+      const context = sdk.treeport.context()
+      const message = panelParent.postMessage.mock.calls[0]![0]
+      listeners.get('message')!({
+        source: panelParent,
+        data: {
+          source: 'treeport-host-v1',
+          id: message.id,
+          ok: true,
+          value: { apiVersion: 1, panel: { id: 'panel_review' } }
+        }
+      })
+
+      await expect(context).resolves.toMatchObject({
+        apiVersion: 1,
+        panel: { id: 'panel_review' }
+      })
+      expect(sdk.treeport.version).toBe(1)
+      expect(panelParent.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          source: 'treeport-panel-v1',
+          method: 'context'
+        }),
+        '*'
+      )
+
+      const stored = sdk.treeport.storage.set('comments', [{ line: 12 }])
+      const storageMessage = panelParent.postMessage.mock.calls[1]![0]
+      expect(storageMessage).toMatchObject({
+        source: 'treeport-panel-v1',
+        method: 'storage.set',
+        key: 'comments',
+        value: [{ line: 12 }]
+      })
+      listeners.get('message')!({
+        source: panelParent,
+        data: {
+          source: 'treeport-host-v1',
+          id: storageMessage.id,
+          ok: true
+        }
+      })
+      await expect(stored).resolves.toBeUndefined()
+
+      const findHandler = vi.fn()
+      const unsubscribeFind = sdk.treeport.shortcuts.onFind(findHandler)
+      const preventFindDefault = vi.fn()
+      const stopFindPropagation = vi.fn()
+      listeners.get('keydown')!({
+        key: 'f',
+        metaKey: true,
+        altKey: false,
+        ctrlKey: false,
+        shiftKey: false,
+        preventDefault: preventFindDefault,
+        stopPropagation: stopFindPropagation
+      })
+      expect(findHandler).toHaveBeenCalledOnce()
+      expect(preventFindDefault).toHaveBeenCalledOnce()
+      expect(stopFindPropagation).toHaveBeenCalledOnce()
+
+      listeners.get('message')!({
+        source: panelParent,
+        data: {
+          source: 'treeport-host-v1',
+          method: 'shortcut',
+          shortcut: 'find'
+        }
+      })
+      expect(findHandler).toHaveBeenCalledTimes(2)
+
+      unsubscribeFind()
+      listeners.get('message')!({
+        source: panelParent,
+        data: {
+          source: 'treeport-host-v1',
+          method: 'shortcut',
+          shortcut: 'find'
+        }
+      })
+      expect(findHandler).toHaveBeenCalledTimes(2)
+
+      const preventDefault = vi.fn()
+      const stopPropagation = vi.fn()
+      listeners.get('keydown')!({
+        key: '2',
+        metaKey: true,
+        altKey: false,
+        ctrlKey: false,
+        shiftKey: false,
+        preventDefault,
+        stopPropagation
+      })
+      expect(panelParent.postMessage).toHaveBeenLastCalledWith(
+        {
+          source: 'treeport-panel-v1',
+          method: 'workspace.select',
+          index: 1
+        },
+        '*'
+      )
+      expect(preventDefault).toHaveBeenCalledOnce()
+      expect(stopPropagation).toHaveBeenCalledOnce()
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('serves panel HTML unchanged with browser-native modules', async () => {
+    const { app, config, service } = fixture()
+    const panelRoot = path.join(config.runtimeDir, 'typed-panel')
+    const indexPath = path.join(panelRoot, 'index.html')
+    const modulePath = path.join(panelRoot, 'panel.js')
+    const indexSource =
+      '<!doctype html><html><head><script type="importmap">{"imports":{"@treeport/panel-sdk":"/api/web-panel-sdk.js"}}</script></head><body><script type="module" src="panel.js"></script></body></html>'
+    await fs.mkdir(panelRoot, { recursive: true })
+    await fs.writeFile(indexPath, indexSource)
+    await fs.writeFile(modulePath, 'export const answer = 42')
+    vi.mocked(service.resolveWebPanelAsset).mockImplementation(
+      async (_panelId, requestedPath) =>
+        requestedPath ? path.join(panelRoot, requestedPath) : indexPath
+    )
+
+    try {
+      const documentResponse = await app.request(
+        '/api/web-panels/panel_review/assets/'
+      )
+      expect(documentResponse.status).toBe(200)
+      await expect(documentResponse.text()).resolves.toBe(indexSource)
+      expect(
+        documentResponse.headers
+          .get('content-security-policy')
+          ?.split(';')
+          .map((directive) => directive.trim())
+      ).toContain("script-src * 'unsafe-inline'")
+
+      const moduleResponse = await app.request(
+        '/api/web-panels/panel_review/assets/panel.js'
+      )
+      expect(moduleResponse.status).toBe(200)
+      expect(moduleResponse.headers.get('content-type')).toBe(
+        'text/javascript; charset=utf-8'
+      )
+      const moduleSource = await moduleResponse.text()
+      const compiled = (await import(
+        /* @vite-ignore */ `data:text/javascript;base64,${Buffer.from(moduleSource).toString('base64')}`
+      )) as { answer: number }
+      expect(compiled.answer).toBe(42)
+    } finally {
+      await fs.rm(config.runtimeDir, { recursive: true, force: true })
+    }
+  })
+
+  it('serves nested panel modules with their browser MIME type', async () => {
+    const { app, config, service } = fixture()
+    const modulePath = path.join(config.runtimeDir, 'nested', 'review.js')
+    await fs.mkdir(path.dirname(modulePath), { recursive: true })
+    await fs.writeFile(modulePath, 'export const loaded = true')
+    vi.mocked(service.resolveWebPanelAsset).mockResolvedValue(modulePath)
+
+    try {
+      const response = await app.request(
+        '/api/web-panels/panel_review/assets/nested/review.js'
+      )
+      expect(response.status).toBe(200)
+      expect(response.headers.get('content-type')).toBe(
+        'text/javascript; charset=utf-8'
+      )
+      expect(await response.text()).toBe('export const loaded = true')
+      expect(service.resolveWebPanelAsset).toHaveBeenCalledWith(
+        'panel_review',
+        'nested/review.js'
+      )
+    } finally {
+      await fs.rm(config.runtimeDir, { recursive: true, force: true })
+    }
   })
 
   it('returns consistent validation errors without calling domain services', async () => {
@@ -560,7 +882,9 @@ describe('HTTP API validation', () => {
       expect(path.extname(result.file.path)).toBe('.png')
       expect(await fs.readFile(result.file.path)).toEqual(Buffer.from(bytes))
       expect((await fs.stat(result.file.path)).mode & 0o777).toBe(0o600)
-      await expect(fs.stat(stalePath)).rejects.toMatchObject({ code: 'ENOENT' })
+      await expect(fs.stat(stalePath)).rejects.toMatchObject({
+        code: 'ENOENT'
+      })
 
       const legacyHeader = await app.request('/api/terminals/term_1/files', {
         method: 'POST',

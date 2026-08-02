@@ -1,0 +1,38 @@
+{
+  "name": "@treeport/panel-sdk",
+  "version": "0.1.0",
+  "description": "Browser SDK for Treeport web panels.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist/index.js",
+    "dist/index.d.ts",
+    "LICENSE",
+    "README.md"
+  ],
+  "scripts": {
+    "clean": "rm -rf dist",
+    "build": "pnpm clean && tsc -b",
+    "prepack": "pnpm build",
+    "typecheck": "tsc --noEmit -p tsconfig.json --pretty"
+  },
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/noice-tech/treeport.git"
+  },
+  "bugs": {
+    "url": "https://github.com/noice-tech/treeport/issues"
+  },
+  "homepage": "https://treeport.app",
+  "publishConfig": {
+    "access": "public"
+  }
+}

@@ -1,8 +1,8 @@
 export type DesktopCommand =
   | 'new-worktree'
   | 'new-terminal'
-  | 'new-terminal-menu'
-  | 'close-terminal'
+  | 'new-panel'
+  | 'close-panel'
 
 export type DesktopFileActionResult = 'opened' | 'rejected'
 

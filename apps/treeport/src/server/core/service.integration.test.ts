@@ -441,6 +441,92 @@ async function beginFromPreview(service: TreeportService, worktreeId: string) {
 }
 
 describe('TreeportService with injected command adapters', () => {
+  it('discovers local web panels and owns their persistent synchronized lifecycle', async () => {
+    const { main, service, database } = await fixture()
+    const webPanels = path.join(main, '.treeport', 'web-panels')
+    const reviewPanel = path.join(webPanels, 'review')
+    await fs.mkdir(reviewPanel, { recursive: true })
+    await fs.writeFile(path.join(reviewPanel, 'index.html'), '<h1>Review</h1>')
+    await fs.mkdir(path.join(webPanels, 'code-review'))
+    await fs.writeFile(
+      path.join(webPanels, 'code-review', 'index.html'),
+      '<h1>Code review</h1>'
+    )
+    await fs.mkdir(path.join(webPanels, 'missing-entry'))
+    const project = await service.registerProject(main)
+    const worktree = project.worktrees[0]!
+    expect(await service.listWebPanelDefinitions(worktree.id)).toEqual([
+      {
+        id: 'project:code-review',
+        source: { type: 'project' },
+        title: 'Code review'
+      },
+      {
+        id: 'project:review',
+        source: { type: 'project' },
+        title: 'Review'
+      }
+    ])
+
+    await expect(
+      service.createWebPanel(worktree.id, 'project:missing')
+    ).rejects.toMatchObject({ code: 'WEB_PANEL_DEFINITION_NOT_FOUND' })
+
+    const events: string[] = []
+    const unsubscribe = service.events.subscribe((event) =>
+      events.push(`${event.type}:${String(event.data.panelId)}`)
+    )
+    const panel = await service.createWebPanel(worktree.id, 'project:review')
+    expect(
+      (await service.getWorktreeSnapshot(worktree.id)).panels
+    ).toContainEqual(panel)
+    expect(await service.resolveWebPanelAsset(panel.id, '')).toBe(
+      await fs.realpath(path.join(reviewPanel, 'index.html'))
+    )
+    await expect(
+      service.resolveWebPanelAsset(panel.id, '../../outside')
+    ).rejects.toMatchObject({ code: 'INVALID_ASSET_PATH' })
+    const outside = path.join(main, 'outside.js')
+    await fs.writeFile(outside, 'outside')
+    await fs.symlink(outside, path.join(reviewPanel, 'outside.js'))
+    await expect(
+      service.resolveWebPanelAsset(panel.id, 'outside.js')
+    ).rejects.toMatchObject({ code: 'INVALID_ASSET_PATH' })
+    expect(await database.webPanel(panel.id)).toEqual(panel)
+
+    expect(
+      await service.getWebPanelStorage(panel.id, 'comments')
+    ).toBeUndefined()
+    expect(await service.hasWebPanelStorage(panel.id)).toBe(false)
+    await service.setWebPanelStorage(panel.id, 'comments', [
+      { file: 'src/app.ts', line: 12, body: 'Handle this case' }
+    ])
+    expect(await service.getWebPanelStorage(panel.id, 'comments')).toEqual([
+      { file: 'src/app.ts', line: 12, body: 'Handle this case' }
+    ])
+    expect(await service.hasWebPanelStorage(panel.id)).toBe(true)
+    await expect(service.deleteWebPanel(panel.id)).rejects.toMatchObject({
+      code: 'PANEL_HAS_STORED_DATA'
+    })
+    expect(await database.webPanel(panel.id)).toEqual(panel)
+    await service.deleteWebPanelStorage(panel.id, 'comments')
+    expect(
+      await service.getWebPanelStorage(panel.id, 'comments')
+    ).toBeUndefined()
+    expect(await service.hasWebPanelStorage(panel.id)).toBe(false)
+    await expect(
+      service.setWebPanelStorage(panel.id, 'too-large', 'x'.repeat(65_537))
+    ).rejects.toMatchObject({ code: 'WEB_PANEL_STORAGE_VALUE_TOO_LARGE' })
+
+    await service.deleteWebPanel(panel.id)
+    unsubscribe()
+    expect(await database.webPanel(panel.id)).toBeNull()
+    expect(events).toEqual([
+      `panel.created:${panel.id}`,
+      `panel.removed:${panel.id}`
+    ])
+  })
+
   it('browses bounded server directories and resolves repository roots', async () => {
     const { root, main, service } = await fixture()
     const browserRoot = path.join(root, 'folder browser')

@@ -12,12 +12,16 @@ import {
   browseDirectoryQuerySchema,
   createTerminalPresetSchema,
   createTerminalSchema,
+  createWebPanelSchema,
   deleteTerminalPresetSchema,
+  deleteWebPanelStorageSchema,
   DESKTOP_PROTOCOL_VERSION,
+  getWebPanelStorageSchema,
   createWorktreeSchema,
   registerProjectSchema,
   TERMINAL_MAX_UPLOAD_BYTES,
   removeWorktreeSchema,
+  setWebPanelStorageSchema,
   spawnSchema,
   terminalBellAcknowledgementSchema,
   terminalCaptureQuerySchema,
@@ -339,6 +343,124 @@ export function createApp({
     })
   })
 
+  app.get('/api/worktrees/:worktreeId/web-panel-definitions', async (context) =>
+    context.json({
+      definitions: await service.listWebPanelDefinitions(
+        context.req.param('worktreeId')
+      )
+    })
+  )
+
+  app.post('/api/worktrees/:worktreeId/panels', async (context) => {
+    const body = await input(context, createWebPanelSchema)
+    return context.json(
+      {
+        panel: await service.createWebPanel(
+          context.req.param('worktreeId'),
+          body.definitionId
+        )
+      },
+      201
+    )
+  })
+
+  app.delete('/api/panels/:panelId', async (context) => {
+    await service.deleteWebPanel(
+      context.req.param('panelId'),
+      context.req.query('discardStoredData') === 'true'
+    )
+    return context.json({ ok: true })
+  })
+
+  app.get('/api/panels/:panelId/context', async (context) =>
+    context.json({
+      context: await service.getWebPanelContext(context.req.param('panelId'))
+    })
+  )
+
+  app.get('/api/panels/:panelId/diff', async (context) =>
+    context.json({
+      diff: await service.getWebPanelDiff(context.req.param('panelId'))
+    })
+  )
+
+  app.get('/api/panels/:panelId/storage', async (context) =>
+    context.json({
+      hasData: await service.hasWebPanelStorage(context.req.param('panelId'))
+    })
+  )
+
+  app.post('/api/panels/:panelId/storage/get', async (context) => {
+    const body = await input(context, getWebPanelStorageSchema)
+    return context.json({
+      value: await service.getWebPanelStorage(
+        context.req.param('panelId'),
+        body.key
+      )
+    })
+  })
+
+  app.put('/api/panels/:panelId/storage', async (context) => {
+    const body = await input(context, setWebPanelStorageSchema)
+    await service.setWebPanelStorage(
+      context.req.param('panelId'),
+      body.key,
+      body.value
+    )
+    return context.json({ ok: true })
+  })
+
+  app.delete('/api/panels/:panelId/storage', async (context) => {
+    const body = await input(context, deleteWebPanelStorageSchema)
+    await service.deleteWebPanelStorage(context.req.param('panelId'), body.key)
+    return context.json({ ok: true })
+  })
+
+  app.get('/api/web-panel-sdk.js', async (context) => {
+    const panelSdkModule = await fs.readFile(
+      fileURLToPath(import.meta.resolve('@treeport/panel-sdk')),
+      'utf8'
+    )
+    context.header('content-type', 'text/javascript; charset=utf-8')
+    context.header('access-control-allow-origin', '*')
+    return context.body(panelSdkModule)
+  })
+
+  app.get('/api/web-panels/:panelId/assets/*', async (context) => {
+    const pathname = new URL(context.req.url).pathname
+    const assetMarker = `/api/web-panels/${encodeURIComponent(
+      context.req.param('panelId')
+    )}/assets/`
+    const requestedPath = decodeURI(
+      pathname.slice(pathname.indexOf(assetMarker) + assetMarker.length)
+    )
+    const assetPath = await service.resolveWebPanelAsset(
+      context.req.param('panelId'),
+      requestedPath
+    )
+    const extension = path.extname(assetPath).toLowerCase()
+    const body = await fs.readFile(assetPath)
+    let mime = 'application/octet-stream'
+    if (extension === '.html') {
+      mime = 'text/html; charset=utf-8'
+    } else if (extension === '.js' || extension === '.mjs') {
+      mime = 'text/javascript; charset=utf-8'
+    } else if (extension === '.css') {
+      mime = 'text/css; charset=utf-8'
+    } else if (extension === '.svg') {
+      mime = 'image/svg+xml'
+    }
+
+    context.header('content-type', mime)
+    context.header('access-control-allow-origin', '*')
+    context.header(
+      'content-security-policy',
+      "default-src 'self'; script-src * 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; frame-ancestors 'self'"
+    )
+    context.header('x-content-type-options', 'nosniff')
+    return context.body(body as any)
+  })
+
   app.post('/api/worktrees/:worktreeId/terminals', async (context) => {
     const body = await input(context, createTerminalSchema)
     const terminal = await service.createTerminal(
@@ -487,7 +609,9 @@ export function createApp({
       await pruneTerminalUploads(uploadDirectory)
       const filePath = path.join(
         uploadDirectory,
-        `treeport-upload-${crypto.randomUUID()}${extension ? `.${extension}` : ''}`
+        `treeport-upload-${crypto.randomUUID()}${
+          extension ? `.${extension}` : ''
+        }`
       )
       const file = await fs.open(filePath, 'wx', 0o600)
       let complete = false

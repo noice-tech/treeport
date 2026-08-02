@@ -248,24 +248,27 @@ test('connects the desktop shell, preserves native behavior, and restores render
       return {
         newWorktree: menu?.getMenuItemById('new-worktree')?.accelerator,
         newTerminal: menu?.getMenuItemById('new-terminal')?.accelerator,
-        newTerminalMenu:
-          menu?.getMenuItemById('new-terminal-menu')?.accelerator,
-        closeTerminal: menu?.getMenuItemById('close-terminal')?.accelerator
+        newPanel: menu?.getMenuItemById('new-panel')?.accelerator,
+        newPanelLabel: menu?.getMenuItemById('new-panel')?.label,
+        closePanel: menu?.getMenuItemById('close-panel')?.accelerator,
+        closePanelLabel: menu?.getMenuItemById('close-panel')?.label
       }
     })
     expect(accelerators).toEqual({
       newWorktree: 'CommandOrControl+N',
       newTerminal: 'CommandOrControl+T',
-      newTerminalMenu: 'CommandOrControl+Shift+T',
-      closeTerminal: 'CommandOrControl+W'
+      newPanel: 'CommandOrControl+Shift+T',
+      newPanelLabel: 'New Panel…',
+      closePanel: 'CommandOrControl+W',
+      closePanelLabel: 'Close Panel'
     })
 
     const commandModifier = process.platform === 'darwin' ? 'meta' : 'control'
     for (const [key, command, shift] of [
       ['N', 'new-worktree', false],
       ['T', 'new-terminal', false],
-      ['T', 'new-terminal-menu', true],
-      ['W', 'close-terminal', false]
+      ['T', 'new-panel', true],
+      ['W', 'close-panel', false]
     ] as const) {
       await electronApp.evaluate(
         ({ webContents }, input) => {
