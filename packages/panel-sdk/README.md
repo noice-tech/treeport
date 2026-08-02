@@ -31,6 +31,6 @@ const stopFind = treeport.shortcuts.onFind(() => {
 })
 ```
 
-Treeport serves the runtime module from `/api/web-panel-sdk.js` inside its sandboxed panel frame, but does not modify extension HTML. The extension-owned import map makes runtime resolution explicit while this package provides the matching API contract to TypeScript editors and coding agents.
+Treeport serves the runtime module from `/api/web-panel-sdk.js` inside its sandboxed panel frame, but does not modify panel HTML. The panel-owned import map makes runtime resolution explicit while this package provides the matching API contract to TypeScript editors and coding agents.
 
 `treeport.shortcuts.onFind(handler)` delivers `Cmd/Ctrl+F` whether keyboard focus is inside the panel or elsewhere in the Treeport workspace. It returns an unsubscribe function. Panels own their find interface and behavior; Treeport only routes the generic shortcut.

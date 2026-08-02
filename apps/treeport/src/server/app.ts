@@ -343,14 +343,12 @@ export function createApp({
     })
   })
 
-  app.get(
-    '/api/worktrees/:worktreeId/web-panel-contributions',
-    async (context) =>
-      context.json({
-        contributions: await service.listWebPanelContributions(
-          context.req.param('worktreeId')
-        )
-      })
+  app.get('/api/worktrees/:worktreeId/web-panel-definitions', async (context) =>
+    context.json({
+      definitions: await service.listWebPanelDefinitions(
+        context.req.param('worktreeId')
+      )
+    })
   )
 
   app.post('/api/worktrees/:worktreeId/panels', async (context) => {
@@ -359,8 +357,7 @@ export function createApp({
       {
         panel: await service.createWebPanel(
           context.req.param('worktreeId'),
-          body.extensionId,
-          body.contributionId
+          body.definitionId
         )
       },
       201

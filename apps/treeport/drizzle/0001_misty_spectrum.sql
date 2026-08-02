@@ -1,8 +1,7 @@
 CREATE TABLE IF NOT EXISTS `web_panels` (
 	`id` text PRIMARY KEY NOT NULL,
 	`worktree_id` text NOT NULL,
-	`extension_id` text NOT NULL,
-	`contribution_id` text NOT NULL,
+	`definition_id` text NOT NULL,
 	`title` text NOT NULL,
 	`created_at` text NOT NULL,
 	`updated_at` text NOT NULL,

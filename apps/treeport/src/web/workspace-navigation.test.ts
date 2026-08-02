@@ -30,8 +30,7 @@ function projectGraph(): ProjectRecord[] {
               id: 'panel-a',
               kind: 'web',
               worktreeId: 'worktree-a',
-              extensionId: 'review',
-              contributionId: 'review',
+              definitionId: 'project:review',
               title: 'Review'
             }
           ]

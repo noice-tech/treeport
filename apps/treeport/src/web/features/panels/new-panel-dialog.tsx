@@ -5,7 +5,7 @@ import {
   MagnifyingGlassIcon,
   WindowIcon
 } from '@heroicons/react/16/solid'
-import type { TerminalPreset, WebPanelContribution } from '@treeport/shared'
+import type { TerminalPreset, WebPanelDefinition } from '@treeport/shared'
 import { Button } from '../../components/ui/button'
 import {
   Dialog,
@@ -24,9 +24,9 @@ export function NewPanelDialog({
   presets,
   presetsLoading,
   presetsError,
-  contributions,
-  contributionsLoading,
-  contributionsError,
+  webPanelDefinitions,
+  webPanelDefinitionsLoading,
+  webPanelDefinitionsError,
   launchDisabled,
   onCreateTerminal,
   onCreateWebPanel,
@@ -39,12 +39,12 @@ export function NewPanelDialog({
   presets: TerminalPreset[]
   presetsLoading: boolean
   presetsError: boolean
-  contributions: WebPanelContribution[]
-  contributionsLoading: boolean
-  contributionsError: boolean
+  webPanelDefinitions: WebPanelDefinition[]
+  webPanelDefinitionsLoading: boolean
+  webPanelDefinitionsError: boolean
   launchDisabled: boolean
   onCreateTerminal: (input: CreateTerminalInput) => void
-  onCreateWebPanel: (contribution: WebPanelContribution) => void
+  onCreateWebPanel: (definition: WebPanelDefinition) => void
   onManagePresets: () => void
 }) {
   const [query, setQuery] = useState('')
@@ -58,14 +58,14 @@ export function NewPanelDialog({
       formatCommandLine([preset.executable, ...preset.args])
     ].some((value) => value.toLocaleLowerCase().includes(normalizedQuery))
   )
-  const filteredContributions = contributions.filter((contribution) =>
-    [contribution.title, contribution.extensionId].some((value) =>
+  const filteredWebPanelDefinitions = webPanelDefinitions.filter((definition) =>
+    [definition.title, definition.id].some((value) =>
       value.toLocaleLowerCase().includes(normalizedQuery)
     )
   )
   const terminalActionCount = filteredPresets.length + (showShell ? 1 : 0)
   const noResults =
-    terminalActionCount === 0 && filteredContributions.length === 0
+    terminalActionCount === 0 && filteredWebPanelDefinitions.length === 0
 
   return (
     <Dialog
@@ -253,22 +253,22 @@ export function NewPanelDialog({
             ) : null}
           </div>
           <div role="group" aria-label="Web panels">
-            {filteredContributions.length > 0 ||
-            contributionsLoading ||
-            contributionsError ? (
+            {filteredWebPanelDefinitions.length > 0 ||
+            webPanelDefinitionsLoading ||
+            webPanelDefinitionsError ? (
               <p className="mt-1 px-2 py-1 text-xs font-medium text-zinc-500">
                 Web panels
               </p>
             ) : null}
-            {filteredContributions.map((contribution, index) => {
+            {filteredWebPanelDefinitions.map((definition, index) => {
               const actionIndex = terminalActionCount + index
               return (
                 <Button
-                  key={`${contribution.extensionId}:${contribution.contributionId}`}
+                  key={definition.id}
                   type="button"
                   variant="ghost"
                   className="h-12 w-full justify-start gap-3 rounded-lg py-2 pr-3 pl-2 text-base font-normal text-zinc-100 hover:bg-white/8 focus-visible:bg-white/8 sm:h-9 sm:text-sm"
-                  aria-label={`${contribution.title}, web panel`}
+                  aria-label={`${definition.title}, web panel`}
                   data-panel-launch
                   data-selected={selectedIndex === actionIndex ? '' : undefined}
                   disabled={launchDisabled}
@@ -277,7 +277,7 @@ export function NewPanelDialog({
                   onClick={() => {
                     setQuery('')
                     setSelectedIndex(0)
-                    onCreateWebPanel(contribution)
+                    onCreateWebPanel(definition)
                   }}
                 >
                   <WindowIcon
@@ -285,15 +285,17 @@ export function NewPanelDialog({
                     aria-hidden="true"
                   />
                   <span className="min-w-0 flex-1 truncate text-left">
-                    {contribution.title}
+                    {definition.title}
                   </span>
                   <span className="min-w-0 max-w-1/2 truncate text-zinc-500">
-                    {contribution.extensionId}
+                    {definition.source.type === 'project'
+                      ? 'Project'
+                      : definition.source.packageId}
                   </span>
                 </Button>
               )
             })}
-            {contributionsLoading ? (
+            {webPanelDefinitionsLoading ? (
               <p
                 className="px-3 py-2 text-base text-zinc-500 sm:text-sm"
                 role="status"
@@ -301,7 +303,7 @@ export function NewPanelDialog({
                 Loading web panels…
               </p>
             ) : null}
-            {contributionsError ? (
+            {webPanelDefinitionsError ? (
               <p
                 className="px-3 py-2 text-base text-zinc-500 sm:text-sm"
                 role="status"
@@ -310,7 +312,7 @@ export function NewPanelDialog({
               </p>
             ) : null}
           </div>
-          {noResults && !presetsLoading && !contributionsLoading ? (
+          {noResults && !presetsLoading && !webPanelDefinitionsLoading ? (
             <p className="px-3 py-8 text-center text-base text-zinc-500 sm:text-sm">
               No matching panels.
             </p>

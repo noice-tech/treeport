@@ -90,10 +90,14 @@ export interface TerminalPanel {
 
 export type Panel = TerminalPanel | WebPanel
 
-export interface WebPanelContribution {
-  extensionId: string
-  contributionId: string
+export type WebPanelSource =
+  | { type: 'project' }
+  | { type: 'package'; packageId: string }
+
+export interface WebPanelDefinition {
+  id: string
   title: string
+  source: WebPanelSource
 }
 
 export interface WorktreeRecord {
@@ -364,8 +368,7 @@ export const updateTerminalSchema = z.object({
 })
 
 export const createWebPanelSchema = z.object({
-  extensionId: z.string().regex(/^[a-z0-9][a-z0-9._-]{0,63}$/),
-  contributionId: z.string().regex(/^[a-z0-9][a-z0-9._-]{0,63}$/)
+  definitionId: z.string().min(1).max(256)
 })
 
 export const webPanelStorageKeySchema = z.string().min(1).max(128)

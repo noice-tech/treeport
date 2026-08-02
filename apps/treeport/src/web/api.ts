@@ -11,7 +11,7 @@ import type {
   TerminalSize,
   WebPanel,
   WebPanelContext,
-  WebPanelContribution,
+  WebPanelDefinition,
   GitDiff,
   JsonValue,
   WorktreeRecord
@@ -152,21 +152,17 @@ export const apiClient = {
         ...(sourceWorktreeId ? { sourceWorktreeId } : {})
       })
     }),
-  webPanelContributions: async (worktreeId: string) =>
+  webPanelDefinitions: async (worktreeId: string) =>
     (
-      await api<{ contributions: WebPanelContribution[] }>(
-        `/api/worktrees/${worktreeId}/web-panel-contributions`
+      await api<{ definitions: WebPanelDefinition[] }>(
+        `/api/worktrees/${worktreeId}/web-panel-definitions`
       )
-    ).contributions,
-  createWebPanel: async (
-    worktreeId: string,
-    extensionId: string,
-    contributionId: string
-  ) =>
+    ).definitions,
+  createWebPanel: async (worktreeId: string, definitionId: string) =>
     (
       await api<{ panel: WebPanel }>(`/api/worktrees/${worktreeId}/panels`, {
         method: 'POST',
-        body: JSON.stringify({ extensionId, contributionId })
+        body: JSON.stringify({ definitionId })
       })
     ).panel,
   deleteWebPanel: async (panelId: string, discardStoredData = false) =>

@@ -6,7 +6,7 @@ import type {
   RemovePreview,
   TerminalRecord,
   WebPanel,
-  WebPanelContribution,
+  WebPanelDefinition,
   WorktreeRecord
 } from '@treeport/shared'
 import { TerminalBellNotifications } from './features/notifications/use-bell-notifications'
@@ -118,24 +118,19 @@ function WorkspaceApp() {
           (worktree) => worktree.id === dialog.worktreeId
         ) ?? null)
       : null
-  const contributionsQuery = useQuery({
-    queryKey: ['web-panel-contributions', panelDialogWorktree?.id],
-    queryFn: () => apiClient.webPanelContributions(panelDialogWorktree!.id),
+  const webPanelDefinitionsQuery = useQuery({
+    queryKey: ['web-panel-definitions', panelDialogWorktree?.id],
+    queryFn: () => apiClient.webPanelDefinitions(panelDialogWorktree!.id),
     enabled: Boolean(panelDialogWorktree)
   })
   const createWebPanel = useMutation({
     mutationFn: ({
       worktree,
-      contribution
+      definition
     }: {
       worktree: WorktreeRecord
-      contribution: WebPanelContribution
-    }) =>
-      apiClient.createWebPanel(
-        worktree.id,
-        contribution.extensionId,
-        contribution.contributionId
-      ),
+      definition: WebPanelDefinition
+    }) => apiClient.createWebPanel(worktree.id, definition.id),
     onSuccess: async (panel) => {
       await queryClient.invalidateQueries({
         queryKey: projectsQueryOptions.queryKey
@@ -665,11 +660,11 @@ function WorkspaceApp() {
         presets={presets}
         presetsLoading={presetsQuery.isPending}
         presetsError={presetsQuery.isError}
-        contributions={contributionsQuery.data ?? []}
-        contributionsLoading={
-          Boolean(panelDialogWorktree) && contributionsQuery.isPending
+        webPanelDefinitions={webPanelDefinitionsQuery.data ?? []}
+        webPanelDefinitionsLoading={
+          Boolean(panelDialogWorktree) && webPanelDefinitionsQuery.isPending
         }
-        contributionsError={contributionsQuery.isError}
+        webPanelDefinitionsError={webPanelDefinitionsQuery.isError}
         launchDisabled={panelLaunchDisabled}
         onCreateTerminal={(input) => {
           if (!panelDialogProject || !panelDialogWorktree) {
@@ -683,7 +678,7 @@ function WorkspaceApp() {
             input
           )
         }}
-        onCreateWebPanel={(contribution) => {
+        onCreateWebPanel={(definition) => {
           if (!panelDialogWorktree) {
             return
           }
@@ -691,7 +686,7 @@ function WorkspaceApp() {
           setDialog(null)
           createWebPanel.mutate({
             worktree: panelDialogWorktree,
-            contribution
+            definition
           })
         }}
         onManagePresets={() => setDialog({ type: 'presets' })}

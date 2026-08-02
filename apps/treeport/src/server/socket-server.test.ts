@@ -259,8 +259,7 @@ describe('Socket.IO real network', () => {
         id: 'panel_review',
         kind: 'web',
         worktreeId: 'wt',
-        extensionId: 'treeport.review',
-        contributionId: 'review',
+        definitionId: 'project:review',
         title: 'Review',
         createdAt: '2026-01-01T00:00:00.000Z',
         updatedAt: '2026-01-01T00:00:00.000Z'

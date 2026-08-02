@@ -587,11 +587,11 @@ async function mockApp(
   let failTerminalDelete = false
   let webPanelCreations = 0
   let webPanelHasStorage = false
-  const webPanelContributions = [
+  const webPanelDefinitions = [
     {
-      extensionId: 'review',
-      contributionId: 'review',
-      title: 'Review'
+      id: 'project:review',
+      title: 'Review',
+      source: { type: 'project' as const }
     }
   ]
   let staleRemovePreview: Record<string, unknown> | null = null
@@ -1039,10 +1039,10 @@ async function mockApp(
     }
 
     if (
-      /^\/api\/worktrees\/[^/]+\/web-panel-contributions$/.test(pathname) &&
+      /^\/api\/worktrees\/[^/]+\/web-panel-definitions$/.test(pathname) &&
       route.request().method() === 'GET'
     ) {
-      await route.fulfill({ json: { contributions: webPanelContributions } })
+      await route.fulfill({ json: { definitions: webPanelDefinitions } })
       return
     }
 
@@ -1052,8 +1052,7 @@ async function mockApp(
     ) {
       const worktreeId = pathname.split('/')[3]!
       const body = route.request().postDataJSON() as {
-        extensionId: string
-        contributionId: string
+        definitionId: string
       }
       const worktree = state.worktrees.find(
         (candidate) => candidate.id === worktreeId
@@ -1062,8 +1061,7 @@ async function mockApp(
         id: `panel_${++webPanelCreations}`,
         kind: 'web' as const,
         worktreeId,
-        extensionId: body.extensionId,
-        contributionId: body.contributionId,
+        definitionId: body.definitionId,
         title: 'Review',
         createdAt: '2026-01-01T00:00:00.000Z',
         updatedAt: '2026-01-01T00:00:00.000Z'
@@ -3214,8 +3212,7 @@ test.describe('desktop worktree terminal UI', () => {
     )
     await page.keyboard.press('Enter')
     expect((await panelCreateRequest).postDataJSON()).toEqual({
-      extensionId: 'review',
-      contributionId: 'review'
+      definitionId: 'project:review'
     })
     await expect(page).toHaveURL(
       /\/projects\/proj_1\/worktrees\/wt_topic\/panels\/panel_1$/

@@ -38,7 +38,7 @@ describe('SQLite migration and catalog ordering', () => {
       await database.db.get<{ count: number }>(
         sql`SELECT count(*) AS count FROM __drizzle_migrations`
       )
-    ).toEqual({ count: 2 })
+    ).toEqual({ count: 3 })
     expect(
       await database.db.get<{ count: number }>(sql`
         SELECT count(*) AS count FROM sqlite_master WHERE name='terminals'
@@ -130,8 +130,7 @@ describe('SQLite migration and catalog ordering', () => {
         id,
         kind: 'web',
         worktreeId: 'wt',
-        extensionId: 'review',
-        contributionId: 'diff',
+        definitionId: 'project:review',
         title: id,
         createdAt,
         updatedAt: createdAt
@@ -249,7 +248,7 @@ describe('SQLite migration and catalog ordering', () => {
       await reopened.db.get<{ count: number }>(
         sql`SELECT count(*) AS count FROM __drizzle_migrations`
       )
-    ).toEqual({ count: 2 })
+    ).toEqual({ count: 3 })
 
     const backupDirectory = path.join(directory, 'database-backups')
     const [backupName] = await fs.readdir(backupDirectory)
@@ -452,6 +451,6 @@ describe('SQLite migration and catalog ordering', () => {
       await recovered.db.get<{ count: number }>(
         sql`SELECT count(*) AS count FROM __drizzle_migrations`
       )
-    ).toEqual({ count: 2 })
+    ).toEqual({ count: 3 })
   })
 })

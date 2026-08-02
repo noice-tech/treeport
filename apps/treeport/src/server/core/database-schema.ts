@@ -97,8 +97,7 @@ export const webPanels = sqliteTable(
     worktreeId: text('worktree_id')
       .notNull()
       .references(() => worktrees.id, { onDelete: 'cascade' }),
-    extensionId: text('extension_id').notNull(),
-    contributionId: text('contribution_id').notNull(),
+    definitionId: text('definition_id').notNull(),
     title: text().notNull(),
     createdAt: text('created_at').notNull(),
     updatedAt: text('updated_at').notNull()

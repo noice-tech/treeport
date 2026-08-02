@@ -124,19 +124,18 @@ function fixture(webDist = '/missing') {
       id: 'wt_1',
       tmuxSocketName: 'treeport-wt-1'
     })),
-    listWebPanelContributions: vi.fn(async () => [
+    listWebPanelDefinitions: vi.fn(async () => [
       {
-        extensionId: 'treeport.review',
-        contributionId: 'review',
-        title: 'Review'
+        id: 'project:review',
+        title: 'Review',
+        source: { type: 'project' }
       }
     ]),
     createWebPanel: vi.fn(async (worktreeId: string) => ({
       id: 'panel_review',
       kind: 'web',
       worktreeId,
-      extensionId: 'treeport.review',
-      contributionId: 'review',
+      definitionId: 'project:review',
       title: 'Review',
       createdAt: '2026-01-01',
       updatedAt: '2026-01-01'
@@ -229,28 +228,22 @@ describe('HTTP API validation', () => {
 
   it('routes persistent web-panel lifecycle and scoped runtime reads', async () => {
     const { app, service } = fixture()
-    const contributions = await app.request(
-      '/api/worktrees/wt_1/web-panel-contributions'
+    const definitions = await app.request(
+      '/api/worktrees/wt_1/web-panel-definitions'
     )
-    expect(await contributions.json()).toMatchObject({
-      contributions: [
-        { extensionId: 'treeport.review', contributionId: 'review' }
-      ]
+    expect(await definitions.json()).toMatchObject({
+      definitions: [{ id: 'project:review', source: { type: 'project' } }]
     })
 
     const created = await app.request('/api/worktrees/wt_1/panels', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        extensionId: 'treeport.review',
-        contributionId: 'review'
-      })
+      body: JSON.stringify({ definitionId: 'project:review' })
     })
     expect(created.status).toBe(201)
     expect(service.createWebPanel).toHaveBeenCalledWith(
       'wt_1',
-      'treeport.review',
-      'review'
+      'project:review'
     )
 
     expect((await app.request('/api/panels/panel_review/context')).status).toBe(

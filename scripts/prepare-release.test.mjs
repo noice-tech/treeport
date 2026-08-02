@@ -54,6 +54,9 @@ describe('release preparation', () => {
       mkdirSync(path.join(repository, 'scripts'))
       mkdirSync(path.join(repository, 'apps/treeport'), { recursive: true })
       mkdirSync(path.join(repository, 'apps/docs/public'), { recursive: true })
+      mkdirSync(path.join(repository, 'packages/panel-sdk'), {
+        recursive: true
+      })
       cpSync(
         path.resolve('scripts/prepare-release.mjs'),
         path.join(repository, 'scripts/prepare-release.mjs')
@@ -65,6 +68,10 @@ describe('release preparation', () => {
       writeFileSync(
         path.join(repository, 'apps/treeport/package.json'),
         '{\n  "name": "@treeport/treeport",\n  "version": "0.1.0"\n}\n'
+      )
+      writeFileSync(
+        path.join(repository, 'packages/panel-sdk/package.json'),
+        '{\n  "name": "@treeport/panel-sdk",\n  "version": "0.1.0"\n}\n'
       )
       writeFileSync(
         path.join(repository, 'apps/docs/public/install-manifest.json'),

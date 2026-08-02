@@ -475,8 +475,7 @@ export class TreeportDatabase {
     await this.db.insert(webPanels).values({
       id: panel.id,
       worktreeId: panel.worktreeId,
-      extensionId: panel.extensionId,
-      contributionId: panel.contributionId,
+      definitionId: panel.definitionId,
       title: panel.title,
       createdAt: panel.createdAt,
       updatedAt: panel.updatedAt

@@ -338,15 +338,8 @@
           "notNull": true,
           "autoincrement": false
         },
-        "extension_id": {
-          "name": "extension_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "contribution_id": {
-          "name": "contribution_id",
+        "definition_id": {
+          "name": "definition_id",
           "type": "text",
           "primaryKey": false,
           "notNull": true,

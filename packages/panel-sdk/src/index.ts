@@ -3,8 +3,7 @@ export interface WebPanel {
   id: string
   kind: 'web'
   worktreeId: string
-  extensionId: string
-  contributionId: string
+  definitionId: string
   title: string
   /** ISO 8601 timestamp. */
   createdAt: string

@@ -443,48 +443,52 @@ async function beginFromPreview(service: TreeportService, worktreeId: string) {
 describe('TreeportService with injected command adapters', () => {
   it('discovers local web panels and owns their persistent synchronized lifecycle', async () => {
     const { main, service, database } = await fixture()
-    const extensions = path.join(main, '.treeport', 'extensions')
-    const extension = path.join(extensions, 'review')
-    await fs.mkdir(extension, { recursive: true })
-    await fs.writeFile(path.join(extension, 'index.html'), '<h1>Review</h1>')
-    await fs.mkdir(path.join(extensions, 'code-review'))
+    const webPanels = path.join(main, '.treeport', 'web-panels')
+    const reviewPanel = path.join(webPanels, 'review')
+    await fs.mkdir(reviewPanel, { recursive: true })
+    await fs.writeFile(path.join(reviewPanel, 'index.html'), '<h1>Review</h1>')
+    await fs.mkdir(path.join(webPanels, 'code-review'))
     await fs.writeFile(
-      path.join(extensions, 'code-review', 'index.html'),
+      path.join(webPanels, 'code-review', 'index.html'),
       '<h1>Code review</h1>'
     )
-    await fs.mkdir(path.join(extensions, 'missing-entry'))
+    await fs.mkdir(path.join(webPanels, 'missing-entry'))
     const project = await service.registerProject(main)
     const worktree = project.worktrees[0]!
-    expect(await service.listWebPanelContributions(worktree.id)).toEqual([
+    expect(await service.listWebPanelDefinitions(worktree.id)).toEqual([
       {
-        extensionId: 'code-review',
-        contributionId: 'code-review',
+        id: 'project:code-review',
+        source: { type: 'project' },
         title: 'Code review'
       },
       {
-        extensionId: 'review',
-        contributionId: 'review',
+        id: 'project:review',
+        source: { type: 'project' },
         title: 'Review'
       }
     ])
+
+    await expect(
+      service.createWebPanel(worktree.id, 'project:missing')
+    ).rejects.toMatchObject({ code: 'WEB_PANEL_DEFINITION_NOT_FOUND' })
 
     const events: string[] = []
     const unsubscribe = service.events.subscribe((event) =>
       events.push(`${event.type}:${String(event.data.panelId)}`)
     )
-    const panel = await service.createWebPanel(worktree.id, 'review', 'review')
+    const panel = await service.createWebPanel(worktree.id, 'project:review')
     expect(
       (await service.getWorktreeSnapshot(worktree.id)).panels
     ).toContainEqual(panel)
     expect(await service.resolveWebPanelAsset(panel.id, '')).toBe(
-      await fs.realpath(path.join(extension, 'index.html'))
+      await fs.realpath(path.join(reviewPanel, 'index.html'))
     )
     await expect(
       service.resolveWebPanelAsset(panel.id, '../../outside')
     ).rejects.toMatchObject({ code: 'INVALID_ASSET_PATH' })
     const outside = path.join(main, 'outside.js')
     await fs.writeFile(outside, 'outside')
-    await fs.symlink(outside, path.join(extension, 'outside.js'))
+    await fs.symlink(outside, path.join(reviewPanel, 'outside.js'))
     await expect(
       service.resolveWebPanelAsset(panel.id, 'outside.js')
     ).rejects.toMatchObject({ code: 'INVALID_ASSET_PATH' })

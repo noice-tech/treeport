@@ -32,8 +32,7 @@ const webPanelSnapshotSchema = z.strictObject({
   id: z.string().min(1),
   kind: z.literal('web'),
   worktreeId: z.string().min(1),
-  extensionId: z.string().min(1),
-  contributionId: z.string().min(1),
+  definitionId: z.string().min(1),
   title: z.string().min(1),
   createdAt: z.string(),
   updatedAt: z.string()

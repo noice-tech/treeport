@@ -16,7 +16,7 @@ import type {
   TerminalSize,
   WebPanel,
   WebPanelContext,
-  WebPanelContribution,
+  WebPanelDefinition,
   WorktreeRecord
 } from '@treeport/shared'
 import { sql } from 'drizzle-orm'
@@ -783,13 +783,13 @@ export class TreeportService {
     }
   }
 
-  private async localWebPanelContributions(
+  private async localWebPanelDefinitions(
     worktreeId: string
-  ): Promise<Array<WebPanelContribution & { root: string; entry: string }>> {
+  ): Promise<Array<WebPanelDefinition & { root: string; entry: string }>> {
     const worktree = await this.getWorktree(worktreeId)
-    const extensionsRoot = path.join(worktree.path, '.treeport', 'extensions')
+    const webPanelsRoot = path.join(worktree.path, '.treeport', 'web-panels')
     const directories = await fs
-      .readdir(extensionsRoot, { withFileTypes: true })
+      .readdir(webPanelsRoot, { withFileTypes: true })
       .catch((error: unknown) => {
         if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
           return []
@@ -797,8 +797,8 @@ export class TreeportService {
 
         throw error
       })
-    const contributions: Array<
-      WebPanelContribution & { root: string; entry: string }
+    const definitions: Array<
+      WebPanelDefinition & { root: string; entry: string }
     > = []
     for (const directory of directories.sort((left, right) =>
       left.name.localeCompare(right.name)
@@ -807,7 +807,7 @@ export class TreeportService {
         continue
       }
 
-      const root = path.join(extensionsRoot, directory.name)
+      const root = path.join(webPanelsRoot, directory.name)
       const entry = 'index.html'
       const entryIsFile = await fs
         .stat(path.join(root, entry))
@@ -821,44 +821,39 @@ export class TreeportService {
         .split(/[-_.]+/)
         .filter(Boolean)
         .join(' ')
-      contributions.push({
-        extensionId: directory.name,
-        contributionId: directory.name,
+      definitions.push({
+        id: `project:${encodeURIComponent(directory.name)}`,
         title: words
           ? `${words[0]!.toLocaleUpperCase()}${words.slice(1)}`
           : directory.name,
+        source: { type: 'project' },
         root,
         entry
       })
     }
-    return contributions
+    return definitions
   }
 
-  async listWebPanelContributions(
+  async listWebPanelDefinitions(
     worktreeId: string
-  ): Promise<WebPanelContribution[]> {
-    return (await this.localWebPanelContributions(worktreeId)).map(
-      ({ root: _root, entry: _entry, ...contribution }) => contribution
+  ): Promise<WebPanelDefinition[]> {
+    return (await this.localWebPanelDefinitions(worktreeId)).map(
+      ({ root: _root, entry: _entry, ...definition }) => definition
     )
   }
 
   async createWebPanel(
     worktreeId: string,
-    extensionId: string,
-    contributionId: string
+    definitionId: string
   ): Promise<WebPanel> {
     await this.requireAvailableWorktree(worktreeId)
-    const contribution = (
-      await this.localWebPanelContributions(worktreeId)
-    ).find(
-      (candidate) =>
-        candidate.extensionId === extensionId &&
-        candidate.contributionId === contributionId
+    const definition = (await this.localWebPanelDefinitions(worktreeId)).find(
+      (candidate) => candidate.id === definitionId
     )
-    if (!contribution) {
+    if (!definition) {
       throw new DomainError(
-        'WEB_PANEL_CONTRIBUTION_NOT_FOUND',
-        'Web panel contribution not found',
+        'WEB_PANEL_DEFINITION_NOT_FOUND',
+        'Web panel definition not found',
         404
       )
     }
@@ -868,9 +863,8 @@ export class TreeportService {
       id: id('panel'),
       kind: 'web',
       worktreeId,
-      extensionId,
-      contributionId,
-      title: contribution.title,
+      definitionId,
+      title: definition.title,
       createdAt: timestamp,
       updatedAt: timestamp
     }
@@ -1010,26 +1004,22 @@ export class TreeportService {
       throw new DomainError('PANEL_NOT_FOUND', 'Panel not found', 404)
     }
 
-    const contribution = (
-      await this.localWebPanelContributions(panel.worktreeId)
-    ).find(
-      (candidate) =>
-        candidate.extensionId === panel.extensionId &&
-        candidate.contributionId === panel.contributionId
-    )
-    if (!contribution) {
+    const definition = (
+      await this.localWebPanelDefinitions(panel.worktreeId)
+    ).find((candidate) => candidate.id === panel.definitionId)
+    if (!definition) {
       throw new DomainError(
-        'WEB_PANEL_EXTENSION_UNAVAILABLE',
-        'The extension for this panel is unavailable',
+        'WEB_PANEL_DEFINITION_NOT_FOUND',
+        'The definition for this panel is unavailable',
         404
       )
     }
 
-    const relative = requestedPath || contribution.entry
-    const asset = path.resolve(contribution.root, relative)
-    const root = await fs.realpath(contribution.root)
+    const relative = requestedPath || definition.entry
+    const asset = path.resolve(definition.root, relative)
+    const root = await fs.realpath(definition.root)
     const rootPrefix = `${root}${path.sep}`
-    if (!asset.startsWith(`${path.resolve(contribution.root)}${path.sep}`)) {
+    if (!asset.startsWith(`${path.resolve(definition.root)}${path.sep}`)) {
       throw new DomainError('INVALID_ASSET_PATH', 'Invalid asset path', 400)
     }
 
