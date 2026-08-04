@@ -53,6 +53,7 @@ interface RemovalCheckoutIdentity {
   inode: string
   gitWorktreeKey: string
   gitMarker: string
+  repositoryIdentity: string | null
   managedWrapperPath: string | null
   quarantinePath: string
 }
@@ -71,6 +72,9 @@ function removalCheckoutIdentity(
     typeof candidate.inode === 'string' &&
     typeof candidate.gitWorktreeKey === 'string' &&
     typeof candidate.gitMarker === 'string' &&
+    (typeof candidate.repositoryIdentity === 'string' ||
+      candidate.repositoryIdentity === null ||
+      candidate.repositoryIdentity === undefined) &&
     (typeof candidate.managedWrapperPath === 'string' ||
       candidate.managedWrapperPath === null) &&
     typeof candidate.quarantinePath === 'string'
@@ -80,6 +84,10 @@ function removalCheckoutIdentity(
         inode: candidate.inode,
         gitWorktreeKey: candidate.gitWorktreeKey,
         gitMarker: candidate.gitMarker,
+        repositoryIdentity:
+          typeof candidate.repositoryIdentity === 'string'
+            ? candidate.repositoryIdentity
+            : null,
         managedWrapperPath: candidate.managedWrapperPath,
         quarantinePath: candidate.quarantinePath
       }
@@ -269,10 +277,23 @@ export class TreeportService {
     const marker = markerStat?.isFile()
       ? await fs.readFile(markerPath, 'utf8').catch(() => null)
       : null
-    return marker !== identity.gitMarker ||
+    if (
+      marker !== identity.gitMarker ||
       !gitMarkerMatchesKey(acceptedPath, marker ?? '', identity.gitWorktreeKey)
-      ? 'Manual cleanup required: the checkout Git marker no longer proves that Treeport owns this removal'
-      : null
+    ) {
+      return 'Manual cleanup required: the checkout Git marker no longer proves that Treeport owns this removal'
+    }
+
+    if (
+      identity.repositoryIdentity &&
+      (await this.deps.git
+        .repositoryIdentity(checkoutPath)
+        .catch(() => null)) !== identity.repositoryIdentity
+    ) {
+      return 'Manual cleanup required: the durable repository identity changed after removal was accepted'
+    }
+
+    return null
   }
 
   private async removeAuthorizedCheckout(
@@ -1380,49 +1401,56 @@ export class TreeportService {
     const repositoryStat = await fs.stat(repositoryPath, { bigint: true })
     const repositoryDevice = repositoryStat.dev.toString()
     const repositoryInode = repositoryStat.ino.toString()
-    const pathMatch = await this.deps.database.projectByPath(repositoryPath)
-    const identityMatch = await this.deps.database.projectByFilesystemIdentity(
-      repositoryDevice,
-      repositoryInode
-    )
+    const repositoryIdentity =
+      await this.deps.git.ensureRepositoryIdentity(repositoryPath)
+    const [pathMatch, identityMatch] = await Promise.all([
+      this.deps.database.projectByPath(repositoryPath),
+      this.deps.database.projectByRepositoryIdentity(repositoryIdentity)
+    ])
     const pathMetadata = pathMatch
-      ? await this.deps.database.projectFilesystemMetadata(pathMatch.id)
+      ? await this.deps.database.projectRepositoryMetadata(pathMatch.id)
       : null
     if (pathMatch && !pathMetadata) {
       throw new DomainError(
         'PROJECT_PATH_CONFLICT',
-        'The registered project is missing its filesystem identity',
+        'The registered project is missing its repository identity metadata',
         409
       )
     }
 
     if (
       pathMatch &&
-      pathMetadata &&
-      (pathMetadata.device !== repositoryDevice ||
-        pathMetadata.inode !== repositoryInode)
+      ((pathMetadata?.identity !== null &&
+        pathMetadata?.identity !== repositoryIdentity) ||
+        (pathMetadata?.identity === null &&
+          pathMetadata.inode !== repositoryInode))
     ) {
-      if (!identityMatch) {
-        throw new DomainError(
-          'PROJECT_PATH_CONFLICT',
-          'This path belongs to a registered project, but now contains a different repository',
-          409
-        )
-      }
-
-      if (identityMatch.id !== pathMatch.id) {
-        throw new DomainError(
-          'PROJECT_PATH_CONFLICT',
-          'The repository identity and registered path belong to different projects',
-          409
-        )
-      }
+      throw new DomainError(
+        'PROJECT_PATH_CONFLICT',
+        'The registered path now contains a different repository',
+        409
+      )
     }
 
     if (pathMatch && identityMatch && pathMatch.id !== identityMatch.id) {
       throw new DomainError(
         'PROJECT_PATH_CONFLICT',
         'The repository identity and registered path belong to different projects',
+        409
+      )
+    }
+
+    if (
+      identityMatch &&
+      identityMatch.repositoryPath !== repositoryPath &&
+      (await fs.realpath(identityMatch.repositoryPath).catch(() => null)) &&
+      (await this.deps.git
+        .repositoryIdentity(identityMatch.repositoryPath)
+        .catch(() => null)) === repositoryIdentity
+    ) {
+      throw new DomainError(
+        'PROJECT_PATH_CONFLICT',
+        'The same local repository identity exists at multiple paths; Treeport cannot choose between a move and a copy',
         409
       )
     }
@@ -1455,7 +1483,7 @@ export class TreeportService {
       const defaultBranch = await this.deps.git.defaultBranch(repositoryPath)
       const requested = requestedName?.trim() || null
       const existingMetadata = existing
-        ? await this.deps.database.projectFilesystemMetadata(existing.id)
+        ? await this.deps.database.projectRepositoryMetadata(existing.id)
         : null
       if (existing && !existingMetadata) {
         throw new DomainError(
@@ -1479,21 +1507,38 @@ export class TreeportService {
           ? path.basename(repositoryPath)
           : existing?.name) ||
         path.basename(repositoryPath)
+      const verifiedIdentity =
+        await this.deps.git.repositoryIdentity(repositoryPath)
+      const verifiedStat = await fs.stat(repositoryPath, { bigint: true })
+      if (
+        verifiedIdentity !== repositoryIdentity ||
+        verifiedStat.dev.toString() !== repositoryDevice ||
+        verifiedStat.ino.toString() !== repositoryInode
+      ) {
+        throw new DomainError(
+          'PROJECT_PATH_CONFLICT',
+          'The repository changed during registration',
+          409
+        )
+      }
+
       await this.deps.database.db.run(sql`
         INSERT INTO projects(
           id,name,repository_path,main_worktree_path,default_branch,
-          repository_device,repository_inode,name_is_custom,is_open,last_opened_at,
-          created_at,updated_at
+          repository_identity,repository_device,repository_inode,name_is_custom,
+          is_open,last_opened_at,created_at,updated_at
         ) VALUES(
           ${projectId},${name},${repositoryPath},${mainPath},${defaultBranch},
-          ${repositoryDevice},${repositoryInode},${nameIsCustom ? 1 : 0},1,
-          ${timestamp},${existing?.createdAt ?? timestamp},${timestamp}
+          ${repositoryIdentity},${repositoryDevice},${repositoryInode},
+          ${nameIsCustom ? 1 : 0},1,${timestamp},
+          ${existing?.createdAt ?? timestamp},${timestamp}
         )
         ON CONFLICT(id) DO UPDATE SET
           name=excluded.name,
           repository_path=excluded.repository_path,
           main_worktree_path=excluded.main_worktree_path,
           default_branch=excluded.default_branch,
+          repository_identity=excluded.repository_identity,
           repository_device=excluded.repository_device,
           repository_inode=excluded.repository_inode,
           name_is_custom=excluded.name_is_custom,
@@ -1778,23 +1823,82 @@ export class TreeportService {
 
     const storedProject = await this.getProject(projectId)
     const storedIdentity =
-      await this.deps.database.projectFilesystemMetadata(projectId)
+      await this.deps.database.projectRepositoryMetadata(projectId)
     if (!storedIdentity) {
-      throw new Error('Registered project is missing its filesystem identity')
+      throw new Error('Registered project is missing its repository metadata')
     }
 
+    let repositoryIdentity = storedIdentity.identity
     let canonicalRepository = await fs
       .realpath(repositoryPath)
       .catch(() => null)
     let canonicalStat = canonicalRepository
       ? await fs.stat(canonicalRepository, { bigint: true }).catch(() => null)
       : null
-    const currentIdentityMatches = Boolean(
-      canonicalStat?.isDirectory() &&
-      canonicalStat.dev.toString() === storedIdentity.device &&
-      canonicalStat.ino.toString() === storedIdentity.inode
-    )
-    if (!currentIdentityMatches) {
+    let markerAtStoredPath = canonicalRepository
+      ? await this.deps.git.repositoryIdentity(canonicalRepository)
+      : null
+
+    if (repositoryIdentity === null) {
+      if (
+        !canonicalRepository ||
+        canonicalRepository !== storedProject.repositoryPath ||
+        !canonicalStat?.isDirectory() ||
+        (markerAtStoredPath === null &&
+          canonicalStat.ino.toString() !== storedIdentity.inode)
+      ) {
+        throw new Error(
+          'Legacy repository identity could not be enrolled; explicitly re-link the repository'
+        )
+      }
+
+      const canonical =
+        await this.deps.git.canonicalizeRepositoryPath(canonicalRepository)
+      const resolvedMain = await this.deps.git.resolveMainCheckout(canonical)
+      const enrollmentInventory = await this.deps.git.listWorktrees(canonical)
+      const verifiedStat = await fs.stat(canonicalRepository, { bigint: true })
+      if (
+        canonical !== canonicalRepository ||
+        resolvedMain !== canonicalRepository ||
+        !enrollmentInventory.some(
+          (item) =>
+            !item.bare &&
+            !item.prunable &&
+            item.path === canonicalRepository &&
+            item.gitWorktreeKey !== null
+        ) ||
+        verifiedStat.dev !== canonicalStat.dev ||
+        verifiedStat.ino !== canonicalStat.ino
+      ) {
+        throw new Error(
+          'Legacy repository changed while its durable identity was enrolled'
+        )
+      }
+
+      repositoryIdentity =
+        markerAtStoredPath ??
+        (await this.deps.git.ensureRepositoryIdentity(canonicalRepository))
+      const identityOwner =
+        await this.deps.database.projectByRepositoryIdentity(repositoryIdentity)
+      if (identityOwner && identityOwner.id !== projectId) {
+        throw new Error(
+          'The local Treeport repository identity belongs to another registered project'
+        )
+      }
+
+      markerAtStoredPath =
+        await this.deps.git.repositoryIdentity(canonicalRepository)
+      const enrolledStat = await fs.stat(canonicalRepository, { bigint: true })
+      if (
+        markerAtStoredPath !== repositoryIdentity ||
+        enrolledStat.dev !== canonicalStat.dev ||
+        enrolledStat.ino !== canonicalStat.ino
+      ) {
+        throw new Error(
+          'Repository identity changed while legacy enrollment completed'
+        )
+      }
+    } else if (markerAtStoredPath !== repositoryIdentity) {
       const candidates = new Set<string>()
       const parent = path.dirname(repositoryPath)
       const entries = await fs
@@ -1808,60 +1912,58 @@ export class TreeportService {
         const candidate = await fs
           .realpath(path.join(parent, entry.name))
           .catch(() => null)
-        if (!candidate) {
+        if (!candidate || candidates.has(candidate)) {
           continue
         }
 
-        const candidateStat = await fs
-          .stat(candidate, { bigint: true })
+        const candidateMarker = await this.deps.git
+          .repositoryIdentity(candidate)
           .catch(() => null)
-        if (
-          candidateStat?.isDirectory() &&
-          candidateStat.dev.toString() === storedIdentity.device &&
-          candidateStat.ino.toString() === storedIdentity.inode
-        ) {
-          candidates.add(candidate)
+        if (candidateMarker === repositoryIdentity) {
+          const candidateTopLevel = await this.deps.git
+            .canonicalizeRepositoryPath(candidate)
+            .catch(() => null)
+          if (candidateTopLevel === candidate) {
+            candidates.add(candidate)
+          }
         }
       }
+
       if (candidates.size !== 1) {
         throw new Error(
           candidates.size > 1
-            ? 'Repository rename recovery is ambiguous'
-            : 'Registered main checkout is unavailable or contains a different repository'
+            ? 'Moved-repository recovery is ambiguous because the local identity exists at multiple paths'
+            : markerAtStoredPath === null
+              ? 'The registered repository marker is missing and no moved repository could be identified'
+              : 'The registered path now contains a different repository'
         )
       }
 
       canonicalRepository = [...candidates][0]!
       canonicalStat = await fs.stat(canonicalRepository, { bigint: true })
-      if (
-        !canonicalStat.isDirectory() ||
-        canonicalStat.dev.toString() !== storedIdentity.device ||
-        canonicalStat.ino.toString() !== storedIdentity.inode
-      ) {
-        throw new Error('Repository rename candidate changed during recovery')
-      }
     }
 
-    if (!canonicalRepository || !canonicalStat?.isDirectory()) {
+    if (
+      !repositoryIdentity ||
+      !canonicalRepository ||
+      !canonicalStat?.isDirectory()
+    ) {
       throw new Error('Registered main checkout is unavailable')
     }
 
     repositoryPath = canonicalRepository
     mainPath = canonicalRepository
     const repositoryRenamed = repositoryPath !== storedProject.repositoryPath
-    if (repositoryRenamed) {
-      const canonical =
-        await this.deps.git.canonicalizeRepositoryPath(repositoryPath)
-      if (canonical !== repositoryPath) {
-        throw new Error(
-          'Repository rename candidate is not the Git top-level checkout'
-        )
-      }
+    const canonical =
+      await this.deps.git.canonicalizeRepositoryPath(repositoryPath)
+    if (canonical !== repositoryPath) {
+      throw new Error('Repository is not the Git top-level main checkout')
+    }
 
-      const verifiedStat = await fs.stat(repositoryPath, { bigint: true })
+    if (repositoryRenamed) {
       if (
-        verifiedStat.dev.toString() !== storedIdentity.device ||
-        verifiedStat.ino.toString() !== storedIdentity.inode
+        (await this.deps.git.repositoryIdentity(repositoryPath)) !==
+        repositoryIdentity
       ) {
         throw new Error('Repository rename candidate changed during recovery')
       }
@@ -1892,17 +1994,25 @@ export class TreeportService {
       )
     }
 
-    const repositoryStat = await fs.stat(repositoryPath, { bigint: true })
+    const [repositoryStat, verifiedIdentity] = await Promise.all([
+      fs.stat(repositoryPath, { bigint: true }),
+      this.deps.git.repositoryIdentity(repositoryPath)
+    ])
     const repositoryDevice = repositoryStat.dev.toString()
     const repositoryInode = repositoryStat.ino.toString()
     if (
-      storedIdentity.device !== repositoryDevice ||
-      storedIdentity.inode !== repositoryInode
+      canonicalStat.dev !== repositoryStat.dev ||
+      canonicalStat.ino !== repositoryStat.ino ||
+      verifiedIdentity !== repositoryIdentity
     ) {
       throw new Error('Registered main checkout changed during observation')
     }
 
-    const projectIdentityChanged = repositoryRenamed
+    const projectIdentityChanged =
+      storedIdentity.identity === null ||
+      repositoryRenamed ||
+      storedIdentity.device !== repositoryDevice ||
+      storedIdentity.inode !== repositoryInode
     const timestamp = now()
     const known = await this.deps.database.db.all<{
       id: string
@@ -2222,7 +2332,9 @@ export class TreeportService {
         await tx.run(sql`
           UPDATE projects
           SET name=${projectName},repository_path=${repositoryPath},
-              main_worktree_path=${mainPath},repository_device=${repositoryDevice},
+              main_worktree_path=${mainPath},
+              repository_identity=${repositoryIdentity},
+              repository_device=${repositoryDevice},
               repository_inode=${repositoryInode},updated_at=${timestamp}
           WHERE id=${projectId}
         `)
@@ -3241,6 +3353,23 @@ export class TreeportService {
         )
       }
 
+      const projectMetadata =
+        await this.deps.database.projectRepositoryMetadata(worktree.projectId)
+      const repositoryIdentity = await this.deps.git.repositoryIdentity(
+        preview.path
+      )
+      if (
+        !projectMetadata?.identity ||
+        repositoryIdentity !== projectMetadata.identity
+      ) {
+        throw new DomainError(
+          'REMOVE_PREVIEW_STALE',
+          'The repository identity changed after the removal preview; review it again',
+          409,
+          preview
+        )
+      }
+
       const operationId = id('op')
       const checkoutIdentity: RemovalCheckoutIdentity = {
         path: preview.path,
@@ -3248,6 +3377,7 @@ export class TreeportService {
         inode: checkout.ino.toString(),
         gitWorktreeKey: checkoutBinding.git_worktree_key,
         gitMarker,
+        repositoryIdentity,
         managedWrapperPath: checkoutBinding.managed_wrapper_path,
         quarantinePath: path.join(
           path.dirname(preview.path),
@@ -3334,8 +3464,13 @@ export class TreeportService {
       const liveWorktree = (
         await this.deps.git.listWorktrees(project.repositoryPath)
       ).find((item) => item.path === worktree.path)
+      const liveRepositoryIdentity = await this.deps.git.repositoryIdentity(
+        project.repositoryPath
+      )
       if (
         !checkoutIdentity ||
+        !checkoutIdentity.repositoryIdentity ||
+        liveRepositoryIdentity !== checkoutIdentity.repositoryIdentity ||
         !liveWorktree?.gitWorktreeKey ||
         liveWorktree.gitWorktreeKey !== checkoutIdentity.gitWorktreeKey
       ) {

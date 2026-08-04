@@ -1,3 +1,4 @@
+import crypto from 'node:crypto'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -65,6 +66,7 @@ class SystemDouble implements CommandRunner {
   setupGate: Promise<void> | null = null
   readonly removeAfterDeregisterGates = new Map<string, Promise<void>>()
   worktreeDeregistered: ((worktreePath: string) => void) | null = null
+  repositoryIdentity: string | null = null
 
   constructor(main: string) {
     this.main = main
@@ -103,6 +105,32 @@ class SystemDouble implements CommandRunner {
 
     if (args[0] === 'rev-parse' && args[1] === '--git-common-dir') {
       return ok(`${path.join(this.main, '.git')}\n`)
+    }
+
+    if (args[0] === 'config' && args.includes('treeport.repositoryId')) {
+      if (args.includes('--get-all')) {
+        const isKnownRepository = (
+          await Promise.all(
+            [this.main, ...this.worktrees.map((worktree) => worktree.path)].map(
+              (worktreePath) =>
+                fs
+                  .realpath(worktreePath)
+                  .catch(() => path.resolve(worktreePath))
+            )
+          )
+        ).includes(request.cwd ?? '')
+        return this.repositoryIdentity && isKnownRepository
+          ? ok(`${this.repositoryIdentity}\n`)
+          : fail('missing')
+      }
+
+      const value = args.at(-1)!
+      if (args.includes('--add') && this.repositoryIdentity) {
+        return ok()
+      }
+
+      this.repositoryIdentity = value
+      return ok()
     }
 
     if (args[0] === 'rev-parse' && args[1] === '--absolute-git-dir') {
@@ -1298,6 +1326,45 @@ describe('TreeportService with injected command adapters', () => {
     })
   })
 
+  it('enrolls a legacy project after a remount without losing its bindings', async () => {
+    const { main, runner, service, database } = await fixture()
+    const project = await service.registerProject(main)
+    const linked = (
+      await service.createWorktree(project.id, 'legacy-remount', 'default')
+    ).worktree
+    const terminal = await service.createTerminal(linked.id, 'Preserved')
+    const identity = await database.projectRepositoryMetadata(project.id)
+    expect(identity).not.toBeNull()
+
+    runner.repositoryIdentity = null
+    await database.db.run(sql`
+      UPDATE projects
+      SET repository_identity=NULL,
+          repository_device=${`${BigInt(identity!.device) + 1n}`}
+      WHERE id=${project.id}
+    `)
+
+    const recovered = await service.getProjectSnapshot(project.id)
+    expect(recovered).toMatchObject({
+      id: project.id,
+      repositoryPath: await fs.realpath(main),
+      availability: { state: 'available' },
+      worktrees: expect.arrayContaining([
+        expect.objectContaining({
+          id: linked.id,
+          terminals: expect.arrayContaining([
+            expect.objectContaining({ id: terminal.id })
+          ])
+        })
+      ])
+    })
+    expect(await database.projectRepositoryMetadata(project.id)).toMatchObject({
+      identity: expect.any(String),
+      device: identity!.device,
+      inode: identity!.inode
+    })
+  })
+
   it('preserves metadata when Git repair fails during main rename recovery', async () => {
     const { root, main, runner, service, database } = await fixture()
     const project = await service.registerProject(main)
@@ -1361,7 +1428,16 @@ describe('TreeportService with injected command adapters', () => {
       head: 'replacement-head',
       branch: 'trunk'
     }
+    runner.repositoryIdentity = crypto.randomUUID()
 
+    expect(await service.getProjectSnapshot(project.id)).toMatchObject({
+      id: project.id,
+      availability: {
+        state: 'unavailable',
+        message: expect.stringContaining('different repository')
+      },
+      worktrees: [expect.objectContaining({ id: project.worktrees[0]!.id })]
+    })
     await expect(service.registerProject(main)).rejects.toMatchObject({
       code: 'PROJECT_PATH_CONFLICT',
       status: 409

@@ -17,6 +17,7 @@ export const projects = sqliteTable(
     mainWorktreePath: text('main_worktree_path').notNull(),
     defaultBranch: text('default_branch').notNull(),
     color: text(),
+    repositoryIdentity: text('repository_identity'),
     repositoryDevice: text('repository_device').notNull(),
     repositoryInode: text('repository_inode').notNull(),
     nameIsCustom: integer('name_is_custom').notNull().default(0),
@@ -32,10 +33,9 @@ export const projects = sqliteTable(
     ),
     check('projects_name_is_custom_check', sql`${table.nameIsCustom} IN (0,1)`),
     check('projects_is_open_check', sql`${table.isOpen} IN (0,1)`),
-    uniqueIndex('projects_fs_identity_idx').on(
-      table.repositoryDevice,
-      table.repositoryInode
-    ),
+    uniqueIndex('projects_repository_identity_idx')
+      .on(table.repositoryIdentity)
+      .where(sql`${table.repositoryIdentity} IS NOT NULL`),
     index('projects_recent_idx').on(
       table.isOpen,
       desc(table.lastOpenedAt),
