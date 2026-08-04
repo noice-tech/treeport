@@ -5,6 +5,12 @@ import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { _electron as electron, expect, test } from '@playwright/test'
 
+function workspaceLink(url: string): string {
+  const link = new URL('treeport://open')
+  link.searchParams.set('url', url)
+  return link.href
+}
+
 async function waitForGuest(
   electronApp: Awaited<ReturnType<typeof electron.launch>>,
   origin: string
@@ -71,12 +77,13 @@ test('connects the desktop shell, preserves native behavior, and restores render
 
     const port = address.port
     const origin = `http://127.0.0.1:${port}`
+    const workspaceUrl = `${origin}/projects/project-1/worktrees/worktree-1`
     await new Promise<void>((resolve, reject) =>
       server.close((error) => (error ? reject(error) : resolve()))
     )
 
     electronApp = await electron.launch({
-      args: [`--user-data-dir=${userData}`, '.'],
+      args: [`--user-data-dir=${userData}`, '.', workspaceLink(workspaceUrl)],
       cwd: process.cwd(),
       env: {
         ...process.env,
@@ -116,6 +123,18 @@ test('connects the desktop shell, preserves native behavior, and restores render
         }, origin)
       )
       .toContain('Treeport desktop test')
+
+    await expect
+      .poll(() =>
+        electronApp!.evaluate(
+          ({ webContents }, targetUrl) =>
+            webContents
+              .getAllWebContents()
+              .some((contents) => contents.getURL() === targetUrl),
+          workspaceUrl
+        )
+      )
+      .toBe(true)
 
     await new Promise<void>((resolve, reject) =>
       server.close((error) => (error ? reject(error) : resolve()))
@@ -557,6 +576,40 @@ test('adds, renames, and switches computers through the desktop-owned selector',
         name: 'Connected computer: This computer'
       })
     ).toBeVisible()
+
+    await selector
+      .getByRole('button', { name: 'Connected computer: This computer' })
+      .click()
+    await selector.getByRole('menuitemradio', { name: /Work VPS/ }).click()
+    await waitForGuest(electronApp, secondOrigin)
+
+    const linkedWorkspaceUrl = `${firstOrigin}/projects/project-1/worktrees/worktree-1`
+    await electronApp.evaluate(
+      ({ app }, deepLink) =>
+        app.emit('open-url', { preventDefault() {} } as never, deepLink),
+      workspaceLink(linkedWorkspaceUrl)
+    )
+    await expect(
+      selector.getByRole('button', {
+        name: 'Connected computer: This computer'
+      })
+    ).toBeVisible()
+    await expect
+      .poll(() =>
+        electronApp!.evaluate(
+          ({ webContents }, targetUrl) =>
+            webContents
+              .getAllWebContents()
+              .some((contents) => contents.getURL() === targetUrl),
+          linkedWorkspaceUrl
+        )
+      )
+      .toBe(true)
+    expect(
+      await electronApp.evaluate(
+        ({ BrowserWindow }) => BrowserWindow.getAllWindows().length
+      )
+    ).toBe(1)
   } finally {
     await electronApp?.close().catch(() => undefined)
     await Promise.all([

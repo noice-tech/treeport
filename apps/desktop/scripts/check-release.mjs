@@ -75,6 +75,26 @@ if (plistValue('CFBundleIdentifier') !== 'tech.noice.treeport') {
   throw new Error('Packaged app has an unexpected bundle identifier')
 }
 
+const urlTypes = JSON.parse(
+  execFileSync(
+    'plutil',
+    ['-extract', 'CFBundleURLTypes', 'json', '-o', '-', plistPath],
+    { encoding: 'utf8' }
+  )
+)
+if (
+  !Array.isArray(urlTypes) ||
+  !urlTypes.some(
+    (entry) =>
+      entry &&
+      typeof entry === 'object' &&
+      Array.isArray(entry.CFBundleURLSchemes) &&
+      entry.CFBundleURLSchemes.includes('treeport')
+  )
+) {
+  throw new Error('Packaged app does not declare the treeport URL scheme')
+}
+
 if (plistValue('CFBundleShortVersionString') !== version) {
   throw new Error('Packaged app version does not match the release version')
 }

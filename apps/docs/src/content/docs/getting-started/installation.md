@@ -23,18 +23,14 @@ curl -fsSL https://treeport.app/install.sh | sh
 
 The installer requires Node.js 24 or newer and npm on `PATH`; it never installs Node.js or a package manager. If tmux is unavailable, it can use a recognized package manager already on the system after asking for confirmation. Supported package managers include Homebrew and MacPorts on macOS and APT, DNF, YUM, pacman, Zypper, and apk on Linux. You can instead install tmux 3.2 or newer yourself before rerunning the installer. Install Git with your preferred package manager if it is unavailable.
 
-Add `~/.local/bin` to `PATH` if requested, then start Treeport:
+Add `~/.local/bin` to `PATH` if requested, then open a Git repository:
 
 ```sh
-treeport up
+cd /path/to/repository
+treeport .
 ```
 
-Treeport starts in the background and prints:
-
-```text
-Treeport is up
-http://127.0.0.1:8733
-```
+Treeport starts its backend in the background if necessary, registers the repository and its worktrees, and opens the current worktree in the macOS desktop app or default browser. Use `treeport up` when you want to start only the backend; it prints its local URL, `http://127.0.0.1:8733`.
 
 Rerun the same curl command to install a newer version. The installer preserves whether the local daemon was running.
 
@@ -44,7 +40,8 @@ To install directly through npm:
 
 ```sh
 npm install --global @treeport/treeport
-treeport up
+cd /path/to/repository
+treeport .
 ```
 
 For upgrades, stop Treeport while npm replaces package files:
@@ -57,10 +54,10 @@ treeport up
 
 ## Connect the desktop app
 
-On first launch, the desktop app tries **This computer** at `http://127.0.0.1:8733`. If Treeport is already running, your projects open without a setup flow. Otherwise, start it and retry:
+On first launch, the desktop app tries **This computer** at `http://127.0.0.1:8733`. If Treeport is already running, your projects open without a setup flow. Otherwise, open a repository from a terminal to start the backend and focus its worktree:
 
 ```sh
-treeport up
+treeport /path/to/repository
 ```
 
 You can instead choose **Connect to another computer…** and enter a private HTTPS Treeport URL. The last computer you deliberately select is restored on later launches. See [Remote access](/features/remote-access/) for the recommended Tailscale Serve setup.

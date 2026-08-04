@@ -28,6 +28,7 @@ export type ConnectionState =
       status: 'ready'
       computerId: string
       serverVersion: string
+      url: string
     }
   | {
       status: 'unavailable'
