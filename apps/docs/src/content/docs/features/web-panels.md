@@ -1,42 +1,64 @@
 ---
 title: Web panels (experimental)
-description: Run repository-provided, worktree-scoped web tools inside Treeport.
+description: Build worktree-scoped web tools with Treeport's hosted Vite runtime.
 ---
 
 Treeport has an experimental runtime for trusted repository-provided web panels. A web panel is persistent and worktree-bound: opening or closing it is synchronized across connected Treeport clients, while the selected panel remains local to each device.
 
-Project-local web panels live under `.treeport/web-panels/<name>/`. Each folder containing `index.html` defines one web-panel definition; the folder name supplies its stable definition identity and humanized title, so project-local panels need no manifest. Treeport serves the folder's browser-native HTML, CSS, JavaScript modules, and assets from the daemon and runs the panel in an isolated frame, so remote browsers and phones do not need the panel files installed locally. Panels may load scripts from any network origin; they are not limited to a Treeport-selected CDN.
+Project-local panels live under `.treeport/web-panels/<name>/`. Each folder containing `index.html` defines a panel; the folder name supplies its stable identity and humanized title. Packages can contribute the same source layout through [`treeport.webPanels`](/features/packages/).
 
-Treeport distinguishes an available web-panel definition from the persistent panel instance created when you launch it. Definitions carry source provenance. [Treeport packages](/features/packages/) can contribute global or repository-scoped web panels through the same picker; repository packages configured in the main worktree are available from every linked worktree.
+```text
+.treeport/web-panels/review/
+├── index.html
+├── review.tsx
+└── review.css
+```
 
-Open **New panel** from a worktree or press `Cmd/Ctrl+Shift+T` to choose between Shell, terminal presets, and discovered web panels. `Cmd/Ctrl+T` continues to create a Shell directly. Web panels share the numbered workspace shortcuts with terminals, so `Cmd+1` through `Cmd+9` switch to the corresponding sidebar item.
+```html
+<div id="root"></div>
+<script type="module" src="./review.tsx"></script>
+```
 
-After a panel is visited, Treeport keeps its frame alive while switching among terminals and other panels. In-memory UI state such as scroll position and unfinished form input therefore behaves like a browser tab. Full-page reloads still reset that ephemeral state; use `treeport.storage` for state that must survive reloads or daemon restarts.
+Treeport owns the Vite server and compiler. Do not commit generated assets or add a panel build script. Local project panels and local-path packages use Vite development serving, React Fast Refresh, and same-origin HMR. Treeport compiles npm-installed package panels into immutable cached assets when first opened. Updating a package produces a new build without invalidating assets already loaded by an open frame.
+
+## Supported Vite profile
+
+Panels can use TypeScript, TSX, JSX, CSS, JSON, dynamic imports, imported static assets, and `import.meta.glob`. React panels are supported by Treeport's fixed React plugin profile. Production builds include source maps.
+
+Declare browser libraries such as React in the package's normal `dependencies`. Vite resolves bare imports from the package's installed dependency graph and bundles that graph, including the package's declared React version. The Treeport host provides `@treeport/panel-sdk`; declare it as a `devDependency` for authoring types rather than shipping a separate runtime copy.
+
+```json
+{
+  "treeport": {
+    "webPanels": ["./web-panels/review"]
+  },
+  "dependencies": {
+    "react": "19.2.7",
+    "react-dom": "19.2.7"
+  },
+  "devDependencies": {
+    "@treeport/panel-sdk": "0.1.0"
+  }
+}
+```
+
+Treeport does not load package `vite.config.*`, executable Babel or PostCSS configuration, package-provided Vite plugins, build scripts, or lifecycle scripts. A package cannot customize the hosted compiler profile. Tailwind is not part of the initial hosted profile; commit ordinary CSS instead.
+
+## Open and retain panels
+
+Open **New panel** from a worktree or press `Cmd/Ctrl+Shift+T` to choose a discovered web panel. Web panels share numbered workspace shortcuts with terminals. After a panel is visited, Treeport keeps its frame alive while switching workspaces, preserving in-memory state such as scroll position and unfinished input. Use `treeport.storage` for state that must survive reloads or daemon restarts.
+
+Definitions are separate from persistent panel instances. Package definition identities exclude npm versions, so package updates preserve existing instances and storage. Removing a package leaves those instances unavailable but intact; reinstalling the same definition revives them.
 
 ## Browser SDK
 
-Optionally add the SDK package as a development dependency so editors and coding agents can inspect the panel API:
+Install the SDK as a development dependency for types and import it normally. Treeport's Vite profile resolves that import to the host's SDK, so no runtime dependency or import map is needed:
 
 ```sh
 pnpm add --save-dev @treeport/panel-sdk
 ```
 
-Treeport and `@treeport/panel-sdk` always use the same release version. The package supplies editor tooling and types, while Treeport serves the matching browser runtime. Treeport does not modify panel HTML, so map the package import to that runtime explicitly in `index.html`, before loading any module scripts:
-
-```html
-<script type="importmap">
-  {
-    "imports": {
-      "@treeport/panel-sdk": "/api/web-panel-sdk.js"
-    }
-  }
-</script>
-<script type="module" src="./panel.js"></script>
-```
-
-The panel module can then use the same import understood by the installed package and the browser:
-
-```js
+```ts
 import { treeport } from '@treeport/panel-sdk'
 
 const context = await treeport.context()
@@ -50,20 +72,6 @@ const stopFind = treeport.shortcuts.onFind(() => {
 })
 ```
 
-`treeport.context()` returns the current panel, project, and worktree identity. `treeport.diff()` returns merge-base metadata and a read-only unified diff containing committed, tracked local, and untracked changes.
+`treeport.context()` returns the panel, project, and worktree identity. `treeport.diff()` returns merge-base metadata and a read-only unified diff. `treeport.shortcuts.onFind(handler)` routes `Cmd/Ctrl+F` to the panel and returns an unsubscribe function.
 
-`treeport.storage` is durable JSON key-value storage scoped to the current panel instance. It survives navigation and daemon restarts and is deleted when the panel is closed. Treeport asks for confirmation before closing a panel with stored data. Keys are limited to 128 characters, individual values to 64 KiB, and each panel to 256 values or 1 MiB total.
-
-`treeport.shortcuts.onFind(handler)` delivers `Cmd/Ctrl+F` whether focus is inside the panel or elsewhere in the Treeport workspace. It returns an unsubscribe function. The panel owns its find interface and behavior; Treeport only routes the generic shortcut.
-
-Treeport serves panel assets as-is and does not transpile or bundle them at request time. Project-local panels can use browser-native JavaScript and direct browser ESM URLs for optional npm libraries, pinning their versions:
-
-```js
-import { FileDiff } from 'https://esm.sh/@pierre/diffs@1.3.1?bundle'
-```
-
-A package panel may instead run a build ahead of time and contribute the generated static folder. Configure the bundler with relative asset URLs so nested scripts and styles continue to load from Treeport's panel asset route. Keep the generated `index.html` in the folder named by `treeport.webPanels`; Treeport does not run the build when it discovers or serves the package.
-
-The package declarations and JSDoc are the authoritative editor contract. The corresponding readable browser runtime remains inspectable at `/api/web-panel-sdk.js` on a running daemon. Importing the SDK module activates iframe-local platform shortcuts, including numbered workspace switching, so panels using those facilities must include the import map and import the SDK.
-
-Project-local web panels do not need a package or manifest. Package panels use durable definition identities that exclude npm versions. Updating a package therefore preserves existing panel instances and storage. Removing or temporarily losing the package leaves those instances intact but unavailable; reinstalling the same definition revives them.
+`treeport.storage` is durable JSON key-value storage scoped to the panel instance. It is deleted when the panel is closed, and Treeport asks for confirmation before closing a panel with stored data. Keys are limited to 128 characters, values to 64 KiB, and each panel to 256 values or 1 MiB total.

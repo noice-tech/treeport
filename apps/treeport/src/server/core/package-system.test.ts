@@ -37,6 +37,7 @@ async function rootFixture() {
     port: 8733,
     databasePath: path.join(dataDir, 'treeport.db'),
     dataDir,
+    cacheDir: path.join(root, 'cache'),
     runtimeDir: path.join(root, 'runtime'),
     shell: '/bin/sh',
     tmuxPath: 'tmux',

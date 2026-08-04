@@ -125,7 +125,9 @@ A terminal preset file contains one preset definition:
 }
 ```
 
-Web panels are browser-native assets and require no build step. Their folder names supply humanized titles. Package resource identities do not include npm versions, so updating a package preserves persistent panel identity and storage.
+Web panels are source-only Vite applications and require no package build step or committed output. Publish `index.html`, TypeScript/TSX or JavaScript, CSS, and imported assets in the declared panel directory. Put browser libraries in normal `dependencies`, not `devDependencies`; Treeport uses Vite to resolve and bundle the installed dependency graph. The host-provided `@treeport/panel-sdk` is the exception and belongs in `devDependencies` for authoring types. Local-path packages use development serving and HMR, while npm-installed packages are compiled into Treeport's immutable cache when opened. See [Web panels](/features/web-panels/) for the supported profile.
+
+Panel folder names supply humanized titles. Package resource identities do not include npm versions, so updating a package preserves persistent panel identity and storage.
 
 ## Failure and removal behavior
 

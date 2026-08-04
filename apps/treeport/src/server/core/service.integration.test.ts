@@ -1,4 +1,5 @@
 import crypto from 'node:crypto'
+import http from 'node:http'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -15,7 +16,11 @@ import type { AppConfig } from './config'
 
 const directories: string[] = []
 const databases: TreeportDatabase[] = []
+const services: TreeportService[] = []
 afterEach(async () => {
+  await Promise.all(
+    services.splice(0).map((service) => service.disposeWebPanelRuntime())
+  )
   databases.splice(0).forEach((database) => database.close())
   await Promise.all(
     directories
@@ -421,6 +426,7 @@ async function fixture() {
     port: 8733,
     databasePath: database.filePath,
     dataDir: root,
+    cacheDir: path.join(root, 'cache'),
     runtimeDir: runtime,
     shell: '/bin/zsh',
     tmuxPath: 'tmux',
@@ -445,6 +451,8 @@ async function fixture() {
     tmux,
     gh
   })
+  service.attachHttpServer(http.createServer())
+  services.push(service)
   await service.initialize()
   return { root, main, runner, service, database, config }
 }
@@ -509,9 +517,10 @@ describe('TreeportService with injected command adapters', () => {
     expect(
       (await service.getWorktreeSnapshot(worktree.id)).panels
     ).toContainEqual(panel)
-    expect(await service.resolveWebPanelAsset(panel.id, '')).toBe(
-      await fs.realpath(path.join(reviewPanel, 'index.html'))
-    )
+    expect(await service.resolveWebPanelAsset(panel.id, '')).toMatchObject({
+      kind: 'redirect',
+      development: true
+    })
     await expect(
       service.resolveWebPanelAsset(panel.id, '../../outside')
     ).rejects.toMatchObject({ code: 'INVALID_ASSET_PATH' })
@@ -628,9 +637,10 @@ describe('TreeportService with injected command adapters', () => {
       'pnpm',
       'dev'
     ])
-    expect(await service.resolveWebPanelAsset(panel.id, '')).toBe(
-      await fs.realpath(path.join(reviewRoot, 'index.html'))
-    )
+    expect(await service.resolveWebPanelAsset(panel.id, '')).toMatchObject({
+      kind: 'redirect',
+      development: true
+    })
 
     await fs.writeFile(
       path.join(reviewRoot, 'index.html'),

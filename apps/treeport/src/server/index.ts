@@ -1,7 +1,7 @@
-import type { Server as HttpServer } from 'node:http'
+import { createServer } from 'node:http'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { serve } from '@hono/node-server'
+import { getRequestListener } from '@hono/node-server'
 import {
   checkRuntimePrerequisites,
   GhAdapter,
@@ -45,16 +45,25 @@ const terminalMetadata = new TerminalMetadataManager(
 await terminalMetadata.initialize()
 
 const app = createApp({ service, config, tmux, terminalMetadata })
-const server = serve({
-  fetch: app.fetch,
-  port: config.port,
-  hostname: config.host
+const honoListener = getRequestListener(app.fetch)
+const server = createServer((request, response) => {
+  service.handleWebPanelDevelopmentRequest(request, response, () => {
+    honoListener(request, response)
+  })
 })
-const { io, attachments } = createSocketServer(server as HttpServer, {
+service.attachHttpServer(server)
+const { io, attachments } = createSocketServer(server, {
   service,
   config,
   tmux,
   terminalMetadata
+})
+await new Promise<void>((resolve, reject) => {
+  server.once('error', reject)
+  server.listen(config.port, config.host, () => {
+    server.off('error', reject)
+    resolve()
+  })
 })
 await ownership.publish()
 
@@ -79,6 +88,7 @@ function shutdown(): void {
   terminalMetadata.dispose()
   io.close(() => {
     void service.drainMutations().then(async () => {
+      await service.disposeWebPanelRuntime()
       database.close()
       await ownership.release()
       process.exit(0)

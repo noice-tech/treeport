@@ -24,6 +24,11 @@ import type {
   WorktreeRecord
 } from '@treeport/shared'
 import { sql } from 'drizzle-orm'
+import type {
+  Server as HttpServer,
+  IncomingMessage,
+  ServerResponse
+} from 'node:http'
 import type { AppConfig } from './config'
 import type { CommandRunner } from './command'
 import type { TreeportDatabase } from './database'
@@ -34,6 +39,11 @@ import type { GhAdapter } from './gh'
 import type { GitAdapter } from './git'
 import type { WorktreeSetupTask } from './setup'
 import { PackageSystem } from './package-system'
+import {
+  WebPanelViteRuntime,
+  type ResolvedWebPanelSource,
+  type WebPanelAssetResolution
+} from './web-panel-vite-runtime'
 import { KeyedTaskQueue } from './task-queue'
 import type { TmuxAdapter } from './tmux'
 import { generateTmuxSessionName, generateTmuxSocketName } from './tmux'
@@ -182,10 +192,28 @@ export class TreeportService {
   private projectsSnapshotInFlight: Promise<ProjectRecord[]> | null = null
   private projectsSnapshotRevision = 0
   private readonly packages: PackageSystem
+  private readonly webPanelRuntime: WebPanelViteRuntime
 
   constructor(private readonly deps: ServiceDependencies) {
     this.events = deps.events ?? new ProductEventBus()
     this.packages = new PackageSystem(deps.config, deps.runner)
+    this.webPanelRuntime = new WebPanelViteRuntime(deps.config)
+  }
+
+  attachHttpServer(server: HttpServer): void {
+    this.webPanelRuntime.attachHttpServer(server)
+  }
+
+  handleWebPanelDevelopmentRequest(
+    request: IncomingMessage,
+    response: ServerResponse,
+    next: () => void
+  ): void {
+    this.webPanelRuntime.handleDevelopmentRequest(request, response, next)
+  }
+
+  async disposeWebPanelRuntime(): Promise<void> {
+    await this.webPanelRuntime.dispose()
   }
 
   get database(): TreeportDatabase {
@@ -739,6 +767,7 @@ export class TreeportService {
     }
 
     const result = await this.packages.install(source, projectId)
+    await this.webPanelRuntime.disposeDevelopmentServers()
     await this.packageResourcesChanged(projectId)
     return result
   }
@@ -752,6 +781,7 @@ export class TreeportService {
     }
 
     const result = await this.packages.remove(source, projectId)
+    await this.webPanelRuntime.disposeDevelopmentServers()
     await this.packageResourcesChanged(projectId)
     return result
   }
@@ -759,6 +789,7 @@ export class TreeportService {
   async updatePackages(source?: string): Promise<PackageOperationResult[]> {
     this.packages.syncProjects(await this.deps.database.projects())
     const results = await this.packages.update(source)
+    await this.webPanelRuntime.disposeDevelopmentServers()
     await this.packageResourcesChanged()
     return results
   }
@@ -773,6 +804,7 @@ export class TreeportService {
     }
 
     const result = await this.packages.reload(projectId)
+    await this.webPanelRuntime.disposeDevelopmentServers()
     await this.packageResourcesChanged(projectId)
     return result
   }
@@ -930,7 +962,7 @@ export class TreeportService {
 
   private async localWebPanelDefinitions(
     worktreeId: string
-  ): Promise<Array<WebPanelDefinition & { root: string; entry: string }>> {
+  ): Promise<Array<WebPanelDefinition & ResolvedWebPanelSource>> {
     const worktree = await this.getWorktree(worktreeId)
     const webPanelsRoot = path.join(worktree.path, '.treeport', 'web-panels')
     const directories = await fs
@@ -942,9 +974,7 @@ export class TreeportService {
 
         throw error
       })
-    const definitions: Array<
-      WebPanelDefinition & { root: string; entry: string }
-    > = []
+    const definitions: Array<WebPanelDefinition & ResolvedWebPanelSource> = []
     for (const directory of directories.sort((left, right) =>
       left.name.localeCompare(right.name)
     )) {
@@ -973,7 +1003,10 @@ export class TreeportService {
           : directory.name,
         source: { type: 'project' },
         root,
-        entry
+        entry,
+        packageRoot: worktree.path,
+        development: true,
+        definitionId: `project:${encodeURIComponent(directory.name)}`
       })
     }
     return definitions
@@ -981,13 +1014,31 @@ export class TreeportService {
 
   private async effectiveWebPanelDefinitions(
     worktreeId: string
-  ): Promise<Array<WebPanelDefinition & { root: string; entry: string }>> {
+  ): Promise<Array<WebPanelDefinition & ResolvedWebPanelSource>> {
     const worktree = await this.getWorktree(worktreeId)
     this.packages.syncProjects([await this.getProject(worktree.projectId)])
     return [
       ...(await this.localWebPanelDefinitions(worktreeId)),
       ...(await this.packages.webPanelDefinitions(worktree.projectId)).map(
-        ({ definition, root, entry }) => ({ ...definition, root, entry })
+        ({
+          definition,
+          root,
+          entry,
+          packageRoot,
+          development,
+          packageLockPath
+        }) => ({
+          ...definition,
+          root,
+          entry,
+          packageRoot,
+          development,
+          ...(packageLockPath ? { packageLockPath } : {}),
+          definitionId: definition.id,
+          ...(definition.source.type === 'package'
+            ? { packageSource: definition.source.source }
+            : {})
+        })
       )
     ]
   }
@@ -996,7 +1047,16 @@ export class TreeportService {
     worktreeId: string
   ): Promise<WebPanelDefinition[]> {
     return (await this.effectiveWebPanelDefinitions(worktreeId)).map(
-      ({ root: _root, entry: _entry, ...definition }) => definition
+      ({
+        root: _root,
+        entry: _entry,
+        packageRoot: _packageRoot,
+        development: _development,
+        packageLockPath: _packageLockPath,
+        definitionId: _definitionId,
+        packageSource: _packageSource,
+        ...definition
+      }) => definition
     )
   }
 
@@ -1156,7 +1216,7 @@ export class TreeportService {
   async resolveWebPanelAsset(
     panelId: string,
     requestedPath: string
-  ): Promise<string> {
+  ): Promise<WebPanelAssetResolution> {
     const panel = await this.deps.database.webPanel(panelId)
     if (!panel) {
       throw new DomainError('PANEL_NOT_FOUND', 'Panel not found', 404)
@@ -1173,29 +1233,12 @@ export class TreeportService {
       )
     }
 
-    const relative = requestedPath || definition.entry
-    const asset = path.resolve(definition.root, relative)
-    const root = await fs.realpath(definition.root)
-    if (!asset.startsWith(`${path.resolve(definition.root)}${path.sep}`)) {
-      throw new DomainError('INVALID_ASSET_PATH', 'Invalid asset path', 400)
-    }
-
-    const realAsset = await fs.realpath(asset).catch((error: unknown) => {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-        throw new DomainError(
-          'WEB_PANEL_ASSET_NOT_FOUND',
-          'Web panel asset not found',
-          404
-        )
-      }
-
-      throw error
-    })
-    if (!isPathWithin(realAsset, root)) {
-      throw new DomainError('INVALID_ASSET_PATH', 'Invalid asset path', 400)
-    }
-
-    return realAsset
+    const encodedPanelId = encodeURIComponent(panelId)
+    return this.webPanelRuntime.resolve(
+      definition,
+      requestedPath,
+      `/api/web-panels/${encodedPanelId}/assets/`
+    )
   }
 
   async listWebPanels(): Promise<WebPanel[]> {

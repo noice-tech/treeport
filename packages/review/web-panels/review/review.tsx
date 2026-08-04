@@ -159,10 +159,17 @@ function ChangedFileTree({
   files: FileDiffMetadata[]
   onSelect(file: string): void
 }) {
-  const paths = useMemo(() => files.map((file) => file.name), [files])
+  const uniqueFiles = useMemo(
+    () => [...new Map(files.map((file) => [file.name, file])).values()],
+    [files]
+  )
+  const paths = useMemo(
+    () => uniqueFiles.map((file) => file.name),
+    [uniqueFiles]
+  )
   const gitStatus = useMemo(
     () =>
-      files.map((file) => {
+      uniqueFiles.map((file) => {
         let status: 'modified' | 'added' | 'deleted' | 'renamed' = 'modified'
         if (file.type === 'new') {
           status = 'added'
@@ -177,7 +184,7 @@ function ChangedFileTree({
 
         return { path: file.name, status }
       }),
-    [files]
+    [uniqueFiles]
   )
   const { model } = useFileTree({
     paths,
@@ -394,7 +401,13 @@ function ReviewApp() {
           : []
       )
       const parsedFiles = diff.unified
-        ? parsePatchFiles(diff.unified).flatMap((patch) => patch.files)
+        ? [
+            ...new Map(
+              parsePatchFiles(diff.unified)
+                .flatMap((patch) => patch.files)
+                .map((file) => [file.name, file])
+            ).values()
+          ]
         : []
       if (diff.unified && parsedFiles.length === 0) {
         throw new Error('The worktree diff did not contain any file patches')
