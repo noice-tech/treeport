@@ -696,7 +696,11 @@ export class TerminalMetadataManager {
         entry.applicationTitleActive =
           paneTitle !== null && paneTitle !== commandLine
       } else if (commandLineChanged) {
-        entry.applicationTitleActive = false
+        entry.applicationTitleActive =
+          previousCommand === null &&
+          paneTitle !== null &&
+          paneTitle !== commandLine &&
+          paneTitle !== entry.shellTitle
       } else if (paneTitleChanged && paneTitle !== commandLine) {
         entry.applicationTitleActive = true
       }
