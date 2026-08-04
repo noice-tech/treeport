@@ -24,6 +24,7 @@ import {
   type TerminalRuntimeMetadata,
   type WorktreeRecord
 } from '@treeport/shared'
+import { parseDurationMs } from '../duration.js'
 import { extractJsonOutput } from './args.js'
 import {
   daemonDown,
@@ -312,26 +313,14 @@ function parseCaptureLines(value: string): number {
 }
 
 function parseDuration(value: string): number {
-  const match = /^(\d+)(ms|s|m|h)$/.exec(value)
-  if (!match) {
+  try {
+    return parseDurationMs(value)
+  } catch (error) {
     throw new CliError(
-      'Timeout must be a positive duration such as 500ms, 30s, 5m, or 1h',
+      error instanceof Error ? error.message : String(error),
       2
     )
   }
-
-  const units = { ms: 1, s: 1_000, m: 60_000, h: 3_600_000 } as const
-  const amount = Number(match[1])
-  const timeoutMs = amount * units[match[2] as keyof typeof units]
-  if (
-    !Number.isSafeInteger(timeoutMs) ||
-    timeoutMs <= 0 ||
-    timeoutMs > 2_147_483_647
-  ) {
-    throw new CliError('Timeout must be between 1ms and 2147483647ms', 2)
-  }
-
-  return timeoutMs
 }
 
 async function inspectTerminal(

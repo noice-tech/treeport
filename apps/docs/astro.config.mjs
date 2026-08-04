@@ -58,7 +58,7 @@ export default defineConfig({
               slug: 'features/attention-and-progress'
             },
             {
-              label: 'Worktree setup hooks',
+              label: 'Worktree setup',
               slug: 'features/worktree-setup-hooks'
             }
           ]

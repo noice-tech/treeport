@@ -37,8 +37,12 @@ import { assertCleanupTransition, DomainError } from './domain'
 import { ProductEventBus } from './events'
 import type { GhAdapter } from './gh'
 import type { GitAdapter } from './git'
-import type { WorktreeSetupTask } from './setup'
 import { PackageSystem } from './package-system'
+import {
+  resolveWorktreeSetupTasks,
+  runWorktreeSetupTasks,
+  type WorktreeSetupTask
+} from './setup'
 import {
   WebPanelViteRuntime,
   type ResolvedWebPanelSource,
@@ -50,9 +54,7 @@ import { generateTmuxSessionName, generateTmuxSocketName } from './tmux'
 import {
   normalizeWorktreeName,
   prepareZedWorktreeWrapper,
-  resolveCreateWorktreeSetupTasks,
-  resolveZedWorktreePath,
-  runCreateWorktreeTasks
+  resolveZedWorktreePath
 } from './zed'
 
 const now = (): string => new Date().toISOString()
@@ -2800,7 +2802,7 @@ export class TreeportService {
               : {})
           }
         )
-        const setupResolution = resolveCreateWorktreeSetupTasks({
+        const setupResolution = resolveWorktreeSetupTasks({
           shell: this.deps.config.shell,
           mainWorktreePath: project.mainWorktreePath,
           worktreePath: worktree.path
@@ -2808,7 +2810,7 @@ export class TreeportService {
           (tasks) => ({ tasks, error: null }),
           (error: unknown) => ({
             tasks: [] as WorktreeSetupTask[],
-            error: `create_worktree setup: ${
+            error: `worktree setup: ${
               error instanceof Error ? error.message : String(error)
             }`.slice(0, 4_096)
           })
@@ -2833,7 +2835,7 @@ export class TreeportService {
         if (setup.tasks.length > 0 || setupError) {
           if (!terminal) {
             setupError ??=
-              'create_worktree setup: no persistent terminal could be started'
+              'worktree setup: no persistent terminal could be started'
           } else {
             try {
               await this.executeCreateTerminal(worktree.id, 'Setup', ['true'], {
@@ -2844,7 +2846,7 @@ export class TreeportService {
                   : {})
               })
             } catch (error) {
-              const setupTerminalError = `create_worktree setup terminal${
+              const setupTerminalError = `worktree setup terminal${
                 error instanceof DomainError ? ` [${error.code}]` : ''
               }: ${
                 error instanceof Error ? error.message : String(error)
@@ -2856,20 +2858,23 @@ export class TreeportService {
           }
         }
       } else {
-        const hookResults = await runCreateWorktreeTasks({
-          runner: this.deps.runner,
+        const setupResults = await resolveWorktreeSetupTasks({
           shell: this.deps.config.shell,
           mainWorktreePath: project.mainWorktreePath,
           worktreePath: worktree.path
-        }).catch((error: unknown) => [
-          {
-            label: 'create_worktree setup',
-            error: error instanceof Error ? error.message : String(error)
-          }
-        ])
-        const hookFailure = hookResults.find((result) => result.error)
-        setupError = hookFailure
-          ? `${hookFailure.label}: ${hookFailure.error}`.slice(0, 4_096)
+        })
+          .then((tasks) =>
+            runWorktreeSetupTasks({ runner: this.deps.runner, tasks })
+          )
+          .catch((error: unknown) => [
+            {
+              label: 'worktree setup',
+              error: error instanceof Error ? error.message : String(error)
+            }
+          ])
+        const setupFailure = setupResults.find((result) => result.error)
+        setupError = setupFailure
+          ? `${setupFailure.label}: ${setupFailure.error}`.slice(0, 4_096)
           : null
       }
 

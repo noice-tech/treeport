@@ -2,14 +2,12 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import type { CommandRequest, CommandResult, CommandRunner } from './command'
 import {
   inferWorktreeName,
   loadCreateWorktreeTasks,
   normalizeWorktreeName,
-  resolveCreateWorktreeSetupTasks,
-  resolveZedWorktreePath,
-  runCreateWorktreeTasks
+  resolveZedCreateWorktreeSetupTasks,
+  resolveZedWorktreePath
 } from './zed'
 
 const temporary: string[] = []
@@ -27,15 +25,6 @@ async function repository(name = 'example') {
   const main = path.join(root, name)
   await fs.mkdir(path.join(main, '.zed'), { recursive: true })
   return { root, main }
-}
-
-class Runner implements CommandRunner {
-  calls: CommandRequest[] = []
-  results: CommandResult[] = []
-  async run(request: CommandRequest): Promise<CommandResult> {
-    this.calls.push(request)
-    return this.results.shift() ?? { stdout: '', stderr: '', exitCode: 0 }
-  }
 }
 
 describe('Zed worktree compatibility', () => {
@@ -110,7 +99,7 @@ describe('Zed worktree compatibility', () => {
     )
   })
 
-  it('loads and sequentially runs create_worktree tasks with Zed variables', async () => {
+  it('loads create_worktree tasks with Zed variables', async () => {
     const { main } = await repository()
     const worktree = path.join(
       path.dirname(main),
@@ -129,7 +118,7 @@ describe('Zed worktree compatibility', () => {
     )
     expect(await loadCreateWorktreeTasks(main)).toHaveLength(2)
     await expect(
-      resolveCreateWorktreeSetupTasks({
+      resolveZedCreateWorktreeSetupTasks({
         shell: '/bin/zsh',
         mainWorktreePath: main,
         worktreePath: worktree
@@ -156,32 +145,6 @@ describe('Zed worktree compatibility', () => {
         timeoutMs: 30 * 60_000
       }
     ])
-    const runner = new Runner()
-    await expect(
-      runCreateWorktreeTasks({
-        runner,
-        shell: '/bin/zsh',
-        mainWorktreePath: main,
-        worktreePath: worktree
-      })
-    ).resolves.toEqual([
-      { label: 'setup', error: null },
-      { label: 'build', error: null }
-    ])
-    expect(runner.calls[0]).toMatchObject({
-      executable: 'bash',
-      args: [path.join(main, '.zed', 'setup.sh')],
-      cwd: worktree
-    })
-    expect(runner.calls[0]?.env).toMatchObject({
-      ZED_WORKTREE_ROOT: worktree,
-      ZED_MAIN_GIT_WORKTREE: main
-    })
-    expect(runner.calls[1]).toMatchObject({
-      executable: '/bin/zsh',
-      args: ['-lc', 'bun install && bun run build'],
-      cwd: worktree
-    })
   })
 
   it('preserves hostile direct arguments and safely quotes explicit-shell arguments', async () => {
@@ -214,7 +177,7 @@ describe('Zed worktree compatibility', () => {
       ])
     )
 
-    const tasks = await resolveCreateWorktreeSetupTasks({
+    const tasks = await resolveZedCreateWorktreeSetupTasks({
       shell: '/bin/zsh',
       mainWorktreePath: main,
       worktreePath: worktree
@@ -233,36 +196,5 @@ describe('Zed worktree compatibility', () => {
       '-lc',
       `echo value | cat 'a b' 'semi;colon' '$cash' 'quote'"'"'argument' '雪'`
     ])
-  })
-
-  it('stops after a bounded hook failure', async () => {
-    const { main } = await repository()
-    await fs.writeFile(
-      path.join(main, '.zed', 'tasks.json'),
-      JSON.stringify([
-        { label: 'bad', command: 'false', hooks: ['create_worktree'] },
-        {
-          label: 'skipped',
-          command: 'echo',
-          args: ['no'],
-          hooks: ['create_worktree']
-        }
-      ])
-    )
-    const runner = new Runner()
-    runner.results.push({
-      stdout: '',
-      stderr: 'failed'.repeat(2_000),
-      exitCode: 1
-    })
-    const results = await runCreateWorktreeTasks({
-      runner,
-      shell: '/bin/sh',
-      mainWorktreePath: main,
-      worktreePath: main
-    })
-    expect(results).toHaveLength(1)
-    expect(results[0]?.error?.length).toBeLessThanOrEqual(4_000)
-    expect(runner.calls).toHaveLength(1)
   })
 })

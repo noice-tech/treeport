@@ -1,11 +1,9 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import { parse, printParseErrorCode, type ParseError } from 'jsonc-parser'
-import type { CommandRunner } from './command'
+import { readOptionalJsonc } from './jsonc'
 import type { WorktreeSetupTask } from './setup'
 
 const DEFAULT_WORKTREE_DIRECTORY = '../worktrees'
-const MAX_HOOK_OUTPUT = 4_000
 
 export interface ZedTask {
   label: string
@@ -13,11 +11,6 @@ export interface ZedTask {
   args: string[]
   cwd?: string
   env: Record<string, string>
-}
-
-export interface ZedHookResult {
-  label: string
-  error: string | null
 }
 
 function isPathWithin(candidate: string, parent: string): boolean {
@@ -60,32 +53,6 @@ async function assertNoSymlinkComponents(
       )
     }
   }
-}
-
-async function readJsonc(filePath: string): Promise<unknown | null> {
-  let source: string
-  try {
-    source = await fs.readFile(filePath, 'utf8')
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-      return null
-    }
-
-    throw error
-  }
-  const errors: ParseError[] = []
-  const value = parse(source, errors, {
-    allowTrailingComma: true,
-    disallowComments: false
-  })
-  if (errors.length) {
-    const first = errors[0]!
-    throw new Error(
-      `Invalid JSONC in ${filePath}: ${printParseErrorCode(first.error)} at offset ${first.offset}`
-    )
-  }
-
-  return value
 }
 
 export function normalizeWorktreeName(input: string): string {
@@ -138,9 +105,10 @@ export async function resolveZedWorktreePath(
   directorySetting: string
 }> {
   const name = normalizeWorktreeName(inputName)
-  const settings = await readJsonc(
+  const settingsFile = await readOptionalJsonc(
     path.join(mainWorktreePath, '.zed', 'settings.json')
   )
+  const settings = settingsFile.found ? settingsFile.value : null
   const record =
     settings && typeof settings === 'object'
       ? (settings as Record<string, unknown>)
@@ -253,9 +221,10 @@ function taskArray(value: unknown): unknown[] {
 export async function loadCreateWorktreeTasks(
   mainWorktreePath: string
 ): Promise<ZedTask[]> {
-  const value = await readJsonc(
+  const tasksFile = await readOptionalJsonc(
     path.join(mainWorktreePath, '.zed', 'tasks.json')
   )
+  const value = tasksFile.found ? tasksFile.value : null
   return taskArray(value).flatMap((entry, index) => {
     if (!entry || typeof entry !== 'object') {
       return []
@@ -337,7 +306,7 @@ function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'"'"'`)}'`
 }
 
-export async function resolveCreateWorktreeSetupTasks(input: {
+export async function resolveZedCreateWorktreeSetupTasks(input: {
   shell: string
   mainWorktreePath: string
   worktreePath: string
@@ -375,51 +344,4 @@ export async function resolveCreateWorktreeSetupTasks(input: {
       timeoutMs: 30 * 60_000
     }
   })
-}
-
-export async function runCreateWorktreeTasks(input: {
-  runner: CommandRunner
-  shell: string
-  mainWorktreePath: string
-  worktreePath: string
-}): Promise<ZedHookResult[]> {
-  const tasks = await resolveCreateWorktreeSetupTasks(input)
-  const results: ZedHookResult[] = []
-  for (const task of tasks) {
-    const [executable, ...args] = task.argv
-    if (!executable) {
-      continue
-    }
-
-    try {
-      const result = await input.runner.run({
-        executable,
-        args,
-        cwd: task.cwd,
-        env: { ...process.env, ...task.env },
-        timeoutMs: task.timeoutMs
-      })
-      if (result.exitCode !== 0) {
-        const detail = (
-          result.stderr.trim() ||
-          result.stdout.trim() ||
-          `exit ${result.exitCode}`
-        ).slice(0, MAX_HOOK_OUTPUT)
-        results.push({ label: task.label, error: detail })
-        break
-      }
-
-      results.push({ label: task.label, error: null })
-    } catch (error) {
-      results.push({
-        label: task.label,
-        error: (error instanceof Error ? error.message : String(error)).slice(
-          0,
-          MAX_HOOK_OUTPUT
-        )
-      })
-      break
-    }
-  }
-  return results
 }
