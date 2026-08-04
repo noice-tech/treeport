@@ -1,27 +1,52 @@
 {
   "$schema": "https://turbo.build/schema.json",
   "ui": "tui",
-  "globalPassThroughEnv": [
-    "HOME",
-    "PATH",
-    "SHELL",
-    "TMPDIR",
-    "TREEPORT_*",
-    "XDG_*"
-  ],
+  "globalPassThroughEnv": ["CI", "HOME", "PATH", "SHELL", "TMPDIR", "XDG_*"],
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
       "outputs": ["dist/**", "dist-types/**"]
     },
+    "@treeport/desktop#build": {
+      "dependsOn": ["^build"],
+      "outputs": [".vite/**"]
+    },
     "dev": {
       "dependsOn": ["^build"],
       "cache": false,
-      "persistent": true
+      "persistent": true,
+      "passThroughEnv": ["TREEPORT_*"]
     },
     "typecheck": {
       "dependsOn": ["^build"],
       "outputs": []
+    },
+    "@treeport/desktop#test:desktop": {
+      "dependsOn": ["build"],
+      "cache": false,
+      "passThroughEnv": [
+        "DBUS_SESSION_BUS_ADDRESS",
+        "DISPLAY",
+        "WAYLAND_DISPLAY"
+      ]
+    },
+    "@treeport/treeport#test:package": {
+      "dependsOn": ["build"],
+      "cache": false
+    },
+    "//#fmt:check": {
+      "cache": false
+    },
+    "//#lint": {
+      "cache": false
+    },
+    "//#test:unit": {
+      "dependsOn": ["@treeport/treeport#build"],
+      "cache": false
+    },
+    "//#test:integration": {
+      "dependsOn": ["@treeport/treeport#build"],
+      "cache": false
     }
   }
 }

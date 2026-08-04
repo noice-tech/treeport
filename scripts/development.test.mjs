@@ -11,11 +11,20 @@ const children = []
 const temporaryDirectories = []
 
 afterEach(async () => {
-  for (const child of children.splice(0)) {
-    if (child.exitCode === null && child.signalCode === null) {
-      child.kill('SIGKILL')
-    }
-  }
+  await Promise.all(
+    children.splice(0).map(
+      (child) =>
+        new Promise((resolve) => {
+          if (child.exitCode !== null || child.signalCode !== null) {
+            resolve()
+            return
+          }
+
+          child.once('exit', resolve)
+          child.kill('SIGTERM')
+        })
+    )
+  )
   await Promise.all(
     servers.splice(0).map(
       (server) =>
@@ -32,7 +41,7 @@ afterEach(async () => {
 })
 
 async function listen(port, host = '127.0.0.1') {
-  const server = net.createServer()
+  const server = net.createServer((socket) => socket.destroy())
   servers.push(server)
   await new Promise((resolve, reject) => {
     server.once('error', reject)
@@ -54,7 +63,7 @@ async function waitUntil(check, description) {
 
 describe('development environment allocation', () => {
   it('selects the next port when another checkout is already listening', async () => {
-    const server = net.createServer()
+    const server = net.createServer((socket) => socket.destroy())
     servers.push(server)
     await new Promise((resolve, reject) => {
       server.once('error', reject)

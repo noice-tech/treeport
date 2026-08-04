@@ -11,13 +11,16 @@
     "dev:desktop": "pnpm dev",
     "dev:docs": "pnpm --filter @treeport/docs start",
     "build": "turbo run build",
-    "check": "pnpm fmt:check && pnpm lint && pnpm typecheck && pnpm test && pnpm test:integration && pnpm test:desktop && pnpm --filter @treeport/treeport test:package",
+    "check": "turbo run fmt:check lint typecheck test:unit test:integration test:desktop --ui=stream && turbo run test:package --ui=stream",
+    "ci:local": "bash scripts/ci-local.sh",
     "release:prepare": "node scripts/prepare-release.mjs",
     "release:publish": "node scripts/publish-release.mjs",
+    "signoff": "bash scripts/signoff.sh",
     "start": "node scripts/start.mjs",
     "start:local": "pnpm --filter @treeport/treeport start",
-    "test": "pnpm --filter @treeport/treeport build && vitest run",
-    "test:desktop": "pnpm --filter @treeport/desktop test",
+    "test": "turbo run test:unit --ui=stream",
+    "test:unit": "vitest run",
+    "test:desktop": "turbo run test:desktop --ui=stream",
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "test:integration:real": "TREEPORT_REAL_INTEGRATION=1 vitest run --config vitest.real.config.ts",
     "test:web": "playwright test",
@@ -27,7 +30,7 @@
     "knip": "knip",
     "fmt": "oxfmt",
     "fmt:check": "oxfmt --check",
-    "clean": "find apps packages -type d \\( -name dist -o -name dist-types \\) -prune -exec rm -rf {} + && rm -rf .turbo"
+    "clean": "find apps packages -type d \\( -name dist -o -name dist-types \\) -prune -exec rm -rf {} + && rm -rf apps/desktop/.vite .turbo"
   },
   "devDependencies": {
     "@playwright/test": "^1.58.2",
