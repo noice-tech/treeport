@@ -136,6 +136,7 @@ async function fixture(): Promise<NetworkFixture> {
     port: 0,
     databasePath: '/tmp/treeport-socket-test.db',
     dataDir: '/tmp',
+    cacheDir: '/tmp',
     runtimeDir: '/tmp',
     shell: '/bin/sh',
     tmuxPath: process.execPath,

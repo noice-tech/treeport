@@ -105,18 +105,24 @@ try {
     throw new Error('Packaged daemon did not serve the Treeport web app')
   }
 
-  await fetch(`http://127.0.0.1:${port}/api/web-panel-sdk.js`).then(
-    async (response) => {
-      if (!response.ok) {
-        throw new Error(`Packaged SDK request returned ${response.status}`)
-      }
-
-      await response.text()
-    }
-  )
-
   const repository = path.join(temporaryDirectory, 'repository')
-  await fs.mkdir(repository)
+  const panelDirectory = path.join(
+    repository,
+    '.treeport',
+    'web-panels',
+    'smoke'
+  )
+  await fs.mkdir(panelDirectory, { recursive: true })
+  await Promise.all([
+    fs.writeFile(
+      path.join(panelDirectory, 'index.html'),
+      '<main id="root"></main><script type="module" src="./panel.tsx"></script>\n'
+    ),
+    fs.writeFile(
+      path.join(panelDirectory, 'panel.tsx'),
+      "import { treeport } from '@treeport/panel-sdk'; const message: string = `source TSX panel loaded with SDK ${treeport.version}`; document.querySelector('#root').textContent = message\n"
+    )
+  ])
   await execute('git', ['init', '-b', 'main'], { cwd: repository })
   await execute('git', ['config', 'user.name', 'Treeport test'], {
     cwd: repository
@@ -134,6 +140,42 @@ try {
   )
   const project = JSON.parse(added.stdout)
   const worktree = project.worktrees[0]
+  const definitions = await fetch(
+    `http://127.0.0.1:${port}/api/worktrees/${worktree.id}/web-panel-definitions`
+  ).then((response) => response.json())
+  const panelDefinition = definitions.definitions.find(
+    (definition) => definition.id === 'project:smoke'
+  )
+  if (!panelDefinition) {
+    throw new Error('Packaged daemon did not discover the source panel')
+  }
+
+  const createdPanel = await fetch(
+    `http://127.0.0.1:${port}/api/worktrees/${worktree.id}/panels`,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ definitionId: panelDefinition.id })
+    }
+  ).then((response) => response.json())
+  const transformedPanel = await fetch(
+    `http://127.0.0.1:${port}/api/web-panels/${createdPanel.panel.id}/assets/`
+  ).then((response) => response.text())
+  const panelModulePath = /src="([^"]*panel\.tsx)"/.exec(transformedPanel)?.[1]
+  if (!panelModulePath) {
+    throw new Error('Packaged daemon did not transform the source panel HTML')
+  }
+
+  const transformedModule = await fetch(
+    new URL(panelModulePath, `http://127.0.0.1:${port}`)
+  ).then((response) => response.text())
+  if (
+    !transformedModule.includes('source TSX panel loaded') ||
+    transformedModule.includes('const message: string')
+  ) {
+    throw new Error('Packaged daemon did not transform the source TSX module')
+  }
+
   await execute(
     treeport,
     [

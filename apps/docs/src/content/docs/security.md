@@ -35,9 +35,11 @@ treeport up --host "$(tailscale ip -4)"
 
 Registering a repository authorizes Treeport to read its main worktree's `.treeport/settings.json` and reconcile declared packages. Review package contents before adding them.
 
-Treeport packages do not execute daemon modules or install server hooks. Managed npm operations always disable lifecycle scripts. A package terminal preset starts only after you select it, and then launches an ordinary terminal with literal arguments. Package web-panel JavaScript runs only after you open that panel and remains inside Treeport's scoped iframe runtime. Served package assets must resolve inside the declared panel root; traversal and escaping symbolic links are rejected.
+Treeport packages do not execute daemon modules or install server hooks. Managed npm operations always disable lifecycle scripts. A package terminal preset starts only after you select it, and then launches an ordinary terminal with literal arguments.
 
-These limits reduce automatic package execution, but selected terminal commands and opened web panels still act on a trusted registered worktree. Web panels can load remote scripts allowed by the panel runtime, so inspect their HTML and JavaScript as well as their package manifest.
+Opening a web panel authorizes Treeport's fixed Vite profile to transform its HTML, TypeScript/TSX, CSS, imports, and assets. Treeport does not load package Vite configuration, executable Babel or PostCSS configuration, package plugins, build scripts, or lifecycle scripts. Npm-installed panel output is served only from Treeport's immutable build cache; source and compiled asset routes reject traversal and escaping symbolic links. Panel JavaScript still runs after you open the panel and remains inside Treeport's scoped iframe runtime.
+
+These limits reduce automatic package execution, but selected terminal commands and opened web panels still act on a trusted registered worktree. Inspect panel source and its runtime dependencies as well as the package manifest.
 
 ## Operational guidance
 

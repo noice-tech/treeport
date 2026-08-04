@@ -1,21 +1,14 @@
 # `@treeport/panel-sdk`
 
-Typed browser SDK for repository-local [Treeport](https://treeport.app) web panels.
+Typed browser SDK for [Treeport](https://treeport.app) web panels.
 
-Add the package as a development dependency for editor and TypeScript support. Repository-local panels run without a build step, so declare Treeport's browser runtime explicitly in `index.html`:
+Install the SDK as a development dependency for editor and TypeScript support:
 
-```html
-<script type="importmap">
-  {
-    "imports": {
-      "@treeport/panel-sdk": "/api/web-panel-sdk.js"
-    }
-  }
-</script>
-<script type="module" src="./panel.js"></script>
+```sh
+pnpm add --save-dev @treeport/panel-sdk
 ```
 
-The panel module can then use the same package import understood by the editor and browser:
+Treeport compiles panel source with its built-in Vite toolchain and resolves `@treeport/panel-sdk` to the host's runtime copy. Panel modules can therefore import the SDK directly without bundling their own copy, adding an import map, or defining a package-owned build step:
 
 ```ts
 import { treeport } from '@treeport/panel-sdk'
@@ -30,7 +23,5 @@ const stopFind = treeport.shortcuts.onFind(() => {
   // Open the panel's own find interface.
 })
 ```
-
-Treeport serves the runtime module from `/api/web-panel-sdk.js` inside its sandboxed panel frame, but does not modify panel HTML. The panel-owned import map makes runtime resolution explicit while this package provides the matching API contract to TypeScript editors and coding agents.
 
 `treeport.shortcuts.onFind(handler)` delivers `Cmd/Ctrl+F` whether keyboard focus is inside the panel or elsewhere in the Treeport workspace. It returns an unsubscribe function. Panels own their find interface and behavior; Treeport only routes the generic shortcut.

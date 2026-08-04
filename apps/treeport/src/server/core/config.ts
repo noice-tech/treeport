@@ -7,6 +7,7 @@ export interface AppConfig {
   port: number
   databasePath: string
   dataDir: string
+  cacheDir: string
   runtimeDir: string
   shell: string
   tmuxPath: string
@@ -39,6 +40,21 @@ function defaultDataDir(
   }
 
   return path.join(os.homedir(), '.local', 'share', 'treeport')
+}
+
+function defaultCacheDir(
+  env: NodeJS.ProcessEnv,
+  platform = process.platform
+): string {
+  if (env.XDG_CACHE_HOME) {
+    return path.join(expandHome(env.XDG_CACHE_HOME), 'treeport')
+  }
+
+  if (platform === 'darwin') {
+    return path.join(os.homedir(), 'Library', 'Caches', 'treeport')
+  }
+
+  return path.join(os.homedir(), '.cache', 'treeport')
 }
 
 function defaultRuntimeDir(env: NodeJS.ProcessEnv): string {
@@ -81,6 +97,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     host,
     port: portValue,
     dataDir,
+    cacheDir: path.resolve(
+      expandHome(env.TREEPORT_CACHE_DIR?.trim() || defaultCacheDir(env))
+    ),
     runtimeDir,
     databasePath: path.resolve(
       expandHome(

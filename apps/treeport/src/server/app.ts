@@ -474,16 +474,6 @@ export function createApp({
     return context.json({ ok: true })
   })
 
-  app.get('/api/web-panel-sdk.js', async (context) => {
-    const panelSdkModule = await fs.readFile(
-      fileURLToPath(import.meta.resolve('@treeport/panel-sdk')),
-      'utf8'
-    )
-    context.header('content-type', 'text/javascript; charset=utf-8')
-    context.header('access-control-allow-origin', '*')
-    return context.body(panelSdkModule)
-  })
-
   app.get('/api/web-panels/:panelId/assets/*', async (context) => {
     const pathname = new URL(context.req.url).pathname
     const assetMarker = `/api/web-panels/${encodeURIComponent(
@@ -492,28 +482,54 @@ export function createApp({
     const requestedPath = decodeURI(
       pathname.slice(pathname.indexOf(assetMarker) + assetMarker.length)
     )
-    const assetPath = await service.resolveWebPanelAsset(
+    const resolution = await service.resolveWebPanelAsset(
       context.req.param('panelId'),
       requestedPath
     )
-    const extension = path.extname(assetPath).toLowerCase()
-    const body = await fs.readFile(assetPath)
-    let mime = 'application/octet-stream'
-    if (extension === '.html') {
-      mime = 'text/html; charset=utf-8'
-    } else if (extension === '.js' || extension === '.mjs') {
-      mime = 'text/javascript; charset=utf-8'
-    } else if (extension === '.css') {
-      mime = 'text/css; charset=utf-8'
-    } else if (extension === '.svg') {
-      mime = 'image/svg+xml'
+    if (resolution.kind === 'redirect') {
+      context.header('cache-control', 'no-store')
+      return context.redirect(resolution.location, 307)
     }
 
-    context.header('content-type', mime)
+    if (resolution.kind === 'error') {
+      context.header('content-type', 'text/html; charset=utf-8')
+      context.header('cache-control', 'no-store')
+      context.header('x-content-type-options', 'nosniff')
+      context.header(
+        'content-security-policy',
+        "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'self'"
+      )
+      return context.html(resolution.html, 500)
+    }
+
+    const extension = path.extname(resolution.path).toLowerCase()
+    const body = await fs.readFile(resolution.path)
+    const mimeTypes: Record<string, string> = {
+      '.css': 'text/css; charset=utf-8',
+      '.gif': 'image/gif',
+      '.html': 'text/html; charset=utf-8',
+      '.jpeg': 'image/jpeg',
+      '.jpg': 'image/jpeg',
+      '.js': 'text/javascript; charset=utf-8',
+      '.json': 'application/json; charset=utf-8',
+      '.map': 'application/json; charset=utf-8',
+      '.mjs': 'text/javascript; charset=utf-8',
+      '.png': 'image/png',
+      '.svg': 'image/svg+xml',
+      '.webp': 'image/webp',
+      '.woff': 'font/woff',
+      '.woff2': 'font/woff2'
+    }
+
+    context.header(
+      'content-type',
+      mimeTypes[extension] ?? 'application/octet-stream'
+    )
+    context.header('cache-control', 'public, max-age=31536000, immutable')
     context.header('access-control-allow-origin', '*')
     context.header(
       'content-security-policy',
-      "default-src 'self'; script-src * 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; frame-ancestors 'self'"
+      "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; frame-ancestors 'self'"
     )
     context.header('x-content-type-options', 'nosniff')
     return context.body(body as any)

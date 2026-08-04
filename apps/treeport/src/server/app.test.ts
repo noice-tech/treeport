@@ -23,6 +23,7 @@ function fixture(webDist = '/missing') {
     port: 8733,
     databasePath: '/tmp/treeport-test.db',
     dataDir: '/tmp',
+    cacheDir: path.join('/tmp', `treeport-cache-${crypto.randomUUID()}`),
     runtimeDir: path.join('/tmp', `treeport-test-${crypto.randomUUID()}`),
     shell: '/bin/zsh',
     tmuxPath: 'tmux',
@@ -347,8 +348,7 @@ describe('HTTP API validation', () => {
     )
   })
 
-  it('serves an executable SDK that brokers scoped panel requests', async () => {
-    const { app } = fixture()
+  it('uses the panel SDK to broker scoped panel requests', async () => {
     const listeners = new Map<string, (...args: unknown[]) => unknown>()
     const panelParent = { postMessage: vi.fn() }
     vi.stubGlobal('parent', panelParent)
@@ -358,16 +358,7 @@ describe('HTTP API validation', () => {
     )
 
     try {
-      const response = await app.request('/api/web-panel-sdk.js')
-      expect(response.status).toBe(200)
-      expect(response.headers.get('content-type')).toBe(
-        'text/javascript; charset=utf-8'
-      )
-
-      const source = await response.text()
-      const sdk = (await import(
-        /* @vite-ignore */ `data:text/javascript;base64,${Buffer.from(source).toString('base64')}#${crypto.randomUUID()}`
-      )) as {
+      const sdk = (await import('@treeport/panel-sdk')) as {
         treeport: {
           version: number
           context: () => Promise<unknown>
@@ -486,19 +477,23 @@ describe('HTTP API validation', () => {
     }
   })
 
-  it('serves panel HTML unchanged with browser-native modules', async () => {
+  it('serves immutable Vite output with restrictive browser headers', async () => {
     const { app, config, service } = fixture()
     const panelRoot = path.join(config.runtimeDir, 'typed-panel')
     const indexPath = path.join(panelRoot, 'index.html')
     const modulePath = path.join(panelRoot, 'panel.js')
     const indexSource =
-      '<!doctype html><html><head><script type="importmap">{"imports":{"@treeport/panel-sdk":"/api/web-panel-sdk.js"}}</script></head><body><script type="module" src="panel.js"></script></body></html>'
+      '<!doctype html><html><body><script type="module" src="panel.js"></script></body></html>'
     await fs.mkdir(panelRoot, { recursive: true })
     await fs.writeFile(indexPath, indexSource)
     await fs.writeFile(modulePath, 'export const answer = 42')
     vi.mocked(service.resolveWebPanelAsset).mockImplementation(
-      async (_panelId, requestedPath) =>
-        requestedPath ? path.join(panelRoot, requestedPath) : indexPath
+      async (_panelId, requestedPath) => ({
+        kind: 'asset',
+        path: requestedPath ? path.join(panelRoot, requestedPath) : indexPath,
+        immutable: true,
+        development: false
+      })
     )
 
     try {
@@ -512,7 +507,7 @@ describe('HTTP API validation', () => {
           .get('content-security-policy')
           ?.split(';')
           .map((directive) => directive.trim())
-      ).toContain("script-src * 'unsafe-inline'")
+      ).toContain("script-src 'self'")
 
       const moduleResponse = await app.request(
         '/api/web-panels/panel_review/assets/panel.js'
@@ -536,7 +531,12 @@ describe('HTTP API validation', () => {
     const modulePath = path.join(config.runtimeDir, 'nested', 'review.js')
     await fs.mkdir(path.dirname(modulePath), { recursive: true })
     await fs.writeFile(modulePath, 'export const loaded = true')
-    vi.mocked(service.resolveWebPanelAsset).mockResolvedValue(modulePath)
+    vi.mocked(service.resolveWebPanelAsset).mockResolvedValue({
+      kind: 'asset',
+      path: modulePath,
+      immutable: true,
+      development: false
+    })
 
     try {
       const response = await app.request(

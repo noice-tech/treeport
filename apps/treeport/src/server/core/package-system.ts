@@ -52,10 +52,13 @@ type ParsedPackageSource = ParsedNpmSource | ParsedLocalSource
 
 type PackageSourceObject = Exclude<PackageSource, string>
 
-interface ResolvedWebPanel {
+export interface ResolvedWebPanel {
   definition: WebPanelDefinition
   root: string
   entry: string
+  packageRoot: string
+  development: boolean
+  packageLockPath?: string
   relativePath: string
   enabled: boolean
 }
@@ -1056,6 +1059,24 @@ export class PackageSystem {
       source,
       scope
     }
+    const packageLockPath =
+      parsed.type === 'npm'
+        ? await Promise.all(
+            [
+              'package-lock.json',
+              'pnpm-lock.yaml',
+              'yarn.lock',
+              'bun.lock',
+              'bun.lockb'
+            ].map(async (name) => {
+              const candidate = path.join(this.npmRoot(scope, projectId), name)
+              return fs
+                .stat(candidate)
+                .then((stat) => (stat.isFile() ? candidate : undefined))
+                .catch(() => undefined)
+            })
+          ).then((values) => values.find(Boolean))
+        : undefined
     const webPanels = applyNormalFilter(
       panelCandidates.map((candidate) => {
         const resourceId = encodeURIComponent(
@@ -1069,6 +1090,9 @@ export class PackageSystem {
           },
           root: candidate.root,
           entry: 'index.html',
+          packageRoot: root,
+          development: parsed.type === 'local',
+          ...(packageLockPath ? { packageLockPath } : {}),
           relativePath: candidate.relativePath,
           enabled: true
         }
