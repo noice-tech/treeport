@@ -141,7 +141,8 @@ async function fixture(): Promise<NetworkFixture> {
     tmuxPath: process.execPath,
     gitPath: 'git',
     ghPath: 'gh',
-    apiUrl: 'http://127.0.0.1'
+    apiUrl: 'http://127.0.0.1',
+    daemonLifecycle: 'treeport'
   } satisfies AppConfig
   const { io, attachments } = createSocketServer(server, {
     service,

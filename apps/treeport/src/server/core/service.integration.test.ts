@@ -426,7 +426,8 @@ async function fixture() {
     tmuxPath: 'tmux',
     gitPath: 'git',
     ghPath: 'gh',
-    apiUrl: 'http://127.0.0.1:8733'
+    apiUrl: 'http://127.0.0.1:8733',
+    daemonLifecycle: 'external'
   }
   const git = new GitAdapter(runner)
   const tmux = new TmuxAdapter(
@@ -2035,6 +2036,7 @@ describe('TreeportService with injected command adapters', () => {
     expect(initialLaunchSpec.setupTasks).toBeUndefined()
     expect(initialLaunchSpec.env).toMatchObject({
       TREEPORT_API_URL: config.apiUrl,
+      TREEPORT_DAEMON_LIFECYCLE: 'external',
       TREEPORT_PROJECT_ID: project.id,
       TREEPORT_WORKTREE_ID: result.worktree.id,
       TREEPORT_TERMINAL_ID: result.terminal!.id

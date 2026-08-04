@@ -45,6 +45,7 @@ export interface HealthRecord {
   pid: number
   instanceId: string | null
   installationMethod: string
+  daemonLifecycle: 'treeport' | 'external'
   url: string
 }
 
@@ -178,7 +179,7 @@ function processExists(pid: number): boolean {
   }
 }
 
-async function health(
+export async function daemonHealth(
   apiUrl: string,
   timeoutMs = 1_500
 ): Promise<HealthRecord | null> {
@@ -235,7 +236,7 @@ async function stopOwned(state: DaemonRecord): Promise<void> {
     return
   }
 
-  const observed = await health(state.apiUrl)
+  const observed = await daemonHealth(state.apiUrl)
   if (!observed || !matchesOwnership(state, observed)) {
     throw new Error(
       `Refusing to stop PID ${state.pid}: Treeport could not verify ownership. Check ${localPaths().statePath}.`
@@ -611,7 +612,7 @@ export async function daemonStatus(): Promise<{
     return { running: false, state: null, health: null, verified: false }
   }
 
-  const observed = await health(state.apiUrl)
+  const observed = await daemonHealth(state.apiUrl)
   return {
     running: Boolean(observed),
     state,
@@ -751,7 +752,7 @@ export async function daemonUp(options: {
 
   const deadline = Date.now() + 15_000
   while (Date.now() < deadline) {
-    const observed = await health(apiUrl, 500)
+    const observed = await daemonHealth(apiUrl, 500)
     if (
       observed &&
       observed.pid === child.pid &&

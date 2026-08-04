@@ -1,9 +1,13 @@
 #!/usr/bin/env node
 import { spawn } from 'node:child_process'
 
+const environment = {
+  ...process.env,
+  TREEPORT_DAEMON_LIFECYCLE: 'external'
+}
 const children = [
-  spawn('pnpm', ['dev:server'], { stdio: 'inherit' }),
-  spawn('pnpm', ['dev:web'], { stdio: 'inherit' })
+  spawn('pnpm', ['dev:server'], { env: environment, stdio: 'inherit' }),
+  spawn('pnpm', ['dev:web'], { env: environment, stdio: 'inherit' })
 ]
 
 let stopping = false
