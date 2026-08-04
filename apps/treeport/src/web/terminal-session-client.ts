@@ -493,6 +493,7 @@ export class TerminalSession {
 
     this.tmuxSelectionPending = false
     this.tmuxSelectionText = null
+    this.wrapper?.classList.remove('terminal-tmux-selection')
     this.terminal?.clearSelection()
     this.updateSelectionState()
   }
@@ -555,7 +556,10 @@ export class TerminalSession {
         onSelectionStart: () => this.clearSelection(),
         onTmuxSelectionStart: () => {
           this.scrollExitPending = true
-          this.wrapper?.classList.add('terminal-scrolling')
+          this.wrapper?.classList.add(
+            'terminal-scrolling',
+            'terminal-tmux-selection'
+          )
         },
         onTmuxSelectionFinish: () => {
           this.tmuxSelectionPending = true
@@ -567,7 +571,10 @@ export class TerminalSession {
           })
           this.scrollExitPending = false
           this.resumeOnNextInput = false
-          this.wrapper?.classList.remove('terminal-scrolling')
+          this.wrapper?.classList.remove(
+            'terminal-scrolling',
+            'terminal-tmux-selection'
+          )
         },
         selectionStartSequence: TERMINAL_SELECTION_START_SEQUENCE,
         selectionStopSequence: TERMINAL_SELECTION_STOP_SEQUENCE
@@ -901,7 +908,10 @@ export class TerminalSession {
 
     this.scrollExitPending = false
     this.resumeOnNextInput = false
-    this.wrapper?.classList.remove('terminal-scrolling')
+    this.wrapper?.classList.remove(
+      'terminal-scrolling',
+      'terminal-tmux-selection'
+    )
     return `${TERMINAL_SCROLL_EXIT_SEQUENCE}${data}`
   }
 

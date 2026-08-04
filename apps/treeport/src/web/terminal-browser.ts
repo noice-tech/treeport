@@ -1,5 +1,9 @@
 import type { Terminal } from '@xterm/xterm'
 import type { TerminalProgress } from '@treeport/shared'
+import {
+  forceSpecificCursor,
+  stopForcingSpecificCursor
+} from './force-specific-cursor'
 
 export const TERMINAL_FONT_SIZE = 14
 
@@ -292,6 +296,7 @@ export function trackTerminalSelectionAutoscroll(
 
     stopScrolling()
     drag = null
+    stopForcingSpecificCursor()
     if (hadTmuxDrag) {
       window.treeportDesktop?.setTerminalSelectionActive(false)
     }
@@ -345,6 +350,7 @@ export function trackTerminalSelectionAutoscroll(
     }
 
     options.onSelectionStart()
+    forceSpecificCursor('text')
     drag = {
       startColumn: cell.column,
       startRow: cell.row,
@@ -375,7 +381,11 @@ export function trackTerminalSelectionAutoscroll(
 
     stopDesktopSelectionRelease?.()
     stopScrolling()
-    drag = null
+    if (drag) {
+      stopForcingSpecificCursor()
+      drag = null
+    }
+
     releasePointerCapture()
     wrapper.removeEventListener('pointerdown', handlePointerDown, true)
     wrapper.removeEventListener('pointerup', handlePointerUp, true)
