@@ -1,0 +1,16 @@
+{
+  "name": "@treeport/review",
+  "version": "0.1.0",
+  "description": "Treeport's internal code-review web panel package.",
+  "private": true,
+  "type": "module",
+  "keywords": [
+    "treeport-package"
+  ],
+  "treeport": {
+    "webPanels": [
+      "./web-panels/review"
+    ]
+  },
+  "license": "Apache-2.0"
+}

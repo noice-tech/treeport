@@ -310,6 +310,8 @@ importers:
 
   packages/panel-sdk: {}
 
+  packages/review: {}
+
   packages/shared:
     dependencies:
       '@treeport/panel-sdk':
