@@ -115,6 +115,7 @@ const desktop = net.createServer().listen(
   () => fs.writeFileSync(process.env.FAKE_ENVIRONMENT_FILE, JSON.stringify({
     apiHost: process.env.TREEPORT_HOST,
     apiPort: process.env.TREEPORT_PORT,
+    daemonLifecycle: process.env.TREEPORT_DAEMON_LIFECYCLE,
     webHost: process.env.TREEPORT_WEB_HOST,
     webPort: process.env.TREEPORT_WEB_PORT,
     desktopUrl: process.env.TREEPORT_DESKTOP_URL,
@@ -241,6 +242,7 @@ process.stdout.write(process.env.FAKE_TAILSCALE_STATUS || '')
       const environment = environments[index]
       const development = [first, second][index]
       expect(environment.apiHost).toBe('127.0.0.1')
+      expect(environment.daemonLifecycle).toBe('external')
       expect(environment.webHost).toBe('127.0.0.1')
       expect(development.output()).toContain(
         `Local:     http://127.0.0.1:${environment.webPort}`

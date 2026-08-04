@@ -14,6 +14,7 @@ describe('configuration', () => {
     expect(config.databasePath).toBe('/tmp/data home/treeport/treeport.db')
     expect(config.runtimeDir).toBe('/tmp/run/treeport')
     expect(config.shell).toBe('/bin/zsh')
+    expect(config.daemonLifecycle).toBe('treeport')
   })
 
   it('uses conventional listener variables when Treeport overrides are absent', () => {
@@ -35,6 +36,7 @@ describe('configuration', () => {
       TREEPORT_HOST: '0.0.0.0',
       TREEPORT_PORT: '5000',
       TREEPORT_API_URL: 'http://example.test:5000',
+      TREEPORT_DAEMON_LIFECYCLE: 'external',
       TREEPORT_SHELL: '/bin/bash'
     })
 
@@ -44,11 +46,15 @@ describe('configuration', () => {
     expect(config.port).toBe(5000)
     expect(config.apiUrl).toBe('http://example.test:5000')
     expect(config.shell).toBe('/bin/bash')
+    expect(config.daemonLifecycle).toBe('external')
   })
 
-  it('rejects an invalid port', () => {
+  it('rejects invalid configuration', () => {
     expect(() => loadConfig({ TREEPORT_PORT: '70000' })).toThrow(
       'TREEPORT_PORT must be an integer between 1 and 65535'
     )
+    expect(() =>
+      loadConfig({ TREEPORT_DAEMON_LIFECYCLE: 'development' })
+    ).toThrow('TREEPORT_DAEMON_LIFECYCLE must be either treeport or external')
   })
 })

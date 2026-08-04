@@ -192,6 +192,7 @@ export function createApp({
       pid: process.pid,
       instanceId: config.instanceId ?? null,
       installationMethod: config.installationMethod ?? 'development',
+      daemonLifecycle: config.daemonLifecycle,
       url: config.apiUrl
     })
   )

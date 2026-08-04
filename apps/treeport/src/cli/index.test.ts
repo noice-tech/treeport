@@ -108,6 +108,7 @@ async function runCli(
   const env = { ...process.env }
   for (const name of [
     'TREEPORT_API_URL',
+    'TREEPORT_DAEMON_LIFECYCLE',
     'TREEPORT_PROJECT_ID',
     'TREEPORT_WORKTREE_ID',
     'TREEPORT_TERMINAL_ID'
@@ -163,6 +164,7 @@ describe('CLI context and machine output', () => {
     | 'exit'
     | 'slow-refresh' = 'none'
   let inspectionRequests = 0
+  let observedDaemonLifecycle: 'treeport' | 'external' = 'treeport'
 
   beforeEach(() => {
     observedTerminal = terminal
@@ -176,12 +178,24 @@ describe('CLI context and machine output', () => {
     }
     eventScenario = 'none'
     inspectionRequests = 0
+    observedDaemonLifecycle = 'treeport'
   })
 
   beforeAll(async () => {
     server = http.createServer(async (request, response) => {
       requests.push(`${request.method} ${request.url}`)
       response.setHeader('content-type', 'application/json')
+
+      if (request.method === 'GET' && request.url === '/api/health') {
+        response.end(
+          JSON.stringify({
+            ok: true,
+            pid: process.pid,
+            daemonLifecycle: observedDaemonLifecycle
+          })
+        )
+        return
+      }
 
       if (
         request.method === 'GET' &&
@@ -429,7 +443,18 @@ describe('CLI context and machine output', () => {
     expect(result.stdout).toContain('Project:  treeport (proj_context)')
     expect(result.stdout).toContain('Worktree: agent-tools (wt_context)')
     expect(result.stdout).toContain('Terminal: Pi (term_context) — running')
+    expect(result.stdout).toContain('Lifecycle: managed by Treeport')
     expect(result.stdout.trimStart().startsWith('{')).toBe(false)
+
+    observedDaemonLifecycle = 'external'
+    const external = await runCli(['context'], {
+      TREEPORT_API_URL: apiUrl,
+      TREEPORT_PROJECT_ID: project.id,
+      TREEPORT_WORKTREE_ID: worktree.id,
+      TREEPORT_TERMINAL_ID: terminal.id
+    })
+    expect(external.code).toBe(0)
+    expect(external.stdout).toContain('Lifecycle: externally managed')
   })
 
   it('returns compact structured context only when requested', async () => {
@@ -446,6 +471,7 @@ describe('CLI context and machine output', () => {
     expect(JSON.parse(result.stdout)).toMatchObject({
       managed: true,
       apiUrl,
+      daemonLifecycle: 'treeport',
       project: { id: project.id, name: 'treeport' },
       worktree: { id: worktree.id, name: 'agent-tools' },
       terminal: { id: terminal.id, name: 'Pi', status: 'running' }
@@ -857,6 +883,31 @@ describe('CLI context and machine output', () => {
     expect(skills.stdout).toContain('## Operating rules')
     expect(skills.stdout).toContain('treeport context')
     expect(skills.stdout).toContain('treeport spawn')
+    expect(skills.stdout).not.toContain(
+      '> **Externally managed daemon lifecycle:**'
+    )
+
+    observedDaemonLifecycle = 'external'
+    const externalSkills = await runCli(['skills'], {
+      TREEPORT_API_URL: apiUrl
+    })
+    expect(externalSkills.code).toBe(0)
+    expect(externalSkills.stdout).toContain(
+      '> **Externally managed daemon lifecycle:** Do not run `treeport up`, `treeport down`, or `treeport remote enable`.'
+    )
+
+    for (const command of [['up'], ['down'], ['remote', 'enable']]) {
+      const refusal = await runCli([...command, '--json'], {
+        TREEPORT_API_URL: apiUrl
+      })
+      expect(refusal.code).toBe(5)
+      expect(JSON.parse(refusal.stderr)).toMatchObject({
+        error: {
+          code: 'DAEMON_LIFECYCLE_EXTERNAL',
+          message: expect.stringContaining('externally managed')
+        }
+      })
+    }
   })
 
   it('rejects extra arguments and unknown options as usage errors', async () => {

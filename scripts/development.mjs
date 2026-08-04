@@ -318,6 +318,7 @@ export async function main() {
     TREEPORT_HOST: loopbackHost,
     TREEPORT_PORT: String(apiPort),
     TREEPORT_API_URL: apiUrl,
+    TREEPORT_DAEMON_LIFECYCLE: 'external',
     TREEPORT_WEB_HOST: mode.webHost,
     TREEPORT_WEB_PORT: String(webPort),
     TREEPORT_DESKTOP_URL: webUrl,

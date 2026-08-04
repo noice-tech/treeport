@@ -28,7 +28,8 @@ function fixture(webDist = '/missing') {
     tmuxPath: 'tmux',
     gitPath: 'git',
     ghPath: 'gh',
-    apiUrl: 'http://127.0.0.1:8733'
+    apiUrl: 'http://127.0.0.1:8733',
+    daemonLifecycle: 'treeport'
   }
   const service = {
     events: new ProductEventBus(),
@@ -222,7 +223,8 @@ describe('HTTP API validation', () => {
     expect(await response.json()).toMatchObject({
       ok: true,
       protocolVersion: DESKTOP_PROTOCOL_VERSION,
-      hostname: os.hostname()
+      hostname: os.hostname(),
+      daemonLifecycle: 'treeport'
     })
   })
 
