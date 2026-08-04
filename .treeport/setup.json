@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "commands": [
+    {
+      "name": "Install dependencies",
+      "argv": ["pnpm", "install", "--frozen-lockfile"]
+    },
+    {
+      "name": "Clone Treeport development database",
+      "argv": [
+        "node",
+        "${TREEPORT_WORKTREE_PATH}/apps/treeport/scripts/development-database.mjs",
+        "--from",
+        "${TREEPORT_MAIN_WORKTREE_PATH}/apps/treeport/.treeport-dev/data/treeport.db",
+        "--to",
+        "${TREEPORT_WORKTREE_PATH}/apps/treeport/.treeport-dev/data/treeport.db"
+      ]
+    }
+  ]
+}

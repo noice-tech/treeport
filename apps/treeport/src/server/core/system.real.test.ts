@@ -80,7 +80,7 @@ async function makeService(databasePath: string, runtimeDir: string) {
   const database = await TreeportDatabase.open(databasePath)
   const git = new GitAdapter(runner)
   const launcherPath = fileURLToPath(
-    new URL('../../dist/core/launcher.js', import.meta.url)
+    new URL('../../../dist/node/server/core/launcher.js', import.meta.url)
   )
   const tmux = new TmuxAdapter(runner, runtimeDir, 'tmux', launcherPath)
   const gh = new GhAdapter(runner)
@@ -133,27 +133,26 @@ describe.skipIf(!enabled)(
         cwd: main
       })
       await fs.writeFile(path.join(main, 'README.md'), 'fixture\n')
-      await fs.mkdir(path.join(main, '.zed'), { recursive: true })
+      await fs.mkdir(path.join(main, '.treeport'), { recursive: true })
       await fs.writeFile(
-        path.join(main, '.zed', 'tasks.json'),
-        JSON.stringify([
-          {
-            label: 'first setup',
-            command: process.execPath,
-            args: ['-e', "console.log('SETUP_ONE')"],
-            hooks: ['create_worktree']
-          },
-          {
-            label: 'second setup',
-            command: process.execPath,
-            args: ['-e', "console.error('SETUP_TWO')"],
-            hooks: ['create_worktree']
-          }
-        ])
+        path.join(main, '.treeport', 'setup.json'),
+        JSON.stringify({
+          version: 1,
+          commands: [
+            {
+              name: 'first setup',
+              argv: [process.execPath, '-e', "console.log('SETUP_ONE')"]
+            },
+            {
+              name: 'second setup',
+              argv: [process.execPath, '-e', "console.error('SETUP_TWO')"]
+            }
+          ]
+        })
       )
       await runChecked(command, {
         executable: 'git',
-        args: ['add', 'README.md', '.zed/tasks.json'],
+        args: ['add', 'README.md', '.treeport/setup.json'],
         cwd: main
       })
       await runChecked(command, {
@@ -359,27 +358,28 @@ describe.skipIf(!enabled)(
       linked.path = moved.path
 
       await fs.writeFile(
-        path.join(main, '.zed', 'tasks.json'),
-        JSON.stringify([
-          {
-            label: 'failure setup one',
-            command: process.execPath,
-            args: ['-e', "console.log('FAIL_SETUP_ONE')"],
-            hooks: ['create_worktree']
-          },
-          {
-            label: 'failure setup two',
-            command: process.execPath,
-            args: ['-e', "console.error('FAIL_SETUP_TWO');process.exit(17)"],
-            hooks: ['create_worktree']
-          },
-          {
-            label: 'skipped setup',
-            command: process.execPath,
-            args: ['-e', "console.log('SHOULD_NOT_RUN')"],
-            hooks: ['create_worktree']
-          }
-        ])
+        path.join(main, '.treeport', 'setup.json'),
+        JSON.stringify({
+          version: 1,
+          commands: [
+            {
+              name: 'failure setup one',
+              argv: [process.execPath, '-e', "console.log('FAIL_SETUP_ONE')"]
+            },
+            {
+              name: 'failure setup two',
+              argv: [
+                process.execPath,
+                '-e',
+                "console.error('FAIL_SETUP_TWO');process.exit(17)"
+              ]
+            },
+            {
+              name: 'skipped setup',
+              argv: [process.execPath, '-e', "console.log('SHOULD_NOT_RUN')"]
+            }
+          ]
+        })
       )
       const failedCreate = await fixture.service.createWorktree(
         project.id,
@@ -629,7 +629,7 @@ describe.skipIf(!enabled)(
       const outputPath = path.join(root, 'initial-size.json')
       const runner = new SpawnCommandRunner()
       const launcherPath = fileURLToPath(
-        new URL('../../dist/core/launcher.js', import.meta.url)
+        new URL('../../../dist/node/server/core/launcher.js', import.meta.url)
       )
       const tmux = new TmuxAdapter(runner, runtimeDir, 'tmux', launcherPath)
       const socket = `treeport-initial-size-${process.pid}`

@@ -2084,15 +2084,83 @@ describe('TreeportService with injected command adapters', () => {
     ).toBe(false)
   })
 
+  it('does not run native setup when discovering or refreshing an existing worktree', async () => {
+    const { root, main, runner, service } = await fixture()
+    await fs.mkdir(path.join(main, '.treeport'), { recursive: true })
+    await fs.writeFile(
+      path.join(main, '.treeport', 'setup.json'),
+      JSON.stringify({
+        version: 1,
+        commands: [
+          {
+            name: 'must not run during discovery',
+            argv: ['discovery-setup-must-not-run']
+          }
+        ]
+      })
+    )
+    const externalPath = path.join(root, 'external linked worktree')
+    const externalGitWorktreeKey = path.join(
+      main,
+      '.git',
+      'worktrees',
+      'external'
+    )
+    await fs.mkdir(externalPath, { recursive: true })
+    await fs.writeFile(
+      path.join(externalPath, '.git'),
+      `gitdir: ${externalGitWorktreeKey}\n`
+    )
+    runner.worktrees.push({
+      path: externalPath,
+      gitWorktreeKey: externalGitWorktreeKey,
+      head: 'external-head',
+      branch: null
+    })
+
+    const project = await service.registerProject(main)
+    expect(project.worktrees).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ path: await fs.realpath(externalPath) })
+      ])
+    )
+    await service.refreshProject(project.id)
+    expect(
+      runner.calls.some(
+        (call) => call.executable === 'discovery-setup-must-not-run'
+      )
+    ).toBe(false)
+  })
+
   it('starts the initial terminal before setup in a separate one-off terminal', async () => {
     const { main, runner, service, config } = await fixture()
+    await fs.mkdir(path.join(main, '.treeport'), { recursive: true })
     await fs.mkdir(path.join(main, '.zed'), { recursive: true })
+    await fs.writeFile(
+      path.join(main, '.treeport', 'setup.json'),
+      JSON.stringify({
+        version: 1,
+        commands: [
+          {
+            name: 'setup',
+            argv: [
+              'fail-setup',
+              '${TREEPORT_MAIN_WORKTREE_PATH}/marker',
+              'literal value'
+            ],
+            cwd: 'packages/api',
+            env: { GENERATED: '${TREEPORT_WORKTREE_PATH}/generated' },
+            timeout: '45s'
+          }
+        ]
+      })
+    )
     await fs.writeFile(
       path.join(main, '.zed', 'tasks.json'),
       JSON.stringify([
         {
-          label: 'setup',
-          command: 'fail-setup',
+          label: 'duplicate setup',
+          command: 'zed-should-not-run',
           hooks: ['create_worktree']
         }
       ])
@@ -2192,12 +2260,32 @@ describe('TreeportService with injected command adapters', () => {
       )
     ) as {
       argv: string[]
-      setupTasks: Array<{ label: string; argv: string[] }>
+      setupTasks: Array<{
+        label: string
+        argv: string[]
+        cwd: string
+        env: Record<string, string>
+        timeoutMs: number
+      }>
       env: Record<string, string>
     }
     expect(setupLaunchSpec.argv).toEqual(['true'])
     expect(setupLaunchSpec.setupTasks).toEqual([
-      expect.objectContaining({ label: 'setup', argv: ['fail-setup'] })
+      {
+        label: 'setup',
+        argv: [
+          'fail-setup',
+          `${project.mainWorktreePath}/marker`,
+          'literal value'
+        ],
+        cwd: path.join(result.worktree.path, 'packages', 'api'),
+        env: {
+          GENERATED: `${result.worktree.path}/generated`,
+          TREEPORT_WORKTREE_PATH: result.worktree.path,
+          TREEPORT_MAIN_WORKTREE_PATH: project.mainWorktreePath
+        },
+        timeoutMs: 45_000
+      }
     ])
     expect(setupLaunchSpec.env.TREEPORT_TERMINAL_ID).toBe(setupTerminal.id)
     const setupSessionKey = `${result.worktree.tmuxSocketName}/${setupTerminal.tmuxSessionName}`
@@ -2232,8 +2320,11 @@ describe('TreeportService with injected command adapters', () => {
 
   it('retains task preparation and setup-terminal creation errors', async () => {
     const { main, runner, service, config } = await fixture()
-    await fs.mkdir(path.join(main, '.zed'), { recursive: true })
-    await fs.writeFile(path.join(main, '.zed', 'tasks.json'), '{ invalid json')
+    await fs.mkdir(path.join(main, '.treeport'), { recursive: true })
+    await fs.writeFile(
+      path.join(main, '.treeport', 'setup.json'),
+      '{ invalid json'
+    )
     const project = await service.registerProject(main)
     const result = await service.createWorktree(
       project.id,
@@ -2279,9 +2370,9 @@ describe('TreeportService with injected command adapters', () => {
     runner.tmuxCreateFails = false
 
     expect(terminalCreates).toBe(1)
-    expect(terminalFailure.setupError).toContain('create_worktree setup:')
+    expect(terminalFailure.setupError).toContain('worktree setup:')
     expect(terminalFailure.setupError).toContain(
-      'create_worktree setup terminal [TERMINAL_CREATE_FAILED]:'
+      'worktree setup terminal [TERMINAL_CREATE_FAILED]:'
     )
     expect(
       (
@@ -3128,16 +3219,18 @@ describe('TreeportService with injected command adapters', () => {
 
   it('creates terminals in active worktrees and queues removal while headless setup is running', async () => {
     const { main, runner, service } = await fixture()
-    await fs.mkdir(path.join(main, '.zed'), { recursive: true })
+    await fs.mkdir(path.join(main, '.treeport'), { recursive: true })
     await fs.writeFile(
-      path.join(main, '.zed', 'tasks.json'),
-      JSON.stringify([
-        {
-          label: 'held setup',
-          command: 'hold-setup',
-          hooks: ['create_worktree']
-        }
-      ])
+      path.join(main, '.treeport', 'setup.json'),
+      JSON.stringify({
+        version: 1,
+        commands: [
+          {
+            name: 'held setup',
+            argv: ['hold-setup']
+          }
+        ]
+      })
     )
     const project = await service.registerProject(main)
     let releaseSetup!: () => void
