@@ -48,7 +48,6 @@ await new Promise((resolve, reject) =>
 const environment = {
   ...process.env,
   TREEPORT_API_URL: '',
-  TREEPORT_DAEMON_LIFECYCLE: '',
   TREEPORT_HOST: '127.0.0.1',
   TREEPORT_PORT: String(port),
   TREEPORT_DATA_DIR: dataDirectory,
