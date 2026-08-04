@@ -4,6 +4,9 @@ packages:
 
 hoistPattern:
   - update-electron-app
+  - vite
+  # @astrojs/mdx imports this transitive dependency directly.
+  - satteri
 
 catalog:
   '@fontsource-variable/inter': ^5.2.8
