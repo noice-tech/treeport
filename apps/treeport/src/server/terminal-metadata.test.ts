@@ -285,7 +285,7 @@ describe('TerminalMetadataManager', () => {
     expect(manager.get(item.id).hasForegroundProcess).toBe(false)
   })
 
-  it('prefers an existing application title when tracking starts while it is running', async () => {
+  it('restores an application title in the initial metadata snapshot after a daemon restart', async () => {
     vi.useFakeTimers()
     const item = { ...terminal('one'), argv: ['/bin/zsh', '-l'] }
     const { manager, sessionTitleState } = fixture([item])
@@ -293,14 +293,18 @@ describe('TerminalMetadataManager', () => {
     sessionTitleState.mockResolvedValue({
       paneTitle: 'π',
       currentCommand: 'node',
+      commandLine: 'pi',
       shellTitle: 'treeport'
     })
     await manager.initialize()
-    expect(manager.get(item.id).title).toBe('π')
+    expect(manager.snapshot()).toEqual([
+      expect.objectContaining({ terminalId: item.id, title: 'π' })
+    ])
 
     sessionTitleState.mockResolvedValue({
       paneTitle: 'π',
       currentCommand: 'rg',
+      commandLine: 'pi',
       shellTitle: 'treeport'
     })
     await vi.advanceTimersByTimeAsync(TERMINAL_METADATA_POLL_MS)
