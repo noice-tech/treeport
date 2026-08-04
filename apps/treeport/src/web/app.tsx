@@ -56,6 +56,7 @@ import {
   targetForWorktree
 } from './workspace-navigation'
 import { useWorkspaceNavigate } from './workspace-router-navigation'
+import { ForceSpecificCursor } from './force-specific-cursor'
 
 type AppDialog =
   | { type: 'project' }
@@ -68,9 +69,12 @@ type AppDialog =
 
 export default function App() {
   return (
-    <WorkspaceShell>
-      <WorkspaceApp />
-    </WorkspaceShell>
+    <>
+      <WorkspaceShell>
+        <WorkspaceApp />
+      </WorkspaceShell>
+      <ForceSpecificCursor />
+    </>
   )
 }
 
