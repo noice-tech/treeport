@@ -12,7 +12,7 @@
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
-      "outputs": ["dist/**", "dist-types/**"]
+      "outputs": ["dist/**", "dist-types/**", "web-panels/**"]
     },
     "dev": {
       "dependsOn": ["^build"],
