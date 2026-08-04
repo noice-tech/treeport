@@ -22,6 +22,26 @@ export interface GitDirtyStatus {
   fingerprint: string
 }
 
+const repositoryIdentityKey = 'treeport.repositoryId'
+const uuidPattern =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu
+
+export class InvalidRepositoryIdentityError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'InvalidRepositoryIdentityError'
+  }
+}
+
+export class GitMetadataNotWritableError extends Error {
+  constructor(cwd: string, details: string) {
+    super(
+      `Treeport could not write repository-local Git metadata for ${cwd}: ${details}`
+    )
+    this.name = 'GitMetadataNotWritableError'
+  }
+}
+
 export function parseWorktreePorcelain(output: string): GitWorktreeInfo[] {
   const records = output
     .trim()
@@ -132,6 +152,172 @@ export class GitAdapter {
       '--show-toplevel'
     ])
     return fs.realpath(result.stdout.trim())
+  }
+
+  private async repositoryIdentityValues(cwd: string): Promise<string[]> {
+    const result = await this.runner.run({
+      executable: this.executable,
+      args: [
+        'config',
+        '--local',
+        '--no-includes',
+        '--get-all',
+        repositoryIdentityKey
+      ],
+      cwd,
+      timeoutMs: 30_000
+    })
+    if (result.exitCode === 1 && !result.stdout.trim()) {
+      return []
+    }
+
+    if (result.exitCode !== 0) {
+      throw new InvalidRepositoryIdentityError(
+        `Could not read the local Treeport repository identity: ${result.stderr.trim() || `Git exited with code ${result.exitCode}`}`
+      )
+    }
+
+    return result.stdout
+      .split(/\r?\n/u)
+      .map((value) => value.trim())
+      .filter(Boolean)
+  }
+
+  async repositoryIdentity(cwd: string): Promise<string | null> {
+    const values = await this.repositoryIdentityValues(cwd)
+    if (values.length === 0) {
+      return null
+    }
+
+    if (values.length !== 1 || !uuidPattern.test(values[0]!)) {
+      throw new InvalidRepositoryIdentityError(
+        values.length > 1
+          ? 'The local Git config contains multiple Treeport repository identities'
+          : 'The local Git config contains an invalid Treeport repository identity'
+      )
+    }
+
+    return values[0]!.toLowerCase()
+  }
+
+  async ensureRepositoryIdentity(cwd: string): Promise<string> {
+    let existing: string | null = null
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      try {
+        existing = await this.repositoryIdentity(cwd)
+        break
+      } catch (error) {
+        if (
+          !(error instanceof InvalidRepositoryIdentityError) ||
+          !error.message.includes('multiple') ||
+          attempt === 19
+        ) {
+          throw error
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, 5))
+      }
+    }
+
+    if (existing) {
+      return existing
+    }
+
+    const generated = crypto.randomUUID()
+    let write = await this.runner.run({
+      executable: this.executable,
+      args: ['config', '--local', '--add', repositoryIdentityKey, generated],
+      cwd,
+      timeoutMs: 30_000
+    })
+    for (
+      let attempt = 0;
+      write.exitCode !== 0 &&
+      /could not lock config file|File exists/iu.test(write.stderr) &&
+      attempt < 100;
+      attempt += 1
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 5))
+      write = await this.runner.run({
+        executable: this.executable,
+        args: ['config', '--local', '--add', repositoryIdentityKey, generated],
+        cwd,
+        timeoutMs: 30_000
+      })
+    }
+
+    if (write.exitCode !== 0) {
+      const raced = await this.repositoryIdentity(cwd).catch(() => null)
+      if (raced) {
+        return raced
+      }
+
+      throw new GitMetadataNotWritableError(
+        cwd,
+        write.stderr.trim() || `Git exited with code ${write.exitCode}`
+      )
+    }
+
+    const values = await this.repositoryIdentityValues(cwd)
+    const valid = values.filter((value) => uuidPattern.test(value))
+    if (valid.length === 0) {
+      throw new InvalidRepositoryIdentityError(
+        'Git did not persist a valid Treeport repository identity'
+      )
+    }
+
+    const identity = valid[0]!.toLowerCase()
+    if (values.length !== 1 || values[0] !== identity) {
+      let cleanup = await this.runner.run({
+        executable: this.executable,
+        args: [
+          'config',
+          '--local',
+          '--replace-all',
+          repositoryIdentityKey,
+          identity
+        ],
+        cwd,
+        timeoutMs: 30_000
+      })
+      for (
+        let attempt = 0;
+        cleanup.exitCode !== 0 &&
+        /could not lock config file|File exists/iu.test(cleanup.stderr) &&
+        attempt < 100;
+        attempt += 1
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 5))
+        cleanup = await this.runner.run({
+          executable: this.executable,
+          args: [
+            'config',
+            '--local',
+            '--replace-all',
+            repositoryIdentityKey,
+            identity
+          ],
+          cwd,
+          timeoutMs: 30_000
+        })
+      }
+
+      if (cleanup.exitCode !== 0) {
+        throw new GitMetadataNotWritableError(
+          cwd,
+          cleanup.stderr.trim() || `Git exited with code ${cleanup.exitCode}`
+        )
+      }
+    }
+
+    const persisted = await this.repositoryIdentity(cwd)
+    if (persisted !== identity) {
+      throw new InvalidRepositoryIdentityError(
+        'The local Treeport repository identity changed while it was initialized'
+      )
+    }
+
+    return persisted
   }
 
   async listWorktrees(cwd: string): Promise<GitWorktreeInfo[]> {

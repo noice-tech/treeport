@@ -3,6 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { CommandRequest, CommandResult, CommandRunner } from './command'
+import { runChecked, SpawnCommandRunner } from './command'
 import { GitAdapter } from './git'
 
 const temporary: string[] = []
@@ -26,6 +27,55 @@ class FakeRunner implements CommandRunner {
 }
 
 describe('GitAdapter', () => {
+  it('shares one durable local identity across worktrees but not clones', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'treeport identity '))
+    temporary.push(root)
+    const main = path.join(root, 'main')
+    const linked = path.join(root, 'linked')
+    const clone = path.join(root, 'clone')
+    const runner = new SpawnCommandRunner()
+    const git = (cwd: string, args: string[]) =>
+      runChecked(runner, {
+        executable: 'git',
+        args,
+        cwd,
+        timeoutMs: 30_000
+      })
+
+    await fs.mkdir(main)
+    await git(main, ['init', '--initial-branch=main'])
+    await git(main, ['config', 'user.email', 'treeport@example.com'])
+    await git(main, ['config', 'user.name', 'Treeport Test'])
+    await fs.writeFile(path.join(main, 'README.md'), 'identity test\n')
+    await git(main, ['add', 'README.md'])
+    await git(main, ['commit', '-m', 'initial'])
+
+    const adapter = new GitAdapter(runner)
+    const identities = await Promise.all(
+      Array.from({ length: 8 }, () => adapter.ensureRepositoryIdentity(main))
+    )
+    expect(new Set(identities)).toEqual(new Set([identities[0]]))
+    expect(
+      (
+        await git(main, [
+          'config',
+          '--local',
+          '--no-includes',
+          '--get-all',
+          'treeport.repositoryId'
+        ])
+      ).stdout
+        .trim()
+        .split('\n')
+    ).toEqual([identities[0]])
+
+    await git(main, ['worktree', 'add', '-b', 'linked', linked])
+    expect(await adapter.repositoryIdentity(linked)).toBe(identities[0])
+
+    await git(root, ['clone', main, clone])
+    expect(await adapter.repositoryIdentity(clone)).toBeNull()
+  })
+
   it('canonicalizes a repository path through realpath and rev-parse', async () => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'treeport repo '))
     temporary.push(directory)

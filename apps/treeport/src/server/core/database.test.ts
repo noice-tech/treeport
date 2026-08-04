@@ -38,12 +38,49 @@ describe('SQLite migration and catalog ordering', () => {
       await database.db.get<{ count: number }>(
         sql`SELECT count(*) AS count FROM __drizzle_migrations`
       )
-    ).toEqual({ count: 3 })
+    ).toEqual({ count: 4 })
     expect(
       await database.db.get<{ count: number }>(sql`
         SELECT count(*) AS count FROM sqlite_master WHERE name='terminals'
       `)
     ).toEqual({ count: 0 })
+
+    const timestamps = {
+      lastOpenedAt: '2026-01-01',
+      createdAt: '2026-01-01',
+      updatedAt: '2026-01-01'
+    }
+    await database.db.insert(projects).values([
+      {
+        id: 'legacy-a',
+        name: 'Legacy A',
+        repositoryPath: '/legacy-a',
+        mainWorktreePath: '/legacy-a',
+        defaultBranch: 'main',
+        repositoryDevice: '1',
+        repositoryInode: '2',
+        ...timestamps
+      },
+      {
+        id: 'legacy-b',
+        name: 'Legacy B',
+        repositoryPath: '/legacy-b',
+        mainWorktreePath: '/legacy-b',
+        defaultBranch: 'main',
+        repositoryDevice: '1',
+        repositoryInode: '2',
+        ...timestamps
+      }
+    ])
+    await database.db.run(sql`
+      UPDATE projects SET repository_identity='11111111-1111-4111-8111-111111111111'
+      WHERE id='legacy-a'
+    `)
+    expect(
+      await database.projectByRepositoryIdentity(
+        '11111111-1111-4111-8111-111111111111'
+      )
+    ).toMatchObject({ id: 'legacy-a', name: 'Legacy A' })
   })
 
   it('keeps the main worktree first and linked worktrees in creation order', async () => {
@@ -211,6 +248,12 @@ describe('SQLite migration and catalog ordering', () => {
     await initial.db.transaction(async (tx) => {
       await tx.run(sql`DROP INDEX terminal_presets_order_idx`)
       await tx.run(sql`DROP TABLE terminal_presets`)
+      await tx.run(sql`DROP INDEX projects_repository_identity_idx`)
+      await tx.run(sql`ALTER TABLE projects DROP COLUMN repository_identity`)
+      await tx.run(sql`
+        CREATE UNIQUE INDEX projects_fs_identity_idx
+        ON projects(repository_device,repository_inode)
+      `)
       await tx.run(sql`DROP TABLE __drizzle_migrations`)
       await tx.run(sql`
         CREATE TABLE schema_migrations (
@@ -248,7 +291,7 @@ describe('SQLite migration and catalog ordering', () => {
       await reopened.db.get<{ count: number }>(
         sql`SELECT count(*) AS count FROM __drizzle_migrations`
       )
-    ).toEqual({ count: 3 })
+    ).toEqual({ count: 4 })
 
     const backupDirectory = path.join(directory, 'database-backups')
     const [backupName] = await fs.readdir(backupDirectory)
@@ -314,6 +357,12 @@ describe('SQLite migration and catalog ordering', () => {
         FROM terminal_presets_latest
       `)
       await tx.run(sql`DROP TABLE terminal_presets_latest`)
+      await tx.run(sql`DROP INDEX projects_repository_identity_idx`)
+      await tx.run(sql`ALTER TABLE projects DROP COLUMN repository_identity`)
+      await tx.run(sql`
+        CREATE UNIQUE INDEX projects_fs_identity_idx
+        ON projects(repository_device,repository_inode)
+      `)
       await tx.run(sql`DROP TABLE __drizzle_migrations`)
       await tx.run(sql`
         CREATE TABLE schema_migrations (
@@ -388,6 +437,12 @@ describe('SQLite migration and catalog ordering', () => {
       updatedAt: '2026-01-01'
     })
     await initial.db.transaction(async (tx) => {
+      await tx.run(sql`DROP INDEX projects_repository_identity_idx`)
+      await tx.run(sql`ALTER TABLE projects DROP COLUMN repository_identity`)
+      await tx.run(sql`
+        CREATE UNIQUE INDEX projects_fs_identity_idx
+        ON projects(repository_device,repository_inode)
+      `)
       await tx.run(sql`DROP TABLE __drizzle_migrations`)
       await tx.run(sql`
         CREATE TABLE schema_migrations (
@@ -451,6 +506,6 @@ describe('SQLite migration and catalog ordering', () => {
       await recovered.db.get<{ count: number }>(
         sql`SELECT count(*) AS count FROM __drizzle_migrations`
       )
-    ).toEqual({ count: 3 })
+    ).toEqual({ count: 4 })
   })
 })

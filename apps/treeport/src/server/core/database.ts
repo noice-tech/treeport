@@ -414,30 +414,26 @@ export class TreeportDatabase {
     return row ? this.mapProject(row) : null
   }
 
-  async projectByFilesystemIdentity(
-    device: string,
-    inode: string
+  async projectByRepositoryIdentity(
+    identity: string
   ): Promise<ProjectRecord | null> {
     const [row] = await this.db
       .select()
       .from(projectTable)
-      .where(
-        and(
-          eq(projectTable.repositoryDevice, device),
-          eq(projectTable.repositoryInode, inode)
-        )
-      )
+      .where(eq(projectTable.repositoryIdentity, identity))
       .limit(1)
     return row ? this.mapProject(row) : null
   }
 
-  async projectFilesystemMetadata(projectId: string): Promise<{
+  async projectRepositoryMetadata(projectId: string): Promise<{
+    identity: string | null
     device: string
     inode: string
     nameIsCustom: boolean
   } | null> {
     const [row] = await this.db
       .select({
+        identity: projectTable.repositoryIdentity,
         device: projectTable.repositoryDevice,
         inode: projectTable.repositoryInode,
         nameIsCustom: projectTable.nameIsCustom
