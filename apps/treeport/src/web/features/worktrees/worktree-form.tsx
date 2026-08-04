@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { ProjectRecord, TerminalPreset } from '@treeport/shared'
+import type { ProjectRecord, TerminalPresetDefinition } from '@treeport/shared'
 import { Button } from '../../components/ui/button'
 import { FormField } from '../../components/ui/form-field'
 import { Input } from '../../components/ui/input'
@@ -18,7 +18,7 @@ export function WorktreeForm({
   onSubmit
 }: {
   project: ProjectRecord
-  presets: TerminalPreset[]
+  presets: TerminalPresetDefinition[]
   presetsLoading: boolean
   presetsError: boolean
   onRetryPresets: () => void
@@ -146,6 +146,9 @@ export function WorktreeForm({
           {initialTerminalPresets.map((preset) => (
             <option key={preset.id} value={preset.id}>
               {preset.name}
+              {preset.source.type === 'package'
+                ? ` — ${preset.source.scope === 'project' ? 'Project' : 'Global'} · ${preset.source.packageId}`
+                : ''}
             </option>
           ))}
         </NativeSelect>

@@ -71,6 +71,69 @@ export interface TerminalPreset {
   updatedAt: string
 }
 
+export type PackageScope = 'global' | 'project'
+export type PackageResourceType = 'web-panel' | 'terminal-preset'
+
+export interface PackageResourceDiagnostic {
+  severity: 'warning' | 'error'
+  message: string
+  scope: PackageScope
+  source?: string
+  projectId?: string
+  resourceType?: PackageResourceType
+  path?: string
+}
+
+export type PackageSource =
+  | string
+  | {
+      source: string
+      autoload?: boolean
+      webPanels?: string[]
+      terminalPresets?: string[]
+    }
+
+export interface PackageListing {
+  source: string
+  identity: string
+  scope: PackageScope
+  projectId: string | null
+  projectName: string | null
+  installedPath: string | null
+  resources: {
+    webPanels: number
+    terminalPresets: number
+  }
+  diagnostics: PackageResourceDiagnostic[]
+}
+
+export interface PackageOperationResult {
+  action: 'install' | 'remove' | 'update' | 'reload'
+  source: string | null
+  scope: PackageScope
+  projectId: string | null
+  status: 'installed' | 'removed' | 'updated' | 'reloaded' | 'skipped'
+  reason?: string
+}
+
+export type TerminalPresetDefinitionSource =
+  | { type: 'user' }
+  | {
+      type: 'package'
+      packageId: string
+      source: string
+      scope: PackageScope
+    }
+
+export interface TerminalPresetDefinition {
+  id: string
+  name: string
+  executable: string
+  args: string[]
+  closeOnSuccess: boolean
+  source: TerminalPresetDefinitionSource
+}
+
 export interface TerminalCapture {
   terminalId: string
   capturedAt: string
@@ -92,7 +155,12 @@ export type Panel = TerminalPanel | WebPanel
 
 export type WebPanelSource =
   | { type: 'project' }
-  | { type: 'package'; packageId: string }
+  | {
+      type: 'package'
+      packageId: string
+      source: string
+      scope: PackageScope
+    }
 
 export interface WebPanelDefinition {
   id: string
@@ -397,6 +465,28 @@ export const updateTerminalPresetSchema = z.object({
 
 export const deleteTerminalPresetSchema = z.object({
   expectedUpdatedAt: terminalPresetRevisionSchema
+})
+
+export const packageProjectQuerySchema = z.object({
+  path: z.string().trim().min(1).max(4096)
+})
+
+export const packageInstallSchema = z.object({
+  source: z.string().trim().min(1).max(4096),
+  projectId: z.string().min(1).optional()
+})
+
+export const packageRemoveSchema = z.object({
+  source: z.string().trim().min(1).max(4096),
+  projectId: z.string().min(1).optional()
+})
+
+export const packageUpdateSchema = z.object({
+  source: z.string().trim().min(1).max(4096).optional()
+})
+
+export const packageReloadSchema = z.object({
+  projectId: z.string().min(1).optional()
 })
 
 export const removeWorktreeSchema = z.object({

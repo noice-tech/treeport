@@ -13,6 +13,9 @@ import {
   type ApiErrorBody,
   type EventsClientToServerEvents,
   type EventsServerToClientEvents,
+  type PackageListing,
+  type PackageOperationResult,
+  type PackageResourceDiagnostic,
   type ProjectRecord,
   type RemovePreview,
   type TreeportContext,
@@ -200,6 +203,35 @@ async function resolveProject(identifier: string): Promise<ProjectRecord> {
   }
 
   return match
+}
+
+async function packageSource(value: string): Promise<string> {
+  if (value.startsWith('npm:')) {
+    return value
+  }
+
+  if (
+    path.isAbsolute(value) ||
+    value === '.' ||
+    value === '..' ||
+    value.startsWith('./') ||
+    value.startsWith('../') ||
+    value === '~' ||
+    value.startsWith('~/')
+  ) {
+    return canonical(value)
+  }
+
+  return value
+}
+
+async function localPackageProjectId(): Promise<string> {
+  const search = new URLSearchParams({ path: await canonical(process.cwd()) })
+  return (
+    await request<{ project: Pick<ProjectRecord, 'id'> }>(
+      `/api/packages/project?${search.toString()}`
+    )
+  ).project.id
 }
 
 async function resolveWorktree(identifier: string): Promise<WorktreeRecord> {
@@ -952,6 +984,164 @@ async function main(args: string[]): Promise<void> {
       () =>
         `Treeport context\n\nProject:  ${context.project.name} (${context.project.id})\nWorktree: ${context.worktree.name} (${context.worktree.id})\nPath:     ${context.worktree.path}\nTerminal: ${context.terminal.name} (${context.terminal.id}) — ${context.terminal.status}\nAPI:      ${context.apiUrl}\nLifecycle: ${context.daemonLifecycle === 'external' ? 'externally managed' : 'managed by Treeport'}`
     )
+  })
+
+  const installCommand = program
+    .command('install')
+    .description('Install and configure a Treeport package')
+    .argument('<source>', 'npm: source or local directory')
+    .option(
+      '-l, --local',
+      'configure the registered project containing the current directory'
+    )
+    .option('--json', 'emit machine-readable JSON')
+  installCommand.action(async (source: string) => {
+    const options = installCommand.opts<{ local?: boolean }>()
+    const result = (
+      await request<{ result: PackageOperationResult }>(
+        '/api/packages/install',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            source: await packageSource(source),
+            ...(options.local
+              ? { projectId: await localPackageProjectId() }
+              : {})
+          })
+        }
+      )
+    ).result
+    print(
+      result,
+      () =>
+        `Installed ${result.source}${result.scope === 'project' ? ` for project ${result.projectId}` : ' globally'}`
+    )
+  })
+
+  const removePackageCommand = program
+    .command('remove')
+    .alias('uninstall')
+    .description('Remove a configured Treeport package')
+    .argument('<source>', 'npm: source or local directory')
+    .option(
+      '-l, --local',
+      'remove from the registered project containing the current directory'
+    )
+    .option('--json', 'emit machine-readable JSON')
+  removePackageCommand.action(async (source: string) => {
+    const options = removePackageCommand.opts<{ local?: boolean }>()
+    const result = (
+      await request<{ result: PackageOperationResult }>(
+        '/api/packages/remove',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            source: await packageSource(source),
+            ...(options.local
+              ? { projectId: await localPackageProjectId() }
+              : {})
+          })
+        }
+      )
+    ).result
+    print(result, () => `Removed ${result.source}`)
+  })
+
+  const listPackagesCommand = program
+    .command('list')
+    .description('List configured Treeport packages')
+    .option('--json', 'emit machine-readable JSON')
+  listPackagesCommand.action(async () => {
+    const result = await request<{
+      packages: PackageListing[]
+      diagnostics: PackageResourceDiagnostic[]
+    }>('/api/packages')
+    print(result, () => {
+      const lines = result.packages.map((pkg) => {
+        const scope =
+          pkg.scope === 'global'
+            ? 'global'
+            : `project:${pkg.projectName ?? pkg.projectId}`
+        return `${scope}\t${pkg.source}\t${pkg.resources.webPanels} web panels, ${pkg.resources.terminalPresets} terminal presets`
+      })
+      lines.push(
+        ...result.diagnostics.map(
+          (item) =>
+            `error\t${item.scope}\t${item.source ?? item.path ?? 'settings'}\t${item.message}`
+        )
+      )
+      return lines.join('\n')
+    })
+  })
+
+  const updatePackagesCommand = program
+    .command('update')
+    .description('Explicitly update configured Treeport packages')
+    .argument('[source]', 'one configured npm: source')
+    .option('--packages', 'update every eligible configured package')
+    .option('--json', 'emit machine-readable JSON')
+  updatePackagesCommand.action(async (source: string | undefined) => {
+    const options = updatePackagesCommand.opts<{ packages?: boolean }>()
+    if ((!source && !options.packages) || (source && options.packages)) {
+      throw new CliError(
+        'Specify a package source or --packages. Bare `treeport update` is reserved for a future Treeport self-update.',
+        2
+      )
+    }
+
+    const results = (
+      await request<{ results: PackageOperationResult[] }>(
+        '/api/packages/update',
+        {
+          method: 'POST',
+          body: JSON.stringify(
+            source ? { source: await packageSource(source) } : {}
+          )
+        }
+      )
+    ).results
+    print(results, () =>
+      results
+        .map(
+          (result) =>
+            `${result.status}\t${result.scope}\t${result.source ?? 'packages'}${result.reason ? `\t${result.reason}` : ''}`
+        )
+        .join('\n')
+    )
+  })
+
+  const reloadCommand = program
+    .command('reload')
+    .description('Reload package settings and resources without restarting')
+    .option(
+      '-l, --local',
+      'reload only the registered project containing the current directory'
+    )
+    .option('--json', 'emit machine-readable JSON')
+  reloadCommand.action(async () => {
+    const options = reloadCommand.opts<{ local?: boolean }>()
+    const result = await request<{
+      results: PackageOperationResult[]
+      diagnostics: PackageResourceDiagnostic[]
+    }>('/api/packages/reload', {
+      method: 'POST',
+      body: JSON.stringify(
+        options.local ? { projectId: await localPackageProjectId() } : {}
+      )
+    })
+    print(result, () => {
+      const lines = [
+        ...result.results.map(
+          (item) =>
+            `Reloaded ${item.scope === 'global' ? 'global packages' : `project ${item.projectId}`}`
+        ),
+        ...result.diagnostics.map(
+          (item) =>
+            `Error: ${item.source ?? item.path ?? item.scope}: ${item.message}`
+        )
+      ]
+      return lines.join('\n')
+    })
   })
 
   const projectCommand = program

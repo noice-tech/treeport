@@ -123,8 +123,14 @@ export function TerminalPresetsManager({
       void queryClient.invalidateQueries({ queryKey: terminalPresetsQueryKey })
       notifyError(mutationError)
     },
-    onSettled: () =>
-      queryClient.invalidateQueries({ queryKey: terminalPresetsQueryKey })
+    onSettled: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: terminalPresetsQueryKey }),
+        queryClient.invalidateQueries({
+          queryKey: ['terminal-preset-definitions']
+        })
+      ])
+    }
   })
 
   const deletePreset = useMutation({
@@ -151,8 +157,14 @@ export function TerminalPresetsManager({
       void queryClient.invalidateQueries({ queryKey: terminalPresetsQueryKey })
       notifyError(mutationError)
     },
-    onSettled: () =>
-      queryClient.invalidateQueries({ queryKey: terminalPresetsQueryKey })
+    onSettled: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: terminalPresetsQueryKey }),
+        queryClient.invalidateQueries({
+          queryKey: ['terminal-preset-definitions']
+        })
+      ])
+    }
   })
 
   const busy = savePreset.isPending || deletePreset.isPending

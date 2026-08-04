@@ -47,6 +47,7 @@ export default defineConfig({
               slug: 'features/persistent-terminals'
             },
             { label: 'Terminal presets', slug: 'features/terminal-presets' },
+            { label: 'Packages', slug: 'features/packages' },
             { label: 'Remote access', slug: 'features/remote-access' },
             {
               label: 'Web panels (experimental)',

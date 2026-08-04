@@ -7,6 +7,7 @@ import type {
   RecentProjectRecord,
   RemovePreview,
   TerminalPreset,
+  TerminalPresetDefinition,
   TerminalRecord,
   TerminalSize,
   WebPanel,
@@ -68,6 +69,16 @@ export const apiClient = {
   },
   terminalPresets: async () =>
     (await api<{ presets: TerminalPreset[] }>('/api/terminal-presets')).presets,
+  terminalPresetDefinitions: async (projectId?: string) => {
+    const search = projectId
+      ? `?${new URLSearchParams({ projectId }).toString()}`
+      : ''
+    return (
+      await api<{ definitions: TerminalPresetDefinition[] }>(
+        `/api/terminal-preset-definitions${search}`
+      )
+    ).definitions
+  },
   createTerminalPreset: async (
     input: Pick<
       TerminalPreset,

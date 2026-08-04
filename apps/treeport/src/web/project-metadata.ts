@@ -28,3 +28,13 @@ export const terminalPresetsQueryOptions = queryOptions({
   refetchOnReconnect: true,
   refetchOnWindowFocus: true
 })
+
+export const terminalPresetDefinitionsQueryOptions = (projectId?: string) =>
+  queryOptions({
+    queryKey: ['terminal-preset-definitions', projectId ?? 'global'] as const,
+    queryFn: () => apiClient.terminalPresetDefinitions(projectId),
+    staleTime: 0,
+    refetchInterval: 5_000,
+    refetchOnReconnect: true,
+    refetchOnWindowFocus: true
+  })
