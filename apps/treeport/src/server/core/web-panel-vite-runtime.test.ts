@@ -13,9 +13,14 @@ import {
 const directories: string[] = []
 afterEach(async () => {
   await Promise.all(
-    directories
-      .splice(0)
-      .map((directory) => fs.rm(directory, { recursive: true, force: true }))
+    directories.splice(0).map((directory) =>
+      fs.rm(directory, {
+        recursive: true,
+        force: true,
+        maxRetries: 10,
+        retryDelay: 100
+      })
+    )
   )
 })
 
@@ -33,11 +38,22 @@ async function fixture() {
       path.join(packageRoot, 'node_modules', 'react'),
       'dir'
     ),
+    fs.symlink(
+      path.dirname(
+        fileURLToPath(import.meta.resolve('react-dom/package.json'))
+      ),
+      path.join(packageRoot, 'node_modules', 'react-dom'),
+      'dir'
+    ),
     fs.writeFile(
       path.join(packageRoot, 'package.json'),
       JSON.stringify({
         name: '@acme/review',
-        dependencies: { 'panel-message': '1.0.0', react: '19.2.4' }
+        dependencies: {
+          'panel-message': '1.0.0',
+          react: '19.2.4',
+          'react-dom': '19.2.4'
+        }
       })
     ),
     fs.writeFile(

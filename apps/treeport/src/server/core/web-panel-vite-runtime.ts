@@ -427,7 +427,12 @@ export class WebPanelViteRuntime {
   async disposeDevelopmentServers(): Promise<void> {
     const servers = [...this.developmentServers.values()]
     this.developmentServers.clear()
-    await Promise.all(servers.map(({ server }) => server.close()))
+    await Promise.all(
+      servers.map(async ({ server }) => {
+        await server.waitForRequestsIdle()
+        await server.close()
+      })
+    )
   }
 
   async dispose(): Promise<void> {

@@ -51,7 +51,11 @@ const environment = {
   TREEPORT_HOST: '127.0.0.1',
   TREEPORT_PORT: String(port),
   TREEPORT_DATA_DIR: dataDirectory,
-  TREEPORT_RUNTIME_DIR: runtimeDirectory
+  TREEPORT_RUNTIME_DIR: runtimeDirectory,
+  TREEPORT_DAEMON_LIFECYCLE: 'treeport',
+  TREEPORT_PROJECT_ID: '',
+  TREEPORT_WORKTREE_ID: '',
+  TREEPORT_TERMINAL_ID: ''
 }
 
 try {

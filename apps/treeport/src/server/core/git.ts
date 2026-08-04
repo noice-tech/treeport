@@ -131,6 +131,11 @@ export function parseDirtyStatus(output: string): DirtyState {
 }
 
 export class GitAdapter {
+  private readonly repositoryIdentityInitializations = new Map<
+    string,
+    Promise<string>
+  >()
+
   constructor(
     private readonly runner: CommandRunner,
     private readonly executable = 'git'
@@ -201,6 +206,37 @@ export class GitAdapter {
   }
 
   async ensureRepositoryIdentity(cwd: string): Promise<string> {
+    const commonDirectoryResult = await this.checked(cwd, [
+      'rev-parse',
+      '--git-common-dir'
+    ])
+    const commonDirectoryValue = commonDirectoryResult.stdout.trim()
+    const resolvedCommonDirectory = path.isAbsolute(commonDirectoryValue)
+      ? commonDirectoryValue
+      : path.resolve(cwd, commonDirectoryValue)
+    const commonDirectory = await fs
+      .realpath(resolvedCommonDirectory)
+      .catch(() => path.resolve(resolvedCommonDirectory))
+    const pending = this.repositoryIdentityInitializations.get(commonDirectory)
+    if (pending) {
+      return pending
+    }
+
+    const initialization = this.initializeRepositoryIdentity(cwd)
+    this.repositoryIdentityInitializations.set(commonDirectory, initialization)
+    try {
+      return await initialization
+    } finally {
+      if (
+        this.repositoryIdentityInitializations.get(commonDirectory) ===
+        initialization
+      ) {
+        this.repositoryIdentityInitializations.delete(commonDirectory)
+      }
+    }
+  }
+
+  private async initializeRepositoryIdentity(cwd: string): Promise<string> {
     let existing: string | null = null
     for (let attempt = 0; attempt < 20; attempt += 1) {
       try {

@@ -16,3 +16,10 @@ Treeport is a worktree-first terminal driver. It registers Git repositories, dis
 - Do not extract single-use helpers preemptively. Inline the logic at the call site unless the helper is reused, hides a genuinely complex boundary, or has a clear independent name that improves the caller.
 - Avoid `try`/`catch` where possible.
 - Do not write tests that are really thin and assert strings. Test behavior in critical paths.
+
+## Validation
+
+- Use the smallest relevant check while developing.
+- `pnpm ci:local` is the complete local pull request gate.
+- `pnpm signoff` runs the local gate, pushes the committed branch, and publishes the required `signoff` status for the pushed HEAD.
+- `pnpm signoff` is not a read-only validation command because it pushes to GitHub.

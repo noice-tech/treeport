@@ -50,9 +50,13 @@ describe('GitAdapter', () => {
     await git(main, ['add', 'README.md'])
     await git(main, ['commit', '-m', 'initial'])
 
+    await git(main, ['worktree', 'add', '-b', 'linked', linked])
+
     const adapter = new GitAdapter(runner)
     const identities = await Promise.all(
-      Array.from({ length: 8 }, () => adapter.ensureRepositoryIdentity(main))
+      Array.from({ length: 8 }, (_, index) =>
+        adapter.ensureRepositoryIdentity(index % 2 === 0 ? main : linked)
+      )
     )
     expect(new Set(identities)).toEqual(new Set([identities[0]]))
     expect(
@@ -69,7 +73,6 @@ describe('GitAdapter', () => {
         .split('\n')
     ).toEqual([identities[0]])
 
-    await git(main, ['worktree', 'add', '-b', 'linked', linked])
     expect(await adapter.repositoryIdentity(linked)).toBe(identities[0])
 
     await git(root, ['clone', main, clone])

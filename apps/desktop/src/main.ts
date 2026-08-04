@@ -642,7 +642,6 @@ function registerIpc(): void {
 
     const selected = await store.select(id)
     if (selected) {
-      broadcastState()
       void connectSelected()
     }
 
@@ -670,7 +669,6 @@ function registerIpc(): void {
 
     try {
       await store.add(origin)
-      broadcastState()
       void connectSelected()
       return { ok: true }
     } catch (error) {
@@ -700,9 +698,10 @@ function registerIpc(): void {
         return { ok: false, error: 'That computer no longer exists.' }
       }
 
-      broadcastState()
       if (result.originChanged && store.selectedComputer?.id === update.id) {
         void connectSelected()
+      } else {
+        broadcastState()
       }
 
       return { ok: true }
@@ -720,9 +719,10 @@ function registerIpc(): void {
     }
 
     const result = await store.remove(id)
-    broadcastState()
     if (result.selectedChanged) {
       void connectSelected()
+    } else {
+      broadcastState()
     }
 
     return true
