@@ -31,6 +31,31 @@ description: Environment variables, paths, and defaults for the Treeport daemon 
 
 Treeport uses `$XDG_RUNTIME_DIR/treeport` when `XDG_RUNTIME_DIR` is set. Otherwise it uses a user-specific directory below the operating system's temporary directory.
 
+## Package settings
+
+Global package settings live at `<data-dir>/settings.json`. A registered repository's settings live at `<main-worktree>/.treeport/settings.json`; the main worktree is authoritative for every linked worktree.
+
+Supported fields are:
+
+```json
+{
+  "npmCommand": ["npm"],
+  "packages": ["npm:@acme/treeport-tools", "./local-tools"]
+}
+```
+
+`npmCommand` is an argv-style command used for managed npm operations. It defaults to `["npm"]` and can use a wrapper without shell parsing:
+
+```json
+{
+  "npmCommand": ["mise", "exec", "node@24", "--", "npm"]
+}
+```
+
+Global managed npm state is stored under `<data-dir>/npm`. Repository managed npm state is stored under `<main-worktree>/.treeport/npm`; Treeport creates its ignore file so generated dependencies and lock state are not accidentally committed. Lifecycle scripts are disabled for every managed package operation.
+
+See [Packages](/features/packages/) for package source, filtering, and scope behavior.
+
 ## CLI
 
 The CLI connects to:

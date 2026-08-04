@@ -5,7 +5,10 @@ import {
   MagnifyingGlassIcon,
   WindowIcon
 } from '@heroicons/react/16/solid'
-import type { TerminalPreset, WebPanelDefinition } from '@treeport/shared'
+import type {
+  TerminalPresetDefinition,
+  WebPanelDefinition
+} from '@treeport/shared'
 import { Button } from '../../components/ui/button'
 import {
   Dialog,
@@ -36,7 +39,7 @@ export function NewPanelDialog({
   onOpenChange: (open: boolean) => void
   restoreFocusTo: HTMLElement | null
   worktreeName: string | null
-  presets: TerminalPreset[]
+  presets: TerminalPresetDefinition[]
   presetsLoading: boolean
   presetsError: boolean
   webPanelDefinitions: WebPanelDefinition[]
@@ -198,13 +201,19 @@ export function NewPanelDialog({
             ) : null}
             {filteredPresets.map((preset, index) => {
               const actionIndex = index + (showShell ? 1 : 0)
+              const provenance =
+                preset.source.type === 'package'
+                  ? `${preset.source.scope === 'project' ? 'Project' : 'Global'} · ${preset.source.packageId}`
+                  : null
               return (
                 <Button
                   key={preset.id}
                   type="button"
                   variant="ghost"
                   className="h-12 w-full justify-start gap-3 rounded-lg py-2 pr-3 pl-2 text-base font-normal text-zinc-100 hover:bg-white/8 focus-visible:bg-white/8 sm:h-9 sm:text-sm"
-                  aria-label={preset.name}
+                  aria-label={
+                    provenance ? `${preset.name}, ${provenance}` : preset.name
+                  }
                   data-panel-launch
                   data-selected={selectedIndex === actionIndex ? '' : undefined}
                   disabled={launchDisabled}
@@ -230,6 +239,7 @@ export function NewPanelDialog({
                     {preset.name}
                   </span>
                   <span className="min-w-0 max-w-1/2 truncate text-zinc-500">
+                    {provenance ? `${provenance} · ` : ''}
                     {formatCommandLine([preset.executable, ...preset.args])}
                   </span>
                 </Button>
@@ -290,7 +300,7 @@ export function NewPanelDialog({
                   <span className="min-w-0 max-w-1/2 truncate text-zinc-500">
                     {definition.source.type === 'project'
                       ? 'Project'
-                      : definition.source.packageId}
+                      : `${definition.source.scope === 'project' ? 'Project' : 'Global'} · ${definition.source.packageId}`}
                   </span>
                 </Button>
               )

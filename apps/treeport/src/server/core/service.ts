@@ -6,12 +6,16 @@ import type {
   DirectoryBrowseResponse,
   JsonValue,
   OperationRecord,
+  PackageListing,
+  PackageOperationResult,
+  PackageResourceDiagnostic,
   PrInfo,
   ProjectColor,
   ProjectRecord,
   RecentProjectRecord,
   RemovePreview,
   TerminalPreset,
+  TerminalPresetDefinition,
   TerminalRecord,
   TerminalSize,
   WebPanel,
@@ -29,6 +33,7 @@ import { ProductEventBus } from './events'
 import type { GhAdapter } from './gh'
 import type { GitAdapter } from './git'
 import type { WorktreeSetupTask } from './setup'
+import { PackageSystem } from './package-system'
 import { KeyedTaskQueue } from './task-queue'
 import type { TmuxAdapter } from './tmux'
 import { generateTmuxSessionName, generateTmuxSocketName } from './tmux'
@@ -176,9 +181,11 @@ export class TreeportService {
   private readonly projectObservationTails = new Map<string, Promise<void>>()
   private projectsSnapshotInFlight: Promise<ProjectRecord[]> | null = null
   private projectsSnapshotRevision = 0
+  private readonly packages: PackageSystem
 
   constructor(private readonly deps: ServiceDependencies) {
     this.events = deps.events ?? new ProductEventBus()
+    this.packages = new PackageSystem(deps.config, deps.runner)
   }
 
   get database(): TreeportDatabase {
@@ -217,6 +224,7 @@ export class TreeportService {
       }
     })
     await this.reconcile()
+    await this.packages.initialize(await this.deps.database.projects())
   }
 
   private invalidateProjectsSnapshot(): void {
@@ -677,6 +685,98 @@ export class TreeportService {
     return project
   }
 
+  async resolveRegisteredProject(identifier: string): Promise<ProjectRecord> {
+    const direct = await this.deps.database.project(identifier)
+    if (direct) {
+      return direct
+    }
+
+    const canonical = await fs
+      .realpath(path.resolve(identifier))
+      .catch(() => path.resolve(identifier))
+    const match = (await this.deps.database.projects()).find(
+      (project) =>
+        isPathWithin(canonical, project.repositoryPath) ||
+        project.worktrees.some((worktree) =>
+          isPathWithin(canonical, worktree.path)
+        )
+    )
+    if (!match) {
+      throw new DomainError(
+        'PROJECT_NOT_FOUND',
+        `No registered project contains ${identifier}`,
+        404
+      )
+    }
+
+    return match
+  }
+
+  async listPackages(): Promise<{
+    packages: PackageListing[]
+    diagnostics: PackageResourceDiagnostic[]
+  }> {
+    this.packages.syncProjects(await this.deps.database.projects())
+    return this.packages.list()
+  }
+
+  private async packageResourcesChanged(projectId?: string): Promise<void> {
+    this.invalidateProjectsSnapshot()
+    const projects = projectId
+      ? [await this.getProject(projectId)]
+      : await this.deps.database.openProjects()
+    for (const project of projects) {
+      this.events.publish('project.updated', { projectId: project.id })
+    }
+  }
+
+  async installPackage(
+    source: string,
+    projectId?: string
+  ): Promise<PackageOperationResult> {
+    if (projectId) {
+      this.packages.syncProjects([await this.getProject(projectId)])
+    }
+
+    const result = await this.packages.install(source, projectId)
+    await this.packageResourcesChanged(projectId)
+    return result
+  }
+
+  async removePackage(
+    source: string,
+    projectId?: string
+  ): Promise<PackageOperationResult> {
+    if (projectId) {
+      this.packages.syncProjects([await this.getProject(projectId)])
+    }
+
+    const result = await this.packages.remove(source, projectId)
+    await this.packageResourcesChanged(projectId)
+    return result
+  }
+
+  async updatePackages(source?: string): Promise<PackageOperationResult[]> {
+    this.packages.syncProjects(await this.deps.database.projects())
+    const results = await this.packages.update(source)
+    await this.packageResourcesChanged()
+    return results
+  }
+
+  async reloadPackages(projectId?: string): Promise<{
+    results: PackageOperationResult[]
+    diagnostics: PackageResourceDiagnostic[]
+  }> {
+    this.packages.syncProjects(await this.deps.database.projects())
+    if (projectId) {
+      await this.getProject(projectId)
+    }
+
+    const result = await this.packages.reload(projectId)
+    await this.packageResourcesChanged(projectId)
+    return result
+  }
+
   async updateProjectColor(
     projectId: string,
     color: ProjectColor | null
@@ -704,6 +804,30 @@ export class TreeportService {
 
   listTerminalPresets(): Promise<TerminalPreset[]> {
     return this.deps.database.terminalPresets()
+  }
+
+  async listTerminalPresetDefinitions(
+    projectId?: string
+  ): Promise<TerminalPresetDefinition[]> {
+    if (projectId) {
+      this.packages.syncProjects([await this.getProject(projectId)])
+    }
+
+    const [userPresets, packagePresets] = await Promise.all([
+      this.deps.database.terminalPresets(),
+      this.packages.terminalPresetDefinitions(projectId)
+    ])
+    return [
+      ...userPresets.map((preset) => ({
+        id: preset.id,
+        name: preset.name,
+        executable: preset.executable,
+        args: [...preset.args],
+        closeOnSuccess: preset.closeOnSuccess,
+        source: { type: 'user' as const }
+      })),
+      ...packagePresets
+    ]
   }
 
   async createTerminalPreset(
@@ -855,10 +979,23 @@ export class TreeportService {
     return definitions
   }
 
+  private async effectiveWebPanelDefinitions(
+    worktreeId: string
+  ): Promise<Array<WebPanelDefinition & { root: string; entry: string }>> {
+    const worktree = await this.getWorktree(worktreeId)
+    this.packages.syncProjects([await this.getProject(worktree.projectId)])
+    return [
+      ...(await this.localWebPanelDefinitions(worktreeId)),
+      ...(await this.packages.webPanelDefinitions(worktree.projectId)).map(
+        ({ definition, root, entry }) => ({ ...definition, root, entry })
+      )
+    ]
+  }
+
   async listWebPanelDefinitions(
     worktreeId: string
   ): Promise<WebPanelDefinition[]> {
-    return (await this.localWebPanelDefinitions(worktreeId)).map(
+    return (await this.effectiveWebPanelDefinitions(worktreeId)).map(
       ({ root: _root, entry: _entry, ...definition }) => definition
     )
   }
@@ -868,9 +1005,9 @@ export class TreeportService {
     definitionId: string
   ): Promise<WebPanel> {
     await this.requireAvailableWorktree(worktreeId)
-    const definition = (await this.localWebPanelDefinitions(worktreeId)).find(
-      (candidate) => candidate.id === definitionId
-    )
+    const definition = (
+      await this.effectiveWebPanelDefinitions(worktreeId)
+    ).find((candidate) => candidate.id === definitionId)
     if (!definition) {
       throw new DomainError(
         'WEB_PANEL_DEFINITION_NOT_FOUND',
@@ -1026,7 +1163,7 @@ export class TreeportService {
     }
 
     const definition = (
-      await this.localWebPanelDefinitions(panel.worktreeId)
+      await this.effectiveWebPanelDefinitions(panel.worktreeId)
     ).find((candidate) => candidate.id === panel.definitionId)
     if (!definition) {
       throw new DomainError(
@@ -1039,7 +1176,6 @@ export class TreeportService {
     const relative = requestedPath || definition.entry
     const asset = path.resolve(definition.root, relative)
     const root = await fs.realpath(definition.root)
-    const rootPrefix = `${root}${path.sep}`
     if (!asset.startsWith(`${path.resolve(definition.root)}${path.sep}`)) {
       throw new DomainError('INVALID_ASSET_PATH', 'Invalid asset path', 400)
     }
@@ -1055,7 +1191,7 @@ export class TreeportService {
 
       throw error
     })
-    if (!realAsset.startsWith(rootPrefix)) {
+    if (!isPathWithin(realAsset, root)) {
       throw new DomainError('INVALID_ASSET_PATH', 'Invalid asset path', 400)
     }
 
@@ -1570,6 +1706,7 @@ export class TreeportService {
         try {
           await updateRegistration()
           await this.deps.database.setProjectOpen(projectId, true, now())
+          await this.packages.registerProject(await this.getProject(projectId))
           await this.ensureProjectTerminals(projectId).catch(() => undefined)
           this.invalidateProjectsSnapshot()
           this.events.publish('project.updated', { projectId })
@@ -1581,6 +1718,7 @@ export class TreeportService {
     }
 
     await updateRegistration()
+    await this.packages.registerProject(await this.getProject(projectId))
     await this.ensureProjectTerminals(projectId).catch(() => undefined)
     this.invalidateProjectsSnapshot()
     this.events.publish('project.created', { projectId })
@@ -1638,6 +1776,7 @@ export class TreeportService {
         WHERE id = ${projectId}
       `)
       await this.reconcile()
+      await this.packages.registerProject(await this.getProject(projectId))
       this.invalidateProjectsSnapshot()
       this.events.publish('project.updated', { projectId })
       return await this.getProject(projectId)
@@ -1663,6 +1802,7 @@ export class TreeportService {
       this.projectLocks.add(projectId)
       try {
         await this.deps.database.setProjectOpen(projectId, true, now())
+        await this.packages.registerProject(await this.getProject(projectId))
         this.invalidateProjectsSnapshot()
         this.events.publish('project.updated', { projectId })
       } finally {
@@ -3631,6 +3771,7 @@ export class TreeportService {
       await this.deps.database.db.run(
         sql`DELETE FROM projects WHERE id=${projectId}`
       )
+      this.packages.forgetProject(projectId)
       for (const worktree of project.worktrees) {
         this.clearWorktreeTerminalState(
           worktree.id,

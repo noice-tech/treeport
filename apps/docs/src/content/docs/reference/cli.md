@@ -36,6 +36,24 @@ treeport context [--json]
 
 Reports exact managed project, worktree, and terminal context. Outside a managed terminal it exits successfully and reports that no managed context is present.
 
+## Packages
+
+```sh
+treeport install <source> [-l|--local] [--json]
+treeport remove <source> [-l|--local] [--json]
+treeport uninstall <source> [-l|--local] [--json]
+treeport list [--json]
+treeport update <source> [--json]
+treeport update --packages [--json]
+treeport reload [-l|--local] [--json]
+```
+
+Sources must be explicit npm sources such as `npm:@acme/treeport-tools@1.2.0` or local directory paths such as `./packages/tools`. Global scope is the default. `-l` resolves the registered repository containing the current directory and uses its main-worktree settings.
+
+`update` changes only eligible configured npm packages. Exact versions and local directories are skipped. Bare `treeport update` is reserved for a future Treeport self-update, so package-wide updates require `--packages`.
+
+`reload` rereads settings, installs missing configured packages, and refreshes resources without restarting the daemon. Without `-l`, it reloads global settings and every registered repository. See [Packages](/features/packages/) for manifests, filters, and failure behavior.
+
 ## Projects
 
 ```sh

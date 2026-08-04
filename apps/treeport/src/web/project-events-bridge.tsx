@@ -47,6 +47,14 @@ export function useProjectEventsBridge(
         queryClient.invalidateQueries(
           { queryKey: recentProjectsQueryKey },
           { cancelRefetch: false }
+        ),
+        queryClient.invalidateQueries(
+          { queryKey: ['terminal-preset-definitions'] },
+          { cancelRefetch: false }
+        ),
+        queryClient.invalidateQueries(
+          { queryKey: ['web-panel-definitions'] },
+          { cancelRefetch: false }
         )
       ])
     )

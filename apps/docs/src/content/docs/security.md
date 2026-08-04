@@ -31,6 +31,14 @@ For advanced direct private-network binding, prefer a specific Tailscale address
 treeport up --host "$(tailscale ip -4)"
 ```
 
+## Package boundary
+
+Registering a repository authorizes Treeport to read its main worktree's `.treeport/settings.json` and reconcile declared packages. Review package contents before adding them.
+
+Treeport packages do not execute daemon modules or install server hooks. Managed npm operations always disable lifecycle scripts. A package terminal preset starts only after you select it, and then launches an ordinary terminal with literal arguments. Package web-panel JavaScript runs only after you open that panel and remains inside Treeport's scoped iframe runtime. Served package assets must resolve inside the declared panel root; traversal and escaping symbolic links are rejected.
+
+These limits reduce automatic package execution, but selected terminal commands and opened web panels still act on a trusted registered worktree. Web panels can load remote scripts allowed by the panel runtime, so inspect their HTML and JavaScript as well as their package manifest.
+
 ## Operational guidance
 
 - Register only repositories you are comfortable controlling through Treeport.

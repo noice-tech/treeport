@@ -4,6 +4,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  realpath,
   rm,
   stat,
   symlink,
@@ -147,6 +148,8 @@ describe('CLI context and machine output', () => {
   const requests: string[] = []
   const spawnBodies: unknown[] = []
   const terminalCreateBodies: unknown[] = []
+  const packageBodies: Array<{ url: string; body: Record<string, unknown> }> =
+    []
   let observedTerminal = terminal
   let observedMetadata: TerminalRuntimeMetadata = {
     terminalId: terminal.id,
@@ -305,6 +308,95 @@ describe('CLI context and machine output', () => {
         terminalCreateBodies.push(JSON.parse(source))
         response.statusCode = 201
         response.end(JSON.stringify({ terminal }))
+        return
+      }
+
+      if (
+        request.method === 'GET' &&
+        request.url?.startsWith('/api/packages/project?')
+      ) {
+        response.end(JSON.stringify({ project }))
+        return
+      }
+
+      if (request.method === 'GET' && request.url === '/api/packages') {
+        response.end(
+          JSON.stringify({
+            packages: [
+              {
+                source: 'npm:@acme/tools',
+                identity: 'npm:@acme/tools',
+                scope: 'global',
+                projectId: null,
+                projectName: null,
+                installedPath: '/data/npm/node_modules/@acme/tools',
+                resources: { webPanels: 1, terminalPresets: 1 },
+                diagnostics: []
+              }
+            ],
+            diagnostics: []
+          })
+        )
+        return
+      }
+
+      if (
+        request.method === 'POST' &&
+        request.url?.startsWith('/api/packages/')
+      ) {
+        let source = ''
+        for await (const chunk of request) {
+          source += chunk
+        }
+        const body = JSON.parse(source) as Record<string, unknown>
+        packageBodies.push({ url: request.url, body })
+        const action = request.url.slice('/api/packages/'.length)
+        if (action === 'reload') {
+          response.end(
+            JSON.stringify({
+              results: [
+                {
+                  action: 'reload',
+                  source: null,
+                  scope: body.projectId ? 'project' : 'global',
+                  projectId: body.projectId ?? null,
+                  status: 'reloaded'
+                }
+              ],
+              diagnostics: []
+            })
+          )
+          return
+        }
+
+        if (action === 'update') {
+          response.end(
+            JSON.stringify({
+              results: [
+                {
+                  action: 'update',
+                  source: body.source ?? 'npm:@acme/tools',
+                  scope: 'global',
+                  projectId: null,
+                  status: 'updated'
+                }
+              ]
+            })
+          )
+          return
+        }
+
+        response.end(
+          JSON.stringify({
+            result: {
+              action: action === 'install' ? 'install' : 'remove',
+              source: body.source,
+              scope: body.projectId ? 'project' : 'global',
+              projectId: body.projectId ?? null,
+              status: action === 'install' ? 'installed' : 'removed'
+            }
+          })
+        )
         return
       }
 
@@ -847,6 +939,11 @@ describe('CLI context and machine output', () => {
     const commandPaths = [
       ['skills'],
       ['context'],
+      ['install'],
+      ['remove'],
+      ['list'],
+      ['update'],
+      ['reload'],
       ['project'],
       ['project', 'add'],
       ['project', 'list'],
@@ -908,6 +1005,82 @@ describe('CLI context and machine output', () => {
         }
       })
     }
+  })
+
+  it('manages global and current-project packages in human and JSON modes', async () => {
+    const environment = {
+      TREEPORT_API_URL: apiUrl,
+      TREEPORT_PROJECT_ID: project.id
+    }
+    const globalInstall = await runCli(
+      ['install', 'npm:@acme/tools', '--json'],
+      environment
+    )
+    expect(globalInstall.code).toBe(0)
+    expect(JSON.parse(globalInstall.stdout)).toMatchObject({
+      action: 'install',
+      source: 'npm:@acme/tools',
+      scope: 'global'
+    })
+    expect(packageBodies.at(-1)).toEqual({
+      url: '/api/packages/install',
+      body: { source: 'npm:@acme/tools' }
+    })
+
+    const projectInstall = await runCli(
+      ['install', './', '--local', '--json'],
+      environment
+    )
+    expect(projectInstall.code).toBe(0)
+    expect(packageBodies.at(-1)).toEqual({
+      url: '/api/packages/install',
+      body: {
+        source: await realpath(repositoryRoot),
+        projectId: project.id
+      }
+    })
+
+    const list = await runCli(['list'], environment)
+    expect(list.code).toBe(0)
+    expect(list.stdout).toContain(
+      'global\tnpm:@acme/tools\t1 web panels, 1 terminal presets'
+    )
+
+    const reserved = await runCli(['update', '--json'], environment)
+    expect(reserved.code).toBe(2)
+    expect(JSON.parse(reserved.stderr).error.message).toContain(
+      'reserved for a future Treeport self-update'
+    )
+
+    const update = await runCli(
+      ['update', 'npm:@acme/tools', '--json'],
+      environment
+    )
+    expect(update.code).toBe(0)
+    expect(JSON.parse(update.stdout)).toEqual([
+      expect.objectContaining({ status: 'updated' })
+    ])
+    expect(packageBodies.at(-1)).toEqual({
+      url: '/api/packages/update',
+      body: { source: 'npm:@acme/tools' }
+    })
+
+    const reload = await runCli(['reload', '-l', '--json'], environment)
+    expect(reload.code).toBe(0)
+    expect(packageBodies.at(-1)).toEqual({
+      url: '/api/packages/reload',
+      body: { projectId: project.id }
+    })
+
+    const uninstall = await runCli(
+      ['uninstall', 'npm:@acme/tools', '--json'],
+      environment
+    )
+    expect(uninstall.code).toBe(0)
+    expect(packageBodies.at(-1)).toEqual({
+      url: '/api/packages/remove',
+      body: { source: 'npm:@acme/tools' }
+    })
   })
 
   it('rejects extra arguments and unknown options as usage errors', async () => {

@@ -16,9 +16,11 @@ For example:
 
 ## Create a preset
 
-Open **New panel**, then choose **Manage presets**. Give the preset a name and the command to run. Treeport saves it for future terminals in any project and worktree.
+Open **New panel**, then choose **Manage presets**. Give the preset a name and the command to run. Treeport saves this user-owned preset for future terminals in any project and worktree.
 
-A preset starts as a normal terminal in the selected worktree. Its program keeps its usual terminal interface, and persistent programs remain available to reconnect to.
+[Treeport packages](/features/packages/) can also provide presets globally or for one registered repository. Package presets remain read-only package resources rather than being copied into the user preset list. The picker shows package and scope provenance so commands with the same title can be distinguished.
+
+A preset starts as a normal terminal in the selected worktree with a concrete literal argv. Its program keeps its usual terminal interface, and persistent programs remain available to reconnect to. Removing its package later does not affect an already running terminal.
 
 ## Close after completion
 

@@ -74,6 +74,42 @@ function fixture(webDist = '/missing') {
         updatedAt: '2026-01-01T00:00:00.000Z'
       }
     ]),
+    listTerminalPresetDefinitions: vi.fn(() => [
+      {
+        id: 'package:npm:@acme/tools:terminal-preset:dev',
+        name: 'Package dev',
+        executable: 'pnpm',
+        args: ['dev'],
+        closeOnSuccess: false,
+        source: {
+          type: 'package',
+          packageId: 'npm:@acme/tools',
+          source: 'npm:@acme/tools',
+          scope: 'global'
+        }
+      }
+    ]),
+    listPackages: vi.fn(() => ({ packages: [], diagnostics: [] })),
+    resolveRegisteredProject: vi.fn((inputPath: string) => ({
+      id: 'project_1',
+      repositoryPath: inputPath
+    })),
+    installPackage: vi.fn((source: string, projectId?: string) => ({
+      action: 'install',
+      source,
+      scope: projectId ? 'project' : 'global',
+      projectId: projectId ?? null,
+      status: 'installed'
+    })),
+    removePackage: vi.fn((source: string, projectId?: string) => ({
+      action: 'remove',
+      source,
+      scope: projectId ? 'project' : 'global',
+      projectId: projectId ?? null,
+      status: 'removed'
+    })),
+    updatePackages: vi.fn(() => []),
+    reloadPackages: vi.fn(() => ({ results: [], diagnostics: [] })),
     createTerminalPreset: vi.fn(
       (input: {
         name: string
@@ -742,6 +778,82 @@ describe('HTTP API validation', () => {
     })
     expect(invalid.status).toBe(400)
     expect(service.createTerminalPreset).toHaveBeenCalledTimes(1)
+  })
+
+  it('routes source-aware package definitions and package management operations', async () => {
+    const { app, service } = fixture()
+    const definitions = await app.request(
+      '/api/terminal-preset-definitions?projectId=project_1'
+    )
+    expect(definitions.status).toBe(200)
+    expect(await definitions.json()).toMatchObject({
+      definitions: [
+        {
+          name: 'Package dev',
+          source: { type: 'package', scope: 'global' }
+        }
+      ]
+    })
+    expect(service.listTerminalPresetDefinitions).toHaveBeenCalledWith(
+      'project_1'
+    )
+
+    const resolved = await app.request(
+      '/api/packages/project?path=%2Frepo%2Flinked'
+    )
+    expect(resolved.status).toBe(200)
+    expect(service.resolveRegisteredProject).toHaveBeenCalledWith(
+      '/repo/linked'
+    )
+
+    const installed = await app.request('/api/packages/install', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        source: 'npm:@acme/tools',
+        projectId: 'project_1'
+      })
+    })
+    expect(installed.status).toBe(200)
+    expect(service.installPackage).toHaveBeenCalledWith(
+      'npm:@acme/tools',
+      'project_1'
+    )
+
+    const removed = await app.request('/api/packages/remove', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ source: 'npm:@acme/tools' })
+    })
+    expect(removed.status).toBe(200)
+    expect(service.removePackage).toHaveBeenCalledWith(
+      'npm:@acme/tools',
+      undefined
+    )
+
+    const updated = await app.request('/api/packages/update', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({})
+    })
+    expect(updated.status).toBe(200)
+    expect(service.updatePackages).toHaveBeenCalledWith(undefined)
+
+    const reloaded = await app.request('/api/packages/reload', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ projectId: 'project_1' })
+    })
+    expect(reloaded.status).toBe(200)
+    expect(service.reloadPackages).toHaveBeenCalledWith('project_1')
+
+    const invalid = await app.request('/api/packages/install', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ source: '' })
+    })
+    expect(invalid.status).toBe(400)
+    expect(service.installPackage).toHaveBeenCalledTimes(1)
   })
 
   it('returns preset domain failures in the standard error envelope', async () => {

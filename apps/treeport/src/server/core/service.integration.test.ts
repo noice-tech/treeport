@@ -556,6 +556,135 @@ describe('TreeportService with injected command adapters', () => {
     ])
   })
 
+  it('serves package resources across repository worktrees while preserving ordinary terminals and persistent panels through removal', async () => {
+    const { root, main, service, database } = await fixture()
+    const packageRoot = path.join(root, 'review package')
+    const reviewRoot = path.join(packageRoot, 'web-panels', 'review')
+    await fs.mkdir(reviewRoot, { recursive: true })
+    await fs.mkdir(path.join(packageRoot, 'terminal-presets'), {
+      recursive: true
+    })
+    await fs.mkdir(path.join(main, '.treeport'), {
+      recursive: true
+    })
+    await Promise.all([
+      fs.writeFile(
+        path.join(packageRoot, 'package.json'),
+        JSON.stringify({
+          name: '@acme/review',
+          keywords: ['treeport-package'],
+          treeport: {
+            webPanels: ['./web-panels/*'],
+            terminalPresets: ['./terminal-presets/*.json']
+          }
+        })
+      ),
+      fs.writeFile(path.join(reviewRoot, 'index.html'), '<h1>Review v1</h1>'),
+      fs.writeFile(
+        path.join(packageRoot, 'terminal-presets', 'dev.json'),
+        JSON.stringify({
+          name: 'Package dev server',
+          executable: 'pnpm',
+          args: ['dev'],
+          closeOnSuccess: false
+        })
+      )
+    ])
+
+    await fs.writeFile(
+      path.join(main, '.treeport', 'settings.json'),
+      JSON.stringify({ packages: [packageRoot] })
+    )
+    const project = await service.registerProject(main)
+    const mainWorktree = project.worktrees[0]!
+    const definition = (
+      await service.listWebPanelDefinitions(mainWorktree.id)
+    ).find((candidate) => candidate.source.type === 'package')!
+    expect(definition).toMatchObject({
+      title: 'Review',
+      source: { type: 'package', scope: 'project' }
+    })
+    expect(await service.listTerminalPresetDefinitions(project.id)).toEqual([
+      expect.objectContaining({
+        name: 'Package dev server',
+        executable: 'pnpm',
+        args: ['dev'],
+        source: expect.objectContaining({ type: 'package', scope: 'project' })
+      })
+    ])
+
+    const linked = (
+      await service.createWorktree(project.id, 'package-linked', 'default')
+    ).worktree
+    expect(
+      (await service.listWebPanelDefinitions(linked.id)).map(
+        (candidate) => candidate.id
+      )
+    ).toContain(definition.id)
+
+    const panel = await service.createWebPanel(linked.id, definition.id)
+    await service.setWebPanelStorage(panel.id, 'draft', { body: 'keep me' })
+    const terminal = await service.createTerminal(linked.id, 'Package dev', [
+      'pnpm',
+      'dev'
+    ])
+    expect(await service.resolveWebPanelAsset(panel.id, '')).toBe(
+      await fs.realpath(path.join(reviewRoot, 'index.html'))
+    )
+
+    await fs.writeFile(
+      path.join(reviewRoot, 'index.html'),
+      '<h1>Review v2</h1>'
+    )
+    await service.reloadPackages()
+    expect(
+      (await service.listWebPanelDefinitions(linked.id)).find(
+        (candidate) => candidate.title === 'Review'
+      )?.id
+    ).toBe(definition.id)
+
+    const outside = path.join(root, 'outside-package.js')
+    await fs.writeFile(outside, 'outside')
+    await fs.symlink(outside, path.join(reviewRoot, 'outside.js'))
+    await expect(
+      service.resolveWebPanelAsset(panel.id, 'outside.js')
+    ).rejects.toMatchObject({ code: 'INVALID_ASSET_PATH' })
+
+    await service.removePackage(packageRoot, project.id)
+    expect(await service.listWebPanelDefinitions(linked.id)).not.toContainEqual(
+      expect.objectContaining({ id: definition.id })
+    )
+    expect(await database.webPanel(panel.id)).toEqual(panel)
+    expect(await service.getWebPanelStorage(panel.id, 'draft')).toEqual({
+      body: 'keep me'
+    })
+    expect(
+      (await service.getWorktreeSnapshot(linked.id)).terminals
+    ).toContainEqual(
+      expect.objectContaining({ id: terminal.id, argv: ['pnpm', 'dev'] })
+    )
+    await expect(
+      service.resolveWebPanelAsset(panel.id, '')
+    ).rejects.toMatchObject({
+      code: 'WEB_PANEL_DEFINITION_NOT_FOUND',
+      message: 'The definition for this panel is unavailable'
+    })
+
+    await service.installPackage(packageRoot, project.id)
+    const persistedSettings = JSON.parse(
+      await fs.readFile(path.join(main, '.treeport', 'settings.json'), 'utf8')
+    ) as { packages: string[] }
+    expect(path.isAbsolute(persistedSettings.packages[0]!)).toBe(false)
+    expect(
+      (await service.listWebPanelDefinitions(linked.id)).find(
+        (candidate) => candidate.title === 'Review'
+      )?.id
+    ).toBe(definition.id)
+    expect(await service.getWebPanelStorage(panel.id, 'draft')).toEqual({
+      body: 'keep me'
+    })
+  })
+
   it('browses bounded server directories and resolves repository roots', async () => {
     const { root, main, service } = await fixture()
     const browserRoot = path.join(root, 'folder browser')

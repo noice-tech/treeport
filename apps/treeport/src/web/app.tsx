@@ -44,6 +44,7 @@ import { notifyError } from './features/notifications/error-notifications'
 import { useProjectEventsBridge } from './project-events-bridge'
 import {
   projectsQueryOptions,
+  terminalPresetDefinitionsQueryOptions,
   terminalPresetsQueryOptions
 } from './project-metadata'
 import {
@@ -122,6 +123,16 @@ function WorkspaceApp() {
           (worktree) => worktree.id === dialog.worktreeId
         ) ?? null)
       : null
+  const presetDefinitionsProjectId =
+    dialog?.type === 'worktree'
+      ? dialog.project.id
+      : dialog?.type === 'panel'
+        ? dialog.projectId
+        : (selectedProject?.id ?? undefined)
+  const presetDefinitionsQuery = useQuery(
+    terminalPresetDefinitionsQueryOptions(presetDefinitionsProjectId)
+  )
+  const availablePresets = presetDefinitionsQuery.data ?? []
   const webPanelDefinitionsQuery = useQuery({
     queryKey: ['web-panel-definitions', panelDialogWorktree?.id],
     queryFn: () => apiClient.webPanelDefinitions(panelDialogWorktree!.id),
@@ -650,10 +661,10 @@ function WorkspaceApp() {
         project={dialog?.type === 'worktree' ? dialog.project : null}
         onOpenChange={(open) => !open && setDialog(null)}
         restoreFocusTo={dialogTriggerRef.current}
-        presets={presets}
-        presetsLoading={presetsQuery.isPending}
-        presetsError={presetsQuery.isError}
-        onRetryPresets={() => void presetsQuery.refetch()}
+        presets={availablePresets}
+        presetsLoading={presetDefinitionsQuery.isPending}
+        presetsError={presetDefinitionsQuery.isError}
+        onRetryPresets={() => void presetDefinitionsQuery.refetch()}
         onSubmit={submitWorktreeCreation}
       />
       <NewPanelDialog
@@ -661,9 +672,9 @@ function WorkspaceApp() {
         onOpenChange={(open) => !open && setDialog(null)}
         restoreFocusTo={dialogTriggerRef.current}
         worktreeName={panelDialogWorktree?.name ?? null}
-        presets={presets}
-        presetsLoading={presetsQuery.isPending}
-        presetsError={presetsQuery.isError}
+        presets={availablePresets}
+        presetsLoading={presetDefinitionsQuery.isPending}
+        presetsError={presetDefinitionsQuery.isError}
         webPanelDefinitions={webPanelDefinitionsQuery.data ?? []}
         webPanelDefinitionsLoading={
           Boolean(panelDialogWorktree) && webPanelDefinitionsQuery.isPending

@@ -18,6 +18,11 @@ import {
   DESKTOP_PROTOCOL_VERSION,
   getWebPanelStorageSchema,
   createWorktreeSchema,
+  packageInstallSchema,
+  packageProjectQuerySchema,
+  packageReloadSchema,
+  packageRemoveSchema,
+  packageUpdateSchema,
   registerProjectSchema,
   TERMINAL_MAX_UPLOAD_BYTES,
   removeWorktreeSchema,
@@ -201,6 +206,14 @@ export function createApp({
     context.json({ presets: await service.listTerminalPresets() })
   )
 
+  app.get('/api/terminal-preset-definitions', async (context) =>
+    context.json({
+      definitions: await service.listTerminalPresetDefinitions(
+        context.req.query('projectId') || undefined
+      )
+    })
+  )
+
   app.post('/api/terminal-presets', async (context) => {
     const body = await input(context, createTerminalPresetSchema)
     return context.json(
@@ -228,6 +241,50 @@ export function createApp({
       body.expectedUpdatedAt
     )
     return context.json({ ok: true })
+  })
+
+  app.get('/api/packages', async (context) =>
+    context.json(await service.listPackages())
+  )
+
+  app.get('/api/packages/project', async (context) => {
+    const query = packageProjectQuerySchema.safeParse(context.req.query())
+    if (!query.success) {
+      throw new DomainError(
+        'VALIDATION_ERROR',
+        'Request validation failed',
+        400,
+        query.error.flatten()
+      )
+    }
+
+    return context.json({
+      project: await service.resolveRegisteredProject(query.data.path)
+    })
+  })
+
+  app.post('/api/packages/install', async (context) => {
+    const body = await input(context, packageInstallSchema)
+    return context.json({
+      result: await service.installPackage(body.source, body.projectId)
+    })
+  })
+
+  app.post('/api/packages/remove', async (context) => {
+    const body = await input(context, packageRemoveSchema)
+    return context.json({
+      result: await service.removePackage(body.source, body.projectId)
+    })
+  })
+
+  app.post('/api/packages/update', async (context) => {
+    const body = await input(context, packageUpdateSchema)
+    return context.json({ results: await service.updatePackages(body.source) })
+  })
+
+  app.post('/api/packages/reload', async (context) => {
+    const body = await input(context, packageReloadSchema)
+    return context.json(await service.reloadPackages(body.projectId))
   })
 
   app.get('/api/projects', async (context) =>
