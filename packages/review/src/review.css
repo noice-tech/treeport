@@ -12,11 +12,14 @@
   box-sizing: border-box;
 }
 body {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
   height: 100vh;
   margin: 0;
   overflow: hidden;
+}
+#root {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  height: 100%;
 }
 header {
   position: relative;
@@ -248,29 +251,26 @@ button:disabled {
 }
 aside {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   min-width: 0;
   overflow: hidden;
   background: #18181b;
   border-right: 1px solid #3f3f46;
 }
-aside h2 {
-  margin: 0;
-  padding: 0.65rem 0.75rem;
-  border-bottom: 1px solid #27272a;
-  color: #a1a1aa;
-  font-size: 0.75rem;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
 #file-tree {
   min-height: 0;
   --trees-padding-inline-override: 0px;
-  --trees-theme-list-bg: #18181b;
-  --trees-theme-list-active-selection-bg: #3f3f46;
+  --trees-bg-override: #18181b;
+  --trees-bg-muted-override: #27272a;
+  --trees-border-color-override: #3f3f46;
+  --trees-fg-override: #e4e4e7;
+  --trees-fg-muted-override: #a1a1aa;
+  --trees-focus-ring-color-override: #71717a;
+  --trees-search-bg-override: #09090b;
+  --trees-search-fg-override: #e4e4e7;
+  --trees-selected-bg-override: #3f3f46;
+  --trees-selected-fg-override: #e4e4e7;
   --trees-theme-list-hover-bg: #27272a;
-  --trees-theme-focus-ring: #71717a;
 }
 #resize-handle {
   position: relative;

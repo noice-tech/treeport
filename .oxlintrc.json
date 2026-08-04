@@ -16,6 +16,7 @@
     "**/dist-types/**",
     "**/*.d.ts",
     "**/coverage/**",
+    "packages/review/web-panels/review/assets/**",
     "node_modules/**",
     "playwright-report/**",
     "test-results/**"

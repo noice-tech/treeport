@@ -56,11 +56,13 @@ const stopFind = treeport.shortcuts.onFind(() => {
 
 `treeport.shortcuts.onFind(handler)` delivers `Cmd/Ctrl+F` whether focus is inside the panel or elsewhere in the Treeport workspace. It returns an unsubscribe function. The panel owns its find interface and behavior; Treeport only routes the generic shortcut.
 
-Panel source is not transpiled or bundled. Use browser-native JavaScript and direct browser ESM URLs for optional npm libraries, pinning their versions:
+Treeport serves panel assets as-is and does not transpile or bundle them at request time. Project-local panels can use browser-native JavaScript and direct browser ESM URLs for optional npm libraries, pinning their versions:
 
 ```js
 import { FileDiff } from 'https://esm.sh/@pierre/diffs@1.3.1?bundle'
 ```
+
+A package panel may instead run a build ahead of time and contribute the generated static folder. Configure the bundler with relative asset URLs so nested scripts and styles continue to load from Treeport's panel asset route. Keep the generated `index.html` in the folder named by `treeport.webPanels`; Treeport does not run the build when it discovers or serves the package.
 
 The package declarations and JSDoc are the authoritative editor contract. The corresponding readable browser runtime remains inspectable at `/api/web-panel-sdk.js` on a running daemon. Importing the SDK module activates iframe-local platform shortcuts, including numbered workspace switching, so panels using those facilities must include the import map and import the SDK.
 
