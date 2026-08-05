@@ -16,6 +16,9 @@ const packageDirectories = ['packages/panel-sdk', 'apps/treeport']
 const packageManifests = packageDirectories.map((directory) =>
   JSON.parse(readFileSync(`${directory}/package.json`, 'utf8'))
 )
+const desktopManifest = JSON.parse(
+  readFileSync('apps/desktop/package.json', 'utf8')
+)
 const [version, ...extraArguments] = process.argv.slice(2)
 if (!version || extraArguments.length > 0) {
   fail('Usage: pnpm release:publish <X.Y.Z>')
@@ -33,7 +36,15 @@ for (const manifest of packageManifests) {
   }
 }
 
+if (desktopManifest.version !== version) {
+  fail(`The desktop app is at ${desktopManifest.version}, not ${version}`)
+}
+
 const tag = `v${version}`
+const expectedDesktopAssets = [
+  `Treeport-${version}-darwin-universal.dmg`,
+  `Treeport-${version}-darwin-universal.zip`
+]
 const originUrl = git(['config', '--get', 'remote.origin.url'])
 if (githubRepositoryFromUrl(originUrl) !== githubRepository) {
   fail(
@@ -97,16 +108,56 @@ function verifyRelease() {
         '--repo',
         githubRepository,
         '--json',
-        'isDraft,isPrerelease,tagName,url'
+        'assets,isDraft,isPrerelease,tagName,url'
       ])
     )
   } catch {
     fail(
-      `Could not read the GitHub Release for ${tag}. Create it and authenticate gh before publishing.`
+      `Could not read the GitHub Release for ${tag}. Wait for the desktop-release workflow and authenticate gh before publishing.`
     )
   }
   if (release.tagName !== tag || release.isDraft || release.isPrerelease) {
     fail(`GitHub Release ${tag} must be published and must not be a prerelease`)
+  }
+
+  const assetNames = release.assets.map((asset) => asset.name).sort()
+  if (
+    assetNames.length !== expectedDesktopAssets.length ||
+    assetNames.some((name, index) => name !== expectedDesktopAssets[index])
+  ) {
+    fail(
+      `GitHub Release ${tag} must contain exactly: ${expectedDesktopAssets.join(', ')}. Found: ${assetNames.join(', ') || 'none'}`
+    )
+  }
+
+  const invalidAsset = release.assets.find(
+    (asset) => asset.size <= 0 || asset.state !== 'uploaded'
+  )
+  if (invalidAsset) {
+    fail(
+      `GitHub Release asset ${invalidAsset.name} is empty or was not uploaded successfully`
+    )
+  }
+
+  let matchingReleases
+  try {
+    matchingReleases = JSON.parse(
+      run('gh', [
+        'api',
+        '--paginate',
+        '--slurp',
+        `repos/${githubRepository}/releases?per_page=100`
+      ])
+    )
+      .flat()
+      .filter((candidate) => candidate.tag_name === tag)
+  } catch {
+    fail(`Could not verify that ${tag} has exactly one GitHub Release`)
+  }
+  if (matchingReleases.length !== 1) {
+    fail(
+      `Expected exactly one GitHub Release for ${tag}; found ${matchingReleases.length}`
+    )
   }
 
   return release

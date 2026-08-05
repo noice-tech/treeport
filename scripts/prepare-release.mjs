@@ -50,6 +50,7 @@ if (
 }
 
 const packageManifestPath = 'apps/treeport/package.json'
+const desktopManifestPath = 'apps/desktop/package.json'
 const panelSdkManifestPath = 'packages/panel-sdk/package.json'
 const installerManifestPath = 'apps/docs/public/install-manifest.json'
 const installerPath = 'apps/docs/public/install.sh'
@@ -71,6 +72,20 @@ if (panelSdkManifest.version !== packageManifest.version) {
 if (compareVersions(requestedVersion, currentVersion) < 0) {
   fail(
     `Requested version ${version} must not be lower than ${packageManifest.version}`
+  )
+}
+
+const desktopManifest = JSON.parse(readFileSync(desktopManifestPath, 'utf8'))
+const currentDesktopVersion = parseVersion(desktopManifest.version)
+if (!currentDesktopVersion) {
+  fail(
+    `The current desktop version is not canonical: ${desktopManifest.version}`
+  )
+}
+
+if (compareVersions(requestedVersion, currentDesktopVersion) < 0) {
+  fail(
+    `Requested version ${version} must not be lower than desktop ${desktopManifest.version}`
   )
 }
 
@@ -99,6 +114,15 @@ if (packageManifest.version !== version) {
   writeFileSync(
     packageManifestPath,
     `${JSON.stringify(packageManifest, null, 2)}\n`
+  )
+}
+
+if (desktopManifest.version !== version) {
+  expectedFiles.push(desktopManifestPath)
+  desktopManifest.version = version
+  writeFileSync(
+    desktopManifestPath,
+    `${JSON.stringify(desktopManifest, null, 2)}\n`
   )
 }
 
@@ -178,5 +202,7 @@ try {
 
 console.log(`\nPrepared and pushed ${tag}. Nothing has been published to npm.`)
 console.log('\nNext:')
-console.log(`  1. Create the published GitHub Release for ${tag}.`)
+console.log(
+  `  1. Wait for the desktop-release workflow to publish the single GitHub Release for ${tag}.`
+)
 console.log(`  2. Run: pnpm release:publish ${version}`)

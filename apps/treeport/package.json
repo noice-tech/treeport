@@ -67,7 +67,7 @@
     "socket.io": "4.8.3",
     "socket.io-client": "4.8.3",
     "vite": "8.1.5",
-    "zod": "catalog:"
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@fontsource-variable/inter": "catalog:",

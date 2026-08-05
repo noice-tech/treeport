@@ -51,13 +51,19 @@ For private tailnet testing, run `tailscale up` and then `pnpm dev:tailscale`. T
 
 ## Releases
 
-Releases are prepared and published from a maintainer's machine. From a clean, up-to-date `main` branch:
+Start a release from a clean, up-to-date `main` branch:
 
 ```sh
 pnpm release:prepare X.Y.Z
-gh release create vX.Y.Z --verify-tag --title vX.Y.Z --generate-notes
+```
+
+Preparation updates the npm package, desktop client, and curl installer together, runs the complete checks, commits, tags, and atomically pushes `main` and `vX.Y.Z`. The tag starts the desktop release workflow. CI builds a signed and notarized universal macOS app, attaches its DMG and updater ZIP to one draft GitHub Release, verifies them, and publishes that same release.
+
+After the workflow succeeds, publish the npm package from the maintainer's authenticated machine:
+
+```sh
 npm login
 pnpm release:publish X.Y.Z
 ```
 
-Preparation updates the npm package and curl installer together, runs the complete checks, commits, tags, and pushes. Publication verifies the tag and published GitHub Release before publishing `@treeport/treeport` with npm tag `latest`.
+Publication verifies the tag, the single published GitHub Release, and both desktop assets before publishing `@treeport/treeport` with npm tag `latest`. Do not create the GitHub Release manually.
