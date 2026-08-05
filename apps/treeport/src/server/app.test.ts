@@ -204,6 +204,15 @@ function fixture(webDist = '/missing') {
       terminalError: null,
       setupError: null
     })),
+    beginCreateWorktree: vi.fn(async () => ({
+      id: 'op_create',
+      kind: 'create',
+      status: 'pending'
+    })),
+    listActiveOperations: vi.fn(async () => [
+      { id: 'op_create', kind: 'create', status: 'running' }
+    ]),
+    getOperation: vi.fn(async (id: string) => ({ id, status: 'running' })),
     removePreview: vi.fn(async () => ({ worktreeId: 'wt_1' })),
     beginRemove: vi.fn(async () => ({ id: 'op_1' }))
   } as unknown as TreeportService
@@ -924,6 +933,31 @@ describe('HTTP API validation', () => {
       },
       'wt_main'
     )
+
+    const accepted = await app.request('/api/projects/p/worktree-operations', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'background', base: 'default' })
+    })
+    expect(accepted.status).toBe(202)
+    expect(await accepted.json()).toMatchObject({
+      operation: { id: 'op_create', status: 'pending' }
+    })
+    expect(service.beginCreateWorktree).toHaveBeenCalledWith(
+      'p',
+      'background',
+      'default',
+      undefined,
+      undefined
+    )
+    const active = await app.request('/api/operations?projectId=p&kind=create')
+    expect(await active.json()).toMatchObject({
+      operations: [{ id: 'op_create', status: 'running' }]
+    })
+    expect(service.listActiveOperations).toHaveBeenCalledWith({
+      projectId: 'p',
+      kind: 'create'
+    })
 
     expect(
       (await app.request('/api/worktrees/wt_1/remove-preview')).status

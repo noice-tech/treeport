@@ -226,9 +226,10 @@ export class TreeportService {
     await this.deps.tmux.initialize()
     const interrupted = await this.deps.database.db.all<{
       id: string
+      kind: OperationRecord['kind']
       worktreeId: string | null
     }>(sql`
-      SELECT id, worktree_id AS worktreeId
+      SELECT id, kind, worktree_id AS worktreeId
       FROM operations
       WHERE status IN ('pending','running')
     `)
@@ -238,7 +239,11 @@ export class TreeportService {
         await tx.run(sql`
           UPDATE operations
           SET status = 'failed',
-              error = 'Daemon restarted before the operation completed; external state was preserved for retry',
+              error = ${
+                operation.kind === 'create'
+                  ? 'Daemon restarted before worktree creation completed; existing Git state will be discovered without replaying the creation'
+                  : 'Daemon restarted before the operation completed; external state was preserved for retry'
+              },
               updated_at = ${timestamp}
           WHERE id = ${operation.id}
         `)
@@ -2579,6 +2584,139 @@ export class TreeportService {
       if (existing) {
         this.events.publish('worktree.updated', { worktreeId: existing.id })
       }
+    }
+  }
+
+  async listActiveOperations(
+    filters: {
+      projectId?: string
+      kind?: OperationRecord['kind']
+    } = {}
+  ): Promise<OperationRecord[]> {
+    if (filters.projectId) {
+      await this.requireOpenProject(filters.projectId)
+    }
+
+    return this.deps.database.activeOperations(filters)
+  }
+
+  async beginCreateWorktree(
+    projectId: string,
+    inputName: string,
+    base: 'default' | 'current',
+    initialTerminal?: {
+      name: string
+      argv?: string[]
+      returnToShell?: boolean
+      initialSize?: TerminalSize
+    },
+    sourceWorktreeId?: string
+  ): Promise<OperationRecord> {
+    await this.requireOpenProject(projectId)
+    try {
+      normalizeWorktreeName(inputName)
+    } catch (error) {
+      throw new DomainError(
+        'INVALID_WORKTREE_NAME',
+        error instanceof Error ? error.message : String(error),
+        400
+      )
+    }
+    if (
+      this.projectLocks.has(projectId) &&
+      !this.worktreeMutations.has(projectId)
+    ) {
+      throw new DomainError(
+        'PROJECT_BUSY',
+        'Project is already being modified',
+        409
+      )
+    }
+
+    const operationId = id('op')
+    const timestamp = now()
+    await this.deps.database.db.run(sql`
+      INSERT INTO operations(
+        id,kind,project_id,worktree_id,status,request_json,result_json,error,
+        created_at,updated_at
+      ) VALUES(
+        ${operationId},'create',${projectId},NULL,'pending',
+        ${serializeOperation({
+          name: inputName,
+          base,
+          ...(initialTerminal ? { initialTerminal } : {}),
+          ...(sourceWorktreeId ? { sourceWorktreeId } : {})
+        })},NULL,NULL,${timestamp},${timestamp}
+      )
+    `)
+    const operation = await this.getOperation(operationId)
+    this.events.publish('create.started', { projectId, operationId })
+
+    void this.worktreeMutations
+      .enqueue(projectId, () =>
+        this.executeCreateOperation(
+          operationId,
+          projectId,
+          inputName,
+          base,
+          initialTerminal,
+          sourceWorktreeId
+        )
+      )
+      .catch(() => undefined)
+    return operation
+  }
+
+  private async executeCreateOperation(
+    operationId: string,
+    projectId: string,
+    inputName: string,
+    base: 'default' | 'current',
+    initialTerminal?: {
+      name: string
+      argv?: string[]
+      returnToShell?: boolean
+      initialSize?: TerminalSize
+    },
+    sourceWorktreeId?: string
+  ): Promise<void> {
+    await this.deps.database.db.run(sql`
+      UPDATE operations SET status='running',updated_at=${now()}
+      WHERE id=${operationId} AND status='pending'
+    `)
+    try {
+      const result = await this.executeCreateWorktree(
+        projectId,
+        inputName,
+        base,
+        initialTerminal,
+        sourceWorktreeId
+      )
+      const timestamp = now()
+      await this.deps.database.db.run(sql`
+        UPDATE operations
+        SET status='completed',worktree_id=${result.worktree.id},
+            result_json=${serializeOperation({
+              worktreeId: result.worktree.id,
+              terminalId: result.terminal?.id ?? null,
+              terminalError: result.terminalError,
+              setupError: result.setupError
+            })},error=NULL,updated_at=${timestamp}
+        WHERE id=${operationId}
+      `)
+      this.events.publish('create.completed', {
+        projectId,
+        operationId,
+        worktreeId: result.worktree.id
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      await this.deps.database.db.run(sql`
+        UPDATE operations
+        SET status='failed',error=${message.slice(0, 4_096)},updated_at=${now()}
+        WHERE id=${operationId}
+      `)
+      this.events.publish('create.failed', { projectId, operationId })
     }
   }
 

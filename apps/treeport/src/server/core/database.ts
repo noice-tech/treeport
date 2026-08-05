@@ -593,6 +593,31 @@ export class TreeportDatabase {
     return row ? this.mapOperation(row) : null
   }
 
+  async activeOperations(
+    filters: {
+      projectId?: string
+      kind?: OperationRecord['kind']
+    } = {}
+  ): Promise<OperationRecord[]> {
+    const rows = await this.db
+      .select()
+      .from(operations)
+      .where(
+        and(
+          or(
+            eq(operations.status, 'pending'),
+            eq(operations.status, 'running')
+          ),
+          ...(filters.projectId
+            ? [eq(operations.projectId, filters.projectId)]
+            : []),
+          ...(filters.kind ? [eq(operations.kind, filters.kind)] : [])
+        )
+      )
+      .orderBy(asc(operations.createdAt), asc(operations.id))
+    return rows.map((row) => this.mapOperation(row))
+  }
+
   private async mapProject(row: ProjectRow): Promise<ProjectRecord> {
     const rows = await this.db
       .select()
