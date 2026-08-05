@@ -245,13 +245,7 @@ export function useWorktreeWorkflows({
       }
 
       releaseRemoval(worktree.id)
-      notifyError(
-        error instanceof ApiError && error.code === 'REMOVE_PREVIEW_STALE'
-          ? new Error(
-              'The worktree kept changing during removal. Review it and try again.'
-            )
-          : error
-      )
+      notifyError(error)
     }
   }
 

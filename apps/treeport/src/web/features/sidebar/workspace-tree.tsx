@@ -347,7 +347,6 @@ export function WorkspaceTree({
                               variant="destructive"
                               disabled={
                                 project.availability.state === 'unavailable' ||
-                                worktree.prunable ||
                                 Boolean(pendingRemovals[worktree.id]) ||
                                 worktree.status === 'cleaning' ||
                                 needsManualCleanup(worktree)
@@ -364,16 +363,14 @@ export function WorkspaceTree({
                               <TrashIcon />
                               {project.availability.state === 'unavailable'
                                 ? 'Git repository unavailable'
-                                : worktree.prunable
-                                  ? 'Removal unavailable'
-                                  : pendingRemovals[worktree.id] ||
-                                      worktree.status === 'cleaning'
-                                    ? 'Removal in progress'
-                                    : needsManualCleanup(worktree)
-                                      ? 'Manual cleanup required'
-                                      : worktree.status === 'cleanup_failed'
-                                        ? 'Retry removal…'
-                                        : 'Remove worktree…'}
+                                : pendingRemovals[worktree.id] ||
+                                    worktree.status === 'cleaning'
+                                  ? 'Removal in progress'
+                                  : needsManualCleanup(worktree)
+                                    ? 'Manual cleanup required'
+                                    : worktree.status === 'cleanup_failed'
+                                      ? 'Retry removal…'
+                                      : 'Remove worktree…'}
                             </ContextMenuItem>
                           </ContextMenuGroup>
                         </ContextMenuContent>
