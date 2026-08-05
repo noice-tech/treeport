@@ -14,8 +14,7 @@ import type {
   WebPanelContext,
   WebPanelDefinition,
   GitDiff,
-  JsonValue,
-  WorktreeRecord
+  JsonValue
 } from '@treeport/shared'
 
 export class ApiError extends Error {
@@ -137,6 +136,22 @@ export const apiClient = {
         body: JSON.stringify({ color })
       })
     ).project,
+  activeWorktreeCreations: async (projectId?: string) => {
+    const search = projectId
+      ? `?${new URLSearchParams({ projectId }).toString()}`
+      : ''
+    return (
+      await api<{ operations: OperationRecord[] }>(
+        `/api/operations${search ? `${search}&kind=create` : '?kind=create'}`
+      )
+    ).operations
+  },
+  operation: async (operationId: string) =>
+    (
+      await api<{ operation: OperationRecord }>(
+        `/api/operations/${operationId}`
+      )
+    ).operation,
   createWorktree: async (
     projectId: string,
     name: string,
@@ -149,20 +164,20 @@ export const apiClient = {
     },
     sourceWorktreeId?: string
   ) =>
-    api<{
-      worktree: WorktreeRecord
-      terminal: TerminalRecord | null
-      terminalError: string | null
-      setupError: string | null
-    }>(`/api/projects/${projectId}/worktrees`, {
-      method: 'POST',
-      body: JSON.stringify({
-        name,
-        base,
-        initialTerminal,
-        ...(sourceWorktreeId ? { sourceWorktreeId } : {})
-      })
-    }),
+    (
+      await api<{ operation: OperationRecord }>(
+        `/api/projects/${projectId}/worktree-operations`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            name,
+            base,
+            initialTerminal,
+            ...(sourceWorktreeId ? { sourceWorktreeId } : {})
+          })
+        }
+      )
+    ).operation,
   webPanelDefinitions: async (worktreeId: string) =>
     (
       await api<{ definitions: WebPanelDefinition[] }>(

@@ -4,6 +4,7 @@ import {
   TERMINAL_SELECTION_CLEAR_SEQUENCE,
   TERMINAL_SELECTION_RESTORE_SEQUENCE,
   TERMINAL_SELECTION_START_SEQUENCE,
+  type OperationRecord,
   type ProjectColor,
   type RecentProjectRecord,
   type TerminalPreset,
@@ -614,6 +615,8 @@ async function mockApp(
   let createGate: Promise<void> | null = null
   let releaseCreate: (() => void) | null = null
   let failCreate = false
+  let creationSequence = 0
+  const creationOperations = new Map<string, OperationRecord>()
   await page.route('**/api/**', async (route) => {
     const url = new URL(route.request().url())
     const pathname = url.pathname
@@ -985,8 +988,28 @@ async function mockApp(
       return
     }
 
+    if (pathname === '/api/operations' && route.request().method() === 'GET') {
+      await route.fulfill({
+        json: {
+          operations: [...creationOperations.values()].filter(
+            (operation) =>
+              operation.status === 'pending' || operation.status === 'running'
+          )
+        }
+      })
+      return
+    }
+
+    const operationMatch = pathname.match(/^\/api\/operations\/([^/]+)$/)
+    if (operationMatch && route.request().method() === 'GET') {
+      await route.fulfill({
+        json: { operation: creationOperations.get(operationMatch[1]!) }
+      })
+      return
+    }
+
     if (
-      pathname === '/api/projects/proj_1/worktrees' &&
+      pathname === '/api/projects/proj_1/worktree-operations' &&
       route.request().method() === 'POST'
     ) {
       const body = route.request().postDataJSON() as {
@@ -999,54 +1022,76 @@ async function mockApp(
           returnToShell?: boolean
         }
       }
-      if (createGate) {
-        await createGate
-      }
-
-      createGate = null
-      releaseCreate = null
-      if (failCreate) {
-        failCreate = false
-        await route.fulfill({
-          status: 500,
-          json: { error: { code: 'CREATE_FAILED', message: 'create failed' } }
-        })
-        return
-      }
-
-      const canonicalName = body.name.trim().replace(/\s+/g, '-')
-      const terminal = {
-        id: 'term_new',
-        worktreeId: 'wt_new',
-        name: body.initialTerminal?.name ?? 'Shell',
-        tmuxSessionName: 'treeport-term-new',
-        argv: body.initialTerminal?.argv ?? ['/bin/zsh', '-l'],
-        status: 'running' as const,
-        exitCode: null,
+      const operation: OperationRecord = {
+        id: `op_create_${++creationSequence}`,
+        kind: 'create',
+        projectId: 'proj_1',
+        worktreeId: null,
+        status: 'pending',
+        request: body,
+        result: null,
+        error: null,
         createdAt: '2026-01-01',
         updatedAt: '2026-01-01'
       }
-      const worktree = {
-        ...structuredClone(state.worktrees[1]!),
-        id: 'wt_new',
-        name: canonicalName,
-        path: `/worktrees/${canonicalName}/repo`,
-        terminals: [terminal],
-        panels: []
-      }
-      const existingIndex = state.worktrees.findIndex(
-        (item) => item.id === worktree.id
-      )
-      if (existingIndex >= 0) {
-        state.worktrees[existingIndex] = worktree
-      } else {
-        state.worktrees.push(worktree)
-      }
+      creationOperations.set(operation.id, operation)
+      await route.fulfill({ status: 202, json: { operation } })
 
-      await route.fulfill({
-        status: 201,
-        json: { worktree, terminal, terminalError: null, setupError: null }
-      })
+      void (async () => {
+        operation.status = 'running'
+
+        if (createGate) {
+          await createGate
+        }
+
+        createGate = null
+        releaseCreate = null
+
+        if (failCreate) {
+          failCreate = false
+          operation.status = 'failed'
+          operation.error = 'create failed'
+          return
+        }
+
+        const canonicalName = body.name.trim().replace(/\s+/g, '-')
+        const terminal = {
+          id: 'term_new',
+          worktreeId: 'wt_new',
+          name: body.initialTerminal?.name ?? 'Shell',
+          tmuxSessionName: 'treeport-term-new',
+          argv: body.initialTerminal?.argv ?? ['/bin/zsh', '-l'],
+          status: 'running' as const,
+          exitCode: null,
+          createdAt: '2026-01-01',
+          updatedAt: '2026-01-01'
+        }
+        const worktree = {
+          ...structuredClone(state.worktrees[1]!),
+          id: 'wt_new',
+          name: canonicalName,
+          path: `/worktrees/${canonicalName}/repo`,
+          terminals: [terminal],
+          panels: []
+        }
+        const existingIndex = state.worktrees.findIndex(
+          (item) => item.id === worktree.id
+        )
+        if (existingIndex >= 0) {
+          state.worktrees[existingIndex] = worktree
+        } else {
+          state.worktrees.push(worktree)
+        }
+
+        operation.status = 'completed'
+        operation.worktreeId = worktree.id
+        operation.result = {
+          worktreeId: worktree.id,
+          terminalId: terminal.id,
+          terminalError: null,
+          setupError: null
+        }
+      })()
       return
     }
 
@@ -2258,7 +2303,8 @@ test.describe('desktop worktree terminal UI', () => {
       const requestPromise = page.waitForRequest(
         (request) =>
           request.method() === 'POST' &&
-          new URL(request.url()).pathname === '/api/projects/proj_1/worktrees'
+          new URL(request.url()).pathname ===
+            '/api/projects/proj_1/worktree-operations'
       )
       await page.getByRole('button', { name: 'Create worktree' }).click()
       const request = await requestPromise
@@ -2334,7 +2380,8 @@ test.describe('desktop worktree terminal UI', () => {
       const requestPromise = page.waitForRequest(
         (request) =>
           request.method() === 'POST' &&
-          new URL(request.url()).pathname === '/api/projects/proj_1/worktrees'
+          new URL(request.url()).pathname ===
+            '/api/projects/proj_1/worktree-operations'
       )
       await page.getByRole('button', { name: 'Create worktree' }).click()
       expect((await requestPromise).postDataJSON()).toEqual({
@@ -2359,6 +2406,34 @@ test.describe('desktop worktree terminal UI', () => {
       await expect(page.getByLabel('Initial terminal')).toHaveValue('shell')
     }
   })
+
+  test('restores an in-progress worktree creation after reload without taking over navigation', async ({
+    page
+  }) => {
+    const mocked = await mockApp(page)
+    const releaseCreate = mocked.delayNextCreate()
+    await page.getByRole('button', { name: 'New worktree' }).click()
+    await page.getByLabel('Worktree name').fill('reload topic')
+    await page.getByRole('button', { name: 'Create worktree' }).click()
+    await expect(
+      page.getByRole('status', { name: 'Creating worktree reload topic' })
+    ).toBeVisible()
+
+    await page.reload()
+    await expect(
+      page.getByRole('status', { name: 'Creating worktree reload topic' })
+    ).toBeVisible()
+    const pathBeforeCompletion = new URL(page.url()).pathname
+    releaseCreate()
+    await expect(
+      page.getByRole('status', { name: 'Creating worktree reload topic' })
+    ).toHaveCount(0)
+    await expect(
+      page.getByRole('button', { name: 'reload-topic', exact: true })
+    ).toBeVisible()
+    expect(new URL(page.url()).pathname).toBe(pathBeforeCompletion)
+  })
+
   test('reconnects and allows a viewer to take control without relaunching', async ({
     page
   }) => {
@@ -4299,7 +4374,8 @@ test.describe('mobile terminal UI', () => {
     const requestPromise = page.waitForRequest(
       (request) =>
         request.method() === 'POST' &&
-        new URL(request.url()).pathname === '/api/projects/proj_1/worktrees'
+        new URL(request.url()).pathname ===
+          '/api/projects/proj_1/worktree-operations'
     )
 
     await page.getByLabel('Worktree name').fill('touch submit')

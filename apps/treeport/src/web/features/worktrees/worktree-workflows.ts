@@ -1,5 +1,10 @@
-import { useRef, useState } from 'react'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useEffect, useRef, useState } from 'react'
+import {
+  useMutation,
+  useQueries,
+  useQuery,
+  useQueryClient
+} from '@tanstack/react-query'
 import { useLocation } from '@tanstack/react-router'
 import type {
   ProjectRecord,
@@ -30,6 +35,11 @@ export interface PendingWorktreeCreation {
   id: string
   projectId: string
   typedName: string
+}
+
+interface WorktreeCreationRequest {
+  projectId: string
+  typedName: string
   base: 'default' | 'current'
   initialTerminal: {
     name: string
@@ -38,6 +48,12 @@ export interface PendingWorktreeCreation {
     initialSize?: TerminalSize
   }
   sourceWorktreeId?: string
+}
+
+interface OwnedCreation {
+  id: string
+  projectId: string
+  replacesEmptyProject: boolean
 }
 
 export function useWorktreeWorkflows({
@@ -60,81 +76,144 @@ export function useWorktreeWorkflows({
   const queryClient = useQueryClient()
   const location = useLocation()
   const navigateToWorkspace = useWorkspaceNavigate()
-  const [pendingWorktrees, setPendingWorktrees] = useState<
-    PendingWorktreeCreation[]
-  >([])
+  const creationsQuery = useQuery({
+    queryKey: ['worktree-creations'],
+    queryFn: () => apiClient.activeWorktreeCreations(),
+    refetchInterval: 2_000,
+    refetchOnReconnect: true,
+    refetchOnWindowFocus: true
+  })
+  const pendingWorktrees: PendingWorktreeCreation[] = (
+    creationsQuery.data ?? []
+  ).flatMap((operation) => {
+    const name = operation.request.name
+    return operation.projectId && typeof name === 'string'
+      ? [{ id: operation.id, projectId: operation.projectId, typedName: name }]
+      : []
+  })
+  const [ownedCreations, setOwnedCreations] = useState<OwnedCreation[]>([])
+  const handledCreationsRef = useRef(new Set<string>())
+  const focusedCreationsRef = useRef(new Set<string>())
+  const ownedCreationQueries = useQueries({
+    queries: ownedCreations.map((creation) => ({
+      queryKey: ['operation', creation.id] as const,
+      queryFn: () => apiClient.operation(creation.id),
+      refetchInterval: 500
+    }))
+  })
   const [pendingRemovals, setPendingRemovals] = useState<
     Record<string, RemovalStage>
   >({})
   const removalGuardsRef = useRef(new Set<string>())
 
   const createWorktree = useMutation({
-    mutationFn: (pending: PendingWorktreeCreation) =>
+    mutationFn: (request: WorktreeCreationRequest) =>
       apiClient.createWorktree(
-        pending.projectId,
-        pending.typedName,
-        pending.base,
-        pending.initialTerminal,
-        pending.sourceWorktreeId
+        request.projectId,
+        request.typedName,
+        request.base,
+        request.initialTerminal,
+        request.sourceWorktreeId
       ),
-    onSuccess: async (result, pending) => {
-      await queryClient.cancelQueries({ queryKey: projectsQueryKey })
-      const worktree =
-        result.terminal &&
-        !result.worktree.terminals.some(
-          (item) => item.id === result.terminal?.id
-        )
-          ? {
-              ...result.worktree,
-              terminals: [...result.worktree.terminals, result.terminal]
-            }
-          : result.worktree
-      const replacesEmptyProject =
-        location.pathname === projectTarget(pending.projectId).pathname
-      setPendingWorktrees((current) =>
-        current.filter((item) => item.id !== pending.id)
-      )
-      queryClient.setQueryData<ProjectRecord[]>(projectsQueryKey, (current) =>
-        current?.map((project) =>
-          project.id === pending.projectId
-            ? {
-                ...project,
-                worktrees: [
-                  ...project.worktrees.filter(
-                    (item) => item.id !== worktree.id
-                  ),
-                  worktree
-                ]
-              }
-            : project
-        )
-      )
-      const target = result.terminal
-        ? terminalTarget(pending.projectId, worktree.id, result.terminal.id)
-        : worktreeTarget(pending.projectId, worktree.id)
-      await navigateToWorkspace(target, replacesEmptyProject)
-      setDrawerOpen(false)
-
-      if (result.setupError) {
-        notifyError(
-          `Worktree created, but setup could not start: ${result.setupError}`
-        )
-      } else if (result.terminalError) {
-        notifyError(
-          `Worktree created, but its terminal could not start: ${result.terminalError}`
-        )
-      }
-
-      await queryClient.invalidateQueries({ queryKey: projectsQueryKey })
+    onSuccess: (operation, request) => {
+      setOwnedCreations((current) => [
+        ...current,
+        {
+          id: operation.id,
+          projectId: request.projectId,
+          replacesEmptyProject:
+            location.pathname === projectTarget(request.projectId).pathname
+        }
+      ])
+      void queryClient.invalidateQueries({ queryKey: ['worktree-creations'] })
     },
-    onError: (mutationError, pending) => {
-      setPendingWorktrees((current) =>
-        current.filter((item) => item.id !== pending.id)
-      )
+    onError: (mutationError) => {
       setDrawerOpen(false)
       notifyError(mutationError)
     }
   })
+
+  useEffect(() => {
+    for (const pending of pendingWorktrees) {
+      if (
+        ownedCreations.some((creation) => creation.id === pending.id) &&
+        !focusedCreationsRef.current.has(pending.id)
+      ) {
+        focusedCreationsRef.current.add(pending.id)
+        window.requestAnimationFrame(() => {
+          document.getElementById(`pending-worktree-${pending.id}`)?.focus()
+        })
+      }
+    }
+  }, [ownedCreations, pendingWorktrees])
+
+  useEffect(() => {
+    ownedCreationQueries.forEach((query, index) => {
+      const operation = query.data
+      const owned = ownedCreations[index]
+      if (
+        !operation ||
+        !owned ||
+        (operation.status !== 'completed' && operation.status !== 'failed') ||
+        handledCreationsRef.current.has(operation.id)
+      ) {
+        return
+      }
+
+      handledCreationsRef.current.add(operation.id)
+
+      void (async () => {
+        await queryClient.invalidateQueries({
+          queryKey: ['worktree-creations']
+        })
+        if (operation.status === 'failed') {
+          notifyError(operation.error ?? 'Worktree creation failed')
+        } else {
+          await queryClient.invalidateQueries({ queryKey: projectsQueryKey })
+          const projects = await apiClient.projects()
+          queryClient.setQueryData(projectsQueryKey, projects)
+          const result = operation.result
+          const worktreeId =
+            typeof result?.worktreeId === 'string'
+              ? result.worktreeId
+              : operation.worktreeId
+          const terminalId =
+            typeof result?.terminalId === 'string' ? result.terminalId : null
+          const worktree = projects
+            .find((project) => project.id === owned.projectId)
+            ?.worktrees.find((item) => item.id === worktreeId)
+          if (worktree) {
+            const target = terminalId
+              ? terminalTarget(owned.projectId, worktree.id, terminalId)
+              : worktreeTarget(owned.projectId, worktree.id)
+            await navigateToWorkspace(target, owned.replacesEmptyProject)
+          }
+
+          setDrawerOpen(false)
+
+          if (typeof result?.setupError === 'string') {
+            notifyError(
+              `Worktree created, but setup could not start: ${result.setupError}`
+            )
+          } else if (typeof result?.terminalError === 'string') {
+            notifyError(
+              `Worktree created, but its terminal could not start: ${result.terminalError}`
+            )
+          }
+        }
+
+        setOwnedCreations((current) =>
+          current.filter((creation) => creation.id !== operation.id)
+        )
+      })()
+    })
+  }, [
+    navigateToWorkspace,
+    ownedCreationQueries,
+    ownedCreations,
+    queryClient,
+    setDrawerOpen
+  ])
 
   const submitWorktreeCreation = (
     project: ProjectRecord,
@@ -150,8 +229,7 @@ export function useWorktreeWorkflows({
     const initialSize = selectedTerminalId
       ? terminalSessions.getInitialSize(selectedTerminalId)
       : null
-    const pending: PendingWorktreeCreation = {
-      id: crypto.randomUUID(),
+    const pending: WorktreeCreationRequest = {
       projectId: project.id,
       typedName: name,
       base,
@@ -163,11 +241,7 @@ export function useWorktreeWorkflows({
       },
       ...(sourceWorktreeId ? { sourceWorktreeId } : {})
     }
-    setPendingWorktrees((current) => [...current, pending])
     onWorktreeSubmitted()
-    window.requestAnimationFrame(() => {
-      document.getElementById(`pending-worktree-${pending.id}`)?.focus()
-    })
     createWorktree.mutate(pending)
   }
 

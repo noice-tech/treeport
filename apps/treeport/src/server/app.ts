@@ -34,6 +34,7 @@ import {
   updateTerminalPresetSchema,
   updateTerminalSchema
 } from '@treeport/shared'
+import type { OperationKind } from '@treeport/shared'
 import type { AppConfig, TmuxAdapter, TreeportService } from './core/index'
 import { DomainError } from './core/index'
 import { TerminalMetadataManager } from './terminal-metadata'
@@ -366,6 +367,36 @@ export function createApp({
       ).worktrees
     })
   )
+
+  app.post('/api/projects/:projectId/worktree-operations', async (context) => {
+    const body = await input(context, createWorktreeSchema)
+    const initialTerminal = body.initialTerminal
+      ? {
+          name: body.initialTerminal.name,
+          ...(body.initialTerminal.argv
+            ? { argv: body.initialTerminal.argv }
+            : {}),
+          ...(body.initialTerminal.returnToShell
+            ? { returnToShell: true }
+            : {}),
+          ...(body.initialTerminal.initialSize
+            ? { initialSize: body.initialTerminal.initialSize }
+            : {})
+        }
+      : undefined
+    return context.json(
+      {
+        operation: await service.beginCreateWorktree(
+          context.req.param('projectId'),
+          body.name,
+          body.base,
+          initialTerminal,
+          body.sourceWorktreeId
+        )
+      },
+      202
+    )
+  })
 
   app.post('/api/projects/:projectId/worktrees', async (context) => {
     const body = await input(context, createWorktreeSchema)
@@ -757,6 +788,33 @@ export function createApp({
       body.sourceWorktreeId
     )
     return context.json(result, 201)
+  })
+
+  app.get('/api/operations', async (context) => {
+    const kind = context.req.query('kind')
+    const projectId = context.req.query('projectId')
+    const supportedKinds: OperationKind[] = [
+      'create',
+      'finish',
+      'discard',
+      'project_cleanup',
+      'remove',
+      'external_remove'
+    ]
+    if (kind && !supportedKinds.includes(kind as OperationKind)) {
+      throw new DomainError(
+        'INVALID_OPERATION_KIND',
+        'Invalid operation kind',
+        400
+      )
+    }
+
+    return context.json({
+      operations: await service.listActiveOperations({
+        ...(projectId ? { projectId } : {}),
+        ...(kind ? { kind: kind as OperationKind } : {})
+      })
+    })
   })
 
   app.get('/api/operations/:operationId', async (context) =>
