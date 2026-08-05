@@ -243,6 +243,7 @@ describe('GitAdapter', () => {
       '/worktrees/üñîçødé repo',
       true
     )
+    await adapter.pruneWorktrees('/repo with spaces')
     expect(runner.calls[0]).toMatchObject({
       cwd: '/repo with spaces',
       args: [
@@ -261,5 +262,9 @@ describe('GitAdapter', () => {
       '--',
       '/worktrees/üñîçødé repo'
     ])
+    expect(runner.calls[2]).toMatchObject({
+      cwd: '/repo with spaces',
+      args: ['worktree', 'prune', '--expire', 'now']
+    })
   })
 })

@@ -216,6 +216,15 @@ class SystemDouble implements CommandRunner {
       return ok()
     }
 
+    if (args[0] === 'worktree' && args[1] === 'prune') {
+      for (let index = this.worktrees.length - 1; index >= 0; index -= 1) {
+        if (this.worktrees[index]!.prunable) {
+          this.worktrees.splice(index, 1)
+        }
+      }
+      return ok()
+    }
+
     if (args[0] === 'worktree' && args[1] === 'remove') {
       if (this.removeFails) {
         return fail('git remove failed')
@@ -1931,8 +1940,8 @@ describe('TreeportService with injected command adapters', () => {
     )
   })
 
-  it('keeps Git-reported prunable worktrees visible but disabled', async () => {
-    const { main, runner, service } = await fixture()
+  it('removes a Git-reported prunable worktree', async () => {
+    const { main, runner, service, database } = await fixture()
     const project = await service.registerProject(main)
     const linked = (
       await service.createWorktree(project.id, 'prunable', 'default')
@@ -1940,12 +1949,32 @@ describe('TreeportService with injected command adapters', () => {
     runner.worktrees.find(
       (worktree) => worktree.path === linked.path
     )!.prunable = true
+    await fs.rm(path.join(linked.path, '.git'))
+    const preservedFile = path.join(linked.path, 'preserved.txt')
+    await fs.writeFile(preservedFile, 'not owned by the stale worktree')
 
     const observed = await service.getWorktreeSnapshot(linked.id)
     expect(observed.prunable).toBe(true)
-    await expect(service.removePreview(linked.id)).rejects.toMatchObject({
-      code: 'WORKTREE_UNAVAILABLE'
-    })
+    const preview = await service.removePreview(linked.id)
+    expect(preview).toMatchObject({ eligible: true, warnings: [] })
+
+    await waitForOperation(
+      service,
+      (
+        await service.beginRemove(linked.id, {
+          confirmationToken: preview.confirmationToken,
+          confirmDestructive: false
+        })
+      ).id
+    )
+
+    expect(await database.worktree(linked.id)).toBeNull()
+    expect(
+      runner.worktrees.some((worktree) => worktree.path === linked.path)
+    ).toBe(false)
+    await expect(fs.readFile(preservedFile, 'utf8')).resolves.toBe(
+      'not owned by the stale worktree'
+    )
   })
 
   it('serializes same-project creation lifecycles and drains queued work', async () => {

@@ -664,7 +664,8 @@ export class TreeportService {
   }
 
   private async requireAvailableWorktree(
-    worktreeId: string
+    worktreeId: string,
+    allowPrunable = false
   ): Promise<WorktreeRecord> {
     const binding = await this.deps.database.worktree(worktreeId)
     if (!binding) {
@@ -682,7 +683,7 @@ export class TreeportService {
       throw new DomainError('WORKTREE_NOT_FOUND', 'Worktree not found', 404)
     }
 
-    if (worktree.prunable) {
+    if (worktree.prunable && !allowPrunable) {
       throw new DomainError(
         'WORKTREE_UNAVAILABLE',
         'Git reports this worktree as prunable',
@@ -3316,10 +3317,12 @@ export class TreeportService {
     return pr
   }
 
-  private async prepareRemovePreview(
-    worktreeId: string
-  ): Promise<{ preview: RemovePreview; statusFingerprint: string }> {
-    const worktree = await this.requireAvailableWorktree(worktreeId)
+  private async prepareRemovePreview(worktreeId: string): Promise<{
+    preview: RemovePreview
+    statusFingerprint: string
+    prunable: boolean
+  }> {
+    const worktree = await this.requireAvailableWorktree(worktreeId, true)
     worktree.terminals = await this.listWorktreeTerminals(worktree)
     const project = await this.getProject(worktree.projectId)
     const live = (
@@ -3334,11 +3337,26 @@ export class TreeportService {
     }
 
     const head = live.head ?? worktree.head
-    const status = await this.deps.git.dirtyStatus(worktree.path)
+    const status = live.prunable
+      ? {
+          dirty: {
+            dirty: false,
+            staged: 0,
+            unstaged: 0,
+            untracked: 0,
+            conflicts: 0,
+            total: 0
+          },
+          fingerprint: `prunable:${live.head ?? ''}:${live.branch ?? ''}`
+        }
+      : await this.deps.git.dirtyStatus(worktree.path)
     const dirty = status.dirty
     const reachable =
       live.detached && head
-        ? await this.deps.git.isCommitReachable(worktree.path, head)
+        ? await this.deps.git.isCommitReachable(
+            live.prunable ? project.repositoryPath : worktree.path,
+            head
+          )
         : null
     const reasons: string[] = []
     const warnings: string[] = []
@@ -3408,7 +3426,8 @@ export class TreeportService {
           status.fingerprint
         )
       },
-      statusFingerprint: status.fingerprint
+      statusFingerprint: status.fingerprint,
+      prunable: live.prunable
     }
   }
 
@@ -3483,7 +3502,7 @@ export class TreeportService {
     this.worktreeLocks.add(worktreeId)
     let operationStarted = false
     try {
-      const { preview } = await this.prepareRemovePreview(worktreeId)
+      const { preview, prunable } = await this.prepareRemovePreview(worktreeId)
       if (!preview.eligible) {
         throw new DomainError(
           'REMOVE_REFUSED',
@@ -3519,33 +3538,12 @@ export class TreeportService {
         SELECT git_worktree_key,managed_wrapper_path
         FROM worktrees WHERE id=${worktreeId}
       `)
-      const markerPath = path.join(preview.path, '.git')
-      const markerStat = await this.checkoutStat(markerPath)
-      const gitMarker = markerStat?.isFile()
-        ? await fs.readFile(markerPath, 'utf8').catch(() => null)
-        : null
-      if (
-        !checkout?.isDirectory() ||
-        !checkoutBinding?.git_worktree_key ||
-        gitMarker === null ||
-        !gitMarkerMatchesKey(
-          preview.path,
-          gitMarker,
-          checkoutBinding.git_worktree_key
-        )
-      ) {
-        throw new DomainError(
-          'REMOVE_PREVIEW_STALE',
-          'The worktree checkout changed after the removal preview; review it again',
-          409,
-          preview
-        )
-      }
-
       const projectMetadata =
         await this.deps.database.projectRepositoryMetadata(worktree.projectId)
       const repositoryIdentity = await this.deps.git.repositoryIdentity(
-        preview.path
+        prunable
+          ? (await this.getProject(worktree.projectId)).repositoryPath
+          : preview.path
       )
       if (
         !projectMetadata?.identity ||
@@ -3560,19 +3558,55 @@ export class TreeportService {
       }
 
       const operationId = id('op')
-      const checkoutIdentity: RemovalCheckoutIdentity = {
-        path: preview.path,
-        device: checkout.dev.toString(),
-        inode: checkout.ino.toString(),
-        gitWorktreeKey: checkoutBinding.git_worktree_key,
-        gitMarker,
-        repositoryIdentity,
-        managedWrapperPath: checkoutBinding.managed_wrapper_path,
-        quarantinePath: path.join(
-          path.dirname(preview.path),
-          `.${path.basename(preview.path)}.treeport-removing-${operationId}`
-        )
+      let checkoutIdentity: RemovalCheckoutIdentity | null = null
+      if (prunable) {
+        if (!checkoutBinding?.git_worktree_key) {
+          throw new DomainError(
+            'REMOVE_PREVIEW_STALE',
+            'The prunable worktree changed after the removal preview; review it again',
+            409,
+            preview
+          )
+        }
+      } else {
+        const markerPath = path.join(preview.path, '.git')
+        const markerStat = await this.checkoutStat(markerPath)
+        const gitMarker = markerStat?.isFile()
+          ? await fs.readFile(markerPath, 'utf8').catch(() => null)
+          : null
+        if (
+          !checkout?.isDirectory() ||
+          !checkoutBinding?.git_worktree_key ||
+          gitMarker === null ||
+          !gitMarkerMatchesKey(
+            preview.path,
+            gitMarker,
+            checkoutBinding.git_worktree_key
+          )
+        ) {
+          throw new DomainError(
+            'REMOVE_PREVIEW_STALE',
+            'The worktree checkout changed after the removal preview; review it again',
+            409,
+            preview
+          )
+        }
+
+        checkoutIdentity = {
+          path: preview.path,
+          device: checkout.dev.toString(),
+          inode: checkout.ino.toString(),
+          gitWorktreeKey: checkoutBinding.git_worktree_key,
+          gitMarker,
+          repositoryIdentity,
+          managedWrapperPath: checkoutBinding.managed_wrapper_path,
+          quarantinePath: path.join(
+            path.dirname(preview.path),
+            `.${path.basename(preview.path)}.treeport-removing-${operationId}`
+          )
+        }
       }
+
       assertCleanupTransition(worktree.status, 'cleaning')
       const timestamp = now()
       await this.deps.database.db.transaction(async (tx) => {
@@ -3583,7 +3617,14 @@ export class TreeportService {
             ${operationId},'remove',${
               worktree.projectId
             },${worktreeId},'pending',
-            ${serializeOperation({ ...request, preview, checkoutIdentity })},
+            ${serializeOperation({
+              ...request,
+              preview,
+              checkoutIdentity,
+              prunable,
+              gitWorktreeKey: checkoutBinding.git_worktree_key,
+              repositoryIdentity
+            })},
             NULL,NULL,${timestamp},${timestamp}
           )
         `)
@@ -3641,49 +3682,82 @@ export class TreeportService {
     let terminalsStopped = false
     let gitRemoved = false
     try {
+      const prunable = operation.request.prunable === true
       const checkoutIdentity = removalCheckoutIdentity(operation.request)
       const checkout = await this.checkoutStat(worktree.path)
-      const authorizationError = checkout
-        ? await this.authorizedCheckoutError(worktree.path, checkoutIdentity)
-        : 'the accepted checkout no longer exists'
-      if (authorizationError) {
-        throw new Error(authorizationError)
-      }
-
       const liveWorktree = (
         await this.deps.git.listWorktrees(project.repositoryPath)
       ).find((item) => item.path === worktree.path)
       const liveRepositoryIdentity = await this.deps.git.repositoryIdentity(
         project.repositoryPath
       )
-      if (
-        !checkoutIdentity ||
-        !checkoutIdentity.repositoryIdentity ||
-        liveRepositoryIdentity !== checkoutIdentity.repositoryIdentity ||
-        !liveWorktree?.gitWorktreeKey ||
-        liveWorktree.gitWorktreeKey !== checkoutIdentity.gitWorktreeKey
-      ) {
-        throw new Error(
-          'Git no longer reports the accepted worktree identity at this path'
-        )
+
+      if (prunable) {
+        const [binding] = await this.deps.database.db.all<{
+          git_worktree_key: string | null
+        }>(sql`
+          SELECT git_worktree_key FROM worktrees WHERE id=${worktree.id}
+        `)
+        if (
+          !liveWorktree?.prunable ||
+          typeof operation.request.gitWorktreeKey !== 'string' ||
+          operation.request.gitWorktreeKey !== binding?.git_worktree_key ||
+          typeof operation.request.repositoryIdentity !== 'string' ||
+          liveRepositoryIdentity !== operation.request.repositoryIdentity
+        ) {
+          throw new Error(
+            'Git no longer reports the accepted prunable worktree identity at this path'
+          )
+        }
+      } else {
+        const authorizationError = checkout
+          ? await this.authorizedCheckoutError(worktree.path, checkoutIdentity)
+          : 'the accepted checkout no longer exists'
+        if (
+          authorizationError ||
+          !checkoutIdentity ||
+          !checkoutIdentity.repositoryIdentity ||
+          liveRepositoryIdentity !== checkoutIdentity.repositoryIdentity ||
+          !liveWorktree?.gitWorktreeKey ||
+          liveWorktree.gitWorktreeKey !== checkoutIdentity.gitWorktreeKey
+        ) {
+          throw new Error(
+            authorizationError ??
+              'Git no longer reports the accepted worktree identity at this path'
+          )
+        }
       }
 
       removalRevalidated = true
 
       await this.deps.tmux.killServer(worktree.tmuxSocketName)
       terminalsStopped = true
-      await this.deps.git.removeWorktree(
-        project.repositoryPath,
-        worktree.path,
-        force
-      )
+      if (prunable) {
+        await this.deps.git.pruneWorktrees(project.repositoryPath)
+        if (
+          (await this.deps.git.listWorktrees(project.repositoryPath)).some(
+            (item) => item.path === worktree.path
+          )
+        ) {
+          throw new Error('Git did not prune the unavailable worktree')
+        }
+      } else {
+        await this.deps.git.removeWorktree(
+          project.repositoryPath,
+          worktree.path,
+          force
+        )
+      }
+
       gitRemoved = true
-      const checkoutCleanup = await this.removeAuthorizedCheckout(
-        worktree.path,
-        checkoutIdentity
-      )
-      if (checkoutCleanup.error) {
-        throw new Error(checkoutCleanup.error)
+      if (checkoutIdentity) {
+        const checkoutCleanup = await this.removeAuthorizedCheckout(
+          worktree.path,
+          checkoutIdentity
+        )
+        if (checkoutCleanup.error) {
+          throw new Error(checkoutCleanup.error)
+        }
       }
 
       const timestamp = now()
@@ -3705,6 +3779,11 @@ export class TreeportService {
       })
       this.clearWorktreeTerminalState(worktree.id)
       this.invalidateProjectsSnapshot()
+
+      if (prunable) {
+        await fs.rmdir(worktree.path).catch(() => undefined)
+      }
+
       if (worktree.managedWrapperPath) {
         await fs.rmdir(worktree.managedWrapperPath).catch(() => undefined)
       }

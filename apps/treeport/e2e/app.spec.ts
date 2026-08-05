@@ -53,6 +53,7 @@ const project = {
       detached: false,
       locked: false,
       lockReason: null,
+      prunable: false,
       kind: 'main',
       tmuxSocketName: 'treeport-wt-main',
       status: 'active',
@@ -102,6 +103,7 @@ const project = {
       detached: false,
       locked: false,
       lockReason: null,
+      prunable: false,
       kind: 'linked',
       tmuxSocketName: 'treeport-wt-topic',
       status: 'active',
@@ -4076,6 +4078,7 @@ test.describe('desktop worktree terminal UI', () => {
     await expect.poll(() => mocked.removeRequests()).toBe(1)
 
     mocked.state.worktrees[1]!.status = 'cleanup_failed'
+    mocked.state.worktrees[1]!.prunable = true
     mocked.state.worktrees[1]!.cleanupError =
       'Terminals were stopped, but Git removal failed again'
     await page.evaluate(() =>

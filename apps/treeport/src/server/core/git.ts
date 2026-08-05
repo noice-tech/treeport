@@ -519,6 +519,15 @@ export class GitAdapter {
     })
   }
 
+  async pruneWorktrees(cwd: string): Promise<void> {
+    await runChecked(this.runner, {
+      executable: this.executable,
+      args: ['worktree', 'prune', '--expire', 'now'],
+      cwd,
+      timeoutMs: 10 * 60_000
+    })
+  }
+
   async removeWorktree(
     cwd: string,
     worktreePath: string,
