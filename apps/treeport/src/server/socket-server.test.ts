@@ -114,7 +114,9 @@ async function fixture(): Promise<NetworkFixture> {
     snapshot: metadataSnapshot,
     get: vi.fn(() => currentMetadata),
     trackTerminal: vi.fn(async () => undefined),
-    subscribe: vi.fn(() => () => undefined)
+    subscribe: vi.fn(() => () => undefined),
+    viewingHistory: vi.fn(() => false),
+    subscribeHistory: vi.fn(() => () => undefined)
   } as unknown as TerminalMetadataManager
   const attachmentManager = new TerminalAttachmentManager(
     service,

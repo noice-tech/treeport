@@ -53,6 +53,7 @@ const EMPTY_SNAPSHOT: TerminalSessionSnapshot = {
   exitSerial: 0,
   fileTransfer: null,
   hasSelection: false,
+  viewingHistory: false,
   pasteRequestSerial: 0,
   error: null
 }
@@ -311,6 +312,27 @@ export function TerminalView({
             ref={hostRef}
             onMouseDown={() => activeSession?.focus({ requestControl: true })}
           />
+          {snapshot.viewingHistory && !pasteOpen ? (
+            <div className="absolute top-3 left-1/2 z-20 flex -translate-x-1/2 items-center gap-2 rounded-full bg-zinc-900/95 py-1 pr-1 pl-3 text-xs text-zinc-300 shadow-lg ring-1 ring-amber-400/20 backdrop-blur">
+              <span role="status" className="whitespace-nowrap leading-tight">
+                <strong className="block font-medium text-zinc-100">
+                  Scrolled back in tmux
+                </strong>
+                <span className="block text-[0.6875rem] text-zinc-400">
+                  New output is continuing off-screen
+                </span>
+              </span>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-7 rounded-full px-2.5 text-xs text-cyan-200 hover:bg-white/8 hover:text-cyan-100"
+                onClick={() => activeSession?.jumpToLatest()}
+              >
+                Follow latest
+              </Button>
+            </div>
+          ) : null}
           {snapshot.phase === 'ready' && !snapshot.controller ? (
             <span
               className="absolute top-3 right-3 z-10 inline-flex shrink-0 items-center gap-1.5 rounded-full bg-zinc-900/90 px-2 py-1 text-[0.6875rem] font-medium text-zinc-400 shadow ring-1 ring-white/8 backdrop-blur"

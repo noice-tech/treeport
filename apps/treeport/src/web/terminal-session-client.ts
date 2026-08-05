@@ -17,6 +17,8 @@ import {
   TERMINAL_MAX_INPUT_BYTES,
   TERMINAL_PROTOCOL_VERSION,
   TERMINAL_SCROLL_EXIT_SEQUENCE,
+  TERMINAL_SELECTION_CLEAR_SEQUENCE,
+  TERMINAL_SELECTION_RESTORE_SEQUENCE,
   TERMINAL_SELECTION_START_SEQUENCE,
   TERMINAL_SELECTION_STOP_SEQUENCE,
   type TerminalClientToServerEvents,
@@ -74,6 +76,7 @@ export interface TerminalSessionSnapshot {
   exitSerial: number
   fileTransfer: TerminalFileTransfer | null
   hasSelection: boolean
+  viewingHistory: boolean
   pasteRequestSerial: number
   error: string | null
 }
@@ -89,6 +92,7 @@ const DEFAULT_SNAPSHOT: TerminalSessionSnapshot = {
   exitSerial: 0,
   fileTransfer: null,
   hasSelection: false,
+  viewingHistory: false,
   pasteRequestSerial: 0,
   error: null
 }
@@ -178,6 +182,8 @@ export class TerminalSession {
   private readonly parsedSequences = new Set<number>()
   private scrollExitPending = false
   private resumeOnNextInput = false
+  private historyExitRequested = false
+  private selectionClearRequested = false
   private selectionDragCancel: (() => void) | null = null
   private tmuxSelectionPending = false
   private tmuxSelectionText: string | null = null
@@ -411,11 +417,14 @@ export class TerminalSession {
 
   sendText(data: string): void {
     this.requestControl()
-    this.discardTmuxSelection()
+    this.clearSelection()
     this.prepareScrollExit()
 
     if (this.canInput()) {
-      this.send('input', { generation: this.controllerGeneration, data })
+      this.send('input', {
+        generation: this.controllerGeneration,
+        data: this.withScrollExit(data)
+      })
     }
 
     this.focus()
@@ -427,7 +436,7 @@ export class TerminalSession {
     }
 
     this.requestControl()
-    this.discardTmuxSelection()
+    this.clearSelection()
     this.prepareScrollExit()
     if (this.canInput()) {
       this.terminal?.paste(data)
@@ -444,6 +453,20 @@ export class TerminalSession {
       ? '\u001bO'
       : '\u001b['
     this.sendText(`${alt ? '\u001b' : ''}${prefix}${final}`)
+  }
+
+  jumpToLatest(): void {
+    if (!this.ready) {
+      return
+    }
+
+    this.historyExitRequested = true
+    this.requestControl()
+    if (this.canInput()) {
+      this.sendHistoryExit()
+    }
+
+    this.focus()
   }
 
   copySelection(): void {
@@ -469,26 +492,23 @@ export class TerminalSession {
     const copied = document.execCommand('copy')
     copyBuffer.remove()
 
-    if (copied) {
-      this.clearSelection()
-      return
+    if (!copied && navigator.clipboard) {
+      void navigator.clipboard.writeText(selection)
     }
 
-    if (navigator.clipboard) {
-      void navigator.clipboard.writeText(selection).then(() => {
-        this.clearSelection()
-      })
-    }
+    this.focus()
   }
 
   clearSelection(): void {
     const hadTmuxSelection =
       this.tmuxSelectionPending || this.tmuxSelectionText !== null
-    if (hadTmuxSelection && this.canInput()) {
-      this.send('input', {
-        generation: this.controllerGeneration,
-        data: TERMINAL_SELECTION_START_SEQUENCE
-      })
+    if (!hadTmuxSelection && !this.terminal?.hasSelection?.()) {
+      return
+    }
+
+    if (hadTmuxSelection) {
+      this.selectionClearRequested = true
+      this.sendSelectionClear()
     }
 
     this.tmuxSelectionPending = false
@@ -564,18 +584,7 @@ export class TerminalSession {
         onTmuxSelectionFinish: () => {
           this.tmuxSelectionPending = true
         },
-        onTmuxSelectionCancel: () => {
-          this.send('input', {
-            generation: this.controllerGeneration,
-            data: TERMINAL_SCROLL_EXIT_SEQUENCE
-          })
-          this.scrollExitPending = false
-          this.resumeOnNextInput = false
-          this.wrapper?.classList.remove(
-            'terminal-scrolling',
-            'terminal-tmux-selection'
-          )
-        },
+        onTmuxSelectionCancel: () => this.sendHistoryExit(),
         selectionStartSequence: TERMINAL_SELECTION_START_SEQUENCE,
         selectionStopSequence: TERMINAL_SELECTION_STOP_SEQUENCE
       }
@@ -617,7 +626,7 @@ export class TerminalSession {
           !browserOwnedMetaShortcut &&
           !copyOrPasteShortcut
         ) {
-          this.discardTmuxSelection()
+          this.clearSelection()
           this.requestControl()
         }
       },
@@ -626,11 +635,24 @@ export class TerminalSession {
     trackTerminalScrolling(
       this.wrapper,
       terminal,
-      () => {
-        this.scrollExitPending = true
+      (event) => {
+        if (event.deltaY < 0 && this.canInput()) {
+          if (
+            !this.snapshotValue.viewingHistory &&
+            this.tmuxSelectionText !== null
+          ) {
+            this.send('input', {
+              generation: this.controllerGeneration,
+              data: TERMINAL_SELECTION_RESTORE_SEQUENCE
+            })
+          }
+
+          this.scrollExitPending = true
+        }
       },
       () => {
         this.requestControl()
+        this.clearSelection()
         this.prepareScrollExit()
       },
       () => {
@@ -865,6 +887,7 @@ export class TerminalSession {
         return
       }
 
+      this.clearSelection()
       this.prepareScrollExit()
       this.terminal?.paste(input)
       this.focus()
@@ -896,7 +919,7 @@ export class TerminalSession {
   }
 
   private prepareScrollExit(): void {
-    if (this.scrollExitPending) {
+    if (this.scrollExitPending || this.snapshotValue.viewingHistory) {
       this.resumeOnNextInput = true
     }
   }
@@ -906,13 +929,55 @@ export class TerminalSession {
       return data
     }
 
-    this.scrollExitPending = false
-    this.resumeOnNextInput = false
-    this.wrapper?.classList.remove(
-      'terminal-scrolling',
-      'terminal-tmux-selection'
-    )
+    this.setViewingHistory(false)
     return `${TERMINAL_SCROLL_EXIT_SEQUENCE}${data}`
+  }
+
+  private sendHistoryExit(): void {
+    if (!this.canInput()) {
+      return
+    }
+
+    this.send('input', {
+      generation: this.controllerGeneration,
+      data: TERMINAL_SCROLL_EXIT_SEQUENCE
+    })
+    this.historyExitRequested = false
+    this.setViewingHistory(false)
+  }
+
+  private sendSelectionClear(): void {
+    if (!this.canInput()) {
+      return
+    }
+
+    this.send('input', {
+      generation: this.controllerGeneration,
+      data: TERMINAL_SELECTION_CLEAR_SEQUENCE
+    })
+    this.selectionClearRequested = false
+  }
+
+  private setViewingHistory(viewing: boolean): void {
+    if (viewing) {
+      this.scrollExitPending = true
+      this.wrapper?.classList.add('terminal-scrolling')
+      if (this.tmuxSelectionText !== null) {
+        this.wrapper?.classList.add('terminal-tmux-selection')
+      }
+    } else {
+      this.scrollExitPending = false
+      this.resumeOnNextInput = false
+      this.historyExitRequested = false
+      this.wrapper?.classList.remove(
+        'terminal-scrolling',
+        'terminal-tmux-selection'
+      )
+    }
+
+    if (viewing !== this.snapshotValue.viewingHistory) {
+      this.update({ viewingHistory: viewing })
+    }
   }
 
   private reconnectImmediately(): void {
@@ -997,6 +1062,7 @@ export class TerminalSession {
     socket.on('output', (value) => this.handleServerEvent('output', value))
     socket.on('title', (value) => this.handleServerEvent('title', value))
     socket.on('progress', (value) => this.handleServerEvent('progress', value))
+    socket.on('history', (value) => this.handleServerEvent('history', value))
     socket.on('control', (value) => this.handleServerEvent('control', value))
     socket.on('exit', (value) => this.handleServerEvent('exit', value))
     socket.on('terminal_error', (value) =>
@@ -1026,6 +1092,7 @@ export class TerminalSession {
       this.selectionDragCancel?.()
       this.tmuxSelectionPending = false
       this.tmuxSelectionText = null
+      this.setViewingHistory(false)
       this.controllerGeneration = 0
       this.controlRequestGeneration = null
       this.cancelControllerResizeIntent()
@@ -1039,6 +1106,7 @@ export class TerminalSession {
         controller: false,
         controlPending: false,
         hasSelection: false,
+        viewingHistory: false,
         degraded: this.reconnectAllowed ? this.snapshotValue.degraded : false,
         error:
           !connected && !this.snapshotValue.error
@@ -1093,6 +1161,7 @@ export class TerminalSession {
       this.selectionDragCancel?.()
       this.tmuxSelectionPending = false
       this.tmuxSelectionText = null
+      this.setViewingHistory(false)
       this.ready = true
       this.renderEpoch += 1
       const epoch = this.renderEpoch
@@ -1120,6 +1189,7 @@ export class TerminalSession {
         controller: message.controller,
         controlPending: false,
         hasSelection: false,
+        viewingHistory: false,
         error: null
       })
       return
@@ -1193,6 +1263,17 @@ export class TerminalSession {
       return
     }
 
+    if (event === 'history') {
+      const message = parseTerminalServerEvent('history', value)
+      if (!message) {
+        this.failProtocol('The terminal server sent invalid history state')
+        return
+      }
+
+      this.setViewingHistory(message.viewing)
+      return
+    }
+
     if (event === 'control') {
       const message = parseTerminalServerEvent('control', value)
       if (!message) {
@@ -1217,6 +1298,14 @@ export class TerminalSession {
       if (controllerChanged && !message.controller) {
         this.selectionDragCancel?.()
         this.tmuxSelectionPending = false
+      }
+
+      if (message.controller && this.selectionClearRequested) {
+        this.sendSelectionClear()
+      }
+
+      if (message.controller && this.historyExitRequested) {
+        this.sendHistoryExit()
       }
 
       if (message.controller && this.pendingPaste) {
@@ -1660,16 +1749,6 @@ export class TerminalSession {
       controller: false,
       controlPending: false
     })
-  }
-
-  private discardTmuxSelection(): void {
-    if (!this.tmuxSelectionPending && this.tmuxSelectionText === null) {
-      return
-    }
-
-    this.tmuxSelectionPending = false
-    this.tmuxSelectionText = null
-    this.updateSelectionState()
   }
 
   private updateSelectionState(): void {

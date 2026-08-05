@@ -247,6 +247,44 @@ describe('TmuxProgressObserver', () => {
     expect(child.kill).toHaveBeenCalledOnce()
   })
 
+  it('reports initial and changed tmux history-view state', async () => {
+    const child = fakeChild()
+    const history: boolean[] = []
+    const observer = new TmuxProgressObserver(
+      {
+        executable: 'tmux',
+        args: ['-C', 'attach'],
+        cwd: '/tmp',
+        env: {},
+        onProgress: vi.fn(),
+        onHistoryChange: (viewing) => history.push(viewing),
+        onExit: vi.fn()
+      },
+      vi.fn(() => child) as never
+    )
+
+    child.stdout.write(
+      '%begin 100 1 0\n%end 100 1 0\n%session-changed $0 session\n'
+    )
+    await vi.waitFor(() =>
+      expect(child.stdin.read()?.toString()).toBe(
+        'display-message -p "#{pane_mode}"\n'
+      )
+    )
+    child.stdout.write('%begin 100 2 1\ncopy-mode\n%end 100 2 1\n')
+    await vi.waitFor(() => expect(history).toEqual([true]))
+
+    child.stdout.write('%pane-mode-changed %0\n')
+    await vi.waitFor(() =>
+      expect(child.stdin.read()?.toString()).toBe(
+        'display-message -p "#{pane_mode}"\n'
+      )
+    )
+    child.stdout.write('%begin 100 3 1\n\n%end 100 3 1\n')
+    await vi.waitFor(() => expect(history).toEqual([true, false]))
+    observer.dispose()
+  })
+
   it('isolates metadata callback failures and suppresses later updates', async () => {
     const child = fakeChild()
     const onTitle = vi.fn()

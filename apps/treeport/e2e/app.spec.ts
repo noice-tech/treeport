@@ -1,6 +1,8 @@
 import { expect, test, type Locator, type Page } from '@playwright/test'
 import {
   TERMINAL_SCROLL_EXIT_SEQUENCE,
+  TERMINAL_SELECTION_CLEAR_SEQUENCE,
+  TERMINAL_SELECTION_RESTORE_SEQUENCE,
   TERMINAL_SELECTION_START_SEQUENCE,
   type ProjectColor,
   type RecentProjectRecord,
@@ -3673,31 +3675,120 @@ test.describe('desktop worktree terminal UI', () => {
       })
     expect(autoscrolledCopy).toBe(tmuxSelection)
 
-    await screen.hover()
-    await page.mouse.wheel(0, -120)
-    await page.mouse.wheel(0, 120)
-    await page.waitForTimeout(50)
     await page.evaluate(() => {
+      const socket = (window as any).__lastWs
+      socket.onmessage?.({
+        data: JSON.stringify({
+          version: 1,
+          type: 'history',
+          viewing: true
+        })
+      })
       ;(window as any).__wsSent = []
     })
-    await page.mouse.click(
-      bounds!.x + bounds!.width / 2,
-      bounds!.y + bounds!.height / 2
-    )
-    const clickInput = await page.evaluate(() =>
-      (window as any).__wsSent
-        .filter((message: any) => message.type === 'input')
-        .map((message: any) => String(message.data))
-    )
-    expect(clickInput).toEqual([TERMINAL_SELECTION_START_SEQUENCE])
+    await expect(
+      page.getByText('Scrolled back in tmux', { exact: true })
+    ).toBeVisible()
+    await expect(
+      page.getByText('New output is continuing off-screen')
+    ).toBeVisible()
+    await page.getByRole('button', { name: 'Follow latest' }).click()
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            (window as any).__wsSent
+              .filter((message: any) => message.type === 'input')
+              .at(-1)?.data
+        )
+      )
+      .toBe(TERMINAL_SCROLL_EXIT_SEQUENCE)
+    await expect(
+      page.getByText('Scrolled back in tmux', { exact: true })
+    ).toHaveCount(0)
+    const retainedCopy = await page
+      .locator('.xterm-helper-textarea')
+      .evaluate((textarea) => {
+        const clipboard = new DataTransfer()
+        textarea.dispatchEvent(
+          new ClipboardEvent('copy', {
+            bubbles: true,
+            cancelable: true,
+            clipboardData: clipboard
+          })
+        )
+        return clipboard.getData('text/plain')
+      })
+    expect(retainedCopy).toBe(tmuxSelection)
 
     await page.evaluate(() => {
       ;(window as any).__wsSent = []
     })
-    await page.mouse.move(bounds!.x + bounds!.width / 2, bounds!.y + 8)
+    await screen.hover()
+    await page.mouse.wheel(0, -120)
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          (window as any).__wsSent
+            .filter((message: any) => message.type === 'input')
+            .map((message: any) => String(message.data))
+        )
+      )
+      .toEqual([
+        TERMINAL_SELECTION_RESTORE_SEQUENCE,
+        expect.stringContaining('\u001b[<64;')
+      ])
+    await page.mouse.wheel(0, 120)
+    await page.evaluate(() => {
+      const socket = (window as any).__lastWs
+      socket.onmessage?.({
+        data: JSON.stringify({
+          version: 1,
+          type: 'history',
+          viewing: true
+        })
+      })
+    })
+    await page.waitForTimeout(50)
+    await page.evaluate(() => {
+      ;(window as any).__wsSent = []
+    })
+    await page.locator('.xterm-helper-textarea').focus()
+    await page.keyboard.type('x')
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          (window as any).__wsSent
+            .filter((message: any) => message.type === 'input')
+            .map((message: any) => String(message.data))
+        )
+      )
+      .toEqual([
+        TERMINAL_SELECTION_CLEAR_SEQUENCE,
+        `${TERMINAL_SCROLL_EXIT_SEQUENCE}x`
+      ])
+    const selectionAfterInput = await page
+      .locator('.xterm-helper-textarea')
+      .evaluate((textarea) => {
+        const clipboard = new DataTransfer()
+        textarea.dispatchEvent(
+          new ClipboardEvent('copy', {
+            bubbles: true,
+            cancelable: true,
+            clipboardData: clipboard
+          })
+        )
+        return clipboard.getData('text/plain')
+      })
+    expect(selectionAfterInput).toBe('')
+
+    await page.evaluate(() => {
+      ;(window as any).__wsSent = []
+    })
+    await page.mouse.move(bounds!.x + bounds!.width / 4, bounds!.y + 8)
     await page.mouse.down()
     await page.mouse.move(
-      bounds!.x + bounds!.width / 2,
+      bounds!.x + bounds!.width / 4,
       bounds!.y + bounds!.height + 30
     )
     await page.waitForTimeout(160)
@@ -3735,11 +3826,11 @@ test.describe('desktop worktree terminal UI', () => {
       ;(window as any).__wsSent = []
     })
     await page.mouse.move(
-      bounds!.x + bounds!.width / 2,
+      bounds!.x + bounds!.width / 4,
       bounds!.y + bounds!.height / 2
     )
     await page.mouse.down()
-    await page.mouse.move(bounds!.x + bounds!.width / 2, bounds!.y - 30)
+    await page.mouse.move(bounds!.x + bounds!.width / 4, bounds!.y - 30)
     await page.waitForTimeout(100)
     await page.mouse.move(bounds!.x + bounds!.width + 30, bounds!.y - 30)
     const dragReports = () =>
@@ -4283,7 +4374,7 @@ test.describe('mobile terminal UI', () => {
       const selectionActions = page.getByLabel('Terminal text selection')
       await expect(selectionActions).toBeVisible()
       await selectionActions.getByRole('button', { name: 'Copy' }).click()
-      await expect(selectionActions).toHaveCount(0)
+      await expect(selectionActions).toBeVisible()
       await expect
         .poll(() => page.evaluate(() => navigator.clipboard.readText()))
         .not.toBe('')

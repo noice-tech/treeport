@@ -3,6 +3,8 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import {
   TERMINAL_SCROLL_EXIT_SEQUENCE,
+  TERMINAL_SELECTION_CLEAR_SEQUENCE,
+  TERMINAL_SELECTION_RESTORE_SEQUENCE,
   TERMINAL_SELECTION_START_SEQUENCE,
   TERMINAL_SELECTION_STOP_SEQUENCE,
   type TerminalSize,
@@ -85,9 +87,20 @@ function decodeMetadata(value: string): unknown {
 }
 
 export const TMUX_SCROLL_EXIT_SEQUENCE = TERMINAL_SCROLL_EXIT_SEQUENCE
+export const TMUX_SELECTION_CLEAR_SEQUENCE = TERMINAL_SELECTION_CLEAR_SEQUENCE
+export const TMUX_SELECTION_RESTORE_SEQUENCE =
+  TERMINAL_SELECTION_RESTORE_SEQUENCE
 export const TMUX_SELECTION_START_SEQUENCE = TERMINAL_SELECTION_START_SEQUENCE
 export const TMUX_SELECTION_STOP_SEQUENCE = TERMINAL_SELECTION_STOP_SEQUENCE
 const TMUX_SCROLL_EXIT_KEY = TMUX_SCROLL_EXIT_SEQUENCE.replace(
+  '\u001b',
+  '\\033'
+)
+const TMUX_SELECTION_CLEAR_KEY = TMUX_SELECTION_CLEAR_SEQUENCE.replace(
+  '\u001b',
+  '\\033'
+)
+const TMUX_SELECTION_RESTORE_KEY = TMUX_SELECTION_RESTORE_SEQUENCE.replace(
   '\u001b',
   '\\033'
 )
@@ -119,17 +132,28 @@ set -s set-clipboard external
 set -s user-keys[0] "${TMUX_SCROLL_EXIT_KEY}"
 set -s user-keys[1] "${TMUX_SELECTION_START_KEY}"
 set -s user-keys[2] "${TMUX_SELECTION_STOP_KEY}"
+set -s user-keys[3] "${TMUX_SELECTION_CLEAR_KEY}"
+set -s user-keys[4] "${TMUX_SELECTION_RESTORE_KEY}"
 bind-key -T root User0 select-pane -t .
 bind-key -T copy-mode User0 send-keys -X cancel
 bind-key -T copy-mode-vi User0 send-keys -X cancel
 bind-key -T root User1 copy-mode -H
 bind-key -T copy-mode User1 send-keys -X clear-selection
 bind-key -T copy-mode-vi User1 send-keys -X clear-selection
-bind-key -T copy-mode User2 send-keys -X stop-selection
-bind-key -T copy-mode-vi User2 send-keys -X stop-selection
-bind-key -T copy-mode MouseDragEnd1Pane { send-keys -X copy-selection-no-clear ; send-keys -X stop-selection }
-bind-key -T copy-mode-vi MouseDragEnd1Pane { send-keys -X copy-selection-no-clear ; send-keys -X stop-selection }
-bind-key -T root WheelUpPane if-shell -F '#{||:#{alternate_on},#{pane_in_mode},#{mouse_any_flag}}' { send-keys -M } { copy-mode -He }
+bind-key -T copy-mode User2 { send-keys -X copy-selection-no-clear ; send-keys -X stop-selection ; set-option -pF @treeport-selection-start-x '#{selection_start_x}' ; set-option -pF @treeport-selection-start-y '#{selection_start_y}' ; set-option -pF @treeport-selection-end-x '#{selection_end_x}' ; set-option -pF @treeport-selection-end-y '#{selection_end_y}' ; set-option -pF @treeport-selection-width '#{pane_width}' }
+bind-key -T copy-mode-vi User2 { send-keys -X copy-selection-no-clear ; send-keys -X stop-selection ; set-option -pF @treeport-selection-start-x '#{selection_start_x}' ; set-option -pF @treeport-selection-start-y '#{selection_start_y}' ; set-option -pF @treeport-selection-end-x '#{selection_end_x}' ; set-option -pF @treeport-selection-end-y '#{selection_end_y}' ; set-option -pF @treeport-selection-width '#{pane_width}' }
+bind-key -T root User3 { set-option -pu @treeport-selection-start-x ; set-option -pu @treeport-selection-start-y ; set-option -pu @treeport-selection-end-x ; set-option -pu @treeport-selection-end-y ; set-option -pu @treeport-selection-width }
+bind-key -T copy-mode User3 { send-keys -X clear-selection ; set-option -pu @treeport-selection-start-x ; set-option -pu @treeport-selection-start-y ; set-option -pu @treeport-selection-end-x ; set-option -pu @treeport-selection-end-y ; set-option -pu @treeport-selection-width }
+bind-key -T copy-mode-vi User3 { send-keys -X clear-selection ; set-option -pu @treeport-selection-start-x ; set-option -pu @treeport-selection-start-y ; set-option -pu @treeport-selection-end-x ; set-option -pu @treeport-selection-end-y ; set-option -pu @treeport-selection-width }
+bind-key -T root User4 if-shell -F '#{||:#{alternate_on},#{mouse_any_flag}}' { select-pane -t . } { if-shell -F '#{==:#{@treeport-selection-width},#{pane_width}}' { copy-mode -H ; send-keys -X history-top ; if-shell -F '#{>:#{@treeport-selection-start-y},0}' { send-keys -X -N '#{@treeport-selection-start-y}' cursor-down } ; send-keys -X start-of-line ; if-shell -F '#{>:#{@treeport-selection-start-x},0}' { send-keys -X -N '#{@treeport-selection-start-x}' cursor-right } ; send-keys -X begin-selection ; send-keys -X history-top ; if-shell -F '#{>:#{@treeport-selection-end-y},0}' { send-keys -X -N '#{@treeport-selection-end-y}' cursor-down } ; send-keys -X start-of-line ; if-shell -F '#{>:#{@treeport-selection-end-x},0}' { send-keys -X -N '#{@treeport-selection-end-x}' cursor-right } ; send-keys -X stop-selection ; send-keys -X history-bottom } { copy-mode -H } }
+bind-key -T copy-mode User4 select-pane -t .
+bind-key -T copy-mode-vi User4 select-pane -t .
+bind-key -T copy-mode MouseDragEnd1Pane send-keys -X stop-selection
+bind-key -T copy-mode-vi MouseDragEnd1Pane send-keys -X stop-selection
+# Keep these explicit so source-file replaces stale bindings in existing servers.
+bind-key -T copy-mode WheelDownPane { select-pane ; send-keys -X -N 5 scroll-down }
+bind-key -T copy-mode-vi WheelDownPane { select-pane ; send-keys -X -N 5 scroll-down }
+bind-key -T root WheelUpPane if-shell -F '#{||:#{alternate_on},#{pane_in_mode},#{mouse_any_flag}}' { send-keys -M } { copy-mode -H }
 `
 
 export class TmuxAdapter {

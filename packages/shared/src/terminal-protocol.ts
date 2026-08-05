@@ -11,6 +11,8 @@ export const TERMINAL_MAX_INPUT_BYTES = 64 * 1024
 export const TERMINAL_SCROLL_EXIT_SEQUENCE = '\u001b[9000~'
 export const TERMINAL_SELECTION_START_SEQUENCE = '\u001b[9001~'
 export const TERMINAL_SELECTION_STOP_SEQUENCE = '\u001b[9002~'
+export const TERMINAL_SELECTION_CLEAR_SEQUENCE = '\u001b[9003~'
+export const TERMINAL_SELECTION_RESTORE_SEQUENCE = '\u001b[9004~'
 
 const terminalId = z.string().min(1).max(128)
 const clientId = z.string().min(1).max(128)
@@ -164,6 +166,9 @@ export const terminalTitleSchema = z.strictObject({
 export const terminalProgressEventSchema = z.strictObject({
   progress: terminalProgressSchema.nullable()
 })
+export const terminalHistorySchema = z.strictObject({
+  viewing: z.boolean()
+})
 export const terminalControlSchema = z.strictObject({
   generation,
   controller: z.boolean()
@@ -196,6 +201,7 @@ export type TerminalDimensions = z.infer<typeof terminalDimensionsSchema>
 export type TerminalOutput = z.infer<typeof terminalOutputSchema>
 export type TerminalTitle = z.infer<typeof terminalTitleSchema>
 export type TerminalProgressEvent = z.infer<typeof terminalProgressEventSchema>
+export type TerminalHistory = z.infer<typeof terminalHistorySchema>
 export type TerminalControl = z.infer<typeof terminalControlSchema>
 export type TerminalExit = z.infer<typeof terminalExitSchema>
 export type TerminalError = z.infer<typeof terminalErrorSchema>
@@ -224,6 +230,7 @@ export interface TerminalServerEventPayloads {
   output: TerminalOutput
   title: TerminalTitle
   progress: TerminalProgressEvent
+  history: TerminalHistory
   control: TerminalControl
   exit: TerminalExit
   terminal_error: TerminalError
@@ -239,6 +246,7 @@ export interface TerminalServerToClientEvents {
   output: (payload: TerminalOutput) => void
   title: (payload: TerminalTitle) => void
   progress: (payload: TerminalProgressEvent) => void
+  history: (payload: TerminalHistory) => void
   control: (payload: TerminalControl) => void
   exit: (payload: TerminalExit) => void
   terminal_error: (payload: TerminalError) => void
@@ -277,6 +285,7 @@ export function parseTerminalServerEvent<E extends TerminalServerEvent>(
     output: terminalOutputSchema,
     title: terminalTitleSchema,
     progress: terminalProgressEventSchema,
+    history: terminalHistorySchema,
     control: terminalControlSchema,
     exit: terminalExitSchema,
     terminal_error: terminalErrorSchema

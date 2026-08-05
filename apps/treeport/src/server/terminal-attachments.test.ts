@@ -102,6 +102,10 @@ class FakeProgressObserver implements TerminalProgressObserver {
     this.options.onProgress(progress)
   }
 
+  emitHistory(viewing: boolean) {
+    this.options.onHistoryChange?.(viewing)
+  }
+
   dispose() {
     this.disposed = true
   }
@@ -412,6 +416,13 @@ describe('TerminalAttachmentManager', () => {
       type: 'progress',
       progress: { state: 'indeterminate', value: null }
     })
+
+    progressObservers[0]!.emitHistory(true)
+    expect(first.sent.at(-1)).toEqual({ type: 'history', viewing: true })
+    expect(second.sent.at(-1)).toEqual({ type: 'history', viewing: true })
+    progressObservers[0]!.emitHistory(false)
+    expect(first.sent.at(-1)).toEqual({ type: 'history', viewing: false })
+    expect(second.sent.at(-1)).toEqual({ type: 'history', viewing: false })
   })
 
   it('isolates a slow viewer and keeps another viewer consuming output', async () => {
