@@ -3,6 +3,8 @@ packages:
   - packages/*
 
 hoistPattern:
+  # Playwright resolves Electron from its own package during desktop tests.
+  - electron
   - update-electron-app
   - vite
   # @astrojs/mdx imports this transitive dependency directly.
