@@ -404,7 +404,7 @@ export function trackTerminalSelectionAutoscroll(
 export function trackTerminalScrolling(
   wrapper: HTMLElement,
   terminal: Terminal,
-  onScroll: () => void,
+  onScroll: (event: WheelEvent) => void,
   onResumeInput: () => void,
   onPasteRequest: () => void
 ): void {
@@ -458,14 +458,10 @@ export function trackTerminalScrolling(
     touchPasteStart = []
   }
 
-  wrapper.addEventListener(
-    'wheel',
-    () => {
-      wrapper.classList.add('terminal-scrolling')
-      onScroll()
-    },
-    { capture: true, passive: true }
-  )
+  wrapper.addEventListener('wheel', onScroll, {
+    capture: true,
+    passive: true
+  })
   wrapper.addEventListener(
     'touchstart',
     (event) => {

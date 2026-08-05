@@ -42,6 +42,7 @@ const SHELL_COMMANDS = new Set([
 ])
 
 type MetadataListener = (metadata: TerminalRuntimeMetadata) => void
+type HistoryListener = (viewing: boolean) => void
 
 type TerminalMetadataPhase =
   | 'create_observer'
@@ -85,6 +86,7 @@ interface TerminalMetadataEntry extends TerminalRuntimeMetadata {
   runtimeReady: Promise<void> | null
   progressLease: NodeJS.Timeout | null
   progressActivityGeneration: number
+  viewingHistory: boolean
 }
 
 function tmuxEnvironment(): NodeJS.ProcessEnv {
@@ -100,6 +102,7 @@ function tmuxEnvironment(): NodeJS.ProcessEnv {
 export class TerminalMetadataManager {
   private readonly entries = new Map<string, TerminalMetadataEntry>()
   private readonly listeners = new Map<string, Set<MetadataListener>>()
+  private readonly historyListeners = new Map<string, Set<HistoryListener>>()
   private readonly tmuxExecutable: string
   private initializePromise: Promise<void> | null = null
   private unsubscribeEvents: (() => void) | null = null
@@ -169,6 +172,23 @@ export class TerminalMetadataManager {
     }
   }
 
+  viewingHistory(terminalId: string): boolean {
+    return this.entries.get(terminalId)?.viewingHistory ?? false
+  }
+
+  subscribeHistory(terminalId: string, listener: HistoryListener): () => void {
+    const listeners =
+      this.historyListeners.get(terminalId) ?? new Set<HistoryListener>()
+    listeners.add(listener)
+    this.historyListeners.set(terminalId, listeners)
+    return () => {
+      listeners.delete(listener)
+      if (!listeners.size) {
+        this.historyListeners.delete(terminalId)
+      }
+    }
+  }
+
   async trackTerminal(
     terminal: TerminalRecord,
     worktree: WorktreeRecord
@@ -223,7 +243,8 @@ export class TerminalMetadataManager {
         runtimeGeneration: 0,
         runtimeReady: null,
         progressLease: null,
-        progressActivityGeneration: 0
+        progressActivityGeneration: 0,
+        viewingHistory: false
       }
       this.entries.set(terminal.id, entry)
     } else {
@@ -293,6 +314,9 @@ export class TerminalMetadataManager {
       bell: null
     } satisfies TerminalRuntimeMetadata
     this.listeners.get(terminalId)?.forEach((listener) => listener(cleared))
+    this.historyListeners
+      .get(terminalId)
+      ?.forEach((listener) => listener(false))
   }
 
   dispose(): void {
@@ -307,6 +331,7 @@ export class TerminalMetadataManager {
       this.removeTerminal(terminalId)
     }
     this.listeners.clear()
+    this.historyListeners.clear()
   }
 
   private handleProductEvent(event: ProductEvent): void {
@@ -557,6 +582,21 @@ export class TerminalMetadataManager {
               }
               this.publish(entry)
             }
+          },
+          onHistoryChange: (viewing) => {
+            if (
+              this.entries.get(entry.terminalId) !== entry ||
+              entry.runtimeGeneration !== runtimeGeneration ||
+              entry.observerVersion !== version ||
+              entry.viewingHistory === viewing
+            ) {
+              return
+            }
+
+            entry.viewingHistory = viewing
+            this.historyListeners
+              .get(entry.terminalId)
+              ?.forEach((listener) => listener(viewing))
           },
           onExit: () => {
             exited = true

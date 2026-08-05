@@ -15,6 +15,12 @@ Treeport tracks the terminal as running or exited and reports an exit code when 
 
 Open the same terminal from the browser or desktop app. On a trusted private network, you can also reconnect from a phone using Treeport's responsive web app.
 
+## Browse earlier output
+
+Scrolling up or selecting earlier output keeps that part of the terminal stable while new output continues in the background. Treeport labels this state **Viewing history — live output continues**. Choose **Jump to latest** or type into the terminal to resume following current output.
+
+A retained selection remains available to copy after you jump to the latest output. If you browse back to it, Treeport restores its highlight. Terminal input, paste, clicking the terminal, or beginning a new selection clears it.
+
 ## Shared terminal size
 
 A terminal has one shared size across its attached clients. Treeport resizes it automatically to fit the client you are using, and synchronizes that size with other attachments. Opening or resizing it on a phone can therefore reflow the terminal on a desktop, and vice versa.

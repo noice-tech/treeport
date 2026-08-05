@@ -112,6 +112,7 @@ export interface TmuxProgressObserverOptions {
   onTitle?: (title: string) => void
   onProgress: (progress: TerminalProgress | null) => void
   onBell?: () => void
+  onHistoryChange?: (viewing: boolean) => void
   onExit: () => void
 }
 
@@ -190,6 +191,8 @@ export class TmuxProgressObserver implements TerminalProgressObserver {
   private disposed = false
   private notified = false
   private terminationStarted = false
+  private historyQueryPending = false
+  private historyQueryQueued = false
   private failLifecycle: ((error: TmuxObserverError) => void) | null = null
 
   constructor(
@@ -334,9 +337,51 @@ export class TmuxProgressObserver implements TerminalProgressObserver {
     for (const event of this.controlParser.push(chunk)) {
       if (event.type === 'output') {
         writes.push(parser.push(event.data))
+        continue
+      }
+
+      if (
+        event.type === 'notification' &&
+        (event.name === 'session-changed' || event.name === 'pane-mode-changed')
+      ) {
+        this.requestHistoryState()
+        continue
+      }
+
+      if (event.type === 'command' && this.historyQueryPending) {
+        this.historyQueryPending = false
+        if (!event.success || event.lines.length !== 1) {
+          throw new Error('tmux did not report the pane mode')
+        }
+
+        const mode = Buffer.from(event.lines[0]!).toString('utf8')
+        this.options.onHistoryChange?.(mode === 'copy-mode')
+        if (this.historyQueryQueued) {
+          this.historyQueryQueued = false
+          this.requestHistoryState()
+        }
       }
     }
     return writes
+  }
+
+  private requestHistoryState(): void {
+    if (!this.options.onHistoryChange || this.disposed || this.failed) {
+      return
+    }
+
+    if (this.historyQueryPending) {
+      this.historyQueryQueued = true
+      return
+    }
+
+    const child = this.process
+    if (!child) {
+      return
+    }
+
+    this.historyQueryPending = true
+    child.stdin.write('display-message -p "#{pane_mode}"\n')
   }
 
   private handleMetadata(update: TerminalMetadataUpdate): void {

@@ -17,6 +17,8 @@ import { GitAdapter } from './git'
 import { TreeportService } from './service'
 import {
   TMUX_SCROLL_EXIT_SEQUENCE,
+  TMUX_SELECTION_CLEAR_SEQUENCE,
+  TMUX_SELECTION_RESTORE_SEQUENCE,
   TMUX_SELECTION_START_SEQUENCE,
   TMUX_SELECTION_STOP_SEQUENCE,
   TmuxAdapter
@@ -746,6 +748,20 @@ describe.skipIf(!enabled)(
           () => output.includes('READY'),
           'tmux client did not attach'
         )
+        await runChecked(runner, {
+          executable: 'tmux',
+          args: [
+            ...base,
+            'bind-key',
+            '-T',
+            'copy-mode',
+            'WheelDownPane',
+            'send-keys',
+            '-X',
+            'cancel'
+          ]
+        })
+        await tmux.configureServer(socket)
         output = ''
         client.write('\u001b[<64;10;10M')
         await waitFor(
@@ -800,7 +816,8 @@ describe.skipIf(!enabled)(
         client.write(
           `${TMUX_SELECTION_START_SEQUENCE}\u001b[<0;1;5M\u001b[<32;1;5M\u001b[<32;1;15M${TMUX_SELECTION_STOP_SEQUENCE}\u001b[<32;1;15M\u001b[<0;1;15m`
         )
-        const secondSelectedLines = (await clipboardSelection())
+        const secondSelection = await clipboardSelection()
+        const secondSelectedLines = secondSelection
           .split('\n')
           .filter((line) => line.startsWith('history-'))
           .map((line) => Number(line.slice('history-'.length)))
@@ -813,6 +830,11 @@ describe.skipIf(!enabled)(
         const releasedSelection = await paneValue(
           '#{selection_start_x},#{selection_start_y},#{selection_end_x},#{selection_end_y}'
         )
+        expect(
+          await paneValue(
+            '#{@treeport-selection-start-x},#{@treeport-selection-start-y},#{@treeport-selection-end-x},#{@treeport-selection-end-y}'
+          )
+        ).toBe(releasedSelection)
         const releasedCursor = await paneValue(
           '#{copy_cursor_x},#{copy_cursor_y}'
         )
@@ -832,11 +854,60 @@ describe.skipIf(!enabled)(
           )
         ).toBe(releasedSelection)
 
-        client.write(TMUX_SELECTION_START_SEQUENCE)
+        for (let step = 0; step < 30; step += 1) {
+          client.write('\u001b[<65;10;10M')
+        }
+        await waitFor(
+          async () => (await paneValue('#{scroll_position}')) === '0',
+          'scrolling down did not reach the bottom of history'
+        )
+        expect(await paneValue('#{selection_present}')).toBe('1')
+        expect(
+          await paneValue(
+            '#{selection_start_x},#{selection_start_y},#{selection_end_x},#{selection_end_y}'
+          )
+        ).toBe(releasedSelection)
+        expect(
+          await paneValue(
+            '#{@treeport-selection-start-x},#{@treeport-selection-start-y},#{@treeport-selection-end-x},#{@treeport-selection-end-y}'
+          )
+        ).toBe(releasedSelection)
+
+        client.write(TMUX_SCROLL_EXIT_SEQUENCE)
+        await waitFor(
+          async () => (await paneMode()) === '0',
+          'returning to live output did not leave copy mode'
+        )
+        client.write(`${TMUX_SELECTION_RESTORE_SEQUENCE}\u001b[<64;10;10M`)
+        await waitFor(
+          async () => (await paneValue('#{selection_present}')) === '1',
+          'reopening history did not restore the selection'
+        )
+        expect(
+          await paneValue(
+            '#{selection_start_x},#{selection_start_y},#{selection_end_x},#{selection_end_y}'
+          )
+        ).toBe(releasedSelection)
+        output = ''
+        await runChecked(runner, {
+          executable: 'tmux',
+          args: [
+            ...base,
+            'send-keys',
+            '-X',
+            '-t',
+            session,
+            'copy-selection-no-clear'
+          ]
+        })
+        expect(await clipboardSelection()).toBe(secondSelection)
+
+        client.write(TMUX_SELECTION_CLEAR_SEQUENCE)
         await waitFor(
           async () => (await paneValue('#{selection_present}')) === '0',
           'clicking after selection did not clear it'
         )
+        expect(await paneValue('#{@treeport-selection-width}')).toBe('')
         expect(await paneMode()).toBe('1')
 
         client.write(`${TMUX_SCROLL_EXIT_SEQUENCE}y`)

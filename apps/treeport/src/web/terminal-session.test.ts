@@ -7,6 +7,7 @@ import {
   it,
   vi
 } from 'vitest'
+import { TERMINAL_SCROLL_EXIT_SEQUENCE } from '@treeport/shared'
 import type {
   terminalKeyboardInput as mapTerminalKeyboardInput,
   terminalOptions as createTerminalOptions,
@@ -88,6 +89,7 @@ class FakeSession {
     exitSerial: 0,
     fileTransfer: null,
     hasSelection: false,
+    viewingHistory: false,
     pasteRequestSerial: 0,
     error: null
   }
@@ -202,6 +204,7 @@ function controllerSessionFixture() {
       exitSerial: 0,
       fileTransfer: null,
       hasSelection: false,
+      viewingHistory: false,
       pasteRequestSerial: 0,
       error: null
     }
@@ -723,6 +726,53 @@ describe('TerminalSession', () => {
     session.dispose()
   })
 
+  it('reports history viewing and returns controllers and viewers to live output', () => {
+    const { control, session, socket } = controllerSessionFixture()
+    const history = (
+      session as unknown as {
+        handleServerEvent(event: 'history', value: unknown): void
+      }
+    ).handleServerEvent.bind(session)
+
+    history('history', { viewing: true })
+    expect(session.getSnapshot().viewingHistory).toBe(true)
+
+    session.jumpToLatest()
+    expect(socket.volatile.emit).toHaveBeenLastCalledWith('input', {
+      generation: 4,
+      data: TERMINAL_SCROLL_EXIT_SEQUENCE
+    })
+    expect(session.getSnapshot().viewingHistory).toBe(false)
+
+    history('history', { viewing: true })
+    session.sendText('continue')
+    expect(socket.volatile.emit).toHaveBeenLastCalledWith('input', {
+      generation: 4,
+      data: `${TERMINAL_SCROLL_EXIT_SEQUENCE}continue`
+    })
+    expect(session.getSnapshot().viewingHistory).toBe(false)
+
+    history('history', { viewing: true })
+    control(false, 5)
+    socket.emit.mockClear()
+    socket.volatile.emit.mockClear()
+    session.jumpToLatest()
+    expect(socket.emit).toHaveBeenCalledWith('take_control', {
+      generation: 5,
+      cols: 100,
+      rows: 30
+    })
+    expect(socket.volatile.emit).not.toHaveBeenCalled()
+
+    control(true, 6)
+    expect(socket.volatile.emit).toHaveBeenCalledWith('input', {
+      generation: 6,
+      data: TERMINAL_SCROLL_EXIT_SEQUENCE
+    })
+    expect(session.getSnapshot().viewingHistory).toBe(false)
+    session.dispose()
+  })
+
   it('closes on render queue failure and does not run later operations', async () => {
     const socket = new FakeSocketIO()
     socketClient.io.mockReturnValue(socket)
@@ -949,6 +999,7 @@ describe('TerminalSession', () => {
         exitSerial: 0,
         fileTransfer: null,
         hasSelection: false,
+        viewingHistory: false,
         pasteRequestSerial: 0,
         error: null
       }

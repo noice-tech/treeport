@@ -84,6 +84,7 @@ interface ClientConnection {
   paused: boolean
   announcedReady: boolean
   metadataUnsubscribe: (() => void) | null
+  historyUnsubscribe: (() => void) | null
   protocolVersion: TerminalProtocolVersion
   queuedInputBytes: number
   queuedInputMessages: number
@@ -163,6 +164,7 @@ export class TerminalAttachmentManager {
       paused: false,
       announcedReady: false,
       metadataUnsubscribe: null,
+      historyUnsubscribe: null,
       protocolVersion,
       queuedInputBytes: 0,
       queuedInputMessages: 0,
@@ -606,6 +608,14 @@ export class TerminalAttachmentManager {
                 }
               }
             )
+            connection.historyUnsubscribe = this.metadata.subscribeHistory(
+              connection.terminalId,
+              (viewing) => {
+                if (connection.announcedReady && this.isActive(connection)) {
+                  this.send(connection, 'history', { viewing })
+                }
+              }
+            )
           },
           catch: (cause) =>
             new AttachmentInitializationError('subscribe_metadata', cause)
@@ -699,6 +709,9 @@ export class TerminalAttachmentManager {
                 connection,
                 this.metadata.get(connection.terminalId)
               ) ||
+              !this.send(connection, 'history', {
+                viewing: this.metadata.viewingHistory(connection.terminalId)
+              }) ||
               !this.isActive(connection)
             ) {
               return false
@@ -740,12 +753,19 @@ export class TerminalAttachmentManager {
   }
 
   private releaseMetadataSubscription(connection: ClientConnection): void {
-    const unsubscribe = connection.metadataUnsubscribe
+    const metadataUnsubscribe = connection.metadataUnsubscribe
+    const historyUnsubscribe = connection.historyUnsubscribe
     connection.metadataUnsubscribe = null
+    connection.historyUnsubscribe = null
     try {
-      unsubscribe?.()
+      metadataUnsubscribe?.()
     } catch {
       // Metadata teardown must not prevent releasing the PTY.
+    }
+    try {
+      historyUnsubscribe?.()
+    } catch {
+      // History teardown must not prevent releasing the PTY.
     }
   }
 

@@ -151,6 +151,10 @@ describe('Socket.IO contracts', () => {
         sequence: 4
       })
     ).toEqual({ streamId: 'stream', sequence: 4 })
+    expect(parseTerminalServerEvent('history', { viewing: true })).toEqual({
+      viewing: true
+    })
+    expect(parseTerminalServerEvent('history', { viewing: 'yes' })).toBeNull()
     expect(
       parseTerminalServerEvent('control', {
         generation: Number.NaN,
