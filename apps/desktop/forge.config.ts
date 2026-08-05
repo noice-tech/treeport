@@ -44,6 +44,12 @@ const config: ForgeConfig = {
     appCategoryType: 'public.app-category.developer-tools',
     asar: true,
     icon: path.resolve('assets/Treeport.icns'),
+    protocols: [
+      {
+        name: 'Treeport workspace',
+        schemes: ['treeport']
+      }
+    ],
     osxSign: releaseBuild
       ? {
           identity: releaseEnvironment.signingIdentity!

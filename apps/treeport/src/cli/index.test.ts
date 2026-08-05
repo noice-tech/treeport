@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import {
   chmod,
   mkdir,
@@ -15,6 +15,7 @@ import type { AddressInfo } from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { promisify } from 'node:util'
 import { Server as SocketIOServer } from 'socket.io'
 import { SOCKET_IO_PATH } from '@treeport/shared'
 import type {
@@ -25,6 +26,7 @@ import type {
 } from '@treeport/shared'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
+const execute = promisify(execFile)
 const repositoryRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   '../../../..'
@@ -104,7 +106,8 @@ interface CliResult {
 async function runCli(
   args: string[],
   overrides: NodeJS.ProcessEnv = {},
-  executable = cliExecutable
+  executable = cliExecutable,
+  cwd = repositoryRoot
 ): Promise<CliResult> {
   const env = { ...process.env }
   for (const name of [
@@ -120,7 +123,7 @@ async function runCli(
 
   return new Promise((resolve, reject) => {
     const child = spawn(executable, args, {
-      cwd: repositoryRoot,
+      cwd,
       env,
       stdio: ['ignore', 'pipe', 'pipe']
     })
@@ -931,6 +934,9 @@ describe('CLI context and machine output', () => {
     expect(help.stdout).toContain(
       "If you're an AI agent, use `treeport skills` to see the usage guide."
     )
+    expect(help.stdout).toContain(
+      'Usage: treeport [options] [folder] [command]'
+    )
     expect(help.stdout).not.toContain('\n  open')
     expect(help.stdout.indexOf('AI agents:')).toBeLessThan(
       help.stdout.indexOf('Usage:')
@@ -1118,19 +1124,26 @@ describe('CLI daemon lifecycle', () => {
     const dataDirectory = path.join(temporaryDirectory, 'data')
     const runtimeDirectory = path.join(temporaryDirectory, 'runtime')
     const tmuxPath = path.join(temporaryDirectory, 'tmux')
-    const gitPath = path.join(temporaryDirectory, 'git')
     const tailscalePath = path.join(temporaryDirectory, 'tailscale')
+    const openerCallsPath = path.join(temporaryDirectory, 'opener-calls')
+    const openPath = path.join(temporaryDirectory, 'open')
+    const xdgOpenPath = path.join(temporaryDirectory, 'xdg-open')
     const tailscaleStatePath = path.join(temporaryDirectory, 'tailscale.json')
     const tailscaleCallsPath = path.join(temporaryDirectory, 'tailscale-calls')
     const nodeOnlyPath = path.join(temporaryDirectory, 'node-only-bin')
+    const tmuxExecutable = (await execute('which', ['tmux'])).stdout.trim()
     await Promise.all([
       writeFile(
         tmuxPath,
-        '#!/bin/sh\n[ "$1" = "-V" ] && echo "tmux 3.6a"\nexit 0\n'
+        `#!/bin/sh\nexec ${JSON.stringify(tmuxExecutable)} "$@"\n`
       ),
       writeFile(
-        gitPath,
-        '#!/bin/sh\n[ "$1" = "--version" ] && echo "git version 2.39.5"\nexit 0\n'
+        openPath,
+        '#!/bin/sh\nprintf \'%s\\n\' "$*" >> "$TREEPORT_OPEN_CALLS"\nexit 0\n'
+      ),
+      writeFile(
+        xdgOpenPath,
+        '#!/bin/sh\nprintf \'%s\\n\' "$*" >> "$TREEPORT_OPEN_CALLS"\nexit 0\n'
       ),
       mkdir(nodeOnlyPath),
       writeFile(
@@ -1169,9 +1182,37 @@ exit 1
     ])
     await Promise.all([
       chmod(tmuxPath, 0o755),
-      chmod(gitPath, 0o755),
       chmod(tailscalePath, 0o755),
+      chmod(openPath, 0o755),
+      chmod(xdgOpenPath, 0o755),
       symlink(process.execPath, path.join(nodeOnlyPath, 'node'))
+    ])
+
+    const repository = path.join(temporaryDirectory, 'repository')
+    const linkedWorktree = path.join(temporaryDirectory, 'linked-worktree')
+    const mainNestedFolder = path.join(repository, 'src', 'main')
+    const linkedNestedFolder = path.join(linkedWorktree, 'src', 'linked')
+    await mkdir(repository)
+    await execute('git', ['init', '-b', 'main'], { cwd: repository })
+    await execute('git', ['config', 'user.name', 'Treeport test'], {
+      cwd: repository
+    })
+    await execute('git', ['config', 'user.email', 'treeport@example.test'], {
+      cwd: repository
+    })
+    await writeFile(path.join(repository, 'README.md'), '# CLI lifecycle\n')
+    await execute('git', ['add', 'README.md'], { cwd: repository })
+    await execute('git', ['commit', '-m', 'Initial commit'], {
+      cwd: repository
+    })
+    await execute(
+      'git',
+      ['worktree', 'add', '-b', 'feature/folder-command', linkedWorktree],
+      { cwd: repository }
+    )
+    await Promise.all([
+      mkdir(mainNestedFolder, { recursive: true }),
+      mkdir(linkedNestedFolder, { recursive: true })
     ])
 
     const reservation = http.createServer()
@@ -1192,8 +1233,9 @@ exit 1
       TREEPORT_DATA_DIR: dataDirectory,
       TREEPORT_RUNTIME_DIR: runtimeDirectory,
       TREEPORT_TMUX_PATH: tmuxPath,
-      TREEPORT_GIT_PATH: gitPath,
+      TREEPORT_GIT_PATH: 'git',
       TREEPORT_TAILSCALE_STATE: tailscaleStatePath,
+      TREEPORT_OPEN_CALLS: openerCallsPath,
       TREEPORT_TAILSCALE_CALLS: tailscaleCallsPath,
       PATH: `${temporaryDirectory}:${process.env.PATH ?? ''}`
     }
@@ -1210,9 +1252,93 @@ exit 1
       expect(unconfirmed.code).toBe(2)
       expect(unconfirmed.stderr).toContain('--terminate-terminals --force')
 
-      const firstUp = await runCli(['up'], environment)
-      expect(firstUp.code).toBe(0)
-      expect(firstUp.stdout).toContain(`http://127.0.0.1:${port}`)
+      const missingFolder = await runCli(
+        [path.join(temporaryDirectory, 'missing'), '--json'],
+        environment
+      )
+      expect(missingFolder.code).toBe(5)
+      expect(JSON.parse(missingFolder.stderr)).toMatchObject({
+        error: { code: 'FOLDER_NOT_FOUND' }
+      })
+
+      const filePath = path.join(repository, 'README.md')
+      const fileFolder = await runCli([filePath, '--json'], environment)
+      expect(fileFolder.code).toBe(5)
+      expect(JSON.parse(fileFolder.stderr)).toMatchObject({
+        error: { code: 'FOLDER_NOT_DIRECTORY' }
+      })
+
+      const linkedOpen = await runCli(
+        ['.', '--json'],
+        environment,
+        cliExecutable,
+        linkedNestedFolder
+      )
+      expect(linkedOpen.code).toBe(0)
+      const linkedResult = JSON.parse(linkedOpen.stdout) as {
+        projectId: string
+        worktreeId: string
+        path: string
+        url: string
+        client: string
+      }
+      expect(linkedResult).toMatchObject({
+        path: await realpath(linkedNestedFolder),
+        client: process.platform === 'darwin' ? 'desktop' : 'browser'
+      })
+
+      const projectList = await runCli(
+        ['project', 'list', '--json'],
+        environment
+      )
+      const registeredProjects = JSON.parse(
+        projectList.stdout
+      ) as ProjectRecord[]
+      expect(registeredProjects).toHaveLength(1)
+      expect(registeredProjects[0]!.id).toBe(linkedResult.projectId)
+      const registeredWorktrees = registeredProjects[0]!.worktrees
+      expect(registeredWorktrees.map((item) => item.kind).sort()).toEqual([
+        'linked',
+        'main'
+      ])
+      expect(
+        registeredWorktrees.find((item) => item.kind === 'linked')?.id
+      ).toBe(linkedResult.worktreeId)
+
+      const mainOpen = await runCli(
+        ['.', '--json'],
+        environment,
+        cliExecutable,
+        mainNestedFolder
+      )
+      expect(mainOpen.code).toBe(0)
+      const mainResult = JSON.parse(mainOpen.stdout) as typeof linkedResult
+      expect(mainResult.projectId).toBe(linkedResult.projectId)
+      expect(mainResult.worktreeId).toBe(
+        registeredWorktrees.find((item) => item.kind === 'main')?.id
+      )
+
+      const openedUrls = (await readFile(openerCallsPath, 'utf8'))
+        .trim()
+        .split('\n')
+        .map((call) => call.split(' ').at(-1)!)
+        .map((value) =>
+          value.startsWith('treeport:')
+            ? new URL(value).searchParams.get('url')
+            : value
+        )
+      expect(openedUrls).toEqual([linkedResult.url, mainResult.url])
+
+      const nonGitDirectory = path.join(temporaryDirectory, 'not-a-repository')
+      await mkdir(nonGitDirectory)
+      const nonGit = await runCli([nonGitDirectory, '--json'], environment)
+      expect(nonGit.code).toBe(5)
+      expect(JSON.parse(nonGit.stderr)).toMatchObject({
+        error: {
+          code: 'NOT_A_GIT_REPOSITORY',
+          message: `No Git repository contains ${await realpath(nonGitDirectory)}.`
+        }
+      })
 
       const firstStatus = await runCli(['status', '--json'], environment)
       expect(firstStatus.code).toBe(0)
@@ -1300,7 +1426,10 @@ exit 1
       )
       expect(app).toContain('<div id="root"></div>')
 
-      const down = await runCli(['down'], environment)
+      const down = await runCli(
+        ['down', '--terminate-terminals', '--force'],
+        environment
+      )
       expect(down.code).toBe(0)
       expect(down.stdout).toContain('Treeport is down')
       const stopped = await runCli(['status'], environment)
@@ -1321,8 +1450,8 @@ exit 1
       expect(refused.code).toBe(1)
       expect(refused.stderr).toContain('Treeport requires tmux 3.2 or newer')
     } finally {
-      await runCli(['down'], environment)
+      await runCli(['down', '--terminate-terminals', '--force'], environment)
       await rm(temporaryDirectory, { recursive: true, force: true })
     }
-  })
+  }, 20_000)
 })

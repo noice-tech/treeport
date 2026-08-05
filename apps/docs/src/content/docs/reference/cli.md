@@ -3,7 +3,19 @@ title: CLI reference
 description: Commands for projects, worktrees, terminals, context, and automation.
 ---
 
-Running `treeport` without a command shows help. Identifiers can usually be exact IDs or paths inside a registered project or worktree.
+Running `treeport` without a folder or command shows help. Identifiers can usually be exact IDs or paths inside a registered project or worktree.
+
+## Open a folder
+
+```sh
+treeport [folder] [--json]
+```
+
+Pass a relative or absolute folder anywhere inside a Git worktree. Treeport starts its managed daemon if necessary, registers or reopens the containing repository, discovers its main and linked worktrees, and opens the worktree containing the folder. Repeating the command reuses the existing project registration. Missing paths, files, and folders outside a Git repository are rejected with an actionable error.
+
+On macOS, Treeport prefers the installed desktop app for loopback or HTTPS backends and falls back to the default browser when the app is unavailable. Other backend URLs and Linux use the default browser. Running `treeport` without a folder still shows help.
+
+With `--json`, success output contains `projectId`, `worktreeId`, the canonical input `path`, the direct `url`, and `client`, which is either `desktop` or `browser`.
 
 ## Lifecycle
 
@@ -153,6 +165,7 @@ Success output is JSON on stdout. Errors are JSON on stderr:
 | Exit code | Meaning                                            |
 | --------- | -------------------------------------------------- |
 | `0`       | Command completed; inspect partial `spawn` fields. |
+| `1`       | Local startup or application launch failed.        |
 | `2`       | Invalid CLI usage.                                 |
 | `3`       | Daemon unreachable or event stream failed.         |
 | `4`       | Terminal wait timed out.                           |

@@ -26,6 +26,7 @@ import {
 } from '@treeport/shared'
 import { parseDurationMs } from '../duration.js'
 import { extractJsonOutput } from './args.js'
+import { OpenWorkspaceError, openWorkspace } from './open.js'
 import {
   daemonDown,
   daemonHealth,
@@ -601,7 +602,9 @@ async function main(args: string[]): Promise<void> {
   let parserError = ''
   const program = new Command()
     .name('treeport')
+    .usage('[options] [folder] [command]')
     .description('Manage Treeport projects, worktrees, and terminals.')
+    .argument('[folder]', 'folder inside a Git repository to open')
     .option('--json', 'emit machine-readable JSON')
     .addHelpText('beforeAll', agentGuidance)
     .configureOutput({
@@ -612,8 +615,128 @@ async function main(args: string[]): Promise<void> {
     .showHelpAfterError()
     .exitOverride()
 
-  program.action(() => {
-    process.stdout.write(program.helpInformation())
+  program.action(async (folder: string | undefined) => {
+    if (folder === undefined) {
+      process.stdout.write(program.helpInformation())
+      return
+    }
+
+    const absoluteFolder = path.resolve(folder)
+    const folderStatus = await fs
+      .stat(absoluteFolder)
+      .catch((error: unknown) => {
+        const code =
+          typeof error === 'object' && error !== null && 'code' in error
+            ? error.code
+            : undefined
+        if (code === 'ENOENT') {
+          throw new CliError(
+            `Folder does not exist: ${absoluteFolder}`,
+            5,
+            'FOLDER_NOT_FOUND',
+            { path: absoluteFolder }
+          )
+        }
+
+        throw new CliError(
+          `Cannot access folder ${absoluteFolder}: ${error instanceof Error ? error.message : String(error)}`,
+          5,
+          'FOLDER_UNREADABLE',
+          { path: absoluteFolder }
+        )
+      })
+    if (!folderStatus.isDirectory()) {
+      throw new CliError(
+        `Path is not a folder: ${absoluteFolder}`,
+        5,
+        'FOLDER_NOT_DIRECTORY',
+        { path: absoluteFolder }
+      )
+    }
+
+    const canonicalFolder = await fs
+      .realpath(absoluteFolder)
+      .catch((error: unknown) => {
+        throw new CliError(
+          `Cannot access folder ${absoluteFolder}: ${error instanceof Error ? error.message : String(error)}`,
+          5,
+          'FOLDER_UNREADABLE',
+          { path: absoluteFolder }
+        )
+      })
+
+    if ((await resolveDaemonLifecycle()) === 'external') {
+      if (!(await daemonHealth(apiUrl))) {
+        throw new CliError(
+          `Cannot reach the externally managed Treeport daemon at ${apiUrl}. Start it through the process that owns its lifecycle and retry.`,
+          3,
+          'DAEMON_UNREACHABLE'
+        )
+      }
+    } else {
+      await daemonUp({})
+    }
+
+    const registered = await request<{ project: ProjectRecord }>(
+      '/api/projects',
+      {
+        method: 'POST',
+        body: JSON.stringify({ path: canonicalFolder })
+      }
+    ).catch((error: unknown) => {
+      if (error instanceof CliError && error.code === 'NOT_A_GIT_REPOSITORY') {
+        throw new CliError(
+          `No Git repository contains ${canonicalFolder}.`,
+          error.exitCode,
+          error.code,
+          error.details
+        )
+      }
+
+      throw error
+    })
+    const targetWorktree = registered.project.worktrees
+      .filter(
+        (worktree) =>
+          worktree.status === 'active' &&
+          !worktree.prunable &&
+          pathContains(canonicalFolder, worktree.path)
+      )
+      .sort((left, right) => right.path.length - left.path.length)[0]
+    if (!targetWorktree) {
+      throw new CliError(
+        `Git did not report an active worktree containing ${canonicalFolder}.`,
+        5,
+        'WORKTREE_NOT_FOUND',
+        { path: canonicalFolder, projectId: registered.project.id }
+      )
+    }
+
+    const target = new URL(apiUrl)
+    target.pathname = `/projects/${encodeURIComponent(registered.project.id)}/worktrees/${encodeURIComponent(targetWorktree.id)}`
+    target.search = ''
+    target.hash = ''
+    const opened = await openWorkspace(target.href).catch((error: unknown) => {
+      if (error instanceof OpenWorkspaceError) {
+        throw new CliError(error.message, 1, 'OPEN_FAILED', {
+          url: target.href
+        })
+      }
+
+      throw error
+    })
+    const result = {
+      projectId: registered.project.id,
+      worktreeId: targetWorktree.id,
+      path: canonicalFolder,
+      url: target.href,
+      client: opened.client
+    }
+    print(
+      result,
+      () =>
+        `Opened ${registered.project.name} / ${targetWorktree.name} in the ${opened.client === 'desktop' ? 'Treeport desktop app' : 'browser'}\n${target.href}`
+    )
   })
 
   const upCommand = program

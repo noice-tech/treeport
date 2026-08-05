@@ -16,17 +16,19 @@ Requirements: macOS or Linux, Node.js 24+, npm, Git, and tmux 3.2+.
 
 ```sh
 curl -fsSL https://treeport.app/install.sh | sh
-treeport up
+cd /path/to/repository
+treeport .
 ```
 
 The installer uses your existing Node.js installation. You can alternatively install the same package directly with npm:
 
 ```sh
 npm install --global @treeport/treeport
-treeport up
+cd /path/to/repository
+treeport .
 ```
 
-Treeport prints its local URL, `http://127.0.0.1:8733`, when it starts.
+Treeport starts its local backend if needed, registers the repository and its worktrees, and opens the current worktree in the desktop app or browser. Run `treeport up` to start only the backend and print its local URL, `http://127.0.0.1:8733`.
 
 ## Documentation
 

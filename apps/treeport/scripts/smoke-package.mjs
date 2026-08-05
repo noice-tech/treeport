@@ -199,13 +199,50 @@ try {
   await fs.writeFile(path.join(repository, 'README.md'), '# Package smoke\n')
   await execute('git', ['add', 'README.md'], { cwd: repository })
   await execute('git', ['commit', '-m', 'Initial commit'], { cwd: repository })
-  const added = await execute(
-    treeport,
-    ['project', 'add', repository, '--json'],
-    { env: environment }
+  const openerDirectory = path.join(temporaryDirectory, 'opener-bin')
+  const openerCallsPath = path.join(temporaryDirectory, 'opener-calls')
+  const openerName = process.platform === 'darwin' ? 'open' : 'xdg-open'
+  await fs.mkdir(openerDirectory)
+  await fs.writeFile(
+    path.join(openerDirectory, openerName),
+    '#!/bin/sh\nprintf \'%s\\n\' "$*" >> "$TREEPORT_OPEN_CALLS"\n',
+    { mode: 0o755 }
   )
-  const project = JSON.parse(added.stdout)
-  const worktree = project.worktrees[0]
+  const openEnvironment = {
+    ...environment,
+    TREEPORT_OPEN_CALLS: openerCallsPath,
+    PATH: `${openerDirectory}:${environment.PATH ?? ''}`
+  }
+  const opened = JSON.parse(
+    (
+      await execute(treeport, [repository, '--json'], {
+        env: openEnvironment
+      })
+    ).stdout
+  )
+  const projects = JSON.parse(
+    (
+      await execute(treeport, ['project', 'list', '--json'], {
+        env: environment
+      })
+    ).stdout
+  )
+  const project = projects.find(
+    (candidate) => candidate.id === opened.projectId
+  )
+  const worktree = project?.worktrees.find(
+    (candidate) => candidate.id === opened.worktreeId
+  )
+  if (
+    !project ||
+    !worktree ||
+    !(await fs.readFile(openerCallsPath, 'utf8')).trim()
+  ) {
+    throw new Error(
+      'Installed folder command did not open its registered worktree'
+    )
+  }
+
   const definitions = await fetch(
     `http://127.0.0.1:${port}/api/worktrees/${worktree.id}/web-panel-definitions`
   ).then((response) => response.json())

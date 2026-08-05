@@ -68,7 +68,7 @@ export function App() {
       {state?.connection.status === 'ready' && computer ? (
         <webview
           key={computer.origin}
-          src={computer.origin}
+          src={state.connection.url}
           partition="persist:treeport-desktop"
           // React removes a boolean allowpopups value, but Electron requires the
           // attribute to exist before the guest can request a new window.

@@ -33,6 +33,7 @@ import type {
 } from './desktop-contract'
 import { filePathFromUrl } from './file-url'
 import { isLoopbackUrl, parseComputerUrl } from './renderer-url'
+import { parseWorkspaceLink, type WorkspaceTarget } from './workspace-link'
 
 const dirname = __dirname
 const TITLEBAR_HEIGHT = 32
@@ -61,6 +62,8 @@ let connectionGeneration = 0
 let connectionAbort: AbortController | null = null
 let fullscreen = false
 let stopAutomaticUpdates: (() => void) | null = null
+let pendingWorkspaceTarget: WorkspaceTarget | null = null
+let workspaceTargetQueue: Promise<void> = Promise.resolve()
 const shellWebContentsIds = new Set<number>()
 let terminalSelectionGuest: WebContents | null = null
 
@@ -323,6 +326,7 @@ async function connectSelected(
   options: {
     unavailableImmediately?: boolean
     unavailableMessage?: string
+    url?: string
   } = {}
 ): Promise<void> {
   const computer = store?.selectedComputer
@@ -338,6 +342,12 @@ async function connectSelected(
     return
   }
 
+  const requestedUrl =
+    options.url &&
+    URL.canParse(options.url) &&
+    new URL(options.url).origin === computer.origin
+      ? options.url
+      : computer.origin
   const unavailableMessage =
     options.unavailableMessage ??
     `The desktop app could not reach ${computer.origin}.`
@@ -416,7 +426,8 @@ async function connectSelected(
     connection = {
       status: 'ready',
       computerId: computer.id,
-      serverVersion: health.version
+      serverVersion: health.version,
+      url: requestedUrl
     }
     broadcastState()
     return
@@ -540,7 +551,7 @@ function installMenu(): void {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template))
 }
 
-function createWindow(): BrowserWindow {
+function createWindow(url?: string): BrowserWindow {
   const window = new BrowserWindow({
     show: process.env.TREEPORT_DESKTOP_E2E !== '1',
     width: 1440,
@@ -627,7 +638,7 @@ function createWindow(): BrowserWindow {
     }
   })
   window.webContents.once('did-finish-load', () => broadcastState())
-  void connectSelected()
+  void connectSelected(url ? { url } : {})
   return window
 }
 
@@ -793,58 +804,139 @@ function registerIpc(): void {
   })
 }
 
+async function openWorkspaceTarget(target: WorkspaceTarget): Promise<void> {
+  const currentStore = store
+  if (!currentStore) {
+    pendingWorkspaceTarget = target
+    return
+  }
+
+  const existing = currentStore.findByOrigin(target.origin)
+  if (existing) {
+    await currentStore.select(existing.id)
+  } else {
+    await currentStore.add(target.origin)
+  }
+
+  const existingWindow = mainWindow
+  const window = existingWindow ?? createWindow(target.url)
+
+  if (existingWindow) {
+    void connectSelected({ url: target.url })
+  }
+
+  if (window.isMinimized()) {
+    window.restore()
+  }
+
+  window.show()
+  window.focus()
+}
+
+function queueWorkspaceTarget(target: WorkspaceTarget): void {
+  if (!store) {
+    pendingWorkspaceTarget = target
+    return
+  }
+
+  workspaceTargetQueue = workspaceTargetQueue
+    .then(() => openWorkspaceTarget(target))
+    .catch((error: unknown) => {
+      console.error('[Treeport] Could not open workspace link', error)
+    })
+}
+
+function receiveWorkspaceLink(value: unknown): boolean {
+  const target = parseWorkspaceLink(value)
+  if (!target) {
+    return false
+  }
+
+  queueWorkspaceTarget(target)
+  return true
+}
+
+app.on('open-url', (event, url) => {
+  event.preventDefault()
+  receiveWorkspaceLink(url)
+})
+for (const argument of process.argv) {
+  const target = parseWorkspaceLink(argument)
+  if (target) {
+    pendingWorkspaceTarget = target
+  }
+}
+
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
 if (!hasSingleInstanceLock) {
   app.quit()
 } else {
-  app.on('second-instance', () => {
+  app.on('second-instance', (_event, commandLine) => {
+    if (commandLine.some((argument) => receiveWorkspaceLink(argument))) {
+      return
+    }
+
     const window = mainWindow ?? createWindow()
     if (window.isMinimized()) {
       window.restore()
     }
 
+    window.show()
     window.focus()
   })
 
   registerIpc()
-  void app.whenReady().then(async () => {
-    store = await ComputerStore.load(
-      path.join(app.getPath('userData'), 'computers.json'),
-      seedComputerUrl,
-      { synchronizeSelectedLoopback: !app.isPackaged }
-    )
-    installMenu()
-    createWindow()
-    if (
-      app.isPackaged &&
-      process.platform === 'darwin' &&
-      process.env.TREEPORT_DESKTOP_E2E !== '1'
-    ) {
-      const updater = updateElectronApp({
-        updateSource: {
-          type: UpdateSourceType.ElectronPublicUpdateService,
-          repo: 'noice-tech/treeport',
-          host: 'https://update.electronjs.org'
-        },
-        updateInterval: '10 minutes',
-        notifyUser: true,
-        onNotifyUser: makeUserNotifier({
-          title: 'Treeport Update Ready',
-          detail:
-            'Restart Treeport to update the desktop client. Your selected local or remote backend is not changed.',
-          restartButtonText: 'Restart Treeport',
-          laterButtonText: 'Later'
-        })
-      })
-      stopAutomaticUpdates = updater.stopUpdates
-    }
-
-    app.on('activate', () => {
-      if (!mainWindow) {
+  void app
+    .whenReady()
+    .then(async () => {
+      store = await ComputerStore.load(
+        path.join(app.getPath('userData'), 'computers.json'),
+        seedComputerUrl,
+        { synchronizeSelectedLoopback: !app.isPackaged }
+      )
+      installMenu()
+      const startupTarget = pendingWorkspaceTarget
+      pendingWorkspaceTarget = null
+      if (startupTarget) {
+        await openWorkspaceTarget(startupTarget)
+      } else {
         createWindow()
       }
+
+      if (
+        app.isPackaged &&
+        process.platform === 'darwin' &&
+        process.env.TREEPORT_DESKTOP_E2E !== '1'
+      ) {
+        const updater = updateElectronApp({
+          updateSource: {
+            type: UpdateSourceType.ElectronPublicUpdateService,
+            repo: 'noice-tech/treeport',
+            host: 'https://update.electronjs.org'
+          },
+          updateInterval: '10 minutes',
+          notifyUser: true,
+          onNotifyUser: makeUserNotifier({
+            title: 'Treeport Update Ready',
+            detail:
+              'Restart Treeport to update the desktop client. Your selected local or remote backend is not changed.',
+            restartButtonText: 'Restart Treeport',
+            laterButtonText: 'Later'
+          })
+        })
+        stopAutomaticUpdates = updater.stopUpdates
+      }
+
+      app.on('activate', () => {
+        if (!mainWindow) {
+          createWindow()
+        }
+      })
     })
-  })
+    .catch((error: unknown) => {
+      console.error('[Treeport] Could not start desktop app', error)
+      app.quit()
+    })
 
   app.on('before-quit', () => {
     stopAutomaticUpdates?.()
