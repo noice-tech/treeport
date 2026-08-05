@@ -3687,10 +3687,12 @@ test.describe('desktop worktree terminal UI', () => {
       ;(window as any).__wsSent = []
     })
     await expect(
-      page.getByText('Viewing history', { exact: true })
+      page.getByText('Scrolled back in tmux', { exact: true })
     ).toBeVisible()
-    await expect(page.getByText('Live output continues')).toBeVisible()
-    await page.getByRole('button', { name: 'Jump to latest' }).click()
+    await expect(
+      page.getByText('New output is continuing off-screen')
+    ).toBeVisible()
+    await page.getByRole('button', { name: 'Follow latest' }).click()
     await expect
       .poll(() =>
         page.evaluate(
@@ -3702,7 +3704,7 @@ test.describe('desktop worktree terminal UI', () => {
       )
       .toBe(TERMINAL_SCROLL_EXIT_SEQUENCE)
     await expect(
-      page.getByText('Viewing history', { exact: true })
+      page.getByText('Scrolled back in tmux', { exact: true })
     ).toHaveCount(0)
     const retainedCopy = await page
       .locator('.xterm-helper-textarea')

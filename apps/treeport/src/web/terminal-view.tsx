@@ -316,10 +316,10 @@ export function TerminalView({
             <div className="absolute top-3 left-1/2 z-20 flex -translate-x-1/2 items-center gap-2 rounded-full bg-zinc-900/95 py-1 pr-1 pl-3 text-xs text-zinc-300 shadow-lg ring-1 ring-amber-400/20 backdrop-blur">
               <span role="status" className="whitespace-nowrap leading-tight">
                 <strong className="block font-medium text-zinc-100">
-                  Viewing history
+                  Scrolled back in tmux
                 </strong>
                 <span className="block text-[0.6875rem] text-zinc-400">
-                  Live output continues
+                  New output is continuing off-screen
                 </span>
               </span>
               <Button
@@ -329,7 +329,7 @@ export function TerminalView({
                 className="h-7 rounded-full px-2.5 text-xs text-cyan-200 hover:bg-white/8 hover:text-cyan-100"
                 onClick={() => activeSession?.jumpToLatest()}
               >
-                Jump to latest
+                Follow latest
               </Button>
             </div>
           ) : null}

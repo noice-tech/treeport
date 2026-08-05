@@ -17,7 +17,7 @@ Open the same terminal from the browser or desktop app. On a trusted private net
 
 ## Browse earlier output
 
-Scrolling up or selecting earlier output keeps that part of the terminal stable while new output continues in the background. Treeport labels this state **Viewing history — live output continues**. Choose **Jump to latest** or type into the terminal to resume following current output.
+Scrolling up or selecting earlier output keeps that part of the terminal stable while new output continues in the background. Treeport labels this state **Scrolled back in tmux — new output is continuing off-screen**. Choose **Follow latest** or type into the terminal to resume following current output.
 
 A retained selection remains available to copy after you jump to the latest output. If you browse back to it, Treeport restores its highlight. Terminal input, paste, clicking the terminal, or beginning a new selection clears it.
 
