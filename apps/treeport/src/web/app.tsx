@@ -352,6 +352,7 @@ function WorkspaceApp() {
     prepareRemoval,
     confirmRemoval
   } = useWorktreeWorkflows({
+    projects,
     setDrawerOpen: (open) => {
       if (open) {
         setDrawerOpen(true)

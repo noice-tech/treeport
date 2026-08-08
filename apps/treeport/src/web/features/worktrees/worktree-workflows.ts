@@ -58,12 +58,14 @@ interface OwnedCreation {
 }
 
 export function useWorktreeWorkflows({
+  projects,
   setDrawerOpen,
   onWorktreeSubmitted,
   onRemovalNeedsConfirmation,
   onRemovalCompleted,
   selectedTerminalId
 }: {
+  projects: ProjectRecord[]
   setDrawerOpen: (open: boolean) => void
   onWorktreeSubmitted: () => void
   onRemovalNeedsConfirmation: (
@@ -93,15 +95,6 @@ export function useWorktreeWorkflows({
       ? [{ id: operation.id, projectId: operation.projectId, typedName: name }]
       : []
   })
-  const serverPendingIds = new Set(
-    serverPendingWorktrees.map((pending) => pending.id)
-  )
-  const pendingWorktrees = [
-    ...serverPendingWorktrees,
-    ...ownedCreations
-      .filter((creation) => !serverPendingIds.has(creation.id))
-      .map(({ id, projectId, typedName }) => ({ id, projectId, typedName }))
-  ]
   const handledCreationsRef = useRef(new Set<string>())
   const focusedCreationsRef = useRef(new Set<string>())
   const ownedCreationQueries = useQueries({
@@ -111,6 +104,42 @@ export function useWorktreeWorkflows({
       refetchInterval: 500
     }))
   })
+  const materializedCreationIds = new Set(
+    ownedCreationQueries.flatMap((query) => {
+      const operation = query.data
+      if (operation?.status !== 'completed') {
+        return []
+      }
+
+      const resultWorktreeId = operation.result?.worktreeId
+      const worktreeId =
+        typeof resultWorktreeId === 'string'
+          ? resultWorktreeId
+          : operation.worktreeId
+      return worktreeId &&
+        projects.some((project) =>
+          project.worktrees.some((worktree) => worktree.id === worktreeId)
+        )
+        ? [operation.id]
+        : []
+    })
+  )
+  const visibleServerPendingWorktrees = serverPendingWorktrees.filter(
+    (pending) => !materializedCreationIds.has(pending.id)
+  )
+  const serverPendingIds = new Set(
+    visibleServerPendingWorktrees.map((pending) => pending.id)
+  )
+  const pendingWorktrees = [
+    ...visibleServerPendingWorktrees,
+    ...ownedCreations
+      .filter(
+        (creation) =>
+          !serverPendingIds.has(creation.id) &&
+          !materializedCreationIds.has(creation.id)
+      )
+      .map(({ id, projectId, typedName }) => ({ id, projectId, typedName }))
+  ]
   const [pendingRemovals, setPendingRemovals] = useState<
     Record<string, RemovalStage>
   >({})
