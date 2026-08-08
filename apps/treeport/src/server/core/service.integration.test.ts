@@ -2050,6 +2050,170 @@ describe('TreeportService with injected command adapters', () => {
     expect(drained).toBe(true)
   })
 
+  it('persists, lists, serializes, and completes server-owned creation operations', async () => {
+    const { main, runner, service } = await fixture()
+    const project = await service.registerProject(main)
+    const firstDestination = await resolveZedWorktreePath(main, 'owned-first')
+    const secondDestination = await resolveZedWorktreePath(main, 'owned-second')
+    let releaseFirst!: () => void
+    runner.worktreeAddGates.set(
+      firstDestination.path,
+      new Promise<void>((resolve) => {
+        releaseFirst = resolve
+      })
+    )
+
+    const first = await service.beginCreateWorktree(
+      project.id,
+      firstDestination.name,
+      'default',
+      { name: 'Agent', argv: ['pi'] }
+    )
+    const second = await service.beginCreateWorktree(
+      project.id,
+      secondDestination.name,
+      'default'
+    )
+    expect(first).toMatchObject({
+      kind: 'create',
+      projectId: project.id,
+      status: 'pending',
+      request: {
+        name: firstDestination.name,
+        base: 'default',
+        initialTerminal: { name: 'Agent', argv: ['pi'] }
+      }
+    })
+    await vi.waitFor(async () =>
+      expect(await service.getOperation(first.id)).toMatchObject({
+        status: 'running'
+      })
+    )
+    expect(
+      await service.listActiveOperations({
+        projectId: project.id,
+        kind: 'create'
+      })
+    ).toEqual([
+      expect.objectContaining({ id: first.id, status: 'running' }),
+      expect.objectContaining({ id: second.id, status: 'pending' })
+    ])
+    expect(
+      runner.calls.some((call) => call.args.includes(secondDestination.path))
+    ).toBe(false)
+
+    releaseFirst()
+    const firstCompleted = await waitForOperation(service, first.id)
+    const secondCompleted = await waitForOperation(service, second.id)
+    expect(firstCompleted).toMatchObject({
+      status: 'completed',
+      worktreeId: expect.any(String),
+      result: {
+        worktreeId: expect.any(String),
+        terminalId: expect.any(String),
+        terminalError: null,
+        setupError: null
+      }
+    })
+    expect(secondCompleted.status).toBe('completed')
+    expect(
+      await service.listActiveOperations({
+        projectId: project.id,
+        kind: 'create'
+      })
+    ).toEqual([])
+  })
+
+  it('records creation failures and partial terminal results without leaving active rows', async () => {
+    const { main, runner, service } = await fixture()
+    const project = await service.registerProject(main)
+    runner.tmuxCreateFails = true
+    const partial = await service.beginCreateWorktree(
+      project.id,
+      'partial-create',
+      'default',
+      { name: 'Agent' }
+    )
+    const partialResult = await waitForOperation(service, partial.id)
+    expect(partialResult).toMatchObject({
+      status: 'completed',
+      worktreeId: expect.any(String),
+      result: {
+        terminalId: null,
+        terminalError: expect.stringContaining('tmux create failed')
+      }
+    })
+
+    runner.tmuxCreateFails = false
+    runner.listWorktreesFails = true
+    const failed = await service.beginCreateWorktree(
+      project.id,
+      'failed-create',
+      'default'
+    )
+    expect(await waitForOperation(service, failed.id)).toMatchObject({
+      status: 'failed',
+      error: expect.stringContaining('worktree')
+    })
+    expect(
+      await service.listActiveOperations({
+        projectId: project.id,
+        kind: 'create'
+      })
+    ).toEqual([])
+  })
+
+  it('fails stale creation operations on restart without replaying Git mutations', async () => {
+    const { main, runner, service, database, config } = await fixture()
+    const project = await service.registerProject(main)
+    const timestamp = new Date().toISOString()
+    await database.db.run(sql`
+      INSERT INTO operations(
+        id,kind,project_id,worktree_id,status,request_json,created_at,updated_at
+      ) VALUES(
+        'op_interrupted_create','create',${project.id},NULL,'running',
+        '{"name":"interrupted","base":"default"}',${timestamp},${timestamp}
+      )
+    `)
+    const addCallsBeforeRestart = runner.calls.filter(
+      (call) => call.args[0] === 'worktree' && call.args[1] === 'add'
+    ).length
+    const restarted = new TreeportService({
+      config,
+      database,
+      runner,
+      git: new GitAdapter(runner),
+      tmux: new TmuxAdapter(
+        runner,
+        config.runtimeDir,
+        'tmux',
+        '/launcher with spaces.js'
+      ),
+      gh: new GhAdapter(runner)
+    })
+    restarted.attachHttpServer(http.createServer())
+    services.push(restarted)
+    await restarted.initialize()
+
+    expect(await restarted.getOperation('op_interrupted_create')).toMatchObject(
+      {
+        status: 'failed',
+        error: expect.stringContaining('without replaying the creation')
+      }
+    )
+    expect(
+      runner.calls.filter(
+        (call) => call.args[0] === 'worktree' && call.args[1] === 'add'
+      )
+    ).toHaveLength(addCallsBeforeRestart)
+    expect(
+      await restarted.listActiveOperations({
+        projectId: project.id,
+        kind: 'create'
+      })
+    ).toEqual([])
+  })
+
   it('continues queued creation after an earlier creation fails', async () => {
     const { main, service } = await fixture()
     const project = await service.registerProject(main)

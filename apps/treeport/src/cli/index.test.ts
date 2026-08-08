@@ -19,6 +19,7 @@ import { promisify } from 'node:util'
 import { Server as SocketIOServer } from 'socket.io'
 import { SOCKET_IO_PATH } from '@treeport/shared'
 import type {
+  OperationRecord,
   ProjectRecord,
   TerminalRecord,
   TerminalRuntimeMetadata,
@@ -149,7 +150,7 @@ describe('CLI context and machine output', () => {
   let socketServer: SocketIOServer
   let apiUrl: string
   const requests: string[] = []
-  const spawnBodies: unknown[] = []
+  const creationBodies: unknown[] = []
   const terminalCreateBodies: unknown[] = []
   const packageBodies: Array<{ url: string; body: Record<string, unknown> }> =
     []
@@ -171,6 +172,8 @@ describe('CLI context and machine output', () => {
     | 'slow-refresh' = 'none'
   let inspectionRequests = 0
   let observedDaemonLifecycle: 'treeport' | 'external' = 'treeport'
+  let creationOperation: OperationRecord | null = null
+  let createdWorktree: WorktreeRecord | null = null
 
   beforeEach(() => {
     observedTerminal = terminal
@@ -185,6 +188,8 @@ describe('CLI context and machine output', () => {
     eventScenario = 'none'
     inspectionRequests = 0
     observedDaemonLifecycle = 'treeport'
+    creationOperation = null
+    createdWorktree = null
   })
 
   beforeAll(async () => {
@@ -279,7 +284,13 @@ describe('CLI context and machine output', () => {
         request.method === 'GET' &&
         request.url === '/api/projects/proj_context'
       ) {
-        response.end(JSON.stringify({ project }))
+        response.end(
+          JSON.stringify({
+            project: createdWorktree
+              ? { ...project, worktrees: [createdWorktree] }
+              : project
+          })
+        )
         return
       }
 
@@ -403,35 +414,57 @@ describe('CLI context and machine output', () => {
         return
       }
 
-      if (request.method === 'POST' && request.url === '/api/spawn') {
+      if (
+        request.method === 'POST' &&
+        request.url === '/api/projects/proj_context/worktree-operations'
+      ) {
         let source = ''
         for await (const chunk of request) {
           source += chunk
         }
-        const body = JSON.parse(source) as { worktreeName: string }
-        spawnBodies.push(body)
-        if (body.worktreeName === 'partial') {
-          response.statusCode = 201
-          response.end(
-            JSON.stringify({
-              worktree: { ...worktree, name: 'partial' },
-              terminal: null,
-              terminalError: 'tmux failed',
-              setupError: 'setup could not be prepared'
-            })
-          )
-          return
+        const body = JSON.parse(source) as {
+          name: string
+          initialTerminal?: { name: string; argv?: string[] }
         }
-
-        response.statusCode = 201
+        creationBodies.push(body)
+        const partial = body.name === 'partial'
+        createdWorktree = {
+          ...worktree,
+          name: body.name,
+          terminals: partial ? [] : [terminal]
+        }
+        creationOperation = {
+          id: 'op_create',
+          kind: 'create',
+          projectId: project.id,
+          worktreeId: worktree.id,
+          status: 'completed',
+          request: body,
+          result: {
+            worktreeId: worktree.id,
+            terminalId: partial ? null : terminal.id,
+            terminalError: partial ? 'tmux failed' : null,
+            setupError: partial ? 'setup could not be prepared' : null
+          },
+          error: null,
+          createdAt: timestamp,
+          updatedAt: timestamp
+        }
+        response.statusCode = 202
         response.end(
           JSON.stringify({
-            worktree: { ...worktree, name: body.worktreeName },
-            terminal,
-            terminalError: null,
-            setupError: null
+            operation: { ...creationOperation, status: 'pending' }
           })
         )
+        return
+      }
+
+      if (
+        request.method === 'GET' &&
+        request.url === '/api/operations/op_create' &&
+        creationOperation
+      ) {
+        response.end(JSON.stringify({ operation: creationOperation }))
         return
       }
 
@@ -711,9 +744,12 @@ describe('CLI context and machine output', () => {
       terminalError: 'tmux failed',
       setupError: 'setup could not be prepared'
     })
-    expect(spawnBodies.at(-1)).toMatchObject({
-      project: project.id,
-      argv: ['pi', 'semi;colon', '$HOME']
+    expect(creationBodies.at(-1)).toMatchObject({
+      name: 'partial',
+      initialTerminal: {
+        name: 'Agent',
+        argv: ['pi', 'semi;colon', '$HOME']
+      }
     })
   })
 

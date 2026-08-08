@@ -58,7 +58,10 @@ export function useProjectEventsBridge(
         )
       ])
     )
-    const refresh = () => refreshes.schedule()
+    const refresh = () => {
+      refreshes.schedule()
+      void queryClient.invalidateQueries({ queryKey: ['worktree-creations'] })
+    }
     const refreshProjects = () => projectRefreshes.schedule()
     const snapshot = (value: unknown) => {
       const payload = parseEventsSnapshot(value)

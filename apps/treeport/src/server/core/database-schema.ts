@@ -147,13 +147,18 @@ export const operations = sqliteTable(
   (table) => [
     check(
       'operations_kind_check',
-      sql`${table.kind} IN ('finish','discard','project_cleanup','remove','external_remove')`
+      sql`${table.kind} IN ('create','finish','discard','project_cleanup','remove','external_remove')`
     ),
     check(
       'operations_status_check',
       sql`${table.status} IN ('pending','running','completed','failed')`
     ),
-    index('operations_worktree_idx').on(table.worktreeId)
+    index('operations_worktree_idx').on(table.worktreeId),
+    index('operations_project_kind_status_idx').on(
+      table.projectId,
+      table.kind,
+      table.status
+    )
   ]
 )
 
