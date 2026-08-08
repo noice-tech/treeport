@@ -2334,7 +2334,14 @@ test.describe('desktop worktree terminal UI', () => {
         .poll(() => mocked.projectRequests())
         .toBeGreaterThan(projectRequestsBeforeEvent)
 
+      const projectRequestsBeforeCompletion = mocked.projectRequests()
+      const releaseCompletedProjects = mocked.delayNextProjects()
       releaseCreate()
+      await expect
+        .poll(() => mocked.projectRequests())
+        .toBeGreaterThan(projectRequestsBeforeCompletion)
+      await expect(pending).toBeVisible()
+      releaseCompletedProjects()
       await expect(pending).toHaveCount(0)
       await expect(
         page.getByRole('button', { name: 'new-topic', exact: true })

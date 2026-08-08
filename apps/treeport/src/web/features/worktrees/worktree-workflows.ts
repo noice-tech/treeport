@@ -53,6 +53,7 @@ interface WorktreeCreationRequest {
 interface OwnedCreation {
   id: string
   projectId: string
+  typedName: string
   replacesEmptyProject: boolean
 }
 
@@ -83,7 +84,8 @@ export function useWorktreeWorkflows({
     refetchOnReconnect: true,
     refetchOnWindowFocus: true
   })
-  const pendingWorktrees: PendingWorktreeCreation[] = (
+  const [ownedCreations, setOwnedCreations] = useState<OwnedCreation[]>([])
+  const serverPendingWorktrees: PendingWorktreeCreation[] = (
     creationsQuery.data ?? []
   ).flatMap((operation) => {
     const name = operation.request.name
@@ -91,7 +93,15 @@ export function useWorktreeWorkflows({
       ? [{ id: operation.id, projectId: operation.projectId, typedName: name }]
       : []
   })
-  const [ownedCreations, setOwnedCreations] = useState<OwnedCreation[]>([])
+  const serverPendingIds = new Set(
+    serverPendingWorktrees.map((pending) => pending.id)
+  )
+  const pendingWorktrees = [
+    ...serverPendingWorktrees,
+    ...ownedCreations
+      .filter((creation) => !serverPendingIds.has(creation.id))
+      .map(({ id, projectId, typedName }) => ({ id, projectId, typedName }))
+  ]
   const handledCreationsRef = useRef(new Set<string>())
   const focusedCreationsRef = useRef(new Set<string>())
   const ownedCreationQueries = useQueries({
@@ -121,6 +131,7 @@ export function useWorktreeWorkflows({
         {
           id: operation.id,
           projectId: request.projectId,
+          typedName: request.typedName,
           replacesEmptyProject:
             location.pathname === projectTarget(request.projectId).pathname
         }
