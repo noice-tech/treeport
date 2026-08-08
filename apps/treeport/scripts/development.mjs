@@ -1,54 +1,44 @@
 #!/usr/bin/env node
 import { spawn } from 'node:child_process'
 
-const environment = {
-  ...process.env,
-  TREEPORT_DAEMON_LIFECYCLE: 'external'
-}
-const children = [
-  spawn('pnpm', ['dev:server'], { env: environment, stdio: 'inherit' }),
-  spawn('pnpm', ['dev:web'], { env: environment, stdio: 'inherit' })
-]
+const child = spawn('pnpm', ['dev:server'], {
+  env: {
+    ...process.env,
+    TREEPORT_DAEMON_LIFECYCLE: 'external',
+    TREEPORT_WEB_DEVELOPMENT: '1'
+  },
+  stdio: 'inherit'
+})
 
 let stopping = false
-let exitCode = 0
+let requestedSignal = null
 function stop(signal = 'SIGTERM') {
   if (stopping) {
     return
   }
 
   stopping = true
-  for (const child of children) {
-    child.kill(signal)
-  }
+  requestedSignal = signal
+  child.kill(signal)
 }
 
 for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
   process.once(signal, () => stop(signal))
 }
 
-for (const child of children) {
-  child.once('error', (error) => {
-    console.error(
-      `Could not start Treeport development process: ${error.message}`
-    )
-    exitCode = 1
-    stop()
-  })
-  child.once('exit', (code) => {
-    if (!stopping) {
-      exitCode = code || 1
-      stop()
-    }
-  })
-}
-
-await Promise.all(
-  children.map(
-    (child) =>
-      new Promise((resolve) => {
-        child.once('exit', resolve)
-      })
+child.once('error', (error) => {
+  console.error(
+    `Could not start Treeport development process: ${error.message}`
   )
-)
-process.exitCode = exitCode
+  process.exitCode = 1
+})
+child.once('exit', (code) => {
+  process.exitCode =
+    requestedSignal === 'SIGINT'
+      ? 130
+      : requestedSignal === 'SIGTERM'
+        ? 143
+        : requestedSignal === 'SIGHUP'
+          ? 129
+          : (code ?? 1)
+})

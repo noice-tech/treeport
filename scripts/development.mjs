@@ -1,16 +1,29 @@
 import { spawn, spawnSync } from 'node:child_process'
-import { open, readFile, unlink } from 'node:fs/promises'
+import {
+  mkdir,
+  open,
+  readFile,
+  readdir,
+  rm,
+  unlink,
+  writeFile
+} from 'node:fs/promises'
 import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const loopbackHost = '127.0.0.1'
-const loopbackHosts = [loopbackHost, '::1']
 const lanHost = '0.0.0.0'
+const developmentUser =
+  typeof process.getuid === 'function' ? process.getuid() : 'user'
 const startupLockPath = path.join(
   os.tmpdir(),
-  `treeport-development-${typeof process.getuid === 'function' ? process.getuid() : 'user'}.lock`
+  `treeport-development-${developmentUser}.lock`
+)
+const tailscaleLeaseDirectory = path.join(
+  os.tmpdir(),
+  `treeport-development-tailscale-${developmentUser}`
 )
 
 function urlFor(host, port) {
@@ -122,22 +135,61 @@ function tailscaleProxyForPort(config, port) {
   return null
 }
 
+async function cleanStaleTailscaleLeases(config) {
+  await mkdir(tailscaleLeaseDirectory, { recursive: true })
+  const entries = await readdir(tailscaleLeaseDirectory, {
+    withFileTypes: true
+  })
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.endsWith('.json')) {
+      continue
+    }
+
+    const leasePath = path.join(tailscaleLeaseDirectory, entry.name)
+    const lease = await readFile(leasePath, 'utf8')
+      .then(JSON.parse)
+      .catch(() => null)
+    if (
+      !lease ||
+      !Number.isInteger(lease.pid) ||
+      !Number.isInteger(lease.port) ||
+      typeof lease.target !== 'string'
+    ) {
+      await rm(leasePath, { force: true })
+      continue
+    }
+
+    if (await processIsRunning(lease.pid)) {
+      continue
+    }
+
+    if (
+      tailscaleProxyForPort(config, lease.port)?.replace(/\/$/, '') ===
+      lease.target
+    ) {
+      tailscale(['serve', `--https=${lease.port}`, 'off'])
+    }
+
+    await rm(leasePath, { force: true })
+  }
+}
+
 function developmentMode() {
   const mode = process.argv[2]
   if (!mode) {
-    return { name: 'local', webHost: loopbackHost }
+    return { name: 'local', appHost: loopbackHost }
   }
 
   if (mode === '--tailscale') {
     return {
       name: 'tailscale',
-      webHost: loopbackHost,
+      appHost: loopbackHost,
       tailscaleDnsName: tailscaleDnsName()
     }
   }
 
   if (mode === '--lan') {
-    return { name: 'lan', webHost: lanHost }
+    return { name: 'lan', appHost: lanHost }
   }
 
   throw new Error(`Unknown development mode: ${mode}`)
@@ -251,13 +303,9 @@ function sendSignalToChild(child, signal) {
   }
 }
 
-async function waitForStackPorts(apiPort, webPort, webHost, childExit) {
+async function waitForStackPort(appPort, appHost, childExit) {
   for (let attempt = 0; attempt < 120; attempt += 1) {
-    const [apiAvailable, webAvailable] = await Promise.all([
-      portIsAvailable(apiPort, loopbackHost),
-      portIsAvailable(webPort, webHost)
-    ])
-    if (!apiAvailable && !webAvailable) {
+    if (!(await portIsAvailable(appPort, appHost))) {
       return true
     }
 
@@ -276,36 +324,36 @@ async function waitForStackPorts(apiPort, webPort, webHost, childExit) {
 export async function main() {
   const mode = developmentMode()
   const releaseStartupLock = await acquireStartupLock()
-  const tailscaleServeConfig =
+  let tailscaleServeConfig =
     mode.name === 'tailscale'
       ? tailscaleJson(['serve', 'status', '--json'])
       : null
-  let apiPort = await findAvailablePort(8733, loopbackHost)
+  if (tailscaleServeConfig) {
+    await cleanStaleTailscaleLeases(tailscaleServeConfig)
+    tailscaleServeConfig = tailscaleJson(['serve', 'status', '--json'])
+  }
+
+  let appPort = await findAvailablePort(8733, mode.appHost)
   while (
     tailscaleServeConfig &&
-    tailscalePortIsServed(tailscaleServeConfig, apiPort)
+    tailscalePortIsServed(tailscaleServeConfig, appPort)
   ) {
-    apiPort = await findAvailablePort(apiPort + 1, loopbackHost)
+    appPort = await findAvailablePort(appPort + 1, mode.appHost)
   }
-  const webPort = await findAvailablePort(
-    5173,
-    mode.webHost,
-    new Set([apiPort])
-  )
-  const desktopRendererPort = await findAvailablePort(
-    6173,
-    loopbackHosts,
-    new Set([apiPort, webPort])
-  )
-  const apiUrl = urlFor(loopbackHost, apiPort)
-  const webUrl = urlFor(mode.webHost, webPort)
+  const appUrl = urlFor(loopbackHost, appPort)
   let tailscaleRemote = null
   if (mode.name === 'tailscale') {
-    tailscale(['serve', '--bg', `--https=${apiPort}`, webUrl])
+    tailscale(['serve', '--bg', `--https=${appPort}`, appUrl])
+    const leasePath = path.join(tailscaleLeaseDirectory, `${process.pid}.json`)
+    await writeFile(
+      leasePath,
+      JSON.stringify({ pid: process.pid, port: appPort, target: appUrl })
+    )
     tailscaleRemote = {
-      port: apiPort,
-      target: webUrl,
-      url: `https://${mode.tailscaleDnsName}:${apiPort}`
+      port: appPort,
+      target: appUrl,
+      url: `https://${mode.tailscaleDnsName}:${appPort}`,
+      leasePath
     }
   }
 
@@ -315,29 +363,25 @@ export async function main() {
   )
   const environment = {
     ...process.env,
-    TREEPORT_HOST: loopbackHost,
-    TREEPORT_PORT: String(apiPort),
-    TREEPORT_API_URL: apiUrl,
+    TREEPORT_HOST: mode.appHost,
+    TREEPORT_PORT: String(appPort),
+    TREEPORT_API_URL: appUrl,
     TREEPORT_DAEMON_LIFECYCLE: 'external',
-    TREEPORT_WEB_HOST: mode.webHost,
-    TREEPORT_WEB_PORT: String(webPort),
-    TREEPORT_DESKTOP_URL: webUrl,
-    TREEPORT_DESKTOP_RENDERER_PORT: String(desktopRendererPort),
+    TREEPORT_DESKTOP_URL: appUrl,
     TREEPORT_DESKTOP_USER_DATA: path.join(
       repositoryRoot,
       'apps/treeport/.treeport-dev/desktop'
     )
   }
+  delete environment.TREEPORT_WEB_HOST
+  delete environment.TREEPORT_WEB_PORT
+  delete environment.TREEPORT_DESKTOP_RENDERER_PORT
 
   console.log('\nTreeport development')
-  console.log(`Local:     ${webUrl}`)
+  console.log(`Local:     ${appUrl}`)
   if (tailscaleRemote) {
     console.log(`Tailscale: ${tailscaleRemote.url}`)
   }
-
-  console.log(`App server: ${apiUrl}`)
-  console.log(`Web port:  ${webPort}`)
-  console.log(`Desktop renderer port: ${desktopRendererPort}`)
 
   if (mode.name === 'lan') {
     console.warn(
@@ -391,21 +435,17 @@ export async function main() {
   process.on('SIGTERM', stopOnSigterm)
   process.on('SIGHUP', stopOnSighup)
 
-  const portsClaimed = await waitForStackPorts(
-    apiPort,
-    webPort,
-    mode.webHost,
-    childExit
-  )
+  const portsClaimed = await waitForStackPort(appPort, mode.appHost, childExit)
   await releaseStartupLock()
   if (!portsClaimed && child.exitCode === null && child.signalCode === null) {
     console.warn(
-      'The development stack did not claim its ports within 30 seconds.'
+      'The development stack did not claim its port within 30 seconds.'
     )
   }
 
   const result = await childExit
   if (tailscaleRemote) {
+    let cleanupComplete = false
     try {
       const serveConfig = tailscaleJson(['serve', 'status', '--json'])
       if (
@@ -416,8 +456,14 @@ export async function main() {
       ) {
         tailscale(['serve', `--https=${tailscaleRemote.port}`, 'off'])
       }
+
+      cleanupComplete = true
     } catch (error) {
       console.warn(`Could not remove Tailscale development route: ${error}`)
+    }
+
+    if (cleanupComplete) {
+      await rm(tailscaleRemote.leasePath, { force: true })
     }
   }
 

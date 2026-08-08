@@ -5,13 +5,13 @@ summary: Run Treeport locally, or share a development stack privately through Ta
 
 ## Local development
 
-`pnpm dev` is the normal contributor command. Both Vite and the Treeport API bind to `127.0.0.1`; nothing is reachable from the LAN or tailnet.
+`pnpm dev` is the normal contributor command. The Treeport app binds to `127.0.0.1`; nothing is reachable from the LAN or tailnet.
 
 ```sh
 pnpm dev
 ```
 
-The development driver chooses unused per-worktree ports and prints the local web URL. The Vite server proxies `/api`, including the Socket.IO WebSocket upgrade, to the loopback API so browser terminals, live project updates, and hot reload work from the one web URL.
+The development driver starts at port `8733`, chooses the next unused port for concurrent worktrees, and prints the local app URL. The same listener serves the web UI, API, terminal WebSockets, and Vite hot reload.
 
 ## Private remote development
 
@@ -22,7 +22,7 @@ tailscale up
 pnpm dev:tailscale
 ```
 
-This command keeps Vite, the API, and the Electron app on loopback, just like ordinary local development. It adds a temporary Tailscale Serve route in front of Vite and prints both URLs: use the local URL on the development machine and the HTTPS Tailscale URL from another device. The route is removed when the development command stops.
+This command keeps the Treeport app and Electron development renderer on loopback, just like ordinary local development. It adds a temporary Tailscale Serve route in front of the app and prints both URLs: use the local URL on the development machine and the HTTPS Tailscale URL from another device. The route is removed when the development command stops, and a later run cleans up routes retained after an interrupted development process.
 
 It fails before starting if Tailscale is missing, disconnected, or does not report a MagicDNS name, with the next step in the error. It never uses Tailscale Funnel or another public tunnel.
 
@@ -32,4 +32,4 @@ This contributor-only mode is independent of `treeport remote enable`. Both use 
 
 ## Intentional LAN testing
 
-`pnpm dev:lan` remains available for testing from a trusted local network. It is deliberately separate from `pnpm dev` because it binds Vite to every interface and exposes an unauthenticated app. The API still stays loopback-only behind Vite's proxy. Prefer Tailscale mode whenever remote testing is possible.
+`pnpm dev:lan` remains available for testing from a trusted local network. It is deliberately separate from `pnpm dev` because it binds the entire unauthenticated app, including its API, to every interface. Prefer Tailscale mode whenever remote testing is possible.

@@ -1,5 +1,12 @@
 import { spawn } from 'node:child_process'
-import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  writeFile
+} from 'node:fs/promises'
 import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
@@ -80,25 +87,9 @@ describe('development environment allocation', () => {
   })
 
   it('starts concurrent checkouts on sequential ports and stops their process groups', async () => {
-    const occupiedDesktopRendererPort = await findAvailablePort(6173, [
-      '127.0.0.1',
-      '::1'
-    ])
-    await listen(occupiedDesktopRendererPort, '::1')
-    const occupiedApiPort = await findAvailablePort(8733, '127.0.0.1')
-    await listen(occupiedApiPort)
-    const expectedApiPort = await findAvailablePort(8733, '127.0.0.1')
-    const occupiedWebPort = await findAvailablePort(
-      5173,
-      '127.0.0.1',
-      new Set([expectedApiPort])
-    )
-    await listen(occupiedWebPort)
-    const expectedWebPort = await findAvailablePort(
-      5173,
-      '127.0.0.1',
-      new Set([expectedApiPort])
-    )
+    const occupiedAppPort = await findAvailablePort(8733, '127.0.0.1')
+    await listen(occupiedAppPort)
+    const expectedAppPort = await findAvailablePort(8733, '127.0.0.1')
 
     const directory = await mkdtemp(
       path.join(os.tmpdir(), 'treeport-development-test-')
@@ -110,34 +101,22 @@ describe('development environment allocation', () => {
       `#!/usr/bin/env node
 const fs = require('node:fs')
 const net = require('node:net')
-const api = net.createServer().listen(
+const app = net.createServer().listen(
   Number(process.env.TREEPORT_PORT),
-  process.env.TREEPORT_HOST
-)
-const web = net.createServer().listen(
-  Number(process.env.TREEPORT_WEB_PORT),
-  process.env.TREEPORT_WEB_HOST
-)
-const desktop = net.createServer().listen(
-  Number(process.env.TREEPORT_DESKTOP_RENDERER_PORT),
-  '127.0.0.1',
+  process.env.TREEPORT_HOST,
   () => fs.writeFileSync(process.env.FAKE_ENVIRONMENT_FILE, JSON.stringify({
-    apiHost: process.env.TREEPORT_HOST,
-    apiPort: process.env.TREEPORT_PORT,
+    appHost: process.env.TREEPORT_HOST,
+    appPort: process.env.TREEPORT_PORT,
+    appUrl: process.env.TREEPORT_API_URL,
     daemonLifecycle: process.env.TREEPORT_DAEMON_LIFECYCLE,
-    webHost: process.env.TREEPORT_WEB_HOST,
-    webPort: process.env.TREEPORT_WEB_PORT,
     desktopUrl: process.env.TREEPORT_DESKTOP_URL,
-    desktopRendererPort: process.env.TREEPORT_DESKTOP_RENDERER_PORT,
     desktopUserData: process.env.TREEPORT_DESKTOP_USER_DATA,
     arguments: process.argv.slice(2)
   }))
 )
 const stop = (signal) => {
   fs.writeFileSync(process.env.FAKE_SIGNAL_FILE, signal)
-  api.close()
-  web.close()
-  desktop.close(() => process.exit(0))
+  app.close(() => process.exit(0))
 }
 process.on('SIGINT', () => stop('SIGINT'))
 process.on('SIGTERM', () => stop('SIGTERM'))
@@ -211,29 +190,11 @@ process.stdout.write(process.env.FAKE_TAILSCALE_STATUS || '')
         readFile(environmentFile, 'utf8').then(JSON.parse)
       )
     )
-    expect(environments.map(({ apiPort }) => apiPort).sort()).toEqual([
-      String(expectedApiPort),
-      String(expectedApiPort + 1)
+    expect(environments.map(({ appPort }) => appPort).sort()).toEqual([
+      String(expectedAppPort),
+      String(expectedAppPort + 1)
     ])
-    expect(environments.map(({ webPort }) => webPort).sort()).toEqual([
-      String(expectedWebPort),
-      String(expectedWebPort + 1)
-    ])
-    expect(
-      new Set(
-        environments.map(({ desktopRendererPort }) => desktopRendererPort)
-      )
-    ).toHaveProperty('size', 2)
-    for (const environment of environments) {
-      expect(Number(environment.desktopRendererPort)).toBeGreaterThan(
-        occupiedDesktopRendererPort
-      )
-      expect(environment.desktopRendererPort).not.toBe(environment.apiPort)
-      expect(environment.desktopRendererPort).not.toBe(environment.webPort)
-    }
-    expect(environments[0].desktopUrl).toBe(
-      `http://127.0.0.1:${environments[0].webPort}`
-    )
+    expect(environments[0].desktopUrl).toBe(environments[0].appUrl)
     expect(environments[0].desktopUserData).toBe(
       path.resolve('apps/treeport/.treeport-dev/desktop')
     )
@@ -250,18 +211,13 @@ process.stdout.write(process.env.FAKE_TAILSCALE_STATUS || '')
     for (let index = 0; index < environments.length; index += 1) {
       const environment = environments[index]
       const development = [first, second][index]
-      expect(environment.apiHost).toBe('127.0.0.1')
+      expect(environment.appHost).toBe('127.0.0.1')
       expect(environment.daemonLifecycle).toBe('external')
-      expect(environment.webHost).toBe('127.0.0.1')
       expect(development.output()).toContain(
-        `Local:     http://127.0.0.1:${environment.webPort}`
+        `Local:     http://127.0.0.1:${environment.appPort}`
       )
-      expect(development.output()).toContain(
-        `App server: http://127.0.0.1:${environment.apiPort}`
-      )
-      expect(development.output()).toContain(
-        `Desktop renderer port: ${environment.desktopRendererPort}`
-      )
+      expect(development.output()).not.toContain('Web port:')
+      expect(development.output()).not.toContain('Desktop renderer port:')
     }
 
     first.child.kill('SIGINT')
@@ -286,9 +242,8 @@ process.stdout.write(process.env.FAKE_TAILSCALE_STATUS || '')
       `#!/usr/bin/env node
 const fs = require('node:fs')
 const net = require('node:net')
-const api = net.createServer().listen(Number(process.env.TREEPORT_PORT), process.env.TREEPORT_HOST)
-const web = net.createServer().listen(Number(process.env.TREEPORT_WEB_PORT), process.env.TREEPORT_WEB_HOST, () => fs.writeFileSync(process.env.FAKE_ENVIRONMENT_FILE, JSON.stringify(process.env)))
-const stop = () => api.close(() => web.close(() => process.exit(0)))
+const app = net.createServer().listen(Number(process.env.TREEPORT_PORT), process.env.TREEPORT_HOST, () => fs.writeFileSync(process.env.FAKE_ENVIRONMENT_FILE, JSON.stringify(process.env)))
+const stop = () => app.close(() => process.exit(0))
 process.on('SIGTERM', stop)
 process.on('SIGINT', stop)
 `
@@ -323,6 +278,26 @@ if (args[0] === 'status') {
 `
     )
     await chmod(path.join(directory, 'tailscale'), 0o755)
+
+    const stalePort = await findAvailablePort(8733, '127.0.0.1')
+    const staleTarget = `http://127.0.0.1:${stalePort}`
+    const leaseDirectory = path.join(
+      os.tmpdir(),
+      `treeport-development-tailscale-${typeof process.getuid === 'function' ? process.getuid() : 'user'}`
+    )
+    await mkdir(leaseDirectory, { recursive: true })
+    await writeFile(
+      path.join(leaseDirectory, '2147483647.json'),
+      JSON.stringify({
+        pid: 2_147_483_647,
+        port: stalePort,
+        target: staleTarget
+      })
+    )
+    await writeFile(
+      tailscaleStateFile,
+      JSON.stringify({ port: String(stalePort), target: staleTarget })
+    )
 
     let output = ''
     const child = spawn(
@@ -359,10 +334,13 @@ if (args[0] === 'status') {
     const tailscaleState = JSON.parse(
       await readFile(tailscaleStateFile, 'utf8')
     )
-    const localUrl = `http://127.0.0.1:${environment.TREEPORT_WEB_PORT}`
+    const localUrl = `http://127.0.0.1:${environment.TREEPORT_PORT}`
     expect(environment.TREEPORT_HOST).toBe('127.0.0.1')
-    expect(environment.TREEPORT_WEB_HOST).toBe('127.0.0.1')
+    expect(environment.TREEPORT_API_URL).toBe(localUrl)
     expect(environment.TREEPORT_DESKTOP_URL).toBe(localUrl)
+    expect(environment.TREEPORT_WEB_PORT).toBeUndefined()
+    expect(environment.TREEPORT_DESKTOP_RENDERER_PORT).toBeUndefined()
+    expect(environment.TREEPORT_PORT).toBe(String(stalePort))
     expect(tailscaleState.port).toBe(environment.TREEPORT_PORT)
     expect(tailscaleState.target).toBe(localUrl)
     expect(output).toContain(`Local:     ${localUrl}`)

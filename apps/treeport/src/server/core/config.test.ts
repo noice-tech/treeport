@@ -40,6 +40,7 @@ describe('configuration', () => {
       TREEPORT_PORT: '5000',
       TREEPORT_API_URL: 'http://example.test:5000',
       TREEPORT_DAEMON_LIFECYCLE: 'external',
+      TREEPORT_WEB_DEVELOPMENT: '1',
       TREEPORT_SHELL: '/bin/bash'
     })
 
@@ -51,6 +52,7 @@ describe('configuration', () => {
     expect(config.apiUrl).toBe('http://example.test:5000')
     expect(config.shell).toBe('/bin/bash')
     expect(config.daemonLifecycle).toBe('external')
+    expect(config.webDevelopment).toBe(true)
   })
 
   it('rejects invalid configuration', () => {
