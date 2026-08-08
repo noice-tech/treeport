@@ -198,12 +198,6 @@ function fixture(webDist = '/missing') {
       worktreeId: 'wt_1',
       tmuxSessionName: 'treeport-term-1'
     })),
-    createWorktree: vi.fn(async () => ({
-      worktree: {},
-      terminal: null,
-      terminalError: null,
-      setupError: null
-    })),
     beginCreateWorktree: vi.fn(async () => ({
       id: 'op_create',
       kind: 'create',
@@ -903,9 +897,9 @@ describe('HTTP API validation', () => {
     })
   })
 
-  it('accepts detached worktree creation and one remove endpoint', async () => {
+  it('accepts durable worktree creation and one remove endpoint', async () => {
     const { app, service } = fixture()
-    const created = await app.request('/api/projects/p/worktrees', {
+    const accepted = await app.request('/api/projects/p/worktree-operations', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
@@ -920,8 +914,11 @@ describe('HTTP API validation', () => {
         }
       })
     })
-    expect(created.status).toBe(201)
-    expect(service.createWorktree).toHaveBeenCalledWith(
+    expect(accepted.status).toBe(202)
+    expect(await accepted.json()).toMatchObject({
+      operation: { id: 'op_create', status: 'pending' }
+    })
+    expect(service.beginCreateWorktree).toHaveBeenCalledWith(
       'p',
       'topic',
       'current',
@@ -932,23 +929,6 @@ describe('HTTP API validation', () => {
         initialSize: { cols: 144, rows: 48 }
       },
       'wt_main'
-    )
-
-    const accepted = await app.request('/api/projects/p/worktree-operations', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ name: 'background', base: 'default' })
-    })
-    expect(accepted.status).toBe(202)
-    expect(await accepted.json()).toMatchObject({
-      operation: { id: 'op_create', status: 'pending' }
-    })
-    expect(service.beginCreateWorktree).toHaveBeenCalledWith(
-      'p',
-      'background',
-      'default',
-      undefined,
-      undefined
     )
     const active = await app.request('/api/operations?projectId=p&kind=create')
     expect(await active.json()).toMatchObject({
@@ -975,30 +955,6 @@ describe('HTTP API validation', () => {
       confirmationToken: 'a'.repeat(64),
       confirmDestructive: true
     })
-  })
-
-  it('forwards spawn argv as a structured initial terminal', async () => {
-    const { app, service } = fixture()
-    const response = await app.request('/api/spawn', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        project: '/repo',
-        worktreeName: 'topic',
-        name: 'Agent',
-        base: 'default',
-        argv: ['tool', 'semi;colon', '$HOME']
-      })
-    })
-    expect(response.status).toBe(201)
-    expect(service.resolveProject).toHaveBeenCalledWith('/repo')
-    expect(service.createWorktree).toHaveBeenCalledWith(
-      'p',
-      'topic',
-      'default',
-      { name: 'Agent', argv: ['tool', 'semi;colon', '$HOME'] },
-      undefined
-    )
   })
 
   it('uploads browser files to a private terminal-readable path', async () => {

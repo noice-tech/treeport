@@ -27,7 +27,6 @@ import {
   TERMINAL_MAX_UPLOAD_BYTES,
   removeWorktreeSchema,
   setWebPanelStorageSchema,
-  spawnSchema,
   terminalBellAcknowledgementSchema,
   terminalCaptureQuerySchema,
   updateProjectSchema,
@@ -398,32 +397,6 @@ export function createApp({
     )
   })
 
-  app.post('/api/projects/:projectId/worktrees', async (context) => {
-    const body = await input(context, createWorktreeSchema)
-    const initialTerminal = body.initialTerminal
-      ? {
-          name: body.initialTerminal.name,
-          ...(body.initialTerminal.argv
-            ? { argv: body.initialTerminal.argv }
-            : {}),
-          ...(body.initialTerminal.returnToShell
-            ? { returnToShell: true }
-            : {}),
-          ...(body.initialTerminal.initialSize
-            ? { initialSize: body.initialTerminal.initialSize }
-            : {})
-        }
-      : undefined
-    const result = await service.createWorktree(
-      context.req.param('projectId'),
-      body.name,
-      body.base,
-      initialTerminal,
-      body.sourceWorktreeId
-    )
-    return context.json(result, 201)
-  })
-
   app.get('/api/worktrees/:worktreeId', async (context) => {
     const worktreeId = context.req.param('worktreeId')
     await service.refreshPr(worktreeId, false)
@@ -771,23 +744,6 @@ export function createApp({
   app.delete('/api/terminals/:terminalId', async (context) => {
     await service.deleteTerminal(context.req.param('terminalId'))
     return context.json({ ok: true })
-  })
-
-  app.post('/api/spawn', async (context) => {
-    const body = await input(context, spawnSchema)
-    const project = await service.resolveProject(body.project)
-    const initialTerminal = {
-      name: body.name,
-      ...(body.argv ? { argv: body.argv } : {})
-    }
-    const result = await service.createWorktree(
-      project.id,
-      body.worktreeName,
-      body.base,
-      initialTerminal,
-      body.sourceWorktreeId
-    )
-    return context.json(result, 201)
   })
 
   app.get('/api/operations', async (context) => {

@@ -16,6 +16,7 @@ import {
   type PackageListing,
   type PackageOperationResult,
   type PackageResourceDiagnostic,
+  type OperationRecord,
   type ProjectRecord,
   type RemovePreview,
   type TreeportContext,
@@ -139,6 +140,89 @@ async function request<T>(
   } finally {
     clearTimeout(timeout)
     externalSignal?.removeEventListener('abort', abort)
+  }
+}
+
+async function createWorktree(
+  projectId: string,
+  input: {
+    name: string
+    base: 'default' | 'current'
+    initialTerminal?: { name: string; argv?: string[] }
+    sourceWorktreeId?: string
+  }
+): Promise<{
+  worktree: WorktreeRecord
+  terminal: TerminalRecord | null
+  terminalError: string | null
+  setupError: string | null
+}> {
+  let operation = (
+    await request<{ operation: OperationRecord }>(
+      `/api/projects/${encodeURIComponent(projectId)}/worktree-operations`,
+      { method: 'POST', body: JSON.stringify(input) }
+    )
+  ).operation
+
+  while (operation.status === 'pending' || operation.status === 'running') {
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    operation = (
+      await request<{ operation: OperationRecord }>(
+        `/api/operations/${encodeURIComponent(operation.id)}`
+      )
+    ).operation
+  }
+
+  if (operation.status === 'failed') {
+    throw new CliError(
+      operation.error ?? 'Worktree creation failed',
+      5,
+      'WORKTREE_CREATION_FAILED'
+    )
+  }
+
+  const worktreeId =
+    typeof operation.result?.worktreeId === 'string'
+      ? operation.result.worktreeId
+      : operation.worktreeId
+  if (!worktreeId) {
+    throw new CliError(
+      'Completed worktree creation did not identify its worktree',
+      5,
+      'INVALID_OPERATION_RESULT'
+    )
+  }
+
+  const project = (
+    await request<{ project: ProjectRecord }>(
+      `/api/projects/${encodeURIComponent(projectId)}`
+    )
+  ).project
+  const worktree = project.worktrees.find((item) => item.id === worktreeId)
+  if (!worktree) {
+    throw new CliError(
+      `Created worktree ${worktreeId} was not found`,
+      5,
+      'INVALID_OPERATION_RESULT'
+    )
+  }
+
+  const terminalId =
+    typeof operation.result?.terminalId === 'string'
+      ? operation.result.terminalId
+      : null
+
+  return {
+    worktree,
+    terminal: worktree.terminals.find((item) => item.id === terminalId) ?? null,
+    terminalError:
+      typeof operation.result?.terminalError === 'string'
+        ? operation.result.terminalError
+        : null,
+    setupError:
+      typeof operation.result?.setupError === 'string'
+        ? operation.result.setupError
+        : null
   }
 }
 
@@ -1342,16 +1426,10 @@ async function main(args: string[]): Promise<void> {
     const sourceWorktreeId = options.fromCurrent
       ? (await resolveWorktree('.')).id
       : undefined
-    const result = await request<{
-      worktree: WorktreeRecord
-      setupError: string | null
-    }>(`/api/projects/${project.id}/worktrees`, {
-      method: 'POST',
-      body: JSON.stringify({
-        name: options.name,
-        base: options.fromCurrent ? 'current' : 'default',
-        ...(sourceWorktreeId ? { sourceWorktreeId } : {})
-      })
+    const result = await createWorktree(project.id, {
+      name: options.name,
+      base: options.fromCurrent ? 'current' : 'default',
+      ...(sourceWorktreeId ? { sourceWorktreeId } : {})
     })
     print(
       result,
@@ -1572,21 +1650,14 @@ async function main(args: string[]): Promise<void> {
     const sourceWorktreeId = options.fromCurrent
       ? (await resolveWorktree('.')).id
       : undefined
-    const result = await request<{
-      worktree: WorktreeRecord
-      terminal: TerminalRecord | null
-      terminalError: string | null
-      setupError: string | null
-    }>('/api/spawn', {
-      method: 'POST',
-      body: JSON.stringify({
-        project: project.id,
-        worktreeName: options.worktreeName,
+    const result = await createWorktree(project.id, {
+      name: options.worktreeName,
+      base: options.fromCurrent ? 'current' : 'default',
+      initialTerminal: {
         name: options.name,
-        base: options.fromCurrent ? 'current' : 'default',
-        ...(sourceWorktreeId ? { sourceWorktreeId } : {}),
         ...(argv ? { argv } : {})
-      })
+      },
+      ...(sourceWorktreeId ? { sourceWorktreeId } : {})
     })
     print(
       result,
