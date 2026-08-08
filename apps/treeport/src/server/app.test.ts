@@ -30,7 +30,8 @@ function fixture(webDist = '/missing') {
     gitPath: 'git',
     ghPath: 'gh',
     apiUrl: 'http://127.0.0.1:8733',
-    daemonLifecycle: 'treeport'
+    daemonLifecycle: 'treeport',
+    webDevelopment: false
   }
   const service = {
     events: new ProductEventBus(),

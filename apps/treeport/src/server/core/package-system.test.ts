@@ -44,7 +44,8 @@ async function rootFixture() {
     gitPath: 'git',
     ghPath: 'gh',
     apiUrl: 'http://127.0.0.1:8733',
-    daemonLifecycle: 'external'
+    daemonLifecycle: 'external',
+    webDevelopment: false
   }
   const projects = [
     { id: 'project-a', name: 'A', mainWorktreePath: projectA },

@@ -2,6 +2,7 @@ import { createServer } from 'node:http'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { getRequestListener } from '@hono/node-server'
+import type { ViteDevServer } from 'vite'
 import {
   checkRuntimePrerequisites,
   GhAdapter,
@@ -46,11 +47,34 @@ await terminalMetadata.initialize()
 
 const app = createApp({ service, config, tmux, terminalMetadata })
 const honoListener = getRequestListener(app.fetch)
+let vite: ViteDevServer | null = null
 const server = createServer((request, response) => {
   service.handleWebPanelDevelopmentRequest(request, response, () => {
+    if (vite && !request.url?.startsWith('/api')) {
+      vite.middlewares(request, response, () => {
+        honoListener(request, response)
+      })
+      return
+    }
+
     honoListener(request, response)
   })
 })
+if (config.webDevelopment) {
+  const { createServer: createViteServer } = await import('vite')
+  vite = await createViteServer({
+    configFile: path.resolve(
+      path.dirname(fileURLToPath(import.meta.url)),
+      '../../../vite.config.ts'
+    ),
+    appType: 'spa',
+    server: {
+      middlewareMode: true,
+      hmr: { server }
+    }
+  })
+}
+
 service.attachHttpServer(server)
 const { io, attachments } = createSocketServer(server, {
   service,
@@ -89,6 +113,7 @@ function shutdown(): void {
   io.close(() => {
     void service.drainMutations().then(async () => {
       await service.disposeWebPanelRuntime()
+      await vite?.close()
       database.close()
       await ownership.release()
       process.exit(0)

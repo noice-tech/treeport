@@ -7,7 +7,7 @@
     "dev": "node scripts/development.mjs",
     "dev:tailscale": "node scripts/development.mjs --tailscale",
     "dev:lan": "node scripts/development.mjs --lan",
-    "dev:direct": "TREEPORT_HOST=127.0.0.1 TREEPORT_PORT=8733 TREEPORT_API_URL=http://127.0.0.1:8733 TREEPORT_DAEMON_LIFECYCLE=external TREEPORT_WEB_HOST=127.0.0.1 TREEPORT_WEB_PORT=5173 TREEPORT_DESKTOP_URL=http://127.0.0.1:5173 turbo run dev",
+    "dev:direct": "TREEPORT_HOST=127.0.0.1 TREEPORT_PORT=8733 TREEPORT_API_URL=http://127.0.0.1:8733 TREEPORT_DAEMON_LIFECYCLE=external TREEPORT_DESKTOP_URL=http://127.0.0.1:8733 turbo run dev",
     "dev:desktop": "pnpm dev",
     "dev:docs": "pnpm --filter @treeport/docs start",
     "build": "turbo run build",

@@ -98,6 +98,7 @@ async function fixture() {
     ghPath: 'gh',
     apiUrl: 'http://127.0.0.1:8733',
     daemonLifecycle: 'external',
+    webDevelopment: false,
     appVersion: 'test'
   }
   const source: ResolvedWebPanelSource = {

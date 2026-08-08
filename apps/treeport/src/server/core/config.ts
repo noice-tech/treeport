@@ -19,6 +19,7 @@ export interface AppConfig {
   instanceId?: string
   installationMethod?: string
   webDist?: string
+  webDevelopment: boolean
 }
 
 function expandHome(value: string): string {
@@ -118,6 +119,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     instanceId: env.TREEPORT_INSTANCE_ID?.trim() || crypto.randomUUID(),
     installationMethod:
       env.TREEPORT_INSTALLATION_METHOD?.trim() || 'development',
+    webDevelopment: env.TREEPORT_WEB_DEVELOPMENT?.trim() === '1',
     ...(env.TREEPORT_WEB_DIST?.trim()
       ? { webDist: env.TREEPORT_WEB_DIST.trim() }
       : {})

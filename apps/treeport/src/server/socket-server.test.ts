@@ -145,7 +145,8 @@ async function fixture(): Promise<NetworkFixture> {
     gitPath: 'git',
     ghPath: 'gh',
     apiUrl: 'http://127.0.0.1',
-    daemonLifecycle: 'treeport'
+    daemonLifecycle: 'treeport',
+    webDevelopment: false
   } satisfies AppConfig
   const { io, attachments } = createSocketServer(server, {
     service,
