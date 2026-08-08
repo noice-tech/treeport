@@ -76,6 +76,7 @@ export interface TerminalSessionSnapshot {
   exitSerial: number
   fileTransfer: TerminalFileTransfer | null
   hasSelection: boolean
+  selecting: boolean
   viewingHistory: boolean
   pasteRequestSerial: number
   error: string | null
@@ -92,6 +93,7 @@ const DEFAULT_SNAPSHOT: TerminalSessionSnapshot = {
   exitSerial: 0,
   fileTransfer: null,
   hasSelection: false,
+  selecting: false,
   viewingHistory: false,
   pasteRequestSerial: 0,
   error: null
@@ -499,6 +501,32 @@ export class TerminalSession {
     this.focus()
   }
 
+  clearSelectionAndJumpToLatest(): void {
+    if (!this.ready) {
+      return
+    }
+
+    this.historyExitRequested = true
+    this.selectionClearRequested = true
+    this.requestControl()
+    if (this.canInput()) {
+      this.send('input', {
+        generation: this.controllerGeneration,
+        data: `${TERMINAL_SCROLL_EXIT_SEQUENCE}${TERMINAL_SELECTION_CLEAR_SEQUENCE}`
+      })
+      this.historyExitRequested = false
+      this.selectionClearRequested = false
+      this.setViewingHistory(false)
+    }
+
+    this.tmuxSelectionPending = false
+    this.tmuxSelectionText = null
+    this.wrapper?.classList.remove('terminal-tmux-selection')
+    this.terminal?.clearSelection()
+    this.update({ selecting: false, hasSelection: false })
+    this.focus()
+  }
+
   clearSelection(): void {
     const hadTmuxSelection =
       this.tmuxSelectionPending || this.tmuxSelectionText !== null
@@ -513,6 +541,7 @@ export class TerminalSession {
 
     this.tmuxSelectionPending = false
     this.tmuxSelectionText = null
+    this.update({ selecting: false })
     this.wrapper?.classList.remove('terminal-tmux-selection')
     this.terminal?.clearSelection()
     this.updateSelectionState()
@@ -576,6 +605,7 @@ export class TerminalSession {
         onSelectionStart: () => this.clearSelection(),
         onTmuxSelectionStart: () => {
           this.scrollExitPending = true
+          this.update({ selecting: true })
           this.wrapper?.classList.add(
             'terminal-scrolling',
             'terminal-tmux-selection'
@@ -583,8 +613,12 @@ export class TerminalSession {
         },
         onTmuxSelectionFinish: () => {
           this.tmuxSelectionPending = true
+          this.update({ selecting: false, hasSelection: true })
         },
-        onTmuxSelectionCancel: () => this.sendHistoryExit(),
+        onTmuxSelectionCancel: () => {
+          this.update({ selecting: false })
+          this.sendHistoryExit()
+        },
         selectionStartSequence: TERMINAL_SELECTION_START_SEQUENCE,
         selectionStopSequence: TERMINAL_SELECTION_STOP_SEQUENCE
       }
@@ -756,6 +790,7 @@ export class TerminalSession {
       this.tmuxSelectionText = new TextDecoder().decode(
         Uint8Array.from(binary, (character) => character.charCodeAt(0))
       )
+      this.update({ selecting: false })
       this.updateSelectionState()
       return true
     })
@@ -1106,6 +1141,7 @@ export class TerminalSession {
         controller: false,
         controlPending: false,
         hasSelection: false,
+        selecting: false,
         viewingHistory: false,
         degraded: this.reconnectAllowed ? this.snapshotValue.degraded : false,
         error:
@@ -1189,6 +1225,7 @@ export class TerminalSession {
         controller: message.controller,
         controlPending: false,
         hasSelection: false,
+        selecting: false,
         viewingHistory: false,
         error: null
       })
@@ -1754,6 +1791,7 @@ export class TerminalSession {
   private updateSelectionState(): void {
     this.update({
       hasSelection:
+        this.tmuxSelectionPending ||
         this.tmuxSelectionText !== null ||
         Boolean(this.terminal?.hasSelection())
     })

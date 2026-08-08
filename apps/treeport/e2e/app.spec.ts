@@ -2,7 +2,6 @@ import { expect, test, type Locator, type Page } from '@playwright/test'
 import {
   TERMINAL_SCROLL_EXIT_SEQUENCE,
   TERMINAL_SELECTION_CLEAR_SEQUENCE,
-  TERMINAL_SELECTION_RESTORE_SEQUENCE,
   TERMINAL_SELECTION_START_SEQUENCE,
   type ProjectColor,
   type RecentProjectRecord,
@@ -3616,6 +3615,19 @@ test.describe('desktop worktree terminal UI', () => {
     )
     await page.mouse.down()
     await page.mouse.move(bounds!.x + bounds!.width / 2, bounds!.y - 30)
+    await page.evaluate(() => {
+      const socket = (window as any).__lastWs
+      socket.onmessage?.({
+        data: JSON.stringify({
+          version: 1,
+          type: 'history',
+          viewing: true
+        })
+      })
+    })
+    await expect(
+      page.getByText('Selection is active', { exact: true })
+    ).toBeVisible()
     await page.waitForTimeout(160)
     await page.mouse.up()
 
@@ -3689,26 +3701,30 @@ test.describe('desktop worktree terminal UI', () => {
       ;(window as any).__wsSent = []
     })
     await expect(
-      page.getByText('Scrolled back in tmux', { exact: true })
+      page.getByText('Selection is active', { exact: true })
     ).toBeVisible()
     await expect(
       page.getByText('New output is continuing off-screen')
     ).toBeVisible()
-    await page.getByRole('button', { name: 'Follow latest' }).click()
+    await page.getByRole('button', { name: 'Clear' }).click()
     await expect
       .poll(() =>
-        page.evaluate(
-          () =>
-            (window as any).__wsSent
-              .filter((message: any) => message.type === 'input')
-              .at(-1)?.data
+        page.evaluate(() =>
+          (window as any).__wsSent
+            .filter((message: any) => message.type === 'input')
+            .map((message: any) => message.data)
         )
       )
-      .toBe(TERMINAL_SCROLL_EXIT_SEQUENCE)
+      .toEqual([
+        `${TERMINAL_SCROLL_EXIT_SEQUENCE}${TERMINAL_SELECTION_CLEAR_SEQUENCE}`
+      ])
+    await expect(
+      page.getByText('Selection is active', { exact: true })
+    ).toHaveCount(0)
     await expect(
       page.getByText('Scrolled back in tmux', { exact: true })
     ).toHaveCount(0)
-    const retainedCopy = await page
+    const selectionAfterClear = await page
       .locator('.xterm-helper-textarea')
       .evaluate((textarea) => {
         const clipboard = new DataTransfer()
@@ -3721,7 +3737,7 @@ test.describe('desktop worktree terminal UI', () => {
         )
         return clipboard.getData('text/plain')
       })
-    expect(retainedCopy).toBe(tmuxSelection)
+    expect(selectionAfterClear).toBe('')
 
     await page.evaluate(() => {
       ;(window as any).__wsSent = []
@@ -3736,10 +3752,7 @@ test.describe('desktop worktree terminal UI', () => {
             .map((message: any) => String(message.data))
         )
       )
-      .toEqual([
-        TERMINAL_SELECTION_RESTORE_SEQUENCE,
-        expect.stringContaining('\u001b[<64;')
-      ])
+      .toEqual([expect.stringContaining('\u001b[<64;')])
     await page.mouse.wheel(0, 120)
     await page.evaluate(() => {
       const socket = (window as any).__lastWs
@@ -3765,10 +3778,7 @@ test.describe('desktop worktree terminal UI', () => {
             .map((message: any) => String(message.data))
         )
       )
-      .toEqual([
-        TERMINAL_SELECTION_CLEAR_SEQUENCE,
-        `${TERMINAL_SCROLL_EXIT_SEQUENCE}x`
-      ])
+      .toEqual([`${TERMINAL_SCROLL_EXIT_SEQUENCE}x`])
     const selectionAfterInput = await page
       .locator('.xterm-helper-textarea')
       .evaluate((textarea) => {

@@ -89,6 +89,7 @@ class FakeSession {
     exitSerial: 0,
     fileTransfer: null,
     hasSelection: false,
+    selecting: false,
     viewingHistory: false,
     pasteRequestSerial: 0,
     error: null

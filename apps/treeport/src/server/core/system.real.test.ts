@@ -859,8 +859,9 @@ describe.skipIf(!enabled)(
         }
         await waitFor(
           async () => (await paneValue('#{scroll_position}')) === '0',
-          'scrolling down did not reach the bottom of history'
+          'scrolling to the bottom with a selection did not reach the latest output'
         )
+        expect(await paneMode()).toBe('1')
         expect(await paneValue('#{selection_present}')).toBe('1')
         expect(
           await paneValue(
@@ -876,7 +877,7 @@ describe.skipIf(!enabled)(
         client.write(TMUX_SCROLL_EXIT_SEQUENCE)
         await waitFor(
           async () => (await paneMode()) === '0',
-          'returning to live output did not leave copy mode'
+          'confirming latest output did not leave copy mode'
         )
         client.write(`${TMUX_SELECTION_RESTORE_SEQUENCE}\u001b[<64;10;10M`)
         await waitFor(
@@ -902,20 +903,24 @@ describe.skipIf(!enabled)(
         })
         expect(await clipboardSelection()).toBe(secondSelection)
 
+        await runChecked(runner, {
+          executable: 'tmux',
+          args: [...base, 'send-keys', '-X', '-t', session, 'history-bottom']
+        })
+        expect(await paneValue('#{scroll_position}')).toBe('0')
         client.write(TMUX_SELECTION_CLEAR_SEQUENCE)
         await waitFor(
-          async () => (await paneValue('#{selection_present}')) === '0',
-          'clicking after selection did not clear it'
+          async () =>
+            (await paneMode()) === '0' &&
+            (await paneValue('#{@treeport-selection-width}')) === '',
+          'clearing the selection at the bottom did not return to live output'
         )
-        expect(await paneValue('#{@treeport-selection-width}')).toBe('')
-        expect(await paneMode()).toBe('1')
 
-        client.write(`${TMUX_SCROLL_EXIT_SEQUENCE}y`)
+        client.write('y')
         await waitFor(
           async () => (await input()) === '☃zy',
           'the first key after selecting was not forwarded'
         )
-        expect(await paneMode()).toBe('0')
       } finally {
         client.kill()
         await tmux.killServer(socket).catch(() => undefined)
