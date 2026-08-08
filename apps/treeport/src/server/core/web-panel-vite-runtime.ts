@@ -6,6 +6,7 @@ import type {
   ServerResponse
 } from 'node:http'
 import path from 'node:path'
+import { TLSSocket } from 'node:tls'
 import { fileURLToPath } from 'node:url'
 import react from '@vitejs/plugin-react'
 import packageJson from '../../../package.json' with { type: 'json' }
@@ -17,6 +18,10 @@ import {
 } from 'vite'
 import type { AppConfig } from './config'
 import { DomainError } from './domain'
+import {
+  webPanelBrowserOrigin,
+  webPanelContentSecurityPolicy
+} from './web-panel-csp'
 
 export interface ResolvedWebPanelSource {
   root: string
@@ -102,8 +107,6 @@ export class WebPanelViteRuntime {
         headers: {
           'access-control-allow-origin': '*',
           'cache-control': 'no-store',
-          'content-security-policy':
-            "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' ws: wss:; frame-ancestors 'self'",
           'x-content-type-options': 'nosniff'
         },
         fs: {
@@ -414,12 +417,26 @@ export class WebPanelViteRuntime {
       return
     }
 
+    const referrer = request.headers.referer
+    const forwardedHost = request.headers['x-forwarded-host']
+    const host = request.headers.host
+    const forwardedProtocol = request.headers['x-forwarded-proto']
+    const browserOrigin = webPanelBrowserOrigin({
+      referrer: Array.isArray(referrer) ? null : referrer,
+      forwardedHost: Array.isArray(forwardedHost) ? null : forwardedHost,
+      host: Array.isArray(host) ? null : host,
+      forwardedProtocol: Array.isArray(forwardedProtocol)
+        ? null
+        : forwardedProtocol,
+      requestProtocol: request.socket instanceof TLSSocket ? 'https:' : 'http:'
+    })
+
     response.setHeader('access-control-allow-origin', '*')
     response.setHeader('cache-control', 'no-store')
     response.setHeader('x-content-type-options', 'nosniff')
     response.setHeader(
       'content-security-policy',
-      "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' ws: wss:; frame-ancestors 'self'"
+      webPanelContentSecurityPolicy('development', browserOrigin)
     )
     development.server.middlewares(request, response, next)
   }
