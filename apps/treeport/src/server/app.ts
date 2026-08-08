@@ -36,6 +36,10 @@ import {
 import type { OperationKind } from '@treeport/shared'
 import type { AppConfig, TmuxAdapter, TreeportService } from './core/index'
 import { DomainError } from './core/index'
+import {
+  webPanelBrowserOrigin,
+  webPanelContentSecurityPolicy
+} from './core/web-panel-csp'
 import { TerminalMetadataManager } from './terminal-metadata'
 
 const UPLOAD_MIME_EXTENSIONS: Readonly<Record<string, string>> = {
@@ -495,13 +499,21 @@ export function createApp({
       return context.redirect(resolution.location, 307)
     }
 
+    const browserOrigin = webPanelBrowserOrigin({
+      referrer: context.req.header('referer'),
+      forwardedHost: context.req.header('x-forwarded-host'),
+      host: context.req.header('host'),
+      forwardedProtocol: context.req.header('x-forwarded-proto'),
+      requestProtocol: new URL(context.req.url).protocol
+    })
+
     if (resolution.kind === 'error') {
       context.header('content-type', 'text/html; charset=utf-8')
       context.header('cache-control', 'no-store')
       context.header('x-content-type-options', 'nosniff')
       context.header(
         'content-security-policy',
-        "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'self'"
+        webPanelContentSecurityPolicy('error', browserOrigin)
       )
       return context.html(resolution.html, 500)
     }
@@ -533,7 +545,7 @@ export function createApp({
     context.header('access-control-allow-origin', '*')
     context.header(
       'content-security-policy',
-      "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; frame-ancestors 'self'"
+      webPanelContentSecurityPolicy('immutable', browserOrigin)
     )
     context.header('x-content-type-options', 'nosniff')
     return context.body(body as any)

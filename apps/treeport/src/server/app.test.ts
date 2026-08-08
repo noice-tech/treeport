@@ -500,8 +500,16 @@ describe('HTTP API validation', () => {
     )
 
     try {
+      const browserOrigin = 'https://treeport.example.ts.net:5173'
       const documentResponse = await app.request(
-        '/api/web-panels/panel_review/assets/'
+        '/api/web-panels/panel_review/assets/',
+        {
+          headers: {
+            referer: `${browserOrigin}/projects/project_1/panels/panel_review`,
+            'x-forwarded-host': 'treeport.example.ts.net:5173',
+            'x-forwarded-proto': 'https'
+          }
+        }
       )
       expect(documentResponse.status).toBe(200)
       await expect(documentResponse.text()).resolves.toBe(indexSource)
@@ -510,7 +518,16 @@ describe('HTTP API validation', () => {
           .get('content-security-policy')
           ?.split(';')
           .map((directive) => directive.trim())
-      ).toContain("script-src 'self'")
+      ).toEqual(
+        expect.arrayContaining([
+          `default-src 'self' ${browserOrigin}`,
+          `script-src 'self' ${browserOrigin}`,
+          `style-src 'self' ${browserOrigin} 'unsafe-inline'`,
+          `img-src 'self' ${browserOrigin} data:`,
+          "connect-src 'none'",
+          `frame-ancestors 'self' ${browserOrigin}`
+        ])
+      )
 
       const moduleResponse = await app.request(
         '/api/web-panels/panel_review/assets/panel.js'

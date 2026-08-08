@@ -206,12 +206,51 @@ describe('WebPanelViteRuntime', () => {
         throw new Error('expected development redirect')
       }
 
+      const browserOrigin = 'https://treeport.example.ts.net:5173'
       const response = await fetch(
-        `http://127.0.0.1:${address.port}${resolution.location}`
+        `http://127.0.0.1:${address.port}${resolution.location}`,
+        {
+          headers: {
+            referer: `${browserOrigin}/projects/project_1/panels/panel_review`,
+            'x-forwarded-host': 'treeport.example.ts.net:5173',
+            'x-forwarded-proto': 'https'
+          }
+        }
       )
       expect(response.headers.get('access-control-allow-origin')).toBe('*')
       expect(response.headers.get('cache-control')).toBe('no-store')
+      expect(
+        response.headers
+          .get('content-security-policy')
+          ?.split(';')
+          .map((directive) => directive.trim())
+      ).toEqual(
+        expect.arrayContaining([
+          `default-src 'self' ${browserOrigin}`,
+          `script-src 'self' ${browserOrigin} 'unsafe-inline'`,
+          `style-src 'self' ${browserOrigin} 'unsafe-inline'`,
+          `img-src 'self' ${browserOrigin} data: blob:`,
+          `connect-src 'self' ${browserOrigin} ws: wss:`,
+          `frame-ancestors 'self' ${browserOrigin}`
+        ])
+      )
       await expect(response.text()).resolves.toContain('@vite/client')
+
+      const untrustedReferrerResponse = await fetch(
+        `http://127.0.0.1:${address.port}${resolution.location}`,
+        {
+          headers: {
+            referer: 'https://attacker.example/panel',
+            'x-forwarded-host': 'treeport.example.ts.net:5173',
+            'x-forwarded-proto': 'https'
+          }
+        }
+      )
+      const untrustedReferrerPolicy = untrustedReferrerResponse.headers.get(
+        'content-security-policy'
+      )
+      expect(untrustedReferrerPolicy).toContain(browserOrigin)
+      expect(untrustedReferrerPolicy).not.toContain('attacker.example')
     } finally {
       await runtime.dispose()
       await new Promise<void>((resolve, reject) =>
