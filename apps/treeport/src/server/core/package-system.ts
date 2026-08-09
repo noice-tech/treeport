@@ -18,7 +18,7 @@ import { runChecked, type CommandRunner } from './command'
 import { DomainError } from './domain'
 
 interface TreeportSettings {
-  raw: Record<string, unknown>
+  raw: object
   packages: PackageSource[]
   npmCommand?: string[]
 }
@@ -406,12 +406,13 @@ export class PackageSystem {
       }
     }
 
-    const settings = raw as Record<string, unknown>
+    const npmCommand: unknown = Reflect.get(raw, 'npmCommand')
+    const packageEntries: unknown = Reflect.get(raw, 'packages')
     if (
-      settings.npmCommand !== undefined &&
-      (!Array.isArray(settings.npmCommand) ||
-        settings.npmCommand.length === 0 ||
-        settings.npmCommand.some(
+      npmCommand !== undefined &&
+      (!Array.isArray(npmCommand) ||
+        npmCommand.length === 0 ||
+        npmCommand.some(
           (value) => typeof value !== 'string' || value.length === 0
         ))
     ) {
@@ -424,7 +425,7 @@ export class PackageSystem {
       }
     }
 
-    if (settings.packages !== undefined && !Array.isArray(settings.packages)) {
+    if (packageEntries !== undefined && !Array.isArray(packageEntries)) {
       return {
         diagnostic: diagnostic(
           scope,
@@ -438,7 +439,7 @@ export class PackageSystem {
     }
 
     const packages: PackageSource[] = []
-    for (const [index, entry] of (settings.packages ?? []).entries()) {
+    for (const [index, entry] of (packageEntries ?? []).entries()) {
       if (typeof entry === 'string' && entry.trim()) {
         packages.push(entry)
         continue
@@ -454,8 +455,11 @@ export class PackageSystem {
         }
       }
 
-      const candidate = entry as Record<string, unknown>
-      if (typeof candidate.source !== 'string' || !candidate.source.trim()) {
+      const source: unknown = Reflect.get(entry, 'source')
+      const autoload: unknown = Reflect.get(entry, 'autoload')
+      const webPanels: unknown = Reflect.get(entry, 'webPanels')
+      const terminalPresets: unknown = Reflect.get(entry, 'terminalPresets')
+      if (typeof source !== 'string' || !source.trim()) {
         return {
           diagnostic: diagnostic(
             scope,
@@ -465,10 +469,7 @@ export class PackageSystem {
         }
       }
 
-      if (
-        candidate.autoload !== undefined &&
-        typeof candidate.autoload !== 'boolean'
-      ) {
+      if (autoload !== undefined && typeof autoload !== 'boolean') {
         return {
           diagnostic: diagnostic(
             scope,
@@ -478,8 +479,10 @@ export class PackageSystem {
         }
       }
 
-      for (const key of ['webPanels', 'terminalPresets'] as const) {
-        const value = candidate[key]
+      for (const [key, value] of [
+        ['webPanels', webPanels],
+        ['terminalPresets', terminalPresets]
+      ] as const) {
         if (
           value !== undefined &&
           (!Array.isArray(value) ||
@@ -494,29 +497,36 @@ export class PackageSystem {
           }
         }
       }
+      const parsedWebPanels = Array.isArray(webPanels)
+        ? webPanels.filter(
+            (pattern): pattern is string => typeof pattern === 'string'
+          )
+        : undefined
+      const parsedTerminalPresets = Array.isArray(terminalPresets)
+        ? terminalPresets.filter(
+            (pattern): pattern is string => typeof pattern === 'string'
+          )
+        : undefined
       packages.push({
-        source: candidate.source,
-        ...(candidate.autoload === undefined
-          ? {}
-          : { autoload: candidate.autoload }),
-        ...(candidate.webPanels === undefined
-          ? {}
-          : { webPanels: [...(candidate.webPanels as string[])] }),
-        ...(candidate.terminalPresets === undefined
-          ? {}
-          : {
-              terminalPresets: [...(candidate.terminalPresets as string[])]
-            })
+        source,
+        ...(autoload === undefined ? {} : { autoload }),
+        ...(parsedWebPanels ? { webPanels: parsedWebPanels } : {}),
+        ...(parsedTerminalPresets
+          ? { terminalPresets: parsedTerminalPresets }
+          : {})
       })
     }
 
+    const parsedNpmCommand = Array.isArray(npmCommand)
+      ? npmCommand.filter(
+          (argument): argument is string => typeof argument === 'string'
+        )
+      : undefined
     return {
       settings: {
-        raw: settings,
+        raw,
         packages,
-        ...(settings.npmCommand
-          ? { npmCommand: [...(settings.npmCommand as string[])] }
-          : {})
+        ...(parsedNpmCommand ? { npmCommand: parsedNpmCommand } : {})
       }
     }
   }
@@ -997,7 +1007,7 @@ export class PackageSystem {
         throw new Error(`${packageJsonPath} must contain a JSON object`)
       }
 
-      const treeport = (packageJson as Record<string, unknown>).treeport
+      const treeport: unknown = Reflect.get(packageJson, 'treeport')
       if (treeport !== undefined) {
         if (
           !treeport ||
@@ -1009,15 +1019,19 @@ export class PackageSystem {
           )
         }
 
-        const value = treeport as Record<string, unknown>
+        const webPanels: unknown = Reflect.get(treeport, 'webPanels')
+        const terminalPresets: unknown = Reflect.get(
+          treeport,
+          'terminalPresets'
+        )
         manifest = {
           webPanels: this.validateManifestPatterns(
-            value.webPanels ?? [],
+            webPanels ?? [],
             'webPanels',
             packageJsonPath
           ),
           terminalPresets: this.validateManifestPatterns(
-            value.terminalPresets ?? [],
+            terminalPresets ?? [],
             'terminalPresets',
             packageJsonPath
           )

@@ -8,8 +8,14 @@ import { readMigrationFiles } from 'drizzle-orm/migrator'
 import { drizzle } from 'drizzle-orm/libsql'
 import type { LibSQLDatabase } from 'drizzle-orm/libsql/driver'
 import { migrate } from 'drizzle-orm/libsql/migrator'
+import { z } from 'zod'
 import type {
+  CreateOperationRequest,
+  CreateOperationResult,
+  ExternalRemoveOperationResult,
   OperationRecord,
+  RemoveOperationRequest,
+  RemoveOperationResult,
   PrInfo,
   ProjectRecord,
   RecentProjectRecord,
@@ -31,6 +37,128 @@ import { inferWorktreeName } from './zed'
 const LEGACY_LATEST_VERSION = 10
 const BACKUP_RETENTION = 2
 
+const createOperationRequestSchema: z.ZodType<CreateOperationRequest> =
+  z.strictObject({
+    name: z.string(),
+    base: z.enum(['default', 'current']),
+    initialTerminal: z
+      .strictObject({
+        name: z.string(),
+        argv: z.array(z.string()).optional(),
+        returnToShell: z.boolean().optional(),
+        initialSize: z
+          .strictObject({ cols: z.number().int(), rows: z.number().int() })
+          .optional()
+      })
+      .optional(),
+    sourceWorktreeId: z.string().optional()
+  })
+
+const createOperationResultSchema: z.ZodType<CreateOperationResult> =
+  z.strictObject({
+    worktreeId: z.string(),
+    terminalId: z.string().nullable(),
+    terminalError: z.string().nullable(),
+    setupError: z.string().nullable()
+  })
+
+const removePreviewSchema = z.strictObject({
+  worktreeId: z.string(),
+  name: z.string(),
+  path: z.string(),
+  head: z.string(),
+  branch: z.string().nullable(),
+  detached: z.boolean(),
+  locked: z.boolean(),
+  lockReason: z.string().nullable(),
+  dirty: z.strictObject({
+    dirty: z.boolean(),
+    staged: z.number().int(),
+    unstaged: z.number().int(),
+    untracked: z.number().int(),
+    conflicts: z.number().int(),
+    total: z.number().int()
+  }),
+  detachedHeadReachable: z.boolean().nullable(),
+  forceRequired: z.boolean(),
+  eligible: z.boolean(),
+  reasons: z.array(z.string()),
+  warnings: z.array(z.string()),
+  terminals: z.array(
+    z.strictObject({
+      id: z.string(),
+      name: z.string(),
+      status: z.enum(['running', 'exited', 'missing'])
+    })
+  ),
+  confirmationToken: z.string()
+})
+
+const removeOperationRequestSchema: z.ZodType<RemoveOperationRequest> = z.union(
+  [
+    z
+      .strictObject({
+        confirmation: z.null().default(null),
+        confirmationToken: z.string(),
+        confirmDestructive: z.boolean(),
+        preview: removePreviewSchema,
+        checkoutIdentity: z
+          .strictObject({
+            path: z.string(),
+            device: z.string(),
+            inode: z.string(),
+            gitWorktreeKey: z.string(),
+            gitMarker: z.string(),
+            repositoryIdentity: z.string().nullable(),
+            managedWrapperPath: z.string().nullable(),
+            quarantinePath: z.string()
+          })
+          .nullable(),
+        prunable: z.boolean(),
+        gitWorktreeKey: z.string(),
+        repositoryIdentity: z.string().nullable()
+      })
+      .transform((request) => request satisfies RemoveOperationRequest),
+    z.strictObject({ confirmation: z.boolean() }).transform(
+      ({ confirmation }): RemoveOperationRequest => ({
+        confirmation,
+        confirmationToken: null,
+        confirmDestructive: null,
+        preview: null,
+        checkoutIdentity: null,
+        prunable: null,
+        gitWorktreeKey: null,
+        repositoryIdentity: null
+      })
+    )
+  ]
+)
+
+const removeOperationResultSchema: z.ZodType<RemoveOperationResult> = z.union([
+  z.strictObject({
+    removed: z.literal(true),
+    name: z.string(),
+    branchPreserved: z.string().nullable(),
+    path: z.string()
+  }),
+  z.strictObject({
+    removed: z.literal(true),
+    recovered: z.literal(true),
+    path: z.string(),
+    message: z.string()
+  })
+])
+
+const externalRemoveOperationResultSchema: z.ZodType<ExternalRemoveOperationResult> =
+  z.strictObject({
+    removed: z.literal(true),
+    external: z.literal(true),
+    worktreeId: z.string(),
+    path: z.string(),
+    head: z.string(),
+    branch: z.string().nullable()
+  })
+
 type TreeportOrm = LibSQLDatabase<typeof schema>
 type ProjectRow = typeof projectTable.$inferSelect
 type WorktreeRow = typeof worktrees.$inferSelect
@@ -42,16 +170,19 @@ export interface DatabaseOpenOptions {
   backupDirectory?: string
 }
 
-export function serializeOperation(
-  value: Record<string, unknown> | null
-): string | null {
+export function serializeOperation(value: object | null): string | null {
   return value === null ? null : JSON.stringify(value)
 }
 
-function deserializeOperation(
-  value: string | null
-): Record<string, unknown> | null {
-  return value === null ? null : (JSON.parse(value) as Record<string, unknown>)
+function deserializeOperation<Value extends object>(
+  value: string | null,
+  schema: z.ZodType<Value>
+): Value | null {
+  if (value === null) {
+    return null
+  }
+
+  return schema.parse(JSON.parse(value))
 }
 
 export class TreeportDatabase {
@@ -700,17 +831,68 @@ export class TreeportDatabase {
   }
 
   private mapOperation(row: OperationRow): OperationRecord {
-    return {
+    const common = {
       id: row.id,
-      kind: row.kind as OperationRecord['kind'],
       projectId: row.projectId,
       worktreeId: row.worktreeId,
-      status: row.status as OperationRecord['status'],
-      request: deserializeOperation(row.requestJson) ?? {},
-      result: deserializeOperation(row.resultJson),
+      status: z
+        .enum(['pending', 'running', 'completed', 'failed'])
+        .parse(row.status),
       error: row.error,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt
+    }
+
+    if (row.kind === 'create') {
+      return {
+        ...common,
+        kind: row.kind,
+        request: createOperationRequestSchema.parse(
+          JSON.parse(row.requestJson)
+        ),
+        result: deserializeOperation(
+          row.resultJson,
+          createOperationResultSchema
+        )
+      }
+    }
+
+    if (row.kind === 'remove') {
+      return {
+        ...common,
+        kind: row.kind,
+        request: removeOperationRequestSchema.parse(
+          JSON.parse(row.requestJson)
+        ),
+        result: deserializeOperation(
+          row.resultJson,
+          removeOperationResultSchema
+        )
+      }
+    }
+
+    if (row.kind === 'external_remove') {
+      return {
+        ...common,
+        kind: row.kind,
+        request: z
+          .strictObject({ source: z.literal('git') })
+          .parse(JSON.parse(row.requestJson)),
+        result: deserializeOperation(
+          row.resultJson,
+          externalRemoveOperationResultSchema
+        )
+      }
+    }
+
+    const legacyKind = z
+      .enum(['finish', 'discard', 'project_cleanup'])
+      .parse(row.kind)
+    return {
+      ...common,
+      kind: legacyKind,
+      request: z.looseObject({}).parse(JSON.parse(row.requestJson)),
+      result: deserializeOperation(row.resultJson, z.looseObject({}))
     }
   }
 }

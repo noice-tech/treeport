@@ -6,7 +6,8 @@ export default defineConfig({
       'packages/**/*.test.ts',
       'apps/**/*.test.ts',
       'apps/**/*.test.tsx',
-      'scripts/**/*.test.mjs'
+      'scripts/**/*.test.mjs',
+      'tools/**/*.test.mjs'
     ],
     exclude: [
       '**/*.integration.test.ts',

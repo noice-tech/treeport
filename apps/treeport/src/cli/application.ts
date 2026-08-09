@@ -6,7 +6,6 @@ import { io, type Socket } from 'socket.io-client'
 import {
   parseEventsSnapshot,
   parseProductEvent,
-  parseTerminalRuntimeMetadata,
   SOCKET_IO_PATH,
   TERMINAL_CAPTURE_DEFAULT_LINES,
   TERMINAL_CAPTURE_MAX_LINES,
@@ -193,6 +192,14 @@ async function createWorktree(
       operation.error ?? 'Worktree creation failed',
       5,
       'WORKTREE_CREATION_FAILED'
+    )
+  }
+
+  if (operation.kind !== 'create') {
+    throw new CliError(
+      'Worktree creation returned an unexpected operation kind',
+      5,
+      'INVALID_OPERATION_RESULT'
     )
   }
 
@@ -601,8 +608,8 @@ async function waitForTerminal(
           }
 
           if (event.type === 'terminal.metadata') {
-            const metadata = parseTerminalRuntimeMetadata(event.data)
-            if (!metadata || !observation) {
+            const { worktreeId: _worktreeId, ...metadata } = event.data
+            if (!observation) {
               throw new CliError(
                 'Treeport daemon sent invalid terminal metadata',
                 3,

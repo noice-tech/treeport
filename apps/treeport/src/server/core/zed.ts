@@ -1,9 +1,18 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import { z } from 'zod'
 import { readOptionalJsonc } from './jsonc'
 import type { WorktreeSetupTask } from './setup'
 
 const DEFAULT_WORKTREE_DIRECTORY = '../worktrees'
+const zedSettingsSchema = z.looseObject({
+  'git.worktree_directory': z.string().optional(),
+  git: z
+    .looseObject({
+      worktree_directory: z.string().optional()
+    })
+    .optional()
+})
 
 export interface ZedTask {
   label: string
@@ -108,24 +117,18 @@ export async function resolveZedWorktreePath(
   const settingsFile = await readOptionalJsonc(
     path.join(mainWorktreePath, '.zed', 'settings.json')
   )
-  const settings = settingsFile.found ? settingsFile.value : null
-  const record =
-    settings && typeof settings === 'object'
-      ? (settings as Record<string, unknown>)
-      : {}
-  const git =
-    record.git && typeof record.git === 'object'
-      ? (record.git as Record<string, unknown>)
-      : {}
-  const configured = record['git.worktree_directory'] ?? git.worktree_directory
+  const settings = zedSettingsSchema.safeParse(
+    settingsFile.found ? settingsFile.value : {}
+  )
+  if (!settings.success) {
+    throw new Error('Zed git.worktree_directory must be a string')
+  }
+
+  const configured =
+    settings.data['git.worktree_directory'] ??
+    settings.data.git?.worktree_directory
   const directorySetting =
-    configured === undefined
-      ? DEFAULT_WORKTREE_DIRECTORY
-      : typeof configured === 'string'
-        ? configured.trim()
-        : (() => {
-            throw new Error('Zed git.worktree_directory must be a string')
-          })()
+    configured === undefined ? DEFAULT_WORKTREE_DIRECTORY : configured.trim()
   if (
     !directorySetting ||
     directorySetting === '..' ||
@@ -207,12 +210,11 @@ function taskArray(value: unknown): unknown[] {
     return value
   }
 
-  if (
-    value &&
-    typeof value === 'object' &&
-    Array.isArray((value as Record<string, unknown>).tasks)
-  ) {
-    return (value as { tasks: unknown[] }).tasks
+  if (value && typeof value === 'object') {
+    const tasks: unknown = Reflect.get(value, 'tasks')
+    if (Array.isArray(tasks)) {
+      return tasks
+    }
   }
 
   return []
@@ -230,22 +232,27 @@ export async function loadCreateWorktreeTasks(
       return []
     }
 
-    const task = entry as Record<string, unknown>
-    if (!Array.isArray(task.hooks) || !task.hooks.includes('create_worktree')) {
+    const hooks: unknown = Reflect.get(entry, 'hooks')
+    if (!Array.isArray(hooks) || !hooks.includes('create_worktree')) {
       return []
     }
 
-    if (typeof task.command !== 'string' || !task.command.trim()) {
+    const command: unknown = Reflect.get(entry, 'command')
+    const argsInput: unknown = Reflect.get(entry, 'args')
+    const environmentInput: unknown = Reflect.get(entry, 'env')
+    const cwd: unknown = Reflect.get(entry, 'cwd')
+    const label: unknown = Reflect.get(entry, 'label')
+    if (typeof command !== 'string' || !command.trim()) {
       throw new Error(
         `Zed create_worktree task ${index + 1} is missing a command`
       )
     }
 
-    if (task.args !== undefined && !Array.isArray(task.args)) {
+    if (argsInput !== undefined && !Array.isArray(argsInput)) {
       throw new Error(`Zed create_worktree task ${index + 1} has invalid args`)
     }
 
-    const args = (task.args ?? []).map((argument) => {
+    const args = (argsInput ?? []).map((argument) => {
       if (typeof argument !== 'string') {
         throw new Error(
           `Zed create_worktree task ${index + 1} has a non-string argument`
@@ -255,16 +262,16 @@ export async function loadCreateWorktreeTasks(
       return argument
     })
     const env: Record<string, string> = {}
-    if (task.env !== undefined) {
+    if (environmentInput !== undefined) {
       if (
-        !task.env ||
-        typeof task.env !== 'object' ||
-        Array.isArray(task.env)
+        !environmentInput ||
+        typeof environmentInput !== 'object' ||
+        Array.isArray(environmentInput)
       ) {
         throw new Error(`Zed create_worktree task ${index + 1} has invalid env`)
       }
 
-      for (const [key, environmentValue] of Object.entries(task.env)) {
+      for (const [key, environmentValue] of Object.entries(environmentInput)) {
         if (typeof environmentValue !== 'string') {
           throw new Error(
             `Zed create_worktree task ${index + 1} has a non-string env value`
@@ -275,19 +282,19 @@ export async function loadCreateWorktreeTasks(
       }
     }
 
-    if (task.cwd !== undefined && typeof task.cwd !== 'string') {
+    if (cwd !== undefined && typeof cwd !== 'string') {
       throw new Error(`Zed create_worktree task ${index + 1} has invalid cwd`)
     }
 
     return [
       {
         label:
-          typeof task.label === 'string' && task.label.trim()
-            ? task.label
+          typeof label === 'string' && label.trim()
+            ? label
             : `Task ${index + 1}`,
-        command: task.command,
+        command,
         args,
-        ...(typeof task.cwd === 'string' ? { cwd: task.cwd } : {}),
+        ...(typeof cwd === 'string' ? { cwd } : {}),
         env
       }
     ]

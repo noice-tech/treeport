@@ -14,6 +14,7 @@ import type {
   EventsServerToClientEvents,
   TerminalClientToServerEvents,
   TerminalRuntimeMetadata,
+  TerminalReady,
   TerminalServerToClientEvents
 } from '@treeport/shared'
 import { SOCKET_IO_PATH, TERMINAL_PROTOCOL_VERSION } from '@treeport/shared'
@@ -178,7 +179,7 @@ async function fixture(): Promise<NetworkFixture> {
 
 function eventClient(
   url: string,
-  options: Record<string, unknown> = {}
+  options: { extraHeaders?: Record<string, string> } = {}
 ): Socket<EventsServerToClientEvents, EventsClientToServerEvents> {
   return createClient(`${url}/events`, {
     path: SOCKET_IO_PATH,
@@ -249,7 +250,9 @@ describe('Socket.IO real network', () => {
       })
     })
     socket.on('product_event', (event) => {
-      received.push(`event:${String(event.data.title)}`)
+      if (event.type === 'terminal.metadata') {
+        received.push(`event:${event.data.title}`)
+      }
     })
 
     await vi.waitFor(() => expect(received).toHaveLength(2))
@@ -393,13 +396,13 @@ describe('Socket.IO real network', () => {
   it('negotiates exact terminal protocol modes and rejects unsupported versions', async () => {
     const value = await fixture()
     const current = terminalClient(value.url, 'tab-current')
-    const currentReady = await new Promise<Record<string, unknown>>((resolve) =>
+    const currentReady = await new Promise<TerminalReady>((resolve) =>
       current.once('ready', (payload) => resolve(payload))
     )
     expect(currentReady).toMatchObject({ cols: 100, rows: 30, revision: 1 })
 
     const legacy = terminalClient(value.url, 'tab-legacy', null)
-    const legacyReady = await new Promise<Record<string, unknown>>((resolve) =>
+    const legacyReady = await new Promise<TerminalReady>((resolve) =>
       legacy.once('ready', (payload) => resolve(payload))
     )
     expect(legacyReady).not.toHaveProperty('cols')

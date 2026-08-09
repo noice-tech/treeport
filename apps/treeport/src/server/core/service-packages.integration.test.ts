@@ -41,9 +41,11 @@ describe('TreeportService with injected command adapters', () => {
     ).rejects.toMatchObject({ code: 'WEB_PANEL_DEFINITION_NOT_FOUND' })
 
     const events: string[] = []
-    const unsubscribe = service.events.subscribe((event) =>
-      events.push(`${event.type}:${String(event.data.panelId)}`)
-    )
+    const unsubscribe = service.events.subscribe((event) => {
+      if (event.type === 'panel.created' || event.type === 'panel.removed') {
+        events.push(`${event.type}:${event.data.panelId}`)
+      }
+    })
     const panel = await service.createWebPanel(worktree.id, 'project:review')
     expect(
       (await service.getWorktreeSnapshot(worktree.id)).panels

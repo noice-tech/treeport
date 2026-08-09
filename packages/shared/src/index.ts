@@ -1,6 +1,9 @@
 import { z } from 'zod'
 import type { WebPanel } from '@treeport/panel-sdk'
-import { terminalSizeSchema } from './terminal-protocol.js'
+import {
+  terminalSizeSchema,
+  type TerminalRuntimeMetadata
+} from './terminal-protocol.js'
 
 export type {
   GitDiff,
@@ -293,18 +296,107 @@ export interface RemovePreview {
   confirmationToken: string
 }
 
-export interface OperationRecord {
+export interface RemovalCheckoutIdentity {
+  path: string
+  device: string
+  inode: string
+  gitWorktreeKey: string
+  gitMarker: string
+  repositoryIdentity: string | null
+  managedWrapperPath: string | null
+  quarantinePath: string
+}
+
+export interface CreateOperationRequest {
+  name: string
+  base: 'default' | 'current'
+  initialTerminal?:
+    | {
+        name: string
+        argv?: string[] | undefined
+        returnToShell?: boolean | undefined
+        initialSize?: { cols: number; rows: number } | undefined
+      }
+    | undefined
+  sourceWorktreeId?: string | undefined
+}
+
+export interface CreateOperationResult {
+  worktreeId: string
+  terminalId: string | null
+  terminalError: string | null
+  setupError: string | null
+}
+
+export interface RemoveOperationRequest {
+  confirmation: boolean | null
+  confirmationToken: string | null
+  confirmDestructive: boolean | null
+  preview: RemovePreview | null
+  checkoutIdentity: RemovalCheckoutIdentity | null
+  prunable: boolean | null
+  gitWorktreeKey: string | null
+  repositoryIdentity: string | null
+}
+
+export type RemoveOperationResult =
+  | {
+      removed: true
+      name: string
+      branchPreserved: string | null
+      path: string
+    }
+  | {
+      removed: true
+      recovered: true
+      path: string
+      message: string
+    }
+
+export interface ExternalRemoveOperationResult {
+  removed: true
+  external: true
+  worktreeId: string
+  path: string
+  head: string
+  branch: string | null
+}
+
+interface OperationRecordBase {
   id: string
-  kind: OperationKind
   projectId: string | null
   worktreeId: string | null
   status: OperationStatus
-  request: Record<string, unknown>
-  result: Record<string, unknown> | null
   error: string | null
   createdAt: string
   updatedAt: string
 }
+
+export type CreateOperationRecord = OperationRecordBase & {
+  kind: 'create'
+  request: CreateOperationRequest
+  result: CreateOperationResult | null
+}
+
+export type RemoveOperationRecord = OperationRecordBase & {
+  kind: 'remove'
+  request: RemoveOperationRequest
+  result: RemoveOperationResult | null
+}
+
+export type OperationRecord =
+  | CreateOperationRecord
+  | RemoveOperationRecord
+  | (OperationRecordBase & {
+      kind: 'external_remove'
+      request: { source: 'git' }
+      result: ExternalRemoveOperationResult | null
+    })
+  | (OperationRecordBase & {
+      kind: 'finish' | 'discard' | 'project_cleanup'
+      request: object
+      result: object | null
+    })
 
 export interface ApiErrorBody {
   error: { code: string; message: string; details?: unknown }
@@ -514,30 +606,66 @@ export const spawnSchema = z
     }
   })
 
-export type ProductEventType =
-  | 'project.created'
-  | 'project.updated'
-  | 'project.removed'
-  | 'worktree.created'
-  | 'worktree.updated'
-  | 'worktree.removed'
-  | 'create.started'
-  | 'create.completed'
-  | 'create.failed'
-  | 'terminal.created'
-  | 'terminal.updated'
-  | 'terminal.removed'
-  | 'terminal.metadata'
-  | 'terminal.controller_changed'
-  | 'panel.created'
-  | 'panel.removed'
-  | 'remove.started'
-  | 'remove.completed'
-  | 'remove.failed'
-
-export interface ProductEvent {
-  id: string
-  type: ProductEventType
-  at: string
-  data: Record<string, unknown>
+interface ProductEventPayloadMap {
+  'project.created': { projectId: string }
+  'project.updated': { projectId: string }
+  'project.removed': { projectId: string }
+  'worktree.created': { projectId: string; worktreeId: string }
+  'worktree.updated': { worktreeId: string }
+  'worktree.removed': { projectId: string; worktreeId: string }
+  'create.started': { projectId: string; operationId: string }
+  'create.completed': {
+    projectId: string
+    operationId: string
+    worktreeId: string
+  }
+  'create.failed': { projectId: string; operationId: string }
+  'terminal.created': {
+    projectId?: string | undefined
+    worktreeId: string
+    terminalId: string
+  }
+  'terminal.updated': { worktreeId: string; terminalId: string }
+  'terminal.removed': { worktreeId: string; terminalId: string }
+  'terminal.metadata': TerminalRuntimeMetadata
+  'terminal.controller_changed': { terminalId: string; controlled: boolean }
+  'panel.created': { worktreeId: string; panelId: string }
+  'panel.removed': { worktreeId: string; panelId: string }
+  'remove.started': {
+    operationId: string
+    worktreeId: string
+    kind: 'remove'
+  }
+  'remove.completed': { operationId: string; worktreeId: string }
+  'remove.failed': {
+    operationId: string
+    worktreeId: string
+    error: string
+  }
 }
+
+export type ProductEventType = keyof ProductEventPayloadMap
+
+export type ProductEventInputDataMap = {
+  [Type in ProductEventType]: ProductEventPayloadMap[Type] & {
+    worktreeId?: string | undefined
+  }
+}
+
+export type ProductEventDataMap = {
+  [Type in ProductEventType]: Omit<
+    ProductEventPayloadMap[Type],
+    'worktreeId'
+  > & {
+    worktreeId: string | null
+  }
+}
+
+export type ProductEvent<Type extends ProductEventType = ProductEventType> = {
+  [EventType in Type]: {
+    id: string
+    type: EventType
+    at: string
+    data: ProductEventDataMap[EventType]
+  }
+}[Type]

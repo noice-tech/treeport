@@ -176,7 +176,7 @@ addEventListener(
 
 function call<Result>(
   method: 'context' | 'diff' | 'storage.get' | 'storage.set' | 'storage.delete',
-  params?: Record<string, unknown>
+  params?: { key: string; value?: JsonValue }
 ): Promise<Result> {
   return new Promise((resolve, reject) => {
     const id = String(++serial)

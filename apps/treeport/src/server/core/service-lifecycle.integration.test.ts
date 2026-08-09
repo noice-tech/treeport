@@ -303,7 +303,9 @@ describe('TreeportService with injected command adapters', () => {
     )
     const events: string[] = []
     const unsubscribe = service.events.subscribe((event) => {
-      events.push(`${event.type}:${String(event.data.terminalId ?? '')}`)
+      events.push(
+        `${event.type}:${'terminalId' in event.data ? event.data.terminalId : ''}`
+      )
     })
 
     await expect(service.closeProject(project.id)).rejects.toMatchObject({

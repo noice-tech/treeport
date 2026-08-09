@@ -13,6 +13,7 @@ import type {
   ProjectColor,
   ProjectRecord,
   RecentProjectRecord,
+  RemovalCheckoutIdentity,
   RemovePreview,
   TerminalPreset,
   TerminalPresetDefinition,
@@ -63,53 +64,6 @@ const id = (prefix: string): string =>
 const WEB_PANEL_STORAGE_MAX_ENTRIES = 256
 const WEB_PANEL_STORAGE_MAX_TOTAL_BYTES = 1024 * 1024
 const WEB_PANEL_STORAGE_MAX_VALUE_BYTES = 64 * 1024
-
-interface RemovalCheckoutIdentity {
-  path: string
-  device: string
-  inode: string
-  gitWorktreeKey: string
-  gitMarker: string
-  repositoryIdentity: string | null
-  managedWrapperPath: string | null
-  quarantinePath: string
-}
-
-function removalCheckoutIdentity(
-  request: Record<string, unknown>
-): RemovalCheckoutIdentity | null {
-  const value = request.checkoutIdentity
-  if (!value || typeof value !== 'object') {
-    return null
-  }
-
-  const candidate = value as Record<string, unknown>
-  return typeof candidate.path === 'string' &&
-    typeof candidate.device === 'string' &&
-    typeof candidate.inode === 'string' &&
-    typeof candidate.gitWorktreeKey === 'string' &&
-    typeof candidate.gitMarker === 'string' &&
-    (typeof candidate.repositoryIdentity === 'string' ||
-      candidate.repositoryIdentity === null ||
-      candidate.repositoryIdentity === undefined) &&
-    (typeof candidate.managedWrapperPath === 'string' ||
-      candidate.managedWrapperPath === null) &&
-    typeof candidate.quarantinePath === 'string'
-    ? {
-        path: candidate.path,
-        device: candidate.device,
-        inode: candidate.inode,
-        gitWorktreeKey: candidate.gitWorktreeKey,
-        gitMarker: candidate.gitMarker,
-        repositoryIdentity:
-          typeof candidate.repositoryIdentity === 'string'
-            ? candidate.repositoryIdentity
-            : null,
-        managedWrapperPath: candidate.managedWrapperPath,
-        quarantinePath: candidate.quarantinePath
-      }
-    : null
-}
 
 function gitMarkerTarget(checkoutPath: string, marker: string): string | null {
   const match = /^gitdir: (.+)$/u.exec(marker.trim())
@@ -2287,28 +2241,23 @@ export class TreeportService {
     for (const worktree of retired) {
       const recoveringRemoval =
         worktree.status === 'cleaning' || worktree.status === 'cleanup_failed'
-      const removeOperation = recoveringRemoval
+      const removeOperationRow = recoveringRemoval
         ? (
-            await this.deps.database.db.all<{
-              id: string
-              status: OperationRecord['status']
-              request_json: string
-              error: string | null
-            }>(sql`
-              SELECT id,status,request_json,error FROM operations
+            await this.deps.database.db.all<{ id: string }>(sql`
+              SELECT id FROM operations
               WHERE worktree_id=${worktree.id} AND kind='remove'
               ORDER BY created_at DESC,id DESC LIMIT 1
             `)
           )[0]
         : undefined
-      const removeRequest = removeOperation
-        ? (JSON.parse(removeOperation.request_json) as Record<string, unknown>)
-        : {}
-      const removeIdentity = removalCheckoutIdentity(removeRequest)
+      const operation = removeOperationRow
+        ? await this.getOperation(removeOperationRow.id)
+        : undefined
+      const removeOperation =
+        operation?.kind === 'remove' ? operation : undefined
+      const removeIdentity = removeOperation?.request.checkoutIdentity ?? null
       if (recoveringRemoval) {
-        const preview = removeRequest.preview as
-          | Record<string, unknown>
-          | undefined
+        const preview = removeOperation?.request.preview
         const identity = removeIdentity
         const checkout = await this.checkoutStat(worktree.path)
         const quarantine = identity
@@ -3800,7 +3749,11 @@ export class TreeportService {
     force: boolean
   ): Promise<void> {
     const operation = await this.getOperation(operationId)
-    if (operation.worktreeId !== lockedWorktreeId) {
+    if (
+      operation.kind !== 'remove' ||
+      operation.request.preview === null ||
+      operation.worktreeId !== lockedWorktreeId
+    ) {
       this.worktreeLocks.delete(lockedWorktreeId)
       return
     }
@@ -3821,7 +3774,7 @@ export class TreeportService {
     let gitRemoved = false
     try {
       const prunable = operation.request.prunable === true
-      const checkoutIdentity = removalCheckoutIdentity(operation.request)
+      const checkoutIdentity = operation.request.checkoutIdentity
       const checkout = await this.checkoutStat(worktree.path)
       const liveWorktree = (
         await this.deps.git.listWorktrees(project.repositoryPath)

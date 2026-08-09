@@ -1,5 +1,6 @@
 import type {
   ApiErrorBody,
+  CreateOperationRecord,
   DirectoryBrowseResponse,
   OperationRecord,
   ProjectColor,
@@ -141,7 +142,7 @@ export const apiClient = {
       ? `?${new URLSearchParams({ projectId }).toString()}`
       : ''
     return (
-      await api<{ operations: OperationRecord[] }>(
+      await api<{ operations: CreateOperationRecord[] }>(
         `/api/operations${search ? `${search}&kind=create` : '?kind=create'}`
       )
     ).operations
@@ -165,7 +166,7 @@ export const apiClient = {
     sourceWorktreeId?: string
   ) =>
     (
-      await api<{ operation: OperationRecord }>(
+      await api<{ operation: CreateOperationRecord }>(
         `/api/projects/${projectId}/worktree-operations`,
         {
           method: 'POST',

@@ -199,6 +199,7 @@ describe('TerminalMetadataManager', () => {
     })
     expect(published).toContainEqual({
       terminalId: 'two',
+      worktreeId: null,
       title: 'pi · /repo',
       hasForegroundProcess: true,
       progress: { state: 'indeterminate', value: null },
