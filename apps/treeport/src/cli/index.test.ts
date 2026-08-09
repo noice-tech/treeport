@@ -26,6 +26,7 @@ import type {
   WorktreeRecord
 } from '@treeport/shared'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { runCliApplication } from './application.js'
 
 const execute = promisify(execFile)
 const repositoryRoot = path.resolve(
@@ -104,28 +105,53 @@ interface CliResult {
   stderr: string
 }
 
-async function runCli(
-  args: string[],
-  overrides: NodeJS.ProcessEnv = {},
-  executable = cliExecutable,
-  cwd = repositoryRoot
-): Promise<CliResult> {
-  const env = { ...process.env }
+function cliEnvironment(overrides: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const environment = { ...process.env }
   for (const name of [
     'TREEPORT_API_URL',
     'TREEPORT_DAEMON_LIFECYCLE',
     'TREEPORT_PROJECT_ID',
     'TREEPORT_WORKTREE_ID',
-    'TREEPORT_TERMINAL_ID'
+    'TREEPORT_TERMINAL_ID',
+    'TREEPORT_WEB_DEVELOPMENT',
+    'TREEPORT_WEB_DIST'
   ]) {
-    delete env[name]
+    delete environment[name]
   }
-  Object.assign(env, overrides)
+  return Object.assign(environment, overrides)
+}
 
+async function runCli(
+  args: string[],
+  overrides: NodeJS.ProcessEnv = {},
+  cwd = repositoryRoot
+): Promise<CliResult> {
+  let stdout = ''
+  let stderr = ''
+  const code = await runCliApplication({
+    args,
+    environment: cliEnvironment(overrides),
+    cwd,
+    stdout: (value) => {
+      stdout += value
+    },
+    stderr: (value) => {
+      stderr += value
+    }
+  })
+  return { code, stdout, stderr }
+}
+
+async function runPackagedCli(
+  args: string[],
+  overrides: NodeJS.ProcessEnv = {},
+  executable = cliExecutable,
+  cwd = repositoryRoot
+): Promise<CliResult> {
   return new Promise((resolve, reject) => {
     const child = spawn(executable, args, {
       cwd,
-      env,
+      env: cliEnvironment(overrides),
       stdio: ['ignore', 'pipe', 'pipe']
     })
     let stdout = ''
@@ -1002,9 +1028,10 @@ describe('CLI context and machine output', () => {
       ['terminal', 'delete'],
       ['spawn']
     ]
-    const commandHelp = await Promise.all(
-      commandPaths.map((command) => runCli([...command, '--help']))
-    )
+    const commandHelp = []
+    for (const command of commandPaths) {
+      commandHelp.push(await runCli([...command, '--help']))
+    }
     for (const [index, result] of commandHelp.entries()) {
       expect(result.code).toBe(0)
       expect(result.stderr).toBe('')
@@ -1277,18 +1304,18 @@ exit 1
     }
 
     try {
-      const help = await runCli([], environment)
+      const help = await runPackagedCli([], environment)
       expect(help.code).toBe(0)
       expect(help.stdout).toContain('up [options]')
 
-      const unconfirmed = await runCli(
+      const unconfirmed = await runPackagedCli(
         ['down', '--terminate-terminals'],
         environment
       )
       expect(unconfirmed.code).toBe(2)
       expect(unconfirmed.stderr).toContain('--terminate-terminals --force')
 
-      const missingFolder = await runCli(
+      const missingFolder = await runPackagedCli(
         [path.join(temporaryDirectory, 'missing'), '--json'],
         environment
       )
@@ -1298,13 +1325,13 @@ exit 1
       })
 
       const filePath = path.join(repository, 'README.md')
-      const fileFolder = await runCli([filePath, '--json'], environment)
+      const fileFolder = await runPackagedCli([filePath, '--json'], environment)
       expect(fileFolder.code).toBe(5)
       expect(JSON.parse(fileFolder.stderr)).toMatchObject({
         error: { code: 'FOLDER_NOT_DIRECTORY' }
       })
 
-      const linkedOpen = await runCli(
+      const linkedOpen = await runPackagedCli(
         ['.', '--json'],
         environment,
         cliExecutable,
@@ -1323,7 +1350,7 @@ exit 1
         client: process.platform === 'darwin' ? 'desktop' : 'browser'
       })
 
-      const projectList = await runCli(
+      const projectList = await runPackagedCli(
         ['project', 'list', '--json'],
         environment
       )
@@ -1341,7 +1368,7 @@ exit 1
         registeredWorktrees.find((item) => item.kind === 'linked')?.id
       ).toBe(linkedResult.worktreeId)
 
-      const mainOpen = await runCli(
+      const mainOpen = await runPackagedCli(
         ['.', '--json'],
         environment,
         cliExecutable,
@@ -1367,7 +1394,10 @@ exit 1
 
       const nonGitDirectory = path.join(temporaryDirectory, 'not-a-repository')
       await mkdir(nonGitDirectory)
-      const nonGit = await runCli([nonGitDirectory, '--json'], environment)
+      const nonGit = await runPackagedCli(
+        [nonGitDirectory, '--json'],
+        environment
+      )
       expect(nonGit.code).toBe(5)
       expect(JSON.parse(nonGit.stderr)).toMatchObject({
         error: {
@@ -1376,7 +1406,10 @@ exit 1
         }
       })
 
-      const firstStatus = await runCli(['status', '--json'], environment)
+      const firstStatus = await runPackagedCli(
+        ['status', '--json'],
+        environment
+      )
       expect(firstStatus.code).toBe(0)
       const firstState = JSON.parse(firstStatus.stdout) as {
         running: boolean
@@ -1385,14 +1418,17 @@ exit 1
       }
       expect(firstState).toMatchObject({ running: true, verified: true })
 
-      const secondUp = await runCli(['up'], environment)
-      const secondStatus = await runCli(['status', '--json'], environment)
+      const secondUp = await runPackagedCli(['up'], environment)
+      const secondStatus = await runPackagedCli(
+        ['status', '--json'],
+        environment
+      )
       expect(secondUp.code).toBe(0)
       expect(JSON.parse(secondStatus.stdout).state.pid).toBe(
         firstState.state.pid
       )
 
-      const missingTailscale = await runCli(
+      const missingTailscale = await runPackagedCli(
         ['remote', 'enable'],
         {
           ...environment,
@@ -1405,15 +1441,24 @@ exit 1
         'Tailscale is required for remote access. Install it from https://tailscale.com/download, run `tailscale up`, then retry.'
       )
 
-      const remoteEnable = await runCli(['remote', 'enable'], environment)
+      const remoteEnable = await runPackagedCli(
+        ['remote', 'enable'],
+        environment
+      )
       expect(remoteEnable.code).toBe(0)
       expect(remoteEnable.stdout).toContain(
         'https://treeport.tailnet.ts.net:8733'
       )
-      const remoteStatus = await runCli(['remote', 'status'], environment)
+      const remoteStatus = await runPackagedCli(
+        ['remote', 'status'],
+        environment
+      )
       expect(remoteStatus.code).toBe(0)
       expect(remoteStatus.stdout).toContain('Treeport remote access is enabled')
-      const remoteDisable = await runCli(['remote', 'disable'], environment)
+      const remoteDisable = await runPackagedCli(
+        ['remote', 'disable'],
+        environment
+      )
       expect(remoteDisable.code).toBe(0)
       expect(remoteDisable.stdout).toContain(
         'Treeport remote access is disabled'
@@ -1426,7 +1471,10 @@ exit 1
         tailscaleStatePath,
         '{"TCP":{"8733":{"HTTPS":true}},"Web":{"other.tailnet.ts.net:8733":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:3000"}}}}}\n'
       )
-      const occupiedRemotePort = await runCli(['remote', 'enable'], environment)
+      const occupiedRemotePort = await runPackagedCli(
+        ['remote', 'enable'],
+        environment
+      )
       expect(occupiedRemotePort.code).toBe(1)
       expect(occupiedRemotePort.stderr).toContain(
         'Tailscale Serve already uses port 8733'
@@ -1435,7 +1483,7 @@ exit 1
         'http://127.0.0.1:3000'
       )
 
-      const alternateRemote = await runCli(
+      const alternateRemote = await runPackagedCli(
         ['remote', 'enable', '--port', '8734'],
         environment
       )
@@ -1443,7 +1491,7 @@ exit 1
       expect(alternateRemote.stdout).toContain(
         'https://treeport.tailnet.ts.net:8734'
       )
-      const alternateRemoteDisable = await runCli(
+      const alternateRemoteDisable = await runPackagedCli(
         ['remote', 'disable'],
         environment
       )
@@ -1457,18 +1505,17 @@ exit 1
         version: packageVersion,
         pid: firstState.state.pid
       })
-      const app = await fetch(`http://127.0.0.1:${port}/`).then((response) =>
-        response.text()
-      )
-      expect(app).toContain('<div id="root"></div>')
+      const appResponse = await fetch(`http://127.0.0.1:${port}/`)
+      expect(appResponse.status).toBe(200)
+      expect(await appResponse.text()).toContain('<div id="root"></div>')
 
-      const down = await runCli(
+      const down = await runPackagedCli(
         ['down', '--terminate-terminals', '--force'],
         environment
       )
       expect(down.code).toBe(0)
       expect(down.stdout).toContain('Treeport is down')
-      const stopped = await runCli(['status'], environment)
+      const stopped = await runPackagedCli(['status'], environment)
       expect(stopped.stdout.trim()).toBe('Treeport is down')
       await expect(
         stat(path.join(dataDirectory, 'treeport.db'))
@@ -1479,14 +1526,17 @@ exit 1
         '#!/bin/sh\n[ "$1" = "-V" ] && echo "tmux 3.1"\nexit 0\n',
         { mode: 0o755 }
       )
-      const doctor = await runCli(['doctor'], environment)
+      const doctor = await runPackagedCli(['doctor'], environment)
       expect(doctor.code).toBe(1)
       expect(doctor.stdout).toContain('Treeport requires tmux 3.2 or newer')
-      const refused = await runCli(['up'], environment)
+      const refused = await runPackagedCli(['up'], environment)
       expect(refused.code).toBe(1)
       expect(refused.stderr).toContain('Treeport requires tmux 3.2 or newer')
     } finally {
-      await runCli(['down', '--terminate-terminals', '--force'], environment)
+      await runPackagedCli(
+        ['down', '--terminate-terminals', '--force'],
+        environment
+      )
       await rm(temporaryDirectory, { recursive: true, force: true })
     }
   }, 20_000)

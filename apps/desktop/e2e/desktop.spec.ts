@@ -153,6 +153,7 @@ test('connects the desktop shell, preserves native behavior, and restores render
     await new Promise<void>((resolve) =>
       server.listen(port, '127.0.0.1', resolve)
     )
+    await selector.evaluate(() => window.treeportShell.retryConnection())
     await expect
       .poll(() =>
         electronApp!.evaluate(({ webContents }, expectedOrigin) => {
