@@ -56,8 +56,9 @@ const UPLOAD_MIME_EXTENSIONS: Readonly<Record<string, string>> = {
 }
 const UPLOAD_RETENTION_MS = 24 * 60 * 60_000
 const UPLOAD_DIRECTORY_MAX_BYTES = 512 * 1024 * 1024
-const optionalProjectQuerySchema = z.object({
-  projectId: z.string().optional()
+const terminalPresetDefinitionsQuerySchema = z.object({
+  projectId: z.string().optional(),
+  worktreeId: z.string().optional()
 })
 const discardStoredDataQuerySchema = z.object({
   discardStoredData: z.string().optional()
@@ -253,13 +254,13 @@ export function createApp({
 
     .get(
       '/api/terminal-preset-definitions',
-      queryInput(optionalProjectQuerySchema),
+      queryInput(terminalPresetDefinitionsQuerySchema),
       async (context) =>
-        context.json({
-          definitions: await service.listTerminalPresetDefinitions(
-            context.req.valid('query').projectId
+        context.json(
+          await service.listTerminalPresetDefinitions(
+            context.req.valid('query')
           )
-        })
+        )
     )
 
     .post(

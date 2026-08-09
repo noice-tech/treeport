@@ -76,21 +76,24 @@ function fixture(webDist = '/missing') {
         updatedAt: '2026-01-01T00:00:00.000Z'
       }
     ]),
-    listTerminalPresetDefinitions: vi.fn(() => [
-      {
-        id: 'package:npm:@acme/tools:terminal-preset:dev',
-        name: 'Package dev',
-        executable: 'pnpm',
-        args: ['dev'],
-        closeOnSuccess: false,
-        source: {
-          type: 'package',
-          packageId: 'npm:@acme/tools',
-          source: 'npm:@acme/tools',
-          scope: 'global'
+    listTerminalPresetDefinitions: vi.fn(() => ({
+      definitions: [
+        {
+          id: 'package:npm:@acme/tools:terminal-preset:dev',
+          name: 'Package dev',
+          executable: 'pnpm',
+          args: ['dev'],
+          closeOnSuccess: false,
+          source: {
+            type: 'package',
+            packageId: 'npm:@acme/tools',
+            source: 'npm:@acme/tools',
+            scope: 'global'
+          }
         }
-      }
-    ]),
+      ],
+      diagnostics: []
+    })),
     listPackages: vi.fn(() => ({ packages: [], diagnostics: [] })),
     resolveRegisteredProject: vi.fn((inputPath: string) => ({
       id: 'project_1',
@@ -848,7 +851,7 @@ describe('HTTP API validation', () => {
   it('routes source-aware package definitions and package management operations', async () => {
     const { app, service } = fixture()
     const definitions = await app.request(
-      '/api/terminal-preset-definitions?projectId=project_1'
+      '/api/terminal-preset-definitions?worktreeId=wt_1'
     )
     expect(definitions.status).toBe(200)
     expect(await definitions.json()).toMatchObject({
@@ -857,11 +860,12 @@ describe('HTTP API validation', () => {
           name: 'Package dev',
           source: { type: 'package', scope: 'global' }
         }
-      ]
+      ],
+      diagnostics: []
     })
-    expect(service.listTerminalPresetDefinitions).toHaveBeenCalledWith(
-      'project_1'
-    )
+    expect(service.listTerminalPresetDefinitions).toHaveBeenCalledWith({
+      worktreeId: 'wt_1'
+    })
 
     const resolved = await app.request(
       '/api/packages/project?path=%2Frepo%2Flinked'

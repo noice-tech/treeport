@@ -18,9 +18,9 @@ test.describe('desktop terminal input and removal', () => {
     await page.getByRole('button', { name: /^New panel/ }).click()
     await page
       .getByRole('dialog', { name: 'New panel' })
-      .getByRole('button', { name: 'Manage presets' })
+      .getByRole('button', { name: 'Manage global presets' })
       .click()
-    const dialog = page.getByRole('dialog', { name: 'Terminal presets' })
+    const dialog = page.getByRole('dialog', { name: 'Global terminal presets' })
     await dialog.getByRole('button', { name: /^Hunk/ }).click()
     await dialog.getByLabel('Name').fill('Unsaved local name')
     mocked.terminalPresets[0] = {
@@ -36,9 +36,10 @@ test.describe('desktop terminal input and removal', () => {
     await dialog.getByRole('button', { name: 'Close', exact: true }).click()
 
     await page.getByRole('button', { name: 'New worktree' }).click()
-    await page
-      .getByLabel('Initial terminal')
-      .selectOption({ label: 'Remote Hunk' })
+    await page.getByLabel('Initial terminal').selectOption({
+      label:
+        'Remote Hunk — Global — npx --yes hunkdiff@0.17.3 diff HEAD --watch'
+    })
     mocked.terminalPresets.splice(0)
     await page.clock.fastForward(5_000)
     await expect(

@@ -16,7 +16,7 @@ import type {
   RemovalCheckoutIdentity,
   RemovePreview,
   TerminalPreset,
-  TerminalPresetDefinition,
+  TerminalPresetDefinitionListing,
   TerminalRecord,
   TerminalSize,
   WebPanel,
@@ -53,6 +53,7 @@ import { ProductEventBus } from './events'
 import type { GhAdapter } from './gh'
 import type { GitAdapter } from './git'
 import { PackageSystem } from './package-system'
+import { loadRepositoryTerminalPresets } from './repository-terminal-presets'
 import {
   resolveWorktreeSetupTasks,
   runWorktreeSetupTasks,
@@ -919,28 +920,51 @@ export class TreeportService {
     return rows.map(mapTerminalPreset)
   }
 
-  async listTerminalPresetDefinitions(
-    projectId?: string
-  ): Promise<TerminalPresetDefinition[]> {
-    if (projectId) {
-      this.packages.syncProjects([await this.getProject(projectId)])
+  async listTerminalPresetDefinitions(context?: {
+    projectId?: string | undefined
+    worktreeId?: string | undefined
+  }): Promise<TerminalPresetDefinitionListing> {
+    const worktree = context?.worktreeId
+      ? await this.getWorktree(context.worktreeId)
+      : null
+    const projectId = worktree?.projectId ?? context?.projectId
+    const project = projectId ? await this.getProject(projectId) : null
+    if (project) {
+      this.packages.syncProjects([project])
     }
 
-    const [userPresets, packagePresets] = await Promise.all([
+    const [userPresets, packagePresets, repositoryPresets] = await Promise.all([
       this.listTerminalPresets(),
-      this.packages.terminalPresetDefinitions(projectId)
+      this.packages.terminalPresetDefinitions(projectId),
+      worktree && project
+        ? loadRepositoryTerminalPresets(project.id, worktree.path)
+        : Promise.resolve({ definitions: [], diagnostics: [] })
     ])
-    return [
-      ...userPresets.map((preset) => ({
-        id: preset.id,
-        name: preset.name,
-        executable: preset.executable,
-        args: [...preset.args],
-        closeOnSuccess: preset.closeOnSuccess,
-        source: { type: 'user' as const }
-      })),
-      ...packagePresets
-    ]
+    const repositoryPackagePresets = packagePresets.filter(
+      (preset) =>
+        preset.source.type === 'package' && preset.source.scope === 'project'
+    )
+    const globalPackagePresets = packagePresets.filter(
+      (preset) =>
+        preset.source.type === 'package' && preset.source.scope === 'global'
+    )
+
+    return {
+      definitions: [
+        ...repositoryPresets.definitions,
+        ...repositoryPackagePresets,
+        ...userPresets.map((preset) => ({
+          id: preset.id,
+          name: preset.name,
+          executable: preset.executable,
+          args: [...preset.args],
+          closeOnSuccess: preset.closeOnSuccess,
+          source: { type: 'user' as const }
+        })),
+        ...globalPackagePresets
+      ],
+      diagnostics: repositoryPresets.diagnostics
+    }
   }
 
   async createTerminalPreset(
