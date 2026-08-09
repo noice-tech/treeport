@@ -1,6 +1,7 @@
 import path from 'node:path'
 import type {
   ProductEvent,
+  TerminalProgram,
   TerminalRecord,
   TerminalRuntimeMetadata,
   WorktreeRecord
@@ -23,6 +24,12 @@ import {
 
 export const TERMINAL_METADATA_POLL_MS = 2_000
 export const TERMINAL_PROGRESS_STALE_MS = 5 * 60_000
+
+const PROGRAM_COMMANDS = new Map<string, TerminalProgram>([
+  ['pi', 'pi'],
+  ['claude', 'claude'],
+  ['codex', 'codex']
+])
 
 const SHELL_COMMANDS = new Set([
   'ash',
@@ -71,6 +78,7 @@ interface TerminalMetadataEntry extends TerminalRuntimeMetadata {
   currentCommand: string | null
   commandLine: string | null
   shellCommand: string | null
+  launchProgram: TerminalProgram | null
   shellTitle: string | null
   persistedShellTitle: string | null
   awaitingShellTitle: boolean
@@ -148,6 +156,7 @@ export class TerminalMetadataManager {
       : {
           terminalId,
           title: null,
+          program: null,
           progress: null,
           progressStartedAt: null,
           progressClearedAt: null,
@@ -208,6 +217,10 @@ export class TerminalMetadataManager {
     }
 
     if (!entry) {
+      const launchCommand = path
+        .basename(terminal.argv?.[0] ?? '')
+        .replace(/^-/, '')
+      const launchProgram = PROGRAM_COMMANDS.get(launchCommand) ?? null
       entry = {
         terminalId: terminal.id,
         worktreeId: terminal.worktreeId,
@@ -216,6 +229,7 @@ export class TerminalMetadataManager {
         cwd: worktree.path,
         status: terminal.status,
         title: null,
+        program: launchProgram,
         hasForegroundProcess: terminal.status === 'running' ? null : false,
         progress: null,
         progressStartedAt: null,
@@ -224,11 +238,8 @@ export class TerminalMetadataManager {
         paneTitle: null,
         currentCommand: null,
         commandLine: null,
-        shellCommand: SHELL_COMMANDS.has(
-          path.basename(terminal.argv?.[0] ?? '').replace(/^-/, '')
-        )
-          ? path.basename(terminal.argv?.[0] ?? '').replace(/^-/, '')
-          : null,
+        shellCommand: SHELL_COMMANDS.has(launchCommand) ? launchCommand : null,
+        launchProgram,
         shellTitle: null,
         persistedShellTitle: null,
         awaitingShellTitle: false,
@@ -308,6 +319,7 @@ export class TerminalMetadataManager {
     const cleared = {
       terminalId,
       title: null,
+      program: null,
       progress: null,
       progressStartedAt: null,
       progressClearedAt: null,
@@ -693,6 +705,24 @@ export class TerminalMetadataManager {
     entry.commandLine = commandLine
     entry.observedTitlePending = false
     this.updateForegroundProcess(entry, currentCommand)
+    const commandToken = commandLine?.match(
+      /^(?:exec\s+|command\s+)?(?:"([^"]+)"|'([^']+)'|(\S+))/
+    )
+    const commandExecutable = commandToken
+      ? commandToken[1] || commandToken[2] || commandToken[3] || null
+      : null
+    const observedProgram =
+      PROGRAM_COMMANDS.get(
+        path.basename(commandExecutable ?? '').replace(/^-/, '')
+      ) ??
+      PROGRAM_COMMANDS.get(
+        path.basename(currentCommand ?? '').replace(/^-/, '')
+      ) ??
+      null
+    this.update(entry, {
+      program:
+        observedProgram ?? (!entry.shellCommand ? entry.launchProgram : null)
+    })
 
     if (!entry.shellCommand) {
       this.update(entry, { title: paneTitle ?? commandLine ?? currentCommand })
@@ -864,7 +894,7 @@ export class TerminalMetadataManager {
     patch: Partial<
       Pick<
         TerminalRuntimeMetadata,
-        'title' | 'progress' | 'hasForegroundProcess'
+        'title' | 'program' | 'progress' | 'hasForegroundProcess'
       >
     >
   ): void {
@@ -876,6 +906,7 @@ export class TerminalMetadataManager {
       patch.title === undefined
         ? entry.title
         : patch.title?.trim().slice(0, 256) || null
+    const program = patch.program === undefined ? entry.program : patch.program
     const progress =
       patch.progress === undefined ? entry.progress : patch.progress
     const progressChanged =
@@ -889,6 +920,7 @@ export class TerminalMetadataManager {
       hasForegroundProcess !== entry.hasForegroundProcess
     if (
       title === entry.title &&
+      program === entry.program &&
       !progressChanged &&
       !foregroundProcessChanged
     ) {
@@ -909,6 +941,7 @@ export class TerminalMetadataManager {
     }
 
     entry.title = title
+    entry.program = program
     entry.hasForegroundProcess = hasForegroundProcess
     entry.progress = progress
     this.publish(entry)
@@ -918,6 +951,7 @@ export class TerminalMetadataManager {
     return {
       terminalId: entry.terminalId,
       title: entry.title,
+      program: entry.program,
       hasForegroundProcess: entry.hasForegroundProcess,
       progress: entry.progress,
       progressStartedAt: entry.progressStartedAt,

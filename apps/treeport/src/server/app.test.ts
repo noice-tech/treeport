@@ -217,6 +217,7 @@ function fixture(webDist = '/missing') {
   const runtimeMetadata: TerminalRuntimeMetadata = {
     terminalId: 'term',
     title: 'pi · /repo',
+    program: 'pi',
     progress: null,
     progressStartedAt: null,
     progressClearedAt: null,

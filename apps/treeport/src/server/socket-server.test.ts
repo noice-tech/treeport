@@ -102,6 +102,7 @@ async function fixture(): Promise<NetworkFixture> {
   const currentMetadata: TerminalRuntimeMetadata = {
     terminalId: 'term',
     title: 'shell',
+    program: null,
     progress: null,
     progressStartedAt: null,
     progressClearedAt: null,
@@ -224,6 +225,7 @@ describe('Socket.IO real network', () => {
       value.events.publish('terminal.metadata', {
         terminalId: 'term',
         title: 'snapshot',
+        program: null,
         progress: null,
         progressStartedAt: null,
         progressClearedAt: null,
@@ -233,6 +235,7 @@ describe('Socket.IO real network', () => {
         {
           terminalId: 'term',
           title: 'snapshot',
+          program: null,
           progress: null,
           progressStartedAt: null,
           progressClearedAt: null,
@@ -333,6 +336,7 @@ describe('Socket.IO real network', () => {
     value.events.publish('terminal.metadata', {
       terminalId: 'term',
       title: 'shell',
+      program: null,
       progress: null,
       progressStartedAt: null,
       progressClearedAt: null,

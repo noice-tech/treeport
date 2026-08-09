@@ -167,6 +167,7 @@ describe('TerminalMetadataManager', () => {
       {
         terminalId: 'one',
         title: 'title session-one',
+        program: 'pi',
         hasForegroundProcess: true,
         progress: null,
         progressStartedAt: null,
@@ -176,6 +177,7 @@ describe('TerminalMetadataManager', () => {
       {
         terminalId: 'two',
         title: 'title session-two',
+        program: 'pi',
         hasForegroundProcess: true,
         progress: null,
         progressStartedAt: null,
@@ -189,6 +191,7 @@ describe('TerminalMetadataManager', () => {
     expect(manager.get('two')).toEqual({
       terminalId: 'two',
       title: 'pi · /repo',
+      program: 'pi',
       hasForegroundProcess: true,
       progress: { state: 'indeterminate', value: null },
       progressStartedAt: expect.any(String),
@@ -199,6 +202,7 @@ describe('TerminalMetadataManager', () => {
       terminalId: 'two',
       worktreeId: null,
       title: 'pi · /repo',
+      program: 'pi',
       hasForegroundProcess: true,
       progress: { state: 'indeterminate', value: null },
       progressStartedAt: expect.any(String),
@@ -232,6 +236,7 @@ describe('TerminalMetadataManager', () => {
     expect(manager.get('one')).toEqual({
       terminalId: 'one',
       title: 'finished',
+      program: 'pi',
       hasForegroundProcess: false,
       progress: null,
       progressStartedAt: expect.any(String),
@@ -284,21 +289,34 @@ describe('TerminalMetadataManager', () => {
     expect(manager.get(item.id).hasForegroundProcess).toBe(false)
   })
 
-  it('restores an application title in the initial metadata snapshot after a daemon restart', async () => {
+  it('detects supported CLI programs and clears the program after returning to the shell', async () => {
     vi.useFakeTimers()
     const item = { ...terminal('one'), argv: ['/bin/zsh', '-l'] }
     const { manager, sessionTitleState } = fixture([item])
     managers.push(manager)
     sessionTitleState.mockResolvedValue({
-      paneTitle: 'π',
+      paneTitle: 'Claude Code',
       currentCommand: 'node',
-      commandLine: 'pi',
+      commandLine: 'claude --resume',
       shellTitle: 'treeport'
     })
     await manager.initialize()
     expect(manager.snapshot()).toEqual([
-      expect.objectContaining({ terminalId: item.id, title: 'π' })
+      expect.objectContaining({
+        terminalId: item.id,
+        title: 'Claude Code',
+        program: 'claude'
+      })
     ])
+
+    sessionTitleState.mockResolvedValue({
+      paneTitle: 'Codex',
+      currentCommand: 'codex',
+      commandLine: 'codex',
+      shellTitle: 'treeport'
+    })
+    await vi.advanceTimersByTimeAsync(TERMINAL_METADATA_POLL_MS)
+    expect(manager.get(item.id)).toMatchObject({ program: 'codex' })
 
     sessionTitleState.mockResolvedValue({
       paneTitle: 'π',
@@ -307,7 +325,7 @@ describe('TerminalMetadataManager', () => {
       shellTitle: 'treeport'
     })
     await vi.advanceTimersByTimeAsync(TERMINAL_METADATA_POLL_MS)
-    expect(manager.get(item.id).title).toBe('π')
+    expect(manager.get(item.id)).toMatchObject({ program: 'pi' })
 
     sessionTitleState.mockResolvedValue({
       paneTitle: 'π',
@@ -315,7 +333,10 @@ describe('TerminalMetadataManager', () => {
       shellTitle: 'treeport'
     })
     await vi.advanceTimersByTimeAsync(TERMINAL_METADATA_POLL_MS)
-    expect(manager.get(item.id).title).toBe('treeport')
+    expect(manager.get(item.id)).toMatchObject({
+      title: 'treeport',
+      program: null
+    })
   })
 
   it('prefers the existing pane title when no remembered shell title can identify it as stale', async () => {
@@ -608,6 +629,7 @@ describe('TerminalMetadataManager', () => {
     expect(manager.get(item.id)).toEqual({
       terminalId: item.id,
       title: null,
+      program: 'pi',
       hasForegroundProcess: false,
       progress: null,
       progressStartedAt: null,
@@ -840,6 +862,7 @@ describe('TerminalMetadataManager', () => {
       expect(manager.snapshot()).toContainEqual({
         terminalId: created.id,
         title: 'title session-new',
+        program: 'pi',
         hasForegroundProcess: true,
         progress: null,
         progressStartedAt: null,

@@ -331,23 +331,21 @@ export function ProjectSwitcher({
                         <span className="ml-auto flex shrink-0 items-center gap-1.5 min-[701px]:group-hover/project-option:opacity-0 min-[701px]:group-focus-within/project-option:opacity-0">
                           {progress ? (
                             <TerminalStatusIcon
-                              working={
-                                progress.state !== 'paused' &&
-                                progress.state !== 'error'
-                              }
-                              className={cn(
-                                'size-4 shrink-0 stroke-cyan-300',
-                                progress.state === 'error' && 'stroke-rose-300',
-                                progress.state === 'paused' &&
-                                  'stroke-amber-300'
-                              )}
+                              program={null}
+                              progress={progress}
+                              attention={false}
+                              exited={false}
+                              className="size-4"
                               title={terminalProgressLabel(progress)}
                             />
                           ) : null}
                           {needsAttention ? (
                             <TerminalStatusIcon
-                              working={false}
-                              className="size-4 shrink-0 stroke-amber-300"
+                              program={null}
+                              progress={null}
+                              attention
+                              exited={false}
+                              className="size-4"
                               title="Terminal needs attention"
                             />
                           ) : null}

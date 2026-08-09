@@ -177,6 +177,7 @@ export function WorkspaceTree({
   const {
     attention: bellAttention,
     titles: runtimeTitles,
+    programs: terminalPrograms,
     progress: terminalProgress
   } = useTerminalNavigationMetadata()
   const desktopBridge = window.treeportDesktop
@@ -442,21 +443,13 @@ export function WorkspaceTree({
                                 }
                               >
                                 <TerminalStatusIcon
-                                  working={working}
-                                  className={cn(
-                                    'size-4! shrink-0 stroke-zinc-500 min-[701px]:size-3.5!',
-                                    working && 'stroke-cyan-400',
-                                    terminal.status === 'exited' &&
-                                      !progress &&
-                                      'stroke-rose-300',
-                                    progress?.state === 'error' &&
-                                      !needsAttention &&
-                                      'stroke-rose-300',
-                                    progress?.state === 'paused' &&
-                                      !needsAttention &&
-                                      'stroke-amber-300',
-                                    needsAttention && 'stroke-amber-300'
-                                  )}
+                                  program={
+                                    terminalPrograms.get(terminal.id) ?? null
+                                  }
+                                  progress={progress ?? null}
+                                  attention={needsAttention}
+                                  exited={terminal.status === 'exited'}
+                                  className="size-4! min-[701px]:size-3.5!"
                                 />
                                 <span
                                   className={cn(

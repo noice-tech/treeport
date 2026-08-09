@@ -186,6 +186,7 @@ describe('CLI context and machine output', () => {
   let observedMetadata: TerminalRuntimeMetadata = {
     terminalId: terminal.id,
     title: 'Pi · /repo',
+    program: 'pi',
     progress: null,
     progressStartedAt: timestamp,
     progressClearedAt: timestamp,
@@ -208,6 +209,7 @@ describe('CLI context and machine output', () => {
     observedMetadata = {
       terminalId: terminal.id,
       title: 'Pi · /repo',
+      program: 'pi',
       progress: null,
       progressStartedAt: timestamp,
       progressClearedAt: timestamp,

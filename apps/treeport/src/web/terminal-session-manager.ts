@@ -1,6 +1,6 @@
 import type {
+  TerminalProgram,
   TerminalProgress,
-  TerminalRuntimeMetadata,
   TerminalSize
 } from '@treeport/shared'
 import { TerminalSession } from './terminal-session-client'
@@ -8,7 +8,8 @@ import { TerminalSessionPool } from './terminal-session-pool'
 import {
   TerminalRuntimeMetadataStore,
   type TerminalBellEvent,
-  type TerminalBellMetadata
+  type TerminalBellMetadata,
+  type TerminalRuntimeMetadataInput
 } from './terminal-runtime-metadata'
 
 export type { TerminalBellEvent, TerminalBellMetadata }
@@ -52,6 +53,8 @@ export class TerminalSessionManager {
     this.runtimeMetadata.getBellSnapshot()
   getTitleSnapshot = (): ReadonlyMap<string, string> =>
     this.runtimeMetadata.getTitleSnapshot()
+  getProgramSnapshot = (): ReadonlyMap<string, TerminalProgram> =>
+    this.runtimeMetadata.getProgramSnapshot()
   getForegroundProcessSnapshot = (): ReadonlySet<string> =>
     this.runtimeMetadata.getForegroundProcessSnapshot()
   getProgressSnapshot = (): ReadonlyMap<string, TerminalProgress> =>
@@ -61,11 +64,13 @@ export class TerminalSessionManager {
     return this.pool.getInitialSize(terminalId)
   }
 
-  applyRuntimeMetadata(metadata: TerminalRuntimeMetadata): void {
+  applyRuntimeMetadata(metadata: TerminalRuntimeMetadataInput): void {
     this.runtimeMetadata.applyRuntimeMetadata(metadata)
   }
 
-  replaceRuntimeMetadata(metadata: Iterable<TerminalRuntimeMetadata>): void {
+  replaceRuntimeMetadata(
+    metadata: Iterable<TerminalRuntimeMetadataInput>
+  ): void {
     this.runtimeMetadata.replaceRuntimeMetadata(metadata)
   }
 
