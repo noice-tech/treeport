@@ -336,19 +336,31 @@ export async function main() {
   let appPort = await findAvailablePort(8733, mode.appHost)
   while (
     tailscaleServeConfig &&
-    tailscalePortIsServed(tailscaleServeConfig, appPort)
+    tailscalePortIsServed(tailscaleServeConfig, appPort) &&
+    tailscaleProxyForPort(tailscaleServeConfig, appPort)?.replace(/\/$/, '') !==
+      urlFor(loopbackHost, appPort)
   ) {
     appPort = await findAvailablePort(appPort + 1, mode.appHost)
   }
   const appUrl = urlFor(loopbackHost, appPort)
   let tailscaleRemote = null
   if (mode.name === 'tailscale') {
-    tailscale(['serve', '--bg', `--https=${appPort}`, appUrl])
-    const leasePath = path.join(tailscaleLeaseDirectory, `${process.pid}.json`)
-    await writeFile(
-      leasePath,
-      JSON.stringify({ pid: process.pid, port: appPort, target: appUrl })
-    )
+    let leasePath = null
+    if (
+      tailscaleProxyForPort(tailscaleServeConfig, appPort)?.replace(
+        /\/$/,
+        ''
+      ) !== appUrl
+    ) {
+      leasePath = path.join(tailscaleLeaseDirectory, `${process.pid}.json`)
+      await writeFile(
+        leasePath,
+        JSON.stringify({ pid: process.pid, port: appPort, target: appUrl })
+      )
+
+      tailscale(['serve', '--bg', `--https=${appPort}`, appUrl])
+    }
+
     tailscaleRemote = {
       port: appPort,
       target: appUrl,
@@ -444,7 +456,7 @@ export async function main() {
   }
 
   const result = await childExit
-  if (tailscaleRemote) {
+  if (tailscaleRemote?.leasePath) {
     let cleanupComplete = false
     try {
       const serveConfig = tailscaleJson(['serve', 'status', '--json'])

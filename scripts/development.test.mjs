@@ -299,29 +299,34 @@ if (args[0] === 'status') {
       JSON.stringify({ port: String(stalePort), target: staleTarget })
     )
 
-    let output = ''
-    const child = spawn(
-      process.execPath,
-      ['scripts/development.mjs', '--tailscale'],
-      {
-        cwd: path.resolve('.'),
-        env: {
-          ...process.env,
-          PATH: `${directory}:${process.env.PATH}`,
-          FAKE_ENVIRONMENT_FILE: environmentFile,
-          FAKE_TAILSCALE_STATE_FILE: tailscaleStateFile,
-          FAKE_TAILSCALE_CALLS_FILE: tailscaleCallsFile
-        },
-        stdio: ['ignore', 'pipe', 'pipe']
-      }
-    )
-    children.push(child)
-    child.stdout.on('data', (chunk) => {
-      output += chunk
-    })
-    child.stderr.on('data', (chunk) => {
-      output += chunk
-    })
+    const startTailscaleDevelopment = () => {
+      let output = ''
+      const child = spawn(
+        process.execPath,
+        ['scripts/development.mjs', '--tailscale'],
+        {
+          cwd: path.resolve('.'),
+          env: {
+            ...process.env,
+            PATH: `${directory}:${process.env.PATH}`,
+            FAKE_ENVIRONMENT_FILE: environmentFile,
+            FAKE_TAILSCALE_STATE_FILE: tailscaleStateFile,
+            FAKE_TAILSCALE_CALLS_FILE: tailscaleCallsFile
+          },
+          stdio: ['ignore', 'pipe', 'pipe']
+        }
+      )
+      children.push(child)
+      child.stdout.on('data', (chunk) => {
+        output += chunk
+      })
+      child.stderr.on('data', (chunk) => {
+        output += chunk
+      })
+      return { child, output: () => output }
+    }
+
+    const firstDevelopment = startTailscaleDevelopment()
     await waitUntil(
       () =>
         readFile(environmentFile).then(
@@ -343,17 +348,52 @@ if (args[0] === 'status') {
     expect(environment.TREEPORT_PORT).toBe(String(stalePort))
     expect(tailscaleState.port).toBe(environment.TREEPORT_PORT)
     expect(tailscaleState.target).toBe(localUrl)
-    expect(output).toContain(`Local:     ${localUrl}`)
-    expect(output).toContain(
+    expect(firstDevelopment.output()).toContain(`Local:     ${localUrl}`)
+    expect(firstDevelopment.output()).toContain(
       `Tailscale: https://treeport-dev.example.ts.net:${tailscaleState.port}`
     )
 
-    const exited = new Promise((resolve) => child.once('exit', resolve))
-    child.kill('SIGTERM')
-    await exited
+    const firstExited = new Promise((resolve) =>
+      firstDevelopment.child.once('exit', resolve)
+    )
+    firstDevelopment.child.kill('SIGTERM')
+    await firstExited
     await expect(readFile(tailscaleStateFile, 'utf8')).rejects.toThrow()
     expect(await readFile(tailscaleCallsFile, 'utf8')).toContain(
       `["serve","--https=${tailscaleState.port}","off"]`
     )
+
+    await rm(environmentFile, { force: true })
+    await writeFile(
+      tailscaleStateFile,
+      JSON.stringify({ port: String(stalePort), target: staleTarget })
+    )
+    await writeFile(tailscaleCallsFile, '')
+    const secondDevelopment = startTailscaleDevelopment()
+    await waitUntil(
+      () =>
+        readFile(environmentFile).then(
+          () => true,
+          () => false
+        ),
+      'the Tailscale development process reusing an existing route'
+    )
+    const reusedEnvironment = JSON.parse(
+      await readFile(environmentFile, 'utf8')
+    )
+    expect(reusedEnvironment.TREEPORT_PORT).toBe(String(stalePort))
+    expect(secondDevelopment.output()).toContain(`Local:     ${staleTarget}`)
+
+    const secondExited = new Promise((resolve) =>
+      secondDevelopment.child.once('exit', resolve)
+    )
+    secondDevelopment.child.kill('SIGTERM')
+    await secondExited
+    await expect(readFile(tailscaleStateFile, 'utf8')).resolves.toBe(
+      JSON.stringify({ port: String(stalePort), target: staleTarget })
+    )
+    const reuseCalls = await readFile(tailscaleCallsFile, 'utf8')
+    expect(reuseCalls).not.toContain('"--bg"')
+    expect(reuseCalls).not.toContain('"off"')
   }, 10_000)
 })
