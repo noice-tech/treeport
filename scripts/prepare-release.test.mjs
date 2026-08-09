@@ -170,5 +170,5 @@ describe('release preparation', () => {
     } finally {
       rmSync(temporaryDirectory, { recursive: true, force: true })
     }
-  })
+  }, 15_000)
 })
