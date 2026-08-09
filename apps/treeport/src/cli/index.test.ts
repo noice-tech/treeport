@@ -583,7 +583,7 @@ describe('CLI context and machine output', () => {
     await new Promise<void>((resolve) => socketServer.close(() => resolve()))
   })
 
-  it('prints concise context text by default', async () => {
+  it('prints context in concise human and compact JSON forms', async () => {
     const result = await runCli(['context'], {
       TREEPORT_API_URL: apiUrl,
       TREEPORT_PROJECT_ID: project.id,
@@ -600,6 +600,24 @@ describe('CLI context and machine output', () => {
     expect(result.stdout).toContain('Lifecycle: managed by Treeport')
     expect(result.stdout.trimStart().startsWith('{')).toBe(false)
 
+    const structured = await runCli(['context', '--json'], {
+      TREEPORT_API_URL: apiUrl,
+      TREEPORT_PROJECT_ID: project.id,
+      TREEPORT_WORKTREE_ID: worktree.id,
+      TREEPORT_TERMINAL_ID: terminal.id
+    })
+    expect(structured.code).toBe(0)
+    expect(structured.stderr).toBe('')
+    expect(structured.stdout).not.toContain('\n  ')
+    expect(JSON.parse(structured.stdout)).toMatchObject({
+      managed: true,
+      apiUrl,
+      daemonLifecycle: 'treeport',
+      project: { id: project.id, name: 'treeport' },
+      worktree: { id: worktree.id, name: 'agent-tools' },
+      terminal: { id: terminal.id, name: 'Pi', status: 'running' }
+    })
+
     observedDaemonLifecycle = 'external'
     const external = await runCli(['context'], {
       TREEPORT_API_URL: apiUrl,
@@ -609,27 +627,6 @@ describe('CLI context and machine output', () => {
     })
     expect(external.code).toBe(0)
     expect(external.stdout).toContain('Lifecycle: externally managed')
-  })
-
-  it('returns compact structured context only when requested', async () => {
-    const result = await runCli(['context', '--json'], {
-      TREEPORT_API_URL: apiUrl,
-      TREEPORT_PROJECT_ID: project.id,
-      TREEPORT_WORKTREE_ID: worktree.id,
-      TREEPORT_TERMINAL_ID: terminal.id
-    })
-
-    expect(result.code).toBe(0)
-    expect(result.stderr).toBe('')
-    expect(result.stdout).not.toContain('\n  ')
-    expect(JSON.parse(result.stdout)).toMatchObject({
-      managed: true,
-      apiUrl,
-      daemonLifecycle: 'treeport',
-      project: { id: project.id, name: 'treeport' },
-      worktree: { id: worktree.id, name: 'agent-tools' },
-      terminal: { id: terminal.id, name: 'Pi', status: 'running' }
-    })
   })
 
   it('detects an unmanaged terminal without contacting the daemon', async () => {

@@ -52,34 +52,6 @@ test.describe('desktop terminal input and removal', () => {
       .getByRole('button', { name: 'Close', exact: true })
       .click()
   })
-  test('preserves modified terminal keys used by macOS and Pi', async ({
-    page
-  }) => {
-    await mockApp(page, [], { keyboardPlatform: 'MacIntel' })
-    await page.getByRole('button', { name: 'Pi, running', exact: true }).click()
-    await requestTerminalControl(page)
-    await page.locator('.xterm-helper-textarea').focus()
-    await page.evaluate(() => {
-      ;(window as any).__wsSent = []
-    })
-
-    await page.keyboard.press('Shift+Enter')
-    await page.keyboard.press('Meta+ArrowLeft')
-    await page.keyboard.press('Meta+ArrowRight')
-    await page.keyboard.press('Alt+ArrowLeft')
-    await page.keyboard.press('Alt+ArrowRight')
-
-    await expect
-      .poll(() =>
-        page.evaluate(() =>
-          (window as any).__wsSent
-            .filter((message: any) => message.type === 'input')
-            .map((message: any) => message.data)
-        )
-      )
-      .toEqual(['\u001b[13;2u', '\u001b[H', '\u001b[F', '\u001bb', '\u001bf'])
-  })
-
   test('uploads pasted and dropped files and pastes their server paths', async ({
     page
   }) => {
@@ -193,7 +165,27 @@ test.describe('desktop terminal input and removal', () => {
     })
     await page.getByRole('button', { name: 'Pi, running', exact: true }).click()
     await requestTerminalControl(page)
+    await page.locator('.xterm-helper-textarea').focus()
     await page.evaluate(() => {
+      ;(window as any).__wsSent = []
+    })
+    await page.keyboard.press('Shift+Enter')
+    await page.keyboard.press('Meta+ArrowLeft')
+    await page.keyboard.press('Meta+ArrowRight')
+    await page.keyboard.press('Alt+ArrowLeft')
+    await page.keyboard.press('Alt+ArrowRight')
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          (window as any).__wsSent
+            .filter((message: any) => message.type === 'input')
+            .map((message: any) => message.data)
+        )
+      )
+      .toEqual(['\u001b[13;2u', '\u001b[H', '\u001b[F', '\u001bb', '\u001bf'])
+
+    await page.evaluate(() => {
+      ;(window as any).__wsSent = []
       ;(window as any).__openedTerminalLinks = []
       window.open = (...args) => {
         ;(window as any).__openedTerminalLinks.push(args)

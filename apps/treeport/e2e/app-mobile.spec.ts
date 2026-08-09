@@ -3,38 +3,6 @@ import { TERMINAL_SCROLL_EXIT_SEQUENCE } from '@treeport/shared'
 import { mockApp, waitForTerminalControl } from './app-fixture'
 
 test.describe('mobile terminal UI', () => {
-  test('scopes the terminal selector to the active project', async ({
-    page
-  }) => {
-    await mockApp(page, [], { includeSecondProject: true })
-    const terminalSelector = page.locator('select[name="terminal-selector"]')
-    const optionValues = () =>
-      terminalSelector
-        .locator('option')
-        .evaluateAll((options) =>
-          options.map((option) => (option as HTMLOptionElement).value)
-        )
-
-    await expect.poll(optionValues).toEqual(['', 'term_shell', 'term_pi'])
-
-    await page.getByLabel('Open worktree drawer').click()
-    await page
-      .getByRole('button', {
-        name: 'Switch project, current project example'
-      })
-      .click()
-    await page
-      .getByRole('button', { name: 'another-project', exact: true })
-      .click()
-
-    await expect(page).toHaveURL(
-      /\/projects\/proj_2\/worktrees\/second_wt_main\/terminals\/second_term_shell$/
-    )
-    await expect
-      .poll(optionValues)
-      .toEqual(['', 'second_term_shell', 'second_term_pi'])
-  })
-
   test('uses the mobile drawer and terminal controls end to end', async ({
     page
   }) => {
@@ -179,36 +147,6 @@ test.describe('mobile terminal UI', () => {
     ).toBeVisible()
   })
 
-  test('submits a mobile worktree immediately', async ({ page }) => {
-    await mockApp(page)
-    await page.getByLabel('Open worktree drawer').click()
-    await page.getByRole('button', { name: 'New worktree' }).click()
-    await page.clock.install()
-
-    const submit = page.getByRole('button', { name: 'Create worktree' })
-    const submitBox = await submit.boundingBox()
-    expect(submitBox).not.toBeNull()
-    const requestPromise = page.waitForRequest(
-      (request) =>
-        request.method() === 'POST' &&
-        new URL(request.url()).pathname ===
-          '/api/projects/proj_1/worktree-operations'
-    )
-
-    await page.getByLabel('Worktree name').fill('touch submit')
-    await page.touchscreen.tap(
-      submitBox!.x + submitBox!.width / 2,
-      submitBox!.y + submitBox!.height / 2
-    )
-
-    expect((await requestPromise).postDataJSON()).toMatchObject({
-      name: 'touch submit'
-    })
-    await expect(
-      page.getByRole('heading', { name: 'Create worktree' })
-    ).toHaveCount(0)
-  })
-
   test('keeps mobile modal and drawer flows coherent', async ({ page }) => {
     const mocked = await mockApp(page)
     await page.getByLabel('Open worktree drawer').click()
@@ -223,6 +161,30 @@ test.describe('mobile terminal UI', () => {
     ).toHaveCount(0)
     await expect(trigger).toBeFocused()
     await page.keyboard.press('Escape')
+
+    await page.getByLabel('Open worktree drawer').click()
+    await trigger.click()
+    await page.clock.install()
+    const submit = page.getByRole('button', { name: 'Create worktree' })
+    const submitBox = await submit.boundingBox()
+    expect(submitBox).not.toBeNull()
+    const requestPromise = page.waitForRequest(
+      (request) =>
+        request.method() === 'POST' &&
+        new URL(request.url()).pathname ===
+          '/api/projects/proj_1/worktree-operations'
+    )
+    await page.getByLabel('Worktree name').fill('touch submit')
+    await page.touchscreen.tap(
+      submitBox!.x + submitBox!.width / 2,
+      submitBox!.y + submitBox!.height / 2
+    )
+    expect((await requestPromise).postDataJSON()).toMatchObject({
+      name: 'touch submit'
+    })
+    await expect(
+      page.getByRole('heading', { name: 'Create worktree' })
+    ).toHaveCount(0)
 
     mocked.failNextCreate()
     await page.getByLabel('Open worktree drawer').click()

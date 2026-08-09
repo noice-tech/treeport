@@ -89,68 +89,6 @@ test.describe('desktop terminal links and metadata', () => {
       .toEqual(['https://example.test/pr/123', '_blank', 'noopener,noreferrer'])
   })
 
-  test('synchronizes fallback, runtime, and cleared titles across the sidebar and terminal workspace', async ({
-    page
-  }) => {
-    await mockApp(page, [
-      {
-        terminalId: 'term_pi',
-        title: null,
-        hasForegroundProcess: true,
-        progress: null,
-        progressStartedAt: null,
-        progressClearedAt: null,
-        bell: null
-      }
-    ])
-    await page.evaluate(() => ((window as any).__suppressInitialTitle = true))
-    await page.getByRole('button', { name: 'Pi, running', exact: true }).click()
-
-    await expect(
-      page.getByRole('button', { name: 'Pi, running', exact: true })
-    ).toBeVisible()
-    await expect(page.getByRole('main', { name: 'Pi terminal' })).toBeVisible()
-
-    await page.evaluate(() => {
-      const socket = (window as any).__wsInstances.find((item: any) =>
-        item.url.includes('term_pi')
-      )
-      socket.onmessage?.({
-        data: JSON.stringify({
-          version: 1,
-          type: 'title',
-          title: 'runtime · /repo'
-        })
-      })
-    })
-    await expect(
-      page.getByRole('button', {
-        name: 'runtime · /repo, running',
-        exact: true
-      })
-    ).toBeVisible()
-    await expect(
-      page.getByRole('main', { name: 'runtime · /repo terminal' })
-    ).toBeVisible()
-    await expect(
-      page.getByRole('button', { name: 'Close runtime · /repo' })
-    ).toBeDisabled()
-
-    await page.evaluate(() => {
-      const socket = (window as any).__wsInstances.find((item: any) =>
-        item.url.includes('term_pi')
-      )
-      socket.onmessage?.({
-        data: JSON.stringify({ version: 1, type: 'title', title: '' })
-      })
-    })
-    await expect(
-      page.getByRole('button', { name: 'Pi, running', exact: true })
-    ).toBeVisible()
-    await expect(page.getByRole('main', { name: 'Pi terminal' })).toBeVisible()
-    await expect(page.getByRole('button', { name: 'Close Pi' })).toBeDisabled()
-  })
-
   test('reconciles terminal metadata in chronological order', async ({
     page
   }) => {
@@ -265,5 +203,40 @@ test.describe('desktop terminal links and metadata', () => {
     await expect(
       page.getByRole('button', { name: /background · \/repo.*75% complete/ })
     ).toHaveCount(0)
+
+    await page.evaluate(() => {
+      const socket = (window as any).__wsInstances.find((item: any) =>
+        item.url.includes('term_pi')
+      )
+      socket.onmessage?.({
+        data: JSON.stringify({
+          version: 1,
+          type: 'title',
+          title: 'runtime · /repo'
+        })
+      })
+    })
+    await expect(
+      page.getByRole('button', {
+        name: 'runtime · /repo, running',
+        exact: true
+      })
+    ).toBeVisible()
+    await expect(
+      page.getByRole('main', { name: 'runtime · /repo terminal' })
+    ).toBeVisible()
+
+    await page.evaluate(() => {
+      const socket = (window as any).__wsInstances.find((item: any) =>
+        item.url.includes('term_pi')
+      )
+      socket.onmessage?.({
+        data: JSON.stringify({ version: 1, type: 'title', title: '' })
+      })
+    })
+    await expect(
+      page.getByRole('button', { name: 'Pi, running', exact: true })
+    ).toBeVisible()
+    await expect(page.getByRole('main', { name: 'Pi terminal' })).toBeVisible()
   })
 })

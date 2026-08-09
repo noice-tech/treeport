@@ -411,7 +411,7 @@ describe('TreeportService with injected command adapters', () => {
     expect(await service.listProjects()).toEqual([])
   })
 
-  it('opens unavailable registrations but rejects mutations while closed', async () => {
+  it('rejects closed mutations and manages an unavailable registration through deletion', async () => {
     const { main, runner, service } = await fixture()
     const project = await service.registerProject(main)
     const mainWorktree = project.worktrees[0]!
@@ -434,27 +434,9 @@ describe('TreeportService with injected command adapters', () => {
     const reopened = await service.openProject(project.id)
     expect(reopened.availability.state).toBe('unavailable')
     await expect(service.database.isProjectOpen(project.id)).resolves.toBe(true)
-  })
 
-  it('keeps destructive unregister available for a closed registration', async () => {
-    const { main, service } = await fixture()
-    const project = await service.registerProject(main)
-    await service.closeProject(project.id)
-
-    await service.deleteProject(project.id)
-
-    expect(await service.database.project(project.id)).toBeNull()
-    expect(await service.listRecentProjects()).toEqual([])
-  })
-
-  it('closes unavailable projects without observing Git', async () => {
-    const { main, runner, service } = await fixture()
-    const project = await service.registerProject(main)
     runner.calls.length = 0
-    runner.listWorktreesFails = true
-
     await service.closeProject(project.id)
-
     await expect(service.database.isProjectOpen(project.id)).resolves.toBe(
       false
     )
@@ -463,6 +445,11 @@ describe('TreeportService with injected command adapters', () => {
         (call) => call.args[0] === 'worktree' && call.args[1] === 'list'
       )
     ).toBe(false)
+
+    runner.listWorktreesFails = false
+    await service.deleteProject(project.id)
+    expect(await service.database.project(project.id)).toBeNull()
+    expect(await service.listRecentProjects()).toEqual([])
   })
 
   it('refuses main and locked worktrees', async () => {
