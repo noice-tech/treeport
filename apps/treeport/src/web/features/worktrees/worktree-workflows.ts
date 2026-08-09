@@ -107,7 +107,7 @@ export function useWorktreeWorkflows({
   const materializedCreationIds = new Set(
     ownedCreationQueries.flatMap((query) => {
       const operation = query.data
-      if (operation?.status !== 'completed') {
+      if (operation?.status !== 'completed' || operation.kind !== 'create') {
         return []
       }
 
@@ -193,6 +193,7 @@ export function useWorktreeWorkflows({
       const owned = ownedCreations[index]
       if (
         !operation ||
+        operation.kind !== 'create' ||
         !owned ||
         (operation.status !== 'completed' && operation.status !== 'failed') ||
         handledCreationsRef.current.has(operation.id)

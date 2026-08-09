@@ -173,7 +173,7 @@ function controllerSessionFixture() {
   const host = {} as HTMLElement
   const resize = vi.fn()
   const session = new TerminalSession('terminal-one')
-  Object.assign(session as unknown as Record<string, unknown>, {
+  Object.assign(session, {
     socket,
     ready: true,
     host,
@@ -682,7 +682,7 @@ describe('TerminalSession', () => {
       focus: vi.fn(),
       dispose: vi.fn()
     }
-    Object.assign(session as unknown as Record<string, unknown>, {
+    Object.assign(session, {
       host: {},
       terminal,
       fitAddon: {
@@ -825,7 +825,7 @@ describe('TerminalSession', () => {
     const socket = new FakeSocketIO()
     socket.connected = true
     const session = new TerminalSession('terminal-one')
-    Object.assign(session as unknown as Record<string, unknown>, {
+    Object.assign(session, {
       socket,
       ready: true,
       host: {},
@@ -984,7 +984,7 @@ describe('TerminalSession', () => {
 
   it('clears a pending resize when control is lost before a later takeover', () => {
     const session = new TerminalSession('terminal-one')
-    Object.assign(session as unknown as Record<string, unknown>, {
+    Object.assign(session, {
       ready: true,
       resizePending: true,
       canonicalRevision: 1,
@@ -1081,7 +1081,7 @@ describe('TerminalSession', () => {
     socketClient.io.mockReturnValue(socket)
     const focus = vi.fn()
     const session = new TerminalSession('terminal-one')
-    Object.assign(session as unknown as Record<string, unknown>, {
+    Object.assign(session, {
       terminal: {
         cols: 100,
         rows: 30,

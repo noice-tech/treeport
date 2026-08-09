@@ -178,8 +178,10 @@ describe('CLI context and machine output', () => {
   const requests: string[] = []
   const creationBodies: unknown[] = []
   const terminalCreateBodies: unknown[] = []
-  const packageBodies: Array<{ url: string; body: Record<string, unknown> }> =
-    []
+  const packageBodies: Array<{
+    url: string
+    body: { source?: string; projectId?: string }
+  }> = []
   let observedTerminal = terminal
   let observedMetadata: TerminalRuntimeMetadata = {
     terminalId: terminal.id,
@@ -227,8 +229,13 @@ describe('CLI context and machine output', () => {
         response.end(
           JSON.stringify({
             ok: true,
+            version: packageVersion,
+            protocolVersion: 1,
             pid: process.pid,
-            daemonLifecycle: observedDaemonLifecycle
+            instanceId: 'instance_context',
+            installationMethod: 'development',
+            daemonLifecycle: observedDaemonLifecycle,
+            url: apiUrl
           })
         )
         return
@@ -388,7 +395,10 @@ describe('CLI context and machine output', () => {
         for await (const chunk of request) {
           source += chunk
         }
-        const body = JSON.parse(source) as Record<string, unknown>
+        const body = JSON.parse(source) as {
+          source?: string
+          projectId?: string
+        }
         packageBodies.push({ url: request.url, body })
         const action = request.url.slice('/api/packages/'.length)
         if (action === 'reload') {
@@ -450,6 +460,7 @@ describe('CLI context and machine output', () => {
         }
         const body = JSON.parse(source) as {
           name: string
+          base: 'default' | 'current'
           initialTerminal?: { name: string; argv?: string[] }
         }
         creationBodies.push(body)
@@ -530,17 +541,25 @@ describe('CLI context and machine output', () => {
       }
 
       const timer = setTimeout(() => {
-        let event: {
-          type: 'terminal.metadata' | 'terminal.updated'
-          data: Record<string, unknown>
-        }
+        let event:
+          | {
+              type: 'terminal.metadata'
+              data: TerminalRuntimeMetadata & { worktreeId: null }
+            }
+          | {
+              type: 'terminal.updated'
+              data: { terminalId: string; worktreeId: string }
+            }
         if (eventScenario === 'working') {
           observedMetadata = {
             ...observedMetadata,
             progress: { state: 'indeterminate', value: null },
             progressStartedAt: '2026-01-01T00:01:00.000Z'
           }
-          event = { type: 'terminal.metadata', data: observedMetadata }
+          event = {
+            type: 'terminal.metadata',
+            data: { ...observedMetadata, worktreeId: null }
+          }
         } else if (eventScenario === 'bell') {
           observedMetadata = {
             ...observedMetadata,
@@ -550,7 +569,10 @@ describe('CLI context and machine output', () => {
               unread: true
             }
           }
-          event = { type: 'terminal.metadata', data: observedMetadata }
+          event = {
+            type: 'terminal.metadata',
+            data: { ...observedMetadata, worktreeId: null }
+          }
         } else {
           observedTerminal = {
             ...observedTerminal,
@@ -559,7 +581,10 @@ describe('CLI context and machine output', () => {
           }
           event = {
             type: 'terminal.updated',
-            data: { terminalId: observedTerminal.id }
+            data: {
+              terminalId: observedTerminal.id,
+              worktreeId: observedTerminal.worktreeId
+            }
           }
         }
 

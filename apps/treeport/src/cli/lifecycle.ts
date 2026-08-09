@@ -5,6 +5,7 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { z } from 'zod'
 
 const DEFAULT_HOST = '127.0.0.1'
 const DEFAULT_PORT = 8733
@@ -15,9 +16,9 @@ interface RemotePreference {
 }
 
 interface Preferences {
-  host?: string
-  port?: number
-  remote?: RemotePreference
+  host?: string | undefined
+  port?: number | undefined
+  remote?: RemotePreference | undefined
 }
 
 export interface TailscaleRemoteStatus {
@@ -41,7 +42,7 @@ export interface HealthRecord {
   ok: true
   version: string
   protocolVersion: number
-  hostname?: string
+  hostname?: string | undefined
   pid: number
   instanceId: string | null
   installationMethod: string
@@ -101,15 +102,46 @@ function localPaths(env: NodeJS.ProcessEnv = process.env): {
   }
 }
 
-async function readJson<T>(filePath: string): Promise<T | null> {
+async function readJson<Output>(
+  filePath: string,
+  schema: z.ZodType<Output>
+): Promise<Output | null> {
   return fs
     .readFile(filePath, 'utf8')
-    .then((value) => JSON.parse(value) as T)
+    .then((value) => schema.parse(JSON.parse(value)))
     .catch(() => null)
 }
 
+const preferencesSchema: z.ZodType<Preferences> = z.looseObject({
+  host: z.string().optional(),
+  port: z.number().optional(),
+  remote: z.strictObject({ port: z.number(), target: z.string() }).optional()
+})
+
+const daemonRecordSchema = z.strictObject({
+  pid: z.number(),
+  instanceId: z.string(),
+  version: z.string(),
+  apiUrl: z.string(),
+  dataDir: z.string(),
+  startedAt: z.string(),
+  installationMethod: z.string()
+})
+
+const healthRecordSchema: z.ZodType<HealthRecord> = z.strictObject({
+  ok: z.literal(true),
+  version: z.string(),
+  protocolVersion: z.number(),
+  hostname: z.string().optional(),
+  pid: z.number(),
+  instanceId: z.string().nullable(),
+  installationMethod: z.string(),
+  daemonLifecycle: z.enum(['treeport', 'external']),
+  url: z.string()
+})
+
 async function preferences(): Promise<Preferences> {
-  return (await readJson<Preferences>(localPaths().preferencesPath)) ?? {}
+  return (await readJson(localPaths().preferencesPath, preferencesSchema)) ?? {}
 }
 
 async function savePreferences(value: Preferences): Promise<void> {
@@ -164,8 +196,9 @@ export async function resolvePackagePath(
 }
 
 export async function treeportVersion(): Promise<string> {
-  const manifest = await readJson<{ version?: string }>(
-    await resolvePackagePath('package.json')
+  const manifest = await readJson(
+    await resolvePackagePath('package.json'),
+    z.looseObject({ version: z.string().optional() })
   )
   return manifest?.version ?? 'development'
 }
@@ -190,10 +223,8 @@ export async function daemonHealth(
         return null
       }
 
-      const value = (await response.json()) as Partial<HealthRecord>
-      return value.ok && typeof value.pid === 'number'
-        ? (value as HealthRecord)
-        : null
+      const result = healthRecordSchema.safeParse(await response.json())
+      return result.success ? result.data : null
     })
     .catch(() => null)
 }
@@ -210,20 +241,16 @@ function matchesOwnership(
 }
 
 async function readState(): Promise<DaemonRecord | null> {
-  const value = await readJson<Partial<DaemonRecord>>(localPaths().statePath)
-  return value &&
-    typeof value.pid === 'number' &&
-    typeof value.instanceId === 'string' &&
-    typeof value.apiUrl === 'string' &&
-    typeof value.dataDir === 'string'
-    ? (value as DaemonRecord)
-    : null
+  return readJson(localPaths().statePath, daemonRecordSchema)
 }
 
 async function removeStaleState(state: DaemonRecord): Promise<void> {
   const paths = localPaths()
   for (const filePath of [paths.statePath, paths.lockPath]) {
-    const value = await readJson<Partial<DaemonRecord>>(filePath)
+    const value = await readJson(
+      filePath,
+      z.looseObject({ instanceId: z.string() })
+    )
     if (value?.instanceId === state.instanceId) {
       await fs.rm(filePath, { force: true })
     }
@@ -288,9 +315,51 @@ async function executableCheck(
   })
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null
+interface TailscaleServeConfiguration {
+  TCP?: { [port: string]: object } | undefined
+  Foreground?: { [name: string]: TailscaleServeConfiguration } | undefined
+  Web?:
+    | {
+        [hostPort: string]: {
+          Handlers?:
+            | { [path: string]: { Proxy?: string | undefined } }
+            | undefined
+        }
+      }
+    | undefined
 }
+
+const tailscaleStatusResponseSchema = z.looseObject({
+  BackendState: z.string().optional(),
+  Self: z
+    .looseObject({
+      DNSName: z.string().optional()
+    })
+    .optional()
+})
+
+const tailscaleServeConfigurationSchema: z.ZodType<TailscaleServeConfiguration> =
+  z.lazy(() =>
+    z.looseObject({
+      TCP: z.record(z.string(), z.looseObject({})).optional(),
+      Foreground: z
+        .record(z.string(), tailscaleServeConfigurationSchema)
+        .optional(),
+      Web: z
+        .record(
+          z.string(),
+          z.looseObject({
+            Handlers: z
+              .record(
+                z.string(),
+                z.looseObject({ Proxy: z.string().optional() })
+              )
+              .optional()
+          })
+        )
+        .optional()
+    })
+  )
 
 async function tailscale(args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -332,16 +401,17 @@ async function tailscale(args: string[]): Promise<string> {
   })
 }
 
-function tailscaleJson(
+function tailscaleJson<Output>(
   value: string,
-  command: string
-): Record<string, unknown> {
-  const parsed: unknown = JSON.parse(value)
-  if (!isRecord(parsed)) {
+  command: string,
+  schema: z.ZodType<Output>
+): Output {
+  const result = schema.safeParse(JSON.parse(value))
+  if (!result.success) {
     throw new Error(`Tailscale ${command} returned an invalid JSON response`)
   }
 
-  return parsed
+  return result.data
 }
 
 function remotePreference(value: Preferences): RemotePreference | null {
@@ -379,42 +449,31 @@ function localProxyTarget(apiUrl: string): string {
   return `http://${url.host}`
 }
 
-function portIsServed(config: Record<string, unknown>, port: number): boolean {
+function portIsServed(
+  config: TailscaleServeConfiguration,
+  port: number
+): boolean {
   const tcp = config.TCP
-  if (isRecord(tcp) && Object.hasOwn(tcp, String(port))) {
+  if (tcp && Object.hasOwn(tcp, String(port))) {
     return true
   }
 
-  const foreground = config.Foreground
-  return (
-    isRecord(foreground) &&
-    Object.values(foreground).some(
-      (value) => isRecord(value) && portIsServed(value, port)
-    )
+  return Object.values(config.Foreground ?? {}).some((value) =>
+    portIsServed(value, port)
   )
 }
 
 function rootProxyForPort(
-  config: Record<string, unknown>,
+  config: TailscaleServeConfiguration,
   port: number
 ): string | null {
-  const web = config.Web
-  if (!isRecord(web)) {
-    return null
-  }
-
-  for (const [hostPort, server] of Object.entries(web)) {
-    if (!hostPort.endsWith(`:${port}`) || !isRecord(server)) {
+  for (const [hostPort, server] of Object.entries(config.Web ?? {})) {
+    if (!hostPort.endsWith(`:${port}`)) {
       continue
     }
 
-    const handlers = server.Handlers
-    if (!isRecord(handlers) || !isRecord(handlers['/'])) {
-      continue
-    }
-
-    const proxy = handlers['/'].Proxy
-    if (typeof proxy === 'string') {
+    const proxy = server.Handlers?.['/']?.Proxy
+    if (proxy !== undefined) {
       return proxy
     }
   }
@@ -433,24 +492,28 @@ function proxyMatches(
   )
 }
 
-async function tailscaleServeConfig(): Promise<Record<string, unknown>> {
+async function tailscaleServeConfig(): Promise<TailscaleServeConfiguration> {
   return tailscaleJson(
     await tailscale(['serve', 'status', '--json']),
-    'serve status'
+    'serve status',
+    tailscaleServeConfigurationSchema
   )
 }
 
 async function tailscaleRemoteUrl(port: number): Promise<string> {
-  const status = tailscaleJson(await tailscale(['status', '--json']), 'status')
+  const status = tailscaleJson(
+    await tailscale(['status', '--json']),
+    'status',
+    tailscaleStatusResponseSchema
+  )
   if (status.BackendState !== 'Running') {
     throw new Error(
       'Tailscale is not connected. Run `tailscale up` then try again.'
     )
   }
 
-  const self = status.Self
-  const dnsName = isRecord(self) ? self.DNSName : undefined
-  if (typeof dnsName !== 'string' || !dnsName.trim()) {
+  const dnsName = status.Self?.DNSName
+  if (!dnsName?.trim()) {
     throw new Error(
       'Tailscale did not report a DNS name. Enable MagicDNS, then try again.'
     )

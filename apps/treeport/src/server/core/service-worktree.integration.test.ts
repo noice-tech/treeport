@@ -1162,6 +1162,7 @@ describe('TreeportService with injected command adapters', () => {
         path.join(worktree.path, '.git'),
         'utf8'
       )
+      const repositoryIdentity = null
       await database.db.transaction(async (tx) => {
         await tx.run(sql`
           INSERT INTO operations(
@@ -1171,6 +1172,8 @@ describe('TreeportService with injected command adapters', () => {
             ${JSON.stringify(
               includeIdentity
                 ? {
+                    confirmationToken: preview.confirmationToken,
+                    confirmDestructive: true,
                     preview,
                     checkoutIdentity: {
                       path: worktree.path,
@@ -1178,6 +1181,7 @@ describe('TreeportService with injected command adapters', () => {
                       inode: checkout.ino.toString(),
                       gitWorktreeKey,
                       gitMarker,
+                      repositoryIdentity,
                       managedWrapperPath: worktree.managedWrapperPath,
                       quarantinePath: path.join(
                         path.dirname(worktree.path),
@@ -1185,9 +1189,20 @@ describe('TreeportService with injected command adapters', () => {
                           worktree.path
                         )}.treeport-removing-${operationId}`
                       )
-                    }
+                    },
+                    prunable: false,
+                    gitWorktreeKey,
+                    repositoryIdentity
                   }
-                : {}
+                : {
+                    confirmationToken: preview.confirmationToken,
+                    confirmDestructive: true,
+                    preview,
+                    checkoutIdentity: null,
+                    prunable: false,
+                    gitWorktreeKey,
+                    repositoryIdentity
+                  }
             )},NULL,NULL,${timestamp},${timestamp}
           )
         `)
@@ -1196,9 +1211,17 @@ describe('TreeportService with injected command adapters', () => {
           WHERE id=${worktree.id}
         `)
       })
+      return path.join(
+        path.dirname(worktree.path),
+        `.${path.basename(worktree.path)}.treeport-removing-${operationId}`
+      )
     }
     await insertInterrupted('op_recoverable_root', recoverable, true)
-    await insertInterrupted('op_quarantined_root', quarantined, true)
+    const quarantinePath = await insertInterrupted(
+      'op_quarantined_root',
+      quarantined,
+      true
+    )
     await insertInterrupted('op_replaced_root', replaced, true)
     await insertInterrupted('op_repurposed_root', repurposed, true)
     await insertInterrupted('op_missing_identity_root', missingIdentity, false)
@@ -1207,12 +1230,6 @@ describe('TreeportService with injected command adapters', () => {
       path.join(path.dirname(recoverable.path), 'preserve.txt'),
       'preserve wrapper'
     )
-    const quarantinePath = (
-      (await service.getOperation('op_quarantined_root')).request
-        .checkoutIdentity as {
-        quarantinePath: string
-      }
-    ).quarantinePath
     expect(path.basename(quarantinePath)).toContain('.treeport-removing-')
     await fs.rename(quarantined.path, quarantinePath)
     await expect(fs.stat(quarantined.path)).rejects.toMatchObject({
@@ -1252,10 +1269,12 @@ describe('TreeportService with injected command adapters', () => {
       ),
       gh: new GhAdapter(runner)
     })
-    const events: Array<{ type: string; worktreeId: unknown }> = []
-    const unsubscribe = restarted.events.subscribe((event) =>
-      events.push({ type: event.type, worktreeId: event.data.worktreeId })
-    )
+    const events: Array<{ type: string; worktreeId: string }> = []
+    const unsubscribe = restarted.events.subscribe((event) => {
+      if (event.data.worktreeId !== null) {
+        events.push({ type: event.type, worktreeId: event.data.worktreeId })
+      }
+    })
     await restarted.initialize()
 
     await expect(fs.stat(recoverable.path)).rejects.toMatchObject({
@@ -1317,7 +1336,7 @@ describe('TreeportService with injected command adapters', () => {
     await expect(fs.stat(missingIdentity.path)).resolves.toBeTruthy()
     expect(await database.worktree(missingIdentity.id)).toMatchObject({
       status: 'cleanup_failed',
-      cleanupError: expect.stringMatching(/verifiable accepted preview/i)
+      cleanupError: expect.stringMatching(/matching filesystem identity/i)
     })
     expect(
       (await restarted.getOperation('op_missing_identity_root')).status
@@ -1368,26 +1387,39 @@ describe('TreeportService with injected command adapters', () => {
     const timestamp = new Date().toISOString()
     const insertInterrupted = async (
       operationId: string,
-      worktreeId: string
+      worktree: typeof beforeGit
     ) => {
+      const preview = await service.removePreview(worktree.id)
+      const binding = await database.db.get<{ git_worktree_key: string }>(sql`
+        SELECT git_worktree_key FROM worktrees WHERE id=${worktree.id}
+      `)
+      const repositoryIdentity = null
       await database.db.transaction(async (tx) => {
         await tx.run(sql`
           INSERT INTO operations(
             id,kind,project_id,worktree_id,status,request_json,result_json,error,created_at,updated_at
           ) VALUES(
-            ${operationId},'remove',${project.id},${worktreeId},'running','{}',
-            NULL,NULL,${timestamp},${timestamp}
+            ${operationId},'remove',${project.id},${worktree.id},'running',
+            ${JSON.stringify({
+              confirmationToken: preview.confirmationToken,
+              confirmDestructive: true,
+              preview,
+              checkoutIdentity: null,
+              prunable: false,
+              gitWorktreeKey: binding!.git_worktree_key,
+              repositoryIdentity
+            })},NULL,NULL,${timestamp},${timestamp}
           )
         `)
         await tx.run(sql`
           UPDATE worktrees SET status='cleaning',updated_at=${timestamp}
-          WHERE id=${worktreeId}
+          WHERE id=${worktree.id}
         `)
       })
     }
-    await insertInterrupted('op_before_git', beforeGit.id)
-    await insertInterrupted('op_after_git', afterGit.id)
-    await insertInterrupted('op_after_git_non_empty', afterGitNonEmpty.id)
+    await insertInterrupted('op_before_git', beforeGit)
+    await insertInterrupted('op_after_git', afterGit)
+    await insertInterrupted('op_after_git_non_empty', afterGitNonEmpty)
     for (const worktree of [afterGit, afterGitNonEmpty]) {
       runner.worktrees.splice(
         runner.worktrees.findIndex((item) => item.path === worktree.path),

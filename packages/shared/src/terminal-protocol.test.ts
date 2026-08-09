@@ -183,7 +183,7 @@ describe('Socket.IO contracts', () => {
         id: 'event-1',
         type: 'terminal.updated',
         at: '2026-01-01T00:00:00.000Z',
-        data: { terminalId: 'term' }
+        data: { terminalId: 'term', worktreeId: 'worktree' }
       })
     ).toMatchObject({ type: 'terminal.updated' })
     expect(

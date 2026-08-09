@@ -15,6 +15,7 @@ Treeport is a worktree-first terminal driver. It registers Git repositories, dis
 - Keep things in one function unless composable or reusable.
 - Do not extract single-use helpers preemptively. Inline the logic at the call site unless the helper is reused, hides a genuinely complex boundary, or has a clear independent name that improves the caller.
 - Avoid `try`/`catch` where possible.
+- Prefer a stable object shape with nullable properties over unions that require property-existence checks such as the `in` operator.
 - Do not add backward-compatibility paths for internal changes. For user-facing contracts, preserve compatibility when required; otherwise prefer a deliberate migration or clean change over maintaining legacy behavior.
 - Do not write tests that are really thin and assert strings. Test behavior in critical paths.
 

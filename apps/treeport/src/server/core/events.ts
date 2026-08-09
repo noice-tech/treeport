@@ -1,17 +1,24 @@
 import { EventEmitter } from 'node:events'
 import crypto from 'node:crypto'
-import type { ProductEvent, ProductEventType } from '@treeport/shared'
+import type {
+  ProductEvent,
+  ProductEventInputDataMap,
+  ProductEventType
+} from '@treeport/shared'
 
 export class ProductEventBus {
   private readonly emitter = new EventEmitter()
 
-  publish(type: ProductEventType, data: Record<string, unknown>): ProductEvent {
-    const event: ProductEvent = {
+  publish<Type extends ProductEventType>(
+    type: Type,
+    data: ProductEventInputDataMap[Type]
+  ): ProductEvent<Type> {
+    const event = {
       id: crypto.randomUUID(),
       type,
       at: new Date().toISOString(),
-      data
-    }
+      data: { ...data, worktreeId: data.worktreeId ?? null }
+    } as ProductEvent<Type>
     this.emitter.emit('event', event)
     return event
   }

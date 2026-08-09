@@ -67,15 +67,19 @@ function isReviewComment(value: unknown): value is ReviewComment {
     return false
   }
 
-  const candidate = value as Record<string, unknown>
+  const id: unknown = Reflect.get(value, 'id')
+  const file: unknown = Reflect.get(value, 'file')
+  const side: unknown = Reflect.get(value, 'side')
+  const lineNumber: unknown = Reflect.get(value, 'lineNumber')
+  const body: unknown = Reflect.get(value, 'body')
   return (
-    typeof candidate.id === 'string' &&
-    typeof candidate.file === 'string' &&
-    (candidate.side === 'additions' || candidate.side === 'deletions') &&
-    Number.isInteger(candidate.lineNumber) &&
-    typeof candidate.lineNumber === 'number' &&
-    candidate.lineNumber >= 0 &&
-    typeof candidate.body === 'string'
+    typeof id === 'string' &&
+    typeof file === 'string' &&
+    (side === 'additions' || side === 'deletions') &&
+    Number.isInteger(lineNumber) &&
+    typeof lineNumber === 'number' &&
+    lineNumber >= 0 &&
+    typeof body === 'string'
   )
 }
 

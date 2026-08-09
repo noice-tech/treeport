@@ -5,6 +5,7 @@ import {
   TERMINAL_OUTPUT_HIGH_WATERMARK,
   TERMINAL_OUTPUT_STALL_TIMEOUT_MS,
   type TerminalServerEvent,
+  type TerminalServerEventPayloads,
   type TerminalServerPayload
 } from '@treeport/shared'
 import {
@@ -111,11 +112,17 @@ class FakeProgressObserver implements TerminalProgressObserver {
   }
 }
 
+type SentTerminalMessage = {
+  [Event in TerminalServerEvent]: {
+    type: Event
+  } & TerminalServerEventPayloads[Event]
+}[TerminalServerEvent]
+
 class FakeTransport implements TerminalTransport {
   private static serial = 0
   readonly id = `socket-${++FakeTransport.serial}`
   connected = true
-  sent: Array<{ type: TerminalServerEvent } & Record<string, unknown>> = []
+  sent: SentTerminalMessage[] = []
   disconnects: boolean[] = []
   failAfter: number | null = null
 
@@ -131,7 +138,7 @@ class FakeTransport implements TerminalTransport {
       return false
     }
 
-    this.sent.push({ type: event, ...payload })
+    this.sent.push({ type: event, ...payload } as SentTerminalMessage)
     return true
   }
 
@@ -673,6 +680,10 @@ describe('TerminalAttachmentManager', () => {
       rows: 30
     })
     const control = multibyte.sent.at(-1)!
+    if (control.type !== 'control') {
+      throw new Error('Expected the latest message to grant control')
+    }
+
     manager.message(secondId, 'input', {
       generation: control.generation,
       data: '💥'.repeat(20_000)
@@ -716,6 +727,9 @@ describe('TerminalAttachmentManager', () => {
       })
     )
     const viewerControl = viewer.sent.at(-1)!
+    if (viewerControl.type !== 'control') {
+      throw new Error('Expected the viewer to receive control')
+    }
 
     manager.message(firstId, 'input', { generation: 1, data: 'stale' })
     manager.message(viewerId, 'binary', {
@@ -790,7 +804,9 @@ describe('TerminalAttachmentManager', () => {
 
     ptys[0]!.emit('old output')
     expect(
-      reconnect.sent.some((message) => message.data === 'old output')
+      reconnect.sent.some(
+        (message) => message.type === 'output' && message.data === 'old output'
+      )
     ).toBe(false)
     manager.close(reconnectId)
   })

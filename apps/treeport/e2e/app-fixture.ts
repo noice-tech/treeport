@@ -3,6 +3,7 @@ import {
   type OperationRecord,
   type ProjectColor,
   type RecentProjectRecord,
+  type RemovePreview,
   type TerminalPreset,
   type TerminalRuntimeMetadata
 } from '@treeport/shared'
@@ -588,7 +589,7 @@ export async function mockApp(
   let failClose = false
   let removePreviewRequests = 0
   let removePreviewDelayMs = 0
-  let removePreviewOverride: Record<string, unknown> = {}
+  let removePreviewOverride: Partial<RemovePreview> = {}
   let fileUploadRequests = 0
   let terminalCreations = 0
   let terminalCreateGate: Promise<void> | null = null
@@ -606,7 +607,7 @@ export async function mockApp(
       source: { type: 'project' as const }
     }
   ]
-  let staleRemovePreview: Record<string, unknown> | null = null
+  let staleRemovePreview: Partial<RemovePreview> | null = null
   let removeRequests = 0
   const removeRequestBodies: unknown[] = []
   let removeGate: Promise<void> | null = null
@@ -1341,7 +1342,7 @@ export async function mockApp(
     setWebPanelHasStorage: (value: boolean) => {
       webPanelHasStorage = value
     },
-    setRemovePreview: (value: Record<string, unknown>) => {
+    setRemovePreview: (value: Partial<RemovePreview>) => {
       removePreviewOverride = value
     },
     setRemovePreviewDelay: (value: number) => {
@@ -1349,7 +1350,7 @@ export async function mockApp(
     },
     removeRequests: () => removeRequests,
     removeRequestBodies: () => [...removeRequestBodies],
-    staleNextRemoveWithPreview: (value: Record<string, unknown>) => {
+    staleNextRemoveWithPreview: (value: Partial<RemovePreview>) => {
       staleRemovePreview = value
     },
     delayNextRemove: () => {

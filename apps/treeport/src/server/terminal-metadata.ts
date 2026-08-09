@@ -335,21 +335,15 @@ export class TerminalMetadataManager {
   }
 
   private handleProductEvent(event: ProductEvent): void {
-    const terminalId =
-      typeof event.data.terminalId === 'string' ? event.data.terminalId : null
-    if (event.type === 'terminal.removed' && terminalId) {
-      this.removeTerminal(terminalId)
+    if (event.type === 'terminal.removed') {
+      this.removeTerminal(event.data.terminalId)
       return
     }
 
     if (event.type === 'worktree.removed') {
-      const worktreeId =
-        typeof event.data.worktreeId === 'string' ? event.data.worktreeId : null
-      if (worktreeId) {
-        for (const entry of this.entries.values()) {
-          if (entry.worktreeId === worktreeId) {
-            this.removeTerminal(entry.terminalId)
-          }
+      for (const entry of this.entries.values()) {
+        if (entry.worktreeId === event.data.worktreeId) {
+          this.removeTerminal(entry.terminalId)
         }
       }
 
@@ -357,10 +351,10 @@ export class TerminalMetadataManager {
     }
 
     if (
-      (event.type === 'terminal.created' ||
-        event.type === 'terminal.updated') &&
-      terminalId
+      event.type === 'terminal.created' ||
+      event.type === 'terminal.updated'
     ) {
+      const { terminalId } = event.data
       void this.service
         .getTerminal(terminalId)
         .then(async (terminal) => {

@@ -2,34 +2,116 @@ import { z } from 'zod'
 import type { ProductEvent } from './index.js'
 import { terminalRuntimeMetadataSchema } from './terminal-protocol.js'
 
-const productEventTypeSchema = z.enum([
-  'project.created',
-  'project.updated',
-  'project.removed',
-  'worktree.created',
-  'worktree.updated',
-  'create.started',
-  'create.completed',
-  'create.failed',
-  'worktree.removed',
-  'terminal.created',
-  'terminal.updated',
-  'terminal.removed',
-  'terminal.metadata',
-  'terminal.controller_changed',
-  'panel.created',
-  'panel.removed',
-  'remove.started',
-  'remove.completed',
-  'remove.failed'
-])
-
-export const productEventSchema = z.strictObject({
-  id: z.string().min(1).max(128),
-  type: productEventTypeSchema,
-  at: z.string().datetime(),
-  data: z.record(z.string(), z.unknown())
+const identifierSchema = z.string().min(1).max(128)
+const eventEnvelope = <Type extends string, DataSchema extends z.ZodType>(
+  type: Type,
+  data: DataSchema
+) =>
+  z.strictObject({
+    id: identifierSchema,
+    type: z.literal(type),
+    at: z.string().datetime(),
+    data
+  })
+const projectEventDataSchema = z.strictObject({
+  projectId: identifierSchema,
+  worktreeId: z.null()
 })
+const worktreeEventDataSchema = z.strictObject({
+  worktreeId: identifierSchema
+})
+const projectWorktreeEventDataSchema = z.strictObject({
+  projectId: identifierSchema,
+  worktreeId: identifierSchema
+})
+const operationEventDataSchema = z.strictObject({
+  operationId: identifierSchema,
+  worktreeId: identifierSchema
+})
+
+export const productEventSchema = z.discriminatedUnion('type', [
+  eventEnvelope('project.created', projectEventDataSchema),
+  eventEnvelope('project.updated', projectEventDataSchema),
+  eventEnvelope('project.removed', projectEventDataSchema),
+  eventEnvelope('worktree.created', projectWorktreeEventDataSchema),
+  eventEnvelope('worktree.updated', worktreeEventDataSchema),
+  eventEnvelope('worktree.removed', projectWorktreeEventDataSchema),
+  eventEnvelope(
+    'create.started',
+    z.strictObject({
+      projectId: identifierSchema,
+      operationId: identifierSchema,
+      worktreeId: z.null()
+    })
+  ),
+  eventEnvelope(
+    'create.completed',
+    z.strictObject({
+      projectId: identifierSchema,
+      operationId: identifierSchema,
+      worktreeId: identifierSchema
+    })
+  ),
+  eventEnvelope(
+    'create.failed',
+    z.strictObject({
+      projectId: identifierSchema,
+      operationId: identifierSchema,
+      worktreeId: z.null()
+    })
+  ),
+  eventEnvelope(
+    'terminal.created',
+    z.strictObject({
+      projectId: identifierSchema.optional(),
+      worktreeId: identifierSchema,
+      terminalId: identifierSchema
+    })
+  ),
+  eventEnvelope(
+    'terminal.updated',
+    z.strictObject({
+      worktreeId: identifierSchema,
+      terminalId: identifierSchema
+    })
+  ),
+  eventEnvelope(
+    'terminal.removed',
+    z.strictObject({
+      worktreeId: identifierSchema,
+      terminalId: identifierSchema
+    })
+  ),
+  eventEnvelope(
+    'terminal.metadata',
+    terminalRuntimeMetadataSchema.extend({ worktreeId: z.null() })
+  ),
+  eventEnvelope(
+    'terminal.controller_changed',
+    z.strictObject({
+      terminalId: identifierSchema,
+      controlled: z.boolean(),
+      worktreeId: z.null()
+    })
+  ),
+  eventEnvelope(
+    'panel.created',
+    z.strictObject({ worktreeId: identifierSchema, panelId: identifierSchema })
+  ),
+  eventEnvelope(
+    'panel.removed',
+    z.strictObject({ worktreeId: identifierSchema, panelId: identifierSchema })
+  ),
+  eventEnvelope(
+    'remove.started',
+    operationEventDataSchema.extend({ kind: z.literal('remove') })
+  ),
+  eventEnvelope('remove.completed', operationEventDataSchema),
+  eventEnvelope(
+    'remove.failed',
+    operationEventDataSchema.extend({ error: z.string() })
+  )
+])
 
 const webPanelSnapshotSchema = z.strictObject({
   id: z.string().min(1),
@@ -63,5 +145,5 @@ export function parseEventsSnapshot(value: unknown): EventsSnapshot | null {
 
 export function parseProductEvent(value: unknown): ProductEvent | null {
   const parsed = productEventSchema.safeParse(value)
-  return parsed.success ? (parsed.data as ProductEvent) : null
+  return parsed.success ? parsed.data : null
 }
