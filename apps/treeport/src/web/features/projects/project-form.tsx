@@ -7,7 +7,7 @@ import {
   HomeIcon
 } from '@heroicons/react/16/solid'
 import type { ProjectRecord } from '@treeport/shared'
-import { apiClient } from '../../api'
+import { parseRpcResponse, rpc } from '../../api'
 import { Button } from '../../components/ui/button'
 import { FormField } from '../../components/ui/form-field'
 import { Input } from '../../components/ui/input'
@@ -35,12 +35,22 @@ export function ProjectForm({
 
   const directoryQuery = useQuery({
     queryKey: ['filesystem-directories', debouncedPath, showHidden],
-    queryFn: () => apiClient.browseDirectories(debouncedPath, showHidden),
+    queryFn: () =>
+      parseRpcResponse(
+        rpc.api.filesystem.directories.$get({
+          query: {
+            input: debouncedPath,
+            ...(showHidden ? { hidden: 'true' } : {})
+          }
+        })
+      ),
     enabled: Boolean(debouncedPath),
     retry: false
   })
   const openProject = useMutation({
-    mutationFn: (path: string) => apiClient.addProject(path),
+    mutationFn: async (path: string) =>
+      (await parseRpcResponse(rpc.api.projects.$post({ json: { path } })))
+        .project,
     onSuccess: onOpened,
     onError: notifyError
   })

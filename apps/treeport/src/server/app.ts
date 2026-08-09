@@ -5,9 +5,11 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Hono } from 'hono'
-import type { Context } from 'hono'
-import type { ZodType } from 'zod'
+import { HTTPException } from 'hono/http-exception'
+import { validator } from 'hono/validator'
+import { z } from 'zod'
 import { serveStatic } from '@hono/node-server/serve-static'
+import { zValidator } from '@hono/zod-validator'
 import {
   browseDirectoryQuerySchema,
   createTerminalPresetSchema,
@@ -53,6 +55,12 @@ const UPLOAD_MIME_EXTENSIONS: Readonly<Record<string, string>> = {
 }
 const UPLOAD_RETENTION_MS = 24 * 60 * 60_000
 const UPLOAD_DIRECTORY_MAX_BYTES = 512 * 1024 * 1024
+const optionalProjectQuerySchema = z.object({
+  projectId: z.string().optional()
+})
+const discardStoredDataQuerySchema = z.object({
+  discardStoredData: z.string().optional()
+})
 
 interface UploadFileInfo {
   path: string
@@ -119,28 +127,30 @@ interface AppDependencies {
   webDist?: string
 }
 
-async function input<T>(context: Context, schema: ZodType<T>): Promise<T> {
-  let body: unknown
-  try {
-    body = await context.req.json()
-  } catch {
-    throw new DomainError(
-      'INVALID_JSON',
-      'Request body must be valid JSON',
-      400
-    )
-  }
-  const result = schema.safeParse(body)
-  if (!result.success) {
-    throw new DomainError(
-      'VALIDATION_ERROR',
-      'Request validation failed',
-      400,
-      result.error.flatten()
-    )
-  }
+function jsonInput<T extends z.ZodType>(schema: T) {
+  return zValidator('json', schema, (result) => {
+    if (!result.success) {
+      throw new DomainError(
+        'VALIDATION_ERROR',
+        'Request validation failed',
+        400,
+        z.flattenError(result.error)
+      )
+    }
+  })
+}
 
-  return result.data
+function queryInput<T extends z.ZodType>(schema: T) {
+  return zValidator('query', schema, (result) => {
+    if (!result.success) {
+      throw new DomainError(
+        'VALIDATION_ERROR',
+        'Request validation failed',
+        400,
+        z.flattenError(result.error)
+      )
+    }
+  })
 }
 
 export function createApp({
@@ -149,7 +159,7 @@ export function createApp({
   tmux,
   terminalMetadata,
   webDist
-}: AppDependencies): Hono {
+}: AppDependencies) {
   const app = new Hono()
   const metadata =
     terminalMetadata ??
@@ -163,6 +173,22 @@ export function createApp({
   let terminalUploadQueue = Promise.resolve()
 
   app.onError((error, context) => {
+    if (
+      error instanceof HTTPException &&
+      error.status === 400 &&
+      error.message === 'Malformed JSON in request body'
+    ) {
+      return context.json(
+        {
+          error: {
+            code: 'INVALID_JSON',
+            message: 'Request body must be valid JSON'
+          }
+        },
+        400
+      )
+    }
+
     if (error instanceof DomainError) {
       return context.json(
         {
@@ -192,615 +218,702 @@ export function createApp({
     )
   })
 
-  app.get('/api/health', (context) =>
-    context.json({
-      ok: true,
-      version: config.appVersion ?? 'development',
-      protocolVersion: DESKTOP_PROTOCOL_VERSION,
-      hostname: os.hostname(),
-      pid: process.pid,
-      instanceId: config.instanceId ?? null,
-      installationMethod: config.installationMethod ?? 'development',
-      daemonLifecycle: config.daemonLifecycle,
-      url: config.apiUrl
-    })
-  )
-
-  app.get('/api/terminal-presets', async (context) =>
-    context.json({ presets: await service.listTerminalPresets() })
-  )
-
-  app.get('/api/terminal-preset-definitions', async (context) =>
-    context.json({
-      definitions: await service.listTerminalPresetDefinitions(
-        context.req.query('projectId') || undefined
-      )
-    })
-  )
-
-  app.post('/api/terminal-presets', async (context) => {
-    const body = await input(context, createTerminalPresetSchema)
-    return context.json(
-      { preset: await service.createTerminalPreset(body) },
-      201
+  const api = new Hono()
+    .get('/api/health', (context) =>
+      context.json({
+        ok: true,
+        version: config.appVersion ?? 'development',
+        protocolVersion: DESKTOP_PROTOCOL_VERSION,
+        hostname: os.hostname(),
+        pid: process.pid,
+        instanceId: config.instanceId ?? null,
+        installationMethod: config.installationMethod ?? 'development',
+        daemonLifecycle: config.daemonLifecycle,
+        url: config.apiUrl
+      })
     )
-  })
 
-  app.patch('/api/terminal-presets/:presetId', async (context) => {
-    const body = await input(context, updateTerminalPresetSchema)
-    const { expectedUpdatedAt, ...presetInput } = body
-    return context.json({
-      preset: await service.updateTerminalPreset(
-        context.req.param('presetId'),
-        presetInput,
-        expectedUpdatedAt
-      )
-    })
-  })
-
-  app.delete('/api/terminal-presets/:presetId', async (context) => {
-    const body = await input(context, deleteTerminalPresetSchema)
-    await service.deleteTerminalPreset(
-      context.req.param('presetId'),
-      body.expectedUpdatedAt
+    .get('/api/terminal-presets', async (context) =>
+      context.json({ presets: await service.listTerminalPresets() })
     )
-    return context.json({ ok: true })
-  })
 
-  app.get('/api/packages', async (context) =>
-    context.json(await service.listPackages())
-  )
-
-  app.get('/api/packages/project', async (context) => {
-    const query = packageProjectQuerySchema.safeParse(context.req.query())
-    if (!query.success) {
-      throw new DomainError(
-        'VALIDATION_ERROR',
-        'Request validation failed',
-        400,
-        query.error.flatten()
-      )
-    }
-
-    return context.json({
-      project: await service.resolveRegisteredProject(query.data.path)
-    })
-  })
-
-  app.post('/api/packages/install', async (context) => {
-    const body = await input(context, packageInstallSchema)
-    return context.json({
-      result: await service.installPackage(body.source, body.projectId)
-    })
-  })
-
-  app.post('/api/packages/remove', async (context) => {
-    const body = await input(context, packageRemoveSchema)
-    return context.json({
-      result: await service.removePackage(body.source, body.projectId)
-    })
-  })
-
-  app.post('/api/packages/update', async (context) => {
-    const body = await input(context, packageUpdateSchema)
-    return context.json({ results: await service.updatePackages(body.source) })
-  })
-
-  app.post('/api/packages/reload', async (context) => {
-    const body = await input(context, packageReloadSchema)
-    return context.json(await service.reloadPackages(body.projectId))
-  })
-
-  app.get('/api/projects', async (context) =>
-    context.json({ projects: await service.listProjects() })
-  )
-
-  app.get('/api/projects/recent', async (context) =>
-    context.json({ projects: await service.listRecentProjects() })
-  )
-
-  app.get('/api/filesystem/directories', async (context) => {
-    const result = browseDirectoryQuerySchema.safeParse(context.req.query())
-    if (!result.success) {
-      throw new DomainError(
-        'VALIDATION_ERROR',
-        'Request validation failed',
-        400,
-        result.error.flatten()
-      )
-    }
-
-    return context.json(
-      await service.browseDirectory(result.data.input, result.data.hidden)
+    .get(
+      '/api/terminal-preset-definitions',
+      queryInput(optionalProjectQuerySchema),
+      async (context) =>
+        context.json({
+          definitions: await service.listTerminalPresetDefinitions(
+            context.req.valid('query').projectId
+          )
+        })
     )
-  })
 
-  app.post('/api/projects', async (context) => {
-    const body = await input(context, registerProjectSchema)
-    const registered = await service.registerProject(body.path, body.name)
-    return context.json(
-      { project: await service.getProjectSnapshot(registered.id) },
-      201
-    )
-  })
-
-  app.post('/api/projects/:projectId/open', async (context) =>
-    context.json({
-      project: await service.openProject(context.req.param('projectId'))
-    })
-  )
-
-  app.post('/api/projects/:projectId/close', async (context) => {
-    await service.closeProject(context.req.param('projectId'))
-    return context.json({ ok: true })
-  })
-
-  app.get('/api/projects/:projectId', async (context) =>
-    context.json({
-      project: await service.getProjectSnapshot(context.req.param('projectId'))
-    })
-  )
-
-  app.patch('/api/projects/:projectId', async (context) => {
-    const body = await input(context, updateProjectSchema)
-    const projectId = context.req.param('projectId')
-    await service.updateProjectColor(projectId, body.color)
-    return context.json({
-      project: await service.getProjectSnapshot(projectId)
-    })
-  })
-
-  app.post('/api/projects/:projectId/refresh', async (context) => {
-    const projectId = context.req.param('projectId')
-    await service.refreshProject(projectId)
-    return context.json({
-      project: await service.getProjectSnapshot(projectId)
-    })
-  })
-
-  app.delete('/api/projects/:projectId', async (context) => {
-    await service.deleteProject(context.req.param('projectId'))
-    return context.json({ ok: true })
-  })
-
-  app.get('/api/projects/:projectId/worktrees', async (context) =>
-    context.json({
-      worktrees: (
-        await service.getProjectSnapshot(context.req.param('projectId'))
-      ).worktrees
-    })
-  )
-
-  app.post('/api/projects/:projectId/worktree-operations', async (context) => {
-    const body = await input(context, createWorktreeSchema)
-    const initialTerminal = body.initialTerminal
-      ? {
-          name: body.initialTerminal.name,
-          ...(body.initialTerminal.argv
-            ? { argv: body.initialTerminal.argv }
-            : {}),
-          ...(body.initialTerminal.returnToShell
-            ? { returnToShell: true }
-            : {}),
-          ...(body.initialTerminal.initialSize
-            ? { initialSize: body.initialTerminal.initialSize }
-            : {})
-        }
-      : undefined
-    return context.json(
-      {
-        operation: await service.beginCreateWorktree(
-          context.req.param('projectId'),
-          body.name,
-          body.base,
-          initialTerminal,
-          body.sourceWorktreeId
-        )
-      },
-      202
-    )
-  })
-
-  app.get('/api/worktrees/:worktreeId', async (context) => {
-    const worktreeId = context.req.param('worktreeId')
-    await service.refreshPr(worktreeId, false)
-    return context.json({
-      worktree: await service.getWorktreeSnapshot(worktreeId)
-    })
-  })
-
-  app.get('/api/worktrees/:worktreeId/web-panel-definitions', async (context) =>
-    context.json({
-      definitions: await service.listWebPanelDefinitions(
-        context.req.param('worktreeId')
-      )
-    })
-  )
-
-  app.post('/api/worktrees/:worktreeId/panels', async (context) => {
-    const body = await input(context, createWebPanelSchema)
-    return context.json(
-      {
-        panel: await service.createWebPanel(
-          context.req.param('worktreeId'),
-          body.definitionId
-        )
-      },
-      201
-    )
-  })
-
-  app.delete('/api/panels/:panelId', async (context) => {
-    await service.deleteWebPanel(
-      context.req.param('panelId'),
-      context.req.query('discardStoredData') === 'true'
-    )
-    return context.json({ ok: true })
-  })
-
-  app.get('/api/panels/:panelId/context', async (context) =>
-    context.json({
-      context: await service.getWebPanelContext(context.req.param('panelId'))
-    })
-  )
-
-  app.get('/api/panels/:panelId/diff', async (context) =>
-    context.json({
-      diff: await service.getWebPanelDiff(context.req.param('panelId'))
-    })
-  )
-
-  app.get('/api/panels/:panelId/storage', async (context) =>
-    context.json({
-      hasData: await service.hasWebPanelStorage(context.req.param('panelId'))
-    })
-  )
-
-  app.post('/api/panels/:panelId/storage/get', async (context) => {
-    const body = await input(context, getWebPanelStorageSchema)
-    return context.json({
-      value: await service.getWebPanelStorage(
-        context.req.param('panelId'),
-        body.key
-      )
-    })
-  })
-
-  app.put('/api/panels/:panelId/storage', async (context) => {
-    const body = await input(context, setWebPanelStorageSchema)
-    await service.setWebPanelStorage(
-      context.req.param('panelId'),
-      body.key,
-      body.value
-    )
-    return context.json({ ok: true })
-  })
-
-  app.delete('/api/panels/:panelId/storage', async (context) => {
-    const body = await input(context, deleteWebPanelStorageSchema)
-    await service.deleteWebPanelStorage(context.req.param('panelId'), body.key)
-    return context.json({ ok: true })
-  })
-
-  app.get('/api/web-panels/:panelId/assets/*', async (context) => {
-    const pathname = new URL(context.req.url).pathname
-    const assetMarker = `/api/web-panels/${encodeURIComponent(
-      context.req.param('panelId')
-    )}/assets/`
-    const requestedPath = decodeURI(
-      pathname.slice(pathname.indexOf(assetMarker) + assetMarker.length)
-    )
-    const resolution = await service.resolveWebPanelAsset(
-      context.req.param('panelId'),
-      requestedPath
-    )
-    if (resolution.kind === 'redirect') {
-      context.header('cache-control', 'no-store')
-      return context.redirect(resolution.location, 307)
-    }
-
-    const browserOrigin = webPanelBrowserOrigin({
-      referrer: context.req.header('referer'),
-      forwardedHost: context.req.header('x-forwarded-host'),
-      host: context.req.header('host'),
-      forwardedProtocol: context.req.header('x-forwarded-proto'),
-      requestProtocol: new URL(context.req.url).protocol
-    })
-
-    if (resolution.kind === 'error') {
-      context.header('content-type', 'text/html; charset=utf-8')
-      context.header('cache-control', 'no-store')
-      context.header('x-content-type-options', 'nosniff')
-      context.header(
-        'content-security-policy',
-        webPanelContentSecurityPolicy('error', browserOrigin)
-      )
-      return context.html(resolution.html, 500)
-    }
-
-    const extension = path.extname(resolution.path).toLowerCase()
-    const body = await fs.readFile(resolution.path)
-    const mimeTypes: Record<string, string> = {
-      '.css': 'text/css; charset=utf-8',
-      '.gif': 'image/gif',
-      '.html': 'text/html; charset=utf-8',
-      '.jpeg': 'image/jpeg',
-      '.jpg': 'image/jpeg',
-      '.js': 'text/javascript; charset=utf-8',
-      '.json': 'application/json; charset=utf-8',
-      '.map': 'application/json; charset=utf-8',
-      '.mjs': 'text/javascript; charset=utf-8',
-      '.png': 'image/png',
-      '.svg': 'image/svg+xml',
-      '.webp': 'image/webp',
-      '.woff': 'font/woff',
-      '.woff2': 'font/woff2'
-    }
-
-    context.header(
-      'content-type',
-      mimeTypes[extension] ?? 'application/octet-stream'
-    )
-    context.header('cache-control', 'public, max-age=31536000, immutable')
-    context.header('access-control-allow-origin', '*')
-    context.header(
-      'content-security-policy',
-      webPanelContentSecurityPolicy('immutable', browserOrigin)
-    )
-    context.header('x-content-type-options', 'nosniff')
-    return context.body(body as any)
-  })
-
-  app.post('/api/worktrees/:worktreeId/terminals', async (context) => {
-    const body = await input(context, createTerminalSchema)
-    const terminal = await service.createTerminal(
-      context.req.param('worktreeId'),
-      body.name,
-      body.argv,
-      body.returnToShell || body.closeOnSuccess || body.initialSize
-        ? {
-            ...(body.returnToShell ? { returnToShell: true } : {}),
-            ...(body.closeOnSuccess ? { closeOnSuccess: true } : {}),
-            ...(body.initialSize ? { initialSize: body.initialSize } : {})
-          }
-        : undefined
-    )
-    return context.json({ terminal }, 201)
-  })
-
-  app.get('/api/worktrees/:worktreeId/remove-preview', async (context) =>
-    context.json({
-      preview: await service.removePreview(context.req.param('worktreeId'))
-    })
-  )
-
-  app.post('/api/worktrees/:worktreeId/remove', async (context) => {
-    const body = await input(context, removeWorktreeSchema)
-    return context.json(
-      {
-        operation: await service.beginRemove(
-          context.req.param('worktreeId'),
-          body
-        )
-      },
-      202
-    )
-  })
-
-  app.post('/api/worktrees/:worktreeId/pr/refresh', async (context) =>
-    context.json({
-      pr: await service.refreshPr(context.req.param('worktreeId'), true)
-    })
-  )
-
-  app.get('/api/terminals/:terminalId/capture', async (context) => {
-    const query = terminalCaptureQuerySchema.safeParse(context.req.query())
-    if (!query.success) {
-      throw new DomainError(
-        'VALIDATION_ERROR',
-        'Request validation failed',
-        400,
-        query.error.flatten()
-      )
-    }
-
-    const terminal = await service.getTerminal(context.req.param('terminalId'))
-    const worktree = await service.getWorktree(terminal.worktreeId)
-    const content = await tmux.capturePane(
-      worktree.tmuxSocketName,
-      terminal.tmuxSessionName,
-      query.data.lines
-    )
-    if (content === null) {
-      throw new DomainError(
-        'TERMINAL_CAPTURE_UNAVAILABLE',
-        'Terminal pane is unavailable',
-        409,
-        { terminalId: terminal.id }
-      )
-    }
-
-    return context.json({
-      terminalId: terminal.id,
-      capturedAt: new Date().toISOString(),
-      lineLimit: query.data.lines,
-      content
-    })
-  })
-
-  app.get('/api/terminals/:terminalId', async (context) => {
-    const terminal = await service.refreshTerminalStatus(
-      context.req.param('terminalId')
-    )
-    await metadataReady
-    const worktree = await service.database.worktree(terminal.worktreeId)
-    if (worktree) {
-      await metadata.trackTerminal(terminal, worktree)
-    }
-
-    return context.json({ terminal, metadata: metadata.get(terminal.id) })
-  })
-
-  app.post('/api/terminals/:terminalId/bell/acknowledge', async (context) => {
-    const terminalId = context.req.param('terminalId')
-    const body = await input(context, terminalBellAcknowledgementSchema)
-    await metadataReady
-    await service.getTerminal(terminalId)
-    metadata.acknowledgeBell(terminalId, body.sequence)
-    return context.json({ ok: true })
-  })
-
-  app.post('/api/terminals/:terminalId/files', async (context) => {
-    await service.getTerminal(context.req.param('terminalId'))
-
-    const contentLength = context.req.header('content-length')
-    if (contentLength) {
-      const declaredBytes = Number(contentLength)
-      if (!Number.isSafeInteger(declaredBytes) || declaredBytes < 0) {
-        throw new DomainError('VALIDATION_ERROR', 'File size is invalid', 400)
-      }
-
-      if (declaredBytes > TERMINAL_MAX_UPLOAD_BYTES) {
-        throw new DomainError(
-          'FILE_TOO_LARGE',
-          `Files are limited to ${TERMINAL_MAX_UPLOAD_BYTES} bytes`,
-          413
+    .post(
+      '/api/terminal-presets',
+      jsonInput(createTerminalPresetSchema),
+      async (context) => {
+        const body = context.req.valid('json')
+        return context.json(
+          { preset: await service.createTerminalPreset(body) },
+          201
         )
       }
-    }
+    )
 
-    const requestedExtension = context.req
-      .header('x-treeport-file-extension')
-      ?.toLowerCase()
-    if (requestedExtension && !/^[a-z0-9]{1,16}$/.test(requestedExtension)) {
-      throw new DomainError(
-        'VALIDATION_ERROR',
-        'File extension is invalid',
-        400
-      )
-    }
-
-    const waitForPreviousUpload = terminalUploadQueue
-    let releaseUpload!: () => void
-    terminalUploadQueue = new Promise<void>((resolve) => {
-      releaseUpload = resolve
-    })
-    await waitForPreviousUpload
-
-    try {
-      const contentType =
-        context.req.header('content-type')?.split(';', 1)[0]?.toLowerCase() ??
-        ''
-      const extension =
-        requestedExtension || UPLOAD_MIME_EXTENSIONS[contentType] || ''
-      const uploadDirectory = path.join(config.runtimeDir, 'uploads')
-      await fs.mkdir(uploadDirectory, { recursive: true, mode: 0o700 })
-      await fs.chmod(uploadDirectory, 0o700)
-      await pruneTerminalUploads(uploadDirectory)
-      const filePath = path.join(
-        uploadDirectory,
-        `treeport-upload-${crypto.randomUUID()}${
-          extension ? `.${extension}` : ''
-        }`
-      )
-      const file = await fs.open(filePath, 'wx', 0o600)
-      let complete = false
-      let receivedBytes = 0
-      try {
-        const reader = context.req.raw.body?.getReader()
-        if (reader) {
-          while (true) {
-            const { done, value } = await reader.read()
-            if (done) {
-              break
-            }
-
-            receivedBytes += value.byteLength
-            if (receivedBytes > TERMINAL_MAX_UPLOAD_BYTES) {
-              throw new DomainError(
-                'FILE_TOO_LARGE',
-                `Files are limited to ${TERMINAL_MAX_UPLOAD_BYTES} bytes`,
-                413
-              )
-            }
-
-            await file.writeFile(value)
-          }
-        }
-
-        complete = true
-      } finally {
-        await file.close()
-        if (!complete) {
-          await fs.rm(filePath, { force: true })
-        }
+    .patch(
+      '/api/terminal-presets/:presetId',
+      jsonInput(updateTerminalPresetSchema),
+      async (context) => {
+        const body = context.req.valid('json')
+        const { expectedUpdatedAt, ...presetInput } = body
+        return context.json({
+          preset: await service.updateTerminalPreset(
+            context.req.param('presetId'),
+            presetInput,
+            expectedUpdatedAt
+          )
+        })
       }
+    )
 
-      await pruneTerminalUploads(uploadDirectory, filePath)
-      return context.json({ file: { path: filePath } }, 201)
-    } finally {
-      releaseUpload()
-    }
-  })
+    .delete(
+      '/api/terminal-presets/:presetId',
+      jsonInput(deleteTerminalPresetSchema),
+      async (context) => {
+        const body = context.req.valid('json')
+        await service.deleteTerminalPreset(
+          context.req.param('presetId'),
+          body.expectedUpdatedAt
+        )
+        return context.json({ ok: true })
+      }
+    )
 
-  app.patch('/api/terminals/:terminalId', async (context) => {
-    const body = await input(context, updateTerminalSchema)
-    return context.json({
-      terminal: await service.renameTerminal(
-        context.req.param('terminalId'),
-        body.name
-      )
+    .get('/api/packages', async (context) =>
+      context.json(await service.listPackages())
+    )
+
+    .get(
+      '/api/packages/project',
+      queryInput(packageProjectQuerySchema),
+      async (context) =>
+        context.json({
+          project: await service.resolveRegisteredProject(
+            context.req.valid('query').path
+          )
+        })
+    )
+
+    .post(
+      '/api/packages/install',
+      jsonInput(packageInstallSchema),
+      async (context) => {
+        const body = context.req.valid('json')
+        return context.json({
+          result: await service.installPackage(body.source, body.projectId)
+        })
+      }
+    )
+
+    .post(
+      '/api/packages/remove',
+      jsonInput(packageRemoveSchema),
+      async (context) => {
+        const body = context.req.valid('json')
+        return context.json({
+          result: await service.removePackage(body.source, body.projectId)
+        })
+      }
+    )
+
+    .post(
+      '/api/packages/update',
+      jsonInput(packageUpdateSchema),
+      async (context) => {
+        const body = context.req.valid('json')
+        return context.json({
+          results: await service.updatePackages(body.source)
+        })
+      }
+    )
+
+    .post(
+      '/api/packages/reload',
+      jsonInput(packageReloadSchema),
+      async (context) => {
+        const body = context.req.valid('json')
+        return context.json(await service.reloadPackages(body.projectId))
+      }
+    )
+
+    .get('/api/projects', async (context) =>
+      context.json({ projects: await service.listProjects() })
+    )
+
+    .get('/api/projects/recent', async (context) =>
+      context.json({ projects: await service.listRecentProjects() })
+    )
+
+    .get(
+      '/api/filesystem/directories',
+      queryInput(browseDirectoryQuerySchema),
+      async (context) => {
+        const query = context.req.valid('query')
+        return context.json(
+          await service.browseDirectory(query.input, query.hidden)
+        )
+      }
+    )
+
+    .post(
+      '/api/projects',
+      jsonInput(registerProjectSchema),
+      async (context) => {
+        const body = context.req.valid('json')
+        const registered = await service.registerProject(body.path, body.name)
+        return context.json(
+          { project: await service.getProjectSnapshot(registered.id) },
+          201
+        )
+      }
+    )
+
+    .post('/api/projects/:projectId/open', async (context) =>
+      context.json({
+        project: await service.openProject(context.req.param('projectId'))
+      })
+    )
+
+    .post('/api/projects/:projectId/close', async (context) => {
+      await service.closeProject(context.req.param('projectId'))
+      return context.json({ ok: true })
     })
-  })
 
-  app.delete('/api/terminals/:terminalId', async (context) => {
-    await service.deleteTerminal(context.req.param('terminalId'))
-    return context.json({ ok: true })
-  })
+    .get('/api/projects/:projectId', async (context) =>
+      context.json({
+        project: await service.getProjectSnapshot(
+          context.req.param('projectId')
+        )
+      })
+    )
 
-  app.get('/api/operations', async (context) => {
-    const kind = context.req.query('kind')
-    const projectId = context.req.query('projectId')
-    const supportedKinds: OperationKind[] = [
-      'create',
-      'finish',
-      'discard',
-      'project_cleanup',
-      'remove',
-      'external_remove'
-    ]
-    if (kind && !supportedKinds.includes(kind as OperationKind)) {
-      throw new DomainError(
-        'INVALID_OPERATION_KIND',
-        'Invalid operation kind',
-        400
-      )
-    }
+    .patch(
+      '/api/projects/:projectId',
+      jsonInput(updateProjectSchema),
+      async (context) => {
+        const body = context.req.valid('json')
+        const projectId = context.req.param('projectId')
+        await service.updateProjectColor(projectId, body.color)
+        return context.json({
+          project: await service.getProjectSnapshot(projectId)
+        })
+      }
+    )
 
-    return context.json({
-      operations: await service.listActiveOperations({
-        ...(projectId ? { projectId } : {}),
-        ...(kind ? { kind: kind as OperationKind } : {})
+    .post('/api/projects/:projectId/refresh', async (context) => {
+      const projectId = context.req.param('projectId')
+      await service.refreshProject(projectId)
+      return context.json({
+        project: await service.getProjectSnapshot(projectId)
       })
     })
-  })
 
-  app.get('/api/operations/:operationId', async (context) =>
-    context.json({
-      operation: await service.getOperation(context.req.param('operationId'))
+    .delete('/api/projects/:projectId', async (context) => {
+      await service.deleteProject(context.req.param('projectId'))
+      return context.json({ ok: true })
     })
-  )
 
-  app.post('/api/admin/terminate-terminals', async (context) =>
-    context.json({ terminated: await service.terminateAllTerminals() })
-  )
-
-  app.all('/api/*', (context) =>
-    context.json(
-      { error: { code: 'NOT_FOUND', message: 'API endpoint not found' } },
-      404
+    .get('/api/projects/:projectId/worktrees', async (context) =>
+      context.json({
+        worktrees: (
+          await service.getProjectSnapshot(context.req.param('projectId'))
+        ).worktrees
+      })
     )
-  )
+
+    .post(
+      '/api/projects/:projectId/worktree-operations',
+      jsonInput(createWorktreeSchema),
+      async (context) => {
+        const body = context.req.valid('json')
+        const initialTerminal = body.initialTerminal
+          ? {
+              name: body.initialTerminal.name,
+              ...(body.initialTerminal.argv
+                ? { argv: body.initialTerminal.argv }
+                : {}),
+              ...(body.initialTerminal.returnToShell
+                ? { returnToShell: true }
+                : {}),
+              ...(body.initialTerminal.initialSize
+                ? { initialSize: body.initialTerminal.initialSize }
+                : {})
+            }
+          : undefined
+        return context.json(
+          {
+            operation: await service.beginCreateWorktree(
+              context.req.param('projectId'),
+              body.name,
+              body.base,
+              initialTerminal,
+              body.sourceWorktreeId
+            )
+          },
+          202
+        )
+      }
+    )
+
+    .get('/api/worktrees/:worktreeId', async (context) => {
+      const worktreeId = context.req.param('worktreeId')
+      await service.refreshPr(worktreeId, false)
+      return context.json({
+        worktree: await service.getWorktreeSnapshot(worktreeId)
+      })
+    })
+
+    .get('/api/worktrees/:worktreeId/web-panel-definitions', async (context) =>
+      context.json({
+        definitions: await service.listWebPanelDefinitions(
+          context.req.param('worktreeId')
+        )
+      })
+    )
+
+    .post(
+      '/api/worktrees/:worktreeId/panels',
+      jsonInput(createWebPanelSchema),
+      async (context) => {
+        const body = context.req.valid('json')
+        return context.json(
+          {
+            panel: await service.createWebPanel(
+              context.req.param('worktreeId'),
+              body.definitionId
+            )
+          },
+          201
+        )
+      }
+    )
+
+    .delete(
+      '/api/panels/:panelId',
+      queryInput(discardStoredDataQuerySchema),
+      async (context) => {
+        await service.deleteWebPanel(
+          context.req.param('panelId'),
+          context.req.valid('query').discardStoredData === 'true'
+        )
+        return context.json({ ok: true })
+      }
+    )
+
+    .get('/api/panels/:panelId/context', async (context) =>
+      context.json({
+        context: await service.getWebPanelContext(context.req.param('panelId'))
+      })
+    )
+
+    .get('/api/panels/:panelId/diff', async (context) =>
+      context.json({
+        diff: await service.getWebPanelDiff(context.req.param('panelId'))
+      })
+    )
+
+    .get('/api/panels/:panelId/storage', async (context) =>
+      context.json({
+        hasData: await service.hasWebPanelStorage(context.req.param('panelId'))
+      })
+    )
+
+    .post(
+      '/api/panels/:panelId/storage/get',
+      jsonInput(getWebPanelStorageSchema),
+      async (context) => {
+        const body = context.req.valid('json')
+        return context.json({
+          value: await service.getWebPanelStorage(
+            context.req.param('panelId'),
+            body.key
+          )
+        })
+      }
+    )
+
+    .put(
+      '/api/panels/:panelId/storage',
+      jsonInput(setWebPanelStorageSchema),
+      async (context) => {
+        const body = context.req.valid('json')
+        await service.setWebPanelStorage(
+          context.req.param('panelId'),
+          body.key,
+          body.value
+        )
+        return context.json({ ok: true })
+      }
+    )
+
+    .delete(
+      '/api/panels/:panelId/storage',
+      jsonInput(deleteWebPanelStorageSchema),
+      async (context) => {
+        const body = context.req.valid('json')
+        await service.deleteWebPanelStorage(
+          context.req.param('panelId'),
+          body.key
+        )
+        return context.json({ ok: true })
+      }
+    )
+
+    .get('/api/web-panels/:panelId/assets/*', async (context) => {
+      const pathname = new URL(context.req.url).pathname
+      const assetMarker = `/api/web-panels/${encodeURIComponent(
+        context.req.param('panelId')
+      )}/assets/`
+      const requestedPath = decodeURI(
+        pathname.slice(pathname.indexOf(assetMarker) + assetMarker.length)
+      )
+      const resolution = await service.resolveWebPanelAsset(
+        context.req.param('panelId'),
+        requestedPath
+      )
+      if (resolution.kind === 'redirect') {
+        context.header('cache-control', 'no-store')
+        return context.redirect(resolution.location, 307)
+      }
+
+      const browserOrigin = webPanelBrowserOrigin({
+        referrer: context.req.header('referer'),
+        forwardedHost: context.req.header('x-forwarded-host'),
+        host: context.req.header('host'),
+        forwardedProtocol: context.req.header('x-forwarded-proto'),
+        requestProtocol: new URL(context.req.url).protocol
+      })
+
+      if (resolution.kind === 'error') {
+        context.header('content-type', 'text/html; charset=utf-8')
+        context.header('cache-control', 'no-store')
+        context.header('x-content-type-options', 'nosniff')
+        context.header(
+          'content-security-policy',
+          webPanelContentSecurityPolicy('error', browserOrigin)
+        )
+        return context.html(resolution.html, 500)
+      }
+
+      const extension = path.extname(resolution.path).toLowerCase()
+      const body = await fs.readFile(resolution.path)
+      const mimeTypes: Record<string, string> = {
+        '.css': 'text/css; charset=utf-8',
+        '.gif': 'image/gif',
+        '.html': 'text/html; charset=utf-8',
+        '.jpeg': 'image/jpeg',
+        '.jpg': 'image/jpeg',
+        '.js': 'text/javascript; charset=utf-8',
+        '.json': 'application/json; charset=utf-8',
+        '.map': 'application/json; charset=utf-8',
+        '.mjs': 'text/javascript; charset=utf-8',
+        '.png': 'image/png',
+        '.svg': 'image/svg+xml',
+        '.webp': 'image/webp',
+        '.woff': 'font/woff',
+        '.woff2': 'font/woff2'
+      }
+
+      context.header(
+        'content-type',
+        mimeTypes[extension] ?? 'application/octet-stream'
+      )
+      context.header('cache-control', 'public, max-age=31536000, immutable')
+      context.header('access-control-allow-origin', '*')
+      context.header(
+        'content-security-policy',
+        webPanelContentSecurityPolicy('immutable', browserOrigin)
+      )
+      context.header('x-content-type-options', 'nosniff')
+      return context.body(body as any)
+    })
+
+    .post(
+      '/api/worktrees/:worktreeId/terminals',
+      jsonInput(createTerminalSchema),
+      async (context) => {
+        const body = context.req.valid('json')
+        const terminal = await service.createTerminal(
+          context.req.param('worktreeId'),
+          body.name,
+          body.argv,
+          body.returnToShell || body.closeOnSuccess || body.initialSize
+            ? {
+                ...(body.returnToShell ? { returnToShell: true } : {}),
+                ...(body.closeOnSuccess ? { closeOnSuccess: true } : {}),
+                ...(body.initialSize ? { initialSize: body.initialSize } : {})
+              }
+            : undefined
+        )
+        return context.json({ terminal }, 201)
+      }
+    )
+
+    .get('/api/worktrees/:worktreeId/remove-preview', async (context) =>
+      context.json({
+        preview: await service.removePreview(context.req.param('worktreeId'))
+      })
+    )
+
+    .post(
+      '/api/worktrees/:worktreeId/remove',
+      jsonInput(removeWorktreeSchema),
+      async (context) => {
+        const body = context.req.valid('json')
+        return context.json(
+          {
+            operation: await service.beginRemove(
+              context.req.param('worktreeId'),
+              body
+            )
+          },
+          202
+        )
+      }
+    )
+
+    .post('/api/worktrees/:worktreeId/pr/refresh', async (context) =>
+      context.json({
+        pr: await service.refreshPr(context.req.param('worktreeId'), true)
+      })
+    )
+
+    .get(
+      '/api/terminals/:terminalId/capture',
+      queryInput(terminalCaptureQuerySchema),
+      async (context) => {
+        const query = context.req.valid('query')
+        const terminal = await service.getTerminal(
+          context.req.param('terminalId')
+        )
+        const worktree = await service.getWorktree(terminal.worktreeId)
+        const content = await tmux.capturePane(
+          worktree.tmuxSocketName,
+          terminal.tmuxSessionName,
+          query.lines
+        )
+        if (content === null) {
+          throw new DomainError(
+            'TERMINAL_CAPTURE_UNAVAILABLE',
+            'Terminal pane is unavailable',
+            409,
+            { terminalId: terminal.id }
+          )
+        }
+
+        return context.json({
+          terminalId: terminal.id,
+          capturedAt: new Date().toISOString(),
+          lineLimit: query.lines,
+          content
+        })
+      }
+    )
+
+    .get('/api/terminals/:terminalId', async (context) => {
+      const terminal = await service.refreshTerminalStatus(
+        context.req.param('terminalId')
+      )
+      await metadataReady
+      const worktree = await service.database.worktree(terminal.worktreeId)
+      if (worktree) {
+        await metadata.trackTerminal(terminal, worktree)
+      }
+
+      return context.json({ terminal, metadata: metadata.get(terminal.id) })
+    })
+
+    .post(
+      '/api/terminals/:terminalId/bell/acknowledge',
+      jsonInput(terminalBellAcknowledgementSchema),
+      async (context) => {
+        const terminalId = context.req.param('terminalId')
+        const body = context.req.valid('json')
+        await metadataReady
+        await service.getTerminal(terminalId)
+        metadata.acknowledgeBell(terminalId, body.sequence)
+        return context.json({ ok: true })
+      }
+    )
+
+    .post('/api/terminals/:terminalId/files', async (context) => {
+      await service.getTerminal(context.req.param('terminalId'))
+
+      const contentLength = context.req.header('content-length')
+      if (contentLength) {
+        const declaredBytes = Number(contentLength)
+        if (!Number.isSafeInteger(declaredBytes) || declaredBytes < 0) {
+          throw new DomainError('VALIDATION_ERROR', 'File size is invalid', 400)
+        }
+
+        if (declaredBytes > TERMINAL_MAX_UPLOAD_BYTES) {
+          throw new DomainError(
+            'FILE_TOO_LARGE',
+            `Files are limited to ${TERMINAL_MAX_UPLOAD_BYTES} bytes`,
+            413
+          )
+        }
+      }
+
+      const requestedExtension = context.req
+        .header('x-treeport-file-extension')
+        ?.toLowerCase()
+      if (requestedExtension && !/^[a-z0-9]{1,16}$/.test(requestedExtension)) {
+        throw new DomainError(
+          'VALIDATION_ERROR',
+          'File extension is invalid',
+          400
+        )
+      }
+
+      const waitForPreviousUpload = terminalUploadQueue
+      let releaseUpload!: () => void
+      terminalUploadQueue = new Promise<void>((resolve) => {
+        releaseUpload = resolve
+      })
+      await waitForPreviousUpload
+
+      try {
+        const contentType =
+          context.req.header('content-type')?.split(';', 1)[0]?.toLowerCase() ??
+          ''
+        const extension =
+          requestedExtension || UPLOAD_MIME_EXTENSIONS[contentType] || ''
+        const uploadDirectory = path.join(config.runtimeDir, 'uploads')
+        await fs.mkdir(uploadDirectory, { recursive: true, mode: 0o700 })
+        await fs.chmod(uploadDirectory, 0o700)
+        await pruneTerminalUploads(uploadDirectory)
+        const filePath = path.join(
+          uploadDirectory,
+          `treeport-upload-${crypto.randomUUID()}${
+            extension ? `.${extension}` : ''
+          }`
+        )
+        const file = await fs.open(filePath, 'wx', 0o600)
+        let complete = false
+        let receivedBytes = 0
+        try {
+          const reader = context.req.raw.body?.getReader()
+          if (reader) {
+            while (true) {
+              const { done, value } = await reader.read()
+              if (done) {
+                break
+              }
+
+              receivedBytes += value.byteLength
+              if (receivedBytes > TERMINAL_MAX_UPLOAD_BYTES) {
+                throw new DomainError(
+                  'FILE_TOO_LARGE',
+                  `Files are limited to ${TERMINAL_MAX_UPLOAD_BYTES} bytes`,
+                  413
+                )
+              }
+
+              await file.writeFile(value)
+            }
+          }
+
+          complete = true
+        } finally {
+          await file.close()
+          if (!complete) {
+            await fs.rm(filePath, { force: true })
+          }
+        }
+
+        await pruneTerminalUploads(uploadDirectory, filePath)
+        return context.json({ file: { path: filePath } }, 201)
+      } finally {
+        releaseUpload()
+      }
+    })
+
+    .patch(
+      '/api/terminals/:terminalId',
+      jsonInput(updateTerminalSchema),
+      async (context) => {
+        const body = context.req.valid('json')
+        return context.json({
+          terminal: await service.renameTerminal(
+            context.req.param('terminalId'),
+            body.name
+          )
+        })
+      }
+    )
+
+    .delete('/api/terminals/:terminalId', async (context) => {
+      await service.deleteTerminal(context.req.param('terminalId'))
+      return context.json({ ok: true })
+    })
+
+    .get(
+      '/api/operations',
+      validator('query', (value) => {
+        const kind = typeof value.kind === 'string' ? value.kind : undefined
+        const projectId =
+          typeof value.projectId === 'string' ? value.projectId : undefined
+        const supportedKinds: OperationKind[] = [
+          'create',
+          'finish',
+          'discard',
+          'project_cleanup',
+          'remove',
+          'external_remove'
+        ]
+        if (kind && !supportedKinds.includes(kind as OperationKind)) {
+          throw new DomainError(
+            'INVALID_OPERATION_KIND',
+            'Invalid operation kind',
+            400
+          )
+        }
+
+        return {
+          ...(kind ? { kind: kind as OperationKind } : {}),
+          ...(projectId ? { projectId } : {})
+        }
+      }),
+      async (context) => {
+        const { kind, projectId } = context.req.valid('query')
+        return context.json({
+          operations: await service.listActiveOperations({
+            ...(projectId ? { projectId } : {}),
+            ...(kind ? { kind } : {})
+          })
+        })
+      }
+    )
+
+    .get('/api/operations/:operationId', async (context) =>
+      context.json({
+        operation: await service.getOperation(context.req.param('operationId'))
+      })
+    )
+
+    .post('/api/admin/terminate-terminals', async (context) =>
+      context.json({ terminated: await service.terminateAllTerminals() })
+    )
+
+    .all('/api/*', (context) =>
+      context.json(
+        { error: { code: 'NOT_FOUND', message: 'API endpoint not found' } },
+        404
+      )
+    )
+
+  const routes = app.route('/', api)
 
   const moduleDirectory = path.dirname(fileURLToPath(import.meta.url))
   const builtStaticRoot = path.resolve(moduleDirectory, '../../web')
@@ -821,5 +934,7 @@ export function createApp({
 
   app.get('*', serveStatic({ root: staticRoot, path: 'index.html' }))
 
-  return app
+  return routes
 }
+
+export type AppType = ReturnType<typeof createApp>

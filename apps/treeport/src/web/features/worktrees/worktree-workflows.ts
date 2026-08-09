@@ -12,7 +12,7 @@ import type {
   TerminalSize,
   WorktreeRecord
 } from '@treeport/shared'
-import { ApiError, apiClient } from '../../api'
+import { ApiError, parseRpcResponse, rpc } from '../../api'
 import { projectsQueryKey } from '../../project-metadata'
 import { terminalSessions } from '../../terminal-session'
 import {
@@ -81,7 +81,12 @@ export function useWorktreeWorkflows({
   const navigateToWorkspace = useWorkspaceNavigate()
   const creationsQuery = useQuery({
     queryKey: ['worktree-creations'],
-    queryFn: () => apiClient.activeWorktreeCreations(),
+    queryFn: async () =>
+      (
+        await parseRpcResponse(
+          rpc.api.operations.$get({ query: { kind: 'create' } })
+        )
+      ).operations,
     refetchInterval: 2_000,
     refetchOnReconnect: true,
     refetchOnWindowFocus: true
@@ -90,6 +95,10 @@ export function useWorktreeWorkflows({
   const serverPendingWorktrees: PendingWorktreeCreation[] = (
     creationsQuery.data ?? []
   ).flatMap((operation) => {
+    if (operation.kind !== 'create') {
+      return []
+    }
+
     const name = operation.request.name
     return operation.projectId && typeof name === 'string'
       ? [{ id: operation.id, projectId: operation.projectId, typedName: name }]
@@ -100,7 +109,14 @@ export function useWorktreeWorkflows({
   const ownedCreationQueries = useQueries({
     queries: ownedCreations.map((creation) => ({
       queryKey: ['operation', creation.id] as const,
-      queryFn: () => apiClient.operation(creation.id),
+      queryFn: async () =>
+        (
+          await parseRpcResponse(
+            rpc.api.operations[':operationId'].$get({
+              param: { operationId: creation.id }
+            })
+          )
+        ).operation,
       refetchInterval: 500
     }))
   })
@@ -147,13 +163,19 @@ export function useWorktreeWorkflows({
 
   const createWorktree = useMutation({
     mutationFn: (request: WorktreeCreationRequest) =>
-      apiClient.createWorktree(
-        request.projectId,
-        request.typedName,
-        request.base,
-        request.initialTerminal,
-        request.sourceWorktreeId
-      ),
+      parseRpcResponse(
+        rpc.api.projects[':projectId']['worktree-operations'].$post({
+          param: { projectId: request.projectId },
+          json: {
+            name: request.typedName,
+            base: request.base,
+            initialTerminal: request.initialTerminal,
+            ...(request.sourceWorktreeId
+              ? { sourceWorktreeId: request.sourceWorktreeId }
+              : {})
+          }
+        })
+      ).then((result) => result.operation),
     onSuccess: (operation, request) => {
       setOwnedCreations((current) => [
         ...current,
@@ -211,7 +233,8 @@ export function useWorktreeWorkflows({
           notifyError(operation.error ?? 'Worktree creation failed')
         } else {
           await queryClient.invalidateQueries({ queryKey: projectsQueryKey })
-          const projects = await apiClient.projects()
+          const projects = (await parseRpcResponse(rpc.api.projects.$get()))
+            .projects
           queryClient.setQueryData(projectsQueryKey, projects)
           const result = operation.result
           const worktreeId =
@@ -322,7 +345,15 @@ export function useWorktreeWorkflows({
   ): Promise<void> => {
     setRemovalStage(worktree.id, 'removing')
     try {
-      await apiClient.removeWorktree(worktree.id, preview, confirmDestructive)
+      await parseRpcResponse(
+        rpc.api.worktrees[':worktreeId'].remove.$post({
+          param: { worktreeId: worktree.id },
+          json: {
+            confirmationToken: preview.confirmationToken,
+            confirmDestructive
+          }
+        })
+      )
       markWorktreeCleaning(worktree.id)
       releaseRemoval(worktree.id)
       onRemovalCompleted(worktree.id)
@@ -338,7 +369,13 @@ export function useWorktreeWorkflows({
       ) {
         setRemovalStage(worktree.id, 'checking')
         try {
-          const freshPreview = await apiClient.removePreview(worktree.id)
+          const freshPreview = (
+            await parseRpcResponse(
+              rpc.api.worktrees[':worktreeId']['remove-preview'].$get({
+                param: { worktreeId: worktree.id }
+              })
+            )
+          ).preview
           if (freshPreview.eligible && freshPreview.warnings.length === 0) {
             await submitRemoval(
               worktree,
@@ -379,7 +416,13 @@ export function useWorktreeWorkflows({
     removalGuardsRef.current.add(worktree.id)
     setRemovalStage(worktree.id, 'checking')
     try {
-      const preview = await apiClient.removePreview(worktree.id)
+      const preview = (
+        await parseRpcResponse(
+          rpc.api.worktrees[':worktreeId']['remove-preview'].$get({
+            param: { worktreeId: worktree.id }
+          })
+        )
+      ).preview
       if (preview.eligible && preview.warnings.length === 0) {
         await submitRemoval(worktree, preview, false, 1)
         return

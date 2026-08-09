@@ -2,7 +2,7 @@ import type {
   TerminalProgress,
   TerminalRuntimeMetadata
 } from '@treeport/shared'
-import { apiClient } from './api'
+import { parseRpcResponse, rpc } from './api'
 
 export interface TerminalBellMetadata {
   sequence: number
@@ -37,7 +37,12 @@ export class TerminalRuntimeMetadataStore {
       terminalId: string,
       sequence: number
     ) => Promise<unknown> = (terminalId, sequence) =>
-      apiClient.acknowledgeTerminalBell(terminalId, sequence)
+      parseRpcResponse(
+        rpc.api.terminals[':terminalId'].bell.acknowledge.$post({
+          param: { terminalId },
+          json: { sequence }
+        })
+      )
   ) {}
 
   subscribe = (listener: () => void): (() => void) => {

@@ -2,7 +2,7 @@ import type { RefObject } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useLocation } from '@tanstack/react-router'
 import type { ProjectRecord, RecentProjectRecord } from '@treeport/shared'
-import { ApiError, apiClient } from '../../api'
+import { ApiError, parseRpcResponse, rpc } from '../../api'
 import {
   projectsQueryKey,
   recentProjectsQueryKey
@@ -31,7 +31,12 @@ export function useProjectWorkflows({
   const location = useLocation()
   const navigateToWorkspace = useWorkspaceNavigate()
   const closeProject = useMutation({
-    mutationFn: (project: ProjectRecord) => apiClient.closeProject(project.id),
+    mutationFn: (project: ProjectRecord) =>
+      parseRpcResponse(
+        rpc.api.projects[':projectId'].close.$post({
+          param: { projectId: project.id }
+        })
+      ),
     onSuccess: async (_, closedProject) => {
       const currentProjects =
         queryClient.getQueryData<ProjectRecord[]>(projectsQueryKey) ?? projects

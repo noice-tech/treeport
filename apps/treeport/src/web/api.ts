@@ -1,22 +1,7 @@
-import type {
-  ApiErrorBody,
-  CreateOperationRecord,
-  DirectoryBrowseResponse,
-  OperationRecord,
-  ProjectColor,
-  ProjectRecord,
-  RecentProjectRecord,
-  RemovePreview,
-  TerminalPreset,
-  TerminalPresetDefinition,
-  TerminalRecord,
-  TerminalSize,
-  WebPanel,
-  WebPanelContext,
-  WebPanelDefinition,
-  GitDiff,
-  JsonValue
-} from '@treeport/shared'
+import { DetailedError, hc, parseResponse } from 'hono/client'
+import type { ClientResponse } from 'hono/client'
+import type { ApiErrorBody } from '@treeport/shared'
+import type { AppType } from '../server/app'
 
 export class ApiError extends Error {
   constructor(
@@ -29,274 +14,25 @@ export class ApiError extends Error {
   }
 }
 
-async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const response = await fetch(path, {
-    ...options,
-    headers: {
-      accept: 'application/json',
-      ...(options.body ? { 'content-type': 'application/json' } : {}),
-      ...options.headers
+export async function parseRpcResponse<T extends ClientResponse<unknown>>(
+  request: T | Promise<T>
+): ReturnType<typeof parseResponse<T>> {
+  try {
+    return await parseResponse(request)
+  } catch (cause) {
+    if (!(cause instanceof DetailedError)) {
+      throw cause
     }
-  })
-  const body = (await response.json().catch(() => ({}))) as T | ApiErrorBody
-  if (!response.ok) {
-    const error = (body as ApiErrorBody).error
+
+    const body = (cause.detail as { data?: ApiErrorBody } | undefined)?.data
+    const error = body?.error
     throw new ApiError(
       error?.code || 'HTTP_ERROR',
-      error?.message || `HTTP ${response.status}`,
-      response.status,
+      error?.message || cause.message,
+      cause.statusCode ?? 500,
       error?.details
     )
   }
-
-  return body as T
 }
 
-export const apiClient = {
-  projects: async () =>
-    (await api<{ projects: ProjectRecord[] }>('/api/projects')).projects,
-  recentProjects: async () =>
-    (await api<{ projects: RecentProjectRecord[] }>('/api/projects/recent'))
-      .projects,
-  browseDirectories: async (input: string, hidden = false) => {
-    const search = new URLSearchParams({
-      input,
-      ...(hidden ? { hidden: 'true' } : {})
-    })
-    return api<DirectoryBrowseResponse>(
-      `/api/filesystem/directories?${search.toString()}`
-    )
-  },
-  terminalPresets: async () =>
-    (await api<{ presets: TerminalPreset[] }>('/api/terminal-presets')).presets,
-  terminalPresetDefinitions: async (projectId?: string) => {
-    const search = projectId
-      ? `?${new URLSearchParams({ projectId }).toString()}`
-      : ''
-    return (
-      await api<{ definitions: TerminalPresetDefinition[] }>(
-        `/api/terminal-preset-definitions${search}`
-      )
-    ).definitions
-  },
-  createTerminalPreset: async (
-    input: Pick<
-      TerminalPreset,
-      'name' | 'executable' | 'args' | 'closeOnSuccess'
-    >
-  ) =>
-    (
-      await api<{ preset: TerminalPreset }>('/api/terminal-presets', {
-        method: 'POST',
-        body: JSON.stringify(input)
-      })
-    ).preset,
-  updateTerminalPreset: async (
-    presetId: string,
-    input: Pick<
-      TerminalPreset,
-      'name' | 'executable' | 'args' | 'closeOnSuccess'
-    >,
-    expectedUpdatedAt: string
-  ) =>
-    (
-      await api<{ preset: TerminalPreset }>(
-        `/api/terminal-presets/${presetId}`,
-        {
-          method: 'PATCH',
-          body: JSON.stringify({ ...input, expectedUpdatedAt })
-        }
-      )
-    ).preset,
-  deleteTerminalPreset: async (presetId: string, expectedUpdatedAt: string) =>
-    api<{ ok: true }>(`/api/terminal-presets/${presetId}`, {
-      method: 'DELETE',
-      body: JSON.stringify({ expectedUpdatedAt })
-    }),
-  addProject: async (path: string) =>
-    (
-      await api<{ project: ProjectRecord }>('/api/projects', {
-        method: 'POST',
-        body: JSON.stringify({ path })
-      })
-    ).project,
-  openProject: async (projectId: string) =>
-    (
-      await api<{ project: ProjectRecord }>(`/api/projects/${projectId}/open`, {
-        method: 'POST'
-      })
-    ).project,
-  closeProject: async (projectId: string) =>
-    api<{ ok: true }>(`/api/projects/${projectId}/close`, {
-      method: 'POST'
-    }),
-  updateProjectColor: async (projectId: string, color: ProjectColor | null) =>
-    (
-      await api<{ project: ProjectRecord }>(`/api/projects/${projectId}`, {
-        method: 'PATCH',
-        body: JSON.stringify({ color })
-      })
-    ).project,
-  activeWorktreeCreations: async (projectId?: string) => {
-    const search = projectId
-      ? `?${new URLSearchParams({ projectId }).toString()}`
-      : ''
-    return (
-      await api<{ operations: CreateOperationRecord[] }>(
-        `/api/operations${search ? `${search}&kind=create` : '?kind=create'}`
-      )
-    ).operations
-  },
-  operation: async (operationId: string) =>
-    (
-      await api<{ operation: OperationRecord }>(
-        `/api/operations/${operationId}`
-      )
-    ).operation,
-  createWorktree: async (
-    projectId: string,
-    name: string,
-    base: 'default' | 'current',
-    initialTerminal: {
-      name: string
-      argv?: string[]
-      returnToShell?: boolean
-      initialSize?: TerminalSize
-    },
-    sourceWorktreeId?: string
-  ) =>
-    (
-      await api<{ operation: CreateOperationRecord }>(
-        `/api/projects/${projectId}/worktree-operations`,
-        {
-          method: 'POST',
-          body: JSON.stringify({
-            name,
-            base,
-            initialTerminal,
-            ...(sourceWorktreeId ? { sourceWorktreeId } : {})
-          })
-        }
-      )
-    ).operation,
-  webPanelDefinitions: async (worktreeId: string) =>
-    (
-      await api<{ definitions: WebPanelDefinition[] }>(
-        `/api/worktrees/${worktreeId}/web-panel-definitions`
-      )
-    ).definitions,
-  createWebPanel: async (worktreeId: string, definitionId: string) =>
-    (
-      await api<{ panel: WebPanel }>(`/api/worktrees/${worktreeId}/panels`, {
-        method: 'POST',
-        body: JSON.stringify({ definitionId })
-      })
-    ).panel,
-  deleteWebPanel: async (panelId: string, discardStoredData = false) =>
-    api<{ ok: true }>(
-      `/api/panels/${panelId}${discardStoredData ? '?discardStoredData=true' : ''}`,
-      { method: 'DELETE' }
-    ),
-  webPanelContext: async (panelId: string) =>
-    (await api<{ context: WebPanelContext }>(`/api/panels/${panelId}/context`))
-      .context,
-  webPanelDiff: async (panelId: string) =>
-    (await api<{ diff: GitDiff }>(`/api/panels/${panelId}/diff`)).diff,
-  hasWebPanelStorage: async (panelId: string) =>
-    (await api<{ hasData: boolean }>(`/api/panels/${panelId}/storage`)).hasData,
-  getWebPanelStorage: async (panelId: string, key: string) =>
-    (
-      await api<{ value?: JsonValue }>(`/api/panels/${panelId}/storage/get`, {
-        method: 'POST',
-        body: JSON.stringify({ key })
-      })
-    ).value,
-  setWebPanelStorage: async (panelId: string, key: string, value: JsonValue) =>
-    api<{ ok: true }>(`/api/panels/${panelId}/storage`, {
-      method: 'PUT',
-      body: JSON.stringify({ key, value })
-    }),
-  deleteWebPanelStorage: async (panelId: string, key: string) =>
-    api<{ ok: true }>(`/api/panels/${panelId}/storage`, {
-      method: 'DELETE',
-      body: JSON.stringify({ key })
-    }),
-  createTerminal: async (
-    worktreeId: string,
-    name: string,
-    argv?: string[],
-    returnToShell = false,
-    closeOnSuccess = false,
-    initialSize?: TerminalSize
-  ) =>
-    (
-      await api<{ terminal: TerminalRecord }>(
-        `/api/worktrees/${worktreeId}/terminals`,
-        {
-          method: 'POST',
-          body: JSON.stringify({
-            name,
-            ...(argv ? { argv } : {}),
-            ...(returnToShell ? { returnToShell: true } : {}),
-            ...(closeOnSuccess ? { closeOnSuccess: true } : {}),
-            ...(initialSize ? { initialSize } : {})
-          })
-        }
-      )
-    ).terminal,
-  renameTerminal: async (terminalId: string, name: string) =>
-    (
-      await api<{ terminal: TerminalRecord }>(`/api/terminals/${terminalId}`, {
-        method: 'PATCH',
-        body: JSON.stringify({ name })
-      })
-    ).terminal,
-  deleteTerminal: async (terminalId: string) =>
-    api(`/api/terminals/${terminalId}`, { method: 'DELETE' }),
-  acknowledgeTerminalBell: async (terminalId: string, sequence: number) =>
-    api<{ ok: true }>(`/api/terminals/${terminalId}/bell/acknowledge`, {
-      method: 'POST',
-      body: JSON.stringify({ sequence })
-    }),
-  uploadTerminalFile: async (terminalId: string, file: File) => {
-    const extension = /\.([a-z0-9]{1,16})$/i.exec(file.name)?.[1]
-    return (
-      await api<{ file: { path: string } }>(
-        `/api/terminals/${terminalId}/files`,
-        {
-          method: 'POST',
-          headers: {
-            'content-type': file.type || 'application/octet-stream',
-            ...(extension
-              ? { 'x-treeport-file-extension': extension.toLowerCase() }
-              : {})
-          },
-          body: file
-        }
-      )
-    ).file.path
-  },
-  removePreview: async (worktreeId: string) =>
-    (
-      await api<{ preview: RemovePreview }>(
-        `/api/worktrees/${worktreeId}/remove-preview`
-      )
-    ).preview,
-  removeWorktree: async (
-    worktreeId: string,
-    preview: RemovePreview,
-    confirmDestructive: boolean
-  ) =>
-    (
-      await api<{ operation: OperationRecord }>(
-        `/api/worktrees/${worktreeId}/remove`,
-        {
-          method: 'POST',
-          body: JSON.stringify({
-            confirmationToken: preview.confirmationToken,
-            confirmDestructive
-          })
-        }
-      )
-    ).operation
-}
+export const rpc = hc<AppType>('/')

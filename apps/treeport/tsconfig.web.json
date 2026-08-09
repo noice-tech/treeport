@@ -14,5 +14,8 @@
     "composite": true
   },
   "include": ["src/web/**/*.ts", "src/web/**/*.tsx", "vite.config.ts"],
-  "references": [{ "path": "../../packages/shared" }]
+  "references": [
+    { "path": "../../packages/shared" },
+    { "path": "./tsconfig.node.json" }
+  ]
 }
