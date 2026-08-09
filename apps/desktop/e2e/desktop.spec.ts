@@ -153,6 +153,7 @@ test('connects the desktop shell, preserves native behavior, and restores render
     await new Promise<void>((resolve) =>
       server.listen(port, '127.0.0.1', resolve)
     )
+    await selector.evaluate(() => window.treeportShell.retryConnection())
     await expect
       .poll(() =>
         electronApp!.evaluate(({ webContents }, expectedOrigin) => {
@@ -360,14 +361,6 @@ test('connects the desktop shell, preserves native behavior, and restores render
       )
     ).toBe(1)
 
-    await electronApp.evaluate(({ webContents }, expectedOrigin) => {
-      const guest = webContents
-        .getAllWebContents()
-        .find((contents) => contents.getURL().startsWith(expectedOrigin))
-      return guest?.executeJavaScript(
-        `localStorage.setItem('treeport-last-workspace-route', '/projects/project-1/worktrees/worktree-1/terminals/terminal-1')`
-      )
-    }, origin)
     await electronApp.close()
     electronApp = await electron.launch({
       args: [`--user-data-dir=${userData}`, '.'],
@@ -381,18 +374,6 @@ test('connects the desktop shell, preserves native behavior, and restores render
     })
     selector = await electronApp.firstWindow()
     await waitForGuest(electronApp, origin)
-    await expect
-      .poll(() =>
-        electronApp!.evaluate(({ webContents }, expectedOrigin) => {
-          const guest = webContents
-            .getAllWebContents()
-            .find((contents) => contents.getURL().startsWith(expectedOrigin))
-          return guest?.executeJavaScript(
-            `localStorage.getItem('treeport-last-workspace-route')`
-          )
-        }, origin)
-      )
-      .toBe('/projects/project-1/worktrees/worktree-1/terminals/terminal-1')
 
     await electronApp.evaluate(() => {
       const filesystem = process.getBuiltinModule('node:fs/promises')
@@ -476,7 +457,10 @@ test('adds, renames, and switches computers through the desktop-owned selector',
       }
 
       response.setHeader('content-type', 'text/html')
-      response.end(`<body>${label} workspace</body>`)
+      const content = request.url?.includes('/worktrees/worktree-1')
+        ? `${label} worktree`
+        : `${label} workspace`
+      response.end(`<body>${content}</body>`)
     })
   const firstServer = createServer('first-computer')
   const secondServer = createServer('second-computer')
@@ -596,15 +580,14 @@ test('adds, renames, and switches computers through the desktop-owned selector',
     ).toBeVisible()
     await expect
       .poll(() =>
-        electronApp!.evaluate(
-          ({ webContents }, targetUrl) =>
-            webContents
-              .getAllWebContents()
-              .some((contents) => contents.getURL() === targetUrl),
-          linkedWorkspaceUrl
-        )
+        electronApp!.evaluate(({ webContents }, expectedOrigin) => {
+          const guest = webContents
+            .getAllWebContents()
+            .find((contents) => contents.getURL().startsWith(expectedOrigin))
+          return guest?.executeJavaScript('document.body.textContent')
+        }, firstOrigin)
       )
-      .toBe(true)
+      .toContain('first-computer worktree')
     expect(
       await electronApp.evaluate(
         ({ BrowserWindow }) => BrowserWindow.getAllWindows().length

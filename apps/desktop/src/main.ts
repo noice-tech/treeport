@@ -37,8 +37,13 @@ import { parseWorkspaceLink, type WorkspaceTarget } from './workspace-link'
 
 const dirname = __dirname
 const TITLEBAR_HEIGHT = 32
+const desktopE2e = process.env.TREEPORT_DESKTOP_E2E === '1'
 const developmentUserData = process.env.TREEPORT_DESKTOP_USER_DATA?.trim()
-if (process.env.TREEPORT_DESKTOP_E2E === '1' && developmentUserData) {
+if (desktopE2e && process.platform === 'darwin') {
+  app.dock?.hide()
+}
+
+if (desktopE2e && developmentUserData) {
   app.setPath('userData', path.resolve(developmentUserData))
 } else if (app.isPackaged) {
   app.setPath('userData', path.join(app.getPath('appData'), 'Treeport'))
@@ -553,7 +558,7 @@ function installMenu(): void {
 
 function createWindow(url?: string): BrowserWindow {
   const window = new BrowserWindow({
-    show: process.env.TREEPORT_DESKTOP_E2E !== '1',
+    show: !desktopE2e,
     width: 1440,
     height: 900,
     minWidth: 320,
@@ -825,12 +830,14 @@ async function openWorkspaceTarget(target: WorkspaceTarget): Promise<void> {
     void connectSelected({ url: target.url })
   }
 
-  if (window.isMinimized()) {
-    window.restore()
-  }
+  if (!desktopE2e) {
+    if (window.isMinimized()) {
+      window.restore()
+    }
 
-  window.show()
-  window.focus()
+    window.show()
+    window.focus()
+  }
 }
 
 function queueWorkspaceTarget(target: WorkspaceTarget): void {
@@ -877,12 +884,14 @@ if (!hasSingleInstanceLock) {
     }
 
     const window = mainWindow ?? createWindow()
-    if (window.isMinimized()) {
-      window.restore()
-    }
+    if (!desktopE2e) {
+      if (window.isMinimized()) {
+        window.restore()
+      }
 
-    window.show()
-    window.focus()
+      window.show()
+      window.focus()
+    }
   })
 
   registerIpc()
@@ -903,11 +912,7 @@ if (!hasSingleInstanceLock) {
         createWindow()
       }
 
-      if (
-        app.isPackaged &&
-        process.platform === 'darwin' &&
-        process.env.TREEPORT_DESKTOP_E2E !== '1'
-      ) {
+      if (app.isPackaged && process.platform === 'darwin' && !desktopE2e) {
         const updater = updateElectronApp({
           updateSource: {
             type: UpdateSourceType.ElectronPublicUpdateService,
