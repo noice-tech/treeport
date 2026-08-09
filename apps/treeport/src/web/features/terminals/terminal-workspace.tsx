@@ -7,7 +7,8 @@ import type {
   TerminalSize,
   WorktreeRecord
 } from '@treeport/shared'
-import { apiClient } from '../../api'
+import { parseResponse } from 'hono/client'
+import { rpc } from '../../api'
 import { useSidebar } from '../../components/ui/sidebar'
 import { projectsQueryKey } from '../../project-metadata'
 import { terminalSessions } from '../../terminal-session'
@@ -80,14 +81,18 @@ export function useTerminalWorkflows({
       initialSize?: TerminalSize
       pendingTerminal: PendingTerminalCreation
     }) =>
-      apiClient.createTerminal(
-        worktreeId,
-        name,
-        argv,
-        returnToShell,
-        closeOnSuccess,
-        initialSize
-      ),
+      parseResponse(
+        rpc.api.worktrees[':worktreeId'].terminals.$post({
+          param: { worktreeId },
+          json: {
+            name,
+            ...(argv ? { argv } : {}),
+            ...(returnToShell ? { returnToShell: true } : {}),
+            ...(closeOnSuccess ? { closeOnSuccess: true } : {}),
+            ...(initialSize ? { initialSize } : {})
+          }
+        })
+      ).then((result) => result.terminal),
     onSuccess: async (terminal, { pendingTerminal }) => {
       const pendingWasSelected =
         selectedPendingTerminalIdRef.current === pendingTerminal.id
@@ -159,7 +164,11 @@ export function useTerminalWorkflows({
 
   const closeTerminal = useMutation({
     mutationFn: ({ terminal }: { terminal: TerminalRecord; index: number }) =>
-      apiClient.deleteTerminal(terminal.id),
+      parseResponse(
+        rpc.api.terminals[':terminalId'].$delete({
+          param: { terminalId: terminal.id }
+        })
+      ),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: projectsQueryKey })
     },

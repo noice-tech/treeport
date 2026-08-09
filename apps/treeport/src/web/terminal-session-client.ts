@@ -2,7 +2,9 @@ import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { Terminal } from '@xterm/xterm'
 import { io, type Socket } from 'socket.io-client'
-import { apiClient } from './api'
+import { parseResponse } from 'hono/client'
+import { rpc } from './api'
+import { errorMessage } from './error-message'
 import {
   activateTerminalLink,
   TERMINAL_FONT_SIZE,
@@ -894,7 +896,26 @@ export class TerminalSession {
     try {
       const paths: string[] = []
       for (const file of files) {
-        paths.push(await apiClient.uploadTerminalFile(this.terminalId, file))
+        const extension = /\.([a-z0-9]{1,16})$/i.exec(file.name)?.[1]
+        const result = await parseResponse(
+          rpc.api.terminals[':terminalId'].files.$post(
+            { param: { terminalId: this.terminalId } },
+            {
+              init: {
+                body: file,
+                headers: {
+                  'content-type': file.type || 'application/octet-stream',
+                  ...(extension
+                    ? {
+                        'x-treeport-file-extension': extension.toLowerCase()
+                      }
+                    : {})
+                }
+              }
+            }
+          )
+        )
+        paths.push(result.file.path)
       }
 
       if (this.disposed) {
@@ -929,9 +950,7 @@ export class TerminalSession {
       this.update({ fileTransfer: null })
     } catch (error) {
       if (!this.disposed) {
-        this.showFileTransferError(
-          error instanceof Error ? error.message : 'File upload failed'
-        )
+        this.showFileTransferError(errorMessage(error))
       }
     }
   }

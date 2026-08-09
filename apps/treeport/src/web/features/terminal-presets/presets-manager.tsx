@@ -2,7 +2,8 @@ import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { PlusIcon, TrashIcon } from '@heroicons/react/16/solid'
 import { TERMINAL_NAME_MAX_LENGTH, type TerminalPreset } from '@treeport/shared'
-import { apiClient } from '../../api'
+import { parseResponse } from 'hono/client'
+import { rpc } from '../../api'
 import { formatCommandLine, parseCommandLine } from '../../command-line'
 import { Button } from '../../components/ui/button'
 import { Checkbox } from '../../components/ui/checkbox'
@@ -97,8 +98,15 @@ export function TerminalPresetsManager({
       expectedUpdatedAt: string | null
     }) =>
       presetId
-        ? apiClient.updateTerminalPreset(presetId, input, expectedUpdatedAt!)
-        : apiClient.createTerminalPreset(input),
+        ? parseResponse(
+            rpc.api['terminal-presets'][':presetId'].$patch({
+              param: { presetId },
+              json: { ...input, expectedUpdatedAt: expectedUpdatedAt! }
+            })
+          ).then((result) => result.preset)
+        : parseResponse(
+            rpc.api['terminal-presets'].$post({ json: input })
+          ).then((result) => result.preset),
     onSuccess: (preset, variables) => {
       queryClient.setQueryData<TerminalPreset[]>(
         terminalPresetsQueryKey,
@@ -135,7 +143,12 @@ export function TerminalPresetsManager({
 
   const deletePreset = useMutation({
     mutationFn: (preset: TerminalPreset) =>
-      apiClient.deleteTerminalPreset(preset.id, preset.updatedAt),
+      parseResponse(
+        rpc.api['terminal-presets'][':presetId'].$delete({
+          param: { presetId: preset.id },
+          json: { expectedUpdatedAt: preset.updatedAt }
+        })
+      ),
     onSuccess: (_, deletedPreset) => {
       queryClient.setQueryData<TerminalPreset[]>(
         terminalPresetsQueryKey,

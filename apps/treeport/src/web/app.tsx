@@ -12,7 +12,8 @@ import type {
 import { TerminalBellNotifications } from './features/notifications/use-bell-notifications'
 import { CloseWebPanelDialog } from './features/web-panels/close-web-panel-dialog'
 import { WebPanelWorkspace } from './features/web-panels/web-panel-workspace'
-import { apiClient } from './api'
+import { parseResponse } from 'hono/client'
+import { rpc } from './api'
 import { OpenProjectDialog } from './features/projects/open-project-dialog'
 import { useProjectWorkflows } from './features/projects/project-workflows'
 import {
@@ -135,7 +136,14 @@ function WorkspaceApp() {
   const availablePresets = presetDefinitionsQuery.data ?? []
   const webPanelDefinitionsQuery = useQuery({
     queryKey: ['web-panel-definitions', panelDialogWorktree?.id],
-    queryFn: () => apiClient.webPanelDefinitions(panelDialogWorktree!.id),
+    queryFn: async () =>
+      (
+        await parseResponse(
+          rpc.api.worktrees[':worktreeId']['web-panel-definitions'].$get({
+            param: { worktreeId: panelDialogWorktree!.id }
+          })
+        )
+      ).definitions,
     enabled: Boolean(panelDialogWorktree)
   })
   const createWebPanel = useMutation({
@@ -145,7 +153,13 @@ function WorkspaceApp() {
     }: {
       worktree: WorktreeRecord
       definition: WebPanelDefinition
-    }) => apiClient.createWebPanel(worktree.id, definition.id),
+    }) =>
+      parseResponse(
+        rpc.api.worktrees[':worktreeId'].panels.$post({
+          param: { worktreeId: worktree.id },
+          json: { definitionId: definition.id }
+        })
+      ).then((result) => result.panel),
     onSuccess: async (panel) => {
       await queryClient.invalidateQueries({
         queryKey: projectsQueryOptions.queryKey
@@ -169,7 +183,15 @@ function WorkspaceApp() {
     }: {
       panel: WebPanel
       discardStoredData?: boolean
-    }) => apiClient.deleteWebPanel(panel.id, discardStoredData),
+    }) =>
+      parseResponse(
+        rpc.api.panels[':panelId'].$delete({
+          param: { panelId: panel.id },
+          query: {
+            ...(discardStoredData ? { discardStoredData: 'true' } : {})
+          }
+        })
+      ),
     onSuccess: async (_, { panel }) => {
       setDialog((current) =>
         current?.type === 'close-web-panel' && current.panel.id === panel.id
@@ -193,7 +215,11 @@ function WorkspaceApp() {
     onError: notifyError
   })
   const requestCloseWebPanel = (panel: WebPanel, trigger?: HTMLElement) => {
-    void apiClient.hasWebPanelStorage(panel.id).then((hasData) => {
+    void parseResponse(
+      rpc.api.panels[':panelId'].storage.$get({
+        param: { panelId: panel.id }
+      })
+    ).then(({ hasData }) => {
       if (hasData) {
         openDialog({ type: 'close-web-panel', panel }, trigger)
       } else {

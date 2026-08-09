@@ -3,14 +3,18 @@
   "compilerOptions": {
     "module": "ESNext",
     "moduleResolution": "Bundler",
-    "composite": false,
-    "noEmit": true
+    "composite": true,
+    "emitDeclarationOnly": true,
+    "outDir": "dist-types/node",
+    "tsBuildInfoFile": "dist-types/node.tsbuildinfo"
   },
   "include": [
     "src/cli/**/*.ts",
     "src/server/**/*.ts",
+    "src/duration.ts",
     "drizzle.config.ts",
-    "tsdown.config.ts"
+    "tsdown.config.ts",
+    "package.json"
   ],
   "references": [{ "path": "../../packages/shared" }]
 }

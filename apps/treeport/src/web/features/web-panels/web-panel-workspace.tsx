@@ -1,6 +1,8 @@
 import { Activity, useEffect, useRef, useState } from 'react'
 import type { WebPanel } from '@treeport/shared'
-import { apiClient } from '../../api'
+import { parseResponse } from 'hono/client'
+import { rpc } from '../../api'
+import { errorMessage } from '../../error-message'
 import { cn } from '../../lib/utils'
 
 export function WebPanelWorkspace({
@@ -78,28 +80,47 @@ export function WebPanelWorkspace({
 
       let request: Promise<unknown>
       if (method === 'context') {
-        request = apiClient.webPanelContext(panel.id)
+        request = parseResponse(
+          rpc.api.panels[':panelId'].context.$get({
+            param: { panelId: panel.id }
+          })
+        ).then((result) => result.context)
       } else if (method === 'diff') {
-        request = apiClient.webPanelDiff(panel.id)
+        request = parseResponse(
+          rpc.api.panels[':panelId'].diff.$get({
+            param: { panelId: panel.id }
+          })
+        ).then((result) => result.diff)
       } else if (
         method === 'storage.get' &&
         typeof event.data.key === 'string'
       ) {
-        request = apiClient.getWebPanelStorage(panel.id, event.data.key)
+        request = parseResponse(
+          rpc.api.panels[':panelId'].storage.get.$post({
+            param: { panelId: panel.id },
+            json: { key: event.data.key }
+          })
+        ).then((result) => result.value)
       } else if (
         method === 'storage.set' &&
         typeof event.data.key === 'string'
       ) {
-        request = apiClient
-          .setWebPanelStorage(panel.id, event.data.key, event.data.value)
-          .then(() => undefined)
+        request = parseResponse(
+          rpc.api.panels[':panelId'].storage.$put({
+            param: { panelId: panel.id },
+            json: { key: event.data.key, value: event.data.value }
+          })
+        ).then(() => undefined)
       } else if (
         method === 'storage.delete' &&
         typeof event.data.key === 'string'
       ) {
-        request = apiClient
-          .deleteWebPanelStorage(panel.id, event.data.key)
-          .then(() => undefined)
+        request = parseResponse(
+          rpc.api.panels[':panelId'].storage.$delete({
+            param: { panelId: panel.id },
+            json: { key: event.data.key }
+          })
+        ).then(() => undefined)
       } else {
         request = Promise.reject(new Error('Unsupported Treeport SDK method'))
       }
@@ -116,7 +137,7 @@ export function WebPanelWorkspace({
               source: 'treeport-host-v1',
               id: event.data.id,
               ok: false,
-              error: error instanceof Error ? error.message : String(error)
+              error: errorMessage(error)
             },
             '*'
           )
