@@ -4,6 +4,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawn as spawnChild } from 'node:child_process'
 import { afterAll, describe, expect, it } from 'vitest'
+import { sql } from 'drizzle-orm'
 import * as nodePty from 'node-pty'
 import {
   resolveExecutablePath,
@@ -11,7 +12,7 @@ import {
   runChecked
 } from './command'
 import { loadConfig } from './config'
-import { TreeportDatabase } from './database'
+import { openDatabase } from './database'
 import { GhAdapter } from './gh'
 import { GitAdapter } from './git'
 import { TreeportService } from './service'
@@ -79,7 +80,7 @@ async function makeService(databasePath: string, runtimeDir: string) {
     TREEPORT_SHELL: process.env.SHELL || '/bin/sh'
   })
   const runner = new SpawnCommandRunner()
-  const database = await TreeportDatabase.open(databasePath)
+  const database = await openDatabase(databasePath)
   const git = new GitAdapter(runner)
   const launcherPath = fileURLToPath(
     new URL('../../../dist/node/server/core/launcher.js', import.meta.url)
@@ -500,7 +501,9 @@ describe.skipIf(!enabled)(
         )
       ).toBe(false)
       expect(
-        await fixture.database.worktree(externallyRemoved.worktree.id)
+        (await fixture.database.db.get<{ id: string }>(sql`
+          SELECT id FROM worktrees WHERE id=${externallyRemoved.worktree.id}
+        `)) ?? null
       ).toBeNull()
 
       await fixture.service.deleteTerminal(first.id)

@@ -3,8 +3,16 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach } from 'vitest'
+import { and, asc, eq, ne, sql } from 'drizzle-orm'
+import type { ProjectRecord, WebPanel, WorktreeRecord } from '@treeport/shared'
 import type { CommandRequest, CommandResult, CommandRunner } from './command'
-import { TreeportDatabase } from './database'
+import {
+  mapProject,
+  mapWorktree,
+  openDatabase,
+  type TreeportDatabase
+} from './database'
+import { projects, webPanels, worktrees } from './database-schema'
 import { GhAdapter } from './gh'
 import { GitAdapter } from './git'
 import { TreeportService } from './service'
@@ -25,6 +33,90 @@ afterEach(async () => {
       .map((directory) => fs.rm(directory, { recursive: true, force: true }))
   )
 })
+
+export async function persistedProject(
+  database: TreeportDatabase,
+  projectId: string
+): Promise<ProjectRecord | null> {
+  const [project] = await database.db
+    .select()
+    .from(projects)
+    .where(eq(projects.id, projectId))
+    .limit(1)
+  if (!project) {
+    return null
+  }
+
+  const rows = await database.db
+    .select()
+    .from(worktrees)
+    .where(
+      and(eq(worktrees.projectId, projectId), ne(worktrees.status, 'removed'))
+    )
+    .orderBy(
+      sql`CASE ${worktrees.kind} WHEN 'main' THEN 0 ELSE 1 END`,
+      asc(worktrees.createdAt),
+      sql`rowid`
+    )
+  return mapProject(project, rows)
+}
+
+export async function persistedWorktree(
+  database: TreeportDatabase,
+  worktreeId: string
+): Promise<WorktreeRecord | null> {
+  const [row] = await database.db
+    .select({
+      worktree: worktrees,
+      mainWorktreePath: projects.mainWorktreePath
+    })
+    .from(worktrees)
+    .innerJoin(projects, eq(worktrees.projectId, projects.id))
+    .where(eq(worktrees.id, worktreeId))
+    .limit(1)
+  return row ? mapWorktree(row.worktree, row.mainWorktreePath) : null
+}
+
+export async function persistedProjectOpen(
+  database: TreeportDatabase,
+  projectId: string
+): Promise<boolean | null> {
+  const [row] = await database.db
+    .select({ isOpen: projects.isOpen })
+    .from(projects)
+    .where(eq(projects.id, projectId))
+    .limit(1)
+  return row ? Boolean(row.isOpen) : null
+}
+
+export async function persistedProjectMetadata(
+  database: TreeportDatabase,
+  projectId: string
+) {
+  const [row] = await database.db
+    .select({
+      identity: projects.repositoryIdentity,
+      device: projects.repositoryDevice,
+      inode: projects.repositoryInode,
+      nameIsCustom: projects.nameIsCustom
+    })
+    .from(projects)
+    .where(eq(projects.id, projectId))
+    .limit(1)
+  return row ? { ...row, nameIsCustom: Boolean(row.nameIsCustom) } : null
+}
+
+export async function persistedWebPanel(
+  database: TreeportDatabase,
+  panelId: string
+): Promise<WebPanel | null> {
+  const [row] = await database.db
+    .select()
+    .from(webPanels)
+    .where(eq(webPanels.id, panelId))
+    .limit(1)
+  return row ? { ...row, kind: 'web' } : null
+}
 
 interface FakeWorktree {
   path: string
@@ -431,7 +523,7 @@ export async function fixture() {
   const runtime = path.join(root, 'runtime')
   await fs.mkdir(main, { recursive: true })
   const runner = new SystemDouble(main)
-  const database = await TreeportDatabase.open(path.join(root, 'treeport.db'))
+  const database = await openDatabase(path.join(root, 'treeport.db'))
   databases.push(database)
   const config: AppConfig = {
     host: '127.0.0.1',

@@ -3,11 +3,24 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { createClient } from '@libsql/client'
-import { sql } from 'drizzle-orm'
+import { and, asc, eq, sql } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/libsql'
 import { afterEach, describe, expect, it } from 'vitest'
-import { TreeportDatabase } from './database'
-import { operations, projects, worktrees } from './database-schema'
+import {
+  mapOperation,
+  mapProject,
+  mapTerminalPreset,
+  openDatabase,
+  type TreeportDatabase
+} from './database'
+import {
+  operations,
+  projects,
+  terminalPresets,
+  webPanels,
+  webPanelStorage,
+  worktrees
+} from './database-schema'
 
 const databases: TreeportDatabase[] = []
 const directories: string[] = []
@@ -26,9 +39,7 @@ describe('SQLite migration and catalog ordering', () => {
       path.join(os.tmpdir(), 'treeport-db-#?%-')
     )
     directories.push(directory)
-    const database = await TreeportDatabase.open(
-      path.join(directory, 'metadata.db')
-    )
+    const database = await openDatabase(path.join(directory, 'metadata.db'))
     databases.push(database)
 
     expect(
@@ -77,18 +88,23 @@ describe('SQLite migration and catalog ordering', () => {
       WHERE id='legacy-a'
     `)
     expect(
-      await database.projectByRepositoryIdentity(
-        '11111111-1111-4111-8111-111111111111'
-      )
+      await database.db
+        .select()
+        .from(projects)
+        .where(
+          eq(
+            projects.repositoryIdentity,
+            '11111111-1111-4111-8111-111111111111'
+          )
+        )
+        .then(([project]) => project)
     ).toMatchObject({ id: 'legacy-a', name: 'Legacy A' })
   })
 
   it('keeps the main worktree first and linked worktrees in creation order', async () => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'treeport-db-'))
     directories.push(directory)
-    const database = await TreeportDatabase.open(
-      path.join(directory, 'metadata.db')
-    )
+    const database = await openDatabase(path.join(directory, 'metadata.db'))
     databases.push(database)
     await database.db.insert(projects).values({
       id: 'p_order',
@@ -121,11 +137,22 @@ describe('SQLite migration and catalog ordering', () => {
       }))
     )
 
-    expect(
-      (await database.project('p_order'))!.worktrees.map(
-        (worktree) => worktree.id
+    const rows = await database.db
+      .select({ id: worktrees.id })
+      .from(worktrees)
+      .where(eq(worktrees.projectId, 'p_order'))
+      .orderBy(
+        sql`CASE ${worktrees.kind} WHEN 'main' THEN 0 ELSE 1 END`,
+        asc(worktrees.createdAt),
+        sql`rowid`
       )
-    ).toEqual(['wt_main', 'wt_oldest', 'wt_same_a', 'wt_same_b', 'wt_newest'])
+    expect(rows.map((worktree) => worktree.id)).toEqual([
+      'wt_main',
+      'wt_oldest',
+      'wt_same_a',
+      'wt_same_b',
+      'wt_newest'
+    ])
   })
 
   it('persists ordered web panels with their worktree lifecycle', async () => {
@@ -133,9 +160,7 @@ describe('SQLite migration and catalog ordering', () => {
       path.join(os.tmpdir(), 'treeport-panels-')
     )
     directories.push(directory)
-    const database = await TreeportDatabase.open(
-      path.join(directory, 'metadata.db')
-    )
+    const database = await openDatabase(path.join(directory, 'metadata.db'))
     databases.push(database)
     await database.db.insert(projects).values({
       id: 'p',
@@ -163,9 +188,8 @@ describe('SQLite migration and catalog ordering', () => {
       ['later', '2026-02-02'],
       ['earlier', '2026-02-01']
     ] as const) {
-      await database.insertWebPanel({
+      await database.db.insert(webPanels).values({
         id,
-        kind: 'web',
         worktreeId: 'wt',
         definitionId: 'project:review',
         title: id,
@@ -173,37 +197,63 @@ describe('SQLite migration and catalog ordering', () => {
         updatedAt: createdAt
       })
     }
-    expect((await database.webPanels('wt')).map((panel) => panel.id)).toEqual([
-      'earlier',
-      'later'
-    ])
-
-    expect(await database.hasWebPanelStorage('earlier')).toBe(false)
-    await database.setWebPanelStorageValue(
-      'earlier',
-      'comments',
-      '[{"line":12}]',
-      '2026-02-03'
-    )
-    expect(await database.webPanelStorageValue('earlier', 'comments')).toBe(
-      '[{"line":12}]'
-    )
-    expect(await database.hasWebPanelStorage('earlier')).toBe(true)
-    await database.setWebPanelStorageValue(
-      'earlier',
-      'comments',
-      '[{"line":13}]',
-      '2026-02-04'
-    )
-    expect(await database.webPanelStorageValue('earlier', 'comments')).toBe(
-      '[{"line":13}]'
-    )
-
-    await database.db.delete(worktrees).where(sql`${worktrees.id} = 'wt'`)
-    expect(await database.webPanels('wt')).toEqual([])
     expect(
-      await database.webPanelStorageValue('earlier', 'comments')
-    ).toBeNull()
+      (
+        await database.db
+          .select({ id: webPanels.id })
+          .from(webPanels)
+          .where(eq(webPanels.worktreeId, 'wt'))
+          .orderBy(asc(webPanels.createdAt), asc(webPanels.id))
+      ).map((panel) => panel.id)
+    ).toEqual(['earlier', 'later'])
+
+    expect(
+      await database.db
+        .select()
+        .from(webPanelStorage)
+        .where(eq(webPanelStorage.panelId, 'earlier'))
+    ).toEqual([])
+    await database.db.insert(webPanelStorage).values({
+      panelId: 'earlier',
+      key: 'comments',
+      valueJson: '[{"line":12}]',
+      updatedAt: '2026-02-03'
+    })
+    expect(
+      await database.db
+        .select({ valueJson: webPanelStorage.valueJson })
+        .from(webPanelStorage)
+        .where(
+          and(
+            eq(webPanelStorage.panelId, 'earlier'),
+            eq(webPanelStorage.key, 'comments')
+          )
+        )
+        .then(([row]) => row?.valueJson)
+    ).toBe('[{"line":12}]')
+    await database.db
+      .insert(webPanelStorage)
+      .values({
+        panelId: 'earlier',
+        key: 'comments',
+        valueJson: '[{"line":13}]',
+        updatedAt: '2026-02-04'
+      })
+      .onConflictDoUpdate({
+        target: [webPanelStorage.panelId, webPanelStorage.key],
+        set: { valueJson: '[{"line":13}]', updatedAt: '2026-02-04' }
+      })
+    expect(
+      await database.db
+        .select({ valueJson: webPanelStorage.valueJson })
+        .from(webPanelStorage)
+        .where(eq(webPanelStorage.panelId, 'earlier'))
+        .then(([row]) => row?.valueJson)
+    ).toBe('[{"line":13}]')
+
+    await database.db.delete(worktrees).where(eq(worktrees.id, 'wt'))
+    expect(await database.db.select().from(webPanels)).toEqual([])
+    expect(await database.db.select().from(webPanelStorage)).toEqual([])
   })
 
   it('adopts a version-7 database, preserves catalog data, and snapshots once', async () => {
@@ -212,7 +262,7 @@ describe('SQLite migration and catalog ordering', () => {
     )
     directories.push(directory)
     const filePath = path.join(directory, 'metadata.db')
-    const initial = await TreeportDatabase.open(filePath)
+    const initial = await openDatabase(filePath)
     await initial.db.insert(projects).values({
       id: 'p_existing',
       name: 'Existing',
@@ -265,15 +315,27 @@ describe('SQLite migration and catalog ordering', () => {
     })
     initial.close()
 
-    const reopened = await TreeportDatabase.open(filePath)
+    const reopened = await openDatabase(filePath)
     databases.push(reopened)
-    expect(await reopened.project('p_existing')).toMatchObject({
+    const [projectRow] = await reopened.db
+      .select()
+      .from(projects)
+      .where(eq(projects.id, 'p_existing'))
+    const worktreeRows = await reopened.db
+      .select()
+      .from(worktrees)
+      .where(eq(worktrees.projectId, 'p_existing'))
+    expect(mapProject(projectRow!, worktreeRows)).toMatchObject({
       id: 'p_existing',
       name: 'Existing',
       repositoryPath: '/existing',
       worktrees: [{ id: 'wt_existing', path: '/existing-linked' }]
     })
-    expect(await reopened.operation('op_existing')).toMatchObject({
+    const [operationRow] = await reopened.db
+      .select()
+      .from(operations)
+      .where(eq(operations.id, 'op_existing'))
+    expect(mapOperation(operationRow!)).toMatchObject({
       id: 'op_existing',
       projectId: 'p_existing',
       worktreeId: 'wt_existing',
@@ -314,7 +376,7 @@ describe('SQLite migration and catalog ordering', () => {
 
     reopened.close()
     databases.splice(databases.indexOf(reopened), 1)
-    const openedAgain = await TreeportDatabase.open(filePath)
+    const openedAgain = await openDatabase(filePath)
     databases.push(openedAgain)
     expect(
       (await fs.readdir(backupDirectory)).filter((name) => name.endsWith('.db'))
@@ -327,13 +389,13 @@ describe('SQLite migration and catalog ordering', () => {
     )
     directories.push(directory)
     const filePath = path.join(directory, 'metadata.db')
-    const initial = await TreeportDatabase.open(filePath)
-    await initial.insertTerminalPreset({
+    const initial = await openDatabase(filePath)
+    await initial.db.insert(terminalPresets).values({
       id: 'preset_legacy',
       name: 'Legacy preset',
       executable: 'pi',
-      args: ['--continue'],
-      closeOnSuccess: false,
+      argsJson: '["--continue"]',
+      closeOnSuccess: 0,
       createdAt: '2026-01-01',
       updatedAt: '2026-01-01'
     })
@@ -375,9 +437,11 @@ describe('SQLite migration and catalog ordering', () => {
     })
     initial.close()
 
-    const reopened = await TreeportDatabase.open(filePath)
+    const reopened = await openDatabase(filePath)
     databases.push(reopened)
-    expect(await reopened.terminalPresets()).toEqual([
+    expect(
+      (await reopened.db.select().from(terminalPresets)).map(mapTerminalPreset)
+    ).toEqual([
       {
         id: 'preset_legacy',
         name: 'Legacy preset',
@@ -396,7 +460,7 @@ describe('SQLite migration and catalog ordering', () => {
     )
     directories.push(directory)
     const filePath = path.join(directory, 'metadata.db')
-    const current = await TreeportDatabase.open(filePath)
+    const current = await openDatabase(filePath)
     const { supported } = (await current.db.get<{ supported: number }>(sql`
       SELECT max(created_at) AS supported FROM __drizzle_migrations
     `))!
@@ -408,7 +472,7 @@ describe('SQLite migration and catalog ordering', () => {
     current.close()
     const before = await fs.readFile(filePath)
 
-    await expect(TreeportDatabase.open(filePath)).rejects.toThrow(
+    await expect(openDatabase(filePath)).rejects.toThrow(
       /newer than this binary supports.*Upgrade Treeport/
     )
     expect(await fs.readFile(filePath)).toEqual(before)
@@ -423,7 +487,7 @@ describe('SQLite migration and catalog ordering', () => {
     )
     directories.push(directory)
     const filePath = path.join(directory, 'metadata.db')
-    const initial = await TreeportDatabase.open(filePath)
+    const initial = await openDatabase(filePath)
     await initial.db.insert(projects).values({
       id: 'p_recover',
       name: 'Recover me',
@@ -469,7 +533,7 @@ describe('SQLite migration and catalog ordering', () => {
     )
 
     await expect(
-      TreeportDatabase.open(filePath, {
+      openDatabase(filePath, {
         migrationsFolder: brokenMigrations
       })
     ).rejects.toThrow()
@@ -496,12 +560,15 @@ describe('SQLite migration and catalog ordering', () => {
       await fs.readdir(path.join(directory, 'database-backups'))
     ).toHaveLength(1)
 
-    const recovered = await TreeportDatabase.open(filePath)
+    const recovered = await openDatabase(filePath)
     databases.push(recovered)
-    expect(await recovered.project('p_recover')).toMatchObject({
-      id: 'p_recover',
-      name: 'Recover me'
-    })
+    expect(
+      await recovered.db
+        .select()
+        .from(projects)
+        .where(eq(projects.id, 'p_recover'))
+        .then(([project]) => project)
+    ).toMatchObject({ id: 'p_recover', name: 'Recover me' })
     expect(
       await recovered.db.get<{ count: number }>(
         sql`SELECT count(*) AS count FROM __drizzle_migrations`

@@ -24,7 +24,7 @@ import type {
   WebPanelDefinition,
   WorktreeRecord
 } from '@treeport/shared'
-import { sql } from 'drizzle-orm'
+import { and, asc, desc, eq, ne, or, sql } from 'drizzle-orm'
 import type {
   Server as HttpServer,
   IncomingMessage,
@@ -33,7 +33,21 @@ import type {
 import type { AppConfig } from './config'
 import type { CommandRunner } from './command'
 import type { TreeportDatabase } from './database'
-import { serializeOperation } from './database'
+import {
+  mapOperation,
+  mapProject,
+  mapTerminalPreset,
+  mapWorktree,
+  serializeOperation
+} from './database'
+import {
+  operations,
+  projects,
+  terminalPresets,
+  webPanels,
+  webPanelStorage,
+  worktrees
+} from './database-schema'
 import { assertCleanupTransition, DomainError } from './domain'
 import { ProductEventBus } from './events'
 import type { GhAdapter } from './gh'
@@ -176,6 +190,91 @@ export class TreeportService {
     return this.deps.database
   }
 
+  private async storedProjects(openOnly = false): Promise<ProjectRecord[]> {
+    const projectRows = await this.deps.database.db
+      .select()
+      .from(projects)
+      .where(openOnly ? eq(projects.isOpen, 1) : undefined)
+      .orderBy(sql`${projects.name} COLLATE NOCASE`)
+    const worktreeRows = await this.deps.database.db
+      .select()
+      .from(worktrees)
+      .where(ne(worktrees.status, 'removed'))
+      .orderBy(
+        asc(worktrees.projectId),
+        sql`CASE ${worktrees.kind} WHEN 'main' THEN 0 ELSE 1 END`,
+        asc(worktrees.createdAt),
+        sql`rowid`
+      )
+    return projectRows.map((project) =>
+      mapProject(
+        project,
+        worktreeRows.filter((worktree) => worktree.projectId === project.id)
+      )
+    )
+  }
+
+  private async storedProject(
+    projectId: string
+  ): Promise<ProjectRecord | null> {
+    const [project] = await this.deps.database.db
+      .select()
+      .from(projects)
+      .where(eq(projects.id, projectId))
+      .limit(1)
+    if (!project) {
+      return null
+    }
+
+    const worktreeRows = await this.deps.database.db
+      .select()
+      .from(worktrees)
+      .where(
+        and(eq(worktrees.projectId, projectId), ne(worktrees.status, 'removed'))
+      )
+      .orderBy(
+        sql`CASE ${worktrees.kind} WHEN 'main' THEN 0 ELSE 1 END`,
+        asc(worktrees.createdAt),
+        sql`rowid`
+      )
+    return mapProject(project, worktreeRows)
+  }
+
+  private async storedWorktree(
+    worktreeId: string
+  ): Promise<WorktreeRecord | null> {
+    const [row] = await this.deps.database.db
+      .select({
+        worktree: worktrees,
+        mainWorktreePath: projects.mainWorktreePath
+      })
+      .from(worktrees)
+      .innerJoin(projects, eq(worktrees.projectId, projects.id))
+      .where(eq(worktrees.id, worktreeId))
+      .limit(1)
+    return row ? mapWorktree(row.worktree, row.mainWorktreePath) : null
+  }
+
+  private async projectOpenState(projectId: string): Promise<boolean | null> {
+    const [row] = await this.deps.database.db
+      .select({ isOpen: projects.isOpen })
+      .from(projects)
+      .where(eq(projects.id, projectId))
+      .limit(1)
+    return row ? Boolean(row.isOpen) : null
+  }
+
+  private async storedOperation(
+    operationId: string
+  ): Promise<OperationRecord | null> {
+    const [row] = await this.deps.database.db
+      .select()
+      .from(operations)
+      .where(eq(operations.id, operationId))
+      .limit(1)
+    return row ? mapOperation(row) : null
+  }
+
   async initialize(): Promise<void> {
     await this.deps.tmux.initialize()
     const interrupted = await this.deps.database.db.all<{
@@ -213,7 +312,7 @@ export class TreeportService {
       }
     })
     await this.reconcile()
-    await this.packages.initialize(await this.deps.database.projects())
+    await this.packages.initialize(await this.storedProjects())
   }
 
   private invalidateProjectsSnapshot(): void {
@@ -434,8 +533,17 @@ export class TreeportService {
     return snapshot
   }
 
-  listRecentProjects(): Promise<RecentProjectRecord[]> {
-    return this.deps.database.recentProjects()
+  async listRecentProjects(): Promise<RecentProjectRecord[]> {
+    return this.deps.database.db
+      .select({
+        id: projects.id,
+        name: projects.name,
+        repositoryPath: projects.repositoryPath,
+        lastOpenedAt: projects.lastOpenedAt
+      })
+      .from(projects)
+      .where(eq(projects.isOpen, 0))
+      .orderBy(desc(projects.lastOpenedAt), asc(projects.id))
   }
 
   private async collectCurrentProjectsSnapshot(): Promise<ProjectRecord[]> {
@@ -450,7 +558,7 @@ export class TreeportService {
 
   private async collectProjectsSnapshot(): Promise<ProjectRecord[]> {
     const projects = await Promise.all(
-      (await this.deps.database.openProjects()).map(async (storedProject) => {
+      (await this.storedProjects(true)).map(async (storedProject) => {
         let project = storedProject
         try {
           await this.importWorktrees(
@@ -459,7 +567,7 @@ export class TreeportService {
             project.mainWorktreePath
           )
           await this.ensureProjectTerminals(project.id)
-          project = (await this.deps.database.project(project.id)) ?? project
+          project = (await this.storedProject(project.id)) ?? project
         } catch (error) {
           project.availability = {
             state: 'unavailable',
@@ -467,7 +575,7 @@ export class TreeportService {
           }
         }
 
-        if ((await this.deps.database.isProjectOpen(project.id)) !== true) {
+        if ((await this.projectOpenState(project.id)) !== true) {
           return null
         }
 
@@ -488,7 +596,11 @@ export class TreeportService {
             ])
             worktree.dirty = dirty
             worktree.terminals = terminals
-            const webPanels = await this.deps.database.webPanels(worktree.id)
+            const storedWebPanels = await this.deps.database.db
+              .select()
+              .from(webPanels)
+              .where(eq(webPanels.worktreeId, worktree.id))
+              .orderBy(asc(webPanels.createdAt), asc(webPanels.id))
             worktree.panels = [
               ...terminals.map((terminal) => ({
                 id: `panel_${terminal.id}`,
@@ -499,7 +611,10 @@ export class TreeportService {
                 createdAt: terminal.createdAt,
                 updatedAt: terminal.updatedAt
               })),
-              ...webPanels
+              ...storedWebPanels.map((panel) => ({
+                ...panel,
+                kind: 'web' as const
+              }))
             ].sort(
               (left, right) =>
                 left.createdAt.localeCompare(right.createdAt) ||
@@ -626,7 +741,7 @@ export class TreeportService {
     worktreeId: string,
     allowPrunable = false
   ): Promise<WorktreeRecord> {
-    const binding = await this.deps.database.worktree(worktreeId)
+    const binding = await this.storedWorktree(worktreeId)
     if (!binding) {
       throw new DomainError('WORKTREE_NOT_FOUND', 'Worktree not found', 404)
     }
@@ -654,7 +769,7 @@ export class TreeportService {
   }
 
   async getProject(projectId: string): Promise<ProjectRecord> {
-    const project = await this.deps.database.project(projectId)
+    const project = await this.storedProject(projectId)
     if (!project) {
       throw new DomainError('PROJECT_NOT_FOUND', 'Project not found', 404)
     }
@@ -664,7 +779,7 @@ export class TreeportService {
 
   private async requireOpenProject(projectId: string): Promise<ProjectRecord> {
     const project = await this.getProject(projectId)
-    if ((await this.deps.database.isProjectOpen(projectId)) !== true) {
+    if ((await this.projectOpenState(projectId)) !== true) {
       throw new DomainError(
         'PROJECT_CLOSED',
         'Project is closed; open it before modifying it',
@@ -676,7 +791,7 @@ export class TreeportService {
   }
 
   async resolveRegisteredProject(identifier: string): Promise<ProjectRecord> {
-    const direct = await this.deps.database.project(identifier)
+    const direct = await this.storedProject(identifier)
     if (direct) {
       return direct
     }
@@ -684,7 +799,7 @@ export class TreeportService {
     const canonical = await fs
       .realpath(path.resolve(identifier))
       .catch(() => path.resolve(identifier))
-    const match = (await this.deps.database.projects()).find(
+    const match = (await this.storedProjects()).find(
       (project) =>
         isPathWithin(canonical, project.repositoryPath) ||
         project.worktrees.some((worktree) =>
@@ -706,7 +821,7 @@ export class TreeportService {
     packages: PackageListing[]
     diagnostics: PackageResourceDiagnostic[]
   }> {
-    this.packages.syncProjects(await this.deps.database.projects())
+    this.packages.syncProjects(await this.storedProjects())
     return this.packages.list()
   }
 
@@ -714,7 +829,7 @@ export class TreeportService {
     this.invalidateProjectsSnapshot()
     const projects = projectId
       ? [await this.getProject(projectId)]
-      : await this.deps.database.openProjects()
+      : await this.storedProjects(true)
     for (const project of projects) {
       this.events.publish('project.updated', { projectId: project.id })
     }
@@ -749,7 +864,7 @@ export class TreeportService {
   }
 
   async updatePackages(source?: string): Promise<PackageOperationResult[]> {
-    this.packages.syncProjects(await this.deps.database.projects())
+    this.packages.syncProjects(await this.storedProjects())
     const results = await this.packages.update(source)
     await this.webPanelRuntime.disposeDevelopmentServers()
     await this.packageResourcesChanged()
@@ -760,7 +875,7 @@ export class TreeportService {
     results: PackageOperationResult[]
     diagnostics: PackageResourceDiagnostic[]
   }> {
-    this.packages.syncProjects(await this.deps.database.projects())
+    this.packages.syncProjects(await this.storedProjects())
     if (projectId) {
       await this.getProject(projectId)
     }
@@ -796,8 +911,12 @@ export class TreeportService {
     return await this.getProject(projectId)
   }
 
-  listTerminalPresets(): Promise<TerminalPreset[]> {
-    return this.deps.database.terminalPresets()
+  async listTerminalPresets(): Promise<TerminalPreset[]> {
+    const rows = await this.deps.database.db
+      .select()
+      .from(terminalPresets)
+      .orderBy(asc(terminalPresets.createdAt), asc(terminalPresets.id))
+    return rows.map(mapTerminalPreset)
   }
 
   async listTerminalPresetDefinitions(
@@ -808,7 +927,7 @@ export class TreeportService {
     }
 
     const [userPresets, packagePresets] = await Promise.all([
-      this.deps.database.terminalPresets(),
+      this.listTerminalPresets(),
       this.packages.terminalPresetDefinitions(projectId)
     ])
     return [
@@ -838,7 +957,15 @@ export class TreeportService {
       createdAt: timestamp,
       updatedAt: timestamp
     }
-    await this.deps.database.insertTerminalPreset(preset)
+    await this.deps.database.db.insert(terminalPresets).values({
+      id: preset.id,
+      name: preset.name,
+      executable: preset.executable,
+      argsJson: JSON.stringify(preset.args),
+      closeOnSuccess: Number(preset.closeOnSuccess),
+      createdAt: preset.createdAt,
+      updatedAt: preset.updatedAt
+    })
     return preset
   }
 
@@ -849,8 +976,12 @@ export class TreeportService {
     },
     expectedUpdatedAt: string
   ): Promise<TerminalPreset> {
-    const existing = await this.deps.database.terminalPreset(presetId)
-    if (!existing) {
+    const [existingRow] = await this.deps.database.db
+      .select()
+      .from(terminalPresets)
+      .where(eq(terminalPresets.id, presetId))
+      .limit(1)
+    if (!existingRow) {
       throw new DomainError(
         'TERMINAL_PRESET_NOT_FOUND',
         'Terminal preset not found',
@@ -858,6 +989,7 @@ export class TreeportService {
       )
     }
 
+    const existing = mapTerminalPreset(existingRow)
     if (existing.updatedAt !== expectedUpdatedAt) {
       throw new DomainError(
         'TERMINAL_PRESET_CHANGED',
@@ -878,12 +1010,22 @@ export class TreeportService {
           ? timestamp
           : new Date(Date.parse(existing.updatedAt) + 1).toISOString()
     }
-    if (
-      !(await this.deps.database.updateTerminalPreset(
-        preset,
-        expectedUpdatedAt
-      ))
-    ) {
+    const result = await this.deps.database.db
+      .update(terminalPresets)
+      .set({
+        name: preset.name,
+        executable: preset.executable,
+        argsJson: JSON.stringify(preset.args),
+        closeOnSuccess: Number(preset.closeOnSuccess),
+        updatedAt: preset.updatedAt
+      })
+      .where(
+        and(
+          eq(terminalPresets.id, preset.id),
+          eq(terminalPresets.updatedAt, expectedUpdatedAt)
+        )
+      )
+    if (result.rowsAffected === 0) {
       throw new DomainError(
         'TERMINAL_PRESET_CHANGED',
         'Terminal preset changed; review the latest values and try again',
@@ -898,7 +1040,11 @@ export class TreeportService {
     presetId: string,
     expectedUpdatedAt: string
   ): Promise<void> {
-    const existing = await this.deps.database.terminalPreset(presetId)
+    const [existing] = await this.deps.database.db
+      .select({ updatedAt: terminalPresets.updatedAt })
+      .from(terminalPresets)
+      .where(eq(terminalPresets.id, presetId))
+      .limit(1)
     if (!existing) {
       throw new DomainError(
         'TERMINAL_PRESET_NOT_FOUND',
@@ -907,13 +1053,15 @@ export class TreeportService {
       )
     }
 
-    if (
-      existing.updatedAt !== expectedUpdatedAt ||
-      !(await this.deps.database.deleteTerminalPreset(
-        presetId,
-        expectedUpdatedAt
-      ))
-    ) {
+    const result = await this.deps.database.db
+      .delete(terminalPresets)
+      .where(
+        and(
+          eq(terminalPresets.id, presetId),
+          eq(terminalPresets.updatedAt, expectedUpdatedAt)
+        )
+      )
+    if (existing.updatedAt !== expectedUpdatedAt || result.rowsAffected === 0) {
       throw new DomainError(
         'TERMINAL_PRESET_CHANGED',
         'Terminal preset changed; review the latest values and try again',
@@ -1048,7 +1196,14 @@ export class TreeportService {
       createdAt: timestamp,
       updatedAt: timestamp
     }
-    await this.deps.database.insertWebPanel(panel)
+    await this.deps.database.db.insert(webPanels).values({
+      id: panel.id,
+      worktreeId: panel.worktreeId,
+      definitionId: panel.definitionId,
+      title: panel.title,
+      createdAt: panel.createdAt,
+      updatedAt: panel.updatedAt
+    })
     this.invalidateProjectsSnapshot()
     this.events.publish('panel.created', { worktreeId, panelId: panel.id })
     return panel
@@ -1058,16 +1213,22 @@ export class TreeportService {
     panelId: string,
     discardStoredData = false
   ): Promise<void> {
-    const panel = await this.deps.database.webPanel(panelId)
+    const [panel] = await this.deps.database.db
+      .select()
+      .from(webPanels)
+      .where(eq(webPanels.id, panelId))
+      .limit(1)
     if (!panel) {
       throw new DomainError('PANEL_NOT_FOUND', 'Panel not found', 404)
     }
 
     await this.requireAvailableWorktree(panel.worktreeId)
-    if (
-      !discardStoredData &&
-      (await this.deps.database.hasWebPanelStorage(panelId))
-    ) {
+    const [storedValue] = await this.deps.database.db
+      .select({ key: webPanelStorage.key })
+      .from(webPanelStorage)
+      .where(eq(webPanelStorage.panelId, panelId))
+      .limit(1)
+    if (!discardStoredData && storedValue) {
       throw new DomainError(
         'PANEL_HAS_STORED_DATA',
         'Closing this panel requires confirmation because its saved data will be deleted',
@@ -1075,7 +1236,9 @@ export class TreeportService {
       )
     }
 
-    await this.deps.database.deleteWebPanel(panelId)
+    await this.deps.database.db
+      .delete(webPanels)
+      .where(eq(webPanels.id, panelId))
     this.invalidateProjectsSnapshot()
     this.events.publish('panel.removed', {
       worktreeId: panel.worktreeId,
@@ -1084,11 +1247,16 @@ export class TreeportService {
   }
 
   async getWebPanelContext(panelId: string): Promise<WebPanelContext> {
-    const panel = await this.deps.database.webPanel(panelId)
-    if (!panel) {
+    const [panelRow] = await this.deps.database.db
+      .select()
+      .from(webPanels)
+      .where(eq(webPanels.id, panelId))
+      .limit(1)
+    if (!panelRow) {
       throw new DomainError('PANEL_NOT_FOUND', 'Panel not found', 404)
     }
 
+    const panel: WebPanel = { ...panelRow, kind: 'web' }
     const worktree = await this.getWorktree(panel.worktreeId)
     const project = await this.getProject(worktree.projectId)
     return {
@@ -1119,7 +1287,12 @@ export class TreeportService {
 
   async hasWebPanelStorage(panelId: string): Promise<boolean> {
     await this.getWebPanelContext(panelId)
-    return this.deps.database.hasWebPanelStorage(panelId)
+    const [row] = await this.deps.database.db
+      .select({ key: webPanelStorage.key })
+      .from(webPanelStorage)
+      .where(eq(webPanelStorage.panelId, panelId))
+      .limit(1)
+    return row !== undefined
   }
 
   async getWebPanelStorage(
@@ -1127,11 +1300,14 @@ export class TreeportService {
     key: string
   ): Promise<JsonValue | undefined> {
     await this.getWebPanelContext(panelId)
-    const valueJson = await this.deps.database.webPanelStorageValue(
-      panelId,
-      key
-    )
-    return valueJson === null ? undefined : (JSON.parse(valueJson) as JsonValue)
+    const [row] = await this.deps.database.db
+      .select({ valueJson: webPanelStorage.valueJson })
+      .from(webPanelStorage)
+      .where(
+        and(eq(webPanelStorage.panelId, panelId), eq(webPanelStorage.key, key))
+      )
+      .limit(1)
+    return row ? (JSON.parse(row.valueJson) as JsonValue) : undefined
   }
 
   async setWebPanelStorage(
@@ -1150,10 +1326,19 @@ export class TreeportService {
       )
     }
 
-    const usage = await this.deps.database.webPanelStorageUsage(panelId, key)
+    const storedValues = await this.deps.database.db
+      .select({ valueJson: webPanelStorage.valueJson })
+      .from(webPanelStorage)
+      .where(
+        and(eq(webPanelStorage.panelId, panelId), ne(webPanelStorage.key, key))
+      )
+    const storedBytes = storedValues.reduce(
+      (total, row) => total + Buffer.byteLength(row.valueJson),
+      0
+    )
     if (
-      usage.entries >= WEB_PANEL_STORAGE_MAX_ENTRIES ||
-      usage.bytes + valueBytes > WEB_PANEL_STORAGE_MAX_TOTAL_BYTES
+      storedValues.length >= WEB_PANEL_STORAGE_MAX_ENTRIES ||
+      storedBytes + valueBytes > WEB_PANEL_STORAGE_MAX_TOTAL_BYTES
     ) {
       throw new DomainError(
         'WEB_PANEL_STORAGE_QUOTA_EXCEEDED',
@@ -1162,24 +1347,34 @@ export class TreeportService {
       )
     }
 
-    await this.deps.database.setWebPanelStorageValue(
-      panelId,
-      key,
-      valueJson,
-      now()
-    )
+    const updatedAt = now()
+    await this.deps.database.db
+      .insert(webPanelStorage)
+      .values({ panelId, key, valueJson, updatedAt })
+      .onConflictDoUpdate({
+        target: [webPanelStorage.panelId, webPanelStorage.key],
+        set: { valueJson, updatedAt }
+      })
   }
 
   async deleteWebPanelStorage(panelId: string, key: string): Promise<void> {
     await this.getWebPanelContext(panelId)
-    await this.deps.database.deleteWebPanelStorageValue(panelId, key)
+    await this.deps.database.db
+      .delete(webPanelStorage)
+      .where(
+        and(eq(webPanelStorage.panelId, panelId), eq(webPanelStorage.key, key))
+      )
   }
 
   async resolveWebPanelAsset(
     panelId: string,
     requestedPath: string
   ): Promise<WebPanelAssetResolution> {
-    const panel = await this.deps.database.webPanel(panelId)
+    const [panel] = await this.deps.database.db
+      .select()
+      .from(webPanels)
+      .where(eq(webPanels.id, panelId))
+      .limit(1)
     if (!panel) {
       throw new DomainError('PANEL_NOT_FOUND', 'Panel not found', 404)
     }
@@ -1204,11 +1399,15 @@ export class TreeportService {
   }
 
   async listWebPanels(): Promise<WebPanel[]> {
-    return this.deps.database.webPanels()
+    const rows = await this.deps.database.db
+      .select()
+      .from(webPanels)
+      .orderBy(asc(webPanels.createdAt), asc(webPanels.id))
+    return rows.map((panel) => ({ ...panel, kind: 'web' as const }))
   }
 
   async getWorktree(worktreeId: string): Promise<WorktreeRecord> {
-    const worktree = await this.deps.database.worktree(worktreeId)
+    const worktree = await this.storedWorktree(worktreeId)
     if (!worktree || worktree.status === 'removed') {
       throw new DomainError('WORKTREE_NOT_FOUND', 'Worktree not found', 404)
     }
@@ -1242,7 +1441,7 @@ export class TreeportService {
   ): Promise<TerminalRecord> {
     const known = this.terminalStates.get(terminalId)
     if (known) {
-      const worktree = await this.deps.database.worktree(known.worktreeId)
+      const worktree = await this.storedWorktree(known.worktreeId)
       if (worktree) {
         await this.requireOpenProject(worktree.projectId)
         const terminal = (await this.listWorktreeTerminals(worktree)).find(
@@ -1255,7 +1454,7 @@ export class TreeportService {
     }
 
     const inventories = await Promise.allSettled(
-      (await this.deps.database.openProjects())
+      (await this.storedProjects(true))
         .flatMap((project) => project.worktrees)
         .map((worktree) => this.listWorktreeTerminals(worktree))
     )
@@ -1291,7 +1490,7 @@ export class TreeportService {
   }
 
   async getOperation(operationId: string): Promise<OperationRecord> {
-    const operation = await this.deps.database.operation(operationId)
+    const operation = await this.storedOperation(operationId)
     if (!operation) {
       throw new DomainError('OPERATION_NOT_FOUND', 'Operation not found', 404)
     }
@@ -1300,7 +1499,7 @@ export class TreeportService {
   }
 
   async resolveProject(identifier: string): Promise<ProjectRecord> {
-    const direct = await this.deps.database.project(identifier)
+    const direct = await this.storedProject(identifier)
     if (direct) {
       return await this.requireOpenProject(direct.id)
     }
@@ -1308,7 +1507,7 @@ export class TreeportService {
     const canonical = await fs
       .realpath(path.resolve(identifier))
       .catch(() => path.resolve(identifier))
-    const projects = await this.deps.database.projects()
+    const projects = await this.storedProjects()
     const match = projects.find(
       (project) =>
         isPathWithin(canonical, project.repositoryPath) ||
@@ -1329,7 +1528,7 @@ export class TreeportService {
   }
 
   async resolveWorktree(identifier: string): Promise<WorktreeRecord> {
-    const direct = await this.deps.database.worktree(identifier)
+    const direct = await this.storedWorktree(identifier)
     if (direct && direct.status !== 'removed') {
       await this.requireOpenProject(direct.projectId)
       return direct
@@ -1338,7 +1537,7 @@ export class TreeportService {
     const canonical = await fs
       .realpath(path.resolve(identifier))
       .catch(() => path.resolve(identifier))
-    const matches = (await this.deps.database.projects())
+    const matches = (await this.storedProjects())
       .flatMap((project) => project.worktrees)
       .filter((worktree) => isPathWithin(canonical, worktree.path))
       .sort((a, b) => b.path.length - a.path.length)
@@ -1544,12 +1743,46 @@ export class TreeportService {
     const repositoryInode = repositoryStat.ino.toString()
     const repositoryIdentity =
       await this.deps.git.ensureRepositoryIdentity(repositoryPath)
-    const [pathMatch, identityMatch] = await Promise.all([
-      this.deps.database.projectByPath(repositoryPath),
-      this.deps.database.projectByRepositoryIdentity(repositoryIdentity)
+    const [pathMatchRow, identityMatchRow] = await Promise.all([
+      this.deps.database.db
+        .select({ id: projects.id })
+        .from(projects)
+        .where(
+          or(
+            eq(projects.repositoryPath, repositoryPath),
+            eq(projects.mainWorktreePath, repositoryPath)
+          )
+        )
+        .limit(1)
+        .then(([row]) => row),
+      this.deps.database.db
+        .select({ id: projects.id })
+        .from(projects)
+        .where(eq(projects.repositoryIdentity, repositoryIdentity))
+        .limit(1)
+        .then(([row]) => row)
     ])
-    const pathMetadata = pathMatch
-      ? await this.deps.database.projectRepositoryMetadata(pathMatch.id)
+    const [pathMatch, identityMatch] = await Promise.all([
+      pathMatchRow ? this.storedProject(pathMatchRow.id) : null,
+      identityMatchRow ? this.storedProject(identityMatchRow.id) : null
+    ])
+    const [pathMetadataRow] = pathMatch
+      ? await this.deps.database.db
+          .select({
+            identity: projects.repositoryIdentity,
+            device: projects.repositoryDevice,
+            inode: projects.repositoryInode,
+            nameIsCustom: projects.nameIsCustom
+          })
+          .from(projects)
+          .where(eq(projects.id, pathMatch.id))
+          .limit(1)
+      : []
+    const pathMetadata = pathMetadataRow
+      ? {
+          ...pathMetadataRow,
+          nameIsCustom: Boolean(pathMetadataRow.nameIsCustom)
+        }
       : null
     if (pathMatch && !pathMetadata) {
       throw new DomainError(
@@ -1623,8 +1856,23 @@ export class TreeportService {
       const timestamp = now()
       const defaultBranch = await this.deps.git.defaultBranch(repositoryPath)
       const requested = requestedName?.trim() || null
-      const existingMetadata = existing
-        ? await this.deps.database.projectRepositoryMetadata(existing.id)
+      const [existingMetadataRow] = existing
+        ? await this.deps.database.db
+            .select({
+              identity: projects.repositoryIdentity,
+              device: projects.repositoryDevice,
+              inode: projects.repositoryInode,
+              nameIsCustom: projects.nameIsCustom
+            })
+            .from(projects)
+            .where(eq(projects.id, existing.id))
+            .limit(1)
+        : []
+      const existingMetadata = existingMetadataRow
+        ? {
+            ...existingMetadataRow,
+            nameIsCustom: Boolean(existingMetadataRow.nameIsCustom)
+          }
         : null
       if (existing && !existingMetadata) {
         throw new DomainError(
@@ -1710,7 +1958,15 @@ export class TreeportService {
         this.projectLocks.add(projectId)
         try {
           await updateRegistration()
-          await this.deps.database.setProjectOpen(projectId, true, now())
+          const timestamp = now()
+          await this.deps.database.db
+            .update(projects)
+            .set({
+              isOpen: 1,
+              lastOpenedAt: timestamp,
+              updatedAt: timestamp
+            })
+            .where(eq(projects.id, projectId))
           await this.packages.registerProject(await this.getProject(projectId))
           await this.ensureProjectTerminals(projectId).catch(() => undefined)
           this.invalidateProjectsSnapshot()
@@ -1806,7 +2062,15 @@ export class TreeportService {
 
       this.projectLocks.add(projectId)
       try {
-        await this.deps.database.setProjectOpen(projectId, true, now())
+        const timestamp = now()
+        await this.deps.database.db
+          .update(projects)
+          .set({
+            isOpen: 1,
+            lastOpenedAt: timestamp,
+            updatedAt: timestamp
+          })
+          .where(eq(projects.id, projectId))
         await this.packages.registerProject(await this.getProject(projectId))
         this.invalidateProjectsSnapshot()
         this.events.publish('project.updated', { projectId })
@@ -1821,7 +2085,7 @@ export class TreeportService {
   async closeProject(projectId: string): Promise<void> {
     await this.serializeProjectObservation(projectId, async () => {
       const project = await this.getProject(projectId)
-      if ((await this.deps.database.isProjectOpen(projectId)) !== true) {
+      if ((await this.projectOpenState(projectId)) !== true) {
         return
       }
 
@@ -1885,7 +2149,10 @@ export class TreeportService {
         }
 
         try {
-          await this.deps.database.setProjectOpen(projectId, false, now())
+          await this.deps.database.db
+            .update(projects)
+            .set({ isOpen: 0, updatedAt: now() })
+            .where(eq(projects.id, projectId))
         } catch (error) {
           throw new DomainError(
             'PROJECT_CLOSE_FAILED',
@@ -1960,15 +2227,22 @@ export class TreeportService {
       (!allowProjectLock &&
         (this.projectLocks.has(projectId) ||
           this.worktreeMutations.has(projectId))) ||
-      (!allowClosed &&
-        (await this.deps.database.isProjectOpen(projectId)) !== true)
+      (!allowClosed && (await this.projectOpenState(projectId)) !== true)
     ) {
       return
     }
 
     const storedProject = await this.getProject(projectId)
-    const storedIdentity =
-      await this.deps.database.projectRepositoryMetadata(projectId)
+    const [storedIdentity] = await this.deps.database.db
+      .select({
+        identity: projects.repositoryIdentity,
+        device: projects.repositoryDevice,
+        inode: projects.repositoryInode,
+        nameIsCustom: projects.nameIsCustom
+      })
+      .from(projects)
+      .where(eq(projects.id, projectId))
+      .limit(1)
     if (!storedIdentity) {
       throw new Error('Registered project is missing its repository metadata')
     }
@@ -2023,8 +2297,11 @@ export class TreeportService {
       repositoryIdentity =
         markerAtStoredPath ??
         (await this.deps.git.ensureRepositoryIdentity(canonicalRepository))
-      const identityOwner =
-        await this.deps.database.projectByRepositoryIdentity(repositoryIdentity)
+      const [identityOwner] = await this.deps.database.db
+        .select({ id: projects.id })
+        .from(projects)
+        .where(eq(projects.repositoryIdentity, repositoryIdentity))
+        .limit(1)
       if (identityOwner && identityOwner.id !== projectId) {
         throw new Error(
           'The local Treeport repository identity belongs to another registered project'
@@ -2123,8 +2400,7 @@ export class TreeportService {
       (!allowProjectLock &&
         (this.projectLocks.has(projectId) ||
           this.worktreeMutations.has(projectId))) ||
-      (!allowClosed &&
-        (await this.deps.database.isProjectOpen(projectId)) !== true)
+      (!allowClosed && (await this.projectOpenState(projectId)) !== true)
     ) {
       return
     }
@@ -2546,7 +2822,23 @@ export class TreeportService {
       await this.requireOpenProject(filters.projectId)
     }
 
-    return this.deps.database.activeOperations(filters)
+    const rows = await this.deps.database.db
+      .select()
+      .from(operations)
+      .where(
+        and(
+          or(
+            eq(operations.status, 'pending'),
+            eq(operations.status, 'running')
+          ),
+          ...(filters.projectId
+            ? [eq(operations.projectId, filters.projectId)]
+            : []),
+          ...(filters.kind ? [eq(operations.kind, filters.kind)] : [])
+        )
+      )
+      .orderBy(asc(operations.createdAt), asc(operations.id))
+    return rows.map(mapOperation)
   }
 
   async beginCreateWorktree(
@@ -2858,7 +3150,23 @@ export class TreeportService {
         SET managed_wrapper_path=${wrapperCreated ? wrapperPath : null}
         WHERE path=${worktreePath}
       `)
-      const worktree = await this.deps.database.worktreeByPath(worktreePath!)
+      const [worktreeRow] = await this.deps.database.db
+        .select({
+          worktree: worktrees,
+          mainWorktreePath: projects.mainWorktreePath
+        })
+        .from(worktrees)
+        .innerJoin(projects, eq(worktrees.projectId, projects.id))
+        .where(
+          and(
+            eq(worktrees.path, worktreePath!),
+            ne(worktrees.status, 'removed')
+          )
+        )
+        .limit(1)
+      const worktree = worktreeRow
+        ? mapWorktree(worktreeRow.worktree, worktreeRow.mainWorktreePath)
+        : null
       if (!worktree) {
         throw new DomainError(
           'WORKTREE_DISCOVERY_FAILED',
@@ -2988,7 +3296,7 @@ export class TreeportService {
 
   private async ensureProjectTerminals(projectId: string): Promise<void> {
     const project = await this.getProject(projectId)
-    if ((await this.deps.database.isProjectOpen(projectId)) !== true) {
+    if ((await this.projectOpenState(projectId)) !== true) {
       return
     }
 
@@ -3007,10 +3315,10 @@ export class TreeportService {
     }
 
     return this.terminalMutations.enqueue(worktreeId, async () => {
-      const worktree = await this.deps.database.worktree(worktreeId)
+      const worktree = await this.storedWorktree(worktreeId)
       if (
         !worktree ||
-        (await this.deps.database.isProjectOpen(worktree.projectId)) !== true ||
+        (await this.projectOpenState(worktree.projectId)) !== true ||
         worktree.status !== 'active' ||
         worktree.prunable ||
         this.worktreeLocks.has(worktreeId)
@@ -3141,7 +3449,7 @@ export class TreeportService {
   ): Promise<TerminalRecord> {
     await this.requireAvailableWorktree(worktreeId)
     try {
-      const worktree = await this.deps.database.worktree(worktreeId)
+      const worktree = await this.storedWorktree(worktreeId)
       if (!worktree) {
         throw new DomainError('WORKTREE_NOT_FOUND', 'Worktree not found', 404)
       }
@@ -3301,7 +3609,7 @@ export class TreeportService {
     terminalId: string,
     worktreeId: string
   ): Promise<void> {
-    const worktree = await this.deps.database.worktree(worktreeId)
+    const worktree = await this.storedWorktree(worktreeId)
     if (!worktree) {
       throw new DomainError('WORKTREE_NOT_FOUND', 'Worktree not found', 404)
     }
@@ -3377,7 +3685,7 @@ export class TreeportService {
 
     await this.requireOpenProject(worktree.projectId)
     const pr = await this.deps.gh.pullRequest(worktree.path, worktree.branch)
-    const current = await this.deps.database.worktree(worktreeId)
+    const current = await this.storedWorktree(worktreeId)
 
     if (!current) {
       throw new DomainError('WORKTREE_NOT_FOUND', 'Worktree not found', 404)
@@ -3625,8 +3933,11 @@ export class TreeportService {
         SELECT git_worktree_key,managed_wrapper_path
         FROM worktrees WHERE id=${worktreeId}
       `)
-      const projectMetadata =
-        await this.deps.database.projectRepositoryMetadata(worktree.projectId)
+      const [projectMetadata] = await this.deps.database.db
+        .select({ identity: projects.repositoryIdentity })
+        .from(projects)
+        .where(eq(projects.id, worktree.projectId))
+        .limit(1)
       const repositoryIdentity = await this.deps.git.repositoryIdentity(
         prunable
           ? (await this.getProject(worktree.projectId)).repositoryPath
@@ -3758,7 +4069,7 @@ export class TreeportService {
       return
     }
 
-    const worktree = await this.deps.database.worktree(lockedWorktreeId)
+    const worktree = await this.storedWorktree(lockedWorktreeId)
     if (!worktree) {
       this.worktreeLocks.delete(lockedWorktreeId)
       return
@@ -4031,7 +4342,7 @@ export class TreeportService {
 
   async reconcile(): Promise<void> {
     const availableProjects = new Set<string>()
-    for (const project of await this.deps.database.openProjects()) {
+    for (const project of await this.storedProjects(true)) {
       try {
         await this.importWorktrees(
           project.id,
@@ -4043,7 +4354,7 @@ export class TreeportService {
         // Keep metadata and tmux untouched while Git is unavailable.
       }
     }
-    for (const project of await this.deps.database.openProjects()) {
+    for (const project of await this.storedProjects(true)) {
       if (!availableProjects.has(project.id)) {
         continue
       }

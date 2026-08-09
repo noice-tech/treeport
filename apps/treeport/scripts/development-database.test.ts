@@ -3,7 +3,10 @@ import os from 'node:os'
 import path from 'node:path'
 import { eq, sql } from 'drizzle-orm'
 import { afterEach, describe, expect, it } from 'vitest'
-import { TreeportDatabase } from '../src/server/core/database'
+import {
+  openDatabase,
+  type TreeportDatabase
+} from '../src/server/core/database'
 import {
   operations,
   projects,
@@ -31,7 +34,7 @@ describe('development database snapshots', () => {
     directories.push(directory)
     const sourcePath = path.join(directory, 'source', 'treeport.db')
     const destinationPath = path.join(directory, 'destination', 'treeport.db')
-    const source = await TreeportDatabase.open(sourcePath)
+    const source = await openDatabase(sourcePath)
     databases.push(source)
     await source.db.insert(projects).values({
       id: 'project',
@@ -70,28 +73,37 @@ describe('development database snapshots', () => {
     await expect(
       cloneDevelopmentDatabase(sourcePath, destinationPath)
     ).resolves.toEqual({ copied: true })
-    const snapshot = await TreeportDatabase.open(destinationPath)
-    expect(await snapshot.project('project')).toMatchObject({
-      name: 'Main project',
-      repositoryPath: '/repo',
-      worktrees: [
-        expect.objectContaining({
-          path: '/repo',
-          status: 'active',
-          cleanupError: null,
-          tmuxSocketName: expect.stringMatching(/^treeport-wt-[0-9a-f]{16}$/)
-        })
-      ]
-    })
+    const snapshot = await openDatabase(destinationPath)
     expect(
-      (await snapshot.project('project'))!.worktrees[0]!.tmuxSocketName
-    ).not.toBe('real-tmux-socket')
+      await snapshot.db
+        .select()
+        .from(projects)
+        .where(eq(projects.id, 'project'))
+        .then(([project]) => project)
+    ).toMatchObject({ name: 'Main project', repositoryPath: '/repo' })
+    const [snapshotWorktree] = await snapshot.db
+      .select()
+      .from(worktrees)
+      .where(eq(worktrees.projectId, 'project'))
+    expect(snapshotWorktree).toMatchObject({
+      path: '/repo',
+      status: 'active',
+      cleanupError: null,
+      tmuxSocketName: expect.stringMatching(/^treeport-wt-[0-9a-f]{16}$/)
+    })
+    expect(snapshotWorktree!.tmuxSocketName).not.toBe('real-tmux-socket')
     expect(
       await snapshot.db.get<{ count: number }>(
         sql`SELECT COUNT(*) AS count FROM operations`
       )
     ).toEqual({ count: 0 })
-    expect((await source.project('project'))!.worktrees[0]).toMatchObject({
+    expect(
+      await source.db
+        .select()
+        .from(worktrees)
+        .where(eq(worktrees.projectId, 'project'))
+        .then(([worktree]) => worktree)
+    ).toMatchObject({
       status: 'cleanup_failed',
       cleanupError: 'real cleanup pending',
       tmuxSocketName: 'real-tmux-socket'
@@ -107,9 +119,13 @@ describe('development database snapshots', () => {
     await cloneDevelopmentDatabase(sourcePath, adoptedPath, {
       preserveTmuxSockets: true
     })
-    const adopted = await TreeportDatabase.open(adoptedPath)
+    const adopted = await openDatabase(adoptedPath)
     expect(
-      (await adopted.project('project'))!.worktrees[0]!.tmuxSocketName
+      await adopted.db
+        .select({ tmuxSocketName: worktrees.tmuxSocketName })
+        .from(worktrees)
+        .where(eq(worktrees.projectId, 'project'))
+        .then(([worktree]) => worktree?.tmuxSocketName)
     ).toBe('real-tmux-socket')
     adopted.close()
 
@@ -124,8 +140,14 @@ describe('development database snapshots', () => {
       cloneDevelopmentDatabase(sourcePath, destinationPath, { force: true })
     ).resolves.toEqual({ copied: true })
 
-    const refreshed = await TreeportDatabase.open(destinationPath)
-    expect((await refreshed.project('project'))!.name).toBe('Refreshed project')
+    const refreshed = await openDatabase(destinationPath)
+    expect(
+      await refreshed.db
+        .select({ name: projects.name })
+        .from(projects)
+        .where(eq(projects.id, 'project'))
+        .then(([project]) => project?.name)
+    ).toBe('Refreshed project')
     refreshed.close()
     expect((await fs.stat(destinationPath)).mode & 0o777).toBe(0o600)
     await expect(

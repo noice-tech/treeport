@@ -11,6 +11,7 @@ import { resolveZedWorktreePath } from './zed'
 import {
   beginFromPreview,
   fixture,
+  persistedWorktree,
   services,
   waitForOperation
 } from './service.integration-fixture'
@@ -44,7 +45,7 @@ describe('TreeportService with injected command adapters', () => {
       ).id
     )
 
-    expect(await database.worktree(linked.id)).toBeNull()
+    expect(await persistedWorktree(database, linked.id)).toBeNull()
     expect(
       runner.worktrees.some((worktree) => worktree.path === linked.path)
     ).toBe(false)
@@ -886,7 +887,7 @@ describe('TreeportService with injected command adapters', () => {
     await expect(fs.stat(linked.path)).rejects.toMatchObject({
       code: 'ENOENT'
     })
-    expect(await service.database.worktree(linked.id)).toBeNull()
+    expect(await persistedWorktree(service.database, linked.id)).toBeNull()
     await expect(
       service.createTerminal(linked.id, 'Blocked after removal')
     ).rejects.toMatchObject({ code: 'WORKTREE_NOT_FOUND' })
@@ -1291,7 +1292,7 @@ describe('TreeportService with injected command adapters', () => {
         entry.includes('.treeport-removing-')
       )
     ).toBe(false)
-    expect(await database.worktree(recoverable.id)).toBeNull()
+    expect(await persistedWorktree(database, recoverable.id)).toBeNull()
     expect(await restarted.getOperation('op_recoverable_root')).toMatchObject({
       status: 'completed',
       result: expect.objectContaining({ removed: true, recovered: true })
@@ -1303,7 +1304,7 @@ describe('TreeportService with injected command adapters', () => {
     await expect(fs.stat(quarantined.path)).rejects.toMatchObject({
       code: 'ENOENT'
     })
-    expect(await database.worktree(quarantined.id)).toBeNull()
+    expect(await persistedWorktree(database, quarantined.id)).toBeNull()
     expect(await restarted.getOperation('op_quarantined_root')).toMatchObject({
       status: 'completed',
       result: expect.objectContaining({ removed: true, recovered: true })
@@ -1312,7 +1313,7 @@ describe('TreeportService with injected command adapters', () => {
     await expect(fs.readFile(replacementMarker, 'utf8')).resolves.toBe(
       'replacement'
     )
-    expect(await database.worktree(replaced.id)).toMatchObject({
+    expect(await persistedWorktree(database, replaced.id)).toMatchObject({
       status: 'cleanup_failed',
       cleanupError: expect.stringMatching(/different filesystem object/i)
     })
@@ -1324,7 +1325,7 @@ describe('TreeportService with injected command adapters', () => {
     await expect(fs.readFile(repurposedMarker, 'utf8')).resolves.toBe(
       'replacement in the same directory'
     )
-    expect(await database.worktree(repurposed.id)).toMatchObject({
+    expect(await persistedWorktree(database, repurposed.id)).toMatchObject({
       status: 'cleanup_failed',
       cleanupError: expect.stringMatching(/Git marker/i)
     })
@@ -1334,10 +1335,12 @@ describe('TreeportService with injected command adapters', () => {
     })
 
     await expect(fs.stat(missingIdentity.path)).resolves.toBeTruthy()
-    expect(await database.worktree(missingIdentity.id)).toMatchObject({
-      status: 'cleanup_failed',
-      cleanupError: expect.stringMatching(/matching filesystem identity/i)
-    })
+    expect(await persistedWorktree(database, missingIdentity.id)).toMatchObject(
+      {
+        status: 'cleanup_failed',
+        cleanupError: expect.stringMatching(/matching filesystem identity/i)
+      }
+    )
     expect(
       (await restarted.getOperation('op_missing_identity_root')).status
     ).toBe('failed')
@@ -1351,7 +1354,7 @@ describe('TreeportService with injected command adapters', () => {
 
     await fs.rm(missingIdentity.path, { recursive: true, force: true })
     await restarted.getProjectSnapshot(project.id)
-    expect(await database.worktree(missingIdentity.id)).toBeNull()
+    expect(await persistedWorktree(database, missingIdentity.id)).toBeNull()
     expect(
       (await restarted.getOperation('op_missing_identity_root')).status
     ).toBe('completed')
@@ -1454,7 +1457,7 @@ describe('TreeportService with injected command adapters', () => {
     expect(await restarted.getOperation('op_before_git')).toMatchObject({
       status: 'failed'
     })
-    expect(await database.worktree(afterGit.id)).toBeNull()
+    expect(await persistedWorktree(database, afterGit.id)).toBeNull()
     expect(await restarted.getOperation('op_after_git')).toMatchObject({
       status: 'completed',
       result: expect.objectContaining({ recovered: true, removed: true }),
@@ -1463,8 +1466,8 @@ describe('TreeportService with injected command adapters', () => {
     await expect(fs.stat(path.dirname(afterGit.path))).rejects.toMatchObject({
       code: 'ENOENT'
     })
-    expect(await database.worktree(afterGit.id)).toBeNull()
-    expect(await database.worktree(afterGitNonEmpty.id)).toBeNull()
+    expect(await persistedWorktree(database, afterGit.id)).toBeNull()
+    expect(await persistedWorktree(database, afterGitNonEmpty.id)).toBeNull()
     expect(
       await restarted.getOperation('op_after_git_non_empty')
     ).toMatchObject({
@@ -1473,7 +1476,7 @@ describe('TreeportService with injected command adapters', () => {
       error: null
     })
     await expect(fs.readFile(preservedMarker, 'utf8')).resolves.toBe('preserve')
-    expect(await database.worktree(afterGitNonEmpty.id)).toBeNull()
+    expect(await persistedWorktree(database, afterGitNonEmpty.id)).toBeNull()
   })
 
   it('clears managed-wrapper provenance when an external worktree revives a removed path', async () => {

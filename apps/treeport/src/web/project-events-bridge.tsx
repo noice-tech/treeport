@@ -4,7 +4,6 @@ import { io, type Socket } from 'socket.io-client'
 import {
   parseEventsSnapshot,
   parseProductEvent,
-  parseTerminalRuntimeMetadata,
   SOCKET_IO_PATH
 } from '@treeport/shared'
 import type {
@@ -81,11 +80,15 @@ export function useProjectEventsBridge(
       }
 
       if (event.type === 'terminal.metadata') {
-        const metadata = parseTerminalRuntimeMetadata(event.data)
-        if (metadata) {
-          terminalSessions.applyRuntimeMetadata(metadata)
-        }
-
+        terminalSessions.applyRuntimeMetadata({
+          terminalId: event.data.terminalId,
+          title: event.data.title,
+          hasForegroundProcess: event.data.hasForegroundProcess,
+          progress: event.data.progress,
+          progressStartedAt: event.data.progressStartedAt,
+          progressClearedAt: event.data.progressClearedAt,
+          bell: event.data.bell
+        })
         return
       }
 
