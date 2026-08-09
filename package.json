@@ -28,7 +28,7 @@
     "lint": "oxlint",
     "lint:fix": "oxlint --fix",
     "knip": "knip",
-    "fmt": "oxfmt",
+    "fmt": "oxfmt && pnpm lint:fix",
     "fmt:check": "oxfmt --check",
     "clean": "find apps packages -type d \\( -name dist -o -name dist-types \\) -prune -exec rm -rf {} + && rm -rf apps/desktop/.vite .turbo"
   },
