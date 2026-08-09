@@ -26,6 +26,6 @@
     "@treeport/panel-sdk": "workspace:*",
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",
-    "typescript": "^5.9.3"
+    "typescript": "^7.0.2"
   }
 }

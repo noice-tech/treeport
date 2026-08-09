@@ -7,7 +7,6 @@
     "jsx": "react-jsx",
     "module": "ESNext",
     "moduleResolution": "Bundler",
-    "baseUrl": ".",
     "paths": {
       "@/*": ["./src/web/*"]
     },
