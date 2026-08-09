@@ -42,6 +42,7 @@ const developmentUserData = process.env.TREEPORT_DESKTOP_USER_DATA?.trim()
 if (desktopE2e && process.platform === 'darwin') {
   app.dock?.hide()
 }
+
 if (desktopE2e && developmentUserData) {
   app.setPath('userData', path.resolve(developmentUserData))
 } else if (app.isPackaged) {
