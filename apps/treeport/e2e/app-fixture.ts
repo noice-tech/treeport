@@ -360,13 +360,17 @@ export async function mockApp(
                 return
               }
 
+              const data = value?.data ?? value
               const event = value?.type
                 ? value
                 : {
                     id: crypto.randomUUID(),
                     type: name,
                     at: new Date().toISOString(),
-                    data: value?.data ?? value
+                    data: {
+                      ...data,
+                      worktreeId: data.worktreeId ?? null
+                    }
                   }
               this.deliverSocket('product_event', event)
             }
