@@ -25,6 +25,12 @@ import {
 export const TERMINAL_METADATA_POLL_MS = 2_000
 export const TERMINAL_PROGRESS_STALE_MS = 5 * 60_000
 
+const PROGRAM_COMMANDS = new Map<string, TerminalProgram>([
+  ['pi', 'pi'],
+  ['claude', 'claude'],
+  ['codex', 'codex']
+])
+
 const SHELL_COMMANDS = new Set([
   'ash',
   'bash',
@@ -211,6 +217,10 @@ export class TerminalMetadataManager {
     }
 
     if (!entry) {
+      const launchCommand = path
+        .basename(terminal.argv?.[0] ?? '')
+        .replace(/^-/, '')
+      const launchProgram = PROGRAM_COMMANDS.get(launchCommand) ?? null
       entry = {
         terminalId: terminal.id,
         worktreeId: terminal.worktreeId,
@@ -219,10 +229,7 @@ export class TerminalMetadataManager {
         cwd: worktree.path,
         status: terminal.status,
         title: null,
-        program:
-          path.basename(terminal.argv?.[0] ?? '').replace(/^-/, '') === 'pi'
-            ? 'pi'
-            : null,
+        program: launchProgram,
         hasForegroundProcess: terminal.status === 'running' ? null : false,
         progress: null,
         progressStartedAt: null,
@@ -231,15 +238,8 @@ export class TerminalMetadataManager {
         paneTitle: null,
         currentCommand: null,
         commandLine: null,
-        shellCommand: SHELL_COMMANDS.has(
-          path.basename(terminal.argv?.[0] ?? '').replace(/^-/, '')
-        )
-          ? path.basename(terminal.argv?.[0] ?? '').replace(/^-/, '')
-          : null,
-        launchProgram:
-          path.basename(terminal.argv?.[0] ?? '').replace(/^-/, '') === 'pi'
-            ? 'pi'
-            : null,
+        shellCommand: SHELL_COMMANDS.has(launchCommand) ? launchCommand : null,
+        launchProgram,
         shellTitle: null,
         persistedShellTitle: null,
         awaitingShellTitle: false,
@@ -712,10 +712,13 @@ export class TerminalMetadataManager {
       ? commandToken[1] || commandToken[2] || commandToken[3] || null
       : null
     const observedProgram =
-      path.basename(commandExecutable ?? '').replace(/^-/, '') === 'pi' ||
-      path.basename(currentCommand ?? '').replace(/^-/, '') === 'pi'
-        ? 'pi'
-        : null
+      PROGRAM_COMMANDS.get(
+        path.basename(commandExecutable ?? '').replace(/^-/, '')
+      ) ??
+      PROGRAM_COMMANDS.get(
+        path.basename(currentCommand ?? '').replace(/^-/, '')
+      ) ??
+      null
     this.update(entry, {
       program:
         observedProgram ?? (!entry.shellCommand ? entry.launchProgram : null)

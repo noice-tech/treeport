@@ -218,6 +218,17 @@ describe('terminal runtime metadata', () => {
       bell: null
     })
     expect(
+      ['pi', 'claude', 'codex'].map(
+        (program) =>
+          parseTerminalRuntimeMetadata({
+            terminalId: 'term',
+            title: null,
+            program,
+            progress: null
+          })?.program
+      )
+    ).toEqual(['pi', 'claude', 'codex'])
+    expect(
       parseTerminalRuntimeMetadata({
         terminalId: 'term',
         title: null,

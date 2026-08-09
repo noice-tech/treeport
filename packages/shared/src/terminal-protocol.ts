@@ -33,7 +33,7 @@ export const terminalProgressSchema = z.strictObject({
 
 export type TerminalProgress = z.infer<typeof terminalProgressSchema>
 
-export const terminalProgramSchema = z.enum(['pi'])
+export const terminalProgramSchema = z.enum(['pi', 'claude', 'codex'])
 export type TerminalProgram = z.infer<typeof terminalProgramSchema>
 
 export const terminalRuntimeMetadataSchema = z.strictObject({

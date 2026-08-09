@@ -289,25 +289,34 @@ describe('TerminalMetadataManager', () => {
     expect(manager.get(item.id).hasForegroundProcess).toBe(false)
   })
 
-  it('restores an application title in the initial metadata snapshot after a daemon restart', async () => {
+  it('detects supported CLI programs and clears the program after returning to the shell', async () => {
     vi.useFakeTimers()
     const item = { ...terminal('one'), argv: ['/bin/zsh', '-l'] }
     const { manager, sessionTitleState } = fixture([item])
     managers.push(manager)
     sessionTitleState.mockResolvedValue({
-      paneTitle: 'π',
+      paneTitle: 'Claude Code',
       currentCommand: 'node',
-      commandLine: 'pi',
+      commandLine: 'claude --resume',
       shellTitle: 'treeport'
     })
     await manager.initialize()
     expect(manager.snapshot()).toEqual([
       expect.objectContaining({
         terminalId: item.id,
-        title: 'π',
-        program: 'pi'
+        title: 'Claude Code',
+        program: 'claude'
       })
     ])
+
+    sessionTitleState.mockResolvedValue({
+      paneTitle: 'Codex',
+      currentCommand: 'codex',
+      commandLine: 'codex',
+      shellTitle: 'treeport'
+    })
+    await vi.advanceTimersByTimeAsync(TERMINAL_METADATA_POLL_MS)
+    expect(manager.get(item.id)).toMatchObject({ program: 'codex' })
 
     sessionTitleState.mockResolvedValue({
       paneTitle: 'π',
@@ -316,7 +325,7 @@ describe('TerminalMetadataManager', () => {
       shellTitle: 'treeport'
     })
     await vi.advanceTimersByTimeAsync(TERMINAL_METADATA_POLL_MS)
-    expect(manager.get(item.id)).toMatchObject({ title: 'π', program: 'pi' })
+    expect(manager.get(item.id)).toMatchObject({ program: 'pi' })
 
     sessionTitleState.mockResolvedValue({
       paneTitle: 'π',
