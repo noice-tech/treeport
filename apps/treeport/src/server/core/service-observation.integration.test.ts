@@ -3,12 +3,19 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { sql } from 'drizzle-orm'
 import { describe, expect, it, vi } from 'vitest'
-import { TreeportDatabase } from './database'
+import { openDatabase } from './database'
 import { GhAdapter } from './gh'
 import { GitAdapter } from './git'
 import { TreeportService } from './service'
 import { TmuxAdapter } from './tmux'
-import { databases, fixture } from './service.integration-fixture'
+import {
+  databases,
+  fixture,
+  persistedProject,
+  persistedProjectMetadata,
+  persistedProjectOpen,
+  persistedWorktree
+} from './service.integration-fixture'
 
 describe('TreeportService with injected command adapters', () => {
   it('shares overlapping project snapshot reconciliation', async () => {
@@ -131,9 +138,9 @@ describe('TreeportService with injected command adapters', () => {
       message: expect.stringContaining('tmux create failed')
     })
     expect(unavailable.worktrees[0]?.terminals).toEqual([])
-    await expect(service.database.isProjectOpen(unavailable.id)).resolves.toBe(
-      true
-    )
+    await expect(
+      persistedProjectOpen(service.database, unavailable.id)
+    ).resolves.toBe(true)
 
     runner.tmuxCreateFails = false
     const recovered = await service.getProjectSnapshot(unavailable.id)
@@ -592,7 +599,7 @@ describe('TreeportService with injected command adapters', () => {
       (worktree) => worktree.gitWorktreeKey === linkedGitKey
     )!.path = movedLinked
 
-    const restartedDatabase = await TreeportDatabase.open(config.databasePath)
+    const restartedDatabase = await openDatabase(config.databasePath)
     databases.push(restartedDatabase)
     const restarted = new TreeportService({
       config,
@@ -634,7 +641,7 @@ describe('TreeportService with injected command adapters', () => {
       await service.createWorktree(project.id, 'legacy-remount', 'default')
     ).worktree
     const terminal = await service.createTerminal(linked.id, 'Preserved')
-    const identity = await database.projectRepositoryMetadata(project.id)
+    const identity = await persistedProjectMetadata(database, project.id)
     expect(identity).not.toBeNull()
 
     runner.repositoryIdentity = null
@@ -659,7 +666,7 @@ describe('TreeportService with injected command adapters', () => {
         })
       ])
     })
-    expect(await database.projectRepositoryMetadata(project.id)).toMatchObject({
+    expect(await persistedProjectMetadata(database, project.id)).toMatchObject({
       identity: expect.any(String),
       device: identity!.device,
       inode: identity!.inode
@@ -684,10 +691,10 @@ describe('TreeportService with injected command adapters', () => {
       state: 'unavailable',
       message: expect.stringContaining('worktree repair failed')
     })
-    expect((await database.project(project.id))?.repositoryPath).toBe(
+    expect((await persistedProject(database, project.id))?.repositoryPath).toBe(
       project.repositoryPath
     )
-    expect(await database.worktree(linked.id)).toMatchObject({
+    expect(await persistedWorktree(database, linked.id)).toMatchObject({
       path: linked.path,
       tmuxSocketName: linked.tmuxSocketName
     })
@@ -743,7 +750,7 @@ describe('TreeportService with injected command adapters', () => {
       code: 'PROJECT_PATH_CONFLICT',
       status: 409
     })
-    expect(await database.project(project.id)).toMatchObject({
+    expect(await persistedProject(database, project.id)).toMatchObject({
       id: project.id,
       repositoryPath: project.repositoryPath,
       mainWorktreePath: project.mainWorktreePath
@@ -775,7 +782,7 @@ describe('TreeportService with injected command adapters', () => {
       repositoryPath: project.repositoryPath,
       availability: { state: 'unavailable' }
     })
-    expect((await database.project(project.id))?.repositoryPath).toBe(
+    expect((await persistedProject(database, project.id))?.repositoryPath).toBe(
       project.repositoryPath
     )
     expect(
@@ -828,7 +835,7 @@ describe('TreeportService with injected command adapters', () => {
     expect(refreshed.worktrees.map((worktree) => worktree.id)).not.toContain(
       linked.id
     )
-    expect(await database.worktree(linked.id)).toBeNull()
+    expect(await persistedWorktree(database, linked.id)).toBeNull()
     expect(
       [...runner.sessions.keys()].some((key) =>
         key.startsWith(`${linked.tmuxSocketName}/`)
@@ -863,7 +870,7 @@ describe('TreeportService with injected command adapters', () => {
     await expect(service.getTerminal(terminal.id)).rejects.toMatchObject({
       code: 'TERMINAL_NOT_FOUND'
     })
-    expect(await database.worktree(linked.id)).toBeNull()
+    expect(await persistedWorktree(database, linked.id)).toBeNull()
   })
 
   it('preserves bindings and history when external terminal shutdown fails', async () => {
@@ -889,7 +896,7 @@ describe('TreeportService with injected command adapters', () => {
       state: 'unavailable',
       message: expect.stringContaining('tmux shutdown failed')
     })
-    expect(await database.worktree(linked.id)).not.toBeNull()
+    expect(await persistedWorktree(database, linked.id)).not.toBeNull()
     expect(
       (
         await database.db.get<{ count: number }>(sql`
@@ -904,7 +911,7 @@ describe('TreeportService with injected command adapters', () => {
     await expect(service.getProjectSnapshot(project.id)).resolves.toMatchObject(
       { availability: { state: 'available' } }
     )
-    expect(await database.worktree(linked.id)).toBeNull()
+    expect(await persistedWorktree(database, linked.id)).toBeNull()
     unsubscribe()
   })
 
@@ -945,8 +952,8 @@ describe('TreeportService with injected command adapters', () => {
 
     const unavailable = await service.getProjectSnapshot(project.id)
     expect(unavailable.availability).toMatchObject({ state: 'unavailable' })
-    expect(await database.worktree(first.id)).toBeNull()
-    expect(await database.worktree(second.id)).not.toBeNull()
+    expect(await persistedWorktree(database, first.id)).toBeNull()
+    expect(await persistedWorktree(database, second.id)).not.toBeNull()
     const externalOperations = await database.db.all<{
       result_json: string
     }>(sql`
@@ -975,7 +982,7 @@ describe('TreeportService with injected command adapters', () => {
 
     runner.tmuxKillFailureSockets.delete(second.tmuxSocketName)
     await service.getProjectSnapshot(project.id)
-    expect(await database.worktree(second.id)).toBeNull()
+    expect(await persistedWorktree(database, second.id)).toBeNull()
     unsubscribe()
   })
 
@@ -1004,7 +1011,7 @@ describe('TreeportService with injected command adapters', () => {
         state: 'unavailable',
         message: expect.stringContaining('inventory is incomplete')
       })
-      expect(await database.worktree(linked.id)).not.toBeNull()
+      expect(await persistedWorktree(database, linked.id)).not.toBeNull()
       expect(
         [...runner.sessions.keys()].some((key) =>
           key.startsWith(`${linked.tmuxSocketName}/`)
@@ -1076,7 +1083,7 @@ describe('TreeportService with injected command adapters', () => {
     expect(unavailable.worktrees.map((worktree) => worktree.id)).toContain(
       linked.id
     )
-    expect(await database.worktree(linked.id)).not.toBeNull()
+    expect(await persistedWorktree(database, linked.id)).not.toBeNull()
     expect(
       [...runner.sessions.keys()].some((key) =>
         key.endsWith(`/${terminal.tmuxSessionName}`)

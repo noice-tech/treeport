@@ -358,12 +358,8 @@ export class TerminalMetadataManager {
       void this.service
         .getTerminal(terminalId)
         .then(async (terminal) => {
-          const worktree = await this.service.database.worktree(
-            terminal.worktreeId
-          )
-          if (worktree) {
-            return this.trackTerminal(terminal, worktree)
-          }
+          const worktree = await this.service.getWorktree(terminal.worktreeId)
+          return this.trackTerminal(terminal, worktree)
         })
         .catch((error: unknown) => {
           if (

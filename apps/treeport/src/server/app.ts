@@ -633,10 +633,8 @@ export function createApp({
       context.req.param('terminalId')
     )
     await metadataReady
-    const worktree = await service.database.worktree(terminal.worktreeId)
-    if (worktree) {
-      await metadata.trackTerminal(terminal, worktree)
-    }
+    const worktree = await service.getWorktree(terminal.worktreeId)
+    await metadata.trackTerminal(terminal, worktree)
 
     return context.json({ terminal, metadata: metadata.get(terminal.id) })
   })

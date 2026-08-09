@@ -1,12 +1,16 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { TreeportDatabase } from './database'
+import { openDatabase } from './database'
 import { GhAdapter } from './gh'
 import { GitAdapter } from './git'
 import { TreeportService } from './service'
 import { TmuxAdapter } from './tmux'
-import { databases, fixture } from './service.integration-fixture'
+import {
+  databases,
+  fixture,
+  persistedWebPanel
+} from './service.integration-fixture'
 
 describe('TreeportService with injected command adapters', () => {
   it('discovers local web panels and owns their persistent synchronized lifecycle', async () => {
@@ -63,7 +67,7 @@ describe('TreeportService with injected command adapters', () => {
     await expect(
       service.resolveWebPanelAsset(panel.id, 'outside.js')
     ).rejects.toMatchObject({ code: 'INVALID_ASSET_PATH' })
-    expect(await database.webPanel(panel.id)).toEqual(panel)
+    expect(await persistedWebPanel(database, panel.id)).toEqual(panel)
 
     expect(
       await service.getWebPanelStorage(panel.id, 'comments')
@@ -79,7 +83,7 @@ describe('TreeportService with injected command adapters', () => {
     await expect(service.deleteWebPanel(panel.id)).rejects.toMatchObject({
       code: 'PANEL_HAS_STORED_DATA'
     })
-    expect(await database.webPanel(panel.id)).toEqual(panel)
+    expect(await persistedWebPanel(database, panel.id)).toEqual(panel)
     await service.deleteWebPanelStorage(panel.id, 'comments')
     expect(
       await service.getWebPanelStorage(panel.id, 'comments')
@@ -91,7 +95,7 @@ describe('TreeportService with injected command adapters', () => {
 
     await service.deleteWebPanel(panel.id)
     unsubscribe()
-    expect(await database.webPanel(panel.id)).toBeNull()
+    expect(await persistedWebPanel(database, panel.id)).toBeNull()
     expect(events).toEqual([
       `panel.created:${panel.id}`,
       `panel.removed:${panel.id}`
@@ -197,7 +201,7 @@ describe('TreeportService with injected command adapters', () => {
     expect(await service.listWebPanelDefinitions(linked.id)).not.toContainEqual(
       expect.objectContaining({ id: definition.id })
     )
-    expect(await database.webPanel(panel.id)).toEqual(panel)
+    expect(await persistedWebPanel(database, panel.id)).toEqual(panel)
     expect(await service.getWebPanelStorage(panel.id, 'draft')).toEqual({
       body: 'keep me'
     })
@@ -367,7 +371,7 @@ describe('TreeportService with injected command adapters', () => {
 
     database.close()
     databases.splice(databases.indexOf(database), 1)
-    const reopenedDatabase = await TreeportDatabase.open(config.databasePath)
+    const reopenedDatabase = await openDatabase(config.databasePath)
     databases.push(reopenedDatabase)
     const reconstructed = new TreeportService({
       config,
