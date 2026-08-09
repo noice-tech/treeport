@@ -6,6 +6,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Hono } from 'hono'
 import { HTTPException } from 'hono/http-exception'
+import { requestId, type RequestIdVariables } from 'hono/request-id'
 import { validator } from 'hono/validator'
 import { z } from 'zod'
 import { serveStatic } from '@hono/node-server/serve-static'
@@ -160,7 +161,14 @@ export function createApp({
   terminalMetadata,
   webDist
 }: AppDependencies) {
-  const app = new Hono()
+  const app = new Hono<{ Variables: RequestIdVariables }>()
+  app.use(
+    '/api/*',
+    requestId({
+      limitLength: 128,
+      generator: () => crypto.randomUUID()
+    })
+  )
   const metadata =
     terminalMetadata ??
     new TerminalMetadataManager(service, tmux, config.tmuxPath)
@@ -202,16 +210,22 @@ export function createApp({
       )
     }
 
-    console.error(
-      '[Treeport]',
-      error instanceof Error ? error.message : String(error)
-    )
+    const requestIdentifier = context.get('requestId') || crypto.randomUUID()
+    context.header('X-Request-Id', requestIdentifier)
+    console.error('[Treeport] API request failed', {
+      requestId: requestIdentifier,
+      method: context.req.method,
+      path: new URL(context.req.url).pathname,
+      status: 500,
+      code: 'INTERNAL_ERROR',
+      error: error instanceof Error ? error.message : String(error)
+    })
     return context.json(
       {
         error: {
           code: 'INTERNAL_ERROR',
-          message:
-            error instanceof Error ? error.message : 'Unexpected server error'
+          message: 'Unexpected server error',
+          details: { requestId: requestIdentifier }
         }
       },
       500

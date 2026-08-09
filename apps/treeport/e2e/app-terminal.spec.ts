@@ -997,6 +997,9 @@ test.describe('desktop worktree and terminal workflows', () => {
     await failedCloseRequest
     await expect(topicTerminals).toHaveCount(1)
     releaseFailedDelete()
+    await expect(
+      page.getByText('Couldn’t close terminal “Shell”', { exact: true })
+    ).toBeVisible()
     await expect(page.getByText('Terminal could not be closed')).toBeVisible()
     await expect(topicTerminals).toHaveCount(2)
 
@@ -1009,7 +1012,47 @@ test.describe('desktop worktree and terminal workflows', () => {
       page.getByRole('button', { name: 'Shell, starting' })
     ).toBeVisible()
     releaseFailedCreate()
+    await expect(
+      page.getByText('Couldn’t create terminal “Shell”', { exact: true })
+    ).toBeVisible()
     await expect(page.getByText('Terminal could not be created')).toBeVisible()
+    await expect(
+      page.getByText('Reference: request_terminal_create.')
+    ).toBeVisible()
+    await expect(
+      page.getByRole('button', { name: 'Shell, starting' })
+    ).toHaveCount(0)
+
+    mocked.failNextTerminalCreateWithGateway()
+    await page.evaluate(() =>
+      (window as any).__dispatchDesktopCommand('new-terminal')
+    )
+    const gatewayToast = page
+      .getByRole('region', { name: /Notifications/ })
+      .getByRole('listitem')
+      .filter({ hasText: '502 Bad Gateway' })
+    await expect(gatewayToast).toContainText('Couldn’t create terminal “Shell”')
+    await expect(gatewayToast).toContainText(
+      'Check that Treeport is running, then retry.'
+    )
+    await expect(page.getByText('PRIVATE_PROXY_DIAGNOSTIC')).toHaveCount(0)
+    await expect(
+      page.getByRole('button', { name: 'Shell, starting' })
+    ).toHaveCount(0)
+
+    mocked.failNextTerminalCreateWithNetwork()
+    await page.evaluate(() =>
+      (window as any).__dispatchDesktopCommand('new-terminal')
+    )
+    const networkToast = page
+      .getByRole('region', { name: /Notifications/ })
+      .getByRole('listitem')
+      .filter({ hasText: 'Treeport could not be reached.' })
+    await expect(networkToast).toContainText('Couldn’t create terminal “Shell”')
+    await expect(networkToast).toContainText(
+      'Check that it is running and reachable, then retry.'
+    )
+    await expect(networkToast).not.toContainText('502 Bad Gateway')
     await expect(
       page.getByRole('button', { name: 'Shell, starting' })
     ).toHaveCount(0)

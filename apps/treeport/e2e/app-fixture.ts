@@ -599,6 +599,8 @@ export async function mockApp(
   let terminalCreateGate: Promise<void> | null = null
   let releaseTerminalCreate: (() => void) | null = null
   let failTerminalCreate = false
+  let failTerminalCreateWithGateway = false
+  let failTerminalCreateWithNetwork = false
   let terminalDeleteGate: Promise<void> | null = null
   let releaseTerminalDelete: (() => void) | null = null
   let failTerminalDelete = false
@@ -1193,8 +1195,30 @@ export async function mockApp(
         failTerminalCreate = false
         await route.fulfill({
           status: 500,
-          json: { error: { message: 'Terminal could not be created' } }
+          json: {
+            error: {
+              code: 'TERMINAL_CREATE_FAILED',
+              message: 'Terminal could not be created',
+              details: { requestId: 'request_terminal_create' }
+            }
+          }
         })
+        return
+      }
+
+      if (failTerminalCreateWithGateway) {
+        failTerminalCreateWithGateway = false
+        await route.fulfill({
+          status: 502,
+          contentType: 'text/html',
+          body: '<html><body>PRIVATE_PROXY_DIAGNOSTIC</body></html>'
+        })
+        return
+      }
+
+      if (failTerminalCreateWithNetwork) {
+        failTerminalCreateWithNetwork = false
+        await route.abort('connectionrefused')
         return
       }
 
@@ -1333,6 +1357,12 @@ export async function mockApp(
     },
     failNextTerminalCreate: () => {
       failTerminalCreate = true
+    },
+    failNextTerminalCreateWithGateway: () => {
+      failTerminalCreateWithGateway = true
+    },
+    failNextTerminalCreateWithNetwork: () => {
+      failTerminalCreateWithNetwork = true
     },
     delayNextTerminalDelete: () => {
       terminalDeleteGate = new Promise<void>((resolve) => {
