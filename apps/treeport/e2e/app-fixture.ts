@@ -4,7 +4,9 @@ import {
   type ProjectColor,
   type RecentProjectRecord,
   type RemovePreview,
+  type RepositoryTerminalPresetDiagnostic,
   type TerminalPreset,
+  type TerminalPresetDefinition,
   type TerminalRuntimeMetadata
 } from '@treeport/shared'
 
@@ -160,6 +162,8 @@ export async function mockApp(
     initialPath?: string
     delayProjects?: boolean
     transientProjectFailures?: number
+    repositoryTerminalPresets?: TerminalPresetDefinition[]
+    repositoryPresetDiagnostics?: RepositoryTerminalPresetDiagnostic[]
   } = {}
 ) {
   if (options.keyboardPlatform) {
@@ -528,6 +532,12 @@ export async function mockApp(
     Object.assign(window, { WebSocket: MockWebSocket })
   }, initialTerminalMetadata)
   const state = structuredClone(project)
+  const repositoryTerminalPresets = [
+    ...(options.repositoryTerminalPresets ?? [])
+  ]
+  const repositoryPresetDiagnostics = [
+    ...(options.repositoryPresetDiagnostics ?? [])
+  ]
   const terminalPresets: TerminalPreset[] = [
     {
       id: 'preset_hunk',
@@ -630,14 +640,22 @@ export async function mockApp(
     ) {
       await route.fulfill({
         json: {
-          definitions: terminalPresets.map((preset) => ({
-            id: preset.id,
-            name: preset.name,
-            executable: preset.executable,
-            args: preset.args,
-            closeOnSuccess: preset.closeOnSuccess,
-            source: { type: 'user' }
-          }))
+          definitions: [
+            ...(url.searchParams.has('worktreeId')
+              ? repositoryTerminalPresets
+              : []),
+            ...terminalPresets.map((preset) => ({
+              id: preset.id,
+              name: preset.name,
+              executable: preset.executable,
+              args: preset.args,
+              closeOnSuccess: preset.closeOnSuccess,
+              source: { type: 'user' as const }
+            }))
+          ],
+          diagnostics: url.searchParams.has('worktreeId')
+            ? repositoryPresetDiagnostics
+            : []
         }
       })
       return
@@ -1305,6 +1323,8 @@ export async function mockApp(
   return {
     state,
     terminalPresets,
+    repositoryTerminalPresets,
+    repositoryPresetDiagnostics,
     recentProjects,
     projectRequests: () => projectRequests,
     registeredProjectPaths: () => [...registeredProjectPaths],

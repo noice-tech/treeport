@@ -122,12 +122,24 @@ export interface PackageOperationResult {
 
 export type TerminalPresetDefinitionSource =
   | { type: 'user' }
+  | { type: 'repository' }
   | {
       type: 'package'
       packageId: string
       source: string
       scope: PackageScope
     }
+
+export interface RepositoryTerminalPresetDiagnostic {
+  path: string
+  presetId: string | null
+  message: string
+}
+
+export interface TerminalPresetDefinitionListing {
+  definitions: TerminalPresetDefinition[]
+  diagnostics: RepositoryTerminalPresetDiagnostic[]
+}
 
 export interface TerminalPresetDefinition {
   id: string
@@ -487,6 +499,18 @@ const terminalPresetFields = {
     .max(TERMINAL_PRESET_ARGUMENT_MAX_COUNT),
   closeOnSuccess: z.boolean().default(false)
 }
+export const repositoryTerminalPresetSchema =
+  z.strictObject(terminalPresetFields)
+const repositoryTerminalPresetIdSchema = z
+  .string()
+  .regex(/^[a-z0-9][a-z0-9._-]{0,119}$/, {
+    message:
+      'Preset IDs must contain only lowercase letters, numbers, dots, underscores, and hyphens'
+  })
+export const repositoryTerminalPresetsFileSchema = z.strictObject({
+  version: z.literal(1),
+  presets: z.record(repositoryTerminalPresetIdSchema, z.unknown())
+})
 const terminalPresetRevisionSchema = z.string().min(1).max(64)
 
 const initialTerminalSchema = z.object({

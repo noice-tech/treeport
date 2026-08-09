@@ -31,6 +31,12 @@ description: Environment variables, paths, and defaults for the Treeport daemon 
 
 Treeport uses `$XDG_RUNTIME_DIR/treeport` when `XDG_RUNTIME_DIR` is set. Otherwise it uses a user-specific directory below the operating system's temporary directory.
 
+## Repository terminal presets
+
+A registered repository can commit terminal choices in `.treeport/terminal-presets.json`. Treeport reads the file from the worktree where a panel is being opened, so each worktree follows the version on its own branch. The versioned file maps stable preset identifiers to a name, executable, literal argument array, and optional `closeOnSuccess` behavior.
+
+See [Terminal presets](/features/terminal-presets/#commit-presets-with-a-repository) for the complete schema, precedence, validation, and refresh behavior.
+
 ## Package settings
 
 Global package settings live at `<data-dir>/settings.json`. A registered repository's settings live at `<main-worktree>/.treeport/settings.json`; the main worktree is authoritative for every linked worktree.

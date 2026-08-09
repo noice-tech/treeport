@@ -124,16 +124,21 @@ function WorkspaceApp() {
           (worktree) => worktree.id === dialog.worktreeId
         ) ?? null)
       : null
-  const presetDefinitionsProjectId =
+  const presetDefinitionsContext =
     dialog?.type === 'worktree'
-      ? dialog.project.id
-      : dialog?.type === 'panel'
-        ? dialog.projectId
-        : (selectedProject?.id ?? undefined)
+      ? { projectId: dialog.project.id }
+      : panelDialogWorktree
+        ? { worktreeId: panelDialogWorktree.id }
+        : selectedWorktree
+          ? { worktreeId: selectedWorktree.id }
+          : selectedProject
+            ? { projectId: selectedProject.id }
+            : undefined
   const presetDefinitionsQuery = useQuery(
-    terminalPresetDefinitionsQueryOptions(presetDefinitionsProjectId)
+    terminalPresetDefinitionsQueryOptions(presetDefinitionsContext)
   )
-  const availablePresets = presetDefinitionsQuery.data ?? []
+  const availablePresets = presetDefinitionsQuery.data?.definitions ?? []
+  const presetDiagnostics = presetDefinitionsQuery.data?.diagnostics ?? []
   const webPanelDefinitionsQuery = useQuery({
     queryKey: ['web-panel-definitions', panelDialogWorktree?.id],
     queryFn: async () =>
@@ -689,6 +694,7 @@ function WorkspaceApp() {
         onOpenChange={(open) => !open && setDialog(null)}
         restoreFocusTo={dialogTriggerRef.current}
         presets={availablePresets}
+        presetDiagnostics={presetDiagnostics}
         presetsLoading={presetDefinitionsQuery.isPending}
         presetsError={presetDefinitionsQuery.isError}
         onRetryPresets={() => void presetDefinitionsQuery.refetch()}
@@ -700,6 +706,7 @@ function WorkspaceApp() {
         restoreFocusTo={dialogTriggerRef.current}
         worktreeName={panelDialogWorktree?.name ?? null}
         presets={availablePresets}
+        presetDiagnostics={presetDiagnostics}
         presetsLoading={presetDefinitionsQuery.isPending}
         presetsError={presetDefinitionsQuery.isError}
         webPanelDefinitions={webPanelDefinitionsQuery.data ?? []}

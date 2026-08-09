@@ -1,5 +1,9 @@
 import { useRef } from 'react'
-import type { ProjectRecord, TerminalPresetDefinition } from '@treeport/shared'
+import type {
+  ProjectRecord,
+  RepositoryTerminalPresetDiagnostic,
+  TerminalPresetDefinition
+} from '@treeport/shared'
 import {
   Dialog,
   DialogContent,
@@ -14,6 +18,7 @@ export function CreateWorktreeDialog({
   onOpenChange,
   restoreFocusTo,
   presets,
+  presetDiagnostics,
   presetsLoading,
   presetsError,
   onRetryPresets,
@@ -23,6 +28,7 @@ export function CreateWorktreeDialog({
   onOpenChange: (open: boolean) => void
   restoreFocusTo: HTMLElement | null
   presets: TerminalPresetDefinition[]
+  presetDiagnostics: RepositoryTerminalPresetDiagnostic[]
   presetsLoading: boolean
   presetsError: boolean
   onRetryPresets: () => void
@@ -65,6 +71,7 @@ export function CreateWorktreeDialog({
           <WorktreeForm
             project={project}
             presets={presets}
+            presetDiagnostics={presetDiagnostics}
             presetsLoading={presetsLoading}
             presetsError={presetsError}
             onRetryPresets={onRetryPresets}

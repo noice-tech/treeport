@@ -1,16 +1,23 @@
 import { useState } from 'react'
-import type { ProjectRecord, TerminalPresetDefinition } from '@treeport/shared'
+import type {
+  ProjectRecord,
+  RepositoryTerminalPresetDiagnostic,
+  TerminalPresetDefinition
+} from '@treeport/shared'
 import { Button } from '../../components/ui/button'
 import { FormField } from '../../components/ui/form-field'
 import { Input } from '../../components/ui/input'
 import { Label } from '../../components/ui/label'
 import { NativeSelect } from '../../components/ui/native-select'
+import { formatCommandLine } from '../../command-line'
+import { terminalPresetProvenance } from '../../terminal-preset-definition'
 
 const INITIAL_TERMINAL_PRESET_STORAGE_KEY = 'treeport-initial-terminal-preset'
 
 export function WorktreeForm({
   project,
   presets,
+  presetDiagnostics,
   presetsLoading,
   presetsError,
   onRetryPresets,
@@ -19,6 +26,7 @@ export function WorktreeForm({
 }: {
   project: ProjectRecord
   presets: TerminalPresetDefinition[]
+  presetDiagnostics: RepositoryTerminalPresetDiagnostic[]
   presetsLoading: boolean
   presetsError: boolean
   onRetryPresets: () => void
@@ -145,10 +153,8 @@ export function WorktreeForm({
           <option value="shell">Shell</option>
           {initialTerminalPresets.map((preset) => (
             <option key={preset.id} value={preset.id}>
-              {preset.name}
-              {preset.source.type === 'package'
-                ? ` — ${preset.source.scope === 'project' ? 'Project' : 'Global'} · ${preset.source.packageId}`
-                : ''}
+              {preset.name} — {terminalPresetProvenance(preset)} —{' '}
+              {formatCommandLine([preset.executable, ...preset.args])}
             </option>
           ))}
         </NativeSelect>
@@ -178,6 +184,15 @@ export function WorktreeForm({
             </Button>
           </div>
         )}
+        {presetDiagnostics.map((diagnostic) => (
+          <p
+            key={`${diagnostic.presetId ?? 'file'}:${diagnostic.message}`}
+            className="form-note"
+            role="status"
+          >
+            {diagnostic.message}
+          </p>
+        ))}
       </FormField>
       <div className="flex items-center justify-between gap-4 pt-1">
         <p className="hidden text-xs text-zinc-600 sm:block">

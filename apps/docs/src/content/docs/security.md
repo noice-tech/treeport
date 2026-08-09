@@ -31,11 +31,13 @@ For advanced direct private-network binding, prefer a specific Tailscale address
 treeport up --host "$(tailscale ip -4)"
 ```
 
-## Package boundary
+## Repository and package boundary
 
-Registering a repository authorizes Treeport to read its main worktree's `.treeport/settings.json` and reconcile declared packages. Review package contents before adding them.
+Registering a repository authorizes Treeport to read package settings from its main worktree and terminal presets from each registered worktree. Review declared packages and `.treeport/terminal-presets.json` commands before using them.
 
-Treeport packages do not execute daemon modules or install server hooks. Managed npm operations always disable lifecycle scripts. A package terminal preset starts only after you select it, and then launches an ordinary terminal with literal arguments.
+Treeport does not execute repository terminal presets during registration or when a repository is opened. A repository preset starts only after you select it in the panel picker. It launches an ordinary terminal with a literal executable and argument array rather than an implicit shell command.
+
+Treeport packages do not execute daemon modules or install server hooks. Managed npm operations always disable lifecycle scripts. Package terminal presets use the same explicit-selection and literal-argument boundary.
 
 Opening a web panel authorizes Treeport's fixed Vite profile to transform its HTML, TypeScript/TSX, CSS, imports, and assets. Treeport does not load package Vite configuration, executable Babel or PostCSS configuration, package plugins, build scripts, or lifecycle scripts. Npm-installed panel output is served only from Treeport's immutable build cache; source and compiled asset routes reject traversal and escaping symbolic links. Panel JavaScript still runs after you open the panel and remains inside Treeport's scoped iframe runtime.
 

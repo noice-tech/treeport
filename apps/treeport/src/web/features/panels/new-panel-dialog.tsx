@@ -6,6 +6,7 @@ import {
   WindowIcon
 } from '@heroicons/react/16/solid'
 import type {
+  RepositoryTerminalPresetDiagnostic,
   TerminalPresetDefinition,
   WebPanelDefinition
 } from '@treeport/shared'
@@ -17,6 +18,7 @@ import {
   DialogTitle
 } from '../../components/ui/dialog'
 import { formatCommandLine } from '../../command-line'
+import { terminalPresetProvenance } from '../../terminal-preset-definition'
 import type { CreateTerminalInput } from '../terminals/terminal-workspace'
 
 export function NewPanelDialog({
@@ -25,6 +27,7 @@ export function NewPanelDialog({
   restoreFocusTo,
   worktreeName,
   presets,
+  presetDiagnostics,
   presetsLoading,
   presetsError,
   webPanelDefinitions,
@@ -40,6 +43,7 @@ export function NewPanelDialog({
   restoreFocusTo: HTMLElement | null
   worktreeName: string | null
   presets: TerminalPresetDefinition[]
+  presetDiagnostics: RepositoryTerminalPresetDiagnostic[]
   presetsLoading: boolean
   presetsError: boolean
   webPanelDefinitions: WebPanelDefinition[]
@@ -58,6 +62,7 @@ export function NewPanelDialog({
     [
       preset.name,
       preset.executable,
+      terminalPresetProvenance(preset),
       formatCommandLine([preset.executable, ...preset.args])
     ].some((value) => value.toLocaleLowerCase().includes(normalizedQuery))
   )
@@ -169,7 +174,10 @@ export function NewPanelDialog({
           }}
         >
           <div role="group" aria-label="Terminals">
-            {terminalActionCount > 0 || presetsLoading || presetsError ? (
+            {terminalActionCount > 0 ||
+            presetsLoading ||
+            presetsError ||
+            presetDiagnostics.length > 0 ? (
               <p className="px-2 py-1 text-xs font-medium text-zinc-500">
                 Terminals
               </p>
@@ -201,19 +209,18 @@ export function NewPanelDialog({
             ) : null}
             {filteredPresets.map((preset, index) => {
               const actionIndex = index + (showShell ? 1 : 0)
-              const provenance =
-                preset.source.type === 'package'
-                  ? `${preset.source.scope === 'project' ? 'Project' : 'Global'} · ${preset.source.packageId}`
-                  : null
+              const provenance = terminalPresetProvenance(preset)
+              const command = formatCommandLine([
+                preset.executable,
+                ...preset.args
+              ])
               return (
                 <Button
                   key={preset.id}
                   type="button"
                   variant="ghost"
                   className="h-12 w-full justify-start gap-3 rounded-lg py-2 pr-3 pl-2 text-base font-normal text-zinc-100 hover:bg-white/8 focus-visible:bg-white/8 sm:h-9 sm:text-sm"
-                  aria-label={
-                    provenance ? `${preset.name}, ${provenance}` : preset.name
-                  }
+                  aria-label={`${preset.name}, ${provenance}, ${command}`}
                   data-panel-launch
                   data-selected={selectedIndex === actionIndex ? '' : undefined}
                   disabled={launchDisabled}
@@ -239,8 +246,7 @@ export function NewPanelDialog({
                     {preset.name}
                   </span>
                   <span className="min-w-0 max-w-1/2 truncate text-zinc-500">
-                    {provenance ? `${provenance} · ` : ''}
-                    {formatCommandLine([preset.executable, ...preset.args])}
+                    {provenance} · {command}
                   </span>
                 </Button>
               )
@@ -261,6 +267,15 @@ export function NewPanelDialog({
                 Presets unavailable
               </p>
             ) : null}
+            {presetDiagnostics.map((diagnostic) => (
+              <p
+                key={`${diagnostic.presetId ?? 'file'}:${diagnostic.message}`}
+                className="px-3 py-2 text-base text-amber-300 sm:text-sm"
+                role="status"
+              >
+                {diagnostic.message}
+              </p>
+            ))}
           </div>
           <div role="group" aria-label="Web panels">
             {filteredWebPanelDefinitions.length > 0 ||
