@@ -127,9 +127,11 @@ export function TerminalPresetsManager({
         notice: 'Preset saved.'
       })
     },
-    onError: (mutationError) => {
+    onError: (mutationError, { presetId, input }) => {
       void queryClient.invalidateQueries({ queryKey: terminalPresetsQueryKey })
-      notifyError(mutationError)
+      notifyError(mutationError, {
+        operation: `${presetId ? 'update' : 'create'} terminal preset “${input.name}”`
+      })
     },
     onSettled: async () => {
       await Promise.all([
@@ -166,9 +168,11 @@ export function TerminalPresetsManager({
         })
       }
     },
-    onError: (mutationError) => {
+    onError: (mutationError, preset) => {
       void queryClient.invalidateQueries({ queryKey: terminalPresetsQueryKey })
-      notifyError(mutationError)
+      notifyError(mutationError, {
+        operation: `delete terminal preset “${preset.name}”`
+      })
     },
     onSettled: async () => {
       await Promise.all([

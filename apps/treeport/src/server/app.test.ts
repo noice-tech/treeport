@@ -704,6 +704,50 @@ describe('HTTP API validation', () => {
     })
   })
 
+  it('sanitizes and correlates unexpected API errors', async () => {
+    const { app, service } = fixture()
+    vi.mocked(service.listProjects).mockRejectedValueOnce(
+      new Error('Database connection failed at /internal/data')
+    )
+    const consoleError = vi
+      .spyOn(console, 'error')
+      .mockImplementation(() => undefined)
+
+    try {
+      const response = await app.request('/api/projects?token=hidden', {
+        headers: { 'x-request-id': 'request_test_123' }
+      })
+      const body = await response.json()
+
+      expect(response.status).toBe(500)
+      expect(response.headers.get('x-request-id')).toBe('request_test_123')
+      expect(body).toEqual({
+        error: {
+          code: 'INTERNAL_ERROR',
+          message: 'Unexpected server error',
+          details: { requestId: 'request_test_123' }
+        }
+      })
+      expect(JSON.stringify(body)).not.toContain('Database connection failed')
+      expect(consoleError).toHaveBeenCalledWith(
+        '[Treeport] API request failed',
+        {
+          requestId: 'request_test_123',
+          method: 'GET',
+          path: '/api/projects',
+          status: 500,
+          code: 'INTERNAL_ERROR',
+          error: 'Database connection failed at /internal/data'
+        }
+      )
+      expect(JSON.stringify(consoleError.mock.calls)).not.toContain(
+        'token=hidden'
+      )
+    } finally {
+      consoleError.mockRestore()
+    }
+  })
+
   it('updates projects with curated colors only', async () => {
     const { app, service } = fixture()
     const updated = await app.request('/api/projects/p', {

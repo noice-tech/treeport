@@ -722,9 +722,15 @@ test.describe('desktop terminal input and removal', () => {
     mocked.state.worktrees[1]!.status = 'cleanup_failed'
     mocked.state.worktrees[1]!.cleanupError =
       'Terminals were stopped, but Git removal failed'
+    const failedRefresh = page.waitForResponse(
+      (response) =>
+        response.request().method() === 'GET' &&
+        new URL(response.url()).pathname === '/api/projects'
+    )
     await page.evaluate(() =>
       (window as any).__eventSource.emit('remove.failed')
     )
+    await failedRefresh
     await expect(page.getByText(/Removal failed:/)).toContainText(
       'Git removal failed'
     )
@@ -738,9 +744,15 @@ test.describe('desktop terminal input and removal', () => {
     mocked.state.worktrees[1]!.prunable = true
     mocked.state.worktrees[1]!.cleanupError =
       'Terminals were stopped, but Git removal failed again'
+    const prunableRefresh = page.waitForResponse(
+      (response) =>
+        response.request().method() === 'GET' &&
+        new URL(response.url()).pathname === '/api/projects'
+    )
     await page.evaluate(() =>
       (window as any).__eventSource.emit('remove.failed')
     )
+    await prunableRefresh
     const secondRetryMenu = await openWorktreeContextMenu(page, 'topic')
     await expect(
       secondRetryMenu.getByRole('menuitem', { name: 'Retry removal…' })
@@ -749,9 +761,15 @@ test.describe('desktop terminal input and removal', () => {
 
     mocked.state.worktrees[1]!.cleanupError =
       'Manual cleanup required: the checkout Git marker changed'
+    const manualCleanupRefresh = page.waitForResponse(
+      (response) =>
+        response.request().method() === 'GET' &&
+        new URL(response.url()).pathname === '/api/projects'
+    )
     await page.evaluate(() =>
       (window as any).__eventSource.emit('remove.failed')
     )
+    await manualCleanupRefresh
     const manualCleanupMenu = await openWorktreeContextMenu(page, 'topic')
     await expect(
       manualCleanupMenu.getByRole('menuitem', {

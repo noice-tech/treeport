@@ -7,14 +7,14 @@ import {
 } from '@tanstack/react-query'
 import { useLocation } from '@tanstack/react-router'
 import type {
-  ApiErrorBody,
   ProjectRecord,
   RemovePreview,
   TerminalSize,
   WorktreeRecord
 } from '@treeport/shared'
-import { DetailedError, parseResponse } from 'hono/client'
+import { parseResponse } from 'hono/client'
 import { rpc } from '../../api'
+import { errorDetails } from '../../error-message'
 import { projectsQueryKey } from '../../project-metadata'
 import { terminalSessions } from '../../terminal-session'
 import {
@@ -191,9 +191,11 @@ export function useWorktreeWorkflows({
       ])
       void queryClient.invalidateQueries({ queryKey: ['worktree-creations'] })
     },
-    onError: (mutationError) => {
+    onError: (mutationError, request) => {
       setDrawerOpen(false)
-      notifyError(mutationError)
+      notifyError(mutationError, {
+        operation: `create worktree “${request.typedName}”`
+      })
     }
   })
 
@@ -232,7 +234,9 @@ export function useWorktreeWorkflows({
           queryKey: ['worktree-creations']
         })
         if (operation.status === 'failed') {
-          notifyError(operation.error ?? 'Worktree creation failed')
+          notifyError(operation.error ?? 'Worktree creation failed', {
+            operation: `create worktree “${owned.typedName}”`
+          })
         } else {
           await queryClient.invalidateQueries({ queryKey: projectsQueryKey })
           const projects = (await parseResponse(rpc.api.projects.$get()))
@@ -258,13 +262,13 @@ export function useWorktreeWorkflows({
           setDrawerOpen(false)
 
           if (typeof result?.setupError === 'string') {
-            notifyError(
-              `Worktree created, but setup could not start: ${result.setupError}`
-            )
+            notifyError(result.setupError, {
+              operation: `start setup for newly created worktree “${owned.typedName}”`
+            })
           } else if (typeof result?.terminalError === 'string') {
-            notifyError(
-              `Worktree created, but its terminal could not start: ${result.terminalError}`
-            )
+            notifyError(result.terminalError, {
+              operation: `start a terminal for newly created worktree “${owned.typedName}”`
+            })
           }
         }
 
@@ -365,9 +369,7 @@ export function useWorktreeWorkflows({
       )
     } catch (error) {
       if (
-        error instanceof DetailedError &&
-        (error.detail as { data?: ApiErrorBody } | undefined)?.data?.error
-          ?.code === 'REMOVE_PREVIEW_STALE' &&
+        errorDetails(error).code === 'REMOVE_PREVIEW_STALE' &&
         staleRetriesRemaining > 0
       ) {
         setRemovalStage(worktree.id, 'checking')
@@ -394,13 +396,15 @@ export function useWorktreeWorkflows({
           return
         } catch (refreshError) {
           releaseRemoval(worktree.id)
-          notifyError(refreshError)
+          notifyError(refreshError, {
+            operation: `refresh removal details for worktree “${worktree.name}”`
+          })
           return
         }
       }
 
       releaseRemoval(worktree.id)
-      notifyError(error)
+      notifyError(error, { operation: `remove worktree “${worktree.name}”` })
     }
   }
 
@@ -435,7 +439,9 @@ export function useWorktreeWorkflows({
       onRemovalNeedsConfirmation(worktree, preview, trigger)
     } catch (error) {
       releaseRemoval(worktree.id)
-      notifyError(error)
+      notifyError(error, {
+        operation: `check whether worktree “${worktree.name}” can be removed`
+      })
     }
   }
 

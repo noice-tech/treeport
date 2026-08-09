@@ -104,9 +104,20 @@ export function TerminalBellNotifications({
 
     const bell = terminalSessions.getBellSnapshot().get(terminalId)
     if (bell?.unread) {
+      const context = findTerminalContext(
+        current.projects,
+        current.runtimeTitles,
+        terminalId
+      )
       void terminalSessions
         .acknowledgeBell(terminalId, bell.sequence)
-        .catch(notifyError)
+        .catch((error: unknown) => {
+          notifyError(error, {
+            operation: context
+              ? `acknowledge notification for terminal “${context.title}”`
+              : 'acknowledge terminal notification'
+          })
+        })
     }
   }
 
@@ -174,7 +185,9 @@ export function TerminalBellNotifications({
                     void terminalSessions
                       .acknowledgeBell(event.terminalId, event.sequence)
                       .catch((error: unknown) => {
-                        notifyError(error)
+                        notifyError(error, {
+                          operation: `dismiss notification for terminal “${context.title}”`
+                        })
                         const currentBell = terminalSessions
                           .getBellSnapshot()
                           .get(event.terminalId)
@@ -253,7 +266,11 @@ export function TerminalBellNotifications({
       if (activelyViewed) {
         void terminalSessions
           .acknowledgeBell(event.terminalId, event.sequence)
-          .catch(notifyError)
+          .catch((error: unknown) => {
+            notifyError(error, {
+              operation: `acknowledge notification for terminal “${context.title}”`
+            })
+          })
         return
       }
 

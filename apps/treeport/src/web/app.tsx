@@ -174,7 +174,11 @@ function WorkspaceApp() {
         await navigateToWorkspace(target)
       }
     },
-    onError: notifyError
+    onError: (error, { worktree, definition }) => {
+      notifyError(error, {
+        operation: `create web panel “${definition.title}” in worktree “${worktree.name}”`
+      })
+    }
   })
   const closeWebPanel = useMutation({
     mutationFn: ({
@@ -212,20 +216,29 @@ function WorkspaceApp() {
         queryKey: projectsQueryOptions.queryKey
       })
     },
-    onError: notifyError
+    onError: (error, { panel }) => {
+      notifyError(error, { operation: `close web panel “${panel.title}”` })
+    }
   })
   const requestCloseWebPanel = (panel: WebPanel, trigger?: HTMLElement) => {
     void parseResponse(
       rpc.api.panels[':panelId'].storage.$get({
         param: { panelId: panel.id }
       })
-    ).then(({ hasData }) => {
-      if (hasData) {
-        openDialog({ type: 'close-web-panel', panel }, trigger)
-      } else {
-        closeWebPanel.mutate({ panel })
+    ).then(
+      ({ hasData }) => {
+        if (hasData) {
+          openDialog({ type: 'close-web-panel', panel }, trigger)
+        } else {
+          closeWebPanel.mutate({ panel })
+        }
+      },
+      (error: unknown) => {
+        notifyError(error, {
+          operation: `check stored data for web panel “${panel.title}”`
+        })
       }
-    }, notifyError)
+    )
   }
   const eventsDisconnected = useProjectEventsBridge(projectsQuery.data)
   const [showSyncDegraded, setShowSyncDegraded] = useState(false)

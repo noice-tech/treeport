@@ -242,14 +242,23 @@ test.describe('desktop worktree terminal UI', () => {
     const mocked = await mockApp(page, [], {
       initialPath: '/projects/proj_1/worktrees/wt_topic/terminals/term_pi'
     })
-    await expect(page.getByText('topic', { exact: true })).toBeVisible()
+    const topicWorktree = page
+      .getByRole('navigation', { name: 'Projects and worktrees' })
+      .getByRole('button', { name: /^topic(?:,|$)/ })
+    await expect(topicWorktree).toBeVisible()
 
     mocked.state.worktrees.splice(1, 1)
+    const projectRefresh = page.waitForResponse(
+      (response) =>
+        response.request().method() === 'GET' &&
+        new URL(response.url()).pathname === '/api/projects'
+    )
     await page.evaluate(() =>
       (window as any).__eventSource.emit('worktree.removed')
     )
+    await projectRefresh
 
-    await expect(page.getByText('topic', { exact: true })).toHaveCount(0)
+    await expect(topicWorktree).toHaveCount(0)
     await expect(
       page.getByRole('button', { name: 'main worktree', exact: true })
     ).toBeVisible()
@@ -291,9 +300,9 @@ test.describe('desktop worktree terminal UI', () => {
         })
         .click()
     const closeProject = async () => {
-      const projectOption = page
-        .getByRole('listitem')
-        .filter({ hasText: 'example' })
+      const projectOption = page.getByRole('listitem').filter({
+        has: page.getByRole('button', { name: 'Close project example' })
+      })
 
       if (!(await projectOption.isVisible())) {
         await openSwitcher()
@@ -313,6 +322,9 @@ test.describe('desktop worktree terminal UI', () => {
     mocked.failNextClose()
     page.once('dialog', (dialog) => dialog.accept())
     await closeProject()
+    await expect(
+      page.getByText('Couldn’t close project “example”', { exact: true })
+    ).toBeVisible()
     await expect(
       page.getByText(/Some terminal sessions could not be stopped/)
     ).toBeVisible()

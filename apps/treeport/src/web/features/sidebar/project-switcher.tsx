@@ -8,7 +8,7 @@ import {
   PlusIcon,
   XMarkIcon
 } from '@heroicons/react/16/solid'
-import type { ProjectRecord } from '@treeport/shared'
+import type { ProjectRecord, RecentProjectRecord } from '@treeport/shared'
 import { parseResponse } from 'hono/client'
 import { rpc } from '../../api'
 import { TerminalStatusIcon } from '../../components/terminal-status-icon'
@@ -99,7 +99,7 @@ export function ProjectSwitcher({
     enabled: projectSwitcher.open
   })
   const reopenProject = useMutation({
-    mutationFn: async (project: { id: string }) =>
+    mutationFn: async (project: RecentProjectRecord) =>
       (
         await parseResponse(
           rpc.api.projects[':projectId'].open.$post({
@@ -108,14 +108,16 @@ export function ProjectSwitcher({
         )
       ).project,
     onSuccess: onProjectOpened,
-    onError: notifyError
+    onError: (error, project) => {
+      notifyError(error, { operation: `reopen project “${project.name}”` })
+    }
   })
   const selectOpenProject = (project: ProjectRecord) => {
     selectProject(project)
     setProjectSearch('')
     setHighlightedProjectId(null)
   }
-  const selectRecentProject = (project: { id: string }) => {
+  const selectRecentProject = (project: RecentProjectRecord) => {
     reopenProject.mutate(project)
     setProjectSearch('')
     setHighlightedProjectId(null)

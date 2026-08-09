@@ -53,7 +53,9 @@ export function ProjectForm({
     mutationFn: async (path: string) =>
       (await parseResponse(rpc.api.projects.$post({ json: { path } }))).project,
     onSuccess: onOpened,
-    onError: notifyError
+    onError: (error, path) => {
+      notifyError(error, { operation: `open project at “${path}”` })
+    }
   })
 
   const inputSettled = pathValue.trim() === debouncedPath
