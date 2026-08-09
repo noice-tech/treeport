@@ -86,10 +86,8 @@ function fixture(initialTerminals: TerminalRecord[]) {
   )
   const service = {
     events,
-    database: {
-      worktree: (worktreeId: string) =>
-        worktreeId === worktree.id ? worktree : undefined
-    },
+    getWorktree: (worktreeId: string) =>
+      Promise.resolve(worktreeId === worktree.id ? worktree : undefined),
     listProjects: vi.fn(async () => [
       { worktrees: [{ ...worktree, terminals: [...terminals.values()] }] }
     ]),

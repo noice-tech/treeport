@@ -10,7 +10,7 @@ import {
   loadConfig,
   SpawnCommandRunner,
   TmuxAdapter,
-  TreeportDatabase,
+  openDatabase,
   TreeportService
 } from './core/index'
 import { createApp } from './app'
@@ -22,7 +22,7 @@ const config = loadConfig()
 const ownership = await acquireDaemonOwnership(config)
 const prerequisites = await checkRuntimePrerequisites(config)
 const runner = new SpawnCommandRunner()
-const database = await TreeportDatabase.open(config.databasePath, {
+const database = await openDatabase(config.databasePath, {
   backupDirectory: path.join(config.dataDir, 'database-backups')
 })
 const git = new GitAdapter(runner, config.gitPath)

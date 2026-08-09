@@ -1,9 +1,12 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
+import { sql } from 'drizzle-orm'
 import {
   beginFromPreview,
   fixture,
+  persistedProject,
+  persistedProjectOpen,
   waitForOperation
 } from './service.integration-fixture'
 
@@ -205,7 +208,7 @@ describe('TreeportService with injected command adapters', () => {
     ])
     expect(runner.sessions.size).toBe(0)
     expect(
-      (await service.database.project(project.id))?.worktrees.map(
+      (await persistedProject(service.database, project.id))?.worktrees.map(
         ({ id }) => id
       )
     ).toEqual(expect.arrayContaining([mainWorktree.id, linked.id]))
@@ -230,7 +233,9 @@ describe('TreeportService with injected command adapters', () => {
     await service.closeProject(project.id)
     const pathReopened = await service.registerProject(main)
     expect(pathReopened.id).toBe(project.id)
-    await expect(service.database.isProjectOpen(project.id)).resolves.toBe(true)
+    await expect(
+      persistedProjectOpen(service.database, project.id)
+    ).resolves.toBe(true)
   })
 
   it('keeps a project open after partial terminal shutdown and retries the close', async () => {
@@ -264,7 +269,9 @@ describe('TreeportService with injected command adapters', () => {
         terminalsMayHaveStopped: true
       }
     })
-    await expect(service.database.isProjectOpen(project.id)).resolves.toBe(true)
+    await expect(
+      persistedProjectOpen(service.database, project.id)
+    ).resolves.toBe(true)
     expect(removed).toContain(mainTerminal.id)
     expect(runner.sessions.size).toBe(1)
     expect(
@@ -276,9 +283,9 @@ describe('TreeportService with injected command adapters', () => {
     runner.tmuxKillFailureSockets.clear()
     await expect(service.closeProject(project.id)).resolves.toBeUndefined()
     unsubscribe()
-    await expect(service.database.isProjectOpen(project.id)).resolves.toBe(
-      false
-    )
+    await expect(
+      persistedProjectOpen(service.database, project.id)
+    ).resolves.toBe(false)
     expect(runner.sessions.size).toBe(0)
   })
 
@@ -291,16 +298,14 @@ describe('TreeportService with injected command adapters', () => {
       'Persistence failure',
       ['pi']
     )
-    const setProjectOpen = database.setProjectOpen.bind(database)
-    vi.spyOn(database, 'setProjectOpen').mockImplementation(
-      async (projectId, open, timestamp) => {
-        if (!open) {
-          throw new Error('database write failed')
-        }
-
-        await setProjectOpen(projectId, open, timestamp)
-      }
-    )
+    await database.db.run(sql`
+      CREATE TRIGGER fail_project_close
+      BEFORE UPDATE OF is_open ON projects
+      WHEN NEW.is_open = 0
+      BEGIN
+        SELECT RAISE(FAIL, 'database write failed');
+      END
+    `)
     const events: string[] = []
     const unsubscribe = service.events.subscribe((event) => {
       events.push(
@@ -316,7 +321,7 @@ describe('TreeportService with injected command adapters', () => {
       }
     })
     unsubscribe()
-    await expect(database.isProjectOpen(project.id)).resolves.toBe(true)
+    await expect(persistedProjectOpen(database, project.id)).resolves.toBe(true)
     expect(runner.sessions.size).toBe(0)
     expect(events).toContain(`terminal.removed:${terminal.id}`)
     expect(events.some((event) => event.startsWith('project.updated'))).toBe(
@@ -406,9 +411,9 @@ describe('TreeportService with injected command adapters', () => {
     await expect(service.registerProject(main)).rejects.toThrow(
       'repository unavailable'
     )
-    await expect(service.database.isProjectOpen(project.id)).resolves.toBe(
-      false
-    )
+    await expect(
+      persistedProjectOpen(service.database, project.id)
+    ).resolves.toBe(false)
     expect(await service.listRecentProjects()).toEqual([recentBefore])
     expect(await service.listProjects()).toEqual([])
   })
@@ -435,13 +440,15 @@ describe('TreeportService with injected command adapters', () => {
     runner.listWorktreesFails = true
     const reopened = await service.openProject(project.id)
     expect(reopened.availability.state).toBe('unavailable')
-    await expect(service.database.isProjectOpen(project.id)).resolves.toBe(true)
+    await expect(
+      persistedProjectOpen(service.database, project.id)
+    ).resolves.toBe(true)
 
     runner.calls.length = 0
     await service.closeProject(project.id)
-    await expect(service.database.isProjectOpen(project.id)).resolves.toBe(
-      false
-    )
+    await expect(
+      persistedProjectOpen(service.database, project.id)
+    ).resolves.toBe(false)
     expect(
       runner.calls.some(
         (call) => call.args[0] === 'worktree' && call.args[1] === 'list'
@@ -450,7 +457,7 @@ describe('TreeportService with injected command adapters', () => {
 
     runner.listWorktreesFails = false
     await service.deleteProject(project.id)
-    expect(await service.database.project(project.id)).toBeNull()
+    expect(await persistedProject(service.database, project.id)).toBeNull()
     expect(await service.listRecentProjects()).toEqual([])
   })
 
