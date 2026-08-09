@@ -647,8 +647,18 @@ test.describe('desktop worktree and terminal workflows', () => {
     await trigger.click()
     const launcher = page.getByRole('dialog', { name: 'New panel' })
     await expect(launcher.getByRole('button', { name: 'Shell' })).toBeDisabled()
-    await launcher.getByRole('button', { name: 'Manage presets' }).click()
-    const dialog = page.getByRole('dialog', { name: 'Terminal presets' })
+    await expect(
+      launcher.getByRole('link', { name: 'Configure repository presets' })
+    ).toHaveAttribute(
+      'href',
+      'https://treeport.app/features/terminal-presets/#repository-presets'
+    )
+    await launcher
+      .getByRole('button', { name: 'Manage global presets' })
+      .click()
+    const dialog = page.getByRole('dialog', {
+      name: 'Global terminal presets'
+    })
     await expect(dialog).toBeVisible()
     await expect(dialog.getByRole('button', { name: 'New' })).toBeVisible()
     await expect(

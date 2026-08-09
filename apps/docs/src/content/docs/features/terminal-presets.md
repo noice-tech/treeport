@@ -16,11 +16,11 @@ For example:
 
 ## Create a global preset
 
-Open **New panel**, then choose **Manage presets**. Give the preset a name and the command to run. Treeport saves this user-owned preset for future terminals in any repository and worktree.
+Open **New panel**, then choose **Manage global presets**. Give the preset a name and the command to run. Treeport saves this user-owned preset for future terminals in any repository and worktree.
 
 [Treeport packages](/features/packages/) can also provide presets globally or for one registered repository. Package presets remain read-only package resources rather than being copied into the user preset list.
 
-## Commit presets with a repository
+## Repository presets
 
 Add `.treeport/terminal-presets.json` to the repository when everyone using a checkout that contains it should receive the same choices:
 

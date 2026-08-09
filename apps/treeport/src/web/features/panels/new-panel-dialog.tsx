@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import {
+  BookOpenIcon,
   Cog6ToothIcon,
   CommandLineIcon,
   MagnifyingGlassIcon,
@@ -358,7 +359,24 @@ export function NewPanelDialog({
               className="size-4 shrink-0 fill-zinc-500"
               aria-hidden="true"
             />
-            <span>Manage presets</span>
+            <span>Manage global presets</span>
+          </Button>
+          <Button
+            asChild
+            variant="ghost"
+            className="h-12 w-full justify-start gap-3 rounded-lg py-2 pr-3 pl-2 text-base font-normal text-zinc-400 hover:bg-white/8 hover:text-zinc-100 sm:h-9 sm:text-sm"
+          >
+            <a
+              href="https://treeport.app/features/terminal-presets/#repository-presets"
+              target="_blank"
+              rel="noreferrer"
+            >
+              <BookOpenIcon
+                className="size-4 shrink-0 fill-zinc-500"
+                aria-hidden="true"
+              />
+              <span>Configure repository presets</span>
+            </a>
           </Button>
         </div>
       </DialogContent>
