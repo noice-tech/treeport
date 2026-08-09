@@ -1,4 +1,5 @@
 import type {
+  TerminalProgram,
   TerminalProgress,
   TerminalRuntimeMetadata
 } from '@treeport/shared'
@@ -17,6 +18,13 @@ export interface TerminalBellEvent {
   at: string
 }
 
+export type TerminalRuntimeMetadataInput = Omit<
+  TerminalRuntimeMetadata,
+  'program'
+> & {
+  program?: TerminalProgram | null
+}
+
 export class TerminalRuntimeMetadataStore {
   private readonly listeners = new Set<() => void>()
   private readonly bellEventListeners = new Set<
@@ -24,6 +32,7 @@ export class TerminalRuntimeMetadataStore {
   >()
   private attentionSnapshot: ReadonlySet<string> = new Set()
   private titleSnapshot: ReadonlyMap<string, string> = new Map()
+  private programSnapshot: ReadonlyMap<string, TerminalProgram> = new Map()
   private foregroundProcessSnapshot: ReadonlySet<string> = new Set()
   private progressSnapshot: ReadonlyMap<string, TerminalProgress> = new Map()
   private bellMetadata: ReadonlyMap<string, TerminalBellMetadata> = new Map()
@@ -62,12 +71,14 @@ export class TerminalRuntimeMetadataStore {
   getBellSnapshot = (): ReadonlyMap<string, TerminalBellMetadata> =>
     this.bellMetadata
   getTitleSnapshot = (): ReadonlyMap<string, string> => this.titleSnapshot
+  getProgramSnapshot = (): ReadonlyMap<string, TerminalProgram> =>
+    this.programSnapshot
   getForegroundProcessSnapshot = (): ReadonlySet<string> =>
     this.foregroundProcessSnapshot
   getProgressSnapshot = (): ReadonlyMap<string, TerminalProgress> =>
     this.progressSnapshot
 
-  applyRuntimeMetadata(metadata: TerminalRuntimeMetadata): void {
+  applyRuntimeMetadata(metadata: TerminalRuntimeMetadataInput): void {
     this.notificationBatchDepth += 1
     const currentBell = this.bellMetadata.get(metadata.terminalId)
     const incomingBell = metadata.bell
@@ -110,6 +121,7 @@ export class TerminalRuntimeMetadataStore {
     }
 
     this.setRuntimeTitle(metadata.terminalId, metadata.title)
+    this.setProgram(metadata.terminalId, metadata.program ?? null)
     this.setForegroundProcess(
       metadata.terminalId,
       metadata.hasForegroundProcess === true
@@ -126,8 +138,11 @@ export class TerminalRuntimeMetadataStore {
     }
   }
 
-  replaceRuntimeMetadata(metadata: Iterable<TerminalRuntimeMetadata>): void {
+  replaceRuntimeMetadata(
+    metadata: Iterable<TerminalRuntimeMetadataInput>
+  ): void {
     const titles = new Map<string, string>()
+    const programs = new Map<string, TerminalProgram>()
     const foregroundProcesses = new Set<string>()
     const progress = new Map<string, TerminalProgress>()
     const bells = new Map<string, TerminalBellMetadata>()
@@ -136,6 +151,10 @@ export class TerminalRuntimeMetadataStore {
       const title = item.title?.trim().slice(0, 256)
       if (title) {
         titles.set(item.terminalId, title)
+      }
+
+      if (item.program) {
+        programs.set(item.terminalId, item.program)
       }
 
       if (item.hasForegroundProcess) {
@@ -168,6 +187,12 @@ export class TerminalRuntimeMetadataStore {
       titles.size !== this.titleSnapshot.size ||
       [...titles].some(
         ([terminalId, title]) => this.titleSnapshot.get(terminalId) !== title
+      )
+    const programsChanged =
+      programs.size !== this.programSnapshot.size ||
+      [...programs].some(
+        ([terminalId, program]) =>
+          this.programSnapshot.get(terminalId) !== program
       )
     const foregroundProcessesChanged =
       foregroundProcesses.size !== this.foregroundProcessSnapshot.size ||
@@ -206,6 +231,10 @@ export class TerminalRuntimeMetadataStore {
       this.titleSnapshot = titles
     }
 
+    if (programsChanged) {
+      this.programSnapshot = programs
+    }
+
     if (foregroundProcessesChanged) {
       this.foregroundProcessSnapshot = foregroundProcesses
     }
@@ -220,6 +249,7 @@ export class TerminalRuntimeMetadataStore {
 
     if (
       titlesChanged ||
+      programsChanged ||
       foregroundProcessesChanged ||
       progressChanged ||
       attentionChanged ||
@@ -256,6 +286,7 @@ export class TerminalRuntimeMetadataStore {
     this.bellAcknowledgementQueues.delete(terminalId)
     this.clearAttention(terminalId)
     this.clearRuntimeTitle(terminalId)
+    this.setProgram(terminalId, null)
     this.setForegroundProcess(terminalId, false)
     this.setProgress(terminalId, null)
   }
@@ -265,6 +296,7 @@ export class TerminalRuntimeMetadataStore {
     let changed = false
     const attention = new Set(this.attentionSnapshot)
     const titles = new Map(this.titleSnapshot)
+    const programs = new Map(this.programSnapshot)
     const foregroundProcesses = new Set(this.foregroundProcessSnapshot)
     const progress = new Map(this.progressSnapshot)
     for (const terminalId of attention) {
@@ -276,6 +308,12 @@ export class TerminalRuntimeMetadataStore {
     for (const terminalId of titles.keys()) {
       if (!valid.has(terminalId)) {
         titles.delete(terminalId)
+        changed = true
+      }
+    }
+    for (const terminalId of programs.keys()) {
+      if (!valid.has(terminalId)) {
+        programs.delete(terminalId)
         changed = true
       }
     }
@@ -303,6 +341,7 @@ export class TerminalRuntimeMetadataStore {
     if (changed) {
       this.attentionSnapshot = attention
       this.titleSnapshot = titles
+      this.programSnapshot = programs
       this.foregroundProcessSnapshot = foregroundProcesses
       this.progressSnapshot = progress
       this.bellMetadata = bells
@@ -378,6 +417,25 @@ export class TerminalRuntimeMetadataStore {
     const titles = new Map(this.titleSnapshot)
     titles.delete(terminalId)
     this.titleSnapshot = titles
+    this.emit()
+  }
+
+  private setProgram(
+    terminalId: string,
+    program: TerminalProgram | null
+  ): void {
+    if (this.programSnapshot.get(terminalId) === program) {
+      return
+    }
+
+    const next = new Map(this.programSnapshot)
+    if (program) {
+      next.set(terminalId, program)
+    } else {
+      next.delete(terminalId)
+    }
+
+    this.programSnapshot = next
     this.emit()
   }
 

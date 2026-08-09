@@ -167,6 +167,7 @@ describe('TerminalMetadataManager', () => {
       {
         terminalId: 'one',
         title: 'title session-one',
+        program: 'pi',
         hasForegroundProcess: true,
         progress: null,
         progressStartedAt: null,
@@ -176,6 +177,7 @@ describe('TerminalMetadataManager', () => {
       {
         terminalId: 'two',
         title: 'title session-two',
+        program: 'pi',
         hasForegroundProcess: true,
         progress: null,
         progressStartedAt: null,
@@ -189,6 +191,7 @@ describe('TerminalMetadataManager', () => {
     expect(manager.get('two')).toEqual({
       terminalId: 'two',
       title: 'pi · /repo',
+      program: 'pi',
       hasForegroundProcess: true,
       progress: { state: 'indeterminate', value: null },
       progressStartedAt: expect.any(String),
@@ -199,6 +202,7 @@ describe('TerminalMetadataManager', () => {
       terminalId: 'two',
       worktreeId: null,
       title: 'pi · /repo',
+      program: 'pi',
       hasForegroundProcess: true,
       progress: { state: 'indeterminate', value: null },
       progressStartedAt: expect.any(String),
@@ -232,6 +236,7 @@ describe('TerminalMetadataManager', () => {
     expect(manager.get('one')).toEqual({
       terminalId: 'one',
       title: 'finished',
+      program: 'pi',
       hasForegroundProcess: false,
       progress: null,
       progressStartedAt: expect.any(String),
@@ -297,7 +302,11 @@ describe('TerminalMetadataManager', () => {
     })
     await manager.initialize()
     expect(manager.snapshot()).toEqual([
-      expect.objectContaining({ terminalId: item.id, title: 'π' })
+      expect.objectContaining({
+        terminalId: item.id,
+        title: 'π',
+        program: 'pi'
+      })
     ])
 
     sessionTitleState.mockResolvedValue({
@@ -307,7 +316,7 @@ describe('TerminalMetadataManager', () => {
       shellTitle: 'treeport'
     })
     await vi.advanceTimersByTimeAsync(TERMINAL_METADATA_POLL_MS)
-    expect(manager.get(item.id).title).toBe('π')
+    expect(manager.get(item.id)).toMatchObject({ title: 'π', program: 'pi' })
 
     sessionTitleState.mockResolvedValue({
       paneTitle: 'π',
@@ -315,7 +324,10 @@ describe('TerminalMetadataManager', () => {
       shellTitle: 'treeport'
     })
     await vi.advanceTimersByTimeAsync(TERMINAL_METADATA_POLL_MS)
-    expect(manager.get(item.id).title).toBe('treeport')
+    expect(manager.get(item.id)).toMatchObject({
+      title: 'treeport',
+      program: null
+    })
   })
 
   it('prefers the existing pane title when no remembered shell title can identify it as stale', async () => {
@@ -608,6 +620,7 @@ describe('TerminalMetadataManager', () => {
     expect(manager.get(item.id)).toEqual({
       terminalId: item.id,
       title: null,
+      program: 'pi',
       hasForegroundProcess: false,
       progress: null,
       progressStartedAt: null,
@@ -840,6 +853,7 @@ describe('TerminalMetadataManager', () => {
       expect(manager.snapshot()).toContainEqual({
         terminalId: created.id,
         title: 'title session-new',
+        program: 'pi',
         hasForegroundProcess: true,
         progress: null,
         progressStartedAt: null,

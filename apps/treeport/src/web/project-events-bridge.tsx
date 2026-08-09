@@ -83,6 +83,7 @@ export function useProjectEventsBridge(
         terminalSessions.applyRuntimeMetadata({
           terminalId: event.data.terminalId,
           title: event.data.title,
+          program: event.data.program,
           hasForegroundProcess: event.data.hasForegroundProcess,
           progress: event.data.progress,
           progressStartedAt: event.data.progressStartedAt,

@@ -33,9 +33,13 @@ export const terminalProgressSchema = z.strictObject({
 
 export type TerminalProgress = z.infer<typeof terminalProgressSchema>
 
+export const terminalProgramSchema = z.enum(['pi'])
+export type TerminalProgram = z.infer<typeof terminalProgramSchema>
+
 export const terminalRuntimeMetadataSchema = z.strictObject({
   terminalId: z.string().min(1),
   title: z.string().max(256).nullable(),
+  program: terminalProgramSchema.nullable().default(null),
   hasForegroundProcess: z.boolean().nullable().optional(),
   progress: terminalProgressSchema.nullable(),
   progressStartedAt: z.string().datetime().nullable().default(null),
