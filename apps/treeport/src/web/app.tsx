@@ -12,7 +12,8 @@ import type {
 import { TerminalBellNotifications } from './features/notifications/use-bell-notifications'
 import { CloseWebPanelDialog } from './features/web-panels/close-web-panel-dialog'
 import { WebPanelWorkspace } from './features/web-panels/web-panel-workspace'
-import { parseRpcResponse, rpc } from './api'
+import { parseResponse } from 'hono/client'
+import { rpc } from './api'
 import { OpenProjectDialog } from './features/projects/open-project-dialog'
 import { useProjectWorkflows } from './features/projects/project-workflows'
 import {
@@ -137,7 +138,7 @@ function WorkspaceApp() {
     queryKey: ['web-panel-definitions', panelDialogWorktree?.id],
     queryFn: async () =>
       (
-        await parseRpcResponse(
+        await parseResponse(
           rpc.api.worktrees[':worktreeId']['web-panel-definitions'].$get({
             param: { worktreeId: panelDialogWorktree!.id }
           })
@@ -153,7 +154,7 @@ function WorkspaceApp() {
       worktree: WorktreeRecord
       definition: WebPanelDefinition
     }) =>
-      parseRpcResponse(
+      parseResponse(
         rpc.api.worktrees[':worktreeId'].panels.$post({
           param: { worktreeId: worktree.id },
           json: { definitionId: definition.id }
@@ -183,7 +184,7 @@ function WorkspaceApp() {
       panel: WebPanel
       discardStoredData?: boolean
     }) =>
-      parseRpcResponse(
+      parseResponse(
         rpc.api.panels[':panelId'].$delete({
           param: { panelId: panel.id },
           query: {
@@ -214,7 +215,7 @@ function WorkspaceApp() {
     onError: notifyError
   })
   const requestCloseWebPanel = (panel: WebPanel, trigger?: HTMLElement) => {
-    void parseRpcResponse(
+    void parseResponse(
       rpc.api.panels[':panelId'].storage.$get({
         param: { panelId: panel.id }
       })

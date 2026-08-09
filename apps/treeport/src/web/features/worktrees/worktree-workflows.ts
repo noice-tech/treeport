@@ -7,12 +7,14 @@ import {
 } from '@tanstack/react-query'
 import { useLocation } from '@tanstack/react-router'
 import type {
+  ApiErrorBody,
   ProjectRecord,
   RemovePreview,
   TerminalSize,
   WorktreeRecord
 } from '@treeport/shared'
-import { ApiError, parseRpcResponse, rpc } from '../../api'
+import { DetailedError, parseResponse } from 'hono/client'
+import { rpc } from '../../api'
 import { projectsQueryKey } from '../../project-metadata'
 import { terminalSessions } from '../../terminal-session'
 import {
@@ -83,7 +85,7 @@ export function useWorktreeWorkflows({
     queryKey: ['worktree-creations'],
     queryFn: async () =>
       (
-        await parseRpcResponse(
+        await parseResponse(
           rpc.api.operations.$get({ query: { kind: 'create' } })
         )
       ).operations,
@@ -111,7 +113,7 @@ export function useWorktreeWorkflows({
       queryKey: ['operation', creation.id] as const,
       queryFn: async () =>
         (
-          await parseRpcResponse(
+          await parseResponse(
             rpc.api.operations[':operationId'].$get({
               param: { operationId: creation.id }
             })
@@ -163,7 +165,7 @@ export function useWorktreeWorkflows({
 
   const createWorktree = useMutation({
     mutationFn: (request: WorktreeCreationRequest) =>
-      parseRpcResponse(
+      parseResponse(
         rpc.api.projects[':projectId']['worktree-operations'].$post({
           param: { projectId: request.projectId },
           json: {
@@ -233,7 +235,7 @@ export function useWorktreeWorkflows({
           notifyError(operation.error ?? 'Worktree creation failed')
         } else {
           await queryClient.invalidateQueries({ queryKey: projectsQueryKey })
-          const projects = (await parseRpcResponse(rpc.api.projects.$get()))
+          const projects = (await parseResponse(rpc.api.projects.$get()))
             .projects
           queryClient.setQueryData(projectsQueryKey, projects)
           const result = operation.result
@@ -345,7 +347,7 @@ export function useWorktreeWorkflows({
   ): Promise<void> => {
     setRemovalStage(worktree.id, 'removing')
     try {
-      await parseRpcResponse(
+      await parseResponse(
         rpc.api.worktrees[':worktreeId'].remove.$post({
           param: { worktreeId: worktree.id },
           json: {
@@ -363,14 +365,15 @@ export function useWorktreeWorkflows({
       )
     } catch (error) {
       if (
-        error instanceof ApiError &&
-        error.code === 'REMOVE_PREVIEW_STALE' &&
+        error instanceof DetailedError &&
+        (error.detail as { data?: ApiErrorBody } | undefined)?.data?.error
+          ?.code === 'REMOVE_PREVIEW_STALE' &&
         staleRetriesRemaining > 0
       ) {
         setRemovalStage(worktree.id, 'checking')
         try {
           const freshPreview = (
-            await parseRpcResponse(
+            await parseResponse(
               rpc.api.worktrees[':worktreeId']['remove-preview'].$get({
                 param: { worktreeId: worktree.id }
               })
@@ -417,7 +420,7 @@ export function useWorktreeWorkflows({
     setRemovalStage(worktree.id, 'checking')
     try {
       const preview = (
-        await parseRpcResponse(
+        await parseResponse(
           rpc.api.worktrees[':worktreeId']['remove-preview'].$get({
             param: { worktreeId: worktree.id }
           })

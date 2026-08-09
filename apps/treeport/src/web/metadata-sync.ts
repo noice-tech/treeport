@@ -1,4 +1,4 @@
-import { ApiError } from './api'
+import { DetailedError } from 'hono/client'
 
 export const METADATA_STALE_TIME_MS = 30_000
 const METADATA_INVALIDATION_DELAY_MS = 75
@@ -12,11 +12,12 @@ export function shouldRetryApiQuery(
     return false
   }
 
-  if (!(error instanceof ApiError)) {
+  if (!(error instanceof DetailedError)) {
     return true
   }
 
-  return error.status === 408 || error.status === 429 || error.status >= 500
+  const status = error.statusCode ?? 500
+  return status === 408 || status === 429 || status >= 500
 }
 
 export function apiRetryDelay(attemptIndex: number): number {

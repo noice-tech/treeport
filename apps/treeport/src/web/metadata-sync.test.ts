@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ApiError } from './api'
+import { DetailedError } from 'hono/client'
 import {
   apiRetryDelay,
   createInvalidationCoalescer,
@@ -11,18 +11,18 @@ afterEach(() => vi.useRealTimers())
 describe('metadata sync', () => {
   it('retries transient failures within a fixed bound', () => {
     expect(shouldRetryApiQuery(0, new Error('offline'))).toBe(true)
-    expect(shouldRetryApiQuery(1, new ApiError('UPSTREAM', 'bad', 503))).toBe(
-      true
-    )
-    expect(shouldRetryApiQuery(0, new ApiError('TIMEOUT', 'later', 408))).toBe(
-      true
-    )
     expect(
-      shouldRetryApiQuery(0, new ApiError('RATE_LIMITED', 'later', 429))
+      shouldRetryApiQuery(1, new DetailedError('bad', { statusCode: 503 }))
     ).toBe(true)
-    expect(shouldRetryApiQuery(0, new ApiError('BAD_REQUEST', 'no', 400))).toBe(
-      false
-    )
+    expect(
+      shouldRetryApiQuery(0, new DetailedError('later', { statusCode: 408 }))
+    ).toBe(true)
+    expect(
+      shouldRetryApiQuery(0, new DetailedError('later', { statusCode: 429 }))
+    ).toBe(true)
+    expect(
+      shouldRetryApiQuery(0, new DetailedError('no', { statusCode: 400 }))
+    ).toBe(false)
     expect(shouldRetryApiQuery(2, new Error('offline'))).toBe(false)
     expect(apiRetryDelay(0)).toBe(500)
     expect(apiRetryDelay(10)).toBe(2_000)

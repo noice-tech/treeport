@@ -7,7 +7,9 @@ import {
   HomeIcon
 } from '@heroicons/react/16/solid'
 import type { ProjectRecord } from '@treeport/shared'
-import { parseRpcResponse, rpc } from '../../api'
+import { parseResponse } from 'hono/client'
+import { rpc } from '../../api'
+import { errorMessage } from '../../error-message'
 import { Button } from '../../components/ui/button'
 import { FormField } from '../../components/ui/form-field'
 import { Input } from '../../components/ui/input'
@@ -36,7 +38,7 @@ export function ProjectForm({
   const directoryQuery = useQuery({
     queryKey: ['filesystem-directories', debouncedPath, showHidden],
     queryFn: () =>
-      parseRpcResponse(
+      parseResponse(
         rpc.api.filesystem.directories.$get({
           query: {
             input: debouncedPath,
@@ -49,8 +51,7 @@ export function ProjectForm({
   })
   const openProject = useMutation({
     mutationFn: async (path: string) =>
-      (await parseRpcResponse(rpc.api.projects.$post({ json: { path } })))
-        .project,
+      (await parseResponse(rpc.api.projects.$post({ json: { path } }))).project,
     onSuccess: onOpened,
     onError: notifyError
   })
@@ -229,7 +230,7 @@ export function ProjectForm({
                 className="text-base text-rose-300 min-[701px]:text-sm"
                 role="alert"
               >
-                {directoryQuery.error.message}
+                {errorMessage(directoryQuery.error)}
               </p>
               <Button
                 type="button"
@@ -325,7 +326,7 @@ export function ProjectForm({
           : directoryQuery.isFetching || !inputSettled
             ? 'Checking folder…'
             : directoryQuery.isError
-              ? directoryQuery.error.message
+              ? errorMessage(directoryQuery.error)
               : data?.repository.state === 'valid'
                 ? `Will open repository: ${data.repository.repositoryPath}`
                 : data?.repository.message}

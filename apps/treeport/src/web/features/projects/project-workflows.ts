@@ -1,8 +1,13 @@
 import type { RefObject } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useLocation } from '@tanstack/react-router'
-import type { ProjectRecord, RecentProjectRecord } from '@treeport/shared'
-import { ApiError, parseRpcResponse, rpc } from '../../api'
+import type {
+  ApiErrorBody,
+  ProjectRecord,
+  RecentProjectRecord
+} from '@treeport/shared'
+import { DetailedError, parseResponse } from 'hono/client'
+import { rpc } from '../../api'
 import {
   projectsQueryKey,
   recentProjectsQueryKey
@@ -32,7 +37,7 @@ export function useProjectWorkflows({
   const navigateToWorkspace = useWorkspaceNavigate()
   const closeProject = useMutation({
     mutationFn: (project: ProjectRecord) =>
-      parseRpcResponse(
+      parseResponse(
         rpc.api.projects[':projectId'].close.$post({
           param: { projectId: project.id }
         })
@@ -87,8 +92,9 @@ export function useProjectWorkflows({
     onError: (mutationError) => {
       notifyError(mutationError)
       if (
-        mutationError instanceof ApiError &&
-        mutationError.code === 'PROJECT_CLOSE_FAILED'
+        mutationError instanceof DetailedError &&
+        (mutationError.detail as { data?: ApiErrorBody } | undefined)?.data
+          ?.error?.code === 'PROJECT_CLOSE_FAILED'
       ) {
         void queryClient.invalidateQueries({ queryKey: projectsQueryKey })
       }

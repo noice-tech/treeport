@@ -1,8 +1,5 @@
 import { toast } from 'sonner'
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
-}
+import { errorMessage } from '../../error-message'
 
 export function notifyError(error: unknown): void {
   toast.error(errorMessage(error))

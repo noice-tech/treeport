@@ -9,7 +9,8 @@ import {
   XMarkIcon
 } from '@heroicons/react/16/solid'
 import type { ProjectRecord } from '@treeport/shared'
-import { parseRpcResponse, rpc } from '../../api'
+import { parseResponse } from 'hono/client'
+import { rpc } from '../../api'
 import { TerminalStatusIcon } from '../../components/terminal-status-icon'
 import { Button } from '../../components/ui/button'
 import { Input } from '../../components/ui/input'
@@ -100,7 +101,7 @@ export function ProjectSwitcher({
   const reopenProject = useMutation({
     mutationFn: async (project: { id: string }) =>
       (
-        await parseRpcResponse(
+        await parseResponse(
           rpc.api.projects[':projectId'].open.$post({
             param: { projectId: project.id }
           })

@@ -7,7 +7,8 @@ import type {
   TerminalSize,
   WorktreeRecord
 } from '@treeport/shared'
-import { parseRpcResponse, rpc } from '../../api'
+import { parseResponse } from 'hono/client'
+import { rpc } from '../../api'
 import { useSidebar } from '../../components/ui/sidebar'
 import { projectsQueryKey } from '../../project-metadata'
 import { terminalSessions } from '../../terminal-session'
@@ -80,7 +81,7 @@ export function useTerminalWorkflows({
       initialSize?: TerminalSize
       pendingTerminal: PendingTerminalCreation
     }) =>
-      parseRpcResponse(
+      parseResponse(
         rpc.api.worktrees[':worktreeId'].terminals.$post({
           param: { worktreeId },
           json: {
@@ -163,7 +164,7 @@ export function useTerminalWorkflows({
 
   const closeTerminal = useMutation({
     mutationFn: ({ terminal }: { terminal: TerminalRecord; index: number }) =>
-      parseRpcResponse(
+      parseResponse(
         rpc.api.terminals[':terminalId'].$delete({
           param: { terminalId: terminal.id }
         })
