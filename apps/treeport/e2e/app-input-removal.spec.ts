@@ -701,81 +701,40 @@ test.describe('desktop terminal input and removal', () => {
     await expect.poll(() => mocked.removeRequests()).toBe(2)
   })
 
-  test('renders authoritative removal progress and a retryable failure', async ({
+  test('restores durable removal progress after refresh and hides the Git-removed worktree', async ({
     page
   }) => {
     const mocked = await mockApp(page)
-    const requestsBeforeStarted = mocked.projectRequests()
-    mocked.state.worktrees[1]!.status = 'cleaning'
-    await page.evaluate(() =>
-      (window as any).__eventSource.emit('remove.started')
-    )
-    await expect
-      .poll(() => mocked.projectRequests())
-      .toBeGreaterThan(requestsBeforeStarted)
-    await expect(page.getByText('Removing…')).toHaveCount(0)
-    const cleaningMenu = await openWorktreeContextMenu(page, 'topic')
-    await expect(
-      cleaningMenu.getByRole('menuitem', { name: 'Removal in progress' })
-    ).toBeDisabled()
-    await page.keyboard.press('Escape')
-
-    mocked.state.worktrees[1]!.status = 'cleanup_failed'
-    mocked.state.worktrees[1]!.cleanupError =
-      'Terminals were stopped, but Git removal failed'
-    const failedRefresh = page.waitForResponse(
-      (response) =>
-        response.request().method() === 'GET' &&
-        new URL(response.url()).pathname === '/api/projects'
-    )
-    await page.evaluate(() =>
-      (window as any).__eventSource.emit('remove.failed')
-    )
-    await failedRefresh
-    await expect(page.getByText(/Removal failed:/)).toContainText(
-      'Git removal failed'
-    )
-    const retryMenu = await openWorktreeContextMenu(page, 'topic')
-    const retry = retryMenu.getByRole('menuitem', { name: 'Retry removal…' })
-    await expect(retry).toBeEnabled()
-    await retry.click()
+    const menu = await openWorktreeContextMenu(page, 'topic')
+    await menu.getByRole('menuitem', { name: 'Remove worktree…' }).click()
     await expect.poll(() => mocked.removeRequests()).toBe(1)
 
-    mocked.state.worktrees[1]!.status = 'cleanup_failed'
-    mocked.state.worktrees[1]!.prunable = true
-    mocked.state.worktrees[1]!.cleanupError =
-      'Terminals were stopped, but Git removal failed again'
-    const prunableRefresh = page.waitForResponse(
-      (response) =>
-        response.request().method() === 'GET' &&
-        new URL(response.url()).pathname === '/api/projects'
-    )
-    await page.evaluate(() =>
-      (window as any).__eventSource.emit('remove.failed')
-    )
-    await prunableRefresh
-    const secondRetryMenu = await openWorktreeContextMenu(page, 'topic')
+    const removingMenu = await openWorktreeContextMenu(page, 'topic')
     await expect(
-      secondRetryMenu.getByRole('menuitem', { name: 'Retry removal…' })
-    ).toBeEnabled()
+      removingMenu.getByRole('menuitem', { name: 'Removal in progress' })
+    ).toBeDisabled()
     await page.keyboard.press('Escape')
 
-    mocked.state.worktrees[1]!.cleanupError =
-      'Manual cleanup required: the checkout Git marker changed'
-    const manualCleanupRefresh = page.waitForResponse(
+    await page.reload()
+    const restoredMenu = await openWorktreeContextMenu(page, 'topic')
+    await expect(
+      restoredMenu.getByRole('menuitem', { name: 'Removal in progress' })
+    ).toBeDisabled()
+    await page.keyboard.press('Escape')
+
+    mocked.completeRemoval()
+    const removedRefresh = page.waitForResponse(
       (response) =>
         response.request().method() === 'GET' &&
         new URL(response.url()).pathname === '/api/projects'
     )
     await page.evaluate(() =>
-      (window as any).__eventSource.emit('remove.failed')
+      (window as any).__eventSource.emit('worktree.removed')
     )
-    await manualCleanupRefresh
-    const manualCleanupMenu = await openWorktreeContextMenu(page, 'topic')
+    await removedRefresh
     await expect(
-      manualCleanupMenu.getByRole('menuitem', {
-        name: 'Manual cleanup required'
-      })
-    ).toBeDisabled()
+      page.getByRole('button', { name: 'topic', exact: true })
+    ).toHaveCount(0)
+    await expect(page).toHaveURL(/wt_main/)
   })
 })

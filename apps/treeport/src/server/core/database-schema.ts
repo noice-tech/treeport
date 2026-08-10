@@ -61,8 +61,6 @@ export const worktrees = sqliteTable(
     prunable: integer().notNull().default(0),
     kind: text().notNull(),
     tmuxSocketName: text('tmux_socket_name').notNull().unique(),
-    status: text().notNull(),
-    cleanupError: text('cleanup_error'),
     managedWrapperPath: text('managed_wrapper_path'),
     prState: text('pr_state').notNull().default('unknown'),
     prNumber: integer('pr_number'),
@@ -79,10 +77,6 @@ export const worktrees = sqliteTable(
     check('worktrees_locked_check', sql`${table.locked} IN (0,1)`),
     check('worktrees_prunable_check', sql`${table.prunable} IN (0,1)`),
     check('worktrees_kind_check', sql`${table.kind} IN ('main','linked')`),
-    check(
-      'worktrees_status_check',
-      sql`${table.status} IN ('active','cleaning','cleanup_failed','removed')`
-    ),
     index('worktrees_project_idx').on(table.projectId),
     uniqueIndex('worktrees_git_key_idx')
       .on(table.projectId, table.gitWorktreeKey)

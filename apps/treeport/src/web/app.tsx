@@ -521,7 +521,7 @@ function WorkspaceApp() {
     !panelDialogWorktree ||
     panelDialogProject.availability.state === 'unavailable' ||
     Boolean(panelDialogWorktree.prunable) ||
-    panelDialogWorktree.status !== 'active'
+    Boolean(pendingRemovals[panelDialogWorktree.id])
 
   useEffect(() => {
     if (!desktopBridge) {

@@ -84,7 +84,7 @@ The worktree model avoids these contradictions by grounding work in the concrete
 - Git remains the source of truth.
 - Worktrees created by Zed, Git, scripts, agents, and Treeport are immediately first-class.
 - Treeport does not require an import or conversion workflow.
-- Cleanup semantics remain tied to concrete Git and filesystem state.
+- Worktree existence and removal remain tied to concrete Git state; residual filesystem cleanup is operation-owned housekeeping.
 - The product remains opinionated and easier to explain.
 - Human-facing context can still be added independently from branch names and paths.
 

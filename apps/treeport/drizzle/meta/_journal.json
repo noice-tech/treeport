@@ -36,6 +36,13 @@
       "when": 1785920000000,
       "tag": "0004_persistent_worktree_creation",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1786000000000,
+      "tag": "0005_git_authoritative_worktrees",
+      "breakpoints": true
     }
   ]
 }

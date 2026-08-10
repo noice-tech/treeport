@@ -112,7 +112,17 @@ const removeOperationRequestSchema: z.ZodType<RemoveOperationRequest> = z.union(
           .nullable(),
         prunable: z.boolean(),
         gitWorktreeKey: z.string(),
-        repositoryIdentity: z.string().nullable()
+        repositoryIdentity: z.string().nullable(),
+        phase: z
+          .enum([
+            'accepted',
+            'terminals_stopped',
+            'git_removed',
+            'cleanup_pending'
+          ])
+          .default('accepted'),
+        tmuxSocketName: z.string().nullable().default(null),
+        managedWrapperPath: z.string().nullable().default(null)
       })
       .transform((request) => request satisfies RemoveOperationRequest),
     z.strictObject({ confirmation: z.boolean() }).transform(
@@ -124,26 +134,29 @@ const removeOperationRequestSchema: z.ZodType<RemoveOperationRequest> = z.union(
         checkoutIdentity: null,
         prunable: null,
         gitWorktreeKey: null,
-        repositoryIdentity: null
+        repositoryIdentity: null,
+        phase: null,
+        tmuxSocketName: null,
+        managedWrapperPath: null
       })
     )
   ]
 )
 
-const removeOperationResultSchema: z.ZodType<RemoveOperationResult> = z.union([
+const removeOperationResultSchema: z.ZodType<RemoveOperationResult> =
   z.strictObject({
     removed: z.literal(true),
+    worktreeId: z.string(),
     name: z.string(),
     branchPreserved: z.string().nullable(),
-    path: z.string()
-  }),
-  z.strictObject({
-    removed: z.literal(true),
-    recovered: z.literal(true),
     path: z.string(),
-    message: z.string()
+    recovered: z.boolean(),
+    cleanup: z.strictObject({
+      status: z.enum(['completed', 'preserved']),
+      residualPath: z.string().nullable(),
+      warning: z.string().nullable()
+    })
   })
-])
 
 const externalRemoveOperationResultSchema: z.ZodType<ExternalRemoveOperationResult> =
   z.strictObject({
@@ -437,8 +450,6 @@ export function mapWorktree(
     prunable: Boolean(row.prunable),
     kind: row.kind as WorktreeRecord['kind'],
     tmuxSocketName: row.tmuxSocketName,
-    status: row.status as WorktreeRecord['status'],
-    cleanupError: row.cleanupError,
     managedWrapperPath: row.managedWrapperPath,
     pr: {
       state: row.prState as PrInfo['state'],

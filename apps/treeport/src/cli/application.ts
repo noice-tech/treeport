@@ -806,9 +806,7 @@ async function main(args: string[]): Promise<void> {
     const targetWorktree = registered.project.worktrees
       .filter(
         (worktree) =>
-          worktree.status === 'active' &&
-          !worktree.prunable &&
-          pathContains(canonicalFolder, worktree.path)
+          !worktree.prunable && pathContains(canonicalFolder, worktree.path)
       )
       .sort((left, right) => right.path.length - left.path.length)[0]
     if (!targetWorktree) {
@@ -1188,8 +1186,7 @@ async function main(args: string[]): Promise<void> {
         head: worktree.head,
         branch: worktree.branch,
         detached: worktree.detached,
-        kind: worktree.kind,
-        status: worktree.status
+        kind: worktree.kind
       },
       terminal: {
         id: terminal.id,
@@ -1427,7 +1424,7 @@ async function main(args: string[]): Promise<void> {
       list
         .map(
           (worktree) =>
-            `${worktree.id}\t${worktree.name}\t${worktree.branch ?? `detached@${worktree.head.slice(0, 8)}`}\t${worktree.status}\t${worktree.path}`
+            `${worktree.id}\t${worktree.name}\t${worktree.branch ?? `detached@${worktree.head.slice(0, 8)}`}\t${worktree.path}`
         )
         .join('\n')
     )
@@ -1489,17 +1486,46 @@ async function main(args: string[]): Promise<void> {
       )
     }
 
-    const result = await request<{ operation: { id: string } }>(
-      `/api/worktrees/${worktree.id}/remove`,
-      {
-        method: 'POST',
-        body: JSON.stringify({
-          confirmationToken: preview.confirmationToken,
-          confirmDestructive: preview.warnings.length > 0
-        })
-      }
-    )
-    print(result.operation, () => `Remove accepted: ${result.operation.id}`)
+    let operation = (
+      await request<{ operation: OperationRecord }>(
+        `/api/worktrees/${worktree.id}/remove`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            confirmationToken: preview.confirmationToken,
+            confirmDestructive: preview.warnings.length > 0
+          })
+        }
+      )
+    ).operation
+    while (operation.status === 'pending' || operation.status === 'running') {
+      await new Promise((resolve) => setTimeout(resolve, 100))
+      operation = (
+        await request<{ operation: OperationRecord }>(
+          `/api/operations/${encodeURIComponent(operation.id)}`
+        )
+      ).operation
+    }
+    if (operation.status === 'failed') {
+      throw new CliError(
+        operation.error ?? 'Worktree removal failed',
+        5,
+        'WORKTREE_REMOVAL_FAILED'
+      )
+    }
+
+    if (operation.kind !== 'remove' || !operation.result) {
+      throw new CliError(
+        'Worktree removal returned an unexpected operation result',
+        5,
+        'INVALID_OPERATION_RESULT'
+      )
+    }
+
+    print(operation.result, () => {
+      const warning = operation.result?.cleanup.warning
+      return `Removed ${worktree.name} (${worktree.id})${warning ? `\nWarning: ${warning}` : ''}`
+    })
   })
 
   const terminalCommand = program
