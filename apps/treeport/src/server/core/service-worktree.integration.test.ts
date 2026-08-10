@@ -651,7 +651,7 @@ describe('TreeportService with injected command adapters', () => {
     ).toEqual([terminalFailure.terminal!.id])
   })
 
-  it('requires force for dirty work and preserves explicit failure state', async () => {
+  it('requires force for dirty work and leaves a Git worktree retryable after failure', async () => {
     const { main, runner, service } = await fixture()
     const project = await service.registerProject(main)
     const linked = (
@@ -673,17 +673,20 @@ describe('TreeportService with injected command adapters', () => {
       service,
       (await beginFromPreview(service, linked.id)).id
     )
-    expect(failed.status).toBe('failed')
-    expect((await service.getWorktree(linked.id)).status).toBe('cleanup_failed')
+    expect(failed).toMatchObject({
+      status: 'failed',
+      error: expect.stringMatching(/Git removal failed/)
+    })
+    expect(await service.getWorktree(linked.id)).toMatchObject({
+      id: linked.id,
+      path: linked.path
+    })
     await expect(service.getTerminal(terminal.id)).rejects.toMatchObject({
       code: 'TERMINAL_NOT_FOUND'
     })
-    expect((await service.getWorktree(linked.id)).cleanupError).toMatch(
-      /Terminals were stopped/
-    )
     await expect(
-      service.createTerminal(linked.id, 'Blocked after failed cleanup')
-    ).rejects.toMatchObject({ code: 'WORKTREE_BUSY' })
+      service.createTerminal(linked.id, 'Available after failed removal')
+    ).resolves.toMatchObject({ worktreeId: linked.id })
   })
 
   it('rejects removal when reachability, dirty categories, or terminal impact changed', async () => {
@@ -831,7 +834,7 @@ describe('TreeportService with injected command adapters', () => {
     })
   })
 
-  it('keeps an in-flight removal cleaning after Git deregisters it', async () => {
+  it('keeps an in-flight removal busy until Git confirms deregistration', async () => {
     const { main, runner, service } = await fixture()
     const project = await service.registerProject(main)
     const linked = (
@@ -870,11 +873,16 @@ describe('TreeportService with injected command adapters', () => {
     const duringRemoval = await service.getProjectSnapshot(project.id)
     expect(
       duringRemoval.worktrees.find((worktree) => worktree.id === linked.id)
-    ).toMatchObject({ status: 'cleaning' })
+    ).toMatchObject({ id: linked.id })
     expect((await service.getOperation(operation.id)).status).toBe('running')
     await expect(
       service.createTerminal(linked.id, 'Blocked during removal')
-    ).rejects.toMatchObject({ code: 'WORKTREE_BUSY' })
+    ).rejects.toMatchObject({ code: 'WORKTREE_NOT_FOUND' })
+    expect(
+      (await service.getProjectSnapshot(project.id)).worktrees.find(
+        (worktree) => worktree.id === linked.id
+      )
+    ).toBeUndefined()
     await expect(fs.stat(linked.path)).resolves.toBeTruthy()
     expect(events.filter((event) => event === 'remove.completed')).toHaveLength(
       0
@@ -952,8 +960,10 @@ describe('TreeportService with injected command adapters', () => {
     expect((await service.getOperation(firstOperation.id)).status).toBe(
       'running'
     )
-    expect((await service.getWorktree(first.id)).status).toBe('cleaning')
-    expect((await service.getWorktree(second.id)).status).toBe('active')
+    expect(await service.getWorktree(first.id)).toMatchObject({ id: first.id })
+    expect(await service.getWorktree(second.id)).toMatchObject({
+      id: second.id
+    })
     expect(deregistered).toEqual(new Set([first.path]))
     await expect(
       service.beginRemove(first.id, {
@@ -991,7 +1001,9 @@ describe('TreeportService with injected command adapters', () => {
     expect((await service.getOperation(secondOperation.id)).status).toBe(
       'running'
     )
-    expect((await service.getWorktree(second.id)).status).toBe('cleaning')
+    expect(await service.getWorktree(second.id)).toMatchObject({
+      id: second.id
+    })
     await expect(service.deleteProject(project.id)).rejects.toMatchObject({
       code: 'PROJECT_BUSY'
     })
@@ -1207,10 +1219,6 @@ describe('TreeportService with injected command adapters', () => {
             )},NULL,NULL,${timestamp},${timestamp}
           )
         `)
-        await tx.run(sql`
-          UPDATE worktrees SET status='cleaning',updated_at=${timestamp}
-          WHERE id=${worktree.id}
-        `)
       })
       return path.join(
         path.dirname(worktree.path),
@@ -1277,6 +1285,13 @@ describe('TreeportService with injected command adapters', () => {
       }
     })
     await restarted.initialize()
+    await Promise.all([
+      waitForOperation(restarted, 'op_recoverable_root'),
+      waitForOperation(restarted, 'op_quarantined_root'),
+      waitForOperation(restarted, 'op_replaced_root'),
+      waitForOperation(restarted, 'op_repurposed_root'),
+      waitForOperation(restarted, 'op_missing_identity_root')
+    ])
 
     await expect(fs.stat(recoverable.path)).rejects.toMatchObject({
       code: 'ENOENT'
@@ -1313,51 +1328,52 @@ describe('TreeportService with injected command adapters', () => {
     await expect(fs.readFile(replacementMarker, 'utf8')).resolves.toBe(
       'replacement'
     )
-    expect(await persistedWorktree(database, replaced.id)).toMatchObject({
-      status: 'cleanup_failed',
-      cleanupError: expect.stringMatching(/different filesystem object/i)
-    })
-    expect(await restarted.getOperation('op_replaced_root')).toMatchObject({
-      status: 'failed',
-      error: expect.stringMatching(/different filesystem object/i)
-    })
+    expect(await persistedWorktree(database, replaced.id)).toBeNull()
+    expect(await waitForOperation(restarted, 'op_replaced_root')).toMatchObject(
+      {
+        status: 'completed',
+        result: expect.objectContaining({
+          cleanup: expect.objectContaining({
+            status: 'preserved',
+            warning: expect.stringMatching(/different filesystem object/i)
+          })
+        })
+      }
+    )
 
     await expect(fs.readFile(repurposedMarker, 'utf8')).resolves.toBe(
       'replacement in the same directory'
     )
-    expect(await persistedWorktree(database, repurposed.id)).toMatchObject({
-      status: 'cleanup_failed',
-      cleanupError: expect.stringMatching(/Git marker/i)
-    })
-    expect(await restarted.getOperation('op_repurposed_root')).toMatchObject({
-      status: 'failed',
-      error: expect.stringMatching(/Git marker/i)
+    expect(await persistedWorktree(database, repurposed.id)).toBeNull()
+    expect(
+      await waitForOperation(restarted, 'op_repurposed_root')
+    ).toMatchObject({
+      status: 'completed',
+      result: expect.objectContaining({
+        cleanup: expect.objectContaining({
+          status: 'preserved',
+          warning: expect.stringMatching(/Git marker/i)
+        })
+      })
     })
 
     await expect(fs.stat(missingIdentity.path)).resolves.toBeTruthy()
-    expect(await persistedWorktree(database, missingIdentity.id)).toMatchObject(
-      {
-        status: 'cleanup_failed',
-        cleanupError: expect.stringMatching(/matching filesystem identity/i)
-      }
-    )
+    expect(await persistedWorktree(database, missingIdentity.id)).toBeNull()
     expect(
-      (await restarted.getOperation('op_missing_identity_root')).status
-    ).toBe('failed')
-    const failuresBeforeSecondPoll = events.filter(
-      (event) => event.type === 'remove.failed'
+      await waitForOperation(restarted, 'op_missing_identity_root')
+    ).toMatchObject({
+      status: 'completed',
+      result: expect.objectContaining({
+        cleanup: expect.objectContaining({ status: 'preserved' })
+      })
+    })
+    const completionsBeforeSecondPoll = events.filter(
+      (event) => event.type === 'remove.completed'
     ).length
     await restarted.getProjectSnapshot(project.id)
     expect(
-      events.filter((event) => event.type === 'remove.failed')
-    ).toHaveLength(failuresBeforeSecondPoll)
-
-    await fs.rm(missingIdentity.path, { recursive: true, force: true })
-    await restarted.getProjectSnapshot(project.id)
-    expect(await persistedWorktree(database, missingIdentity.id)).toBeNull()
-    expect(
-      (await restarted.getOperation('op_missing_identity_root')).status
-    ).toBe('completed')
+      events.filter((event) => event.type === 'remove.completed')
+    ).toHaveLength(completionsBeforeSecondPoll)
     expect(
       events.filter(
         (event) =>
@@ -1393,10 +1409,36 @@ describe('TreeportService with injected command adapters', () => {
       worktree: typeof beforeGit
     ) => {
       const preview = await service.removePreview(worktree.id)
-      const binding = await database.db.get<{ git_worktree_key: string }>(sql`
-        SELECT git_worktree_key FROM worktrees WHERE id=${worktree.id}
+      const binding = await database.db.get<{
+        git_worktree_key: string
+        managed_wrapper_path: string | null
+      }>(sql`
+        SELECT git_worktree_key,managed_wrapper_path
+        FROM worktrees WHERE id=${worktree.id}
       `)
-      const repositoryIdentity = null
+      const repositoryIdentity = await database.db
+        .get<{ repository_identity: string }>(sql`
+          SELECT repository_identity FROM projects WHERE id=${project.id}
+        `)
+        .then((row) => row!.repository_identity)
+      const checkout = await fs.lstat(worktree.path, { bigint: true })
+      const gitMarker = await fs.readFile(
+        path.join(worktree.path, '.git'),
+        'utf8'
+      )
+      const checkoutIdentity = {
+        path: worktree.path,
+        device: checkout.dev.toString(),
+        inode: checkout.ino.toString(),
+        gitWorktreeKey: binding!.git_worktree_key,
+        gitMarker,
+        repositoryIdentity,
+        managedWrapperPath: binding!.managed_wrapper_path,
+        quarantinePath: path.join(
+          path.dirname(worktree.path),
+          `.${path.basename(worktree.path)}.treeport-removing-${operationId}`
+        )
+      }
       await database.db.transaction(async (tx) => {
         await tx.run(sql`
           INSERT INTO operations(
@@ -1407,16 +1449,15 @@ describe('TreeportService with injected command adapters', () => {
               confirmationToken: preview.confirmationToken,
               confirmDestructive: true,
               preview,
-              checkoutIdentity: null,
+              checkoutIdentity,
               prunable: false,
               gitWorktreeKey: binding!.git_worktree_key,
-              repositoryIdentity
+              repositoryIdentity,
+              phase: 'accepted',
+              tmuxSocketName: worktree.tmuxSocketName,
+              managedWrapperPath: worktree.managedWrapperPath
             })},NULL,NULL,${timestamp},${timestamp}
           )
-        `)
-        await tx.run(sql`
-          UPDATE worktrees SET status='cleaning',updated_at=${timestamp}
-          WHERE id=${worktree.id}
         `)
       })
     }
@@ -1451,11 +1492,12 @@ describe('TreeportService with injected command adapters', () => {
     })
     await restarted.initialize()
 
-    expect((await restarted.getWorktree(beforeGit.id)).status).toBe(
-      'cleanup_failed'
-    )
-    expect(await restarted.getOperation('op_before_git')).toMatchObject({
-      status: 'failed'
+    expect(await waitForOperation(restarted, 'op_before_git')).toMatchObject({
+      status: 'completed',
+      result: expect.objectContaining({ removed: true })
+    })
+    await expect(restarted.getWorktree(beforeGit.id)).rejects.toMatchObject({
+      code: 'WORKTREE_NOT_FOUND'
     })
     expect(await persistedWorktree(database, afterGit.id)).toBeNull()
     expect(await restarted.getOperation('op_after_git')).toMatchObject({

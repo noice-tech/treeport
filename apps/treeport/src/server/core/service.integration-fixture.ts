@@ -3,7 +3,7 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach } from 'vitest'
-import { and, asc, eq, ne, sql } from 'drizzle-orm'
+import { asc, eq, sql } from 'drizzle-orm'
 import type { ProjectRecord, WebPanel, WorktreeRecord } from '@treeport/shared'
 import type { CommandRequest, CommandResult, CommandRunner } from './command'
 import {
@@ -50,9 +50,7 @@ export async function persistedProject(
   const rows = await database.db
     .select()
     .from(worktrees)
-    .where(
-      and(eq(worktrees.projectId, projectId), ne(worktrees.status, 'removed'))
-    )
+    .where(eq(worktrees.projectId, projectId))
     .orderBy(
       sql`CASE ${worktrees.kind} WHEN 'main' THEN 0 ELSE 1 END`,
       asc(worktrees.createdAt),

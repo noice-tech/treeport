@@ -67,8 +67,6 @@ const worktree: WorktreeRecord = {
   prunable: false,
   kind: 'linked',
   tmuxSocketName: 'treeport-wt-context',
-  status: 'active',
-  cleanupError: null,
   managedWrapperPath: null,
   pr: {
     state: 'no_pr',

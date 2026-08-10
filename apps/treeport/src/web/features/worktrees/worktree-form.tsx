@@ -123,13 +123,11 @@ export function WorktreeForm({
           <option value="default">
             {project.defaultBranch} · latest from origin
           </option>
-          {project.worktrees
-            .filter((worktree) => worktree.status === 'active')
-            .map((worktree) => (
-              <option key={worktree.id} value={worktree.id}>
-                {worktree.name} · current commit
-              </option>
-            ))}
+          {project.worktrees.map((worktree) => (
+            <option key={worktree.id} value={worktree.id}>
+              {worktree.name} · current commit
+            </option>
+          ))}
         </NativeSelect>
       </FormField>
       <FormField>

@@ -83,7 +83,9 @@ describe('TreeportService with injected command adapters', () => {
     await expect(removing).resolves.toMatchObject({
       error: { code: 'REMOVE_PREVIEW_STALE' }
     })
-    expect((await service.getWorktree(linked.id)).status).toBe('active')
+    expect(await service.getWorktree(linked.id)).toMatchObject({
+      id: linked.id
+    })
     expect(terminalOutcome).toMatchObject({
       terminal: {
         worktreeId: mainWorktree.id,

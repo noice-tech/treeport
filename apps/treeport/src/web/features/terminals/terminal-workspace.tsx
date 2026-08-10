@@ -218,8 +218,7 @@ export function useTerminalWorkflows({
       !currentProject ||
       !currentWorktree ||
       currentProject.availability.state === 'unavailable' ||
-      currentWorktree.prunable ||
-      currentWorktree.status !== 'active'
+      currentWorktree.prunable
     ) {
       return
     }
