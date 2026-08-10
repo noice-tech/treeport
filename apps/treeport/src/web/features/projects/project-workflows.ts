@@ -119,7 +119,10 @@ export function useProjectWorkflows({
     closeProject.mutate(project)
   }
 
-  const projectOpened = async (project: ProjectRecord) => {
+  const projectOpened = async (
+    project: ProjectRecord,
+    focusTerminal = true
+  ) => {
     const replacesEmptyRoot = projects.length === 0 && location.pathname === '/'
     queryClient.setQueryData<ProjectRecord[]>(projectsQueryKey, (current) => [
       ...(current ?? []).filter((candidate) => candidate.id !== project.id),
@@ -129,7 +132,11 @@ export function useProjectWorkflows({
       recentProjectsQueryKey,
       (current) => current?.filter((candidate) => candidate.id !== project.id)
     )
-    await navigateToWorkspace(targetForProject(project), replacesEmptyRoot)
+    await navigateToWorkspace(
+      targetForProject(project),
+      replacesEmptyRoot,
+      focusTerminal
+    )
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: projectsQueryKey }),
       queryClient.invalidateQueries({ queryKey: recentProjectsQueryKey })

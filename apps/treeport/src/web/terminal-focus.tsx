@@ -12,11 +12,12 @@ import type { TerminalSession } from './terminal-session'
 
 interface TerminalFocusRequest {
   terminalId: string
+  focus: boolean
   sequence: number
 }
 
-const RequestTerminalFocusContext = createContext<
-  ((terminalId: string) => void) | null
+const SetTerminalFocusIntentContext = createContext<
+  ((terminalId: string, focus: boolean) => void) | null
 >(null)
 const TerminalFocusRequestContext = createContext<TerminalFocusRequest | null>(
   null
@@ -24,31 +25,38 @@ const TerminalFocusRequestContext = createContext<TerminalFocusRequest | null>(
 
 export function TerminalFocusProvider({ children }: { children: ReactNode }) {
   const [request, setRequest] = useState<TerminalFocusRequest | null>(null)
-  const requestTerminalFocus = useCallback((terminalId: string) => {
-    setRequest((current) => ({
-      terminalId,
-      sequence: (current?.sequence ?? 0) + 1
-    }))
-  }, [])
+  const setTerminalFocusIntent = useCallback(
+    (terminalId: string, focus: boolean) => {
+      setRequest((current) => ({
+        terminalId,
+        focus,
+        sequence: (current?.sequence ?? 0) + 1
+      }))
+    },
+    []
+  )
 
   return (
-    <RequestTerminalFocusContext value={requestTerminalFocus}>
+    <SetTerminalFocusIntentContext value={setTerminalFocusIntent}>
       <TerminalFocusRequestContext value={request}>
         {children}
       </TerminalFocusRequestContext>
-    </RequestTerminalFocusContext>
+    </SetTerminalFocusIntentContext>
   )
 }
 
-export function useRequestTerminalFocus(): (terminalId: string) => void {
-  const requestTerminalFocus = useContext(RequestTerminalFocusContext)
-  if (!requestTerminalFocus) {
+export function useSetTerminalFocusIntent(): (
+  terminalId: string,
+  focus: boolean
+) => void {
+  const setTerminalFocusIntent = useContext(SetTerminalFocusIntentContext)
+  if (!setTerminalFocusIntent) {
     throw new Error(
-      'useRequestTerminalFocus must be used within TerminalFocusProvider'
+      'useSetTerminalFocusIntent must be used within TerminalFocusProvider'
     )
   }
 
-  return requestTerminalFocus
+  return setTerminalFocusIntent
 }
 
 export function useTerminalAutoFocus({
@@ -64,6 +72,7 @@ export function useTerminalAutoFocus({
   const previousTerminalId = useRef<string | null>(null)
   const observedRequestSequence = useRef(0)
   const pendingTerminalId = useRef<string | null>(null)
+  const suppressedTerminalId = useRef<string | null>(null)
   const currentTerminalId = useRef(terminalId)
   const currentSession = useRef(session)
   const focusBlocked = useRef(blocked)
@@ -75,14 +84,22 @@ export function useTerminalAutoFocus({
   }, [blocked, session, terminalId])
 
   useEffect(() => {
-    if (previousTerminalId.current !== terminalId) {
-      previousTerminalId.current = terminalId
-      pendingTerminalId.current = terminalId
-    }
-
     if (request && observedRequestSequence.current !== request.sequence) {
       observedRequestSequence.current = request.sequence
-      pendingTerminalId.current = request.terminalId
+      pendingTerminalId.current = request.focus ? request.terminalId : null
+      suppressedTerminalId.current =
+        request.focus || previousTerminalId.current === request.terminalId
+          ? null
+          : request.terminalId
+    }
+
+    if (previousTerminalId.current !== terminalId) {
+      previousTerminalId.current = terminalId
+      pendingTerminalId.current =
+        suppressedTerminalId.current === terminalId ? null : terminalId
+      if (suppressedTerminalId.current === terminalId) {
+        suppressedTerminalId.current = null
+      }
     }
 
     if (

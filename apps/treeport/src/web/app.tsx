@@ -371,7 +371,10 @@ function WorkspaceApp() {
     )
 
   const selectProject = (project: ProjectRecord) => {
-    void navigateToWorkspace(rememberedTargetForProject(project))
+    const target = rememberedTargetForProject(project)
+    projectSwitcher.dismissedIntoTerminalRef.current =
+      !isMobile && target.kind === 'terminal'
+    void navigateToWorkspace(target, false, !isMobile)
     projectSwitcher.setOpen(false)
     closeDrawerAfterNavigation()
   }
@@ -389,6 +392,12 @@ function WorkspaceApp() {
         setDialog(null)
       }
     })
+  const projectOpenedFromSwitcher = (project: ProjectRecord) => {
+    const target = rememberedTargetForProject(project)
+    projectSwitcher.dismissedIntoTerminalRef.current =
+      !isMobile && target.kind === 'terminal'
+    return projectOpened(project, !isMobile)
+  }
   const {
     pendingWorktrees,
     pendingRemovals,
@@ -609,7 +618,7 @@ function WorkspaceApp() {
             activeProject={activeProject}
             closingProjectId={closingProjectId}
             onSelectProject={selectProject}
-            onProjectOpened={projectOpened}
+            onProjectOpened={projectOpenedFromSwitcher}
             onRequestProjectClose={requestProjectClose}
             onOpenProjectDialog={(trigger) =>
               openDialog({ type: 'project' }, trigger)
