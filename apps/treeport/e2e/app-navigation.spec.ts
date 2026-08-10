@@ -192,6 +192,7 @@ test.describe('desktop worktree terminal UI', () => {
     ).toBeVisible()
     await expect(page.getByText('topic', { exact: true })).toHaveCount(0)
     await expect(page.getByText('another topic', { exact: true })).toBeVisible()
+    await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
 
     await page
       .getByRole('button', {
@@ -218,6 +219,7 @@ test.describe('desktop worktree terminal UI', () => {
     await expect(page.locator('.xterm-rows')).toContainText(
       'same persistent terminal session'
     )
+    await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
 
     await page
       .getByRole('button', {
@@ -284,6 +286,7 @@ test.describe('desktop worktree terminal UI', () => {
         name: 'Switch project, current project example'
       })
     ).toBeVisible()
+    await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
 
     await page
       .getByRole('button', {

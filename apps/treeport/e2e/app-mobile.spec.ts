@@ -147,6 +147,23 @@ test.describe('mobile terminal UI', () => {
     ).toBeVisible()
   })
 
+  test('switches projects without opening the mobile keyboard', async ({
+    page
+  }) => {
+    await mockApp(page, [], { includeSecondProject: true })
+    const shortcutModifier = await page.evaluate(() =>
+      /Mac|iPhone|iPad|iPod/.test(navigator.platform) ? 'Meta' : 'Control'
+    )
+
+    await page.keyboard.press(`${shortcutModifier}+Shift+P`)
+    await page
+      .getByRole('button', { name: 'another-project', exact: true })
+      .click()
+
+    await expect(page).toHaveURL(/\/projects\/proj_2\//)
+    await expect(page.locator('.xterm-helper-textarea')).not.toBeFocused()
+  })
+
   test('keeps mobile modal and drawer flows coherent', async ({ page }) => {
     const mocked = await mockApp(page)
     await page.getByLabel('Open worktree drawer').click()
