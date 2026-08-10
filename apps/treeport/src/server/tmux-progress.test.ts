@@ -285,6 +285,50 @@ describe('TmuxProgressObserver', () => {
     observer.dispose()
   })
 
+  it('treats a closed tmux command pipe as an ancillary observer failure', async () => {
+    const child = fakeChild()
+    const onExit = vi.fn()
+    const observer = new TmuxProgressObserver(
+      {
+        executable: 'tmux',
+        args: ['-C', 'attach'],
+        cwd: '/tmp',
+        env: {},
+        onProgress: vi.fn(),
+        onHistoryChange: vi.fn(),
+        onExit
+      },
+      vi.fn(() => child) as never
+    )
+
+    child.stdout.write('%session-changed $0 session\n')
+    await vi.waitFor(() =>
+      expect(child.stdin.read()?.toString()).toBe(
+        'display-message -p "#{pane_mode}"\n'
+      )
+    )
+
+    child.stdin.emit(
+      'error',
+      Object.assign(new Error('write EPIPE'), {
+        code: 'EPIPE'
+      })
+    )
+    expect(onExit).toHaveBeenCalledOnce()
+    expect(child.kill).toHaveBeenCalledOnce()
+
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(() =>
+      child.stdin.emit(
+        'error',
+        Object.assign(new Error('late EPIPE'), {
+          code: 'EPIPE'
+        })
+      )
+    ).not.toThrow()
+    observer.dispose()
+  })
+
   it('isolates metadata callback failures and suppresses later updates', async () => {
     const child = fakeChild()
     const onTitle = vi.fn()
