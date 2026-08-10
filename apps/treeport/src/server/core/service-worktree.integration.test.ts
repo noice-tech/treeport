@@ -1500,7 +1500,7 @@ describe('TreeportService with injected command adapters', () => {
       code: 'WORKTREE_NOT_FOUND'
     })
     expect(await persistedWorktree(database, afterGit.id)).toBeNull()
-    expect(await restarted.getOperation('op_after_git')).toMatchObject({
+    expect(await waitForOperation(restarted, 'op_after_git')).toMatchObject({
       status: 'completed',
       result: expect.objectContaining({ recovered: true, removed: true }),
       error: null
@@ -1511,7 +1511,7 @@ describe('TreeportService with injected command adapters', () => {
     expect(await persistedWorktree(database, afterGit.id)).toBeNull()
     expect(await persistedWorktree(database, afterGitNonEmpty.id)).toBeNull()
     expect(
-      await restarted.getOperation('op_after_git_non_empty')
+      await waitForOperation(restarted, 'op_after_git_non_empty')
     ).toMatchObject({
       status: 'completed',
       result: expect.objectContaining({ recovered: true, removed: true }),
