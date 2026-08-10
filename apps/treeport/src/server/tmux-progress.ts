@@ -247,6 +247,15 @@ export class TmuxProgressObserver implements TerminalProgressObserver {
                 stdio: ['pipe', 'pipe', 'pipe']
               }
             )
+            // Keep a no-op listener for the stream's whole lifetime. The
+            // active lifecycle listener below reports write failures, while
+            // this one prevents a queued EPIPE from becoming uncaught after
+            // lifecycle cleanup has started.
+            const onStdinResourceError = () => {}
+            acquired.stdin.on('error', onStdinResourceError)
+            acquired.stdin.once('close', () => {
+              acquired.stdin.off('error', onStdinResourceError)
+            })
             this.process = acquired
             return acquired
           },
@@ -304,6 +313,8 @@ export class TmuxProgressObserver implements TerminalProgressObserver {
         }
         const onError = (cause: Error) =>
           fail(new TmuxObserverError('process', cause))
+        const onStdinError = (cause: Error) =>
+          fail(new TmuxObserverError('process', cause))
         const onExit = () =>
           fail(
             new TmuxObserverError(
@@ -314,12 +325,14 @@ export class TmuxProgressObserver implements TerminalProgressObserver {
         child.stdout.on('data', onData)
         child.stderr.resume()
         child.once('error', onError)
+        child.stdin.on('error', onStdinError)
         child.once('exit', onExit)
 
         return Effect.sync(() => {
           this.failLifecycle = null
           child.stdout.off('data', onData)
           child.off('error', onError)
+          child.stdin.off('error', onStdinError)
           child.off('exit', onExit)
           child.stdout.pause()
         })
