@@ -1,8 +1,16 @@
-import { treeport, type JsonValue } from '@treeport/panel-sdk'
+import {
+  treeport,
+  type JsonValue,
+  type WorktreeListener,
+  type WorktreeListenerDiscovery
+} from '@treeport/panel-sdk'
 import './browser.css'
 
 const form = document.querySelector('form')!
 const input = document.querySelector<HTMLInputElement>('input[name="url"]')!
+const homeButton = document.querySelector<HTMLButtonElement>(
+  '[data-action="home"]'
+)!
 const reload = document.querySelector<HTMLButtonElement>(
   '[data-action="reload"]'
 )!
@@ -12,9 +20,18 @@ const external = document.querySelector<HTMLButtonElement>(
 const retry = document.querySelector<HTMLButtonElement>(
   '[data-action="retry"]'
 )!
+const refreshServers = document.querySelector<HTMLButtonElement>(
+  '[data-action="refresh-servers"]'
+)!
 const error = document.querySelector<HTMLParagraphElement>('.error')!
 const loading = document.querySelector<HTMLDivElement>('.loading')!
 const failure = document.querySelector<HTMLDivElement>('.failure')!
+const homepage = document.querySelector<HTMLElement>('.homepage')!
+const serverStatus =
+  document.querySelector<HTMLParagraphElement>('.server-status')!
+const serverList = document.querySelector<HTMLUListElement>('.server-list')!
+const serverEmpty =
+  document.querySelector<HTMLParagraphElement>('.server-empty')!
 const frame = document.querySelector<HTMLIFrameElement>('iframe')!
 
 function browserUrl(value: unknown): URL | null {
@@ -34,22 +51,56 @@ function browserUrl(value: unknown): URL | null {
     : null
 }
 
+function listenerUrl(listener: WorktreeListener): URL | null {
+  let host = listener.host
+  if (
+    host === '*' ||
+    host === '0.0.0.0' ||
+    host === '::' ||
+    host === '::1' ||
+    host === '127.0.0.1'
+  ) {
+    host = 'localhost'
+  } else if (host.includes(':')) {
+    host = `[${host}]`
+  }
+
+  return browserUrl(`http://${host}:${listener.port}/`)
+}
+
 function showError(message: string | null) {
   error.textContent = message ?? ''
   error.hidden = message === null
 }
 
 let navigation = 0
+let discoveryRequest = 0
 let frameLoaded = false
 let targetReachable = false
+let showingHomepage = false
+let currentUrl: URL | null = null
+let chooseServer: ((url: URL) => void) | null = null
+
+function showHomepage() {
+  showingHomepage = true
+  navigation += 1
+  homepage.hidden = false
+  frame.hidden = true
+  loading.hidden = true
+  failure.hidden = true
+}
 
 function navigate(url: URL) {
+  showingHomepage = false
+  homepage.hidden = true
+  frame.hidden = false
   const currentNavigation = ++navigation
   frameLoaded = false
   targetReachable = false
   failure.hidden = true
   loading.hidden = false
   reload.disabled = true
+  external.disabled = false
   frame.src = url.href
 
   void fetch(url, {
@@ -59,7 +110,7 @@ function navigate(url: URL) {
     signal: AbortSignal.timeout(10_000)
   }).then(
     () => {
-      if (navigation !== currentNavigation) {
+      if (navigation !== currentNavigation || showingHomepage) {
         return
       }
 
@@ -70,7 +121,7 @@ function navigate(url: URL) {
       }
     },
     () => {
-      if (navigation !== currentNavigation) {
+      if (navigation !== currentNavigation || showingHomepage) {
         return
       }
 
@@ -81,8 +132,84 @@ function navigate(url: URL) {
   )
 }
 
+function renderListeners(discovery: WorktreeListenerDiscovery) {
+  serverList.replaceChildren()
+  serverEmpty.hidden = true
+  serverStatus.textContent = ''
+  if (!discovery.supported) {
+    serverStatus.textContent =
+      discovery.message ?? 'TCP listener discovery is unavailable.'
+    return
+  }
+
+  const candidates = new Map<string, { url: URL; listener: WorktreeListener }>()
+  for (const listener of discovery.listeners) {
+    const url = listenerUrl(listener)
+    if (!url) {
+      continue
+    }
+
+    const existing = candidates.get(url.href)
+    if (!existing || (!existing.listener.terminalId && listener.terminalId)) {
+      candidates.set(url.href, { url, listener })
+    }
+  }
+
+  if (candidates.size === 0) {
+    serverEmpty.hidden = false
+    return
+  }
+
+  for (const { url, listener } of [...candidates.values()].sort(
+    (left, right) =>
+      left.listener.port - right.listener.port ||
+      left.url.href.localeCompare(right.url.href) ||
+      left.listener.command.localeCompare(right.listener.command)
+  )) {
+    const item = document.createElement('li')
+    const button = document.createElement('button')
+    button.type = 'button'
+    button.setAttribute(
+      'aria-label',
+      `Open ${url.href}, ${listener.command || 'unknown command'}`
+    )
+    const address = document.createElement('strong')
+    address.textContent = url.href
+    const command = document.createElement('span')
+    command.textContent = listener.command || 'Unknown command'
+    button.append(address, command)
+    button.addEventListener('click', () => chooseServer?.(url))
+    item.append(button)
+    serverList.append(item)
+  }
+}
+
+async function discoverListeners() {
+  const request = ++discoveryRequest
+  refreshServers.disabled = true
+  serverStatus.textContent = 'Scanning for development servers…'
+  serverList.replaceChildren()
+  serverEmpty.hidden = true
+  try {
+    const discovery = await treeport.network.listeners()
+    if (request === discoveryRequest) {
+      renderListeners(discovery)
+    }
+  } catch (reason) {
+    if (request === discoveryRequest) {
+      serverStatus.textContent = `Could not scan for development servers: ${
+        reason instanceof Error ? reason.message : String(reason)
+      }`
+    }
+  } finally {
+    if (request === discoveryRequest) {
+      refreshServers.disabled = false
+    }
+  }
+}
+
 frame.addEventListener('load', () => {
-  if (frame.getAttribute('src') === 'about:blank') {
+  if (frame.getAttribute('src') === 'about:blank' || showingHomepage) {
     return
   }
 
@@ -115,41 +242,12 @@ void Promise.all([
       typeof storedState?.launchUpdatedAt === 'string'
         ? storedState.launchUpdatedAt
         : null
-    let currentUrl =
+    currentUrl =
       configuredUrl && storedLaunchUpdatedAt !== context.panel.updatedAt
         ? configuredUrl
         : (storedUrl ?? configuredUrl)
 
-    if (currentUrl) {
-      input.value = currentUrl.href
-      navigate(currentUrl)
-      treeport.panel.setTitle(configuredTitle || currentUrl.host)
-      void treeport.storage.set('browser-state', {
-        url: currentUrl.href,
-        launchUpdatedAt: context.panel.updatedAt
-      })
-    } else {
-      loading.hidden = true
-      reload.disabled = true
-      external.disabled = true
-      treeport.panel.setTitle(null)
-      if (configuredInput?.url !== undefined) {
-        input.value =
-          typeof configuredInput.url === 'string'
-            ? configuredInput.url
-            : 'http://localhost:3000/'
-        showError('Enter an absolute HTTP or HTTPS URL without credentials.')
-      }
-    }
-
-    form.addEventListener('submit', (event) => {
-      event.preventDefault()
-      const url = browserUrl(input.value.trim())
-      if (!url) {
-        showError('Enter an absolute HTTP or HTTPS URL without credentials.')
-        return
-      }
-
+    const persistAndNavigate = (url: URL) => {
       showError(null)
       const controls = form.querySelectorAll<
         HTMLInputElement | HTMLButtonElement
@@ -164,20 +262,59 @@ void Promise.all([
         })
         .then(() => {
           currentUrl = url
+          input.value = url.href
           navigate(url)
           treeport.panel.setTitle(configuredTitle || url.host)
-          controls.forEach((control) => {
-            control.disabled = false
-          })
         })
         .catch((reason: unknown) => {
+          showError(reason instanceof Error ? reason.message : String(reason))
+        })
+        .finally(() => {
           controls.forEach((control) => {
             control.disabled = false
           })
-          showError(reason instanceof Error ? reason.message : String(reason))
+          reload.disabled = currentUrl === null
+          external.disabled = currentUrl === null
         })
-    })
+    }
+    chooseServer = persistAndNavigate
 
+    if (currentUrl) {
+      input.value = currentUrl.href
+      navigate(currentUrl)
+      treeport.panel.setTitle(configuredTitle || currentUrl.host)
+      void treeport.storage.set('browser-state', {
+        url: currentUrl.href,
+        launchUpdatedAt: context.panel.updatedAt
+      })
+    } else {
+      reload.disabled = true
+      external.disabled = true
+      treeport.panel.setTitle(null)
+      showHomepage()
+      if (configuredInput?.url !== undefined) {
+        input.value =
+          typeof configuredInput.url === 'string'
+            ? configuredInput.url
+            : 'http://localhost:3000/'
+        showError('Enter an absolute HTTP or HTTPS URL without credentials.')
+      }
+    }
+
+    void discoverListeners()
+
+    form.addEventListener('submit', (event) => {
+      event.preventDefault()
+      const url = browserUrl(input.value.trim())
+      if (!url) {
+        showError('Enter an absolute HTTP or HTTPS URL without credentials.')
+        return
+      }
+
+      persistAndNavigate(url)
+    })
+    homeButton.addEventListener('click', showHomepage)
+    refreshServers.addEventListener('click', () => void discoverListeners())
     reload.addEventListener('click', () => {
       if (currentUrl) {
         navigate(currentUrl)

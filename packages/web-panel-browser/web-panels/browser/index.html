@@ -9,6 +9,14 @@
   <body>
     <main>
       <form>
+        <button
+          type="button"
+          data-action="home"
+          aria-label="Show development servers"
+          title="Show development servers"
+        >
+          ⌂
+        </button>
         <input
           name="url"
           type="url"
@@ -43,6 +51,23 @@
       </form>
       <p class="error" role="alert" hidden></p>
       <div class="viewport">
+        <section class="homepage" aria-label="Development servers" hidden>
+          <div class="homepage-header">
+            <div>
+              <h1>Development servers</h1>
+              <p>Select a listening server from this worktree.</p>
+            </div>
+            <button type="button" data-action="refresh-servers">
+              Refresh servers
+            </button>
+          </div>
+          <p class="server-status" role="status" aria-live="polite"></p>
+          <ul class="server-list"></ul>
+          <p class="server-empty" hidden>
+            No listening servers were found. Start one from a Treeport terminal,
+            then refresh this list, or enter its URL above.
+          </p>
+        </section>
         <div class="loading" role="status" aria-live="polite">
           <span class="spinner" aria-hidden="true"></span>
           <span>Loading application…</span>

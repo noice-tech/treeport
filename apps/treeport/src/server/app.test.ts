@@ -210,6 +210,19 @@ function fixture(webDist = '/missing') {
       baseRef: 'origin/trunk',
       unified: 'diff --git a/a b/a'
     })),
+    getWebPanelListeners: vi.fn(async () => ({
+      supported: true,
+      message: null,
+      listeners: [
+        {
+          pid: 42,
+          command: 'vite',
+          host: '127.0.0.1',
+          port: 5173,
+          terminalId: 'term_1'
+        }
+      ]
+    })),
     hasWebPanelStorage: vi.fn(async () => true),
     getWebPanelStorage: vi.fn(async () => [{ file: 'src/app.ts', line: 12 }]),
     setWebPanelStorage: vi.fn(async () => undefined),
@@ -353,6 +366,27 @@ describe('HTTP API validation', () => {
     expect(service.getWebPanelDiff).toHaveBeenCalledWith('panel_review')
 
     expect(
+      await (
+        await app.request('/api/panels/panel_review/network/listeners')
+      ).json()
+    ).toEqual({
+      discovery: {
+        supported: true,
+        message: null,
+        listeners: [
+          {
+            pid: 42,
+            command: 'vite',
+            host: '127.0.0.1',
+            port: 5173,
+            terminalId: 'term_1'
+          }
+        ]
+      }
+    })
+    expect(service.getWebPanelListeners).toHaveBeenCalledWith('panel_review')
+
+    expect(
       await (await app.request('/api/panels/panel_review/storage')).json()
     ).toEqual({ hasData: true })
     expect(service.hasWebPanelStorage).toHaveBeenCalledWith('panel_review')
@@ -422,6 +456,7 @@ describe('HTTP API validation', () => {
           version: number
           panel: { setTitle: (title: string | null) => void }
           context: () => Promise<unknown>
+          network: { listeners: () => Promise<unknown> }
           storage: {
             set: (key: string, value: unknown) => Promise<void>
           }
@@ -455,8 +490,29 @@ describe('HTTP API validation', () => {
         '*'
       )
 
+      const discovery = sdk.treeport.network.listeners()
+      const discoveryMessage = panelParent.postMessage.mock.calls[1]![0]
+      expect(discoveryMessage).toMatchObject({
+        source: 'treeport-panel-v1',
+        method: 'network.listeners'
+      })
+      listeners.get('message')!({
+        source: panelParent,
+        data: {
+          source: 'treeport-host-v1',
+          id: discoveryMessage.id,
+          ok: true,
+          value: { supported: true, message: null, listeners: [] }
+        }
+      })
+      await expect(discovery).resolves.toEqual({
+        supported: true,
+        message: null,
+        listeners: []
+      })
+
       const stored = sdk.treeport.storage.set('comments', [{ line: 12 }])
-      const storageMessage = panelParent.postMessage.mock.calls[1]![0]
+      const storageMessage = panelParent.postMessage.mock.calls[2]![0]
       expect(storageMessage).toMatchObject({
         source: 'treeport-panel-v1',
         method: 'storage.set',

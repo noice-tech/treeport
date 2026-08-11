@@ -114,6 +114,12 @@ export function WebPanelWorkspace({
             param: { panelId: panel.id }
           })
         ).then((result) => result.diff)
+      } else if (method === 'network.listeners') {
+        request = parseResponse(
+          rpc.api.panels[':panelId'].network.listeners.$get({
+            param: { panelId: panel.id }
+          })
+        ).then((result) => result.discovery)
       } else if (
         method === 'storage.get' &&
         typeof event.data.key === 'string'

@@ -768,6 +768,14 @@ test.describe('desktop worktree and terminal workflows', () => {
     let packageFrame = page
       .frames()
       .find((frame) => frame.url().includes('/api/web-panels/panel_1/assets/'))!
+    await expect(
+      packageFrame.getByRole('heading', { name: 'Development servers' })
+    ).toBeVisible()
+    await expect(
+      packageFrame.getByRole('button', {
+        name: 'Open http://localhost:5173/, vite'
+      })
+    ).toBeVisible()
     await expect(packageFrame.getByLabel('Application URL')).toHaveValue(
       'http://localhost:3000/'
     )

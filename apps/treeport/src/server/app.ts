@@ -562,6 +562,14 @@ export function createApp({
       })
     )
 
+    .get('/api/panels/:panelId/network/listeners', async (context) =>
+      context.json({
+        discovery: await service.getWebPanelListeners(
+          context.req.param('panelId')
+        )
+      })
+    )
+
     .get('/api/panels/:panelId/storage', async (context) =>
       context.json({
         hasData: await service.hasWebPanelStorage(context.req.param('panelId'))

@@ -26,6 +26,7 @@ import type {
   WebPanelDefinition,
   WebPanelInput,
   WebPanelLaunch,
+  WorktreeListenerDiscovery,
   WorktreeRecord
 } from '@treeport/shared'
 import { and, asc, desc, eq, ne, or, sql } from 'drizzle-orm'
@@ -56,6 +57,7 @@ import { DomainError } from './domain'
 import { ProductEventBus } from './events'
 import type { GhAdapter } from './gh'
 import type { GitAdapter } from './git'
+import { NetworkListenerAdapter } from './network-listeners'
 import { PackageSystem } from './package-system'
 import { loadRepositoryTerminalPresets } from './repository-terminal-presets'
 import {
@@ -192,11 +194,13 @@ export class TreeportService {
   private projectsSnapshotInFlight: Promise<ProjectRecord[]> | null = null
   private projectsSnapshotRevision = 0
   private readonly packages: PackageSystem
+  private readonly networkListeners: NetworkListenerAdapter
   private readonly webPanelRuntime: WebPanelViteRuntime
 
   constructor(private readonly deps: ServiceDependencies) {
     this.events = deps.events ?? new ProductEventBus()
     this.packages = new PackageSystem(deps.config, deps.runner)
+    this.networkListeners = new NetworkListenerAdapter(deps.runner)
     this.webPanelRuntime = new WebPanelViteRuntime(deps.config)
   }
 
@@ -1510,6 +1514,21 @@ export class TreeportService {
       worktree.path,
       context.project.defaultBranch
     )
+  }
+
+  async getWebPanelListeners(
+    panelId: string
+  ): Promise<WorktreeListenerDiscovery> {
+    const context = await this.getWebPanelContext(panelId)
+    const worktree = await this.getWorktree(context.panel.worktreeId)
+    const panes = await this.deps.tmux.listPaneProcesses(
+      worktree.tmuxSocketName,
+      worktree.id
+    )
+    return this.networkListeners.listeners({
+      worktreePath: worktree.path,
+      panes
+    })
   }
 
   async hasWebPanelStorage(panelId: string): Promise<boolean> {

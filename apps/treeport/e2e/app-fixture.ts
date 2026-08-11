@@ -1152,13 +1152,38 @@ export async function mockApp(
     }
 
     if (
+      /^\/api\/panels\/[^/]+\/network\/listeners$/.test(pathname) &&
+      route.request().method() === 'GET'
+    ) {
+      await route.fulfill({
+        json: {
+          discovery: {
+            supported: true,
+            message: null,
+            listeners: [
+              {
+                pid: 42,
+                command: 'vite',
+                host: '127.0.0.1',
+                port: 5173,
+                terminalId: 'term_topic'
+              }
+            ]
+          }
+        }
+      })
+      return
+    }
+
+    if (
       /^\/api\/web-panels\/[^/]+\/assets\/$/.test(pathname) &&
       route.request().method() === 'GET'
     ) {
       await route.fulfill({
         contentType: 'text/html',
         body: `<!doctype html><html><body>
-          <form><input type="url" aria-label="Application URL" value="http://localhost:3000/" required></form>
+          <form><button type="button" aria-label="Show development servers">Home</button><input type="url" aria-label="Application URL" value="http://localhost:3000/" required></form>
+          <section aria-label="Development servers"><h1>Development servers</h1><p role="status">Scanning for development servers…</p><div data-servers></div><button type="button">Refresh servers</button></section>
           <div role="alert" hidden><strong>Load failed</strong><span>Check that the application is running and reachable.</span></div>
           <iframe title="Browser target" src="about:blank"></iframe>
           <script>
@@ -1179,8 +1204,19 @@ export async function mockApp(
                 parent.postMessage(event.data, '*');
               }
             });
-            Promise.all([call('context'), call('storage.get', { key: 'browser-state' })]).then(([context, stored]) => {
+            Promise.all([call('context'), call('storage.get', { key: 'browser-state' }), call('network.listeners')]).then(([context, stored, discovery]) => {
               const input = document.querySelector('input');
+              const servers = document.querySelector('[data-servers]');
+              const status = document.querySelector('[role="status"]');
+              status.textContent = '';
+              for (const listener of discovery.listeners) {
+                const button = document.createElement('button');
+                const url = 'http://localhost:' + listener.port + '/';
+                button.type = 'button';
+                button.textContent = url + ' ' + listener.command;
+                button.setAttribute('aria-label', 'Open ' + url + ', ' + listener.command);
+                servers.append(button);
+              }
               const failure = document.querySelector('[role="alert"]');
               const navigate = (url) => {
                 failure.hidden = true;
@@ -1191,7 +1227,7 @@ export async function mockApp(
               };
               const url = stored?.url || context.launch.input?.url || '';
               if (url) input.value = url;
-              if (url) navigate(url);
+              if (url) { document.querySelector('section').hidden = true; navigate(url); }
               if (url) parent.postMessage({ source: 'treeport-panel-v1', method: 'panel.title.set', title: context.launch.input?.title || new URL(url).host }, '*');
               document.querySelector('form').addEventListener('submit', (event) => {
                 event.preventDefault();
