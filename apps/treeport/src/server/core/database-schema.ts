@@ -93,6 +93,8 @@ export const webPanels = sqliteTable(
       .references(() => worktrees.id, { onDelete: 'cascade' }),
     definitionId: text('definition_id').notNull(),
     title: text().notNull(),
+    inputJson: text('input_json').notNull().default('null'),
+    launchCwd: text('launch_cwd'),
     createdAt: text('created_at').notNull(),
     updatedAt: text('updated_at').notNull()
   },

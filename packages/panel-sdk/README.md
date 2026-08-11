@@ -24,4 +24,6 @@ const stopFind = treeport.shortcuts.onFind(() => {
 })
 ```
 
+`treeport.context()` includes the stored JSON launch input and worktree-relative launch directory.
+
 `treeport.shortcuts.onFind(handler)` delivers `Cmd/Ctrl+F` whether keyboard focus is inside the panel or elsewhere in the Treeport workspace. It returns an unsubscribe function. Panels own their find interface and behavior; Treeport only routes the generic shortcut.

@@ -197,11 +197,26 @@ describe('TreeportService with injected command adapters', () => {
 
     const events: string[] = []
     const unsubscribe = service.events.subscribe((event) => {
-      if (event.type === 'panel.created' || event.type === 'panel.removed') {
+      if (
+        event.type === 'panel.created' ||
+        event.type === 'panel.updated' ||
+        event.type === 'panel.open_requested' ||
+        event.type === 'panel.removed'
+      ) {
         events.push(`${event.type}:${event.data.panelId}`)
       }
     })
-    const panel = await service.createWebPanel(worktree.id, 'project:review')
+    const panel = await service.createWebPanel(worktree.id, 'project:review', {
+      input: { path: 'output/demo.mp4', autoplay: false },
+      cwd: '.'
+    })
+    expect(panel.launch).toEqual({
+      input: { path: 'output/demo.mp4', autoplay: false },
+      cwd: '.'
+    })
+    expect((await service.getWebPanelContext(panel.id)).launch).toEqual(
+      panel.launch
+    )
     expect(
       (await service.getWorktreeSnapshot(worktree.id)).panels
     ).toContainEqual(panel)
@@ -220,6 +235,19 @@ describe('TreeportService with injected command adapters', () => {
     ).rejects.toMatchObject({ code: 'INVALID_ASSET_PATH' })
     expect(await persistedWebPanel(database, panel.id)).toEqual(panel)
 
+    await expect(
+      service.createWebPanel(worktree.id, 'project:review', {
+        input: { body: 'x'.repeat(65_537) },
+        cwd: null
+      })
+    ).rejects.toMatchObject({ code: 'WEB_PANEL_INPUT_TOO_LARGE' })
+    await expect(
+      service.createWebPanel(worktree.id, 'project:review', {
+        input: null,
+        cwd: '..'
+      })
+    ).rejects.toMatchObject({ code: 'INVALID_WEB_PANEL_LAUNCH_CWD' })
+
     expect(
       await service.getWebPanelStorage(panel.id, 'comments')
     ).toBeUndefined()
@@ -231,10 +259,39 @@ describe('TreeportService with injected command adapters', () => {
       { file: 'src/app.ts', line: 12, body: 'Handle this case' }
     ])
     expect(await service.hasWebPanelStorage(panel.id)).toBe(true)
+
+    const reused = await service.openWebPanel(worktree.id, 'project:review', {
+      input: { path: 'output/updated.mp4' },
+      cwd: '.'
+    })
+    expect(reused).toMatchObject({
+      created: false,
+      reused: true,
+      panel: {
+        id: panel.id,
+        launch: { input: { path: 'output/updated.mp4' }, cwd: '.' }
+      }
+    })
+    expect(reused.panel.updatedAt > panel.updatedAt).toBe(true)
+    expect(await service.getWebPanelStorage(panel.id, 'comments')).toEqual([
+      { file: 'src/app.ts', line: 12, body: 'Handle this case' }
+    ])
+
+    const separate = await service.openWebPanel(
+      worktree.id,
+      'project:review',
+      { input: null, cwd: null },
+      true
+    )
+    expect(separate.created).toBe(true)
+    expect(separate.reused).toBe(false)
+    expect(separate.panel.id).not.toBe(panel.id)
+    await service.deleteWebPanel(separate.panel.id)
+
     await expect(service.deleteWebPanel(panel.id)).rejects.toMatchObject({
       code: 'PANEL_HAS_STORED_DATA'
     })
-    expect(await persistedWebPanel(database, panel.id)).toEqual(panel)
+    expect(await persistedWebPanel(database, panel.id)).toEqual(reused.panel)
     await service.deleteWebPanelStorage(panel.id, 'comments')
     expect(
       await service.getWebPanelStorage(panel.id, 'comments')
@@ -249,8 +306,52 @@ describe('TreeportService with injected command adapters', () => {
     expect(await persistedWebPanel(database, panel.id)).toBeNull()
     expect(events).toEqual([
       `panel.created:${panel.id}`,
+      `panel.updated:${panel.id}`,
+      `panel.open_requested:${panel.id}`,
+      `panel.created:${separate.panel.id}`,
+      `panel.open_requested:${separate.panel.id}`,
+      `panel.removed:${separate.panel.id}`,
       `panel.removed:${panel.id}`
     ])
+  })
+
+  it('restores web-panel launch input after a daemon service reconstruction', async () => {
+    const { main, service, database, config, runner } = await fixture()
+    const panelRoot = path.join(main, '.treeport', 'web-panels', 'preview')
+    await fs.mkdir(panelRoot, { recursive: true })
+    await fs.writeFile(path.join(panelRoot, 'index.html'), '<h1>Preview</h1>')
+    const project = await service.registerProject(main)
+    const worktree = project.worktrees[0]!
+    const panel = await service.createWebPanel(worktree.id, 'project:preview', {
+      input: { path: 'output/demo.mp4', autoplay: false },
+      cwd: '.'
+    })
+
+    database.close()
+    databases.splice(databases.indexOf(database), 1)
+    const reopenedDatabase = await openDatabase(config.databasePath)
+    databases.push(reopenedDatabase)
+    const reconstructed = new TreeportService({
+      config,
+      database: reopenedDatabase,
+      runner,
+      git: new GitAdapter(runner),
+      tmux: new TmuxAdapter(
+        runner,
+        config.runtimeDir,
+        'tmux',
+        '/launcher with spaces.js'
+      ),
+      gh: new GhAdapter(runner)
+    })
+    await reconstructed.initialize()
+
+    await expect(
+      reconstructed.getWebPanelContext(panel.id)
+    ).resolves.toMatchObject({
+      panel: { id: panel.id, launch: panel.launch },
+      launch: panel.launch
+    })
   })
 
   it('serves package resources across repository worktrees while preserving ordinary terminals and persistent panels through removal', async () => {

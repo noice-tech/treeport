@@ -272,6 +272,7 @@ describe('Socket.IO real network', () => {
         worktreeId: 'wt',
         definitionId: 'project:review',
         title: 'Review',
+        launch: { input: null, cwd: null },
         createdAt: '2026-01-01T00:00:00.000Z',
         updatedAt: '2026-01-01T00:00:00.000Z'
       }

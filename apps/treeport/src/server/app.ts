@@ -17,6 +17,7 @@ import {
   createTerminalSchema,
   createWebPanelSchema,
   deleteTerminalPresetSchema,
+  openWebPanelSchema,
   deleteWebPanelStorageSchema,
   DESKTOP_PROTOCOL_VERSION,
   getWebPanelStorageSchema,
@@ -505,10 +506,34 @@ export function createApp({
           {
             panel: await service.createWebPanel(
               context.req.param('worktreeId'),
-              body.definitionId
+              body.definitionId,
+              {
+                input: body.input ?? null,
+                cwd: body.launchCwd ?? null
+              }
             )
           },
           201
+        )
+      }
+    )
+
+    .post(
+      '/api/worktrees/:worktreeId/panels/open',
+      jsonInput(openWebPanelSchema),
+      async (context) => {
+        const body = context.req.valid('json')
+        return context.json(
+          await service.openWebPanel(
+            context.req.param('worktreeId'),
+            body.definitionId,
+            {
+              input: body.input ?? null,
+              cwd: body.launchCwd ?? null
+            },
+            body.newInstance ?? false,
+            body.sourceTerminalId ?? null
+          )
         )
       }
     )

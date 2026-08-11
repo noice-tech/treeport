@@ -23,6 +23,7 @@ import type {
   ProjectRecord,
   TerminalRecord,
   TerminalRuntimeMetadata,
+  WebPanel,
   WorktreeRecord
 } from '@treeport/shared'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
@@ -95,6 +96,14 @@ const project: ProjectRecord = {
   worktrees: [worktree],
   createdAt: timestamp,
   updatedAt: timestamp
+}
+
+interface ObservedWebPanelBody {
+  definitionId: string
+  input: WebPanel['launch']['input']
+  launchCwd: string
+  newInstance?: boolean
+  sourceTerminalId?: string | null
 }
 
 interface CliResult {
@@ -176,6 +185,10 @@ describe('CLI context and machine output', () => {
   const requests: string[] = []
   const creationBodies: unknown[] = []
   const terminalCreateBodies: unknown[] = []
+  const webPanelBodies: Array<{
+    url: string
+    body: ObservedWebPanelBody
+  }> = []
   const packageBodies: Array<{
     url: string
     body: { source?: string; projectId?: string }
@@ -201,6 +214,7 @@ describe('CLI context and machine output', () => {
   let observedDaemonLifecycle: 'treeport' | 'external' = 'treeport'
   let creationOperation: OperationRecord | null = null
   let createdWorktree: WorktreeRecord | null = null
+  let createdWebPanels: WebPanel[] = []
 
   beforeEach(() => {
     observedTerminal = terminal
@@ -218,6 +232,8 @@ describe('CLI context and machine output', () => {
     observedDaemonLifecycle = 'treeport'
     creationOperation = null
     createdWorktree = null
+    createdWebPanels = []
+    webPanelBodies.length = 0
   })
 
   beforeAll(async () => {
@@ -309,7 +325,21 @@ describe('CLI context and machine output', () => {
       }
 
       if (request.method === 'GET' && request.url === '/api/projects') {
-        response.end(JSON.stringify({ projects: [project] }))
+        response.end(
+          JSON.stringify({
+            projects: [
+              {
+                ...project,
+                worktrees: [
+                  {
+                    ...worktree,
+                    panels: [...worktree.panels, ...createdWebPanels]
+                  }
+                ]
+              }
+            ]
+          })
+        )
         return
       }
 
@@ -341,6 +371,110 @@ describe('CLI context and machine output', () => {
             }
           })
         )
+        return
+      }
+
+      if (
+        request.method === 'GET' &&
+        request.url === '/api/worktrees/wt_context/web-panel-definitions'
+      ) {
+        response.end(
+          JSON.stringify({
+            definitions: [
+              {
+                id: 'project:preview',
+                title: 'Preview',
+                source: { type: 'project' }
+              },
+              {
+                id: 'package:one:review',
+                title: 'Review one',
+                source: {
+                  type: 'package',
+                  packageId: 'one',
+                  source: 'npm:@acme/one',
+                  scope: 'global'
+                }
+              },
+              {
+                id: 'package:two:review',
+                title: 'Review two',
+                source: {
+                  type: 'package',
+                  packageId: 'two',
+                  source: 'npm:@acme/two',
+                  scope: 'global'
+                }
+              }
+            ]
+          })
+        )
+        return
+      }
+
+      if (
+        request.method === 'POST' &&
+        (request.url === '/api/worktrees/wt_context/panels' ||
+          request.url === '/api/worktrees/wt_context/panels/open')
+      ) {
+        let source = ''
+        for await (const chunk of request) {
+          source += chunk
+        }
+        const body = JSON.parse(source) as ObservedWebPanelBody
+        webPanelBodies.push({ url: request.url, body })
+        const open = request.url.endsWith('/open')
+        const reuse =
+          open && body.newInstance !== true && createdWebPanels.length > 0
+        const previous = createdWebPanels.at(-1)
+        const panel: WebPanel = reuse
+          ? {
+              ...previous!,
+              launch: {
+                input: body.input as WebPanel['launch']['input'],
+                cwd: String(body.launchCwd)
+              },
+              updatedAt: '2026-01-01T00:00:01.000Z'
+            }
+          : {
+              id: `panel_${createdWebPanels.length + 1}`,
+              kind: 'web',
+              worktreeId: worktree.id,
+              definitionId: String(body.definitionId),
+              title: 'Preview',
+              launch: {
+                input: body.input as WebPanel['launch']['input'],
+                cwd: String(body.launchCwd)
+              },
+              createdAt: timestamp,
+              updatedAt: timestamp
+            }
+        if (reuse) {
+          createdWebPanels[createdWebPanels.length - 1] = panel
+        } else {
+          createdWebPanels.push(panel)
+        }
+
+        response.statusCode = open ? 200 : 201
+        response.end(
+          JSON.stringify(
+            open ? { panel, created: !reuse, reused: reuse } : { panel }
+          )
+        )
+        return
+      }
+
+      if (
+        request.method === 'DELETE' &&
+        request.url?.startsWith('/api/panels/')
+      ) {
+        const panelId = decodeURIComponent(
+          request.url.slice('/api/panels/'.length).split('?')[0]!
+        )
+        createdWebPanels = createdWebPanels.filter(
+          (panel) => panel.id !== panelId
+        )
+        response.end(JSON.stringify({ ok: true }))
         return
       }
 
@@ -377,7 +511,10 @@ describe('CLI context and machine output', () => {
                 projectId: null,
                 projectName: null,
                 installedPath: '/data/npm/node_modules/@acme/tools',
-                resources: { webPanels: 1, terminalPresets: 1 },
+                resources: {
+                  webPanels: 1,
+                  terminalPresets: 1
+                },
                 diagnostics: []
               }
             ],
@@ -820,6 +957,122 @@ describe('CLI context and machine output', () => {
     expect(result.code).toBe(0)
     expect(result.stdout).toContain('Created worktree child (wt_context)')
     expect(result.stdout).toContain('Terminal: Pi (term_context) — running')
+  })
+
+  it('opens and reuses web panels with JSON input', async () => {
+    const environment = {
+      TREEPORT_API_URL: apiUrl,
+      TREEPORT_PROJECT_ID: project.id,
+      TREEPORT_WORKTREE_ID: worktree.id,
+      TREEPORT_TERMINAL_ID: terminal.id
+    }
+    const cwd = '/repo/worktrees/agent-tools/packages/client'
+
+    const opened = await runCli(
+      [
+        'web-panel',
+        'open',
+        'preview',
+        '--worktree',
+        '.',
+        '--input',
+        '{"path":"output/demo.json","mode":"inspect"}',
+        '--json'
+      ],
+      environment,
+      cwd
+    )
+    expect(opened.code).toBe(0)
+    expect(JSON.parse(opened.stdout)).toMatchObject({
+      panel: { id: 'panel_1', definitionId: 'project:preview' },
+      created: true,
+      reused: false
+    })
+    expect(webPanelBodies.at(-1)).toEqual({
+      url: '/api/worktrees/wt_context/panels/open',
+      body: {
+        definitionId: 'project:preview',
+        input: { path: 'output/demo.json', mode: 'inspect' },
+        launchCwd: 'packages/client',
+        newInstance: false,
+        sourceTerminalId: terminal.id
+      }
+    })
+
+    const reused = await runCli(
+      [
+        'web-panel',
+        'open',
+        'preview',
+        '--worktree',
+        '.',
+        '--input',
+        '{"path":"output/updated.json"}',
+        '--json'
+      ],
+      environment,
+      cwd
+    )
+    expect(reused.code).toBe(0)
+    expect(JSON.parse(reused.stdout)).toMatchObject({
+      panel: { id: 'panel_1' },
+      created: false,
+      reused: true
+    })
+
+    const separate = await runCli(
+      [
+        'web-panel',
+        'open',
+        'project:preview',
+        '--worktree',
+        '.',
+        '--new',
+        '--json'
+      ],
+      environment,
+      cwd
+    )
+    expect(separate.code).toBe(0)
+    expect(JSON.parse(separate.stdout)).toMatchObject({
+      panel: { id: 'panel_2' },
+      created: true,
+      reused: false
+    })
+
+    const invalid = await runCli(
+      [
+        'web-panel',
+        'open',
+        'preview',
+        '--worktree',
+        '.',
+        '--input',
+        'not-json',
+        '--json'
+      ],
+      environment,
+      cwd
+    )
+    expect(invalid.code).toBe(2)
+    expect(JSON.parse(invalid.stderr)).toMatchObject({
+      error: { code: 'USAGE_ERROR' }
+    })
+
+    const ambiguous = await runCli(
+      ['web-panel', 'open', 'review', '--worktree', '.', '--json'],
+      environment,
+      cwd
+    )
+    expect(ambiguous.code).toBe(5)
+    expect(JSON.parse(ambiguous.stderr)).toMatchObject({
+      error: {
+        code: 'WEB_PANEL_DEFINITION_AMBIGUOUS',
+        details: {
+          definitionIds: ['package:one:review', 'package:two:review']
+        }
+      }
+    })
   })
 
   it('inspects terminals by exact ID and managed dot context', async () => {
@@ -1359,7 +1612,7 @@ exit 1
         cliExecutable,
         linkedNestedFolder
       )
-      expect(linkedOpen.code).toBe(0)
+      expect(linkedOpen.code, linkedOpen.stderr).toBe(0)
       const linkedResult = JSON.parse(linkedOpen.stdout) as {
         projectId: string
         worktreeId: string

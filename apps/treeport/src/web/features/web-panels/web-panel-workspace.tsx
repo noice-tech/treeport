@@ -16,7 +16,10 @@ export function WebPanelWorkspace({
 }) {
   const frameRef = useRef<HTMLIFrameElement>(null)
   const panelWindowRef = useRef<Window | null>(null)
-  const [loadedPanelId, setLoadedPanelId] = useState<string | null>(null)
+  const panelRevision = `${panel.id}:${panel.updatedAt}`
+  const [loadedPanelRevision, setLoadedPanelRevision] = useState<string | null>(
+    null
+  )
 
   useEffect(() => {
     if (!active) {
@@ -154,18 +157,18 @@ export function WebPanelWorkspace({
         aria-label={`${panel.title} web panel`}
       >
         <iframe
-          key={panel.id}
+          key={panelRevision}
           ref={frameRef}
           title={panel.title}
           src={`/api/web-panels/${encodeURIComponent(panel.id)}/assets/`}
           sandbox="allow-scripts"
           className={cn(
             'h-full w-full border-0 bg-zinc-950',
-            loadedPanelId === panel.id ? 'opacity-100' : 'opacity-0'
+            loadedPanelRevision === panelRevision ? 'opacity-100' : 'opacity-0'
           )}
           onLoad={() => {
             panelWindowRef.current = frameRef.current?.contentWindow ?? null
-            setLoadedPanelId(panel.id)
+            setLoadedPanelRevision(panelRevision)
           }}
         />
       </main>

@@ -49,7 +49,7 @@ describe('SQLite migration and catalog ordering', () => {
       await database.db.get<{ count: number }>(
         sql`SELECT count(*) AS count FROM __drizzle_migrations`
       )
-    ).toEqual({ count: 6 })
+    ).toEqual({ count: 7 })
     expect(
       await database.db.get<{ count: number }>(sql`
         SELECT count(*) AS count FROM sqlite_master WHERE name='terminals'
@@ -301,6 +301,8 @@ describe('SQLite migration and catalog ordering', () => {
         CREATE UNIQUE INDEX projects_fs_identity_idx
         ON projects(repository_device,repository_inode)
       `)
+      await tx.run(sql`ALTER TABLE web_panels DROP COLUMN input_json`)
+      await tx.run(sql`ALTER TABLE web_panels DROP COLUMN launch_cwd`)
       await tx.run(sql`DROP TABLE __drizzle_migrations`)
       await tx.run(sql`
         CREATE TABLE schema_migrations (
@@ -350,7 +352,7 @@ describe('SQLite migration and catalog ordering', () => {
       await reopened.db.get<{ count: number }>(
         sql`SELECT count(*) AS count FROM __drizzle_migrations`
       )
-    ).toEqual({ count: 6 })
+    ).toEqual({ count: 7 })
 
     const backupDirectory = path.join(directory, 'database-backups')
     const [backupName] = await fs.readdir(backupDirectory)
@@ -422,6 +424,8 @@ describe('SQLite migration and catalog ordering', () => {
         CREATE UNIQUE INDEX projects_fs_identity_idx
         ON projects(repository_device,repository_inode)
       `)
+      await tx.run(sql`ALTER TABLE web_panels DROP COLUMN input_json`)
+      await tx.run(sql`ALTER TABLE web_panels DROP COLUMN launch_cwd`)
       await tx.run(sql`DROP TABLE __drizzle_migrations`)
       await tx.run(sql`
         CREATE TABLE schema_migrations (
@@ -490,13 +494,15 @@ describe('SQLite migration and catalog ordering', () => {
     await fs.cp(packagedMigrations, oldMigrations, { recursive: true })
     await Promise.all([
       fs.rm(path.join(oldMigrations, '0005_git_authoritative_worktrees.sql')),
-      fs.rm(path.join(oldMigrations, 'meta', '0005_snapshot.json'))
+      fs.rm(path.join(oldMigrations, '0006_web_panel_launch_input.sql')),
+      fs.rm(path.join(oldMigrations, 'meta', '0005_snapshot.json')),
+      fs.rm(path.join(oldMigrations, 'meta', '0006_snapshot.json'))
     ])
     const journalPath = path.join(oldMigrations, 'meta', '_journal.json')
     const journal = JSON.parse(await fs.readFile(journalPath, 'utf8')) as {
       entries: unknown[]
     }
-    journal.entries.pop()
+    journal.entries.splice(-2)
     await fs.writeFile(journalPath, JSON.stringify(journal, null, 2))
 
     const filePath = path.join(directory, 'treeport.db')
@@ -569,6 +575,8 @@ describe('SQLite migration and catalog ordering', () => {
         CREATE UNIQUE INDEX projects_fs_identity_idx
         ON projects(repository_device,repository_inode)
       `)
+      await tx.run(sql`ALTER TABLE web_panels DROP COLUMN input_json`)
+      await tx.run(sql`ALTER TABLE web_panels DROP COLUMN launch_cwd`)
       await tx.run(sql`DROP TABLE __drizzle_migrations`)
       await tx.run(sql`
         CREATE TABLE schema_migrations (
@@ -635,6 +643,6 @@ describe('SQLite migration and catalog ordering', () => {
       await recovered.db.get<{ count: number }>(
         sql`SELECT count(*) AS count FROM __drizzle_migrations`
       )
-    ).toEqual({ count: 6 })
+    ).toEqual({ count: 7 })
   })
 })

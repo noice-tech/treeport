@@ -99,6 +99,18 @@ export const productEventSchema = z.discriminatedUnion('type', [
     z.strictObject({ worktreeId: identifierSchema, panelId: identifierSchema })
   ),
   eventEnvelope(
+    'panel.updated',
+    z.strictObject({ worktreeId: identifierSchema, panelId: identifierSchema })
+  ),
+  eventEnvelope(
+    'panel.open_requested',
+    z.strictObject({
+      worktreeId: identifierSchema,
+      panelId: identifierSchema,
+      sourceTerminalId: identifierSchema.nullable()
+    })
+  ),
+  eventEnvelope(
     'panel.removed',
     z.strictObject({ worktreeId: identifierSchema, panelId: identifierSchema })
   ),
@@ -119,6 +131,10 @@ const webPanelSnapshotSchema = z.strictObject({
   worktreeId: z.string().min(1),
   definitionId: z.string().min(1),
   title: z.string().min(1),
+  launch: z.strictObject({
+    input: z.record(z.string(), z.json()).nullable(),
+    cwd: z.string().nullable()
+  }),
   createdAt: z.string(),
   updatedAt: z.string()
 })

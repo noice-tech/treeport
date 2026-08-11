@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { io, type Socket } from 'socket.io-client'
 import {
@@ -9,6 +9,7 @@ import {
 import type {
   EventsClientToServerEvents,
   EventsServerToClientEvents,
+  ProductEventDataMap,
   ProjectRecord
 } from '@treeport/shared'
 import { createInvalidationCoalescer } from './metadata-sync'
@@ -16,9 +17,14 @@ import { projectsQueryKey, recentProjectsQueryKey } from './project-metadata'
 import { terminalSessions } from './terminal-session'
 
 export function useProjectEventsBridge(
-  projects: ProjectRecord[] | undefined
+  projects: ProjectRecord[] | undefined,
+  onPanelOpenRequested?: (
+    request: ProductEventDataMap['panel.open_requested']
+  ) => void
 ): boolean {
   const queryClient = useQueryClient()
+  const onPanelOpenRequestedRef = useRef(onPanelOpenRequested)
+  onPanelOpenRequestedRef.current = onPanelOpenRequested
   const [eventsDisconnected, setEventsDisconnected] = useState(false)
 
   useEffect(() => {
@@ -96,10 +102,18 @@ export function useProjectEventsBridge(
         return
       }
 
-      if (
-        event.type === 'project.updated' ||
-        event.type === 'project.removed'
-      ) {
+      if (event.type === 'panel.open_requested') {
+        refresh()
+        onPanelOpenRequestedRef.current?.(event.data)
+        return
+      }
+
+      if (event.type === 'project.updated') {
+        refreshProjects()
+        return
+      }
+
+      if (event.type === 'project.removed') {
         refreshProjects()
         return
       }

@@ -43,6 +43,13 @@
       "when": 1786000000000,
       "tag": "0005_git_authoritative_worktrees",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1786283200364,
+      "tag": "0006_web_panel_launch_input",
+      "breakpoints": true
     }
   ]
 }

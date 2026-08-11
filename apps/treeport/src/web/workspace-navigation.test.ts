@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { ProjectRecord } from '@treeport/shared'
 import {
   deepestProjectTarget,
+  panelOpenRequestMatchesTerminal,
   panelTarget,
   resolveWorkspaceRoute,
   targetForProject,
@@ -56,6 +57,17 @@ function projectGraph(): ProjectRecord[] {
 }
 
 describe('workspace route resolution', () => {
+  it('targets only clients that currently show the source terminal', () => {
+    expect(panelOpenRequestMatchesTerminal('terminal-a', 'terminal-a')).toBe(
+      true
+    )
+    expect(panelOpenRequestMatchesTerminal('terminal-a', 'terminal-b')).toBe(
+      false
+    )
+    expect(panelOpenRequestMatchesTerminal(null, 'terminal-a')).toBe(false)
+    expect(panelOpenRequestMatchesTerminal(null, null)).toBe(false)
+  })
+
   it('keeps a valid hierarchy and resolves nonempty parent routes to their deepest child', () => {
     const projects = projectGraph()
     const terminal = terminalTarget('project-a', 'worktree-a', 'terminal-b')

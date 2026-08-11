@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useLocation } from '@tanstack/react-router'
 import type {
+  ProductEventDataMap,
   ProjectRecord,
   RemovePreview,
   TerminalRecord,
@@ -51,6 +52,7 @@ import {
 import {
   LAST_PROJECT_TERMINAL_STORAGE_PREFIX,
   LAST_WORKSPACE_ROUTE_STORAGE_KEY,
+  panelOpenRequestMatchesTerminal,
   resolveWorkspaceRoute,
   targetForProject,
   targetForTerminal,
@@ -245,7 +247,48 @@ function WorkspaceApp() {
       }
     )
   }
-  const eventsDisconnected = useProjectEventsBridge(projectsQuery.data)
+  const navigatePanelOpenRequest = useCallback(
+    (request: ProductEventDataMap['panel.open_requested']) => {
+      if (
+        !panelOpenRequestMatchesTerminal(
+          request.sourceTerminalId,
+          selectedTerminalId
+        )
+      ) {
+        return
+      }
+
+      void queryClient
+        .invalidateQueries({
+          queryKey: projectsQueryOptions.queryKey
+        })
+        .then(async () => {
+          const freshProjects =
+            queryClient.getQueryData<ProjectRecord[]>(
+              projectsQueryOptions.queryKey
+            ) ?? []
+          const panel = freshProjects
+            .flatMap((project) => project.worktrees)
+            .find((worktree) => worktree.id === request.worktreeId)
+            ?.panels.find(
+              (candidate): candidate is WebPanel =>
+                candidate.kind === 'web' && candidate.id === request.panelId
+            )
+          const target = panel ? targetForWebPanel(freshProjects, panel) : null
+          if (target) {
+            await navigateToWorkspace(target)
+          }
+        })
+        .catch((error: unknown) => {
+          notifyError(error, { operation: 'open web panel' })
+        })
+    },
+    [navigateToWorkspace, queryClient, selectedTerminalId]
+  )
+  const eventsDisconnected = useProjectEventsBridge(
+    projectsQuery.data,
+    navigatePanelOpenRequest
+  )
   const [showSyncDegraded, setShowSyncDegraded] = useState(false)
   const dialogTriggerRef = useRef<HTMLElement | null>(null)
   const openDialog = (
