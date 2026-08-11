@@ -513,6 +513,8 @@ describe('TreeportService with injected command adapters', () => {
     expect(initialLaunchSpec.setupTasks).toBeUndefined()
     expect(initialLaunchSpec.env).toMatchObject({
       TREEPORT_API_URL: config.apiUrl,
+      TREEPORT_MANAGED_API_URL: config.apiUrl,
+      TREEPORT_DAEMON_RECORD: path.join(config.runtimeDir, 'daemon.json'),
       TREEPORT_DAEMON_LIFECYCLE: 'external',
       TREEPORT_PROJECT_ID: project.id,
       TREEPORT_WORKTREE_ID: result.worktree.id,
