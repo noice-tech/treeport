@@ -584,12 +584,6 @@ export const openWebPanelSchema = createWebPanelSchema.extend({
   sourceTerminalId: z.string().min(1).max(128).nullable().optional()
 })
 
-export const updateWebPanelLaunchSchema = z.strictObject({
-  input: webPanelInputSchema.nullable(),
-  launchCwd: z.string().max(4096).nullable(),
-  expectedUpdatedAt: z.string().datetime()
-})
-
 export const webPanelStorageKeySchema = z.string().min(1).max(128)
 
 export const getWebPanelStorageSchema = z.object({

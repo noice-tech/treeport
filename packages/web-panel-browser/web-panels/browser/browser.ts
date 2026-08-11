@@ -190,7 +190,7 @@ void Promise.all([
     })
     external.addEventListener('click', () => {
       if (currentUrl) {
-        void treeport.panel.openExternal(currentUrl.href)
+        window.open(currentUrl.href, '_blank', 'noopener,noreferrer')
       }
     })
   },

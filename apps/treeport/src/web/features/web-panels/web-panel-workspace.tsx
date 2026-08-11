@@ -1,11 +1,9 @@
 import { Activity, useEffect, useRef, useState } from 'react'
-import { useQueryClient } from '@tanstack/react-query'
 import type { WebPanel } from '@treeport/shared'
 import { parseResponse } from 'hono/client'
 import { rpc } from '../../api'
 import { errorMessage } from '../../error-message'
 import { cn } from '../../lib/utils'
-import { projectsQueryOptions } from '../../project-metadata'
 
 export function WebPanelWorkspace({
   panel,
@@ -22,7 +20,6 @@ export function WebPanelWorkspace({
   onTitleChange: (panelId: string, title: string | null) => void
   onSelectWorkspace: (index: number) => void
 }) {
-  const queryClient = useQueryClient()
   const frameRef = useRef<HTMLIFrameElement>(null)
   const panelWindowRef = useRef<Window | null>(null)
   const panelRevision = `${panel.id}:${reloadRevision}`
@@ -147,43 +144,6 @@ export function WebPanelWorkspace({
             json: { key: event.data.key }
           })
         ).then(() => undefined)
-      } else if (
-        method === 'panel.launch.update' &&
-        event.data.launch !== null &&
-        typeof event.data.launch === 'object' &&
-        !Array.isArray(event.data.launch)
-      ) {
-        request = parseResponse(
-          rpc.api.panels[':panelId'].launch.$put({
-            param: { panelId: panel.id },
-            json: {
-              input: event.data.launch.input ?? null,
-              launchCwd: event.data.launch.cwd ?? null,
-              expectedUpdatedAt: panel.updatedAt
-            }
-          })
-        ).then(() => {
-          void queryClient.invalidateQueries({
-            queryKey: projectsQueryOptions.queryKey
-          })
-        })
-      } else if (
-        method === 'panel.external.open' &&
-        typeof event.data.url === 'string' &&
-        event.data.url.length <= 4_096
-      ) {
-        const url = URL.canParse(event.data.url)
-          ? new URL(event.data.url)
-          : null
-        request =
-          url &&
-          (url.protocol === 'http:' || url.protocol === 'https:') &&
-          url.username === '' &&
-          url.password === ''
-            ? Promise.resolve(
-                window.open(url.href, '_blank', 'noopener,noreferrer')
-              ).then(() => undefined)
-            : Promise.reject(new Error('External URL must use HTTP or HTTPS'))
       } else {
         request = Promise.reject(new Error('Unsupported Treeport SDK method'))
       }
@@ -208,7 +168,7 @@ export function WebPanelWorkspace({
     }
     window.addEventListener('message', receive)
     return () => window.removeEventListener('message', receive)
-  }, [onSelectWorkspace, onTitleChange, panel.id, panel.updatedAt, queryClient])
+  }, [onSelectWorkspace, onTitleChange, panel.id])
 
   return (
     <Activity mode={active ? 'visible' : 'hidden'}>

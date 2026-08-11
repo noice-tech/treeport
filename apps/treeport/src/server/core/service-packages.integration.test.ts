@@ -237,23 +237,6 @@ describe('TreeportService with injected command adapters', () => {
     ).rejects.toMatchObject({ code: 'INVALID_ASSET_PATH' })
     expect(await persistedWebPanel(database, panel.id)).toEqual(panel)
 
-    const launchUpdated = await service.updateWebPanelLaunch(
-      panel.id,
-      { input: { path: 'output/preview.mp4' }, cwd: '.' },
-      panel.updatedAt
-    )
-    expect(launchUpdated).toMatchObject({
-      id: panel.id,
-      launch: { input: { path: 'output/preview.mp4' }, cwd: '.' }
-    })
-    await expect(
-      service.updateWebPanelLaunch(
-        panel.id,
-        { input: null, cwd: null },
-        panel.updatedAt
-      )
-    ).rejects.toMatchObject({ code: 'WEB_PANEL_CHANGED' })
-
     await expect(
       service.createWebPanel(worktree.id, 'project:review', {
         input: { body: 'x'.repeat(65_537) },

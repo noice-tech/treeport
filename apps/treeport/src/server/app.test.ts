@@ -200,21 +200,6 @@ function fixture(webDist = '/missing') {
       created: false,
       reused: true
     })),
-    updateWebPanelLaunch: vi.fn(
-      async (
-        panelId: string,
-        launch: { input: unknown; cwd: string | null }
-      ) => ({
-        id: panelId,
-        kind: 'web',
-        worktreeId: 'wt_1',
-        definitionId: 'project:review',
-        title: 'Review',
-        launch,
-        createdAt: '2026-01-01',
-        updatedAt: '2026-01-02'
-      })
-    ),
     deleteWebPanel: vi.fn(async () => undefined),
     getWebPanelContext: vi.fn(async () => ({
       apiVersion: 1,
@@ -357,25 +342,6 @@ describe('HTTP API validation', () => {
       },
       false,
       'term_1'
-    )
-
-    const updated = await app.request('/api/panels/panel_review/launch', {
-      method: 'PUT',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        input: { path: 'output/next.mp4' },
-        launchCwd: 'packages/preview',
-        expectedUpdatedAt: '2026-01-01T00:00:00.000Z'
-      })
-    })
-    expect(updated.status).toBe(200)
-    expect(service.updateWebPanelLaunch).toHaveBeenCalledWith(
-      'panel_review',
-      {
-        input: { path: 'output/next.mp4' },
-        cwd: 'packages/preview'
-      },
-      '2026-01-01T00:00:00.000Z'
     )
 
     expect((await app.request('/api/panels/panel_review/context')).status).toBe(

@@ -45,7 +45,11 @@ These limits reduce automatic package execution, but selected terminal commands 
 
 A hosted panel can request the `same-origin` permission. This permission weakens the iframe boundary. Panel code can potentially read or change the Treeport page, use Treeport browser storage, call same-origin routes, make direct HTTP or HTTPS requests, and remove its sandbox attribute. Install and open such a panel only when you trust its source and runtime dependencies. Panels without this permission keep an opaque origin.
 
-The Browser package can load an arbitrary HTTP or HTTPS site in a nested iframe. The package relays only the target's client-local title message. The target cannot use context, diff, storage, launch, external URL, shortcut, or workspace navigation methods. Browser iframe restrictions remain in effect, and Treeport does not bypass a target's framing policy.
+:::caution[TODO: confirm panel permissions]
+Treeport does not yet ask for confirmation before it loads a panel that declares permissions. Treeport must require explicit confirmation once, show the panel and its permissions, and ask again if the permissions change. This work is tracked in [issue #259](https://github.com/noice-tech/treeport/issues/259).
+:::
+
+The Browser package can load an arbitrary HTTP or HTTPS site in a nested iframe. The package relays only the target's client-local title message. The target cannot use context, diff, storage, shortcuts, or workspace navigation methods. Browser iframe restrictions remain in effect, and Treeport does not bypass a target's framing policy.
 
 ## Operational guidance
 

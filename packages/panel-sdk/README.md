@@ -28,8 +28,6 @@ const stopFind = treeport.shortcuts.onFind(() => {
 
 `treeport.panel.setTitle(title)` sets a runtime title in the current Treeport client. Pass `null` to restore the configured title. Treeport does not persist or synchronize runtime titles.
 
-`treeport.panel.updateLaunch(launch)` replaces the persistent launch data without reloading open panel frames. An explicit `treeport web-panel open` request reloads a reused panel. `treeport.panel.openExternal(url)` opens an HTTP or HTTPS URL outside Treeport.
-
 `treeport.context()` includes the stored JSON launch input and worktree-relative launch directory.
 
 `treeport.shortcuts.onFind(handler)` delivers `Cmd/Ctrl+F` whether keyboard focus is inside the panel or elsewhere in the Treeport workspace. It returns an unsubscribe function. Panels own their find interface and behavior; Treeport only routes the generic shortcut.

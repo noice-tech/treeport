@@ -35,8 +35,7 @@ import {
   terminalCaptureQuerySchema,
   updateProjectSchema,
   updateTerminalPresetSchema,
-  updateTerminalSchema,
-  updateWebPanelLaunchSchema
+  updateTerminalSchema
 } from '@treeport/shared'
 import type { OperationKind } from '@treeport/shared'
 import type { AppConfig, TmuxAdapter, TreeportService } from './core/index'
@@ -536,21 +535,6 @@ export function createApp({
             body.sourceTerminalId ?? null
           )
         )
-      }
-    )
-
-    .put(
-      '/api/panels/:panelId/launch',
-      jsonInput(updateWebPanelLaunchSchema),
-      async (context) => {
-        const body = context.req.valid('json')
-        return context.json({
-          panel: await service.updateWebPanelLaunch(
-            context.req.param('panelId'),
-            { input: body.input, cwd: body.launchCwd },
-            body.expectedUpdatedAt
-          )
-        })
       }
     )
 

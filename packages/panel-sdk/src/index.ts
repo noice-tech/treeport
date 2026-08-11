@@ -81,10 +81,6 @@ export interface WebPanelStorage {
 export interface WebPanelControls {
   /** Set a runtime title. Pass null to restore the configured title. */
   setTitle(title: string | null): void
-  /** Replace the persistent launch data for this panel instance. */
-  updateLaunch(launch: WebPanelLaunch): Promise<void>
-  /** Open an absolute HTTP or HTTPS URL in the user's browser. */
-  openExternal(url: string): Promise<void>
 }
 
 /** Keyboard shortcuts Treeport can route to an active web panel. */
@@ -202,19 +198,10 @@ addEventListener(
 )
 
 function call<Result>(
-  method:
-    | 'context'
-    | 'diff'
-    | 'storage.get'
-    | 'storage.set'
-    | 'storage.delete'
-    | 'panel.launch.update'
-    | 'panel.external.open',
+  method: 'context' | 'diff' | 'storage.get' | 'storage.set' | 'storage.delete',
   params?: {
     key?: string
     value?: JsonValue
-    launch?: WebPanelLaunch
-    url?: string
   }
 ): Promise<Result> {
   return new Promise((resolve, reject) => {
@@ -243,10 +230,7 @@ export const treeport: TreeportPanelSdk = Object.freeze({
         { source: 'treeport-panel-v1', method: 'panel.title.set', title },
         '*'
       )
-    },
-    updateLaunch: (launch: WebPanelLaunch) =>
-      call<void>('panel.launch.update', { launch }),
-    openExternal: (url: string) => call<void>('panel.external.open', { url })
+    }
   }),
   context: () => call<WebPanelContext>('context'),
   diff: () => call<GitDiff>('diff'),
