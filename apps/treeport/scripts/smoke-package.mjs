@@ -55,7 +55,9 @@ const environment = {
   TREEPORT_DAEMON_LIFECYCLE: 'treeport',
   TREEPORT_PROJECT_ID: '',
   TREEPORT_WORKTREE_ID: '',
-  TREEPORT_TERMINAL_ID: ''
+  TREEPORT_TERMINAL_ID: '',
+  TREEPORT_WEB_DEVELOPMENT: '',
+  TREEPORT_WEB_DIST: ''
 }
 
 try {
@@ -253,14 +255,67 @@ try {
     throw new Error('Packaged daemon did not discover the source panel')
   }
 
-  const createdPanel = await fetch(
-    `http://127.0.0.1:${port}/api/worktrees/${worktree.id}/panels`,
-    {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ definitionId: panelDefinition.id })
-    }
-  ).then((response) => response.json())
+  const createdPanel = JSON.parse(
+    (
+      await execute(
+        treeport,
+        [
+          'web-panel',
+          'open',
+          panelDefinition.id,
+          '--worktree',
+          worktree.id,
+          '--input',
+          '{"mode":"smoke"}',
+          '--json'
+        ],
+        { cwd: repository, env: environment }
+      )
+    ).stdout
+  )
+  const reusedPanel = JSON.parse(
+    (
+      await execute(
+        treeport,
+        [
+          'web-panel',
+          'open',
+          panelDefinition.id,
+          '--worktree',
+          worktree.id,
+          '--input',
+          '{"mode":"smoke"}',
+          '--json'
+        ],
+        { cwd: repository, env: environment }
+      )
+    ).stdout
+  )
+  const separatePanel = JSON.parse(
+    (
+      await execute(
+        treeport,
+        [
+          'web-panel',
+          'open',
+          panelDefinition.id,
+          '--worktree',
+          worktree.id,
+          '--new',
+          '--json'
+        ],
+        { cwd: repository, env: environment }
+      )
+    ).stdout
+  )
+  if (
+    !reusedPanel.reused ||
+    reusedPanel.panel.id !== createdPanel.panel.id ||
+    separatePanel.panel.id === createdPanel.panel.id
+  ) {
+    throw new Error('Packaged web-panel CLI did not preserve reuse behavior')
+  }
+
   const transformedPanel = await fetch(
     `http://127.0.0.1:${port}/api/web-panels/${createdPanel.panel.id}/assets/`
   ).then((response) => response.text())

@@ -50,6 +50,15 @@ Open **New panel** from a worktree or press `Cmd/Ctrl+Shift+T` to choose a disco
 
 Definitions are separate from persistent panel instances. Package definition identities exclude npm versions, so package updates preserve existing instances and storage. Removing a package leaves those instances unavailable but intact; reinstalling the same definition revives them.
 
+The CLI can open or reuse an instance and provide one inline JSON object:
+
+```sh
+treeport web-panel open --worktree . review \
+  --input '{"path":"output/result.json"}'
+```
+
+The command accepts an exact definition ID or an unambiguous short name. It reuses the newest instance for the definition, replaces the stored launch input, and reloads the panel frame. Durable `treeport.storage` values remain unchanged. Use `--new` when the worktree needs another instance.
+
 ## Browser SDK
 
 Install the SDK as a development dependency for types and import it normally. Treeport's Vite profile resolves that import to the host's SDK, so no runtime dependency or import map is needed:
@@ -63,6 +72,7 @@ import { treeport } from '@treeport/panel-sdk'
 
 const context = await treeport.context()
 const diff = await treeport.diff()
+const input = context.launch.input
 
 await treeport.storage.set('drafts', [{ file: 'src/app.ts', line: 12 }])
 const drafts = await treeport.storage.get('drafts')
@@ -72,6 +82,8 @@ const stopFind = treeport.shortcuts.onFind(() => {
 })
 ```
 
-`treeport.context()` returns the panel, project, and worktree identity. `treeport.diff()` returns merge-base metadata and a read-only unified diff. `treeport.shortcuts.onFind(handler)` routes `Cmd/Ctrl+F` to the panel and returns an unsubscribe function.
+`treeport.context()` returns the panel, project, worktree, and launch data. Launch input is a JSON object or `null`. Launch `cwd` is relative to the worktree root.
+
+`treeport.diff()` returns merge-base metadata and a read-only unified diff. `treeport.shortcuts.onFind(handler)` routes `Cmd/Ctrl+F` to the panel and returns an unsubscribe function.
 
 `treeport.storage` is durable JSON key-value storage scoped to the panel instance. It is deleted when the panel is closed, and Treeport asks for confirmation before closing a panel with stored data. Keys are limited to 128 characters, values to 64 KiB, and each panel to 256 values or 1 MiB total.

@@ -1,3 +1,21 @@
+export type JsonValue =
+  | null
+  | boolean
+  | number
+  | string
+  | JsonValue[]
+  | { [key: string]: JsonValue }
+
+/** Structured input stored with a web panel launch. */
+export type WebPanelInput = Record<string, JsonValue>
+
+/** Launch data for a persistent web panel instance. */
+export interface WebPanelLaunch {
+  input: WebPanelInput | null
+  /** Directory relative to the worktree root. */
+  cwd: string | null
+}
+
 /** A persistent web panel instance scoped to one worktree. */
 export interface WebPanel {
   id: string
@@ -5,6 +23,7 @@ export interface WebPanel {
   worktreeId: string
   definitionId: string
   title: string
+  launch: WebPanelLaunch
   /** ISO 8601 timestamp. */
   createdAt: string
   /** ISO 8601 timestamp. */
@@ -15,6 +34,7 @@ export interface WebPanel {
 export interface WebPanelContext {
   apiVersion: 1
   panel: WebPanel
+  launch: WebPanelLaunch
   project: {
     id: string
     name: string
@@ -41,14 +61,6 @@ export interface GitDiff {
   /** Unified diff text. */
   unified: string
 }
-
-export type JsonValue =
-  | null
-  | boolean
-  | number
-  | string
-  | JsonValue[]
-  | { [key: string]: JsonValue }
 
 /** Durable key-value storage scoped to one panel instance. */
 export interface WebPanelStorage {
@@ -176,7 +188,7 @@ addEventListener(
 
 function call<Result>(
   method: 'context' | 'diff' | 'storage.get' | 'storage.set' | 'storage.delete',
-  params?: { key: string; value?: JsonValue }
+  params?: { key?: string; value?: JsonValue }
 ): Promise<Result> {
   return new Promise((resolve, reject) => {
     const id = String(++serial)

@@ -92,6 +92,20 @@ By default, creation starts from the fetched remote default branch. `--from-curr
 
 Removal obtains a fresh safety preview. `--force` confirms reported warnings when cleanup is still eligible.
 
+## Web panels
+
+```sh
+treeport web-panel open <definition> \
+  --worktree <id-or-path-or-dot> \
+  [--input <json-object>] [--new] [--json]
+```
+
+`open` reuses the newest instance of the same definition by default. Use `--new` to create a separate instance. When it runs inside a managed terminal, clients that currently show that terminal select the resulting panel. Other clients keep their current selection.
+
+`--input` accepts one inline JSON object. Treeport stores this input with the panel. It also stores the current directory relative to the worktree. Do not put secrets in panel input. The first version does not read panel input from files or standard input.
+
+A definition can be an exact ID or an unambiguous short name.
+
 ## Terminals
 
 ```sh

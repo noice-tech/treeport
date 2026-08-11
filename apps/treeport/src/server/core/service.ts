@@ -2,9 +2,11 @@ import crypto from 'node:crypto'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import { WEB_PANEL_INPUT_MAX_BYTES } from '@treeport/shared'
 import type {
   DirectoryBrowseResponse,
   JsonValue,
+  OpenWebPanelResult,
   OperationRecord,
   PackageListing,
   PackageOperationResult,
@@ -22,6 +24,8 @@ import type {
   WebPanel,
   WebPanelContext,
   WebPanelDefinition,
+  WebPanelInput,
+  WebPanelLaunch,
   WorktreeRecord
 } from '@treeport/shared'
 import { and, asc, desc, eq, ne, or, sql } from 'drizzle-orm'
@@ -78,6 +82,27 @@ const id = (prefix: string): string =>
 const WEB_PANEL_STORAGE_MAX_ENTRIES = 256
 const WEB_PANEL_STORAGE_MAX_TOTAL_BYTES = 1024 * 1024
 const WEB_PANEL_STORAGE_MAX_VALUE_BYTES = 64 * 1024
+
+function mapWebPanel(row: typeof webPanels.$inferSelect): WebPanel {
+  const input: unknown = JSON.parse(row.inputJson)
+  if (input !== null && (typeof input !== 'object' || Array.isArray(input))) {
+    throw new Error(`Web panel ${row.id} has invalid stored launch input`)
+  }
+
+  return {
+    id: row.id,
+    kind: 'web',
+    worktreeId: row.worktreeId,
+    definitionId: row.definitionId,
+    title: row.title,
+    launch: {
+      input: input as WebPanelInput | null,
+      cwd: row.launchCwd
+    },
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt
+  }
+}
 
 function gitMarkerTarget(checkoutPath: string, marker: string): string | null {
   const match = /^gitdir: (.+)$/u.exec(marker.trim())
@@ -611,10 +636,7 @@ export class TreeportService {
                 createdAt: terminal.createdAt,
                 updatedAt: terminal.updatedAt
               })),
-              ...storedWebPanels.map((panel) => ({
-                ...panel,
-                kind: 'web' as const
-              }))
+              ...storedWebPanels.map(mapWebPanel)
             ].sort(
               (left, right) =>
                 left.createdAt.localeCompare(right.createdAt) ||
@@ -1170,11 +1192,60 @@ export class TreeportService {
     )
   }
 
+  private async normalizeWebPanelLaunch(
+    worktree: WorktreeRecord,
+    launch: WebPanelLaunch
+  ): Promise<{ launch: WebPanelLaunch; inputJson: string }> {
+    const inputJson = JSON.stringify(launch.input)
+    if (Buffer.byteLength(inputJson) > WEB_PANEL_INPUT_MAX_BYTES) {
+      throw new DomainError(
+        'WEB_PANEL_INPUT_TOO_LARGE',
+        'Web panel input is limited to 64 KiB',
+        413
+      )
+    }
+
+    if (launch.cwd === null) {
+      return { launch: { input: launch.input, cwd: null }, inputJson }
+    }
+
+    const [worktreeRoot, requestedCwd] = await Promise.all([
+      fs.realpath(worktree.path),
+      fs.realpath(path.resolve(worktree.path, launch.cwd)).catch(() => null)
+    ])
+    if (!requestedCwd || !(await fs.stat(requestedCwd)).isDirectory()) {
+      throw new DomainError(
+        'INVALID_WEB_PANEL_LAUNCH_CWD',
+        'Web panel launch directory does not exist',
+        400
+      )
+    }
+
+    const relativeCwd = path.relative(worktreeRoot, requestedCwd)
+    if (
+      relativeCwd === '..' ||
+      relativeCwd.startsWith(`..${path.sep}`) ||
+      path.isAbsolute(relativeCwd)
+    ) {
+      throw new DomainError(
+        'INVALID_WEB_PANEL_LAUNCH_CWD',
+        'Web panel launch directory must be inside the worktree',
+        400
+      )
+    }
+
+    return {
+      launch: { input: launch.input, cwd: relativeCwd || '.' },
+      inputJson
+    }
+  }
+
   async createWebPanel(
     worktreeId: string,
-    definitionId: string
+    definitionId: string,
+    launch: WebPanelLaunch = { input: null, cwd: null }
   ): Promise<WebPanel> {
-    await this.requireAvailableWorktree(worktreeId)
+    const worktree = await this.requireAvailableWorktree(worktreeId)
     const definition = (
       await this.effectiveWebPanelDefinitions(worktreeId)
     ).find((candidate) => candidate.id === definitionId)
@@ -1186,6 +1257,7 @@ export class TreeportService {
       )
     }
 
+    const normalized = await this.normalizeWebPanelLaunch(worktree, launch)
     const timestamp = now()
     const panel: WebPanel = {
       id: id('panel'),
@@ -1193,6 +1265,7 @@ export class TreeportService {
       worktreeId,
       definitionId,
       title: definition.title,
+      launch: normalized.launch,
       createdAt: timestamp,
       updatedAt: timestamp
     }
@@ -1201,12 +1274,96 @@ export class TreeportService {
       worktreeId: panel.worktreeId,
       definitionId: panel.definitionId,
       title: panel.title,
+      inputJson: normalized.inputJson,
+      launchCwd: panel.launch.cwd,
       createdAt: panel.createdAt,
       updatedAt: panel.updatedAt
     })
     this.invalidateProjectsSnapshot()
     this.events.publish('panel.created', { worktreeId, panelId: panel.id })
     return panel
+  }
+
+  async openWebPanel(
+    worktreeId: string,
+    definitionId: string,
+    launch: WebPanelLaunch = { input: null, cwd: null },
+    newInstance = false,
+    sourceTerminalId: string | null = null
+  ): Promise<OpenWebPanelResult> {
+    const worktree = await this.requireAvailableWorktree(worktreeId)
+    const definition = (
+      await this.effectiveWebPanelDefinitions(worktreeId)
+    ).find((candidate) => candidate.id === definitionId)
+    if (!definition) {
+      throw new DomainError(
+        'WEB_PANEL_DEFINITION_NOT_FOUND',
+        'Web panel definition not found',
+        404
+      )
+    }
+
+    const finish = (result: OpenWebPanelResult): OpenWebPanelResult => {
+      this.events.publish('panel.open_requested', {
+        worktreeId,
+        panelId: result.panel.id,
+        sourceTerminalId
+      })
+      return result
+    }
+
+    if (newInstance) {
+      return finish({
+        panel: await this.createWebPanel(worktreeId, definitionId, launch),
+        created: true,
+        reused: false
+      })
+    }
+
+    const [existing] = await this.deps.database.db
+      .select()
+      .from(webPanels)
+      .where(
+        and(
+          eq(webPanels.worktreeId, worktreeId),
+          eq(webPanels.definitionId, definitionId)
+        )
+      )
+      .orderBy(desc(webPanels.createdAt), desc(webPanels.id))
+      .limit(1)
+    if (!existing) {
+      return finish({
+        panel: await this.createWebPanel(worktreeId, definitionId, launch),
+        created: true,
+        reused: false
+      })
+    }
+
+    const normalized = await this.normalizeWebPanelLaunch(worktree, launch)
+    const observedAt = now()
+    const updatedAt =
+      observedAt > existing.updatedAt
+        ? observedAt
+        : new Date(Date.parse(existing.updatedAt) + 1).toISOString()
+    await this.deps.database.db
+      .update(webPanels)
+      .set({
+        title: definition.title,
+        inputJson: normalized.inputJson,
+        launchCwd: normalized.launch.cwd,
+        updatedAt
+      })
+      .where(eq(webPanels.id, existing.id))
+    const panel = mapWebPanel({
+      ...existing,
+      title: definition.title,
+      inputJson: normalized.inputJson,
+      launchCwd: normalized.launch.cwd,
+      updatedAt
+    })
+    this.invalidateProjectsSnapshot()
+    this.events.publish('panel.updated', { worktreeId, panelId: panel.id })
+    return finish({ panel, created: false, reused: true })
   }
 
   async deleteWebPanel(
@@ -1256,12 +1413,13 @@ export class TreeportService {
       throw new DomainError('PANEL_NOT_FOUND', 'Panel not found', 404)
     }
 
-    const panel: WebPanel = { ...panelRow, kind: 'web' }
+    const panel = mapWebPanel(panelRow)
     const worktree = await this.getWorktree(panel.worktreeId)
     const project = await this.getProject(worktree.projectId)
     return {
       apiVersion: 1,
       panel,
+      launch: panel.launch,
       project: {
         id: project.id,
         name: project.name,
@@ -1403,7 +1561,7 @@ export class TreeportService {
       .select()
       .from(webPanels)
       .orderBy(asc(webPanels.createdAt), asc(webPanels.id))
-    return rows.map((panel) => ({ ...panel, kind: 'web' as const }))
+    return rows.map(mapWebPanel)
   }
 
   async getWorktree(worktreeId: string): Promise<WorktreeRecord> {

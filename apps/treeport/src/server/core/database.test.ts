@@ -49,7 +49,7 @@ describe('SQLite migration and catalog ordering', () => {
       await database.db.get<{ count: number }>(
         sql`SELECT count(*) AS count FROM __drizzle_migrations`
       )
-    ).toEqual({ count: 5 })
+    ).toEqual({ count: 6 })
     expect(
       await database.db.get<{ count: number }>(sql`
         SELECT count(*) AS count FROM sqlite_master WHERE name='terminals'
@@ -304,6 +304,8 @@ describe('SQLite migration and catalog ordering', () => {
         CREATE UNIQUE INDEX projects_fs_identity_idx
         ON projects(repository_device,repository_inode)
       `)
+      await tx.run(sql`ALTER TABLE web_panels DROP COLUMN input_json`)
+      await tx.run(sql`ALTER TABLE web_panels DROP COLUMN launch_cwd`)
       await tx.run(sql`DROP TABLE __drizzle_migrations`)
       await tx.run(sql`
         CREATE TABLE schema_migrations (
@@ -353,7 +355,7 @@ describe('SQLite migration and catalog ordering', () => {
       await reopened.db.get<{ count: number }>(
         sql`SELECT count(*) AS count FROM __drizzle_migrations`
       )
-    ).toEqual({ count: 5 })
+    ).toEqual({ count: 6 })
 
     const backupDirectory = path.join(directory, 'database-backups')
     const [backupName] = await fs.readdir(backupDirectory)
@@ -425,6 +427,8 @@ describe('SQLite migration and catalog ordering', () => {
         CREATE UNIQUE INDEX projects_fs_identity_idx
         ON projects(repository_device,repository_inode)
       `)
+      await tx.run(sql`ALTER TABLE web_panels DROP COLUMN input_json`)
+      await tx.run(sql`ALTER TABLE web_panels DROP COLUMN launch_cwd`)
       await tx.run(sql`DROP TABLE __drizzle_migrations`)
       await tx.run(sql`
         CREATE TABLE schema_migrations (
@@ -507,6 +511,8 @@ describe('SQLite migration and catalog ordering', () => {
         CREATE UNIQUE INDEX projects_fs_identity_idx
         ON projects(repository_device,repository_inode)
       `)
+      await tx.run(sql`ALTER TABLE web_panels DROP COLUMN input_json`)
+      await tx.run(sql`ALTER TABLE web_panels DROP COLUMN launch_cwd`)
       await tx.run(sql`DROP TABLE __drizzle_migrations`)
       await tx.run(sql`
         CREATE TABLE schema_migrations (
@@ -573,6 +579,6 @@ describe('SQLite migration and catalog ordering', () => {
       await recovered.db.get<{ count: number }>(
         sql`SELECT count(*) AS count FROM __drizzle_migrations`
       )
-    ).toEqual({ count: 5 })
+    ).toEqual({ count: 6 })
   })
 })

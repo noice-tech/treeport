@@ -9,12 +9,14 @@ import {
   SOCKET_IO_PATH,
   TERMINAL_CAPTURE_DEFAULT_LINES,
   TERMINAL_CAPTURE_MAX_LINES,
+  WEB_PANEL_INPUT_MAX_BYTES,
   type ApiErrorBody,
   type EventsClientToServerEvents,
   type EventsServerToClientEvents,
   type PackageListing,
   type PackageOperationResult,
   type PackageResourceDiagnostic,
+  type OpenWebPanelResult,
   type OperationRecord,
   type ProjectRecord,
   type RemovePreview,
@@ -22,6 +24,8 @@ import {
   type TerminalCapture,
   type TerminalRecord,
   type TerminalRuntimeMetadata,
+  type WebPanelDefinition,
+  type WebPanelInput,
   type WorktreeRecord
 } from '@treeport/shared'
 import { parseDurationMs } from '../duration.js'
@@ -370,6 +374,95 @@ async function resolveWorktree(identifier: string): Promise<WorktreeRecord> {
   }
 
   return match
+}
+
+function parseWebPanelInput(value: string | undefined): WebPanelInput | null {
+  if (value === undefined) {
+    return null
+  }
+
+  if (Buffer.byteLength(value) > WEB_PANEL_INPUT_MAX_BYTES) {
+    throw new CliError('Web panel input is limited to 64 KiB', 2)
+  }
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(value)
+  } catch (error) {
+    throw new CliError(
+      `--input must contain valid JSON: ${error instanceof Error ? error.message : String(error)}`,
+      2
+    )
+  }
+
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new CliError('--input must contain a JSON object', 2)
+  }
+
+  return parsed as WebPanelInput
+}
+
+async function webPanelDefinition(
+  worktreeId: string,
+  identifier: string
+): Promise<WebPanelDefinition> {
+  const definitions = (
+    await request<{ definitions: WebPanelDefinition[] }>(
+      `/api/worktrees/${encodeURIComponent(worktreeId)}/web-panel-definitions`
+    )
+  ).definitions
+  const exact = definitions.find((definition) => definition.id === identifier)
+  if (exact) {
+    return exact
+  }
+
+  const matches = definitions.filter(
+    (definition) =>
+      decodeURIComponent(definition.id.split(':').at(-1) ?? '') === identifier
+  )
+  if (matches.length === 1) {
+    return matches[0]!
+  }
+
+  if (matches.length > 1) {
+    throw new CliError(
+      `Web panel name ${identifier} is ambiguous: ${matches.map((match) => match.id).join(', ')}`,
+      5,
+      'WEB_PANEL_DEFINITION_AMBIGUOUS',
+      { definitionIds: matches.map((match) => match.id) }
+    )
+  }
+
+  throw new CliError(
+    `Web panel ${identifier} is not available in this worktree`,
+    5,
+    'WEB_PANEL_DEFINITION_NOT_FOUND'
+  )
+}
+
+async function webPanelLaunchCwd(worktree: WorktreeRecord): Promise<string> {
+  const [cwd, worktreeRoot] = await Promise.all([
+    canonical(workingDirectory),
+    canonical(worktree.path)
+  ])
+  if (!pathContains(cwd, worktreeRoot)) {
+    throw new CliError(
+      `The current directory is outside worktree ${worktree.name}`,
+      5,
+      'INVALID_WEB_PANEL_LAUNCH_CWD',
+      { cwd, worktreeId: worktree.id, worktreePath: worktree.path }
+    )
+  }
+
+  return path.relative(worktreeRoot, cwd) || '.'
+}
+
+function webPanelUrl(worktree: WorktreeRecord, panelId: string): string {
+  const target = new URL(apiUrl)
+  target.pathname = `/projects/${encodeURIComponent(worktree.projectId)}/worktrees/${encodeURIComponent(worktree.id)}/panels/${encodeURIComponent(panelId)}`
+  target.search = ''
+  target.hash = ''
+  return target.href
 }
 
 type WaitCondition = 'idle' | 'working' | 'bell' | 'exit'
@@ -1502,6 +1595,53 @@ async function main(args: string[]): Promise<void> {
     print(result.operation, () => `Remove accepted: ${result.operation.id}`)
   })
 
+  const webPanelCommand = program
+    .command('web-panel')
+    .description('Open persistent web panels')
+  webPanelCommand.action(() => {
+    throw new CliError(webPanelCommand.helpInformation(), 2)
+  })
+
+  const webPanelOpenCommand = webPanelCommand
+    .command('open')
+    .description('Create or reuse a web panel and request client navigation')
+    .argument('<definition>', 'definition ID or unique short name')
+    .requiredOption('--worktree <id-or-path-or-dot>', 'owning worktree')
+    .option('--input <json>', 'structured panel input as a JSON object')
+    .option('--new', 'create a separate panel instance')
+    .option('--json', 'emit machine-readable JSON')
+  webPanelOpenCommand.action(async (identifier: string) => {
+    const options = webPanelOpenCommand.opts<{
+      worktree: string
+      input?: string
+      new?: boolean
+    }>()
+    const worktree = await resolveWorktree(options.worktree)
+    const definition = await webPanelDefinition(worktree.id, identifier)
+    const result = await request<OpenWebPanelResult>(
+      `/api/worktrees/${encodeURIComponent(worktree.id)}/panels/open`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          definitionId: definition.id,
+          input: parseWebPanelInput(options.input),
+          launchCwd: await webPanelLaunchCwd(worktree),
+          newInstance: options.new ?? false,
+          sourceTerminalId: contextTerminalId ?? null
+        })
+      }
+    )
+    const output = {
+      ...result,
+      url: webPanelUrl(worktree, result.panel.id)
+    }
+    print(
+      output,
+      () =>
+        `${result.reused ? 'Reused' : 'Opened'} ${result.panel.title} (${result.panel.id})\n${output.url}`
+    )
+  })
+
   const terminalCommand = program
     .command('terminal')
     .description('Manage persistent worktree terminals')
@@ -1711,9 +1851,9 @@ export async function runCliApplication(
   const environment = options.environment ?? process.env
   configuredApiUrl = environment.TREEPORT_API_URL?.trim()
   apiUrl = (configuredApiUrl || (await resolveLocalApiUrl())).replace(/\/$/, '')
-  contextProjectId = environment.TREEPORT_PROJECT_ID?.trim()
-  contextWorktreeId = environment.TREEPORT_WORKTREE_ID?.trim()
-  contextTerminalId = environment.TREEPORT_TERMINAL_ID?.trim()
+  contextProjectId = environment.TREEPORT_PROJECT_ID?.trim() || undefined
+  contextWorktreeId = environment.TREEPORT_WORKTREE_ID?.trim() || undefined
+  contextTerminalId = environment.TREEPORT_TERMINAL_ID?.trim() || undefined
   configuredDaemonLifecycle = environment.TREEPORT_DAEMON_LIFECYCLE?.trim()
   jsonOutput = extractJsonOutput(options.args)
   workingDirectory = options.cwd ?? process.cwd()

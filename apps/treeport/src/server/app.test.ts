@@ -176,13 +176,32 @@ function fixture(webDist = '/missing') {
       worktreeId,
       definitionId: 'project:review',
       title: 'Review',
+      launch: { input: null, cwd: null },
       createdAt: '2026-01-01',
       updatedAt: '2026-01-01'
+    })),
+    openWebPanel: vi.fn(async (worktreeId: string) => ({
+      panel: {
+        id: 'panel_review',
+        kind: 'web',
+        worktreeId,
+        definitionId: 'project:review',
+        title: 'Review',
+        launch: {
+          input: { path: 'output/demo.mp4' },
+          cwd: 'packages/preview'
+        },
+        createdAt: '2026-01-01',
+        updatedAt: '2026-01-02'
+      },
+      created: false,
+      reused: true
     })),
     deleteWebPanel: vi.fn(async () => undefined),
     getWebPanelContext: vi.fn(async () => ({
       apiVersion: 1,
-      panel: { id: 'panel_review' }
+      panel: { id: 'panel_review' },
+      launch: { input: null, cwd: null }
     })),
     getWebPanelDiff: vi.fn(async () => ({
       baseRef: 'origin/trunk',
@@ -281,12 +300,44 @@ describe('HTTP API validation', () => {
     const created = await app.request('/api/worktrees/wt_1/panels', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ definitionId: 'project:review' })
+      body: JSON.stringify({
+        definitionId: 'project:review',
+        input: { path: 'output/demo.mp4' },
+        launchCwd: 'packages/preview'
+      })
     })
     expect(created.status).toBe(201)
     expect(service.createWebPanel).toHaveBeenCalledWith(
       'wt_1',
-      'project:review'
+      'project:review',
+      {
+        input: { path: 'output/demo.mp4' },
+        cwd: 'packages/preview'
+      }
+    )
+
+    const opened = await app.request('/api/worktrees/wt_1/panels/open', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        definitionId: 'project:review',
+        input: { path: 'output/demo.mp4' },
+        launchCwd: 'packages/preview',
+        newInstance: false,
+        sourceTerminalId: 'term_1'
+      })
+    })
+    expect(opened.status).toBe(200)
+    expect(await opened.json()).toMatchObject({ reused: true, created: false })
+    expect(service.openWebPanel).toHaveBeenCalledWith(
+      'wt_1',
+      'project:review',
+      {
+        input: { path: 'output/demo.mp4' },
+        cwd: 'packages/preview'
+      },
+      false,
+      'term_1'
     )
 
     expect((await app.request('/api/panels/panel_review/context')).status).toBe(

@@ -115,7 +115,23 @@ export async function persistedWebPanel(
     .from(webPanels)
     .where(eq(webPanels.id, panelId))
     .limit(1)
-  return row ? { ...row, kind: 'web' } : null
+  if (!row) {
+    return null
+  }
+
+  return {
+    id: row.id,
+    kind: 'web',
+    worktreeId: row.worktreeId,
+    definitionId: row.definitionId,
+    title: row.title,
+    launch: {
+      input: JSON.parse(row.inputJson) as WebPanel['launch']['input'],
+      cwd: row.launchCwd
+    },
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt
+  }
 }
 
 interface FakeWorktree {

@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import type { WebPanel } from '@treeport/panel-sdk'
+import type { WebPanel, WebPanelInput } from '@treeport/panel-sdk'
 import {
   terminalSizeSchema,
   type TerminalRuntimeMetadata
@@ -9,7 +9,9 @@ export type {
   GitDiff,
   JsonValue,
   WebPanel,
-  WebPanelContext
+  WebPanelContext,
+  WebPanelInput,
+  WebPanelLaunch
 } from '@treeport/panel-sdk'
 export * from './socket-protocol.js'
 export * from './terminal-protocol.js'
@@ -25,6 +27,7 @@ export const TERMINAL_ARGUMENT_MAX_LENGTH = 4_096
 export const TERMINAL_PRESET_ARGUMENT_MAX_COUNT = TERMINAL_ARGV_MAX_COUNT - 1
 export const TERMINAL_CAPTURE_DEFAULT_LINES = 200
 export const TERMINAL_CAPTURE_MAX_LINES = 5_000
+export const WEB_PANEL_INPUT_MAX_BYTES = 64 * 1024
 
 export type WorktreeKind = 'main' | 'linked'
 export type WorktreeStatus =
@@ -170,6 +173,12 @@ export interface WebPanelDefinition {
   id: string
   title: string
   source: WebPanelSource
+}
+
+export interface OpenWebPanelResult {
+  panel: WebPanel
+  created: boolean
+  reused: boolean
 }
 
 export interface WorktreeRecord {
@@ -529,8 +538,20 @@ export const updateTerminalSchema = z.object({
   name: terminalNameSchema
 })
 
+export const webPanelInputSchema: z.ZodType<WebPanelInput> = z.record(
+  z.string(),
+  z.json()
+)
+
 export const createWebPanelSchema = z.object({
-  definitionId: z.string().min(1).max(256)
+  definitionId: z.string().min(1).max(256),
+  input: webPanelInputSchema.nullable().optional(),
+  launchCwd: z.string().max(4096).nullable().optional()
+})
+
+export const openWebPanelSchema = createWebPanelSchema.extend({
+  newInstance: z.boolean().optional(),
+  sourceTerminalId: z.string().min(1).max(128).nullable().optional()
 })
 
 export const webPanelStorageKeySchema = z.string().min(1).max(128)
@@ -630,6 +651,12 @@ interface ProductEventPayloadMap {
   'terminal.metadata': TerminalRuntimeMetadata
   'terminal.controller_changed': { terminalId: string; controlled: boolean }
   'panel.created': { worktreeId: string; panelId: string }
+  'panel.updated': { worktreeId: string; panelId: string }
+  'panel.open_requested': {
+    worktreeId: string
+    panelId: string
+    sourceTerminalId: string | null
+  }
   'panel.removed': { worktreeId: string; panelId: string }
   'remove.started': {
     operationId: string
