@@ -43,7 +43,9 @@ Opening a web panel authorizes Treeport's fixed Vite profile to transform its HT
 
 These limits reduce automatic package execution, but selected terminal commands and opened hosted panels still act on a trusted registered worktree. Inspect panel source and its runtime dependencies as well as the package manifest.
 
-A Browser panel can load an arbitrary HTTP or HTTPS site. The target can set only its client-local panel title through the panel message bridge. It cannot use the context, diff, storage, shortcut, or workspace navigation methods. Browser iframe restrictions remain in effect, and Treeport does not bypass a target's framing policy.
+A hosted panel can request the `same-origin` permission. This permission weakens the iframe boundary. Panel code can potentially read or change the Treeport page, use Treeport browser storage, call same-origin routes, make direct HTTP or HTTPS requests, and remove its sandbox attribute. Install and open such a panel only when you trust its source and runtime dependencies. Panels without this permission keep an opaque origin.
+
+The Browser package can load an arbitrary HTTP or HTTPS site in a nested iframe. The package relays only the target's client-local title message. The target cannot use context, diff, storage, launch, external URL, shortcut, or workspace navigation methods. Browser iframe restrictions remain in effect, and Treeport does not bypass a target's framing policy.
 
 ## Operational guidance
 

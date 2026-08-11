@@ -84,11 +84,10 @@ const WEB_PANEL_STORAGE_MAX_ENTRIES = 256
 const WEB_PANEL_STORAGE_MAX_TOTAL_BYTES = 1024 * 1024
 const WEB_PANEL_STORAGE_MAX_VALUE_BYTES = 64 * 1024
 
-type EffectiveWebPanelDefinition = WebPanelDefinition & {
-  viteSource: ResolvedWebPanelSource | null
-}
-
-function mapWebPanel(row: typeof webPanels.$inferSelect): WebPanel {
+function mapWebPanel(
+  row: typeof webPanels.$inferSelect,
+  allowSameOrigin = false
+): WebPanel {
   const input: unknown = JSON.parse(row.inputJson)
   if (input !== null && (typeof input !== 'object' || Array.isArray(input))) {
     throw new Error(`Web panel ${row.id} has invalid stored launch input`)
@@ -99,12 +98,12 @@ function mapWebPanel(row: typeof webPanels.$inferSelect): WebPanel {
     kind: 'web',
     worktreeId: row.worktreeId,
     definitionId: row.definitionId,
-    renderer: row.renderer as WebPanel['renderer'],
     title: row.title,
     launch: {
       input: input as WebPanelInput | null,
       cwd: row.launchCwd
     },
+    sandbox: { allowSameOrigin },
     createdAt: row.createdAt,
     updatedAt: row.updatedAt
   }
@@ -643,6 +642,16 @@ export class TreeportService {
               .from(webPanels)
               .where(eq(webPanels.worktreeId, worktree.id))
               .orderBy(asc(webPanels.createdAt), asc(webPanels.id))
+            const definitions =
+              project.availability.state === 'available' &&
+              storedWebPanels.length > 0
+                ? await this.effectiveWebPanelDefinitions(worktree.id).catch(
+                    () => []
+                  )
+                : []
+            const definitionsById = new Map(
+              definitions.map((definition) => [definition.id, definition])
+            )
             worktree.panels = [
               ...terminals.map((terminal) => ({
                 id: `panel_${terminal.id}`,
@@ -653,7 +662,13 @@ export class TreeportService {
                 createdAt: terminal.createdAt,
                 updatedAt: terminal.updatedAt
               })),
-              ...storedWebPanels.map(mapWebPanel)
+              ...storedWebPanels.map((panel) =>
+                mapWebPanel(
+                  panel,
+                  definitionsById.get(panel.definitionId)?.sandbox
+                    .allowSameOrigin ?? false
+                )
+              )
             ].sort(
               (left, right) =>
                 left.createdAt.localeCompare(right.createdAt) ||
@@ -1134,7 +1149,7 @@ export class TreeportService {
 
   private async localWebPanelDefinitions(
     worktreeId: string
-  ): Promise<EffectiveWebPanelDefinition[]> {
+  ): Promise<Array<WebPanelDefinition & ResolvedWebPanelSource>> {
     const worktree = await this.getWorktree(worktreeId)
     const webPanelsRoot = path.join(worktree.path, '.treeport', 'web-panels')
     const directories = await fs
@@ -1146,7 +1161,7 @@ export class TreeportService {
 
         throw error
       })
-    const definitions: EffectiveWebPanelDefinition[] = []
+    const definitions: Array<WebPanelDefinition & ResolvedWebPanelSource> = []
     for (const directory of directories.sort((left, right) =>
       left.name.localeCompare(right.name)
     )) {
@@ -1168,21 +1183,19 @@ export class TreeportService {
         .split(/[-_.]+/)
         .filter(Boolean)
         .join(' ')
-      const definitionId = `project:${encodeURIComponent(directory.name)}`
       definitions.push({
-        id: definitionId,
+        id: `project:${encodeURIComponent(directory.name)}`,
         title: words
           ? `${words[0]!.toLocaleUpperCase()}${words.slice(1)}`
           : directory.name,
-        renderer: 'hosted',
         source: { type: 'project' },
-        viteSource: {
-          root,
-          entry,
-          packageRoot: worktree.path,
-          development: true,
-          definitionId
-        }
+        sandbox: { allowSameOrigin: false },
+        root,
+        entry,
+        packageRoot: worktree.path,
+        development: true,
+        definitionId: `project:${encodeURIComponent(directory.name)}`,
+        allowNetworkRequests: false
       })
     }
     return definitions
@@ -1190,7 +1203,7 @@ export class TreeportService {
 
   private async effectiveWebPanelDefinitions(
     worktreeId: string
-  ): Promise<EffectiveWebPanelDefinition[]> {
+  ): Promise<Array<WebPanelDefinition & ResolvedWebPanelSource>> {
     const worktree = await this.getWorktree(worktreeId)
     this.packages.syncProjects([await this.getProject(worktree.projectId)])
     return [
@@ -1205,20 +1218,16 @@ export class TreeportService {
           packageLockPath
         }) => ({
           ...definition,
-          viteSource:
-            definition.renderer === 'hosted' && entry !== null
-              ? {
-                  root,
-                  entry,
-                  packageRoot,
-                  development,
-                  ...(packageLockPath ? { packageLockPath } : {}),
-                  definitionId: definition.id,
-                  ...(definition.source.type === 'package'
-                    ? { packageSource: definition.source.source }
-                    : {})
-                }
-              : null
+          root,
+          entry,
+          packageRoot,
+          development,
+          ...(packageLockPath ? { packageLockPath } : {}),
+          definitionId: definition.id,
+          allowNetworkRequests: definition.sandbox.allowSameOrigin,
+          ...(definition.source.type === 'package'
+            ? { packageSource: definition.source.source }
+            : {})
         })
       )
     ]
@@ -1228,71 +1237,25 @@ export class TreeportService {
     worktreeId: string
   ): Promise<WebPanelDefinition[]> {
     return (await this.effectiveWebPanelDefinitions(worktreeId)).map(
-      ({ viteSource: _viteSource, ...definition }) => definition
+      ({
+        root: _root,
+        entry: _entry,
+        packageRoot: _packageRoot,
+        development: _development,
+        packageLockPath: _packageLockPath,
+        definitionId: _definitionId,
+        packageSource: _packageSource,
+        allowNetworkRequests: _allowNetworkRequests,
+        ...definition
+      }) => definition
     )
   }
 
   private async normalizeWebPanelLaunch(
     worktree: WorktreeRecord,
-    definition: WebPanelDefinition,
     launch: WebPanelLaunch
-  ): Promise<{ launch: WebPanelLaunch; inputJson: string; title: string }> {
-    let input = launch.input
-    let configuredTitle = definition.title
-    if (definition.renderer === 'browser' && input !== null) {
-      const keys = Object.keys(input)
-      if (
-        keys.some((key) => key !== 'url' && key !== 'title') ||
-        typeof input.url !== 'string' ||
-        input.url.length > 4_096 ||
-        (input.title !== undefined && typeof input.title !== 'string')
-      ) {
-        throw new DomainError(
-          'INVALID_BROWSER_PANEL_INPUT',
-          'Browser panel input must contain a valid URL and optional title',
-          400
-        )
-      }
-
-      let url: URL
-      try {
-        url = new URL(input.url)
-      } catch {
-        throw new DomainError(
-          'INVALID_BROWSER_PANEL_URL',
-          'Browser panel URL must be an absolute HTTP or HTTPS URL',
-          400
-        )
-      }
-      if (
-        (url.protocol !== 'http:' && url.protocol !== 'https:') ||
-        url.username !== '' ||
-        url.password !== ''
-      ) {
-        throw new DomainError(
-          'INVALID_BROWSER_PANEL_URL',
-          'Browser panel URL must be an absolute HTTP or HTTPS URL without credentials',
-          400
-        )
-      }
-
-      const title = typeof input.title === 'string' ? input.title.trim() : ''
-      if (title.length > 256) {
-        throw new DomainError(
-          'INVALID_BROWSER_PANEL_TITLE',
-          'Browser panel title is limited to 256 characters',
-          400
-        )
-      }
-
-      input = {
-        url: url.href,
-        ...(title ? { title } : {})
-      }
-      configuredTitle = title || url.host
-    }
-
-    const inputJson = JSON.stringify(input)
+  ): Promise<{ launch: WebPanelLaunch; inputJson: string }> {
+    const inputJson = JSON.stringify(launch.input)
     if (Buffer.byteLength(inputJson) > WEB_PANEL_INPUT_MAX_BYTES) {
       throw new DomainError(
         'WEB_PANEL_INPUT_TOO_LARGE',
@@ -1301,40 +1264,38 @@ export class TreeportService {
       )
     }
 
-    let cwd: string | null = null
-    if (launch.cwd !== null) {
-      const [worktreeRoot, requestedCwd] = await Promise.all([
-        fs.realpath(worktree.path),
-        fs.realpath(path.resolve(worktree.path, launch.cwd)).catch(() => null)
-      ])
-      if (!requestedCwd || !(await fs.stat(requestedCwd)).isDirectory()) {
-        throw new DomainError(
-          'INVALID_WEB_PANEL_LAUNCH_CWD',
-          'Web panel launch directory does not exist',
-          400
-        )
-      }
+    if (launch.cwd === null) {
+      return { launch: { input: launch.input, cwd: null }, inputJson }
+    }
 
-      const relativeCwd = path.relative(worktreeRoot, requestedCwd)
-      if (
-        relativeCwd === '..' ||
-        relativeCwd.startsWith(`..${path.sep}`) ||
-        path.isAbsolute(relativeCwd)
-      ) {
-        throw new DomainError(
-          'INVALID_WEB_PANEL_LAUNCH_CWD',
-          'Web panel launch directory must be inside the worktree',
-          400
-        )
-      }
+    const [worktreeRoot, requestedCwd] = await Promise.all([
+      fs.realpath(worktree.path),
+      fs.realpath(path.resolve(worktree.path, launch.cwd)).catch(() => null)
+    ])
+    if (!requestedCwd || !(await fs.stat(requestedCwd)).isDirectory()) {
+      throw new DomainError(
+        'INVALID_WEB_PANEL_LAUNCH_CWD',
+        'Web panel launch directory does not exist',
+        400
+      )
+    }
 
-      cwd = relativeCwd || '.'
+    const relativeCwd = path.relative(worktreeRoot, requestedCwd)
+    if (
+      relativeCwd === '..' ||
+      relativeCwd.startsWith(`..${path.sep}`) ||
+      path.isAbsolute(relativeCwd)
+    ) {
+      throw new DomainError(
+        'INVALID_WEB_PANEL_LAUNCH_CWD',
+        'Web panel launch directory must be inside the worktree',
+        400
+      )
     }
 
     return {
-      launch: { input, cwd },
-      inputJson,
-      title: configuredTitle
+      launch: { input: launch.input, cwd: relativeCwd || '.' },
+      inputJson
     }
   }
 
@@ -1355,20 +1316,16 @@ export class TreeportService {
       )
     }
 
-    const normalized = await this.normalizeWebPanelLaunch(
-      worktree,
-      definition,
-      launch
-    )
+    const normalized = await this.normalizeWebPanelLaunch(worktree, launch)
     const timestamp = now()
     const panel: WebPanel = {
       id: id('panel'),
       kind: 'web',
       worktreeId,
       definitionId,
-      renderer: definition.renderer,
-      title: normalized.title,
+      title: definition.title,
       launch: normalized.launch,
+      sandbox: definition.sandbox,
       createdAt: timestamp,
       updatedAt: timestamp
     }
@@ -1376,7 +1333,6 @@ export class TreeportService {
       id: panel.id,
       worktreeId: panel.worktreeId,
       definitionId: panel.definitionId,
-      renderer: panel.renderer,
       title: panel.title,
       inputJson: normalized.inputJson,
       launchCwd: panel.launch.cwd,
@@ -1443,11 +1399,7 @@ export class TreeportService {
       })
     }
 
-    const normalized = await this.normalizeWebPanelLaunch(
-      worktree,
-      definition,
-      launch
-    )
+    const normalized = await this.normalizeWebPanelLaunch(worktree, launch)
     const observedAt = now()
     const updatedAt =
       observedAt > existing.updatedAt
@@ -1456,21 +1408,22 @@ export class TreeportService {
     await this.deps.database.db
       .update(webPanels)
       .set({
-        renderer: definition.renderer,
-        title: normalized.title,
+        title: definition.title,
         inputJson: normalized.inputJson,
         launchCwd: normalized.launch.cwd,
         updatedAt
       })
       .where(eq(webPanels.id, existing.id))
-    const panel = mapWebPanel({
-      ...existing,
-      renderer: definition.renderer,
-      title: normalized.title,
-      inputJson: normalized.inputJson,
-      launchCwd: normalized.launch.cwd,
-      updatedAt
-    })
+    const panel = mapWebPanel(
+      {
+        ...existing,
+        title: definition.title,
+        inputJson: normalized.inputJson,
+        launchCwd: normalized.launch.cwd,
+        updatedAt
+      },
+      definition.sandbox.allowSameOrigin
+    )
     this.invalidateProjectsSnapshot()
     this.events.publish('panel.updated', { worktreeId, panelId: panel.id })
     return finish({ panel, created: false, reused: true })
@@ -1510,11 +1463,7 @@ export class TreeportService {
       )
     }
 
-    const normalized = await this.normalizeWebPanelLaunch(
-      worktree,
-      definition,
-      launch
-    )
+    const normalized = await this.normalizeWebPanelLaunch(worktree, launch)
     const observedAt = now()
     const updatedAt =
       observedAt > existing.updatedAt
@@ -1523,8 +1472,6 @@ export class TreeportService {
     const result = await this.deps.database.db
       .update(webPanels)
       .set({
-        renderer: definition.renderer,
-        title: normalized.title,
         inputJson: normalized.inputJson,
         launchCwd: normalized.launch.cwd,
         updatedAt
@@ -1543,14 +1490,15 @@ export class TreeportService {
       )
     }
 
-    const panel = mapWebPanel({
-      ...existing,
-      renderer: definition.renderer,
-      title: normalized.title,
-      inputJson: normalized.inputJson,
-      launchCwd: normalized.launch.cwd,
-      updatedAt
-    })
+    const panel = mapWebPanel(
+      {
+        ...existing,
+        inputJson: normalized.inputJson,
+        launchCwd: normalized.launch.cwd,
+        updatedAt
+      },
+      definition.sandbox.allowSameOrigin
+    )
     this.invalidateProjectsSnapshot()
     this.events.publish('panel.updated', {
       worktreeId: panel.worktreeId,
@@ -1606,7 +1554,13 @@ export class TreeportService {
       throw new DomainError('PANEL_NOT_FOUND', 'Panel not found', 404)
     }
 
-    const panel = mapWebPanel(panelRow)
+    const definition = (
+      await this.effectiveWebPanelDefinitions(panelRow.worktreeId)
+    ).find((candidate) => candidate.id === panelRow.definitionId)
+    const panel = mapWebPanel(
+      panelRow,
+      definition?.sandbox.allowSameOrigin ?? false
+    )
     const worktree = await this.getWorktree(panel.worktreeId)
     const project = await this.getProject(worktree.projectId)
     return {
@@ -1741,17 +1695,9 @@ export class TreeportService {
       )
     }
 
-    if (!definition.viteSource) {
-      throw new DomainError(
-        'WEB_PANEL_ASSETS_UNAVAILABLE',
-        'This web panel does not use hosted assets',
-        400
-      )
-    }
-
     const encodedPanelId = encodeURIComponent(panelId)
     return this.webPanelRuntime.resolve(
-      definition.viteSource,
+      definition,
       requestedPath,
       `/api/web-panels/${encodedPanelId}/assets/`
     )
@@ -1762,7 +1708,7 @@ export class TreeportService {
       .select()
       .from(webPanels)
       .orderBy(asc(webPanels.createdAt), asc(webPanels.id))
-    return rows.map(mapWebPanel)
+    return rows.map((row) => mapWebPanel(row))
   }
 
   async getWorktree(worktreeId: string): Promise<WorktreeRecord> {

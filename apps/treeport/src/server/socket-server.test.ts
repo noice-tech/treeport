@@ -271,9 +271,9 @@ describe('Socket.IO real network', () => {
         kind: 'web',
         worktreeId: 'wt',
         definitionId: 'project:review',
-        renderer: 'hosted',
         title: 'Review',
         launch: { input: null, cwd: null },
+        sandbox: { allowSameOrigin: false },
         createdAt: '2026-01-01T00:00:00.000Z',
         updatedAt: '2026-01-01T00:00:00.000Z'
       }

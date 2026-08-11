@@ -12,7 +12,6 @@ import type {
   WorktreeRecord
 } from '@treeport/shared'
 import { TerminalBellNotifications } from './features/notifications/use-bell-notifications'
-import { BrowserPanelWorkspace } from './features/web-panels/browser-panel-workspace'
 import { CloseWebPanelDialog } from './features/web-panels/close-web-panel-dialog'
 import { WebPanelWorkspace } from './features/web-panels/web-panel-workspace'
 import { parseResponse } from 'hono/client'
@@ -118,6 +117,9 @@ function WorkspaceApp() {
   const [retainedWebPanelIds, setRetainedWebPanelIds] = useState<Set<string>>(
     () => new Set()
   )
+  const [webPanelReloadRevisions, setWebPanelReloadRevisions] = useState<
+    Record<string, number>
+  >({})
   const [webPanelRuntimeTitles, setWebPanelRuntimeTitles] = useState<
     Record<string, string>
   >({})
@@ -305,6 +307,10 @@ function WorkspaceApp() {
   }
   const navigatePanelOpenRequest = useCallback(
     (request: ProductEventDataMap['panel.open_requested']) => {
+      setWebPanelReloadRevisions((current) => ({
+        ...current,
+        [request.panelId]: (current[request.panelId] ?? 0) + 1
+      }))
       if (
         !panelOpenRequestMatchesTerminal(
           request.sourceTerminalId,
@@ -778,20 +784,13 @@ function WorkspaceApp() {
             panel.id === selectedWebPanelId &&
             !terminalWorkflows.selectedPendingTerminal
           const title = webPanelRuntimeTitles[panel.id] ?? panel.title
-          return panel.renderer === 'browser' ? (
-            <BrowserPanelWorkspace
-              key={panel.id}
-              panel={panel}
-              active={active}
-              title={title}
-              onTitleChange={setWebPanelRuntimeTitle}
-            />
-          ) : (
+          return (
             <WebPanelWorkspace
               key={panel.id}
               panel={panel}
               active={active}
               title={title}
+              reloadRevision={webPanelReloadRevisions[panel.id] ?? 0}
               onTitleChange={setWebPanelRuntimeTitle}
               onSelectWorkspace={selectWorkspaceByIndex}
             />

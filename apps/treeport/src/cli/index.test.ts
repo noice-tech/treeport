@@ -384,7 +384,6 @@ describe('CLI context and machine output', () => {
               {
                 id: 'package:npm:@treeport/web-panel-browser:web-panel:browser',
                 title: 'Browser',
-                renderer: 'browser',
                 source: {
                   type: 'package',
                   packageId: 'npm:@treeport/web-panel-browser',
@@ -395,13 +394,11 @@ describe('CLI context and machine output', () => {
               {
                 id: 'project:preview',
                 title: 'Preview',
-                renderer: 'hosted',
                 source: { type: 'project' }
               },
               {
                 id: 'package:one:review',
                 title: 'Review one',
-                renderer: 'hosted',
                 source: {
                   type: 'package',
                   packageId: 'one',
@@ -412,7 +409,6 @@ describe('CLI context and machine output', () => {
               {
                 id: 'package:two:review',
                 title: 'Review two',
-                renderer: 'hosted',
                 source: {
                   type: 'package',
                   packageId: 'two',
@@ -457,11 +453,6 @@ describe('CLI context and machine output', () => {
               kind: 'web',
               worktreeId: worktree.id,
               definitionId: String(body.definitionId),
-              renderer:
-                body.definitionId ===
-                'package:npm:@treeport/web-panel-browser:web-panel:browser'
-                  ? 'browser'
-                  : 'hosted',
               title:
                 body.definitionId ===
                 'package:npm:@treeport/web-panel-browser:web-panel:browser'
@@ -474,6 +465,7 @@ describe('CLI context and machine output', () => {
                 input: body.input as WebPanel['launch']['input'],
                 cwd: String(body.launchCwd)
               },
+              sandbox: { allowSameOrigin: false },
               createdAt: timestamp,
               updatedAt: timestamp
             }
@@ -1088,7 +1080,6 @@ describe('CLI context and machine output', () => {
         id: 'panel_3',
         definitionId:
           'package:npm:@treeport/web-panel-browser:web-panel:browser',
-        renderer: 'browser',
         title: 'Application'
       },
       created: true,

@@ -656,7 +656,11 @@ export function createApp({
         context.header('x-content-type-options', 'nosniff')
         context.header(
           'content-security-policy',
-          webPanelContentSecurityPolicy('error', browserOrigin)
+          webPanelContentSecurityPolicy(
+            'error',
+            browserOrigin,
+            resolution.allowNetworkRequests
+          )
         )
         return context.html(resolution.html, 500)
       }
@@ -688,7 +692,11 @@ export function createApp({
       context.header('access-control-allow-origin', '*')
       context.header(
         'content-security-policy',
-        webPanelContentSecurityPolicy('immutable', browserOrigin)
+        webPanelContentSecurityPolicy(
+          'immutable',
+          browserOrigin,
+          resolution.allowNetworkRequests
+        )
       )
       context.header('x-content-type-options', 'nosniff')
       return context.body(body as any)

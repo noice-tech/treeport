@@ -22,9 +22,11 @@ export interface WebPanel {
   kind: 'web'
   worktreeId: string
   definitionId: string
-  renderer: 'hosted' | 'browser'
   title: string
   launch: WebPanelLaunch
+  sandbox: {
+    allowSameOrigin: boolean
+  }
   /** ISO 8601 timestamp. */
   createdAt: string
   /** ISO 8601 timestamp. */
@@ -79,6 +81,10 @@ export interface WebPanelStorage {
 export interface WebPanelControls {
   /** Set a runtime title. Pass null to restore the configured title. */
   setTitle(title: string | null): void
+  /** Replace the persistent launch data for this panel instance. */
+  updateLaunch(launch: WebPanelLaunch): Promise<void>
+  /** Open an absolute HTTP or HTTPS URL in the user's browser. */
+  openExternal(url: string): Promise<void>
 }
 
 /** Keyboard shortcuts Treeport can route to an active web panel. */
@@ -196,8 +202,20 @@ addEventListener(
 )
 
 function call<Result>(
-  method: 'context' | 'diff' | 'storage.get' | 'storage.set' | 'storage.delete',
-  params?: { key?: string; value?: JsonValue }
+  method:
+    | 'context'
+    | 'diff'
+    | 'storage.get'
+    | 'storage.set'
+    | 'storage.delete'
+    | 'panel.launch.update'
+    | 'panel.external.open',
+  params?: {
+    key?: string
+    value?: JsonValue
+    launch?: WebPanelLaunch
+    url?: string
+  }
 ): Promise<Result> {
   return new Promise((resolve, reject) => {
     const id = String(++serial)
@@ -212,7 +230,7 @@ function call<Result>(
   })
 }
 
-/** The worktree-scoped, read-only API available to this web panel. */
+/** The worktree-scoped API available to this web panel. */
 export const treeport: TreeportPanelSdk = Object.freeze({
   version: 1,
   panel: Object.freeze({
@@ -225,7 +243,10 @@ export const treeport: TreeportPanelSdk = Object.freeze({
         { source: 'treeport-panel-v1', method: 'panel.title.set', title },
         '*'
       )
-    }
+    },
+    updateLaunch: (launch: WebPanelLaunch) =>
+      call<void>('panel.launch.update', { launch }),
+    openExternal: (url: string) => call<void>('panel.external.open', { url })
   }),
   context: () => call<WebPanelContext>('context'),
   diff: () => call<GitDiff>('diff'),

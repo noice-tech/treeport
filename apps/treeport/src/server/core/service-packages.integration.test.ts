@@ -164,23 +164,8 @@ describe('TreeportService with injected command adapters', () => {
     })
   })
 
-  it('discovers local and package web panels and owns their persistent synchronized lifecycle', async () => {
-    const { root, main, service, database } = await fixture()
-    const browserPackage = path.join(root, 'browser-package')
-    await fs.mkdir(browserPackage)
-    await fs.writeFile(
-      path.join(browserPackage, 'package.json'),
-      JSON.stringify({
-        name: '@treeport/web-panel-browser',
-        treeport: {
-          webPanels: [{ id: 'browser', title: 'Browser', renderer: 'browser' }]
-        }
-      })
-    )
-    await fs.writeFile(
-      path.join(root, 'settings.json'),
-      JSON.stringify({ packages: [browserPackage] })
-    )
+  it('discovers local web panels and owns their persistent synchronized lifecycle', async () => {
+    const { main, service, database } = await fixture()
     const webPanels = path.join(main, '.treeport', 'web-panels')
     const reviewPanel = path.join(webPanels, 'review')
     await fs.mkdir(reviewPanel, { recursive: true })
@@ -193,104 +178,24 @@ describe('TreeportService with injected command adapters', () => {
     await fs.mkdir(path.join(webPanels, 'missing-entry'))
     const project = await service.registerProject(main)
     const worktree = project.worktrees[0]!
-    const definitions = await service.listWebPanelDefinitions(worktree.id)
-    expect(definitions).toEqual([
+    expect(await service.listWebPanelDefinitions(worktree.id)).toEqual([
       {
         id: 'project:code-review',
-        renderer: 'hosted',
         source: { type: 'project' },
+        sandbox: { allowSameOrigin: false },
         title: 'Code review'
       },
       {
         id: 'project:review',
-        renderer: 'hosted',
         source: { type: 'project' },
+        sandbox: { allowSameOrigin: false },
         title: 'Review'
-      },
-      expect.objectContaining({
-        id: expect.stringMatching(
-          /^package:local:[a-f0-9]{16}:web-panel:browser$/
-        ),
-        renderer: 'browser',
-        source: expect.objectContaining({
-          type: 'package',
-          source: browserPackage,
-          scope: 'global'
-        }),
-        title: 'Browser'
-      })
+      }
     ])
-    const browserDefinition = definitions.find(
-      (definition) => definition.renderer === 'browser'
-    )!
 
     await expect(
       service.createWebPanel(worktree.id, 'project:missing')
     ).rejects.toMatchObject({ code: 'WEB_PANEL_DEFINITION_NOT_FOUND' })
-
-    const emptyBrowser = await service.createWebPanel(
-      worktree.id,
-      browserDefinition.id
-    )
-    expect(emptyBrowser).toMatchObject({
-      renderer: 'browser',
-      title: 'Browser',
-      launch: { input: null, cwd: null }
-    })
-    await service.deleteWebPanel(emptyBrowser.id)
-
-    const browser = await service.createWebPanel(
-      worktree.id,
-      browserDefinition.id,
-      {
-        input: { url: 'http://127.0.0.1:5173', title: ' Application ' },
-        cwd: '.'
-      }
-    )
-    expect(browser).toMatchObject({
-      renderer: 'browser',
-      title: 'Application',
-      launch: {
-        input: { url: 'http://127.0.0.1:5173/', title: 'Application' },
-        cwd: '.'
-      }
-    })
-    await expect(
-      service.resolveWebPanelAsset(browser.id, '')
-    ).rejects.toMatchObject({ code: 'WEB_PANEL_ASSETS_UNAVAILABLE' })
-    const updatedBrowser = await service.updateWebPanelLaunch(
-      browser.id,
-      { input: { url: 'https://example.com/preview' }, cwd: '.' },
-      browser.updatedAt
-    )
-    expect(updatedBrowser).toMatchObject({
-      id: browser.id,
-      title: 'example.com',
-      launch: {
-        input: { url: 'https://example.com/preview' },
-        cwd: '.'
-      }
-    })
-    await expect(
-      service.updateWebPanelLaunch(
-        browser.id,
-        { input: { url: 'https://example.com/stale' }, cwd: null },
-        browser.updatedAt
-      )
-    ).rejects.toMatchObject({ code: 'WEB_PANEL_CHANGED' })
-    await expect(
-      service.createWebPanel(worktree.id, browserDefinition.id, {
-        input: {},
-        cwd: null
-      })
-    ).rejects.toMatchObject({ code: 'INVALID_BROWSER_PANEL_INPUT' })
-    await expect(
-      service.createWebPanel(worktree.id, browserDefinition.id, {
-        input: { url: 'file:///tmp/index.html' },
-        cwd: null
-      })
-    ).rejects.toMatchObject({ code: 'INVALID_BROWSER_PANEL_URL' })
-    await service.deleteWebPanel(browser.id)
 
     const events: string[] = []
     const unsubscribe = service.events.subscribe((event) => {
@@ -331,6 +236,23 @@ describe('TreeportService with injected command adapters', () => {
       service.resolveWebPanelAsset(panel.id, 'outside.js')
     ).rejects.toMatchObject({ code: 'INVALID_ASSET_PATH' })
     expect(await persistedWebPanel(database, panel.id)).toEqual(panel)
+
+    const launchUpdated = await service.updateWebPanelLaunch(
+      panel.id,
+      { input: { path: 'output/preview.mp4' }, cwd: '.' },
+      panel.updatedAt
+    )
+    expect(launchUpdated).toMatchObject({
+      id: panel.id,
+      launch: { input: { path: 'output/preview.mp4' }, cwd: '.' }
+    })
+    await expect(
+      service.updateWebPanelLaunch(
+        panel.id,
+        { input: null, cwd: null },
+        panel.updatedAt
+      )
+    ).rejects.toMatchObject({ code: 'WEB_PANEL_CHANGED' })
 
     await expect(
       service.createWebPanel(worktree.id, 'project:review', {
@@ -403,6 +325,7 @@ describe('TreeportService with injected command adapters', () => {
     expect(await persistedWebPanel(database, panel.id)).toBeNull()
     expect(events).toEqual([
       `panel.created:${panel.id}`,
+      `panel.updated:${panel.id}`,
       `panel.updated:${panel.id}`,
       `panel.open_requested:${panel.id}`,
       `panel.created:${separate.panel.id}`,

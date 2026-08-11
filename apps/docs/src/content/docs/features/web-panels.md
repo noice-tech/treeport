@@ -7,7 +7,7 @@ Treeport has experimental support for browser panels and trusted repository-prov
 
 ## Open an HTTP application
 
-A package can provide the **Browser** panel with a declarative [`renderer: "browser"` definition](/features/packages/#create-a-package). Select **Browser** from **New panel** to open an empty panel. Enter an absolute HTTP or HTTPS URL in the toolbar and select **Go**. The toolbar can open another address, reload the configured address, or open it in a separate browser tab.
+The `@treeport/web-panel-browser` package provides the **Browser** panel as a normal [hosted panel](#create-a-hosted-panel). Select **Browser** from **New panel** to open an empty panel. Enter an absolute HTTP or HTTPS URL in the toolbar and select **Go**. The toolbar can open another address, reload the configured address, or open it in a separate browser tab.
 
 When a Browser package is configured, you can also open or reuse it from a worktree terminal:
 
@@ -18,7 +18,11 @@ treeport web-panel open --worktree . browser \
 
 The URL must be reachable from the computer that runs the browser. A loopback address such as `127.0.0.1` refers to that computer. It does not refer to a remote Treeport daemon. Treeport does not proxy application traffic or change the URL host. An HTTPS Treeport page can also block an HTTP application as mixed content.
 
-An application can refuse iframe use with `Content-Security-Policy: frame-ancestors` or `X-Frame-Options`. Treeport does not bypass these controls. Use **Open externally** when the application cannot run in the panel.
+The Browser package loads the target in a nested iframe and owns the complete panel layout. Its high-trust `same-origin` permission lets the target use normal browser storage. An application can refuse iframe use with `Content-Security-Policy: frame-ancestors` or `X-Frame-Options`. Treeport does not bypass these controls. Use **Open externally** when the application cannot run in the panel.
+
+Enter an address and press Enter to navigate. The Browser panel saves the current address in its panel storage. **Reload** affects only the current client. Another client uses the saved address when it later opens or reloads the panel.
+
+The Browser panel checks if the address is reachable before it removes the loading state. If the connection fails or takes more than 10 seconds, it shows **Load failed**. Start the application or correct the address, then select **Retry**.
 
 Use the development tools in your current browser to inspect the application and its elements. A web page cannot open browser development tools for you.
 
@@ -78,7 +82,7 @@ treeport web-panel open --worktree . review \
 
 The command accepts an exact definition ID or an unambiguous short name. It reuses the newest instance for the definition, replaces the stored launch input, and reloads the panel frame. Durable `treeport.storage` values remain unchanged. Use `--new` when the worktree needs another instance.
 
-## Browser SDK
+## Panel SDK
 
 Install the SDK as a development dependency for types and import it normally. Treeport's Vite profile resolves that import to the host's SDK, so no runtime dependency or import map is needed:
 
@@ -104,6 +108,8 @@ const stopFind = treeport.shortcuts.onFind(() => {
 `treeport.context()` returns the panel, project, worktree, and launch data. Launch input is a JSON object or `null`. Launch `cwd` is relative to the worktree root.
 
 Use `treeport.panel.setTitle(title)` to set a runtime title for the current client. Use `treeport.panel.setTitle(null)` to restore the configured title. Runtime titles are not saved or sent to other clients.
+
+Use `treeport.panel.updateLaunch(launch)` to replace the persistent launch input and working directory. This update does not reload open panel frames. The panel can apply the change in its current frame. A later open uses the saved launch data. An explicit `treeport web-panel open` request reloads a reused panel. Use `treeport.panel.openExternal(url)` to open an HTTP or HTTPS URL outside the panel.
 
 A target application in Browser can use `treeport.panel.setTitle()`, but it cannot use context, diff, storage, shortcuts, or workspace navigation. Add the SDK to the target application's normal build when it uses the title method.
 

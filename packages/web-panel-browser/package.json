@@ -10,11 +10,19 @@
   "treeport": {
     "webPanels": [
       {
-        "id": "browser",
-        "title": "Browser",
-        "renderer": "browser"
+        "source": "./web-panels/browser",
+        "permissions": [
+          "same-origin"
+        ]
       }
     ]
   },
-  "license": "MIT"
+  "license": "MIT",
+  "scripts": {
+    "typecheck": "tsc --noEmit --pretty"
+  },
+  "devDependencies": {
+    "@treeport/panel-sdk": "workspace:*",
+    "typescript": "^7.0.2"
+  }
 }

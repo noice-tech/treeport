@@ -130,7 +130,6 @@ const webPanelSnapshotSchema = z.strictObject({
   kind: z.literal('web'),
   worktreeId: z.string().min(1),
   definitionId: z.string().min(1),
-  renderer: z.enum(['hosted', 'browser']),
   title: z.string().min(1),
   launch: z.strictObject({
     input: z.record(z.string(), z.json()).nullable(),

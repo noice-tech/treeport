@@ -175,7 +175,6 @@ describe('Socket.IO contracts', () => {
             worktreeId: 'worktree',
             definitionId:
               'package:npm:@treeport/web-panel-browser:web-panel:browser',
-            renderer: 'browser',
             title: 'Application',
             launch: {
               input: { url: 'http://127.0.0.1:3000/' },
@@ -188,7 +187,7 @@ describe('Socket.IO contracts', () => {
       })
     ).toMatchObject({
       terminalMetadata: [{ terminalId: 'term' }],
-      webPanels: [{ id: 'panel', renderer: 'browser' }]
+      webPanels: [{ id: 'panel' }]
     })
     expect(
       parseEventsSnapshot({

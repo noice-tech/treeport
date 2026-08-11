@@ -170,7 +170,6 @@ function fixture(webDist = '/missing') {
       {
         id: 'project:review',
         title: 'Review',
-        renderer: 'hosted',
         source: { type: 'project' }
       }
     ]),
@@ -179,7 +178,6 @@ function fixture(webDist = '/missing') {
       kind: 'web',
       worktreeId,
       definitionId: 'project:review',
-      renderer: 'hosted',
       title: 'Review',
       launch: { input: null, cwd: null },
       createdAt: '2026-01-01',
@@ -191,7 +189,6 @@ function fixture(webDist = '/missing') {
         kind: 'web',
         worktreeId,
         definitionId: 'project:review',
-        renderer: 'hosted',
         title: 'Review',
         launch: {
           input: { path: 'output/demo.mp4' },
@@ -212,7 +209,6 @@ function fixture(webDist = '/missing') {
         kind: 'web',
         worktreeId: 'wt_1',
         definitionId: 'project:review',
-        renderer: 'hosted',
         title: 'Review',
         launch,
         createdAt: '2026-01-01',
@@ -600,7 +596,8 @@ describe('HTTP API validation', () => {
         kind: 'asset',
         path: requestedPath ? path.join(panelRoot, requestedPath) : indexPath,
         immutable: true,
-        development: false
+        development: false,
+        allowNetworkRequests: false
       })
     )
 
@@ -630,6 +627,7 @@ describe('HTTP API validation', () => {
           `style-src 'self' ${browserOrigin} 'unsafe-inline'`,
           `img-src 'self' ${browserOrigin} data:`,
           "connect-src 'none'",
+          'frame-src http: https:',
           `frame-ancestors 'self' ${browserOrigin}`
         ])
       )
@@ -660,7 +658,8 @@ describe('HTTP API validation', () => {
       kind: 'asset',
       path: modulePath,
       immutable: true,
-      development: false
+      development: false,
+      allowNetworkRequests: true
     })
 
     try {
@@ -670,6 +669,9 @@ describe('HTTP API validation', () => {
       expect(response.status).toBe(200)
       expect(response.headers.get('content-type')).toBe(
         'text/javascript; charset=utf-8'
+      )
+      expect(response.headers.get('content-security-policy')).toContain(
+        'connect-src http: https:'
       )
       expect(await response.text()).toBe('export const loaded = true')
       expect(service.resolveWebPanelAsset).toHaveBeenCalledWith(

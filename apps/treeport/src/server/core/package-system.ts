@@ -55,7 +55,7 @@ type PackageSourceObject = Exclude<PackageSource, string>
 export interface ResolvedWebPanel {
   definition: WebPanelDefinition
   root: string
-  entry: string | null
+  entry: string
   packageRoot: string
   development: boolean
   packageLockPath?: string
@@ -102,16 +102,14 @@ interface ResourceCandidates {
   diagnostics: PackageResourceDiagnostic[]
 }
 
-interface BrowserWebPanelManifest {
-  id: string
-  title: string
-  renderer: 'browser'
+interface WebPanelManifestEntry {
+  source: string
+  allowSameOrigin: boolean
 }
 
 interface PackageManifest {
-  webPanelPatterns: string[]
-  browserWebPanels: BrowserWebPanelManifest[]
-  terminalPresetPatterns: string[]
+  webPanels: WebPanelManifestEntry[]
+  terminalPresets: string[]
 }
 
 const EMPTY_SETTINGS: TreeportSettings = { raw: {}, packages: [] }
@@ -841,57 +839,54 @@ export class PackageSystem {
   private validateWebPanelManifest(
     entries: unknown,
     packageJsonPath: string
-  ): {
-    patterns: string[]
-    browserWebPanels: BrowserWebPanelManifest[]
-  } {
+  ): WebPanelManifestEntry[] {
     if (!Array.isArray(entries)) {
       throw new Error(`${packageJsonPath} treeport.webPanels must be an array`)
     }
 
-    const patterns: string[] = []
-    const browserWebPanels: BrowserWebPanelManifest[] = []
-    for (const entry of entries) {
+    return entries.map((entry): WebPanelManifestEntry => {
       if (typeof entry === 'string') {
-        patterns.push(entry)
-        continue
+        this.validateManifestPatterns([entry], 'webPanels', packageJsonPath)
+        return { source: entry, allowSameOrigin: false }
       }
 
       if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
         throw new Error(
-          `${packageJsonPath} treeport.webPanels entries must be package-relative patterns or Browser panel definitions`
+          `${packageJsonPath} treeport.webPanels entries must be package-relative patterns or panel definitions`
         )
       }
 
       const keys = Object.keys(entry)
-      const id: unknown = Reflect.get(entry, 'id')
-      const title: unknown = Reflect.get(entry, 'title')
-      const renderer: unknown = Reflect.get(entry, 'renderer')
+      const source: unknown = Reflect.get(entry, 'source')
+      const permissions: unknown = Reflect.get(entry, 'permissions') ?? []
       if (
-        keys.some((key) => !['id', 'title', 'renderer'].includes(key)) ||
-        typeof id !== 'string' ||
-        !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(id) ||
-        typeof title !== 'string' ||
-        title.trim() === '' ||
-        title.length > 256 ||
-        renderer !== 'browser'
+        keys.some((key) => !['source', 'permissions'].includes(key)) ||
+        typeof source !== 'string' ||
+        source.startsWith('!') ||
+        !Array.isArray(permissions) ||
+        permissions.some((permission) => typeof permission !== 'string')
       ) {
         throw new Error(
-          `${packageJsonPath} contains an invalid Browser panel definition`
+          `${packageJsonPath} contains an invalid web panel definition`
         )
       }
 
-      browserWebPanels.push({ id, title: title.trim(), renderer })
-    }
+      this.validateManifestPatterns([source], 'webPanels', packageJsonPath)
+      const uniquePermissions = new Set(permissions)
+      if (
+        uniquePermissions.size !== permissions.length ||
+        permissions.some((permission) => permission !== 'same-origin')
+      ) {
+        throw new Error(
+          `${packageJsonPath} contains an invalid web panel permission`
+        )
+      }
 
-    return {
-      patterns: this.validateManifestPatterns(
-        patterns,
-        'webPanels',
-        packageJsonPath
-      ),
-      browserWebPanels
-    }
+      return {
+        source,
+        allowSameOrigin: uniquePermissions.has('same-origin')
+      }
+    })
   }
 
   private async resourceCandidates(
@@ -1092,14 +1087,12 @@ export class PackageSystem {
           treeport,
           'terminalPresets'
         )
-        const parsedWebPanels = this.validateWebPanelManifest(
-          webPanels ?? [],
-          packageJsonPath
-        )
         manifest = {
-          webPanelPatterns: parsedWebPanels.patterns,
-          browserWebPanels: parsedWebPanels.browserWebPanels,
-          terminalPresetPatterns: this.validateManifestPatterns(
+          webPanels: this.validateWebPanelManifest(
+            webPanels ?? [],
+            packageJsonPath
+          ),
+          terminalPresets: this.validateManifestPatterns(
             terminalPresets ?? [],
             'terminalPresets',
             packageJsonPath
@@ -1118,7 +1111,7 @@ export class PackageSystem {
       manifest
         ? this.manifestAllows(
             candidate.relativePath,
-            manifest.webPanelPatterns,
+            manifest.webPanels.map((entry) => entry.source),
             'web-panel'
           )
         : candidate.relativePath.startsWith('web-panels/') &&
@@ -1128,7 +1121,7 @@ export class PackageSystem {
       manifest
         ? this.manifestAllows(
             candidate.relativePath,
-            manifest.terminalPresetPatterns,
+            manifest.terminalPresets,
             'terminal-preset'
           )
         : candidate.relativePath.startsWith('terminal-presets/') &&
@@ -1161,43 +1154,36 @@ export class PackageSystem {
           ).then((values) => values.find(Boolean))
         : undefined
     const webPanels = applyNormalFilter(
-      [
-        ...panelCandidates.map((candidate) => {
-          const resourceId = encodeURIComponent(
-            path.posix.basename(candidate.relativePath)
-          )
-          return {
-            definition: {
-              id: `package:${parsed.packageId}:web-panel:${resourceId}`,
-              title: titleFromPath(candidate.relativePath),
-              renderer: 'hosted' as const,
-              source: metadata
-            },
-            root: candidate.root,
-            entry: 'index.html',
-            packageRoot: root,
-            development: parsed.type === 'local',
-            ...(packageLockPath ? { packageLockPath } : {}),
-            relativePath: candidate.relativePath,
-            enabled: true
-          }
-        }),
-        ...(manifest?.browserWebPanels ?? []).map((panel) => ({
+      panelCandidates.map((candidate) => {
+        const resourceId = encodeURIComponent(
+          path.posix.basename(candidate.relativePath)
+        )
+        const allowSameOrigin =
+          manifest?.webPanels.some(
+            (entry) =>
+              entry.allowSameOrigin &&
+              this.manifestAllows(
+                candidate.relativePath,
+                [entry.source],
+                'web-panel'
+              )
+          ) ?? false
+        return {
           definition: {
-            id: `package:${parsed.packageId}:web-panel:${encodeURIComponent(panel.id)}`,
-            title: panel.title,
-            renderer: panel.renderer,
-            source: metadata
+            id: `package:${parsed.packageId}:web-panel:${resourceId}`,
+            title: titleFromPath(candidate.relativePath),
+            source: metadata,
+            sandbox: { allowSameOrigin }
           },
-          root,
-          entry: null,
+          root: candidate.root,
+          entry: 'index.html',
           packageRoot: root,
           development: parsed.type === 'local',
           ...(packageLockPath ? { packageLockPath } : {}),
-          relativePath: `web-panels/${panel.id}`,
+          relativePath: candidate.relativePath,
           enabled: true
-        }))
-      ],
+        }
+      }),
       filter?.webPanels,
       autoload
     )

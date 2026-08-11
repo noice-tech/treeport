@@ -71,9 +71,11 @@ async function writeLocalPackage(packageRoot: string) {
         name: '@acme/treeport-tools',
         treeport: {
           webPanels: [
-            './web-panels/*',
-            '!./web-panels/legacy',
-            { id: 'browser', title: 'Browser', renderer: 'browser' }
+            {
+              source: './web-panels/review',
+              permissions: ['same-origin']
+            },
+            '!./web-panels/legacy'
           ],
           terminalPresets: ['./terminal-presets/*.json']
         }
@@ -252,22 +254,8 @@ describe('PackageSystem', () => {
         /^package:local:[a-f0-9]{16}:web-panel:review$/
       ),
       title: 'Review',
-      source: { type: 'package', scope: 'global' }
-    })
-    const browserPanel = (await packages.webPanelDefinitions('project-b')).find(
-      (panel) => panel.definition.renderer === 'browser'
-    )
-    expect(browserPanel).toMatchObject({
-      definition: {
-        id: expect.stringMatching(
-          /^package:local:[a-f0-9]{16}:web-panel:browser$/
-        ),
-        title: 'Browser',
-        renderer: 'browser',
-        source: { type: 'package', scope: 'global' }
-      },
-      entry: null,
-      relativePath: 'web-panels/browser'
+      source: { type: 'package', scope: 'global' },
+      sandbox: { allowSameOrigin: true }
     })
     expect(
       (await packages.terminalPresetDefinitions('project-b')).map(
@@ -278,7 +266,7 @@ describe('PackageSystem', () => {
       (await packages.webPanelDefinitions('project-a')).map(
         (panel) => panel.definition.title
       )
-    ).toEqual(['Browser', 'Repository'])
+    ).toEqual(['Repository'])
     expect(
       (await packages.terminalPresetDefinitions('project-a')).map(
         (preset) => preset.name
@@ -334,6 +322,29 @@ describe('PackageSystem', () => {
         expect.objectContaining({
           resourceType: 'terminal-preset',
           message: expect.stringContaining('Could not parse terminal preset')
+        })
+      ])
+    )
+
+    await fs.writeFile(
+      path.join(packageRoot, 'package.json'),
+      JSON.stringify({
+        name: '@acme/treeport-tools',
+        treeport: {
+          webPanels: [
+            {
+              source: './web-panels/review',
+              permissions: ['same-origin', 'same-origin']
+            }
+          ]
+        }
+      })
+    )
+    const invalidPermission = await packages.reload()
+    expect(invalidPermission.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          message: expect.stringContaining('invalid web panel permission')
         })
       ])
     )

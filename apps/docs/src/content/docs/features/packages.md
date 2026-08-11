@@ -107,26 +107,29 @@ A package can declare resources in `package.json`:
 }
 ```
 
-Manifest paths and globs are relative to the package root and may include `!` exclusions. A valid explicit `treeport` manifest is authoritative. Without one, Treeport discovers these conventional resources:
-
-```text
-web-panels/<resource-id>/index.html
-terminal-presets/*.json
-```
-
-A Browser panel has no hosted source directory. Declare it directly in `treeport.webPanels`:
+Manifest paths and globs are relative to the package root and may include `!` exclusions. A web panel can use object form to request the high-trust `same-origin` permission:
 
 ```json
 {
   "treeport": {
     "webPanels": [
-      { "id": "browser", "title": "Browser", "renderer": "browser" }
+      {
+        "source": "./web-panels/browser",
+        "permissions": ["same-origin"]
+      }
     ]
   }
 }
 ```
 
-The `id` must contain only letters, numbers, `.`, `_`, or `-`, and must start with a letter or number. The title is limited to 256 characters. Package filters address this resource as `web-panels/<id>`.
+This permission lets the panel compose nested web applications that need normal browser storage. It also lets panel code access the same-origin Treeport page and API routes. Use it only for code that you trust. Exclusions remain string entries.
+
+A valid explicit `treeport` manifest is authoritative. Without one, Treeport discovers these conventional resources:
+
+```text
+web-panels/<resource-id>/index.html
+terminal-presets/*.json
+```
 
 A terminal preset file contains one preset definition:
 
@@ -139,7 +142,7 @@ A terminal preset file contains one preset definition:
 }
 ```
 
-Hosted web panels are source-only Vite applications and require no package build step or committed output. Publish `index.html`, TypeScript/TSX or JavaScript, CSS, and imported assets in the declared panel directory. Put browser libraries in normal `dependencies`, not `devDependencies`; Treeport uses Vite to resolve and bundle the installed dependency graph. The host-provided `@treeport/panel-sdk` is the exception and belongs in `devDependencies` for authoring types. Local-path packages use development serving and HMR, while npm-installed packages are compiled into Treeport's immutable cache when opened. See [Web panels](/features/web-panels/) for the supported profile.
+Web panels are source-only Vite applications and require no package build step or committed output. Publish `index.html`, TypeScript/TSX or JavaScript, CSS, and imported assets in the declared panel directory. Put browser libraries in normal `dependencies`, not `devDependencies`; Treeport uses Vite to resolve and bundle the installed dependency graph. The host-provided `@treeport/panel-sdk` is the exception and belongs in `devDependencies` for authoring types. Local-path packages use development serving and HMR, while npm-installed packages are compiled into Treeport's immutable cache when opened. See [Web panels](/features/web-panels/) for the supported profile.
 
 Panel folder names supply humanized titles. Package resource identities do not include npm versions, so updating a package preserves persistent panel identity and storage.
 
