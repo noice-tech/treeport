@@ -56,6 +56,11 @@ export interface TmuxTerminalSession {
   updatedAt: string
 }
 
+export interface TmuxPaneProcess {
+  pid: number
+  terminalId: string
+}
+
 export interface TmuxTerminalMetadata {
   terminalId: string
   worktreeId: string
@@ -595,6 +600,51 @@ export class TmuxAdapter {
     }
 
     return [...sessions.values()]
+  }
+
+  async listPaneProcesses(
+    socketName: string,
+    worktreeId: string
+  ): Promise<TmuxPaneProcess[]> {
+    const result = await this.runner.run({
+      executable: this.executable,
+      args: [
+        ...this.base(socketName),
+        'list-panes',
+        '-a',
+        '-F',
+        '#{pane_pid}\t#{@treeport-terminal-id}\t#{@treeport-worktree-id}\t#{pane_dead}'
+      ],
+      env: this.environment(),
+      timeoutMs: 10_000
+    })
+    if (result.exitCode !== 0) {
+      if (isAbsentTmuxServer(result.stderr)) {
+        return []
+      }
+
+      throw new Error(
+        result.stderr.trim() || 'Failed to list terminal processes'
+      )
+    }
+
+    const panes = new Map<number, TmuxPaneProcess>()
+    for (const line of result.stdout.split('\n')) {
+      const [pidText, terminalId, paneWorktreeId, dead] = line.split('\t')
+      const pid = Number.parseInt(pidText ?? '', 10)
+      if (
+        !Number.isInteger(pid) ||
+        pid <= 0 ||
+        !terminalId ||
+        paneWorktreeId !== worktreeId ||
+        dead !== '0'
+      ) {
+        continue
+      }
+
+      panes.set(pid, { pid, terminalId })
+    }
+    return [...panes.values()].sort((left, right) => left.pid - right.pid)
   }
 
   async sessionState(

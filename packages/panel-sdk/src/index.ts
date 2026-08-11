@@ -65,6 +65,22 @@ export interface GitDiff {
   unified: string
 }
 
+/** A listening TCP socket attributed to the current worktree. */
+export interface WorktreeListener {
+  pid: number
+  command: string
+  host: string
+  port: number
+  terminalId: string | null
+}
+
+/** The result of scanning for worktree-scoped listening TCP sockets. */
+export interface WorktreeListenerDiscovery {
+  supported: boolean
+  message: string | null
+  listeners: WorktreeListener[]
+}
+
 /** Durable key-value storage scoped to one panel instance. */
 export interface WebPanelStorage {
   /** Return a stored JSON value, or undefined when the key does not exist. */
@@ -98,6 +114,10 @@ export interface TreeportPanelSdk {
   context(): Promise<WebPanelContext>
   /** Return the current worktree changes as unified diff text. */
   diff(): Promise<GitDiff>
+  /** Listening TCP sockets conservatively attributed to this worktree. */
+  readonly network: {
+    listeners(): Promise<WorktreeListenerDiscovery>
+  }
   /** Durable storage deleted when this panel instance is closed. */
   readonly storage: WebPanelStorage
   /** Shortcuts delivered whether focus is in the panel or Treeport host. */
@@ -198,7 +218,13 @@ addEventListener(
 )
 
 function call<Result>(
-  method: 'context' | 'diff' | 'storage.get' | 'storage.set' | 'storage.delete',
+  method:
+    | 'context'
+    | 'diff'
+    | 'network.listeners'
+    | 'storage.get'
+    | 'storage.set'
+    | 'storage.delete',
   params?: {
     key?: string
     value?: JsonValue
@@ -234,6 +260,9 @@ export const treeport: TreeportPanelSdk = Object.freeze({
   }),
   context: () => call<WebPanelContext>('context'),
   diff: () => call<GitDiff>('diff'),
+  network: Object.freeze({
+    listeners: () => call<WorktreeListenerDiscovery>('network.listeners')
+  }),
   storage: Object.freeze({
     get: <Value extends JsonValue = JsonValue>(key: string) =>
       call<Value | undefined>('storage.get', { key }),

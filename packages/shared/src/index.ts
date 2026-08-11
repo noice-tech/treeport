@@ -11,7 +11,9 @@ export type {
   WebPanel,
   WebPanelContext,
   WebPanelInput,
-  WebPanelLaunch
+  WebPanelLaunch,
+  WorktreeListener,
+  WorktreeListenerDiscovery
 } from '@treeport/panel-sdk'
 export * from './socket-protocol.js'
 export * from './terminal-protocol.js'

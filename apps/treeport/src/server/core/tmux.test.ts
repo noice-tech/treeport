@@ -67,6 +67,53 @@ describe('TmuxAdapter', () => {
     ])
   })
 
+  it('lists live pane process roots for only the requested worktree', async () => {
+    const runtime = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'treeport-runtime-')
+    )
+    temporary.push(runtime)
+    const runner = new RecordingRunner()
+    runner.responses.push({
+      stdout:
+        '101\tterm_one\twt_one\t0\n102\tterm_dead\twt_one\t1\n103\tterm_other\twt_two\t0\nbad\tterm_bad\twt_one\t0\n',
+      stderr: '',
+      exitCode: 0
+    })
+    const adapter = new TmuxAdapter(runner, runtime)
+
+    await expect(
+      adapter.listPaneProcesses('socket', 'wt_one')
+    ).resolves.toEqual([{ pid: 101, terminalId: 'term_one' }])
+    expect(runner.calls.at(-1)?.args).toEqual([
+      '-L',
+      'socket',
+      '-f',
+      adapter.configPath,
+      'list-panes',
+      '-a',
+      '-F',
+      '#{pane_pid}\t#{@treeport-terminal-id}\t#{@treeport-worktree-id}\t#{pane_dead}'
+    ])
+  })
+
+  it('treats an absent tmux server as having no pane processes', async () => {
+    const runtime = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'treeport-runtime-')
+    )
+    temporary.push(runtime)
+    const runner = new RecordingRunner()
+    runner.responses.push({
+      stdout: '',
+      stderr: 'no server running on socket',
+      exitCode: 1
+    })
+    const adapter = new TmuxAdapter(runner, runtime)
+
+    await expect(
+      adapter.listPaneProcesses('socket', 'wt_one')
+    ).resolves.toEqual([])
+  })
+
   it('resizes a window explicitly at the canonical dimensions', async () => {
     const runtime = await fs.mkdtemp(
       path.join(os.tmpdir(), 'treeport-runtime-')
