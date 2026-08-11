@@ -3413,6 +3413,11 @@ export class TreeportService {
         ...(options?.initialSize ? { initialSize: options.initialSize } : {}),
         env: {
           TREEPORT_API_URL: this.deps.config.apiUrl,
+          TREEPORT_MANAGED_API_URL: this.deps.config.apiUrl,
+          TREEPORT_DAEMON_RECORD: path.join(
+            this.deps.config.runtimeDir,
+            'daemon.json'
+          ),
           TREEPORT_DAEMON_LIFECYCLE: this.deps.config.daemonLifecycle,
           TREEPORT_PROJECT_ID: project.id,
           TREEPORT_WORKTREE_ID: worktree.id,

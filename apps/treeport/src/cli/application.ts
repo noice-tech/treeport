@@ -1876,7 +1876,7 @@ export async function runCliApplication(
 ): Promise<number> {
   const environment = options.environment ?? process.env
   configuredApiUrl = environment.TREEPORT_API_URL?.trim()
-  apiUrl = (configuredApiUrl || (await resolveLocalApiUrl())).replace(/\/$/, '')
+  apiUrl = (await resolveLocalApiUrl(environment)).replace(/\/$/, '')
   contextProjectId = environment.TREEPORT_PROJECT_ID?.trim() || undefined
   contextWorktreeId = environment.TREEPORT_WORKTREE_ID?.trim() || undefined
   contextTerminalId = environment.TREEPORT_TERMINAL_ID?.trim() || undefined

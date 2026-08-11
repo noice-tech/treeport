@@ -140,8 +140,12 @@ const healthRecordSchema: z.ZodType<HealthRecord> = z.strictObject({
   url: z.string()
 })
 
-async function preferences(): Promise<Preferences> {
-  return (await readJson(localPaths().preferencesPath, preferencesSchema)) ?? {}
+async function preferences(
+  env: NodeJS.ProcessEnv = process.env
+): Promise<Preferences> {
+  return (
+    (await readJson(localPaths(env).preferencesPath, preferencesSchema)) ?? {}
+  )
 }
 
 async function savePreferences(value: Preferences): Promise<void> {
@@ -154,21 +158,36 @@ async function savePreferences(value: Preferences): Promise<void> {
   await fs.rename(temporaryPath, paths.preferencesPath)
 }
 
-export async function resolveLocalApiUrl(): Promise<string> {
-  const explicit = process.env.TREEPORT_API_URL?.trim()
+export async function resolveLocalApiUrl(
+  env: NodeJS.ProcessEnv = process.env
+): Promise<string> {
+  const explicit = env.TREEPORT_API_URL?.trim()
+  const managedApiUrl = env.TREEPORT_MANAGED_API_URL?.trim()
+  const daemonRecordPath = env.TREEPORT_DAEMON_RECORD?.trim()
+  if (explicit && explicit !== managedApiUrl) {
+    return explicit.replace(/\/$/, '')
+  }
+
+  if (managedApiUrl && daemonRecordPath) {
+    const record = await readJson(
+      path.resolve(expandHome(daemonRecordPath)),
+      daemonRecordSchema
+    )
+    if (record) {
+      return record.apiUrl.replace(/\/$/, '')
+    }
+  }
+
   if (explicit) {
     return explicit.replace(/\/$/, '')
   }
 
-  const saved = await preferences()
+  const saved = await preferences(env)
   const host =
-    process.env.TREEPORT_HOST?.trim() ||
-    process.env.HOST?.trim() ||
-    saved.host ||
-    DEFAULT_HOST
+    env.TREEPORT_HOST?.trim() || env.HOST?.trim() || saved.host || DEFAULT_HOST
   const port = Number.parseInt(
-    process.env.TREEPORT_PORT?.trim() ||
-      process.env.PORT?.trim() ||
+    env.TREEPORT_PORT?.trim() ||
+      env.PORT?.trim() ||
       String(saved.port ?? DEFAULT_PORT),
     10
   )

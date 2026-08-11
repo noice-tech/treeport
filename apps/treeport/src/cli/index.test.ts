@@ -116,6 +116,8 @@ function cliEnvironment(overrides: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const environment = { ...process.env }
   for (const name of [
     'TREEPORT_API_URL',
+    'TREEPORT_MANAGED_API_URL',
+    'TREEPORT_DAEMON_RECORD',
     'TREEPORT_DAEMON_LIFECYCLE',
     'TREEPORT_PROJECT_ID',
     'TREEPORT_WORKTREE_ID',
@@ -809,6 +811,60 @@ describe('CLI context and machine output', () => {
     })
     expect(external.code).toBe(0)
     expect(external.stdout).toContain('Lifecycle: externally managed')
+
+    const runtimeDirectory = await mkdtemp(
+      path.join(os.tmpdir(), 'treeport-managed-cli-')
+    )
+    const daemonRecordPath = path.join(runtimeDirectory, 'daemon.json')
+    await writeFile(
+      daemonRecordPath,
+      JSON.stringify({
+        pid: process.pid,
+        instanceId: 'current-instance',
+        version: 'development',
+        apiUrl,
+        dataDir: runtimeDirectory,
+        startedAt: timestamp,
+        installationMethod: 'development'
+      })
+    )
+    const staleApiUrl = 'http://127.0.0.1:1'
+    const recovered = await runCli(['context'], {
+      TREEPORT_API_URL: staleApiUrl,
+      TREEPORT_MANAGED_API_URL: staleApiUrl,
+      TREEPORT_DAEMON_RECORD: daemonRecordPath,
+      TREEPORT_PROJECT_ID: project.id,
+      TREEPORT_WORKTREE_ID: worktree.id,
+      TREEPORT_TERMINAL_ID: terminal.id
+    })
+    expect(recovered.code).toBe(0)
+    expect(recovered.stderr).toBe('')
+    expect(recovered.stdout).toContain(`API:      ${apiUrl}`)
+
+    await writeFile(
+      daemonRecordPath,
+      JSON.stringify({
+        pid: process.pid,
+        instanceId: 'stale-instance',
+        version: 'development',
+        apiUrl: staleApiUrl,
+        dataDir: runtimeDirectory,
+        startedAt: timestamp,
+        installationMethod: 'development'
+      })
+    )
+    const overridden = await runCli(['context'], {
+      TREEPORT_API_URL: apiUrl,
+      TREEPORT_MANAGED_API_URL: staleApiUrl,
+      TREEPORT_DAEMON_RECORD: daemonRecordPath,
+      TREEPORT_PROJECT_ID: project.id,
+      TREEPORT_WORKTREE_ID: worktree.id,
+      TREEPORT_TERMINAL_ID: terminal.id
+    })
+    expect(overridden.code).toBe(0)
+    expect(overridden.stderr).toBe('')
+    expect(overridden.stdout).toContain(`API:      ${apiUrl}`)
+    await rm(runtimeDirectory, { recursive: true, force: true })
   })
 
   it('detects an unmanaged terminal without contacting the daemon', async () => {

@@ -72,7 +72,7 @@ TREEPORT_API_URL=http://127.0.0.1:8733
 
 If the variable is unset, it uses the listener saved by `treeport up`, or defaults to `http://127.0.0.1:8733`.
 
-Managed terminals receive these variables automatically:
+Managed terminals receive these variables automatically. Treeport CLI commands in a managed terminal reconnect to the current local daemon after a restart, even when its listener URL changes.
 
 | Variable               | Meaning                     |
 | ---------------------- | --------------------------- |
