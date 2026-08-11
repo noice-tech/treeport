@@ -49,7 +49,7 @@ describe('SQLite migration and catalog ordering', () => {
       await database.db.get<{ count: number }>(
         sql`SELECT count(*) AS count FROM __drizzle_migrations`
       )
-    ).toEqual({ count: 6 })
+    ).toEqual({ count: 7 })
     expect(
       await database.db.get<{ count: number }>(sql`
         SELECT count(*) AS count FROM sqlite_master WHERE name='terminals'
@@ -131,7 +131,6 @@ describe('SQLite migration and catalog ordering', () => {
         path: worktreePath!,
         kind: kind!,
         tmuxSocketName: `socket-${id}`,
-        status: 'active',
         createdAt: createdAt!,
         updatedAt: createdAt!
       }))
@@ -180,7 +179,6 @@ describe('SQLite migration and catalog ordering', () => {
       path: '/panels',
       kind: 'main',
       tmuxSocketName: 'panel-socket',
-      status: 'active',
       createdAt: '2026-01-01',
       updatedAt: '2026-01-01'
     })
@@ -281,7 +279,6 @@ describe('SQLite migration and catalog ordering', () => {
       path: '/existing-linked',
       kind: 'linked',
       tmuxSocketName: 'treeport-existing',
-      status: 'active',
       createdAt: '2026-01-01',
       updatedAt: '2026-01-01'
     })
@@ -355,7 +352,7 @@ describe('SQLite migration and catalog ordering', () => {
       await reopened.db.get<{ count: number }>(
         sql`SELECT count(*) AS count FROM __drizzle_migrations`
       )
-    ).toEqual({ count: 6 })
+    ).toEqual({ count: 7 })
 
     const backupDirectory = path.join(directory, 'database-backups')
     const [backupName] = await fs.readdir(backupDirectory)
@@ -485,6 +482,73 @@ describe('SQLite migration and catalog ordering', () => {
     ).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
+  it('cuts cleanup lifecycle columns out of an existing worktree catalog', async () => {
+    const directory = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'treeport-cleanup-cutover-')
+    )
+    directories.push(directory)
+    const oldMigrations = path.join(directory, 'old-migrations')
+    const packagedMigrations = fileURLToPath(
+      new URL('../../../drizzle', import.meta.url)
+    )
+    await fs.cp(packagedMigrations, oldMigrations, { recursive: true })
+    await Promise.all([
+      fs.rm(path.join(oldMigrations, '0005_git_authoritative_worktrees.sql')),
+      fs.rm(path.join(oldMigrations, '0006_web_panel_launch_input.sql')),
+      fs.rm(path.join(oldMigrations, 'meta', '0005_snapshot.json')),
+      fs.rm(path.join(oldMigrations, 'meta', '0006_snapshot.json'))
+    ])
+    const journalPath = path.join(oldMigrations, 'meta', '_journal.json')
+    const journal = JSON.parse(await fs.readFile(journalPath, 'utf8')) as {
+      entries: unknown[]
+    }
+    journal.entries.splice(-2)
+    await fs.writeFile(journalPath, JSON.stringify(journal, null, 2))
+
+    const filePath = path.join(directory, 'treeport.db')
+    const oldDatabase = await openDatabase(filePath, {
+      migrationsFolder: oldMigrations
+    })
+    await oldDatabase.db.run(sql`
+      INSERT INTO projects(
+        id,name,repository_path,main_worktree_path,default_branch,
+        repository_device,repository_inode,last_opened_at,created_at,updated_at
+      ) VALUES(
+        'p_cutover','Cutover','/cutover','/cutover','main',
+        '1','1','2026-01-01','2026-01-01','2026-01-01'
+      )
+    `)
+    await oldDatabase.db.run(sql`
+      INSERT INTO worktrees(
+        id,project_id,path,kind,tmux_socket_name,status,cleanup_error,
+        created_at,updated_at
+      ) VALUES(
+        'w_cutover','p_cutover','/cutover','main','cutover-socket',
+        'cleanup_failed','old cleanup error','2026-01-01','2026-01-01'
+      )
+    `)
+    oldDatabase.close()
+
+    const migrated = await openDatabase(filePath)
+    databases.push(migrated)
+    expect(
+      await migrated.db
+        .select()
+        .from(worktrees)
+        .where(eq(worktrees.id, 'w_cutover'))
+        .then(([worktree]) => worktree)
+    ).toMatchObject({ id: 'w_cutover', path: '/cutover' })
+    expect(
+      (
+        await migrated.db.all<{ name: string }>(
+          sql`PRAGMA table_info(worktrees)`
+        )
+      )
+        .map((column) => column.name)
+        .filter((name) => name === 'status' || name === 'cleanup_error')
+    ).toEqual([])
+  })
+
   it('rolls back a failed migration and recovers on the next startup', async () => {
     const directory = await fs.mkdtemp(
       path.join(os.tmpdir(), 'treeport-db-failure-')
@@ -579,6 +643,6 @@ describe('SQLite migration and catalog ordering', () => {
       await recovered.db.get<{ count: number }>(
         sql`SELECT count(*) AS count FROM __drizzle_migrations`
       )
-    ).toEqual({ count: 6 })
+    ).toEqual({ count: 7 })
   })
 })

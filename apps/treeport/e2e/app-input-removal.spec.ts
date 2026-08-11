@@ -18,9 +18,9 @@ test.describe('desktop terminal input and removal', () => {
     await page.getByRole('button', { name: /^New panel/ }).click()
     await page
       .getByRole('dialog', { name: 'New panel' })
-      .getByRole('button', { name: 'Manage presets' })
+      .getByRole('button', { name: 'Manage global presets' })
       .click()
-    const dialog = page.getByRole('dialog', { name: 'Terminal presets' })
+    const dialog = page.getByRole('dialog', { name: 'Global terminal presets' })
     await dialog.getByRole('button', { name: /^Hunk/ }).click()
     await dialog.getByLabel('Name').fill('Unsaved local name')
     mocked.terminalPresets[0] = {
@@ -36,9 +36,10 @@ test.describe('desktop terminal input and removal', () => {
     await dialog.getByRole('button', { name: 'Close', exact: true }).click()
 
     await page.getByRole('button', { name: 'New worktree' }).click()
-    await page
-      .getByLabel('Initial terminal')
-      .selectOption({ label: 'Remote Hunk' })
+    await page.getByLabel('Initial terminal').selectOption({
+      label:
+        'Remote Hunk — Global — npx --yes hunkdiff@0.17.3 diff HEAD --watch'
+    })
     mocked.terminalPresets.splice(0)
     await page.clock.fastForward(5_000)
     await expect(
@@ -700,63 +701,40 @@ test.describe('desktop terminal input and removal', () => {
     await expect.poll(() => mocked.removeRequests()).toBe(2)
   })
 
-  test('renders authoritative removal progress and a retryable failure', async ({
+  test('restores durable removal progress after refresh and hides the Git-removed worktree', async ({
     page
   }) => {
     const mocked = await mockApp(page)
-    const requestsBeforeStarted = mocked.projectRequests()
-    mocked.state.worktrees[1]!.status = 'cleaning'
-    await page.evaluate(() =>
-      (window as any).__eventSource.emit('remove.started')
-    )
-    await expect
-      .poll(() => mocked.projectRequests())
-      .toBeGreaterThan(requestsBeforeStarted)
-    await expect(page.getByText('Removing…')).toHaveCount(0)
-    const cleaningMenu = await openWorktreeContextMenu(page, 'topic')
-    await expect(
-      cleaningMenu.getByRole('menuitem', { name: 'Removal in progress' })
-    ).toBeDisabled()
-    await page.keyboard.press('Escape')
-
-    mocked.state.worktrees[1]!.status = 'cleanup_failed'
-    mocked.state.worktrees[1]!.cleanupError =
-      'Terminals were stopped, but Git removal failed'
-    await page.evaluate(() =>
-      (window as any).__eventSource.emit('remove.failed')
-    )
-    await expect(page.getByText(/Removal failed:/)).toContainText(
-      'Git removal failed'
-    )
-    const retryMenu = await openWorktreeContextMenu(page, 'topic')
-    const retry = retryMenu.getByRole('menuitem', { name: 'Retry removal…' })
-    await expect(retry).toBeEnabled()
-    await retry.click()
+    const menu = await openWorktreeContextMenu(page, 'topic')
+    await menu.getByRole('menuitem', { name: 'Remove worktree…' }).click()
     await expect.poll(() => mocked.removeRequests()).toBe(1)
 
-    mocked.state.worktrees[1]!.status = 'cleanup_failed'
-    mocked.state.worktrees[1]!.prunable = true
-    mocked.state.worktrees[1]!.cleanupError =
-      'Terminals were stopped, but Git removal failed again'
-    await page.evaluate(() =>
-      (window as any).__eventSource.emit('remove.failed')
-    )
-    const secondRetryMenu = await openWorktreeContextMenu(page, 'topic')
+    const removingMenu = await openWorktreeContextMenu(page, 'topic')
     await expect(
-      secondRetryMenu.getByRole('menuitem', { name: 'Retry removal…' })
-    ).toBeEnabled()
+      removingMenu.getByRole('menuitem', { name: 'Removal in progress' })
+    ).toBeDisabled()
     await page.keyboard.press('Escape')
 
-    mocked.state.worktrees[1]!.cleanupError =
-      'Manual cleanup required: the checkout Git marker changed'
-    await page.evaluate(() =>
-      (window as any).__eventSource.emit('remove.failed')
-    )
-    const manualCleanupMenu = await openWorktreeContextMenu(page, 'topic')
+    await page.reload()
+    const restoredMenu = await openWorktreeContextMenu(page, 'topic')
     await expect(
-      manualCleanupMenu.getByRole('menuitem', {
-        name: 'Manual cleanup required'
-      })
+      restoredMenu.getByRole('menuitem', { name: 'Removal in progress' })
     ).toBeDisabled()
+    await page.keyboard.press('Escape')
+
+    mocked.completeRemoval()
+    const removedRefresh = page.waitForResponse(
+      (response) =>
+        response.request().method() === 'GET' &&
+        new URL(response.url()).pathname === '/api/projects'
+    )
+    await page.evaluate(() =>
+      (window as any).__eventSource.emit('worktree.removed')
+    )
+    await removedRefresh
+    await expect(
+      page.getByRole('button', { name: 'topic', exact: true })
+    ).toHaveCount(0)
+    await expect(page).toHaveURL(/wt_main/)
   })
 })

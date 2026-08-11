@@ -13,6 +13,157 @@ import {
 } from './service.integration-fixture'
 
 describe('TreeportService with injected command adapters', () => {
+  it('resolves repository terminal presets from each worktree and keeps usable choices through configuration errors', async () => {
+    const { main, service } = await fixture()
+    const treeportDirectory = path.join(main, '.treeport')
+    const configPath = path.join(treeportDirectory, 'terminal-presets.json')
+    await fs.mkdir(treeportDirectory, { recursive: true })
+    await fs.writeFile(
+      configPath,
+      JSON.stringify({
+        version: 1,
+        presets: {
+          review: {
+            name: 'Review',
+            executable: 'pi',
+            args: ['--prompt', 'Review; do not invoke a shell', '$HOME'],
+            closeOnSuccess: false
+          },
+          dev: {
+            name: 'Development',
+            executable: 'pnpm',
+            args: ['dev'],
+            closeOnSuccess: true
+          },
+          broken: {
+            name: '',
+            executable: 'pnpm',
+            args: ['broken']
+          }
+        }
+      })
+    )
+    await service.createTerminalPreset({
+      name: 'Development',
+      executable: 'global-dev',
+      args: [],
+      closeOnSuccess: false
+    })
+    const project = await service.registerProject(main)
+    const mainWorktree = project.worktrees[0]!
+
+    const initial = await service.listTerminalPresetDefinitions({
+      worktreeId: mainWorktree.id
+    })
+    expect(initial.definitions).toMatchObject([
+      {
+        name: 'Development',
+        executable: 'pnpm',
+        args: ['dev'],
+        source: { type: 'repository' }
+      },
+      {
+        name: 'Review',
+        executable: 'pi',
+        args: ['--prompt', 'Review; do not invoke a shell', '$HOME'],
+        source: { type: 'repository' }
+      },
+      {
+        name: 'Development',
+        executable: 'global-dev',
+        source: { type: 'user' }
+      }
+    ])
+    expect(initial.diagnostics).toEqual([
+      expect.objectContaining({
+        presetId: 'broken',
+        message: expect.stringContaining(
+          'Invalid repository terminal preset broken'
+        )
+      })
+    ])
+
+    const linked = (
+      await service.createWorktree(project.id, 'preset-linked', 'default')
+    ).worktree
+    await fs.mkdir(path.join(linked.path, '.treeport'), { recursive: true })
+    await fs.writeFile(
+      path.join(linked.path, '.treeport', 'terminal-presets.json'),
+      JSON.stringify({
+        version: 1,
+        presets: {
+          'linked-only': {
+            name: 'Linked only',
+            executable: 'linked-command',
+            args: []
+          }
+        }
+      })
+    )
+    const linkedDefinitions = await service.listTerminalPresetDefinitions({
+      worktreeId: linked.id
+    })
+    expect(linkedDefinitions.definitions).toContainEqual(
+      expect.objectContaining({
+        name: 'Linked only',
+        executable: 'linked-command',
+        source: { type: 'repository' }
+      })
+    )
+    expect(linkedDefinitions.definitions).not.toContainEqual(
+      expect.objectContaining({ name: 'Review' })
+    )
+
+    await fs.writeFile(configPath, '{ invalid json')
+    const malformed = await service.listTerminalPresetDefinitions({
+      worktreeId: mainWorktree.id
+    })
+    expect(malformed.definitions).toEqual([
+      expect.objectContaining({
+        name: 'Development',
+        executable: 'global-dev',
+        source: { type: 'user' }
+      })
+    ])
+    expect(malformed.diagnostics[0]?.message).toContain(
+      'Could not parse repository terminal presets'
+    )
+
+    await fs.writeFile(
+      configPath,
+      JSON.stringify({
+        version: 1,
+        presets: {
+          fixed: {
+            name: 'Fixed immediately',
+            executable: 'fixed-command',
+            args: ['argument with spaces']
+          }
+        }
+      })
+    )
+    expect(
+      await service.listTerminalPresetDefinitions({
+        worktreeId: mainWorktree.id
+      })
+    ).toMatchObject({
+      definitions: [
+        {
+          name: 'Fixed immediately',
+          executable: 'fixed-command',
+          args: ['argument with spaces'],
+          source: { type: 'repository' }
+        },
+        {
+          name: 'Development',
+          executable: 'global-dev',
+          source: { type: 'user' }
+        }
+      ],
+      diagnostics: []
+    })
+  })
+
   it('discovers local web panels and owns their persistent synchronized lifecycle', async () => {
     const { main, service, database } = await fixture()
     const webPanels = path.join(main, '.treeport', 'web-panels')
@@ -251,14 +402,19 @@ describe('TreeportService with injected command adapters', () => {
       title: 'Review',
       source: { type: 'package', scope: 'project' }
     })
-    expect(await service.listTerminalPresetDefinitions(project.id)).toEqual([
-      expect.objectContaining({
-        name: 'Package dev server',
-        executable: 'pnpm',
-        args: ['dev'],
-        source: expect.objectContaining({ type: 'package', scope: 'project' })
-      })
-    ])
+    expect(
+      await service.listTerminalPresetDefinitions({ projectId: project.id })
+    ).toEqual({
+      definitions: [
+        expect.objectContaining({
+          name: 'Package dev server',
+          executable: 'pnpm',
+          args: ['dev'],
+          source: expect.objectContaining({ type: 'package', scope: 'project' })
+        })
+      ],
+      diagnostics: []
+    })
 
     const linked = (
       await service.createWorktree(project.id, 'package-linked', 'default')

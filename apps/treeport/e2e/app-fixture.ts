@@ -4,7 +4,9 @@ import {
   type ProjectColor,
   type RecentProjectRecord,
   type RemovePreview,
+  type RepositoryTerminalPresetDiagnostic,
   type TerminalPreset,
+  type TerminalPresetDefinition,
   type TerminalRuntimeMetadata
 } from '@treeport/shared'
 
@@ -57,8 +59,6 @@ const project = {
       prunable: false,
       kind: 'main',
       tmuxSocketName: 'treeport-wt-main',
-      status: 'active',
-      cleanupError: null,
       managedWrapperPath: null,
       pr: {
         state: 'no_pr',
@@ -107,8 +107,6 @@ const project = {
       prunable: false,
       kind: 'linked',
       tmuxSocketName: 'treeport-wt-topic',
-      status: 'active',
-      cleanupError: null,
       managedWrapperPath: null,
       pr: {
         state: 'merged',
@@ -160,6 +158,8 @@ export async function mockApp(
     initialPath?: string
     delayProjects?: boolean
     transientProjectFailures?: number
+    repositoryTerminalPresets?: TerminalPresetDefinition[]
+    repositoryPresetDiagnostics?: RepositoryTerminalPresetDiagnostic[]
   } = {}
 ) {
   if (options.keyboardPlatform) {
@@ -528,6 +528,12 @@ export async function mockApp(
     Object.assign(window, { WebSocket: MockWebSocket })
   }, initialTerminalMetadata)
   const state = structuredClone(project)
+  const repositoryTerminalPresets = [
+    ...(options.repositoryTerminalPresets ?? [])
+  ]
+  const repositoryPresetDiagnostics = [
+    ...(options.repositoryPresetDiagnostics ?? [])
+  ]
   const terminalPresets: TerminalPreset[] = [
     {
       id: 'preset_hunk',
@@ -599,6 +605,8 @@ export async function mockApp(
   let terminalCreateGate: Promise<void> | null = null
   let releaseTerminalCreate: (() => void) | null = null
   let failTerminalCreate = false
+  let failTerminalCreateWithGateway = false
+  let failTerminalCreateWithNetwork = false
   let terminalDeleteGate: Promise<void> | null = null
   let releaseTerminalDelete: (() => void) | null = null
   let failTerminalDelete = false
@@ -621,6 +629,7 @@ export async function mockApp(
   let failCreate = false
   let creationSequence = 0
   const creationOperations = new Map<string, OperationRecord>()
+  let removeOperation: OperationRecord | null = null
   await page.route('**/api/**', async (route) => {
     const url = new URL(route.request().url())
     const pathname = url.pathname
@@ -630,14 +639,22 @@ export async function mockApp(
     ) {
       await route.fulfill({
         json: {
-          definitions: terminalPresets.map((preset) => ({
-            id: preset.id,
-            name: preset.name,
-            executable: preset.executable,
-            args: preset.args,
-            closeOnSuccess: preset.closeOnSuccess,
-            source: { type: 'user' }
-          }))
+          definitions: [
+            ...(url.searchParams.has('worktreeId')
+              ? repositoryTerminalPresets
+              : []),
+            ...terminalPresets.map((preset) => ({
+              id: preset.id,
+              name: preset.name,
+              executable: preset.executable,
+              args: preset.args,
+              closeOnSuccess: preset.closeOnSuccess,
+              source: { type: 'user' as const }
+            }))
+          ],
+          diagnostics: url.searchParams.has('worktreeId')
+            ? repositoryPresetDiagnostics
+            : []
         }
       })
       return
@@ -1014,7 +1031,10 @@ export async function mockApp(
     if (pathname === '/api/operations' && route.request().method() === 'GET') {
       await route.fulfill({
         json: {
-          operations: [...creationOperations.values()].filter(
+          operations: [
+            ...creationOperations.values(),
+            ...(removeOperation ? [removeOperation] : [])
+          ].filter(
             (operation) =>
               operation.status === 'pending' || operation.status === 'running'
           )
@@ -1193,8 +1213,30 @@ export async function mockApp(
         failTerminalCreate = false
         await route.fulfill({
           status: 500,
-          json: { error: { message: 'Terminal could not be created' } }
+          json: {
+            error: {
+              code: 'TERMINAL_CREATE_FAILED',
+              message: 'Terminal could not be created',
+              details: { requestId: 'request_terminal_create' }
+            }
+          }
         })
+        return
+      }
+
+      if (failTerminalCreateWithGateway) {
+        failTerminalCreateWithGateway = false
+        await route.fulfill({
+          status: 502,
+          contentType: 'text/html',
+          body: '<html><body>PRIVATE_PROXY_DIAGNOSTIC</body></html>'
+        })
+        return
+      }
+
+      if (failTerminalCreateWithNetwork) {
+        failTerminalCreateWithNetwork = false
+        await route.abort('connectionrefused')
         return
       }
 
@@ -1286,11 +1328,56 @@ export async function mockApp(
 
       removeGate = null
       releaseRemove = null
-      state.worktrees[1]!.status = 'cleaning'
-      await route.fulfill({
-        status: 202,
-        json: { operation: { id: 'op_1', status: 'pending' } }
-      })
+      const worktree = state.worktrees[1]!
+      removeOperation = {
+        id: 'op_1',
+        kind: 'remove',
+        projectId: worktree.projectId,
+        worktreeId: worktree.id,
+        status: 'pending',
+        request: {
+          confirmation: null,
+          confirmationToken: 'a'.repeat(64),
+          confirmDestructive: false,
+          preview: {
+            worktreeId: worktree.id,
+            name: worktree.name,
+            path: worktree.path,
+            head: worktree.head,
+            branch: worktree.branch,
+            detached: worktree.detached,
+            locked: worktree.locked,
+            lockReason: worktree.lockReason,
+            dirty: {
+              dirty: false,
+              staged: 0,
+              unstaged: 0,
+              untracked: 0,
+              conflicts: 0,
+              total: 0
+            },
+            detachedHeadReachable: true,
+            forceRequired: false,
+            eligible: true,
+            reasons: [],
+            warnings: [],
+            terminals: [],
+            confirmationToken: 'a'.repeat(64)
+          },
+          checkoutIdentity: null,
+          prunable: false,
+          gitWorktreeKey: 'worktrees/feature',
+          repositoryIdentity: 'repository',
+          phase: 'accepted',
+          tmuxSocketName: worktree.tmuxSocketName,
+          managedWrapperPath: worktree.managedWrapperPath
+        },
+        result: null,
+        error: null,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      }
+      await route.fulfill({ status: 202, json: { operation: removeOperation } })
       return
     }
 
@@ -1305,6 +1392,8 @@ export async function mockApp(
   return {
     state,
     terminalPresets,
+    repositoryTerminalPresets,
+    repositoryPresetDiagnostics,
     recentProjects,
     projectRequests: () => projectRequests,
     registeredProjectPaths: () => [...registeredProjectPaths],
@@ -1334,6 +1423,12 @@ export async function mockApp(
     failNextTerminalCreate: () => {
       failTerminalCreate = true
     },
+    failNextTerminalCreateWithGateway: () => {
+      failTerminalCreateWithGateway = true
+    },
+    failNextTerminalCreateWithNetwork: () => {
+      failTerminalCreateWithNetwork = true
+    },
     delayNextTerminalDelete: () => {
       terminalDeleteGate = new Promise<void>((resolve) => {
         releaseTerminalDelete = resolve
@@ -1354,6 +1449,31 @@ export async function mockApp(
     },
     removeRequests: () => removeRequests,
     removeRequestBodies: () => [...removeRequestBodies],
+    completeRemoval: () => {
+      const worktree = state.worktrees[1]
+      if (worktree && removeOperation?.kind === 'remove') {
+        state.worktrees.splice(1, 1)
+        removeOperation = {
+          ...removeOperation,
+          worktreeId: null,
+          status: 'completed',
+          result: {
+            removed: true,
+            worktreeId: worktree.id,
+            name: worktree.name,
+            branchPreserved: worktree.branch,
+            path: worktree.path,
+            recovered: false,
+            cleanup: {
+              status: 'completed',
+              residualPath: null,
+              warning: null
+            }
+          },
+          updatedAt: new Date().toISOString()
+        }
+      }
+    },
     staleNextRemoveWithPreview: (value: Partial<RemovePreview>) => {
       staleRemovePreview = value
     },

@@ -54,8 +54,6 @@ describe('development database snapshots', () => {
       path: '/repo',
       kind: 'main',
       tmuxSocketName: 'real-tmux-socket',
-      status: 'cleanup_failed',
-      cleanupError: 'real cleanup pending',
       createdAt: '2026-01-01',
       updatedAt: '2026-01-01'
     })
@@ -87,8 +85,6 @@ describe('development database snapshots', () => {
       .where(eq(worktrees.projectId, 'project'))
     expect(snapshotWorktree).toMatchObject({
       path: '/repo',
-      status: 'active',
-      cleanupError: null,
       tmuxSocketName: expect.stringMatching(/^treeport-wt-[0-9a-f]{16}$/)
     })
     expect(snapshotWorktree!.tmuxSocketName).not.toBe('real-tmux-socket')
@@ -103,11 +99,7 @@ describe('development database snapshots', () => {
         .from(worktrees)
         .where(eq(worktrees.projectId, 'project'))
         .then(([worktree]) => worktree)
-    ).toMatchObject({
-      status: 'cleanup_failed',
-      cleanupError: 'real cleanup pending',
-      tmuxSocketName: 'real-tmux-socket'
-    })
+    ).toMatchObject({ tmuxSocketName: 'real-tmux-socket' })
     expect(
       await source.db.get<{ count: number }>(
         sql`SELECT COUNT(*) AS count FROM operations`

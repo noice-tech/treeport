@@ -38,7 +38,7 @@ A different marker at the stored path is a different repository. A missing, inva
 
 The durable UUID proves repository continuity across daemon runs. It does not replace short-lived filesystem observations used to authorize an operation.
 
-Registration and reconciliation capture a path's `(st_dev, st_ino)`, inspect Git and the marker, then require the same stat and marker before committing metadata. Destructive worktree removal additionally persists and revalidates the accepted path, stat, `.git` marker, Git administrative key, repository UUID, and quarantine path immediately before cleanup. A restart or remount that changes an operation-scoped stat intentionally fails closed and preserves the checkout for manual intervention.
+Registration and reconciliation capture a path's `(st_dev, st_ino)`, inspect Git and the marker, then require the same stat and marker before committing metadata. Destructive worktree removal additionally persists and revalidates the accepted path, stat, `.git` marker, Git administrative key, repository UUID, and quarantine path immediately before cleanup. A restart or remount that changes an operation-scoped stat intentionally fails closed and preserves the uncertain filesystem path. As established by Decision 0007, preserving residual files does not preserve or resurrect a worktree that Git no longer reports.
 
 ## Consequences
 

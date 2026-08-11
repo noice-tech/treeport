@@ -126,16 +126,21 @@ function WorkspaceApp() {
           (worktree) => worktree.id === dialog.worktreeId
         ) ?? null)
       : null
-  const presetDefinitionsProjectId =
+  const presetDefinitionsContext =
     dialog?.type === 'worktree'
-      ? dialog.project.id
-      : dialog?.type === 'panel'
-        ? dialog.projectId
-        : (selectedProject?.id ?? undefined)
+      ? { projectId: dialog.project.id }
+      : panelDialogWorktree
+        ? { worktreeId: panelDialogWorktree.id }
+        : selectedWorktree
+          ? { worktreeId: selectedWorktree.id }
+          : selectedProject
+            ? { projectId: selectedProject.id }
+            : undefined
   const presetDefinitionsQuery = useQuery(
-    terminalPresetDefinitionsQueryOptions(presetDefinitionsProjectId)
+    terminalPresetDefinitionsQueryOptions(presetDefinitionsContext)
   )
-  const availablePresets = presetDefinitionsQuery.data ?? []
+  const availablePresets = presetDefinitionsQuery.data?.definitions ?? []
+  const presetDiagnostics = presetDefinitionsQuery.data?.diagnostics ?? []
   const webPanelDefinitionsQuery = useQuery({
     queryKey: ['web-panel-definitions', panelDialogWorktree?.id],
     queryFn: async () =>
@@ -176,7 +181,11 @@ function WorkspaceApp() {
         await navigateToWorkspace(target)
       }
     },
-    onError: notifyError
+    onError: (error, { worktree, definition }) => {
+      notifyError(error, {
+        operation: `create web panel “${definition.title}” in worktree “${worktree.name}”`
+      })
+    }
   })
   const closeWebPanel = useMutation({
     mutationFn: ({
@@ -214,20 +223,29 @@ function WorkspaceApp() {
         queryKey: projectsQueryOptions.queryKey
       })
     },
-    onError: notifyError
+    onError: (error, { panel }) => {
+      notifyError(error, { operation: `close web panel “${panel.title}”` })
+    }
   })
   const requestCloseWebPanel = (panel: WebPanel, trigger?: HTMLElement) => {
     void parseResponse(
       rpc.api.panels[':panelId'].storage.$get({
         param: { panelId: panel.id }
       })
-    ).then(({ hasData }) => {
-      if (hasData) {
-        openDialog({ type: 'close-web-panel', panel }, trigger)
-      } else {
-        closeWebPanel.mutate({ panel })
+    ).then(
+      ({ hasData }) => {
+        if (hasData) {
+          openDialog({ type: 'close-web-panel', panel }, trigger)
+        } else {
+          closeWebPanel.mutate({ panel })
+        }
+      },
+      (error: unknown) => {
+        notifyError(error, {
+          operation: `check stored data for web panel “${panel.title}”`
+        })
       }
-    }, notifyError)
+    )
   }
   const navigatePanelOpenRequest = useCallback(
     (request: ProductEventDataMap['panel.open_requested']) => {
@@ -261,7 +279,9 @@ function WorkspaceApp() {
             await navigateToWorkspace(target)
           }
         })
-        .catch(notifyError)
+        .catch((error: unknown) => {
+          notifyError(error, { operation: 'open web panel' })
+        })
     },
     [navigateToWorkspace, queryClient, selectedTerminalId]
   )
@@ -394,7 +414,10 @@ function WorkspaceApp() {
     )
 
   const selectProject = (project: ProjectRecord) => {
-    void navigateToWorkspace(rememberedTargetForProject(project))
+    const target = rememberedTargetForProject(project)
+    projectSwitcher.dismissedIntoTerminalRef.current =
+      !isMobile && target.kind === 'terminal'
+    void navigateToWorkspace(target, false, !isMobile)
     projectSwitcher.setOpen(false)
     closeDrawerAfterNavigation()
   }
@@ -412,6 +435,12 @@ function WorkspaceApp() {
         setDialog(null)
       }
     })
+  const projectOpenedFromSwitcher = (project: ProjectRecord) => {
+    const target = rememberedTargetForProject(project)
+    projectSwitcher.dismissedIntoTerminalRef.current =
+      !isMobile && target.kind === 'terminal'
+    return projectOpened(project, !isMobile)
+  }
   const {
     pendingWorktrees,
     pendingRemovals,
@@ -544,7 +573,7 @@ function WorkspaceApp() {
     !panelDialogWorktree ||
     panelDialogProject.availability.state === 'unavailable' ||
     Boolean(panelDialogWorktree.prunable) ||
-    panelDialogWorktree.status !== 'active'
+    Boolean(pendingRemovals[panelDialogWorktree.id])
 
   useEffect(() => {
     if (!desktopBridge) {
@@ -632,7 +661,7 @@ function WorkspaceApp() {
             activeProject={activeProject}
             closingProjectId={closingProjectId}
             onSelectProject={selectProject}
-            onProjectOpened={projectOpened}
+            onProjectOpened={projectOpenedFromSwitcher}
             onRequestProjectClose={requestProjectClose}
             onOpenProjectDialog={(trigger) =>
               openDialog({ type: 'project' }, trigger)
@@ -730,6 +759,7 @@ function WorkspaceApp() {
         onOpenChange={(open) => !open && setDialog(null)}
         restoreFocusTo={dialogTriggerRef.current}
         presets={availablePresets}
+        presetDiagnostics={presetDiagnostics}
         presetsLoading={presetDefinitionsQuery.isPending}
         presetsError={presetDefinitionsQuery.isError}
         onRetryPresets={() => void presetDefinitionsQuery.refetch()}
@@ -741,6 +771,7 @@ function WorkspaceApp() {
         restoreFocusTo={dialogTriggerRef.current}
         worktreeName={panelDialogWorktree?.name ?? null}
         presets={availablePresets}
+        presetDiagnostics={presetDiagnostics}
         presetsLoading={presetDefinitionsQuery.isPending}
         presetsError={presetDefinitionsQuery.isError}
         webPanelDefinitions={webPanelDefinitionsQuery.data ?? []}

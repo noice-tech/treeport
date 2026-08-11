@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "presets": {
+    "signoff": {
+      "name": "Signoff",
+      "executable": "pnpm",
+      "args": ["signoff"],
+      "closeOnSuccess": true
+    }
+  }
+}

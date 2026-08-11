@@ -1,18 +1,19 @@
 import { useCallback } from 'react'
 import { useNavigate } from '@tanstack/react-router'
-import { useRequestTerminalFocus } from './terminal-focus'
+import { useSetTerminalFocusIntent } from './terminal-focus'
 import type { WorkspaceTarget } from './workspace-navigation'
 
 export function useWorkspaceNavigate(): (
   target: WorkspaceTarget,
-  replace?: boolean
+  replace?: boolean,
+  focusTerminal?: boolean
 ) => Promise<void> {
   const navigate = useNavigate()
-  const requestTerminalFocus = useRequestTerminalFocus()
+  const setTerminalFocusIntent = useSetTerminalFocusIntent()
   return useCallback(
-    (target: WorkspaceTarget, replace = false) => {
+    (target: WorkspaceTarget, replace = false, focusTerminal = true) => {
       if (target.kind === 'terminal') {
-        requestTerminalFocus(target.terminalId)
+        setTerminalFocusIntent(target.terminalId, focusTerminal)
       }
 
       switch (target.kind) {
@@ -55,6 +56,6 @@ export function useWorkspaceNavigate(): (
           })
       }
     },
-    [navigate, requestTerminalFocus]
+    [navigate, setTerminalFocusIntent]
   )
 }

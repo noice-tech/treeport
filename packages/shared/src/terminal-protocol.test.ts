@@ -203,18 +203,31 @@ describe('terminal runtime metadata', () => {
       parseTerminalRuntimeMetadata({
         terminalId: 'term',
         title: 'pi · /repo',
+        program: 'pi',
         hasForegroundProcess: true,
         progress: { state: 'normal', value: 42 }
       })
     ).toEqual({
       terminalId: 'term',
       title: 'pi · /repo',
+      program: 'pi',
       hasForegroundProcess: true,
       progress: { state: 'normal', value: 42 },
       progressStartedAt: null,
       progressClearedAt: null,
       bell: null
     })
+    expect(
+      ['pi', 'claude', 'codex'].map(
+        (program) =>
+          parseTerminalRuntimeMetadata({
+            terminalId: 'term',
+            title: null,
+            program,
+            progress: null
+          })?.program
+      )
+    ).toEqual(['pi', 'claude', 'codex'])
     expect(
       parseTerminalRuntimeMetadata({
         terminalId: 'term',

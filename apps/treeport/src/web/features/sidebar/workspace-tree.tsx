@@ -39,12 +39,6 @@ import type {
 } from '../worktrees/worktree-workflows'
 import { SidebarAction } from './sidebar-action'
 
-const MANUAL_CLEANUP_PREFIX = 'Manual cleanup required:'
-
-function needsManualCleanup(worktree: WorktreeRecord): boolean {
-  return Boolean(worktree.cleanupError?.startsWith(MANUAL_CLEANUP_PREFIX))
-}
-
 function WorktreeShell({
   name,
   title,
@@ -177,6 +171,7 @@ export function WorkspaceTree({
   const {
     attention: bellAttention,
     titles: runtimeTitles,
+    programs: terminalPrograms,
     progress: terminalProgress
   } = useTerminalNavigationMetadata()
   const desktopBridge = window.treeportDesktop
@@ -265,22 +260,17 @@ export function WorkspaceTree({
                               selectedWorktree?.id === worktree.id &&
                                 'min-[701px]:pr-6'
                             )}
-                            busy={
-                              Boolean(pendingRemovals[worktree.id]) ||
-                              worktree.status === 'cleaning'
-                            }
+                            busy={Boolean(pendingRemovals[worktree.id])}
                             ariaLabel={
                               pendingRemovals[worktree.id] === 'checking'
                                 ? `${worktree.name}, preparing removal`
-                                : pendingRemovals[worktree.id] ||
-                                    worktree.status === 'cleaning'
+                                : pendingRemovals[worktree.id]
                                   ? `${worktree.name}, removing`
                                   : undefined
                             }
                             onClick={() => selectWorktree(worktree)}
                             icon={
-                              pendingRemovals[worktree.id] ||
-                              worktree.status === 'cleaning' ? (
+                              pendingRemovals[worktree.id] ? (
                                 <GitBranchIcon
                                   className="worktree-progress-icon worktree-removing-icon size-4 shrink-0 stroke-rose-400 stroke-[1.5] min-[701px]:size-3.5!"
                                   aria-hidden="true"
@@ -296,20 +286,6 @@ export function WorkspaceTree({
                                   aria-hidden="true"
                                 />
                               )
-                            }
-                            status={
-                              worktree.status === 'cleanup_failed' ? (
-                                <span
-                                  className="truncate text-sm/4 font-normal text-rose-300 min-[701px]:text-[0.6875rem]"
-                                  role="status"
-                                  title={worktree.cleanupError ?? undefined}
-                                >
-                                  Removal failed
-                                  {worktree.cleanupError
-                                    ? `: ${worktree.cleanupError}`
-                                    : ''}
-                                </span>
-                              ) : undefined
                             }
                           />
                           {selectedWorktree?.id === worktree.id ? (
@@ -347,9 +323,7 @@ export function WorkspaceTree({
                               variant="destructive"
                               disabled={
                                 project.availability.state === 'unavailable' ||
-                                Boolean(pendingRemovals[worktree.id]) ||
-                                worktree.status === 'cleaning' ||
-                                needsManualCleanup(worktree)
+                                Boolean(pendingRemovals[worktree.id])
                               }
                               onSelect={() =>
                                 void prepareRemoval(
@@ -363,14 +337,9 @@ export function WorkspaceTree({
                               <TrashIcon />
                               {project.availability.state === 'unavailable'
                                 ? 'Git repository unavailable'
-                                : pendingRemovals[worktree.id] ||
-                                    worktree.status === 'cleaning'
+                                : pendingRemovals[worktree.id]
                                   ? 'Removal in progress'
-                                  : needsManualCleanup(worktree)
-                                    ? 'Manual cleanup required'
-                                    : worktree.status === 'cleanup_failed'
-                                      ? 'Retry removal…'
-                                      : 'Remove worktree…'}
+                                  : 'Remove worktree…'}
                             </ContextMenuItem>
                           </ContextMenuGroup>
                         </ContextMenuContent>
@@ -442,21 +411,13 @@ export function WorkspaceTree({
                                 }
                               >
                                 <TerminalStatusIcon
-                                  working={working}
-                                  className={cn(
-                                    'size-4! shrink-0 stroke-zinc-500 min-[701px]:size-3.5!',
-                                    working && 'stroke-cyan-400',
-                                    terminal.status === 'exited' &&
-                                      !progress &&
-                                      'stroke-rose-300',
-                                    progress?.state === 'error' &&
-                                      !needsAttention &&
-                                      'stroke-rose-300',
-                                    progress?.state === 'paused' &&
-                                      !needsAttention &&
-                                      'stroke-amber-300',
-                                    needsAttention && 'stroke-amber-300'
-                                  )}
+                                  program={
+                                    terminalPrograms.get(terminal.id) ?? null
+                                  }
+                                  progress={progress ?? null}
+                                  attention={needsAttention}
+                                  exited={terminal.status === 'exited'}
+                                  className="size-4! min-[701px]:size-3.5!"
                                 />
                                 <span
                                   className={cn(

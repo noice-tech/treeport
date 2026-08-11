@@ -157,7 +157,9 @@ export function useTerminalWorkflows({
         setSelectedPendingTerminalId(null)
       }
 
-      notifyError(error)
+      notifyError(error, {
+        operation: `create terminal “${pendingTerminal.name}”`
+      })
       await queryClient.invalidateQueries({ queryKey: projectsQueryKey })
     }
   })
@@ -192,7 +194,9 @@ export function useTerminalWorkflows({
           })
         }))
       )
-      notifyError(error)
+      notifyError(error, {
+        operation: `close terminal “${closed.terminal.name}”`
+      })
     },
     onSettled: (_, __, closed) => {
       closingTerminalIdsRef.current.delete(closed.terminal.id)
@@ -214,8 +218,7 @@ export function useTerminalWorkflows({
       !currentProject ||
       !currentWorktree ||
       currentProject.availability.state === 'unavailable' ||
-      currentWorktree.prunable ||
-      currentWorktree.status !== 'active'
+      currentWorktree.prunable
     ) {
       return
     }

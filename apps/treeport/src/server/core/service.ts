@@ -18,7 +18,7 @@ import type {
   RemovalCheckoutIdentity,
   RemovePreview,
   TerminalPreset,
-  TerminalPresetDefinition,
+  TerminalPresetDefinitionListing,
   TerminalRecord,
   TerminalSize,
   WebPanel,
@@ -52,11 +52,12 @@ import {
   webPanelStorage,
   worktrees
 } from './database-schema'
-import { assertCleanupTransition, DomainError } from './domain'
+import { DomainError } from './domain'
 import { ProductEventBus } from './events'
 import type { GhAdapter } from './gh'
 import type { GitAdapter } from './git'
 import { PackageSystem } from './package-system'
+import { loadRepositoryTerminalPresets } from './repository-terminal-presets'
 import {
   resolveWorktreeSetupTasks,
   runWorktreeSetupTasks,
@@ -224,7 +225,6 @@ export class TreeportService {
     const worktreeRows = await this.deps.database.db
       .select()
       .from(worktrees)
-      .where(ne(worktrees.status, 'removed'))
       .orderBy(
         asc(worktrees.projectId),
         sql`CASE ${worktrees.kind} WHEN 'main' THEN 0 ELSE 1 END`,
@@ -254,9 +254,7 @@ export class TreeportService {
     const worktreeRows = await this.deps.database.db
       .select()
       .from(worktrees)
-      .where(
-        and(eq(worktrees.projectId, projectId), ne(worktrees.status, 'removed'))
-      )
+      .where(eq(worktrees.projectId, projectId))
       .orderBy(
         sql`CASE ${worktrees.kind} WHEN 'main' THEN 0 ELSE 1 END`,
         asc(worktrees.createdAt),
@@ -305,15 +303,18 @@ export class TreeportService {
     const interrupted = await this.deps.database.db.all<{
       id: string
       kind: OperationRecord['kind']
-      worktreeId: string | null
     }>(sql`
-      SELECT id, kind, worktree_id AS worktreeId
+      SELECT id, kind
       FROM operations
       WHERE status IN ('pending','running')
     `)
     const timestamp = now()
     await this.deps.database.db.transaction(async (tx) => {
       for (const operation of interrupted) {
+        if (operation.kind === 'remove') {
+          continue
+        }
+
         await tx.run(sql`
           UPDATE operations
           SET status = 'failed',
@@ -325,18 +326,39 @@ export class TreeportService {
               updated_at = ${timestamp}
           WHERE id = ${operation.id}
         `)
-        if (operation.worktreeId) {
-          await tx.run(sql`
-            UPDATE worktrees
-            SET status = 'cleanup_failed',
-                cleanup_error = 'Cleanup was interrupted by a daemon restart; inspect and retry',
-                updated_at = ${timestamp}
-            WHERE id = ${operation.worktreeId} AND status = 'cleaning'
-          `)
-        }
       }
     })
     await this.reconcile()
+
+    for (const interruptedOperation of interrupted) {
+      if (interruptedOperation.kind !== 'remove') {
+        continue
+      }
+
+      const operation = await this.storedOperation(interruptedOperation.id)
+      if (
+        operation?.kind !== 'remove' ||
+        !operation.projectId ||
+        !operation.request.preview
+      ) {
+        continue
+      }
+
+      const worktreeId = operation.request.preview.worktreeId
+      this.worktreeLocks.add(worktreeId)
+      void this.worktreeMutations
+        .enqueue(operation.projectId, () =>
+          this.executeRemove(
+            operation.id,
+            worktreeId,
+            operation.request.preview!.forceRequired
+          )
+        )
+        .catch(() => {
+          this.worktreeLocks.delete(worktreeId)
+        })
+    }
+
     await this.packages.initialize(await this.storedProjects())
   }
 
@@ -382,7 +404,7 @@ export class TreeportService {
     }
 
     if (!identity || identity.path !== acceptedPath) {
-      return 'Manual cleanup required: the checkout remains on disk, but this removal has no matching filesystem identity'
+      return 'The residual checkout has no matching filesystem identity'
     }
 
     if (
@@ -390,7 +412,7 @@ export class TreeportService {
       checkout.dev.toString() !== identity.device ||
       checkout.ino.toString() !== identity.inode
     ) {
-      return 'Manual cleanup required: the checkout path now refers to a different filesystem object'
+      return 'The residual checkout path now refers to a different filesystem object'
     }
 
     const markerPath = path.join(checkoutPath, '.git')
@@ -402,16 +424,7 @@ export class TreeportService {
       marker !== identity.gitMarker ||
       !gitMarkerMatchesKey(acceptedPath, marker ?? '', identity.gitWorktreeKey)
     ) {
-      return 'Manual cleanup required: the checkout Git marker no longer proves that Treeport owns this removal'
-    }
-
-    if (
-      identity.repositoryIdentity &&
-      (await this.deps.git
-        .repositoryIdentity(checkoutPath)
-        .catch(() => null)) !== identity.repositoryIdentity
-    ) {
-      return 'Manual cleanup required: the durable repository identity changed after removal was accepted'
+      return 'The residual checkout Git marker no longer proves that Treeport owns this removal'
     }
 
     return null
@@ -429,8 +442,7 @@ export class TreeportService {
     ) {
       return {
         removed: false,
-        error:
-          'Manual cleanup required: the persisted checkout quarantine is invalid'
+        error: 'The persisted residual-checkout quarantine is invalid'
       }
     }
 
@@ -516,7 +528,7 @@ export class TreeportService {
         if (!restoreError) {
           return {
             removed: false,
-            error: `Manual cleanup required: automatic checkout cleanup failed: ${
+            error: `Automatic residual-checkout cleanup failed: ${
               removalError instanceof Error
                 ? removalError.message
                 : 'the quarantined checkout root still exists'
@@ -527,7 +539,7 @@ export class TreeportService {
 
       return {
         removed: false,
-        error: `Manual cleanup required: automatic checkout cleanup failed; the checkout was preserved at ${quarantinePath}`
+        error: `Automatic residual-checkout cleanup failed; the checkout was preserved at ${quarantinePath}`
       }
     }
 
@@ -535,7 +547,7 @@ export class TreeportService {
       return {
         removed: false,
         error:
-          'Manual cleanup required: the checkout path was recreated during automatic cleanup'
+          'The residual checkout path was recreated during automatic cleanup'
       }
     }
 
@@ -941,28 +953,51 @@ export class TreeportService {
     return rows.map(mapTerminalPreset)
   }
 
-  async listTerminalPresetDefinitions(
-    projectId?: string
-  ): Promise<TerminalPresetDefinition[]> {
-    if (projectId) {
-      this.packages.syncProjects([await this.getProject(projectId)])
+  async listTerminalPresetDefinitions(context?: {
+    projectId?: string | undefined
+    worktreeId?: string | undefined
+  }): Promise<TerminalPresetDefinitionListing> {
+    const worktree = context?.worktreeId
+      ? await this.getWorktree(context.worktreeId)
+      : null
+    const projectId = worktree?.projectId ?? context?.projectId
+    const project = projectId ? await this.getProject(projectId) : null
+    if (project) {
+      this.packages.syncProjects([project])
     }
 
-    const [userPresets, packagePresets] = await Promise.all([
+    const [userPresets, packagePresets, repositoryPresets] = await Promise.all([
       this.listTerminalPresets(),
-      this.packages.terminalPresetDefinitions(projectId)
+      this.packages.terminalPresetDefinitions(projectId),
+      worktree && project
+        ? loadRepositoryTerminalPresets(project.id, worktree.path)
+        : Promise.resolve({ definitions: [], diagnostics: [] })
     ])
-    return [
-      ...userPresets.map((preset) => ({
-        id: preset.id,
-        name: preset.name,
-        executable: preset.executable,
-        args: [...preset.args],
-        closeOnSuccess: preset.closeOnSuccess,
-        source: { type: 'user' as const }
-      })),
-      ...packagePresets
-    ]
+    const repositoryPackagePresets = packagePresets.filter(
+      (preset) =>
+        preset.source.type === 'package' && preset.source.scope === 'project'
+    )
+    const globalPackagePresets = packagePresets.filter(
+      (preset) =>
+        preset.source.type === 'package' && preset.source.scope === 'global'
+    )
+
+    return {
+      definitions: [
+        ...repositoryPresets.definitions,
+        ...repositoryPackagePresets,
+        ...userPresets.map((preset) => ({
+          id: preset.id,
+          name: preset.name,
+          executable: preset.executable,
+          args: [...preset.args],
+          closeOnSuccess: preset.closeOnSuccess,
+          source: { type: 'user' as const }
+        })),
+        ...globalPackagePresets
+      ],
+      diagnostics: repositoryPresets.diagnostics
+    }
   }
 
   async createTerminalPreset(
@@ -1566,7 +1601,7 @@ export class TreeportService {
 
   async getWorktree(worktreeId: string): Promise<WorktreeRecord> {
     const worktree = await this.storedWorktree(worktreeId)
-    if (!worktree || worktree.status === 'removed') {
+    if (!worktree) {
       throw new DomainError('WORKTREE_NOT_FOUND', 'Worktree not found', 404)
     }
 
@@ -1687,7 +1722,7 @@ export class TreeportService {
 
   async resolveWorktree(identifier: string): Promise<WorktreeRecord> {
     const direct = await this.storedWorktree(identifier)
-    if (direct && direct.status !== 'removed') {
+    if (direct) {
       await this.requireOpenProject(direct.projectId)
       return direct
     }
@@ -2599,8 +2634,6 @@ export class TreeportService {
       git_worktree_key: string | null
       kind: 'main' | 'linked'
       tmux_socket_name: string
-      status: WorktreeRecord['status']
-      cleanup_error: string | null
       managed_wrapper_path: string | null
       created_at: string
       head: string
@@ -2610,7 +2643,7 @@ export class TreeportService {
       lock_reason: string | null
       prunable: number
     }>(sql`
-      SELECT id,path,git_worktree_key,kind,tmux_socket_name,status,cleanup_error,
+      SELECT id,path,git_worktree_key,kind,tmux_socket_name,
              managed_wrapper_path,created_at,head,branch,detached,locked,lock_reason,prunable
       FROM worktrees WHERE project_id=${projectId}
     `)
@@ -2639,10 +2672,7 @@ export class TreeportService {
     )
     const retired = known
       .filter(
-        (worktree) =>
-          worktree.kind === 'linked' &&
-          !matchedIds.has(worktree.id) &&
-          !this.worktreeLocks.has(worktree.id)
+        (worktree) => worktree.kind === 'linked' && !matchedIds.has(worktree.id)
       )
       .sort((left, right) => left.created_at.localeCompare(right.created_at))
     const changed = matched.filter(({ item, existing }) => {
@@ -2651,10 +2681,6 @@ export class TreeportService {
       }
 
       const kind = item.path === mainPath ? 'main' : 'linked'
-      const desiredStatus =
-        existing.status === 'cleaning' || existing.status === 'cleanup_failed'
-          ? existing.status
-          : 'active'
       return (
         existing.path !== item.path ||
         existing.git_worktree_key !==
@@ -2665,112 +2691,13 @@ export class TreeportService {
         Boolean(existing.locked) !== item.locked ||
         existing.lock_reason !== item.lockReason ||
         Boolean(existing.prunable) !== item.prunable ||
-        existing.kind !== kind ||
-        existing.status !== desiredStatus
+        existing.kind !== kind
       )
     })
     const changedExistingIds = new Set(
       changed.flatMap(({ existing }) => (existing ? [existing.id] : []))
     )
     for (const worktree of retired) {
-      const recoveringRemoval =
-        worktree.status === 'cleaning' || worktree.status === 'cleanup_failed'
-      const removeOperationRow = recoveringRemoval
-        ? (
-            await this.deps.database.db.all<{ id: string }>(sql`
-              SELECT id FROM operations
-              WHERE worktree_id=${worktree.id} AND kind='remove'
-              ORDER BY created_at DESC,id DESC LIMIT 1
-            `)
-          )[0]
-        : undefined
-      const operation = removeOperationRow
-        ? await this.getOperation(removeOperationRow.id)
-        : undefined
-      const removeOperation =
-        operation?.kind === 'remove' ? operation : undefined
-      const removeIdentity = removeOperation?.request.checkoutIdentity ?? null
-      if (recoveringRemoval) {
-        const preview = removeOperation?.request.preview
-        const identity = removeIdentity
-        const checkout = await this.checkoutStat(worktree.path)
-        const quarantine = identity
-          ? await this.checkoutStat(identity.quarantinePath)
-          : null
-        let recoveryError: string | null = null
-        if (checkout || quarantine) {
-          if (!removeOperation) {
-            recoveryError =
-              'Manual cleanup required: the checkout remains on disk, but its accepted removal operation cannot be verified'
-          } else if (
-            preview?.worktreeId !== worktree.id ||
-            preview.path !== worktree.path
-          ) {
-            recoveryError =
-              'Manual cleanup required: the checkout remains on disk, but this legacy removal has no verifiable accepted preview'
-          } else if (!identity || identity.path !== worktree.path) {
-            recoveryError =
-              'Manual cleanup required: the checkout remains on disk, but this legacy removal has no matching filesystem identity'
-          } else if (identity.gitWorktreeKey !== worktree.git_worktree_key) {
-            recoveryError =
-              'Manual cleanup required: the checkout Git administrative identity changed after removal was accepted'
-          } else if (
-            identity.managedWrapperPath !== worktree.managed_wrapper_path
-          ) {
-            recoveryError =
-              'Manual cleanup required: the checkout wrapper provenance changed after removal was accepted'
-          } else {
-            recoveryError = checkout
-              ? await this.authorizedCheckoutError(worktree.path, identity)
-              : await this.authorizedCheckoutError(
-                  identity.quarantinePath,
-                  identity,
-                  worktree.path
-                )
-          }
-        }
-
-        if (recoveryError) {
-          const message = recoveryError.slice(0, 4_096)
-          if (
-            worktree.status !== 'cleanup_failed' ||
-            worktree.cleanup_error !== message ||
-            (removeOperation &&
-              (removeOperation.status !== 'failed' ||
-                removeOperation.error !== message))
-          ) {
-            const failedAt = now()
-            await this.deps.database.db.transaction(async (tx) => {
-              await tx.run(sql`
-                UPDATE worktrees
-                SET status='cleanup_failed',cleanup_error=${message},updated_at=${failedAt}
-                WHERE id=${worktree.id}
-              `)
-              if (removeOperation) {
-                await tx.run(sql`
-                  UPDATE operations
-                  SET status='failed',result_json=NULL,error=${message},updated_at=${failedAt}
-                  WHERE id=${removeOperation.id}
-                `)
-              }
-            })
-            this.invalidateProjectsSnapshot()
-            this.events.publish('worktree.updated', {
-              worktreeId: worktree.id
-            })
-            if (removeOperation) {
-              this.events.publish('remove.failed', {
-                operationId: removeOperation.id,
-                worktreeId: worktree.id,
-                error: message
-              })
-            }
-          }
-
-          continue
-        }
-      }
-
       const terminalIds = new Set(
         this.terminalIdsByWorktree.get(worktree.id) ?? []
       )
@@ -2784,82 +2711,22 @@ export class TreeportService {
       }
       await this.deps.tmux.killServer(worktree.tmux_socket_name)
 
-      if (recoveringRemoval && removeIdentity) {
-        const cleanup = await this.removeAuthorizedCheckout(
-          worktree.path,
-          removeIdentity
-        ).catch((error: unknown) => ({
-          removed: false,
-          error: `Manual cleanup required: automatic checkout cleanup failed: ${
-            error instanceof Error ? error.message : String(error)
-          }`
-        }))
-        if (cleanup.error) {
-          const message = cleanup.error.slice(0, 4_096)
-          if (
-            worktree.status !== 'cleanup_failed' ||
-            worktree.cleanup_error !== message ||
-            (removeOperation &&
-              (removeOperation.status !== 'failed' ||
-                removeOperation.error !== message))
-          ) {
-            const failedAt = now()
-            await this.deps.database.db.transaction(async (tx) => {
-              await tx.run(sql`
-                UPDATE worktrees
-                SET status='cleanup_failed',cleanup_error=${message},updated_at=${failedAt}
-                WHERE id=${worktree.id}
-              `)
-              if (removeOperation) {
-                await tx.run(sql`
-                  UPDATE operations
-                  SET status='failed',result_json=NULL,error=${message},updated_at=${failedAt}
-                  WHERE id=${removeOperation.id}
-                `)
-              }
-            })
-            this.invalidateProjectsSnapshot()
-            this.events.publish('worktree.updated', {
-              worktreeId: worktree.id
-            })
-            if (removeOperation) {
-              this.events.publish('remove.failed', {
-                operationId: removeOperation.id,
-                worktreeId: worktree.id,
-                error: message
-              })
-            }
-          }
-
-          continue
-        }
-      }
-
+      const [acceptedRemoval] = await this.deps.database.db.all<{
+        id: string
+      }>(sql`
+        SELECT id FROM operations
+        WHERE worktree_id=${worktree.id} AND kind='remove'
+          AND status IN ('pending','running')
+        ORDER BY created_at DESC,id DESC LIMIT 1
+      `)
       const retiredAt = now()
       await this.deps.database.db.transaction(async (tx) => {
-        if (recoveringRemoval && removeOperation) {
-          await tx.run(sql`
-            UPDATE operations
-            SET status='completed',
-                result_json=${serializeOperation({
-                  removed: true,
-                  recovered: true,
-                  path: worktree.path,
-                  message:
-                    'Git no longer reports the worktree and the checkout root is absent; removal was recovered during reconciliation'
-                })},
-                error=NULL,
-                updated_at=${retiredAt}
-            WHERE id=${removeOperation.id}
-          `)
-        } else if (!recoveringRemoval && worktree.status !== 'removed') {
+        if (!acceptedRemoval) {
           await tx.run(sql`
             INSERT INTO operations(
               id,kind,project_id,worktree_id,status,request_json,result_json,error,created_at,updated_at
             ) VALUES(
-              ${id('op')},'external_remove',${projectId},${
-                worktree.id
-              },'completed',
+              ${id('op')},'external_remove',${projectId},${worktree.id},'completed',
               ${serializeOperation({ source: 'git' })},
               ${serializeOperation({
                 removed: true,
@@ -2879,7 +2746,7 @@ export class TreeportService {
       this.clearWorktreeTerminalState(worktree.id)
       this.invalidateProjectsSnapshot()
 
-      if (worktree.managed_wrapper_path) {
+      if (!acceptedRemoval && worktree.managed_wrapper_path) {
         await fs.rmdir(worktree.managed_wrapper_path).catch(() => undefined)
       }
 
@@ -2887,12 +2754,6 @@ export class TreeportService {
         projectId,
         worktreeId: worktree.id
       })
-      if (recoveringRemoval && removeOperation) {
-        this.events.publish('remove.completed', {
-          operationId: removeOperation.id,
-          worktreeId: worktree.id
-        })
-      }
     }
 
     await this.deps.database.db.transaction(async (tx) => {
@@ -2933,8 +2794,6 @@ export class TreeportService {
                   item.prunable ? 1 : 0
                 },
                 kind=${kind},
-                status=CASE WHEN status IN ('cleaning','cleanup_failed') THEN status ELSE 'active' END,
-                cleanup_error=CASE WHEN status='cleanup_failed' THEN cleanup_error ELSE NULL END,
                 updated_at=${timestamp}
             WHERE id=${existing.id}
           `)
@@ -2944,12 +2803,12 @@ export class TreeportService {
         await tx.run(sql`
           INSERT INTO worktrees(
             id,project_id,path,git_worktree_key,head,branch,detached,locked,lock_reason,
-            prunable,kind,tmux_socket_name,status,cleanup_error,created_at,updated_at
+            prunable,kind,tmux_socket_name,created_at,updated_at
           ) VALUES(
             ${id('wt')},${projectId},${item.path},${item.gitWorktreeKey},
             ${item.head ?? ''},${item.branch},${item.detached ? 1 : 0},
             ${item.locked ? 1 : 0},${item.lockReason},${item.prunable ? 1 : 0},
-            ${kind},${generateTmuxSocketName()},'active',NULL,${timestamp},${timestamp}
+            ${kind},${generateTmuxSocketName()},${timestamp},${timestamp}
           )
         `)
       }
@@ -3198,7 +3057,6 @@ export class TreeportService {
       if (
         project.worktrees.some(
           (worktree) =>
-            worktree.status !== 'removed' &&
             worktree.name.localeCompare(name, undefined, {
               sensitivity: 'accent'
             }) === 0
@@ -3246,11 +3104,7 @@ export class TreeportService {
         }
 
         const source = await this.getWorktree(sourceWorktreeId)
-        if (
-          source.projectId !== projectId ||
-          source.status !== 'active' ||
-          source.prunable
-        ) {
+        if (source.projectId !== projectId || source.prunable) {
           throw new DomainError(
             'INVALID_SOURCE_WORKTREE',
             'The source worktree must be active and belong to the project',
@@ -3315,12 +3169,7 @@ export class TreeportService {
         })
         .from(worktrees)
         .innerJoin(projects, eq(worktrees.projectId, projects.id))
-        .where(
-          and(
-            eq(worktrees.path, worktreePath!),
-            ne(worktrees.status, 'removed')
-          )
-        )
+        .where(eq(worktrees.path, worktreePath!))
         .limit(1)
       const worktree = worktreeRow
         ? mapWorktree(worktreeRow.worktree, worktreeRow.mainWorktreePath)
@@ -3477,7 +3326,6 @@ export class TreeportService {
       if (
         !worktree ||
         (await this.projectOpenState(worktree.projectId)) !== true ||
-        worktree.status !== 'active' ||
         worktree.prunable ||
         this.worktreeLocks.has(worktreeId)
       ) {
@@ -3615,12 +3463,11 @@ export class TreeportService {
       if (
         this.projectLocks.has(worktree.projectId) ||
         this.worktreeLocks.has(worktreeId) ||
-        worktree.status !== 'active' ||
         worktree.prunable
       ) {
         throw new DomainError(
           'WORKTREE_BUSY',
-          'Cannot create a terminal while the worktree is cleaning or failed',
+          'Cannot create a terminal while the worktree is being modified',
           409
         )
       }
@@ -3849,7 +3696,7 @@ export class TreeportService {
       throw new DomainError('WORKTREE_NOT_FOUND', 'Worktree not found', 404)
     }
 
-    if (current.status !== 'active') {
+    if (this.worktreeLocks.has(worktreeId)) {
       throw new DomainError(
         'WORKTREE_UNAVAILABLE',
         'Cannot refresh a pull request while the worktree is being removed',
@@ -3994,7 +3841,13 @@ export class TreeportService {
   ): Promise<OperationRecord> {
     const worktree = await this.getWorktree(worktreeId)
     await this.requireOpenProject(worktree.projectId)
-    if (worktree.status === 'cleaning') {
+    const [activeRemoval] = await this.deps.database.db.all<{ id: string }>(sql`
+      SELECT id FROM operations
+      WHERE worktree_id=${worktreeId} AND kind='remove'
+        AND status IN ('pending','running')
+      LIMIT 1
+    `)
+    if (activeRemoval) {
       throw new DomainError(
         'REMOVE_IN_PROGRESS',
         'The worktree is already being removed',
@@ -4042,8 +3895,7 @@ export class TreeportService {
     await this.requireOpenProject(worktree.projectId)
     if (
       this.worktreeLocks.has(worktreeId) ||
-      this.projectLocks.has(worktree.projectId) ||
-      worktree.status === 'cleaning'
+      this.projectLocks.has(worktree.projectId)
     ) {
       throw new DomainError(
         'REMOVE_IN_PROGRESS',
@@ -4163,7 +4015,6 @@ export class TreeportService {
         }
       }
 
-      assertCleanupTransition(worktree.status, 'cleaning')
       const timestamp = now()
       await this.deps.database.db.transaction(async (tx) => {
         await tx.run(sql`
@@ -4179,15 +4030,13 @@ export class TreeportService {
               checkoutIdentity,
               prunable,
               gitWorktreeKey: checkoutBinding.git_worktree_key,
-              repositoryIdentity
+              repositoryIdentity,
+              phase: 'accepted',
+              tmuxSocketName: worktree.tmuxSocketName,
+              managedWrapperPath: checkoutBinding.managed_wrapper_path
             })},
             NULL,NULL,${timestamp},${timestamp}
           )
-        `)
-        await tx.run(sql`
-          UPDATE worktrees
-          SET status='cleaning',cleanup_error=NULL,updated_at=${timestamp}
-          WHERE id=${worktreeId}
         `)
       })
       this.invalidateProjectsSnapshot()
@@ -4217,176 +4066,277 @@ export class TreeportService {
     lockedWorktreeId: string,
     force: boolean
   ): Promise<void> {
-    const operation = await this.getOperation(operationId)
+    const operation = await this.storedOperation(operationId)
     if (
-      operation.kind !== 'remove' ||
-      operation.request.preview === null ||
-      operation.worktreeId !== lockedWorktreeId
+      operation?.kind !== 'remove' ||
+      !operation.projectId ||
+      !operation.request.preview
     ) {
       this.worktreeLocks.delete(lockedWorktreeId)
       return
     }
 
-    const worktree = await this.storedWorktree(lockedWorktreeId)
-    if (!worktree) {
+    const request = operation.request
+    const preview = request.preview!
+    const project = await this.storedProject(operation.projectId)
+    if (!project) {
       this.worktreeLocks.delete(lockedWorktreeId)
       return
     }
 
-    const project = await this.getProject(worktree.projectId)
+    const persistPhase = async (
+      phase: NonNullable<typeof request.phase>
+    ): Promise<void> => {
+      request.phase = phase
+      await this.deps.database.db.run(sql`
+        UPDATE operations
+        SET request_json=${serializeOperation(request)},updated_at=${now()}
+        WHERE id=${operationId}
+      `)
+    }
+
     await this.deps.database.db.run(sql`
-      UPDATE operations SET status='running',updated_at=${now()}
+      UPDATE operations SET status='running',error=NULL,updated_at=${now()}
       WHERE id=${operationId}
     `)
-    let removalRevalidated = false
-    let terminalsStopped = false
-    let gitRemoved = false
+    let gitRemoved =
+      request.phase === 'git_removed' || request.phase === 'cleanup_pending'
+    let retiredNow = false
     try {
-      const prunable = operation.request.prunable === true
-      const checkoutIdentity = operation.request.checkoutIdentity
-      const checkout = await this.checkoutStat(worktree.path)
-      const liveWorktree = (
-        await this.deps.git.listWorktrees(project.repositoryPath)
-      ).find((item) => item.path === worktree.path)
+      const liveWorktrees = await this.deps.git.listWorktrees(
+        project.repositoryPath
+      )
+      const acceptedKey = request.gitWorktreeKey
+      const liveAccepted = liveWorktrees.find(
+        (item) =>
+          item.path === preview.path &&
+          (request.prunable
+            ? item.prunable
+            : typeof acceptedKey === 'string' &&
+              item.gitWorktreeKey === acceptedKey)
+      )
       const liveRepositoryIdentity = await this.deps.git.repositoryIdentity(
         project.repositoryPath
       )
 
-      if (prunable) {
-        const [binding] = await this.deps.database.db.all<{
-          git_worktree_key: string | null
-        }>(sql`
-          SELECT git_worktree_key FROM worktrees WHERE id=${worktree.id}
-        `)
+      if (liveAccepted) {
         if (
-          !liveWorktree?.prunable ||
-          typeof operation.request.gitWorktreeKey !== 'string' ||
-          operation.request.gitWorktreeKey !== binding?.git_worktree_key ||
-          typeof operation.request.repositoryIdentity !== 'string' ||
-          liveRepositoryIdentity !== operation.request.repositoryIdentity
+          !request.repositoryIdentity ||
+          liveRepositoryIdentity !== request.repositoryIdentity
         ) {
           throw new Error(
-            'Git no longer reports the accepted prunable worktree identity at this path'
+            'Removal revalidation failed before destructive effects: the repository identity changed after removal was accepted'
           )
         }
-      } else {
-        const authorizationError = checkout
-          ? await this.authorizedCheckoutError(worktree.path, checkoutIdentity)
-          : 'the accepted checkout no longer exists'
-        if (
-          authorizationError ||
-          !checkoutIdentity ||
-          !checkoutIdentity.repositoryIdentity ||
-          liveRepositoryIdentity !== checkoutIdentity.repositoryIdentity ||
-          !liveWorktree?.gitWorktreeKey ||
-          liveWorktree.gitWorktreeKey !== checkoutIdentity.gitWorktreeKey
-        ) {
-          throw new Error(
-            authorizationError ??
-              'Git no longer reports the accepted worktree identity at this path'
-          )
-        }
-      }
 
-      removalRevalidated = true
-
-      await this.deps.tmux.killServer(worktree.tmuxSocketName)
-      terminalsStopped = true
-      if (prunable) {
-        await this.deps.git.pruneWorktrees(project.repositoryPath)
-        if (
-          (await this.deps.git.listWorktrees(project.repositoryPath)).some(
-            (item) => item.path === worktree.path
+        if (request.prunable) {
+          if (!liveAccepted.prunable) {
+            throw new Error(
+              'Removal revalidation failed before destructive effects: the accepted worktree is no longer prunable'
+            )
+          }
+        } else {
+          const authorizationError = await this.authorizedCheckoutError(
+            preview.path,
+            request.checkoutIdentity
           )
-        ) {
-          throw new Error('Git did not prune the unavailable worktree')
+          if (authorizationError) {
+            throw new Error(
+              `Removal revalidation failed before destructive effects: ${authorizationError}`
+            )
+          }
         }
-      } else {
-        await this.deps.git.removeWorktree(
-          project.repositoryPath,
-          worktree.path,
-          force
+
+        if (request.tmuxSocketName) {
+          await this.deps.tmux.killServer(request.tmuxSocketName)
+        }
+
+        await persistPhase('terminals_stopped')
+
+        if (request.prunable) {
+          await this.deps.git.pruneWorktrees(project.repositoryPath)
+        } else {
+          await this.deps.git.removeWorktree(
+            project.repositoryPath,
+            preview.path,
+            force
+          )
+        }
+
+        const stillReported = (
+          await this.deps.git.listWorktrees(project.repositoryPath)
+        ).some(
+          (item) =>
+            item.path === preview.path &&
+            (request.prunable
+              ? item.prunable
+              : item.gitWorktreeKey === acceptedKey)
         )
+        if (stillReported) {
+          throw new Error(
+            'Git still reports the accepted worktree after removal'
+          )
+        }
       }
 
       gitRemoved = true
-      if (checkoutIdentity) {
-        const checkoutCleanup = await this.removeAuthorizedCheckout(
-          worktree.path,
-          checkoutIdentity
-        )
-        if (checkoutCleanup.error) {
-          throw new Error(checkoutCleanup.error)
+      await persistPhase('git_removed')
+
+      const [storedBinding] = await this.deps.database.db.all<{
+        id: string
+        git_worktree_key: string | null
+      }>(sql`
+        SELECT id,git_worktree_key FROM worktrees WHERE id=${preview.worktreeId}
+      `)
+      if (
+        storedBinding &&
+        (!acceptedKey || storedBinding.git_worktree_key === acceptedKey)
+      ) {
+        const deletion = await this.deps.database.db.run(sql`
+          DELETE FROM worktrees WHERE id=${preview.worktreeId}
+        `)
+        retiredNow = deletion.rowsAffected > 0
+        if (retiredNow) {
+          this.clearWorktreeTerminalState(preview.worktreeId)
+          this.invalidateProjectsSnapshot()
+          this.events.publish('worktree.removed', {
+            projectId: project.id,
+            worktreeId: preview.worktreeId
+          })
         }
       }
 
+      await persistPhase('cleanup_pending')
+      let cleanupWarning: string | null = null
+      let residualPath: string | null = null
+      const currentRepositoryIdentity = await this.deps.git
+        .repositoryIdentity(project.repositoryPath)
+        .catch(() => null)
+      if (
+        request.repositoryIdentity &&
+        currentRepositoryIdentity !== request.repositoryIdentity
+      ) {
+        cleanupWarning =
+          'The repository identity changed after removal was accepted; residual files were preserved'
+        residualPath = preview.path
+      } else if (request.checkoutIdentity) {
+        let cleanup: { removed: boolean; error: string | null } = {
+          removed: false,
+          error: null
+        }
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+          cleanup = await this.removeAuthorizedCheckout(
+            preview.path,
+            request.checkoutIdentity
+          ).catch((error: unknown) => ({
+            removed: false,
+            error: `Automatic residual-checkout cleanup failed: ${
+              error instanceof Error ? error.message : String(error)
+            }`
+          }))
+          if (!cleanup.error || !cleanup.error.startsWith('Automatic ')) {
+            break
+          }
+
+          if (attempt < 2) {
+            await new Promise((resolve) => setTimeout(resolve, 100))
+          }
+        }
+        if (cleanup.error) {
+          cleanupWarning = cleanup.error.slice(0, 4_096)
+          residualPath = (await this.checkoutStat(
+            request.checkoutIdentity.quarantinePath
+          ))
+            ? request.checkoutIdentity.quarantinePath
+            : preview.path
+        }
+      } else if (request.prunable) {
+        const worktreeAtPath = (
+          await this.deps.git.listWorktrees(project.repositoryPath)
+        ).some((item) => item.path === preview.path)
+        if (!worktreeAtPath) {
+          await fs.rmdir(preview.path).catch(() => undefined)
+        }
+      } else if (await this.checkoutStat(preview.path)) {
+        cleanupWarning =
+          'The residual checkout has no matching filesystem identity and was preserved'
+        residualPath = preview.path
+      }
+
+      if (request.managedWrapperPath) {
+        await fs.rmdir(request.managedWrapperPath).catch(() => undefined)
+      }
+
       const timestamp = now()
-      await this.deps.database.db.transaction(async (tx) => {
-        assertCleanupTransition('cleaning', 'removed')
-        await tx.run(sql`
+      await this.deps.database.db.run(sql`
+        UPDATE operations
+        SET status='completed',
+            result_json=${serializeOperation({
+              removed: true,
+              worktreeId: preview.worktreeId,
+              name: preview.name,
+              branchPreserved: preview.branch,
+              path: preview.path,
+              recovered: operation.status === 'running' || !retiredNow,
+              cleanup: {
+                status: cleanupWarning ? 'preserved' : 'completed',
+                residualPath,
+                warning: cleanupWarning
+              }
+            })},
+            error=NULL,
+            updated_at=${timestamp}
+        WHERE id=${operationId}
+      `)
+      this.events.publish('remove.completed', {
+        operationId,
+        worktreeId: preview.worktreeId
+      })
+    } catch (error) {
+      const base = error instanceof Error ? error.message : String(error)
+      if (gitRemoved) {
+        const warning = base.slice(0, 4_096)
+        await this.deps.database.db.run(sql`
           UPDATE operations
           SET status='completed',
               result_json=${serializeOperation({
                 removed: true,
-                name: worktree.name,
-                branchPreserved: worktree.branch,
-                path: worktree.path
+                worktreeId: preview.worktreeId,
+                name: preview.name,
+                branchPreserved: preview.branch,
+                path: preview.path,
+                recovered: true,
+                cleanup: {
+                  status: 'preserved',
+                  residualPath: preview.path,
+                  warning
+                }
               })},
-              updated_at=${timestamp}
+              error=NULL,
+              updated_at=${now()}
           WHERE id=${operationId}
         `)
-        await tx.run(sql`DELETE FROM worktrees WHERE id=${worktree.id}`)
-      })
-      this.clearWorktreeTerminalState(worktree.id)
-      this.invalidateProjectsSnapshot()
-
-      if (prunable) {
-        await fs.rmdir(worktree.path).catch(() => undefined)
-      }
-
-      if (worktree.managedWrapperPath) {
-        await fs.rmdir(worktree.managedWrapperPath).catch(() => undefined)
-      }
-
-      this.events.publish('worktree.removed', {
-        projectId: project.id,
-        worktreeId: worktree.id
-      })
-      this.events.publish('remove.completed', {
-        operationId,
-        worktreeId: worktree.id
-      })
-    } catch (error) {
-      const base = error instanceof Error ? error.message : String(error)
-      const message = (
-        !removalRevalidated
-          ? `Removal revalidation failed before destructive effects: ${base}`
-          : !terminalsStopped
-            ? `Terminal shutdown failed before Git removal: ${base}`
-            : gitRemoved
-              ? `Manual cleanup required: Git stopped reporting the worktree, but checkout cleanup failed: ${base}`
-              : `Terminals were stopped, but Git removal failed: ${base}`
-      ).slice(0, 4_096)
-      const timestamp = now()
-      await this.deps.database.db.transaction(async (tx) => {
-        assertCleanupTransition('cleaning', 'cleanup_failed')
-        await tx.run(sql`
-          UPDATE worktrees
-          SET status='cleanup_failed',cleanup_error=${message},updated_at=${timestamp}
-          WHERE id=${worktree.id}
-        `)
-        await tx.run(sql`
+        this.events.publish('remove.completed', {
+          operationId,
+          worktreeId: preview.worktreeId
+        })
+      } else {
+        const message = (
+          request.phase === 'terminals_stopped'
+            ? `Terminals were stopped, but Git removal failed: ${base}`
+            : base
+        ).slice(0, 4_096)
+        await this.deps.database.db.run(sql`
           UPDATE operations
-          SET status='failed',error=${message},updated_at=${timestamp}
+          SET status='failed',result_json=NULL,error=${message},updated_at=${now()}
           WHERE id=${operationId}
         `)
-      })
-      this.invalidateProjectsSnapshot()
-      this.events.publish('remove.failed', {
-        operationId,
-        worktreeId: worktree.id,
-        error: message
-      })
+        this.events.publish('remove.failed', {
+          operationId,
+          worktreeId: preview.worktreeId,
+          error: message
+        })
+      }
     } finally {
       this.worktreeLocks.delete(lockedWorktreeId)
     }

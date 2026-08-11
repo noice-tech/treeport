@@ -1,8 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "7adcd561-4aff-46d1-9646-3a1168313096",
-  "prevId": "523a3d94-562d-4a96-8e49-645c90008c01",
+  "id": "7098f0b3-cc85-47fa-83f3-f8346f5b7025",
+  "prevId": "7adcd561-4aff-46d1-9646-3a1168313096",
   "tables": {
     "operations": {
       "name": "operations",
@@ -417,6 +417,21 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true,
+          "autoincrement": false
+        },
+        "input_json": {
+          "name": "input_json",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'null'"
+        },
+        "launch_cwd": {
+          "name": "launch_cwd",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
           "autoincrement": false
         },
         "created_at": {

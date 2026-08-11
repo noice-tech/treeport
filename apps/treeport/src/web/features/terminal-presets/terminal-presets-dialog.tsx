@@ -29,9 +29,10 @@ export function TerminalPresetsDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-3xl" restoreFocusTo={restoreFocusTo}>
         <DialogHeader>
-          <DialogTitle>Terminal presets</DialogTitle>
+          <DialogTitle>Global terminal presets</DialogTitle>
           <DialogDescription>
-            Create reusable commands. Arguments are passed exactly as entered.
+            Create commands available in every repository. Arguments are passed
+            exactly as entered.
           </DialogDescription>
         </DialogHeader>
         <TerminalPresetsManager

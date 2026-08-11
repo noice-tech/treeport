@@ -117,7 +117,7 @@ test.describe('desktop worktree and terminal workflows', () => {
     }
     {
       await page.getByRole('button', { name: 'New worktree' }).click()
-      await page.getByLabel('Initial terminal').selectOption({ label: 'Hunk' })
+      await page.getByLabel('Initial terminal').selectOption('preset_hunk')
       await expect
         .poll(() =>
           page.evaluate(() =>
@@ -647,8 +647,18 @@ test.describe('desktop worktree and terminal workflows', () => {
     await trigger.click()
     const launcher = page.getByRole('dialog', { name: 'New panel' })
     await expect(launcher.getByRole('button', { name: 'Shell' })).toBeDisabled()
-    await launcher.getByRole('button', { name: 'Manage presets' }).click()
-    const dialog = page.getByRole('dialog', { name: 'Terminal presets' })
+    await expect(
+      launcher.getByRole('link', { name: 'Configure repository presets' })
+    ).toHaveAttribute(
+      'href',
+      'https://treeport.app/features/terminal-presets/#repository-presets'
+    )
+    await launcher
+      .getByRole('button', { name: 'Manage global presets' })
+      .click()
+    const dialog = page.getByRole('dialog', {
+      name: 'Global terminal presets'
+    })
     await expect(dialog).toBeVisible()
     await expect(dialog.getByRole('button', { name: 'New' })).toBeVisible()
     await expect(
@@ -706,6 +716,66 @@ test.describe('desktop worktree and terminal workflows', () => {
     await dialog.getByRole('button', { name: 'Close', exact: true }).click()
     await expect(page.getByRole('button', { name: /^New panel/ })).toBeFocused()
   })
+  test('launches repository presets and keeps global choices available while repository configuration refreshes', async ({
+    page
+  }) => {
+    const repositoryPreset = {
+      id: 'repository:proj_1:terminal-preset:hunk',
+      name: 'Hunk',
+      executable: 'repo-tool',
+      args: ['argument with spaces', 'semi;$HOME'],
+      closeOnSuccess: false,
+      source: { type: 'repository' as const }
+    }
+    const mocked = await mockApp(page, [], {
+      repositoryTerminalPresets: [repositoryPreset]
+    })
+
+    await page.getByRole('button', { name: /^topic(?:,|\s|$)/ }).click()
+    const createRequest = page.waitForRequest(
+      (request) =>
+        request.method() === 'POST' &&
+        new URL(request.url()).pathname === '/api/worktrees/wt_topic/terminals'
+    )
+    await page.getByRole('button', { name: /^New panel/ }).click()
+    const launcher = page.getByRole('dialog', { name: 'New panel' })
+    await launcher
+      .getByRole('button', {
+        name: /^Hunk, Repository, repo-tool/
+      })
+      .click()
+    expect((await createRequest).postDataJSON()).toMatchObject({
+      name: 'Hunk',
+      argv: ['repo-tool', 'argument with spaces', 'semi;$HOME'],
+      returnToShell: true
+    })
+
+    mocked.repositoryTerminalPresets.splice(0, 1, {
+      ...repositoryPreset,
+      id: 'repository:proj_1:terminal-preset:fixed',
+      name: 'Fixed repository preset'
+    })
+    mocked.repositoryPresetDiagnostics.push({
+      path: '.treeport/terminal-presets.json',
+      presetId: 'broken',
+      message: 'Invalid repository terminal preset broken: name is required'
+    })
+    await page.getByRole('button', { name: /^New panel/ }).click()
+    await expect(
+      launcher.getByText(
+        'Invalid repository terminal preset broken: name is required'
+      )
+    ).toBeVisible({ timeout: 7_000 })
+    await expect(
+      launcher.getByRole('button', { name: /^Hunk, Global, npx/ })
+    ).toBeVisible()
+    await expect(
+      launcher.getByRole('button', {
+        name: /^Fixed repository preset, Repository, repo-tool/
+      })
+    ).toBeVisible()
+  })
+
   test('launches Shell and configured persistent and one-off presets', async ({
     page
   }) => {
@@ -802,7 +872,7 @@ test.describe('desktop worktree and terminal workflows', () => {
     await page.getByRole('button', { name: /^New panel/ }).click()
     const presetItem = page
       .getByRole('dialog', { name: 'New panel' })
-      .getByRole('button', { name: 'Hunk', exact: true })
+      .getByRole('button', { name: /^Hunk, Global, npx/ })
     await presetItem.click()
     const presetRequest = await presetRequestPromise
     expect(presetRequest.postDataJSON()).toEqual({
@@ -997,6 +1067,9 @@ test.describe('desktop worktree and terminal workflows', () => {
     await failedCloseRequest
     await expect(topicTerminals).toHaveCount(1)
     releaseFailedDelete()
+    await expect(
+      page.getByText('Couldn’t close terminal “Shell”', { exact: true })
+    ).toBeVisible()
     await expect(page.getByText('Terminal could not be closed')).toBeVisible()
     await expect(topicTerminals).toHaveCount(2)
 
@@ -1009,7 +1082,47 @@ test.describe('desktop worktree and terminal workflows', () => {
       page.getByRole('button', { name: 'Shell, starting' })
     ).toBeVisible()
     releaseFailedCreate()
+    await expect(
+      page.getByText('Couldn’t create terminal “Shell”', { exact: true })
+    ).toBeVisible()
     await expect(page.getByText('Terminal could not be created')).toBeVisible()
+    await expect(
+      page.getByText('Reference: request_terminal_create.')
+    ).toBeVisible()
+    await expect(
+      page.getByRole('button', { name: 'Shell, starting' })
+    ).toHaveCount(0)
+
+    mocked.failNextTerminalCreateWithGateway()
+    await page.evaluate(() =>
+      (window as any).__dispatchDesktopCommand('new-terminal')
+    )
+    const gatewayToast = page
+      .getByRole('region', { name: /Notifications/ })
+      .getByRole('listitem')
+      .filter({ hasText: '502 Bad Gateway' })
+    await expect(gatewayToast).toContainText('Couldn’t create terminal “Shell”')
+    await expect(gatewayToast).toContainText(
+      'Check that Treeport is running, then retry.'
+    )
+    await expect(page.getByText('PRIVATE_PROXY_DIAGNOSTIC')).toHaveCount(0)
+    await expect(
+      page.getByRole('button', { name: 'Shell, starting' })
+    ).toHaveCount(0)
+
+    mocked.failNextTerminalCreateWithNetwork()
+    await page.evaluate(() =>
+      (window as any).__dispatchDesktopCommand('new-terminal')
+    )
+    const networkToast = page
+      .getByRole('region', { name: /Notifications/ })
+      .getByRole('listitem')
+      .filter({ hasText: 'Treeport could not be reached.' })
+    await expect(networkToast).toContainText('Couldn’t create terminal “Shell”')
+    await expect(networkToast).toContainText(
+      'Check that it is running and reachable, then retry.'
+    )
+    await expect(networkToast).not.toContainText('502 Bad Gateway')
     await expect(
       page.getByRole('button', { name: 'Shell, starting' })
     ).toHaveCount(0)

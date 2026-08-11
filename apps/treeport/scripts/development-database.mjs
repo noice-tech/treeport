@@ -68,11 +68,6 @@ export async function cloneDevelopmentDatabase(
         : await destinationDatabase.all(sql`SELECT id FROM worktrees`)
       await destinationDatabase.transaction(async (tx) => {
         await tx.run(sql`DELETE FROM operations`)
-        await tx.run(sql`
-          UPDATE worktrees
-          SET status = 'active', cleanup_error = NULL
-          WHERE status IN ('cleaning', 'cleanup_failed')
-        `)
         for (const worktree of worktrees) {
           await tx.run(sql`
             UPDATE worktrees

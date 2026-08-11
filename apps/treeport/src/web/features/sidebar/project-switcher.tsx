@@ -8,7 +8,7 @@ import {
   PlusIcon,
   XMarkIcon
 } from '@heroicons/react/16/solid'
-import type { ProjectRecord } from '@treeport/shared'
+import type { ProjectRecord, RecentProjectRecord } from '@treeport/shared'
 import { parseResponse } from 'hono/client'
 import { rpc } from '../../api'
 import { TerminalStatusIcon } from '../../components/terminal-status-icon'
@@ -99,7 +99,7 @@ export function ProjectSwitcher({
     enabled: projectSwitcher.open
   })
   const reopenProject = useMutation({
-    mutationFn: async (project: { id: string }) =>
+    mutationFn: async (project: RecentProjectRecord) =>
       (
         await parseResponse(
           rpc.api.projects[':projectId'].open.$post({
@@ -108,14 +108,16 @@ export function ProjectSwitcher({
         )
       ).project,
     onSuccess: onProjectOpened,
-    onError: notifyError
+    onError: (error, project) => {
+      notifyError(error, { operation: `reopen project “${project.name}”` })
+    }
   })
   const selectOpenProject = (project: ProjectRecord) => {
     selectProject(project)
     setProjectSearch('')
     setHighlightedProjectId(null)
   }
-  const selectRecentProject = (project: { id: string }) => {
+  const selectRecentProject = (project: RecentProjectRecord) => {
     reopenProject.mutate(project)
     setProjectSearch('')
     setHighlightedProjectId(null)
@@ -329,23 +331,21 @@ export function ProjectSwitcher({
                         <span className="ml-auto flex shrink-0 items-center gap-1.5 min-[701px]:group-hover/project-option:opacity-0 min-[701px]:group-focus-within/project-option:opacity-0">
                           {progress ? (
                             <TerminalStatusIcon
-                              working={
-                                progress.state !== 'paused' &&
-                                progress.state !== 'error'
-                              }
-                              className={cn(
-                                'size-4 shrink-0 stroke-cyan-300',
-                                progress.state === 'error' && 'stroke-rose-300',
-                                progress.state === 'paused' &&
-                                  'stroke-amber-300'
-                              )}
+                              program={null}
+                              progress={progress}
+                              attention={false}
+                              exited={false}
+                              className="size-4"
                               title={terminalProgressLabel(progress)}
                             />
                           ) : null}
                           {needsAttention ? (
                             <TerminalStatusIcon
-                              working={false}
-                              className="size-4 shrink-0 stroke-amber-300"
+                              program={null}
+                              progress={null}
+                              attention
+                              exited={false}
+                              className="size-4"
                               title="Terminal needs attention"
                             />
                           ) : null}

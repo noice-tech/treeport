@@ -7,14 +7,14 @@ import {
 } from '@tanstack/react-query'
 import { useLocation } from '@tanstack/react-router'
 import type {
-  ApiErrorBody,
   ProjectRecord,
   RemovePreview,
   TerminalSize,
   WorktreeRecord
 } from '@treeport/shared'
-import { DetailedError, parseResponse } from 'hono/client'
+import { parseResponse } from 'hono/client'
 import { rpc } from '../../api'
+import { errorDetails } from '../../error-message'
 import { projectsQueryKey } from '../../project-metadata'
 import { terminalSessions } from '../../terminal-session'
 import {
@@ -25,13 +25,7 @@ import {
 import { useWorkspaceNavigate } from '../../workspace-router-navigation'
 import { notifyError } from '../notifications/error-notifications'
 
-const MANUAL_CLEANUP_PREFIX = 'Manual cleanup required:'
-
 export type RemovalStage = 'checking' | 'removing'
-
-function needsManualCleanup(worktree: WorktreeRecord): boolean {
-  return Boolean(worktree.cleanupError?.startsWith(MANUAL_CLEANUP_PREFIX))
-}
 
 export interface PendingWorktreeCreation {
   id: string
@@ -87,6 +81,18 @@ export function useWorktreeWorkflows({
       (
         await parseResponse(
           rpc.api.operations.$get({ query: { kind: 'create' } })
+        )
+      ).operations,
+    refetchInterval: 2_000,
+    refetchOnReconnect: true,
+    refetchOnWindowFocus: true
+  })
+  const removalsQuery = useQuery({
+    queryKey: ['worktree-removals'],
+    queryFn: async () =>
+      (
+        await parseResponse(
+          rpc.api.operations.$get({ query: { kind: 'remove' } })
         )
       ).operations,
     refetchInterval: 2_000,
@@ -158,9 +164,21 @@ export function useWorktreeWorkflows({
       )
       .map(({ id, projectId, typedName }) => ({ id, projectId, typedName }))
   ]
-  const [pendingRemovals, setPendingRemovals] = useState<
+  const [localPendingRemovals, setLocalPendingRemovals] = useState<
     Record<string, RemovalStage>
   >({})
+  const pendingRemovals = (removalsQuery.data ?? []).reduce<
+    Record<string, RemovalStage>
+  >(
+    (current, operation) => {
+      if (operation.kind === 'remove' && operation.request.preview) {
+        current[operation.request.preview.worktreeId] = 'removing'
+      }
+
+      return current
+    },
+    { ...localPendingRemovals }
+  )
   const removalGuardsRef = useRef(new Set<string>())
 
   const createWorktree = useMutation({
@@ -191,9 +209,11 @@ export function useWorktreeWorkflows({
       ])
       void queryClient.invalidateQueries({ queryKey: ['worktree-creations'] })
     },
-    onError: (mutationError) => {
+    onError: (mutationError, request) => {
       setDrawerOpen(false)
-      notifyError(mutationError)
+      notifyError(mutationError, {
+        operation: `create worktree “${request.typedName}”`
+      })
     }
   })
 
@@ -232,7 +252,9 @@ export function useWorktreeWorkflows({
           queryKey: ['worktree-creations']
         })
         if (operation.status === 'failed') {
-          notifyError(operation.error ?? 'Worktree creation failed')
+          notifyError(operation.error ?? 'Worktree creation failed', {
+            operation: `create worktree “${owned.typedName}”`
+          })
         } else {
           await queryClient.invalidateQueries({ queryKey: projectsQueryKey })
           const projects = (await parseResponse(rpc.api.projects.$get()))
@@ -258,13 +280,13 @@ export function useWorktreeWorkflows({
           setDrawerOpen(false)
 
           if (typeof result?.setupError === 'string') {
-            notifyError(
-              `Worktree created, but setup could not start: ${result.setupError}`
-            )
+            notifyError(result.setupError, {
+              operation: `start setup for newly created worktree “${owned.typedName}”`
+            })
           } else if (typeof result?.terminalError === 'string') {
-            notifyError(
-              `Worktree created, but its terminal could not start: ${result.terminalError}`
-            )
+            notifyError(result.terminalError, {
+              operation: `start a terminal for newly created worktree “${owned.typedName}”`
+            })
           }
         }
 
@@ -312,11 +334,14 @@ export function useWorktreeWorkflows({
   }
 
   const setRemovalStage = (worktreeId: string, stage: RemovalStage) =>
-    setPendingRemovals((current) => ({ ...current, [worktreeId]: stage }))
+    setLocalPendingRemovals((current) => ({
+      ...current,
+      [worktreeId]: stage
+    }))
 
   const releaseRemoval = (worktreeId: string) => {
     removalGuardsRef.current.delete(worktreeId)
-    setPendingRemovals((current) => {
+    setLocalPendingRemovals((current) => {
       if (!(worktreeId in current)) {
         return current
       }
@@ -326,18 +351,6 @@ export function useWorktreeWorkflows({
       return next
     })
   }
-
-  const markWorktreeCleaning = (worktreeId: string) =>
-    queryClient.setQueryData<ProjectRecord[]>(projectsQueryKey, (current) =>
-      current?.map((project) => ({
-        ...project,
-        worktrees: project.worktrees.map((worktree) =>
-          worktree.id === worktreeId
-            ? { ...worktree, status: 'cleaning', cleanupError: null }
-            : worktree
-        )
-      }))
-    )
 
   const submitRemoval = async (
     worktree: WorktreeRecord,
@@ -356,7 +369,9 @@ export function useWorktreeWorkflows({
           }
         })
       )
-      markWorktreeCleaning(worktree.id)
+      await queryClient.invalidateQueries({
+        queryKey: ['worktree-removals']
+      })
       releaseRemoval(worktree.id)
       onRemovalCompleted(worktree.id)
       void queryClient.invalidateQueries(
@@ -365,9 +380,7 @@ export function useWorktreeWorkflows({
       )
     } catch (error) {
       if (
-        error instanceof DetailedError &&
-        (error.detail as { data?: ApiErrorBody } | undefined)?.data?.error
-          ?.code === 'REMOVE_PREVIEW_STALE' &&
+        errorDetails(error).code === 'REMOVE_PREVIEW_STALE' &&
         staleRetriesRemaining > 0
       ) {
         setRemovalStage(worktree.id, 'checking')
@@ -394,13 +407,15 @@ export function useWorktreeWorkflows({
           return
         } catch (refreshError) {
           releaseRemoval(worktree.id)
-          notifyError(refreshError)
+          notifyError(refreshError, {
+            operation: `refresh removal details for worktree “${worktree.name}”`
+          })
           return
         }
       }
 
       releaseRemoval(worktree.id)
-      notifyError(error)
+      notifyError(error, { operation: `remove worktree “${worktree.name}”` })
     }
   }
 
@@ -410,8 +425,7 @@ export function useWorktreeWorkflows({
   ): Promise<void> => {
     if (
       removalGuardsRef.current.has(worktree.id) ||
-      worktree.status === 'cleaning' ||
-      needsManualCleanup(worktree)
+      Boolean(pendingRemovals[worktree.id])
     ) {
       return
     }
@@ -435,7 +449,9 @@ export function useWorktreeWorkflows({
       onRemovalNeedsConfirmation(worktree, preview, trigger)
     } catch (error) {
       releaseRemoval(worktree.id)
-      notifyError(error)
+      notifyError(error, {
+        operation: `check whether worktree “${worktree.name}” can be removed`
+      })
     }
   }
 

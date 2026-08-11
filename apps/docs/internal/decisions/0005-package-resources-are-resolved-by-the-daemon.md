@@ -11,9 +11,9 @@ Pi's package manager, settings manager, and resolve-then-load resource architect
 
 ## Decision
 
-The main daemon owns one package system boundary. It reads global desired state from `<data-dir>/settings.json` and repository desired state only from the registered main worktree's `.treeport/settings.json`. Registration is the authorization boundary for reading repository settings. Linked worktrees never receive separate package installations or settings precedence.
+The main daemon owns resource resolution. Its package system reads global desired state from `<data-dir>/settings.json` and repository package desired state only from the registered main worktree's `.treeport/settings.json`. Direct repository terminal presets instead follow direct web-panel semantics: the daemon resolves `.treeport/terminal-presets.json` from the worktree where the terminal will launch. Registration is the authorization boundary for reading repository configuration. Linked worktrees never receive separate package installations or package-settings precedence, but their direct resources follow the files on their own branches.
 
-The boundary parses settings without partially mutating live state, reconciles managed npm roots, resolves package manifests and conventions, validates individual resources, applies filters and scope deduplication, and atomically replaces source-aware effective registries. Web-panel and terminal-preset code consume resolved definitions and do not contain npm or settings logic.
+The package boundary parses settings without partially mutating live state, reconciles managed npm roots, resolves package manifests and conventions, validates individual resources, applies filters and scope deduplication, and atomically replaces source-aware effective registries. The direct repository preset loader validates its versioned root and each keyed definition independently on every definition request. Web-panel and terminal-preset consumers receive combined source-aware definitions and do not contain npm, settings, or repository-file parsing logic.
 
 Npm identity is its package name without version. Local identity is the canonical resolved directory. Durable resource IDs use that package identity (or a stable hash of a canonical local identity), resource type, and package-relative resource name; versions and managed installation paths are excluded.
 
@@ -25,7 +25,9 @@ Package operations are serialized per global or project scope. Install validates
 
 Settings fingerprints are checked on resource lookup. Daemon initialization, registration, reopen, explicit reload, and changed fingerprints reconcile the relevant scope. The package-manager lockfile remains the dependency lock; Treeport does not introduce another package lock format.
 
-Malformed settings preserve the previous valid scoped registry. A package install or package-level load failure preserves the previous resolved package when one exists. Invalid individual resources produce diagnostics and are omitted while valid resources continue loading. Unrelated user presets, direct project panels, shells, and packages remain available.
+Malformed package settings preserve the previous valid scoped registry. A package install or package-level load failure preserves the previous resolved package when one exists. Invalid individual package resources produce diagnostics and are omitted while valid resources continue loading.
+
+Direct repository presets deliberately do not preserve stale definitions. A malformed direct preset file omits all direct definitions until fixed; an invalid keyed entry omits only that entry. Both cases produce diagnostics while valid direct definitions, user presets, package presets, and shells remain available. Re-reading on each definition request lets remote clients observe the selected worktree's file through their normal refresh cycle.
 
 Persistent web-panel rows and storage are references to durable definition IDs, not installed files. Package removal makes the definition unavailable but never cascades to those rows. Running terminals already contain literal argv and have no ongoing package dependency.
 
@@ -46,8 +48,8 @@ This intentionally borrows Pi's package semantics while applying a smaller execu
 
 ## Consequences
 
-- Global resources are consistently available to every registered project, while repository resources apply to every worktree of only that repository.
+- Global resources are consistently available to every registered project. Repository package resources apply to every worktree of only that repository, while direct repository resources follow each worktree's checked-out files.
 - Remote clients receive the same definitions and provenance as local clients without accessing package files themselves.
 - Package resource IDs, panel storage, and existing terminal processes survive updates and temporary package loss.
 - Package management remains CLI-only in V1; the web UI consumes resources and displays provenance but does not edit package desired state.
-- Future direct repository presets, additional declarative resources, and source kinds can reuse the resolver boundary without coupling their consumers to npm.
+- Direct repository presets and future declarative source kinds reuse daemon resource composition without coupling their consumers to npm.

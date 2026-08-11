@@ -68,8 +68,6 @@ const worktree: WorktreeRecord = {
   prunable: false,
   kind: 'linked',
   tmuxSocketName: 'treeport-wt-context',
-  status: 'active',
-  cleanupError: null,
   managedWrapperPath: null,
   pr: {
     state: 'no_pr',
@@ -199,6 +197,7 @@ describe('CLI context and machine output', () => {
   let observedMetadata: TerminalRuntimeMetadata = {
     terminalId: terminal.id,
     title: 'Pi · /repo',
+    program: 'pi',
     progress: null,
     progressStartedAt: timestamp,
     progressClearedAt: timestamp,
@@ -222,6 +221,7 @@ describe('CLI context and machine output', () => {
     observedMetadata = {
       terminalId: terminal.id,
       title: 'Pi · /repo',
+      program: 'pi',
       progress: null,
       progressStartedAt: timestamp,
       progressClearedAt: timestamp,

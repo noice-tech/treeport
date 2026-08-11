@@ -30,11 +30,6 @@ export const TERMINAL_CAPTURE_MAX_LINES = 5_000
 export const WEB_PANEL_INPUT_MAX_BYTES = 64 * 1024
 
 export type WorktreeKind = 'main' | 'linked'
-export type WorktreeStatus =
-  | 'active'
-  | 'cleaning'
-  | 'cleanup_failed'
-  | 'removed'
 export type TerminalStatus = 'running' | 'exited' | 'missing'
 export type PrState = 'no_pr' | 'open' | 'merged' | 'closed' | 'unknown'
 export type OperationStatus = 'pending' | 'running' | 'completed' | 'failed'
@@ -125,12 +120,24 @@ export interface PackageOperationResult {
 
 export type TerminalPresetDefinitionSource =
   | { type: 'user' }
+  | { type: 'repository' }
   | {
       type: 'package'
       packageId: string
       source: string
       scope: PackageScope
     }
+
+export interface RepositoryTerminalPresetDiagnostic {
+  path: string
+  presetId: string | null
+  message: string
+}
+
+export interface TerminalPresetDefinitionListing {
+  definitions: TerminalPresetDefinition[]
+  diagnostics: RepositoryTerminalPresetDiagnostic[]
+}
 
 export interface TerminalPresetDefinition {
   id: string
@@ -194,8 +201,6 @@ export interface WorktreeRecord {
   prunable: boolean
   kind: WorktreeKind
   tmuxSocketName: string
-  status: WorktreeStatus
-  cleanupError: string | null
   managedWrapperPath: string | null
   pr: PrInfo
   dirty: DirtyState | null
@@ -269,7 +274,6 @@ export type TreeportContext =
         | 'branch'
         | 'detached'
         | 'kind'
-        | 'status'
       >
       terminal: Pick<
         TerminalRecord,
@@ -337,6 +341,12 @@ export interface CreateOperationResult {
   setupError: string | null
 }
 
+export type RemoveOperationPhase =
+  | 'accepted'
+  | 'terminals_stopped'
+  | 'git_removed'
+  | 'cleanup_pending'
+
 export interface RemoveOperationRequest {
   confirmation: boolean | null
   confirmationToken: string | null
@@ -346,21 +356,24 @@ export interface RemoveOperationRequest {
   prunable: boolean | null
   gitWorktreeKey: string | null
   repositoryIdentity: string | null
+  phase: RemoveOperationPhase | null
+  tmuxSocketName: string | null
+  managedWrapperPath: string | null
 }
 
-export type RemoveOperationResult =
-  | {
-      removed: true
-      name: string
-      branchPreserved: string | null
-      path: string
-    }
-  | {
-      removed: true
-      recovered: true
-      path: string
-      message: string
-    }
+export interface RemoveOperationResult {
+  removed: true
+  worktreeId: string
+  name: string
+  branchPreserved: string | null
+  path: string
+  recovered: boolean
+  cleanup: {
+    status: 'completed' | 'preserved'
+    residualPath: string | null
+    warning: string | null
+  }
+}
 
 export interface ExternalRemoveOperationResult {
   removed: true
@@ -496,6 +509,18 @@ const terminalPresetFields = {
     .max(TERMINAL_PRESET_ARGUMENT_MAX_COUNT),
   closeOnSuccess: z.boolean().default(false)
 }
+export const repositoryTerminalPresetSchema =
+  z.strictObject(terminalPresetFields)
+const repositoryTerminalPresetIdSchema = z
+  .string()
+  .regex(/^[a-z0-9][a-z0-9._-]{0,119}$/, {
+    message:
+      'Preset IDs must contain only lowercase letters, numbers, dots, underscores, and hyphens'
+  })
+export const repositoryTerminalPresetsFileSchema = z.strictObject({
+  version: z.literal(1),
+  presets: z.record(repositoryTerminalPresetIdSchema, z.unknown())
+})
 const terminalPresetRevisionSchema = z.string().min(1).max(64)
 
 const initialTerminalSchema = z.object({

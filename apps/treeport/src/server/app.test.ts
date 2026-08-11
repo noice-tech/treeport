@@ -76,21 +76,24 @@ function fixture(webDist = '/missing') {
         updatedAt: '2026-01-01T00:00:00.000Z'
       }
     ]),
-    listTerminalPresetDefinitions: vi.fn(() => [
-      {
-        id: 'package:npm:@acme/tools:terminal-preset:dev',
-        name: 'Package dev',
-        executable: 'pnpm',
-        args: ['dev'],
-        closeOnSuccess: false,
-        source: {
-          type: 'package',
-          packageId: 'npm:@acme/tools',
-          source: 'npm:@acme/tools',
-          scope: 'global'
+    listTerminalPresetDefinitions: vi.fn(() => ({
+      definitions: [
+        {
+          id: 'package:npm:@acme/tools:terminal-preset:dev',
+          name: 'Package dev',
+          executable: 'pnpm',
+          args: ['dev'],
+          closeOnSuccess: false,
+          source: {
+            type: 'package',
+            packageId: 'npm:@acme/tools',
+            source: 'npm:@acme/tools',
+            scope: 'global'
+          }
         }
-      }
-    ]),
+      ],
+      diagnostics: []
+    })),
     listPackages: vi.fn(() => ({ packages: [], diagnostics: [] })),
     resolveRegisteredProject: vi.fn((inputPath: string) => ({
       id: 'project_1',
@@ -233,6 +236,7 @@ function fixture(webDist = '/missing') {
   const runtimeMetadata: TerminalRuntimeMetadata = {
     terminalId: 'term',
     title: 'pi · /repo',
+    program: 'pi',
     progress: null,
     progressStartedAt: null,
     progressClearedAt: null,
@@ -755,6 +759,50 @@ describe('HTTP API validation', () => {
     })
   })
 
+  it('sanitizes and correlates unexpected API errors', async () => {
+    const { app, service } = fixture()
+    vi.mocked(service.listProjects).mockRejectedValueOnce(
+      new Error('Database connection failed at /internal/data')
+    )
+    const consoleError = vi
+      .spyOn(console, 'error')
+      .mockImplementation(() => undefined)
+
+    try {
+      const response = await app.request('/api/projects?token=hidden', {
+        headers: { 'x-request-id': 'request_test_123' }
+      })
+      const body = await response.json()
+
+      expect(response.status).toBe(500)
+      expect(response.headers.get('x-request-id')).toBe('request_test_123')
+      expect(body).toEqual({
+        error: {
+          code: 'INTERNAL_ERROR',
+          message: 'Unexpected server error',
+          details: { requestId: 'request_test_123' }
+        }
+      })
+      expect(JSON.stringify(body)).not.toContain('Database connection failed')
+      expect(consoleError).toHaveBeenCalledWith(
+        '[Treeport] API request failed',
+        {
+          requestId: 'request_test_123',
+          method: 'GET',
+          path: '/api/projects',
+          status: 500,
+          code: 'INTERNAL_ERROR',
+          error: 'Database connection failed at /internal/data'
+        }
+      )
+      expect(JSON.stringify(consoleError.mock.calls)).not.toContain(
+        'token=hidden'
+      )
+    } finally {
+      consoleError.mockRestore()
+    }
+  })
+
   it('updates projects with curated colors only', async () => {
     const { app, service } = fixture()
     const updated = await app.request('/api/projects/p', {
@@ -855,7 +903,7 @@ describe('HTTP API validation', () => {
   it('routes source-aware package definitions and package management operations', async () => {
     const { app, service } = fixture()
     const definitions = await app.request(
-      '/api/terminal-preset-definitions?projectId=project_1'
+      '/api/terminal-preset-definitions?worktreeId=wt_1'
     )
     expect(definitions.status).toBe(200)
     expect(await definitions.json()).toMatchObject({
@@ -864,11 +912,12 @@ describe('HTTP API validation', () => {
           name: 'Package dev',
           source: { type: 'package', scope: 'global' }
         }
-      ]
+      ],
+      diagnostics: []
     })
-    expect(service.listTerminalPresetDefinitions).toHaveBeenCalledWith(
-      'project_1'
-    )
+    expect(service.listTerminalPresetDefinitions).toHaveBeenCalledWith({
+      worktreeId: 'wt_1'
+    })
 
     const resolved = await app.request(
       '/api/packages/project?path=%2Frepo%2Flinked'
