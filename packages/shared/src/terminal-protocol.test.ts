@@ -180,6 +180,7 @@ describe('Socket.IO contracts', () => {
               input: { url: 'http://127.0.0.1:3000/' },
               cwd: '.'
             },
+            sandbox: { allowSameOrigin: true },
             createdAt: '2026-01-01T00:00:00.000Z',
             updatedAt: '2026-01-01T00:00:00.000Z'
           }
@@ -202,6 +203,7 @@ describe('Socket.IO contracts', () => {
             renderer: 'unknown',
             title: 'Review',
             launch: { input: null, cwd: null },
+            sandbox: { allowSameOrigin: false },
             createdAt: '2026-01-01T00:00:00.000Z',
             updatedAt: '2026-01-01T00:00:00.000Z'
           }
