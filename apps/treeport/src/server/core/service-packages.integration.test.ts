@@ -309,7 +309,6 @@ describe('TreeportService with injected command adapters', () => {
     expect(events).toEqual([
       `panel.created:${panel.id}`,
       `panel.updated:${panel.id}`,
-      `panel.updated:${panel.id}`,
       `panel.open_requested:${panel.id}`,
       `panel.created:${separate.panel.id}`,
       `panel.open_requested:${separate.panel.id}`,
