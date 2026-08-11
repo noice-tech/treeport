@@ -127,6 +127,7 @@ export async function persistedWebPanel(
       input: JSON.parse(row.inputJson) as WebPanel['launch']['input'],
       cwd: row.launchCwd
     },
+    sandbox: { allowSameOrigin: false },
     createdAt: row.createdAt,
     updatedAt: row.updatedAt
   }

@@ -13,6 +13,8 @@ Treeport compiles panel source with its built-in Vite toolchain and resolves `@t
 ```ts
 import { treeport } from '@treeport/panel-sdk'
 
+treeport.panel.setTitle('Review route')
+
 const context = await treeport.context()
 const diff = await treeport.diff()
 
@@ -24,6 +26,10 @@ const stopFind = treeport.shortcuts.onFind(() => {
 })
 ```
 
+`treeport.panel.setTitle(title)` sets a runtime title in the current Treeport client. Pass `null` to restore the configured title. Treeport does not persist or synchronize runtime titles.
+
 `treeport.context()` includes the stored JSON launch input and worktree-relative launch directory.
 
 `treeport.shortcuts.onFind(handler)` delivers `Cmd/Ctrl+F` whether keyboard focus is inside the panel or elsewhere in the Treeport workspace. It returns an unsubscribe function. Panels own their find interface and behavior; Treeport only routes the generic shortcut.
+
+An HTTP application loaded in the Browser package's nested iframe can use `treeport.panel.setTitle()`. The Browser package relays this title message. The target must include the SDK in its own application build. Browser targets cannot use context, diff, storage, launch, external URL, shortcuts, or workspace navigation methods.

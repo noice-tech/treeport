@@ -70,7 +70,13 @@ async function writeLocalPackage(packageRoot: string) {
       JSON.stringify({
         name: '@acme/treeport-tools',
         treeport: {
-          webPanels: ['./web-panels/*', '!./web-panels/legacy'],
+          webPanels: [
+            {
+              source: './web-panels/review',
+              permissions: ['same-origin']
+            },
+            '!./web-panels/legacy'
+          ],
           terminalPresets: ['./terminal-presets/*.json']
         }
       })
@@ -248,7 +254,8 @@ describe('PackageSystem', () => {
         /^package:local:[a-f0-9]{16}:web-panel:review$/
       ),
       title: 'Review',
-      source: { type: 'package', scope: 'global' }
+      source: { type: 'package', scope: 'global' },
+      sandbox: { allowSameOrigin: true }
     })
     expect(
       (await packages.terminalPresetDefinitions('project-b')).map(
@@ -315,6 +322,29 @@ describe('PackageSystem', () => {
         expect.objectContaining({
           resourceType: 'terminal-preset',
           message: expect.stringContaining('Could not parse terminal preset')
+        })
+      ])
+    )
+
+    await fs.writeFile(
+      path.join(packageRoot, 'package.json'),
+      JSON.stringify({
+        name: '@acme/treeport-tools',
+        treeport: {
+          webPanels: [
+            {
+              source: './web-panels/review',
+              permissions: ['same-origin', 'same-origin']
+            }
+          ]
+        }
+      })
+    )
+    const invalidPermission = await packages.reload()
+    expect(invalidPermission.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          message: expect.stringContaining('invalid web panel permission')
         })
       ])
     )

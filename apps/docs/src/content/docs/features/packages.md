@@ -107,7 +107,24 @@ A package can declare resources in `package.json`:
 }
 ```
 
-Manifest paths and globs are relative to the package root and may include `!` exclusions. A valid explicit `treeport` manifest is authoritative. Without one, Treeport discovers these conventional resources:
+Manifest paths and globs are relative to the package root and may include `!` exclusions. A web panel can use object form to request the high-trust `same-origin` permission:
+
+```json
+{
+  "treeport": {
+    "webPanels": [
+      {
+        "source": "./web-panels/browser",
+        "permissions": ["same-origin"]
+      }
+    ]
+  }
+}
+```
+
+This permission lets the panel compose nested web applications that need normal browser storage. It also lets panel code access the same-origin Treeport page and API routes. Use it only for code that you trust. Exclusions remain string entries.
+
+A valid explicit `treeport` manifest is authoritative. Without one, Treeport discovers these conventional resources:
 
 ```text
 web-panels/<resource-id>/index.html

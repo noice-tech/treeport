@@ -107,7 +107,8 @@ async function fixture() {
     packageRoot,
     development: false,
     definitionId: 'package:npm:@acme/review:web-panel:review',
-    packageSource: 'npm:@acme/review@1.0.0'
+    packageSource: 'npm:@acme/review@1.0.0',
+    allowNetworkRequests: false
   }
   return { root, panelRoot, config, source }
 }
@@ -199,7 +200,7 @@ describe('WebPanelViteRuntime', () => {
       }
 
       const resolution = await runtime.resolve(
-        { ...source, development: true },
+        { ...source, development: true, allowNetworkRequests: true },
         '',
         '/api/web-panels/panel/assets/'
       )
@@ -231,7 +232,8 @@ describe('WebPanelViteRuntime', () => {
           `script-src 'self' ${browserOrigin} 'unsafe-inline'`,
           `style-src 'self' ${browserOrigin} 'unsafe-inline'`,
           `img-src 'self' ${browserOrigin} data: blob:`,
-          `connect-src 'self' ${browserOrigin} ws: wss:`,
+          `connect-src 'self' ${browserOrigin} ws: wss: http: https:`,
+          'frame-src http: https:',
           `frame-ancestors 'self' ${browserOrigin}`
         ])
       )

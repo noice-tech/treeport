@@ -176,10 +176,15 @@ export type WebPanelSource =
       scope: PackageScope
     }
 
+export interface WebPanelSandbox {
+  allowSameOrigin: boolean
+}
+
 export interface WebPanelDefinition {
   id: string
   title: string
   source: WebPanelSource
+  sandbox: WebPanelSandbox
 }
 
 export interface OpenWebPanelResult {

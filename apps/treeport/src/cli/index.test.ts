@@ -382,6 +382,16 @@ describe('CLI context and machine output', () => {
           JSON.stringify({
             definitions: [
               {
+                id: 'package:npm:@treeport/web-panel-browser:web-panel:browser',
+                title: 'Browser',
+                source: {
+                  type: 'package',
+                  packageId: 'npm:@treeport/web-panel-browser',
+                  source: 'npm:@treeport/web-panel-browser',
+                  scope: 'global'
+                }
+              },
+              {
                 id: 'project:preview',
                 title: 'Preview',
                 source: { type: 'project' }
@@ -424,9 +434,11 @@ describe('CLI context and machine output', () => {
         const body = JSON.parse(source) as ObservedWebPanelBody
         webPanelBodies.push({ url: request.url, body })
         const open = request.url.endsWith('/open')
+        const previous = [...createdWebPanels]
+          .reverse()
+          .find((panel) => panel.definitionId === body.definitionId)
         const reuse =
-          open && body.newInstance !== true && createdWebPanels.length > 0
-        const previous = createdWebPanels.at(-1)
+          open && body.newInstance !== true && previous !== undefined
         const panel: WebPanel = reuse
           ? {
               ...previous!,
@@ -441,16 +453,24 @@ describe('CLI context and machine output', () => {
               kind: 'web',
               worktreeId: worktree.id,
               definitionId: String(body.definitionId),
-              title: 'Preview',
+              title:
+                body.definitionId ===
+                'package:npm:@treeport/web-panel-browser:web-panel:browser'
+                  ? String(
+                      (body.input as { title?: string } | undefined)?.title ??
+                        '127.0.0.1:5173'
+                    )
+                  : 'Preview',
               launch: {
                 input: body.input as WebPanel['launch']['input'],
                 cwd: String(body.launchCwd)
               },
+              sandbox: { allowSameOrigin: false },
               createdAt: timestamp,
               updatedAt: timestamp
             }
         if (reuse) {
-          createdWebPanels[createdWebPanels.length - 1] = panel
+          createdWebPanels[createdWebPanels.indexOf(previous!)] = panel
         } else {
           createdWebPanels.push(panel)
         }
@@ -1038,6 +1058,40 @@ describe('CLI context and machine output', () => {
       panel: { id: 'panel_2' },
       created: true,
       reused: false
+    })
+
+    const browser = await runCli(
+      [
+        'web-panel',
+        'open',
+        'browser',
+        '--worktree',
+        '.',
+        '--input',
+        '{"url":"http://127.0.0.1:5173","title":"Application"}',
+        '--json'
+      ],
+      environment,
+      cwd
+    )
+    expect(browser.code).toBe(0)
+    expect(JSON.parse(browser.stdout)).toMatchObject({
+      panel: {
+        id: 'panel_3',
+        definitionId:
+          'package:npm:@treeport/web-panel-browser:web-panel:browser',
+        title: 'Application'
+      },
+      created: true,
+      reused: false
+    })
+    expect(webPanelBodies.at(-1)?.body).toMatchObject({
+      definitionId: 'package:npm:@treeport/web-panel-browser:web-panel:browser',
+      input: {
+        url: 'http://127.0.0.1:5173',
+        title: 'Application'
+      },
+      launchCwd: 'packages/client'
     })
 
     const invalid = await runCli(

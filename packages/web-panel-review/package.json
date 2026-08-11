@@ -1,5 +1,5 @@
 {
-  "name": "@treeport/review",
+  "name": "@treeport/web-panel-review",
   "version": "0.1.0",
   "description": "Treeport's internal code-review web panel package.",
   "private": true,

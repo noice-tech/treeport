@@ -31,12 +31,29 @@ export interface ResolvedWebPanelSource {
   packageLockPath?: string
   definitionId: string
   packageSource?: string
+  allowNetworkRequests: boolean
 }
 
 export type WebPanelAssetResolution =
-  | { kind: 'redirect'; location: string; development: boolean }
-  | { kind: 'asset'; path: string; immutable: boolean; development: false }
-  | { kind: 'error'; html: string; development: boolean }
+  | {
+      kind: 'redirect'
+      location: string
+      development: boolean
+      allowNetworkRequests: boolean
+    }
+  | {
+      kind: 'asset'
+      path: string
+      immutable: boolean
+      development: false
+      allowNetworkRequests: boolean
+    }
+  | {
+      kind: 'error'
+      html: string
+      development: boolean
+      allowNetworkRequests: boolean
+    }
 
 const COMPILER_ABI = 'runtime-abi-1'
 const VITE_VERSION = packageJson.dependencies.vite
@@ -71,7 +88,7 @@ export class WebPanelViteRuntime {
   private readonly builds = new Map<string, Promise<string>>()
   private readonly developmentServers = new Map<
     string,
-    { base: string; server: ViteDevServer }
+    { base: string; server: ViteDevServer; allowNetworkRequests: boolean }
   >()
   private httpServer?: HttpServer
 
@@ -283,6 +300,7 @@ export class WebPanelViteRuntime {
     const key = crypto
       .createHash('sha256')
       .update(canonical)
+      .update(source.allowNetworkRequests ? ':network' : ':isolated')
       .digest('hex')
       .slice(0, 24)
     const existing = this.developmentServers.get(key)
@@ -303,7 +321,11 @@ export class WebPanelViteRuntime {
     const server = await createServer(
       this.viteConfig(developmentSource, base, { server: this.httpServer })
     )
-    const created = { base, server }
+    const created = {
+      base,
+      server,
+      allowNetworkRequests: source.allowNetworkRequests
+    }
     this.developmentServers.set(key, created)
     return created
   }
@@ -334,7 +356,8 @@ export class WebPanelViteRuntime {
         return {
           kind: 'redirect',
           location: `${development.base}${relative}`,
-          development: true
+          development: true,
+          allowNetworkRequests: source.allowNetworkRequests
         }
       }
 
@@ -344,7 +367,8 @@ export class WebPanelViteRuntime {
         return {
           kind: 'redirect',
           location: `${logicalBase}${IMMUTABLE_PREFIX}${compiled.hash}/${requestedPath || source.entry}`,
-          development: false
+          development: false,
+          allowNetworkRequests: source.allowNetworkRequests
         }
       }
 
@@ -386,7 +410,13 @@ export class WebPanelViteRuntime {
         )
       }
 
-      return { kind: 'asset', path: real, immutable: true, development: false }
+      return {
+        kind: 'asset',
+        path: real,
+        immutable: true,
+        development: false,
+        allowNetworkRequests: source.allowNetworkRequests
+      }
     } catch (error) {
       if (error instanceof DomainError) {
         throw error
@@ -396,7 +426,8 @@ export class WebPanelViteRuntime {
       return {
         kind: 'error',
         html: this.errorPage(source, error),
-        development: source.development
+        development: source.development,
+        allowNetworkRequests: source.allowNetworkRequests
       }
     }
   }
@@ -436,7 +467,11 @@ export class WebPanelViteRuntime {
     response.setHeader('x-content-type-options', 'nosniff')
     response.setHeader(
       'content-security-policy',
-      webPanelContentSecurityPolicy('development', browserOrigin)
+      webPanelContentSecurityPolicy(
+        'development',
+        browserOrigin,
+        development.allowNetworkRequests
+      )
     )
     development.server.middlewares(request, response, next)
   }

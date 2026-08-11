@@ -182,11 +182,13 @@ describe('TreeportService with injected command adapters', () => {
       {
         id: 'project:code-review',
         source: { type: 'project' },
+        sandbox: { allowSameOrigin: false },
         title: 'Code review'
       },
       {
         id: 'project:review',
         source: { type: 'project' },
+        sandbox: { allowSameOrigin: false },
         title: 'Review'
       }
     ])

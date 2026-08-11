@@ -41,7 +41,15 @@ Treeport packages do not execute daemon modules or install server hooks. Managed
 
 Opening a web panel authorizes Treeport's fixed Vite profile to transform its HTML, TypeScript/TSX, CSS, imports, and assets. Treeport does not load package Vite configuration, executable Babel or PostCSS configuration, package plugins, build scripts, or lifecycle scripts. Npm-installed panel output is served only from Treeport's immutable build cache; source and compiled asset routes reject traversal and escaping symbolic links. Panel JavaScript still runs after you open the panel and remains inside Treeport's scoped iframe runtime.
 
-These limits reduce automatic package execution, but selected terminal commands and opened web panels still act on a trusted registered worktree. Inspect panel source and its runtime dependencies as well as the package manifest.
+These limits reduce automatic package execution, but selected terminal commands and opened hosted panels still act on a trusted registered worktree. Inspect panel source and its runtime dependencies as well as the package manifest.
+
+A hosted panel can request the `same-origin` permission. This permission weakens the iframe boundary. Panel code can potentially read or change the Treeport page, use Treeport browser storage, call same-origin routes, make direct HTTP or HTTPS requests, and remove its sandbox attribute. Install and open such a panel only when you trust its source and runtime dependencies. Panels without this permission keep an opaque origin.
+
+:::caution[TODO: confirm panel permissions]
+Treeport does not yet ask for confirmation before it loads a panel that declares permissions. Treeport must require explicit confirmation once, show the panel and its permissions, and ask again if the permissions change. This work is tracked in [issue #259](https://github.com/noice-tech/treeport/issues/259).
+:::
+
+The Browser package can load an arbitrary HTTP or HTTPS site in a nested iframe. The package relays only the target's client-local title message. The target cannot use context, diff, storage, shortcuts, or workspace navigation methods. Browser iframe restrictions remain in effect, and Treeport does not bypass a target's framing policy.
 
 ## Operational guidance
 

@@ -612,11 +612,24 @@ export async function mockApp(
   let failTerminalDelete = false
   let webPanelCreations = 0
   let webPanelHasStorage = false
+  const webPanelStorage = new Map<string, Map<string, unknown>>()
   const webPanelDefinitions = [
+    {
+      id: 'package:npm:@treeport/web-panel-browser:web-panel:browser',
+      title: 'Browser',
+      source: {
+        type: 'package' as const,
+        packageId: 'npm:@treeport/web-panel-browser',
+        source: 'npm:@treeport/web-panel-browser',
+        scope: 'global' as const
+      },
+      sandbox: { allowSameOrigin: true }
+    },
     {
       id: 'project:review',
       title: 'Review',
-      source: { type: 'project' as const }
+      source: { type: 'project' as const },
+      sandbox: { allowSameOrigin: false }
     }
   ]
   let staleRemovePreview: Partial<RemovePreview> | null = null
@@ -1139,6 +1152,63 @@ export async function mockApp(
     }
 
     if (
+      /^\/api\/web-panels\/[^/]+\/assets\/$/.test(pathname) &&
+      route.request().method() === 'GET'
+    ) {
+      await route.fulfill({
+        contentType: 'text/html',
+        body: `<!doctype html><html><body>
+          <form><input type="url" aria-label="Application URL" value="http://localhost:3000/" required></form>
+          <div role="alert" hidden><strong>Load failed</strong><span>Check that the application is running and reachable.</span></div>
+          <iframe title="Browser target" src="about:blank"></iframe>
+          <script>
+            const pending = new Map(); let serial = 0;
+            const call = (method, values = {}) => new Promise((resolve, reject) => {
+              const id = String(++serial); pending.set(id, { resolve, reject });
+              parent.postMessage({ source: 'treeport-panel-v1', id, method, ...values }, '*');
+            });
+            const frame = document.querySelector('iframe');
+            addEventListener('message', (event) => {
+              if (event.source === parent && event.data?.source === 'treeport-host-v1' && event.data.id) {
+                const request = pending.get(event.data.id); if (!request) return;
+                pending.delete(event.data.id);
+                event.data.ok ? request.resolve(event.data.value) : request.reject(new Error(event.data.error));
+                return;
+              }
+              if (event.source === frame.contentWindow && event.data?.source === 'treeport-panel-v1' && event.data.method === 'panel.title.set') {
+                parent.postMessage(event.data, '*');
+              }
+            });
+            Promise.all([call('context'), call('storage.get', { key: 'browser-state' })]).then(([context, stored]) => {
+              const input = document.querySelector('input');
+              const failure = document.querySelector('[role="alert"]');
+              const navigate = (url) => {
+                failure.hidden = true;
+                fetch(url, { method: 'HEAD', mode: 'no-cors', cache: 'no-store' }).then(
+                  () => { frame.src = url; },
+                  () => { failure.hidden = false; }
+                );
+              };
+              const url = stored?.url || context.launch.input?.url || '';
+              if (url) input.value = url;
+              if (url) navigate(url);
+              if (url) parent.postMessage({ source: 'treeport-panel-v1', method: 'panel.title.set', title: context.launch.input?.title || new URL(url).host }, '*');
+              document.querySelector('form').addEventListener('submit', (event) => {
+                event.preventDefault();
+                const url = new URL(input.value).href;
+                call('storage.set', { key: 'browser-state', value: { url, launchUpdatedAt: context.panel.updatedAt } }).then(() => {
+                  navigate(url);
+                  parent.postMessage({ source: 'treeport-panel-v1', method: 'panel.title.set', title: new URL(url).host }, '*');
+                });
+              });
+            });
+          </script>
+        </body></html>`
+      })
+      return
+    }
+
+    if (
       /^\/api\/worktrees\/[^/]+\/web-panel-definitions$/.test(pathname) &&
       route.request().method() === 'GET'
     ) {
@@ -1153,21 +1223,115 @@ export async function mockApp(
       const worktreeId = pathname.split('/')[3]!
       const body = route.request().postDataJSON() as {
         definitionId: string
+        input?: { url?: string; title?: string } | null
+        launchCwd?: string | null
       }
       const worktree = state.worktrees.find(
         (candidate) => candidate.id === worktreeId
+      )!
+      const definition = webPanelDefinitions.find(
+        (candidate) => candidate.id === body.definitionId
       )!
       const panel = {
         id: `panel_${++webPanelCreations}`,
         kind: 'web' as const,
         worktreeId,
         definitionId: body.definitionId,
-        title: 'Review',
+        title: definition.title,
+        launch: {
+          input: body.input ?? null,
+          cwd: body.launchCwd ?? null
+        },
+        sandbox: definition.sandbox,
         createdAt: '2026-01-01T00:00:00.000Z',
         updatedAt: '2026-01-01T00:00:00.000Z'
       }
       worktree.panels.push(panel)
       await route.fulfill({ status: 201, json: { panel } })
+      return
+    }
+
+    if (
+      /^\/api\/panels\/[^/]+\/context$/.test(pathname) &&
+      route.request().method() === 'GET'
+    ) {
+      const panelId = pathname.split('/')[3]!
+      const worktree = state.worktrees.find((candidate) =>
+        candidate.panels.some((panel) => panel.id === panelId)
+      )!
+      const panel = worktree.panels.find(
+        (candidate) => candidate.id === panelId
+      )!
+      await route.fulfill({
+        json: {
+          context: {
+            apiVersion: 1,
+            panel,
+            launch: panel.launch,
+            project: {
+              id: state.id,
+              name: state.name,
+              defaultBranch: state.defaultBranch
+            },
+            worktree: {
+              id: worktree.id,
+              name: worktree.name,
+              branch: worktree.branch,
+              head: worktree.head
+            }
+          }
+        }
+      })
+      return
+    }
+
+    if (
+      /^\/api\/panels\/[^/]+\/launch$/.test(pathname) &&
+      route.request().method() === 'PUT'
+    ) {
+      const panelId = pathname.split('/')[3]!
+      const body = route.request().postDataJSON() as {
+        input: { url?: string; title?: string } | null
+        launchCwd: string | null
+      }
+      const panel = state.worktrees
+        .flatMap((worktree) => worktree.panels)
+        .find((candidate) => candidate.id === panelId)!
+
+      panel.launch = { input: body.input, cwd: body.launchCwd }
+      panel.updatedAt = new Date(
+        Date.parse(panel.updatedAt) + 1_000
+      ).toISOString()
+      await route.fulfill({ json: { panel } })
+      return
+    }
+
+    if (
+      /^\/api\/panels\/[^/]+\/storage\/get$/.test(pathname) &&
+      route.request().method() === 'POST'
+    ) {
+      const panelId = pathname.split('/')[3]!
+      const body = route.request().postDataJSON() as { key: string }
+      await route.fulfill({
+        json: { value: webPanelStorage.get(panelId)?.get(body.key) }
+      })
+      return
+    }
+
+    if (
+      /^\/api\/panels\/[^/]+\/storage$/.test(pathname) &&
+      route.request().method() === 'PUT'
+    ) {
+      const panelId = pathname.split('/')[3]!
+      const body = route.request().postDataJSON() as {
+        key: string
+        value: unknown
+      }
+      const storage = webPanelStorage.get(panelId) ?? new Map<string, unknown>()
+      storage.set(body.key, body.value)
+      webPanelStorage.set(panelId, storage)
+      webPanelHasStorage = true
+      await route.fulfill({ json: { ok: true } })
       return
     }
 

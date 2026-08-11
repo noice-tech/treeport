@@ -102,6 +102,16 @@ interface ResourceCandidates {
   diagnostics: PackageResourceDiagnostic[]
 }
 
+interface WebPanelManifestEntry {
+  source: string
+  allowSameOrigin: boolean
+}
+
+interface PackageManifest {
+  webPanels: WebPanelManifestEntry[]
+  terminalPresets: string[]
+}
+
 const EMPTY_SETTINGS: TreeportSettings = { raw: {}, packages: [] }
 const PACKAGE_OPERATION_TIMEOUT_MS = 5 * 60_000
 
@@ -826,6 +836,59 @@ export class PackageSystem {
     return [...(patterns as string[])]
   }
 
+  private validateWebPanelManifest(
+    entries: unknown,
+    packageJsonPath: string
+  ): WebPanelManifestEntry[] {
+    if (!Array.isArray(entries)) {
+      throw new Error(`${packageJsonPath} treeport.webPanels must be an array`)
+    }
+
+    return entries.map((entry): WebPanelManifestEntry => {
+      if (typeof entry === 'string') {
+        this.validateManifestPatterns([entry], 'webPanels', packageJsonPath)
+        return { source: entry, allowSameOrigin: false }
+      }
+
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+        throw new Error(
+          `${packageJsonPath} treeport.webPanels entries must be package-relative patterns or panel definitions`
+        )
+      }
+
+      const keys = Object.keys(entry)
+      const source: unknown = Reflect.get(entry, 'source')
+      const permissions: unknown = Reflect.get(entry, 'permissions') ?? []
+      if (
+        keys.some((key) => !['source', 'permissions'].includes(key)) ||
+        typeof source !== 'string' ||
+        source.startsWith('!') ||
+        !Array.isArray(permissions) ||
+        permissions.some((permission) => typeof permission !== 'string')
+      ) {
+        throw new Error(
+          `${packageJsonPath} contains an invalid web panel definition`
+        )
+      }
+
+      this.validateManifestPatterns([source], 'webPanels', packageJsonPath)
+      const uniquePermissions = new Set(permissions)
+      if (
+        uniquePermissions.size !== permissions.length ||
+        permissions.some((permission) => permission !== 'same-origin')
+      ) {
+        throw new Error(
+          `${packageJsonPath} contains an invalid web panel permission`
+        )
+      }
+
+      return {
+        source,
+        allowSameOrigin: uniquePermissions.has('same-origin')
+      }
+    })
+  }
+
   private async resourceCandidates(
     root: string,
     scope: PackageScope,
@@ -989,7 +1052,7 @@ export class PackageSystem {
 
         throw error
       })
-    let manifest: { webPanels: string[]; terminalPresets: string[] } | undefined
+    let manifest: PackageManifest | undefined
     if (packageJsonContent !== null) {
       let packageJson: unknown
       try {
@@ -1025,9 +1088,8 @@ export class PackageSystem {
           'terminalPresets'
         )
         manifest = {
-          webPanels: this.validateManifestPatterns(
+          webPanels: this.validateWebPanelManifest(
             webPanels ?? [],
-            'webPanels',
             packageJsonPath
           ),
           terminalPresets: this.validateManifestPatterns(
@@ -1049,7 +1111,7 @@ export class PackageSystem {
       manifest
         ? this.manifestAllows(
             candidate.relativePath,
-            manifest.webPanels,
+            manifest.webPanels.map((entry) => entry.source),
             'web-panel'
           )
         : candidate.relativePath.startsWith('web-panels/') &&
@@ -1096,11 +1158,22 @@ export class PackageSystem {
         const resourceId = encodeURIComponent(
           path.posix.basename(candidate.relativePath)
         )
+        const allowSameOrigin =
+          manifest?.webPanels.some(
+            (entry) =>
+              entry.allowSameOrigin &&
+              this.manifestAllows(
+                candidate.relativePath,
+                [entry.source],
+                'web-panel'
+              )
+          ) ?? false
         return {
           definition: {
             id: `package:${parsed.packageId}:web-panel:${resourceId}`,
             title: titleFromPath(candidate.relativePath),
-            source: metadata
+            source: metadata,
+            sandbox: { allowSameOrigin }
           },
           root: candidate.root,
           entry: 'index.html',

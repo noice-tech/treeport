@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Browser</title>
+    <script type="module" src="./browser.ts"></script>
+  </head>
+  <body>
+    <main>
+      <form>
+        <input
+          name="url"
+          type="url"
+          aria-label="Application URL"
+          value="http://localhost:3000/"
+          maxlength="4096"
+          required
+        />
+        <button
+          type="button"
+          data-action="reload"
+          aria-label="Reload application"
+          title="Reload application"
+        >
+          ↻
+        </button>
+        <button
+          type="button"
+          data-action="external"
+          aria-label="Open application externally"
+          title="Open application externally"
+        >
+          ↗
+        </button>
+        <span
+          class="help"
+          tabindex="0"
+          aria-label="Browser panel help"
+          title="The application must allow iframe use and must be reachable from this browser. Use browser development tools to inspect it."
+          >ⓘ</span
+        >
+      </form>
+      <p class="error" role="alert" hidden></p>
+      <div class="viewport">
+        <div class="loading" role="status" aria-live="polite">
+          <span class="spinner" aria-hidden="true"></span>
+          <span>Loading application…</span>
+        </div>
+        <div class="failure" role="alert" hidden>
+          <strong>Load failed</strong>
+          <span>Check that the application is running and reachable.</span>
+          <button type="button" data-action="retry">Retry</button>
+        </div>
+        <iframe
+          title="Browser"
+          src="about:blank"
+          sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups allow-popups-to-escape-sandbox allow-downloads allow-presentation"
+          allow="clipboard-read; clipboard-write; fullscreen"
+          referrerpolicy="no-referrer"
+        ></iframe>
+      </div>
+    </main>
+  </body>
+</html>

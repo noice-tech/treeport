@@ -716,6 +716,182 @@ test.describe('desktop worktree and terminal workflows', () => {
     await dialog.getByRole('button', { name: 'Close', exact: true }).click()
     await expect(page.getByRole('button', { name: /^New panel/ })).toBeFocused()
   })
+  test('opens and updates a Browser panel with a client-local runtime title', async ({
+    page
+  }) => {
+    await page.route('http://unreachable.test/**', (route) =>
+      route.abort('connectionrefused')
+    )
+    await page.route('http://browser-app.test/**', async (route) => {
+      const url = new URL(route.request().url())
+      await route.fulfill({
+        contentType: 'text/html',
+        body:
+          url.pathname === '/start'
+            ? `<h1>Start application</h1><script>parent.postMessage({ source: 'treeport-panel-v1', method: 'panel.title.set', title: 'Runtime route' }, '*')</script>`
+            : '<h1>Next application</h1>'
+      })
+    })
+    await mockApp(page)
+    await page.getByRole('button', { name: /^topic(?:,|\s|$)/ }).click()
+
+    await page.getByRole('button', { name: /^New panel/ }).click()
+    const launcher = page.getByRole('dialog', { name: 'New panel' })
+    const createRequest = page.waitForRequest(
+      (request) =>
+        request.method() === 'POST' &&
+        new URL(request.url()).pathname === '/api/worktrees/wt_topic/panels'
+    )
+    await launcher.getByRole('button', { name: 'Browser, web panel' }).click()
+    expect((await createRequest).postDataJSON()).toEqual({
+      definitionId: 'package:npm:@treeport/web-panel-browser:web-panel:browser',
+      input: null,
+      launchCwd: null
+    })
+
+    await expect(
+      page.getByRole('button', { name: 'Browser, web panel' })
+    ).toBeVisible()
+    await expect
+      .poll(() =>
+        page
+          .frames()
+          .some((frame) =>
+            frame.url().includes('/api/web-panels/panel_1/assets/')
+          )
+      )
+      .toBe(true)
+    await expect(page.locator('iframe[title="Browser"]')).toHaveAttribute(
+      'sandbox',
+      /allow-same-origin/
+    )
+    let packageFrame = page
+      .frames()
+      .find((frame) => frame.url().includes('/api/web-panels/panel_1/assets/'))!
+    await expect(packageFrame.getByLabel('Application URL')).toHaveValue(
+      'http://localhost:3000/'
+    )
+    await packageFrame
+      .getByLabel('Application URL')
+      .fill('http://unreachable.test/')
+    await packageFrame.getByLabel('Application URL').press('Enter')
+    await expect(packageFrame.getByRole('alert')).toContainText('Load failed')
+
+    await packageFrame
+      .getByLabel('Application URL')
+      .fill('http://browser-app.test/start')
+    const firstStorageRequest = page.waitForRequest(
+      (request) =>
+        request.method() === 'PUT' &&
+        new URL(request.url()).pathname === '/api/panels/panel_1/storage'
+    )
+    await packageFrame.getByLabel('Application URL').press('Enter')
+    expect((await firstStorageRequest).postDataJSON()).toEqual({
+      key: 'browser-state',
+      value: {
+        url: 'http://browser-app.test/start',
+        launchUpdatedAt: '2026-01-01T00:00:00.000Z'
+      }
+    })
+
+    await expect(
+      page.getByRole('button', { name: 'Runtime route, web panel' })
+    ).toBeVisible()
+    expect(
+      page
+        .frames()
+        .find((frame) =>
+          frame.url().includes('/api/web-panels/panel_1/assets/')
+        )
+    ).toBe(packageFrame)
+    const browserFrame = page
+      .frames()
+      .find((frame) => frame.url() === 'http://browser-app.test/start')!
+    await expect(browserFrame.getByRole('heading')).toHaveText(
+      'Start application'
+    )
+    await expect(
+      browserFrame.evaluate(() => {
+        localStorage.setItem('treeport-browser-test', 'local')
+        sessionStorage.setItem('treeport-browser-test', 'session')
+        return [
+          localStorage.getItem('treeport-browser-test'),
+          sessionStorage.getItem('treeport-browser-test')
+        ]
+      })
+    ).resolves.toEqual(['local', 'session'])
+    await expect(
+      browserFrame.evaluate(
+        () =>
+          new Promise((resolve) => {
+            const id = 'restricted-request'
+            addEventListener(
+              'message',
+              (event) => {
+                if (
+                  event.source === parent &&
+                  event.data?.source === 'treeport-host-v1' &&
+                  event.data.id === id
+                ) {
+                  resolve(true)
+                }
+              },
+              { once: true }
+            )
+            parent.postMessage(
+              { source: 'treeport-panel-v1', id, method: 'context' },
+              '*'
+            )
+            setTimeout(() => resolve(false), 100)
+          })
+      )
+    ).resolves.toBe(false)
+
+    packageFrame = page
+      .frames()
+      .find((frame) => frame.url().includes('/api/web-panels/panel_1/assets/'))!
+    await packageFrame
+      .getByLabel('Application URL')
+      .fill('http://browser-app.test/next')
+    const storageRequest = page.waitForRequest(
+      (request) =>
+        request.method() === 'PUT' &&
+        new URL(request.url()).pathname === '/api/panels/panel_1/storage'
+    )
+    await packageFrame.getByLabel('Application URL').press('Enter')
+    expect((await storageRequest).postDataJSON()).toEqual({
+      key: 'browser-state',
+      value: {
+        url: 'http://browser-app.test/next',
+        launchUpdatedAt: '2026-01-01T00:00:00.000Z'
+      }
+    })
+    await expect(
+      page.getByRole('button', { name: 'browser-app.test, web panel' })
+    ).toBeVisible()
+    await expect
+      .poll(() =>
+        page
+          .frames()
+          .some((frame) => frame.url() === 'http://browser-app.test/next')
+      )
+      .toBe(true)
+
+    await page.reload()
+    await expect(
+      page.getByRole('button', { name: 'browser-app.test, web panel' })
+    ).toBeVisible()
+    const nextFrame = page
+      .frames()
+      .find((frame) => frame.url() === 'http://browser-app.test/next')!
+    await expect(nextFrame.getByRole('heading')).toHaveText('Next application')
+
+    await page.getByRole('button', { name: 'Close browser-app.test' }).click()
+    await expect(
+      page.getByRole('button', { name: 'browser-app.test, web panel' })
+    ).toHaveCount(0)
+  })
+
   test('launches repository presets and keeps global choices available while repository configuration refreshes', async ({
     page
   }) => {
@@ -1152,11 +1328,17 @@ test.describe('desktop worktree and terminal workflows', () => {
     )
     await page.keyboard.press('Enter')
     expect((await panelCreateRequest).postDataJSON()).toEqual({
-      definitionId: 'project:review'
+      definitionId: 'project:review',
+      input: null,
+      launchCwd: null
     })
     await expect(
       page.getByRole('button', { name: 'Review, web panel' })
     ).toBeVisible()
+    await expect(page.locator('iframe[title="Review"]')).not.toHaveAttribute(
+      'sandbox',
+      /allow-same-origin/
+    )
     await expect
       .poll(() =>
         page

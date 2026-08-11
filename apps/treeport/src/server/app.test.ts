@@ -420,6 +420,7 @@ describe('HTTP API validation', () => {
       const sdk = (await import('@treeport/panel-sdk')) as {
         treeport: {
           version: number
+          panel: { setTitle: (title: string | null) => void }
           context: () => Promise<unknown>
           storage: {
             set: (key: string, value: unknown) => Promise<void>
@@ -471,6 +472,16 @@ describe('HTTP API validation', () => {
         }
       })
       await expect(stored).resolves.toBeUndefined()
+
+      sdk.treeport.panel.setTitle('Review route')
+      expect(panelParent.postMessage).toHaveBeenLastCalledWith(
+        {
+          source: 'treeport-panel-v1',
+          method: 'panel.title.set',
+          title: 'Review route'
+        },
+        '*'
+      )
 
       const findHandler = vi.fn()
       const unsubscribeFind = sdk.treeport.shortcuts.onFind(findHandler)
@@ -551,7 +562,8 @@ describe('HTTP API validation', () => {
         kind: 'asset',
         path: requestedPath ? path.join(panelRoot, requestedPath) : indexPath,
         immutable: true,
-        development: false
+        development: false,
+        allowNetworkRequests: false
       })
     )
 
@@ -581,6 +593,7 @@ describe('HTTP API validation', () => {
           `style-src 'self' ${browserOrigin} 'unsafe-inline'`,
           `img-src 'self' ${browserOrigin} data:`,
           "connect-src 'none'",
+          'frame-src http: https:',
           `frame-ancestors 'self' ${browserOrigin}`
         ])
       )
@@ -611,7 +624,8 @@ describe('HTTP API validation', () => {
       kind: 'asset',
       path: modulePath,
       immutable: true,
-      development: false
+      development: false,
+      allowNetworkRequests: true
     })
 
     try {
@@ -621,6 +635,9 @@ describe('HTTP API validation', () => {
       expect(response.status).toBe(200)
       expect(response.headers.get('content-type')).toBe(
         'text/javascript; charset=utf-8'
+      )
+      expect(response.headers.get('content-security-policy')).toContain(
+        'connect-src http: https:'
       )
       expect(await response.text()).toBe('export const loaded = true')
       expect(service.resolveWebPanelAsset).toHaveBeenCalledWith(

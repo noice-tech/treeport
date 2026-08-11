@@ -59,7 +59,7 @@ treeport web-panel open --worktree . review \
 
 The command accepts an exact definition ID or an unambiguous short name. It reuses the newest instance for the definition, replaces the stored launch input, and reloads the panel frame. Durable `treeport.storage` values remain unchanged. Use `--new` when the worktree needs another instance.
 
-## Browser SDK
+## Panel SDK
 
 Install the SDK as a development dependency for types and import it normally. Treeport's Vite profile resolves that import to the host's SDK, so no runtime dependency or import map is needed:
 
@@ -83,6 +83,8 @@ const stopFind = treeport.shortcuts.onFind(() => {
 ```
 
 `treeport.context()` returns the panel, project, worktree, and launch data. Launch input is a JSON object or `null`. Launch `cwd` is relative to the worktree root.
+
+Use `treeport.panel.setTitle(title)` to set a runtime title for the current client. Use `treeport.panel.setTitle(null)` to restore the configured title. Runtime titles are not saved or sent to other clients.
 
 `treeport.diff()` returns merge-base metadata and a read-only unified diff. `treeport.shortcuts.onFind(handler)` routes `Cmd/Ctrl+F` to the panel and returns an unsubscribe function.
 

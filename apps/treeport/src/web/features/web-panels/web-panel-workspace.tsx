@@ -8,18 +8,28 @@ import { cn } from '../../lib/utils'
 export function WebPanelWorkspace({
   panel,
   active,
+  title,
+  reloadRevision,
+  onTitleChange,
   onSelectWorkspace
 }: {
   panel: WebPanel
   active: boolean
+  title: string
+  reloadRevision: number
+  onTitleChange: (panelId: string, title: string | null) => void
   onSelectWorkspace: (index: number) => void
 }) {
   const frameRef = useRef<HTMLIFrameElement>(null)
   const panelWindowRef = useRef<Window | null>(null)
-  const panelRevision = `${panel.id}:${panel.updatedAt}`
+  const panelRevision = `${panel.id}:${reloadRevision}`
   const [loadedPanelRevision, setLoadedPanelRevision] = useState<string | null>(
     null
   )
+
+  useEffect(() => {
+    onTitleChange(panel.id, null)
+  }, [onTitleChange, panel.id, panelRevision])
 
   useEffect(() => {
     if (!active) {
@@ -67,6 +77,16 @@ export function WebPanelWorkspace({
       }
 
       const method = event.data.method
+      if (method === 'panel.title.set') {
+        if (event.data.title === null) {
+          onTitleChange(panel.id, null)
+        } else if (typeof event.data.title === 'string') {
+          onTitleChange(panel.id, event.data.title.trim().slice(0, 256) || null)
+        }
+
+        return
+      }
+
       if (
         method === 'workspace.select' &&
         Number.isInteger(event.data.index) &&
@@ -148,20 +168,21 @@ export function WebPanelWorkspace({
     }
     window.addEventListener('message', receive)
     return () => window.removeEventListener('message', receive)
-  }, [onSelectWorkspace, panel.id])
+  }, [onSelectWorkspace, onTitleChange, panel.id])
 
   return (
     <Activity mode={active ? 'visible' : 'hidden'}>
       <main
         className="min-h-0 min-w-0 bg-zinc-950"
-        aria-label={`${panel.title} web panel`}
+        aria-label={`${title} web panel`}
       >
         <iframe
           key={panelRevision}
           ref={frameRef}
-          title={panel.title}
+          title={title}
           src={`/api/web-panels/${encodeURIComponent(panel.id)}/assets/`}
-          sandbox="allow-scripts"
+          sandbox={`allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads${panel.sandbox.allowSameOrigin ? ' allow-same-origin' : ''}`}
+          allow="clipboard-read; clipboard-write; fullscreen"
           className={cn(
             'h-full w-full border-0 bg-zinc-950',
             loadedPanelRevision === panelRevision ? 'opacity-100' : 'opacity-0'

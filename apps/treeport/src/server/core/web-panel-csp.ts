@@ -62,14 +62,16 @@ export function webPanelBrowserOrigin(input: WebPanelRequestOrigin): string {
 
 export function webPanelContentSecurityPolicy(
   policy: 'development' | 'immutable' | 'error',
-  browserOrigin: string
+  browserOrigin: string,
+  allowNetworkRequests = false
 ): string {
+  const networkSources = allowNetworkRequests ? ' http: https:' : ''
   if (policy === 'development') {
-    return `default-src 'self' ${browserOrigin}; script-src 'self' ${browserOrigin} 'unsafe-inline'; style-src 'self' ${browserOrigin} 'unsafe-inline'; img-src 'self' ${browserOrigin} data: blob:; connect-src 'self' ${browserOrigin} ws: wss:; frame-ancestors 'self' ${browserOrigin}`
+    return `default-src 'self' ${browserOrigin}; script-src 'self' ${browserOrigin} 'unsafe-inline'; style-src 'self' ${browserOrigin} 'unsafe-inline'; img-src 'self' ${browserOrigin} data: blob:; connect-src 'self' ${browserOrigin} ws: wss:${networkSources}; frame-src http: https:; frame-ancestors 'self' ${browserOrigin}`
   }
 
   if (policy === 'immutable') {
-    return `default-src 'self' ${browserOrigin}; script-src 'self' ${browserOrigin}; style-src 'self' ${browserOrigin} 'unsafe-inline'; img-src 'self' ${browserOrigin} data:; connect-src 'none'; frame-ancestors 'self' ${browserOrigin}`
+    return `default-src 'self' ${browserOrigin}; script-src 'self' ${browserOrigin}; style-src 'self' ${browserOrigin} 'unsafe-inline'; img-src 'self' ${browserOrigin} data:; connect-src${allowNetworkRequests ? networkSources : " 'none'"}; frame-src http: https:; frame-ancestors 'self' ${browserOrigin}`
   }
 
   return `default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'self' ${browserOrigin}`

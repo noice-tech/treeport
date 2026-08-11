@@ -17,7 +17,11 @@ import type {
   TerminalReady,
   TerminalServerToClientEvents
 } from '@treeport/shared'
-import { SOCKET_IO_PATH, TERMINAL_PROTOCOL_VERSION } from '@treeport/shared'
+import {
+  parseEventsSnapshot,
+  SOCKET_IO_PATH,
+  TERMINAL_PROTOCOL_VERSION
+} from '@treeport/shared'
 import { TerminalAttachmentManager } from './terminal-attachments'
 import { createSocketServer } from './socket-server'
 import type { TerminalMetadataManager } from './terminal-metadata'
@@ -273,6 +277,7 @@ describe('Socket.IO real network', () => {
         definitionId: 'project:review',
         title: 'Review',
         launch: { input: null, cwd: null },
+        sandbox: { allowSameOrigin: false },
         createdAt: '2026-01-01T00:00:00.000Z',
         updatedAt: '2026-01-01T00:00:00.000Z'
       }
@@ -287,9 +292,17 @@ describe('Socket.IO real network', () => {
           )
       )
     )
-    expect(snapshots.map((snapshot) => snapshot.webPanels[0]?.id)).toEqual([
-      'panel_review',
-      'panel_review'
+    expect(
+      snapshots.map((snapshot) => parseEventsSnapshot(snapshot)?.webPanels[0])
+    ).toEqual([
+      expect.objectContaining({
+        id: 'panel_review',
+        sandbox: { allowSameOrigin: false }
+      }),
+      expect.objectContaining({
+        id: 'panel_review',
+        sandbox: { allowSameOrigin: false }
+      })
     ])
 
     const closures = [first, second].map(

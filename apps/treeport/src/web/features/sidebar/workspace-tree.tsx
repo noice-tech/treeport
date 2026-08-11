@@ -117,6 +117,7 @@ export interface WorkspaceTreeProps {
   selectedTerminalId: string | null
   selectedPendingTerminalId: string | null
   selectedWebPanelId: string | null
+  webPanelRuntimeTitles: Record<string, string>
   pendingTerminals: Array<{
     id: string
     projectId: string
@@ -154,6 +155,7 @@ export function WorkspaceTree({
   selectedTerminalId,
   selectedPendingTerminalId,
   selectedWebPanelId,
+  webPanelRuntimeTitles,
   pendingTerminals,
   pendingWorktrees,
   pendingRemovals,
@@ -464,6 +466,8 @@ export function WorkspaceTree({
                           (panel): panel is WebPanel => panel.kind === 'web'
                         )
                         .map((panel, panelIndex) => {
+                          const title =
+                            webPanelRuntimeTitles[panel.id] ?? panel.title
                           const shortcutIndex =
                             selectedWorktree?.id === worktree.id &&
                             worktree.terminals.length + panelIndex < 9
@@ -501,7 +505,7 @@ export function WorkspaceTree({
                                     event.preventDefault()
                                     closeWebPanel(panel, event.currentTarget)
                                   }}
-                                  aria-label={`${panel.title}, web panel`}
+                                  aria-label={`${title}, web panel`}
                                   aria-keyshortcuts={
                                     shortcutIndex
                                       ? `Meta+${shortcutIndex}`
@@ -513,7 +517,7 @@ export function WorkspaceTree({
                                     aria-hidden="true"
                                   />
                                   <span className="truncate" aria-hidden="true">
-                                    {panel.title}
+                                    {title}
                                   </span>
                                   {shortcutIndex ? (
                                     <kbd
@@ -529,7 +533,7 @@ export function WorkspaceTree({
                               </SidebarMenuSubButton>
                               <div className="absolute inset-y-0 right-0 z-10 flex items-center opacity-0 group-hover/terminal:opacity-100 group-focus-within/terminal:opacity-100 max-[700px]:opacity-100">
                                 <SidebarAction
-                                  label={`Close ${panel.title}`}
+                                  label={`Close ${title}`}
                                   tooltip="Close web panel"
                                   className="text-zinc-500 hover:bg-transparent hover:text-zinc-200"
                                   onClick={(trigger) =>

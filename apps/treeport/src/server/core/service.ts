@@ -84,7 +84,10 @@ const WEB_PANEL_STORAGE_MAX_ENTRIES = 256
 const WEB_PANEL_STORAGE_MAX_TOTAL_BYTES = 1024 * 1024
 const WEB_PANEL_STORAGE_MAX_VALUE_BYTES = 64 * 1024
 
-function mapWebPanel(row: typeof webPanels.$inferSelect): WebPanel {
+function mapWebPanel(
+  row: typeof webPanels.$inferSelect,
+  allowSameOrigin = false
+): WebPanel {
   const input: unknown = JSON.parse(row.inputJson)
   if (input !== null && (typeof input !== 'object' || Array.isArray(input))) {
     throw new Error(`Web panel ${row.id} has invalid stored launch input`)
@@ -100,6 +103,7 @@ function mapWebPanel(row: typeof webPanels.$inferSelect): WebPanel {
       input: input as WebPanelInput | null,
       cwd: row.launchCwd
     },
+    sandbox: { allowSameOrigin },
     createdAt: row.createdAt,
     updatedAt: row.updatedAt
   }
@@ -638,6 +642,16 @@ export class TreeportService {
               .from(webPanels)
               .where(eq(webPanels.worktreeId, worktree.id))
               .orderBy(asc(webPanels.createdAt), asc(webPanels.id))
+            const definitions =
+              project.availability.state === 'available' &&
+              storedWebPanels.length > 0
+                ? await this.effectiveWebPanelDefinitions(worktree.id).catch(
+                    () => []
+                  )
+                : []
+            const definitionsById = new Map(
+              definitions.map((definition) => [definition.id, definition])
+            )
             worktree.panels = [
               ...terminals.map((terminal) => ({
                 id: `panel_${terminal.id}`,
@@ -648,7 +662,13 @@ export class TreeportService {
                 createdAt: terminal.createdAt,
                 updatedAt: terminal.updatedAt
               })),
-              ...storedWebPanels.map(mapWebPanel)
+              ...storedWebPanels.map((panel) =>
+                mapWebPanel(
+                  panel,
+                  definitionsById.get(panel.definitionId)?.sandbox
+                    .allowSameOrigin ?? false
+                )
+              )
             ].sort(
               (left, right) =>
                 left.createdAt.localeCompare(right.createdAt) ||
@@ -1169,11 +1189,13 @@ export class TreeportService {
           ? `${words[0]!.toLocaleUpperCase()}${words.slice(1)}`
           : directory.name,
         source: { type: 'project' },
+        sandbox: { allowSameOrigin: false },
         root,
         entry,
         packageRoot: worktree.path,
         development: true,
-        definitionId: `project:${encodeURIComponent(directory.name)}`
+        definitionId: `project:${encodeURIComponent(directory.name)}`,
+        allowNetworkRequests: false
       })
     }
     return definitions
@@ -1202,6 +1224,7 @@ export class TreeportService {
           development,
           ...(packageLockPath ? { packageLockPath } : {}),
           definitionId: definition.id,
+          allowNetworkRequests: definition.sandbox.allowSameOrigin,
           ...(definition.source.type === 'package'
             ? { packageSource: definition.source.source }
             : {})
@@ -1222,6 +1245,7 @@ export class TreeportService {
         packageLockPath: _packageLockPath,
         definitionId: _definitionId,
         packageSource: _packageSource,
+        allowNetworkRequests: _allowNetworkRequests,
         ...definition
       }) => definition
     )
@@ -1301,6 +1325,7 @@ export class TreeportService {
       definitionId,
       title: definition.title,
       launch: normalized.launch,
+      sandbox: definition.sandbox,
       createdAt: timestamp,
       updatedAt: timestamp
     }
@@ -1389,13 +1414,16 @@ export class TreeportService {
         updatedAt
       })
       .where(eq(webPanels.id, existing.id))
-    const panel = mapWebPanel({
-      ...existing,
-      title: definition.title,
-      inputJson: normalized.inputJson,
-      launchCwd: normalized.launch.cwd,
-      updatedAt
-    })
+    const panel = mapWebPanel(
+      {
+        ...existing,
+        title: definition.title,
+        inputJson: normalized.inputJson,
+        launchCwd: normalized.launch.cwd,
+        updatedAt
+      },
+      definition.sandbox.allowSameOrigin
+    )
     this.invalidateProjectsSnapshot()
     this.events.publish('panel.updated', { worktreeId, panelId: panel.id })
     return finish({ panel, created: false, reused: true })
@@ -1448,7 +1476,13 @@ export class TreeportService {
       throw new DomainError('PANEL_NOT_FOUND', 'Panel not found', 404)
     }
 
-    const panel = mapWebPanel(panelRow)
+    const definition = (
+      await this.effectiveWebPanelDefinitions(panelRow.worktreeId)
+    ).find((candidate) => candidate.id === panelRow.definitionId)
+    const panel = mapWebPanel(
+      panelRow,
+      definition?.sandbox.allowSameOrigin ?? false
+    )
     const worktree = await this.getWorktree(panel.worktreeId)
     const project = await this.getProject(worktree.projectId)
     return {
@@ -1596,7 +1630,7 @@ export class TreeportService {
       .select()
       .from(webPanels)
       .orderBy(asc(webPanels.createdAt), asc(webPanels.id))
-    return rows.map(mapWebPanel)
+    return rows.map((row) => mapWebPanel(row))
   }
 
   async getWorktree(worktreeId: string): Promise<WorktreeRecord> {

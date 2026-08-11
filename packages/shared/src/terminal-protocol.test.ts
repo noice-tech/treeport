@@ -168,9 +168,48 @@ describe('Socket.IO contracts', () => {
       parseEventsSnapshot({
         at: '2026-01-01T00:00:00.000Z',
         terminalMetadata: [{ terminalId: 'term', title: null, progress: null }],
-        webPanels: []
+        webPanels: [
+          {
+            id: 'panel',
+            kind: 'web',
+            worktreeId: 'worktree',
+            definitionId:
+              'package:npm:@treeport/web-panel-browser:web-panel:browser',
+            title: 'Application',
+            launch: {
+              input: { url: 'http://127.0.0.1:3000/' },
+              cwd: '.'
+            },
+            sandbox: { allowSameOrigin: true },
+            createdAt: '2026-01-01T00:00:00.000Z',
+            updatedAt: '2026-01-01T00:00:00.000Z'
+          }
+        ]
       })
-    ).toMatchObject({ terminalMetadata: [{ terminalId: 'term' }] })
+    ).toMatchObject({
+      terminalMetadata: [{ terminalId: 'term' }],
+      webPanels: [{ id: 'panel' }]
+    })
+    expect(
+      parseEventsSnapshot({
+        at: '2026-01-01T00:00:00.000Z',
+        terminalMetadata: [],
+        webPanels: [
+          {
+            id: 'panel',
+            kind: 'web',
+            worktreeId: 'worktree',
+            definitionId: 'project:review',
+            renderer: 'unknown',
+            title: 'Review',
+            launch: { input: null, cwd: null },
+            sandbox: { allowSameOrigin: false },
+            createdAt: '2026-01-01T00:00:00.000Z',
+            updatedAt: '2026-01-01T00:00:00.000Z'
+          }
+        ]
+      })
+    ).toBeNull()
     expect(
       parseEventsSnapshot({
         at: 'not-a-date',

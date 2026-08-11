@@ -54,6 +54,10 @@ export default defineConfig({
               slug: 'features/web-panels'
             },
             {
+              label: 'Browser panel (experimental)',
+              slug: 'features/browser-panel'
+            },
+            {
               label: 'Attention and progress',
               slug: 'features/attention-and-progress'
             },
