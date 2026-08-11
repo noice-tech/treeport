@@ -1,9 +1,28 @@
 ---
 title: Web panels (experimental)
-description: Build worktree-scoped web tools with Treeport's hosted Vite runtime.
+description: Open HTTP applications and build worktree-scoped web tools.
 ---
 
-Treeport has an experimental runtime for trusted repository-provided web panels. A web panel is persistent and worktree-bound: opening or closing it is synchronized across connected Treeport clients, while the selected panel remains local to each device.
+Treeport has experimental support for browser panels and trusted repository-provided web panels. A web panel is persistent and worktree-bound: opening or closing it is synchronized across connected Treeport clients, while the selected panel remains local to each device.
+
+## Open an HTTP application
+
+A package can provide the **Browser** panel with a declarative [`renderer: "browser"` definition](/features/packages/#create-a-package). Select **Browser** from **New panel** to open an empty panel. Enter an absolute HTTP or HTTPS URL in the toolbar and select **Go**. The toolbar can open another address, reload the configured address, or open it in a separate browser tab.
+
+When a Browser package is configured, you can also open or reuse it from a worktree terminal:
+
+```sh
+treeport web-panel open --worktree . browser \
+  --input '{"url":"http://127.0.0.1:5173","title":"Application"}'
+```
+
+The URL must be reachable from the computer that runs the browser. A loopback address such as `127.0.0.1` refers to that computer. It does not refer to a remote Treeport daemon. Treeport does not proxy application traffic or change the URL host. An HTTPS Treeport page can also block an HTTP application as mixed content.
+
+An application can refuse iframe use with `Content-Security-Policy: frame-ancestors` or `X-Frame-Options`. Treeport does not bypass these controls. Use **Open externally** when the application cannot run in the panel.
+
+Use the development tools in your current browser to inspect the application and its elements. A web page cannot open browser development tools for you.
+
+## Create a hosted panel
 
 Project-local panels live under `.treeport/web-panels/<name>/`. Each folder containing `index.html` defines a panel; the folder name supplies its stable identity and humanized title. Packages can contribute the same source layout through [`treeport.webPanels`](/features/packages/).
 
@@ -83,6 +102,10 @@ const stopFind = treeport.shortcuts.onFind(() => {
 ```
 
 `treeport.context()` returns the panel, project, worktree, and launch data. Launch input is a JSON object or `null`. Launch `cwd` is relative to the worktree root.
+
+Use `treeport.panel.setTitle(title)` to set a runtime title for the current client. Use `treeport.panel.setTitle(null)` to restore the configured title. Runtime titles are not saved or sent to other clients.
+
+A target application in Browser can use `treeport.panel.setTitle()`, but it cannot use context, diff, storage, shortcuts, or workspace navigation. Add the SDK to the target application's normal build when it uses the title method.
 
 `treeport.diff()` returns merge-base metadata and a read-only unified diff. `treeport.shortcuts.onFind(handler)` routes `Cmd/Ctrl+F` to the panel and returns an unsubscribe function.
 

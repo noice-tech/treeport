@@ -170,6 +170,7 @@ function fixture(webDist = '/missing') {
       {
         id: 'project:review',
         title: 'Review',
+        renderer: 'hosted',
         source: { type: 'project' }
       }
     ]),
@@ -178,6 +179,7 @@ function fixture(webDist = '/missing') {
       kind: 'web',
       worktreeId,
       definitionId: 'project:review',
+      renderer: 'hosted',
       title: 'Review',
       launch: { input: null, cwd: null },
       createdAt: '2026-01-01',
@@ -189,6 +191,7 @@ function fixture(webDist = '/missing') {
         kind: 'web',
         worktreeId,
         definitionId: 'project:review',
+        renderer: 'hosted',
         title: 'Review',
         launch: {
           input: { path: 'output/demo.mp4' },
@@ -200,6 +203,22 @@ function fixture(webDist = '/missing') {
       created: false,
       reused: true
     })),
+    updateWebPanelLaunch: vi.fn(
+      async (
+        panelId: string,
+        launch: { input: unknown; cwd: string | null }
+      ) => ({
+        id: panelId,
+        kind: 'web',
+        worktreeId: 'wt_1',
+        definitionId: 'project:review',
+        renderer: 'hosted',
+        title: 'Review',
+        launch,
+        createdAt: '2026-01-01',
+        updatedAt: '2026-01-02'
+      })
+    ),
     deleteWebPanel: vi.fn(async () => undefined),
     getWebPanelContext: vi.fn(async () => ({
       apiVersion: 1,
@@ -344,6 +363,25 @@ describe('HTTP API validation', () => {
       'term_1'
     )
 
+    const updated = await app.request('/api/panels/panel_review/launch', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        input: { path: 'output/next.mp4' },
+        launchCwd: 'packages/preview',
+        expectedUpdatedAt: '2026-01-01T00:00:00.000Z'
+      })
+    })
+    expect(updated.status).toBe(200)
+    expect(service.updateWebPanelLaunch).toHaveBeenCalledWith(
+      'panel_review',
+      {
+        input: { path: 'output/next.mp4' },
+        cwd: 'packages/preview'
+      },
+      '2026-01-01T00:00:00.000Z'
+    )
+
     expect((await app.request('/api/panels/panel_review/context')).status).toBe(
       200
     )
@@ -420,6 +458,7 @@ describe('HTTP API validation', () => {
       const sdk = (await import('@treeport/panel-sdk')) as {
         treeport: {
           version: number
+          panel: { setTitle: (title: string | null) => void }
           context: () => Promise<unknown>
           storage: {
             set: (key: string, value: unknown) => Promise<void>
@@ -471,6 +510,16 @@ describe('HTTP API validation', () => {
         }
       })
       await expect(stored).resolves.toBeUndefined()
+
+      sdk.treeport.panel.setTitle('Review route')
+      expect(panelParent.postMessage).toHaveBeenLastCalledWith(
+        {
+          source: 'treeport-panel-v1',
+          method: 'panel.title.set',
+          title: 'Review route'
+        },
+        '*'
+      )
 
       const findHandler = vi.fn()
       const unsubscribeFind = sdk.treeport.shortcuts.onFind(findHandler)

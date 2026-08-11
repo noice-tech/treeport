@@ -1,0 +1,20 @@
+{
+  "name": "@treeport/web-panel-browser",
+  "version": "0.1.0",
+  "description": "Treeport's Browser web panel package.",
+  "private": true,
+  "type": "module",
+  "keywords": [
+    "treeport-package"
+  ],
+  "treeport": {
+    "webPanels": [
+      {
+        "id": "browser",
+        "title": "Browser",
+        "renderer": "browser"
+      }
+    ]
+  },
+  "license": "MIT"
+}

@@ -8,9 +8,11 @@ import type {
   TerminalRecord,
   WebPanel,
   WebPanelDefinition,
+  WebPanelInput,
   WorktreeRecord
 } from '@treeport/shared'
 import { TerminalBellNotifications } from './features/notifications/use-bell-notifications'
+import { BrowserPanelWorkspace } from './features/web-panels/browser-panel-workspace'
 import { CloseWebPanelDialog } from './features/web-panels/close-web-panel-dialog'
 import { WebPanelWorkspace } from './features/web-panels/web-panel-workspace'
 import { parseResponse } from 'hono/client'
@@ -116,6 +118,52 @@ function WorkspaceApp() {
   const [retainedWebPanelIds, setRetainedWebPanelIds] = useState<Set<string>>(
     () => new Set()
   )
+  const [webPanelRuntimeTitles, setWebPanelRuntimeTitles] = useState<
+    Record<string, string>
+  >({})
+  const setWebPanelRuntimeTitle = useCallback(
+    (panelId: string, title: string | null) => {
+      setWebPanelRuntimeTitles((current) => {
+        if (title === null) {
+          if (current[panelId] === undefined) {
+            return current
+          }
+
+          const next = { ...current }
+          delete next[panelId]
+          return next
+        }
+
+        return current[panelId] === title
+          ? current
+          : { ...current, [panelId]: title }
+      })
+    },
+    []
+  )
+  useEffect(() => {
+    const panelIds = new Set(
+      projects.flatMap((project) =>
+        project.worktrees.flatMap((worktree) =>
+          worktree.panels
+            .filter((panel) => panel.kind === 'web')
+            .map((panel) => panel.id)
+        )
+      )
+    )
+    setWebPanelRuntimeTitles((current) => {
+      const removedIds = Object.keys(current).filter(
+        (panelId) => !panelIds.has(panelId)
+      )
+      if (removedIds.length === 0) {
+        return current
+      }
+
+      const next = { ...current }
+      removedIds.forEach((panelId) => delete next[panelId])
+      return next
+    })
+  }, [projects])
   const panelDialogProject =
     dialog?.type === 'panel'
       ? (projects.find((project) => project.id === dialog.projectId) ?? null)
@@ -156,18 +204,25 @@ function WorkspaceApp() {
   const createWebPanel = useMutation({
     mutationFn: ({
       worktree,
-      definition
+      definition,
+      input
     }: {
       worktree: WorktreeRecord
       definition: WebPanelDefinition
+      input: WebPanelInput | null
     }) =>
       parseResponse(
         rpc.api.worktrees[':worktreeId'].panels.$post({
           param: { worktreeId: worktree.id },
-          json: { definitionId: definition.id }
+          json: {
+            definitionId: definition.id,
+            input,
+            launchCwd: null
+          }
         })
       ).then((result) => result.panel),
     onSuccess: async (panel) => {
+      setDialog(null)
       await queryClient.invalidateQueries({
         queryKey: projectsQueryOptions.queryKey
       })
@@ -204,6 +259,7 @@ function WorkspaceApp() {
         })
       ),
     onSuccess: async (_, { panel }) => {
+      setWebPanelRuntimeTitle(panel.id, null)
       setDialog((current) =>
         current?.type === 'close-web-panel' && current.panel.id === panel.id
           ? null
@@ -686,6 +742,7 @@ function WorkspaceApp() {
               ? null
               : (selectedWebPanel?.id ?? null)
           }
+          webPanelRuntimeTitles={webPanelRuntimeTitles}
           selectedPendingTerminalId={
             terminalWorkflows.selectedPendingTerminal?.id ?? null
           }
@@ -716,17 +773,30 @@ function WorkspaceApp() {
         />
       </WorkspaceSidebar>
       <WorkspaceMain>
-        {retainedWebPanels.map((panel) => (
-          <WebPanelWorkspace
-            key={panel.id}
-            panel={panel}
-            active={
-              panel.id === selectedWebPanelId &&
-              !terminalWorkflows.selectedPendingTerminal
-            }
-            onSelectWorkspace={selectWorkspaceByIndex}
-          />
-        ))}
+        {retainedWebPanels.map((panel) => {
+          const active =
+            panel.id === selectedWebPanelId &&
+            !terminalWorkflows.selectedPendingTerminal
+          const title = webPanelRuntimeTitles[panel.id] ?? panel.title
+          return panel.renderer === 'browser' ? (
+            <BrowserPanelWorkspace
+              key={panel.id}
+              panel={panel}
+              active={active}
+              title={title}
+              onTitleChange={setWebPanelRuntimeTitle}
+            />
+          ) : (
+            <WebPanelWorkspace
+              key={panel.id}
+              panel={panel}
+              active={active}
+              title={title}
+              onTitleChange={setWebPanelRuntimeTitle}
+              onSelectWorkspace={selectWorkspaceByIndex}
+            />
+          )
+        })}
         {(!selectedWebPanel || terminalWorkflows.selectedPendingTerminal) && (
           <TerminalWorkspace
             selectedWorktree={selectedWorktree}
@@ -779,7 +849,7 @@ function WorkspaceApp() {
           Boolean(panelDialogWorktree) && webPanelDefinitionsQuery.isPending
         }
         webPanelDefinitionsError={webPanelDefinitionsQuery.isError}
-        launchDisabled={panelLaunchDisabled}
+        launchDisabled={panelLaunchDisabled || createWebPanel.isPending}
         onCreateTerminal={(input) => {
           if (!panelDialogProject || !panelDialogWorktree) {
             return
@@ -797,10 +867,10 @@ function WorkspaceApp() {
             return
           }
 
-          setDialog(null)
           createWebPanel.mutate({
             worktree: panelDialogWorktree,
-            definition
+            definition,
+            input: null
           })
         }}
         onManagePresets={() => setDialog({ type: 'presets' })}

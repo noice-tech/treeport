@@ -50,6 +50,13 @@
       "when": 1786283200364,
       "tag": "0006_web_panel_launch_input",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1786370000000,
+      "tag": "0007_browser_web_panel",
+      "breakpoints": true
     }
   ]
 }

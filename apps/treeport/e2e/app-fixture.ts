@@ -614,8 +614,20 @@ export async function mockApp(
   let webPanelHasStorage = false
   const webPanelDefinitions = [
     {
+      id: 'package:npm:@treeport/web-panel-browser:web-panel:browser',
+      title: 'Browser',
+      renderer: 'browser' as const,
+      source: {
+        type: 'package' as const,
+        packageId: 'npm:@treeport/web-panel-browser',
+        source: 'npm:@treeport/web-panel-browser',
+        scope: 'global' as const
+      }
+    },
+    {
       id: 'project:review',
       title: 'Review',
+      renderer: 'hosted' as const,
       source: { type: 'project' as const }
     }
   ]
@@ -1153,21 +1165,60 @@ export async function mockApp(
       const worktreeId = pathname.split('/')[3]!
       const body = route.request().postDataJSON() as {
         definitionId: string
+        input?: { url?: string; title?: string } | null
+        launchCwd?: string | null
       }
       const worktree = state.worktrees.find(
         (candidate) => candidate.id === worktreeId
+      )!
+      const definition = webPanelDefinitions.find(
+        (candidate) => candidate.id === body.definitionId
       )!
       const panel = {
         id: `panel_${++webPanelCreations}`,
         kind: 'web' as const,
         worktreeId,
         definitionId: body.definitionId,
-        title: 'Review',
+        renderer: definition.renderer,
+        title:
+          body.input?.title ??
+          (definition.renderer === 'browser' && body.input?.url
+            ? new URL(body.input.url).host
+            : definition.title),
+        launch: {
+          input: body.input ?? null,
+          cwd: body.launchCwd ?? null
+        },
         createdAt: '2026-01-01T00:00:00.000Z',
         updatedAt: '2026-01-01T00:00:00.000Z'
       }
       worktree.panels.push(panel)
       await route.fulfill({ status: 201, json: { panel } })
+      return
+    }
+
+    if (
+      /^\/api\/panels\/[^/]+\/launch$/.test(pathname) &&
+      route.request().method() === 'PUT'
+    ) {
+      const panelId = pathname.split('/')[3]!
+      const body = route.request().postDataJSON() as {
+        input: { url?: string; title?: string } | null
+        launchCwd: string | null
+      }
+      const panel = state.worktrees
+        .flatMap((worktree) => worktree.panels)
+        .find((candidate) => candidate.id === panelId)!
+
+      panel.launch = { input: body.input, cwd: body.launchCwd }
+      if (panel.renderer === 'browser' && body.input?.url) {
+        panel.title = body.input.title ?? new URL(body.input.url).host
+      }
+
+      panel.updatedAt = new Date(
+        Date.parse(panel.updatedAt) + 1_000
+      ).toISOString()
+      await route.fulfill({ json: { panel } })
       return
     }
 

@@ -114,6 +114,20 @@ web-panels/<resource-id>/index.html
 terminal-presets/*.json
 ```
 
+A Browser panel has no hosted source directory. Declare it directly in `treeport.webPanels`:
+
+```json
+{
+  "treeport": {
+    "webPanels": [
+      { "id": "browser", "title": "Browser", "renderer": "browser" }
+    ]
+  }
+}
+```
+
+The `id` must contain only letters, numbers, `.`, `_`, or `-`, and must start with a letter or number. The title is limited to 256 characters. Package filters address this resource as `web-panels/<id>`.
+
 A terminal preset file contains one preset definition:
 
 ```json
@@ -125,7 +139,7 @@ A terminal preset file contains one preset definition:
 }
 ```
 
-Web panels are source-only Vite applications and require no package build step or committed output. Publish `index.html`, TypeScript/TSX or JavaScript, CSS, and imported assets in the declared panel directory. Put browser libraries in normal `dependencies`, not `devDependencies`; Treeport uses Vite to resolve and bundle the installed dependency graph. The host-provided `@treeport/panel-sdk` is the exception and belongs in `devDependencies` for authoring types. Local-path packages use development serving and HMR, while npm-installed packages are compiled into Treeport's immutable cache when opened. See [Web panels](/features/web-panels/) for the supported profile.
+Hosted web panels are source-only Vite applications and require no package build step or committed output. Publish `index.html`, TypeScript/TSX or JavaScript, CSS, and imported assets in the declared panel directory. Put browser libraries in normal `dependencies`, not `devDependencies`; Treeport uses Vite to resolve and bundle the installed dependency graph. The host-provided `@treeport/panel-sdk` is the exception and belongs in `devDependencies` for authoring types. Local-path packages use development serving and HMR, while npm-installed packages are compiled into Treeport's immutable cache when opened. See [Web panels](/features/web-panels/) for the supported profile.
 
 Panel folder names supply humanized titles. Package resource identities do not include npm versions, so updating a package preserves persistent panel identity and storage.
 

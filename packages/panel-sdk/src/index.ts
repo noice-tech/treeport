@@ -22,6 +22,7 @@ export interface WebPanel {
   kind: 'web'
   worktreeId: string
   definitionId: string
+  renderer: 'hosted' | 'browser'
   title: string
   launch: WebPanelLaunch
   /** ISO 8601 timestamp. */
@@ -74,6 +75,12 @@ export interface WebPanelStorage {
   delete(key: string): Promise<void>
 }
 
+/** Client-local controls for the current panel. */
+export interface WebPanelControls {
+  /** Set a runtime title. Pass null to restore the configured title. */
+  setTitle(title: string | null): void
+}
+
 /** Keyboard shortcuts Treeport can route to an active web panel. */
 export interface WebPanelShortcuts {
   /** Run a handler when the user invokes Find with Cmd/Ctrl+F. */
@@ -83,6 +90,8 @@ export interface WebPanelShortcuts {
 /** The worktree-scoped API available to a Treeport web panel. */
 export interface TreeportPanelSdk {
   readonly version: 1
+  /** Client-local controls for the current panel. */
+  readonly panel: WebPanelControls
   /** Return the identity and Git context for the current panel. */
   context(): Promise<WebPanelContext>
   /** Return the current worktree changes as unified diff text. */
@@ -206,6 +215,18 @@ function call<Result>(
 /** The worktree-scoped, read-only API available to this web panel. */
 export const treeport: TreeportPanelSdk = Object.freeze({
   version: 1,
+  panel: Object.freeze({
+    setTitle: (title: string | null) => {
+      if (parent === self) {
+        return
+      }
+
+      parent.postMessage(
+        { source: 'treeport-panel-v1', method: 'panel.title.set', title },
+        '*'
+      )
+    }
+  }),
   context: () => call<WebPanelContext>('context'),
   diff: () => call<GitDiff>('diff'),
   storage: Object.freeze({

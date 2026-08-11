@@ -70,7 +70,11 @@ async function writeLocalPackage(packageRoot: string) {
       JSON.stringify({
         name: '@acme/treeport-tools',
         treeport: {
-          webPanels: ['./web-panels/*', '!./web-panels/legacy'],
+          webPanels: [
+            './web-panels/*',
+            '!./web-panels/legacy',
+            { id: 'browser', title: 'Browser', renderer: 'browser' }
+          ],
           terminalPresets: ['./terminal-presets/*.json']
         }
       })
@@ -250,6 +254,21 @@ describe('PackageSystem', () => {
       title: 'Review',
       source: { type: 'package', scope: 'global' }
     })
+    const browserPanel = (await packages.webPanelDefinitions('project-b')).find(
+      (panel) => panel.definition.renderer === 'browser'
+    )
+    expect(browserPanel).toMatchObject({
+      definition: {
+        id: expect.stringMatching(
+          /^package:local:[a-f0-9]{16}:web-panel:browser$/
+        ),
+        title: 'Browser',
+        renderer: 'browser',
+        source: { type: 'package', scope: 'global' }
+      },
+      entry: null,
+      relativePath: 'web-panels/browser'
+    })
     expect(
       (await packages.terminalPresetDefinitions('project-b')).map(
         (preset) => preset.name
@@ -259,7 +278,7 @@ describe('PackageSystem', () => {
       (await packages.webPanelDefinitions('project-a')).map(
         (panel) => panel.definition.title
       )
-    ).toEqual(['Repository'])
+    ).toEqual(['Browser', 'Repository'])
     expect(
       (await packages.terminalPresetDefinitions('project-a')).map(
         (preset) => preset.name

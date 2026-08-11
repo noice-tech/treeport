@@ -179,6 +179,7 @@ export type WebPanelSource =
 export interface WebPanelDefinition {
   id: string
   title: string
+  renderer: 'hosted' | 'browser'
   source: WebPanelSource
 }
 
@@ -577,6 +578,12 @@ export const createWebPanelSchema = z.object({
 export const openWebPanelSchema = createWebPanelSchema.extend({
   newInstance: z.boolean().optional(),
   sourceTerminalId: z.string().min(1).max(128).nullable().optional()
+})
+
+export const updateWebPanelLaunchSchema = z.strictObject({
+  input: webPanelInputSchema.nullable(),
+  launchCwd: z.string().max(4096).nullable(),
+  expectedUpdatedAt: z.string().datetime()
 })
 
 export const webPanelStorageKeySchema = z.string().min(1).max(128)

@@ -41,7 +41,9 @@ Treeport packages do not execute daemon modules or install server hooks. Managed
 
 Opening a web panel authorizes Treeport's fixed Vite profile to transform its HTML, TypeScript/TSX, CSS, imports, and assets. Treeport does not load package Vite configuration, executable Babel or PostCSS configuration, package plugins, build scripts, or lifecycle scripts. Npm-installed panel output is served only from Treeport's immutable build cache; source and compiled asset routes reject traversal and escaping symbolic links. Panel JavaScript still runs after you open the panel and remains inside Treeport's scoped iframe runtime.
 
-These limits reduce automatic package execution, but selected terminal commands and opened web panels still act on a trusted registered worktree. Inspect panel source and its runtime dependencies as well as the package manifest.
+These limits reduce automatic package execution, but selected terminal commands and opened hosted panels still act on a trusted registered worktree. Inspect panel source and its runtime dependencies as well as the package manifest.
+
+A Browser panel can load an arbitrary HTTP or HTTPS site. The target can set only its client-local panel title through the panel message bridge. It cannot use the context, diff, storage, shortcut, or workspace navigation methods. Browser iframe restrictions remain in effect, and Treeport does not bypass a target's framing policy.
 
 ## Operational guidance
 

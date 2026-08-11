@@ -5,5 +5,5 @@
   "semi": false,
   "trailingComma": "none",
   "sortPackageJson": false,
-  "ignorePatterns": ["packages/review/web-panels/review/**"]
+  "ignorePatterns": ["packages/web-panel-review/web-panels/review/**"]
 }

@@ -55,7 +55,7 @@ type PackageSourceObject = Exclude<PackageSource, string>
 export interface ResolvedWebPanel {
   definition: WebPanelDefinition
   root: string
-  entry: string
+  entry: string | null
   packageRoot: string
   development: boolean
   packageLockPath?: string
@@ -100,6 +100,18 @@ interface ResourceCandidates {
   webPanels: Array<{ root: string; relativePath: string }>
   terminalPresets: Array<{ path: string; relativePath: string }>
   diagnostics: PackageResourceDiagnostic[]
+}
+
+interface BrowserWebPanelManifest {
+  id: string
+  title: string
+  renderer: 'browser'
+}
+
+interface PackageManifest {
+  webPanelPatterns: string[]
+  browserWebPanels: BrowserWebPanelManifest[]
+  terminalPresetPatterns: string[]
 }
 
 const EMPTY_SETTINGS: TreeportSettings = { raw: {}, packages: [] }
@@ -826,6 +838,62 @@ export class PackageSystem {
     return [...(patterns as string[])]
   }
 
+  private validateWebPanelManifest(
+    entries: unknown,
+    packageJsonPath: string
+  ): {
+    patterns: string[]
+    browserWebPanels: BrowserWebPanelManifest[]
+  } {
+    if (!Array.isArray(entries)) {
+      throw new Error(`${packageJsonPath} treeport.webPanels must be an array`)
+    }
+
+    const patterns: string[] = []
+    const browserWebPanels: BrowserWebPanelManifest[] = []
+    for (const entry of entries) {
+      if (typeof entry === 'string') {
+        patterns.push(entry)
+        continue
+      }
+
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+        throw new Error(
+          `${packageJsonPath} treeport.webPanels entries must be package-relative patterns or Browser panel definitions`
+        )
+      }
+
+      const keys = Object.keys(entry)
+      const id: unknown = Reflect.get(entry, 'id')
+      const title: unknown = Reflect.get(entry, 'title')
+      const renderer: unknown = Reflect.get(entry, 'renderer')
+      if (
+        keys.some((key) => !['id', 'title', 'renderer'].includes(key)) ||
+        typeof id !== 'string' ||
+        !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(id) ||
+        typeof title !== 'string' ||
+        title.trim() === '' ||
+        title.length > 256 ||
+        renderer !== 'browser'
+      ) {
+        throw new Error(
+          `${packageJsonPath} contains an invalid Browser panel definition`
+        )
+      }
+
+      browserWebPanels.push({ id, title: title.trim(), renderer })
+    }
+
+    return {
+      patterns: this.validateManifestPatterns(
+        patterns,
+        'webPanels',
+        packageJsonPath
+      ),
+      browserWebPanels
+    }
+  }
+
   private async resourceCandidates(
     root: string,
     scope: PackageScope,
@@ -989,7 +1057,7 @@ export class PackageSystem {
 
         throw error
       })
-    let manifest: { webPanels: string[]; terminalPresets: string[] } | undefined
+    let manifest: PackageManifest | undefined
     if (packageJsonContent !== null) {
       let packageJson: unknown
       try {
@@ -1024,13 +1092,14 @@ export class PackageSystem {
           treeport,
           'terminalPresets'
         )
+        const parsedWebPanels = this.validateWebPanelManifest(
+          webPanels ?? [],
+          packageJsonPath
+        )
         manifest = {
-          webPanels: this.validateManifestPatterns(
-            webPanels ?? [],
-            'webPanels',
-            packageJsonPath
-          ),
-          terminalPresets: this.validateManifestPatterns(
+          webPanelPatterns: parsedWebPanels.patterns,
+          browserWebPanels: parsedWebPanels.browserWebPanels,
+          terminalPresetPatterns: this.validateManifestPatterns(
             terminalPresets ?? [],
             'terminalPresets',
             packageJsonPath
@@ -1049,7 +1118,7 @@ export class PackageSystem {
       manifest
         ? this.manifestAllows(
             candidate.relativePath,
-            manifest.webPanels,
+            manifest.webPanelPatterns,
             'web-panel'
           )
         : candidate.relativePath.startsWith('web-panels/') &&
@@ -1059,7 +1128,7 @@ export class PackageSystem {
       manifest
         ? this.manifestAllows(
             candidate.relativePath,
-            manifest.terminalPresets,
+            manifest.terminalPresetPatterns,
             'terminal-preset'
           )
         : candidate.relativePath.startsWith('terminal-presets/') &&
@@ -1092,25 +1161,43 @@ export class PackageSystem {
           ).then((values) => values.find(Boolean))
         : undefined
     const webPanels = applyNormalFilter(
-      panelCandidates.map((candidate) => {
-        const resourceId = encodeURIComponent(
-          path.posix.basename(candidate.relativePath)
-        )
-        return {
+      [
+        ...panelCandidates.map((candidate) => {
+          const resourceId = encodeURIComponent(
+            path.posix.basename(candidate.relativePath)
+          )
+          return {
+            definition: {
+              id: `package:${parsed.packageId}:web-panel:${resourceId}`,
+              title: titleFromPath(candidate.relativePath),
+              renderer: 'hosted' as const,
+              source: metadata
+            },
+            root: candidate.root,
+            entry: 'index.html',
+            packageRoot: root,
+            development: parsed.type === 'local',
+            ...(packageLockPath ? { packageLockPath } : {}),
+            relativePath: candidate.relativePath,
+            enabled: true
+          }
+        }),
+        ...(manifest?.browserWebPanels ?? []).map((panel) => ({
           definition: {
-            id: `package:${parsed.packageId}:web-panel:${resourceId}`,
-            title: titleFromPath(candidate.relativePath),
+            id: `package:${parsed.packageId}:web-panel:${encodeURIComponent(panel.id)}`,
+            title: panel.title,
+            renderer: panel.renderer,
             source: metadata
           },
-          root: candidate.root,
-          entry: 'index.html',
+          root,
+          entry: null,
           packageRoot: root,
           development: parsed.type === 'local',
           ...(packageLockPath ? { packageLockPath } : {}),
-          relativePath: candidate.relativePath,
+          relativePath: `web-panels/${panel.id}`,
           enabled: true
-        }
-      }),
+        }))
+      ],
       filter?.webPanels,
       autoload
     )

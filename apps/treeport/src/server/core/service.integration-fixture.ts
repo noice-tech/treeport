@@ -122,6 +122,7 @@ export async function persistedWebPanel(
     kind: 'web',
     worktreeId: row.worktreeId,
     definitionId: row.definitionId,
+    renderer: row.renderer as WebPanel['renderer'],
     title: row.title,
     launch: {
       input: JSON.parse(row.inputJson) as WebPanel['launch']['input'],
