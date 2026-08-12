@@ -17,6 +17,7 @@ import type {
   TerminalProgressObserver,
   TmuxProgressObserverOptions
 } from './tmux-progress'
+import type { TerminalBellStateStore } from './core/terminal-bell-state-store'
 
 class FakePty {
   readonly pid = 1
@@ -193,11 +194,18 @@ function fixture() {
       return observer
     }
   )
+  const bellStateStore: TerminalBellStateStore = {
+    load: vi.fn(async () => []),
+    upsert: vi.fn(async () => undefined),
+    markRead: vi.fn(async () => undefined),
+    delete: vi.fn(async () => undefined)
+  }
   const metadata = new TerminalMetadataManager(
     service,
     tmux,
     process.execPath,
-    createProgressObserver
+    createProgressObserver,
+    bellStateStore
   )
   metadataManagers.push(metadata)
   const manager = new TerminalAttachmentManager(

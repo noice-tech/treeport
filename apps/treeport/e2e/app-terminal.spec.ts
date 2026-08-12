@@ -452,7 +452,7 @@ test.describe('desktop worktree and terminal workflows', () => {
       .toBeGreaterThan(before)
   })
 
-  test('acknowledges, coalesces, and dismisses terminal bells', async ({
+  test('shows, coalesces, and acknowledges terminal notifications', async ({
     page
   }) => {
     const bellMetadata = {
@@ -473,17 +473,61 @@ test.describe('desktop worktree and terminal workflows', () => {
     const piTreeRow = page.getByRole('button', {
       name: /zsh · \/worktrees\/topic.*bell/
     })
+    const notificationTrigger = page.getByRole('button', {
+      name: 'Notifications, 1 unread'
+    })
     await expect(piTreeRow).toBeVisible()
+    await expect(notificationTrigger).toBeVisible()
+    await expect
+      .poll(() => page.evaluate(() => (window as any).__attentionRequests))
+      .toBe(0)
     await page.reload()
     await expect(piTreeRow).toBeVisible()
 
+    await notificationTrigger.click()
+    const notificationCenter = page.getByRole('dialog', {
+      name: 'Notifications'
+    })
+    await expect(
+      notificationCenter.getByText('zsh · /worktrees/topic')
+    ).toBeVisible()
+    await expect(notificationCenter.getByText('example · topic')).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(notificationCenter).toHaveCount(0)
+    await expect(piTreeRow).toBeVisible()
+
+    await notificationTrigger.click()
+    await page.evaluate(() => {
+      ;(window as any).__wsSent = []
+    })
+    const terminalScreen = page.locator('.xterm-screen')
+    const terminalBounds = await terminalScreen.boundingBox()
+    expect(terminalBounds).not.toBeNull()
+    await page.mouse.move(terminalBounds!.x + 12, terminalBounds!.y + 12)
+    await page.mouse.down()
+    await page.mouse.move(terminalBounds!.x + 140, terminalBounds!.y + 12)
+    await page.mouse.up()
+    await expect(notificationCenter).toHaveCount(0)
+    expect(
+      await page.evaluate(() =>
+        (window as any).__wsSent.filter(
+          (message: any) =>
+            message.type === 'input' || message.type === 'take_control'
+        )
+      )
+    ).toEqual([])
+
+    await notificationTrigger.click()
     const acknowledgement = page.waitForRequest(
       (request) =>
         request.method() === 'POST' &&
         new URL(request.url()).pathname ===
           '/api/terminals/term_pi/bell/acknowledge'
     )
-    await piTreeRow.click()
+    await notificationCenter
+      .getByRole('button', { name: 'Open zsh · /worktrees/topic' })
+      .click()
+    await expect(notificationCenter).toHaveCount(0)
     const request = await acknowledgement
     expect(request.postDataJSON()).toEqual({ sequence: 4 })
     await expect(piTreeRow).toBeVisible()
@@ -559,11 +603,10 @@ test.describe('desktop worktree and terminal workflows', () => {
       )
 
     await emitBell(5)
-    const dismissToast = page.getByRole('button', { name: 'Dismiss' })
-    await expect(dismissToast).toHaveCount(1)
     await expect(
-      page.getByText('example · topic', { exact: true })
+      page.getByRole('button', { name: 'Notifications, 1 unread' })
     ).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Dismiss' })).toHaveCount(0)
     await expect(
       page.getByRole('button', {
         name: /Pi build · \/worktrees\/topic.*61% complete.*bell/
@@ -574,18 +617,29 @@ test.describe('desktop worktree and terminal workflows', () => {
       .toBe(1)
 
     await emitBell(5, false)
-    await expect(dismissToast).toHaveCount(1)
+    await expect(
+      page.getByRole('button', {
+        name: 'Notifications, no unread notifications'
+      })
+    ).toBeVisible()
 
     await emitBell(6)
-    await expect(dismissToast).toHaveCount(1)
+    const updatedTrigger = page.getByRole('button', {
+      name: 'Notifications, 1 unread'
+    })
+    await updatedTrigger.click()
+    const updatedCenter = page.getByRole('dialog', { name: 'Notifications' })
+    await expect(
+      updatedCenter.getByText('Pi build · /worktrees/topic')
+    ).toBeVisible()
     const liveAcknowledgement = page.waitForRequest(
       (request) =>
         request.method() === 'POST' &&
         new URL(request.url()).pathname ===
           '/api/terminals/term_pi/bell/acknowledge'
     )
-    await page
-      .getByRole('button', { name: /Pi build · \/worktrees\/topic.*bell/ })
+    await updatedCenter
+      .getByRole('button', { name: 'Open Pi build · /worktrees/topic' })
       .click()
     expect((await liveAcknowledgement).postDataJSON()).toEqual({ sequence: 6 })
     await expect(
@@ -593,7 +647,6 @@ test.describe('desktop worktree and terminal workflows', () => {
         name: 'Pi build · /worktrees/topic terminal'
       })
     ).toBeVisible()
-    await expect(dismissToast).toHaveCount(0)
     await page
       .getByRole('button', { name: 'main worktree', exact: true })
       .click()
@@ -622,20 +675,26 @@ test.describe('desktop worktree and terminal workflows', () => {
       )
     )
 
-    await expect(dismissToast).toBeVisible()
+    const activeNotificationTrigger = page.getByRole('button', {
+      name: 'Notifications, 1 unread'
+    })
+    await expect(activeNotificationTrigger).toBeVisible()
     await expect(activeBellTerminal).toBeVisible()
+    await activeNotificationTrigger.click()
     const dismissAcknowledgement = page.waitForRequest(
       (request) =>
         request.method() === 'POST' &&
         new URL(request.url()).pathname ===
           '/api/terminals/term_pi/bell/acknowledge'
     )
-    await dismissToast.click()
+    await page
+      .getByLabel('Notifications')
+      .getByRole('button', { name: 'Open Pi' })
+      .click()
     expect((await dismissAcknowledgement).postDataJSON()).toEqual({
       sequence: 7
     })
-    await expect(activeBellTerminal).toBeVisible()
-    await expect(dismissToast).toHaveCount(0)
+    await expect(page.getByRole('main', { name: 'Pi terminal' })).toBeVisible()
   })
 
   test('manages global terminal presets without a selected worktree', async ({

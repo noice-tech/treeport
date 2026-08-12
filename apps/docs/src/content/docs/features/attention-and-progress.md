@@ -27,7 +27,9 @@ Emit BEL when a terminal needs a person to look at it:
 printf '\007'
 ```
 
-Treeport marks the terminal as needing attention and, unless you are already viewing it, shows an in-app notification. The desktop app also requests your attention. That state is shared by connected clients and stays visible until someone opens the terminal or dismisses the notification.
+Treeport marks the terminal as needing attention and, unless you are already viewing it, adds it to the notification center. The desktop app also requests your attention when a new background BEL arrives. Unread notifications survive Treeport restarts and are shared by connected clients.
+
+Opening the terminal clears its notification and attention state. Closing the notification center does not mark anything as read. Treeport keeps the latest notification for each terminal rather than a history of every BEL.
 
 Useful moments for BEL include a failed check, an input prompt, completed CI, or an agent that has finished a task.
 

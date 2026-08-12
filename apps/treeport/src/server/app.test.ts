@@ -263,7 +263,7 @@ function fixture(webDist = '/missing') {
     terminalId
   }))
   const metadataTrack = vi.fn(async () => undefined)
-  const metadataAcknowledgeBell = vi.fn()
+  const metadataAcknowledgeBell = vi.fn(async () => undefined)
   const terminalMetadata = {
     initialize: vi.fn(async () => undefined),
     snapshot: metadataSnapshot,
