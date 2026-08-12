@@ -1198,6 +1198,9 @@ export async function mockApp(
               parent.postMessage({ source: 'treeport-panel-v1', id, method, ...values }, '*');
             });
             const frame = document.querySelector('iframe');
+            let locationSubscription = null;
+            let locationSubscriptionSerial = 0;
+            let setBrowserLocation = null;
             addEventListener('message', (event) => {
               if (event.source === parent && event.data?.source === 'treeport-host-v1' && event.data.id) {
                 const request = pending.get(event.data.id); if (!request) return;
@@ -1205,8 +1208,13 @@ export async function mockApp(
                 event.data.ok ? request.resolve(event.data.value) : request.reject(new Error(event.data.error));
                 return;
               }
-              if (event.source === frame.contentWindow && event.data?.source === 'treeport-panel-v1' && event.data.method === 'panel.title.set') {
+              if (event.source !== frame.contentWindow || event.data?.source !== 'treeport-panel-v1') return;
+              if (event.data.method === 'panel.title.set') {
                 parent.postMessage(event.data, '*');
+                return;
+              }
+              if (event.data.method === 'browser.location.set' && event.data.subscription === locationSubscription) {
+                setBrowserLocation?.(event);
               }
             });
             Promise.all([call('context'), call('storage.get', { key: 'browser-state' }), call('network.listeners')]).then(([context, stored, discovery]) => {
@@ -1223,6 +1231,19 @@ export async function mockApp(
                 servers.append(button);
               }
               const failure = document.querySelector('[role="alert"]');
+              let currentUrl = stored?.url || context.launch.input?.url || '';
+              const storeUrl = (url) => call('storage.set', { key: 'browser-state', value: { url, launchUpdatedAt: context.panel.updatedAt } });
+              setBrowserLocation = (event) => {
+                const url = new URL(event.data.url);
+                if (url.origin !== event.origin || url.href === currentUrl) return;
+                currentUrl = url.href;
+                input.value = currentUrl;
+                storeUrl(currentUrl);
+              };
+              frame.addEventListener('load', () => {
+                locationSubscription = String(++locationSubscriptionSerial);
+                frame.contentWindow.postMessage({ source: 'treeport-browser-v1', method: 'location.subscribe', subscription: locationSubscription }, '*');
+              });
               const navigate = (url) => {
                 failure.hidden = true;
                 fetch(url, { method: 'HEAD', mode: 'no-cors', cache: 'no-store' }).then(
@@ -1230,14 +1251,14 @@ export async function mockApp(
                   () => { failure.hidden = false; }
                 );
               };
-              const url = stored?.url || context.launch.input?.url || '';
-              if (url) input.value = url;
-              if (url) { document.querySelector('section').hidden = true; navigate(url); }
-              if (url) parent.postMessage({ source: 'treeport-panel-v1', method: 'panel.title.set', title: context.launch.input?.title || new URL(url).host }, '*');
+              if (currentUrl) input.value = currentUrl;
+              if (currentUrl) { document.querySelector('section').hidden = true; navigate(currentUrl); }
+              if (currentUrl) parent.postMessage({ source: 'treeport-panel-v1', method: 'panel.title.set', title: context.launch.input?.title || new URL(currentUrl).host }, '*');
               document.querySelector('form').addEventListener('submit', (event) => {
                 event.preventDefault();
                 const url = new URL(input.value).href;
-                call('storage.set', { key: 'browser-state', value: { url, launchUpdatedAt: context.panel.updatedAt } }).then(() => {
+                storeUrl(url).then(() => {
+                  currentUrl = url;
                   navigate(url);
                   parent.postMessage({ source: 'treeport-panel-v1', method: 'panel.title.set', title: new URL(url).host }, '*');
                 });

@@ -451,6 +451,13 @@ describe('HTTP API validation', () => {
     vi.stubGlobal('addEventListener', (type: string, listener: unknown) =>
       listeners.set(type, listener as (...args: unknown[]) => unknown)
     )
+    const intervalHandlers: Array<() => void> = []
+    vi.stubGlobal('setInterval', (handler: () => void) => {
+      intervalHandlers.push(handler)
+      return 1
+    })
+    const targetLocation = { href: 'http://browser-app.test/start' }
+    vi.stubGlobal('location', targetLocation)
 
     try {
       const sdk = (await import('@treeport/panel-sdk')) as {
@@ -537,6 +544,36 @@ describe('HTTP API validation', () => {
           source: 'treeport-panel-v1',
           method: 'panel.title.set',
           title: 'Review route'
+        },
+        '*'
+      )
+
+      listeners.get('message')!({
+        source: panelParent,
+        data: {
+          source: 'treeport-browser-v1',
+          method: 'location.subscribe',
+          subscription: 'browser-frame-1'
+        }
+      })
+      expect(panelParent.postMessage).toHaveBeenLastCalledWith(
+        {
+          source: 'treeport-panel-v1',
+          method: 'browser.location.set',
+          subscription: 'browser-frame-1',
+          url: 'http://browser-app.test/start'
+        },
+        '*'
+      )
+
+      targetLocation.href = 'http://browser-app.test/next'
+      intervalHandlers[0]!()
+      expect(panelParent.postMessage).toHaveBeenLastCalledWith(
+        {
+          source: 'treeport-panel-v1',
+          method: 'browser.location.set',
+          subscription: 'browser-frame-1',
+          url: 'http://browser-app.test/next'
         },
         '*'
       )

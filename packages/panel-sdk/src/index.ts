@@ -138,6 +138,12 @@ interface HostShortcut {
   shortcut: 'find'
 }
 
+interface BrowserLocationSubscription {
+  source: 'treeport-browser-v1'
+  method: 'location.subscribe'
+  subscription: string
+}
+
 interface PendingRequest {
   resolve(value: unknown): void
   reject(reason: Error): void
@@ -147,9 +153,48 @@ const pending = new Map<string, PendingRequest>()
 const shortcutEvents = new EventTarget()
 let findSubscribers = 0
 let serial = 0
+let browserLocationSubscription: string | null = null
+let lastReportedBrowserLocation: string | null = null
+let browserLocationWatcherStarted = false
 
 function triggerFindShortcut() {
   shortcutEvents.dispatchEvent(new Event('find'))
+}
+
+function reportBrowserLocation() {
+  if (
+    browserLocationSubscription === null ||
+    location.href === lastReportedBrowserLocation
+  ) {
+    return
+  }
+
+  lastReportedBrowserLocation = location.href
+  parent.postMessage(
+    {
+      source: 'treeport-panel-v1',
+      method: 'browser.location.set',
+      subscription: browserLocationSubscription,
+      url: location.href
+    },
+    '*'
+  )
+}
+
+function subscribeBrowserLocation(subscription: string) {
+  browserLocationSubscription = subscription
+  lastReportedBrowserLocation = null
+  reportBrowserLocation()
+  if (browserLocationWatcherStarted) {
+    return
+  }
+
+  browserLocationWatcherStarted = true
+  addEventListener('hashchange', reportBrowserLocation)
+  addEventListener('popstate', reportBrowserLocation)
+  const navigation = (globalThis as { navigation?: EventTarget }).navigation
+  navigation?.addEventListener('currententrychange', reportBrowserLocation)
+  setInterval(reportBrowserLocation, 250)
 }
 
 if (parent !== self) {
@@ -189,9 +234,28 @@ if (parent !== self) {
 
 addEventListener(
   'message',
-  (event: MessageEvent<HostResponse | HostShortcut>) => {
+  (
+    event: MessageEvent<
+      HostResponse | HostShortcut | BrowserLocationSubscription
+    >
+  ) => {
     const message = event.data
-    if (event.source !== parent || message?.source !== 'treeport-host-v1') {
+    if (event.source !== parent) {
+      return
+    }
+
+    if (message?.source === 'treeport-browser-v1') {
+      if (
+        message.method === 'location.subscribe' &&
+        typeof message.subscription === 'string'
+      ) {
+        subscribeBrowserLocation(message.subscription)
+      }
+
+      return
+    }
+
+    if (message?.source !== 'treeport-host-v1') {
       return
     }
 

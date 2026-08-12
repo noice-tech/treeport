@@ -49,7 +49,7 @@ A hosted panel can request the `same-origin` permission. This permission weakens
 Treeport does not yet ask for confirmation before it loads a panel that declares permissions. Treeport must require explicit confirmation once, show the panel and its permissions, and ask again if the permissions change. This work is tracked in [issue #259](https://github.com/noice-tech/treeport/issues/259).
 :::
 
-The Browser package can load an arbitrary HTTP or HTTPS site in a nested iframe. The package relays only the target's client-local title message. The target cannot use context, diff, storage, shortcuts, or workspace navigation methods. Browser iframe restrictions remain in effect, and Treeport does not bypass a target's framing policy.
+The Browser package can load an arbitrary HTTP or HTTPS site in a nested iframe. The package relays the target's client-local title message and, when the target includes the panel SDK, stores reported URL changes for navigation restoration. The target cannot use context, diff, storage, shortcuts, or workspace navigation methods. Browser iframe restrictions remain in effect, and Treeport does not bypass a target's framing policy.
 
 ## Operational guidance
 
