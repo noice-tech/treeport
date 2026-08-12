@@ -339,16 +339,38 @@ void Promise.all([
 
 addEventListener('message', (event) => {
   if (
+    event.source === parent &&
+    event.data?.source === 'treeport-host-v1' &&
+    event.data.method === 'shortcut' &&
+    event.data.shortcut === 'find'
+  ) {
+    frame.contentWindow?.postMessage(event.data, '*')
+    return
+  }
+
+  if (
     event.source !== frame.contentWindow ||
-    event.data?.source !== 'treeport-panel-v1' ||
-    event.data.method !== 'panel.title.set'
+    event.data?.source !== 'treeport-panel-v1'
   ) {
     return
   }
 
-  if (event.data.title === null) {
-    treeport.panel.setTitle(null)
-  } else if (typeof event.data.title === 'string') {
-    treeport.panel.setTitle(event.data.title.trim().slice(0, 256) || null)
+  if (event.data.method === 'panel.title.set') {
+    if (event.data.title === null) {
+      treeport.panel.setTitle(null)
+    } else if (typeof event.data.title === 'string') {
+      treeport.panel.setTitle(event.data.title.trim().slice(0, 256) || null)
+    }
+
+    return
+  }
+
+  if (
+    event.data.method === 'workspace.select' &&
+    Number.isInteger(event.data.index) &&
+    event.data.index >= 0 &&
+    event.data.index <= 8
+  ) {
+    parent.postMessage(event.data, '*')
   }
 })

@@ -728,7 +728,20 @@ test.describe('desktop worktree and terminal workflows', () => {
         contentType: 'text/html',
         body:
           url.pathname === '/start'
-            ? `<h1>Start application</h1><script>parent.postMessage({ source: 'treeport-panel-v1', method: 'panel.title.set', title: 'Runtime route' }, '*')</script>`
+            ? `<h1>Start application</h1><button autofocus>Application control</button><div role="status"></div><script>
+                parent.postMessage({ source: 'treeport-panel-v1', method: 'panel.title.set', title: 'Runtime route' }, '*');
+                addEventListener('message', (event) => {
+                  if (event.source === parent && event.data?.source === 'treeport-host-v1' && event.data.method === 'shortcut' && event.data.shortcut === 'find') {
+                    document.querySelector('[role="status"]').textContent = 'Find requested';
+                  }
+                });
+                addEventListener('keydown', (event) => {
+                  if (event.metaKey && !event.altKey && !event.ctrlKey && !event.shiftKey && event.key === '1') {
+                    event.preventDefault();
+                    parent.postMessage({ source: 'treeport-panel-v1', method: 'workspace.select', index: 0 }, '*');
+                  }
+                }, true);
+              </script>`
             : '<h1>Next application</h1>'
       })
     })
@@ -818,6 +831,18 @@ test.describe('desktop worktree and terminal workflows', () => {
     await expect(browserFrame.getByRole('heading')).toHaveText(
       'Start application'
     )
+
+    await page.getByRole('button', { name: 'Runtime route, web panel' }).focus()
+    await page.keyboard.press('Meta+f')
+    await expect(browserFrame.getByRole('status')).toHaveText('Find requested')
+
+    await browserFrame
+      .getByRole('button', { name: 'Application control' })
+      .focus()
+    await page.keyboard.press('Meta+1')
+    await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
+    await page.getByRole('button', { name: 'Runtime route, web panel' }).click()
+
     await expect(
       browserFrame.evaluate(() => {
         localStorage.setItem('treeport-browser-test', 'local')
@@ -889,6 +914,13 @@ test.describe('desktop worktree and terminal workflows', () => {
     await expect(
       page.getByRole('button', { name: 'browser-app.test, web panel' })
     ).toBeVisible()
+    await expect
+      .poll(() =>
+        page
+          .frames()
+          .some((frame) => frame.url() === 'http://browser-app.test/next')
+      )
+      .toBe(true)
     const nextFrame = page
       .frames()
       .find((frame) => frame.url() === 'http://browser-app.test/next')!

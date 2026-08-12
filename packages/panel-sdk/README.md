@@ -39,4 +39,4 @@ const stopFind = treeport.shortcuts.onFind(() => {
 
 `treeport.shortcuts.onFind(handler)` delivers `Cmd/Ctrl+F` whether keyboard focus is inside the panel or elsewhere in the Treeport workspace. It returns an unsubscribe function. Panels own their find interface and behavior; Treeport only routes the generic shortcut.
 
-An HTTP application loaded in the Browser package's nested iframe can use `treeport.panel.setTitle()`. The Browser package relays this title message. The target must include the SDK in its own application build. Browser targets cannot use context, diff, network discovery, storage, launch, external URL, shortcuts, or workspace navigation methods.
+An HTTP application loaded in the Browser package's nested iframe can use `treeport.panel.setTitle()` and `treeport.shortcuts.onFind()`. Numbered `Cmd+1` through `Cmd+9` workspace shortcuts are also routed from a target that includes the SDK. The Browser package relays only these title and shortcut messages. The target must include the SDK in its own application build. Browser targets cannot use context, diff, network discovery, storage, launch, or external URL methods.

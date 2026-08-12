@@ -24,4 +24,4 @@ The panel saves the current address in its panel storage. **Reload** affects onl
 
 If the connection fails or takes more than 10 seconds, the panel shows **Load failed**. Start the application or correct the address, then select **Retry**. Use **Open externally** if the application blocks iframe embedding or you want to open the address in a separate browser tab.
 
-A target application can use `treeport.panel.setTitle()` to set the panel title. It cannot use context, diff, network discovery, storage, shortcuts, or workspace navigation. Add `@treeport/panel-sdk` to the target application's normal build if it uses the title method.
+A target application can use `treeport.panel.setTitle()` to set the panel title and `treeport.shortcuts.onFind()` to handle `Cmd/Ctrl+F`. When the target includes the SDK, `Cmd+1` through `Cmd+9` also select Treeport workspaces while focus is inside the application. Add `@treeport/panel-sdk` to the target application's normal build to use these integrations. Targets cannot use context, diff, network discovery, or storage through the Browser panel.

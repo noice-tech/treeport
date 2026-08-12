@@ -1205,7 +1205,11 @@ export async function mockApp(
                 event.data.ok ? request.resolve(event.data.value) : request.reject(new Error(event.data.error));
                 return;
               }
-              if (event.source === frame.contentWindow && event.data?.source === 'treeport-panel-v1' && event.data.method === 'panel.title.set') {
+              if (event.source === parent && event.data?.source === 'treeport-host-v1' && event.data.method === 'shortcut' && event.data.shortcut === 'find') {
+                frame.contentWindow?.postMessage(event.data, '*');
+                return;
+              }
+              if (event.source === frame.contentWindow && event.data?.source === 'treeport-panel-v1' && (event.data.method === 'panel.title.set' || event.data.method === 'workspace.select')) {
                 parent.postMessage(event.data, '*');
               }
             });
