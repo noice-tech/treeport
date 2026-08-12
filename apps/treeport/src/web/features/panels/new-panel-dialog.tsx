@@ -7,8 +7,8 @@ import {
   WindowIcon
 } from '@heroicons/react/16/solid'
 import type {
-  RepositoryTerminalPresetDiagnostic,
   TerminalPresetDefinition,
+  TerminalPresetDefinitionDiagnostic,
   WebPanelDefinition
 } from '@treeport/shared'
 import { Button } from '../../components/ui/button'
@@ -44,7 +44,7 @@ export function NewPanelDialog({
   restoreFocusTo: HTMLElement | null
   worktreeName: string | null
   presets: TerminalPresetDefinition[]
-  presetDiagnostics: RepositoryTerminalPresetDiagnostic[]
+  presetDiagnostics: TerminalPresetDefinitionDiagnostic[]
   presetsLoading: boolean
   presetsError: boolean
   webPanelDefinitions: WebPanelDefinition[]
@@ -233,6 +233,10 @@ export function NewPanelDialog({
                     onCreateTerminal({
                       name: preset.name,
                       argv: [preset.executable, ...preset.args],
+                      ...(preset.cwd ? { cwd: preset.cwd } : {}),
+                      ...(Object.keys(preset.env).length
+                        ? { env: { ...preset.env } }
+                        : {}),
                       ...(preset.closeOnSuccess
                         ? { closeOnSuccess: true }
                         : { returnToShell: true })
@@ -270,7 +274,7 @@ export function NewPanelDialog({
             ) : null}
             {presetDiagnostics.map((diagnostic) => (
               <p
-                key={`${diagnostic.presetId ?? 'file'}:${diagnostic.message}`}
+                key={`${diagnostic.path}:${diagnostic.itemId ?? 'file'}:${diagnostic.message}`}
                 className="px-3 py-2 text-base text-amber-300 sm:text-sm"
                 role="status"
               >

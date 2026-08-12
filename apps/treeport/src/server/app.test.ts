@@ -83,6 +83,8 @@ function fixture(webDist = '/missing') {
           name: 'Package dev',
           executable: 'pnpm',
           args: ['dev'],
+          cwd: null,
+          env: {},
           closeOnSuccess: false,
           source: {
             type: 'package',
@@ -716,6 +718,18 @@ describe('HTTP API validation', () => {
     expect(await response.json()).toMatchObject({
       error: { code: 'VALIDATION_ERROR', message: 'Request validation failed' }
     })
+    const invalidEnvironment = await app.request(
+      '/api/worktrees/wt_1/terminals',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          name: 'bad environment',
+          env: { 'BAD=KEY': 'value' }
+        })
+      }
+    )
+    expect(invalidEnvironment.status).toBe(400)
     expect(service.createTerminal).not.toHaveBeenCalled()
   })
 
@@ -727,6 +741,8 @@ describe('HTTP API validation', () => {
       body: JSON.stringify({
         name: 'Diff',
         argv: ['diff', 'main', '--mode', 'split'],
+        cwd: '/repo/worktrees/topic',
+        env: { CUSTOM: 'argument with spaces;$HOME' },
         returnToShell: true,
         initialSize: { cols: 132, rows: 47 }
       })
@@ -736,7 +752,12 @@ describe('HTTP API validation', () => {
       'wt_1',
       'Diff',
       ['diff', 'main', '--mode', 'split'],
-      { returnToShell: true, initialSize: { cols: 132, rows: 47 } }
+      {
+        returnToShell: true,
+        initialSize: { cols: 132, rows: 47 },
+        cwd: '/repo/worktrees/topic',
+        env: { CUSTOM: 'argument with spaces;$HOME' }
+      }
     )
 
     const oneOff = await app.request('/api/worktrees/wt_1/terminals', {

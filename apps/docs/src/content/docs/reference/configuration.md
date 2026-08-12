@@ -33,9 +33,11 @@ Treeport uses `$XDG_RUNTIME_DIR/treeport` when `XDG_RUNTIME_DIR` is set. Otherwi
 
 ## Repository terminal presets
 
-A registered repository can commit terminal choices in `.treeport/terminal-presets.json`. Treeport reads the file from the worktree where a panel is being opened, so each worktree follows the version on its own branch. The versioned file maps stable preset identifiers to a name, executable, literal argument array, and optional `closeOnSuccess` behavior.
+A registered repository can commit native terminal choices in `.treeport/terminal-presets.json`. Treeport reads the file from the worktree where a panel is being opened, so each worktree follows the version on its own branch. The versioned file maps stable preset identifiers to a name, executable, literal argument array, and optional `closeOnSuccess` behavior.
 
-See [Terminal presets](/features/terminal-presets/#commit-presets-with-a-repository) for the complete schema, precedence, validation, and refresh behavior.
+Treeport also reads compatible `.zed/tasks.json` tasks from the registered main worktree. Those choices apply to every existing worktree in that repository and support per-worktree path expansion, working directories, and environments.
+
+See [Terminal presets](/features/terminal-presets/#repository-presets) for the native schema and [Zed task compatibility](/features/terminal-presets/#zed-task-compatibility) for the supported Zed subset, precedence, validation, and refresh behavior.
 
 ## Package settings
 

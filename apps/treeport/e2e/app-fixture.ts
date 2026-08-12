@@ -4,8 +4,8 @@ import {
   type ProjectColor,
   type RecentProjectRecord,
   type RemovePreview,
-  type RepositoryTerminalPresetDiagnostic,
   type TerminalPreset,
+  type TerminalPresetDefinitionDiagnostic,
   type TerminalPresetDefinition,
   type TerminalRuntimeMetadata
 } from '@treeport/shared'
@@ -159,7 +159,7 @@ export async function mockApp(
     delayProjects?: boolean
     transientProjectFailures?: number
     repositoryTerminalPresets?: TerminalPresetDefinition[]
-    repositoryPresetDiagnostics?: RepositoryTerminalPresetDiagnostic[]
+    repositoryPresetDiagnostics?: TerminalPresetDefinitionDiagnostic[]
   } = {}
 ) {
   if (options.keyboardPlatform) {
@@ -653,7 +653,8 @@ export async function mockApp(
       await route.fulfill({
         json: {
           definitions: [
-            ...(url.searchParams.has('worktreeId')
+            ...(url.searchParams.has('worktreeId') &&
+            !url.searchParams.get('worktreeId')?.startsWith('second_')
               ? repositoryTerminalPresets
               : []),
             ...terminalPresets.map((preset) => ({
@@ -661,13 +662,17 @@ export async function mockApp(
               name: preset.name,
               executable: preset.executable,
               args: preset.args,
+              cwd: null,
+              env: {},
               closeOnSuccess: preset.closeOnSuccess,
               source: { type: 'user' as const }
             }))
           ],
-          diagnostics: url.searchParams.has('worktreeId')
-            ? repositoryPresetDiagnostics
-            : []
+          diagnostics:
+            url.searchParams.has('worktreeId') &&
+            !url.searchParams.get('worktreeId')?.startsWith('second_')
+              ? repositoryPresetDiagnostics
+              : []
         }
       })
       return

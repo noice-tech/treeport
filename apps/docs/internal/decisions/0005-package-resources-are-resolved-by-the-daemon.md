@@ -11,7 +11,7 @@ Pi's package manager, settings manager, and resolve-then-load resource architect
 
 ## Decision
 
-The main daemon owns resource resolution. Its package system reads global desired state from `<data-dir>/settings.json` and repository package desired state only from the registered main worktree's `.treeport/settings.json`. Direct repository terminal presets instead follow direct web-panel semantics: the daemon resolves `.treeport/terminal-presets.json` from the worktree where the terminal will launch. Registration is the authorization boundary for reading repository configuration. Linked worktrees never receive separate package installations or package-settings precedence, but their direct resources follow the files on their own branches.
+The main daemon owns resource resolution. Its package system reads global desired state from `<data-dir>/settings.json` and repository package desired state only from the registered main worktree's `.treeport/settings.json`. Direct repository terminal presets instead follow direct web-panel semantics: the daemon resolves `.treeport/terminal-presets.json` from the worktree where the terminal will launch. The Zed task compatibility source is a deliberate exception: the daemon resolves `.zed/tasks.json` from the registered main worktree, matching the authority already used by Zed-compatible worktree setup, and resolves each task for the selected target worktree. Registration is the authorization boundary for reading repository configuration. Linked worktrees never receive separate package installations or package-settings precedence, but their native direct resources follow the files on their own branches.
 
 The package boundary parses settings without partially mutating live state, reconciles managed npm roots, resolves package manifests and conventions, validates individual resources, applies filters and scope deduplication, and atomically replaces source-aware effective registries. The direct repository preset loader validates its versioned root and each keyed definition independently on every definition request. Web-panel and terminal-preset consumers receive combined source-aware definitions and do not contain npm, settings, or repository-file parsing logic.
 
@@ -27,7 +27,7 @@ Settings fingerprints are checked on resource lookup. Daemon initialization, reg
 
 Malformed package settings preserve the previous valid scoped registry. A package install or package-level load failure preserves the previous resolved package when one exists. Invalid individual package resources produce diagnostics and are omitted while valid resources continue loading.
 
-Direct repository presets deliberately do not preserve stale definitions. A malformed direct preset file omits all direct definitions until fixed; an invalid keyed entry omits only that entry. Both cases produce diagnostics while valid direct definitions, user presets, package presets, and shells remain available. Re-reading on each definition request lets remote clients observe the selected worktree's file through their normal refresh cycle.
+Direct repository sources deliberately do not preserve stale definitions. A malformed native or Zed task file omits only that source's definitions until fixed; an invalid keyed preset or indexed task omits only that entry. These failures produce diagnostics while the other direct source, user presets, package presets, and shells remain available. Re-reading on each definition request lets remote clients observe the relevant selected- or main-worktree file through their normal refresh cycle.
 
 Persistent web-panel rows and storage are references to durable definition IDs, not installed files. Package removal makes the definition unavailable but never cascades to those rows. Running terminals already contain literal argv and have no ongoing package dependency.
 
@@ -48,7 +48,7 @@ This intentionally borrows Pi's package semantics while applying a smaller execu
 
 ## Consequences
 
-- Global resources are consistently available to every registered project. Repository package resources apply to every worktree of only that repository, while direct repository resources follow each worktree's checked-out files.
+- Global resources are consistently available to every registered project. Repository package resources and main-worktree Zed tasks apply to every worktree of only that repository, while native direct repository resources follow each worktree's checked-out files.
 - Remote clients receive the same definitions and provenance as local clients without accessing package files themselves.
 - Package resource IDs, panel storage, and existing terminal processes survive updates and temporary package loss.
 - Package management remains CLI-only in V1; the web UI consumes resources and displays provenance but does not edit package desired state.

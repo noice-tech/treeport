@@ -122,7 +122,7 @@ export interface PackageOperationResult {
 
 export type TerminalPresetDefinitionSource =
   | { type: 'user' }
-  | { type: 'repository' }
+  | { type: 'repository'; format: 'treeport' | 'zed' }
   | {
       type: 'package'
       packageId: string
@@ -130,15 +130,15 @@ export type TerminalPresetDefinitionSource =
       scope: PackageScope
     }
 
-export interface RepositoryTerminalPresetDiagnostic {
+export interface TerminalPresetDefinitionDiagnostic {
   path: string
-  presetId: string | null
+  itemId: string | null
   message: string
 }
 
 export interface TerminalPresetDefinitionListing {
   definitions: TerminalPresetDefinition[]
-  diagnostics: RepositoryTerminalPresetDiagnostic[]
+  diagnostics: TerminalPresetDefinitionDiagnostic[]
 }
 
 export interface TerminalPresetDefinition {
@@ -146,6 +146,8 @@ export interface TerminalPresetDefinition {
   name: string
   executable: string
   args: string[]
+  cwd: string | null
+  env: Record<string, string>
   closeOnSuccess: boolean
   source: TerminalPresetDefinitionSource
 }
@@ -554,10 +556,40 @@ export const createWorktreeSchema = z
     }
   })
 
+const terminalCwdSchema = z
+  .string()
+  .min(1)
+  .max(4_096)
+  .refine((value) => value.trim().length > 0 && !value.includes('\0'), {
+    message: 'Working directory cannot be blank or contain NUL'
+  })
+const terminalEnvironmentKeySchema = z
+  .string()
+  .min(1)
+  .max(256)
+  .refine((value) => !value.includes('=') && !value.includes('\0'), {
+    message: 'Environment keys cannot contain equals or NUL'
+  })
+const terminalEnvironmentSchema = z
+  .record(
+    terminalEnvironmentKeySchema,
+    z
+      .string()
+      .max(TERMINAL_ARGUMENT_MAX_LENGTH)
+      .refine((value) => !value.includes('\0'), {
+        message: 'Environment values cannot contain NUL'
+      })
+  )
+  .refine((value) => Object.keys(value).length <= 128, {
+    message: 'Environment cannot contain more than 128 variables'
+  })
+
 export const createTerminalSchema = z
   .object({
     name: terminalNameSchema,
     argv: terminalArgvSchema.optional(),
+    cwd: terminalCwdSchema.optional(),
+    env: terminalEnvironmentSchema.optional(),
     returnToShell: z.boolean().optional(),
     closeOnSuccess: z.boolean().optional(),
     initialSize: terminalSizeSchema.optional()

@@ -703,11 +703,17 @@ export function createApp({
           context.req.param('worktreeId'),
           body.name,
           body.argv,
-          body.returnToShell || body.closeOnSuccess || body.initialSize
+          body.returnToShell ||
+            body.closeOnSuccess ||
+            body.initialSize ||
+            body.cwd ||
+            body.env
             ? {
                 ...(body.returnToShell ? { returnToShell: true } : {}),
                 ...(body.closeOnSuccess ? { closeOnSuccess: true } : {}),
-                ...(body.initialSize ? { initialSize: body.initialSize } : {})
+                ...(body.initialSize ? { initialSize: body.initialSize } : {}),
+                ...(body.cwd ? { cwd: body.cwd } : {}),
+                ...(body.env ? { env: body.env } : {})
               }
             : undefined
         )
