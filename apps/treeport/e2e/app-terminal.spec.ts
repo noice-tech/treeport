@@ -36,9 +36,9 @@ test.describe('desktop worktree and terminal workflows', () => {
         page.getByRole('heading', { name: 'Create worktree' })
       ).toHaveCount(0)
       const pending = page.getByRole('status', {
-        name: 'Creating worktree will fail'
+        name: 'Creating worktree will-fail'
       })
-      await expect(pending).toHaveText('will fail')
+      await expect(pending).toHaveText('will-fail')
 
       releaseCreate()
       await expect(pending).toHaveCount(0)
@@ -47,7 +47,7 @@ test.describe('desktop worktree and terminal workflows', () => {
     {
       const releaseCreate = mocked.delayNextCreate()
       await page.getByRole('button', { name: 'New worktree' }).click()
-      await page.getByLabel('Worktree name').fill('new topic')
+      await page.getByLabel('Worktree name').fill('New Tópic / Preview!')
       const requestPromise = page.waitForRequest(
         (request) =>
           request.method() === 'POST' &&
@@ -57,7 +57,7 @@ test.describe('desktop worktree and terminal workflows', () => {
       await page.getByRole('button', { name: 'Create worktree' }).click()
       const request = await requestPromise
       expect(request.postDataJSON()).toEqual({
-        name: 'new topic',
+        name: 'New Tópic / Preview!',
         base: 'default',
         initialTerminal: {
           name: 'Shell',
@@ -71,9 +71,9 @@ test.describe('desktop worktree and terminal workflows', () => {
         page.getByRole('heading', { name: 'Create worktree' })
       ).toHaveCount(0)
       const pending = page.getByRole('status', {
-        name: 'Creating worktree new topic'
+        name: 'Creating worktree new-topic-preview'
       })
-      await expect(pending).toHaveText('new topic')
+      await expect(pending).toHaveText('new-topic-preview')
       await expect(pending).toBeFocused()
       const projectRequestsBeforeEvent = mocked.projectRequests()
       await page.evaluate(() =>
@@ -92,12 +92,14 @@ test.describe('desktop worktree and terminal workflows', () => {
       await expect(pending).toBeVisible()
       releaseCompletedProjects()
       await expect(
-        page.getByRole('button', { name: 'new-topic', exact: true })
+        page.getByRole('button', { name: 'new-topic-preview', exact: true })
       ).toHaveCount(1)
       expect(await pending.count()).toBe(0)
       await expect(
-        page.getByRole('button', { name: /^(main worktree|topic|new-topic)$/ })
-      ).toHaveText(['main worktree', 'topic', 'new-topic'])
+        page.getByRole('button', {
+          name: /^(main worktree|topic|new-topic-preview)$/
+        })
+      ).toHaveText(['main worktree', 'topic', 'new-topic-preview'])
       await expect
         .poll(() =>
           page.evaluate(() =>
@@ -171,18 +173,18 @@ test.describe('desktop worktree and terminal workflows', () => {
     await page.getByLabel('Worktree name').fill('reload topic')
     await page.getByRole('button', { name: 'Create worktree' }).click()
     await expect(
-      page.getByRole('status', { name: 'Creating worktree reload topic' })
+      page.getByRole('status', { name: 'Creating worktree reload-topic' })
     ).toBeVisible()
 
     await page.reload()
     await expect(
-      page.getByRole('status', { name: 'Creating worktree reload topic' })
+      page.getByRole('status', { name: 'Creating worktree reload-topic' })
     ).toBeVisible()
     const activeTerminal = page.getByRole('main', { name: /terminal$/ })
     await expect(activeTerminal).toBeVisible()
     releaseCreate()
     await expect(
-      page.getByRole('status', { name: 'Creating worktree reload topic' })
+      page.getByRole('status', { name: 'Creating worktree reload-topic' })
     ).toHaveCount(0)
     await expect(
       page.getByRole('button', { name: 'reload-topic', exact: true })

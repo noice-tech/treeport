@@ -2946,8 +2946,9 @@ export class TreeportService {
     sourceWorktreeId?: string
   ): Promise<OperationRecord> {
     await this.requireOpenProject(projectId)
+    let name: string
     try {
-      normalizeWorktreeName(inputName)
+      name = normalizeWorktreeName(inputName)
     } catch (error) {
       throw new DomainError(
         'INVALID_WORKTREE_NAME',
@@ -2975,7 +2976,7 @@ export class TreeportService {
       ) VALUES(
         ${operationId},'create',${projectId},NULL,'pending',
         ${serializeOperation({
-          name: inputName,
+          name,
           base,
           ...(initialTerminal ? { initialTerminal } : {}),
           ...(sourceWorktreeId ? { sourceWorktreeId } : {})
@@ -2990,7 +2991,7 @@ export class TreeportService {
         this.executeCreateOperation(
           operationId,
           projectId,
-          inputName,
+          name,
           base,
           initialTerminal,
           sourceWorktreeId

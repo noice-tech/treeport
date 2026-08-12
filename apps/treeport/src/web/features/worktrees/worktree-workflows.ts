@@ -197,12 +197,14 @@ export function useWorktreeWorkflows({
         })
       ).then((result) => result.operation),
     onSuccess: (operation, request) => {
+      const name =
+        operation.kind === 'create' ? operation.request.name : request.typedName
       setOwnedCreations((current) => [
         ...current,
         {
           id: operation.id,
           projectId: request.projectId,
-          typedName: request.typedName,
+          typedName: name,
           replacesEmptyProject:
             location.pathname === projectTarget(request.projectId).pathname
         }

@@ -130,7 +130,10 @@ describe('TreeportService with injected command adapters', () => {
   it('persists, lists, serializes, and completes server-owned creation operations', async () => {
     const { main, runner, service } = await fixture()
     const project = await service.registerProject(main)
-    const firstDestination = await resolveZedWorktreePath(main, 'owned-first')
+    const firstDestination = await resolveZedWorktreePath(
+      main,
+      'owned-first-preview'
+    )
     const secondDestination = await resolveZedWorktreePath(main, 'owned-second')
     let releaseFirst!: () => void
     runner.worktreeAddGates.set(
@@ -142,7 +145,7 @@ describe('TreeportService with injected command adapters', () => {
 
     const first = await service.beginCreateWorktree(
       project.id,
-      firstDestination.name,
+      ' Owned Fírst / Preview! ',
       'default',
       { name: 'Agent', argv: ['pi'] }
     )

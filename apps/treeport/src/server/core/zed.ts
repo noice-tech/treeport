@@ -69,25 +69,18 @@ async function assertNoSymlinkComponents(
 }
 
 export function normalizeWorktreeName(input: string): string {
-  const name = input.trim().replace(/\s+/g, '-')
-  if (!name || name === '.' || name === '..') {
+  const name = input
+    .normalize('NFKD')
+    .replace(/\p{Mark}+/gu, '')
+    .toLowerCase()
+    .replace(/[^\p{Letter}\p{Number}]+/gu, '-')
+    .replace(/^-+|-+$/gu, '')
+  if (!name) {
     throw new Error('Worktree name is required')
   }
 
   if (name.length > 120) {
     throw new Error('Worktree name must be 120 characters or fewer')
-  }
-
-  if (
-    /[\\/]/u.test(name) ||
-    [...name].some((character) => {
-      const codePoint = character.codePointAt(0) ?? 0
-      return codePoint < 32 || codePoint === 127
-    })
-  ) {
-    throw new Error(
-      'Worktree name cannot contain path separators or control characters'
-    )
   }
 
   return name

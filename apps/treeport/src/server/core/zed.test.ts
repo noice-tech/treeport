@@ -30,9 +30,11 @@ async function repository(name = 'example') {
 
 describe('Zed worktree compatibility', () => {
   it('normalizes names and infers Zed and legacy layouts', () => {
-    expect(normalizeWorktreeName(' feature cache ')).toBe('feature-cache')
-    expect(() => normalizeWorktreeName('feature/cache')).toThrow(
-      /path separators/
+    expect(normalizeWorktreeName(' Feature Cáché / API! ')).toBe(
+      'feature-cache-api'
+    )
+    expect(() => normalizeWorktreeName(' / ')).toThrow(
+      /Worktree name is required/
     )
     expect(
       inferWorktreeName(

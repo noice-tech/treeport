@@ -1083,13 +1083,19 @@ export async function mockApp(
           returnToShell?: boolean
         }
       }
+      const canonicalName = body.name
+        .normalize('NFKD')
+        .replace(/\p{Mark}+/gu, '')
+        .toLowerCase()
+        .replace(/[^\p{Letter}\p{Number}]+/gu, '-')
+        .replace(/^-+|-+$/gu, '')
       const operation: OperationRecord = {
         id: `op_create_${++creationSequence}`,
         kind: 'create',
         projectId: 'proj_1',
         worktreeId: null,
         status: 'pending',
-        request: body,
+        request: { ...body, name: canonicalName },
         result: null,
         error: null,
         createdAt: '2026-01-01',
@@ -1115,7 +1121,6 @@ export async function mockApp(
           return
         }
 
-        const canonicalName = body.name.trim().replace(/\s+/g, '-')
         const terminal = {
           id: 'term_new',
           worktreeId: 'wt_new',
