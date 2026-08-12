@@ -80,6 +80,9 @@ let targetReachable = false
 let showingHomepage = false
 let currentUrl: URL | null = null
 let chooseServer: ((url: URL) => void) | null = null
+let receiveFrameLocation: ((url: URL) => void) | null = null
+let frameLocationSubscription: string | null = null
+let frameLocationSubscriptionSerial = 0
 
 function showHomepage() {
   showingHomepage = true
@@ -94,6 +97,7 @@ function navigate(url: URL) {
   showingHomepage = false
   homepage.hidden = true
   frame.hidden = false
+  frameLocationSubscription = null
   const currentNavigation = ++navigation
   frameLoaded = false
   targetReachable = false
@@ -209,7 +213,20 @@ async function discoverListeners() {
 }
 
 frame.addEventListener('load', () => {
-  if (frame.getAttribute('src') === 'about:blank' || showingHomepage) {
+  if (frame.getAttribute('src') === 'about:blank') {
+    return
+  }
+
+  frameLocationSubscription = String(++frameLocationSubscriptionSerial)
+  frame.contentWindow?.postMessage(
+    {
+      source: 'treeport-browser-v1',
+      method: 'location.subscribe',
+      subscription: frameLocationSubscription
+    },
+    '*'
+  )
+  if (showingHomepage) {
     return
   }
 
@@ -247,6 +264,31 @@ void Promise.all([
         ? configuredUrl
         : (storedUrl ?? configuredUrl)
 
+    let storageWrites: Promise<unknown> = Promise.resolve()
+    const storeUrl = (url: URL) => {
+      const write = storageWrites.then(() =>
+        treeport.storage.set('browser-state', {
+          url: url.href,
+          launchUpdatedAt: context.panel.updatedAt
+        })
+      )
+      storageWrites = write.catch(() => undefined)
+      return write
+    }
+
+    receiveFrameLocation = (url) => {
+      if (url.href === currentUrl?.href) {
+        return
+      }
+
+      showError(null)
+      currentUrl = url
+      input.value = url.href
+      void storeUrl(url).catch((reason: unknown) => {
+        showError(reason instanceof Error ? reason.message : String(reason))
+      })
+    }
+
     const persistAndNavigate = (url: URL) => {
       showError(null)
       const controls = form.querySelectorAll<
@@ -255,11 +297,7 @@ void Promise.all([
       controls.forEach((control) => {
         control.disabled = true
       })
-      void treeport.storage
-        .set('browser-state', {
-          url: url.href,
-          launchUpdatedAt: context.panel.updatedAt
-        })
+      void storeUrl(url)
         .then(() => {
           currentUrl = url
           input.value = url.href
@@ -283,9 +321,8 @@ void Promise.all([
       input.value = currentUrl.href
       navigate(currentUrl)
       treeport.panel.setTitle(configuredTitle || currentUrl.host)
-      void treeport.storage.set('browser-state', {
-        url: currentUrl.href,
-        launchUpdatedAt: context.panel.updatedAt
+      void storeUrl(currentUrl).catch((reason: unknown) => {
+        showError(reason instanceof Error ? reason.message : String(reason))
       })
     } else {
       reload.disabled = true
@@ -340,15 +377,30 @@ void Promise.all([
 addEventListener('message', (event) => {
   if (
     event.source !== frame.contentWindow ||
-    event.data?.source !== 'treeport-panel-v1' ||
-    event.data.method !== 'panel.title.set'
+    event.data?.source !== 'treeport-panel-v1'
   ) {
     return
   }
 
-  if (event.data.title === null) {
-    treeport.panel.setTitle(null)
-  } else if (typeof event.data.title === 'string') {
-    treeport.panel.setTitle(event.data.title.trim().slice(0, 256) || null)
+  if (event.data.method === 'panel.title.set') {
+    if (event.data.title === null) {
+      treeport.panel.setTitle(null)
+    } else if (typeof event.data.title === 'string') {
+      treeport.panel.setTitle(event.data.title.trim().slice(0, 256) || null)
+    }
+
+    return
+  }
+
+  if (
+    event.data.method !== 'browser.location.set' ||
+    event.data.subscription !== frameLocationSubscription
+  ) {
+    return
+  }
+
+  const url = browserUrl(event.data.url)
+  if (url?.origin === event.origin) {
+    receiveFrameLocation?.(url)
   }
 })

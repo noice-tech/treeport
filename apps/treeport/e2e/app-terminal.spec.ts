@@ -726,10 +726,29 @@ test.describe('desktop worktree and terminal workflows', () => {
       const url = new URL(route.request().url())
       await route.fulfill({
         contentType: 'text/html',
-        body:
-          url.pathname === '/start'
-            ? `<h1>Start application</h1><script>parent.postMessage({ source: 'treeport-panel-v1', method: 'panel.title.set', title: 'Runtime route' }, '*')</script>`
-            : '<h1>Next application</h1>'
+        body: `<h1>${url.pathname === '/start' ? 'Start' : 'Next'} application</h1>
+          ${url.pathname === '/start' ? '<button type="button">Navigate in application</button>' : ''}
+          <script>
+            let locationSubscription = null
+            const reportLocation = () => parent.postMessage({
+              source: 'treeport-panel-v1',
+              method: 'browser.location.set',
+              subscription: locationSubscription,
+              url: location.href
+            }, '*')
+            addEventListener('message', (event) => {
+              if (event.source === parent && event.data?.source === 'treeport-browser-v1' && event.data.method === 'location.subscribe') {
+                locationSubscription = event.data.subscription
+                reportLocation()
+              }
+            })
+            document.querySelector('button')?.addEventListener('click', () => {
+              history.pushState({}, '', '/next')
+              document.querySelector('h1').textContent = 'Next application'
+              reportLocation()
+            })
+            ${url.pathname === '/start' ? "parent.postMessage({ source: 'treeport-panel-v1', method: 'panel.title.set', title: 'Runtime route' }, '*')" : ''}
+          </script>`
       })
     })
     await mockApp(page)
@@ -858,15 +877,14 @@ test.describe('desktop worktree and terminal workflows', () => {
     packageFrame = page
       .frames()
       .find((frame) => frame.url().includes('/api/web-panels/panel_1/assets/'))!
-    await packageFrame
-      .getByLabel('Application URL')
-      .fill('http://browser-app.test/next')
     const storageRequest = page.waitForRequest(
       (request) =>
         request.method() === 'PUT' &&
         new URL(request.url()).pathname === '/api/panels/panel_1/storage'
     )
-    await packageFrame.getByLabel('Application URL').press('Enter')
+    await browserFrame
+      .getByRole('button', { name: 'Navigate in application' })
+      .click()
     expect((await storageRequest).postDataJSON()).toEqual({
       key: 'browser-state',
       value: {
@@ -874,16 +892,15 @@ test.describe('desktop worktree and terminal workflows', () => {
         launchUpdatedAt: '2026-01-01T00:00:00.000Z'
       }
     })
+    await expect(packageFrame.getByLabel('Application URL')).toHaveValue(
+      'http://browser-app.test/next'
+    )
     await expect(
-      page.getByRole('button', { name: 'browser-app.test, web panel' })
+      page.getByRole('button', { name: 'Runtime route, web panel' })
     ).toBeVisible()
-    await expect
-      .poll(() =>
-        page
-          .frames()
-          .some((frame) => frame.url() === 'http://browser-app.test/next')
-      )
-      .toBe(true)
+    await expect(browserFrame.getByRole('heading')).toHaveText(
+      'Next application'
+    )
 
     await page.reload()
     await expect(
