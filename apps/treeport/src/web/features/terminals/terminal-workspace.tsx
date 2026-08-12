@@ -29,6 +29,8 @@ export interface PendingTerminalCreation {
 export interface CreateTerminalInput {
   name: string
   argv?: string[]
+  cwd?: string
+  env?: Record<string, string>
   returnToShell?: boolean
   closeOnSuccess?: boolean
 }
@@ -69,6 +71,8 @@ export function useTerminalWorkflows({
       worktreeId,
       name,
       argv,
+      cwd,
+      env,
       returnToShell,
       closeOnSuccess,
       initialSize
@@ -76,6 +80,8 @@ export function useTerminalWorkflows({
       worktreeId: string
       name: string
       argv?: string[]
+      cwd?: string
+      env?: Record<string, string>
       returnToShell?: boolean
       closeOnSuccess?: boolean
       initialSize?: TerminalSize
@@ -87,6 +93,8 @@ export function useTerminalWorkflows({
           json: {
             name,
             ...(argv ? { argv } : {}),
+            ...(cwd ? { cwd } : {}),
+            ...(env ? { env } : {}),
             ...(returnToShell ? { returnToShell: true } : {}),
             ...(closeOnSuccess ? { closeOnSuccess: true } : {}),
             ...(initialSize ? { initialSize } : {})
@@ -242,6 +250,8 @@ export function useTerminalWorkflows({
       worktreeId: currentWorktree.id,
       name: input.name,
       ...(input.argv ? { argv: [...input.argv] } : {}),
+      ...(input.cwd ? { cwd: input.cwd } : {}),
+      ...(input.env ? { env: { ...input.env } } : {}),
       ...(input.returnToShell ? { returnToShell: true } : {}),
       ...(input.closeOnSuccess ? { closeOnSuccess: true } : {}),
       ...(initialSize ? { initialSize } : {}),

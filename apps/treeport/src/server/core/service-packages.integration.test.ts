@@ -14,7 +14,7 @@ import {
 
 describe('TreeportService with injected command adapters', () => {
   it('resolves repository terminal presets from each worktree and keeps usable choices through configuration errors', async () => {
-    const { main, service } = await fixture()
+    const { main, service, config } = await fixture()
     const treeportDirectory = path.join(main, '.treeport')
     const configPath = path.join(treeportDirectory, 'terminal-presets.json')
     await fs.mkdir(treeportDirectory, { recursive: true })
@@ -43,6 +43,27 @@ describe('TreeportService with injected command adapters', () => {
         }
       })
     )
+    await fs.mkdir(path.join(main, '.zed'), { recursive: true })
+    await fs.writeFile(
+      path.join(main, '.zed', 'tasks.json'),
+      `[
+        {
+          // This remains manually runnable even though it is also a setup hook.
+          "label": "Shared $ZED_WORKTREE_ROOT",
+          "command": "node",
+          "args": ["$ZED_MAIN_GIT_WORKTREE/script.js", "argument with spaces"],
+          "cwd": "tools",
+          "env": {
+            "CUSTOM": "$ZED_MAIN_GIT_WORKTREE:$ZED_WORKTREE_ROOT",
+            "TREEPORT_PROJECT_ID": "cannot-override"
+          },
+          "hooks": ["create_worktree"],
+          "reveal": "always",
+        },
+        { "label": "Duplicate", "command": "echo one" },
+        { "label": "Duplicate", "command": "printf", "args": ["two"] },
+      ]`
+    )
     await service.createTerminalPreset({
       name: 'Development',
       executable: 'global-dev',
@@ -50,6 +71,7 @@ describe('TreeportService with injected command adapters', () => {
       closeOnSuccess: false
     })
     const project = await service.registerProject(main)
+    const canonicalMain = project.mainWorktreePath
     const mainWorktree = project.worktrees[0]!
 
     const initial = await service.listTerminalPresetDefinitions({
@@ -60,13 +82,30 @@ describe('TreeportService with injected command adapters', () => {
         name: 'Development',
         executable: 'pnpm',
         args: ['dev'],
-        source: { type: 'repository' }
+        source: { type: 'repository', format: 'treeport' }
       },
       {
         name: 'Review',
         executable: 'pi',
         args: ['--prompt', 'Review; do not invoke a shell', '$HOME'],
-        source: { type: 'repository' }
+        source: { type: 'repository', format: 'treeport' }
+      },
+      {
+        name: `Shared ${canonicalMain}`,
+        executable: 'node',
+        args: [path.join(canonicalMain, 'script.js'), 'argument with spaces'],
+        cwd: path.join(canonicalMain, 'tools'),
+        source: { type: 'repository', format: 'zed' }
+      },
+      {
+        name: 'Duplicate',
+        executable: '/bin/zsh',
+        source: { type: 'repository', format: 'zed' }
+      },
+      {
+        name: 'Duplicate',
+        executable: 'printf',
+        source: { type: 'repository', format: 'zed' }
       },
       {
         name: 'Development',
@@ -76,7 +115,7 @@ describe('TreeportService with injected command adapters', () => {
     ])
     expect(initial.diagnostics).toEqual([
       expect.objectContaining({
-        presetId: 'broken',
+        itemId: 'broken',
         message: expect.stringContaining(
           'Invalid repository terminal preset broken'
         )
@@ -100,6 +139,11 @@ describe('TreeportService with injected command adapters', () => {
         }
       })
     )
+    await fs.mkdir(path.join(linked.path, '.zed'), { recursive: true })
+    await fs.writeFile(
+      path.join(linked.path, '.zed', 'tasks.json'),
+      JSON.stringify([{ label: 'Linked Zed task', command: 'ignored' }])
+    )
     const linkedDefinitions = await service.listTerminalPresetDefinitions({
       worktreeId: linked.id
     })
@@ -107,23 +151,93 @@ describe('TreeportService with injected command adapters', () => {
       expect.objectContaining({
         name: 'Linked only',
         executable: 'linked-command',
-        source: { type: 'repository' }
+        source: { type: 'repository', format: 'treeport' }
       })
     )
     expect(linkedDefinitions.definitions).not.toContainEqual(
       expect.objectContaining({ name: 'Review' })
     )
+    expect(linkedDefinitions.definitions).not.toContainEqual(
+      expect.objectContaining({ name: 'Linked Zed task' })
+    )
+    expect(
+      linkedDefinitions.definitions.filter(
+        (definition) =>
+          definition.source.type === 'repository' &&
+          definition.source.format === 'zed'
+      )
+    ).toMatchObject([
+      {
+        name: `Shared ${linked.path}`,
+        cwd: path.join(linked.path, 'tools'),
+        env: {
+          CUSTOM: `${canonicalMain}:${linked.path}`,
+          ZED_WORKTREE_ROOT: linked.path,
+          ZED_MAIN_GIT_WORKTREE: canonicalMain
+        }
+      },
+      { name: 'Duplicate' },
+      { name: 'Duplicate' }
+    ])
+    expect(
+      (
+        await service.listTerminalPresetDefinitions({ projectId: project.id })
+      ).definitions.some(
+        (definition) => definition.source.type === 'repository'
+      )
+    ).toBe(false)
+
+    const resolvedZed = linkedDefinitions.definitions.find(
+      (definition) => definition.name === `Shared ${linked.path}`
+    )!
+    const terminal = await service.createTerminal(
+      linked.id,
+      resolvedZed.name,
+      [resolvedZed.executable, ...resolvedZed.args],
+      {
+        cwd: resolvedZed.cwd!,
+        env: resolvedZed.env,
+        returnToShell: true
+      }
+    )
+    const launchSpec = JSON.parse(
+      await fs.readFile(
+        path.join(config.runtimeDir, 'launch-specs', `${terminal.id}.json`),
+        'utf8'
+      )
+    ) as {
+      argv: string[]
+      fallbackArgv: string[]
+      cwd: string
+      env: Record<string, string>
+    }
+    expect(launchSpec).toMatchObject({
+      argv: [
+        'node',
+        path.join(canonicalMain, 'script.js'),
+        'argument with spaces'
+      ],
+      fallbackArgv: ['/bin/zsh', '-l'],
+      cwd: path.join(linked.path, 'tools'),
+      env: {
+        CUSTOM: `${canonicalMain}:${linked.path}`,
+        ZED_WORKTREE_ROOT: linked.path,
+        ZED_MAIN_GIT_WORKTREE: canonicalMain,
+        TREEPORT_PROJECT_ID: project.id,
+        TREEPORT_WORKTREE_ID: linked.id,
+        TREEPORT_TERMINAL_ID: terminal.id
+      }
+    })
 
     await fs.writeFile(configPath, '{ invalid json')
     const malformed = await service.listTerminalPresetDefinitions({
       worktreeId: mainWorktree.id
     })
-    expect(malformed.definitions).toEqual([
-      expect.objectContaining({
-        name: 'Development',
-        executable: 'global-dev',
-        source: { type: 'user' }
-      })
+    expect(malformed.definitions.map((definition) => definition.name)).toEqual([
+      `Shared ${canonicalMain}`,
+      'Duplicate',
+      'Duplicate',
+      'Development'
     ])
     expect(malformed.diagnostics[0]?.message).toContain(
       'Could not parse repository terminal presets'
@@ -142,26 +256,44 @@ describe('TreeportService with injected command adapters', () => {
         }
       })
     )
-    expect(
-      await service.listTerminalPresetDefinitions({
-        worktreeId: mainWorktree.id
-      })
-    ).toMatchObject({
-      definitions: [
-        {
-          name: 'Fixed immediately',
-          executable: 'fixed-command',
-          args: ['argument with spaces'],
-          source: { type: 'repository' }
-        },
-        {
-          name: 'Development',
-          executable: 'global-dev',
-          source: { type: 'user' }
-        }
-      ],
-      diagnostics: []
+    const fixed = await service.listTerminalPresetDefinitions({
+      worktreeId: mainWorktree.id
     })
+    expect(fixed.definitions.map((definition) => definition.name)).toEqual([
+      'Fixed immediately',
+      `Shared ${canonicalMain}`,
+      'Duplicate',
+      'Duplicate',
+      'Development'
+    ])
+    expect(fixed.diagnostics).toEqual([])
+
+    await fs.writeFile(path.join(main, '.zed', 'tasks.json'), '{ invalid json')
+    const malformedZed = await service.listTerminalPresetDefinitions({
+      worktreeId: mainWorktree.id
+    })
+    expect(
+      malformedZed.definitions.map((definition) => definition.name)
+    ).toEqual(['Fixed immediately', 'Development'])
+    expect(malformedZed.diagnostics).toEqual([
+      expect.objectContaining({
+        path: path.join('.zed', 'tasks.json'),
+        itemId: null,
+        message: expect.stringContaining('Could not load Zed tasks')
+      })
+    ])
+
+    await fs.writeFile(
+      path.join(main, '.zed', 'tasks.json'),
+      JSON.stringify([{ label: 'Recovered Zed task', command: 'recovered' }])
+    )
+    expect(
+      (
+        await service.listTerminalPresetDefinitions({
+          worktreeId: mainWorktree.id
+        })
+      ).definitions.map((definition) => definition.name)
+    ).toEqual(['Fixed immediately', 'Recovered Zed task', 'Development'])
   })
 
   it('discovers local web panels and owns their persistent synchronized lifecycle', async () => {

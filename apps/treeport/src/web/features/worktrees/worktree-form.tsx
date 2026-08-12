@@ -1,8 +1,8 @@
 import { useState } from 'react'
 import type {
   ProjectRecord,
-  RepositoryTerminalPresetDiagnostic,
-  TerminalPresetDefinition
+  TerminalPresetDefinition,
+  TerminalPresetDefinitionDiagnostic
 } from '@treeport/shared'
 import { Button } from '../../components/ui/button'
 import { FormField } from '../../components/ui/form-field'
@@ -26,7 +26,7 @@ export function WorktreeForm({
 }: {
   project: ProjectRecord
   presets: TerminalPresetDefinition[]
-  presetDiagnostics: RepositoryTerminalPresetDiagnostic[]
+  presetDiagnostics: TerminalPresetDefinitionDiagnostic[]
   presetsLoading: boolean
   presetsError: boolean
   onRetryPresets: () => void
@@ -184,7 +184,7 @@ export function WorktreeForm({
         )}
         {presetDiagnostics.map((diagnostic) => (
           <p
-            key={`${diagnostic.presetId ?? 'file'}:${diagnostic.message}`}
+            key={`${diagnostic.path}:${diagnostic.itemId ?? 'file'}:${diagnostic.message}`}
             className="form-note"
             role="status"
           >

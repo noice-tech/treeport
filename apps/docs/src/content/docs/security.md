@@ -33,9 +33,9 @@ treeport up --host "$(tailscale ip -4)"
 
 ## Repository and package boundary
 
-Registering a repository authorizes Treeport to read package settings from its main worktree and terminal presets from each registered worktree. Review declared packages and `.treeport/terminal-presets.json` commands before using them.
+Registering a repository authorizes Treeport to read package settings and compatible `.zed/tasks.json` tasks from its main worktree, plus native terminal presets from each registered worktree. Review declared packages, `.treeport/terminal-presets.json`, and `.zed/tasks.json` commands before using them.
 
-Treeport does not execute repository terminal presets during registration or when a repository is opened. A repository preset starts only after you select it in the panel picker. It launches an ordinary terminal with a literal executable and argument array rather than an implicit shell command.
+Treeport does not execute manual repository terminal presets during registration or when a repository is opened. A native preset or compatible Zed task starts only after you select it in the panel picker. Native presets launch an ordinary terminal with a literal executable and argument array. A Zed `command` containing shell syntax intentionally runs through Treeport's configured shell, so treat it as executable repository configuration. Automatic Zed `create_worktree` hooks remain separately governed by the [worktree setup rules](/features/worktree-setup-hooks/#zed-compatibility).
 
 Treeport packages do not execute daemon modules or install server hooks. Managed npm operations always disable lifecycle scripts. Package terminal presets use the same explicit-selection and literal-argument boundary.
 

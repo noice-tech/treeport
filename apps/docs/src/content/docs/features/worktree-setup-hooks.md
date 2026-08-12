@@ -120,11 +120,13 @@ If `.treeport/setup.json` is absent, Treeport continues to read compatible `crea
 
 Treeport supports the Zed task fields `label`, `command`, `args`, `cwd`, `env`, and `hooks` for this compatibility path. It also provides `ZED_WORKTREE_ROOT` and `ZED_MAIN_GIT_WORKTREE` in commands, arguments, `cwd`, and environment values.
 
-Native and Zed commands are never combined:
+Native and Zed commands are never combined during automatic setup:
 
 - If `.treeport/setup.json` exists, Treeport uses only that file.
 - An empty native `commands` array disables setup even when Zed hooks exist.
 - An invalid native file reports a setup error instead of falling back to Zed.
 - Removing the native file restores Zed fallback.
+
+This precedence applies only to automatic worktree setup. Compatible tasks in `.zed/tasks.json`, including tasks with a `create_worktree` hook, remain available for explicit launch from **New panel**. Opening the picker or starting one manually does not trigger another automatic setup run. See [Terminal presets](/features/terminal-presets/#zed-task-compatibility) for the supported manual-task fields and launch behavior.
 
 To migrate, add equivalent native commands and verify them before removing `create_worktree` from the Zed tasks. Other Zed tasks can remain in the same file. See the [Zed task documentation](https://zed.dev/docs/tasks) for Zed's format; Treeport's compatibility support is limited to the fields described above.

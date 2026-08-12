@@ -1,8 +1,8 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import type {
-  RepositoryTerminalPresetDiagnostic,
-  TerminalPresetDefinition
+  TerminalPresetDefinition,
+  TerminalPresetDefinitionDiagnostic
 } from '@treeport/shared'
 import {
   repositoryTerminalPresetSchema,
@@ -16,7 +16,7 @@ export async function loadRepositoryTerminalPresets(
   worktreePath: string
 ): Promise<{
   definitions: TerminalPresetDefinition[]
-  diagnostics: RepositoryTerminalPresetDiagnostic[]
+  diagnostics: TerminalPresetDefinitionDiagnostic[]
 }> {
   const configPath = path.join(worktreePath, CONFIG_PATH)
   const content = await fs
@@ -42,7 +42,7 @@ export async function loadRepositoryTerminalPresets(
       diagnostics: [
         {
           path: CONFIG_PATH,
-          presetId: null,
+          itemId: null,
           message: `Could not read repository terminal presets: ${content.message}`
         }
       ]
@@ -58,7 +58,7 @@ export async function loadRepositoryTerminalPresets(
       diagnostics: [
         {
           path: CONFIG_PATH,
-          presetId: null,
+          itemId: null,
           message: `Could not parse repository terminal presets: ${error instanceof Error ? error.message : String(error)}`
         }
       ]
@@ -72,7 +72,7 @@ export async function loadRepositoryTerminalPresets(
       diagnostics: [
         {
           path: CONFIG_PATH,
-          presetId: null,
+          itemId: null,
           message: `Invalid repository terminal presets: ${file.error.issues
             .map(
               (issue) => `${issue.path.join('.') || 'value'} ${issue.message}`
@@ -84,7 +84,7 @@ export async function loadRepositoryTerminalPresets(
   }
 
   const definitions: TerminalPresetDefinition[] = []
-  const diagnostics: RepositoryTerminalPresetDiagnostic[] = []
+  const diagnostics: TerminalPresetDefinitionDiagnostic[] = []
   for (const presetId of Object.keys(file.data.presets).sort()) {
     const preset = repositoryTerminalPresetSchema.safeParse(
       file.data.presets[presetId]
@@ -92,7 +92,7 @@ export async function loadRepositoryTerminalPresets(
     if (!preset.success) {
       diagnostics.push({
         path: CONFIG_PATH,
-        presetId,
+        itemId: presetId,
         message: `Invalid repository terminal preset ${presetId}: ${preset.error.issues
           .map((issue) => `${issue.path.join('.') || 'value'} ${issue.message}`)
           .join('; ')}`
@@ -105,8 +105,10 @@ export async function loadRepositoryTerminalPresets(
       name: preset.data.name,
       executable: preset.data.executable,
       args: [...preset.data.args],
+      cwd: null,
+      env: {},
       closeOnSuccess: preset.data.closeOnSuccess,
-      source: { type: 'repository' }
+      source: { type: 'repository', format: 'treeport' }
     })
   }
 

@@ -1235,6 +1235,8 @@ export class PackageSystem {
           name: result.data.name,
           executable: result.data.executable,
           args: [...result.data.args],
+          cwd: null,
+          env: {},
           closeOnSuccess: result.data.closeOnSuccess,
           source: metadata
         },

@@ -64,11 +64,15 @@ describe('API input validation', () => {
       createTerminalSchema.parse({
         name: 'researcher',
         argv,
+        cwd: '/repo/worktrees/topic with spaces',
+        env: { CUSTOM: 'value;$HOME 雪' },
         returnToShell: true,
         initialSize: { cols: 132, rows: 47 }
       })
     ).toMatchObject({
       argv,
+      cwd: '/repo/worktrees/topic with spaces',
+      env: { CUSTOM: 'value;$HOME 雪' },
       returnToShell: true,
       initialSize: { cols: 132, rows: 47 }
     })
@@ -112,6 +116,24 @@ describe('API input validation', () => {
         }
       }).success
     ).toBe(false)
+    for (const invalid of [
+      { cwd: '' },
+      { cwd: ' \t ' },
+      { cwd: '/repo/with\0nul' },
+      { env: { 'BAD=KEY': 'value' } },
+      { env: { 'BAD\0KEY': 'value' } },
+      { env: { GOOD: 'value\0with-nul' } },
+      {
+        env: Object.fromEntries(
+          Array.from({ length: 129 }, (_, index) => [`KEY_${index}`, 'value'])
+        )
+      }
+    ]) {
+      expect(
+        createTerminalSchema.safeParse({ name: 'invalid launch', ...invalid })
+          .success
+      ).toBe(false)
+    }
   })
 
   it('keeps legacy terminal and spawn argument lengths unchanged', () => {

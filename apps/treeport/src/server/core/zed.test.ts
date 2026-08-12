@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import {
   inferWorktreeName,
   loadCreateWorktreeTasks,
+  loadZedTerminalPresetDefinitions,
   normalizeWorktreeName,
   resolveZedCreateWorktreeSetupTasks,
   resolveZedWorktreePath
@@ -145,6 +146,178 @@ describe('Zed worktree compatibility', () => {
         timeoutMs: 30 * 60_000
       }
     ])
+  })
+
+  it('discovers ordered repository tasks and resolves their launch context for a linked worktree', async () => {
+    const { main } = await repository()
+    const worktree = path.join(
+      path.dirname(main),
+      'worktrees',
+      'example',
+      'picker',
+      'example'
+    )
+    await fs.mkdir(worktree, { recursive: true })
+    await fs.writeFile(
+      path.join(main, '.zed', 'tasks.json'),
+      `{
+        // Zed also accepts an object root.
+        "tasks": [
+          {
+            "label": "Run $ZED_WORKTREE_ROOT",
+            "command": "\${ZED_MAIN_GIT_WORKTREE}/bin/node",
+            "args": ["$ZED_MAIN_GIT_WORKTREE/script.js", "a b", "$HOME", "雪"],
+            "cwd": "nested dir",
+            "env": { "CUSTOM": "\${ZED_MAIN_GIT_WORKTREE}:$ZED_WORKTREE_ROOT" },
+            "hooks": ["create_worktree"],
+            "reveal": "always",
+          },
+          { "label": "Duplicate", "command": "echo value | cat", "args": ["semi;colon", "quote'argument"] },
+          { "label": "Duplicate", "command": "printf", "args": ["done"] },
+        ],
+      }`
+    )
+
+    const listing = await loadZedTerminalPresetDefinitions({
+      projectId: 'project_1',
+      shell: '/bin/zsh',
+      mainWorktreePath: main,
+      worktreePath: worktree
+    })
+    expect(listing).toEqual({
+      definitions: [
+        {
+          id: 'repository:project_1:zed-task:0',
+          name: `Run ${worktree}`,
+          executable: path.join(main, 'bin', 'node'),
+          args: [path.join(main, 'script.js'), 'a b', '$HOME', '雪'],
+          cwd: path.join(worktree, 'nested dir'),
+          env: {
+            CUSTOM: `${main}:${worktree}`,
+            ZED_WORKTREE_ROOT: worktree,
+            ZED_MAIN_GIT_WORKTREE: main
+          },
+          closeOnSuccess: false,
+          source: { type: 'repository', format: 'zed' }
+        },
+        {
+          id: 'repository:project_1:zed-task:1',
+          name: 'Duplicate',
+          executable: '/bin/zsh',
+          args: ['-lc', `echo value | cat 'semi;colon' 'quote'"'"'argument'`],
+          cwd: worktree,
+          env: {
+            ZED_WORKTREE_ROOT: worktree,
+            ZED_MAIN_GIT_WORKTREE: main
+          },
+          closeOnSuccess: false,
+          source: { type: 'repository', format: 'zed' }
+        },
+        {
+          id: 'repository:project_1:zed-task:2',
+          name: 'Duplicate',
+          executable: 'printf',
+          args: ['done'],
+          cwd: worktree,
+          env: {
+            ZED_WORKTREE_ROOT: worktree,
+            ZED_MAIN_GIT_WORKTREE: main
+          },
+          closeOnSuccess: false,
+          source: { type: 'repository', format: 'zed' }
+        }
+      ],
+      diagnostics: []
+    })
+    expect(await loadCreateWorktreeTasks(main)).toHaveLength(1)
+  })
+
+  it('isolates malformed picker tasks, invalid files, and repository roots', async () => {
+    const first = await repository('first')
+    const second = await repository('second')
+    await fs.writeFile(
+      path.join(first.main, '.zed', 'tasks.json'),
+      JSON.stringify([
+        'not an object',
+        { label: ' ', command: 'missing-label' },
+        { label: 'Missing command' },
+        { label: 'Valid', command: 'node' },
+        { label: 'Bad args', command: 'node', args: 'one' },
+        { label: 'Bad argument', command: 'node', args: [42] },
+        { label: 'Bad cwd', command: 'node', cwd: 42 },
+        { label: 'Bad env root', command: 'node', env: 'value' },
+        { label: 'Bad env', command: 'node', env: { 'BAD=KEY': 'value' } },
+        { label: 'Bad value', command: 'node', env: { GOOD: 42 } }
+      ])
+    )
+
+    const listing = await loadZedTerminalPresetDefinitions({
+      projectId: 'first',
+      shell: '/bin/zsh',
+      mainWorktreePath: first.main,
+      worktreePath: first.main
+    })
+    expect(listing.definitions).toEqual([
+      expect.objectContaining({
+        id: 'repository:first:zed-task:3',
+        name: 'Valid'
+      })
+    ])
+    expect(listing.diagnostics.map((diagnostic) => diagnostic.itemId)).toEqual([
+      '1',
+      '2',
+      '3',
+      '5',
+      '6',
+      '7',
+      '8',
+      '9',
+      '10'
+    ])
+    expect(
+      await loadZedTerminalPresetDefinitions({
+        projectId: 'second',
+        shell: '/bin/zsh',
+        mainWorktreePath: second.main,
+        worktreePath: second.main
+      })
+    ).toEqual({ definitions: [], diagnostics: [] })
+
+    await fs.writeFile(
+      path.join(first.main, '.zed', 'tasks.json'),
+      JSON.stringify({ tasks: 'invalid' })
+    )
+    await expect(
+      loadZedTerminalPresetDefinitions({
+        projectId: 'first',
+        shell: '/bin/zsh',
+        mainWorktreePath: first.main,
+        worktreePath: first.main
+      })
+    ).resolves.toMatchObject({
+      definitions: [],
+      diagnostics: [
+        { itemId: null, message: expect.stringContaining('Invalid Zed tasks') }
+      ]
+    })
+
+    await fs.writeFile(path.join(first.main, '.zed', 'tasks.json'), '{ bad')
+    await expect(
+      loadZedTerminalPresetDefinitions({
+        projectId: 'first',
+        shell: '/bin/zsh',
+        mainWorktreePath: first.main,
+        worktreePath: first.main
+      })
+    ).resolves.toMatchObject({
+      definitions: [],
+      diagnostics: [
+        {
+          itemId: null,
+          message: expect.stringContaining('Could not load Zed tasks')
+        }
+      ]
+    })
   })
 
   it('preserves hostile direct arguments and safely quotes explicit-shell arguments', async () => {

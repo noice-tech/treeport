@@ -74,6 +74,7 @@ import { KeyedTaskQueue } from './task-queue'
 import type { TmuxAdapter } from './tmux'
 import { generateTmuxSessionName, generateTmuxSocketName } from './tmux'
 import {
+  loadZedTerminalPresetDefinitions,
   normalizeWorktreeName,
   prepareZedWorktreeWrapper,
   resolveZedWorktreePath
@@ -85,6 +86,15 @@ const id = (prefix: string): string =>
 const WEB_PANEL_STORAGE_MAX_ENTRIES = 256
 const WEB_PANEL_STORAGE_MAX_TOTAL_BYTES = 1024 * 1024
 const WEB_PANEL_STORAGE_MAX_VALUE_BYTES = 64 * 1024
+
+interface TerminalLaunchOptions {
+  setup?: { tasks: WorktreeSetupTask[]; error: string | null }
+  returnToShell?: boolean
+  closeOnSuccess?: boolean
+  initialSize?: TerminalSize
+  cwd?: string
+  env?: Record<string, string>
+}
 
 function mapWebPanel(
   row: typeof webPanels.$inferSelect,
@@ -990,13 +1000,22 @@ export class TreeportService {
       this.packages.syncProjects([project])
     }
 
-    const [userPresets, packagePresets, repositoryPresets] = await Promise.all([
-      this.listTerminalPresets(),
-      this.packages.terminalPresetDefinitions(projectId),
-      worktree && project
-        ? loadRepositoryTerminalPresets(project.id, worktree.path)
-        : Promise.resolve({ definitions: [], diagnostics: [] })
-    ])
+    const [userPresets, packagePresets, repositoryPresets, zedPresets] =
+      await Promise.all([
+        this.listTerminalPresets(),
+        this.packages.terminalPresetDefinitions(projectId),
+        worktree && project
+          ? loadRepositoryTerminalPresets(project.id, worktree.path)
+          : Promise.resolve({ definitions: [], diagnostics: [] }),
+        worktree && project
+          ? loadZedTerminalPresetDefinitions({
+              projectId: project.id,
+              shell: this.deps.config.shell,
+              mainWorktreePath: project.mainWorktreePath,
+              worktreePath: worktree.path
+            })
+          : Promise.resolve({ definitions: [], diagnostics: [] })
+      ])
     const repositoryPackagePresets = packagePresets.filter(
       (preset) =>
         preset.source.type === 'package' && preset.source.scope === 'project'
@@ -1009,18 +1028,21 @@ export class TreeportService {
     return {
       definitions: [
         ...repositoryPresets.definitions,
+        ...zedPresets.definitions,
         ...repositoryPackagePresets,
         ...userPresets.map((preset) => ({
           id: preset.id,
           name: preset.name,
           executable: preset.executable,
           args: [...preset.args],
+          cwd: null,
+          env: {},
           closeOnSuccess: preset.closeOnSuccess,
           source: { type: 'user' as const }
         })),
         ...globalPackagePresets
       ],
-      diagnostics: repositoryPresets.diagnostics
+      diagnostics: [...repositoryPresets.diagnostics, ...zedPresets.diagnostics]
     }
   }
 
@@ -3403,12 +3425,7 @@ export class TreeportService {
     worktree: WorktreeRecord,
     name: string,
     argv?: string[],
-    options?: {
-      setup?: { tasks: WorktreeSetupTask[]; error: string | null }
-      returnToShell?: boolean
-      closeOnSuccess?: boolean
-      initialSize?: TerminalSize
-    }
+    options?: TerminalLaunchOptions
   ): Promise<TerminalRecord> {
     const project = await this.requireOpenProject(worktree.projectId)
     const terminalId = id('term')
@@ -3423,7 +3440,7 @@ export class TreeportService {
         worktreeId: worktree.id,
         name,
         createdAt: timestamp,
-        cwd: worktree.path,
+        cwd: options?.cwd ?? worktree.path,
         argv: commandArgv,
         ...(options?.returnToShell && argv
           ? { fallbackArgv: [this.deps.config.shell, '-l'] }
@@ -3431,6 +3448,7 @@ export class TreeportService {
         ...(options?.closeOnSuccess ? { closeOnSuccess: true } : {}),
         ...(options?.initialSize ? { initialSize: options.initialSize } : {}),
         env: {
+          ...(options?.env ?? {}),
           TREEPORT_API_URL: this.deps.config.apiUrl,
           TREEPORT_MANAGED_API_URL: this.deps.config.apiUrl,
           TREEPORT_DAEMON_RECORD: path.join(
@@ -3487,12 +3505,7 @@ export class TreeportService {
     worktreeId: string,
     name: string,
     argv?: string[],
-    options?: {
-      setup?: { tasks: WorktreeSetupTask[]; error: string | null }
-      returnToShell?: boolean
-      closeOnSuccess?: boolean
-      initialSize?: TerminalSize
-    }
+    options?: TerminalLaunchOptions
   ): Promise<TerminalRecord> {
     await this.getWorktree(worktreeId)
     return this.terminalMutations.enqueue(worktreeId, () =>
@@ -3504,12 +3517,7 @@ export class TreeportService {
     worktreeId: string,
     name: string,
     argv?: string[],
-    options?: {
-      setup?: { tasks: WorktreeSetupTask[]; error: string | null }
-      returnToShell?: boolean
-      closeOnSuccess?: boolean
-      initialSize?: TerminalSize
-    }
+    options?: TerminalLaunchOptions
   ): Promise<TerminalRecord> {
     await this.requireAvailableWorktree(worktreeId)
     try {

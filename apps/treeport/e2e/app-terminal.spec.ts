@@ -908,11 +908,27 @@ test.describe('desktop worktree and terminal workflows', () => {
       name: 'Hunk',
       executable: 'repo-tool',
       args: ['argument with spaces', 'semi;$HOME'],
+      cwd: null,
+      env: {},
       closeOnSuccess: false,
-      source: { type: 'repository' as const }
+      source: { type: 'repository' as const, format: 'treeport' as const }
+    }
+    const zedPreset = {
+      id: 'repository:proj_1:zed-task:0',
+      name: 'Zed build',
+      executable: '/bin/zsh',
+      args: ['-lc', "pnpm build '$HOME'"],
+      cwd: '/worktrees/topic/packages/app',
+      env: {
+        ZED_WORKTREE_ROOT: '/worktrees/topic',
+        ZED_MAIN_GIT_WORKTREE: '/repo',
+        CUSTOM: 'argument with spaces;$HOME'
+      },
+      closeOnSuccess: false,
+      source: { type: 'repository' as const, format: 'zed' as const }
     }
     const mocked = await mockApp(page, [], {
-      repositoryTerminalPresets: [repositoryPreset]
+      repositoryTerminalPresets: [repositoryPreset, zedPreset]
     })
 
     await page.getByRole('button', { name: /^topic(?:,|\s|$)/ }).click()
@@ -925,12 +941,18 @@ test.describe('desktop worktree and terminal workflows', () => {
     const launcher = page.getByRole('dialog', { name: 'New panel' })
     await launcher
       .getByRole('button', {
-        name: /^Hunk, Repository, repo-tool/
+        name: /^Zed build, Repository · Zed, \/bin\/zsh/
       })
       .click()
     expect((await createRequest).postDataJSON()).toMatchObject({
-      name: 'Hunk',
-      argv: ['repo-tool', 'argument with spaces', 'semi;$HOME'],
+      name: 'Zed build',
+      argv: ['/bin/zsh', '-lc', "pnpm build '$HOME'"],
+      cwd: '/worktrees/topic/packages/app',
+      env: {
+        ZED_WORKTREE_ROOT: '/worktrees/topic',
+        ZED_MAIN_GIT_WORKTREE: '/repo',
+        CUSTOM: 'argument with spaces;$HOME'
+      },
       returnToShell: true
     })
 
@@ -939,16 +961,15 @@ test.describe('desktop worktree and terminal workflows', () => {
       id: 'repository:proj_1:terminal-preset:fixed',
       name: 'Fixed repository preset'
     })
+    mocked.repositoryTerminalPresets.splice(1, 1)
     mocked.repositoryPresetDiagnostics.push({
-      path: '.treeport/terminal-presets.json',
-      presetId: 'broken',
-      message: 'Invalid repository terminal preset broken: name is required'
+      path: '.zed/tasks.json',
+      itemId: null,
+      message: 'Could not load Zed tasks: invalid JSONC'
     })
     await page.getByRole('button', { name: /^New panel/ }).click()
     await expect(
-      launcher.getByText(
-        'Invalid repository terminal preset broken: name is required'
-      )
+      launcher.getByText('Could not load Zed tasks: invalid JSONC')
     ).toBeVisible({ timeout: 7_000 })
     await expect(
       launcher.getByRole('button', { name: /^Hunk, Global, npx/ })
