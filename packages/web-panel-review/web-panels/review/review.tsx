@@ -254,40 +254,63 @@ function ChangedFileTree({
       }
     }
 
-    return { paths: [...actualPaths.keys()], actualPaths, gitStatus }
+    const paths = [...actualPaths.keys()]
+    const initialExpandedPaths = new Set<string>()
+    if (uncommittedCount > 0) {
+      for (const path of paths) {
+        const segments = path.split('/')
+        if (!segments[0]?.startsWith('Uncommitted Changes')) {
+          continue
+        }
+
+        for (let depth = 1; depth < segments.length; depth += 1) {
+          initialExpandedPaths.add(segments.slice(0, depth).join('/'))
+        }
+      }
+    }
+
+    return {
+      paths,
+      actualPaths,
+      gitStatus,
+      hasUncommittedChanges: uncommittedCount > 0,
+      initialExpandedPaths: [...initialExpandedPaths]
+    }
   }, [changeSets, files])
   const { model } = useFileTree({
     paths: tree.paths,
     gitStatus: tree.gitStatus,
-    initialExpansion: 'open',
+    initialExpansion: tree.hasUncommittedChanges ? 'closed' : 'open',
+    initialExpandedPaths: tree.initialExpandedPaths,
     flattenEmptyDirectories: false,
     density: 'compact',
     unsafeCSS: TREE_CSS,
     search: true,
     fileTreeSearchMode: 'hide-non-matches',
     sort: (left, right) => {
-      if (left.depth === 1 && right.depth === 1) {
-        const leftOrder = left.basename.startsWith('Uncommitted Changes') ? 0 : 1
-        const rightOrder = right.basename.startsWith('Uncommitted Changes')
-          ? 0
-          : 1
-        if (leftOrder !== rightOrder) {
-          return leftOrder - rightOrder
-        }
+      const leftRootOrder = left.segments[0]?.startsWith(
+        'Uncommitted Changes'
+      )
+        ? 0
+        : 1
+      const rightRootOrder = right.segments[0]?.startsWith(
+        'Uncommitted Changes'
+      )
+        ? 0
+        : 1
+      if (leftRootOrder !== rightRootOrder) {
+        return leftRootOrder - rightRootOrder
       }
 
-      if (
-        left.depth === 2 &&
-        right.depth === 2 &&
-        left.segments[0]?.startsWith('Uncommitted Changes') &&
-        right.segments[0]?.startsWith('Uncommitted Changes')
-      ) {
+      if (leftRootOrder === 0) {
         const order = ['Staged', 'Unstaged', 'Untracked']
+        const leftGroup = left.segments[1] ?? left.basename
+        const rightGroup = right.segments[1] ?? right.basename
         const leftOrder = order.findIndex((name) =>
-          left.basename.startsWith(name)
+          leftGroup.startsWith(name)
         )
         const rightOrder = order.findIndex((name) =>
-          right.basename.startsWith(name)
+          rightGroup.startsWith(name)
         )
         if (leftOrder !== rightOrder) {
           return leftOrder - rightOrder
@@ -421,6 +444,9 @@ function ReviewApp() {
   commentsRef.current = comments
   const [viewedFiles, setViewedFiles] = useState<Set<string>>(new Set())
   const [collapsedFiles, setCollapsedFiles] = useState<Set<string>>(new Set())
+  const collapsedFilesRef = useRef(collapsedFiles)
+  collapsedFilesRef.current = collapsedFiles
+  const autoCollapsedFiles = useRef<Set<string>>(new Set())
   const fileStateLoaded = useRef(false)
   const [selectedFile, setSelectedFile] = useState<string | null>(null)
   const [selectedLines, setSelectedLines] = useState<{
@@ -558,10 +584,34 @@ function ReviewApp() {
           : null
       )
       setViewedFiles(parsedViewed)
-      if (!fileStateLoaded.current) {
-        setCollapsedFiles(new Set(parsedViewed))
-        fileStateLoaded.current = true
+      const uncommittedFiles = new Set([
+        ...diff.changeSets.staged,
+        ...diff.changeSets.unstaged,
+        ...diff.changeSets.untracked
+      ])
+      const nextAutoCollapsedFiles = new Set<string>()
+      if (uncommittedFiles.size > 0) {
+        for (const file of diff.changeSets.branch) {
+          if (!uncommittedFiles.has(file)) {
+            nextAutoCollapsedFiles.add(file)
+          }
+        }
       }
+
+      const collapsed = fileStateLoaded.current
+        ? new Set(collapsedFilesRef.current)
+        : new Set(parsedViewed)
+      for (const file of autoCollapsedFiles.current) {
+        if (!parsedViewed.has(file)) {
+          collapsed.delete(file)
+        }
+      }
+      for (const file of nextAutoCollapsedFiles) {
+        collapsed.add(file)
+      }
+      setCollapsedFiles(collapsed)
+      autoCollapsedFiles.current = nextAutoCollapsedFiles
+      fileStateLoaded.current = true
 
       setCommentStatus('')
       setLoaded({

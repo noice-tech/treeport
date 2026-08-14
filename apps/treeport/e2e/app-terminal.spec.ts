@@ -1316,12 +1316,22 @@ test.describe('desktop worktree and terminal workflows', () => {
     await expect(
       reviewFrame.getByRole('treeitem', { name: 'Untracked (1)' })
     ).toBeVisible()
+    const branchChanges = reviewFrame.getByRole('treeitem', {
+      name: 'Branch Changes (2)'
+    })
+    await expect(branchChanges).toBeVisible()
     await expect(
-      reviewFrame.getByRole('treeitem', { name: 'Branch Changes (2)' })
-    ).toBeVisible()
+      reviewFrame.getByRole('treeitem', { name: 'branch.ts', exact: true })
+    ).toHaveCount(0)
     await expect(
       reviewFrame.getByRole('treeitem', { name: 'shared.ts', exact: true })
-    ).toHaveCount(2)
+    ).toHaveCount(1)
+    await expect(
+      reviewFrame.getByRole('button', { name: 'Expand src/branch.ts' })
+    ).toBeVisible()
+    await expect(
+      reviewFrame.getByRole('button', { name: 'Collapse src/shared.ts' })
+    ).toBeVisible()
 
     await expect(reviewFrame.getByText('2 unresolved')).toBeVisible()
     await reviewFrame
