@@ -10,6 +10,7 @@ export function WebPanelWorkspace({
   active,
   title,
   reloadRevision,
+  autoFocusBlocked,
   onTitleChange,
   onSelectWorkspace
 }: {
@@ -17,6 +18,7 @@ export function WebPanelWorkspace({
   active: boolean
   title: string
   reloadRevision: number
+  autoFocusBlocked: boolean
   onTitleChange: (panelId: string, title: string | null) => void
   onSelectWorkspace: (index: number) => void
 }) {
@@ -30,6 +32,15 @@ export function WebPanelWorkspace({
   useEffect(() => {
     onTitleChange(panel.id, null)
   }, [onTitleChange, panel.id, panelRevision])
+
+  useEffect(() => {
+    if (!active || autoFocusBlocked || loadedPanelRevision !== panelRevision) {
+      return
+    }
+
+    const frame = window.requestAnimationFrame(() => frameRef.current?.focus())
+    return () => window.cancelAnimationFrame(frame)
+  }, [active, autoFocusBlocked, loadedPanelRevision, panelRevision])
 
   useEffect(() => {
     if (!active) {

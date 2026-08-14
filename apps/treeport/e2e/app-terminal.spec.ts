@@ -1624,6 +1624,7 @@ test.describe('desktop worktree and terminal workflows', () => {
           .some((frame) => frame.url().includes('/api/web-panels/panel_1/'))
       )
       .toBe(true)
+    await expect(page.locator('iframe[title="Review"]')).toBeFocused()
     await page.reload()
 
     await expect
@@ -1638,6 +1639,25 @@ test.describe('desktop worktree and terminal workflows', () => {
       .find((frame) => frame.url().includes('/api/web-panels/panel_1/'))!
     await panelFrame.evaluate(() => {
       document.body.textContent = 'Unsaved panel draft'
+      let keyboardInputs = 0
+      window.addEventListener('keydown', (event) => {
+        if (event.key !== 'x') {
+          return
+        }
+
+        keyboardInputs += 1
+        let status = document.querySelector(
+          '[aria-label="Keyboard input status"]'
+        )
+        if (!status) {
+          status = document.createElement('div')
+          status.setAttribute('aria-label', 'Keyboard input status')
+          document.body.append(status)
+        }
+
+        status.textContent = `Keyboard input received ${keyboardInputs} time${keyboardInputs === 1 ? '' : 's'}`
+      })
+
       let findRequests = 0
       window.addEventListener('message', (event) => {
         if (
@@ -1680,7 +1700,11 @@ test.describe('desktop worktree and terminal workflows', () => {
     )
     await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
     await page.keyboard.press('Meta+4')
-    await expect(panelFrame.getByText('Unsaved panel draft')).toBeVisible()
+    await expect(page.locator('iframe[title="Review"]')).toBeFocused()
+    await page.keyboard.press('x')
+    await expect(panelFrame.getByLabel('Keyboard input status')).toHaveText(
+      'Keyboard input received 1 time'
+    )
 
     const terminalFromPanelRequest = page.waitForRequest(
       (request) =>
