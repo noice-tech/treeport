@@ -801,7 +801,7 @@ export function createApp({
         const body = context.req.valid('json')
         await metadataReady
         await service.getTerminal(terminalId)
-        metadata.acknowledgeBell(terminalId, body.sequence)
+        await metadata.acknowledgeBell(terminalId, body.sequence)
         return context.json({ ok: true })
       }
     )

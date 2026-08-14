@@ -11,7 +11,8 @@ import type {
   WebPanelInput,
   WorktreeRecord
 } from '@treeport/shared'
-import { TerminalBellNotifications } from './features/notifications/use-bell-notifications'
+import { NotificationCenter } from './features/notifications/notification-center'
+import { TerminalBellAttention } from './features/notifications/terminal-bell-attention'
 import { CloseWebPanelDialog } from './features/web-panels/close-web-panel-dialog'
 import { WebPanelWorkspace } from './features/web-panels/web-panel-workspace'
 import { parseResponse } from 'hono/client'
@@ -114,6 +115,9 @@ function WorkspaceApp() {
   const projectSwitcher = useProjectSwitcher()
   const projectSwitcherOpen = projectSwitcher.open
   const [dialog, setDialog] = useState<AppDialog>(null)
+  const [desktopNotificationsOpen, setDesktopNotificationsOpen] =
+    useState(false)
+  const [mobileNotificationsOpen, setMobileNotificationsOpen] = useState(false)
   const [retainedWebPanelIds, setRetainedWebPanelIds] = useState<Set<string>>(
     () => new Set()
   )
@@ -536,6 +540,8 @@ function WorkspaceApp() {
   })
   const selectTerminal = useCallback(
     (terminal: TerminalRecord) => {
+      setDesktopNotificationsOpen(false)
+      setMobileNotificationsOpen(false)
       terminalWorkflows.clearPendingTerminalSelection()
       navigateToTerminal(terminal)
     },
@@ -700,11 +706,9 @@ function WorkspaceApp() {
 
   return (
     <>
-      <TerminalBellNotifications
+      <TerminalBellAttention
         projects={projects}
-        projectsLoaded={projectsQuery.data !== undefined}
         selectedTerminalId={selectedTerminalId}
-        navigateToWorkspace={navigateToWorkspace}
       />
       <ProjectSwitcherShortcut blocked={dialog !== null} />
       <WorkspaceMobileHeader
@@ -715,8 +719,24 @@ function WorkspaceApp() {
         }
         terminals={activeProjectTerminals}
         onSelectTerminal={selectTerminal}
+        notificationCenter={
+          <NotificationCenter
+            projects={projects}
+            navigateToWorkspace={navigateToWorkspace}
+            open={mobileNotificationsOpen}
+            onOpenChange={setMobileNotificationsOpen}
+          />
+        }
       />
       <WorkspaceSidebar
+        notificationCenter={
+          <NotificationCenter
+            projects={projects}
+            navigateToWorkspace={navigateToWorkspace}
+            open={desktopNotificationsOpen}
+            onOpenChange={setDesktopNotificationsOpen}
+          />
+        }
         projectSwitcher={
           <ProjectSwitcher
             projects={projects}

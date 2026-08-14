@@ -19,6 +19,10 @@ import type {
   TerminalProgressObserver,
   TmuxProgressObserverOptions
 } from './tmux-progress'
+import type {
+  TerminalBellState,
+  TerminalBellStateStore
+} from './core/terminal-bell-state-store'
 
 class FakeObserver implements TerminalProgressObserver {
   disposed = false
@@ -78,7 +82,10 @@ function deferred<Value>() {
   return { promise, resolve }
 }
 
-function fixture(initialTerminals: TerminalRecord[]) {
+function fixture(
+  initialTerminals: TerminalRecord[],
+  initialBellStates: TerminalBellState[] = []
+) {
   const terminals = new Map(initialTerminals.map((item) => [item.id, item]))
   const events = new ProductEventBus()
   const refreshTerminalStatus = vi.fn(async (terminalId: string) =>
@@ -123,14 +130,35 @@ function fixture(initialTerminals: TerminalRecord[]) {
     observers.push(observer)
     return observer
   })
+  const bellStates = new Map(
+    initialBellStates.map((state) => [state.terminalId, state])
+  )
+  const bellStateStore: TerminalBellStateStore = {
+    load: vi.fn(async () => [...bellStates.values()]),
+    upsert: vi.fn(async (state) => {
+      bellStates.set(state.terminalId, state)
+    }),
+    markRead: vi.fn(async (terminalId, sequence) => {
+      const state = bellStates.get(terminalId)
+      if (state && state.sequence === sequence) {
+        bellStates.set(terminalId, { ...state, unread: false })
+      }
+    }),
+    delete: vi.fn(async (terminalId) => {
+      bellStates.delete(terminalId)
+    })
+  }
   const manager = new TerminalMetadataManager(
     service,
     tmux,
     process.execPath,
-    createObserver
+    createObserver,
+    bellStateStore
   )
   return {
     manager,
+    bellStates,
+    bellStateStore,
     events,
     observers,
     refreshTerminalStatus,
@@ -149,6 +177,110 @@ afterEach(() => {
 })
 
 describe('TerminalMetadataManager', () => {
+  it('restores persisted bell state and continues its sequence', async () => {
+    const item = terminal('one')
+    const { manager, observers, bellStates } = fixture(
+      [item],
+      [
+        {
+          terminalId: item.id,
+          worktreeId: item.worktreeId,
+          sequence: 4,
+          occurredAt: '2026-01-01T00:02:00.000Z',
+          unread: true
+        }
+      ]
+    )
+    managers.push(manager)
+
+    await manager.initialize()
+    expect(manager.get(item.id).bell).toEqual({
+      sequence: 4,
+      at: '2026-01-01T00:02:00.000Z',
+      unread: true
+    })
+
+    observers[0]!.bell()
+    await manager.drain()
+    expect(manager.get(item.id).bell).toMatchObject({
+      sequence: 5,
+      unread: true
+    })
+    expect(bellStates.get(item.id)).toMatchObject({
+      sequence: 5,
+      unread: true
+    })
+
+    await manager.acknowledgeBell(item.id, 5)
+    expect(bellStates.get(item.id)).toMatchObject({
+      sequence: 5,
+      unread: false
+    })
+    expect(manager.get(item.id).bell).toMatchObject({
+      sequence: 5,
+      unread: false
+    })
+  })
+
+  it('does not delete bell state when the same terminal identity is retracked', async () => {
+    const item = terminal('one')
+    const { manager, bellStateStore } = fixture(
+      [item],
+      [
+        {
+          terminalId: item.id,
+          worktreeId: item.worktreeId,
+          sequence: 2,
+          occurredAt: '2026-01-01T00:02:00.000Z',
+          unread: true
+        }
+      ]
+    )
+    managers.push(manager)
+
+    await manager.initialize()
+    await manager.trackTerminal(
+      { ...item, tmuxSessionName: 'replacement-session' },
+      worktree
+    )
+    await manager.drain()
+
+    expect(bellStateStore.delete).not.toHaveBeenCalled()
+    expect(manager.get(item.id).bell).toMatchObject({
+      sequence: 2,
+      unread: true
+    })
+  })
+
+  it('keeps a bell unread when durable acknowledgement fails', async () => {
+    const item = terminal('one')
+    const { manager, bellStateStore } = fixture(
+      [item],
+      [
+        {
+          terminalId: item.id,
+          worktreeId: item.worktreeId,
+          sequence: 2,
+          occurredAt: '2026-01-01T00:02:00.000Z',
+          unread: true
+        }
+      ]
+    )
+    managers.push(manager)
+    vi.mocked(bellStateStore.markRead).mockRejectedValueOnce(
+      new Error('disk unavailable')
+    )
+
+    await manager.initialize()
+    await expect(manager.acknowledgeBell(item.id, 2)).rejects.toThrow(
+      'disk unavailable'
+    )
+    expect(manager.get(item.id).bell).toMatchObject({
+      sequence: 2,
+      unread: true
+    })
+  })
+
   it('observes every running terminal for the daemon lifetime and publishes metadata', async () => {
     const first = terminal('one')
     const second = terminal('two')
@@ -655,6 +787,7 @@ describe('TerminalMetadataManager', () => {
     observers[0]!.progress({ state: 'indeterminate', value: null })
     observers[0]!.bell()
     observers[0]!.bell()
+    await manager.drain()
     observers[0]!.progress(null)
     const cleared = manager.get('one')
     observers[0]!.progress(null)
@@ -682,26 +815,28 @@ describe('TerminalMetadataManager', () => {
     })
 
     observers[0]!.bell()
-    manager.acknowledgeBell('one', 1)
+    await manager.drain()
+    await manager.acknowledgeBell('one', 1)
     expect(manager.get('one').bell).toMatchObject({
       sequence: 1,
       unread: false
     })
 
     observers[0]!.bell()
-    manager.acknowledgeBell('one', 1)
+    await manager.drain()
+    await manager.acknowledgeBell('one', 1)
     expect(manager.get('one').bell).toMatchObject({
       sequence: 2,
       unread: true
     })
 
-    manager.acknowledgeBell('one', 2)
-    manager.acknowledgeBell('one', 2)
+    await manager.acknowledgeBell('one', 2)
+    await manager.acknowledgeBell('one', 2)
     expect(manager.get('one').bell).toMatchObject({
       sequence: 2,
       unread: false
     })
-    expect(() => manager.acknowledgeBell('one', 3)).toThrowError(
+    await expect(manager.acknowledgeBell('one', 3)).rejects.toEqual(
       expect.objectContaining({ code: 'BELL_SEQUENCE_AHEAD', status: 409 })
     )
     expect(published).toHaveLength(4)
@@ -845,6 +980,30 @@ describe('TerminalMetadataManager', () => {
     await vi.advanceTimersByTimeAsync(TERMINAL_PROGRESS_STALE_MS)
     expect(manager.snapshot()).toEqual([])
     expect(published).toHaveLength(eventCount)
+  })
+
+  it('deletes persisted bell state when its terminal is removed', async () => {
+    const item = terminal('one')
+    const { manager, bellStateStore } = fixture(
+      [item],
+      [
+        {
+          terminalId: item.id,
+          worktreeId: item.worktreeId,
+          sequence: 2,
+          occurredAt: '2026-01-01T00:02:00.000Z',
+          unread: true
+        }
+      ]
+    )
+    managers.push(manager)
+
+    await manager.initialize()
+    manager.removeTerminal(item.id)
+    await manager.drain()
+
+    expect(bellStateStore.delete).toHaveBeenCalledWith(item.id)
+    expect(manager.snapshot()).toEqual([])
   })
 
   it('tracks terminals created after startup and disposes them on removal', async () => {

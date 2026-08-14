@@ -14,11 +14,13 @@ import { ResizableSidebarRail } from './workspace-shell'
 
 export interface WorkspaceSidebarProps {
   projectSwitcher: ReactNode
+  notificationCenter: ReactNode
   children: ReactNode
 }
 
 export function WorkspaceSidebar({
   projectSwitcher,
+  notificationCenter,
   children
 }: WorkspaceSidebarProps) {
   return (
@@ -42,7 +44,8 @@ export function WorkspaceSidebar({
           </SidebarTrigger>
         </div>
         <div className="flex items-center gap-1 p-2 max-[700px]:pt-0">
-          {projectSwitcher}
+          <div className="min-w-0 flex-1">{projectSwitcher}</div>
+          <div className="max-[700px]:hidden">{notificationCenter}</div>
         </div>
       </SidebarHeader>
       <SidebarContent className="gap-0 overflow-hidden">
@@ -56,18 +59,20 @@ export function WorkspaceSidebar({
 export function WorkspaceMobileHeader({
   selectedTerminalId,
   terminals,
-  onSelectTerminal
+  onSelectTerminal,
+  notificationCenter
 }: {
   selectedTerminalId: string | null
   terminals: TerminalRecord[]
   onSelectTerminal: (terminal: TerminalRecord) => void
+  notificationCenter: ReactNode
 }) {
   const { isMobile, openMobile } = useSidebar()
   const { titles: runtimeTitles } = useTerminalNavigationMetadata()
 
   return (
     <header
-      className="mobile-bar hidden min-w-0 grid-cols-[2.75rem_minmax(0,1fr)] items-center gap-2 border-b border-white/8 bg-zinc-900/95 px-2 backdrop-blur max-[700px]:grid"
+      className="mobile-bar hidden min-w-0 grid-cols-[2.75rem_minmax(0,1fr)_2.75rem] items-center gap-2 border-b border-white/8 bg-zinc-900/95 px-2 backdrop-blur max-[700px]:grid"
       inert={isMobile && openMobile ? true : undefined}
     >
       <SidebarTrigger
@@ -100,6 +105,7 @@ export function WorkspaceMobileHeader({
           </option>
         ))}
       </NativeSelect>
+      {notificationCenter}
     </header>
   )
 }

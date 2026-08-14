@@ -8,7 +8,7 @@
 
 Treeport needs a durable local catalog, but it should remain barely stateful and easy to reconstruct. Git already owns repositories, worktrees, branches, commits, and files. The application-owned tmux server owns live terminal processes. Duplicating either system in SQLite would create conflicting sources of truth and make recovery less reliable.
 
-Treeport does need a small amount of durable application state: repository registration and presentation metadata, terminal presets, and operation records used to recover interrupted Treeport operations. That state needs an explicit upgrade path before public releases.
+Treeport does need a small amount of durable application state: repository registration and presentation metadata, terminal presets, terminal attention acknowledgement state, and operation records used to recover interrupted Treeport operations. Terminal attention state records only the latest BEL sequence and read status per terminal; it is neither a terminal-process manifest nor general notification history. That state needs an explicit upgrade path before public releases.
 
 ## Decision
 

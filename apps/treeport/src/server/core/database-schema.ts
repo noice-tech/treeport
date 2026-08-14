@@ -84,6 +84,23 @@ export const worktrees = sqliteTable(
   ]
 )
 
+export const terminalBellStates = sqliteTable(
+  'terminal_bell_states',
+  {
+    terminalId: text('terminal_id').primaryKey(),
+    worktreeId: text('worktree_id')
+      .notNull()
+      .references(() => worktrees.id, { onDelete: 'cascade' }),
+    sequence: integer().notNull(),
+    occurredAt: text('occurred_at').notNull(),
+    unread: integer().notNull()
+  },
+  (table) => [
+    check('terminal_bell_states_sequence_check', sql`${table.sequence} > 0`),
+    check('terminal_bell_states_unread_check', sql`${table.unread} IN (0,1)`)
+  ]
+)
+
 export const webPanels = sqliteTable(
   'web_panels',
   {

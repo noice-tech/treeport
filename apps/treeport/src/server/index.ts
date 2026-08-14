@@ -111,13 +111,15 @@ function shutdown(): void {
   attachments.dispose()
   terminalMetadata.dispose()
   io.close(() => {
-    void service.drainMutations().then(async () => {
-      await service.disposeWebPanelRuntime()
-      await vite?.close()
-      database.close()
-      await ownership.release()
-      process.exit(0)
-    })
+    void Promise.all([service.drainMutations(), terminalMetadata.drain()]).then(
+      async () => {
+        await service.disposeWebPanelRuntime()
+        await vite?.close()
+        database.close()
+        await ownership.release()
+        process.exit(0)
+      }
+    )
   })
   setTimeout(() => process.exit(1), 5_000).unref()
 }

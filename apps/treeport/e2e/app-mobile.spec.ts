@@ -10,9 +10,28 @@ test.describe('mobile terminal UI', () => {
       {
         terminalId: 'term_pi',
         title: 'background · /repo',
-        progress: { state: 'normal', value: 42 }
+        progress: { state: 'normal', value: 42 },
+        bell: {
+          sequence: 3,
+          at: '2026-01-01T00:02:00.000Z',
+          unread: true
+        }
       }
     ])
+    const notifications = page.getByRole('button', {
+      name: 'Notifications, 1 unread'
+    })
+    await expect(notifications).toBeVisible()
+    await notifications.click()
+    const notificationCenter = page.getByRole('dialog', {
+      name: 'Notifications'
+    })
+    await expect(
+      notificationCenter.getByText('background · /repo')
+    ).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(notifications).toBeVisible()
+
     const trigger = page.getByLabel('Open worktree drawer')
     await trigger.click()
     await expect(page.getByLabel('Close drawer')).toBeFocused()
@@ -29,7 +48,11 @@ test.describe('mobile terminal UI', () => {
             progress: null,
             progressStartedAt: '2026-01-01T00:00:00.000Z',
             progressClearedAt: '2026-01-01T00:00:01.000Z',
-            bell: null
+            bell: {
+              sequence: 3,
+              at: '2026-01-01T00:02:00.000Z',
+              unread: true
+            }
           }
         })
       )
@@ -42,7 +65,7 @@ test.describe('mobile terminal UI', () => {
 
     await trigger.click()
     await page
-      .getByRole('button', { name: 'background · /repo, running', exact: true })
+      .getByRole('button', { name: /background · \/repo, running.*bell/ })
       .click()
     await expect(page.locator('.xterm')).toBeVisible()
     await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
