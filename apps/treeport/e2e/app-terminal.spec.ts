@@ -519,6 +519,10 @@ test.describe('desktop worktree and terminal workflows', () => {
       )
     ).toEqual([])
 
+    const previousWorkspaceUrl = page.url()
+    await expect(
+      page.getByRole('main', { name: 'zsh · /worktrees/topic terminal' })
+    ).toBeVisible()
     await notificationTrigger.click()
     const acknowledgement = page.waitForRequest(
       (request) =>
@@ -532,6 +536,28 @@ test.describe('desktop worktree and terminal workflows', () => {
     await expect(notificationCenter).toHaveCount(0)
     const request = await acknowledgement
     expect(request.postDataJSON()).toEqual({ sequence: 4 })
+    await expect(page).toHaveURL(
+      /\/projects\/proj_1\/worktrees\/wt_topic\/terminals\/term_pi$/
+    )
+    const notificationTerminal = page.getByRole('main', {
+      name: 'zsh · /worktrees/topic terminal'
+    })
+    await expect(notificationTerminal).toBeVisible()
+    await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
+
+    await page.goBack()
+    await expect(page).toHaveURL(previousWorkspaceUrl)
+    await expect(
+      page.getByRole('main', { name: 'zsh · /worktrees/topic terminal' })
+    ).toBeVisible()
+    await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
+
+    await page.goForward()
+    await expect(page).toHaveURL(
+      /\/projects\/proj_1\/worktrees\/wt_topic\/terminals\/term_pi$/
+    )
+    await expect(notificationTerminal).toBeVisible()
+    await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
     await expect(piTreeRow).toBeVisible()
 
     await page.evaluate(() =>

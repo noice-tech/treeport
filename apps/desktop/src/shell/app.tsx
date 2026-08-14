@@ -1,3 +1,4 @@
+import { ChevronLeftIcon, ChevronRightIcon } from 'lucide-react'
 import {
   type PointerEvent as ReactPointerEvent,
   useEffect,
@@ -8,6 +9,7 @@ import { ConnectDialog } from './connect-dialog'
 import { ConnectionPage } from './connection-page'
 import { ManageComputersDialog } from './manage-computers-dialog'
 import { selectedComputer, useShellState } from './shell-state'
+import { Button } from './ui'
 
 function Titlebar() {
   const state = useShellState()
@@ -15,8 +17,38 @@ function Titlebar() {
     return null
   }
 
+  const shortcutSuffix = state.platform === 'darwin'
+
   return (
-    <header className="fixed inset-x-0 top-0 z-10 h-8 select-none bg-zinc-950 [-webkit-app-region:drag]" />
+    <header className="fixed inset-x-0 top-0 z-10 flex h-8 select-none items-center bg-zinc-950 [-webkit-app-region:drag]">
+      <nav
+        aria-label="Workspace history"
+        className={`flex items-center gap-0.5 [-webkit-app-region:no-drag] ${state.platform === 'darwin' ? 'ml-[72px]' : 'ml-2'}`}
+      >
+        <Button
+          variant="ghost"
+          size={null}
+          className="size-6 p-0 text-zinc-500 [&_svg]:size-4"
+          title={`Back${shortcutSuffix ? ' (⌘[)' : ''}`}
+          aria-label="Back"
+          disabled={!state.navigation.canGoBack}
+          onClick={() => window.treeportShell.navigateHistory('back')}
+        >
+          <ChevronLeftIcon />
+        </Button>
+        <Button
+          variant="ghost"
+          size={null}
+          className="size-6 p-0 text-zinc-500 [&_svg]:size-4"
+          title={`Forward${shortcutSuffix ? ' (⌘])' : ''}`}
+          aria-label="Forward"
+          disabled={!state.navigation.canGoForward}
+          onClick={() => window.treeportShell.navigateHistory('forward')}
+        >
+          <ChevronRightIcon />
+        </Button>
+      </nav>
+    </header>
   )
 }
 

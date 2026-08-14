@@ -94,6 +94,10 @@ test('connects the desktop shell, preserves native behavior, and restores render
     })
 
     let selector = await electronApp.firstWindow()
+    await expect(selector.getByRole('button', { name: 'Back' })).toBeDisabled()
+    await expect(
+      selector.getByRole('button', { name: 'Forward' })
+    ).toBeDisabled()
     await expect(
       selector.getByRole('heading', {
         name: 'Treeport isn’t available on this computer'
@@ -150,6 +154,10 @@ test('connects the desktop shell, preserves native behavior, and restores render
         name: 'Treeport isn’t available on this computer'
       })
     ).toBeVisible({ timeout: 8_000 })
+    await expect(selector.getByRole('button', { name: 'Back' })).toBeDisabled()
+    await expect(
+      selector.getByRole('button', { name: 'Forward' })
+    ).toBeDisabled()
     await new Promise<void>((resolve) =>
       server.listen(port, '127.0.0.1', resolve)
     )
@@ -166,6 +174,118 @@ test('connects the desktop shell, preserves native behavior, and restores render
         }, origin)
       )
       .toContain('Treeport desktop test')
+    const backButton = selector.getByRole('button', { name: 'Back' })
+    const forwardButton = selector.getByRole('button', { name: 'Forward' })
+    await expect(backButton).toBeDisabled()
+    await expect(forwardButton).toBeDisabled()
+
+    const terminalPath =
+      '/projects/project-1/worktrees/worktree-1/terminals/terminal-1'
+    const panelPath = '/projects/project-1/worktrees/worktree-1/panels/panel-1'
+    const alternateProjectPath = '/projects/project-2'
+    await electronApp.evaluate(
+      ({ webContents }, input) => {
+        const guest = webContents
+          .getAllWebContents()
+          .find((contents) => contents.getURL().startsWith(input.origin))
+        return guest?.executeJavaScript(`
+          history.pushState({}, '', ${JSON.stringify(input.terminalPath)})
+          history.pushState({}, '', ${JSON.stringify(input.panelPath)})
+        `)
+      },
+      { origin, terminalPath, panelPath }
+    )
+    await expect(backButton).toBeEnabled()
+    await expect(forwardButton).toBeDisabled()
+
+    await backButton.click()
+    await expect
+      .poll(() =>
+        electronApp!.evaluate(({ webContents }, expectedOrigin) => {
+          const guest = webContents
+            .getAllWebContents()
+            .find((contents) => contents.getURL().startsWith(expectedOrigin))
+          return guest?.executeJavaScript('location.pathname')
+        }, origin)
+      )
+      .toBe(terminalPath)
+    await expect(backButton).toBeEnabled()
+    await expect(forwardButton).toBeEnabled()
+
+    await forwardButton.click()
+    await expect
+      .poll(() =>
+        electronApp!.evaluate(({ webContents }, expectedOrigin) => {
+          const guest = webContents
+            .getAllWebContents()
+            .find((contents) => contents.getURL().startsWith(expectedOrigin))
+          return guest?.executeJavaScript('location.pathname')
+        }, origin)
+      )
+      .toBe(panelPath)
+
+    await backButton.click()
+    await expect
+      .poll(() =>
+        electronApp!.evaluate(({ webContents }, expectedOrigin) => {
+          const guest = webContents
+            .getAllWebContents()
+            .find((contents) => contents.getURL().startsWith(expectedOrigin))
+          return guest?.executeJavaScript('location.pathname')
+        }, origin)
+      )
+      .toBe(terminalPath)
+    await electronApp.evaluate(
+      ({ webContents }, input) => {
+        const guest = webContents
+          .getAllWebContents()
+          .find((contents) => contents.getURL().startsWith(input.origin))
+        return guest?.executeJavaScript(
+          `history.pushState({}, '', ${JSON.stringify(input.path)})`
+        )
+      },
+      { origin, path: alternateProjectPath }
+    )
+    await expect(backButton).toBeEnabled()
+    await expect(forwardButton).toBeDisabled()
+
+    if (process.platform === 'darwin') {
+      for (const [key, expectedPath] of [
+        ['[', terminalPath],
+        [']', alternateProjectPath]
+      ] as const) {
+        await electronApp.evaluate(
+          ({ webContents }, input) => {
+            const guest = webContents
+              .getAllWebContents()
+              .find((contents) => contents.getURL().startsWith(input.origin))
+            guest?.sendInputEvent({
+              type: 'keyDown',
+              keyCode: input.key,
+              modifiers: ['meta']
+            })
+            guest?.sendInputEvent({
+              type: 'keyUp',
+              keyCode: input.key,
+              modifiers: ['meta']
+            })
+          },
+          { origin, key }
+        )
+        await expect
+          .poll(() =>
+            electronApp!.evaluate(({ webContents }, expectedOrigin) => {
+              const guest = webContents
+                .getAllWebContents()
+                .find((contents) =>
+                  contents.getURL().startsWith(expectedOrigin)
+                )
+              return guest?.executeJavaScript('location.pathname')
+            }, origin)
+          )
+          .toBe(expectedPath)
+      }
+    }
 
     const preferences = await electronApp.evaluate(
       ({ webContents }, expectedOrigin) =>
@@ -301,7 +421,11 @@ test('connects the desktop shell, preserves native behavior, and restores render
         newPanel: menu?.getMenuItemById('new-panel')?.accelerator,
         newPanelLabel: menu?.getMenuItemById('new-panel')?.label,
         closePanel: menu?.getMenuItemById('close-panel')?.accelerator,
-        closePanelLabel: menu?.getMenuItemById('close-panel')?.label
+        closePanelLabel: menu?.getMenuItemById('close-panel')?.label,
+        back: menu?.getMenuItemById('navigate-back')?.accelerator ?? null,
+        backEnabled: menu?.getMenuItemById('navigate-back')?.enabled,
+        forward: menu?.getMenuItemById('navigate-forward')?.accelerator ?? null,
+        forwardEnabled: menu?.getMenuItemById('navigate-forward')?.enabled
       }
     })
     expect(accelerators).toEqual({
@@ -310,7 +434,11 @@ test('connects the desktop shell, preserves native behavior, and restores render
       newPanel: 'CommandOrControl+Shift+T',
       newPanelLabel: 'New Panel…',
       closePanel: 'CommandOrControl+W',
-      closePanelLabel: 'Close Panel'
+      closePanelLabel: 'Close Panel',
+      back: process.platform === 'darwin' ? 'Command+[' : null,
+      backEnabled: true,
+      forward: process.platform === 'darwin' ? 'Command+]' : null,
+      forwardEnabled: false
     })
 
     const commandModifier = process.platform === 'darwin' ? 'meta' : 'control'
@@ -374,6 +502,10 @@ test('connects the desktop shell, preserves native behavior, and restores render
     })
     selector = await electronApp.firstWindow()
     await waitForGuest(electronApp, origin)
+    await expect(selector.getByRole('button', { name: 'Back' })).toBeDisabled()
+    await expect(
+      selector.getByRole('button', { name: 'Forward' })
+    ).toBeDisabled()
 
     await electronApp.evaluate(() => {
       const filesystem = process.getBuiltinModule('node:fs/promises')

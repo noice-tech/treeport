@@ -1,6 +1,7 @@
 import type {
   ComputerMutationResult,
   ComputerUpdate,
+  DesktopNavigationDirection,
   DesktopShellState
 } from '../desktop-contract'
 
@@ -20,6 +21,7 @@ declare global {
       ) => Promise<ComputerMutationResult>
       removeComputer: (id: string) => Promise<boolean>
       retryConnection: () => void
+      navigateHistory: (direction: DesktopNavigationDirection) => void
       copyStartCommand: () => Promise<void>
       openInstallationDocs: () => Promise<void>
     }>

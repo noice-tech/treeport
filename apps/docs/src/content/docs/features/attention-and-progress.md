@@ -29,6 +29,8 @@ printf '\007'
 
 Treeport marks the terminal as needing attention and, unless you are already viewing it, adds it to the notification center. The desktop app also requests your attention when a new background BEL arrives. Unread notifications survive Treeport restarts and are shared by connected clients.
 
+Opening a notification adds its terminal to your workspace navigation history. In the desktop app, use the title-bar Back control or `Command+[` to return to your previous workspace. Use Forward or `Command+]` to open the notification target again.
+
 Opening the terminal clears its notification and attention state. Closing the notification center does not mark anything as read. Treeport keeps the latest notification for each terminal rather than a history of every BEL.
 
 Useful moments for BEL include a failed check, an input prompt, completed CI, or an agent that has finished a task.

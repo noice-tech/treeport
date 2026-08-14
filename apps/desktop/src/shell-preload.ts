@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
 import type {
   ComputerMutationResult,
   ComputerUpdate,
+  DesktopNavigationDirection,
   DesktopShellState
 } from './desktop-contract'
 
@@ -39,6 +40,9 @@ const shellBridge = Object.freeze({
   },
   retryConnection(): void {
     ipcRenderer.send('shell:retry-connection')
+  },
+  navigateHistory(direction: DesktopNavigationDirection): void {
+    ipcRenderer.send('shell:navigate-history', direction)
   },
   copyStartCommand(): Promise<void> {
     return ipcRenderer.invoke('shell:copy-start-command')
