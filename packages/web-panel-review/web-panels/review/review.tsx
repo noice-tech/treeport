@@ -5,7 +5,10 @@ import {
   type SelectedLineRange
 } from '@pierre/diffs/react'
 import { FileTree, useFileTree } from '@pierre/trees/react'
-import { treeport } from '@treeport/panel-sdk'
+import {
+  treeport,
+  type GitDiffChangeSets
+} from '@treeport/panel-sdk'
 import {
   useCallback,
   useEffect,
@@ -25,6 +28,7 @@ interface ReviewComment {
   side: CommentSide
   lineNumber: number
   body: string
+  resolved: boolean
   draft?: boolean
   originalBody?: string
 }
@@ -43,7 +47,9 @@ interface FindMatch extends SearchableLine {
 
 interface LoadedReview {
   summary: string
+  generatedAt: string
   files: FileDiffMetadata[]
+  changeSets: GitDiffChangeSets
   searchableLines: SearchableLine[]
 }
 
@@ -62,9 +68,9 @@ const TREE_CSS = `
   }
 `
 
-function isReviewComment(value: unknown): value is ReviewComment {
+function parseReviewComment(value: unknown): ReviewComment | null {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
-    return false
+    return null
   }
 
   const id: unknown = Reflect.get(value, 'id')
@@ -72,15 +78,28 @@ function isReviewComment(value: unknown): value is ReviewComment {
   const side: unknown = Reflect.get(value, 'side')
   const lineNumber: unknown = Reflect.get(value, 'lineNumber')
   const body: unknown = Reflect.get(value, 'body')
-  return (
-    typeof id === 'string' &&
-    typeof file === 'string' &&
-    (side === 'additions' || side === 'deletions') &&
-    Number.isInteger(lineNumber) &&
-    typeof lineNumber === 'number' &&
-    lineNumber >= 0 &&
-    typeof body === 'string'
-  )
+  const resolved: unknown = Reflect.get(value, 'resolved')
+  if (
+    typeof id !== 'string' ||
+    typeof file !== 'string' ||
+    (side !== 'additions' && side !== 'deletions') ||
+    !Number.isInteger(lineNumber) ||
+    typeof lineNumber !== 'number' ||
+    lineNumber < 0 ||
+    typeof body !== 'string' ||
+    (resolved !== undefined && typeof resolved !== 'boolean')
+  ) {
+    return null
+  }
+
+  return {
+    id,
+    file,
+    side,
+    lineNumber,
+    body,
+    resolved: resolved ?? false
+  }
 }
 
 function savedComments(comments: ReviewComment[]) {
@@ -158,51 +177,157 @@ function Chevron({ direction }: { direction: 'up' | 'down' }) {
 
 function ChangedFileTree({
   files,
+  changeSets,
   onSelect
 }: {
   files: FileDiffMetadata[]
+  changeSets: GitDiffChangeSets
   onSelect(file: string): void
 }) {
-  const uniqueFiles = useMemo(
-    () => [...new Map(files.map((file) => [file.name, file])).values()],
-    [files]
-  )
-  const paths = useMemo(
-    () => uniqueFiles.map((file) => file.name),
-    [uniqueFiles]
-  )
-  const gitStatus = useMemo(
-    () =>
-      uniqueFiles.map((file) => {
-        let status: 'modified' | 'added' | 'deleted' | 'renamed' = 'modified'
-        if (file.type === 'new') {
+  const tree = useMemo(() => {
+    const filesByName = new Map(files.map((file) => [file.name, file]))
+    const visible = (paths: string[]) =>
+      [...new Set(paths)].filter((path) => filesByName.has(path)).sort()
+    const branch = visible(changeSets.branch)
+    const staged = visible(changeSets.staged)
+    const unstaged = visible(changeSets.unstaged)
+    const untracked = visible(changeSets.untracked)
+    const uncommittedCount = new Set([...staged, ...unstaged, ...untracked])
+      .size
+    const uncommittedRoot = `Uncommitted Changes (${uncommittedCount})`
+    const branchRoot = `Branch Changes (${branch.length})`
+    const entries: Array<{
+      group: string
+      paths: string[]
+      untracked: boolean
+    }> = [
+      {
+        group: `${uncommittedRoot}/Staged (${staged.length})`,
+        paths: staged,
+        untracked: false
+      },
+      {
+        group: `${uncommittedRoot}/Unstaged (${unstaged.length})`,
+        paths: unstaged,
+        untracked: false
+      },
+      {
+        group: `${uncommittedRoot}/Untracked (${untracked.length})`,
+        paths: untracked,
+        untracked: true
+      },
+      { group: branchRoot, paths: branch, untracked: false }
+    ]
+    const actualPaths = new Map<string, string>()
+    const gitStatus: Array<{
+      path: string
+      status:
+        | 'modified'
+        | 'added'
+        | 'deleted'
+        | 'renamed'
+        | 'untracked'
+    }> = []
+    for (const entry of entries) {
+      for (const path of entry.paths) {
+        const syntheticPath = `${entry.group}/${path}`
+        actualPaths.set(syntheticPath, path)
+        const file = filesByName.get(path)!
+        let status:
+          | 'modified'
+          | 'added'
+          | 'deleted'
+          | 'renamed'
+          | 'untracked' = entry.untracked ? 'untracked' : 'modified'
+        if (!entry.untracked && file.type === 'new') {
           status = 'added'
-        } else if (file.type === 'deleted') {
+        } else if (!entry.untracked && file.type === 'deleted') {
           status = 'deleted'
         } else if (
-          file.type === 'rename-pure' ||
-          file.type === 'rename-changed'
+          !entry.untracked &&
+          (file.type === 'rename-pure' || file.type === 'rename-changed')
         ) {
           status = 'renamed'
         }
 
-        return { path: file.name, status }
-      }),
-    [uniqueFiles]
-  )
+        gitStatus.push({ path: syntheticPath, status })
+      }
+    }
+
+    const paths = [...actualPaths.keys()]
+    const initialExpandedPaths = new Set<string>()
+    if (uncommittedCount > 0) {
+      for (const path of paths) {
+        const segments = path.split('/')
+        if (!segments[0]?.startsWith('Uncommitted Changes')) {
+          continue
+        }
+
+        for (let depth = 1; depth < segments.length; depth += 1) {
+          initialExpandedPaths.add(segments.slice(0, depth).join('/'))
+        }
+      }
+    }
+
+    return {
+      paths,
+      actualPaths,
+      gitStatus,
+      hasUncommittedChanges: uncommittedCount > 0,
+      initialExpandedPaths: [...initialExpandedPaths]
+    }
+  }, [changeSets, files])
   const { model } = useFileTree({
-    paths,
-    gitStatus,
-    initialExpansion: 'open',
+    paths: tree.paths,
+    gitStatus: tree.gitStatus,
+    initialExpansion: tree.hasUncommittedChanges ? 'closed' : 'open',
+    initialExpandedPaths: tree.initialExpandedPaths,
     flattenEmptyDirectories: false,
     density: 'compact',
     unsafeCSS: TREE_CSS,
     search: true,
     fileTreeSearchMode: 'hide-non-matches',
+    sort: (left, right) => {
+      const leftRootOrder = left.segments[0]?.startsWith(
+        'Uncommitted Changes'
+      )
+        ? 0
+        : 1
+      const rightRootOrder = right.segments[0]?.startsWith(
+        'Uncommitted Changes'
+      )
+        ? 0
+        : 1
+      if (leftRootOrder !== rightRootOrder) {
+        return leftRootOrder - rightRootOrder
+      }
+
+      if (leftRootOrder === 0) {
+        const order = ['Staged', 'Unstaged', 'Untracked']
+        const leftGroup = left.segments[1] ?? left.basename
+        const rightGroup = right.segments[1] ?? right.basename
+        const leftOrder = order.findIndex((name) =>
+          leftGroup.startsWith(name)
+        )
+        const rightOrder = order.findIndex((name) =>
+          rightGroup.startsWith(name)
+        )
+        if (leftOrder !== rightOrder) {
+          return leftOrder - rightOrder
+        }
+      }
+
+      if (left.isDirectory !== right.isDirectory) {
+        return left.isDirectory ? -1 : 1
+      }
+
+      return left.basename.localeCompare(right.basename)
+    },
     onSelectionChange: (selectedPaths) => {
-      const selected = selectedPaths.find((path) => paths.includes(path))
-      if (selected) {
-        requestAnimationFrame(() => onSelect(selected))
+      const selected = selectedPaths.find((path) => tree.actualPaths.has(path))
+      const actualPath = selected ? tree.actualPaths.get(selected) : null
+      if (actualPath) {
+        requestAnimationFrame(() => onSelect(actualPath))
       }
     }
   })
@@ -216,14 +341,18 @@ function CommentEditor({
   onCancel,
   onDelete,
   onEdit,
-  onSave
+  onResolve,
+  onSave,
+  onUnresolve
 }: {
   comment: ReviewComment
   active: boolean
   onCancel(): void
   onDelete(): void
   onEdit(): void
+  onResolve(): void
   onSave(body: string): void
+  onUnresolve(): void
 }) {
   const [body, setBody] = useState(comment.body)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -251,7 +380,18 @@ function CommentEditor({
       className={`review-comment${active ? ' active' : ''}`}
       data-comment-id={comment.id}
     >
-      {comment.draft ? (
+      {comment.resolved ? (
+        <div className="resolved-comment">
+          <span>Resolved comment</span>
+          <button
+            type="button"
+            aria-label={`Unresolve comment on ${comment.file} line ${comment.lineNumber}`}
+            onClick={onUnresolve}
+          >
+            Unresolve
+          </button>
+        </div>
+      ) : comment.draft ? (
         <>
           <textarea
             ref={textareaRef}
@@ -275,6 +415,13 @@ function CommentEditor({
         <>
           <p>{comment.body}</p>
           <div className="comment-actions">
+            <button
+              type="button"
+              aria-label={`Resolve comment on ${comment.file} line ${comment.lineNumber}`}
+              onClick={onResolve}
+            >
+              Resolve
+            </button>
             <button type="button" onClick={onEdit}>
               Edit
             </button>
@@ -297,6 +444,9 @@ function ReviewApp() {
   commentsRef.current = comments
   const [viewedFiles, setViewedFiles] = useState<Set<string>>(new Set())
   const [collapsedFiles, setCollapsedFiles] = useState<Set<string>>(new Set())
+  const collapsedFilesRef = useRef(collapsedFiles)
+  collapsedFilesRef.current = collapsedFiles
+  const autoCollapsedFiles = useRef<Set<string>>(new Set())
   const fileStateLoaded = useRef(false)
   const [selectedFile, setSelectedFile] = useState<string | null>(null)
   const [selectedLines, setSelectedLines] = useState<{
@@ -328,10 +478,16 @@ function ReviewApp() {
   const files = loaded?.files ?? []
   const fileNames = useMemo(() => files.map((file) => file.name), [files])
   const saved = useMemo(() => savedComments(comments), [comments])
+  const unresolved = useMemo(
+    () => saved.filter((comment) => !comment.resolved),
+    [saved]
+  )
   const viewedCount = fileNames.filter((file) => viewedFiles.has(file)).length
   const progress =
     fileNames.length === 0 ? 0 : (viewedCount / fileNames.length) * 100
-  const activeCommentIndex = saved.findIndex(({ id }) => id === activeCommentId)
+  const activeCommentIndex = unresolved.findIndex(
+    ({ id }) => id === activeCommentId
+  )
   const findMatches = useMemo(() => {
     const query = findQuery.toLocaleLowerCase()
     if (!query || !loaded) {
@@ -393,9 +549,10 @@ function ReviewApp() {
           treeport.storage.get(VIEWED_KEY)
         ])
       const parsedComments: ReviewComment[] = Array.isArray(storedComments)
-        ? storedComments.flatMap((comment): ReviewComment[] =>
-            isReviewComment(comment) ? [comment] : []
-          )
+        ? storedComments.flatMap((comment): ReviewComment[] => {
+            const parsed = parseReviewComment(comment)
+            return parsed ? [parsed] : []
+          })
         : []
       const parsedViewed = new Set(
         Array.isArray(storedViewedFiles)
@@ -420,18 +577,48 @@ function ReviewApp() {
       clearCopyFeedback()
       setComments(parsedComments)
       setActiveCommentId((current) =>
-        parsedComments.some(({ id }) => id === current) ? current : null
+        parsedComments.some(
+          ({ id, resolved }) => id === current && !resolved
+        )
+          ? current
+          : null
       )
       setViewedFiles(parsedViewed)
-      if (!fileStateLoaded.current) {
-        setCollapsedFiles(new Set(parsedViewed))
-        fileStateLoaded.current = true
+      const uncommittedFiles = new Set([
+        ...diff.changeSets.staged,
+        ...diff.changeSets.unstaged,
+        ...diff.changeSets.untracked
+      ])
+      const nextAutoCollapsedFiles = new Set<string>()
+      if (uncommittedFiles.size > 0) {
+        for (const file of diff.changeSets.branch) {
+          if (!uncommittedFiles.has(file)) {
+            nextAutoCollapsedFiles.add(file)
+          }
+        }
       }
+
+      const collapsed = fileStateLoaded.current
+        ? new Set(collapsedFilesRef.current)
+        : new Set(parsedViewed)
+      for (const file of autoCollapsedFiles.current) {
+        if (!parsedViewed.has(file)) {
+          collapsed.delete(file)
+        }
+      }
+      for (const file of nextAutoCollapsedFiles) {
+        collapsed.add(file)
+      }
+      setCollapsedFiles(collapsed)
+      autoCollapsedFiles.current = nextAutoCollapsedFiles
+      fileStateLoaded.current = true
 
       setCommentStatus('')
       setLoaded({
         summary: `${context.project.name} / ${context.worktree.name} · ${diff.baseRef}`,
+        generatedAt: diff.generatedAt,
         files: parsedFiles,
+        changeSets: diff.changeSets,
         searchableLines: searchableLinesFor(parsedFiles)
       })
     } catch (reason) {
@@ -656,18 +843,18 @@ function ReviewApp() {
   )
 
   const navigateComments = (direction: number) => {
-    if (saved.length === 0) {
+    if (unresolved.length === 0) {
       return
     }
 
-    const current = saved.findIndex(({ id }) => id === activeCommentId)
+    const current = unresolved.findIndex(({ id }) => id === activeCommentId)
     const index =
       current === -1
         ? direction > 0
           ? 0
-          : saved.length - 1
-        : (current + direction + saved.length) % saved.length
-    navigateToComment(saved[index]!)
+          : unresolved.length - 1
+        : (current + direction + unresolved.length) % unresolved.length
+    navigateToComment(unresolved[index]!)
   }
 
   const updateComment = (next: ReviewComment[], persist: boolean) => {
@@ -727,9 +914,19 @@ function ReviewApp() {
     updateComment(next, true)
     setSelectedLines(null)
   }
+  const setCommentResolved = (comment: ReviewComment, resolved: boolean) => {
+    const next = commentsRef.current.map((candidate) =>
+      candidate.id === comment.id ? { ...candidate, resolved } : candidate
+    )
+    if (resolved && activeCommentId === comment.id) {
+      setActiveCommentId(null)
+    }
+
+    updateComment(next, true)
+  }
 
   const copy = () => {
-    const output = saved
+    const output = unresolved
       .map((comment) => {
         const side = comment.side === 'deletions' ? ' (deleted line)' : ''
         return `${comment.file}:${comment.lineNumber}${side}\n${comment.body}`
@@ -745,8 +942,8 @@ function ReviewApp() {
     textarea.remove()
     setCopyFeedback(
       copied
-        ? `Copied ${saved.length} ${saved.length === 1 ? 'comment' : 'comments'}`
-        : 'Could not copy comments'
+        ? `Copied ${unresolved.length} ${unresolved.length === 1 ? 'comment' : 'comments'}`
+        : 'Could not copy unresolved comments'
     )
     if (copyTimer.current) {
       clearTimeout(copyTimer.current)
@@ -905,32 +1102,32 @@ function ReviewApp() {
           <div className="comment-navigation" aria-label="Comment navigation">
             <span id="comment-position">
               {activeCommentIndex === -1
-                ? `${saved.length} ${saved.length === 1 ? 'comment' : 'comments'}`
-                : `${activeCommentIndex + 1} of ${saved.length}`}
+                ? `${unresolved.length} unresolved`
+                : `${activeCommentIndex + 1} of ${unresolved.length} unresolved`}
             </span>
             <div className="comment-navigation-buttons">
               <button
                 type="button"
-                aria-label="Previous comment"
-                title="Previous comment"
-                disabled={!saved.length}
+                aria-label="Previous unresolved comment"
+                title="Previous unresolved comment"
+                disabled={!unresolved.length}
                 onClick={() => navigateComments(-1)}
               >
                 <Chevron direction="up" />
               </button>
               <button
                 type="button"
-                aria-label="Next comment"
-                title="Next comment"
-                disabled={!saved.length}
+                aria-label="Next unresolved comment"
+                title="Next unresolved comment"
+                disabled={!unresolved.length}
                 onClick={() => navigateComments(1)}
               >
                 <Chevron direction="down" />
               </button>
             </div>
           </div>
-          <button type="button" disabled={!saved.length} onClick={copy}>
-            {copyFeedback ?? `Copy comments (${saved.length})`}
+          <button type="button" disabled={!unresolved.length} onClick={copy}>
+            {copyFeedback ?? `Copy unresolved (${unresolved.length})`}
           </button>
           <button type="button" disabled={loading} onClick={() => void load()}>
             Refresh
@@ -1002,8 +1199,9 @@ function ReviewApp() {
           <div id="file-tree">
             {files.length > 0 && (
               <ChangedFileTree
-                key={loaded?.summary}
+                key={loaded?.generatedAt}
                 files={files}
+                changeSets={loaded!.changeSets}
                 onSelect={selectFile}
               />
             )}
@@ -1079,6 +1277,7 @@ function ReviewApp() {
                             side: range.side ?? 'additions',
                             lineNumber: range.start,
                             body: '',
+                            resolved: false,
                             draft: true
                           } satisfies ReviewComment
                         ]
@@ -1146,7 +1345,11 @@ function ReviewApp() {
                           onCancel={() => cancelComment(comment)}
                           onDelete={() => deleteComment(comment)}
                           onEdit={() => editComment(comment)}
+                          onResolve={() => setCommentResolved(comment, true)}
                           onSave={(body) => saveComment(comment, body)}
+                          onUnresolve={() =>
+                            setCommentResolved(comment, false)
+                          }
                         />
                       )
                     }}

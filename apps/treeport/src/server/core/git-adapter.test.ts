@@ -110,9 +110,46 @@ describe('GitAdapter', () => {
         return { stdout: 'base\n', stderr: '', exitCode: 0 }
       }
 
-      if (command === 'diff' && args[0] === '--no-ext-diff') {
+      if (command === 'diff' && args[0] === '--no-index') {
+        return {
+          stdout: 'diff --git a/new file.txt b/new file.txt\n',
+          stderr: '',
+          exitCode: 1
+        }
+      }
+
+      if (command === 'diff' && args.includes('--binary')) {
         return {
           stdout: 'diff --git a/tracked b/tracked\n',
+          stderr: '',
+          exitCode: 0
+        }
+      }
+
+      if (
+        command === 'diff' &&
+        args.includes('--name-only') &&
+        args.at(-2) === 'base' &&
+        args.at(-1) === 'head'
+      ) {
+        return {
+          stdout: 'branch-only.ts\0shared file.ts\0',
+          stderr: '',
+          exitCode: 0
+        }
+      }
+
+      if (command === 'diff' && args.includes('--cached')) {
+        return {
+          stdout: 'partial.ts\0',
+          stderr: '',
+          exitCode: 0
+        }
+      }
+
+      if (command === 'diff' && args.includes('--name-only')) {
+        return {
+          stdout: 'shared file.ts\0partial.ts\0',
           stderr: '',
           exitCode: 0
         }
@@ -122,31 +159,40 @@ describe('GitAdapter', () => {
         return { stdout: 'new file.txt\0', stderr: '', exitCode: 0 }
       }
 
-      if (command === 'diff' && args[0] === '--no-index') {
-        return {
-          stdout: 'diff --git a/new file.txt b/new file.txt\n',
-          stderr: '',
-          exitCode: 1
-        }
-      }
-
       throw new Error(`Unexpected command ${request.args.join(' ')}`)
     })
     const result = await new GitAdapter(runner).worktreeDiff('/repo', 'trunk')
     expect(result).toMatchObject({
       baseRef: 'origin/trunk',
       baseCommit: 'base',
-      headCommit: 'head'
+      headCommit: 'head',
+      changeSets: {
+        branch: ['branch-only.ts', 'shared file.ts'],
+        staged: ['partial.ts'],
+        unstaged: ['partial.ts', 'shared file.ts'],
+        untracked: ['new file.txt']
+      }
     })
     expect(result.unified).toContain('diff --git a/tracked b/tracked')
     expect(result.unified).toContain('diff --git a/new file.txt b/new file.txt')
     expect(
       runner.calls
         .find(
-          (call) => call.args[0] === 'diff' && call.args[1] === '--no-ext-diff'
+          (call) => call.args[0] === 'diff' && call.args.includes('--binary')
         )
         ?.args.at(-1)
     ).toBe('base')
+    expect(
+      runner.calls
+        .find(
+          (call) =>
+            call.args[0] === 'diff' &&
+            call.args.includes('--name-only') &&
+            !call.args.includes('--cached') &&
+            call.args.length > 6
+        )
+        ?.args.slice(-2)
+    ).toEqual(['base', 'head'])
   })
 
   it('uses the first porcelain worktree as the main checkout', async () => {

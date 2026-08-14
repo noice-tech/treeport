@@ -7,6 +7,7 @@ import {
 
 export type {
   GitDiff,
+  GitDiffChangeSets,
   JsonValue,
   WebPanel,
   WebPanelContext,

@@ -614,21 +614,46 @@ export class GitAdapter {
     const mergeBase = await this.checked(cwd, ['merge-base', baseRef, 'HEAD'])
     const baseCommit = mergeBase.stdout.trim()
     const headCommit = await this.resolveCommit(cwd)
-    const diff = await this.checked(cwd, [
-      'diff',
-      '--no-ext-diff',
-      '--binary',
-      '--find-renames',
-      baseCommit
+    const [diff, branch, staged, unstaged, untracked] = await Promise.all([
+      this.checked(cwd, [
+        'diff',
+        '--no-ext-diff',
+        '--binary',
+        '--find-renames',
+        baseCommit
+      ]),
+      this.checked(cwd, [
+        'diff',
+        '--no-ext-diff',
+        '--name-only',
+        '-z',
+        '--find-renames',
+        baseCommit,
+        headCommit
+      ]),
+      this.checked(cwd, [
+        'diff',
+        '--no-ext-diff',
+        '--cached',
+        '--name-only',
+        '-z',
+        '--find-renames',
+        headCommit
+      ]),
+      this.checked(cwd, [
+        'diff',
+        '--no-ext-diff',
+        '--name-only',
+        '-z',
+        '--find-renames'
+      ]),
+      this.checked(cwd, ['ls-files', '--others', '--exclude-standard', '-z'])
     ])
-    const untracked = await this.checked(cwd, [
-      'ls-files',
-      '--others',
-      '--exclude-standard',
-      '-z'
-    ])
+    const paths = (output: string) =>
+      [...new Set(output.split('\0').filter(Boolean))].sort()
+    const untrackedPaths = paths(untracked.stdout)
     let unified = diff.stdout
-    for (const file of untracked.stdout.split('\0').filter(Boolean)) {
+    for (const file of untrackedPaths) {
       const addition = await this.runner.run({
         executable: this.executable,
         args: ['diff', '--no-index', '--binary', '--', '/dev/null', file],
@@ -647,7 +672,13 @@ export class GitAdapter {
       baseCommit,
       headCommit,
       generatedAt: new Date().toISOString(),
-      unified
+      unified,
+      changeSets: {
+        branch: paths(branch.stdout),
+        staged: paths(staged.stdout),
+        unstaged: paths(unstaged.stdout),
+        untracked: untrackedPaths
+      }
     }
   }
 
