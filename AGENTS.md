@@ -27,6 +27,10 @@ Treeport development terminals are usually managed by an outer Treeport instance
 - Public documentation belongs in `apps/docs/src/content/docs`.
 - Internal documentation, including architectural decisions, belongs in `apps/docs/internal` and must not be added to the public Starlight content collection or sidebar.
 
+## Communication
+
+- Use ASD-STE100 Simplified Technical English when you communicate with the user.
+
 ## Coding guidelines
 
 - Keep things in one function unless composable or reusable.
