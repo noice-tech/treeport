@@ -6,6 +6,13 @@ export type DesktopCommand =
 
 export type DesktopFileActionResult = 'opened' | 'rejected'
 
+export type DesktopNavigationDirection = 'back' | 'forward'
+
+export interface DesktopNavigationState {
+  canGoBack: boolean
+  canGoForward: boolean
+}
+
 export interface SavedComputer {
   id: string
   origin: string
@@ -50,6 +57,7 @@ export interface DesktopShellState {
   selectedComputerId?: string
   computers: ComputerSummary[]
   connection: ConnectionState
+  navigation: DesktopNavigationState
 }
 
 export type ComputerMutationResult =

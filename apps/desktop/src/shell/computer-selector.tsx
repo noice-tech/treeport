@@ -25,7 +25,7 @@ export function ComputerSelector({
       size="xs"
       title={label}
       aria-label={selected ? `Connected computer: ${selected.name}` : label}
-      className="pointer-events-auto max-w-[min(16rem,calc(100vw-1rem))] pr-2 pl-1.5 text-zinc-500 hover:text-zinc-100 [-webkit-app-region:no-drag]"
+      className="pointer-events-auto max-w-[min(16rem,calc(100vw-9rem))] pr-2 pl-1.5 text-zinc-500 hover:text-zinc-100 [-webkit-app-region:no-drag]"
       onClick={state.computers.length === 0 ? onConnect : undefined}
     >
       <MonitorIcon data-icon="inline-start" />

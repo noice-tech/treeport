@@ -29,6 +29,8 @@ import type {
   ComputerUpdate,
   ConnectionState,
   DesktopCommand,
+  DesktopNavigationDirection,
+  DesktopNavigationState,
   DesktopShellState
 } from './desktop-contract'
 import { filePathFromUrl } from './file-url'
@@ -88,6 +90,20 @@ function shellUrl(): string {
   ).toString()
 }
 
+function navigationState(): DesktopNavigationState {
+  const guest = activeGuest
+  if (!guest || guest.isDestroyed() || connection.status !== 'ready') {
+    return { canGoBack: false, canGoForward: false }
+  }
+
+  // Electron's canGoBack/canGoForward omit same-document pushState entries.
+  // Relative offsets include the TanStack Router locations in the guest.
+  return {
+    canGoBack: guest.navigationHistory.canGoToOffset(-1),
+    canGoForward: guest.navigationHistory.canGoToOffset(1)
+  }
+}
+
 function shellState(): DesktopShellState {
   return {
     appVersion: app.getVersion(),
@@ -97,12 +113,24 @@ function shellState(): DesktopShellState {
       ? { selectedComputerId: store.selectedComputer.id }
       : {}),
     computers: store?.summaries() ?? [],
-    connection
+    connection,
+    navigation: navigationState()
   }
 }
 
 function broadcastState(): void {
   const state = shellState()
+  const menu = Menu.getApplicationMenu()
+  const backItem = menu?.getMenuItemById('navigate-back')
+  const forwardItem = menu?.getMenuItemById('navigate-forward')
+  if (backItem) {
+    backItem.enabled = state.navigation.canGoBack
+  }
+
+  if (forwardItem) {
+    forwardItem.enabled = state.navigation.canGoForward
+  }
+
   for (const id of [...shellWebContentsIds]) {
     const contents = webContents.fromId(id)
     if (!contents || contents.isDestroyed()) {
@@ -198,6 +226,20 @@ function disposeGuest(): void {
   if (guest && !guest.isDestroyed()) {
     guest.close({ waitForBeforeUnload: false })
   }
+
+  broadcastState()
+}
+
+function navigateGuestHistory(direction: DesktopNavigationDirection): void {
+  const guest = activeGuest
+  if (!guest || guest.isDestroyed() || connection.status !== 'ready') {
+    return
+  }
+
+  const offset = direction === 'back' ? -1 : 1
+  if (guest.navigationHistory.canGoToOffset(offset)) {
+    guest.navigationHistory.goToOffset(offset)
+  }
 }
 
 function sendDesktopCommand(command: DesktopCommand): void {
@@ -215,9 +257,25 @@ function sendDesktopCommand(command: DesktopCommand): void {
 
 function installGuestSecurity(guest: WebContents, origin: string): void {
   guest.on('before-input-event', (event, input) => {
+    const key = input.key.toLowerCase()
+    if (
+      process.platform === 'darwin' &&
+      input.type === 'keyDown' &&
+      !input.isAutoRepeat &&
+      !input.isComposing &&
+      input.meta &&
+      !input.control &&
+      !input.alt &&
+      !input.shift &&
+      (key === '[' || key === ']')
+    ) {
+      event.preventDefault()
+      navigateGuestHistory(key === '[' ? 'back' : 'forward')
+      return
+    }
+
     const commandModifier =
       process.platform === 'darwin' ? input.meta : input.control
-    const key = input.key.toLowerCase()
     const command: DesktopCommand | undefined = input.shift
       ? key === 't'
         ? 'new-panel'
@@ -232,6 +290,7 @@ function installGuestSecurity(guest: WebContents, origin: string): void {
     if (
       input.type !== 'keyDown' ||
       input.isAutoRepeat ||
+      input.isComposing ||
       !commandModifier ||
       input.alt ||
       !command
@@ -269,8 +328,20 @@ function installGuestSecurity(guest: WebContents, origin: string): void {
   guest.session.setPermissionRequestHandler(
     (_contents, _permission, callback) => callback(false)
   )
+  const refreshNavigationState = () => {
+    if (activeGuest === guest) {
+      broadcastState()
+    }
+  }
+  guest.on('did-navigate', refreshNavigationState)
+  guest.on('did-navigate-in-page', (_event, _url, isMainFrame) => {
+    if (isMainFrame) {
+      refreshNavigationState()
+    }
+  })
   guest.on('did-finish-load', () => {
     guest.send('fullscreen-change', fullscreen)
+    refreshNavigationState()
   })
   const showGuestFailure = () => {
     if (activeGuest !== guest || connection.status !== 'ready') {
@@ -464,6 +535,7 @@ function loadShellContents(contents: WebContents): Promise<void> {
 }
 
 function installMenu(): void {
+  const navigation = navigationState()
   const template: MenuItemConstructorOptions[] = [
     ...(process.platform === 'darwin'
       ? ([{ role: 'appMenu' }] satisfies MenuItemConstructorOptions[])
@@ -505,6 +577,29 @@ function installMenu(): void {
       ]
     },
     { role: 'editMenu' },
+    {
+      label: 'Navigate',
+      submenu: [
+        {
+          id: 'navigate-back',
+          label: 'Back',
+          ...(process.platform === 'darwin'
+            ? { accelerator: 'Command+[' }
+            : {}),
+          enabled: navigation.canGoBack,
+          click: () => navigateGuestHistory('back')
+        },
+        {
+          id: 'navigate-forward',
+          label: 'Forward',
+          ...(process.platform === 'darwin'
+            ? { accelerator: 'Command+]' }
+            : {}),
+          enabled: navigation.canGoForward,
+          click: () => navigateGuestHistory('forward')
+        }
+      ]
+    },
     {
       label: 'View',
       submenu: [
@@ -616,9 +711,11 @@ function createWindow(url?: string): BrowserWindow {
 
       if (activeGuest === guest) {
         activeGuest = null
+        broadcastState()
       }
     })
     installGuestSecurity(guest, origin)
+    broadcastState()
   })
   void loadShellContents(window.webContents).catch((error: unknown) => {
     console.error('[Treeport] Could not load desktop shell', error)
@@ -754,6 +851,14 @@ function registerIpc(): void {
   ipcMain.on('shell:retry-connection', (event) => {
     if (isAuthorizedShellEvent(event)) {
       void connectSelected()
+    }
+  })
+  ipcMain.on('shell:navigate-history', (event, direction: unknown) => {
+    if (
+      isAuthorizedShellEvent(event) &&
+      (direction === 'back' || direction === 'forward')
+    ) {
+      navigateGuestHistory(direction)
     }
   })
   ipcMain.handle('shell:copy-start-command', (event) => {
