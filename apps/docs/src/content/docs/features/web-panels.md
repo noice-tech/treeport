@@ -86,6 +86,8 @@ const stopFind = treeport.shortcuts.onFind(() => {
 
 Use `treeport.panel.setTitle(title)` to set a runtime title for the current client. Use `treeport.panel.setTitle(null)` to restore the configured title. Runtime titles are not saved or sent to other clients.
 
-`treeport.diff()` returns merge-base metadata and a read-only unified diff. `treeport.shortcuts.onFind(handler)` routes `Cmd/Ctrl+F` to the panel and returns an unsubscribe function.
+`treeport.diff()` returns merge-base metadata and a read-only unified diff for the combined final worktree state. Relative file paths are grouped into `changeSets.branch` (merge base to `HEAD`), `changeSets.staged` (`HEAD` to index), `changeSets.unstaged` (index to working tree), and `changeSets.untracked`. Sets can overlap; for example, a committed branch file edited locally appears in both branch and unstaged changes.
+
+`treeport.shortcuts.onFind(handler)` routes `Cmd/Ctrl+F` to the panel and returns an unsubscribe function.
 
 `treeport.storage` is durable JSON key-value storage scoped to the panel instance. It is deleted when the panel is closed, and Treeport asks for confirmation before closing a panel with stored data. Keys are limited to 128 characters, values to 64 KiB, and each panel to 256 values or 1 MiB total.

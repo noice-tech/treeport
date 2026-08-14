@@ -1265,6 +1265,141 @@ test.describe('desktop worktree and terminal workflows', () => {
     await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
   })
 
+  test('groups review changes and persists resolved comments', async ({
+    page
+  }) => {
+    const mocked = await mockApp(page, [], { realReviewPanel: true })
+    mocked.setWebPanelStorage('panel_1', 'review-comments-v1', [
+      {
+        id: 'legacy-comment',
+        file: 'src/shared.ts',
+        side: 'additions',
+        lineNumber: 1,
+        body: 'Keep the shared behavior explicit.'
+      },
+      {
+        id: 'branch-comment',
+        file: 'src/branch.ts',
+        side: 'additions',
+        lineNumber: 1,
+        body: 'Cover the branch-only path.',
+        resolved: false
+      }
+    ])
+
+    await page.getByRole('button', { name: /^topic(?:,|\s|$)/ }).click()
+    await page.getByRole('button', { name: /^New panel/ }).click()
+    const launcher = page.getByRole('dialog', { name: 'New panel' })
+    await launcher.getByRole('button', { name: 'Review, web panel' }).click()
+    await expect
+      .poll(() =>
+        page
+          .frames()
+          .some((frame) =>
+            frame.url().includes('/api/web-panels/panel_1/assets/')
+          )
+      )
+      .toBe(true)
+    let reviewFrame = page
+      .frames()
+      .find((frame) => frame.url().includes('/api/web-panels/panel_1/assets/'))!
+
+    await expect(
+      reviewFrame.getByRole('treeitem', { name: 'Uncommitted Changes (3)' })
+    ).toBeVisible()
+    await expect(
+      reviewFrame.getByRole('treeitem', { name: 'Staged (1)' })
+    ).toBeVisible()
+    await expect(
+      reviewFrame.getByRole('treeitem', { name: 'Unstaged (2)' })
+    ).toBeVisible()
+    await expect(
+      reviewFrame.getByRole('treeitem', { name: 'Untracked (1)' })
+    ).toBeVisible()
+    await expect(
+      reviewFrame.getByRole('treeitem', { name: 'Branch Changes (2)' })
+    ).toBeVisible()
+    await expect(
+      reviewFrame.getByRole('treeitem', { name: 'shared.ts', exact: true })
+    ).toHaveCount(2)
+
+    await expect(reviewFrame.getByText('2 unresolved')).toBeVisible()
+    await reviewFrame
+      .getByRole('button', {
+        name: 'Resolve comment on src/shared.ts line 1'
+      })
+      .click()
+    await expect(reviewFrame.getByText('Resolved comment')).toBeVisible()
+    await expect(reviewFrame.getByText('1 unresolved')).toBeVisible()
+    await expect(
+      reviewFrame.getByRole('button', { name: 'Copy unresolved (1)' })
+    ).toBeEnabled()
+    await expect
+      .poll(() => mocked.getWebPanelStorage('panel_1', 'review-comments-v1'))
+      .toEqual([
+        {
+          id: 'legacy-comment',
+          file: 'src/shared.ts',
+          side: 'additions',
+          lineNumber: 1,
+          body: 'Keep the shared behavior explicit.',
+          resolved: true
+        },
+        {
+          id: 'branch-comment',
+          file: 'src/branch.ts',
+          side: 'additions',
+          lineNumber: 1,
+          body: 'Cover the branch-only path.',
+          resolved: false
+        }
+      ])
+
+    await page.reload()
+    await expect
+      .poll(() =>
+        page
+          .frames()
+          .some((frame) =>
+            frame.url().includes('/api/web-panels/panel_1/assets/')
+          )
+      )
+      .toBe(true)
+    reviewFrame = page
+      .frames()
+      .find((frame) => frame.url().includes('/api/web-panels/panel_1/assets/'))!
+    await expect(reviewFrame.getByText('Resolved comment')).toBeVisible()
+    await reviewFrame
+      .getByRole('button', {
+        name: 'Unresolve comment on src/shared.ts line 1'
+      })
+      .click()
+    await expect(
+      reviewFrame.getByText('Keep the shared behavior explicit.')
+    ).toBeVisible()
+    await expect(reviewFrame.getByText('2 unresolved')).toBeVisible()
+    await expect
+      .poll(() => mocked.getWebPanelStorage('panel_1', 'review-comments-v1'))
+      .toEqual([
+        {
+          id: 'legacy-comment',
+          file: 'src/shared.ts',
+          side: 'additions',
+          lineNumber: 1,
+          body: 'Keep the shared behavior explicit.',
+          resolved: false
+        },
+        {
+          id: 'branch-comment',
+          file: 'src/branch.ts',
+          side: 'additions',
+          lineNumber: 1,
+          body: 'Cover the branch-only path.',
+          resolved: false
+        }
+      ])
+  })
+
   test('handles Electron commands through worktree, terminal, and web-panel flows', async ({
     page
   }) => {

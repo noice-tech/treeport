@@ -1,4 +1,7 @@
+import path from 'node:path'
+import react from '@vitejs/plugin-react'
 import { expect, type Locator, type Page } from '@playwright/test'
+import { build as viteBuild } from 'vite'
 import {
   type OperationRecord,
   type ProjectColor,
@@ -160,8 +163,65 @@ export async function mockApp(
     transientProjectFailures?: number
     repositoryTerminalPresets?: TerminalPresetDefinition[]
     repositoryPresetDiagnostics?: TerminalPresetDefinitionDiagnostic[]
+    realReviewPanel?: boolean
   } = {}
 ) {
+  let reviewPanelScript = ''
+  let reviewPanelCss = ''
+  const reviewPanelAssets = new Map<
+    string,
+    { body: string | Buffer; contentType: string }
+  >()
+  if (options.realReviewPanel) {
+    const reviewRoot = path.resolve(
+      process.cwd(),
+      'packages/web-panel-review/web-panels/review'
+    )
+    const build = await viteBuild({
+      root: reviewRoot,
+      configFile: false,
+      logLevel: 'silent',
+      plugins: [react()],
+      resolve: { dedupe: ['react', 'react-dom'] },
+      build: {
+        write: false,
+        cssCodeSplit: false,
+        rollupOptions: {
+          input: path.join(reviewRoot, 'review.tsx'),
+          output: { codeSplitting: false }
+        }
+      }
+    })
+    const output = Array.isArray(build)
+      ? build.flatMap((result) => result.output)
+      : build.output
+    for (const item of output) {
+      if (item.type === 'chunk') {
+        if (item.isEntry) {
+          reviewPanelScript = item.code
+        }
+
+        reviewPanelAssets.set(item.fileName, {
+          body: item.code,
+          contentType: 'text/javascript'
+        })
+      } else if (item.fileName.endsWith('.css')) {
+        reviewPanelCss =
+          typeof item.source === 'string'
+            ? item.source
+            : new TextDecoder().decode(item.source)
+      } else {
+        reviewPanelAssets.set(item.fileName, {
+          body:
+            typeof item.source === 'string'
+              ? item.source
+              : Buffer.from(item.source),
+          contentType: 'application/octet-stream'
+        })
+      }
+    }
+  }
+
   if (options.keyboardPlatform) {
     await page.addInitScript((platform) => {
       Object.defineProperty(navigator, 'platform', {
@@ -1161,6 +1221,23 @@ export async function mockApp(
       return
     }
 
+    const reviewAssetMatch = /^\/api\/web-panels\/[^/]+\/assets\/(.+)$/.exec(
+      pathname
+    )
+    if (
+      reviewAssetMatch &&
+      route.request().method() === 'GET' &&
+      options.realReviewPanel
+    ) {
+      const asset =
+        reviewPanelAssets.get(reviewAssetMatch[1]!) ??
+        reviewPanelAssets.get(`assets/${reviewAssetMatch[1]!}`)
+      if (asset) {
+        await route.fulfill(asset)
+        return
+      }
+    }
+
     if (
       /^\/api\/panels\/[^/]+\/network\/listeners$/.test(pathname) &&
       route.request().method() === 'GET'
@@ -1189,6 +1266,21 @@ export async function mockApp(
       /^\/api\/web-panels\/[^/]+\/assets\/$/.test(pathname) &&
       route.request().method() === 'GET'
     ) {
+      const panelId = pathname.split('/')[3]!
+      const panel = state.worktrees
+        .flatMap((worktree) => worktree.panels)
+        .find((candidate) => candidate.id === panelId)
+      if (options.realReviewPanel && panel?.definitionId === 'project:review') {
+        await route.fulfill({
+          contentType: 'text/html',
+          body: `<!doctype html><html><head><meta charset="UTF-8"><style>${reviewPanelCss}</style></head><body>
+            <div id="root"></div>
+            <script type="module">${reviewPanelScript.replaceAll('</script', '<\\/script')}</script>
+          </body></html>`
+        })
+        return
+      }
+
       await route.fulfill({
         contentType: 'text/html',
         body: `<!doctype html><html><body>
@@ -1315,6 +1407,61 @@ export async function mockApp(
       }
       worktree.panels.push(panel)
       await route.fulfill({ status: 201, json: { panel } })
+      return
+    }
+
+    if (
+      /^\/api\/panels\/[^/]+\/diff$/.test(pathname) &&
+      route.request().method() === 'GET' &&
+      options.realReviewPanel
+    ) {
+      await route.fulfill({
+        json: {
+          diff: {
+            baseRef: 'origin/trunk',
+            baseCommit: 'base',
+            headCommit: 'head',
+            generatedAt: '2026-01-01T00:00:00.000Z',
+            unified: [
+              'diff --git a/src/branch.ts b/src/branch.ts',
+              'index 1111111..2222222 100644',
+              '--- a/src/branch.ts',
+              '+++ b/src/branch.ts',
+              '@@ -1 +1 @@',
+              '-branch before',
+              '+branch after',
+              'diff --git a/src/shared.ts b/src/shared.ts',
+              'index 1111111..2222222 100644',
+              '--- a/src/shared.ts',
+              '+++ b/src/shared.ts',
+              '@@ -1 +1 @@',
+              '-shared before',
+              '+shared after',
+              'diff --git a/src/partial.ts b/src/partial.ts',
+              'index 1111111..2222222 100644',
+              '--- a/src/partial.ts',
+              '+++ b/src/partial.ts',
+              '@@ -1 +1 @@',
+              '-partial before',
+              '+partial after',
+              'diff --git a/new file.txt b/new file.txt',
+              'new file mode 100644',
+              'index 0000000..3333333',
+              '--- /dev/null',
+              '+++ b/new file.txt',
+              '@@ -0,0 +1 @@',
+              '+untracked',
+              ''
+            ].join('\n'),
+            changeSets: {
+              branch: ['src/branch.ts', 'src/shared.ts'],
+              staged: ['src/partial.ts'],
+              unstaged: ['src/partial.ts', 'src/shared.ts'],
+              untracked: ['new file.txt']
+            }
+          }
+        }
+      })
       return
     }
 
@@ -1672,6 +1819,14 @@ export async function mockApp(
     setWebPanelHasStorage: (value: boolean) => {
       webPanelHasStorage = value
     },
+    setWebPanelStorage: (panelId: string, key: string, value: unknown) => {
+      const storage = webPanelStorage.get(panelId) ?? new Map<string, unknown>()
+      storage.set(key, value)
+      webPanelStorage.set(panelId, storage)
+      webPanelHasStorage = true
+    },
+    getWebPanelStorage: (panelId: string, key: string) =>
+      webPanelStorage.get(panelId)?.get(key),
     setRemovePreview: (value: Partial<RemovePreview>) => {
       removePreviewOverride = value
     },

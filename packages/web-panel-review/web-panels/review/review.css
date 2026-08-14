@@ -337,6 +337,23 @@ main {
   margin: 0;
   white-space: pre-wrap;
 }
+.review-comment:has(.resolved-comment) {
+  padding-block: 0.45rem;
+  border-color: #3f3f46;
+  background: #18181b;
+  color: #a1a1aa;
+}
+.resolved-comment {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  font-size: 0.8rem;
+}
+.resolved-comment button {
+  padding: 0.25rem 0.55rem;
+  font-size: 0.8rem;
+}
 .review-comment textarea {
   width: 100%;
   min-height: 5rem;

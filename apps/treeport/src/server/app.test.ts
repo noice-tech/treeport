@@ -210,7 +210,16 @@ function fixture(webDist = '/missing') {
     })),
     getWebPanelDiff: vi.fn(async () => ({
       baseRef: 'origin/trunk',
-      unified: 'diff --git a/a b/a'
+      baseCommit: 'base',
+      headCommit: 'head',
+      generatedAt: '2026-01-01T00:00:00.000Z',
+      unified: 'diff --git a/a b/a',
+      changeSets: {
+        branch: ['a'],
+        staged: [],
+        unstaged: [],
+        untracked: []
+      }
     })),
     getWebPanelListeners: vi.fn(async () => ({
       supported: true,

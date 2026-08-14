@@ -51,6 +51,18 @@ export interface WebPanelContext {
   }
 }
 
+/** File paths grouped by the Git layer where they changed. */
+export interface GitDiffChangeSets {
+  /** Paths changed between the default-branch merge base and HEAD. */
+  branch: string[]
+  /** Paths changed between HEAD and the index. */
+  staged: string[]
+  /** Paths changed between the index and the working tree. */
+  unstaged: string[]
+  /** Untracked, non-ignored paths in the working tree. */
+  untracked: string[]
+}
+
 /**
  * A read-only diff from the default-branch merge base through the worktree's
  * committed, tracked local, and untracked changes.
@@ -61,8 +73,10 @@ export interface GitDiff {
   headCommit: string
   /** ISO 8601 timestamp. */
   generatedAt: string
-  /** Unified diff text. */
+  /** Combined unified diff text for the final working-tree state. */
   unified: string
+  /** Relative paths; a path can occur in more than one change set. */
+  changeSets: GitDiffChangeSets
 }
 
 /** A listening TCP socket attributed to the current worktree. */
@@ -112,7 +126,7 @@ export interface TreeportPanelSdk {
   readonly panel: WebPanelControls
   /** Return the identity and Git context for the current panel. */
   context(): Promise<WebPanelContext>
-  /** Return the current worktree changes as unified diff text. */
+  /** Return the combined worktree diff and its Git-layer file groups. */
   diff(): Promise<GitDiff>
   /** Listening TCP sockets conservatively attributed to this worktree. */
   readonly network: {
