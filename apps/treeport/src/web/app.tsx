@@ -642,8 +642,16 @@ function WorkspaceApp() {
       return
     }
 
-    return desktopBridge.onCommand((command) => {
+    return desktopBridge.onCommand((command, workspaceIndex) => {
       if (dialog || projectSwitcherOpen || (isMobile && drawerOpen)) {
+        return
+      }
+
+      if (command === 'select-workspace') {
+        if (workspaceIndex !== null) {
+          selectWorkspaceByIndex(workspaceIndex)
+        }
+
         return
       }
 
@@ -695,6 +703,7 @@ function WorkspaceApp() {
     selectedTerminal,
     selectedWebPanel,
     selectedWorktree,
+    selectWorkspaceByIndex,
     terminalWorkflows.selectedPendingTerminal
   ])
 

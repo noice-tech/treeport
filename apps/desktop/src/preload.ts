@@ -20,15 +20,34 @@ const desktopBridge = Object.freeze({
     ipcRenderer.on('fullscreen-change', receive)
     return () => ipcRenderer.removeListener('fullscreen-change', receive)
   },
-  onCommand(listener: (command: DesktopCommand) => void) {
-    const receive = (_event: IpcRendererEvent, value: unknown) => {
+  onCommand(
+    listener: (command: DesktopCommand, workspaceIndex: number | null) => void
+  ) {
+    const receive = (
+      _event: IpcRendererEvent,
+      value: unknown,
+      workspaceIndex: unknown
+    ) => {
+      if (value === 'select-workspace') {
+        if (
+          typeof workspaceIndex === 'number' &&
+          Number.isInteger(workspaceIndex) &&
+          workspaceIndex >= 0 &&
+          workspaceIndex <= 8
+        ) {
+          listener(value, workspaceIndex)
+        }
+
+        return
+      }
+
       if (
         value === 'new-worktree' ||
         value === 'new-terminal' ||
         value === 'new-panel' ||
         value === 'close-panel'
       ) {
-        listener(value)
+        listener(value, null)
       }
     }
     ipcRenderer.on('desktop-command', receive)

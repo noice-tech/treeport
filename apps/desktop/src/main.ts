@@ -200,7 +200,10 @@ function disposeGuest(): void {
   }
 }
 
-function sendDesktopCommand(command: DesktopCommand): void {
+function sendDesktopCommand(
+  command: DesktopCommand,
+  workspaceIndex: number | null = null
+): void {
   if (
     !mainWindow ||
     !activeGuest ||
@@ -210,25 +213,34 @@ function sendDesktopCommand(command: DesktopCommand): void {
     return
   }
 
-  activeGuest.send('desktop-command', command)
+  activeGuest.send('desktop-command', command, workspaceIndex)
 }
 
 function installGuestSecurity(guest: WebContents, origin: string): void {
   guest.on('before-input-event', (event, input) => {
     const commandModifier =
       process.platform === 'darwin' ? input.meta : input.control
+    const otherCommandModifier =
+      process.platform === 'darwin' ? input.control : input.meta
     const key = input.key.toLowerCase()
-    const command: DesktopCommand | undefined = input.shift
-      ? key === 't'
-        ? 'new-panel'
-        : undefined
-      : key === 'n'
-        ? 'new-worktree'
-        : key === 't'
-          ? 'new-terminal'
-          : key === 'w'
-            ? 'close-panel'
+    const workspaceIndex =
+      !input.shift && !otherCommandModifier && /^[1-9]$/.test(key)
+        ? Number(key) - 1
+        : null
+    const command: DesktopCommand | undefined =
+      workspaceIndex !== null
+        ? 'select-workspace'
+        : input.shift
+          ? key === 't'
+            ? 'new-panel'
             : undefined
+          : key === 'n'
+            ? 'new-worktree'
+            : key === 't'
+              ? 'new-terminal'
+              : key === 'w'
+                ? 'close-panel'
+                : undefined
     if (
       input.type !== 'keyDown' ||
       input.isAutoRepeat ||
@@ -240,7 +252,7 @@ function installGuestSecurity(guest: WebContents, origin: string): void {
     }
 
     event.preventDefault()
-    guest.send('desktop-command', command)
+    guest.send('desktop-command', command, workspaceIndex)
   })
 
   guest.on('will-navigate', (event, targetUrl) => {

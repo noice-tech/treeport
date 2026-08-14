@@ -3,6 +3,7 @@ export type DesktopCommand =
   | 'new-terminal'
   | 'new-panel'
   | 'close-panel'
+  | 'select-workspace'
 
 export type DesktopFileActionResult = 'opened' | 'rejected'
 

@@ -59,10 +59,13 @@ test('connects the desktop shell, preserves native behavior, and restores render
       <body data-command="none">
         Treeport desktop test
         <a href="https://example.test/docs" target="_blank" rel="noopener noreferrer">Open docs</a>
+        <iframe title="Embedded application" srcdoc="<button autofocus>Embedded control</button>"></iframe>
       </body>
       <script>
-        window.treeportDesktop.onCommand((command) => {
-          document.body.dataset.command = command
+        window.treeportDesktop.onCommand((command, workspaceIndex) => {
+          document.body.dataset.command = workspaceIndex === null
+            ? command
+            : command + ':' + workspaceIndex
         })
       </script>`)
   })
@@ -313,12 +316,27 @@ test('connects the desktop shell, preserves native behavior, and restores render
       closePanelLabel: 'Close Panel'
     })
 
+    expect(
+      await electronApp.evaluate(({ webContents }, expectedOrigin) => {
+        const guest = webContents
+          .getAllWebContents()
+          .find((contents) => contents.getURL().startsWith(expectedOrigin))
+        return guest?.executeJavaScript(`(() => {
+          const frame = document.querySelector('iframe')
+          const control = frame?.contentDocument?.querySelector('button')
+          control?.focus()
+          return control === frame?.contentDocument?.activeElement
+        })()`)
+      }, origin)
+    ).toBe(true)
+
     const commandModifier = process.platform === 'darwin' ? 'meta' : 'control'
     for (const [key, command, shift] of [
       ['N', 'new-worktree', false],
       ['T', 'new-terminal', false],
       ['T', 'new-panel', true],
-      ['W', 'close-panel', false]
+      ['W', 'close-panel', false],
+      ['1', 'select-workspace:0', false]
     ] as const) {
       await electronApp.evaluate(
         ({ webContents }, input) => {

@@ -179,7 +179,10 @@ export async function mockApp(
         | 'new-terminal'
         | 'new-panel'
         | 'close-panel'
-      const listeners = new Set<(command: DesktopCommand) => void>()
+        | 'select-workspace'
+      const listeners = new Set<
+        (command: DesktopCommand, workspaceIndex: number | null) => void
+      >()
       const terminalSelectionReleaseListeners = new Set<() => void>()
       let fullscreenListener: ((fullscreen: boolean) => void) | null = null
       scope.__attentionRequests = 0
@@ -198,7 +201,9 @@ export async function mockApp(
             }
           }
         },
-        onCommand(next: (command: DesktopCommand) => void) {
+        onCommand(
+          next: (command: DesktopCommand, workspaceIndex: number | null) => void
+        ) {
           listeners.add(next)
           return () => listeners.delete(next)
         },
@@ -211,8 +216,10 @@ export async function mockApp(
           scope.__attentionRequests += 1
         }
       })
-      scope.__dispatchDesktopCommand = (command: DesktopCommand) =>
-        listeners.forEach((listener) => listener(command))
+      scope.__dispatchDesktopCommand = (
+        command: DesktopCommand,
+        workspaceIndex: number | null = null
+      ) => listeners.forEach((listener) => listener(command, workspaceIndex))
       scope.__dispatchTerminalSelectionRelease = () =>
         terminalSelectionReleaseListeners.forEach((listener) => listener())
       scope.__dispatchDesktopFullscreen = (fullscreen: boolean) =>

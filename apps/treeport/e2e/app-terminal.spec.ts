@@ -745,7 +745,7 @@ test.describe('desktop worktree and terminal workflows', () => {
             : '<h1>Next application</h1>'
       })
     })
-    await mockApp(page)
+    await mockApp(page, [], { desktopBridge: true })
     await page.getByRole('button', { name: /^topic(?:,|\s|$)/ }).click()
 
     await page.getByRole('button', { name: /^New panel/ }).click()
@@ -842,6 +842,20 @@ test.describe('desktop worktree and terminal workflows', () => {
     await page.keyboard.press('Meta+1')
     await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
     await page.getByRole('button', { name: 'Runtime route, web panel' }).click()
+
+    await browserFrame
+      .getByRole('button', { name: 'Application control' })
+      .focus()
+    await page.evaluate(() =>
+      (window as any).__dispatchDesktopCommand('select-workspace', 0)
+    )
+    await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
+    await page.evaluate(() =>
+      (window as any).__dispatchDesktopCommand('select-workspace', 1)
+    )
+    await expect(browserFrame.getByRole('heading')).toHaveText(
+      'Start application'
+    )
 
     await expect(
       browserFrame.evaluate(() => {

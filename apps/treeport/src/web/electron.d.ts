@@ -3,13 +3,19 @@ type TreeportDesktopCommand =
   | 'new-terminal'
   | 'new-panel'
   | 'close-panel'
+  | 'select-workspace'
 type TreeportDesktopFileAction = 'opened' | 'rejected'
 
 type TreeportDesktopBridge = Readonly<{
   platform: NodeJS.Platform
   openFileUrl: (url: string) => Promise<TreeportDesktopFileAction>
   onFullscreenChange: (listener: (fullscreen: boolean) => void) => () => void
-  onCommand: (listener: (command: TreeportDesktopCommand) => void) => () => void
+  onCommand: (
+    listener: (
+      command: TreeportDesktopCommand,
+      workspaceIndex: number | null
+    ) => void
+  ) => () => void
   setTerminalSelectionActive: (active: boolean) => void
   onTerminalSelectionRelease: (listener: () => void) => () => void
   requestAttention: () => void
