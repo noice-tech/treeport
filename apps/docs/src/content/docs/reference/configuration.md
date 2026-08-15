@@ -3,22 +3,22 @@ title: Configuration
 description: Environment variables, paths, and defaults for the Treeport daemon and CLI.
 ---
 
-`treeport up --host/--port` persists listener preferences. `treeport remote enable` separately persists its Tailscale HTTPS port. Environment variables override listener preferences for advanced and contributor use.
+`treeport up --host/--port` persists listener preferences. The host must be `127.0.0.1`, `::1`, or `localhost`. `treeport remote enable` separately persists its Tailscale HTTPS port. Environment variables override listener preferences but cannot enable a non-loopback listener.
 
 ## Daemon
 
-| Variable                 | Default                    | Purpose                                                              |
-| ------------------------ | -------------------------- | -------------------------------------------------------------------- |
-| `TREEPORT_HOST`          | `127.0.0.1`                | Network interface on which the daemon listens. `HOST` is a fallback. |
-| `TREEPORT_PORT`          | `8733`                     | Daemon and web-app port. `PORT` is a fallback.                       |
-| `TREEPORT_DATA_DIR`      | Platform data directory    | Treeport's durable application data.                                 |
-| `TREEPORT_DATABASE_PATH` | `<data-dir>/treeport.db`   | SQLite database path.                                                |
-| `TREEPORT_RUNTIME_DIR`   | Platform runtime directory | Runtime files, including Treeport-owned tmux state.                  |
-| `TREEPORT_SHELL`         | `$SHELL`, then `/bin/sh`   | Shell used for login-shell terminals.                                |
-| `TREEPORT_TMUX_PATH`     | `tmux`                     | tmux executable or path.                                             |
-| `TREEPORT_GIT_PATH`      | `git`                      | Git executable or path.                                              |
-| `TREEPORT_GH_PATH`       | `gh`                       | Optional GitHub CLI executable or path.                              |
-| `TREEPORT_API_URL`       | `http://<host>:<port>`     | URL injected into managed terminals and used for callbacks.          |
+| Variable                 | Default                    | Purpose                                                             |
+| ------------------------ | -------------------------- | ------------------------------------------------------------------- |
+| `TREEPORT_HOST`          | `127.0.0.1`                | Loopback address on which the daemon listens. `HOST` is a fallback. |
+| `TREEPORT_PORT`          | `8733`                     | Daemon and web-app port. `PORT` is a fallback.                      |
+| `TREEPORT_DATA_DIR`      | Platform data directory    | Treeport's durable application data.                                |
+| `TREEPORT_DATABASE_PATH` | `<data-dir>/treeport.db`   | SQLite database path.                                               |
+| `TREEPORT_RUNTIME_DIR`   | Platform runtime directory | Runtime files, including Treeport-owned tmux state.                 |
+| `TREEPORT_SHELL`         | `$SHELL`, then `/bin/sh`   | Shell used for login-shell terminals.                               |
+| `TREEPORT_TMUX_PATH`     | `tmux`                     | tmux executable or path.                                            |
+| `TREEPORT_GIT_PATH`      | `git`                      | Git executable or path.                                             |
+| `TREEPORT_GH_PATH`       | `gh`                       | Optional GitHub CLI executable or path.                             |
+| `TREEPORT_API_URL`       | `http://<host>:<port>`     | URL injected into managed terminals and used for callbacks.         |
 
 `~` and `~/…` are expanded in path variables.
 
@@ -101,4 +101,11 @@ TREEPORT_DATABASE_PATH=~/Backups/treeport.db \
 treeport up
 ```
 
-For private remote browser access, prefer `treeport remote enable`, which keeps the daemon on loopback and exposes it through Tailscale Serve; see [Remote access](/features/remote-access/). Bind beyond loopback only on a trusted private network; see [Security](/security/).
+For private remote access, use `treeport remote enable`. It keeps the daemon on loopback and exposes it through Tailscale Serve; see [Remote access](/features/remote-access/).
+
+Treeport refuses old non-loopback preferences and environment values. Repair an old preference, then enable the supported remote endpoint:
+
+```sh
+treeport up --host 127.0.0.1
+treeport remote enable
+```

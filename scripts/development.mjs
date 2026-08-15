@@ -14,7 +14,6 @@ import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const loopbackHost = '127.0.0.1'
-const lanHost = '0.0.0.0'
 const developmentUser =
   typeof process.getuid === 'function' ? process.getuid() : 'user'
 const startupLockPath = path.join(
@@ -186,10 +185,6 @@ function developmentMode() {
       appHost: loopbackHost,
       tailscaleDnsName: tailscaleDnsName()
     }
-  }
-
-  if (mode === '--lan') {
-    return { name: 'lan', appHost: lanHost }
   }
 
   throw new Error(`Unknown development mode: ${mode}`)
@@ -393,12 +388,6 @@ export async function main() {
   console.log(`Local:     ${appUrl}`)
   if (tailscaleRemote) {
     console.log(`Tailscale: ${tailscaleRemote.url}`)
-  }
-
-  if (mode.name === 'lan') {
-    console.warn(
-      'LAN mode exposes an unauthenticated development server on every network interface. Use only on a trusted LAN.'
-    )
   }
 
   const child = spawn(

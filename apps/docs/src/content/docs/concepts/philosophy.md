@@ -23,7 +23,7 @@ Projects such as [Herdr](https://herdr.dev/) are taking an exciting approach by 
 
 Treeport would rather connect good tools than replace them:
 
-- [Tailscale](https://tailscale.com/) already provides trusted private networking;
+- [Tailscale](https://tailscale.com/) already provides authenticated private networking;
 - Pi and other coding agents already provide strong coding workflows;
 - terminal CLIs already expose powerful development tools;
 - editors already provide excellent code navigation and editing; and

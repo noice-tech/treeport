@@ -13,7 +13,7 @@ Treeport tracks the terminal as running or exited and reports an exit code when 
 
 ## Reconnect from another device
 
-Open the same terminal from the browser or desktop app. On a trusted private network, you can also reconnect from a phone using Treeport's responsive web app.
+Open the same terminal from the browser or desktop app. Through the supported Tailscale Serve endpoint, you can also reconnect from a phone using Treeport's responsive web app.
 
 ## Browse earlier output
 
@@ -24,7 +24,7 @@ Treeport uses tmux history, so you can keep earlier output or a selection visibl
 A terminal has one shared size across its attached clients. The controlling client sets the row-and-column grid, while viewers adapt that grid to their available space. Taking control from a differently sized device can reflow the terminal for all attachments. See [Shared terminal size](/reference/shortcuts/#shared-terminal-size).
 
 :::caution
-Remote access grants terminal control. Treeport currently has no authentication. Use it only on a trusted private network; see the [security guidance](/security/).
+Remote access grants terminal control. Use only Treeport's authenticated Tailscale Serve workflow, and give access only to users who may control the host; see the [security guidance](/security/).
 :::
 
 ## Normal terminal applications

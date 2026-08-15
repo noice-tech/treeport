@@ -6,6 +6,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { z } from 'zod'
+import { assertLoopbackHost } from '../server/core/loopback.js'
 
 const DEFAULT_HOST = '127.0.0.1'
 const DEFAULT_PORT = 8733
@@ -724,15 +725,21 @@ export async function daemonUp(options: {
     host: options.host?.trim() || saved.host || DEFAULT_HOST,
     port: options.port ?? saved.port ?? DEFAULT_PORT
   }
+  const host =
+    options.host?.trim() ||
+    process.env.TREEPORT_HOST?.trim() ||
+    process.env.HOST?.trim() ||
+    next.host!
+  assertLoopbackHost(host)
   if (options.host !== undefined || options.port !== undefined) {
     await savePreferences(next)
   }
 
-  const host =
-    options.host?.trim() || process.env.TREEPORT_HOST?.trim() || next.host!
   const port = Number.parseInt(
     options.port === undefined
-      ? process.env.TREEPORT_PORT?.trim() || String(next.port)
+      ? process.env.TREEPORT_PORT?.trim() ||
+          process.env.PORT?.trim() ||
+          String(next.port)
       : String(options.port),
     10
   )

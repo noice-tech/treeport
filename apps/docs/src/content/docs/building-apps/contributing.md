@@ -26,10 +26,6 @@ This command keeps the Treeport app and Electron development renderer on loopbac
 
 It fails before starting if Tailscale is missing, disconnected, or does not report a MagicDNS name, with the next step in the error. It never uses Tailscale Funnel or another public tunnel.
 
-Tailscale encrypts the network path, but Treeport currently has no application authentication. Give tailnet access only to people who may control terminals and worktrees. Do not expose this URL through a public proxy.
+Tailscale encrypts the network path and supplies the remote user identity that Treeport requires. Give tailnet access only to people who may control terminals and worktrees. Do not expose this URL through Funnel, a public proxy, or a direct network listener.
 
 This contributor-only mode is independent of `treeport remote enable`. Both use Tailscale Serve, but the production workflow retains its saved route while development chooses an unused port and owns only its temporary route.
-
-## Intentional LAN testing
-
-`pnpm dev:lan` remains available for testing from a trusted local network. It is deliberately separate from `pnpm dev` because it binds the entire unauthenticated app, including its API, to every interface. Prefer Tailscale mode whenever remote testing is possible.

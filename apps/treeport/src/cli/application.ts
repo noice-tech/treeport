@@ -941,7 +941,7 @@ async function main(args: string[]): Promise<void> {
   const upCommand = program
     .command('up')
     .description('Ensure the local Treeport daemon is running')
-    .option('--host <address>', 'listener address')
+    .option('--host <address>', 'loopback listener address')
     .option('--port <port>', 'listener port')
     .option('--foreground', 'run in the foreground')
     .option('--json', 'emit machine-readable JSON')
@@ -972,12 +972,6 @@ async function main(args: string[]): Promise<void> {
     }
 
     print(result, () => `Treeport is up\n${result.apiUrl}`)
-    const listenerHost = new URL(result.apiUrl).hostname
-    if (!['127.0.0.1', '::1', '[::1]', 'localhost'].includes(listenerHost)) {
-      writeStderr(
-        'Warning: Treeport has no authentication. Use only a trusted private network.\n'
-      )
-    }
   })
 
   const downCommand = program
@@ -1055,7 +1049,7 @@ async function main(args: string[]): Promise<void> {
     print(
       result,
       () =>
-        `Treeport remote access is ${result.alreadyEnabled ? 'already enabled' : 'enabled'}\n${result.url}\nAccess is limited by your Tailscale policy.`
+        `Treeport remote access is ${result.alreadyEnabled ? 'already enabled' : 'enabled'}\n${result.url}\nTailscale authenticates each remote user. Access is limited by your Tailscale policy.`
     )
   })
 
