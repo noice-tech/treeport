@@ -4,6 +4,7 @@ import { pathToFileURL } from 'node:url'
 import { DESKTOP_PROTOCOL_VERSION } from '@treeport/shared'
 import {
   app,
+  autoUpdater,
   BrowserWindow,
   clipboard,
   ipcMain,
@@ -17,11 +18,7 @@ import {
   type MenuItemConstructorOptions,
   type WebContents
 } from 'electron'
-import {
-  makeUserNotifier,
-  updateElectronApp,
-  UpdateSourceType
-} from 'update-electron-app'
+import { updateElectronApp, UpdateSourceType } from 'update-electron-app'
 import { z } from 'zod'
 import { ComputerStore } from './computer-store'
 import type {
@@ -40,6 +37,8 @@ import { parseWorkspaceLink, type WorkspaceTarget } from './workspace-link'
 const dirname = __dirname
 const TITLEBAR_HEIGHT = 32
 const desktopE2e = process.env.TREEPORT_DESKTOP_E2E === '1'
+const desktopUpdateReady =
+  desktopE2e && process.env.TREEPORT_DESKTOP_E2E_UPDATE_READY === '1'
 const developmentUserData = process.env.TREEPORT_DESKTOP_USER_DATA?.trim()
 if (desktopE2e && process.platform === 'darwin') {
   app.dock?.hide()
@@ -68,6 +67,7 @@ let connection: ConnectionState = { status: 'empty' }
 let connectionGeneration = 0
 let connectionAbort: AbortController | null = null
 let fullscreen = false
+let updateReady = desktopUpdateReady
 let stopAutomaticUpdates: (() => void) | null = null
 let pendingWorkspaceTarget: WorkspaceTarget | null = null
 let workspaceTargetQueue: Promise<void> = Promise.resolve()
@@ -109,6 +109,7 @@ function shellState(): DesktopShellState {
     appVersion: app.getVersion(),
     platform: process.platform,
     fullscreen,
+    updateReady,
     ...(store?.selectedComputer
       ? { selectedComputerId: store.selectedComputer.id }
       : {}),
@@ -853,6 +854,19 @@ function registerIpc(): void {
       void connectSelected()
     }
   })
+  ipcMain.on('shell:install-update', (event) => {
+    if (!isAuthorizedShellEvent(event) || !updateReady) {
+      return
+    }
+
+    if (desktopE2e) {
+      updateReady = false
+      broadcastState()
+      return
+    }
+
+    autoUpdater.quitAndInstall()
+  })
   ipcMain.on('shell:navigate-history', (event, direction: unknown) => {
     if (
       isAuthorizedShellEvent(event) &&
@@ -1018,6 +1032,10 @@ if (!hasSingleInstanceLock) {
       }
 
       if (app.isPackaged && process.platform === 'darwin' && !desktopE2e) {
+        autoUpdater.on('update-downloaded', () => {
+          updateReady = true
+          broadcastState()
+        })
         const updater = updateElectronApp({
           updateSource: {
             type: UpdateSourceType.ElectronPublicUpdateService,
@@ -1025,14 +1043,7 @@ if (!hasSingleInstanceLock) {
             host: 'https://update.electronjs.org'
           },
           updateInterval: '10 minutes',
-          notifyUser: true,
-          onNotifyUser: makeUserNotifier({
-            title: 'Treeport Update Ready',
-            detail:
-              'Restart Treeport to update the desktop client. Your selected local or remote backend is not changed.',
-            restartButtonText: 'Restart Treeport',
-            laterButtonText: 'Later'
-          })
+          notifyUser: false
         })
         stopAutomaticUpdates = updater.stopUpdates
       }

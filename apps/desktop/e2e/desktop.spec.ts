@@ -90,12 +90,19 @@ test('connects the desktop shell, preserves native behavior, and restores render
       env: {
         ...process.env,
         TREEPORT_DESKTOP_E2E: '1',
+        TREEPORT_DESKTOP_E2E_UPDATE_READY: '1',
         TREEPORT_DESKTOP_USER_DATA: '',
         TREEPORT_DESKTOP_URL: origin
       }
     })
 
     let selector = await electronApp.firstWindow()
+    const installUpdate = selector.getByRole('button', {
+      name: 'Update & restart'
+    })
+    await expect(installUpdate).toBeVisible()
+    await installUpdate.click()
+    await expect(installUpdate).not.toBeVisible()
     await expect(selector.getByRole('button', { name: 'Back' })).toBeDisabled()
     await expect(
       selector.getByRole('button', { name: 'Forward' })

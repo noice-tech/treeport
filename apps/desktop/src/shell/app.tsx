@@ -1,4 +1,4 @@
-import { ChevronLeftIcon, ChevronRightIcon } from 'lucide-react'
+import { ChevronLeftIcon, ChevronRightIcon, DownloadIcon } from 'lucide-react'
 import {
   type PointerEvent as ReactPointerEvent,
   useEffect,
@@ -126,6 +126,18 @@ export function App() {
               : 'pointer-events-none fixed inset-x-0 top-0 z-20 flex h-8 items-center justify-center'
           }
         >
+          {state.updateReady ? (
+            <Button
+              variant="ghost"
+              size="xs"
+              className="pointer-events-auto text-cyan-300 hover:text-cyan-100 [-webkit-app-region:no-drag]"
+              title="Restart to update Treeport"
+              onClick={() => window.treeportShell.installUpdate()}
+            >
+              <DownloadIcon data-icon="inline-start" />
+              Update & restart
+            </Button>
+          ) : null}
           <ComputerSelector
             state={state}
             open={selectorOpen}

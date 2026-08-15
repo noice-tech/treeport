@@ -143,7 +143,7 @@ const mainBundle = extractFile(asarPath, '.vite/build/main.js').toString()
 if (
   !mainBundle.includes('https://update.electronjs.org') ||
   !mainBundle.includes('noice-tech/treeport') ||
-  !mainBundle.includes('Treeport Update Ready')
+  !mainBundle.includes('shell:install-update')
 ) {
   throw new Error('Packaged app is missing its automatic update integration')
 }

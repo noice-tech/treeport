@@ -21,6 +21,7 @@ declare global {
       ) => Promise<ComputerMutationResult>
       removeComputer: (id: string) => Promise<boolean>
       retryConnection: () => void
+      installUpdate: () => void
       navigateHistory: (direction: DesktopNavigationDirection) => void
       copyStartCommand: () => Promise<void>
       openInstallationDocs: () => Promise<void>
