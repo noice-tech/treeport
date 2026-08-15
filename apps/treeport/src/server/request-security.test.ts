@@ -52,6 +52,32 @@ async function request(
   })
 }
 
+async function upgrade(
+  url: string,
+  options: { path: string; headers?: Record<string, string> }
+): Promise<number> {
+  const target = new URL(options.path, url)
+  return new Promise((resolve, reject) => {
+    const outgoing = http.request(target, {
+      headers: {
+        Connection: 'Upgrade',
+        Upgrade: 'websocket',
+        ...options.headers
+      }
+    })
+    outgoing.once('upgrade', (response, socket) => {
+      socket.destroy()
+      resolve(response.statusCode ?? 0)
+    })
+    outgoing.once('response', (response) => {
+      response.resume()
+      response.once('end', () => resolve(response.statusCode ?? 0))
+    })
+    outgoing.once('error', reject)
+    outgoing.end()
+  })
+}
+
 async function fixture(): Promise<{
   url: string
   mutations: { count: number }
@@ -74,6 +100,14 @@ async function fixture(): Promise<{
         source: security.principal?.source,
         login: security.principal?.login
       })
+    )
+  })
+  server.on('upgrade', (incoming, socket) => {
+    const security = authorizeRequest(incoming, { socketUpgrade: true })
+    socket.end(
+      security.allowed
+        ? 'HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n'
+        : `HTTP/1.1 ${security.status} Rejected\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`
     )
   })
   servers.push(server)
@@ -233,6 +267,64 @@ describe('request security over a real HTTP server', () => {
     })
     expect(missingForwardedOrigin.status).toBe(400)
 
+    const panelId = `panel_${'a'.repeat(32)}`
+    const developmentKey = '0123456789abcdef01234567'
+    const sandboxedPanelModule = await request(value.url, {
+      path: `/api/web-panels/${panelId}/assets/__treeport/${'b'.repeat(64)}/assets/review.js`,
+      headers: {
+        ...tailscaleHeaders,
+        Origin: 'null',
+        'Sec-Fetch-Site': 'cross-site'
+      }
+    })
+    expect(sandboxedPanelModule.status).toBe(200)
+
+    const sandboxedDevelopmentModule = await request(value.url, {
+      path: `/api/web-panel-dev/${developmentKey}/src/review.tsx`,
+      headers: {
+        ...tailscaleHeaders,
+        Origin: 'null',
+        'Sec-Fetch-Site': 'cross-site'
+      }
+    })
+    expect(sandboxedDevelopmentModule.status).toBe(200)
+
+    expect(
+      await upgrade(value.url, {
+        path: `/api/web-panel-dev/${developmentKey}/@vite-hmr`,
+        headers: { ...tailscaleHeaders, Origin: 'null' }
+      })
+    ).toBe(101)
+    expect(
+      await upgrade(value.url, {
+        path: `/api/web-panel-dev/${developmentKey}/src/review.tsx`,
+        headers: { ...tailscaleHeaders, Origin: 'null' }
+      })
+    ).toBe(403)
+    expect(
+      await upgrade(value.url, {
+        path: `/api/web-panel-dev/${developmentKey}/@vite-hmr`,
+        headers: { ...tailscaleHeaders, Origin: 'https://evil.example' }
+      })
+    ).toBe(403)
+
+    const opaqueApiRead = await request(value.url, {
+      path: '/api/projects',
+      headers: {
+        ...tailscaleHeaders,
+        Origin: 'null',
+        'Sec-Fetch-Site': 'cross-site'
+      }
+    })
+    expect(opaqueApiRead.status).toBe(403)
+    expect(JSON.parse(opaqueApiRead.body).error.code).toBe('INVALID_ORIGIN')
+
+    const foreignPanelAsset = await request(value.url, {
+      path: `/api/web-panels/${panelId}/assets/review.js`,
+      headers: { ...tailscaleHeaders, Origin: 'https://evil.example' }
+    })
+    expect(foreignPanelAsset.status).toBe(403)
+
     const foreignMutation = await request(value.url, {
       method: 'POST',
       path: '/api/projects',
@@ -243,6 +335,14 @@ describe('request security over a real HTTP server', () => {
     })
     expect(foreignMutation.status).toBe(403)
     expect(JSON.parse(foreignMutation.body).error.code).toBe('INVALID_ORIGIN')
+    expect(value.mutations.count).toBe(0)
+
+    const opaquePanelMutation = await request(value.url, {
+      method: 'POST',
+      path: `/api/web-panels/${panelId}/assets/review.js`,
+      headers: { ...tailscaleHeaders, Origin: 'null' }
+    })
+    expect(opaquePanelMutation.status).toBe(403)
     expect(value.mutations.count).toBe(0)
 
     const crossSiteMutation = await request(value.url, {

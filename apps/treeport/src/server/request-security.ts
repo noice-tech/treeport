@@ -165,6 +165,27 @@ function effectiveOriginFor(
   return `https://${forwardedHost.host}`
 }
 
+// A sandboxed panel has an opaque browser origin. Allow this origin only for
+// read-only panel resources and the dedicated development HMR upgrade.
+function allowsOpaqueWebPanelOrigin(
+  request: IncomingMessage,
+  socketUpgrade: boolean
+): boolean {
+  if (!['GET', 'HEAD'].includes(request.method?.toUpperCase() ?? '')) {
+    return false
+  }
+
+  const pathname = new URL(request.url ?? '/', 'http://treeport.local').pathname
+  if (socketUpgrade) {
+    return /^\/api\/web-panel-dev\/[a-f0-9]{24}\/@vite-hmr$/u.test(pathname)
+  }
+
+  return (
+    /^\/api\/web-panels\/panel_[a-f0-9]{32}\/assets(?:\/|$)/u.test(pathname) ||
+    /^\/api\/web-panel-dev\/[a-f0-9]{24}\//u.test(pathname)
+  )
+}
+
 function originIsAllowed(
   request: IncomingMessage,
   effectiveOrigin: string,
@@ -177,17 +198,23 @@ function originIsAllowed(
 
   if (originHeader.present) {
     const value = originHeader.value ?? ''
-    if (value === 'null' || !URL.canParse(value)) {
-      return false
-    }
+    if (value === 'null') {
+      if (!allowsOpaqueWebPanelOrigin(request, socketUpgrade)) {
+        return false
+      }
+    } else {
+      if (!URL.canParse(value)) {
+        return false
+      }
 
-    const parsed = new URL(value)
-    if (
-      (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') ||
-      parsed.origin !== value ||
-      parsed.origin !== effectiveOrigin
-    ) {
-      return false
+      const parsed = new URL(value)
+      if (
+        (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') ||
+        parsed.origin !== value ||
+        parsed.origin !== effectiveOrigin
+      ) {
+        return false
+      }
     }
   }
 

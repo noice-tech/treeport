@@ -442,6 +442,14 @@ describe('Socket.IO real network', () => {
     )
     expect(originError.message).toMatch(/websocket error/i)
 
+    const opaqueOrigin = eventClient(value.url, {
+      extraHeaders: { ...tailscaleHeaders, Origin: 'null' }
+    })
+    const opaqueOriginError = await new Promise<Error>((resolve) =>
+      opaqueOrigin.once('connect_error', resolve)
+    )
+    expect(opaqueOriginError.message).toMatch(/websocket error/i)
+
     const originless = eventClient(value.url)
     await new Promise<void>((resolve, reject) => {
       originless.once('connect', () => resolve())
@@ -455,6 +463,7 @@ describe('Socket.IO real network', () => {
         bypassedEvents,
         bypassedTerminal,
         foreignOrigin,
+        opaqueOrigin,
         originless
       ].map(closeClient)
     )
