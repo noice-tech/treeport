@@ -17,13 +17,11 @@ Open the same terminal from the browser or desktop app. On a trusted private net
 
 ## Browse earlier output
 
-Scrolling up or selecting earlier output keeps that part of the terminal stable while new output continues in the background. Treeport labels this state **Scrolled back in tmux** or **Selection is active** while noting that new output is continuing off-screen. Without a selection, scrolling to the bottom resumes following current output automatically.
-
-With an active selection, Treeport stays scrolled back to preserve its highlight and offers **Clear** instead of **Follow latest**. Clearing the selection resumes live output. Terminal input, paste, clicking the terminal, or beginning a new selection also clears it.
+Treeport uses tmux history, so you can keep earlier output or a selection visible while new output continues. See [Shortcuts](/reference/shortcuts/#selection-scrolling-and-clipboard) for scrolling, selection, copy, and paste interactions.
 
 ## Shared terminal size
 
-A terminal has one shared size across its attached clients. Treeport resizes it automatically to fit the client you are using, and synchronizes that size with other attachments. Opening or resizing it on a phone can therefore reflow the terminal on a desktop, and vice versa.
+A terminal has one shared size across its attached clients. The controlling client sets the row-and-column grid, while viewers adapt that grid to their available space. Taking control from a differently sized device can reflow the terminal for all attachments. See [Shared terminal size](/reference/shortcuts/#shared-terminal-size).
 
 :::caution
 Remote access grants terminal control. Treeport currently has no authentication. Use it only on a trusted private network; see the [security guidance](/security/).
