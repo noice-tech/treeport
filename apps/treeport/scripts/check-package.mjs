@@ -37,6 +37,13 @@ const required = [
   'README.md'
 ]
 await Promise.all(required.map((file) => fs.access(path.join(directory, file))))
+const binSource = await fs.readFile(
+  path.join(directory, 'bin/treeport.mjs'),
+  'utf8'
+)
+if (!binSource.includes('TREEPORT_CLI_ENTRYPOINT')) {
+  throw new Error('The packaged CLI must preserve its stable bin entrypoint')
+}
 
 const forbidden = []
 async function inspect(current) {

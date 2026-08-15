@@ -12,7 +12,7 @@ Direct access is restricted to loopback and relies on the local OS-user boundary
 Start the daemon with its loopback default:
 
 ```sh
-treeport up
+treeport start
 ```
 
 This listens at `127.0.0.1:8733` and limits access to the local machine.
@@ -24,6 +24,8 @@ For browser, desktop, phone, or remote CLI access, use [private remote access th
 :::danger
 Do not port-forward Treeport from your router, bind it to a LAN or Tailscale address, publish it through Tailscale Funnel, or use an arbitrary tunnel or reverse proxy. A private network alone does not authenticate a user. Running Treeport on a VPS is safe only when the daemon stays on loopback and Tailscale Serve is the private ingress.
 :::
+
+Opt-in [service supervision](/features/service-supervision/) does not change this network boundary. The backend still listens only on loopback. On macOS, the administrator installs a system LaunchDaemon definition, but launchd runs Treeport as the user who enabled it. On Linux, Treeport uses that user's systemd manager. Treeport never runs the backend as root.
 
 The desktop app applies the same boundary: HTTP is accepted only for loopback computers, while remote computers require HTTPS with a certificate trusted by the operating system. It uses the Mac's existing Tailscale access rather than creating a Treeport login session. It does not offer a certificate-warning bypass and does not expose its saved computer list to remote Treeport web content.
 
@@ -55,6 +57,6 @@ The Browser package can load an arbitrary HTTP or HTTPS site in a nested iframe.
 - Treat terminal output and scrollback as sensitive; it may contain source code or command output.
 - Do not put secrets in terminal names, command arguments, or URLs.
 - Keep Git, tmux, Node.js, Treeport, and your private-network software updated.
-- Stop the daemon when remote access is no longer needed.
+- Stop the daemon when remote access is no longer needed. Disable service supervision when it must not return after reboot.
 
 `TREEPORT_API_URL` tells launched terminals and the CLI how to reach the daemon. The URL does not add authentication or encryption. For remote use, set it only to the private HTTPS URL created by `treeport remote enable`; Tailscale Serve authenticates that request while the daemon remains loopback-only.

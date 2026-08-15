@@ -10,6 +10,6 @@ export function assertLoopbackHost(host: string): void {
   }
 
   throw new Error(
-    'Treeport supports only loopback listeners. Run `treeport up --host 127.0.0.1`, then use `treeport remote enable` for private remote access.'
+    'Treeport supports only loopback listeners. Run `treeport start --host 127.0.0.1`, then use `treeport remote enable` for private remote access.'
   )
 }

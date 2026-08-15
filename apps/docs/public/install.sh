@@ -152,7 +152,15 @@ EOF
 was_running='0'
 if [ -x "$BIN_DIR/treeport" ] && "$BIN_DIR/treeport" status --json 2>/dev/null | grep -q '"running":true'; then
   was_running='1'
-  "$BIN_DIR/treeport" down >/dev/null
+  if "$BIN_DIR/treeport" --help 2>/dev/null | grep -q '^  start '; then
+    if ! "$BIN_DIR/treeport" stop; then
+      fail 'Treeport did not stop. Complete any service administrator action above, then rerun the installer.'
+    fi
+  else
+    # Treeport 0.2.2 used the old name. This fallback exists only in the
+    # installer that performs the package cutover.
+    "$BIN_DIR/treeport" down >/dev/null
+  fi
 fi
 
 rm -rf "$target"
@@ -168,13 +176,14 @@ shim="$BIN_DIR/.treeport-$$"
 cat >"$shim" <<EOF
 #!/bin/sh
 export TREEPORT_INSTALLATION_METHOD=curl
+export TREEPORT_CLI_ENTRYPOINT="$BIN_DIR/treeport"
 exec node "$INSTALL_ROOT/current/npm/lib/node_modules/@treeport/treeport/dist/node/cli/index.js" "\$@"
 EOF
 chmod 755 "$shim"
 mv -f "$shim" "$BIN_DIR/treeport"
 
 if [ "$was_running" = '1' ]; then
-  "$BIN_DIR/treeport" up >/dev/null
+  "$BIN_DIR/treeport" start >/dev/null
 fi
 
 find "$INSTALL_ROOT/versions" -mindepth 1 -maxdepth 1 -type d \
@@ -182,9 +191,9 @@ find "$INSTALL_ROOT/versions" -mindepth 1 -maxdepth 1 -type d \
 
 printf 'Installed Treeport %s\n' "$TREEPORT_VERSION"
 case ":$PATH:" in
-  *":$BIN_DIR:"*) printf 'Run: treeport up\n' ;;
+  *":$BIN_DIR:"*) printf 'Run: treeport start\n' ;;
   *)
-    printf 'Add %s to PATH, then run: treeport up\n' "$BIN_DIR"
+    printf 'Add %s to PATH, then run: treeport start\n' "$BIN_DIR"
     printf 'For zsh: echo '\''export PATH="$HOME/.local/bin:$PATH"'\'' >> "$HOME/.zshrc"\n'
     ;;
 esac

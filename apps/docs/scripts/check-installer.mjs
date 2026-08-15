@@ -34,6 +34,15 @@ if (!installer.includes(`TREEPORT_VERSION:-${manifest.treeportVersion}`)) {
   throw new Error('Installer and manifest Treeport versions differ')
 }
 
+if (
+  !installer.includes('TREEPORT_CLI_ENTRYPOINT') ||
+  !installer.includes('treeport" start')
+) {
+  throw new Error(
+    'Installer must preserve the stable CLI path and use the canonical start command'
+  )
+}
+
 if (packageManifest.engines?.node !== '>=24') {
   throw new Error('The published package must require Node.js 24 or newer')
 }
@@ -183,6 +192,54 @@ try {
       throw new Error(`Uninstaller did not remove ${removedPath}`)
     }
   }
+
+  await Promise.all([
+    fs.mkdir(path.join(installRoot, 'current'), { recursive: true }),
+    fs.mkdir(binDirectory, { recursive: true })
+  ])
+  await Promise.all([
+    fs.writeFile(path.join(installRoot, 'current/install.json'), '{}\n'),
+    fs.writeFile(
+      path.join(binDirectory, 'treeport'),
+      `#!/bin/sh
+if [ "$1 $2 $3" = "service status --json" ]; then
+  printf '%s\\n' '{"state":"healthy","installed":true}'
+  exit 1
+fi
+if [ "$1 $2" = "service disable" ]; then
+  printf '%s\\n' 'Administrator action required: sudo treeport service apply --request /tmp/request'
+  exit 1
+fi
+exit 0
+`,
+      { mode: 0o755 }
+    )
+  ])
+  const refusedUninstall = await execute(
+    '/bin/sh',
+    [path.join(docsDirectory, 'public/uninstall.sh')],
+    {
+      env: {
+        ...process.env,
+        HOME: temporaryDirectory,
+        TREEPORT_INSTALL_ROOT: installRoot,
+        TREEPORT_BIN_DIR: binDirectory
+      }
+    }
+  ).then(
+    () => ({ succeeded: true, stderr: '' }),
+    (error) => ({ succeeded: false, stderr: String(error.stderr) })
+  )
+  if (
+    refusedUninstall.succeeded ||
+    !refusedUninstall.stderr.includes('complete the administrator action')
+  ) {
+    throw new Error(
+      'Uninstaller must preserve package files until service supervision is disabled'
+    )
+  }
+
+  await fs.access(path.join(installRoot, 'current/install.json'))
 } finally {
   await fs.rm(temporaryDirectory, { recursive: true, force: true })
 }

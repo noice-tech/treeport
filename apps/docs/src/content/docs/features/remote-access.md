@@ -52,7 +52,7 @@ TREEPORT_API_URL=https://laptop.tailnet.ts.net:8733 \
   treeport project list
 ```
 
-Tailscale Serve authenticates the request. The CLI does not create or store a Treeport credential. Keep daemon lifecycle commands such as `up`, `down`, and `remote` on the computer that runs Treeport.
+Tailscale Serve authenticates the request. The CLI does not create or store a Treeport credential. Keep daemon lifecycle commands such as `start`, `stop`, `service`, and `remote` on the computer that runs Treeport.
 
 ## Ports and other Serve apps
 
@@ -66,7 +66,9 @@ Treeport refuses to overwrite an endpoint already using the selected port.
 
 ## Persistence and status
 
-Tailscale Serve keeps its configuration independently of the Treeport CLI process. Treeport saves the selected port and expected loopback target. Once enabled, ordinary `treeport up` restarts make Treeport available through the existing remote URL.
+Tailscale Serve keeps its configuration independently of the Treeport CLI process. Treeport saves the selected port and expected loopback target. Once enabled, ordinary `treeport start` operations make Treeport available through the existing remote URL.
+
+For recovery after a host reboot, explicitly enable [service supervision](/features/service-supervision/). Treeport does not rewrite the Serve route when launchd or systemd restarts the loopback daemon. The same private URL becomes available when the local daemon is healthy again.
 
 Check the configuration at any time:
 
@@ -98,4 +100,4 @@ Do not work around this limitation by exposing Treeport directly to a LAN or the
 - If Tailscale is disconnected, reconnect it with `tailscale up`.
 - If Treeport returns `401`, confirm that you used the Serve URL from a user-owned Tailscale device. Tagged devices do not provide the required user identity.
 - Access is governed by your tailnet's ACLs and grants. Update them in the Tailscale admin console when another user or device cannot open the URL.
-- If an old non-loopback listener preference prevents startup, run `treeport up --host 127.0.0.1`, then use `treeport remote enable`.
+- If an old non-loopback listener preference prevents startup, run `treeport start --host 127.0.0.1`, then use `treeport remote enable`.

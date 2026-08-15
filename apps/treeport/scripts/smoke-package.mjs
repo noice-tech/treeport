@@ -150,7 +150,7 @@ try {
     }
   }
 
-  await execute(treeport, ['up'], { env: environment })
+  await execute(treeport, ['start'], { env: environment })
   const health = await fetch(`http://127.0.0.1:${port}/api/health`).then(
     async (response) => {
       if (!response.ok) {
@@ -351,7 +351,7 @@ try {
     { env: environment }
   )
 
-  await execute(treeport, ['down', '--terminate-terminals', '--force'], {
+  await execute(treeport, ['stop', '--terminate-terminals', '--force'], {
     env: environment
   })
   const tmuxEnvironment = { ...process.env, TMUX: '' }
@@ -370,6 +370,6 @@ try {
   await fs.access(path.join(dataDirectory, 'treeport.db'))
   console.log('Clean npm package installation smoke test passed')
 } finally {
-  await execute(treeport, ['down'], { env: environment }).catch(() => undefined)
+  await execute(treeport, ['stop'], { env: environment }).catch(() => undefined)
   await fs.rm(temporaryDirectory, { recursive: true, force: true })
 }

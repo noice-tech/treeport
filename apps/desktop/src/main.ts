@@ -863,7 +863,7 @@ function registerIpc(): void {
   })
   ipcMain.handle('shell:copy-start-command', (event) => {
     if (isAuthorizedShellEvent(event)) {
-      clipboard.writeText('treeport up')
+      clipboard.writeText('treeport start')
     }
   })
   ipcMain.handle('shell:open-installation-docs', (event) => {

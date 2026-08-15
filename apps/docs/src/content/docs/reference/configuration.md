@@ -3,7 +3,7 @@ title: Configuration
 description: Environment variables, paths, and defaults for the Treeport daemon and CLI.
 ---
 
-`treeport up --host/--port` persists listener preferences. The host must be `127.0.0.1`, `::1`, or `localhost`. `treeport remote enable` separately persists its Tailscale HTTPS port. Environment variables override listener preferences but cannot enable a non-loopback listener.
+`treeport start --host/--port` persists listener preferences. The host must be `127.0.0.1`, `::1`, or `localhost`. `treeport remote enable` separately persists its Tailscale HTTPS port. Environment variables override listener preferences but cannot enable a non-loopback listener.
 
 ## Daemon
 
@@ -72,7 +72,7 @@ The CLI connects to:
 TREEPORT_API_URL=http://127.0.0.1:8733
 ```
 
-If the variable is unset, it uses the listener saved by `treeport up`, or defaults to `http://127.0.0.1:8733`.
+If the variable is unset, it uses the listener saved by `treeport start`, or defaults to `http://127.0.0.1:8733`.
 
 Managed terminals receive these variables automatically. Treeport CLI commands in a managed terminal reconnect to the current local daemon after a restart, even when its listener URL changes.
 
@@ -85,12 +85,18 @@ Managed terminals receive these variables automatically. Treeport CLI commands i
 
 `treeport context` validates that all IDs are present and still belong together. It refuses partial or stale managed context rather than guessing from the current directory.
 
+## Service environment
+
+`treeport service enable` saves the daemon configuration that the OS manager needs after login or shell state is gone. It includes the resolved Treeport paths, listener, selected tool paths, `PATH`, and locale. It does not save terminal context, SSH-agent state, or unrelated shell variables.
+
+Run `treeport service enable` again after you change the Node installation, npm prefix, `PATH`, Treeport paths, listener, shell, Git path, or tmux path. `treeport service status` and `treeport doctor` report a stale service environment.
+
 ## Examples
 
 Keep Treeport local on a custom port:
 
 ```sh
-treeport up --port 4900
+treeport start --port 4900
 ```
 
 Use an alternate shell and database:
@@ -98,7 +104,7 @@ Use an alternate shell and database:
 ```sh
 TREEPORT_SHELL=/bin/bash \
 TREEPORT_DATABASE_PATH=~/Backups/treeport.db \
-treeport up
+treeport start
 ```
 
 For private remote access, use `treeport remote enable`. It keeps the daemon on loopback and exposes it through Tailscale Serve; see [Remote access](/features/remote-access/).
@@ -106,6 +112,6 @@ For private remote access, use `treeport remote enable`. It keeps the daemon on 
 Treeport refuses old non-loopback preferences and environment values. Repair an old preference, then enable the supported remote endpoint:
 
 ```sh
-treeport up --host 127.0.0.1
+treeport start --host 127.0.0.1
 treeport remote enable
 ```

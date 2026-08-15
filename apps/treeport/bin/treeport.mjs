@@ -1,2 +1,4 @@
 #!/usr/bin/env node
-import '../dist/node/cli/index.js'
+
+process.env.TREEPORT_CLI_ENTRYPOINT ??= process.argv[1]
+await import('../dist/node/cli/index.js')

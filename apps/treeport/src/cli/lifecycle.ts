@@ -37,6 +37,7 @@ export interface DaemonRecord {
   dataDir: string
   startedAt: string
   installationMethod: string
+  daemonLifecycle: 'treeport' | 'service' | 'external'
 }
 
 export interface HealthRecord {
@@ -47,7 +48,7 @@ export interface HealthRecord {
   pid: number
   instanceId: string | null
   installationMethod: string
-  daemonLifecycle: 'treeport' | 'external'
+  daemonLifecycle: 'treeport' | 'service' | 'external'
   url: string
 }
 
@@ -69,14 +70,16 @@ function expandHome(value: string): string {
     : value
 }
 
-function localPaths(env: NodeJS.ProcessEnv = process.env): {
+export interface LocalPaths {
   dataDir: string
   runtimeDir: string
   preferencesPath: string
   statePath: string
   lockPath: string
   logPath: string
-} {
+}
+
+export function localPaths(env: NodeJS.ProcessEnv = process.env): LocalPaths {
   const defaultDataDir = env.XDG_DATA_HOME
     ? path.join(expandHome(env.XDG_DATA_HOME), 'treeport')
     : process.platform === 'darwin'
@@ -126,7 +129,8 @@ const daemonRecordSchema = z.strictObject({
   apiUrl: z.string(),
   dataDir: z.string(),
   startedAt: z.string(),
-  installationMethod: z.string()
+  installationMethod: z.string(),
+  daemonLifecycle: z.enum(['treeport', 'service', 'external'])
 })
 
 const healthRecordSchema: z.ZodType<HealthRecord> = z.strictObject({
@@ -137,7 +141,7 @@ const healthRecordSchema: z.ZodType<HealthRecord> = z.strictObject({
   pid: z.number(),
   instanceId: z.string().nullable(),
   installationMethod: z.string(),
-  daemonLifecycle: z.enum(['treeport', 'external']),
+  daemonLifecycle: z.enum(['treeport', 'service', 'external']),
   url: z.string()
 })
 
@@ -462,7 +466,7 @@ function localProxyTarget(apiUrl: string): string {
     !['127.0.0.1', 'localhost', '::1', '[::1]'].includes(url.hostname)
   ) {
     throw new Error(
-      'Treeport remote access requires a loopback daemon. Run `treeport up --host 127.0.0.1`, then try again.'
+      'Treeport remote access requires a loopback daemon. Run `treeport start --host 127.0.0.1`, then try again.'
     )
   }
 
@@ -544,6 +548,7 @@ async function tailscaleRemoteUrl(port: number): Promise<string> {
 
 export async function enableTailscaleRemote(options: {
   port?: number
+  daemon?: { apiUrl: string }
 }): Promise<{ alreadyEnabled: boolean; port: number; url: string }> {
   if (
     options.port !== undefined &&
@@ -582,7 +587,7 @@ export async function enableTailscaleRemote(options: {
     )
   }
 
-  const daemon = await daemonUp({})
+  const daemon = options.daemon ?? (await daemonUp({}))
   const target = localProxyTarget(daemon.apiUrl)
   const alreadyEnabled = proxyMatches(existingTarget, target)
   if (!alreadyEnabled) {
@@ -810,6 +815,7 @@ export async function daemonUp(options: {
     TREEPORT_INSTANCE_ID: instanceId,
     TREEPORT_INSTALLATION_METHOD:
       process.env.TREEPORT_INSTALLATION_METHOD?.trim() || 'npm',
+    TREEPORT_DAEMON_LIFECYCLE: 'treeport',
     TREEPORT_WEB_DIST: webDist
   }
 

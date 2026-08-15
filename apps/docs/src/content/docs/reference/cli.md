@@ -20,27 +20,33 @@ With `--json`, success output contains `projectId`, `worktreeId`, the canonical 
 ## Lifecycle
 
 ```sh
-treeport up [--host <address>] [--port <port>]
-treeport down
+treeport start [--host <address>] [--port <port>] [--foreground]
+treeport stop [--terminate-terminals --force]
 treeport status
 treeport logs [--lines <count>]
 treeport doctor
 treeport version
+
+treeport service enable
+treeport service status
+treeport service disable
 
 treeport remote enable [--port <port>]
 treeport remote status
 treeport remote disable
 ```
 
-`treeport up` starts the daemon in the background, waits until it is ready, and prints its URL. Repeating it is safe: it reports the existing healthy daemon rather than starting another.
+`treeport start` starts the daemon in the background, waits until it is ready, and prints its URL. Repeating it is safe: it reports the existing healthy daemon rather than starting another. `treeport stop` stops only a verified Treeport-owned daemon. It preserves Treeport's tmux sessions so the next start can reconcile them. `treeport stop --terminate-terminals --force` is the explicit destructive alternative.
 
-`treeport down` stops only a verified Treeport-owned daemon. It preserves Treeport's tmux sessions so they can be reconciled by the next `treeport up`. `treeport down --terminate-terminals --force` is the explicit destructive alternative used by a complete uninstall.
+Service mode is an explicit option for startup after reboot and restart after an unexpected exit. `service enable` registers it, `service status` checks it even when the daemon is stopped, and `service disable` stops and unregisters it. While service mode is installed, normal `start`, `stop`, `status`, `logs`, and `doctor` commands use the OS manager. See [Service supervision](/features/service-supervision/) for platform requirements and administrator actions.
 
-The default listener is `http://127.0.0.1:8733`. Host and port options are persisted for later starts. `--host` accepts only `127.0.0.1`, `::1`, or `localhost`. Treeport refuses a non-loopback option, environment value, or saved preference. Repair an old preference with `treeport up --host 127.0.0.1`.
+With `--json`, service status reports support, manager, state, installation, boot enablement, active and healthy state, reboot readiness, definition and environment matches, expected paths, daemon state, issues, recovery commands, and a pending administrator command. Stable states are `disabled`, `action_required`, `starting`, `healthy`, `stopped`, `unhealthy`, and `stale`.
+
+The default listener is `http://127.0.0.1:8733`. Host and port options are persisted for later starts. `--host` accepts only `127.0.0.1`, `::1`, or `localhost`. Treeport refuses a non-loopback option, environment value, or saved preference. Repair an old preference with `treeport start --host 127.0.0.1`.
 
 `remote enable` starts the loopback daemon if needed, then configures a persistent private HTTPS [Tailscale Serve](https://tailscale.com/docs/features/tailscale-serve) endpoint. It uses port `8733` by default. Serve authenticates each remote user, and tailnet policy controls access. Treeport does not create a separate credential.
 
-A CLI on another permitted tailnet device can set `TREEPORT_API_URL` to the Serve HTTPS URL for API commands. Keep `up`, `down`, `status`, `logs`, `doctor`, and `remote` lifecycle operations on the computer that runs Treeport. See [Remote access](/features/remote-access/) for prerequisites, persistence, tagged-device limits, and access-policy guidance.
+A CLI on another permitted tailnet device can set `TREEPORT_API_URL` to the Serve HTTPS URL for API commands. Keep `start`, `stop`, `service`, `status`, `logs`, `doctor`, and `remote` lifecycle operations on the computer that runs Treeport. See [Remote access](/features/remote-access/) for prerequisites, persistence, tagged-device limits, and access-policy guidance.
 
 ## Context
 
@@ -178,12 +184,12 @@ Success output is JSON on stdout. Errors are JSON on stderr:
 { "error": { "code": "DOMAIN_ERROR", "message": "…", "details": {} } }
 ```
 
-| Exit code | Meaning                                            |
-| --------- | -------------------------------------------------- |
-| `0`       | Command completed; inspect partial `spawn` fields. |
-| `1`       | Local startup or application launch failed.        |
-| `2`       | Invalid CLI usage.                                 |
-| `3`       | Daemon unreachable or event stream failed.         |
-| `4`       | Terminal wait timed out.                           |
-| `5`       | API, domain, or invalid-context refusal.           |
-| `130`     | Wait interrupted with Ctrl+C.                      |
+| Exit code | Meaning                                               |
+| --------- | ----------------------------------------------------- |
+| `0`       | Command completed; inspect partial `spawn` fields.    |
+| `1`       | Startup failed or a service action is still required. |
+| `2`       | Invalid CLI usage.                                    |
+| `3`       | Daemon unreachable or event stream failed.            |
+| `4`       | Terminal wait timed out.                              |
+| `5`       | API, domain, or invalid-context refusal.              |
+| `130`     | Wait interrupted with Ctrl+C.                         |
