@@ -1,11 +1,19 @@
-import { describe, expect, it } from 'vitest'
+import { execFile } from 'node:child_process'
+import fs from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
+import { promisify } from 'node:util'
+import { describe, expect, it, onTestFinished } from 'vitest'
 import {
+  createAdministratorCommand,
   createLaunchdDefinition,
   createServiceEnvironment,
   createSystemdDefinition,
   serializeLaunchdDefinition,
   serializeSystemdDefinition
 } from './service.js'
+
+const execute = promisify(execFile)
 
 describe('OS service definitions', () => {
   it('keeps Treeport under the target account and preserves tmux processes on macOS', () => {
@@ -69,6 +77,92 @@ describe('OS service definitions', () => {
       'ExecStart="/home/tree%%port/.local/share/treeport/service/run"'
     )
     expect(unit).toContain('WantedBy=default.target')
+  })
+
+  it('runs the generated administrator command without Node in PATH', async () => {
+    const temporaryDirectory = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'treeport-service-command-')
+    )
+    onTestFinished(() =>
+      fs.rm(temporaryDirectory, { recursive: true, force: true })
+    )
+
+    const installationDirectory = path.join(
+      temporaryDirectory,
+      "owner's installation with spaces"
+    )
+    const restrictedBinDirectory = path.join(
+      temporaryDirectory,
+      'restricted-bin'
+    )
+    const runtimeExecutable = path.join(installationDirectory, 'node runtime')
+    const runtimeEntrypoint = path.join(
+      installationDirectory,
+      "treeport's cli.mjs"
+    )
+    const cliEntrypoint = path.join(
+      installationDirectory,
+      "treeport's shell shim"
+    )
+    const requestPath = path.join(
+      installationDirectory,
+      "request's folder",
+      'apply request.json'
+    )
+    await Promise.all([
+      fs.mkdir(installationDirectory, { recursive: true }),
+      fs.mkdir(restrictedBinDirectory, { recursive: true })
+    ])
+    await Promise.all([
+      fs.symlink(process.execPath, runtimeExecutable),
+      fs.writeFile(
+        runtimeEntrypoint,
+        "import fs from 'node:fs'; fs.writeFileSync(process.env.TREEPORT_TEST_OUTPUT, JSON.stringify(process.argv.slice(2)))\n"
+      ),
+      fs.writeFile(
+        cliEntrypoint,
+        `#!/bin/sh\nexec ${JSON.stringify(runtimeExecutable)} ${JSON.stringify(runtimeEntrypoint)} "$@"\n`,
+        { mode: 0o755 }
+      ),
+      fs.writeFile(
+        path.join(restrictedBinDirectory, 'sudo'),
+        '#!/bin/sh\nexec "$@"\n',
+        { mode: 0o755 }
+      )
+    ])
+
+    for (const installationMethod of ['curl', 'npm'] as const) {
+      const outputPath = path.join(
+        temporaryDirectory,
+        `${installationMethod}-arguments.json`
+      )
+      await execute(
+        '/bin/sh',
+        [
+          '-c',
+          createAdministratorCommand({
+            installationMethod,
+            cliEntrypoint,
+            runtimeExecutable,
+            runtimeEntrypoint,
+            requestPath
+          })
+        ],
+        {
+          env: {
+            PATH: restrictedBinDirectory,
+            TREEPORT_TEST_OUTPUT: outputPath
+          }
+        }
+      )
+
+      expect(JSON.parse(await fs.readFile(outputPath, 'utf8'))).toEqual([
+        'service',
+        'apply',
+        '--request',
+        requestPath
+      ])
+    }
   })
 
   it('captures only the supported service environment', () => {

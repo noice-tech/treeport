@@ -17,13 +17,13 @@ The supervised backend still runs as your user and listens only on loopback. It 
 
 Treeport uses a system LaunchDaemon so it can start before a GUI login. Run `treeport service enable` as the user who owns the Treeport data. Do not run it as root.
 
-Treeport prepares the definition and prints one command for an administrator, similar to:
+Treeport prepares the definition and prints one command for an administrator. For a curl installation, it is similar to:
 
 ```sh
-sudo /absolute/path/to/treeport service apply --request /absolute/path/to/request.json
+sudo '/absolute/path/to/treeport' service apply --request '/absolute/path/to/request.json'
 ```
 
-An administrator can run this command from another account. The command installs the system definition, but the definition tells launchd to run Treeport as the original user. Treeport does not run the backend as root.
+An npm installation can include the absolute Node runtime and package CLI entrypoint in the command. An administrator can run the printed command from another account, even when that account has a different restricted `PATH`. The command uses the Node runtime and Treeport installation selected by the Treeport owner. It installs the system definition, but the definition tells launchd to run Treeport as the original user. Treeport does not run the backend as root.
 
 macOS also requires a printed administrator command when `treeport start`, `treeport stop`, or `treeport service disable` changes the system LaunchDaemon. Requests expire. If one expires, run the original Treeport command again.
 

@@ -36,10 +36,12 @@ if (!installer.includes(`TREEPORT_VERSION:-${manifest.treeportVersion}`)) {
 
 if (
   !installer.includes('TREEPORT_CLI_ENTRYPOINT') ||
+  !installer.includes("node -p 'process.execPath'") ||
+  !installer.includes("exec '$node_executable_for_shim'") ||
   !installer.includes('treeport" start')
 ) {
   throw new Error(
-    'Installer must preserve the stable CLI path and use the canonical start command'
+    'Installer must preserve the stable CLI path, pin its Node runtime, and use the canonical start command'
   )
 }
 
@@ -111,7 +113,13 @@ try {
   await Promise.all([
     fs.writeFile(
       path.join(temporaryDirectory, 'node'),
-      '#!/bin/sh\necho v24.0.0\n',
+      `#!/bin/sh
+if [ "$1" = "-p" ]; then
+  printf '%s\\n' ${JSON.stringify(path.join(temporaryDirectory, 'node'))}
+else
+  echo v24.0.0
+fi
+`,
       { mode: 0o755 }
     ),
     fs.writeFile(path.join(temporaryDirectory, 'npm'), '#!/bin/sh\nexit 0\n', {
