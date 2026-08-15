@@ -505,7 +505,7 @@ describe('TmuxAdapter', () => {
     )
     temporary.push(runtime)
     const runner = new RecordingRunner()
-    const encode = (value: unknown) =>
+    const encode = <Value>(value: Value) =>
       Buffer.from(JSON.stringify(value), 'utf8').toString('base64url')
     runner.responses.push({
       stdout: [
@@ -688,7 +688,7 @@ describe('TmuxAdapter', () => {
     )
     temporary.push(runtime)
     const runner = new RecordingRunner()
-    const encode = (value: unknown) =>
+    const encode = <Value>(value: Value) =>
       Buffer.from(JSON.stringify(value), 'utf8').toString('base64url')
     runner.responses.push(
       {

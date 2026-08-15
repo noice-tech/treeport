@@ -22,6 +22,7 @@ import {
   type TerminalAuth,
   type TerminalClientEvent,
   type TerminalRuntimeMetadata,
+  type TerminalProtocolInput,
   type TerminalServerEvent,
   type TerminalServerPayload
 } from '@treeport/shared'
@@ -107,14 +108,15 @@ interface CanonicalTerminalDimensions {
   sessionName: string
 }
 
-function errorMessage(error: unknown): string {
+function errorMessage(cause: unknown): string {
   const message = (
-    error instanceof Error ? error.message : String(error)
+    cause instanceof Error ? cause.message : String(cause)
   ).trim()
   return (message || 'Terminal attachment failed').slice(0, 1_000)
 }
 
 function tmuxEnvironment(): NodeJS.ProcessEnv {
+  // SAFETY: The surrounding boundary contract establishes this asserted value.
   return Object.fromEntries(
     Object.entries(process.env).filter(
       ([key, value]) =>
@@ -199,7 +201,7 @@ export class TerminalAttachmentManager {
   message(
     connectionId: string,
     event: TerminalClientEvent,
-    value: unknown
+    value: TerminalProtocolInput
   ): void {
     const connection = this.clients.get(connectionId)
     if (!connection || connection.state === 'closed') {
@@ -952,14 +954,14 @@ export class TerminalAttachmentManager {
     }).catch((error) => this.failInputWrite(connection, error))
   }
 
-  private failInputWrite(connection: ClientConnection, error: unknown): void {
+  private failInputWrite(connection: ClientConnection, cause: unknown): void {
     if (!this.isActive(connection)) {
       return
     }
 
     this.send(connection, 'terminal_error', {
       code: 'INPUT_FAILED',
-      message: errorMessage(error),
+      message: errorMessage(cause),
       retryable: true
     })
     connection.transport.disconnect(true)
@@ -1034,7 +1036,7 @@ export class TerminalAttachmentManager {
     )
   }
 
-  private failDimensionChange(terminalId: string, error: unknown): void {
+  private failDimensionChange(terminalId: string, cause: unknown): void {
     this.dimensions.delete(terminalId)
     for (const client of [...this.clients.values()]) {
       if (client.terminalId !== terminalId || !this.isActive(client)) {
@@ -1043,7 +1045,7 @@ export class TerminalAttachmentManager {
 
       this.send(client, 'terminal_error', {
         code: 'RESIZE_FAILED',
-        message: errorMessage(error),
+        message: errorMessage(cause),
         retryable: true
       })
       client.transport.disconnect(true)

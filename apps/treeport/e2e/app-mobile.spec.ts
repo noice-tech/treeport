@@ -39,7 +39,7 @@ test.describe('mobile terminal UI', () => {
       page.getByRole('button', { name: /background · \/repo.*42% complete/ })
     ).toBeVisible()
     await page.evaluate(() =>
-      (window as any).__eventSource.emit(
+      window.__eventSource.emit(
         'terminal.metadata',
         JSON.stringify({
           data: {
@@ -71,13 +71,13 @@ test.describe('mobile terminal UI', () => {
     await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
     await expect(page.getByText('Viewing', { exact: true })).toBeVisible()
     await page.evaluate(() => {
-      ;(window as any).__wsSent = []
+      window.__wsSent = []
     })
     await page.getByRole('button', { name: 'Esc' }).click()
     await waitForTerminalControl(page)
     await page.getByRole('button', { name: 'Esc' }).click()
     await page.evaluate(() => {
-      const socket = (window as any).__lastWs
+      const socket = window.__lastWs
       socket.onmessage?.({
         data: JSON.stringify({
           version: 1,
@@ -90,7 +90,7 @@ test.describe('mobile terminal UI', () => {
     })
     await page.getByRole('button', { name: 'Arrow up' }).click()
     await expect
-      .poll(() => page.evaluate(() => (window as any).__wsSent))
+      .poll(() => page.evaluate(() => window.__wsSent))
       .toEqual(
         expect.arrayContaining([
           expect.objectContaining({ type: 'input', data: '\u001b' }),
@@ -106,7 +106,7 @@ test.describe('mobile terminal UI', () => {
       exact: true
     })
     await page.evaluate(() => {
-      ;(window as any).__wsSent = []
+      window.__wsSent = []
     })
     await ctrl.click()
     await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
@@ -117,7 +117,7 @@ test.describe('mobile terminal UI', () => {
     await expect
       .poll(() =>
         page.evaluate(() =>
-          (window as any).__wsSent
+          window.__wsSent
             .filter((message: any) => message.type === 'input')
             .map((message: any) => message.data)
         )
@@ -127,14 +127,14 @@ test.describe('mobile terminal UI', () => {
     await alt.click()
     await ctrl.click()
     await page.evaluate(() => {
-      ;(window as any).__wsSent = []
+      window.__wsSent = []
     })
     await shiftTab.scrollIntoViewIfNeeded()
     await shiftTab.click()
     await expect
       .poll(() =>
         page.evaluate(() =>
-          (window as any).__wsSent
+          window.__wsSent
             .filter((message: any) => message.type === 'input')
             .map((message: any) => message.data)
         )
@@ -293,7 +293,7 @@ test.describe('mobile terminal UI', () => {
     await page.waitForTimeout(100)
     expect(
       await page.evaluate(() => {
-        const socket = (window as any).__lastWs
+        const socket = window.__lastWs
         const state = JSON.parse(
           localStorage.getItem('__treeport_terminal_state__:term_pi') || '{}'
         )
@@ -312,7 +312,7 @@ test.describe('mobile terminal UI', () => {
     })
     await waitForTerminalControl(page)
     await page.evaluate(() => {
-      const socket = (window as any).__lastWs
+      const socket = window.__lastWs
       socket.onmessage?.({
         data: JSON.stringify({
           version: 1,
@@ -322,7 +322,7 @@ test.describe('mobile terminal UI', () => {
           data: '\u001b[?1049h\u001b[?1000h\u001b[?1006h'
         })
       })
-      ;(window as any).__wsSent = []
+      window.__wsSent = []
     })
     await client.send('Input.dispatchTouchEvent', {
       type: 'touchStart',
@@ -336,7 +336,7 @@ test.describe('mobile terminal UI', () => {
       .poll(() =>
         page.evaluate(
           () =>
-            (window as any).__wsSent.filter((message: any) =>
+            window.__wsSent.filter((message: any) =>
               String(message.data).includes('\u001b[<64;')
             ).length
         )
@@ -348,7 +348,7 @@ test.describe('mobile terminal UI', () => {
     })
 
     await page.evaluate(() => {
-      const socket = (window as any).__lastWs
+      const socket = window.__lastWs
       socket.onmessage?.({
         data: JSON.stringify({
           version: 1,
@@ -361,9 +361,8 @@ test.describe('mobile terminal UI', () => {
     })
     const inputMessagesBeforeModeChange = await page.evaluate(
       () =>
-        (window as any).__wsSent.filter(
-          (message: any) => message.type === 'input'
-        ).length
+        window.__wsSent.filter((message: any) => message.type === 'input')
+          .length
     )
 
     await client.send('Input.dispatchTouchEvent', {
@@ -383,9 +382,8 @@ test.describe('mobile terminal UI', () => {
       .poll(() =>
         page.evaluate(
           (previousCount) =>
-            (window as any).__wsSent.filter(
-              (message: any) => message.type === 'input'
-            ).length > previousCount,
+            window.__wsSent.filter((message: any) => message.type === 'input')
+              .length > previousCount,
           inputMessagesBeforeModeChange
         )
       )
@@ -393,9 +391,7 @@ test.describe('mobile terminal UI', () => {
     await expect
       .poll(() =>
         page.evaluate(() =>
-          (window as any).__wsSent.some(
-            (message: any) => message.data === '\u001b[A'
-          )
+          window.__wsSent.some((message: any) => message.data === '\u001b[A')
         )
       )
       .toBe(true)
@@ -406,7 +402,7 @@ test.describe('mobile terminal UI', () => {
       .poll(() =>
         page.evaluate(
           () =>
-            (window as any).__wsSent
+            window.__wsSent
               .filter((message: any) => message.type === 'input')
               .at(-1)?.data
         )
@@ -448,7 +444,7 @@ test.describe('mobile terminal UI', () => {
         .poll(() =>
           page.evaluate(
             () =>
-              (window as any).__wsSent
+              window.__wsSent
                 .filter((message: any) => message.type === 'input')
                 .at(-1)?.data
           )

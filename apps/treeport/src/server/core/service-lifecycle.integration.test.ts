@@ -54,7 +54,7 @@ describe('TreeportService with injected command adapters', () => {
       .createTerminal(mainWorktree.id, 'Created during setup', ['pi'])
       .then(
         (terminal) => ({ terminal, error: null }),
-        (error: unknown) => ({ terminal: null, error })
+        (error) => ({ terminal: null, error })
       )
     expect(creationSettled).toBe(false)
 
@@ -67,7 +67,7 @@ describe('TreeportService with injected command adapters', () => {
       })
       .then(
         (operation) => ({ operation, error: null }),
-        (error: unknown) => ({ operation: null, error })
+        (error) => ({ operation: null, error })
       )
       .finally(() => {
         removalSettled = true

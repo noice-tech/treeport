@@ -6,6 +6,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import { fileURLToPath } from 'node:url'
+import { z } from 'zod'
 
 const execute = promisify(execFile)
 const packageDirectory = path.resolve(
@@ -35,12 +36,14 @@ await new Promise((resolve, reject) => {
   reservation.once('error', reject)
   reservation.listen(0, '127.0.0.1', resolve)
 })
-const address = reservation.address()
-if (!address || typeof address === 'string') {
+const address = z
+  .object({ port: z.number().int() })
+  .safeParse(reservation.address())
+if (!address.success) {
   throw new Error('Could not allocate a package smoke-test port')
 }
 
-const port = address.port
+const port = address.data.port
 await new Promise((resolve, reject) =>
   reservation.close((error) => (error ? reject(error) : resolve()))
 )
@@ -144,8 +147,11 @@ try {
         throw new Error('Installing the npm package installed Electron')
       }
 
-      if (dependency && typeof dependency === 'object') {
-        dependencyQueue.push(dependency.dependencies ?? {})
+      const parsedDependency = z
+        .object({ dependencies: z.record(z.string(), z.unknown()).optional() })
+        .safeParse(dependency)
+      if (parsedDependency.success) {
+        dependencyQueue.push(parsedDependency.data.dependencies ?? {})
       }
     }
   }

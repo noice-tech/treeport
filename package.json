@@ -43,7 +43,8 @@
     "oxlint": "^1.78.0",
     "turbo": "^2.10.5",
     "typescript": "^7.0.2",
-    "vitest": "^4.0.18"
+    "vitest": "^4.0.18",
+    "zod": "catalog:"
   },
   "packageManager": "pnpm@11.15.0"
 }

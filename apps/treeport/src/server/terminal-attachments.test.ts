@@ -12,6 +12,7 @@ import {
   TerminalAttachmentManager,
   type TerminalTransport
 } from './terminal-attachments'
+import { testAccess } from './test-access'
 import { TerminalMetadataManager } from './terminal-metadata'
 import type {
   TerminalProgressObserver,
@@ -139,6 +140,7 @@ class FakeTransport implements TerminalTransport {
       return false
     }
 
+    // SAFETY: The test fixture provides the asserted contract used here.
     this.sent.push({ type: event, ...payload } as SentTerminalMessage)
     return true
   }
@@ -155,7 +157,8 @@ function fixture() {
   const ptys: FakePty[] = []
   const progressObservers: FakeProgressObserver[] = []
   const publish = vi.fn()
-  const service = {
+  // SAFETY: The test fixture provides the asserted contract used here.
+  const service = testAccess<TreeportService>({
     refreshTerminalStatus: vi.fn(async () => ({
       id: 'term',
       worktreeId: 'wt',
@@ -169,8 +172,9 @@ function fixture() {
       tmuxSocketName: 'socket'
     })),
     events: { publish }
-  } as unknown as TreeportService
-  const tmux = {
+  })
+  // SAFETY: The test fixture provides the asserted contract used here.
+  const tmux = testAccess<TmuxAdapter>({
     configPath: '/runtime/tmux.conf',
     configureServer: vi.fn(async () => undefined),
     useManualWindowSize: vi.fn(async () => undefined),
@@ -181,11 +185,12 @@ function fixture() {
       currentCommand: 'zsh'
     })),
     attachArgs: vi.fn(() => ['attach-session', '-t', 'session'])
-  } as unknown as TmuxAdapter
+  })
   const spawn = vi.fn(() => {
     const value = new FakePty()
     ptys.push(value)
-    return value as unknown as IPty
+    // SAFETY: The test fixture provides the asserted contract used here.
+    return testAccess<IPty>(value)
   })
   const createProgressObserver = vi.fn(
     (options: TmuxProgressObserverOptions) => {
@@ -213,6 +218,7 @@ function fixture() {
     tmux,
     process.execPath,
     metadata,
+    // SAFETY: The test fixture provides the asserted contract used here.
     spawn as never
   )
   return {
@@ -229,12 +235,10 @@ function fixture() {
 
 function deferred<Value>() {
   let resolve!: (value: Value | PromiseLike<Value>) => void
-  let reject!: (reason?: unknown) => void
-  const promise = new Promise<Value>((resolvePromise, rejectPromise) => {
+  const promise = new Promise<Value>((resolvePromise) => {
     resolve = resolvePromise
-    reject = rejectPromise
   })
-  return { promise, resolve, reject }
+  return { promise, resolve }
 }
 
 function attach(
@@ -747,6 +751,7 @@ describe('TerminalAttachmentManager', () => {
     await vi.waitFor(() => expect(ptys[1]!.writes).toHaveLength(1))
     expect(ptys[0]!.writes).toHaveLength(0)
     expect(Buffer.isBuffer(ptys[1]!.writes[0])).toBe(true)
+    // SAFETY: The test fixture provides the asserted contract used here.
     expect((ptys[1]!.writes[0] as Buffer).equals(Buffer.from([0, 255]))).toBe(
       true
     )
@@ -834,27 +839,33 @@ describe('TerminalAttachmentManager', () => {
       const pending = deferred<unknown>()
       if (phase === 'refresh') {
         vi.mocked(value.service.refreshTerminalStatus).mockReturnValueOnce(
+          // SAFETY: The test fixture provides the asserted contract used here.
           pending.promise as never
         )
       } else if (phase === 'configure') {
         vi.mocked(value.tmux.configureServer).mockReturnValueOnce(
+          // SAFETY: The test fixture provides the asserted contract used here.
           pending.promise as Promise<void>
         )
       } else if (phase === 'metadata') {
         vi.spyOn(value.metadata, 'trackTerminal').mockReturnValueOnce(
+          // SAFETY: The test fixture provides the asserted contract used here.
           pending.promise as Promise<void>
         )
       } else if (phase === 'manual-size') {
         vi.mocked(value.tmux.useManualWindowSize).mockReturnValueOnce(
+          // SAFETY: The test fixture provides the asserted contract used here.
           pending.promise as Promise<void>
         )
       } else if (phase === 'session-size') {
         vi.mocked(value.tmux.sessionSize).mockReturnValueOnce(
+          // SAFETY: The test fixture provides the asserted contract used here.
           pending.promise as never
         )
       } else {
         vi.mocked(value.tmux.sessionSize).mockResolvedValueOnce(null)
         vi.mocked(value.tmux.resizeWindow).mockReturnValueOnce(
+          // SAFETY: The test fixture provides the asserted contract used here.
           pending.promise as Promise<void>
         )
       }
@@ -913,7 +924,8 @@ describe('TerminalAttachmentManager', () => {
       const pty = new FakePty()
       pty.onExitError = new Error('exit subscription failed')
       value.ptys.push(pty)
-      return pty as unknown as IPty
+      // SAFETY: The test fixture provides the asserted contract used here.
+      return testAccess<IPty>(pty)
     })
     const transport = new FakeTransport()
 

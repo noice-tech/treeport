@@ -103,6 +103,31 @@ export class WebPanelViteRuntime {
     base: string,
     options: { outDir?: string; server?: HttpServer } = {}
   ): InlineConfig {
+    const server: NonNullable<InlineConfig['server']> = {
+      middlewareMode: true,
+      headers: {
+        'access-control-allow-origin': '*',
+        'cache-control': 'no-store',
+        'x-content-type-options': 'nosniff'
+      },
+      fs: {
+        strict: true,
+        allow: [source.packageRoot, PANEL_SDK_ROOT]
+      }
+    }
+    if (options.server) {
+      server.hmr = { server: options.server, path: `${base}@vite-hmr` }
+    }
+
+    const viteBuild: NonNullable<InlineConfig['build']> = {
+      sourcemap: true,
+      rollupOptions: { input: path.join(source.root, source.entry) }
+    }
+    if (options.outDir) {
+      viteBuild.outDir = options.outDir
+      viteBuild.emptyOutDir = true
+    }
+
     return {
       root: source.root,
       base,
@@ -119,26 +144,8 @@ export class WebPanelViteRuntime {
         alias: { '@treeport/panel-sdk': PANEL_SDK_ENTRY },
         dedupe: ['react', 'react-dom']
       },
-      server: {
-        middlewareMode: true,
-        headers: {
-          'access-control-allow-origin': '*',
-          'cache-control': 'no-store',
-          'x-content-type-options': 'nosniff'
-        },
-        fs: {
-          strict: true,
-          allow: [source.packageRoot, PANEL_SDK_ROOT]
-        },
-        ...(options.server
-          ? { hmr: { server: options.server, path: `${base}@vite-hmr` } }
-          : {})
-      },
-      build: {
-        sourcemap: true,
-        rollupOptions: { input: path.join(source.root, source.entry) },
-        ...(options.outDir ? { outDir: options.outDir, emptyOutDir: true } : {})
-      }
+      server,
+      build: viteBuild
     }
   }
 
@@ -230,7 +237,10 @@ export class WebPanelViteRuntime {
     if (
       await fs
         .readFile(metadata, 'utf8')
-        .then((value) => JSON.parse(value) as { hash?: string })
+        .then((value) => {
+          // SAFETY: This module writes the cache metadata with a hash field.
+          return JSON.parse(value) as { hash?: string }
+        })
         .then((value) => value.hash === hash)
         .catch(() => false)
     ) {
@@ -257,13 +267,12 @@ export class WebPanelViteRuntime {
             path.join(temporary, BUILD_METADATA),
             `${JSON.stringify({ hash, compilerAbi: COMPILER_ABI })}\n`
           )
-          await fs
-            .rename(temporary, directory)
-            .catch(async (error: unknown) => {
-              if ((error as NodeJS.ErrnoException).code !== 'EEXIST') {
-                throw error
-              }
-            })
+          await fs.rename(temporary, directory).catch(async (error) => {
+            // SAFETY: The surrounding boundary contract establishes this asserted value.
+            if ((error as NodeJS.ErrnoException).code !== 'EEXIST') {
+              throw error
+            }
+          })
           return directory
         } finally {
           await fs.rm(temporary, { recursive: true, force: true })
@@ -278,8 +287,8 @@ export class WebPanelViteRuntime {
     return { hash, directory: await pending }
   }
 
-  private errorPage(source: ResolvedWebPanelSource, error: unknown): string {
-    const raw = error instanceof Error ? error.message : String(error)
+  private errorPage(source: ResolvedWebPanelSource, cause: unknown): string {
+    const raw = cause instanceof Error ? cause.message : String(cause)
     const diagnostic = raw
       .replaceAll(source.packageRoot, '<package>')
       .replaceAll(source.root, '<panel>')

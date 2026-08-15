@@ -164,6 +164,7 @@ export function NewPanelDialog({
                 '[data-panel-launch]:not(:disabled)'
               )
             )
+            // SAFETY: The component contract supplies the asserted browser value used here.
             const index = actions.indexOf(event.target as HTMLButtonElement)
             if (index < 0 || actions.length < 2) {
               return
@@ -230,17 +231,25 @@ export function NewPanelDialog({
                   onClick={() => {
                     setQuery('')
                     setSelectedIndex(0)
-                    onCreateTerminal({
+                    const input: CreateTerminalInput = {
                       name: preset.name,
-                      argv: [preset.executable, ...preset.args],
-                      ...(preset.cwd ? { cwd: preset.cwd } : {}),
-                      ...(Object.keys(preset.env).length
-                        ? { env: { ...preset.env } }
-                        : {}),
-                      ...(preset.closeOnSuccess
-                        ? { closeOnSuccess: true }
-                        : { returnToShell: true })
-                    })
+                      argv: [preset.executable, ...preset.args]
+                    }
+                    if (preset.cwd) {
+                      input.cwd = preset.cwd
+                    }
+
+                    if (Object.keys(preset.env).length) {
+                      input.env = { ...preset.env }
+                    }
+
+                    if (preset.closeOnSuccess) {
+                      input.closeOnSuccess = true
+                    } else {
+                      input.returnToShell = true
+                    }
+
+                    onCreateTerminal(input)
                   }}
                 >
                   <CommandLineIcon

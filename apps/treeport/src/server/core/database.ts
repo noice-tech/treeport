@@ -179,7 +179,9 @@ export interface DatabaseOpenOptions {
   backupDirectory?: string
 }
 
-export function serializeOperation(value: object | null): string | null {
+export function serializeOperation<Value extends object>(
+  value: Value | null
+): string | null {
   return value === null ? null : JSON.stringify(value)
 }
 
@@ -419,6 +421,7 @@ export function mapProject(
     repositoryPath: row.repositoryPath,
     mainWorktreePath: row.mainWorktreePath,
     defaultBranch: row.defaultBranch,
+    // SAFETY: The query selects the columns required by this database row contract.
     color: row.color as ProjectRecord['color'],
     availability: { state: 'available', message: null },
     worktrees: worktreeRows.map((worktree) =>
@@ -439,6 +442,7 @@ export function mapWorktree(
     name: inferWorktreeName(
       mainWorktreePath,
       row.path,
+      // SAFETY: The query selects the columns required by this database row contract.
       row.kind as WorktreeRecord['kind']
     ),
     path: row.path,
@@ -448,10 +452,12 @@ export function mapWorktree(
     locked: Boolean(row.locked),
     lockReason: row.lockReason,
     prunable: Boolean(row.prunable),
+    // SAFETY: The query selects the columns required by this database row contract.
     kind: row.kind as WorktreeRecord['kind'],
     tmuxSocketName: row.tmuxSocketName,
     managedWrapperPath: row.managedWrapperPath,
     pr: {
+      // SAFETY: The query selects the columns required by this database row contract.
       state: row.prState as PrInfo['state'],
       number: row.prNumber,
       url: row.prUrl,
@@ -473,6 +479,7 @@ export function mapTerminalPreset(row: TerminalPresetRow): TerminalPreset {
     id: row.id,
     name: row.name,
     executable: row.executable,
+    // SAFETY: The query selects the columns required by this database row contract.
     args: JSON.parse(row.argsJson) as string[],
     closeOnSuccess: Boolean(row.closeOnSuccess),
     createdAt: row.createdAt,

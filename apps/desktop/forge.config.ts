@@ -34,32 +34,36 @@ const notarizationCredentials = {
   appleApiIssuer: releaseEnvironment.appleApiIssuer ?? ''
 }
 
+const packagerConfig: NonNullable<ForgeConfig['packagerConfig']> = {
+  name: 'Treeport',
+  appBundleId: 'tech.noice.treeport',
+  appCategoryType: 'public.app-category.developer-tools',
+  asar: true,
+  icon: path.resolve('assets/Treeport.icns'),
+  protocols: [
+    {
+      name: 'Treeport workspace',
+      schemes: ['treeport']
+    }
+  ],
+  osxSign: releaseBuild
+    ? {
+        identity: releaseEnvironment.signingIdentity!
+      }
+    : {
+        identity: '-',
+        identityValidation: false
+      }
+}
+if (releaseBuild) {
+  packagerConfig.osxNotarize = notarizationCredentials
+}
+
 const config: ForgeConfig = {
   rebuildConfig: {
     onlyModules: []
   },
-  packagerConfig: {
-    name: 'Treeport',
-    appBundleId: 'tech.noice.treeport',
-    appCategoryType: 'public.app-category.developer-tools',
-    asar: true,
-    icon: path.resolve('assets/Treeport.icns'),
-    protocols: [
-      {
-        name: 'Treeport workspace',
-        schemes: ['treeport']
-      }
-    ],
-    osxSign: releaseBuild
-      ? {
-          identity: releaseEnvironment.signingIdentity!
-        }
-      : {
-          identity: '-',
-          identityValidation: false
-        },
-    ...(releaseBuild ? { osxNotarize: notarizationCredentials } : {})
-  },
+  packagerConfig,
   makers: [
     {
       name: '@electron-forge/maker-dmg',

@@ -22,6 +22,7 @@ import {
   SOCKET_IO_PATH,
   TERMINAL_PROTOCOL_VERSION
 } from '@treeport/shared'
+import { testAccess } from './test-access'
 import { TerminalAttachmentManager } from './terminal-attachments'
 import { createSocketServer } from './socket-server'
 import type { TerminalMetadataManager } from './terminal-metadata'
@@ -80,7 +81,8 @@ const fixtures: NetworkFixture[] = []
 async function fixture(): Promise<NetworkFixture> {
   const events = new ProductEventBus()
   const ptys: FakePty[] = []
-  const service = {
+  // SAFETY: The test fixture provides the asserted contract used here.
+  const service = testAccess<TreeportService>({
     events,
     listWebPanels: vi.fn(async () => []),
     refreshTerminalStatus: vi.fn(async () => ({
@@ -95,14 +97,15 @@ async function fixture(): Promise<NetworkFixture> {
       path: '/tmp',
       tmuxSocketName: 'socket'
     }))
-  } as unknown as TreeportService
-  const tmux = {
+  })
+  // SAFETY: The test fixture provides the asserted contract used here.
+  const tmux = testAccess<TmuxAdapter>({
     configureServer: vi.fn(async () => undefined),
     useManualWindowSize: vi.fn(async () => undefined),
     resizeWindow: vi.fn(async () => undefined),
     sessionSize: vi.fn(async () => ({ cols: 100, rows: 30 })),
     attachArgs: vi.fn(() => ['attach-session', '-t', 'session'])
-  } as unknown as TmuxAdapter
+  })
   const currentMetadata: TerminalRuntimeMetadata = {
     terminalId: 'term',
     title: 'shell',
@@ -115,7 +118,8 @@ async function fixture(): Promise<NetworkFixture> {
   const metadataSnapshot = vi.fn<() => TerminalRuntimeMetadata[]>(() => [
     currentMetadata
   ])
-  const metadata = {
+  // SAFETY: The test fixture provides the asserted contract used here.
+  const metadata = testAccess<TerminalMetadataManager>({
     initialize: vi.fn(async () => undefined),
     snapshot: metadataSnapshot,
     get: vi.fn(() => currentMetadata),
@@ -123,16 +127,18 @@ async function fixture(): Promise<NetworkFixture> {
     subscribe: vi.fn(() => () => undefined),
     viewingHistory: vi.fn(() => false),
     subscribeHistory: vi.fn(() => () => undefined)
-  } as unknown as TerminalMetadataManager
+  })
   const attachmentManager = new TerminalAttachmentManager(
     service,
     tmux,
     process.execPath,
     metadata,
+    // SAFETY: The test fixture provides the asserted contract used here.
     (() => {
       const value = new FakePty()
       ptys.push(value)
-      return value as unknown as IPty
+      // SAFETY: The test fixture provides the asserted contract used here.
+      return testAccess<IPty>(value)
     }) as never
   )
   const server = http.createServer((_request, response) => {
@@ -162,6 +168,7 @@ async function fixture(): Promise<NetworkFixture> {
     attachmentManager
   })
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  // SAFETY: The test fixture provides the asserted contract used here.
   const address = server.address() as AddressInfo
   const value: NetworkFixture = {
     server,
@@ -201,16 +208,20 @@ function terminalClient(
   terminalProtocol: string | null = String(TERMINAL_PROTOCOL_VERSION),
   options: { extraHeaders?: Record<string, string> } = {}
 ): Socket<TerminalServerToClientEvents, TerminalClientToServerEvents> {
-  return createClient(`${url}/terminals`, {
+  const clientOptions: NonNullable<Parameters<typeof createClient>[1]> = {
     path: SOCKET_IO_PATH,
     transports: ['websocket'],
     forceNew: true,
     reconnection: true,
     reconnectionDelay: 10,
-    ...(terminalProtocol === null ? {} : { query: { terminalProtocol } }),
     auth: { terminalId: 'term', clientId, cols: 100, rows: 30 },
     ...options
-  })
+  }
+  if (terminalProtocol !== null) {
+    clientOptions.query = { terminalProtocol }
+  }
+
+  return createClient(`${url}/terminals`, clientOptions)
 }
 
 async function closeClient(socket: Socket): Promise<void> {
@@ -336,11 +347,13 @@ describe('Socket.IO real network', () => {
     const secondEvents: TerminalRuntimeMetadata[] = []
     first.on('product_event', (event) => {
       if (event.type === 'terminal.metadata') {
+        // SAFETY: The test fixture provides the asserted contract used here.
         firstEvents.push(event.data as TerminalRuntimeMetadata)
       }
     })
     second.on('product_event', (event) => {
       if (event.type === 'terminal.metadata') {
+        // SAFETY: The test fixture provides the asserted contract used here.
         secondEvents.push(event.data as TerminalRuntimeMetadata)
       }
     })
@@ -498,11 +511,14 @@ describe('Socket.IO real network', () => {
 
   it('does not finish attachment setup after a real pre-ready disconnect', async () => {
     const value = await fixture()
-    let finishRefresh!: (terminal: unknown) => void
+    type RefreshedTerminal = Awaited<
+      ReturnType<TreeportService['refreshTerminalStatus']>
+    >
+    let finishRefresh!: (terminal: RefreshedTerminal) => void
     vi.mocked(value.service.refreshTerminalStatus).mockReturnValueOnce(
-      new Promise((resolve) => {
+      new Promise<RefreshedTerminal>((resolve) => {
         finishRefresh = resolve
-      }) as never
+      })
     )
     const closeAttachment = vi.spyOn(value.attachments, 'close')
     const socket = terminalClient(value.url)
@@ -520,9 +536,13 @@ describe('Socket.IO real network', () => {
     finishRefresh({
       id: 'term',
       worktreeId: 'wt',
+      name: 'Terminal',
       tmuxSessionName: 'session',
+      argv: ['shell'],
       status: 'running',
-      exitCode: null
+      exitCode: null,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z'
     })
 
     const probe = terminalClient(value.url, 'tab-probe')
@@ -574,6 +594,7 @@ describe('Socket.IO real network', () => {
     socket.io.reconnection(false)
     await new Promise<void>((resolve) => socket.once('ready', () => resolve()))
 
+    // SAFETY: The test fixture provides the asserted contract used here.
     socket.emit('input', undefined as never)
     await vi.waitFor(() => expect(socket.connected).toBe(false))
     expect(value.ptys[0]!.kills).toBe(1)

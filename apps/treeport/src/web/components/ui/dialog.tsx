@@ -78,6 +78,7 @@ const DialogContent = React.forwardRef<
             className
           )}
           style={
+            // SAFETY: The component contract supplies the asserted browser value used here.
             {
               ...style,
               '--dialog-visual-viewport-top':

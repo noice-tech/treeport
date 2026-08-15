@@ -10,7 +10,9 @@ import {
   TERMINAL_CAPTURE_DEFAULT_LINES,
   TERMINAL_CAPTURE_MAX_LINES,
   WEB_PANEL_INPUT_MAX_BYTES,
+  webPanelInputSchema,
   type ApiErrorBody,
+  type CreateOperationRequest,
   type EventsClientToServerEvents,
   type EventsServerToClientEvents,
   type PackageListing,
@@ -76,6 +78,16 @@ let writeStderr: (value: string) => void = (value) => {
 }
 let requestedExitCode = 0
 
+interface PackageMutationBody {
+  source: string
+  projectId?: string
+}
+
+interface TerminalCreateBody {
+  name: string
+  argv?: string[]
+}
+
 export interface CliApplicationOptions {
   args: string[]
   environment?: NodeJS.ProcessEnv
@@ -84,15 +96,15 @@ export interface CliApplicationOptions {
   stderr?: (value: string) => void
 }
 
-class CliError extends Error {
+class CliError<Details = undefined> extends Error {
   readonly code: string
-  readonly details: unknown
+  readonly details: Details | undefined
 
   constructor(
     message: string,
     readonly exitCode: number,
     code?: string,
-    details?: unknown
+    details?: Details
   ) {
     super(message)
     this.code =
@@ -206,17 +218,23 @@ async function request<T>(
 
   const timeout = setTimeout(abort, 90_000)
   try {
+    const headers = new Headers({ accept: 'application/json' })
+    if (options.body) {
+      headers.set('content-type', 'application/json')
+    }
+
+    new Headers(options.headers).forEach((value, key) =>
+      headers.set(key, value)
+    )
     const response = await fetch(`${apiUrl}${pathname}`, {
       ...options,
       signal: controller.signal,
-      headers: {
-        accept: 'application/json',
-        ...(options.body ? { 'content-type': 'application/json' } : {}),
-        ...options.headers
-      }
+      headers
     })
+    // SAFETY: The validated CLI or Node contract establishes this asserted value.
     const body = (await response.json().catch(() => ({}))) as T | ApiErrorBody
     if (!response.ok) {
+      // SAFETY: The validated CLI or Node contract establishes this asserted value.
       const error = (body as ApiErrorBody).error
       throw new CliError(
         error?.message || `HTTP ${response.status}`,
@@ -226,6 +244,7 @@ async function request<T>(
       )
     }
 
+    // SAFETY: The validated CLI or Node contract establishes this asserted value.
     return body as T
   } catch (error) {
     if (error instanceof CliError) {
@@ -245,12 +264,7 @@ async function request<T>(
 
 async function createWorktree(
   projectId: string,
-  input: {
-    name: string
-    base: 'default' | 'current'
-    initialTerminal?: { name: string; argv?: string[] }
-    sourceWorktreeId?: string
-  }
+  input: CreateOperationRequest
 ): Promise<{
   worktree: WorktreeRecord
   terminal: TerminalRecord | null
@@ -289,10 +303,7 @@ async function createWorktree(
     )
   }
 
-  const worktreeId =
-    typeof operation.result?.worktreeId === 'string'
-      ? operation.result.worktreeId
-      : operation.worktreeId
+  const worktreeId = operation.result?.worktreeId ?? operation.worktreeId
   if (!worktreeId) {
     throw new CliError(
       'Completed worktree creation did not identify its worktree',
@@ -315,22 +326,13 @@ async function createWorktree(
     )
   }
 
-  const terminalId =
-    typeof operation.result?.terminalId === 'string'
-      ? operation.result.terminalId
-      : null
+  const terminalId = operation.result?.terminalId ?? null
 
   return {
     worktree,
     terminal: worktree.terminals.find((item) => item.id === terminalId) ?? null,
-    terminalError:
-      typeof operation.result?.terminalError === 'string'
-        ? operation.result.terminalError
-        : null,
-    setupError:
-      typeof operation.result?.setupError === 'string'
-        ? operation.result.setupError
-        : null
+    terminalError: operation.result?.terminalError ?? null,
+    setupError: operation.result?.setupError ?? null
   }
 }
 
@@ -477,11 +479,12 @@ function parseWebPanelInput(value: string | undefined): WebPanelInput | null {
     )
   }
 
-  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+  const validated = webPanelInputSchema.safeParse(parsed)
+  if (!validated.success) {
     throw new CliError('--input must contain a JSON object', 2)
   }
 
-  return parsed as WebPanelInput
+  return validated.data
 }
 
 async function webPanelDefinition(
@@ -699,10 +702,10 @@ async function waitForTerminal(
           resolve(result)
         }
       }
-      const fail = (error: unknown) => {
+      const fail = (cause: unknown) => {
         if (!settled) {
           settled = true
-          reject(error)
+          reject(cause)
         }
       }
       const enqueue = (task: () => Promise<void>) => {
@@ -866,7 +869,7 @@ async function waitForTerminal(
   }
 }
 
-function print(value: unknown, human?: () => string): void {
+function print<Value>(value: Value, human?: () => string): void {
   writeStdout(
     `${jsonOutput ? JSON.stringify(value) : human ? human() : JSON.stringify(value, null, 2)}\n`
   )
@@ -905,29 +908,27 @@ async function main(args: string[]): Promise<void> {
     }
 
     const absoluteFolder = path.resolve(workingDirectory, folder)
-    const folderStatus = await fs
-      .stat(absoluteFolder)
-      .catch((error: unknown) => {
-        const code =
-          typeof error === 'object' && error !== null && 'code' in error
-            ? error.code
-            : undefined
-        if (code === 'ENOENT') {
-          throw new CliError(
-            `Folder does not exist: ${absoluteFolder}`,
-            5,
-            'FOLDER_NOT_FOUND',
-            { path: absoluteFolder }
-          )
-        }
-
+    const folderStatus = await fs.stat(absoluteFolder).catch((error) => {
+      if (
+        error instanceof Error &&
+        'code' in error &&
+        error.code === 'ENOENT'
+      ) {
         throw new CliError(
-          `Cannot access folder ${absoluteFolder}: ${error instanceof Error ? error.message : String(error)}`,
+          `Folder does not exist: ${absoluteFolder}`,
           5,
-          'FOLDER_UNREADABLE',
+          'FOLDER_NOT_FOUND',
           { path: absoluteFolder }
         )
-      })
+      }
+
+      throw new CliError(
+        `Cannot access folder ${absoluteFolder}: ${error instanceof Error ? error.message : String(error)}`,
+        5,
+        'FOLDER_UNREADABLE',
+        { path: absoluteFolder }
+      )
+    })
     if (!folderStatus.isDirectory()) {
       throw new CliError(
         `Path is not a folder: ${absoluteFolder}`,
@@ -937,16 +938,14 @@ async function main(args: string[]): Promise<void> {
       )
     }
 
-    const canonicalFolder = await fs
-      .realpath(absoluteFolder)
-      .catch((error: unknown) => {
-        throw new CliError(
-          `Cannot access folder ${absoluteFolder}: ${error instanceof Error ? error.message : String(error)}`,
-          5,
-          'FOLDER_UNREADABLE',
-          { path: absoluteFolder }
-        )
-      })
+    const canonicalFolder = await fs.realpath(absoluteFolder).catch((error) => {
+      throw new CliError(
+        `Cannot access folder ${absoluteFolder}: ${error instanceof Error ? error.message : String(error)}`,
+        5,
+        'FOLDER_UNREADABLE',
+        { path: absoluteFolder }
+      )
+    })
 
     const lifecycle = await resolveDaemonLifecycle()
     if (lifecycle === 'external') {
@@ -969,7 +968,7 @@ async function main(args: string[]): Promise<void> {
         method: 'POST',
         body: JSON.stringify({ path: canonicalFolder })
       }
-    ).catch((error: unknown) => {
+    ).catch((error) => {
       if (error instanceof CliError && error.code === 'NOT_A_GIT_REPOSITORY') {
         throw new CliError(
           `No Git repository contains ${canonicalFolder}.`,
@@ -1000,7 +999,7 @@ async function main(args: string[]): Promise<void> {
     target.pathname = `/projects/${encodeURIComponent(registered.project.id)}/worktrees/${encodeURIComponent(targetWorktree.id)}`
     target.search = ''
     target.hash = ''
-    const opened = await openWorkspace(target.href).catch((error: unknown) => {
+    const opened = await openWorkspace(target.href).catch((error) => {
       if (error instanceof OpenWorkspaceError) {
         throw new CliError(error.message, 1, 'OPEN_FAILED', {
           url: target.href
@@ -1064,13 +1063,20 @@ async function main(args: string[]): Promise<void> {
     }
 
     const port = options.port === undefined ? undefined : Number(options.port)
-    const result = await daemonUp({
-      ...(options.host === undefined ? {} : { host: options.host }),
-      ...(port === undefined ? {} : { port }),
-      ...(options.foreground === undefined
-        ? {}
-        : { foreground: options.foreground })
-    })
+    const daemonOptions: Parameters<typeof daemonUp>[0] = {}
+    if (options.host !== undefined) {
+      daemonOptions.host = options.host
+    }
+
+    if (port !== undefined) {
+      daemonOptions.port = port
+    }
+
+    if (options.foreground !== undefined) {
+      daemonOptions.foreground = options.foreground
+    }
+
+    const result = await daemonUp(daemonOptions)
     if (options.foreground) {
       return
     }
@@ -1222,10 +1228,16 @@ async function main(args: string[]): Promise<void> {
 
     const serviceDaemon =
       lifecycle === 'service' ? await ensureServiceDaemon() : undefined
-    const result = await enableTailscaleRemote({
-      ...(port === undefined ? {} : { port }),
-      ...(serviceDaemon === undefined ? {} : { daemon: serviceDaemon })
-    })
+    const remoteOptions: Parameters<typeof enableTailscaleRemote>[0] = {}
+    if (port !== undefined) {
+      remoteOptions.port = port
+    }
+
+    if (serviceDaemon !== undefined) {
+      remoteOptions.daemon = serviceDaemon
+    }
+
+    const result = await enableTailscaleRemote(remoteOptions)
     print(
       result,
       () =>
@@ -1491,18 +1503,17 @@ async function main(args: string[]): Promise<void> {
     .option('--json', 'emit machine-readable JSON')
   installCommand.action(async (source: string) => {
     const options = installCommand.opts<{ local?: boolean }>()
+    const body: PackageMutationBody = {
+      source: await packageSource(source)
+    }
+    if (options.local) {
+      body.projectId = await localPackageProjectId()
+    }
+
     const result = (
       await request<{ result: PackageOperationResult }>(
         '/api/packages/install',
-        {
-          method: 'POST',
-          body: JSON.stringify({
-            source: await packageSource(source),
-            ...(options.local
-              ? { projectId: await localPackageProjectId() }
-              : {})
-          })
-        }
+        { method: 'POST', body: JSON.stringify(body) }
       )
     ).result
     print(
@@ -1524,18 +1535,17 @@ async function main(args: string[]): Promise<void> {
     .option('--json', 'emit machine-readable JSON')
   removePackageCommand.action(async (source: string) => {
     const options = removePackageCommand.opts<{ local?: boolean }>()
+    const body: PackageMutationBody = {
+      source: await packageSource(source)
+    }
+    if (options.local) {
+      body.projectId = await localPackageProjectId()
+    }
+
     const result = (
       await request<{ result: PackageOperationResult }>(
         '/api/packages/remove',
-        {
-          method: 'POST',
-          body: JSON.stringify({
-            source: await packageSource(source),
-            ...(options.local
-              ? { projectId: await localPackageProjectId() }
-              : {})
-          })
-        }
+        { method: 'POST', body: JSON.stringify(body) }
       )
     ).result
     print(result, () => `Removed ${result.source}`)
@@ -1724,11 +1734,15 @@ async function main(args: string[]): Promise<void> {
     const sourceWorktreeId = options.fromCurrent
       ? (await resolveWorktree('.')).id
       : undefined
-    const result = await createWorktree(project.id, {
+    const request: CreateOperationRequest = {
       name: options.name,
-      base: options.fromCurrent ? 'current' : 'default',
-      ...(sourceWorktreeId ? { sourceWorktreeId } : {})
-    })
+      base: options.fromCurrent ? 'current' : 'default'
+    }
+    if (sourceWorktreeId) {
+      request.sourceWorktreeId = sourceWorktreeId
+    }
+
+    const result = await createWorktree(project.id, request)
     print(
       result,
       () =>
@@ -1897,15 +1911,14 @@ async function main(args: string[]): Promise<void> {
       name: string
     }>()
     const worktree = await resolveWorktree(options.worktree)
+    const body: TerminalCreateBody = { name: options.name }
+    if (argv) {
+      body.argv = argv
+    }
+
     const result = await request<{ terminal: TerminalRecord }>(
       `/api/worktrees/${worktree.id}/terminals`,
-      {
-        method: 'POST',
-        body: JSON.stringify({
-          name: options.name,
-          ...(argv ? { argv } : {})
-        })
-      }
+      { method: 'POST', body: JSON.stringify(body) }
     )
     print(
       result.terminal,
@@ -1983,6 +1996,7 @@ async function main(args: string[]): Promise<void> {
 
     const result = await waitForTerminal(
       resolveTerminalId(identifier),
+      // SAFETY: The validated CLI or Node contract establishes this asserted value.
       options.until as WaitCondition,
       options.timeout === undefined ? undefined : parseDuration(options.timeout)
     )
@@ -2024,15 +2038,23 @@ async function main(args: string[]): Promise<void> {
     const sourceWorktreeId = options.fromCurrent
       ? (await resolveWorktree('.')).id
       : undefined
-    const result = await createWorktree(project.id, {
+    const initialTerminal: NonNullable<
+      CreateOperationRequest['initialTerminal']
+    > = { name: options.name }
+    if (argv) {
+      initialTerminal.argv = argv
+    }
+
+    const request: CreateOperationRequest = {
       name: options.worktreeName,
       base: options.fromCurrent ? 'current' : 'default',
-      initialTerminal: {
-        name: options.name,
-        ...(argv ? { argv } : {})
-      },
-      ...(sourceWorktreeId ? { sourceWorktreeId } : {})
-    })
+      initialTerminal
+    }
+    if (sourceWorktreeId) {
+      request.sourceWorktreeId = sourceWorktreeId
+    }
+
+    const result = await createWorktree(project.id, request)
     print(
       result,
       () =>
@@ -2083,14 +2105,12 @@ export async function runCliApplication(
           )
     if (jsonOutput) {
       const body: ApiErrorBody = {
-        error: {
-          code: cliError.code,
-          message: cliError.message,
-          ...(cliError.details === undefined
-            ? {}
-            : { details: cliError.details })
-        }
+        error: { code: cliError.code, message: cliError.message }
       }
+      if (cliError.details !== undefined) {
+        body.error.details = cliError.details
+      }
+
       writeStderr(`${JSON.stringify(body)}\n`)
     } else {
       writeStderr(`${cliError.message}\n`)

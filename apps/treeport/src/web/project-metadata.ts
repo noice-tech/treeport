@@ -32,6 +32,11 @@ export const terminalPresetsQueryOptions = queryOptions({
   refetchOnWindowFocus: true
 })
 
+interface TerminalPresetDefinitionsQuery {
+  projectId?: string
+  worktreeId?: string
+}
+
 export const terminalPresetDefinitionsQueryOptions = (context?: {
   projectId?: string
   worktreeId?: string
@@ -41,15 +46,20 @@ export const terminalPresetDefinitionsQueryOptions = (context?: {
       'terminal-preset-definitions',
       context?.worktreeId ?? context?.projectId ?? 'global'
     ] as const,
-    queryFn: async () =>
-      await parseResponse(
-        rpc.api['terminal-preset-definitions'].$get({
-          query: {
-            ...(context?.projectId ? { projectId: context.projectId } : {}),
-            ...(context?.worktreeId ? { worktreeId: context.worktreeId } : {})
-          }
-        })
-      ),
+    queryFn: async () => {
+      const query: TerminalPresetDefinitionsQuery = {}
+      if (context?.projectId) {
+        query.projectId = context.projectId
+      }
+
+      if (context?.worktreeId) {
+        query.worktreeId = context.worktreeId
+      }
+
+      return await parseResponse(
+        rpc.api['terminal-preset-definitions'].$get({ query })
+      )
+    },
     staleTime: 0,
     refetchInterval: 5_000,
     refetchOnReconnect: true,

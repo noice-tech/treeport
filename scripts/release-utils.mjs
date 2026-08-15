@@ -8,14 +8,12 @@ export function fail(message) {
 }
 
 export function run(command, args, options = {}) {
-  const output = execFileSync(command, args, {
-    cwd: options.cwd,
-    encoding: 'utf8',
-    stdio: options.stdio ?? ['ignore', 'pipe', 'pipe']
-  })
-  if (typeof output !== 'string') {
-    return ''
-  }
+  const output =
+    execFileSync(command, args, {
+      cwd: options.cwd,
+      encoding: 'utf8',
+      stdio: options.stdio ?? ['ignore', 'pipe', 'pipe']
+    })?.toString() ?? ''
 
   return options.trim === false ? output : output.trim()
 }

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import { spawn, type ChildProcess } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { z } from 'zod'
 import { integrateShellLaunch } from './shell-integration'
@@ -40,8 +40,28 @@ interface SignalSource {
 }
 type Writable = Pick<NodeJS.WritableStream, 'write'>
 
+interface LauncherChild {
+  kill(signal: NodeJS.Signals): boolean
+  once(event: 'error', listener: (error: Error) => void): this
+  once(
+    event: 'exit',
+    listener: (code: number | null, signal: NodeJS.Signals | null) => void
+  ): this
+}
+
+type SpawnProcess = (
+  executable: string,
+  args: readonly string[],
+  options: {
+    cwd: string
+    env: NodeJS.ProcessEnv
+    stdio: 'inherit'
+    shell: false
+  }
+) => LauncherChild
+
 export interface LauncherDependencies {
-  spawnProcess?: typeof spawn
+  spawnProcess?: SpawnProcess
   stdout?: Writable
   stderr?: Writable
   signalSource?: SignalSource
@@ -77,7 +97,7 @@ function runChild(
     cwd: string
     env: NodeJS.ProcessEnv
     timeoutMs?: number
-    spawnProcess: typeof spawn
+    spawnProcess: SpawnProcess
     signalSource: SignalSource
   }
 ): Promise<ChildResult> {
@@ -93,7 +113,7 @@ function runChild(
   }
 
   return new Promise((resolve) => {
-    let child: ChildProcess
+    let child: LauncherChild
     try {
       child = options.spawnProcess(executable, args, {
         cwd: options.cwd,

@@ -99,6 +99,7 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
             resizingSidebar && 'select-none'
           )}
           style={
+            // SAFETY: The component contract supplies the asserted browser value used here.
             {
               '--sidebar-width': `${sidebarWidth}px`,
               '--sidebar-width-mobile': 'min(88vw, 21rem)'

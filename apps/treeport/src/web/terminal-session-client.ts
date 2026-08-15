@@ -25,11 +25,13 @@ import {
   TERMINAL_SELECTION_STOP_SEQUENCE,
   type TerminalClientToServerEvents,
   type TerminalServerEvent,
+  type TerminalProtocolInput,
   type TerminalSize,
   type TerminalServerToClientEvents
 } from '@treeport/shared'
 
 type ConnectionPhase = 'connecting' | 'ready' | 'reconnecting' | 'closed'
+export type TerminalSocketFactory = typeof io
 export type ArrowDirection = 'up' | 'down' | 'left' | 'right'
 export type TerminalFileTransfer = {
   state: 'uploading' | 'error'
@@ -48,9 +50,9 @@ const IOS_KEYBOARD_TOOLBAR_CLEARANCE = 24
 const IOS_BROWSER_TOOLBAR_CLEARANCE = 44
 
 function normalizeTerminalDimensions(
-  dimensions: { cols: number; rows: number },
-  fallback: { cols: number; rows: number } = { cols: 100, rows: 30 }
-): { cols: number; rows: number } {
+  dimensions: TerminalSize,
+  fallback: TerminalSize = { cols: 100, rows: 30 }
+): TerminalSize {
   return {
     cols: Number.isFinite(dimensions.cols)
       ? Math.min(
@@ -118,7 +120,7 @@ function getClientId(): string {
   }
 
   const bytes = new Uint8Array(16)
-  if (typeof globalThis.crypto?.getRandomValues === 'function') {
+  if (globalThis.crypto?.getRandomValues) {
     globalThis.crypto.getRandomValues(bytes)
   } else {
     for (let index = 0; index < bytes.length; index += 1) {
@@ -206,7 +208,10 @@ export class TerminalSession {
     }
   }
 
-  constructor(terminalId: string) {
+  constructor(
+    terminalId: string,
+    private readonly createSocket: TerminalSocketFactory = io
+  ) {
     this.terminalId = terminalId
   }
 
@@ -294,6 +299,7 @@ export class TerminalSession {
           const standalone =
             window.matchMedia('(display-mode: standalone)').matches ||
             Boolean(
+              // SAFETY: The terminal protocol and xterm contracts establish this asserted value.
               (navigator as Navigator & { standalone?: boolean }).standalone
             )
           const browserToolbarGap = standalone
@@ -897,22 +903,17 @@ export class TerminalSession {
       const paths: string[] = []
       for (const file of files) {
         const extension = /\.([a-z0-9]{1,16})$/i.exec(file.name)?.[1]
+        const headers = new Headers({
+          'content-type': file.type || 'application/octet-stream'
+        })
+        if (extension) {
+          headers.set('x-treeport-file-extension', extension.toLowerCase())
+        }
+
         const result = await parseResponse(
           rpc.api.terminals[':terminalId'].files.$post(
             { param: { terminalId: this.terminalId } },
-            {
-              init: {
-                body: file,
-                headers: {
-                  'content-type': file.type || 'application/octet-stream',
-                  ...(extension
-                    ? {
-                        'x-treeport-file-extension': extension.toLowerCase()
-                      }
-                    : {})
-                }
-              }
-            }
+            { init: { body: file, headers } }
           )
         )
         paths.push(result.file.path)
@@ -1075,7 +1076,7 @@ export class TerminalSession {
     const socket: Socket<
       TerminalServerToClientEvents,
       TerminalClientToServerEvents
-    > = io('/terminals', {
+    > = this.createSocket('/terminals', {
       path: SOCKET_IO_PATH,
       transports: ['websocket'],
       forceNew: true,
@@ -1183,7 +1184,10 @@ export class TerminalSession {
     socket.connect()
   }
 
-  private handleServerEvent(event: TerminalServerEvent, value: unknown): void {
+  private handleServerEvent(
+    event: TerminalServerEvent,
+    value: TerminalProtocolInput
+  ): void {
     if (event === 'ready') {
       const message = parseTerminalServerEvent('ready', value)
       if (!message) {
@@ -1468,7 +1472,7 @@ export class TerminalSession {
     this.renderQueue = queued
     // Rendering is a fatal UI boundary: keep the causal queue rejected so no
     // later operation runs, while observing the rejection to close explicitly.
-    void queued.catch((error: unknown) => this.failRendering(error))
+    void queued.catch((error) => this.failRendering(error))
   }
 
   private applyCanonicalDimensions(
@@ -1516,17 +1520,21 @@ export class TerminalSession {
       event === 'resize' ||
       event === 'take_control'
     ) {
-      ;(this.socket.emit as (event: string, payload: unknown) => void)(
-        event,
-        payload
-      )
+      // SAFETY: The generic event selects its matching protocol payload.
+      const emit = this.socket.emit.bind(this.socket) as (
+        event: E,
+        payload: Parameters<TerminalClientToServerEvents[E]>[0]
+      ) => void
+      emit(event, payload)
       return
     }
 
-    ;(this.socket.volatile.emit as (event: string, payload: unknown) => void)(
-      event,
-      payload
-    )
+    // SAFETY: The generic event selects its matching protocol payload.
+    const emit = this.socket.volatile.emit.bind(this.socket.volatile) as (
+      event: E,
+      payload: Parameters<TerminalClientToServerEvents[E]>[0]
+    ) => void
+    emit(event, payload)
   }
 
   private scheduleFit(): void {
@@ -1770,14 +1778,14 @@ export class TerminalSession {
     }, 180)
   }
 
-  private failRendering(error: unknown): void {
+  private failRendering(cause: unknown): void {
     if (this.renderFailed || this.disposed) {
       return
     }
 
     this.renderFailed = true
     const detail = (
-      error instanceof Error ? error.message : String(error)
+      cause instanceof Error ? cause.message : String(cause)
     ).trim()
     this.reconnectAllowed = false
     this.stopWithError(

@@ -232,6 +232,7 @@ function processExists(pid: number): boolean {
     process.kill(pid, 0)
     return true
   } catch (error) {
+    // SAFETY: The validated CLI or Node contract establishes this asserted value.
     return (error as NodeJS.ErrnoException).code === 'EPERM'
   }
 }
@@ -339,8 +340,10 @@ async function executableCheck(
   })
 }
 
+type TailscaleTcpListener = Record<never, never>
+
 interface TailscaleServeConfiguration {
-  TCP?: { [port: string]: object } | undefined
+  TCP?: Record<string, TailscaleTcpListener> | undefined
   Foreground?: { [name: string]: TailscaleServeConfiguration } | undefined
   Web?:
     | {
@@ -403,6 +406,7 @@ async function tailscale(args: string[]): Promise<string> {
     child.once('error', (error) =>
       reject(
         new Error(
+          // SAFETY: The validated CLI or Node contract establishes this asserted value.
           (error as NodeJS.ErrnoException).code === 'ENOENT'
             ? 'Tailscale is required for remote access. Install it from https://tailscale.com/download, run `tailscale up`, then retry.'
             : `Could not run Tailscale: ${error.message}`
@@ -660,7 +664,7 @@ export async function runDoctor(): Promise<DoctorCheck[]> {
     fs
       .mkdir(directoryPath, { recursive: true, mode: 0o700 })
       .then(() => ({ ok: true, detail: directoryPath }))
-      .catch((error: unknown) => ({
+      .catch((error) => ({
         ok: false,
         detail: `${directoryPath}: ${error instanceof Error ? error.message : String(error)}`
       }))

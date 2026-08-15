@@ -1,4 +1,5 @@
 import { DetailedError } from 'hono/client'
+import { z } from 'zod'
 import { RpcNetworkError } from './api'
 
 const MESSAGE_MAX_LENGTH = 500
@@ -18,54 +19,59 @@ export interface ErrorDetails {
   recoveryHint: string | null
 }
 
-interface ApiErrorEnvelope {
-  error?: {
-    code?: unknown
-    message?: unknown
-    details?: unknown
-  }
-}
+const detailedErrorDataSchema = z.object({
+  error: z
+    .object({
+      code: z.unknown().optional(),
+      message: z.unknown().optional(),
+      details: z.unknown().optional()
+    })
+    .optional()
+})
 
-interface RequestDetails {
-  requestId?: unknown
-}
+const detailedErrorDetailSchema = z.object({
+  data: z.unknown().optional(),
+  statusText: z.unknown().optional()
+})
 
-function displayText(value: unknown, maximumLength: number): string | null {
-  if (typeof value !== 'string') {
+const displayText = (maximumLength: number) =>
+  z.unknown().transform((value) => {
+    const parsed = z.string().safeParse(value)
+    if (!parsed.success) {
+      return null
+    }
+
+    let printable = ''
+    for (const character of parsed.data) {
+      const code = character.charCodeAt(0)
+      printable += code < 32 || code === 127 ? ' ' : character
+    }
+
+    const normalized = printable.replace(/\s+/g, ' ').trim()
+    if (!normalized) {
+      return null
+    }
+
+    return normalized.length <= maximumLength
+      ? normalized
+      : `${normalized.slice(0, maximumLength - 1)}…`
+  }).parse
+
+const requestIdFrom = z.unknown().transform((details) => {
+  const parsed = z.object({ requestId: z.string() }).safeParse(details)
+  if (!parsed.success) {
     return null
   }
 
-  let printable = ''
-  for (const character of value) {
-    const code = character.charCodeAt(0)
-    printable += code < 32 || code === 127 ? ' ' : character
-  }
-
-  const normalized = printable.replace(/\s+/g, ' ').trim()
-  if (!normalized) {
-    return null
-  }
-
-  return normalized.length <= maximumLength
-    ? normalized
-    : `${normalized.slice(0, maximumLength - 1)}…`
-}
-
-function requestIdFrom(details: unknown): string | null {
-  if (!details || typeof details !== 'object' || Array.isArray(details)) {
-    return null
-  }
-
-  const requestId = (details as RequestDetails).requestId
-  return typeof requestId === 'string' &&
-    requestId.length <= REQUEST_ID_MAX_LENGTH &&
+  const requestId = parsed.data.requestId
+  return requestId.length <= REQUEST_ID_MAX_LENGTH &&
     /^[A-Za-z0-9_=-]+$/.test(requestId)
     ? requestId
     : null
-}
+}).parse
 
-export function errorDetails(error: unknown): ErrorDetails {
-  if (error instanceof RpcNetworkError) {
+export function errorDetails(cause: unknown): ErrorDetails {
+  if (cause instanceof RpcNetworkError) {
     return {
       message: 'Treeport could not be reached.',
       code: null,
@@ -73,38 +79,29 @@ export function errorDetails(error: unknown): ErrorDetails {
       status: null,
       statusText: null,
       requestId: null,
-      method: error.method,
-      path: error.path,
+      method: cause.method,
+      path: cause.path,
       networkFailure: true,
       recoveryHint: 'Check that it is running and reachable, then retry.'
     }
   }
 
-  if (error instanceof DetailedError) {
-    const detail = error.detail as
-      | { data?: unknown; statusText?: unknown }
-      | undefined
-    const data = detail?.data
-    const errorEnvelope =
-      data && typeof data === 'object' && !Array.isArray(data)
-        ? (data as ApiErrorEnvelope).error
-        : null
-    const apiError =
-      errorEnvelope &&
-      typeof errorEnvelope === 'object' &&
-      !Array.isArray(errorEnvelope)
-        ? errorEnvelope
-        : null
-    const apiMessage = displayText(apiError?.message, MESSAGE_MAX_LENGTH)
-    const code = displayText(apiError?.code, 100)
+  if (cause instanceof DetailedError) {
+    const parsedDetail = detailedErrorDetailSchema.safeParse(cause.detail)
+    const detail = parsedDetail.success ? parsedDetail.data : null
+    const parsedData = detailedErrorDataSchema.safeParse(detail?.data)
+    const apiError = parsedData.success ? parsedData.data.error : null
+    const apiMessage = displayText(MESSAGE_MAX_LENGTH)(apiError?.message)
+    const code = displayText(100)(apiError?.code)
     const details = apiError?.details ?? null
-    const status =
-      typeof error.statusCode === 'number' &&
-      error.statusCode >= 100 &&
-      error.statusCode <= 599
-        ? error.statusCode
-        : null
-    const statusText = displayText(detail?.statusText, STATUS_TEXT_MAX_LENGTH)
+    const parsedStatus = z
+      .number()
+      .int()
+      .min(100)
+      .max(599)
+      .safeParse(cause.statusCode)
+    const status = parsedStatus.success ? parsedStatus.data : null
+    const statusText = displayText(STATUS_TEXT_MAX_LENGTH)(detail?.statusText)
     const requestId = requestIdFrom(details)
 
     if (apiMessage) {
@@ -127,7 +124,7 @@ export function errorDetails(error: unknown): ErrorDetails {
 
     const statusLabel = status
       ? `${status}${statusText ? ` ${statusText}` : ''}`
-      : displayText(error.message, STATUS_TEXT_MAX_LENGTH)
+      : displayText(STATUS_TEXT_MAX_LENGTH)(cause.message)
 
     return {
       message:
@@ -151,9 +148,8 @@ export function errorDetails(error: unknown): ErrorDetails {
     }
   }
 
-  const message = displayText(
-    error instanceof Error ? error.message : String(error),
-    MESSAGE_MAX_LENGTH
+  const message = displayText(MESSAGE_MAX_LENGTH)(
+    cause instanceof Error ? cause.message : String(cause)
   )
   return {
     message: message ?? 'Unexpected error.',
@@ -169,6 +165,6 @@ export function errorDetails(error: unknown): ErrorDetails {
   }
 }
 
-export function errorMessage(error: unknown): string {
-  return errorDetails(error).message
+export function errorMessage(cause: unknown): string {
+  return errorDetails(cause).message
 }
