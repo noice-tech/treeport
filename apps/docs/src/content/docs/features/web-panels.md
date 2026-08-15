@@ -46,7 +46,9 @@ Treeport does not load package `vite.config.*`, executable Babel or PostCSS conf
 
 ## Open and retain panels
 
-Open **New panel** from a worktree or press `Cmd/Ctrl+Shift+T` to choose a discovered web panel. Web panels share numbered workspace shortcuts with terminals. After a panel is visited, Treeport keeps its frame alive while switching workspaces, preserving in-memory state such as scroll position and unfinished input. Use `treeport.storage` for state that must survive reloads or daemon restarts.
+Open **New panel** from a worktree to choose a discovered web panel. In the macOS desktop client, `Cmd+Shift+T` opens **New panel**, and numbered panel shortcuts include web panels. Browsers keep these shortcuts for tab management, so use the Treeport interface instead. See the [Shortcuts reference](/reference/shortcuts/).
+
+After a panel is visited, Treeport keeps its frame alive while switching workspaces, preserving in-memory state such as scroll position and unfinished input. Use `treeport.storage` for state that must survive reloads or daemon restarts.
 
 Definitions are separate from persistent panel instances. Package definition identities exclude npm versions, so package updates preserve existing instances and storage. Removing a package leaves those instances unavailable but intact; reinstalling the same definition revives them.
 

@@ -85,6 +85,7 @@ export default defineConfig({
         {
           label: 'Reference',
           items: [
+            { label: 'Shortcuts', slug: 'reference/shortcuts' },
             { label: 'CLI', slug: 'reference/cli' },
             { label: 'Configuration', slug: 'reference/configuration' },
             { label: 'Terminal signals', slug: 'reference/terminal-signals' }
