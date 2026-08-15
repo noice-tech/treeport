@@ -57,6 +57,13 @@
       "when": 1786533775050,
       "tag": "0007_dashing_pestilence",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1786600000000,
+      "tag": "0008_host_browser_permissions",
+      "breakpoints": true
     }
   ]
 }

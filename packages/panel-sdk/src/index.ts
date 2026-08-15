@@ -17,6 +17,8 @@ export interface WebPanelLaunch {
 }
 
 /** A persistent web panel instance scoped to one worktree. */
+export type WebPanelPermission = 'same-origin' | 'host-browser'
+
 export interface WebPanel {
   id: string
   kind: 'web'
@@ -24,6 +26,7 @@ export interface WebPanel {
   definitionId: string
   title: string
   launch: WebPanelLaunch
+  permissions: WebPanelPermission[]
   sandbox: {
     allowSameOrigin: boolean
   }

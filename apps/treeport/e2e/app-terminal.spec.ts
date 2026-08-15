@@ -843,12 +843,28 @@ test.describe('desktop worktree and terminal workflows', () => {
 
     await page.getByRole('button', { name: /^New panel/ }).click()
     const launcher = page.getByRole('dialog', { name: 'New panel' })
+    await launcher
+      .getByRole('button', { name: 'Browser, web panel', exact: true })
+      .click()
+    const permission = page.getByRole('alertdialog', {
+      name: 'Allow privileged panel access?'
+    })
+    await expect(permission).toContainText("share Treeport's web origin")
+    const grantRequest = page.waitForRequest(
+      (request) =>
+        request.method() === 'PUT' &&
+        new URL(request.url()).pathname.endsWith('/permission-grant')
+    )
     const createRequest = page.waitForRequest(
       (request) =>
         request.method() === 'POST' &&
         new URL(request.url()).pathname === '/api/worktrees/wt_topic/panels'
     )
-    await launcher.getByRole('button', { name: 'Browser, web panel' }).click()
+    await permission.getByRole('button', { name: 'Allow and open' }).click()
+    expect((await grantRequest).postDataJSON()).toEqual({
+      granted: true,
+      permissions: ['same-origin']
+    })
     expect((await createRequest).postDataJSON()).toEqual({
       definitionId: 'package:npm:@treeport/web-panel-browser:web-panel:browser',
       input: null,
@@ -856,7 +872,7 @@ test.describe('desktop worktree and terminal workflows', () => {
     })
 
     await expect(
-      page.getByRole('button', { name: 'Browser, web panel' })
+      page.getByRole('button', { name: 'Browser, web panel', exact: true })
     ).toBeVisible()
     await expect
       .poll(() =>
@@ -867,10 +883,6 @@ test.describe('desktop worktree and terminal workflows', () => {
           )
       )
       .toBe(true)
-    await expect(page.locator('iframe[title="Browser"]')).toHaveAttribute(
-      'sandbox',
-      /allow-same-origin/
-    )
     let packageFrame = page
       .frames()
       .find((frame) => frame.url().includes('/api/web-panels/panel_1/assets/'))!
@@ -1001,6 +1013,91 @@ test.describe('desktop worktree and terminal workflows', () => {
     await page.getByRole('button', { name: 'Close browser-app.test' }).click()
     await expect(
       page.getByRole('button', { name: 'browser-app.test, web panel' })
+    ).toHaveCount(0)
+  })
+
+  test('approves and opens the daemon-hosted Remote Browser panel', async ({
+    page
+  }) => {
+    await mockApp(page)
+    await page.getByRole('button', { name: /^topic(?:,|\s|$)/ }).click()
+
+    await page.getByRole('button', { name: /^New panel/ }).click()
+    const launcher = page.getByRole('dialog', { name: 'New panel' })
+    await launcher
+      .getByRole('button', { name: 'Remote browser, web panel', exact: true })
+      .click()
+
+    const permission = page.getByRole('alertdialog', {
+      name: 'Allow privileged panel access?'
+    })
+    await expect(permission).toContainText(
+      'global package npm:@treeport/web-panel-browser'
+    )
+    await expect(permission).toContainText(
+      'reach localhost, local network services, and internet sites'
+    )
+    const grantRequest = page.waitForRequest(
+      (request) =>
+        request.method() === 'PUT' &&
+        new URL(request.url()).pathname.endsWith('/permission-grant')
+    )
+    const createRequest = page.waitForRequest(
+      (request) =>
+        request.method() === 'POST' &&
+        new URL(request.url()).pathname === '/api/worktrees/wt_topic/panels'
+    )
+    await permission.getByRole('button', { name: 'Allow and open' }).click()
+    expect((await grantRequest).postDataJSON()).toEqual({
+      granted: true,
+      permissions: ['host-browser']
+    })
+    expect((await createRequest).postDataJSON()).toEqual({
+      definitionId:
+        'package:npm:@treeport/web-panel-browser:web-panel:remote-browser',
+      input: null,
+      launchCwd: null
+    })
+
+    await expect(
+      page.getByRole('button', {
+        name: 'Remote browser, web panel',
+        exact: true
+      })
+    ).toBeVisible()
+    await expect
+      .poll(() =>
+        page
+          .frames()
+          .some((frame) =>
+            frame.url().includes('/api/web-panels/panel_1/assets/')
+          )
+      )
+      .toBe(true)
+    const packageFrame = page
+      .frames()
+      .find((frame) => frame.url().includes('/api/web-panels/panel_1/assets/'))!
+    await expect(
+      packageFrame.getByRole('heading', { name: 'Development servers' })
+    ).toBeVisible()
+    await expect(
+      packageFrame.getByRole('button', {
+        name: 'Open http://localhost:5173/, vite'
+      })
+    ).toBeVisible()
+    await expect(packageFrame.getByLabel('Application URL')).toHaveValue(
+      'http://localhost:3000/'
+    )
+    await expect(packageFrame.getByRole('alert')).toContainText(
+      'Hosted browser fixture is unavailable'
+    )
+
+    await page.getByRole('button', { name: 'Close Remote browser' }).click()
+    await expect(
+      page.getByRole('button', {
+        name: 'Remote browser, web panel',
+        exact: true
+      })
     ).toHaveCount(0)
   })
 

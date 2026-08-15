@@ -1,7 +1,7 @@
 {
   "name": "@treeport/web-panel-browser",
   "version": "0.1.0",
-  "description": "Treeport's Browser web panel package.",
+  "description": "Treeport's Browser and Remote Browser web panel package.",
   "private": true,
   "type": "module",
   "keywords": [
@@ -13,6 +13,12 @@
         "source": "./web-panels/browser",
         "permissions": [
           "same-origin"
+        ]
+      },
+      {
+        "source": "./web-panels/remote-browser",
+        "permissions": [
+          "host-browser"
         ]
       }
     ]

@@ -217,16 +217,45 @@ function WorkspaceApp() {
       definition: WebPanelDefinition
       input: WebPanelInput | null
     }) =>
-      parseResponse(
-        rpc.api.worktrees[':worktreeId'].panels.$post({
-          param: { worktreeId: worktree.id },
-          json: {
-            definitionId: definition.id,
-            input,
-            launchCwd: null
+      (async () => {
+        if (
+          definition.permissions.length > 0 &&
+          !definition.permissionsGranted
+        ) {
+          const response = await fetch(
+            `/api/worktrees/${encodeURIComponent(worktree.id)}/web-panel-definitions/${encodeURIComponent(definition.id)}/permission-grant`,
+            {
+              method: 'PUT',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({
+                granted: true,
+                permissions: definition.permissions
+              })
+            }
+          )
+          if (!response.ok) {
+            const result = (await response.json().catch(() => null)) as {
+              error?: { message?: string }
+            } | null
+            throw new Error(
+              result?.error?.message ?? 'Could not grant web panel permission'
+            )
           }
-        })
-      ).then((result) => result.panel),
+        }
+
+        return (
+          await parseResponse(
+            rpc.api.worktrees[':worktreeId'].panels.$post({
+              param: { worktreeId: worktree.id },
+              json: {
+                definitionId: definition.id,
+                input,
+                launchCwd: null
+              }
+            })
+          )
+        ).panel
+      })(),
     onSuccess: async (panel) => {
       setDialog(null)
       await queryClient.invalidateQueries({

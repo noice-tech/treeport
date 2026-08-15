@@ -123,6 +123,37 @@ treeport terminal wait <terminal-id> --until exit
 
 Treeport does not infer agent settlement. An orchestrator can inspect first, wait for `working` if no progress cycle has been observed, and then wait for `idle`. Progress depends on the child application emitting OSC `9;4`; for Pi, `terminal.showTerminalProgress` must be enabled. Applications should clear progress or refresh active progress more frequently than the five-minute lease. A null progress value is not proof that every application supports progress reporting.
 
+## Inspect the worktree application in its Remote Browser panel
+
+Remote Browser panels run isolated Chromium sessions on the Treeport daemon host. They can reach worktree development servers on that host and remain open for user takeover. The client-side Browser panel is a separate iframe panel and cannot be controlled with these commands. Never attach Treeport to a personal browser profile.
+
+First inspect available Remote Browser panels:
+
+```sh
+treeport browser list
+```
+
+If Chromium is not ready, ask the user before installing the managed browser, then run:
+
+```sh
+treeport browser status
+treeport browser install
+```
+
+Open the official Remote Browser panel through the Treeport UI when one does not exist. Its host-browser permission requires explicit user approval. After the panel exists, use its shared Playwright session:
+
+```sh
+treeport browser snapshot
+treeport browser click e12
+treeport browser fill e14 "value"
+treeport browser press Enter
+treeport browser console
+treeport browser network
+treeport browser screenshot
+```
+
+Commands resolve the only Remote Browser panel in the current worktree. Add `--panel <panel-id>` when more than one exists or when controlling another explicit panel. Use snapshot element refs instead of guessed selectors. After each important action, take another snapshot or inspect the resulting URL, console, or network output. Leave the Remote Browser panel open so the user can inspect and continue the same session.
+
 ## Automation and integrations
 
 Extensions and scripts should add `--json` before the `--` command separator:

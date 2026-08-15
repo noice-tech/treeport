@@ -124,6 +124,20 @@ export const webPanels = sqliteTable(
   ]
 )
 
+export const webPanelPermissionGrants = sqliteTable(
+  'web_panel_permission_grants',
+  {
+    sourceKey: text('source_key').primaryKey(),
+    definitionId: text('definition_id').notNull(),
+    permissionsJson: text('permissions_json').notNull(),
+    grantedAt: text('granted_at').notNull(),
+    updatedAt: text('updated_at').notNull()
+  },
+  (table) => [
+    index('web_panel_permission_definition_idx').on(table.definitionId)
+  ]
+)
+
 export const webPanelStorage = sqliteTable(
   'web_panel_storage',
   {

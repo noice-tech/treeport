@@ -10,6 +10,8 @@ import {
   type TmuxAdapter
 } from './core/index'
 import type {
+  BrowserClientToServerEvents,
+  BrowserServerToClientEvents,
   EventsClientToServerEvents,
   EventsServerToClientEvents,
   TerminalClientToServerEvents,
@@ -24,6 +26,7 @@ import {
 } from '@treeport/shared'
 import { TerminalAttachmentManager } from './terminal-attachments'
 import { createSocketServer } from './socket-server'
+import type { BrowserSessionManager } from './browser-sessions'
 import type { TerminalMetadataManager } from './terminal-metadata'
 
 class FakePty {
@@ -77,7 +80,9 @@ interface NetworkFixture {
 
 const fixtures: NetworkFixture[] = []
 
-async function fixture(): Promise<NetworkFixture> {
+async function fixture(
+  browserSessions?: BrowserSessionManager
+): Promise<NetworkFixture> {
   const events = new ProductEventBus()
   const ptys: FakePty[] = []
   const service = {
@@ -159,7 +164,8 @@ async function fixture(): Promise<NetworkFixture> {
     config,
     tmux,
     terminalMetadata: metadata,
-    attachmentManager
+    attachmentManager,
+    ...(browserSessions ? { browserSessions } : {})
   })
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
   const address = server.address() as AddressInfo
@@ -279,6 +285,7 @@ describe('Socket.IO real network', () => {
         definitionId: 'project:review',
         title: 'Review',
         launch: { input: null, cwd: null },
+        permissions: [],
         sandbox: { allowSameOrigin: false },
         createdAt: '2026-01-01T00:00:00.000Z',
         updatedAt: '2026-01-01T00:00:00.000Z'
@@ -371,6 +378,63 @@ describe('Socket.IO real network', () => {
     expect(secondEvents[0]?.bell).toMatchObject({ sequence: 1, unread: false })
     await closeClient(first)
     await closeClient(second)
+  })
+
+  it('uses one-use browser authorization before relaying hosted browser commands', async () => {
+    const messages: unknown[] = []
+    const closes: string[] = []
+    const browserSessions = {
+      accept: vi.fn(
+        async (
+          ticket: string,
+          transport: { sendMessage(message: unknown): boolean }
+        ) => {
+          expect(ticket).toBe('b'.repeat(43))
+          transport.sendMessage({
+            type: 'ready',
+            state: {
+              url: 'about:blank',
+              title: '',
+              loading: false,
+              canGoBack: false,
+              canGoForward: false,
+              controlled: true,
+              hasController: true,
+              controller: 'you',
+              viewport: { width: 800, height: 600 }
+            }
+          })
+          return 'browser-connection'
+        }
+      ),
+      message: vi.fn((_connectionId: string, message: unknown) =>
+        messages.push(message)
+      ),
+      close: vi.fn((connectionId: string) => closes.push(connectionId))
+    } as unknown as BrowserSessionManager
+    const value = await fixture(browserSessions)
+    const browser: Socket<
+      BrowserServerToClientEvents,
+      BrowserClientToServerEvents
+    > = createClient(`${value.url}/browsers`, {
+      path: SOCKET_IO_PATH,
+      transports: ['websocket'],
+      forceNew: true,
+      reconnection: false,
+      auth: { ticket: 'b'.repeat(43), protocolVersion: 1 }
+    })
+    const ready = await new Promise<unknown>((resolve) =>
+      browser.once('message', resolve)
+    )
+    expect(ready).toMatchObject({
+      type: 'ready',
+      state: { controlled: true, viewport: { width: 800, height: 600 } }
+    })
+    browser.emit('command', { type: 'back' })
+    await vi.waitFor(() => expect(messages).toEqual([{ type: 'back' }]))
+    const socketId = browser.id!
+    await closeClient(browser)
+    await vi.waitFor(() => expect(closes).toEqual([socketId]))
   })
 
   it('authenticates local and Tailscale clients before accepting either socket namespace', async () => {

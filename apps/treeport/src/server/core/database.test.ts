@@ -50,7 +50,7 @@ describe('SQLite migration and catalog ordering', () => {
       await database.db.get<{ count: number }>(
         sql`SELECT count(*) AS count FROM __drizzle_migrations`
       )
-    ).toEqual({ count: 8 })
+    ).toEqual({ count: 9 })
     expect(
       await database.db.get<{ count: number }>(sql`
         SELECT count(*) AS count FROM sqlite_master WHERE name='terminals'
@@ -407,7 +407,7 @@ describe('SQLite migration and catalog ordering', () => {
       await reopened.db.get<{ count: number }>(
         sql`SELECT count(*) AS count FROM __drizzle_migrations`
       )
-    ).toEqual({ count: 8 })
+    ).toEqual({ count: 9 })
 
     const backupDirectory = path.join(directory, 'database-backups')
     const [backupName] = await fs.readdir(backupDirectory)
@@ -552,15 +552,17 @@ describe('SQLite migration and catalog ordering', () => {
       fs.rm(path.join(oldMigrations, '0005_git_authoritative_worktrees.sql')),
       fs.rm(path.join(oldMigrations, '0006_web_panel_launch_input.sql')),
       fs.rm(path.join(oldMigrations, '0007_dashing_pestilence.sql')),
+      fs.rm(path.join(oldMigrations, '0008_host_browser_permissions.sql')),
       fs.rm(path.join(oldMigrations, 'meta', '0005_snapshot.json')),
       fs.rm(path.join(oldMigrations, 'meta', '0006_snapshot.json')),
-      fs.rm(path.join(oldMigrations, 'meta', '0007_snapshot.json'))
+      fs.rm(path.join(oldMigrations, 'meta', '0007_snapshot.json')),
+      fs.rm(path.join(oldMigrations, 'meta', '0008_snapshot.json'))
     ])
     const journalPath = path.join(oldMigrations, 'meta', '_journal.json')
     const journal = JSON.parse(await fs.readFile(journalPath, 'utf8')) as {
       entries: unknown[]
     }
-    journal.entries.splice(-3)
+    journal.entries.splice(-4)
     await fs.writeFile(journalPath, JSON.stringify(journal, null, 2))
 
     const filePath = path.join(directory, 'treeport.db')
@@ -702,6 +704,6 @@ describe('SQLite migration and catalog ordering', () => {
       await recovered.db.get<{ count: number }>(
         sql`SELECT count(*) AS count FROM __drizzle_migrations`
       )
-    ).toEqual({ count: 8 })
+    ).toEqual({ count: 9 })
   })
 })

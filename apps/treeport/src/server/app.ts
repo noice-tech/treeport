@@ -13,6 +13,8 @@ import { serveStatic } from '@hono/node-server/serve-static'
 import { zValidator } from '@hono/zod-validator'
 import {
   browseDirectoryQuerySchema,
+  browserAgentCommandSchema,
+  browserTicketRequestSchema,
   createTerminalPresetSchema,
   createTerminalSchema,
   createWebPanelSchema,
@@ -35,7 +37,8 @@ import {
   terminalCaptureQuerySchema,
   updateProjectSchema,
   updateTerminalPresetSchema,
-  updateTerminalSchema
+  updateTerminalSchema,
+  updateWebPanelPermissionGrantSchema
 } from '@treeport/shared'
 import type { OperationKind } from '@treeport/shared'
 import type { AppConfig, TmuxAdapter, TreeportService } from './core/index'
@@ -45,6 +48,7 @@ import {
   webPanelContentSecurityPolicy
 } from './core/web-panel-csp'
 import { TerminalMetadataManager } from './terminal-metadata'
+import type { BrowserSessionManager } from './browser-sessions'
 
 const UPLOAD_MIME_EXTENSIONS: Readonly<Record<string, string>> = {
   'application/pdf': 'pdf',
@@ -127,6 +131,7 @@ interface AppDependencies {
   config: AppConfig
   tmux: TmuxAdapter
   terminalMetadata?: TerminalMetadataManager
+  browserSessions?: BrowserSessionManager
   webDist?: string
 }
 
@@ -161,6 +166,7 @@ export function createApp({
   config,
   tmux,
   terminalMetadata,
+  browserSessions,
   webDist
 }: AppDependencies) {
   const app = new Hono<{ Variables: RequestIdVariables }>()
@@ -233,6 +239,98 @@ export function createApp({
       500
     )
   })
+
+  const browserApi = new Hono()
+    .get('/api/browser/status', async (context) => {
+      if (!browserSessions) {
+        throw new DomainError(
+          'HOST_BROWSER_UNAVAILABLE',
+          'Hosted browser service is unavailable',
+          503
+        )
+      }
+
+      return context.json(await browserSessions.status())
+    })
+    .post('/api/browser/install', async (context) => {
+      if (!browserSessions) {
+        throw new DomainError(
+          'HOST_BROWSER_UNAVAILABLE',
+          'Hosted browser service is unavailable',
+          503
+        )
+      }
+
+      return context.json({ message: await browserSessions.install() })
+    })
+    .delete('/api/browser/install', async (context) => {
+      if (!browserSessions) {
+        throw new DomainError(
+          'HOST_BROWSER_UNAVAILABLE',
+          'Hosted browser service is unavailable',
+          503
+        )
+      }
+
+      await browserSessions.remove()
+      return context.json({ ok: true })
+    })
+    .put(
+      '/api/worktrees/:worktreeId/web-panel-definitions/:definitionId/permission-grant',
+      jsonInput(updateWebPanelPermissionGrantSchema),
+      async (context) => {
+        const body = context.req.valid('json')
+        const definition = await service.setWebPanelPermissionGrant(
+          context.req.param('worktreeId'),
+          context.req.param('definitionId'),
+          body.granted,
+          body.permissions
+        )
+        return context.json({ definition })
+      }
+    )
+    .post(
+      '/api/panels/:panelId/browser-agent',
+      jsonInput(browserAgentCommandSchema),
+      async (context) => {
+        if (!browserSessions) {
+          throw new DomainError(
+            'HOST_BROWSER_UNAVAILABLE',
+            'Hosted browser service is unavailable',
+            503
+          )
+        }
+
+        return context.json({
+          output: await browserSessions.agentCommand(
+            context.req.param('panelId'),
+            context.req.valid('json')
+          )
+        })
+      }
+    )
+    .post(
+      '/api/panels/:panelId/browser-ticket',
+      jsonInput(browserTicketRequestSchema),
+      async (context) => {
+        if (!browserSessions) {
+          throw new DomainError(
+            'HOST_BROWSER_UNAVAILABLE',
+            'Hosted browser service is unavailable',
+            503
+          )
+        }
+
+        return context.json({
+          ticket: await browserSessions.issueTicket(
+            context.req.param('panelId'),
+            context.req.valid('json').clientId
+          )
+        })
+      }
+    )
+
+  app.route('/', browserApi)
 
   const api = new Hono()
     .get('/api/health', (context) =>

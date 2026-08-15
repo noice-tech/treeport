@@ -174,13 +174,14 @@ describe('Socket.IO contracts', () => {
             kind: 'web',
             worktreeId: 'worktree',
             definitionId:
-              'package:npm:@treeport/web-panel-browser:web-panel:browser',
+              'package:npm:@treeport/web-panel-browser:web-panel:remote-browser',
             title: 'Application',
             launch: {
               input: { url: 'http://127.0.0.1:3000/' },
               cwd: '.'
             },
-            sandbox: { allowSameOrigin: true },
+            permissions: ['host-browser'],
+            sandbox: { allowSameOrigin: false },
             createdAt: '2026-01-01T00:00:00.000Z',
             updatedAt: '2026-01-01T00:00:00.000Z'
           }

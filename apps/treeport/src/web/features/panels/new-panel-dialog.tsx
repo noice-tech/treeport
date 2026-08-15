@@ -13,6 +13,16 @@ import type {
 } from '@treeport/shared'
 import { Button } from '../../components/ui/button'
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle
+} from '../../components/ui/alert-dialog'
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -57,6 +67,23 @@ export function NewPanelDialog({
 }) {
   const [query, setQuery] = useState('')
   const [selectedIndex, setSelectedIndex] = useState(0)
+  const [permissionDefinition, setPermissionDefinition] =
+    useState<WebPanelDefinition | null>(null)
+  const permissionSource = permissionDefinition
+    ? permissionDefinition.source.type === 'package'
+      ? `${permissionDefinition.source.scope} package ${permissionDefinition.source.source}`
+      : 'this project'
+    : ''
+  const permissionDescription = [
+    permissionDefinition?.permissions.includes('host-browser')
+      ? 'It will start an isolated browser on the Treeport daemon host. It can reach localhost, local network services, and internet sites available from that host.'
+      : '',
+    permissionDefinition?.permissions.includes('same-origin')
+      ? "It will share Treeport's web origin. It can access Treeport browser storage, the Treeport page, and API routes available to this client."
+      : ''
+  ]
+    .filter(Boolean)
+    .join(' ')
   const normalizedQuery = query.trim().toLocaleLowerCase()
   const showShell = 'shell'.includes(normalizedQuery)
   const filteredPresets = presets.filter((preset) =>
@@ -305,6 +332,14 @@ export function NewPanelDialog({
                   onFocus={() => setSelectedIndex(actionIndex)}
                   onMouseMove={() => setSelectedIndex(actionIndex)}
                   onClick={() => {
+                    if (
+                      definition.permissions.length > 0 &&
+                      !definition.permissionsGranted
+                    ) {
+                      setPermissionDefinition(definition)
+                      return
+                    }
+
                     setQuery('')
                     setSelectedIndex(0)
                     onCreateWebPanel(definition)
@@ -383,6 +418,41 @@ export function NewPanelDialog({
             </a>
           </Button>
         </div>
+        <AlertDialog
+          open={permissionDefinition !== null}
+          onOpenChange={(nextOpen) => {
+            if (!nextOpen) {
+              setPermissionDefinition(null)
+            }
+          }}
+        >
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>
+                Allow privileged panel access?
+              </AlertDialogTitle>
+              <AlertDialogDescription>
+                {`${permissionDefinition?.title ?? 'This panel'} is from ${permissionSource}. ${permissionDescription}`}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={() => {
+                  const definition = permissionDefinition
+                  setPermissionDefinition(null)
+                  if (definition) {
+                    setQuery('')
+                    setSelectedIndex(0)
+                    onCreateWebPanel(definition)
+                  }
+                }}
+              >
+                Allow and open
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </DialogContent>
     </Dialog>
   )

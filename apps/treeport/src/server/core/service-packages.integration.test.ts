@@ -314,12 +314,16 @@ describe('TreeportService with injected command adapters', () => {
       {
         id: 'project:code-review',
         source: { type: 'project' },
+        permissions: [],
+        permissionsGranted: true,
         sandbox: { allowSameOrigin: false },
         title: 'Code review'
       },
       {
         id: 'project:review',
         source: { type: 'project' },
+        permissions: [],
+        permissionsGranted: true,
         sandbox: { allowSameOrigin: false },
         title: 'Review'
       }
@@ -621,6 +625,186 @@ describe('TreeportService with injected command adapters', () => {
     expect(await service.getWebPanelStorage(panel.id, 'draft')).toEqual({
       body: 'keep me'
     })
+  })
+
+  it('scopes host-browser grants to the package source and permission set', async () => {
+    const { root, main, service } = await fixture({
+      trustedHostBrowserPackageRelativePath: 'packages/web-panel-browser'
+    })
+    const packageRoot = path.join(root, 'packages', 'web-panel-browser')
+    const browserRoot = path.join(packageRoot, 'web-panels', 'browser')
+    const remoteBrowserRoot = path.join(
+      packageRoot,
+      'web-panels',
+      'remote-browser'
+    )
+    await Promise.all([
+      fs.mkdir(browserRoot, { recursive: true }),
+      fs.mkdir(remoteBrowserRoot, { recursive: true }),
+      fs.mkdir(path.join(main, '.treeport'), { recursive: true })
+    ])
+    await Promise.all([
+      fs.writeFile(
+        path.join(packageRoot, 'package.json'),
+        JSON.stringify({
+          name: '@treeport/web-panel-browser',
+          keywords: ['treeport-package'],
+          treeport: {
+            webPanels: [
+              {
+                source: './web-panels/browser',
+                permissions: ['same-origin']
+              },
+              {
+                source: './web-panels/remote-browser',
+                permissions: ['host-browser']
+              }
+            ]
+          }
+        })
+      ),
+      fs.writeFile(path.join(browserRoot, 'index.html'), '<h1>Browser</h1>'),
+      fs.writeFile(
+        path.join(remoteBrowserRoot, 'index.html'),
+        '<h1>Remote browser</h1>'
+      ),
+      fs.writeFile(
+        path.join(main, '.treeport', 'settings.json'),
+        JSON.stringify({ packages: [packageRoot] })
+      )
+    ])
+
+    const project = await service.registerProject(main)
+    const worktree = project.worktrees[0]!
+    const definitions = await service.listWebPanelDefinitions(worktree.id)
+    expect(
+      definitions.find((candidate) => candidate.title === 'Browser')
+    ).toMatchObject({
+      permissions: ['same-origin'],
+      permissionsGranted: false,
+      sandbox: { allowSameOrigin: true }
+    })
+    const definition = definitions.find(
+      (candidate) => candidate.title === 'Remote browser'
+    )!
+    expect(definition).toMatchObject({
+      permissions: ['host-browser'],
+      permissionsGranted: false,
+      sandbox: { allowSameOrigin: false }
+    })
+    await expect(
+      service.createWebPanel(worktree.id, definition.id)
+    ).rejects.toMatchObject({
+      code: 'WEB_PANEL_PERMISSION_REQUIRED',
+      details: { permissions: ['host-browser'] }
+    })
+    await expect(
+      service.setWebPanelPermissionGrant(worktree.id, definition.id, true, [])
+    ).rejects.toMatchObject({ code: 'WEB_PANEL_PERMISSIONS_CHANGED' })
+
+    await service.setWebPanelPermissionGrant(
+      worktree.id,
+      definition.id,
+      true,
+      definition.permissions
+    )
+    expect(
+      (await service.listWebPanelDefinitions(worktree.id)).find(
+        (candidate) => candidate.id === definition.id
+      )
+    ).toMatchObject({ permissionsGranted: true })
+    const panel = await service.createWebPanel(worktree.id, definition.id)
+    await expect(service.authorizeHostBrowserPanel(panel.id)).resolves.toEqual({
+      panel,
+      worktreePath: worktree.path
+    })
+    await service.setWebPanelPermissionGrant(
+      worktree.id,
+      definition.id,
+      false,
+      definition.permissions
+    )
+    await expect(
+      service.authorizeHostBrowserPanel(panel.id)
+    ).rejects.toMatchObject({ code: 'WEB_PANEL_PERMISSION_REQUIRED' })
+    await service.setWebPanelPermissionGrant(
+      worktree.id,
+      definition.id,
+      true,
+      definition.permissions
+    )
+
+    const untrustedRoot = path.join(root, 'packages', 'browser-copy')
+    await fs.cp(packageRoot, untrustedRoot, { recursive: true })
+    await fs.writeFile(
+      path.join(main, '.treeport', 'settings.json'),
+      JSON.stringify({ packages: [packageRoot, untrustedRoot] })
+    )
+    await service.reloadPackages(project.id)
+    const untrustedDefinition = (
+      await service.listWebPanelDefinitions(worktree.id)
+    ).find(
+      (candidate) =>
+        candidate.source.type === 'package' &&
+        candidate.source.source === untrustedRoot &&
+        candidate.title === 'Remote browser'
+    )!
+    await expect(
+      service.setWebPanelPermissionGrant(
+        worktree.id,
+        untrustedDefinition.id,
+        true,
+        untrustedDefinition.permissions
+      )
+    ).rejects.toMatchObject({ code: 'HOST_BROWSER_PACKAGE_NOT_TRUSTED' })
+    await fs.writeFile(
+      path.join(main, '.treeport', 'settings.json'),
+      JSON.stringify({ packages: [packageRoot] })
+    )
+    await service.reloadPackages(project.id)
+
+    await service.removePackage(packageRoot, project.id)
+    await service.installPackage(packageRoot, project.id)
+    expect(
+      (await service.listWebPanelDefinitions(worktree.id)).find(
+        (candidate) => candidate.id === definition.id
+      )
+    ).toMatchObject({ permissionsGranted: false })
+    await service.setWebPanelPermissionGrant(
+      worktree.id,
+      definition.id,
+      true,
+      definition.permissions
+    )
+
+    await fs.writeFile(
+      path.join(packageRoot, 'package.json'),
+      JSON.stringify({
+        name: '@treeport/web-panel-browser',
+        keywords: ['treeport-package'],
+        treeport: {
+          webPanels: [
+            {
+              source: './web-panels/browser',
+              permissions: ['same-origin']
+            },
+            {
+              source: './web-panels/remote-browser',
+              permissions: ['host-browser', 'same-origin']
+            }
+          ]
+        }
+      })
+    )
+    await service.reloadPackages(project.id)
+    expect(
+      (await service.listWebPanelDefinitions(worktree.id)).find(
+        (candidate) => candidate.id === definition.id
+      )
+    ).toMatchObject({ permissionsGranted: false })
+    await expect(
+      service.authorizeHostBrowserPanel(panel.id)
+    ).rejects.toMatchObject({ code: 'WEB_PANEL_PERMISSION_REQUIRED' })
   })
 
   it('browses bounded server directories and resolves repository roots', async () => {

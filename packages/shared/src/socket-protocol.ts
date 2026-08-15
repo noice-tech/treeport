@@ -135,6 +135,7 @@ const webPanelSnapshotSchema = z.strictObject({
     input: z.record(z.string(), z.json()).nullable(),
     cwd: z.string().nullable()
   }),
+  permissions: z.array(z.enum(['same-origin', 'host-browser'])),
   sandbox: z.strictObject({ allowSameOrigin: z.boolean() }),
   createdAt: z.string(),
   updatedAt: z.string()

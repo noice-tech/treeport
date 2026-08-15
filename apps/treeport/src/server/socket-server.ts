@@ -1,11 +1,15 @@
 import type { Server as HttpServer } from 'node:http'
+import type { Namespace } from 'socket.io'
 import { Server } from 'socket.io'
 import type {
+  BrowserClientToServerEvents,
+  BrowserServerToClientEvents,
   EventsServerToClientEvents,
   TerminalClientToServerEvents,
   TerminalServerToClientEvents
 } from '@treeport/shared'
 import {
+  parseBrowserAuth,
   parseTerminalAuth,
   SOCKET_IO_PATH,
   TERMINAL_MAX_CLIENT_MESSAGE_BYTES,
@@ -21,6 +25,10 @@ import {
 } from './terminal-attachments'
 import { authorizeRequest } from './request-security'
 import type { TerminalMetadataManager } from './terminal-metadata'
+import {
+  BrowserSessionManager,
+  type BrowserTransport
+} from './browser-sessions'
 
 type ClientToServerEvents = TerminalClientToServerEvents
 
@@ -29,6 +37,7 @@ interface ServerToClientEvents
 
 interface SocketData {
   terminalAuth?: TerminalAuth
+  browserTicket?: string
   terminalProtocolVersion?: 1 | typeof TERMINAL_PROTOCOL_VERSION
 }
 
@@ -40,6 +49,7 @@ interface SocketServerDependencies {
   tmux: TmuxAdapter
   terminalMetadata: TerminalMetadataManager
   attachmentManager?: TerminalAttachmentManager
+  browserSessions?: BrowserSessionManager
 }
 
 export function createSocketServer(
@@ -49,7 +59,8 @@ export function createSocketServer(
     config,
     tmux,
     terminalMetadata,
-    attachmentManager
+    attachmentManager,
+    browserSessions
   }: SocketServerDependencies
 ): {
   io: Server<
@@ -59,6 +70,7 @@ export function createSocketServer(
     SocketData
   >
   attachments: TerminalAttachmentManager
+  browserSessions: BrowserSessionManager
 } {
   const io = new Server<
     ClientToServerEvents,
@@ -83,6 +95,8 @@ export function createSocketServer(
       config.tmuxPath,
       terminalMetadata
     )
+  const hostedBrowsers =
+    browserSessions ?? new BrowserSessionManager(service, config)
 
   io.of('/events').on('connection', (socket) => {
     const queuedEvents: Parameters<
@@ -209,5 +223,54 @@ export function createSocketServer(
     socket.once('disconnect', () => attachments.close(connectionId))
   })
 
-  return { io, attachments }
+  const browsers = io.of('/browsers') as unknown as Namespace<
+    BrowserClientToServerEvents,
+    BrowserServerToClientEvents,
+    InterServerEvents,
+    SocketData
+  >
+  browsers.use((socket, next) => {
+    const auth = parseBrowserAuth(socket.handshake.auth)
+    if (!auth) {
+      next(new Error('INVALID_BROWSER_AUTH'))
+      return
+    }
+
+    socket.data.browserTicket = auth.ticket
+    next()
+  })
+  browsers.on('connection', (socket) => {
+    const transport: BrowserTransport = {
+      id: socket.id,
+      isConnected: () => socket.connected,
+      sendMessage(message) {
+        if (!socket.connected) {
+          return false
+        }
+
+        socket.emit('message', message)
+        return true
+      },
+      sendFrame(frame) {
+        if (!socket.connected) {
+          return false
+        }
+
+        socket.emit('frame', frame)
+        return true
+      },
+      disconnect() {
+        socket.disconnect(true)
+      }
+    }
+    socket.on('command', (message) =>
+      hostedBrowsers.message(socket.id, message)
+    )
+    socket.once('disconnect', () => hostedBrowsers.close(socket.id))
+    void hostedBrowsers
+      .accept(socket.data.browserTicket!, transport)
+      .catch(() => socket.disconnect(true))
+  })
+
+  return { io, attachments, browserSessions: hostedBrowsers }
 }

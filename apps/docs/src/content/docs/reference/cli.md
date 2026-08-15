@@ -100,6 +100,33 @@ By default, creation starts from the fetched remote default branch. `--from-curr
 
 Removal obtains a fresh safety preview. `--force` confirms reported warnings when removal is eligible. Once accepted, removal continues independently of the browser and resumes after a Treeport restart. The worktree disappears when Git stops reporting it; Treeport handles any safely identifiable residual files separately.
 
+## Remote Browser
+
+```sh
+treeport browser install [--json]
+treeport browser status [--json]
+treeport browser remove [--json]
+treeport browser list [--json]
+
+treeport browser snapshot [--panel <panel-id>] [--json]
+treeport browser click <target> [--panel <panel-id>] [--json]
+treeport browser fill <target> <text> [--panel <panel-id>] [--json]
+treeport browser press <key> [--panel <panel-id>] [--json]
+treeport browser goto <url> [--panel <panel-id>] [--json]
+treeport browser back [--panel <panel-id>] [--json]
+treeport browser forward [--panel <panel-id>] [--json]
+treeport browser reload [--panel <panel-id>] [--json]
+treeport browser console [level] [--panel <panel-id>] [--json]
+treeport browser network [--panel <panel-id>] [--json]
+treeport browser screenshot [--panel <panel-id>] [--json]
+```
+
+`install` downloads the Chromium build that matches Treeport's pinned Playwright runtime into Treeport's cache. `status` reports whether that build is ready. `remove` requires all Remote Browser sessions to be closed.
+
+The remaining commands use the Playwright Agent CLI against an existing Remote Browser panel. Without `--panel`, Treeport selects the only Remote Browser panel in the current worktree. Use `list` to find panel IDs. Snapshot output contains element references that `click` and `fill` can use. The agent and Remote Browser panel operate on the same disposable browser session. These commands do not control the client-side Browser panel.
+
+See [Browser panels](/features/browser-panel/) for permission, networking, persistence, and feature limits.
+
 ## Web panels
 
 ```sh
