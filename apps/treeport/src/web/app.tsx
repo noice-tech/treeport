@@ -811,6 +811,11 @@ function WorkspaceApp() {
               active={active}
               title={title}
               reloadRevision={webPanelReloadRevisions[panel.id] ?? 0}
+              autoFocusBlocked={
+                dialog !== null ||
+                projectSwitcherOpen ||
+                (isMobile && drawerOpen)
+              }
               onTitleChange={setWebPanelRuntimeTitle}
               onSelectWorkspace={selectWorkspaceByIndex}
             />
