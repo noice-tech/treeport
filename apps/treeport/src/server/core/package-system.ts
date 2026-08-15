@@ -11,7 +11,8 @@ import {
   type PackageSource,
   type ProjectRecord,
   type TerminalPresetDefinition,
-  type WebPanelDefinition
+  type WebPanelDefinition,
+  type WebPanelPermission
 } from '@treeport/shared'
 import type { AppConfig } from './config'
 import { runChecked, type CommandRunner } from './command'
@@ -104,7 +105,7 @@ interface ResourceCandidates {
 
 interface WebPanelManifestEntry {
   source: string
-  allowSameOrigin: boolean
+  permissions: WebPanelPermission[]
 }
 
 interface PackageManifest {
@@ -847,7 +848,7 @@ export class PackageSystem {
     return entries.map((entry): WebPanelManifestEntry => {
       if (typeof entry === 'string') {
         this.validateManifestPatterns([entry], 'webPanels', packageJsonPath)
-        return { source: entry, allowSameOrigin: false }
+        return { source: entry, permissions: [] }
       }
 
       if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
@@ -875,7 +876,10 @@ export class PackageSystem {
       const uniquePermissions = new Set(permissions)
       if (
         uniquePermissions.size !== permissions.length ||
-        permissions.some((permission) => permission !== 'same-origin')
+        permissions.some(
+          (permission) =>
+            permission !== 'same-origin' && permission !== 'host-browser'
+        )
       ) {
         throw new Error(
           `${packageJsonPath} contains an invalid web panel permission`
@@ -884,7 +888,7 @@ export class PackageSystem {
 
       return {
         source,
-        allowSameOrigin: uniquePermissions.has('same-origin')
+        permissions: [...uniquePermissions] as WebPanelPermission[]
       }
     })
   }
@@ -1158,22 +1162,27 @@ export class PackageSystem {
         const resourceId = encodeURIComponent(
           path.posix.basename(candidate.relativePath)
         )
-        const allowSameOrigin =
-          manifest?.webPanels.some(
-            (entry) =>
-              entry.allowSameOrigin &&
-              this.manifestAllows(
-                candidate.relativePath,
-                [entry.source],
-                'web-panel'
+        const permissions = [
+          ...new Set(
+            (manifest?.webPanels ?? [])
+              .filter((entry) =>
+                this.manifestAllows(
+                  candidate.relativePath,
+                  [entry.source],
+                  'web-panel'
+                )
               )
-          ) ?? false
+              .flatMap((entry) => entry.permissions)
+          )
+        ]
         return {
           definition: {
             id: `package:${parsed.packageId}:web-panel:${resourceId}`,
             title: titleFromPath(candidate.relativePath),
             source: metadata,
-            sandbox: { allowSameOrigin }
+            permissions,
+            permissionsGranted: permissions.length === 0,
+            sandbox: { allowSameOrigin: permissions.includes('same-origin') }
           },
           root: candidate.root,
           entry: 'index.html',

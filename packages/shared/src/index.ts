@@ -1,5 +1,9 @@
 import { z } from 'zod'
-import type { WebPanel, WebPanelInput } from '@treeport/panel-sdk'
+import type {
+  WebPanel,
+  WebPanelInput,
+  WebPanelPermission
+} from '@treeport/panel-sdk'
 import {
   terminalSizeSchema,
   type TerminalRuntimeMetadata
@@ -13,9 +17,11 @@ export type {
   WebPanelContext,
   WebPanelInput,
   WebPanelLaunch,
+  WebPanelPermission,
   WorktreeListener,
   WorktreeListenerDiscovery
 } from '@treeport/panel-sdk'
+export * from './browser-protocol.js'
 export * from './socket-protocol.js'
 export * from './terminal-protocol.js'
 
@@ -189,6 +195,8 @@ export interface WebPanelDefinition {
   id: string
   title: string
   source: WebPanelSource
+  permissions: WebPanelPermission[]
+  permissionsGranted: boolean
   sandbox: WebPanelSandbox
 }
 
@@ -612,6 +620,11 @@ export const createWebPanelSchema = z.object({
   definitionId: z.string().min(1).max(256),
   input: webPanelInputSchema.nullable().optional(),
   launchCwd: z.string().max(4096).nullable().optional()
+})
+
+export const updateWebPanelPermissionGrantSchema = z.strictObject({
+  granted: z.boolean(),
+  permissions: z.array(z.enum(['same-origin', 'host-browser']))
 })
 
 export const openWebPanelSchema = createWebPanelSchema.extend({

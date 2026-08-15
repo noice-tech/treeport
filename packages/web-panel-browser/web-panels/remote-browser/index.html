@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Remote browser</title>
+    <script type="module" src="./remote-browser.ts"></script>
+  </head>
+  <body>
+    <main>
+      <form aria-label="Remote browser controls">
+        <button
+          type="button"
+          data-action="home"
+          aria-label="Show development servers"
+          title="Show development servers"
+        >
+          ⌂
+        </button>
+        <button
+          type="button"
+          data-action="back"
+          aria-label="Go back"
+          title="Go back"
+          disabled
+        >
+          ←
+        </button>
+        <button
+          type="button"
+          data-action="forward"
+          aria-label="Go forward"
+          title="Go forward"
+          disabled
+        >
+          →
+        </button>
+        <input
+          name="url"
+          type="url"
+          aria-label="Application URL"
+          placeholder="http://localhost:3000/"
+          maxlength="4096"
+          required
+        />
+        <button
+          type="button"
+          data-action="reload"
+          aria-label="Reload application"
+          title="Reload application"
+          disabled
+        >
+          ↻
+        </button>
+        <button
+          type="button"
+          data-action="stop"
+          aria-label="Stop loading"
+          title="Stop loading"
+          hidden
+        >
+          ×
+        </button>
+        <button
+          type="button"
+          data-action="copy"
+          aria-label="Copy application URL"
+          title="Copy application URL"
+          disabled
+        >
+          ⧉
+        </button>
+        <button
+          type="button"
+          data-action="reset"
+          aria-label="Reset remote browser"
+          title="Reset remote browser"
+        >
+          Reset
+        </button>
+        <span
+          class="help"
+          tabindex="0"
+          aria-label="Remote browser panel help"
+          title="This disposable browser runs on the Treeport daemon host. It does not use your personal browser profile."
+          >ⓘ</span
+        >
+      </form>
+      <p class="error" role="alert" hidden></p>
+      <p class="control-status" role="status" hidden></p>
+      <div class="viewport">
+        <canvas tabindex="0" aria-label="Remote browser viewport"></canvas>
+        <section class="homepage" aria-label="Development servers" hidden>
+          <div class="homepage-header">
+            <div>
+              <h1>Development servers</h1>
+              <p>Select a listening server from this worktree.</p>
+            </div>
+            <button type="button" data-action="refresh-servers">
+              Refresh servers
+            </button>
+          </div>
+          <p class="server-status" role="status" aria-live="polite"></p>
+          <ul class="server-list"></ul>
+          <p class="server-empty" hidden>
+            No listening servers were found. Start one from a Treeport terminal,
+            then refresh this list, or enter its URL above.
+          </p>
+        </section>
+        <div class="loading" role="status" aria-live="polite" hidden>
+          <span class="spinner" aria-hidden="true"></span>
+          <span>Loading application…</span>
+        </div>
+        <div class="failure" role="alert" hidden>
+          <strong>Remote browser unavailable</strong>
+          <span class="failure-message"
+            >The hosted browser could not start.</span
+          >
+          <code class="install-command"></code>
+          <button type="button" data-action="retry">Retry</button>
+        </div>
+      </div>
+    </main>
+  </body>
+</html>

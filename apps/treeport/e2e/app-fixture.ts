@@ -683,12 +683,29 @@ export async function mockApp(
         source: 'npm:@treeport/web-panel-browser',
         scope: 'global' as const
       },
+      permissions: ['same-origin' as const],
+      permissionsGranted: false,
       sandbox: { allowSameOrigin: true }
+    },
+    {
+      id: 'package:npm:@treeport/web-panel-browser:web-panel:remote-browser',
+      title: 'Remote browser',
+      source: {
+        type: 'package' as const,
+        packageId: 'npm:@treeport/web-panel-browser',
+        source: 'npm:@treeport/web-panel-browser',
+        scope: 'global' as const
+      },
+      permissions: ['host-browser' as const],
+      permissionsGranted: false,
+      sandbox: { allowSameOrigin: false }
     },
     {
       id: 'project:review',
       title: 'Review',
       source: { type: 'project' as const },
+      permissions: [],
+      permissionsGranted: true,
       sandbox: { allowSameOrigin: false }
     }
   ]
@@ -1281,44 +1298,132 @@ export async function mockApp(
         return
       }
 
+      if (
+        panel?.definitionId ===
+        'package:npm:@treeport/web-panel-browser:web-panel:browser'
+      ) {
+        await route.fulfill({
+          contentType: 'text/html',
+          body: `<!doctype html><html><body>
+            <form><button type="button" aria-label="Show development servers">Home</button><input type="url" aria-label="Application URL" value="http://localhost:3000/" required></form>
+            <section aria-label="Development servers"><h1>Development servers</h1><p role="status">Scanning for development servers…</p><div data-servers></div><button type="button">Refresh servers</button></section>
+            <div role="alert" hidden><strong>Load failed</strong><span>Check that the application is running and reachable.</span></div>
+            <iframe title="Browser target" src="about:blank"></iframe>
+            <script>
+              const pending = new Map(); let serial = 0;
+              const call = (method, values = {}) => new Promise((resolve, reject) => {
+                const id = String(++serial); pending.set(id, { resolve, reject });
+                parent.postMessage({ source: 'treeport-panel-v1', id, method, ...values }, '*');
+              });
+              const frame = document.querySelector('iframe');
+              let locationSubscription = null;
+              let locationSubscriptionSerial = 0;
+              let setBrowserLocation = null;
+              addEventListener('message', (event) => {
+                if (event.source === parent && event.data?.source === 'treeport-host-v1' && event.data.id) {
+                  const request = pending.get(event.data.id); if (!request) return;
+                  pending.delete(event.data.id);
+                  event.data.ok ? request.resolve(event.data.value) : request.reject(new Error(event.data.error));
+                  return;
+                }
+                if (event.source !== frame.contentWindow || event.data?.source !== 'treeport-panel-v1') return;
+                if (event.data.method === 'panel.title.set') {
+                  parent.postMessage(event.data, '*');
+                  return;
+                }
+                if (event.data.method === 'browser.location.set' && event.data.subscription === locationSubscription) {
+                  setBrowserLocation?.(event);
+                }
+              });
+              Promise.all([call('context'), call('storage.get', { key: 'browser-state' }), call('network.listeners')]).then(([context, stored, discovery]) => {
+                const input = document.querySelector('input');
+                const servers = document.querySelector('[data-servers]');
+                const status = document.querySelector('[role="status"]');
+                status.textContent = '';
+                for (const listener of discovery.listeners) {
+                  const button = document.createElement('button');
+                  const url = 'http://localhost:' + listener.port + '/';
+                  button.type = 'button';
+                  button.textContent = url + ' ' + listener.command;
+                  button.setAttribute('aria-label', 'Open ' + url + ', ' + listener.command);
+                  servers.append(button);
+                }
+                const failure = document.querySelector('[role="alert"]');
+                let currentUrl = stored?.url || context.launch.input?.url || '';
+                const storeUrl = (url) => call('storage.set', { key: 'browser-state', value: { url, launchUpdatedAt: context.panel.updatedAt } });
+                setBrowserLocation = (event) => {
+                  const url = new URL(event.data.url);
+                  if (url.origin !== event.origin || url.href === currentUrl) return;
+                  currentUrl = url.href;
+                  input.value = currentUrl;
+                  storeUrl(currentUrl);
+                };
+                frame.addEventListener('load', () => {
+                  locationSubscription = String(++locationSubscriptionSerial);
+                  frame.contentWindow.postMessage({ source: 'treeport-browser-v1', method: 'location.subscribe', subscription: locationSubscription }, '*');
+                });
+                const navigate = (url) => {
+                  failure.hidden = true;
+                  fetch(url, { method: 'HEAD', mode: 'no-cors', cache: 'no-store' }).then(
+                    () => { frame.src = url; },
+                    () => { failure.hidden = false; }
+                  );
+                };
+                if (currentUrl) input.value = currentUrl;
+                if (currentUrl) { document.querySelector('section').hidden = true; navigate(currentUrl); }
+                if (currentUrl) parent.postMessage({ source: 'treeport-panel-v1', method: 'panel.title.set', title: context.launch.input?.title || new URL(currentUrl).host }, '*');
+                document.querySelector('form').addEventListener('submit', (event) => {
+                  event.preventDefault();
+                  const url = new URL(input.value).href;
+                  storeUrl(url).then(() => {
+                    currentUrl = url;
+                    navigate(url);
+                    parent.postMessage({ source: 'treeport-panel-v1', method: 'panel.title.set', title: new URL(url).host }, '*');
+                  });
+                });
+              });
+            </script>
+          </body></html>`
+        })
+        return
+      }
+
       await route.fulfill({
         contentType: 'text/html',
         body: `<!doctype html><html><body>
           <form><button type="button" aria-label="Show development servers">Home</button><input type="url" aria-label="Application URL" value="http://localhost:3000/" required></form>
           <section aria-label="Development servers"><h1>Development servers</h1><p role="status">Scanning for development servers…</p><div data-servers></div><button type="button">Refresh servers</button></section>
-          <div role="alert" hidden><strong>Load failed</strong><span>Check that the application is running and reachable.</span></div>
-          <iframe title="Browser target" src="about:blank"></iframe>
+          <div role="alert" hidden><strong>Remote browser unavailable</strong><span data-error></span></div>
+          <canvas tabindex="0" aria-label="Remote browser viewport"></canvas>
           <script>
             const pending = new Map(); let serial = 0;
             const call = (method, values = {}) => new Promise((resolve, reject) => {
               const id = String(++serial); pending.set(id, { resolve, reject });
               parent.postMessage({ source: 'treeport-panel-v1', id, method, ...values }, '*');
             });
-            const frame = document.querySelector('iframe');
-            let locationSubscription = null;
-            let locationSubscriptionSerial = 0;
-            let setBrowserLocation = null;
             addEventListener('message', (event) => {
-              if (event.source === parent && event.data?.source === 'treeport-host-v1' && event.data.id) {
+              if (event.source !== parent || event.data?.source !== 'treeport-host-v1') return;
+              if (event.data.id) {
                 const request = pending.get(event.data.id); if (!request) return;
                 pending.delete(event.data.id);
                 event.data.ok ? request.resolve(event.data.value) : request.reject(new Error(event.data.error));
                 return;
               }
-              if (event.source !== frame.contentWindow || event.data?.source !== 'treeport-panel-v1') return;
-              if (event.data.method === 'panel.title.set') {
-                parent.postMessage(event.data, '*');
-                return;
-              }
-              if (event.data.method === 'browser.location.set' && event.data.subscription === locationSubscription) {
-                setBrowserLocation?.(event);
+              if (event.data.method === 'browser.connected' && event.ports[0]) {
+                const port = event.ports[0];
+                port.onmessage = (message) => {
+                  if (message.data?.type === 'browserUnavailable') {
+                    const failure = document.querySelector('[role="alert"]');
+                    failure.hidden = false;
+                    document.querySelector('[data-error]').textContent = message.data.message;
+                  }
+                };
+                port.start();
               }
             });
-            Promise.all([call('context'), call('storage.get', { key: 'browser-state' }), call('network.listeners')]).then(([context, stored, discovery]) => {
-              const input = document.querySelector('input');
+            Promise.all([call('context'), call('network.listeners')]).then(([context, discovery]) => {
               const servers = document.querySelector('[data-servers]');
-              const status = document.querySelector('[role="status"]');
-              status.textContent = '';
+              document.querySelector('[role="status"]').textContent = '';
               for (const listener of discovery.listeners) {
                 const button = document.createElement('button');
                 const url = 'http://localhost:' + listener.port + '/';
@@ -1327,39 +1432,7 @@ export async function mockApp(
                 button.setAttribute('aria-label', 'Open ' + url + ', ' + listener.command);
                 servers.append(button);
               }
-              const failure = document.querySelector('[role="alert"]');
-              let currentUrl = stored?.url || context.launch.input?.url || '';
-              const storeUrl = (url) => call('storage.set', { key: 'browser-state', value: { url, launchUpdatedAt: context.panel.updatedAt } });
-              setBrowserLocation = (event) => {
-                const url = new URL(event.data.url);
-                if (url.origin !== event.origin || url.href === currentUrl) return;
-                currentUrl = url.href;
-                input.value = currentUrl;
-                storeUrl(currentUrl);
-              };
-              frame.addEventListener('load', () => {
-                locationSubscription = String(++locationSubscriptionSerial);
-                frame.contentWindow.postMessage({ source: 'treeport-browser-v1', method: 'location.subscribe', subscription: locationSubscription }, '*');
-              });
-              const navigate = (url) => {
-                failure.hidden = true;
-                fetch(url, { method: 'HEAD', mode: 'no-cors', cache: 'no-store' }).then(
-                  () => { frame.src = url; },
-                  () => { failure.hidden = false; }
-                );
-              };
-              if (currentUrl) input.value = currentUrl;
-              if (currentUrl) { document.querySelector('section').hidden = true; navigate(currentUrl); }
-              if (currentUrl) parent.postMessage({ source: 'treeport-panel-v1', method: 'panel.title.set', title: context.launch.input?.title || new URL(currentUrl).host }, '*');
-              document.querySelector('form').addEventListener('submit', (event) => {
-                event.preventDefault();
-                const url = new URL(input.value).href;
-                storeUrl(url).then(() => {
-                  currentUrl = url;
-                  navigate(url);
-                  parent.postMessage({ source: 'treeport-panel-v1', method: 'panel.title.set', title: new URL(url).host }, '*');
-                });
-              });
+              parent.postMessage({ source: 'treeport-browser-panel-v1', method: 'browser.connect' }, '*');
             });
           </script>
         </body></html>`
@@ -1372,6 +1445,21 @@ export async function mockApp(
       route.request().method() === 'GET'
     ) {
       await route.fulfill({ json: { definitions: webPanelDefinitions } })
+      return
+    }
+
+    if (
+      /^\/api\/worktrees\/[^/]+\/web-panel-definitions\/[^/]+\/permission-grant$/.test(
+        pathname
+      ) &&
+      route.request().method() === 'PUT'
+    ) {
+      const definitionId = decodeURIComponent(pathname.split('/')[5]!)
+      const definition = webPanelDefinitions.find(
+        (candidate) => candidate.id === definitionId
+      )!
+      definition.permissionsGranted = true
+      await route.fulfill({ json: { definition } })
       return
     }
 
@@ -1401,12 +1489,29 @@ export async function mockApp(
           input: body.input ?? null,
           cwd: body.launchCwd ?? null
         },
+        permissions: definition.permissions,
         sandbox: definition.sandbox,
         createdAt: '2026-01-01T00:00:00.000Z',
         updatedAt: '2026-01-01T00:00:00.000Z'
       }
       worktree.panels.push(panel)
       await route.fulfill({ status: 201, json: { panel } })
+      return
+    }
+
+    if (
+      /^\/api\/panels\/[^/]+\/browser-ticket$/.test(pathname) &&
+      route.request().method() === 'POST'
+    ) {
+      await route.fulfill({
+        status: 503,
+        json: {
+          error: {
+            code: 'HOST_BROWSER_UNAVAILABLE',
+            message: 'Hosted browser fixture is unavailable'
+          }
+        }
+      })
       return
     }
 

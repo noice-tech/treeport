@@ -4,6 +4,10 @@ import { parseResponse } from 'hono/client'
 import { rpc } from '../../api'
 import { errorMessage } from '../../error-message'
 import { cn } from '../../lib/utils'
+import {
+  connectBrowserPanel,
+  isBrowserPanelConnectMessage
+} from '../../browser-session-client'
 
 export function WebPanelWorkspace({
   panel,
@@ -24,6 +28,9 @@ export function WebPanelWorkspace({
 }) {
   const frameRef = useRef<HTMLIFrameElement>(null)
   const panelWindowRef = useRef<Window | null>(null)
+  const browserConnectionRef = useRef<ReturnType<
+    typeof connectBrowserPanel
+  > | null>(null)
   const panelRevision = `${panel.id}:${reloadRevision}`
   const [loadedPanelRevision, setLoadedPanelRevision] = useState<string | null>(
     null
@@ -41,6 +48,18 @@ export function WebPanelWorkspace({
     const frame = window.requestAnimationFrame(() => frameRef.current?.focus())
     return () => window.cancelAnimationFrame(frame)
   }, [active, autoFocusBlocked, loadedPanelRevision, panelRevision])
+
+  useEffect(() => {
+    browserConnectionRef.current?.setVisible(active)
+  }, [active])
+
+  useEffect(
+    () => () => {
+      browserConnectionRef.current?.dispose()
+      browserConnectionRef.current = null
+    },
+    [panel.id, panelRevision]
+  )
 
   useEffect(() => {
     if (!active) {
@@ -80,10 +99,34 @@ export function WebPanelWorkspace({
     const receive = (event: MessageEvent) => {
       const panelWindow =
         frameRef.current?.contentWindow ?? panelWindowRef.current
-      if (
-        event.source !== panelWindow ||
-        event.data?.source !== 'treeport-panel-v1'
-      ) {
+      if (event.source !== panelWindow) {
+        return
+      }
+
+      if (isBrowserPanelConnectMessage(event.data)) {
+        if (!panel.permissions.includes('host-browser')) {
+          return
+        }
+
+        browserConnectionRef.current?.dispose()
+        const channel = new MessageChannel()
+        browserConnectionRef.current = connectBrowserPanel(
+          panel.id,
+          channel.port1,
+          active
+        )
+        panelWindow?.postMessage(
+          {
+            source: 'treeport-host-v1',
+            method: 'browser.connected'
+          },
+          '*',
+          [channel.port2]
+        )
+        return
+      }
+
+      if (event.data?.source !== 'treeport-panel-v1') {
         return
       }
 
@@ -185,7 +228,7 @@ export function WebPanelWorkspace({
     }
     window.addEventListener('message', receive)
     return () => window.removeEventListener('message', receive)
-  }, [onSelectWorkspace, onTitleChange, panel.id])
+  }, [active, onSelectWorkspace, onTitleChange, panel.id, panel.permissions])
 
   return (
     <Activity mode={active ? 'visible' : 'hidden'}>

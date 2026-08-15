@@ -122,7 +122,11 @@ Manifest paths and globs are relative to the package root and may include `!` ex
 }
 ```
 
-This permission lets the panel compose nested web applications that need normal browser storage. It also lets panel code access the same-origin Treeport page and API routes. Use it only for code that you trust. Exclusions remain string entries.
+Treeport shows the panel source and requested permission before the first open. It asks again if the requested permission set changes. The grant is scoped to that exact package source and project/global scope, so a repository package cannot inherit a global package grant. Removing the package revokes its grants and closes active privileged sessions.
+
+This permission lets the panel use normal same-origin browser storage. It also lets panel code access the same-origin Treeport page and API routes. Use it only for code that you trust. Exclusions remain string entries.
+
+`host-browser` is reserved for the official package's Remote Browser panel. It is not a public web-panel capability in this version.
 
 A valid explicit `treeport` manifest is authoritative. Without one, Treeport discovers these conventional resources:
 

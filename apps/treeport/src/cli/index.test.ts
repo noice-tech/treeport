@@ -222,6 +222,7 @@ describe('CLI context and machine output', () => {
     url: string
     body: ObservedWebPanelBody
   }> = []
+  const browserAgentBodies: Array<{ command: string; args: string[] }> = []
   const packageBodies: Array<{
     url: string
     body: { source?: string; projectId?: string }
@@ -267,6 +268,7 @@ describe('CLI context and machine output', () => {
     createdWorktree = null
     createdWebPanels = []
     webPanelBodies.length = 0
+    browserAgentBodies.length = 0
   })
 
   beforeAll(async () => {
@@ -432,14 +434,17 @@ describe('CLI context and machine output', () => {
           JSON.stringify({
             definitions: [
               {
-                id: 'package:npm:@treeport/web-panel-browser:web-panel:browser',
-                title: 'Browser',
+                id: 'package:npm:@treeport/web-panel-browser:web-panel:remote-browser',
+                title: 'Remote browser',
                 source: {
                   type: 'package',
                   packageId: 'npm:@treeport/web-panel-browser',
                   source: 'npm:@treeport/web-panel-browser',
                   scope: 'global'
-                }
+                },
+                permissions: ['host-browser'],
+                permissionsGranted: true,
+                sandbox: { allowSameOrigin: false }
               },
               {
                 id: 'project:preview',
@@ -467,6 +472,27 @@ describe('CLI context and machine output', () => {
                 }
               }
             ]
+          })
+        )
+        return
+      }
+
+      if (
+        request.method === 'POST' &&
+        /^\/api\/panels\/panel_\d+\/browser-agent$/.test(request.url ?? '')
+      ) {
+        let source = ''
+        for await (const chunk of request) {
+          source += chunk
+        }
+        const body = JSON.parse(source) as {
+          command: string
+          args: string[]
+        }
+        browserAgentBodies.push(body)
+        response.end(
+          JSON.stringify({
+            output: '### Snapshot\n- button "Run checks" [ref=e2]'
           })
         )
         return
@@ -505,7 +531,7 @@ describe('CLI context and machine output', () => {
               definitionId: String(body.definitionId),
               title:
                 body.definitionId ===
-                'package:npm:@treeport/web-panel-browser:web-panel:browser'
+                'package:npm:@treeport/web-panel-browser:web-panel:remote-browser'
                   ? String(
                       (body.input as { title?: string } | undefined)?.title ??
                         '127.0.0.1:5173'
@@ -515,6 +541,11 @@ describe('CLI context and machine output', () => {
                 input: body.input as WebPanel['launch']['input'],
                 cwd: String(body.launchCwd)
               },
+              permissions:
+                body.definitionId ===
+                'package:npm:@treeport/web-panel-browser:web-panel:remote-browser'
+                  ? ['host-browser']
+                  : [],
               sandbox: { allowSameOrigin: false },
               createdAt: timestamp,
               updatedAt: timestamp
@@ -1200,7 +1231,7 @@ describe('CLI context and machine output', () => {
       [
         'web-panel',
         'open',
-        'browser',
+        'remote-browser',
         '--worktree',
         '.',
         '--input',
@@ -1215,20 +1246,42 @@ describe('CLI context and machine output', () => {
       panel: {
         id: 'panel_3',
         definitionId:
-          'package:npm:@treeport/web-panel-browser:web-panel:browser',
+          'package:npm:@treeport/web-panel-browser:web-panel:remote-browser',
         title: 'Application'
       },
       created: true,
       reused: false
     })
     expect(webPanelBodies.at(-1)?.body).toMatchObject({
-      definitionId: 'package:npm:@treeport/web-panel-browser:web-panel:browser',
+      definitionId:
+        'package:npm:@treeport/web-panel-browser:web-panel:remote-browser',
       input: {
         url: 'http://127.0.0.1:5173',
         title: 'Application'
       },
       launchCwd: 'packages/client'
     })
+
+    const browserList = await runCli(
+      ['browser', 'list', '--json'],
+      environment,
+      cwd
+    )
+    expect(browserList.code).toBe(0)
+    expect(JSON.parse(browserList.stdout)).toEqual([
+      expect.objectContaining({ panelId: 'panel_3', worktreeId: worktree.id })
+    ])
+    const snapshot = await runCli(
+      ['browser', 'snapshot', '--json'],
+      environment,
+      cwd
+    )
+    expect(snapshot.code).toBe(0)
+    expect(JSON.parse(snapshot.stdout)).toEqual({
+      panelId: 'panel_3',
+      output: '### Snapshot\n- button "Run checks" [ref=e2]'
+    })
+    expect(browserAgentBodies).toEqual([{ command: 'snapshot', args: [] }])
 
     const invalid = await runCli(
       [

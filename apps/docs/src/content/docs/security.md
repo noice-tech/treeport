@@ -43,13 +43,15 @@ Opening a web panel authorizes Treeport's fixed Vite profile to transform its HT
 
 These limits reduce automatic package execution, but selected terminal commands and opened hosted panels still act on a trusted registered worktree. Inspect panel source and its runtime dependencies as well as the package manifest.
 
-A hosted panel can request the `same-origin` permission. This permission weakens the iframe boundary. Panel code can potentially read or change the Treeport page, use Treeport browser storage, call same-origin routes, make direct HTTP or HTTPS requests, and remove its sandbox attribute. Install and open such a panel only when you trust its source and runtime dependencies. Panels without this permission keep an opaque origin.
+A hosted panel can request the `same-origin` permission. This permission weakens the iframe boundary. Panel code can potentially read or change the Treeport page, use Treeport browser storage, call same-origin routes, make direct HTTP or HTTPS requests, and remove its sandbox attribute. Panels without this permission keep an opaque origin.
 
-:::caution[TODO: confirm panel permissions]
-Treeport does not yet ask for confirmation before it loads a panel that declares permissions. Treeport must require explicit confirmation once, show the panel and its permissions, and ask again if the permissions change. This work is tracked in [issue #259](https://github.com/noice-tech/treeport/issues/259).
-:::
+Treeport shows a confirmation before it first opens a panel that requests a privileged permission. The grant is scoped to the exact package source, project/global scope, definition, and requested permission set. A changed permission set requires a new confirmation. Install and approve such a panel only when you trust its source and runtime dependencies.
 
-The Browser package can load an arbitrary HTTP or HTTPS site in a nested iframe. The package relays the target's client-local title message and, when the target includes the panel SDK, stores reported URL changes for navigation restoration. The target cannot use context, diff, storage, shortcuts, or workspace navigation methods. Browser iframe restrictions remain in effect, and Treeport does not bypass a target's framing policy.
+The official package's client-side **Browser** panel can load an arbitrary HTTP or HTTPS site in a nested iframe. The package relays the target's client-local title message and, when the target includes the panel SDK, stores reported URL changes for navigation restoration. Browser iframe restrictions remain in effect, and Treeport does not bypass a target's framing policy.
+
+The package's **Remote Browser** panel requests the reserved `host-browser` permission. It starts a separate disposable Chromium process as the Treeport daemon OS user. The browser can reach localhost, local-network services, and internet sites available from the daemon host. This is intentional, but it gives browsed sites the daemon host's network position.
+
+Each Remote Browser panel starts with an empty Treeport-owned browser context. It never attaches to a personal browser profile. Treeport keeps Playwright, browser-server, and Chromium debugging endpoints inside the daemon and local host-user boundary; web-panel code receives only a restricted navigation, input, state, and frame protocol. Resetting or closing the Remote Browser panel deletes its temporary browser state.
 
 ## Operational guidance
 

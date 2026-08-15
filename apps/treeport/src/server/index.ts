@@ -1,3 +1,5 @@
+import crypto from 'node:crypto'
+import fs from 'node:fs/promises'
 import { createServer } from 'node:http'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -18,6 +20,7 @@ import { acquireDaemonOwnership } from './daemon-ownership'
 import { authorizeRequest, rejectHttpRequest } from './request-security'
 import { createSocketServer } from './socket-server'
 import { TerminalMetadataManager } from './terminal-metadata'
+import { BrowserSessionManager } from './browser-sessions'
 
 const config = loadConfig()
 const ownership = await acquireDaemonOwnership(config)
@@ -37,7 +40,31 @@ const tmux = new TmuxAdapter(
   launcherPath
 )
 const gh = new GhAdapter(runner, config.ghPath)
-const service = new TreeportService({ config, database, runner, git, tmux, gh })
+const trustedHostBrowserPackageIds =
+  config.installationMethod === 'development'
+    ? await Promise.all(
+        [
+          path.resolve(process.cwd(), 'packages/web-panel-browser'),
+          path.resolve(process.cwd(), '../../packages/web-panel-browser')
+        ].map(async (source) => {
+          const canonical = await fs.realpath(source).catch(() => source)
+          return `local:${crypto
+            .createHash('sha256')
+            .update(canonical)
+            .digest('hex')
+            .slice(0, 16)}`
+        })
+      )
+    : []
+const service = new TreeportService({
+  config,
+  database,
+  runner,
+  git,
+  tmux,
+  gh,
+  trustedHostBrowserPackageIds
+})
 await service.initialize()
 const terminalMetadata = new TerminalMetadataManager(
   service,
@@ -45,8 +72,15 @@ const terminalMetadata = new TerminalMetadataManager(
   config.tmuxPath
 )
 await terminalMetadata.initialize()
+const browserSessions = new BrowserSessionManager(service, config)
 
-const app = createApp({ service, config, tmux, terminalMetadata })
+const app = createApp({
+  service,
+  config,
+  tmux,
+  terminalMetadata,
+  browserSessions
+})
 const honoListener = getRequestListener(app.fetch)
 let vite: ViteDevServer | null = null
 const server = createServer((request, response) => {
@@ -104,7 +138,8 @@ const { io, attachments } = createSocketServer(server, {
   service,
   config,
   tmux,
-  terminalMetadata
+  terminalMetadata,
+  browserSessions
 })
 await new Promise<void>((resolve, reject) => {
   server.once('error', reject)
@@ -132,6 +167,7 @@ function shutdown(): void {
   io.close(() => {
     void Promise.all([service.drainMutations(), terminalMetadata.drain()]).then(
       async () => {
+        await browserSessions.dispose()
         await service.disposeWebPanelRuntime()
         await vite?.close()
         database.close()
