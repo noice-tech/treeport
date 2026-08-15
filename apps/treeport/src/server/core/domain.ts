@@ -1,9 +1,9 @@
-export class DomainError extends Error {
+export class DomainError<Details = never> extends Error {
   constructor(
     readonly code: string,
     message: string,
     readonly status = 400,
-    readonly details?: unknown
+    readonly details?: Details
   ) {
     super(message)
     this.name = 'DomainError'

@@ -65,7 +65,7 @@ type TerminalSessionManagerConstructor = new (
   maxSessions?: number,
   idleMs?: number,
   createSession?: (terminalId: string) => TerminalSessionInstance,
-  acknowledgeBell?: (terminalId: string, sequence: number) => Promise<unknown>
+  acknowledgeBell?: (terminalId: string, sequence: number) => Promise<void>
 ) => TerminalSessionManagerInstance
 
 let TerminalSession: new (terminalId: string) => TerminalSessionInstance

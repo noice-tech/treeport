@@ -32,6 +32,7 @@
     "clean": "find apps packages -type d \\( -name dist -o -name dist-types \\) -prune -exec rm -rf {} + && rm -rf apps/desktop/.vite .turbo"
   },
   "devDependencies": {
+    "@oxlint/plugins": "1.78.0",
     "@playwright/test": "^1.58.2",
     "@stylistic/eslint-plugin": "^5.10.0",
     "@treeport/treeport": "workspace:*",
@@ -39,7 +40,7 @@
     "eslint-plugin-react-you-might-not-need-an-effect": "^1.0.1",
     "knip": "^6.29.0",
     "oxfmt": "^0.59.0",
-    "oxlint": "^1.74.0",
+    "oxlint": "^1.78.0",
     "turbo": "^2.10.5",
     "typescript": "^7.0.2",
     "vitest": "^4.0.18"

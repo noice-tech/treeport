@@ -153,8 +153,8 @@ interface ChildResource {
   terminalError: CommandExecutionError | null
 }
 
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
+function errorMessage(cause: unknown): string {
+  return cause instanceof Error ? cause.message : String(cause)
 }
 
 /**
@@ -348,18 +348,19 @@ function runCommandEffect(
         }
       )
 
-      if (request.timeoutMs === undefined || request.timeoutMs <= 0) {
+      const timeoutMs = request.timeoutMs
+      if (timeoutMs === undefined || timeoutMs <= 0) {
         return awaitResult
       }
 
       return Effect.raceFirst(
         awaitResult,
-        Effect.sleep(Duration.millis(request.timeoutMs)).pipe(
+        Effect.sleep(Duration.millis(timeoutMs)).pipe(
           Effect.flatMap(() =>
             Effect.sync(() => {
               resource.terminalError ??= new TimeoutCommandError(
                 request,
-                request.timeoutMs as number
+                timeoutMs
               )
               return resource.terminalError
             })

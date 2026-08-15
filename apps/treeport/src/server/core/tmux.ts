@@ -22,13 +22,13 @@ export const generateTmuxSessionName = (): string =>
 
 export interface LaunchSpec {
   argv: string[]
-  fallbackArgv?: string[]
+  fallbackArgv?: string[] | undefined
   cwd: string
   env: Record<string, string>
-  shellIntegrationDir?: string
-  tmuxExecutable?: string
-  setupTasks?: WorktreeSetupTask[]
-  setupError?: string
+  shellIntegrationDir?: string | undefined
+  tmuxExecutable?: string | undefined
+  setupTasks?: WorktreeSetupTask[] | undefined
+  setupError?: string | undefined
 }
 
 export interface TmuxSessionState {

@@ -13,6 +13,8 @@ export class ProductEventBus {
     type: Type,
     data: ProductEventInputDataMap[Type]
   ): ProductEvent<Type> {
+    // SAFETY: The payload keeps the fields for Type and normalizes only its
+    // optional worktreeId field to the ProductEvent contract.
     const event = {
       id: crypto.randomUUID(),
       type,

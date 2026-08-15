@@ -57,15 +57,18 @@ function headerValues(request: IncomingMessage, name: string): string[] {
   return Array.isArray(value) ? value : [value]
 }
 
-function singleHeader(
-  request: IncomingMessage,
-  name: string
-): { present: boolean; valid: boolean; value: string | null } {
+interface HeaderValue {
+  present: boolean
+  valid: boolean
+  value: string | null
+}
+
+function singleHeader(request: IncomingMessage, name: string): HeaderValue {
   const values = headerValues(request, name)
   return {
     present: values.length > 0,
     valid: values.length <= 1,
-    value: values.length === 1 ? values[0]! : null
+    value: values.length === 1 ? (values[0] ?? null) : null
   }
 }
 

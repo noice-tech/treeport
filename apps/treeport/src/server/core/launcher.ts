@@ -3,14 +3,40 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
+import { z } from 'zod'
 import { integrateShellLaunch } from './shell-integration'
 import type { LaunchSpec } from './tmux'
 
 const FORWARDED_SIGNALS = ['SIGTERM', 'SIGINT', 'SIGHUP'] as const
 
+const launchSpecSchema = z
+  .object({
+    argv: z.array(z.string()),
+    fallbackArgv: z.array(z.string()).optional(),
+    cwd: z.string(),
+    env: z.record(z.string(), z.string()),
+    shellIntegrationDir: z.string().optional(),
+    tmuxExecutable: z.string().optional(),
+    setupTasks: z
+      .array(
+        z
+          .object({
+            label: z.string(),
+            argv: z.array(z.string()),
+            cwd: z.string(),
+            env: z.record(z.string(), z.string()),
+            timeoutMs: z.number()
+          })
+          .strict()
+      )
+      .optional(),
+    setupError: z.string().optional()
+  })
+  .strict() satisfies z.ZodType<LaunchSpec>
+
 interface SignalSource {
-  on(signal: NodeJS.Signals, listener: () => void): unknown
-  off(signal: NodeJS.Signals, listener: () => void): unknown
+  on(signal: NodeJS.Signals, listener: () => void): void
+  off(signal: NodeJS.Signals, listener: () => void): void
 }
 type Writable = Pick<NodeJS.WritableStream, 'write'>
 
@@ -284,7 +310,9 @@ async function main(): Promise<void> {
 
   let spec: LaunchSpec
   try {
-    spec = JSON.parse(await fs.readFile(specPath, 'utf8')) as LaunchSpec
+    spec = launchSpecSchema.parse(
+      JSON.parse(await fs.readFile(specPath, 'utf8'))
+    )
   } catch (error) {
     process.stderr.write(
       `Treeport launcher: cannot read launch spec: ${error instanceof Error ? error.message : String(error)}\n`
