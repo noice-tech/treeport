@@ -783,8 +783,11 @@ test('keeps an incompatible computer in the shell without loading its web app', 
         name: 'This Treeport version is incompatible'
       })
     ).toBeVisible()
+    const desktopVersion = await electronApp.evaluate(({ app }) =>
+      app.getVersion()
+    )
     await expect(
-      window.getByText('Desktop 0.1.0 · Treeport 0.0.1')
+      window.getByText(`Desktop ${desktopVersion} · Treeport 0.0.1`)
     ).toBeVisible()
     expect(applicationRequests).toBe(0)
   } finally {
