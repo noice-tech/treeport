@@ -244,7 +244,7 @@ describe('CLI context and machine output', () => {
     | 'exit'
     | 'slow-refresh' = 'none'
   let inspectionRequests = 0
-  let observedDaemonLifecycle: 'treeport' | 'external' = 'treeport'
+  let observedDaemonLifecycle: 'treeport' | 'service' | 'external' = 'treeport'
   let creationOperation: OperationRecord | null = null
   let createdWorktree: WorktreeRecord | null = null
   let createdWebPanels: WebPanel[] = []
@@ -860,6 +860,17 @@ describe('CLI context and machine output', () => {
     expect(external.code).toBe(0)
     expect(external.stdout).toContain('Lifecycle: externally managed')
 
+    observedDaemonLifecycle = 'service'
+    const supervised = await runCli(['context'], {
+      TREEPORT_API_URL: apiUrl,
+      TREEPORT_PROJECT_ID: project.id,
+      TREEPORT_WORKTREE_ID: worktree.id,
+      TREEPORT_TERMINAL_ID: terminal.id
+    })
+    expect(supervised.code).toBe(0)
+    expect(supervised.stdout).toContain('Lifecycle: managed by the OS service')
+    observedDaemonLifecycle = 'treeport'
+
     const runtimeDirectory = await mkdtemp(
       path.join(os.tmpdir(), 'treeport-managed-cli-')
     )
@@ -873,7 +884,8 @@ describe('CLI context and machine output', () => {
         apiUrl,
         dataDir: runtimeDirectory,
         startedAt: timestamp,
-        installationMethod: 'development'
+        installationMethod: 'development',
+        daemonLifecycle: 'treeport'
       })
     )
     const staleApiUrl = 'http://127.0.0.1:1'
@@ -898,7 +910,8 @@ describe('CLI context and machine output', () => {
         apiUrl: staleApiUrl,
         dataDir: runtimeDirectory,
         startedAt: timestamp,
-        installationMethod: 'development'
+        installationMethod: 'development',
+        daemonLifecycle: 'treeport'
       })
     )
     const overridden = await runCli(['context'], {
@@ -1457,6 +1470,12 @@ describe('CLI context and machine output', () => {
     )
 
     const commandPaths = [
+      ['start'],
+      ['stop'],
+      ['service'],
+      ['service', 'enable'],
+      ['service', 'status'],
+      ['service', 'disable'],
       ['skills'],
       ['context'],
       ['install'],
@@ -1511,10 +1530,10 @@ describe('CLI context and machine output', () => {
     })
     expect(externalSkills.code).toBe(0)
     expect(externalSkills.stdout).toContain(
-      '> **Externally managed daemon lifecycle:** Do not run `treeport up`, `treeport down`, or `treeport remote enable`.'
+      '> **Externally managed daemon lifecycle:** Do not run `treeport start`, `treeport stop`, or `treeport remote enable`.'
     )
 
-    for (const command of [['up'], ['down'], ['remote', 'enable']]) {
+    for (const command of [['start'], ['stop'], ['remote', 'enable']]) {
       const refusal = await runCli([...command, '--json'], {
         TREEPORT_API_URL: apiUrl
       })
@@ -1759,10 +1778,11 @@ exit 1
     try {
       const help = await runPackagedCli([], environment)
       expect(help.code).toBe(0)
-      expect(help.stdout).toContain('up [options]')
+      expect(help.stdout).toContain('start [options]')
+      expect(help.stdout).not.toContain('start|up')
 
       const unconfirmed = await runPackagedCli(
-        ['down', '--terminate-terminals'],
+        ['stop', '--terminate-terminals'],
         environment
       )
       expect(unconfirmed.code).toBe(2)
@@ -1785,7 +1805,7 @@ exit 1
       })
 
       const unsafeListener = await runPackagedCli(
-        ['up', '--host', '0.0.0.0'],
+        ['start', '--host', '0.0.0.0'],
         environment
       )
       expect(unsafeListener.code).toBe(1)
@@ -1883,12 +1903,12 @@ exit 1
       }
       expect(firstState).toMatchObject({ running: true, verified: true })
 
-      const secondUp = await runPackagedCli(['up'], environment)
+      const secondStart = await runPackagedCli(['start'], environment)
       const secondStatus = await runPackagedCli(
         ['status', '--json'],
         environment
       )
-      expect(secondUp.code).toBe(0)
+      expect(secondStart.code).toBe(0)
       expect(JSON.parse(secondStatus.stdout).state.pid).toBe(
         firstState.state.pid
       )
@@ -1968,7 +1988,8 @@ exit 1
       expect(health).toMatchObject({
         ok: true,
         version: packageVersion,
-        pid: firstState.state.pid
+        pid: firstState.state.pid,
+        daemonLifecycle: 'treeport'
       })
       const appResponse = await fetch(`http://127.0.0.1:${port}/`)
       expect(appResponse.status).toBe(200)
@@ -2066,13 +2087,13 @@ exit 1
       })
 
       const down = await runPackagedCli(
-        ['down', '--terminate-terminals', '--force'],
+        ['stop', '--terminate-terminals', '--force'],
         environment
       )
       expect(down.code).toBe(0)
-      expect(down.stdout).toContain('Treeport is down')
+      expect(down.stdout).toContain('Treeport is stopped')
       const stopped = await runPackagedCli(['status'], environment)
-      expect(stopped.stdout.trim()).toBe('Treeport is down')
+      expect(stopped.stdout.trim()).toBe('Treeport is stopped')
       await expect(
         stat(path.join(dataDirectory, 'treeport.db'))
       ).resolves.toBeTruthy()
@@ -2081,22 +2102,22 @@ exit 1
         path.join(dataDirectory, 'config.json'),
         `${JSON.stringify({ host: '192.168.1.10', port }, null, 2)}\n`
       )
-      const invalidSavedListener = await runPackagedCli(['up'], {
+      const invalidSavedListener = await runPackagedCli(['start'], {
         ...environment,
         TREEPORT_HOST: '',
         HOST: ''
       })
       expect(invalidSavedListener.code).toBe(1)
       expect(invalidSavedListener.stderr).toContain(
-        'treeport up --host 127.0.0.1'
+        'treeport start --host 127.0.0.1'
       )
       const repairedListener = await runPackagedCli(
-        ['up', '--host', '127.0.0.1'],
+        ['start', '--host', '127.0.0.1'],
         { ...environment, TREEPORT_HOST: '', HOST: '' }
       )
       expect(repairedListener.code).toBe(0)
       await runPackagedCli(
-        ['down', '--terminate-terminals', '--force'],
+        ['stop', '--terminate-terminals', '--force'],
         environment
       )
 
@@ -2108,7 +2129,7 @@ exit 1
       const doctor = await runPackagedCli(['doctor'], environment)
       expect(doctor.code).toBe(1)
       expect(doctor.stdout).toContain('Treeport requires tmux 3.2 or newer')
-      const refused = await runPackagedCli(['up'], environment)
+      const refused = await runPackagedCli(['start'], environment)
       expect(refused.code).toBe(1)
       expect(refused.stderr).toContain('Treeport requires tmux 3.2 or newer')
     } finally {
@@ -2119,7 +2140,7 @@ exit 1
       }
 
       await runPackagedCli(
-        ['down', '--terminate-terminals', '--force'],
+        ['stop', '--terminate-terminals', '--force'],
         environment
       )
       await rm(temporaryDirectory, { recursive: true, force: true })

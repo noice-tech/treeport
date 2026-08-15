@@ -28,7 +28,7 @@ cd /path/to/repository
 treeport .
 ```
 
-Treeport starts its local backend if needed, registers the repository and its worktrees, and opens the current worktree in the desktop app or browser. Run `treeport up` to start only the backend and print its local URL, `http://127.0.0.1:8733`.
+Treeport starts its local backend if needed, registers the repository and its worktrees, and opens the current worktree in the desktop app or browser. Run `treeport start` to start only the backend and print its local URL, `http://127.0.0.1:8733`. Use `treeport service enable` when a host must start Treeport after reboot.
 
 ## Documentation
 

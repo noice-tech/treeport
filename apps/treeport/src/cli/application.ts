@@ -45,6 +45,19 @@ import {
   tailscaleRemoteStatus,
   treeportVersion
 } from './lifecycle.js'
+import {
+  readServiceLogs,
+  serviceApply,
+  serviceDisable,
+  serviceDoctorCheck,
+  serviceEnable,
+  serviceInstalled,
+  serviceRun,
+  serviceStart,
+  serviceStatus,
+  serviceStop,
+  type ServiceStatus
+} from './service.js'
 
 const contextPrefix = 'TREEPORT'
 let configuredApiUrl: string | undefined
@@ -97,16 +110,85 @@ class CliError extends Error {
   }
 }
 
-async function resolveDaemonLifecycle(): Promise<'treeport' | 'external'> {
+async function resolveDaemonLifecycle(): Promise<
+  'treeport' | 'service' | 'external'
+> {
   if (configuredDaemonLifecycle === 'external') {
     return 'external'
   }
 
-  if (configuredApiUrl) {
-    return (await daemonHealth(apiUrl))?.daemonLifecycle ?? 'treeport'
+  if (configuredDaemonLifecycle === 'service') {
+    return 'service'
   }
 
-  return 'treeport'
+  if (configuredApiUrl) {
+    const observed = await daemonHealth(apiUrl)
+    if (observed) {
+      return observed.daemonLifecycle
+    }
+  }
+
+  return (await serviceInstalled()) ? 'service' : 'treeport'
+}
+
+function formatServiceStatus(status: ServiceStatus): string {
+  const lines = [
+    `Treeport service: ${status.state}`,
+    `Manager: ${status.manager ?? 'unsupported'}`,
+    `Starts at boot: ${status.enabledAtBoot ? 'yes' : 'no'}`,
+    `Active: ${status.active ? 'yes' : 'no'}`,
+    `Definition: ${status.definitionPath ?? 'not installed'}`
+  ]
+  if (status.daemon?.state) {
+    lines.push(`PID: ${status.daemon.state.pid}`)
+  }
+
+  if (status.issues.length) {
+    lines.push(...status.issues.map((issue) => `Issue: ${issue}`))
+  }
+
+  if (status.administratorCommand) {
+    lines.push(
+      'Administrator action required:',
+      status.administratorCommand,
+      'Then run: treeport service status'
+    )
+  } else if (status.recoveryCommands.length) {
+    lines.push(`Next: ${status.recoveryCommands[0]}`)
+  }
+
+  return lines.join('\n')
+}
+
+async function ensureServiceDaemon(): Promise<{
+  apiUrl: string
+  pid: number
+}> {
+  const result = await serviceStart()
+  const state = result.status.daemon?.state
+  if (state && result.status.healthy) {
+    return { apiUrl: state.apiUrl, pid: state.pid }
+  }
+
+  if (result.administratorCommand) {
+    throw new CliError(
+      `An administrator must start the Treeport service:\n${result.administratorCommand}`,
+      5,
+      'SERVICE_ADMINISTRATOR_ACTION_REQUIRED',
+      result
+    )
+  }
+
+  if (!state || !result.status.healthy) {
+    throw new CliError(
+      'The Treeport service did not become healthy. Run `treeport service status`.',
+      3,
+      'DAEMON_UNREACHABLE',
+      result.status
+    )
+  }
+
+  return { apiUrl: state.apiUrl, pid: state.pid }
 }
 
 async function request<T>(
@@ -866,7 +948,8 @@ async function main(args: string[]): Promise<void> {
         )
       })
 
-    if ((await resolveDaemonLifecycle()) === 'external') {
+    const lifecycle = await resolveDaemonLifecycle()
+    if (lifecycle === 'external') {
       if (!(await daemonHealth(apiUrl))) {
         throw new CliError(
           `Cannot reach the externally managed Treeport daemon at ${apiUrl}. Start it through the process that owns its lifecycle and retry.`,
@@ -874,6 +957,8 @@ async function main(args: string[]): Promise<void> {
           'DAEMON_UNREACHABLE'
         )
       }
+    } else if (lifecycle === 'service') {
+      await ensureServiceDaemon()
     } else {
       await daemonUp({})
     }
@@ -938,27 +1023,46 @@ async function main(args: string[]): Promise<void> {
     )
   })
 
-  const upCommand = program
-    .command('up')
+  const startCommand = program
+    .command('start')
     .description('Ensure the local Treeport daemon is running')
     .option('--host <address>', 'loopback listener address')
     .option('--port <port>', 'listener port')
     .option('--foreground', 'run in the foreground')
     .option('--json', 'emit machine-readable JSON')
-  upCommand.action(async () => {
-    if ((await resolveDaemonLifecycle()) === 'external') {
+  startCommand.action(async () => {
+    const lifecycle = await resolveDaemonLifecycle()
+    if (lifecycle === 'external') {
       throw new CliError(
-        'Cannot run `treeport up` because the daemon lifecycle is externally managed. Control the process that started Treeport instead.',
+        'Cannot run `treeport start` because the daemon lifecycle is externally managed. Control the process that started Treeport instead.',
         5,
         'DAEMON_LIFECYCLE_EXTERNAL'
       )
     }
 
-    const options = upCommand.opts<{
+    const options = startCommand.opts<{
       host?: string
       port?: string
       foreground?: boolean
     }>()
+    if (lifecycle === 'service') {
+      if (options.foreground || options.host || options.port) {
+        throw new CliError(
+          'An installed service owns the listener and process mode. Run `treeport service enable` to refresh its configuration, or `treeport service disable` to return to local background mode.',
+          5,
+          'DAEMON_LIFECYCLE_SERVICE'
+        )
+      }
+
+      const result = await serviceStart()
+      print(result, () => formatServiceStatus(result.status))
+      if (result.administratorCommand || !result.status.healthy) {
+        requestedExitCode = 1
+      }
+
+      return
+    }
+
     const port = options.port === undefined ? undefined : Number(options.port)
     const result = await daemonUp({
       ...(options.host === undefined ? {} : { host: options.host }),
@@ -971,11 +1075,11 @@ async function main(args: string[]): Promise<void> {
       return
     }
 
-    print(result, () => `Treeport is up\n${result.apiUrl}`)
+    print(result, () => `Treeport is running\n${result.apiUrl}`)
   })
 
-  const downCommand = program
-    .command('down')
+  const stopCommand = program
+    .command('stop')
     .description('Stop the local daemon and preserve terminal sessions')
     .option(
       '--terminate-terminals',
@@ -983,16 +1087,17 @@ async function main(args: string[]): Promise<void> {
     )
     .option('--force', 'confirm termination of all terminals')
     .option('--json', 'emit machine-readable JSON')
-  downCommand.action(async () => {
-    if ((await resolveDaemonLifecycle()) === 'external') {
+  stopCommand.action(async () => {
+    const lifecycle = await resolveDaemonLifecycle()
+    if (lifecycle === 'external') {
       throw new CliError(
-        'Cannot run `treeport down` because the daemon lifecycle is externally managed. Control the process that started Treeport instead.',
+        'Cannot run `treeport stop` because the daemon lifecycle is externally managed. Control the process that started Treeport instead.',
         5,
         'DAEMON_LIFECYCLE_EXTERNAL'
       )
     }
 
-    const options = downCommand.opts<{
+    const options = stopCommand.opts<{
       terminateTerminals?: boolean
       force?: boolean
     }>()
@@ -1007,10 +1112,81 @@ async function main(args: string[]): Promise<void> {
       await request('/api/admin/terminate-terminals', { method: 'POST' })
     }
 
+    if (lifecycle === 'service') {
+      const result = await serviceStop()
+      print(result, () => formatServiceStatus(result.status))
+      if (result.administratorCommand) {
+        requestedExitCode = 1
+      }
+
+      return
+    }
+
     const result = await daemonDown()
     print(result, () =>
-      result.wasRunning ? 'Treeport is down' : 'Treeport is already down'
+      result.wasRunning ? 'Treeport is stopped' : 'Treeport is already stopped'
     )
+  })
+
+  const serviceCommand = program
+    .command('service')
+    .description('Manage opt-in OS service supervision')
+  serviceCommand.action(() => {
+    writeStdout(serviceCommand.helpInformation())
+  })
+
+  const serviceEnableCommand = serviceCommand
+    .command('enable')
+    .description('Enable startup after reboot and unexpected-exit restarts')
+    .option('--json', 'emit machine-readable JSON')
+  serviceEnableCommand.action(async () => {
+    const result = await serviceEnable()
+    print(result, () => formatServiceStatus(result.status))
+    if (result.status.state === 'action_required') {
+      requestedExitCode = 1
+    }
+  })
+
+  const serviceStatusCommand = serviceCommand
+    .command('status')
+    .description('Show OS service supervision status')
+    .option('--json', 'emit machine-readable JSON')
+  serviceStatusCommand.action(async () => {
+    const result = await serviceStatus()
+    print(result, () => formatServiceStatus(result))
+    if (
+      !['disabled', 'healthy', 'stopped'].includes(result.state) ||
+      !result.supported
+    ) {
+      requestedExitCode = 1
+    }
+  })
+
+  const serviceDisableCommand = serviceCommand
+    .command('disable')
+    .description('Stop and unregister OS service supervision')
+    .option('--json', 'emit machine-readable JSON')
+  serviceDisableCommand.action(async () => {
+    const result = await serviceDisable()
+    print(result, () => formatServiceStatus(result.status))
+    if (result.administratorCommand || result.status.state !== 'disabled') {
+      requestedExitCode = 1
+    }
+  })
+
+  serviceCommand
+    .command('run', { hidden: true })
+    .action(async () => serviceRun())
+
+  const serviceApplyCommand = serviceCommand
+    .command('apply', { hidden: true })
+    .requiredOption('--request <absolute-path>', 'prepared request')
+  serviceApplyCommand.action(async () => {
+    const { request: requestPath } = serviceApplyCommand.opts<{
+      request: string
+    }>()
+    const result = await serviceApply(requestPath)
+    print(result, () => `Applied Treeport service ${result.operation} request.`)
   })
 
   const remoteCommand = program
@@ -1026,7 +1202,8 @@ async function main(args: string[]): Promise<void> {
     .option('--port <port>', 'Tailscale HTTPS port (default: 8733)')
     .option('--json', 'emit machine-readable JSON')
   remoteEnableCommand.action(async () => {
-    if ((await resolveDaemonLifecycle()) === 'external') {
+    const lifecycle = await resolveDaemonLifecycle()
+    if (lifecycle === 'external') {
       throw new CliError(
         'Cannot run `treeport remote enable` because the daemon lifecycle is externally managed. Configure remote access through the process that started Treeport instead.',
         5,
@@ -1043,9 +1220,12 @@ async function main(args: string[]): Promise<void> {
       throw new CliError('--port must be an integer between 1 and 65535', 2)
     }
 
-    const result = await enableTailscaleRemote(
-      port === undefined ? {} : { port }
-    )
+    const serviceDaemon =
+      lifecycle === 'service' ? await ensureServiceDaemon() : undefined
+    const result = await enableTailscaleRemote({
+      ...(port === undefined ? {} : { port }),
+      ...(serviceDaemon === undefined ? {} : { daemon: serviceDaemon })
+    })
     print(
       result,
       () =>
@@ -1093,9 +1273,13 @@ async function main(args: string[]): Promise<void> {
     .option('--json', 'emit machine-readable JSON')
   statusCommand.action(async () => {
     const status = await daemonStatus()
+    const supervision = (await serviceInstalled())
+      ? await serviceStatus()
+      : null
     const projectList = status.verified ? await projects() : []
     const result = {
       ...status,
+      service: supervision,
       projects: projectList.length,
       worktrees: projectList.reduce(
         (count, project) => count + project.worktrees.length,
@@ -1114,14 +1298,16 @@ async function main(args: string[]): Promise<void> {
     }
     print(result, () => {
       if (!status.state) {
-        return 'Treeport is down'
+        return supervision
+          ? formatServiceStatus(supervision)
+          : 'Treeport is stopped'
       }
 
       if (!status.running || !status.verified) {
         return `Treeport is unhealthy (PID ${status.state.pid})\nLogs: ${path.join(status.state.dataDir, 'logs', 'daemon.log')}`
       }
 
-      return `Treeport is up\n${status.state.apiUrl}\nVersion: ${status.health?.version}\nPID: ${status.state.pid}\nProjects: ${result.projects}\nWorktrees: ${result.worktrees}\nTerminals: ${result.terminals}`
+      return `Treeport is running\n${status.state.apiUrl}\nLifecycle: ${status.health?.daemonLifecycle}\nVersion: ${status.health?.version}\nPID: ${status.state.pid}\nProjects: ${result.projects}\nWorktrees: ${result.worktrees}\nTerminals: ${result.terminals}`
     })
   })
 
@@ -1135,7 +1321,11 @@ async function main(args: string[]): Promise<void> {
       throw new CliError('--lines must be an integer between 1 and 10000', 2)
     }
 
-    writeStdout(await readDaemonLogs(lines))
+    writeStdout(
+      (await serviceInstalled())
+        ? await readServiceLogs(lines)
+        : await readDaemonLogs(lines)
+    )
   })
 
   const doctorCommand = program
@@ -1143,7 +1333,7 @@ async function main(args: string[]): Promise<void> {
     .description('Diagnose local requirements and paths')
     .option('--json', 'emit machine-readable JSON')
   doctorCommand.action(async () => {
-    const checks = await runDoctor()
+    const checks = [...(await runDoctor()), await serviceDoctorCheck()]
     print(checks, () =>
       checks
         .map(
@@ -1185,7 +1375,7 @@ async function main(args: string[]): Promise<void> {
       (await resolveDaemonLifecycle()) === 'external'
         ? skill.replace(
             '\n# Treeport\n',
-            '\n# Treeport\n\n> **Externally managed daemon lifecycle:** Do not run `treeport up`, `treeport down`, or `treeport remote enable`. The process that started Treeport owns startup, shutdown, remote exposure, and logs. Other Treeport commands continue to use the configured daemon normally.\n'
+            '\n# Treeport\n\n> **Externally managed daemon lifecycle:** Do not run `treeport start`, `treeport stop`, or `treeport remote enable`. The process that started Treeport owns startup, shutdown, remote exposure, and logs. Other Treeport commands continue to use the configured daemon normally.\n'
           )
         : skill
     )
@@ -1286,7 +1476,7 @@ async function main(args: string[]): Promise<void> {
     print(
       context,
       () =>
-        `Treeport context\n\nProject:  ${context.project.name} (${context.project.id})\nWorktree: ${context.worktree.name} (${context.worktree.id})\nPath:     ${context.worktree.path}\nTerminal: ${context.terminal.name} (${context.terminal.id}) — ${context.terminal.status}\nAPI:      ${context.apiUrl}\nLifecycle: ${context.daemonLifecycle === 'external' ? 'externally managed' : 'managed by Treeport'}`
+        `Treeport context\n\nProject:  ${context.project.name} (${context.project.id})\nWorktree: ${context.worktree.name} (${context.worktree.id})\nPath:     ${context.worktree.path}\nTerminal: ${context.terminal.name} (${context.terminal.id}) — ${context.terminal.status}\nAPI:      ${context.apiUrl}\nLifecycle: ${context.daemonLifecycle === 'external' ? 'externally managed' : context.daemonLifecycle === 'service' ? 'managed by the OS service' : 'managed by Treeport'}`
     )
   })
 

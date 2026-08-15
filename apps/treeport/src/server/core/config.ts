@@ -15,7 +15,7 @@ export interface AppConfig {
   gitPath: string
   ghPath: string
   apiUrl: string
-  daemonLifecycle: 'treeport' | 'external'
+  daemonLifecycle: 'treeport' | 'service' | 'external'
   appVersion?: string
   instanceId?: string
   installationMethod?: string
@@ -90,9 +90,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     expandHome(env.TREEPORT_RUNTIME_DIR?.trim() || defaultRuntimeDir(env))
   )
   const daemonLifecycle = env.TREEPORT_DAEMON_LIFECYCLE?.trim() || 'treeport'
-  if (daemonLifecycle !== 'treeport' && daemonLifecycle !== 'external') {
+  if (
+    daemonLifecycle !== 'treeport' &&
+    daemonLifecycle !== 'service' &&
+    daemonLifecycle !== 'external'
+  ) {
     throw new Error(
-      'TREEPORT_DAEMON_LIFECYCLE must be either treeport or external'
+      'TREEPORT_DAEMON_LIFECYCLE must be treeport, service, or external'
     )
   }
 

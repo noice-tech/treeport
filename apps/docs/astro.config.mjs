@@ -48,6 +48,10 @@ export default defineConfig({
             },
             { label: 'Terminal presets', slug: 'features/terminal-presets' },
             { label: 'Packages', slug: 'features/packages' },
+            {
+              label: 'Service supervision',
+              slug: 'features/service-supervision'
+            },
             { label: 'Remote access', slug: 'features/remote-access' },
             {
               label: 'Web panels (experimental)',

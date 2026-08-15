@@ -30,9 +30,9 @@ cd /path/to/repository
 treeport .
 ```
 
-Treeport starts its backend in the background if necessary, registers the repository and its worktrees, and opens the current worktree in the macOS desktop app or default browser. Use `treeport up` when you want to start only the backend; it prints its local URL, `http://127.0.0.1:8733`.
+Treeport starts its backend in the background if necessary, registers the repository and its worktrees, and opens the current worktree in the macOS desktop app or default browser. Use `treeport start` when you want to start only the backend; it prints its local URL, `http://127.0.0.1:8733`.
 
-Rerun the same curl command to install a newer version. The installer preserves whether the local daemon was running.
+Rerun the same curl command to install a newer version. The installer preserves whether the local daemon was running. If macOS service mode needs an administrator action during an upgrade, complete the printed action and rerun the installer before you remove old package files.
 
 ## Install the backend with npm
 
@@ -47,9 +47,9 @@ treeport .
 For upgrades, stop Treeport while npm replaces package files:
 
 ```sh
-treeport down
+treeport stop
 npm install --global @treeport/treeport@latest
-treeport up
+treeport start
 ```
 
 ## Connect the desktop app
@@ -70,7 +70,26 @@ treeport doctor
 treeport version
 ```
 
-`treeport down` stops the daemon but preserves persistent tmux sessions. A later `treeport up` reconnects them.
+`treeport stop` stops the daemon but preserves persistent tmux sessions. A later `treeport start` reconnects them.
+
+## Start Treeport after reboot
+
+Normal installation does not register an OS service. To opt in to startup after reboot and restart after an unexpected exit, run:
+
+```sh
+treeport service enable
+```
+
+On macOS, Treeport prepares a LaunchDaemon and prints one administrator command. The LaunchDaemon starts before GUI login but runs the backend as your user, not as root. On Linux, Treeport installs a systemd user unit. If user lingering is off, it prints the `loginctl enable-linger` administrator command that is required for startup without login.
+
+Check the result with:
+
+```sh
+treeport service status
+treeport doctor
+```
+
+See [Service supervision](/features/service-supervision/) for start, stop, log, recovery, upgrade, and removal behavior.
 
 ## Uninstall
 
@@ -86,14 +105,14 @@ To terminate every terminal and remove application data as well:
 curl -fsSL https://treeport.app/uninstall.sh | TREEPORT_PURGE=1 sh
 ```
 
-For npm installations:
+For npm installations, disable service supervision before npm removes the CLI:
 
 ```sh
-treeport down
+treeport service disable
 npm uninstall --global @treeport/treeport
 ```
 
-npm uninstall preserves application data by default.
+If service mode was never enabled, `treeport service disable` is safe and reports that it is disabled. npm uninstall preserves application data by default. npm cannot run a reliable package uninstall hook, so do not omit the explicit disable step.
 
 :::caution
 Treeport provides terminal access and does not include authentication. Keep it on loopback unless you deliberately configure a trusted private-network address. Never expose it directly to the public internet.
