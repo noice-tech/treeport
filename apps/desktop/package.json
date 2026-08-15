@@ -19,6 +19,7 @@
     "check:release": "node scripts/check-release.mjs",
     "smoke:release": "node scripts/smoke-release.mjs",
     "test": "pnpm build && pnpm test:desktop",
+    "pretest:desktop": "install-electron",
     "test:desktop": "playwright test --config playwright.config.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json --pretty"
   },

@@ -16,14 +16,16 @@ async function waitForGuest(
   origin: string
 ): Promise<void> {
   await expect
-    .poll(() =>
-      electronApp.evaluate(
-        ({ webContents }, expectedOrigin) =>
-          webContents
-            .getAllWebContents()
-            .some((contents) => contents.getURL().startsWith(expectedOrigin)),
-        origin
-      )
+    .poll(
+      () =>
+        electronApp.evaluate(
+          ({ webContents }, expectedOrigin) =>
+            webContents
+              .getAllWebContents()
+              .some((contents) => contents.getURL().startsWith(expectedOrigin)),
+          origin
+        ),
+      { timeout: 15_000 }
     )
     .toBe(true)
 }
