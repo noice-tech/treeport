@@ -178,15 +178,14 @@ export function trackTerminalSelectionAutoscroll(
       return null
     }
 
+    // Match xterm's text-boundary behavior: the left half of a cell is the
+    // boundary before its glyph and the right half is the boundary after it.
+    const selectionColumn = Math.ceil(
+      ((clientX - bounds.left) / bounds.width) * terminal.cols + 0.5
+    )
     return {
-      column: Math.max(
-        1,
-        Math.min(
-          terminal.cols,
-          Math.floor(((clientX - bounds.left) / bounds.width) * terminal.cols) +
-            1
-        )
-      ),
+      column: Math.max(1, Math.min(terminal.cols, selectionColumn)),
+      endOfLine: selectionColumn > terminal.cols,
       row: Math.max(
         1,
         Math.min(
@@ -225,6 +224,9 @@ export function trackTerminalSelectionAutoscroll(
       stopScrolling()
     }
 
+    // SGR mouse reports stop at the final cell. End moves tmux's exclusive
+    // selection boundary past that cell.
+    const endOfLineInput = cell.endOfLine ? '\u001b[F' : ''
     if (!drag.tmux) {
       const distance = Math.hypot(
         drag.clientX - drag.startClientX,
@@ -238,7 +240,7 @@ export function trackTerminalSelectionAutoscroll(
       }
 
       options.sendInput(
-        `${options.selectionStartSequence}\u001b[<0;${drag.startColumn};${drag.startRow}M\u001b[<32;${drag.startColumn};${drag.startRow}M\u001b[<32;${cell.column};${cell.row}M`
+        `${options.selectionStartSequence}\u001b[<0;${drag.startColumn};${drag.startRow}M\u001b[<32;${drag.startColumn};${drag.startRow}M\u001b[<32;${cell.column};${cell.row}M${endOfLineInput}`
       )
       terminal.clearSelection()
 
@@ -252,7 +254,9 @@ export function trackTerminalSelectionAutoscroll(
       window.treeportDesktop?.setTerminalSelectionActive(true)
       options.onTmuxSelectionStart()
     } else if (options.canInput()) {
-      options.sendInput(`\u001b[<32;${cell.column};${cell.row}M`)
+      options.sendInput(
+        `\u001b[<32;${cell.column};${cell.row}M${endOfLineInput}`
+      )
     }
 
     if (shouldScroll && scrollTimer === null) {
