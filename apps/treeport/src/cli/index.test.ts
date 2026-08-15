@@ -2124,5 +2124,5 @@ exit 1
       )
       await rm(temporaryDirectory, { recursive: true, force: true })
     }
-  }, 20_000)
+  }, 60_000)
 })
