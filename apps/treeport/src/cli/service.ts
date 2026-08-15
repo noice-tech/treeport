@@ -47,6 +47,8 @@ interface ServiceRecord {
   logPath: string
   apiUrl: string
   cliEntrypoint: string
+  runtimeExecutable: string | null
+  runtimeEntrypoint: string | null
   installationMethod: 'curl' | 'npm'
   definitionName: string
   definitionPath: string
@@ -78,6 +80,8 @@ interface AdministratorRequest {
   definitionHash: string
   apiUrl: string
   cliEntrypoint: string
+  runtimeExecutable: string
+  runtimeEntrypoint: string
 }
 
 export interface ServiceStatus {
@@ -154,6 +158,8 @@ const serviceRecordSchema: z.ZodType<ServiceRecord> = z.strictObject({
   logPath: z.string().min(1),
   apiUrl: z.string().min(1),
   cliEntrypoint: z.string().min(1),
+  runtimeExecutable: z.string().min(1).nullable().default(null),
+  runtimeEntrypoint: z.string().min(1).nullable().default(null),
   installationMethod: z.enum(['curl', 'npm']),
   definitionName: z.string().min(1),
   definitionPath: z.string().min(1),
@@ -185,7 +191,9 @@ const administratorRequestSchema: z.ZodType<AdministratorRequest> =
     stagedDefinitionPath: z.string().min(1),
     definitionHash: z.string().length(64),
     apiUrl: z.string().min(1),
-    cliEntrypoint: z.string().min(1)
+    cliEntrypoint: z.string().min(1),
+    runtimeExecutable: z.string().min(1),
+    runtimeEntrypoint: z.string().min(1)
   })
 
 function managerForPlatform(
@@ -260,6 +268,20 @@ function xml(value: string): string {
 
 function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'\\''`)}'`
+}
+
+export function createAdministratorCommand(input: {
+  installationMethod: 'curl' | 'npm'
+  cliEntrypoint: string
+  runtimeExecutable: string
+  runtimeEntrypoint: string
+  requestPath: string
+}): string {
+  const command =
+    input.installationMethod === 'curl'
+      ? shellQuote(input.cliEntrypoint)
+      : `${shellQuote(input.runtimeExecutable)} ${shellQuote(input.runtimeEntrypoint)}`
+  return `sudo ${command} service apply --request ${shellQuote(input.requestPath)}`
 }
 
 function systemdValue(value: string): string {
@@ -504,6 +526,43 @@ async function ensureEntrypoint(
   return entrypoint
 }
 
+async function currentAdministratorRuntime(): Promise<{
+  runtimeExecutable: string
+  runtimeEntrypoint: string
+}> {
+  const invokedEntrypoint = process.argv[1]?.trim()
+  if (!invokedEntrypoint) {
+    throw new Error('Treeport could not identify its Node entrypoint.')
+  }
+
+  const runtimeEntrypoint = path.resolve(invokedEntrypoint)
+  const [
+    runtimeExecutable,
+    actualEntrypoint,
+    packageBinEntrypoint,
+    packageCliEntrypoint
+  ] = await Promise.all([
+    fs.realpath(process.execPath),
+    fs.realpath(runtimeEntrypoint),
+    fs.realpath(await resolvePackagePath('bin', 'treeport.mjs')),
+    fs.realpath(await resolvePackagePath('dist', 'node', 'cli', 'index.js'))
+  ])
+  if (
+    actualEntrypoint !== packageBinEntrypoint &&
+    actualEntrypoint !== packageCliEntrypoint
+  ) {
+    throw new Error(
+      `Treeport cannot use an unrecognized package entrypoint for administrator commands: ${runtimeEntrypoint}`
+    )
+  }
+
+  await Promise.all([
+    fs.access(runtimeExecutable, fsConstants.X_OK),
+    fs.access(runtimeEntrypoint, fsConstants.R_OK)
+  ])
+  return { runtimeExecutable, runtimeEntrypoint }
+}
+
 function cacheDirectory(home: string, env: NodeJS.ProcessEnv): string {
   const configured = env.TREEPORT_CACHE_DIR?.trim()
   if (configured) {
@@ -678,7 +737,7 @@ async function managerState(record: ServiceRecord): Promise<{
 
 function administratorCommand(record: ServiceRecord): string | null {
   const requestId = record.pendingAdministratorRequestId
-  if (!requestId) {
+  if (!requestId || !record.runtimeExecutable || !record.runtimeEntrypoint) {
     return null
   }
 
@@ -686,7 +745,13 @@ function administratorCommand(record: ServiceRecord): string | null {
     servicePaths({ TREEPORT_DATA_DIR: record.dataDir }).requestsDirectory,
     `${requestId}.json`
   )
-  return `sudo ${shellQuote(record.cliEntrypoint)} service apply --request ${shellQuote(requestPath)}`
+  return createAdministratorCommand({
+    installationMethod: record.installationMethod,
+    cliEntrypoint: record.cliEntrypoint,
+    runtimeExecutable: record.runtimeExecutable,
+    runtimeEntrypoint: record.runtimeEntrypoint,
+    requestPath
+  })
 }
 
 async function untrackedDefinition(): Promise<{
@@ -814,25 +879,51 @@ export async function serviceStatus(): Promise<ServiceStatus> {
   }
 
   const paths = servicePaths({ TREEPORT_DATA_DIR: record.dataDir })
-  const [managerStatus, definitionContent, entrypointExists, daemon] =
-    await Promise.all([
-      managerState(record),
-      fs.readFile(record.definitionPath, 'utf8').catch(() => ''),
-      fs
-        .access(record.cliEntrypoint, fsConstants.X_OK)
-        .then(() => true)
-        .catch(() => false),
-      daemonStatus()
-    ])
+  const [
+    managerStatus,
+    definitionContent,
+    entrypointExists,
+    runtimeExecutableExists,
+    runtimeEntrypointExists,
+    currentRuntime,
+    daemon
+  ] = await Promise.all([
+    managerState(record),
+    fs.readFile(record.definitionPath, 'utf8').catch(() => ''),
+    fs
+      .access(record.cliEntrypoint, fsConstants.X_OK)
+      .then(() => true)
+      .catch(() => false),
+    record.runtimeExecutable
+      ? fs
+          .access(record.runtimeExecutable, fsConstants.X_OK)
+          .then(() => true)
+          .catch(() => false)
+      : Promise.resolve(false),
+    record.runtimeEntrypoint
+      ? fs
+          .access(record.runtimeEntrypoint, fsConstants.R_OK)
+          .then(() => true)
+          .catch(() => false)
+      : Promise.resolve(false),
+    currentAdministratorRuntime().catch(() => null),
+    daemonStatus()
+  ])
   const definitionPresent = definitionContent !== ''
   const definitionMatches =
     definitionPresent &&
     fingerprint(definitionContent) === record.definitionHash
   const invokedEntrypoint = currentEntrypoint()
-  const entrypointMatches =
+  const entrypointMatches = Boolean(
     entrypointExists &&
+    runtimeExecutableExists &&
+    runtimeEntrypointExists &&
+    currentRuntime &&
+    record.runtimeExecutable === currentRuntime.runtimeExecutable &&
+    record.runtimeEntrypoint === currentRuntime.runtimeEntrypoint &&
     (invokedEntrypoint === null ||
       path.resolve(invokedEntrypoint) === path.resolve(record.cliEntrypoint))
+  )
   const currentEnvironment = createServiceEnvironment({
     user: {
       uid: record.uid,
@@ -897,7 +988,7 @@ export async function serviceStatus(): Promise<ServiceStatus> {
 
   if (!entrypointMatches) {
     issues.push(
-      `The service CLI entrypoint is unavailable or moved: ${record.cliEntrypoint}`
+      `The service CLI entrypoint or Node runtime is unavailable or moved: ${record.cliEntrypoint}`
     )
     recoveryCommands.push('treeport service enable')
   }
@@ -1008,7 +1099,10 @@ async function prepareRecord(): Promise<{
   assertLoopbackHost(listener.hostname)
   const installationMethod =
     process.env.TREEPORT_INSTALLATION_METHOD?.trim() === 'curl' ? 'curl' : 'npm'
-  const cliEntrypoint = await ensureEntrypoint(installationMethod)
+  const [cliEntrypoint, administratorRuntime] = await Promise.all([
+    ensureEntrypoint(installationMethod),
+    currentAdministratorRuntime()
+  ])
   const group = await primaryGroup(user.username)
   const definitionName =
     manager === 'launchd'
@@ -1063,6 +1157,8 @@ async function prepareRecord(): Promise<{
     logPath: paths.logPath,
     apiUrl,
     cliEntrypoint,
+    runtimeExecutable: administratorRuntime.runtimeExecutable,
+    runtimeEntrypoint: administratorRuntime.runtimeEntrypoint,
     installationMethod,
     definitionName,
     definitionPath,
@@ -1115,6 +1211,14 @@ async function prepareAdministratorRequest(
   record: ServiceRecord,
   operation: AdministratorRequest['operation']
 ): Promise<{ record: ServiceRecord; command: string }> {
+  const runtime =
+    record.runtimeExecutable && record.runtimeEntrypoint
+      ? {
+          runtimeExecutable: record.runtimeExecutable,
+          runtimeEntrypoint: record.runtimeEntrypoint
+        }
+      : await currentAdministratorRuntime()
+  const requestRecord = { ...record, ...runtime }
   const locations = servicePaths({ TREEPORT_DATA_DIR: record.dataDir })
   const id = crypto.randomUUID()
   const now = new Date()
@@ -1136,12 +1240,14 @@ async function prepareAdministratorRequest(
     stagedDefinitionPath: locations.stagedDefinitionPath,
     definitionHash: record.definitionHash,
     apiUrl: record.apiUrl,
-    cliEntrypoint: record.cliEntrypoint
+    cliEntrypoint: record.cliEntrypoint,
+    runtimeExecutable: requestRecord.runtimeExecutable,
+    runtimeEntrypoint: requestRecord.runtimeEntrypoint
   }
   const requestPath = path.join(locations.requestsDirectory, `${id}.json`)
   await writeJson(requestPath, request)
   const next = {
-    ...record,
+    ...requestRecord,
     pendingAdministratorRequestId: id,
     updatedAt: now.toISOString()
   }
@@ -1464,6 +1570,21 @@ export async function serviceApply(requestPath: string): Promise<{
     )
   }
 
+  const currentRuntime = await currentAdministratorRuntime().catch(() => null)
+  const invokedRuntimeEntrypoint = process.argv[1]
+    ? path.resolve(process.argv[1])
+    : null
+  if (
+    !currentRuntime ||
+    currentRuntime.runtimeExecutable !== request.runtimeExecutable ||
+    currentRuntime.runtimeEntrypoint !== request.runtimeEntrypoint ||
+    invokedRuntimeEntrypoint !== request.runtimeEntrypoint
+  ) {
+    throw new Error(
+      'The service apply command did not use the approved Treeport Node runtime and package entrypoint.'
+    )
+  }
+
   const usedPath = `${requestPath}.used`
   if (
     await fs
@@ -1494,6 +1615,8 @@ export async function serviceApply(requestPath: string): Promise<{
     record.definitionName !== request.definitionName ||
     record.definitionPath !== request.definitionPath ||
     record.cliEntrypoint !== request.cliEntrypoint ||
+    record.runtimeExecutable !== request.runtimeExecutable ||
+    record.runtimeEntrypoint !== request.runtimeEntrypoint ||
     record.definitionHash !== request.definitionHash ||
     record.pendingAdministratorRequestId !== request.id
   ) {

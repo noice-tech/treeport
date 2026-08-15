@@ -31,6 +31,11 @@ case "$node_major" in
 esac
 [ "$node_major" -ge "$MINIMUM_NODE_MAJOR" ] ||
   fail "Node.js 24 or newer is required; found $node_version. Upgrade Node.js, then retry."
+node_executable=$(node -p 'process.execPath' 2>/dev/null || true)
+case "$node_executable" in
+  /*) [ -x "$node_executable" ] || fail "Node.js is not executable at $node_executable" ;;
+  *) fail 'Could not resolve the absolute Node.js executable path.' ;;
+esac
 command -v npm >/dev/null 2>&1 || fail 'npm is required. Install npm for your Node.js installation, then retry.'
 
 tmux_supported() {
@@ -173,11 +178,12 @@ node -e \
   "$next_link" "$INSTALL_ROOT/current"
 
 shim="$BIN_DIR/.treeport-$$"
+node_executable_for_shim=$(printf '%s' "$node_executable" | sed "s/'/'\\\\''/g")
 cat >"$shim" <<EOF
 #!/bin/sh
 export TREEPORT_INSTALLATION_METHOD=curl
 export TREEPORT_CLI_ENTRYPOINT="$BIN_DIR/treeport"
-exec node "$INSTALL_ROOT/current/npm/lib/node_modules/@treeport/treeport/dist/node/cli/index.js" "\$@"
+exec '$node_executable_for_shim' "$INSTALL_ROOT/current/npm/lib/node_modules/@treeport/treeport/dist/node/cli/index.js" "\$@"
 EOF
 chmod 755 "$shim"
 mv -f "$shim" "$BIN_DIR/treeport"
