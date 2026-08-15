@@ -1,4 +1,4 @@
-import type { IncomingMessage, Server as HttpServer } from 'node:http'
+import type { Server as HttpServer } from 'node:http'
 import { Server } from 'socket.io'
 import type {
   EventsServerToClientEvents,
@@ -19,6 +19,7 @@ import {
   TerminalAttachmentManager,
   type TerminalTransport
 } from './terminal-attachments'
+import { authorizeRequest } from './request-security'
 import type { TerminalMetadataManager } from './terminal-metadata'
 
 type ClientToServerEvents = TerminalClientToServerEvents
@@ -39,35 +40,6 @@ interface SocketServerDependencies {
   tmux: TmuxAdapter
   terminalMetadata: TerminalMetadataManager
   attachmentManager?: TerminalAttachmentManager
-}
-
-function isAllowedSocketOrigin(
-  request: IncomingMessage,
-  apiUrl: string
-): boolean {
-  const origin = request.headers.origin
-  if (origin === undefined) {
-    return true
-  }
-
-  if (Array.isArray(origin) || !URL.canParse(origin)) {
-    return false
-  }
-
-  const parsed = new URL(origin)
-  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-    return false
-  }
-
-  const forwardedHost = request.headers['x-forwarded-host']
-  const hosts = [
-    request.headers.host,
-    typeof forwardedHost === 'string'
-      ? forwardedHost.split(',', 1)[0]?.trim()
-      : undefined,
-    URL.canParse(apiUrl) ? new URL(apiUrl).host : undefined
-  ]
-  return hosts.some((host) => host === parsed.host)
 }
 
 export function createSocketServer(
@@ -100,7 +72,7 @@ export function createSocketServer(
     perMessageDeflate: false,
     maxHttpBufferSize: TERMINAL_MAX_CLIENT_MESSAGE_BYTES,
     allowRequest: (request, callback) =>
-      callback(null, isAllowedSocketOrigin(request, config.apiUrl))
+      callback(null, authorizeRequest(request, { socketUpgrade: true }).allowed)
   })
   const metadataReady = terminalMetadata.initialize()
   const attachments =

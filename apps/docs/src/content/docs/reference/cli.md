@@ -36,9 +36,11 @@ treeport remote disable
 
 `treeport down` stops only a verified Treeport-owned daemon. It preserves Treeport's tmux sessions so they can be reconciled by the next `treeport up`. `treeport down --terminate-terminals --force` is the explicit destructive alternative used by a complete uninstall.
 
-The default listener is `http://127.0.0.1:8733`. Host and port options are persisted for later starts. Binding beyond loopback is unauthenticated and is suitable only for a trusted private network.
+The default listener is `http://127.0.0.1:8733`. Host and port options are persisted for later starts. `--host` accepts only `127.0.0.1`, `::1`, or `localhost`. Treeport refuses a non-loopback option, environment value, or saved preference. Repair an old preference with `treeport up --host 127.0.0.1`.
 
-`remote enable` starts the loopback daemon if needed, then configures a persistent private HTTPS [Tailscale Serve](https://tailscale.com/docs/features/tailscale-serve) endpoint. It uses port `8733` by default. See [Remote access](/features/remote-access/) for prerequisites, persistence, and access-policy guidance.
+`remote enable` starts the loopback daemon if needed, then configures a persistent private HTTPS [Tailscale Serve](https://tailscale.com/docs/features/tailscale-serve) endpoint. It uses port `8733` by default. Serve authenticates each remote user, and tailnet policy controls access. Treeport does not create a separate credential.
+
+A CLI on another permitted tailnet device can set `TREEPORT_API_URL` to the Serve HTTPS URL for API commands. Keep `up`, `down`, `status`, `logs`, `doctor`, and `remote` lifecycle operations on the computer that runs Treeport. See [Remote access](/features/remote-access/) for prerequisites, persistence, tagged-device limits, and access-policy guidance.
 
 ## Context
 

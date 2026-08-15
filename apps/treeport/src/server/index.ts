@@ -15,6 +15,7 @@ import {
 } from './core/index'
 import { createApp } from './app'
 import { acquireDaemonOwnership } from './daemon-ownership'
+import { authorizeRequest, rejectHttpRequest } from './request-security'
 import { createSocketServer } from './socket-server'
 import { TerminalMetadataManager } from './terminal-metadata'
 
@@ -49,6 +50,12 @@ const app = createApp({ service, config, tmux, terminalMetadata })
 const honoListener = getRequestListener(app.fetch)
 let vite: ViteDevServer | null = null
 const server = createServer((request, response) => {
+  const security = authorizeRequest(request)
+  if (!security.allowed) {
+    rejectHttpRequest(request, response, security)
+    return
+  }
+
   service.handleWebPanelDevelopmentRequest(request, response, () => {
     if (vite && !request.url?.startsWith('/api')) {
       vite.middlewares(request, response, () => {
@@ -59,6 +66,23 @@ const server = createServer((request, response) => {
 
     honoListener(request, response)
   })
+})
+server.on('upgrade', (request, socket) => {
+  const security = authorizeRequest(request, { socketUpgrade: true })
+  if (security.allowed) {
+    return
+  }
+
+  const statusText =
+    security.status === 400
+      ? 'Bad Request'
+      : security.status === 403
+        ? 'Forbidden'
+        : 'Unauthorized'
+  socket.write(
+    `HTTP/1.1 ${security.status} ${statusText}\r\nConnection: close\r\nCache-Control: no-store\r\n\r\n`
+  )
+  socket.destroy()
 })
 if (config.webDevelopment) {
   const { createServer: createViteServer } = await import('vite')
@@ -95,11 +119,6 @@ console.log(`Treeport ${config.appVersion} listening on ${config.apiUrl}`)
 console.log(`database: ${config.databasePath}`)
 console.log(`git: ${prerequisites.gitVersion}`)
 console.log(`tmux: ${prerequisites.tmuxVersion}`)
-if (!['127.0.0.1', '::1', 'localhost'].includes(config.host)) {
-  console.warn(
-    'Authentication is disabled; anyone who can reach this address has full terminal access.'
-  )
-}
 
 let shuttingDown = false
 function shutdown(): void {

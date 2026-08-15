@@ -180,6 +180,37 @@ async function runPackagedCli(
   })
 }
 
+async function requestPackagedDaemon(options: {
+  port: number
+  path: string
+  method?: string
+  headers: Record<string, string>
+}): Promise<{ status: number; body: string }> {
+  return new Promise((resolve, reject) => {
+    const request = http.request(
+      {
+        hostname: '127.0.0.1',
+        port: options.port,
+        path: options.path,
+        method: options.method,
+        headers: options.headers
+      },
+      (response) => {
+        response.setEncoding('utf8')
+        let body = ''
+        response.on('data', (chunk: string) => {
+          body += chunk
+        })
+        response.once('end', () =>
+          resolve({ status: response.statusCode ?? 0, body })
+        )
+      }
+    )
+    request.once('error', reject)
+    request.end()
+  })
+}
+
 describe('CLI context and machine output', () => {
   let server: Server
   let socketServer: SocketIOServer
@@ -370,6 +401,23 @@ describe('CLI context and machine output', () => {
               code: 'PROJECT_BUSY',
               message: 'Project is already being modified',
               details: { projectId: 'proj_domain' }
+            }
+          })
+        )
+        return
+      }
+
+      if (
+        request.method === 'GET' &&
+        request.url === '/api/projects/proj_auth'
+      ) {
+        response.statusCode = 401
+        response.end(
+          JSON.stringify({
+            error: {
+              code: 'AUTHENTICATION_REQUIRED',
+              message:
+                'Treeport accepts remote requests only through Tailscale Serve.'
             }
           })
         )
@@ -928,6 +976,25 @@ describe('CLI context and machine output', () => {
         code: 'PROJECT_BUSY',
         message: 'Project is already being modified',
         details: { projectId: 'proj_domain' }
+      }
+    })
+  })
+
+  it('reports an authentication refusal without treating the daemon as unreachable', async () => {
+    const result = await runCli(['context', '--json'], {
+      TREEPORT_API_URL: apiUrl,
+      TREEPORT_PROJECT_ID: 'proj_auth',
+      TREEPORT_WORKTREE_ID: worktree.id,
+      TREEPORT_TERMINAL_ID: terminal.id
+    })
+
+    expect(result.code).toBe(5)
+    expect(result.stdout).toBe('')
+    expect(JSON.parse(result.stderr)).toEqual({
+      error: {
+        code: 'AUTHENTICATION_REQUIRED',
+        message:
+          'Treeport accepts remote requests only through Tailscale Serve.'
       }
     })
   })
@@ -1579,6 +1646,7 @@ describe('CLI daemon lifecycle', () => {
     const tailscaleStatePath = path.join(temporaryDirectory, 'tailscale.json')
     const tailscaleCallsPath = path.join(temporaryDirectory, 'tailscale-calls')
     const nodeOnlyPath = path.join(temporaryDirectory, 'node-only-bin')
+    let identityProxy: Server | null = null
     const tmuxExecutable = (await execute('which', ['tmux'])).stdout.trim()
     await Promise.all([
       writeFile(
@@ -1715,6 +1783,18 @@ exit 1
       expect(JSON.parse(fileFolder.stderr)).toMatchObject({
         error: { code: 'FOLDER_NOT_DIRECTORY' }
       })
+
+      const unsafeListener = await runPackagedCli(
+        ['up', '--host', '0.0.0.0'],
+        environment
+      )
+      expect(unsafeListener.code).toBe(1)
+      expect(unsafeListener.stderr).toContain(
+        'Treeport supports only loopback listeners'
+      )
+      await expect(
+        stat(path.join(dataDirectory, 'config.json'))
+      ).rejects.toMatchObject({ code: 'ENOENT' })
 
       const linkedOpen = await runPackagedCli(
         ['.', '--json'],
@@ -1894,6 +1974,97 @@ exit 1
       expect(appResponse.status).toBe(200)
       expect(await appResponse.text()).toContain('<div id="root"></div>')
 
+      const remoteHost = 'treeport.tailnet.ts.net:8733'
+      const unauthenticatedRemote = await requestPackagedDaemon({
+        port,
+        path: '/api/health',
+        headers: { Host: remoteHost }
+      })
+      expect(unauthenticatedRemote.status).toBe(401)
+      expect(JSON.parse(unauthenticatedRemote.body)).toMatchObject({
+        error: { code: 'AUTHENTICATION_REQUIRED' }
+      })
+
+      const tailscaleHeaders = {
+        Host: remoteHost,
+        Origin: `https://${remoteHost}`,
+        'Tailscale-User-Login': 'developer@example.test',
+        'X-Forwarded-Host': remoteHost,
+        'X-Forwarded-Proto': 'https'
+      }
+      const authenticatedRemote = await requestPackagedDaemon({
+        port,
+        path: '/api/health',
+        headers: tailscaleHeaders
+      })
+      expect(authenticatedRemote.status).toBe(200)
+
+      const ingressRequests: Array<{
+        authorization: string | undefined
+        url: string | undefined
+      }> = []
+      identityProxy = http.createServer((request, response) => {
+        ingressRequests.push({
+          authorization: request.headers.authorization,
+          url: request.url
+        })
+        const headers = { ...request.headers }
+        delete headers['tailscale-user-login']
+        delete headers['tailscale-user-name']
+        delete headers['tailscale-user-profile-pic']
+        const outgoing = http.request(
+          {
+            hostname: '127.0.0.1',
+            port,
+            path: request.url,
+            method: request.method,
+            headers: {
+              ...headers,
+              host: remoteHost,
+              'tailscale-user-login': 'developer@example.test',
+              'tailscale-user-name': 'Treeport Developer',
+              'tailscale-user-profile-pic': '',
+              'x-forwarded-host': remoteHost,
+              'x-forwarded-proto': 'https'
+            }
+          },
+          (incoming) => {
+            response.writeHead(incoming.statusCode ?? 500, incoming.headers)
+            incoming.pipe(response)
+          }
+        )
+        outgoing.once('error', () => response.destroy())
+        request.pipe(outgoing)
+      })
+      await new Promise<void>((resolve) =>
+        identityProxy!.listen(0, '127.0.0.1', resolve)
+      )
+      const identityProxyAddress = identityProxy.address() as AddressInfo
+      const remoteCli = await runPackagedCli(['project', 'list', '--json'], {
+        ...environment,
+        TREEPORT_API_URL: `http://127.0.0.1:${identityProxyAddress.port}`
+      })
+      expect(remoteCli.code).toBe(0)
+      expect(JSON.parse(remoteCli.stdout)).toHaveLength(1)
+      expect(ingressRequests).toEqual([
+        { authorization: undefined, url: '/api/projects' }
+      ])
+      await new Promise<void>((resolve, reject) =>
+        identityProxy!.close((error) => (error ? reject(error) : resolve()))
+      )
+      identityProxy = null
+
+      const foreignMutation = await requestPackagedDaemon({
+        port,
+        path: '/api/admin/terminate-terminals',
+        method: 'POST',
+        headers: { ...tailscaleHeaders, Origin: 'https://evil.example' }
+      })
+      expect(foreignMutation.status).toBe(403)
+      expect(JSON.parse(foreignMutation.body)).toMatchObject({
+        error: { code: 'INVALID_ORIGIN' }
+      })
+
       const down = await runPackagedCli(
         ['down', '--terminate-terminals', '--force'],
         environment
@@ -1907,6 +2078,29 @@ exit 1
       ).resolves.toBeTruthy()
 
       await writeFile(
+        path.join(dataDirectory, 'config.json'),
+        `${JSON.stringify({ host: '192.168.1.10', port }, null, 2)}\n`
+      )
+      const invalidSavedListener = await runPackagedCli(['up'], {
+        ...environment,
+        TREEPORT_HOST: '',
+        HOST: ''
+      })
+      expect(invalidSavedListener.code).toBe(1)
+      expect(invalidSavedListener.stderr).toContain(
+        'treeport up --host 127.0.0.1'
+      )
+      const repairedListener = await runPackagedCli(
+        ['up', '--host', '127.0.0.1'],
+        { ...environment, TREEPORT_HOST: '', HOST: '' }
+      )
+      expect(repairedListener.code).toBe(0)
+      await runPackagedCli(
+        ['down', '--terminate-terminals', '--force'],
+        environment
+      )
+
+      await writeFile(
         tmuxPath,
         '#!/bin/sh\n[ "$1" = "-V" ] && echo "tmux 3.1"\nexit 0\n',
         { mode: 0o755 }
@@ -1918,6 +2112,12 @@ exit 1
       expect(refused.code).toBe(1)
       expect(refused.stderr).toContain('Treeport requires tmux 3.2 or newer')
     } finally {
+      if (identityProxy) {
+        await new Promise<void>((resolve) =>
+          identityProxy!.close(() => resolve())
+        )
+      }
+
       await runPackagedCli(
         ['down', '--terminate-terminals', '--force'],
         environment

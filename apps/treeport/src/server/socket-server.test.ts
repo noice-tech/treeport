@@ -198,7 +198,8 @@ function eventClient(
 function terminalClient(
   url: string,
   clientId = 'tab-a',
-  terminalProtocol: string | null = String(TERMINAL_PROTOCOL_VERSION)
+  terminalProtocol: string | null = String(TERMINAL_PROTOCOL_VERSION),
+  options: { extraHeaders?: Record<string, string> } = {}
 ): Socket<TerminalServerToClientEvents, TerminalClientToServerEvents> {
   return createClient(`${url}/terminals`, {
     path: SOCKET_IO_PATH,
@@ -207,7 +208,8 @@ function terminalClient(
     reconnection: true,
     reconnectionDelay: 10,
     ...(terminalProtocol === null ? {} : { query: { terminalProtocol } }),
-    auth: { terminalId: 'term', clientId, cols: 100, rows: 30 }
+    auth: { terminalId: 'term', clientId, cols: 100, rows: 30 },
+    ...options
   })
 }
 
@@ -371,44 +373,91 @@ describe('Socket.IO real network', () => {
     await closeClient(second)
   })
 
-  it('accepts direct and reverse-proxied local clients but rejects foreign browser origins', async () => {
+  it('authenticates local and Tailscale clients before accepting either socket namespace', async () => {
     const value = await fixture()
-    const allowed = eventClient(value.url, {
+    const local = eventClient(value.url, {
       extraHeaders: { Origin: value.url }
     })
     await new Promise<void>((resolve, reject) => {
-      allowed.once('connect', () => resolve())
-      allowed.once('connect_error', reject)
+      local.once('connect', () => resolve())
+      local.once('connect_error', reject)
     })
 
+    const tailscaleHeaders = {
+      Origin: 'https://feature.treeport.localhost',
+      'Tailscale-User-Login': 'developer@example.test',
+      'X-Forwarded-Host': 'feature.treeport.localhost',
+      'X-Forwarded-Proto': 'https'
+    }
     const proxied = eventClient(value.url, {
-      extraHeaders: {
-        Origin: 'https://feature.treeport.localhost',
-        'X-Forwarded-Host': 'feature.treeport.localhost'
-      }
+      extraHeaders: tailscaleHeaders
     })
     await new Promise<void>((resolve, reject) => {
       proxied.once('connect', () => resolve())
       proxied.once('connect_error', reject)
     })
 
-    const rejected = eventClient(value.url, {
-      extraHeaders: { Origin: 'https://evil.example' }
-    })
-    const error = await new Promise<Error>((resolve) =>
-      rejected.once('connect_error', resolve)
+    const proxiedTerminal = terminalClient(
+      value.url,
+      'tab-proxied',
+      String(TERMINAL_PROTOCOL_VERSION),
+      { extraHeaders: tailscaleHeaders }
     )
-    expect(error.message).toMatch(/websocket error/i)
+    await new Promise<void>((resolve, reject) => {
+      proxiedTerminal.once('ready', () => resolve())
+      proxiedTerminal.once('connect_error', reject)
+    })
+
+    const bypassHeaders = {
+      Host: 'feature.treeport.localhost',
+      'X-Forwarded-Host': 'feature.treeport.localhost',
+      'X-Forwarded-Proto': 'https'
+    }
+    const bypassedEvents = eventClient(value.url, {
+      extraHeaders: bypassHeaders
+    })
+    const eventError = await new Promise<Error>((resolve) =>
+      bypassedEvents.once('connect_error', resolve)
+    )
+    expect(eventError.message).toMatch(/websocket error/i)
+
+    const bypassedTerminal = terminalClient(
+      value.url,
+      'tab-bypassed',
+      String(TERMINAL_PROTOCOL_VERSION),
+      { extraHeaders: bypassHeaders }
+    )
+    bypassedTerminal.io.reconnection(false)
+    const terminalError = await new Promise<Error>((resolve) =>
+      bypassedTerminal.once('connect_error', resolve)
+    )
+    expect(terminalError.message).toMatch(/websocket error/i)
+    expect(value.service.refreshTerminalStatus).toHaveBeenCalledTimes(1)
+
+    const foreignOrigin = eventClient(value.url, {
+      extraHeaders: { ...tailscaleHeaders, Origin: 'https://evil.example' }
+    })
+    const originError = await new Promise<Error>((resolve) =>
+      foreignOrigin.once('connect_error', resolve)
+    )
+    expect(originError.message).toMatch(/websocket error/i)
 
     const originless = eventClient(value.url)
     await new Promise<void>((resolve, reject) => {
       originless.once('connect', () => resolve())
       originless.once('connect_error', reject)
     })
-    await closeClient(allowed)
-    await closeClient(proxied)
-    await closeClient(rejected)
-    await closeClient(originless)
+    await Promise.all(
+      [
+        local,
+        proxied,
+        proxiedTerminal,
+        bypassedEvents,
+        bypassedTerminal,
+        foreignOrigin,
+        originless
+      ].map(closeClient)
+    )
   })
 
   it('negotiates exact terminal protocol modes and rejects unsupported versions', async () => {

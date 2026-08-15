@@ -1,6 +1,7 @@
 import crypto from 'node:crypto'
 import os from 'node:os'
 import path from 'node:path'
+import { assertLoopbackHost } from './loopback'
 
 export interface AppConfig {
   host: string
@@ -71,6 +72,7 @@ function defaultRuntimeDir(env: NodeJS.ProcessEnv): string {
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const host = env.TREEPORT_HOST?.trim() || env.HOST?.trim() || '127.0.0.1'
+  assertLoopbackHost(host)
   const portValue = Number.parseInt(
     env.TREEPORT_PORT?.trim() || env.PORT?.trim() || '8733',
     10

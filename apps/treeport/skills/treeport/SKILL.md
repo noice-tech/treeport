@@ -151,4 +151,4 @@ JSON success output is written to stdout. JSON errors use `{ "error": { "code", 
 - `5`: API, domain, or invalid-context refusal.
 - `130`: a terminal wait was interrupted with Ctrl+C.
 
-Treeport currently has no authentication. Use it only through a trusted local or private-network listener; do not invent credentials or put secrets in command arguments or URLs.
+Treeport trusts the local OS boundary for loopback access and delegates supported remote authentication to Tailscale Serve. Do not expose the daemon through a direct network listener, invent credentials, or put secrets in command arguments or URLs.
