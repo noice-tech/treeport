@@ -21,11 +21,15 @@ You can open the project again later.
 
 ## Trees
 
-A Tree is Treeport's persistent workspace for a Git worktree.
+A Tree is Treeport's persistent workspace for an isolated development environment.
+
+The Tree name does not tie the workspace to one isolation mechanism. Treeport currently uses a Git worktree for each Tree.
 
 A Git worktree is a checkout in a project. Git identifies one as the main worktree or a linked worktree.
 
 Treeport finds Git worktrees that Git, editors, agents, scripts, or other tools create. It shows each worktree as a Tree.
+
+[Rift](https://github.com/anomalyco/rift) is one example of a different isolation mechanism. It creates copy-on-write workspaces instead of Git worktrees. Treeport does not currently support Rift.
 
 ## Terminals
 
