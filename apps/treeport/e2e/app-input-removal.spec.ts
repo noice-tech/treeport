@@ -207,10 +207,14 @@ test.describe('desktop terminal input and removal', () => {
     const screen = page.locator('.xterm-screen')
     const bounds = await screen.boundingBox()
     expect(bounds).not.toBeNull()
-    await page.mouse.move(bounds!.x + 8, bounds!.y + 8)
+    const columns = await page.evaluate(() => (window as any).__lastWs.cols)
+    const cellWidth = bounds!.width / columns
+    await page.mouse.move(bounds!.x + cellWidth * 1.25, bounds!.y + 8)
     await page.keyboard.down('Alt')
     await page.mouse.down()
-    await page.mouse.move(bounds!.x + 160, bounds!.y + 8, { steps: 5 })
+    await page.mouse.move(bounds!.x + cellWidth * 5.75, bounds!.y + 8, {
+      steps: 5
+    })
     await page.mouse.up()
     await page.keyboard.up('Alt')
 
@@ -251,6 +255,14 @@ test.describe('desktop terminal input and removal', () => {
     expect(inViewportSelectionInput.join('')).toContain(
       TERMINAL_SELECTION_START_SEQUENCE
     )
+    const selectionStartInput = inViewportSelectionInput.find((data: string) =>
+      data.includes(TERMINAL_SELECTION_START_SEQUENCE)
+    )
+    expect(selectionStartInput).toContain(
+      `${TERMINAL_SELECTION_START_SEQUENCE}\u001b[<0;2;`
+    )
+    expect(selectionStartInput).toContain('M\u001b[<32;2;')
+    expect(inViewportSelectionInput.at(-1)).toContain('\u001b[<32;7;')
     expect(inViewportSelectionInput.at(-1)).toContain('\u001b[<0;')
     expect(inViewportSelectionInput.at(-1)).toMatch(/m$/)
 
@@ -503,6 +515,15 @@ test.describe('desktop terminal input and removal', () => {
           ).length
       )
     const reportsAfterLeavingSide = await dragReports()
+    expect(
+      await page.evaluate(() =>
+        (window as any).__wsSent.some(
+          (message: any) =>
+            message.type === 'input' &&
+            String(message.data).endsWith('\u001b[F')
+        )
+      )
+    ).toBe(true)
     await page.waitForTimeout(160)
     expect(await dragReports()).toBe(reportsAfterLeavingSide)
     await page.mouse.up()
