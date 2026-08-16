@@ -6,7 +6,7 @@ export default defineConfig({
   integrations: [
     starlight({
       title: 'Treeport',
-      description: 'Use persistent terminals in separate Trees.',
+      description: 'Use persistent terminals in Git worktrees.',
       favicon: '/favicon.svg',
       disable404Route: true,
       head: [
@@ -21,7 +21,7 @@ export default defineConfig({
           tag: 'meta',
           attrs: {
             property: 'og:image:alt',
-            content: 'Treeport: Persistent terminals for Trees.'
+            content: 'Treeport: Persistent terminals for Git worktrees.'
           }
         },
         {
@@ -35,7 +35,7 @@ export default defineConfig({
           tag: 'meta',
           attrs: {
             name: 'twitter:image:alt',
-            content: 'Treeport: Persistent terminals for Trees.'
+            content: 'Treeport: Persistent terminals for Git worktrees.'
           }
         }
       ],

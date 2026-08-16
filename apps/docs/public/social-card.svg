@@ -1,9 +1,9 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-labelledby="title description">
   <title id="title">Treeport</title>
-  <desc id="description">Persistent terminals for Trees.</desc>
+  <desc id="description">Persistent terminals for Git worktrees.</desc>
   <rect width="1200" height="630" fill="#09090b"/>
   <rect x="84" y="91" width="160" height="160" rx="32" fill="#18181b"/>
   <path d="M119 133h90v20h-35v63h-20v-63h-35z" fill="#67e8f9"/>
   <text x="84" y="367" fill="#f4f4f5" font-family="Inter, Arial, sans-serif" font-size="88" font-weight="700">Treeport</text>
-  <text x="84" y="455" fill="#a1a1aa" font-family="Inter, Arial, sans-serif" font-size="42">Persistent terminals for Trees.</text>
+  <text x="84" y="455" fill="#a1a1aa" font-family="Inter, Arial, sans-serif" font-size="42">Persistent terminals for Git worktrees.</text>
 </svg>
