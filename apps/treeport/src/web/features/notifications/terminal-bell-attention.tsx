@@ -43,6 +43,7 @@ export function TerminalBellAttention({
     projects,
     selectedTerminalId,
     titles,
+    // SAFETY: The component contract supplies the asserted browser value used here.
     presence: {
       focused: document.hasFocus(),
       visible: document.visibilityState === 'visible'
@@ -67,7 +68,7 @@ export function TerminalBellAttention({
     const title = terminalTitle(current.projects, current.titles, terminalId)
     void terminalSessions
       .acknowledgeBell(terminalId, bell.sequence)
-      .catch((error: unknown) => {
+      .catch((error) => {
         notifyError(error, {
           operation: title
             ? `acknowledge notification for terminal “${title}”`
@@ -116,7 +117,7 @@ export function TerminalBellAttention({
         )
         void terminalSessions
           .acknowledgeBell(event.terminalId, event.sequence)
-          .catch((error: unknown) => {
+          .catch((error) => {
             notifyError(error, {
               operation: title
                 ? `acknowledge notification for terminal “${title}”`

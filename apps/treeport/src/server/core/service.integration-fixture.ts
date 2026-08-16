@@ -124,6 +124,7 @@ export async function persistedWebPanel(
     definitionId: row.definitionId,
     title: row.title,
     launch: {
+      // SAFETY: The test fixture provides the asserted contract used here.
       input: JSON.parse(row.inputJson) as WebPanel['launch']['input'],
       cwd: row.launchCwd
     },

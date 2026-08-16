@@ -9,6 +9,8 @@ import {
 import type {
   EventsClientToServerEvents,
   EventsServerToClientEvents,
+  EventsSnapshot,
+  ProductEvent,
   ProductEventDataMap,
   ProjectRecord
 } from '@treeport/shared'
@@ -61,7 +63,7 @@ export function useProjectEventsBridge(
           { queryKey: ['web-panel-definitions'] },
           { cancelRefetch: false }
         )
-      ])
+      ]).then(() => undefined)
     )
     const refresh = () => {
       refreshes.schedule()
@@ -71,7 +73,7 @@ export function useProjectEventsBridge(
       ])
     }
     const refreshProjects = () => projectRefreshes.schedule()
-    const snapshot = (value: unknown) => {
+    const snapshot = (value: EventsSnapshot) => {
       const payload = parseEventsSnapshot(value)
       if (!payload) {
         setEventsDisconnected(true)
@@ -82,7 +84,7 @@ export function useProjectEventsBridge(
       setEventsDisconnected(false)
       refresh()
     }
-    const productEvent = (value: unknown) => {
+    const productEvent = (value: ProductEvent) => {
       const event = parseProductEvent(value)
       if (!event) {
         return

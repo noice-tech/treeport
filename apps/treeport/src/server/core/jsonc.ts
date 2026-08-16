@@ -12,7 +12,7 @@ export async function readOptionalJsonc(
   try {
     source = await fs.readFile(filePath, 'utf8')
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
       return { found: false }
     }
 

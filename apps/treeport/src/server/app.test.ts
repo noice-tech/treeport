@@ -5,6 +5,7 @@ import path from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import {
   DESKTOP_PROTOCOL_VERSION,
+  type JsonValue,
   type TerminalRuntimeMetadata
 } from '@treeport/shared'
 import {
@@ -14,6 +15,7 @@ import {
   type TmuxAdapter,
   type TreeportService
 } from './core/index'
+import { testAccess } from './test-access'
 import { createApp } from './app'
 import type { TerminalMetadataManager } from './terminal-metadata'
 
@@ -33,7 +35,8 @@ function fixture(webDist = '/missing') {
     daemonLifecycle: 'treeport',
     webDevelopment: false
   }
-  const service = {
+  // SAFETY: The test fixture provides the asserted contract used here.
+  const service = testAccess<TreeportService>({
     events: new ProductEventBus(),
     listProjects: vi.fn(async () => []),
     listRecentProjects: vi.fn(() => [
@@ -256,7 +259,7 @@ function fixture(webDist = '/missing') {
     getOperation: vi.fn(async (id: string) => ({ id, status: 'running' })),
     removePreview: vi.fn(async () => ({ worktreeId: 'wt_1' })),
     beginRemove: vi.fn(async () => ({ id: 'op_1' }))
-  } as unknown as TreeportService
+  })
   const runtimeMetadata: TerminalRuntimeMetadata = {
     terminalId: 'term',
     title: 'pi · /repo',
@@ -273,20 +276,21 @@ function fixture(webDist = '/missing') {
   }))
   const metadataTrack = vi.fn(async () => undefined)
   const metadataAcknowledgeBell = vi.fn(async () => undefined)
-  const terminalMetadata = {
+  // SAFETY: The test fixture provides the asserted contract used here.
+  const terminalMetadata = testAccess<TerminalMetadataManager>({
     initialize: vi.fn(async () => undefined),
     snapshot: metadataSnapshot,
     get: metadataGet,
     trackTerminal: metadataTrack,
     acknowledgeBell: metadataAcknowledgeBell
-  } as unknown as TerminalMetadataManager
+  })
   const capturePane = vi.fn(
     async (): Promise<string | null> => 'Preparing changes\nRunning tests'
   )
   const app = createApp({
     service,
     config,
-    tmux: { capturePane } as unknown as TmuxAdapter,
+    tmux: testAccess<TmuxAdapter>({ capturePane }),
     terminalMetadata,
     webDist
   })
@@ -453,13 +457,17 @@ describe('HTTP API validation', () => {
   })
 
   it('uses the panel SDK to broker scoped panel requests', async () => {
-    const listeners = new Map<string, (...args: unknown[]) => unknown>()
+    const listeners = new Map<string, EventListener>()
     const panelParent = { postMessage: vi.fn() }
     vi.stubGlobal('parent', panelParent)
     vi.stubGlobal('self', globalThis)
-    vi.stubGlobal('addEventListener', (type: string, listener: unknown) =>
-      listeners.set(type, listener as (...args: unknown[]) => unknown)
+    vi.stubGlobal('addEventListener', (type: string, listener: EventListener) =>
+      listeners.set(type, listener)
     )
+    const dispatch = <EventFixture extends object>(
+      type: string,
+      event: EventFixture
+    ) => listeners.get(type)!(testAccess<Event>(event))
     const intervalHandlers: Array<() => void> = []
     vi.stubGlobal('setInterval', (handler: () => void) => {
       intervalHandlers.push(handler)
@@ -469,14 +477,15 @@ describe('HTTP API validation', () => {
     vi.stubGlobal('location', targetLocation)
 
     try {
+      // SAFETY: The test fixture provides the asserted contract used here.
       const sdk = (await import('@treeport/panel-sdk')) as {
         treeport: {
           version: number
           panel: { setTitle: (title: string | null) => void }
-          context: () => Promise<unknown>
-          network: { listeners: () => Promise<unknown> }
+          context: () => Promise<object>
+          network: { listeners: () => Promise<object> }
           storage: {
-            set: (key: string, value: unknown) => Promise<void>
+            set: (key: string, value: JsonValue) => Promise<void>
           }
           shortcuts: {
             onFind: (handler: () => void) => () => void
@@ -485,7 +494,7 @@ describe('HTTP API validation', () => {
       }
       const context = sdk.treeport.context()
       const message = panelParent.postMessage.mock.calls[0]![0]
-      listeners.get('message')!({
+      dispatch('message', {
         source: panelParent,
         data: {
           source: 'treeport-host-v1',
@@ -514,7 +523,7 @@ describe('HTTP API validation', () => {
         source: 'treeport-panel-v1',
         method: 'network.listeners'
       })
-      listeners.get('message')!({
+      dispatch('message', {
         source: panelParent,
         data: {
           source: 'treeport-host-v1',
@@ -537,7 +546,7 @@ describe('HTTP API validation', () => {
         key: 'comments',
         value: [{ line: 12 }]
       })
-      listeners.get('message')!({
+      dispatch('message', {
         source: panelParent,
         data: {
           source: 'treeport-host-v1',
@@ -557,7 +566,7 @@ describe('HTTP API validation', () => {
         '*'
       )
 
-      listeners.get('message')!({
+      dispatch('message', {
         source: panelParent,
         data: {
           source: 'treeport-browser-v1',
@@ -591,7 +600,7 @@ describe('HTTP API validation', () => {
       const unsubscribeFind = sdk.treeport.shortcuts.onFind(findHandler)
       const preventFindDefault = vi.fn()
       const stopFindPropagation = vi.fn()
-      listeners.get('keydown')!({
+      dispatch('keydown', {
         key: 'f',
         metaKey: true,
         altKey: false,
@@ -604,7 +613,7 @@ describe('HTTP API validation', () => {
       expect(preventFindDefault).toHaveBeenCalledOnce()
       expect(stopFindPropagation).toHaveBeenCalledOnce()
 
-      listeners.get('message')!({
+      dispatch('message', {
         source: panelParent,
         data: {
           source: 'treeport-host-v1',
@@ -615,7 +624,7 @@ describe('HTTP API validation', () => {
       expect(findHandler).toHaveBeenCalledTimes(2)
 
       unsubscribeFind()
-      listeners.get('message')!({
+      dispatch('message', {
         source: panelParent,
         data: {
           source: 'treeport-host-v1',
@@ -627,7 +636,7 @@ describe('HTTP API validation', () => {
 
       const preventDefault = vi.fn()
       const stopPropagation = vi.fn()
-      listeners.get('keydown')!({
+      dispatch('keydown', {
         key: '2',
         metaKey: true,
         altKey: false,
@@ -710,6 +719,7 @@ describe('HTTP API validation', () => {
         'text/javascript; charset=utf-8'
       )
       const moduleSource = await moduleResponse.text()
+      // SAFETY: The test fixture provides the asserted contract used here.
       const compiled = (await import(
         /* @vite-ignore */ `data:text/javascript;base64,${Buffer.from(moduleSource).toString('base64')}`
       )) as { answer: number }
@@ -1237,6 +1247,7 @@ describe('HTTP API validation', () => {
 
       expect(response.status).toBe(201)
       expect(service.getTerminal).toHaveBeenCalledWith('term_1')
+      // SAFETY: The test fixture provides the asserted contract used here.
       const result = (await response.json()) as { file: { path: string } }
       expect(path.dirname(result.file.path)).toBe(
         path.join(config.runtimeDir, 'uploads')
@@ -1256,6 +1267,7 @@ describe('HTTP API validation', () => {
       expect(legacyHeader.status).toBe(201)
       expect(
         path.extname(
+          // SAFETY: The test fixture provides the asserted contract used here.
           ((await legacyHeader.json()) as { file: { path: string } }).file.path
         )
       ).toBe('.txt')

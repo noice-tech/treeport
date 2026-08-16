@@ -5,7 +5,7 @@ test.describe('desktop worktree terminal UI', () => {
   test('recovers from an unexpected component crash', async ({ page }) => {
     await page.addInitScript(() => {
       const originalGetItem = Storage.prototype.getItem
-      ;(window as any).__restoreStorageGetItem = () => {
+      window.__restoreStorageGetItem = () => {
         Storage.prototype.getItem = originalGetItem
       }
       Storage.prototype.getItem = function (key) {
@@ -31,7 +31,7 @@ test.describe('desktop worktree terminal UI', () => {
       fallback.getByRole('button', { name: 'Reload Treeport' })
     ).toBeVisible()
 
-    await page.evaluate(() => (window as any).__restoreStorageGetItem())
+    await page.evaluate(() => window.__restoreStorageGetItem())
     await fallback.getByRole('button', { name: 'Try again' }).click()
     await expect(
       page.getByRole('button', {
@@ -133,7 +133,7 @@ test.describe('desktop worktree terminal UI', () => {
       .poll(() =>
         page.evaluate(
           () =>
-            ((window as any).__wsInstances ?? []).filter(
+            (window.__wsInstances ?? []).filter(
               (socket: { namespace: string; readyState: number }) =>
                 socket.namespace === '/events' && socket.readyState === 1
             ).length
@@ -255,9 +255,7 @@ test.describe('desktop worktree terminal UI', () => {
         response.request().method() === 'GET' &&
         new URL(response.url()).pathname === '/api/projects'
     )
-    await page.evaluate(() =>
-      (window as any).__eventSource.emit('worktree.removed')
-    )
+    await page.evaluate(() => window.__eventSource.emit('worktree.removed'))
     await projectRefresh
 
     await expect(topicWorktree).toHaveCount(0)
@@ -346,7 +344,7 @@ test.describe('desktop worktree terminal UI', () => {
     await expect
       .poll(() =>
         page.evaluate(() =>
-          ((window as any).__wsInstances ?? [])
+          (window.__wsInstances ?? [])
             .filter((socket: WebSocket) =>
               socket.url.includes('/api/terminals/')
             )

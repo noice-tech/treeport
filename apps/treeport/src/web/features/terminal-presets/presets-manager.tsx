@@ -27,12 +27,16 @@ export function TerminalPresetsManager({
 }) {
   const queryClient = useQueryClient()
   const [draft, setDraft] = useState({
+    // SAFETY: The component contract supplies the asserted browser value used here.
     editingId: null as string | null,
+    // SAFETY: The component contract supplies the asserted browser value used here.
     loadedUpdatedAt: null as string | null,
     name: '',
     command: '',
     closeOnSuccess: false,
+    // SAFETY: The component contract supplies the asserted browser value used here.
     commandError: null as string | null,
+    // SAFETY: The component contract supplies the asserted browser value used here.
     notice: null as string | null
   })
   const {

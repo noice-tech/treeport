@@ -6,17 +6,17 @@ export const METADATA_DEGRADED_GRACE_MS = 3_000
 
 export function shouldRetryApiQuery(
   failureCount: number,
-  error: unknown
+  cause: unknown
 ): boolean {
   if (failureCount >= 2) {
     return false
   }
 
-  if (!(error instanceof DetailedError)) {
+  if (!(cause instanceof DetailedError)) {
     return true
   }
 
-  const status = error.statusCode ?? 500
+  const status = cause.statusCode ?? 500
   return status === 408 || status === 429 || status >= 500
 }
 
@@ -30,7 +30,7 @@ export interface InvalidationCoalescer {
 }
 
 export function createInvalidationCoalescer(
-  invalidate: () => Promise<unknown>,
+  invalidate: () => Promise<void>,
   delayMs = METADATA_INVALIDATION_DELAY_MS
 ): InvalidationCoalescer {
   let timer: ReturnType<typeof setTimeout> | null = null

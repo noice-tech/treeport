@@ -73,6 +73,10 @@ type AppDialog =
   | { type: 'close-web-panel'; panel: WebPanel }
   | null
 
+interface DeletePanelQuery {
+  discardStoredData?: string
+}
+
 export default function App() {
   return (
     <>
@@ -255,15 +259,19 @@ function WorkspaceApp() {
     }: {
       panel: WebPanel
       discardStoredData?: boolean
-    }) =>
-      parseResponse(
+    }) => {
+      const query: DeletePanelQuery = {}
+      if (discardStoredData) {
+        query.discardStoredData = 'true'
+      }
+
+      return parseResponse(
         rpc.api.panels[':panelId'].$delete({
           param: { panelId: panel.id },
-          query: {
-            ...(discardStoredData ? { discardStoredData: 'true' } : {})
-          }
+          query
         })
-      ),
+      )
+    },
     onSuccess: async (_, { panel }) => {
       setWebPanelRuntimeTitle(panel.id, null)
       setDialog((current) =>
@@ -302,7 +310,7 @@ function WorkspaceApp() {
           closeWebPanel.mutate({ panel })
         }
       },
-      (error: unknown) => {
+      (error) => {
         notifyError(error, {
           operation: `check stored data for web panel “${panel.title}”`
         })
@@ -345,7 +353,7 @@ function WorkspaceApp() {
             await navigateToWorkspace(target)
           }
         })
-        .catch((error: unknown) => {
+        .catch((error) => {
           notifyError(error, { operation: 'open web panel' })
         })
     },
@@ -362,6 +370,7 @@ function WorkspaceApp() {
     trigger?: HTMLElement
   ) => {
     dialogTriggerRef.current =
+      // SAFETY: The component contract supplies the asserted browser value used here.
       trigger ?? (document.activeElement as HTMLElement | null)
     setDialog(nextDialog)
   }

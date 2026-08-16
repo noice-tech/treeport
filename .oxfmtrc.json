@@ -5,5 +5,19 @@
   "semi": false,
   "trailingComma": "none",
   "sortPackageJson": false,
-  "ignorePatterns": ["packages/web-panel-review/web-panels/review/**"]
+  "ignorePatterns": [
+    ".agent/**",
+    ".agents/**",
+    ".claude/**",
+    ".codex/**",
+    ".continue/**",
+    ".cursor/**",
+    ".gemini/**",
+    ".opencode/**",
+    ".pi/**",
+    ".roo/**",
+    ".windsurf/**",
+    "tools/oxlint/anti-slop/**",
+    "packages/web-panel-review/web-panels/review/**"
+  ]
 }

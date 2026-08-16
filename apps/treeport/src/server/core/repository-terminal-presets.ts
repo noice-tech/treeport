@@ -19,19 +19,13 @@ export async function loadRepositoryTerminalPresets(
   diagnostics: TerminalPresetDefinitionDiagnostic[]
 }> {
   const configPath = path.join(worktreePath, CONFIG_PATH)
-  const content = await fs
-    .readFile(configPath, 'utf8')
-    .catch((error: unknown) => {
-      const code =
-        typeof error === 'object' && error !== null && 'code' in error
-          ? error.code
-          : undefined
-      if (code === 'ENOENT') {
-        return null
-      }
+  const content = await fs.readFile(configPath, 'utf8').catch((error) => {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
+      return null
+    }
 
-      return error instanceof Error ? error : new Error(String(error))
-    })
+    return error instanceof Error ? error : new Error(String(error))
+  })
   if (content === null) {
     return { definitions: [], diagnostics: [] }
   }

@@ -1,9 +1,9 @@
-const DURATION_UNITS = {
-  ms: 1,
-  s: 1_000,
-  m: 60_000,
-  h: 3_600_000
-} as const
+const DURATION_UNITS = new Map([
+  ['ms', 1],
+  ['s', 1_000],
+  ['m', 60_000],
+  ['h', 3_600_000]
+])
 
 const MAX_DURATION_MS = 2_147_483_647
 
@@ -16,8 +16,12 @@ export function parseDurationMs(value: string): number {
   }
 
   const amount = Number(match[1])
-  const timeoutMs =
-    amount * DURATION_UNITS[match[2] as keyof typeof DURATION_UNITS]
+  const multiplier = DURATION_UNITS.get(match[2] ?? '')
+  if (multiplier === undefined) {
+    throw new Error('Timeout has an unsupported duration unit')
+  }
+
+  const timeoutMs = amount * multiplier
   if (
     !Number.isSafeInteger(timeoutMs) ||
     timeoutMs <= 0 ||

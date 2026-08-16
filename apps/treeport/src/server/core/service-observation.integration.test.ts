@@ -281,7 +281,7 @@ describe('TreeportService with injected command adapters', () => {
       })
       .then(
         (operation) => ({ operation, error: null }),
-        (error: unknown) => ({ operation: null, error })
+        (error) => ({ operation: null, error })
       )
       .finally(() => {
         removalSettled = true

@@ -92,10 +92,7 @@ export function terminalKeyboardInput(
 }
 
 function usesMacKeyboard(): boolean {
-  return (
-    typeof navigator !== 'undefined' &&
-    /Mac|iPhone|iPad|iPod/.test(navigator.platform)
-  )
+  return /Mac|iPhone|iPad|iPod/.test(globalThis.navigator?.platform ?? '')
 }
 
 export function activateTerminalLink(event: MouseEvent, url: string): void {

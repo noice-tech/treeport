@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
+import { z } from 'zod'
 import type {
   DesktopCommand,
   DesktopFileActionResult
@@ -9,26 +10,31 @@ const desktopBridge = Object.freeze({
   openFileUrl(url: string): Promise<DesktopFileActionResult> {
     return ipcRenderer
       .invoke('open-file-url', url)
-      .then((result: unknown) => (result === 'opened' ? result : 'rejected'))
+      .then((result) => (result === 'opened' ? result : 'rejected'))
   },
   onFullscreenChange(listener: (fullscreen: boolean) => void) {
-    const receive = (_event: IpcRendererEvent, value: unknown) => {
-      if (typeof value === 'boolean') {
-        listener(value)
+    const receive: Parameters<typeof ipcRenderer.on>[1] = (
+      _event: IpcRendererEvent,
+      value
+    ) => {
+      const parsed = z.boolean().safeParse(value)
+      if (parsed.success) {
+        listener(parsed.data)
       }
     }
     ipcRenderer.on('fullscreen-change', receive)
     return () => ipcRenderer.removeListener('fullscreen-change', receive)
   },
   onCommand(listener: (command: DesktopCommand) => void) {
-    const receive = (_event: IpcRendererEvent, value: unknown) => {
-      if (
-        value === 'new-worktree' ||
-        value === 'new-terminal' ||
-        value === 'new-panel' ||
-        value === 'close-panel'
-      ) {
-        listener(value)
+    const receive: Parameters<typeof ipcRenderer.on>[1] = (
+      _event: IpcRendererEvent,
+      value
+    ) => {
+      const parsed = z
+        .enum(['new-worktree', 'new-terminal', 'new-panel', 'close-panel'])
+        .safeParse(value)
+      if (parsed.success) {
+        listener(parsed.data)
       }
     }
     ipcRenderer.on('desktop-command', receive)

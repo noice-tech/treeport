@@ -157,12 +157,17 @@ export async function prepareShellIntegration(root: string): Promise<void> {
   ])
 }
 
+interface ShellLaunch {
+  argv: string[]
+  env: NodeJS.ProcessEnv
+}
+
 export function integrateShellLaunch(
   argv: string[],
   env: NodeJS.ProcessEnv,
   root: string | undefined,
   tmuxExecutable: string | undefined
-): { argv: string[]; env: NodeJS.ProcessEnv } {
+): ShellLaunch {
   const shell = path.basename(argv[0] ?? '').replace(/^-/, '')
   if (!root || !tmuxExecutable || !['zsh', 'bash', 'fish'].includes(shell)) {
     return { argv, env }
@@ -226,19 +231,18 @@ export function integrateShellLaunch(
 
   if (shell === 'fish') {
     const integrationDataDir = path.join(root, 'fish')
-    return {
-      argv,
-      env: {
-        ...integratedEnv,
-        TREEPORT_FISH_XDG_DATA_DIR: integrationDataDir,
-        ...(env.XDG_DATA_DIRS !== undefined
-          ? { TREEPORT_FISH_XDG_DATA_DIRS_SET: '1' }
-          : {}),
-        XDG_DATA_DIRS: [integrationDataDir, env.XDG_DATA_DIRS]
-          .filter(Boolean)
-          .join(':')
-      }
+    const fishEnvironment: NodeJS.ProcessEnv = {
+      ...integratedEnv,
+      TREEPORT_FISH_XDG_DATA_DIR: integrationDataDir,
+      XDG_DATA_DIRS: [integrationDataDir, env.XDG_DATA_DIRS]
+        .filter(Boolean)
+        .join(':')
     }
+    if (env.XDG_DATA_DIRS !== undefined) {
+      fishEnvironment.TREEPORT_FISH_XDG_DATA_DIRS_SET = '1'
+    }
+
+    return { argv, env: fishEnvironment }
   }
 
   positional = false
@@ -268,18 +272,15 @@ export function integrateShellLaunch(
   }
 
   const integrationFile = path.join(root, 'bash', 'treeport.bash')
-  return {
-    argv,
-    env: {
-      ...integratedEnv,
-      TREEPORT_BASH_INTEGRATION_FILE: integrationFile,
-      ...(env.PROMPT_COMMAND !== undefined
-        ? {
-            TREEPORT_BASH_PROMPT_COMMAND_SET: '1',
-            TREEPORT_BASH_PROMPT_COMMAND: env.PROMPT_COMMAND
-          }
-        : {}),
-      PROMPT_COMMAND: 'source "${TREEPORT_BASH_INTEGRATION_FILE}"'
-    }
+  const bashEnvironment: NodeJS.ProcessEnv = {
+    ...integratedEnv,
+    TREEPORT_BASH_INTEGRATION_FILE: integrationFile,
+    PROMPT_COMMAND: 'source "${TREEPORT_BASH_INTEGRATION_FILE}"'
   }
+  if (env.PROMPT_COMMAND !== undefined) {
+    bashEnvironment.TREEPORT_BASH_PROMPT_COMMAND_SET = '1'
+    bashEnvironment.TREEPORT_BASH_PROMPT_COMMAND = env.PROMPT_COMMAND
+  }
+
+  return { argv, env: bashEnvironment }
 }

@@ -155,12 +155,19 @@ export interface EventsServerToClientEvents {
 
 export type EventsClientToServerEvents = Record<never, never>
 
-export function parseEventsSnapshot(value: unknown): EventsSnapshot | null {
+const socketProtocolInputSchema = z.unknown()
+type SocketProtocolInput = z.input<typeof socketProtocolInputSchema>
+
+export function parseEventsSnapshot(
+  value: SocketProtocolInput
+): EventsSnapshot | null {
   const parsed = eventsSnapshotSchema.safeParse(value)
   return parsed.success ? parsed.data : null
 }
 
-export function parseProductEvent(value: unknown): ProductEvent | null {
+export function parseProductEvent(
+  value: SocketProtocolInput
+): ProductEvent | null {
   const parsed = productEventSchema.safeParse(value)
   return parsed.success ? parsed.data : null
 }

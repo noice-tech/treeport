@@ -4,6 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
+import { z } from 'zod'
 import type { AppConfig } from './config'
 import {
   WebPanelViteRuntime,
@@ -194,8 +195,10 @@ describe('WebPanelViteRuntime', () => {
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
 
     try {
-      const address = server.address()
-      if (!address || typeof address === 'string') {
+      const address = z
+        .object({ port: z.number().int() })
+        .safeParse(server.address())
+      if (!address.success) {
         throw new Error('expected HTTP listener address')
       }
 
@@ -210,7 +213,7 @@ describe('WebPanelViteRuntime', () => {
 
       const browserOrigin = 'https://treeport.example.ts.net:5173'
       const response = await fetch(
-        `http://127.0.0.1:${address.port}${resolution.location}`,
+        `http://127.0.0.1:${address.data.port}${resolution.location}`,
         {
           headers: {
             referer: `${browserOrigin}/projects/project_1/panels/panel_review`,
@@ -240,7 +243,7 @@ describe('WebPanelViteRuntime', () => {
       await expect(response.text()).resolves.toContain('@vite/client')
 
       const untrustedReferrerResponse = await fetch(
-        `http://127.0.0.1:${address.port}${resolution.location}`,
+        `http://127.0.0.1:${address.data.port}${resolution.location}`,
         {
           headers: {
             referer: 'https://attacker.example/panel',

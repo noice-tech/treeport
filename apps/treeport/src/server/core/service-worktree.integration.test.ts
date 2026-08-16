@@ -496,6 +496,7 @@ describe('TreeportService with injected command adapters', () => {
       'terminal.created'
     ])
 
+    // SAFETY: The test fixture provides the asserted contract used here.
     const initialLaunchSpec = JSON.parse(
       await fs.readFile(
         path.join(
@@ -524,6 +525,7 @@ describe('TreeportService with injected command adapters', () => {
       TREEPORT_TERMINAL_ID: result.terminal!.id
     })
 
+    // SAFETY: The test fixture provides the asserted contract used here.
     const setupLaunchSpec = JSON.parse(
       await fs.readFile(
         path.join(
@@ -584,6 +586,7 @@ describe('TreeportService with injected command adapters', () => {
       'Direct argv',
       ['pi']
     )
+    // SAFETY: The test fixture provides the asserted contract used here.
     const directLaunchSpec = JSON.parse(
       await fs.readFile(
         path.join(config.runtimeDir, 'launch-specs', `${direct.id}.json`),
@@ -615,6 +618,7 @@ describe('TreeportService with injected command adapters', () => {
     const setupTerminal = (
       await service.getWorktreeSnapshot(result.worktree.id)
     ).terminals.find((terminal) => terminal.name === 'Setup')!
+    // SAFETY: The test fixture provides the asserted contract used here.
     const launchSpec = JSON.parse(
       await fs.readFile(
         path.join(
@@ -1068,7 +1072,7 @@ describe('TreeportService with injected command adapters', () => {
       })
       .then(
         (operation) => ({ operation, error: null }),
-        (error: unknown) => ({ operation: null, error })
+        (error) => ({ operation: null, error })
       )
       .finally(() => {
         secondRemovalSettled = true

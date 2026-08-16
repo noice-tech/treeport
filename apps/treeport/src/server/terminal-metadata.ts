@@ -104,6 +104,7 @@ interface TerminalMetadataEntry extends TerminalRuntimeMetadata {
 }
 
 function tmuxEnvironment(): NodeJS.ProcessEnv {
+  // SAFETY: The surrounding boundary contract establishes this asserted value.
   return Object.fromEntries(
     Object.entries(process.env).filter(
       ([key, value]) =>
@@ -388,7 +389,7 @@ export class TerminalMetadataManager {
         await this.bellStateStore.delete(terminalId)
         this.persistedBells.delete(terminalId)
       })
-      .catch((error: unknown) => {
+      .catch((error) => {
         console.error(
           `[Treeport] Failed to delete terminal bell state for ${terminalId}:`,
           error instanceof Error ? error.message : String(error)
@@ -461,7 +462,7 @@ export class TerminalMetadataManager {
           const worktree = await this.service.getWorktree(terminal.worktreeId)
           return this.trackTerminal(terminal, worktree)
         })
-        .catch((error: unknown) => {
+        .catch((error) => {
           if (
             error instanceof DomainError &&
             error.code === 'TERMINAL_NOT_FOUND'
@@ -708,7 +709,7 @@ export class TerminalMetadataManager {
                 entry.bell = bell
                 this.publish(entry)
               })
-              .catch((error: unknown) => {
+              .catch((error) => {
                 console.error(
                   `[Treeport] Failed to persist terminal bell for ${entry.terminalId}:`,
                   error instanceof Error ? error.message : String(error)

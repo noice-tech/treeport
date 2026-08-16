@@ -10,6 +10,7 @@ import {
   type TmuxAdapter,
   type TmuxSessionTitleState
 } from './core/index'
+import { testAccess } from './test-access'
 import {
   TerminalMetadataManager,
   TERMINAL_METADATA_POLL_MS,
@@ -52,13 +53,14 @@ class FakeObserver implements TerminalProgressObserver {
   }
 }
 
-const worktree = {
+// SAFETY: The test fixture provides the asserted contract used here.
+const worktree = testAccess<WorktreeRecord>({
   id: 'wt',
   projectId: 'project',
   path: '/repo',
   tmuxSocketName: 'socket',
   terminals: []
-} as unknown as WorktreeRecord
+})
 
 function terminal(id: string): TerminalRecord {
   return {
@@ -91,7 +93,8 @@ function fixture(
   const refreshTerminalStatus = vi.fn(async (terminalId: string) =>
     terminals.get(terminalId)!
   )
-  const service = {
+  // SAFETY: The test fixture provides the asserted contract used here.
+  const service = testAccess<TreeportService>({
     events,
     getWorktree: (worktreeId: string) =>
       Promise.resolve(worktreeId === worktree.id ? worktree : undefined),
@@ -107,7 +110,7 @@ function fixture(
       return item
     }),
     refreshTerminalStatus
-  } as unknown as TreeportService
+  })
   const sessionTitleState = vi.fn(
     async (
       _socket: string,
@@ -119,11 +122,12 @@ function fixture(
     })
   )
   const setSessionShellTitle = vi.fn(async () => undefined)
-  const tmux = {
+  // SAFETY: The test fixture provides the asserted contract used here.
+  const tmux = testAccess<TmuxAdapter>({
     configPath: '/runtime/tmux.conf',
     sessionTitleState,
     setSessionShellTitle
-  } as unknown as TmuxAdapter
+  })
   const observers: FakeObserver[] = []
   const createObserver = vi.fn((options: TmuxProgressObserverOptions) => {
     const observer = new FakeObserver(options)

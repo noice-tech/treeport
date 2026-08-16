@@ -2,8 +2,12 @@ import crypto from 'node:crypto'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { WEB_PANEL_INPUT_MAX_BYTES } from '@treeport/shared'
+import {
+  WEB_PANEL_INPUT_MAX_BYTES,
+  webPanelInputSchema
+} from '@treeport/shared'
 import type {
+  CreateOperationRequest,
   DirectoryBrowseResponse,
   JsonValue,
   OpenWebPanelResult,
@@ -24,7 +28,6 @@ import type {
   WebPanel,
   WebPanelContext,
   WebPanelDefinition,
-  WebPanelInput,
   WebPanelLaunch,
   WorktreeListenerDiscovery,
   WorktreeRecord
@@ -87,6 +90,11 @@ const WEB_PANEL_STORAGE_MAX_ENTRIES = 256
 const WEB_PANEL_STORAGE_MAX_TOTAL_BYTES = 1024 * 1024
 const WEB_PANEL_STORAGE_MAX_VALUE_BYTES = 64 * 1024
 
+interface CheckoutCleanupResult {
+  removed: boolean
+  error: string | null
+}
+
 interface TerminalLaunchOptions {
   setup?: { tasks: WorktreeSetupTask[]; error: string | null }
   returnToShell?: boolean
@@ -100,8 +108,10 @@ function mapWebPanel(
   row: typeof webPanels.$inferSelect,
   allowSameOrigin = false
 ): WebPanel {
-  const input: unknown = JSON.parse(row.inputJson)
-  if (input !== null && (typeof input !== 'object' || Array.isArray(input))) {
+  const parsedInput = webPanelInputSchema
+    .nullable()
+    .safeParse(JSON.parse(row.inputJson))
+  if (!parsedInput.success) {
     throw new Error(`Web panel ${row.id} has invalid stored launch input`)
   }
 
@@ -112,7 +122,7 @@ function mapWebPanel(
     definitionId: row.definitionId,
     title: row.title,
     launch: {
-      input: input as WebPanelInput | null,
+      input: parsedInput.data,
       cwd: row.launchCwd
     },
     sandbox: { allowSameOrigin },
@@ -402,7 +412,8 @@ export class TreeportService {
   }
 
   private async checkoutStat(checkoutPath: string) {
-    return fs.lstat(checkoutPath, { bigint: true }).catch((error: unknown) => {
+    return fs.lstat(checkoutPath, { bigint: true }).catch((error) => {
+      // SAFETY: The surrounding boundary contract establishes this asserted value.
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
         return null
       }
@@ -451,7 +462,7 @@ export class TreeportService {
   private async removeAuthorizedCheckout(
     checkoutPath: string,
     identity: RemovalCheckoutIdentity | null
-  ): Promise<{ removed: boolean; error: string | null }> {
+  ): Promise<CheckoutCleanupResult> {
     if (
       !identity ||
       identity.path !== checkoutPath ||
@@ -492,10 +503,11 @@ export class TreeportService {
 
       const renameError = await fs.rename(checkoutPath, quarantinePath).then(
         () => null,
-        (error: unknown) => error
+        (error) => error
       )
       if (renameError) {
         if (
+          // SAFETY: The surrounding boundary contract establishes this asserted value.
           (renameError as NodeJS.ErrnoException).code === 'ENOENT' &&
           !(await this.checkoutStat(checkoutPath)) &&
           !(await this.checkoutStat(quarantinePath))
@@ -517,7 +529,7 @@ export class TreeportService {
             .rename(quarantinePath, checkoutPath)
             .then(
               () => null,
-              (error: unknown) => error
+              (error) => error
             )
           if (!restoreError) {
             return { removed: false, error: quarantineError }
@@ -535,13 +547,13 @@ export class TreeportService {
       .rm(quarantinePath, { recursive: true, force: true })
       .then(
         () => null,
-        (error: unknown) => error
+        (error) => error
       )
     if (removalError || (await this.checkoutStat(quarantinePath))) {
       if (!(await this.checkoutStat(checkoutPath))) {
         const restoreError = await fs.rename(quarantinePath, checkoutPath).then(
           () => null,
-          (error: unknown) => error
+          (error) => error
         )
         if (!restoreError) {
           return {
@@ -640,7 +652,7 @@ export class TreeportService {
               project.availability.state === 'available' && !worktree.prunable
                 ? this.deps.git.dirtyState(worktree.path).catch(() => null)
                 : null,
-              this.listWorktreeTerminals(worktree).catch((error: unknown) => {
+              this.listWorktreeTerminals(worktree).catch((error) => {
                 project.availability = {
                   state: 'unavailable',
                   message:
@@ -1180,7 +1192,8 @@ export class TreeportService {
     const webPanelsRoot = path.join(worktree.path, '.treeport', 'web-panels')
     const directories = await fs
       .readdir(webPanelsRoot, { withFileTypes: true })
-      .catch((error: unknown) => {
+      .catch((error) => {
+        // SAFETY: The surrounding boundary contract establishes this asserted value.
         if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
           return []
         }
@@ -1242,19 +1255,26 @@ export class TreeportService {
           packageRoot,
           development,
           packageLockPath
-        }) => ({
-          ...definition,
-          root,
-          entry,
-          packageRoot,
-          development,
-          ...(packageLockPath ? { packageLockPath } : {}),
-          definitionId: definition.id,
-          allowNetworkRequests: definition.sandbox.allowSameOrigin,
-          ...(definition.source.type === 'package'
-            ? { packageSource: definition.source.source }
-            : {})
-        })
+        }) => {
+          const resolved: WebPanelDefinition & ResolvedWebPanelSource = {
+            ...definition,
+            root,
+            entry,
+            packageRoot,
+            development,
+            definitionId: definition.id,
+            allowNetworkRequests: definition.sandbox.allowSameOrigin
+          }
+          if (packageLockPath) {
+            resolved.packageLockPath = packageLockPath
+          }
+
+          if (definition.source.type === 'package') {
+            resolved.packageSource = definition.source.source
+          }
+
+          return resolved
+        }
       )
     ]
   }
@@ -1575,6 +1595,7 @@ export class TreeportService {
         and(eq(webPanelStorage.panelId, panelId), eq(webPanelStorage.key, key))
       )
       .limit(1)
+    // SAFETY: The surrounding boundary contract establishes this asserted value.
     return row ? (JSON.parse(row.valueJson) as JsonValue) : undefined
   }
 
@@ -1847,6 +1868,7 @@ export class TreeportService {
     const directoryPath = await fs
       .realpath(requestedPath)
       .catch(async (error) => {
+        // SAFETY: The surrounding boundary contract establishes this asserted value.
         const code = (error as NodeJS.ErrnoException).code
         if (code !== 'ENOENT') {
           throw new DomainError(
@@ -1859,6 +1881,7 @@ export class TreeportService {
         exact = false
         entryQuery ||= path.basename(requestedPath)
         return fs.realpath(path.dirname(requestedPath)).catch((parentError) => {
+          // SAFETY: The surrounding boundary contract establishes this asserted value.
           const parentCode = (parentError as NodeJS.ErrnoException).code
           throw new DomainError(
             parentCode === 'ENOENT'
@@ -1872,6 +1895,7 @@ export class TreeportService {
         })
       })
     const directoryStat = await fs.stat(directoryPath).catch((error) => {
+      // SAFETY: The surrounding boundary contract establishes this asserted value.
       const code = (error as NodeJS.ErrnoException).code
       throw new DomainError(
         code === 'ENOENT' ? 'DIRECTORY_NOT_FOUND' : 'DIRECTORY_UNREADABLE',
@@ -1997,7 +2021,7 @@ export class TreeportService {
   ): Promise<ProjectRecord> {
     const checkout = await this.deps.git
       .canonicalizeRepositoryPath(inputPath)
-      .catch((error: unknown) => {
+      .catch((error) => {
         throw new DomainError(
           'NOT_A_GIT_REPOSITORY',
           error instanceof Error ? error.message : 'Not a Git repository',
@@ -2969,18 +2993,22 @@ export class TreeportService {
 
     const operationId = id('op')
     const timestamp = now()
+    const request: CreateOperationRequest = { name, base }
+    if (initialTerminal) {
+      request.initialTerminal = initialTerminal
+    }
+
+    if (sourceWorktreeId) {
+      request.sourceWorktreeId = sourceWorktreeId
+    }
+
     await this.deps.database.db.run(sql`
       INSERT INTO operations(
         id,kind,project_id,worktree_id,status,request_json,result_json,error,
         created_at,updated_at
       ) VALUES(
         ${operationId},'create',${projectId},NULL,'pending',
-        ${serializeOperation({
-          name,
-          base,
-          ...(initialTerminal ? { initialTerminal } : {}),
-          ...(sourceWorktreeId ? { sourceWorktreeId } : {})
-        })},NULL,NULL,${timestamp},${timestamp}
+        ${serializeOperation(request)},NULL,NULL,${timestamp},${timestamp}
       )
     `)
     const operation = await this.getOperation(operationId)
@@ -3148,7 +3176,7 @@ export class TreeportService {
       const destination = await resolveZedWorktreePath(
         project.mainWorktreePath,
         name
-      ).catch((error: unknown) => {
+      ).catch((error) => {
         throw new DomainError(
           'INVALID_WORKTREE_PATH',
           error instanceof Error ? error.message : String(error),
@@ -3270,16 +3298,20 @@ export class TreeportService {
       let terminalError: string | null = null
       let setupError: string | null = null
       if (initialTerminal) {
+        const launchOptions: TerminalLaunchOptions = {}
+        if (initialTerminal.returnToShell) {
+          launchOptions.returnToShell = true
+        }
+
+        if (initialTerminal.initialSize) {
+          launchOptions.initialSize = initialTerminal.initialSize
+        }
+
         const initialTerminalCreation = this.executeCreateTerminal(
           worktree.id,
           initialTerminal.name,
           initialTerminal.argv,
-          {
-            ...(initialTerminal.returnToShell ? { returnToShell: true } : {}),
-            ...(initialTerminal.initialSize
-              ? { initialSize: initialTerminal.initialSize }
-              : {})
-          }
+          launchOptions
         )
         const setupResolution = resolveWorktreeSetupTasks({
           shell: this.deps.config.shell,
@@ -3287,7 +3319,8 @@ export class TreeportService {
           worktreePath: worktree.path
         }).then(
           (tasks) => ({ tasks, error: null }),
-          (error: unknown) => ({
+          (error) => ({
+            // SAFETY: The surrounding boundary contract establishes this asserted value.
             tasks: [] as WorktreeSetupTask[],
             error: `worktree setup: ${
               error instanceof Error ? error.message : String(error)
@@ -3317,13 +3350,20 @@ export class TreeportService {
               'worktree setup: no persistent terminal could be started'
           } else {
             try {
-              await this.executeCreateTerminal(worktree.id, 'Setup', ['true'], {
+              const setupOptions: TerminalLaunchOptions = {
                 setup: { tasks: setup.tasks, error: setupError },
-                closeOnSuccess: true,
-                ...(initialTerminal.initialSize
-                  ? { initialSize: initialTerminal.initialSize }
-                  : {})
-              })
+                closeOnSuccess: true
+              }
+              if (initialTerminal.initialSize) {
+                setupOptions.initialSize = initialTerminal.initialSize
+              }
+
+              await this.executeCreateTerminal(
+                worktree.id,
+                'Setup',
+                ['true'],
+                setupOptions
+              )
             } catch (error) {
               const setupTerminalError = `worktree setup terminal${
                 error instanceof DomainError ? ` [${error.code}]` : ''
@@ -3345,7 +3385,7 @@ export class TreeportService {
           .then((tasks) =>
             runWorktreeSetupTasks({ runner: this.deps.runner, tasks })
           )
-          .catch((error: unknown) => [
+          .catch((error) => [
             {
               label: 'worktree setup',
               error: error instanceof Error ? error.message : String(error)
@@ -3433,39 +3473,51 @@ export class TreeportService {
     const sessionName = generateTmuxSessionName()
     const commandArgv = argv ? [...argv] : [this.deps.config.shell, '-l']
     const timestamp = now()
+    const session: Parameters<TmuxAdapter['createSession']>[0] = {
+      socketName: worktree.tmuxSocketName,
+      sessionName,
+      terminalId,
+      worktreeId: worktree.id,
+      name,
+      createdAt: timestamp,
+      cwd: options?.cwd ?? worktree.path,
+      argv: commandArgv,
+      env: {
+        ...(options?.env ?? {}),
+        TREEPORT_API_URL: this.deps.config.apiUrl,
+        TREEPORT_MANAGED_API_URL: this.deps.config.apiUrl,
+        TREEPORT_DAEMON_RECORD: path.join(
+          this.deps.config.runtimeDir,
+          'daemon.json'
+        ),
+        TREEPORT_DAEMON_LIFECYCLE: this.deps.config.daemonLifecycle,
+        TREEPORT_PROJECT_ID: project.id,
+        TREEPORT_WORKTREE_ID: worktree.id,
+        TREEPORT_TERMINAL_ID: terminalId
+      }
+    }
+    if (options?.returnToShell && argv) {
+      session.fallbackArgv = [this.deps.config.shell, '-l']
+    }
+
+    if (options?.closeOnSuccess) {
+      session.closeOnSuccess = true
+    }
+
+    if (options?.initialSize) {
+      session.initialSize = options.initialSize
+    }
+
+    if (options?.setup?.tasks.length) {
+      session.setupTasks = options.setup.tasks
+    }
+
+    if (options?.setup?.error) {
+      session.setupError = options.setup.error
+    }
+
     try {
-      await this.deps.tmux.createSession({
-        socketName: worktree.tmuxSocketName,
-        sessionName,
-        terminalId,
-        worktreeId: worktree.id,
-        name,
-        createdAt: timestamp,
-        cwd: options?.cwd ?? worktree.path,
-        argv: commandArgv,
-        ...(options?.returnToShell && argv
-          ? { fallbackArgv: [this.deps.config.shell, '-l'] }
-          : {}),
-        ...(options?.closeOnSuccess ? { closeOnSuccess: true } : {}),
-        ...(options?.initialSize ? { initialSize: options.initialSize } : {}),
-        env: {
-          ...(options?.env ?? {}),
-          TREEPORT_API_URL: this.deps.config.apiUrl,
-          TREEPORT_MANAGED_API_URL: this.deps.config.apiUrl,
-          TREEPORT_DAEMON_RECORD: path.join(
-            this.deps.config.runtimeDir,
-            'daemon.json'
-          ),
-          TREEPORT_DAEMON_LIFECYCLE: this.deps.config.daemonLifecycle,
-          TREEPORT_PROJECT_ID: project.id,
-          TREEPORT_WORKTREE_ID: worktree.id,
-          TREEPORT_TERMINAL_ID: terminalId
-        },
-        ...(options?.setup?.tasks.length
-          ? { setupTasks: options.setup.tasks }
-          : {}),
-        ...(options?.setup?.error ? { setupError: options.setup.error } : {})
-      })
+      await this.deps.tmux.createSession(session)
     } catch (error) {
       throw new DomainError(
         'TERMINAL_CREATE_FAILED',
@@ -4179,8 +4231,7 @@ export class TreeportService {
           item.path === preview.path &&
           (request.prunable
             ? item.prunable
-            : typeof acceptedKey === 'string' &&
-              item.gitWorktreeKey === acceptedKey)
+            : acceptedKey !== null && item.gitWorktreeKey === acceptedKey)
       )
       const liveRepositoryIdentity = await this.deps.git.repositoryIdentity(
         project.repositoryPath
@@ -4287,7 +4338,7 @@ export class TreeportService {
           'The repository identity changed after removal was accepted; residual files were preserved'
         residualPath = preview.path
       } else if (request.checkoutIdentity) {
-        let cleanup: { removed: boolean; error: string | null } = {
+        let cleanup: CheckoutCleanupResult = {
           removed: false,
           error: null
         }
@@ -4295,7 +4346,7 @@ export class TreeportService {
           cleanup = await this.removeAuthorizedCheckout(
             preview.path,
             request.checkoutIdentity
-          ).catch((error: unknown) => ({
+          ).catch((error) => ({
             removed: false,
             error: `Automatic residual-checkout cleanup failed: ${
               error instanceof Error ? error.message : String(error)

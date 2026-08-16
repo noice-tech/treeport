@@ -34,6 +34,18 @@ interface SocketData {
 
 type InterServerEvents = Record<never, never>
 
+type TreeportSocketServer = Server<
+  ClientToServerEvents,
+  ServerToClientEvents,
+  InterServerEvents,
+  SocketData
+>
+
+interface SocketServerResult {
+  io: TreeportSocketServer
+  attachments: TerminalAttachmentManager
+}
+
 interface SocketServerDependencies {
   service: TreeportService
   config: AppConfig
@@ -51,15 +63,7 @@ export function createSocketServer(
     terminalMetadata,
     attachmentManager
   }: SocketServerDependencies
-): {
-  io: Server<
-    ClientToServerEvents,
-    ServerToClientEvents,
-    InterServerEvents,
-    SocketData
-  >
-  attachments: TerminalAttachmentManager
-} {
+): SocketServerResult {
   const io = new Server<
     ClientToServerEvents,
     ServerToClientEvents,
@@ -124,12 +128,12 @@ export function createSocketServer(
             }
             snapshotted = true
           })
-          .catch((error: unknown) => {
+          .catch((error) => {
             console.error('[Treeport] Socket.IO panel snapshot failed:', error)
             socket.disconnect(true)
           })
       },
-      (error: unknown) => {
+      (error) => {
         console.error(
           '[Treeport] Socket.IO event snapshot failed:',
           error instanceof Error ? error.message : String(error)
@@ -172,10 +176,12 @@ export function createSocketServer(
           return false
         }
 
-        ;(socket.emit as (event: string, payload: unknown) => void)(
-          event,
-          payload
-        )
+        // SAFETY: TerminalTransport accepts only terminal protocol events and matching payloads.
+        const emit = socket.emit.bind(socket) as (
+          event: TerminalServerEvent,
+          payload: TerminalServerPayload
+        ) => void
+        emit(event, payload)
         return true
       },
       disconnect(retryable: boolean) {

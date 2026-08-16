@@ -11,6 +11,7 @@ import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { z } from 'zod'
 import { findAvailablePort } from './development.mjs'
 
 const servers = []
@@ -76,14 +77,16 @@ describe('development environment allocation', () => {
       server.once('error', reject)
       server.listen({ host: '127.0.0.1', port: 0 }, resolve)
     })
-    const address = server.address()
-    if (!address || typeof address === 'string') {
+    const address = z
+      .object({ port: z.number().int() })
+      .safeParse(server.address())
+    if (!address.success) {
       throw new Error('Expected a TCP test server')
     }
 
-    expect(await findAvailablePort(address.port, '127.0.0.1')).toBeGreaterThan(
-      address.port
-    )
+    expect(
+      await findAvailablePort(address.data.port, '127.0.0.1')
+    ).toBeGreaterThan(address.data.port)
   })
 
   it('starts concurrent checkouts on sequential ports and stops their process groups', async () => {
@@ -283,7 +286,7 @@ if (args[0] === 'status') {
     const staleTarget = `http://127.0.0.1:${stalePort}`
     const leaseDirectory = path.join(
       os.tmpdir(),
-      `treeport-development-tailscale-${typeof process.getuid === 'function' ? process.getuid() : 'user'}`
+      `treeport-development-tailscale-${process.getuid?.() ?? 'user'}`
     )
     await mkdir(leaseDirectory, { recursive: true })
     await writeFile(

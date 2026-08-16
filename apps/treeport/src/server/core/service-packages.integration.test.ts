@@ -200,6 +200,7 @@ describe('TreeportService with injected command adapters', () => {
         returnToShell: true
       }
     )
+    // SAFETY: The test fixture provides the asserted contract used here.
     const launchSpec = JSON.parse(
       await fs.readFile(
         path.join(config.runtimeDir, 'launch-specs', `${terminal.id}.json`),
@@ -609,6 +610,7 @@ describe('TreeportService with injected command adapters', () => {
     })
 
     await service.installPackage(packageRoot, project.id)
+    // SAFETY: The test fixture provides the asserted contract used here.
     const persistedSettings = JSON.parse(
       await fs.readFile(path.join(main, '.treeport', 'settings.json'), 'utf8')
     ) as { packages: string[] }

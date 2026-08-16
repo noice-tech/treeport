@@ -557,6 +557,7 @@ describe('SQLite migration and catalog ordering', () => {
       fs.rm(path.join(oldMigrations, 'meta', '0007_snapshot.json'))
     ])
     const journalPath = path.join(oldMigrations, 'meta', '_journal.json')
+    // SAFETY: The test fixture provides the asserted contract used here.
     const journal = JSON.parse(await fs.readFile(journalPath, 'utf8')) as {
       entries: unknown[]
     }

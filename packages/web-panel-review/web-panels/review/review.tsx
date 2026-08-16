@@ -18,6 +18,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent
 } from 'react'
 import { createRoot } from 'react-dom/client'
+import { z } from 'zod'
 import './review.css'
 
 type CommentSide = 'additions' | 'deletions'
@@ -68,39 +69,24 @@ const TREE_CSS = `
   }
 `
 
-function parseReviewComment(value: unknown): ReviewComment | null {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
-    return null
-  }
+const reviewCommentSchema = z.object({
+  id: z.string(),
+  file: z.string(),
+  side: z.enum(['additions', 'deletions']),
+  lineNumber: z.number().int().nonnegative(),
+  body: z.string(),
+  resolved: z.boolean().optional()
+})
 
-  const id: unknown = Reflect.get(value, 'id')
-  const file: unknown = Reflect.get(value, 'file')
-  const side: unknown = Reflect.get(value, 'side')
-  const lineNumber: unknown = Reflect.get(value, 'lineNumber')
-  const body: unknown = Reflect.get(value, 'body')
-  const resolved: unknown = Reflect.get(value, 'resolved')
-  if (
-    typeof id !== 'string' ||
-    typeof file !== 'string' ||
-    (side !== 'additions' && side !== 'deletions') ||
-    !Number.isInteger(lineNumber) ||
-    typeof lineNumber !== 'number' ||
-    lineNumber < 0 ||
-    typeof body !== 'string' ||
-    (resolved !== undefined && typeof resolved !== 'boolean')
-  ) {
-    return null
-  }
-
-  return {
-    id,
-    file,
-    side,
-    lineNumber,
-    body,
-    resolved: resolved ?? false
-  }
-}
+const parseReviewComment = z
+  .unknown()
+  .transform((value): ReviewComment | null => {
+    const parsed = reviewCommentSchema.safeParse(value)
+    return parsed.success
+      ? { ...parsed.data, resolved: parsed.data.resolved ?? false }
+      : null
+  })
+  .parse
 
 function savedComments(comments: ReviewComment[]) {
   return comments.flatMap((comment) => {
@@ -511,7 +497,7 @@ function ReviewApp() {
     const operation = values.length
       ? treeport.storage.set(COMMENTS_KEY, values)
       : treeport.storage.delete(COMMENTS_KEY)
-    await operation.catch((reason: unknown) => {
+    await operation.catch((reason) => {
       setCommentStatus(
         reason instanceof Error
           ? `Could not save: ${reason.message}`
@@ -524,7 +510,7 @@ function ReviewApp() {
     const operation = next.size
       ? treeport.storage.set(VIEWED_KEY, [...next].sort())
       : treeport.storage.delete(VIEWED_KEY)
-    await operation.catch((reason: unknown) => {
+    await operation.catch((reason) => {
       setCommentStatus(
         reason instanceof Error
           ? `Could not save: ${reason.message}`
@@ -554,12 +540,9 @@ function ReviewApp() {
             return parsed ? [parsed] : []
           })
         : []
+      const parsedViewedFiles = z.array(z.string()).safeParse(storedViewedFiles)
       const parsedViewed = new Set(
-        Array.isArray(storedViewedFiles)
-          ? storedViewedFiles.filter(
-              (file): file is string => typeof file === 'string'
-            )
-          : []
+        parsedViewedFiles.success ? parsedViewedFiles.data : []
       )
       const parsedFiles = diff.unified
         ? [
