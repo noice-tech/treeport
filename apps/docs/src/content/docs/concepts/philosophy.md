@@ -9,7 +9,7 @@ Treeport gives terminal tools a standard application interface. You do not need 
 
 Treeport runs terminal applications as normal terminal applications. It does not replace their terminal user interfaces.
 
-Use familiar tabs, keyboard shortcuts, and mouse navigation to move between repositories, worktrees, and terminals.
+Use familiar tabs, keyboard shortcuts, and mouse navigation to move between repositories, trees, and terminals.
 
 You can continue to use your editor, shell, coding agent, and review tools.
 
@@ -29,18 +29,18 @@ Treeport connects tools that have a specific purpose:
 - Editors supply code navigation and editing.
 - GitHub pull requests supply a review workflow.
 
-Treeport supplies the persistent worktree and terminal context. It does not make less capable copies of specialist tools.
+Treeport supplies the persistent tree and terminal context. It does not make less capable copies of specialist tools.
 
-## 4. Use one worktree for one task
+## 4. Use one tree for one task
 
-A Git worktree gives each task separate files, changes, terminals, agents, and development servers.
+A tree gives each task separate files, changes, terminals, agents, and development servers.
 
-Treeport uses the worktree as the task boundary. It does not add a separate task database or task lifecycle.
+Each tree represents a Git worktree. Treeport uses the tree as the task boundary.
 
 Git remains the source of truth. This rule applies when Git, an editor, an agent, a script, or Treeport creates the worktree.
 
 ## 5. Keep the product boundary small
 
-Treeport makes worktree-based development persistent and easy to access. It does not replace an agent, editor, review system, or cloud platform.
+Treeport makes tree-based development persistent and easy to access. It does not replace an agent, editor, review system, or cloud platform.
 
 When a suitable tool exists, Treeport connects to it or stays out of its operation.

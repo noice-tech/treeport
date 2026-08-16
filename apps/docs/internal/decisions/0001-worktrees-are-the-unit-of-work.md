@@ -1,4 +1,4 @@
-# Decision 0001: Worktrees are the unit of work
+# Decision 0001: Git worktrees are the unit of work
 
 - Status: Accepted
 - Date: 2026-07-25
@@ -7,6 +7,8 @@
 ## Context
 
 Treeport needs a stable user model for development work.
+
+Current product copy calls this item a **tree**. This decision uses **Git worktree** for the underlying Git concept.
 
 One proposal added a separate `Task` entity:
 
@@ -26,25 +28,25 @@ However, the model would add a second lifecycle and source of truth.
 
 Treeport uses a Git worktree as the primary unit of work.
 
-The hierarchy is:
+The product hierarchy is:
 
 ```text
-Repository
-└── Worktree
+Project
+└── Tree
     └── Terminals
 ```
 
 Treeport will not add a separate task entity at this stage.
 
-A worktree can have Treeport presentation information:
+A tree can have Treeport presentation information:
 
 - a user title;
 - a reminder or note;
 - provenance;
-- optional parent-worktree context;
+- optional parent-tree context;
 - other small items that do not copy Git lifecycle state.
 
-This information adds context but does not replace worktree identity.
+This information adds context but does not replace Git worktree identity.
 
 ## Rationale
 
@@ -67,19 +69,19 @@ This synchronization can cause contradictions:
 - An active task can have no workspace.
 - An archived task can have active terminals.
 - A merged pull request can belong to an active task.
-- An external worktree can have no task record.
+- An external Git worktree can have no task record.
 - Task removal can have an unclear effect on branches, workspaces, and terminals.
 
-The worktree model prevents these contradictions. Development work stays connected to the concrete workspace that contains it.
+The tree model prevents these contradictions. Development work stays connected to the concrete workspace that contains it.
 
 ## Consequences
 
 ### Positive consequences
 
 - Git stays the source of truth.
-- Worktrees from Git, editors, scripts, agents, and Treeport are first-class items.
+- Git worktrees from Git, editors, scripts, agents, and Treeport are first-class trees.
 - Treeport does not need an import or conversion workflow.
-- Git state controls worktree existence and removal.
+- Git state controls tree existence and removal.
 - Operation-owned cleanup controls residual files.
 - The product is direct and easy to explain.
 - Presentation information can differ from branch names and paths.
@@ -88,7 +90,7 @@ The worktree model prevents these contradictions. Development work stays connect
 
 - Treeport is specific to Git worktrees.
 - Work that cannot use a Git worktree can be outside the primary product model.
-- A removed worktree does not keep an active workspace representation.
+- A removed tree does not keep an active workspace representation.
 - A future isolation method can require a new decision or abstraction.
 
 Treeport accepts these limits. Current product clarity is more important than possible future backends.
@@ -107,7 +109,7 @@ Optional applications can add information through:
 - Treeport CLI and API operations;
 - provider extensions.
 
-The worktree model must stay valid when these integrations are not present.
+The tree model must stay valid when these integrations are not present.
 
 ## Rejected alternatives
 
@@ -123,7 +125,7 @@ Treeport rejects this model for now. A workspace is less concrete than the Git w
 
 Treeport defers this model. A shared abstraction needs a second implementation with verified common requirements.
 
-### Worktree with small presentation information
+### Tree with small presentation information
 
 Treeport accepts this model. It supplies user titles and reminders without an independent task lifecycle.
 

@@ -38,9 +38,9 @@ treeport remove -l npm:@acme/treeport-tools
 treeport reload -l
 ```
 
-Repository settings always belong to the main worktree.
+Repository settings always belong to the main tree.
 
-Package resources are available in all worktrees for that repository.
+Package resources are available in all trees for that repository.
 
 `treeport reload` reads global settings and all registered repository settings again. It does not restart the daemon.
 
@@ -58,7 +58,7 @@ After you change a local package manifest or resource, run `treeport reload`.
 
 Global package settings are in `settings.json` in the Treeport data directory.
 
-Repository package settings are in `.treeport/settings.json` in the main worktree:
+Repository package settings are in `.treeport/settings.json` in the main tree:
 
 ```json
 {

@@ -1,15 +1,15 @@
 ---
-title: Worktree setup
-description: Prepare new worktrees with repository setup commands.
+title: Tree setup
+description: Prepare new trees with repository setup commands.
 ---
 
-Treeport can run repository setup commands when it creates a worktree.
+Treeport can run repository setup commands when it creates a tree.
 
 Use setup commands to install dependencies, copy local files, generate code, or prepare other prerequisites.
 
-Setup runs only for worktrees that Treeport creates.
+Setup runs only for trees that Treeport creates.
 
-Treeport does not run setup when it registers, finds, or refreshes an existing worktree.
+Treeport does not run setup when it registers, finds, or refreshes an existing tree.
 
 :::caution[Setup runs repository code]
 Setup commands run automatically with your user permissions. Use setup only in repositories and revisions that you trust.
@@ -19,7 +19,7 @@ See [Security](/security/) for the Treeport trust boundaries.
 
 ## Configure setup
 
-Create `.treeport/setup.json` in the main worktree:
+Create `.treeport/setup.json` in the main tree:
 
 ```json
 {
@@ -47,11 +47,11 @@ Create `.treeport/setup.json` in the main worktree:
 }
 ```
 
-Treeport always reads setup configuration from the main worktree.
+Treeport always reads setup configuration from the main tree.
 
-This rule applies when you create a worktree from a linked worktree.
+This rule applies when you create a tree from a linked tree.
 
-The setup can reference untracked files that are present only in the main worktree.
+The setup can reference untracked files that are present only in the main tree.
 
 The file can contain comments and trailing commas.
 
@@ -68,7 +68,7 @@ Each command supports these fields:
 
 - `name`: Required name in setup progress and errors.
 - `argv`: Required array with the executable and its literal arguments.
-- `cwd`: Optional directory in the new worktree. The default is the worktree root.
+- `cwd`: Optional directory in the new tree. The default is the tree root.
 - `env`: Optional object with string environment names and values.
 - `timeout`: Optional positive duration with `ms`, `s`, `m`, or `h`.
 
@@ -82,8 +82,8 @@ A timeout applies to one command, not to the complete command list.
 
 Each command receives these variables:
 
-- `TREEPORT_WORKTREE_PATH`: The new worktree path.
-- `TREEPORT_MAIN_WORKTREE_PATH`: The main worktree path.
+- `TREEPORT_WORKTREE_PATH`: The new tree path.
+- `TREEPORT_MAIN_WORKTREE_PATH`: The main tree path.
 
 Treeport replaces these exact placeholders in `argv`, `cwd`, and configured `env` values.
 
@@ -91,11 +91,11 @@ It does not replace other values, such as `$HOME` and `${OTHER_VARIABLE}`.
 
 The two Treeport variables are reserved. You cannot replace them in `env`.
 
-A `cwd` must resolve to the new worktree or one of its child directories.
+A `cwd` must resolve to the new tree or one of its child directories.
 
 Both `"packages/api"` and `"${TREEPORT_WORKTREE_PATH}/packages/api"` are valid.
 
-Treeport rejects a path that uses `..` to leave the new worktree. It also rejects the main worktree path.
+Treeport rejects a path that uses `..` to leave the new tree. It also rejects the main tree path.
 
 An earlier command can create the directory. The directory must exist only when its command starts.
 
@@ -122,7 +122,7 @@ Treeport runs commands one at a time in their listed order.
 
 A start error, timeout, signal, or nonzero exit stops setup immediately. Treeport does not run later commands.
 
-A setup failure does not remove the new worktree.
+A setup failure does not remove the new tree.
 
 When creation includes an initial terminal, Treeport starts that terminal immediately.
 
@@ -173,7 +173,7 @@ Treeport does not combine native and Zed commands during automatic setup:
 - An invalid native file reports an error. Treeport does not use Zed as a fallback.
 - When you remove the native file, Treeport uses Zed tasks again.
 
-This order applies only to automatic worktree setup.
+This order applies only to automatic tree setup.
 
 Zed tasks, including tasks with `create_worktree`, stay available for manual start in **New panel**.
 

@@ -96,7 +96,7 @@ function WorktreeShell({
         onClick={pending ? undefined : onClick}
         title={title}
         role={pending ? 'status' : undefined}
-        aria-label={pending ? `Creating worktree ${name}` : ariaLabel}
+        aria-label={pending ? `Creating tree ${name}` : ariaLabel}
         aria-live={pending || ariaLabel ? 'polite' : undefined}
         aria-disabled={pending || undefined}
         tabIndex={pending ? -1 : undefined}
@@ -191,7 +191,7 @@ export function WorkspaceTree({
   return (
     <nav
       className="tree min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-2 pt-3 pb-5 min-[701px]:px-1.5 min-[701px]:pt-2 min-[701px]:pb-4 [scrollbar-color:var(--color-zinc-700)_transparent]"
-      aria-label="Projects and worktrees"
+      aria-label="Projects and trees"
     >
       {projectsPending ? (
         <p className="sidebar-note px-2 py-3 text-base text-zinc-500 min-[701px]:text-sm">
@@ -341,7 +341,7 @@ export function WorkspaceTree({
                                 ? 'Git repository unavailable'
                                 : pendingRemovals[worktree.id]
                                   ? 'Removal in progress'
-                                  : 'Remove worktree…'}
+                                  : 'Remove tree…'}
                             </ContextMenuItem>
                           </ContextMenuGroup>
                         </ContextMenuContent>
@@ -448,7 +448,7 @@ export function WorkspaceTree({
                                 label={`Close ${title}`}
                                 tooltip={
                                   worktree.terminals.length === 1
-                                    ? 'Every worktree keeps at least one terminal'
+                                    ? 'Every tree keeps at least one terminal'
                                     : 'Close terminal'
                                 }
                                 disabled={worktree.terminals.length === 1}
@@ -660,7 +660,7 @@ export function WorkspaceTree({
                       }
                       title={
                         newWorktreeShortcut
-                          ? `New worktree — ${newWorktreeShortcut}`
+                          ? `New tree — ${newWorktreeShortcut}`
                           : undefined
                       }
                       onClick={(event) =>
@@ -668,7 +668,7 @@ export function WorkspaceTree({
                       }
                     >
                       <PlusIcon className="min-[701px]:size-3.5!" />
-                      <span>New worktree</span>
+                      <span>New tree</span>
                       {newWorktreeShortcut ? (
                         <kbd
                           className="ml-auto font-sans text-[0.6875rem] text-zinc-500"

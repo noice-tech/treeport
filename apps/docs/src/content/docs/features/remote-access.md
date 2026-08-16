@@ -9,7 +9,7 @@ The daemon stays on loopback. Tailscale Serve supplies private HTTPS and authent
 
 Serve adds the Tailscale user identity to HTTP and Socket.IO requests. Treeport rejects remote requests that do not have this identity.
 
-Your tailnet ACLs and grants control access. Each permitted user can control Treeport terminals and worktrees.
+Your tailnet ACLs and grants control access. Each permitted user can control Treeport terminals and trees.
 
 :::caution
 Do not use Tailscale Funnel, a public proxy, an arbitrary reverse proxy, or a direct network listener.

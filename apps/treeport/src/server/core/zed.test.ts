@@ -33,9 +33,7 @@ describe('Zed worktree compatibility', () => {
     expect(normalizeWorktreeName(' Feature Cáché / API! ')).toBe(
       'feature-cache-api'
     )
-    expect(() => normalizeWorktreeName(' / ')).toThrow(
-      /Worktree name is required/
-    )
+    expect(() => normalizeWorktreeName(' / ')).toThrow(/Tree name is required/)
     expect(
       inferWorktreeName(
         '/Projects/remotion-main',
@@ -51,7 +49,7 @@ describe('Zed worktree compatibility', () => {
       )
     ).toBe('test')
     expect(inferWorktreeName('/Projects/repo', '/Projects/repo', 'main')).toBe(
-      'main worktree'
+      'main tree'
     )
   })
 

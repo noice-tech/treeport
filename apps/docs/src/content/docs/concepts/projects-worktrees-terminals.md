@@ -1,13 +1,13 @@
 ---
-title: Projects, worktrees, and terminals
-description: Learn how Treeport organizes repositories, worktrees, and terminals.
+title: Projects, trees, and terminals
+description: Learn how Treeport organizes repositories, trees, and terminals.
 ---
 
-Treeport uses a Git worktree as the boundary for one unit of development work.
+Treeport uses a tree as the boundary for one unit of development work.
 
 ```text
 Project
-└── Worktree
+└── Tree
     └── Terminal
 ```
 
@@ -15,19 +15,25 @@ Project
 
 A project is a Git repository that you open in Treeport.
 
-When you close a project, Treeport stops all terminals in that project. It does not remove the repository, worktrees, or files.
+When you close a project, Treeport stops all terminals in that project. It does not remove the repository, Git worktrees, or files.
 
 You can open the project again later.
 
-## Worktrees
+## Trees
 
-A worktree is a Git checkout in a project. It can be the main worktree or a linked worktree.
+A tree is Treeport's persistent workspace for an isolated development environment.
 
-Treeport finds worktrees that Git, editors, agents, scripts, or other tools create. Treeport does not have to create them.
+The tree name does not tie the workspace to one isolation mechanism. Treeport currently uses a Git worktree for each tree.
+
+A Git worktree is a checkout in a project. Git identifies one as the main worktree or a linked worktree.
+
+Treeport finds Git worktrees that Git, editors, agents, scripts, or other tools create. It shows each worktree as a tree.
+
+[Rift](https://github.com/anomalyco/rift) is one example of a different isolation mechanism. It creates copy-on-write workspaces instead of Git worktrees. Treeport does not currently support Rift.
 
 ## Terminals
 
-Each terminal belongs to a worktree. The terminal runs in a tmux session that Treeport manages.
+Each terminal belongs to a tree. The terminal runs in a tmux session that Treeport manages.
 
 When you close a client, the client disconnects from the terminal. The terminal and its process continue to run.
 

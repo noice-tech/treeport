@@ -491,14 +491,12 @@ export function TerminalView({
           <div className="grid max-w-lg gap-3">
             <p className="eyebrow">No terminal open</p>
             <h1 className="text-balance text-2xl font-semibold tracking-tight text-zinc-50 sm:text-3xl">
-              {worktree
-                ? 'Start a terminal for this worktree.'
-                : 'Choose a worktree.'}
+              {worktree ? 'Start a terminal for this tree.' : 'Choose a tree.'}
             </h1>
             <p className="max-w-[52ch] text-base text-pretty text-zinc-400 sm:text-sm">
               {worktree
                 ? 'Use New panel in the sidebar to start a login shell, preset, or web panel.'
-                : 'Select a worktree from the sidebar to view its terminals.'}
+                : 'Select a tree from the sidebar to view its terminals.'}
             </p>
           </div>
         </div>

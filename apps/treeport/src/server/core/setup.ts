@@ -180,7 +180,7 @@ export async function resolveWorktreeSetupTasks(input: {
       : path.resolve(worktreePath, expandedCwd)
     if (!isPathWithin(cwd, worktreePath)) {
       throw new Error(
-        `Invalid Treeport setup in ${filePath}: commands[${index}].cwd must stay inside the new worktree`
+        `Invalid Treeport setup in ${filePath}: commands[${index}].cwd must stay inside the new tree`
       )
     }
 

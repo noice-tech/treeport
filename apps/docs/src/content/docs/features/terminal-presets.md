@@ -1,16 +1,16 @@
 ---
 title: Terminal presets
-description: Save terminal commands for repeated use in worktrees.
+description: Save terminal commands for repeated use in trees.
 ---
 
 A terminal preset is a named command in the **New panel** picker. Use presets for commands that you start frequently.
 
-| Preset             | Command             | Result                                               |
-| ------------------ | ------------------- | ---------------------------------------------------- |
-| Pi                 | `pi`                | Keep the agent terminal available.                   |
-| Development server | `pnpm dev`          | Keep the server active in the worktree.              |
-| Test watcher       | `pnpm test --watch` | Continue tests while you work.                       |
-| VS Code            | `code .`            | Open the worktree and close after a successful exit. |
+| Preset             | Command             | Result                                           |
+| ------------------ | ------------------- | ------------------------------------------------ |
+| Pi                 | `pi`                | Keep the agent terminal available.               |
+| Development server | `pnpm dev`          | Keep the server active in the tree.              |
+| Test watcher       | `pnpm test --watch` | Continue tests while you work.                   |
+| VS Code            | `code .`            | Open the tree and close after a successful exit. |
 
 ## Create a global preset
 
@@ -18,7 +18,7 @@ A terminal preset is a named command in the **New panel** picker. Use presets fo
 2. Select **Manage global presets**.
 3. Enter a name and command.
 
-Treeport saves the preset for all repositories and worktrees.
+Treeport saves the preset for all repositories and trees.
 
 [Treeport packages](/features/packages/) can also supply global or repository presets.
 
@@ -59,9 +59,9 @@ A preset supports these fields:
 - `args`: An array of literal arguments.
 - `closeOnSuccess`: An optional Boolean value. The default is `false`.
 
-Treeport reads the file from the worktree where you open the panel.
+Treeport reads the file from the tree where you open the panel.
 
-Each worktree uses the file from its own branch. Thus, you can test a preset before you merge it.
+Each tree uses the file from its own branch. Thus, you can test a preset before you merge it.
 
 After you change the file, the picker updates in approximately five seconds.
 
@@ -81,9 +81,9 @@ Shell and global presets stay available.
 
 Treeport also shows compatible tasks from `.zed/tasks.json` as terminal presets.
 
-Treeport reads this file from the main worktree. The same tasks are available in all worktrees for that repository.
+Treeport reads this file from the main tree. The same tasks are available in all trees for that repository.
 
-A `.zed/tasks.json` file in a linked worktree does not replace the main file.
+A `.zed/tasks.json` file in a linked tree does not replace the main file.
 
 The file can contain a task array or an object with a `tasks` array. Treeport permits comments and trailing commas.
 
@@ -92,15 +92,15 @@ Treeport supports these task fields:
 - `label`: Required name in the picker.
 - `command`: Required command string.
 - `args`: Optional array of string arguments. The default is `[]`.
-- `cwd`: Optional working directory. The default is the selected worktree root.
+- `cwd`: Optional working directory. The default is the selected tree root.
 - `env`: Optional object with string environment values.
 
-Treeport resolves a relative `cwd` from the selected worktree. It does not change an absolute path.
+Treeport resolves a relative `cwd` from the selected tree. It does not change an absolute path.
 
 Treeport expands `$NAME` and `${NAME}` forms for these variables:
 
-- `ZED_WORKTREE_ROOT`: The selected worktree.
-- `ZED_MAIN_GIT_WORKTREE`: The main worktree.
+- `ZED_WORKTREE_ROOT`: The selected tree.
+- `ZED_MAIN_GIT_WORKTREE`: The main tree.
 
 Expansion applies to the label, command, arguments, working directory, and environment values.
 
@@ -120,7 +120,7 @@ It ignores other Zed fields, such as `reveal`, `hide`, `allow_concurrent_runs`, 
 
 Tasks with a `create_worktree` hook stay available for manual start.
 
-See [Worktree setup](/features/worktree-setup-hooks/#zed-compatibility) for their separate automatic behavior.
+See [Tree setup](/features/worktree-setup-hooks/#zed-compatibility) for their separate automatic behavior.
 
 Treeport keeps Zed task file order and duplicate labels.
 
@@ -134,7 +134,7 @@ An invalid file omits only the Zed tasks and shows a diagnostic. All non-Zed pre
 
 Changes appear in the picker in approximately five seconds.
 
-Zed tasks require an existing worktree. They do not appear in **Initial terminal** during worktree creation.
+Zed tasks require an existing tree. They do not appear in **Initial terminal** during tree creation.
 
 ## Launch behavior
 

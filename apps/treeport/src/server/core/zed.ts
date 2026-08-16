@@ -77,11 +77,11 @@ export function normalizeWorktreeName(input: string): string {
     .replace(/[^\p{Letter}\p{Number}]+/gu, '-')
     .replace(/^-+|-+$/gu, '')
   if (!name) {
-    throw new Error('Worktree name is required')
+    throw new Error('Tree name is required')
   }
 
   if (name.length > 120) {
-    throw new Error('Worktree name must be 120 characters or fewer')
+    throw new Error('Tree name must be 120 characters or fewer')
   }
 
   return name
@@ -93,7 +93,7 @@ export function inferWorktreeName(
   kind: 'main' | 'linked'
 ): string {
   if (kind === 'main') {
-    return 'main worktree'
+    return 'main tree'
   }
 
   const checkoutName = path.basename(worktreePath)

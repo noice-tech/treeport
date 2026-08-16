@@ -564,7 +564,7 @@ function installMenu(): void {
       submenu: [
         {
           id: 'new-worktree',
-          label: 'New Worktree…',
+          label: 'New tree…',
           accelerator: 'CommandOrControl+N',
           click: () => sendDesktopCommand('new-worktree')
         },

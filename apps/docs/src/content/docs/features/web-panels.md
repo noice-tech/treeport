@@ -1,11 +1,11 @@
 ---
 title: Web panels (experimental)
-description: Build worktree panels with the Treeport Vite runtime.
+description: Build tree panels with the Treeport Vite runtime.
 ---
 
 Treeport has an experimental runtime for trusted web panels that a repository supplies.
 
-A web panel is persistent and belongs to one worktree.
+A web panel is persistent and belongs to one tree.
 
 Treeport synchronizes open and close operations between connected clients. The selected panel stays local to each client.
 
@@ -87,7 +87,7 @@ Use standard CSS instead.
 
 ## Open and keep panels
 
-Open **New panel** in a worktree. Then, select a discovered web panel.
+Open **New panel** in a tree. Then, select a discovered web panel.
 
 In the macOS desktop client, `Cmd+Shift+T` opens **New panel**.
 
@@ -151,9 +151,9 @@ const stopFind = treeport.shortcuts.onFind(() => {
 
 The Treeport Vite profile maps this import to the host SDK. You do not need a runtime dependency or import map.
 
-`treeport.context()` returns panel, project, worktree, and start data.
+`treeport.context()` returns `panel`, `project`, `worktree`, and `launch` data.
 
-The start input is a JSON object or `null`. The start `cwd` is relative to the worktree root.
+The start input is a JSON object or `null`. The start `cwd` is relative to the tree root.
 
 Use `treeport.panel.setTitle(title)` to set a title on the current client.
 
@@ -161,7 +161,7 @@ Use `treeport.panel.setTitle(null)` to restore the configured title.
 
 Treeport does not save runtime titles or send them to other clients.
 
-`treeport.diff()` returns merge-base information and a read-only unified diff for the final worktree state.
+`treeport.diff()` returns merge-base information and a read-only unified diff for the final tree state.
 
 It groups relative file paths into these sets:
 

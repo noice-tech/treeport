@@ -15,7 +15,7 @@ Service mode is optional. A normal installation or start does not enable it.
 
 The supervised backend runs as your user and listens only on loopback.
 
-It uses the same data, projects, worktrees, terminals, listener, and Tailscale Serve route as the standard background daemon.
+It uses the same data, projects, trees, terminals, listener, and Tailscale Serve route as the standard background daemon.
 
 ## macOS
 

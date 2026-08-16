@@ -5,7 +5,7 @@ description: Understand the local, remote, repository, and package security boun
 
 Treeport gives full terminal access.
 
-An authorized user can read terminal output, send input, create processes, and change registered worktrees.
+An authorized user can read terminal output, send input, create processes, and change registered trees.
 
 Direct access is limited to loopback. It uses the local operating-system user as the security boundary.
 
@@ -57,9 +57,9 @@ Keep the access policy narrow. A tagged device does not supply a user identity a
 
 When you register a repository, Treeport can read these files:
 
-- package settings from the main worktree;
-- compatible `.zed/tasks.json` tasks from the main worktree;
-- native terminal presets from each registered worktree.
+- package settings from the main tree;
+- compatible `.zed/tasks.json` tasks from the main tree;
+- native terminal presets from each registered tree.
 
 Review packages, `.treeport/terminal-presets.json`, and `.zed/tasks.json` commands before you use them.
 
@@ -71,7 +71,7 @@ Native presets use one executable and a literal argument array.
 
 A Zed command with shell syntax runs through the configured shell. Treat this command as executable repository configuration.
 
-Automatic Zed `create_worktree` hooks use the separate [worktree setup rules](/features/worktree-setup-hooks/#zed-compatibility).
+Automatic Zed `create_worktree` hooks use the separate [tree setup rules](/features/worktree-setup-hooks/#zed-compatibility).
 
 ## Review packages and web panels
 
@@ -87,7 +87,7 @@ Treeport serves installed panel output only from its fixed build cache. Source a
 
 Panel JavaScript runs after you open the panel. It stays in the Treeport iframe runtime.
 
-These limits reduce automatic package execution. However, selected commands and open panels still operate on a trusted registered worktree.
+These limits reduce automatic package execution. However, selected commands and open panels still operate on a trusted registered tree.
 
 Review the panel source, runtime dependencies, and package manifest.
 

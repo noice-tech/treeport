@@ -649,9 +649,9 @@ describe('TreeportService with injected command adapters', () => {
     runner.tmuxCreateFails = false
 
     expect(terminalCreates).toBe(1)
-    expect(terminalFailure.setupError).toContain('worktree setup:')
+    expect(terminalFailure.setupError).toContain('Tree setup:')
     expect(terminalFailure.setupError).toContain(
-      'worktree setup terminal [TERMINAL_CREATE_FAILED]:'
+      'Tree setup terminal [TERMINAL_CREATE_FAILED]:'
     )
     expect(
       (

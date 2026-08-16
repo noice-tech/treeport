@@ -32,7 +32,7 @@ test.describe('mobile terminal UI', () => {
     await page.keyboard.press('Escape')
     await expect(notifications).toBeVisible()
 
-    const trigger = page.getByLabel('Open worktree drawer')
+    const trigger = page.getByLabel('Open tree drawer')
     await trigger.click()
     await expect(page.getByLabel('Close drawer')).toBeFocused()
     await expect(
@@ -146,7 +146,7 @@ test.describe('mobile terminal UI', () => {
         request.method() === 'POST' &&
         new URL(request.url()).pathname === '/api/worktrees/wt_topic/terminals'
     )
-    await page.getByLabel('Open worktree drawer').click()
+    await page.getByLabel('Open tree drawer').click()
     await page.getByRole('button', { name: /^New panel/ }).click()
     await page
       .getByRole('dialog', { name: 'New panel' })
@@ -189,23 +189,23 @@ test.describe('mobile terminal UI', () => {
 
   test('keeps mobile modal and drawer flows coherent', async ({ page }) => {
     const mocked = await mockApp(page)
-    await page.getByLabel('Open worktree drawer').click()
-    const trigger = page.getByRole('button', { name: 'New worktree' })
+    await page.getByLabel('Open tree drawer').click()
+    const trigger = page.getByRole('button', { name: 'New tree' })
     await trigger.click()
     await expect(
-      page.getByRole('dialog', { name: 'Create worktree' })
+      page.getByRole('dialog', { name: 'Create tree' })
     ).toBeVisible()
     await page.keyboard.press('Escape')
     await expect(
-      page.getByRole('heading', { name: 'Create worktree' })
+      page.getByRole('heading', { name: 'Create tree' })
     ).toHaveCount(0)
     await expect(trigger).toBeFocused()
     await page.keyboard.press('Escape')
 
-    await page.getByLabel('Open worktree drawer').click()
+    await page.getByLabel('Open tree drawer').click()
     await trigger.click()
     await page.clock.install()
-    const submit = page.getByRole('button', { name: 'Create worktree' })
+    const submit = page.getByRole('button', { name: 'Create tree' })
     const submitBox = await submit.boundingBox()
     expect(submitBox).not.toBeNull()
     const requestPromise = page.waitForRequest(
@@ -214,7 +214,7 @@ test.describe('mobile terminal UI', () => {
         new URL(request.url()).pathname ===
           '/api/projects/proj_1/worktree-operations'
     )
-    await page.getByLabel('Worktree name').fill('touch submit')
+    await page.getByLabel('Tree name').fill('touch submit')
     await page.touchscreen.tap(
       submitBox!.x + submitBox!.width / 2,
       submitBox!.y + submitBox!.height / 2
@@ -223,14 +223,14 @@ test.describe('mobile terminal UI', () => {
       name: 'touch submit'
     })
     await expect(
-      page.getByRole('heading', { name: 'Create worktree' })
+      page.getByRole('heading', { name: 'Create tree' })
     ).toHaveCount(0)
 
     mocked.failNextCreate()
-    await page.getByLabel('Open worktree drawer').click()
+    await page.getByLabel('Open tree drawer').click()
     await trigger.click()
-    await page.getByLabel('Worktree name').fill('mobile failure')
-    await page.getByRole('button', { name: 'Create worktree' }).click()
+    await page.getByLabel('Tree name').fill('mobile failure')
+    await page.getByRole('button', { name: 'Create tree' }).click()
     await expect(page.getByText('create failed')).toBeVisible()
   })
 
@@ -238,7 +238,7 @@ test.describe('mobile terminal UI', () => {
     page
   }, testInfo) => {
     await mockApp(page)
-    await page.getByLabel('Open worktree drawer').click()
+    await page.getByLabel('Open tree drawer').click()
     await page.getByRole('button', { name: 'Pi, running', exact: true }).click()
     const screen = page.locator('.xterm-screen')
     const bounds = await screen.boundingBox()

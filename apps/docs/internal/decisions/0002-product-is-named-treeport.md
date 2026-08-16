@@ -16,17 +16,17 @@ The original name did not have a public release.
 
 The product and GitHub repository name is **Treeport**.
 
-The name identifies a stable place to enter worktree development environments and return to them.
+The name identifies a stable place to enter Git worktree development environments and return to them.
 
-The product hierarchy stays:
+The product hierarchy is:
 
 ```text
-Repository
-└── Worktree
+Project
+└── Tree
     └── Terminals
 ```
 
-The name change does not add task, tree, workspace, or provider lifecycle abstractions.
+Each tree represents a Git worktree. The tree term does not add a separate lifecycle abstraction.
 
 ## Prerelease change
 

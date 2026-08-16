@@ -103,7 +103,7 @@ export function WorktreeForm({
           value={name}
           onChange={(event) => setName(event.target.value)}
           placeholder="feature-name"
-          aria-label="Worktree name"
+          aria-label="Tree name"
           autoCapitalize="none"
           spellCheck={false}
           required
@@ -201,7 +201,7 @@ export function WorktreeForm({
           className="ml-auto"
           disabled={busy || waitingForInitialPreset || !name.trim()}
         >
-          {busy ? 'Creating…' : 'Create worktree'}
+          {busy ? 'Creating…' : 'Create tree'}
         </Button>
       </div>
     </form>
