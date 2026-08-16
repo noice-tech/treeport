@@ -1,7 +1,7 @@
 {
-  "name": "Treeport — worktree terminal driver",
+  "name": "Treeport — Tree terminal driver",
   "short_name": "Treeport",
-  "description": "Persistent terminals organized by Git worktree",
+  "description": "Persistent terminals organized in Trees",
   "theme_color": "#09090b",
   "background_color": "#09090b",
   "display": "standalone",

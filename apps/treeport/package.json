@@ -1,7 +1,7 @@
 {
   "name": "@treeport/treeport",
   "version": "0.3.0",
-  "description": "A worktree-first terminal driver for persistent development workspaces.",
+  "description": "A Tree-first terminal driver for persistent development workspaces.",
   "type": "module",
   "bin": {
     "treeport": "bin/treeport.mjs"

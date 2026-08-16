@@ -289,7 +289,7 @@ async function createWorktree(
 
   if (operation.status === 'failed') {
     throw new CliError(
-      operation.error ?? 'Worktree creation failed',
+      operation.error ?? 'Tree creation failed',
       5,
       'WORKTREE_CREATION_FAILED'
     )
@@ -297,7 +297,7 @@ async function createWorktree(
 
   if (operation.kind !== 'create') {
     throw new CliError(
-      'Worktree creation returned an unexpected operation kind',
+      'Tree creation returned an unexpected operation kind',
       5,
       'INVALID_OPERATION_RESULT'
     )
@@ -306,7 +306,7 @@ async function createWorktree(
   const worktreeId = operation.result?.worktreeId ?? operation.worktreeId
   if (!worktreeId) {
     throw new CliError(
-      'Completed worktree creation did not identify its worktree',
+      'Completed Tree creation did not identify its Tree',
       5,
       'INVALID_OPERATION_RESULT'
     )
@@ -320,7 +320,7 @@ async function createWorktree(
   const worktree = project.worktrees.find((item) => item.id === worktreeId)
   if (!worktree) {
     throw new CliError(
-      `Created worktree ${worktreeId} was not found`,
+      `Created Tree ${worktreeId} was not found`,
       5,
       'INVALID_OPERATION_RESULT'
     )
@@ -454,7 +454,7 @@ async function resolveWorktree(identifier: string): Promise<WorktreeRecord> {
     .filter((worktree) => pathContains(candidate, worktree.path))
     .sort((a, b) => b.path.length - a.path.length)[0]
   if (!match) {
-    throw new CliError(`No registered worktree matches ${identifier}`, 5)
+    throw new CliError(`No registered Tree matches ${identifier}`, 5)
   }
 
   return match
@@ -519,7 +519,7 @@ async function webPanelDefinition(
   }
 
   throw new CliError(
-    `Web panel ${identifier} is not available in this worktree`,
+    `Web panel ${identifier} is not available in this Tree`,
     5,
     'WEB_PANEL_DEFINITION_NOT_FOUND'
   )
@@ -532,7 +532,7 @@ async function webPanelLaunchCwd(worktree: WorktreeRecord): Promise<string> {
   ])
   if (!pathContains(cwd, worktreeRoot)) {
     throw new CliError(
-      `The current directory is outside worktree ${worktree.name}`,
+      `The current directory is outside Tree ${worktree.name}`,
       5,
       'INVALID_WEB_PANEL_LAUNCH_CWD',
       { cwd, worktreeId: worktree.id, worktreePath: worktree.path }
@@ -888,7 +888,7 @@ async function main(args: string[]): Promise<void> {
   const program = new Command()
     .name('treeport')
     .usage('[options] [folder] [command]')
-    .description('Manage Treeport projects, worktrees, and terminals.')
+    .description('Manage Treeport projects, Trees, and terminals.')
     .argument('[folder]', 'folder inside a Git repository to open')
     .option('--json', 'emit machine-readable JSON')
     .addHelpText('beforeAll', agentGuidance)
@@ -1319,7 +1319,7 @@ async function main(args: string[]): Promise<void> {
         return `Treeport is unhealthy (PID ${status.state.pid})\nLogs: ${path.join(status.state.dataDir, 'logs', 'daemon.log')}`
       }
 
-      return `Treeport is running\n${status.state.apiUrl}\nLifecycle: ${status.health?.daemonLifecycle}\nVersion: ${status.health?.version}\nPID: ${status.state.pid}\nProjects: ${result.projects}\nWorktrees: ${result.worktrees}\nTerminals: ${result.terminals}`
+      return `Treeport is running\n${status.state.apiUrl}\nLifecycle: ${status.health?.daemonLifecycle}\nVersion: ${status.health?.version}\nPID: ${status.state.pid}\nProjects: ${result.projects}\nTrees: ${result.worktrees}\nTerminals: ${result.terminals}`
     })
   })
 
@@ -1436,7 +1436,7 @@ async function main(args: string[]): Promise<void> {
     )
     if (!worktree) {
       throw new CliError(
-        'Treeport context worktree does not belong to the current project',
+        'Treeport context Tree does not belong to the current project',
         5,
         'TREEPORT_CONTEXT_INVALID',
         { projectId, worktreeId }
@@ -1448,7 +1448,7 @@ async function main(args: string[]): Promise<void> {
     )
     if (!terminal) {
       throw new CliError(
-        'Treeport context terminal does not belong to the current worktree',
+        'Treeport context terminal does not belong to the current Tree',
         5,
         'TREEPORT_CONTEXT_INVALID',
         { worktreeId, terminalId }
@@ -1488,7 +1488,7 @@ async function main(args: string[]): Promise<void> {
     print(
       context,
       () =>
-        `Treeport context\n\nProject:  ${context.project.name} (${context.project.id})\nWorktree: ${context.worktree.name} (${context.worktree.id})\nPath:     ${context.worktree.path}\nTerminal: ${context.terminal.name} (${context.terminal.id}) — ${context.terminal.status}\nAPI:      ${context.apiUrl}\nLifecycle: ${context.daemonLifecycle === 'external' ? 'externally managed' : context.daemonLifecycle === 'service' ? 'managed by the OS service' : 'managed by Treeport'}`
+        `Treeport context\n\nProject:  ${context.project.name} (${context.project.id})\nTree:     ${context.worktree.name} (${context.worktree.id})\nPath:     ${context.worktree.path}\nTerminal: ${context.terminal.name} (${context.terminal.id}) — ${context.terminal.status}\nAPI:      ${context.apiUrl}\nLifecycle: ${context.daemonLifecycle === 'external' ? 'externally managed' : context.daemonLifecycle === 'service' ? 'managed by the OS service' : 'managed by Treeport'}`
     )
   })
 
@@ -1690,14 +1690,14 @@ async function main(args: string[]): Promise<void> {
 
   const worktreeCommand = program
     .command('worktree')
-    .description('List, create, and remove worktrees')
+    .description('List, create, and remove Trees')
   worktreeCommand.action(() => {
     throw new CliError(worktreeCommand.helpInformation(), 2)
   })
 
   const worktreeListCommand = worktreeCommand
     .command('list')
-    .description('List discovered worktrees')
+    .description('List discovered Trees')
     .option('--project <id-or-path>', 'limit results to a project')
     .option('--json', 'emit machine-readable JSON')
   worktreeListCommand.action(async () => {
@@ -1719,10 +1719,10 @@ async function main(args: string[]): Promise<void> {
 
   const worktreeCreateCommand = worktreeCommand
     .command('create')
-    .description('Create a linked worktree')
+    .description('Create a linked Tree')
     .requiredOption('--project <id-or-path>', 'project to create from')
-    .requiredOption('--name <name>', 'worktree name')
-    .option('--from-current', 'base the worktree on the current worktree')
+    .requiredOption('--name <name>', 'Tree name')
+    .option('--from-current', 'base the Tree on the current Tree')
     .option('--json', 'emit machine-readable JSON')
   worktreeCreateCommand.action(async () => {
     const options = worktreeCreateCommand.opts<{
@@ -1746,14 +1746,14 @@ async function main(args: string[]): Promise<void> {
     print(
       result,
       () =>
-        `Created ${result.worktree.name} (${result.worktree.id})\n${result.worktree.path}${result.setupError ? `\nSetup error: ${result.setupError}` : ''}`
+        `Created Tree ${result.worktree.name} (${result.worktree.id})\n${result.worktree.path}${result.setupError ? `\nSetup error: ${result.setupError}` : ''}`
     )
   })
 
   const worktreeRemoveCommand = worktreeCommand
     .command('remove')
-    .description('Remove a linked worktree')
-    .argument('<id-or-path-or-dot>', 'worktree to remove')
+    .description('Remove a linked Tree')
+    .argument('<id-or-path-or-dot>', 'Tree to remove')
     .option('--force', 'confirm destructive removal warnings')
     .option('--json', 'emit machine-readable JSON')
   worktreeRemoveCommand.action(async (identifier: string) => {
@@ -1799,7 +1799,7 @@ async function main(args: string[]): Promise<void> {
     }
     if (operation.status === 'failed') {
       throw new CliError(
-        operation.error ?? 'Worktree removal failed',
+        operation.error ?? 'Tree removal failed',
         5,
         'WORKTREE_REMOVAL_FAILED'
       )
@@ -1807,7 +1807,7 @@ async function main(args: string[]): Promise<void> {
 
     if (operation.kind !== 'remove' || !operation.result) {
       throw new CliError(
-        'Worktree removal returned an unexpected operation result',
+        'Tree removal returned an unexpected operation result',
         5,
         'INVALID_OPERATION_RESULT'
       )
@@ -1815,7 +1815,7 @@ async function main(args: string[]): Promise<void> {
 
     print(operation.result, () => {
       const warning = operation.result?.cleanup.warning
-      return `Removed ${worktree.name} (${worktree.id})${warning ? `\nWarning: ${warning}` : ''}`
+      return `Removed Tree ${worktree.name} (${worktree.id})${warning ? `\nWarning: ${warning}` : ''}`
     })
   })
 
@@ -1830,7 +1830,7 @@ async function main(args: string[]): Promise<void> {
     .command('open')
     .description('Create or reuse a web panel and request client navigation')
     .argument('<definition>', 'definition ID or unique short name')
-    .requiredOption('--worktree <id-or-path-or-dot>', 'owning worktree')
+    .requiredOption('--worktree <id-or-path-or-dot>', 'owning Tree')
     .option('--input <json>', 'structured panel input as a JSON object')
     .option('--new', 'create a separate panel instance')
     .option('--json', 'emit machine-readable JSON')
@@ -1868,7 +1868,7 @@ async function main(args: string[]): Promise<void> {
 
   const terminalCommand = program
     .command('terminal')
-    .description('Manage persistent worktree terminals')
+    .description('Manage persistent Tree terminals')
   terminalCommand.action(() => {
     throw new CliError(terminalCommand.helpInformation(), 2)
   })
@@ -1876,7 +1876,7 @@ async function main(args: string[]): Promise<void> {
   const terminalListCommand = terminalCommand
     .command('list')
     .description('List terminals')
-    .option('--worktree <id-or-path>', 'limit results to a worktree')
+    .option('--worktree <id-or-path>', 'limit results to a Tree')
     .option('--json', 'emit machine-readable JSON')
   terminalListCommand.action(async () => {
     const { worktree: identifier } = terminalListCommand.opts<{
@@ -1901,7 +1901,7 @@ async function main(args: string[]): Promise<void> {
     .command('create')
     .description('Create a persistent terminal')
     .usage('[options] [-- <command> args...]')
-    .requiredOption('--worktree <id-or-path-or-dot>', 'owning worktree')
+    .requiredOption('--worktree <id-or-path-or-dot>', 'owning Tree')
     .requiredOption('--name <name>', 'terminal name')
     .option('--json', 'emit machine-readable JSON')
     .addHelpText('after', '\nCommand arguments may be passed after --.\n')
@@ -2019,12 +2019,12 @@ async function main(args: string[]): Promise<void> {
 
   const spawnCommand = program
     .command('spawn')
-    .description('Create a worktree and its first terminal')
+    .description('Create a Tree and its first terminal')
     .usage('[options] [-- <command> args...]')
     .requiredOption('--project <id-or-path-or-dot>', 'project to create from')
-    .requiredOption('--worktree-name <name>', 'worktree name')
+    .requiredOption('--worktree-name <name>', 'Tree name')
     .requiredOption('--name <terminal-name>', 'terminal name')
-    .option('--from-current', 'base the worktree on the current worktree')
+    .option('--from-current', 'base the Tree on the current Tree')
     .option('--json', 'emit machine-readable JSON')
     .addHelpText('after', '\nCommand arguments may be passed after --.\n')
   spawnCommand.action(async () => {
@@ -2058,7 +2058,7 @@ async function main(args: string[]): Promise<void> {
     print(
       result,
       () =>
-        `Created worktree ${result.worktree.name} (${result.worktree.id})\nPath: ${result.worktree.path}\n${result.terminal ? `Terminal: ${result.terminal.name} (${result.terminal.id}) — ${result.terminal.status}` : 'Terminal: not created'}${result.setupError ? `\nSetup error: ${result.setupError}` : ''}${result.terminalError ? `\nTerminal error: ${result.terminalError}` : ''}`
+        `Created Tree ${result.worktree.name} (${result.worktree.id})\nPath: ${result.worktree.path}\n${result.terminal ? `Terminal: ${result.terminal.name} (${result.terminal.id}) — ${result.terminal.status}` : 'Terminal: not created'}${result.setupError ? `\nSetup error: ${result.setupError}` : ''}${result.terminalError ? `\nTerminal error: ${result.terminalError}` : ''}`
     )
   })
 

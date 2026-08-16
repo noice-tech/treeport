@@ -41,6 +41,10 @@ function getAnchors(content) {
       continue
     }
 
+    for (const match of line.matchAll(/\bid=["']([^"']+)["']/g)) {
+      anchors.add(match[1])
+    }
+
     const match = /^(#{1,6})\s+(.+?)\s*$/.exec(line)
 
     if (!match) {

@@ -914,9 +914,7 @@ export class TmuxAdapter {
       timeoutMs: 15_000
     })
     if (result.exitCode !== 0 && !isAbsentTmuxServer(result.stderr)) {
-      throw new Error(
-        result.stderr.trim() || 'Failed to kill worktree tmux server'
-      )
+      throw new Error(result.stderr.trim() || 'Failed to kill Tree tmux server')
     }
 
     await Promise.all(

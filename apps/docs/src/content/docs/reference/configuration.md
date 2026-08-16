@@ -43,13 +43,13 @@ Otherwise, it uses a user-specific directory in the operating-system temporary d
 
 A repository can contain `.treeport/terminal-presets.json`.
 
-Treeport reads this file from the selected worktree. Thus, each worktree uses the file from its branch.
+Treeport reads this file from the selected Tree. Thus, each Tree uses the file from its branch.
 
 The file maps stable preset identifiers to a name, executable, literal argument array, and optional `closeOnSuccess` value.
 
-Treeport also reads compatible `.zed/tasks.json` tasks from the main worktree.
+Treeport also reads compatible `.zed/tasks.json` tasks from the main Tree.
 
-These tasks apply to all worktrees in that repository. They support path expansion, working directories, and environments.
+These tasks apply to all Trees in that repository. They support path expansion, working directories, and environments.
 
 See [Repository presets](/features/terminal-presets/#repository-presets) and [Zed task compatibility](/features/terminal-presets/#zed-task-compatibility).
 
@@ -57,7 +57,7 @@ See [Repository presets](/features/terminal-presets/#repository-presets) and [Ze
 
 Global package settings are at `<data-dir>/settings.json`.
 
-Repository settings are at `<main-worktree>/.treeport/settings.json`. The main worktree controls all linked worktrees.
+Repository settings are at `<main-tree>/.treeport/settings.json`. The main Tree controls all linked Trees.
 
 Supported fields are:
 
@@ -80,7 +80,7 @@ You can use a wrapper without shell parsing:
 
 Global managed npm files are in `<data-dir>/npm`.
 
-Repository managed npm files are in `<main-worktree>/.treeport/npm`.
+Repository managed npm files are in `<main-tree>/.treeport/npm`.
 
 Treeport creates an ignore file in this directory. This prevents accidental commits of dependencies and lock data.
 
@@ -104,7 +104,7 @@ Treeport puts these variables in managed terminals:
 | ---------------------- | --------------------------- |
 | `TREEPORT_API_URL`     | Daemon URL                  |
 | `TREEPORT_PROJECT_ID`  | Exact registered project ID |
-| `TREEPORT_WORKTREE_ID` | Exact current worktree ID   |
+| `TREEPORT_WORKTREE_ID` | Exact current Tree ID       |
 | `TREEPORT_TERMINAL_ID` | Exact current terminal ID   |
 
 After a daemon restart, CLI commands in managed terminals connect to the current local daemon.

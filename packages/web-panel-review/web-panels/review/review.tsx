@@ -554,7 +554,7 @@ function ReviewApp() {
           ]
         : []
       if (diff.unified && parsedFiles.length === 0) {
-        throw new Error('The worktree diff did not contain any file patches')
+        throw new Error('The Tree diff did not contain any file patches')
       }
 
       clearCopyFeedback()
@@ -1201,7 +1201,7 @@ function ReviewApp() {
         />
         <main id="review" aria-live="polite">
           {loading ? (
-            <p className="empty">Reading worktree changes…</p>
+            <p className="empty">Reading Tree changes…</p>
           ) : error ? (
             <p className="error">{error}</p>
           ) : files.length === 0 ? (

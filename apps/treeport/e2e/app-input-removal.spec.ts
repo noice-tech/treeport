@@ -35,7 +35,7 @@ test.describe('desktop terminal input and removal', () => {
     )
     await dialog.getByRole('button', { name: 'Close', exact: true }).click()
 
-    await page.getByRole('button', { name: 'New worktree' }).click()
+    await page.getByRole('button', { name: 'New Tree' }).click()
     await page.getByLabel('Initial terminal').selectOption({
       label:
         'Remote Hunk — Global — npx --yes hunkdiff@0.17.3 diff HEAD --watch'
@@ -49,7 +49,7 @@ test.describe('desktop terminal input and removal', () => {
     ).toBeVisible()
     await expect(page.getByLabel('Initial terminal')).toHaveValue('shell')
     await page
-      .getByRole('dialog', { name: 'Create worktree' })
+      .getByRole('dialog', { name: 'Create Tree' })
       .getByRole('button', { name: 'Close', exact: true })
       .click()
   })
@@ -575,17 +575,17 @@ test.describe('desktop terminal input and removal', () => {
       .toBe(`${TERMINAL_SCROLL_EXIT_SEQUENCE}q`)
   })
 
-  test('uses one removal action, live preview state, and places New worktree last', async ({
+  test('uses one removal action, live preview state, and places New Tree last', async ({
     page
   }) => {
     const mocked = await mockApp(page)
     await expect(
       page
         .getByRole('list')
-        .filter({ hasText: 'New worktree' })
+        .filter({ hasText: 'New Tree' })
         .getByRole('listitem')
         .last()
-    ).toContainText('New worktree')
+    ).toContainText('New Tree')
 
     mocked.setRemovePreview({
       branch: null,
@@ -596,9 +596,9 @@ test.describe('desktop terminal input and removal', () => {
       confirmationToken: 'b'.repeat(64)
     })
     const menu = await openWorktreeContextMenu(page, 'topic')
-    await menu.getByRole('menuitem', { name: 'Remove worktree…' }).click()
+    await menu.getByRole('menuitem', { name: 'Remove Tree…' }).click()
     await expect(
-      page.getByRole('alertdialog', { name: 'Remove worktree' })
+      page.getByRole('alertdialog', { name: 'Remove Tree' })
     ).toBeVisible()
     await expect(
       page.getByText('/worktrees/topic', { exact: true })
@@ -625,7 +625,7 @@ test.describe('desktop terminal input and removal', () => {
     const releaseRemove = mocked.delayNextRemove()
     const menu = await openWorktreeContextMenu(page, 'topic')
     const removeItem = menu.getByRole('menuitem', {
-      name: 'Remove worktree…'
+      name: 'Remove Tree…'
     })
     await removeItem.evaluate((item: HTMLElement) => {
       item.click()
@@ -640,7 +640,7 @@ test.describe('desktop terminal input and removal', () => {
     await expect(page.getByText('Removing…')).toHaveCount(0)
     await expect.poll(() => mocked.removeRequests()).toBe(1)
     await expect(
-      page.getByRole('heading', { name: 'Remove worktree' })
+      page.getByRole('heading', { name: 'Remove Tree' })
     ).toHaveCount(0)
     expect(mocked.removeRequestBodies()).toEqual([
       {
@@ -659,7 +659,7 @@ test.describe('desktop terminal input and removal', () => {
       confirmationToken: 'c'.repeat(64)
     })
     const menu = await openWorktreeContextMenu(page, 'topic')
-    await menu.getByRole('menuitem', { name: 'Remove worktree…' }).click()
+    await menu.getByRole('menuitem', { name: 'Remove Tree…' }).click()
 
     await expect.poll(() => mocked.removeRequests()).toBe(2)
     expect(mocked.removeRequestBodies()).toEqual([
@@ -673,7 +673,7 @@ test.describe('desktop terminal input and removal', () => {
       }
     ])
     await expect(
-      page.getByRole('heading', { name: 'Remove worktree' })
+      page.getByRole('heading', { name: 'Remove Tree' })
     ).toHaveCount(0)
   })
 
@@ -695,10 +695,10 @@ test.describe('desktop terminal input and removal', () => {
       confirmationToken: 'c'.repeat(64)
     })
     const menu = await openWorktreeContextMenu(page, 'topic')
-    await menu.getByRole('menuitem', { name: 'Remove worktree…' }).click()
+    await menu.getByRole('menuitem', { name: 'Remove Tree…' }).click()
 
     await expect(
-      page.getByRole('heading', { name: 'Remove worktree' })
+      page.getByRole('heading', { name: 'Remove Tree' })
     ).toBeVisible()
     await expect(
       page.getByText('1 untracked file(s) will be lost')
@@ -722,7 +722,7 @@ test.describe('desktop terminal input and removal', () => {
   }) => {
     const mocked = await mockApp(page)
     const menu = await openWorktreeContextMenu(page, 'topic')
-    await menu.getByRole('menuitem', { name: 'Remove worktree…' }).click()
+    await menu.getByRole('menuitem', { name: 'Remove Tree…' }).click()
     await expect.poll(() => mocked.removeRequests()).toBe(1)
 
     const removingMenu = await openWorktreeContextMenu(page, 'topic')

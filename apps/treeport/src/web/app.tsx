@@ -248,7 +248,7 @@ function WorkspaceApp() {
     },
     onError: (error, { worktree, definition }) => {
       notifyError(error, {
-        operation: `create web panel “${definition.title}” in worktree “${worktree.name}”`
+        operation: `create web panel “${definition.title}” in Tree “${worktree.name}”`
       })
     }
   })

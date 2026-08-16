@@ -348,7 +348,7 @@ export class TreeportService {
           SET status = 'failed',
               error = ${
                 operation.kind === 'create'
-                  ? 'Daemon restarted before worktree creation completed; existing Git state will be discovered without replaying the creation'
+                  ? 'Daemon restarted before Tree creation completed; existing Git state will be discovered without replaying the creation'
                   : 'Daemon restarted before the operation completed; external state was preserved for retry'
               },
               updated_at = ${timestamp}
@@ -811,7 +811,7 @@ export class TreeportService {
       .flatMap((project) => project.worktrees)
       .find((candidate) => candidate.id === worktreeId)
     if (!worktree) {
-      throw new DomainError('WORKTREE_NOT_FOUND', 'Worktree not found', 404)
+      throw new DomainError('WORKTREE_NOT_FOUND', 'Tree not found', 404)
     }
 
     return worktree
@@ -823,7 +823,7 @@ export class TreeportService {
   ): Promise<WorktreeRecord> {
     const binding = await this.storedWorktree(worktreeId)
     if (!binding) {
-      throw new DomainError('WORKTREE_NOT_FOUND', 'Worktree not found', 404)
+      throw new DomainError('WORKTREE_NOT_FOUND', 'Tree not found', 404)
     }
 
     const project = await this.observeAvailableProject(
@@ -834,7 +834,7 @@ export class TreeportService {
       (candidate) => candidate.id === worktreeId
     )
     if (!worktree) {
-      throw new DomainError('WORKTREE_NOT_FOUND', 'Worktree not found', 404)
+      throw new DomainError('WORKTREE_NOT_FOUND', 'Tree not found', 404)
     }
 
     if (worktree.prunable && !allowPrunable) {
@@ -1334,7 +1334,7 @@ export class TreeportService {
     ) {
       throw new DomainError(
         'INVALID_WEB_PANEL_LAUNCH_CWD',
-        'Web panel launch directory must be inside the worktree',
+        'Web panel launch directory must be inside the Tree',
         400
       )
     }
@@ -1698,7 +1698,7 @@ export class TreeportService {
   async getWorktree(worktreeId: string): Promise<WorktreeRecord> {
     const worktree = await this.storedWorktree(worktreeId)
     if (!worktree) {
-      throw new DomainError('WORKTREE_NOT_FOUND', 'Worktree not found', 404)
+      throw new DomainError('WORKTREE_NOT_FOUND', 'Tree not found', 404)
     }
 
     return worktree
@@ -1834,7 +1834,7 @@ export class TreeportService {
     if (!match) {
       throw new DomainError(
         'WORKTREE_NOT_FOUND',
-        `No registered worktree contains ${identifier}`,
+        `No registered Tree contains ${identifier}`,
         404
       )
     }
@@ -2399,7 +2399,7 @@ export class TreeportService {
       ) {
         throw new DomainError(
           'PROJECT_BUSY',
-          'A project worktree is already being modified',
+          'A project Tree is already being modified',
           409
         )
       }
@@ -3168,7 +3168,7 @@ export class TreeportService {
       ) {
         throw new DomainError(
           'WORKTREE_EXISTS',
-          `A worktree named ${name} already exists`,
+          `A Tree named ${name} already exists`,
           409
         )
       }
@@ -3202,7 +3202,7 @@ export class TreeportService {
         if (!sourceWorktreeId) {
           throw new DomainError(
             'INVALID_SOURCE_WORKTREE',
-            'A source worktree is required when starting from current',
+            'A source Tree is required when starting from current',
             400
           )
         }
@@ -3211,7 +3211,7 @@ export class TreeportService {
         if (source.projectId !== projectId || source.prunable) {
           throw new DomainError(
             'INVALID_SOURCE_WORKTREE',
-            'The source worktree must be active and belong to the project',
+            'The source Tree must be active and belong to the project',
             400
           )
         }
@@ -3322,7 +3322,7 @@ export class TreeportService {
           (error) => ({
             // SAFETY: The surrounding boundary contract establishes this asserted value.
             tasks: [] as WorktreeSetupTask[],
-            error: `worktree setup: ${
+            error: `Tree setup: ${
               error instanceof Error ? error.message : String(error)
             }`.slice(0, 4_096)
           })
@@ -3346,8 +3346,7 @@ export class TreeportService {
         setupError = setup.error
         if (setup.tasks.length > 0 || setupError) {
           if (!terminal) {
-            setupError ??=
-              'worktree setup: no persistent terminal could be started'
+            setupError ??= 'Tree setup: no persistent terminal could be started'
           } else {
             try {
               const setupOptions: TerminalLaunchOptions = {
@@ -3365,7 +3364,7 @@ export class TreeportService {
                 setupOptions
               )
             } catch (error) {
-              const setupTerminalError = `worktree setup terminal${
+              const setupTerminalError = `Tree setup terminal${
                 error instanceof DomainError ? ` [${error.code}]` : ''
               }: ${
                 error instanceof Error ? error.message : String(error)
@@ -3387,7 +3386,7 @@ export class TreeportService {
           )
           .catch((error) => [
             {
-              label: 'worktree setup',
+              label: 'Tree setup',
               error: error instanceof Error ? error.message : String(error)
             }
           ])
@@ -3576,7 +3575,7 @@ export class TreeportService {
     try {
       const worktree = await this.storedWorktree(worktreeId)
       if (!worktree) {
-        throw new DomainError('WORKTREE_NOT_FOUND', 'Worktree not found', 404)
+        throw new DomainError('WORKTREE_NOT_FOUND', 'Tree not found', 404)
       }
 
       if (
@@ -3586,7 +3585,7 @@ export class TreeportService {
       ) {
         throw new DomainError(
           'WORKTREE_BUSY',
-          'Cannot create a terminal while the worktree is being modified',
+          'Cannot create a terminal while the Tree is being modified',
           409
         )
       }
@@ -3735,7 +3734,7 @@ export class TreeportService {
   ): Promise<void> {
     const worktree = await this.storedWorktree(worktreeId)
     if (!worktree) {
-      throw new DomainError('WORKTREE_NOT_FOUND', 'Worktree not found', 404)
+      throw new DomainError('WORKTREE_NOT_FOUND', 'Tree not found', 404)
     }
 
     await this.requireOpenProject(worktree.projectId)
@@ -3770,7 +3769,7 @@ export class TreeportService {
       ) {
         throw new DomainError(
           'LAST_TERMINAL',
-          'Every open worktree must keep at least one terminal',
+          'Every open Tree must keep at least one terminal',
           409
         )
       }
@@ -3812,13 +3811,13 @@ export class TreeportService {
     const current = await this.storedWorktree(worktreeId)
 
     if (!current) {
-      throw new DomainError('WORKTREE_NOT_FOUND', 'Worktree not found', 404)
+      throw new DomainError('WORKTREE_NOT_FOUND', 'Tree not found', 404)
     }
 
     if (this.worktreeLocks.has(worktreeId)) {
       throw new DomainError(
         'WORKTREE_UNAVAILABLE',
-        'Cannot refresh a pull request while the worktree is being removed',
+        'Cannot refresh a pull request while the Tree is being removed',
         409
       )
     }
@@ -3886,8 +3885,8 @@ export class TreeportService {
     if (live.locked) {
       reasons.push(
         live.lockReason
-          ? `The worktree is locked: ${live.lockReason}`
-          : 'The worktree is locked'
+          ? `The Tree is locked: ${live.lockReason}`
+          : 'The Tree is locked'
       )
     }
 
@@ -3969,7 +3968,7 @@ export class TreeportService {
     if (activeRemoval) {
       throw new DomainError(
         'REMOVE_IN_PROGRESS',
-        'The worktree is already being removed',
+        'The Tree is already being removed',
         409
       )
     }
@@ -3998,7 +3997,7 @@ export class TreeportService {
     ) {
       throw new DomainError(
         'REMOVE_IN_PROGRESS',
-        'The worktree or project is already being modified',
+        'The Tree or project is already being modified',
         409
       )
     }
@@ -4018,7 +4017,7 @@ export class TreeportService {
     ) {
       throw new DomainError(
         'REMOVE_IN_PROGRESS',
-        'The worktree or project is already being modified',
+        'The Tree or project is already being modified',
         409
       )
     }
@@ -4030,7 +4029,7 @@ export class TreeportService {
       if (!preview.eligible) {
         throw new DomainError(
           'REMOVE_REFUSED',
-          'The worktree cannot be removed',
+          'The Tree cannot be removed',
           409,
           preview
         )
@@ -4039,7 +4038,7 @@ export class TreeportService {
       if (request.confirmationToken !== preview.confirmationToken) {
         throw new DomainError(
           'REMOVE_PREVIEW_STALE',
-          'The worktree changed after the removal preview; review it again',
+          'The Tree changed after the removal preview; review it again',
           409,
           preview
         )
@@ -4090,7 +4089,7 @@ export class TreeportService {
         if (!checkoutBinding?.git_worktree_key) {
           throw new DomainError(
             'REMOVE_PREVIEW_STALE',
-            'The prunable worktree changed after the removal preview; review it again',
+            'The prunable Tree changed after the removal preview; review it again',
             409,
             preview
           )
@@ -4113,7 +4112,7 @@ export class TreeportService {
         ) {
           throw new DomainError(
             'REMOVE_PREVIEW_STALE',
-            'The worktree checkout changed after the removal preview; review it again',
+            'The Tree checkout changed after the removal preview; review it again',
             409,
             preview
           )
@@ -4250,7 +4249,7 @@ export class TreeportService {
         if (request.prunable) {
           if (!liveAccepted.prunable) {
             throw new Error(
-              'Removal revalidation failed before destructive effects: the accepted worktree is no longer prunable'
+              'Removal revalidation failed before destructive effects: the accepted Tree is no longer prunable'
             )
           }
         } else {
@@ -4478,7 +4477,7 @@ export class TreeportService {
     ) {
       throw new DomainError(
         'PROJECT_BUSY',
-        'A project worktree is already being modified',
+        'A project Tree is already being modified',
         409
       )
     }
@@ -4495,7 +4494,7 @@ export class TreeportService {
       ) {
         throw new DomainError(
           'PROJECT_BUSY',
-          'A project worktree is already being modified',
+          'A project Tree is already being modified',
           409
         )
       }
@@ -4511,7 +4510,7 @@ export class TreeportService {
       if (linked.length) {
         throw new DomainError(
           'PROJECT_HAS_WORKTREES',
-          'Remove linked worktrees before unregistering the project',
+          'Remove linked Trees before unregistering the project',
           409
         )
       }

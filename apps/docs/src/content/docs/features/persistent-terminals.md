@@ -3,7 +3,7 @@ title: Persistent terminals
 description: Run terminal programs and connect again without a restart.
 ---
 
-Treeport runs each terminal in a dedicated tmux server that Treeport owns. The process belongs to the worktree, not to a client.
+Treeport runs each terminal in a dedicated tmux server that Treeport owns. The process belongs to the Tree, not to a client.
 
 ## Disconnect without a stop
 
@@ -47,7 +47,7 @@ Treeport transfers terminal input and output. It does not replace the terminal u
 
 Mouse input, keyboard shortcuts, alternate screens, and interactive prompts continue to work as the terminal application expects.
 
-A worktree can have multiple named terminals:
+A Tree can have multiple named terminals:
 
 ```text
 investigate-cache
@@ -70,6 +70,6 @@ These signals are not necessary for persistence or control. See the [terminal si
 
 ## Keep tmux separate
 
-Treeport uses tmux only as a persistent terminal runtime. It shows repositories, worktrees, and terminal tabs in the Treeport interface.
+Treeport uses tmux only as a persistent terminal runtime. It shows repositories, Trees, and terminal tabs in the Treeport interface.
 
 Your personal tmux server and configuration stay separate.

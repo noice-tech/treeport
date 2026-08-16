@@ -1,13 +1,13 @@
 ---
-title: Projects, worktrees, and terminals
-description: Learn how Treeport organizes repositories, worktrees, and terminals.
+title: Projects, Trees, and terminals
+description: Learn how Treeport organizes repositories, Trees, and terminals.
 ---
 
-Treeport uses a Git worktree as the boundary for one unit of development work.
+Treeport uses a Tree as the boundary for one unit of development work.
 
 ```text
 Project
-└── Worktree
+└── Tree
     └── Terminal
 ```
 
@@ -15,19 +15,21 @@ Project
 
 A project is a Git repository that you open in Treeport.
 
-When you close a project, Treeport stops all terminals in that project. It does not remove the repository, worktrees, or files.
+When you close a project, Treeport stops all terminals in that project. It does not remove the repository, Git worktrees, or files.
 
 You can open the project again later.
 
-## Worktrees
+## Trees
 
-A worktree is a Git checkout in a project. It can be the main worktree or a linked worktree.
+A Tree is Treeport's persistent workspace for a Git worktree.
 
-Treeport finds worktrees that Git, editors, agents, scripts, or other tools create. Treeport does not have to create them.
+A Git worktree is a checkout in a project. Git identifies one as the main worktree or a linked worktree.
+
+Treeport finds Git worktrees that Git, editors, agents, scripts, or other tools create. It shows each worktree as a Tree.
 
 ## Terminals
 
-Each terminal belongs to a worktree. The terminal runs in a tmux session that Treeport manages.
+Each terminal belongs to a Tree. The terminal runs in a tmux session that Treeport manages.
 
 When you close a client, the client disconnects from the terminal. The terminal and its process continue to run.
 

@@ -1,12 +1,12 @@
 ---
 name: treeport
-description: Understand Treeport-managed terminal context and safely create persistent, observable terminals and child worktrees with the Treeport CLI. Use when an agent or extension needs to inspect its Treeport environment, open another session, or spawn work in a separate worktree.
+description: Understand Treeport-managed terminal context and safely create persistent, observable terminals and child Trees with the Treeport CLI. Use when an agent or extension needs to inspect its Treeport environment, open another session, or spawn work in a separate Tree.
 compatibility: Requires the treeport CLI on PATH and a reachable Treeport daemon. Creation commands also require the requested child executable to be installed.
 ---
 
 # Treeport
 
-Treeport is a generic terminal and worktree layer. Its terminals are persistent tmux sessions that appear in the Treeport UI. A user can open a created terminal, take control of the normal application TUI, and continue working in the same session.
+Treeport is a generic terminal and Tree layer. Its terminals are persistent tmux sessions that appear in the Treeport UI. A user can open a created terminal, take control of the normal application TUI, and continue working in the same session.
 
 Treeport does not define task sources, planning or approval states, agent tool policies, or provider-specific workflows. The caller owns names, commands, prompts, and higher-level orchestration.
 
@@ -16,7 +16,7 @@ Treeport does not define task sources, planning or approval states, agent tool p
 - Treat command arguments after `--` as an argv array. Do not turn them into a shell command string.
 - Do not use `eval` or an implicit `sh -lc`. Launch a shell explicitly only when the caller intentionally requests shell semantics.
 - Do not place untrusted titles, prompts, or other external text into interpolated shell fragments. Pass each value as one argument or use a caller-managed file when the child supports file arguments.
-- Never delete a terminal or remove a worktree unless the user explicitly asks.
+- Never delete a terminal or remove a Tree unless the user explicitly asks.
 - Obey the daemon lifecycle reported by `treeport context`. When it is `external`, never run `treeport start`, `treeport stop`, or `treeport remote enable`; the parent process owns startup, shutdown, and remote exposure. When it is `service`, normal `start` and `stop` delegate to the OS manager and can require the printed administrator action.
 - Do not restrict a launched agent's normal tools or make it ephemeral unless the caller explicitly asks. The persistent interactive session is intended to remain useful when the user takes over.
 
@@ -28,45 +28,45 @@ Run:
 treeport context
 ```
 
-Inside a managed terminal, this reports the current project, worktree, terminal, paths, statuses, IDs, daemon URL, and whether the daemon lifecycle is managed by Treeport, by the OS service, or by an external process. It resolves the injected IDs strictly; it does not guess identity from the current path.
+Inside a managed terminal, this reports the current project, Tree, terminal, paths, statuses, IDs, and daemon URL. It reports whether Treeport, the OS service, or an external process manages the daemon lifecycle. It resolves the injected IDs strictly. It does not guess identity from the current path.
 
 Outside Treeport it reports that the terminal is not managed and exits successfully. `TREEPORT_API_URL` may be configured outside a managed terminal; if any context ID is present, however, all injected values are required. Partial IDs or IDs that no longer belong together fail instead of falling back to path inference.
 
-Use the exact IDs from this command for subsequent operations. `.` is a convenient shorthand for the current project or worktree, but exact IDs are clearer once context has been resolved.
+Use the exact IDs from this command for subsequent operations. `.` is a convenient shorthand for the current project or Tree. Exact IDs are clearer after context is resolved.
 
-## Create a terminal in the current worktree
+## Create a terminal in the current Tree
 
 Create a persistent login shell:
 
 ```sh
-treeport terminal create --worktree <worktree-id> --name <terminal-name>
+treeport terminal create --worktree <tree-id> --name <terminal-name>
 ```
 
 Launch a program directly:
 
 ```sh
-treeport terminal create --worktree <worktree-id> --name <terminal-name> -- <program> <arg> ...
+treeport terminal create --worktree <tree-id> --name <terminal-name> -- <program> <arg> ...
 ```
 
 The command returns after Treeport creates the tmux session. The program continues independently of the browser and of the caller that created it.
 
-## Create a child worktree and terminal
+## Create a child Tree and terminal
 
-Create a linked worktree and its first persistent terminal together:
+Create a linked Tree and its first persistent terminal together:
 
 ```sh
 treeport spawn \
   --project <project-id> \
-  --worktree-name <worktree-name> \
+  --worktree-name <tree-name> \
   --name <terminal-name> \
   -- <program> <arg> ...
 ```
 
 The child program and its arguments are entirely caller-owned. Treeport preserves them but does not add prompts, modes, capability restrictions, or lifecycle policy.
 
-By default, Treeport bases the worktree on the fetched remote default branch. Add `--from-current` only when the caller wants the current worktree's committed `HEAD` as the base. Uncommitted changes are not copied.
+By default, Treeport bases the Tree on the fetched remote default branch. Add `--from-current` only for the current Tree's committed `HEAD`. Uncommitted changes are not copied.
 
-Treeport serializes worktree mutations per project. If a caller needs several child worktrees, create them one at a time; their terminal programs can run concurrently after creation.
+Treeport serializes Tree mutations per project. If a caller needs several child Trees, create them one at a time. Their terminal programs can run concurrently after creation.
 
 ## Interpret creation results
 
@@ -75,16 +75,16 @@ A successful `terminal create` means the tmux session was created. The requested
 `spawn` is intentionally non-atomic after Git creates the worktree:
 
 - A terminal ID means the persistent session was created.
-- `terminalError` means the worktree remains but its initial terminal could not be created.
-- `setupError` means worktree setup could not be prepared. A retained terminal may display that error and exit without launching the requested program.
+- `terminalError` means the Tree remains but its initial terminal could not be created.
+- `setupError` means Tree setup could not be prepared. A retained terminal may display that error and exit without launching the requested program.
 - Setup tasks can also fail after the create response. Their output and failure remain visible in the retained terminal.
 
-Report partial creation with the returned worktree and terminal IDs. Do not blindly rerun `spawn`: the worktree may already exist. Do not remove retained resources automatically.
+Report partial creation with the returned Tree and terminal IDs. Do not blindly rerun `spawn`: the Tree may already exist. Do not remove retained resources automatically.
 
 Inspect terminal inventory later with:
 
 ```sh
-treeport terminal list --worktree <worktree-id>
+treeport terminal list --worktree <tree-id>
 ```
 
 Inspect one terminal's refreshed process status and volatile runtime metadata with:
@@ -131,13 +131,13 @@ Extensions and scripts should add `--json` before the `--` command separator:
 treeport context --json
 
 treeport terminal create \
-  --worktree <worktree-id> \
+  --worktree <tree-id> \
   --name <terminal-name> \
   --json -- <program> <arg> ...
 
 treeport spawn \
   --project <project-id> \
-  --worktree-name <worktree-name> \
+  --worktree-name <tree-name> \
   --name <terminal-name> \
   --json -- <program> <arg> ...
 ```

@@ -552,7 +552,7 @@ export const createWorktreeSchema = z
       context.addIssue({
         code: 'custom',
         path: ['sourceWorktreeId'],
-        message: 'A source worktree is required when starting from current'
+        message: 'A source Tree is required when starting from current'
       })
     }
   })
@@ -687,7 +687,7 @@ export const spawnSchema = z
       context.addIssue({
         code: 'custom',
         path: ['sourceWorktreeId'],
-        message: 'A source worktree is required when starting from current'
+        message: 'A source Tree is required when starting from current'
       })
     }
   })

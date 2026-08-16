@@ -434,6 +434,7 @@ test('connects the desktop shell, preserves native behavior, and restores render
       const menu = Menu.getApplicationMenu()
       return {
         newWorktree: menu?.getMenuItemById('new-worktree')?.accelerator,
+        newTreeLabel: menu?.getMenuItemById('new-worktree')?.label,
         newTerminal: menu?.getMenuItemById('new-terminal')?.accelerator,
         newPanel: menu?.getMenuItemById('new-panel')?.accelerator,
         newPanelLabel: menu?.getMenuItemById('new-panel')?.label,
@@ -447,6 +448,7 @@ test('connects the desktop shell, preserves native behavior, and restores render
     })
     expect(accelerators).toEqual({
       newWorktree: 'CommandOrControl+N',
+      newTreeLabel: 'New Tree…',
       newTerminal: 'CommandOrControl+T',
       newPanel: 'CommandOrControl+Shift+T',
       newPanelLabel: 'New Panel…',

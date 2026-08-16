@@ -6,8 +6,7 @@ export default defineConfig({
   integrations: [
     starlight({
       title: 'Treeport',
-      description:
-        'Use persistent terminals in separate Git worktree workspaces.',
+      description: 'Use persistent terminals in separate Trees.',
       favicon: '/favicon.svg',
       disable404Route: true,
       head: [
@@ -22,7 +21,7 @@ export default defineConfig({
           tag: 'meta',
           attrs: {
             property: 'og:image:alt',
-            content: 'Treeport: Persistent terminals for Git worktrees.'
+            content: 'Treeport: Persistent terminals for Trees.'
           }
         },
         {
@@ -36,7 +35,7 @@ export default defineConfig({
           tag: 'meta',
           attrs: {
             name: 'twitter:image:alt',
-            content: 'Treeport: Persistent terminals for Git worktrees.'
+            content: 'Treeport: Persistent terminals for Trees.'
           }
         }
       ],
@@ -63,7 +62,7 @@ export default defineConfig({
           items: [
             { label: 'Design principles', slug: 'concepts/philosophy' },
             {
-              label: 'Projects, worktrees, and terminals',
+              label: 'Projects, Trees, and terminals',
               slug: 'concepts/projects-worktrees-terminals'
             },
             {
@@ -99,7 +98,7 @@ export default defineConfig({
               slug: 'features/attention-and-progress'
             },
             {
-              label: 'Worktree setup',
+              label: 'Tree setup',
               slug: 'features/worktree-setup-hooks'
             }
           ]
@@ -108,7 +107,7 @@ export default defineConfig({
           label: 'Tools and workflows',
           items: [
             {
-              label: 'Worktree-friendly development',
+              label: 'Tree-friendly development',
               slug: 'workflows/worktree-friendly-development'
             },
             { label: 'Shell setup', slug: 'workflows/shell-setup' },

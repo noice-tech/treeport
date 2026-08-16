@@ -5,13 +5,17 @@ description: Principles that define the Treeport product boundary.
 
 Treeport is a persistent terminal workspace that uses Git worktrees.
 
+Treeport shows each Git worktree as a Tree. Use **Tree** and **Trees** for these items in product copy.
+
+Use **Git worktree** only when the text explains the underlying Git concept or names a stable technical contract.
+
 Use these principles for product design, issue review, integrations, and architecture decisions.
 
-## Use a worktree as the unit of work
+## Use a Tree as the unit of work
 
-Treeport uses a Git worktree as the concrete form of one unit of development work.
+Each Tree represents a Git worktree as one unit of development work.
 
-A worktree contains useful source state:
+A Tree contains useful source state:
 
 - a separate checkout;
 - a starting revision;
@@ -24,26 +28,26 @@ A worktree contains useful source state:
 
 Add information to this object instead of making a parallel task model.
 
-A worktree can have user titles, reminders, provenance, and presentation information.
+A Tree can have user titles, reminders, provenance, and presentation information.
 
-This information must not replace or hide its Git identity.
+This information must not replace or hide its Git worktree identity.
 
 ## Keep Git authoritative
 
-Treeport does not have exclusive control of repositories or worktrees.
+Treeport does not have exclusive control of repositories or Git worktrees.
 
-These tools can create, move, change, or remove worktrees:
+These tools can create, move, change, or remove Git worktrees:
 
 - Git;
 - Zed or another editor;
 - scripts;
 - coding agents;
-- other worktree tools;
+- other Git worktree tools;
 - Treeport.
 
 Treeport must compare its state with Git.
 
-It must not require an import or conversion for an external worktree.
+It must not require an import or conversion for an external Git worktree.
 
 Treeport information must fail safely when Git state changes.
 
@@ -51,12 +55,12 @@ Treeport information must fail safely when Git state changes.
 
 A separate task entity causes synchronization questions:
 
-- Can a task be complete when its worktree has changes?
+- Can a task be complete when its Tree has changes?
 - Can a task be active after workspace removal?
 - Does task archiving remove terminals?
 - Does task deletion remove its branch?
 - What occurs when a pull request merges outside Treeport?
-- How does an external worktree connect to a task?
+- How does an external Git worktree connect to a task?
 
 Treeport must not add status or archive behavior that copies Git, process, or provider state.
 
@@ -66,7 +70,7 @@ Use concrete actions and observations for completion:
 - Make commits available from another reference.
 - Merge the pull request when applicable.
 - Stop active terminals.
-- Remove the worktree safely.
+- Remove the Tree safely.
 
 ## Use progressive enhancement
 
@@ -94,7 +98,7 @@ For example:
 - Without an agent integration, Treeport can show an active terminal.
 - Without OSC progress, Treeport can preserve and show the terminal.
 - Without BEL, users can open and control the terminal.
-- Without GitHub authentication, Git and worktree operations continue.
+- Without GitHub authentication, Git and Tree operations continue.
 - Without a pull request, users can complete or discard work.
 
 Integrations add information. They do not define the basic workflow.
@@ -134,7 +138,7 @@ Specialist tools keep their responsibilities:
 - Git and provider CLIs control commits, pull requests, and merges.
 - Editors control file navigation and editing.
 
-Treeport controls the persistent worktree and terminal context around them.
+Treeport controls the persistent Tree and terminal context around them.
 
 ## Use application navigation
 
@@ -147,15 +151,15 @@ It can use familiar application operations:
 - `Cmd+W` to close;
 - numbered selection shortcuts;
 - mouse navigation;
-- a persistent repository and worktree hierarchy.
+- a persistent project and Tree hierarchy.
 
 A terminal runtime must not force its native session, tab, or pane hierarchy into the main Treeport interface.
 
 ## Make cleanup safer than creation
 
-Worktree creation must be low cost and easy.
+Tree creation must be low cost and easy.
 
-Worktree removal must be conservative.
+Tree removal must be conservative.
 
 Treeport must review these conditions:
 
@@ -194,6 +198,6 @@ Use these extension points for related workflows:
 - optional runtime adapters;
 - limited extensions with a verified need.
 
-Add a function to core only when it improves the shared worktree and terminal lifecycle.
+Add a function to core only when it improves the shared Tree and terminal lifecycle.
 
 Do not add a core function that copies a specialist tool.

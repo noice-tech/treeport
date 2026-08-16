@@ -5,14 +5,14 @@ description: Open an application development server in a Treeport workspace.
 
 The `@treeport/web-panel-browser` package supplies the **Browser** panel.
 
-Use this panel to open an application development server next to its worktree terminal.
+Use this panel to open an application development server next to its Tree terminal.
 
 ## Open a detected development server
 
 1. Select **Browser** from **New panel**.
 2. Select a server from **Development servers**.
 
-The page lists listening TCP ports that Treeport can associate with the current worktree.
+The page lists listening TCP ports that Treeport can associate with the current Tree.
 
 You can also enter an absolute HTTP or HTTPS URL. Press Enter to open it.
 
