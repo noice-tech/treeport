@@ -1,11 +1,9 @@
 ---
 title: Projects, worktrees, and terminals
-description: How Treeport organizes Git repositories, worktrees, and persistent terminals.
+description: Learn how Treeport organizes repositories, worktrees, and terminals.
 ---
 
-**Treeport makes one opinionated bet:** a Git worktree is the right boundary for a piece of development work.
-
-Treeport adds persistent terminals around your existing Git worktrees. It does not replace Git, your editor, or the terminal tools you already use.
+Treeport uses a Git worktree as the boundary for one unit of development work.
 
 ```text
 Project
@@ -15,16 +13,28 @@ Project
 
 ## Projects
 
-A project is a Git repository opened in Treeport. Closing a project stops all of its Treeport terminals, but leaves the repository, worktrees, and files on disk. You can reopen it later.
+A project is a Git repository that you open in Treeport.
+
+When you close a project, Treeport stops all terminals in that project. It does not remove the repository, worktrees, or files.
+
+You can open the project again later.
 
 ## Worktrees
 
-A worktree is a Git checkout within a project: the main checkout or a linked worktree. Treeport discovers worktrees created by Git, editors, agents, scripts, and other worktree-aware tools. It does not require Treeport to have created them.
+A worktree is a Git checkout in a project. It can be the main worktree or a linked worktree.
+
+Treeport finds worktrees that Git, editors, agents, scripts, or other tools create. Treeport does not have to create them.
 
 ## Terminals
 
-Terminals belong to a worktree and run in Treeport-managed tmux sessions. Closing a browser tab or the desktop app only detaches you: the terminal and its process keep running. Reopen Treeport to attach to the same session.
+Each terminal belongs to a worktree. The terminal runs in a tmux session that Treeport manages.
 
-## Fits around your tools
+When you close a client, the client disconnects from the terminal. The terminal and its process continue to run.
 
-Treeport is intentionally small. Git remains authoritative for branches, commits, and worktrees, while your editor, agent, shell, and other terminal tools keep their normal interfaces. Learn how Treeport [fits around your tools](/concepts/fits-around-your-tools/).
+Open Treeport again to connect to the same session.
+
+## Keep your current tools
+
+Git controls branches, commits, and worktrees. Your editor, agent, shell, and other terminal tools keep their usual interfaces.
+
+Read [How Treeport uses your tools](/concepts/fits-around-your-tools/).

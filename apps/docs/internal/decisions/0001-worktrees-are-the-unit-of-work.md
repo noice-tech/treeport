@@ -6,9 +6,9 @@
 
 ## Context
 
-Treeport needs a durable user-facing model for organizing development work.
+Treeport needs a stable user model for development work.
 
-One proposed model introduced a separate `Task` entity:
+One proposal added a separate `Task` entity:
 
 ```text
 Task
@@ -16,22 +16,17 @@ Task
     └── Terminals
 ```
 
-Under that proposal, Git worktrees would be one possible workspace backend alongside directories, copy-on-write snapshots, containers, remote machines, or micro-VMs.
+A workspace could be a worktree, directory, snapshot, container, remote computer, or micro virtual machine.
 
-The proposal offered some apparent flexibility:
+This model could let a task continue after workspace removal. It could also separate task titles from branches and paths.
 
-- a task could outlive its workspace;
-- task titles could differ from branch names and paths;
-- future isolation mechanisms could be added;
-- the user would express intent without choosing a Git primitive.
-
-However, it also introduced a second lifecycle and source of truth alongside the actual development environment.
+However, the model would add a second lifecycle and source of truth.
 
 ## Decision
 
-Treeport will treat the Git worktree as the primary unit of work.
+Treeport uses a Git worktree as the primary unit of work.
 
-The primary hierarchy remains:
+The hierarchy is:
 
 ```text
 Repository
@@ -39,105 +34,106 @@ Repository
     └── Terminals
 ```
 
-Treeport will not introduce a separate task entity at this stage.
+Treeport will not add a separate task entity at this stage.
 
-A worktree may receive Treeport-owned presentation metadata, including:
+A worktree can have Treeport presentation information:
 
-- a human-facing title;
+- a user title;
 - a reminder or note;
 - provenance;
 - optional parent-worktree context;
-- other lightweight metadata that does not duplicate Git lifecycle state.
+- other small items that do not copy Git lifecycle state.
 
-This metadata enriches the worktree but does not replace its identity.
+This information adds context but does not replace worktree identity.
 
 ## Rationale
 
-A Git worktree already provides grounded development state:
+A Git worktree supplies concrete development state:
 
-- isolated files;
-- starting revision;
-- dirty state;
+- separate files;
+- a starting revision;
+- file change state;
 - commits;
-- branch or detached HEAD;
-- running processes;
+- a branch or detached `HEAD`;
+- active processes;
 - optional pull-request context;
-- a concrete removal lifecycle.
+- a removal lifecycle.
 
-A separate task object would require Treeport to synchronize abstract status with Git, processes, provider state, and external tools.
+A separate task object must synchronize abstract status with Git, processes, providers, and external tools.
 
-Potential contradictions would include:
+This synchronization can cause contradictions:
 
-- a task marked complete with uncommitted files;
-- an active task whose workspace was removed externally;
-- an archived task with running terminals;
-- a merged pull request attached to an in-progress task;
-- an external worktree with no task record;
-- task deletion whose relationship to workspace, branch, and terminal deletion is unclear.
+- A completed task can have uncommitted files.
+- An active task can have no workspace.
+- An archived task can have active terminals.
+- A merged pull request can belong to an active task.
+- An external worktree can have no task record.
+- Task removal can have an unclear effect on branches, workspaces, and terminals.
 
-The worktree model avoids these contradictions by grounding work in the concrete workspace that contains it.
+The worktree model prevents these contradictions. Development work stays connected to the concrete workspace that contains it.
 
 ## Consequences
 
-### Positive
+### Positive consequences
 
-- Git remains the source of truth.
-- Worktrees created by Zed, Git, scripts, agents, and Treeport are immediately first-class.
-- Treeport does not require an import or conversion workflow.
-- Worktree existence and removal remain tied to concrete Git state; residual filesystem cleanup is operation-owned housekeeping.
-- The product remains opinionated and easier to explain.
-- Human-facing context can still be added independently from branch names and paths.
+- Git stays the source of truth.
+- Worktrees from Git, editors, scripts, agents, and Treeport are first-class items.
+- Treeport does not need an import or conversion workflow.
+- Git state controls worktree existence and removal.
+- Operation-owned cleanup controls residual files.
+- The product is direct and easy to explain.
+- Presentation information can differ from branch names and paths.
 
-### Negative
+### Negative consequences
 
-- Treeport is explicitly Git-worktree-oriented.
-- Work that cannot be represented by a Git worktree may not fit the primary product model.
-- A removed worktree no longer has an active workspace representation.
-- Future non-worktree isolation mechanisms may require a new decision or a revised abstraction.
+- Treeport is specific to Git worktrees.
+- Work that cannot use a Git worktree can be outside the primary product model.
+- A removed worktree does not keep an active workspace representation.
+- A future isolation method can require a new decision or abstraction.
 
-These tradeoffs are accepted. Product clarity is currently more valuable than hypothetical backend generality.
+Treeport accepts these limits. Current product clarity is more important than possible future backends.
 
 ## Progressive enhancement
 
-Treeport does not require every worktree to have coding-agent, pull-request, or provider integrations.
+Treeport does not require coding-agent, pull-request, or provider integrations.
 
-Core state comes from Git, process lifecycle, and Treeport-owned terminal state.
+Core state comes from Git, process lifecycle, and Treeport terminal state.
 
-Optional applications can enrich the experience using:
+Optional applications can add information through:
 
 - terminal titles;
 - BEL attention;
 - OSC progress;
 - Treeport CLI and API operations;
-- provider-specific extensions.
+- provider extensions.
 
-The absence of these integrations must not invalidate the worktree model.
+The worktree model must stay valid when these integrations are not present.
 
-## Alternatives considered
+## Rejected alternatives
 
-### Separate Task entity
+### Separate task entity
 
-Rejected because it creates a parallel lifecycle and synchronization burden without a validated second workspace backend.
+Treeport rejects this model because it adds a parallel lifecycle without a verified second workspace backend.
 
-### Generic Workspace entity exposed to users
+### User-visible generic workspace entity
 
-Rejected for now because “workspace” is less concrete and less opinionated than the Git worktree behavior Treeport is designed around.
+Treeport rejects this model for now. A workspace is less concrete than the Git worktree behavior that Treeport supplies.
 
-### Generic adapter framework with worktrees as one backend
+### Generic adapter framework
 
-Deferred. A shared backend abstraction should emerge only after a second concrete implementation demonstrates actual common requirements.
+Treeport defers this model. A shared abstraction needs a second implementation with verified common requirements.
 
-### Worktree plus lightweight metadata
+### Worktree with small presentation information
 
-Accepted. This provides human-facing titles and reminders without introducing an independent task lifecycle.
+Treeport accepts this model. It supplies user titles and reminders without an independent task lifecycle.
 
-## Future reconsideration
+## Conditions for a new decision
 
-This decision may be revisited when all of the following are true:
+Review this decision only when all these conditions are true:
 
-1. A concrete non-worktree backend has been implemented or seriously prototyped.
-2. Users have demonstrated workflows that cannot reasonably use Git worktrees.
-3. The second backend shares enough lifecycle semantics to justify a common abstraction.
-4. Introducing that abstraction does not weaken external Git interoperability or cleanup safety.
+1. A concrete non-worktree backend exists or has a substantial prototype.
+2. Users have workflows that cannot reasonably use Git worktrees.
+3. The second backend shares sufficient lifecycle behavior for one abstraction.
+4. The abstraction keeps Git interoperability and cleanup safety.
 
-Until then, hypothetical containers, micro-VMs, remote environments, or copy-on-write directories must not shape the primary user-facing model.
+Until then, possible future backends must not control the primary user model.

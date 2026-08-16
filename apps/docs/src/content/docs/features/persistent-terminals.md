@@ -1,37 +1,53 @@
 ---
 title: Persistent terminals
-description: Run normal terminal programs and reconnect without restarting them.
+description: Run terminal programs and connect again without a restart.
 ---
 
-Every terminal created by Treeport runs in a dedicated, application-owned tmux server. The process belongs to the worktree, not to a browser tab.
+Treeport runs each terminal in a dedicated tmux server that Treeport owns. The process belongs to the worktree, not to a client.
 
-## Detach without stopping
+## Disconnect without a stop
 
-Closing the desktop app, browser, or terminal view only detaches that client. Coding agents, shells, development servers, editors, and test watchers keep running. Reopen the terminal to attach to the same screen and process.
+When you close a client or terminal view, only that client disconnects.
 
-Treeport tracks the terminal as running or exited and reports an exit code when available. If a command returns to an interactive shell, the terminal remains running because the shell is still alive.
+Coding agents, shells, development servers, editors, and test watchers continue to run. Open the terminal again to connect to the same process.
 
-## Reconnect from another device
+Treeport reports whether the terminal process runs or has exited. It also reports the exit code when that code is available.
 
-Open the same terminal from the browser or desktop app. Through the supported Tailscale Serve endpoint, you can also reconnect from a phone using Treeport's responsive web app.
+If a command returns to an interactive shell, the terminal continues to run because the shell is active.
 
-## Browse earlier output
+## Connect from another device
 
-Treeport uses tmux history, so you can keep earlier output or a selection visible while new output continues. See [Shortcuts](/reference/shortcuts/#selection-scrolling-and-clipboard) for scrolling, selection, copy, and paste interactions.
+Open the same terminal from the browser or desktop client.
 
-## Shared terminal size
+You can also connect from a phone through the supported Tailscale Serve endpoint.
 
-A terminal has one shared size across its attached clients. The controlling client sets the row-and-column grid, while viewers adapt that grid to their available space. Taking control from a differently sized device can reflow the terminal for all attachments. See [Shared terminal size](/reference/shortcuts/#shared-terminal-size).
+## Read earlier output
+
+Treeport uses tmux history. Earlier output or a selection can stay visible while new output continues.
+
+See [Shortcuts](/reference/shortcuts/#selection-scrolling-and-clipboard) for scroll, selection, copy, and paste operations.
+
+## Understand the shared terminal size
+
+A terminal has one size for all connected clients. The client that has control sets the row-and-column grid.
+
+Other clients fit that grid into the available area. A change of control between different devices can change the layout for all clients.
+
+See [Shared terminal size](/reference/shortcuts/#shared-terminal-size).
 
 :::caution
-Remote access grants terminal control. Use only Treeport's authenticated Tailscale Serve workflow, and give access only to users who may control the host; see the [security guidance](/security/).
+Remote access gives terminal control. Use only the authenticated Tailscale Serve workflow. Give access only to users who can control the host.
 :::
 
-## Normal terminal applications
+Read the [security guidance](/security/) before you enable remote access.
 
-Treeport transports terminal input and output without replacing the application's TUI. Mouse input, keyboard shortcuts, alternate screens, and interactive prompts continue to work as terminal applications expect.
+## Run standard terminal applications
 
-A worktree can have multiple named terminals, for example:
+Treeport transfers terminal input and output. It does not replace the terminal user interface.
+
+Mouse input, keyboard shortcuts, alternate screens, and interactive prompts continue to work as the terminal application expects.
+
+A worktree can have multiple named terminals:
 
 ```text
 investigate-cache
@@ -41,17 +57,19 @@ investigate-cache
 └── shell       login shell
 ```
 
-## Runtime awareness
+## Add runtime information
 
-Applications can progressively enrich their terminal with standard signals:
+Applications can add information with standard signals:
 
-- **Title** — short semantic context such as `PR #123` or `Development server`.
-- **BEL** — a meaningful transition that needs attention.
-- **OSC 9;4 progress** — active work, an optional percentage, or a cleared state.
-- **Process exit** — completion and exit code where available.
+- **Title**: Short context, such as `PR #123` or `Development server`.
+- **BEL**: An important change that requires attention.
+- **OSC 9;4 progress**: Active work, a percentage, or a cleared state.
+- **Process exit**: Completion and the exit code, when available.
 
-None of these signals is needed for persistence or control. See the [terminal signals reference](/reference/terminal-signals/).
+These signals are not necessary for persistence or control. See the [terminal signals reference](/reference/terminal-signals/).
 
-## Dedicated tmux ownership
+## Keep tmux separate
 
-Treeport does not expose a nested tmux workspace as its product navigation. It uses tmux as a durable terminal runtime while presenting repositories, worktrees, and named terminal tabs in its own interface. Your personal tmux server and configuration remain separate.
+Treeport uses tmux only as a persistent terminal runtime. It shows repositories, worktrees, and terminal tabs in the Treeport interface.
+
+Your personal tmux server and configuration stay separate.
