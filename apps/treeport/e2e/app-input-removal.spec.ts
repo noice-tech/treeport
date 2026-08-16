@@ -205,7 +205,7 @@ test.describe('desktop terminal input and removal', () => {
     const screen = page.locator('.xterm-screen')
     const bounds = await screen.boundingBox()
     expect(bounds).not.toBeNull()
-    const columns = await page.evaluate(() => (window as any).__lastWs.cols)
+    const columns = await page.evaluate(() => window.__lastWs.cols)
     const cellWidth = bounds!.width / columns
     await page.mouse.move(bounds!.x + cellWidth * 1.25, bounds!.y + 8)
     await page.keyboard.down('Alt')
@@ -512,7 +512,7 @@ test.describe('desktop terminal input and removal', () => {
     const reportsAfterLeavingSide = await dragReports()
     expect(
       await page.evaluate(() =>
-        (window as any).__wsSent.some(
+        window.__wsSent.some(
           (message: any) =>
             message.type === 'input' &&
             String(message.data).endsWith('\u001b[F')

@@ -11,7 +11,7 @@ Download the DMG from the [latest GitHub Release](https://github.com/noice-tech/
 
 The desktop client connects to a Treeport backend; it does not contain one. Install and start the backend on this Mac using curl or npm below, or connect the app to a private HTTPS backend on another computer.
 
-The desktop client checks for stable updates automatically. After an update downloads, Treeport asks before restarting the desktop client to install it. Desktop updates never upgrade or restart the selected local or remote backend.
+The desktop client checks for stable updates automatically. After an update downloads, an **Update & restart** button appears in the top bar. Treeport waits for you to select it before the desktop client restarts and installs the update. Desktop updates never upgrade or restart the selected local or remote backend.
 
 ## Install the backend with curl
 
