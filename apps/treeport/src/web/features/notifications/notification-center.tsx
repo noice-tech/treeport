@@ -93,7 +93,7 @@ export function NotificationCenter({
     setPending((current) => new Set(current).add(terminalId))
     await terminalSessions
       .acknowledgeBell(terminalId, sequence)
-      .catch((error: unknown) => {
+      .catch((error) => {
         notifyError(error, {
           operation: `mark notification for terminal “${title}” as read`
         })

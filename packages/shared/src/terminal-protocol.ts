@@ -14,6 +14,9 @@ export const TERMINAL_SELECTION_STOP_SEQUENCE = '\u001b[9002~'
 export const TERMINAL_SELECTION_CLEAR_SEQUENCE = '\u001b[9003~'
 export const TERMINAL_SELECTION_RESTORE_SEQUENCE = '\u001b[9004~'
 
+const terminalProtocolInputSchema = z.unknown()
+export type TerminalProtocolInput = z.input<typeof terminalProtocolInputSchema>
+
 const terminalId = z.string().min(1).max(128)
 const clientId = z.string().min(1).max(128)
 const streamId = z.string().min(1).max(128)
@@ -67,7 +70,7 @@ export type TerminalRuntimeMetadata = z.infer<
 >
 
 export function parseTerminalRuntimeMetadata(
-  value: unknown
+  value: TerminalProtocolInput
 ): TerminalRuntimeMetadata | null {
   const parsed = terminalRuntimeMetadataSchema.safeParse(value)
   return parsed.success ? parsed.data : null
@@ -256,14 +259,16 @@ export interface TerminalServerToClientEvents {
   terminal_error: (payload: TerminalError) => void
 }
 
-export function parseTerminalAuth(value: unknown): TerminalAuth | null {
+export function parseTerminalAuth(
+  value: TerminalProtocolInput
+): TerminalAuth | null {
   const parsed = terminalAuthSchema.safeParse(value)
   return parsed.success ? parsed.data : null
 }
 
 export function parseTerminalClientEvent<E extends TerminalClientEvent>(
   event: E,
-  value: unknown
+  value: TerminalProtocolInput
 ): TerminalClientEventPayloads[E] | null {
   const schema = {
     input: terminalInputSchema,
@@ -276,12 +281,13 @@ export function parseTerminalClientEvent<E extends TerminalClientEvent>(
     output_ack: terminalOutputAckSchema
   }[event]
   const parsed = schema.safeParse(value)
+  // SAFETY: The Zod schema validated the event payload before this assertion.
   return parsed.success ? (parsed.data as TerminalClientEventPayloads[E]) : null
 }
 
 export function parseTerminalServerEvent<E extends TerminalServerEvent>(
   event: E,
-  value: unknown
+  value: TerminalProtocolInput
 ): TerminalServerEventPayloads[E] | null {
   const schema = {
     ready: terminalReadySchema,
@@ -295,5 +301,6 @@ export function parseTerminalServerEvent<E extends TerminalServerEvent>(
     terminal_error: terminalErrorSchema
   }[event]
   const parsed = schema.safeParse(value)
+  // SAFETY: The Zod schema validated the event payload before this assertion.
   return parsed.success ? (parsed.data as TerminalServerEventPayloads[E]) : null
 }

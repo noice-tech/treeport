@@ -13,6 +13,9 @@ const TREEPORT_PATH_VARIABLES = [
   'TREEPORT_WORKTREE_PATH',
   'TREEPORT_MAIN_WORKTREE_PATH'
 ] as const
+const TREEPORT_PATH_VARIABLE_NAMES: ReadonlySet<string> = new Set(
+  TREEPORT_PATH_VARIABLES
+)
 
 const environmentSchema = z
   .record(z.string(), z.string())
@@ -27,7 +30,7 @@ const environmentSchema = z
         })
       }
 
-      if ((TREEPORT_PATH_VARIABLES as readonly string[]).includes(name)) {
+      if (TREEPORT_PATH_VARIABLE_NAMES.has(name)) {
         context.addIssue({
           code: 'custom',
           path: [name],
@@ -105,8 +108,9 @@ function formatIssuePath(issuePath: PropertyKey[]): string {
   }
 
   return issuePath.reduce<string>((formatted, component) => {
-    if (typeof component === 'number') {
-      return `${formatted}[${component}]`
+    const parsedIndex = z.number().safeParse(component)
+    if (parsedIndex.success) {
+      return `${formatted}[${parsedIndex.data}]`
     }
 
     return formatted ? `${formatted}.${String(component)}` : String(component)

@@ -8,15 +8,15 @@ test.describe('desktop terminal links and metadata', () => {
     await mockApp(page, [], { keyboardPlatform: 'Linux x86_64' })
     expect(await page.evaluate(() => navigator.platform)).toBe('Linux x86_64')
     await page.evaluate(() => {
-      ;(window as any).__openedTerminalLinks = []
+      window.__openedTerminalLinks = []
       window.open = (...args) => {
-        ;(window as any).__openedTerminalLinks.push(args)
+        window.__openedTerminalLinks.push(args)
         return null
       }
     })
     await page.getByRole('button', { name: 'Pi, running', exact: true }).click()
     await page.evaluate(() => {
-      const socket = (window as any).__wsInstances.find((item: any) =>
+      const socket = window.__wsInstances.find((item: any) =>
         item.url.includes('term_pi')
       )
       socket.onmessage?.({
@@ -43,7 +43,7 @@ test.describe('desktop terminal links and metadata', () => {
     await page.mouse.click(httpPoint.x, httpPoint.y)
     await page.keyboard.up('Control')
     await expect
-      .poll(() => page.evaluate(() => (window as any).__openedTerminalLinks))
+      .poll(() => page.evaluate(() => window.__openedTerminalLinks))
       .toEqual([['http://example.test/help', '_blank', 'noopener,noreferrer']])
   })
 
@@ -53,15 +53,15 @@ test.describe('desktop terminal links and metadata', () => {
     await mockApp(page, [], { keyboardPlatform: 'MacIntel' })
     expect(await page.evaluate(() => navigator.platform)).toBe('MacIntel')
     await page.evaluate(() => {
-      ;(window as any).__openedTerminalLink = null
+      window.__openedTerminalLink = null
       window.open = (...args) => {
-        ;(window as any).__openedTerminalLink = args
+        window.__openedTerminalLink = args
         return null
       }
     })
     await page.getByRole('button', { name: 'Pi, running', exact: true }).click()
     await page.evaluate(() => {
-      const socket = (window as any).__wsInstances.find((item: any) =>
+      const socket = window.__wsInstances.find((item: any) =>
         item.url.includes('term_pi')
       )
       socket.onmessage?.({
@@ -85,7 +85,7 @@ test.describe('desktop terminal links and metadata', () => {
     await page.mouse.click(linkedPoint.x, linkedPoint.y)
     await page.keyboard.up('Meta')
     await expect
-      .poll(() => page.evaluate(() => (window as any).__openedTerminalLink))
+      .poll(() => page.evaluate(() => window.__openedTerminalLink))
       .toEqual(['https://example.test/pr/123', '_blank', 'noopener,noreferrer'])
   })
 
@@ -106,7 +106,7 @@ test.describe('desktop terminal links and metadata', () => {
     await expect(background).toBeVisible()
     expect(
       await page.evaluate(() =>
-        ((window as any).__wsInstances || []).some((socket: { url: string }) =>
+        (window.__wsInstances || []).some((socket: { url: string }) =>
           socket.url.includes('term_pi')
         )
       )
@@ -116,7 +116,7 @@ test.describe('desktop terminal links and metadata', () => {
       .getByRole('button', { name: /background · \/repo.*42% complete/ })
       .click()
     await page.evaluate(() =>
-      (window as any).__eventSource.emit(
+      window.__eventSource.emit(
         'terminal.metadata',
         JSON.stringify({
           data: {
@@ -135,7 +135,7 @@ test.describe('desktop terminal links and metadata', () => {
     ).toHaveCount(0)
 
     await page.evaluate(() => {
-      const socket = (window as any).__wsInstances.find((item: any) =>
+      const socket = window.__wsInstances.find((item: any) =>
         item.url.includes('term_pi')
       )
       socket.onmessage?.({
@@ -158,7 +158,7 @@ test.describe('desktop terminal links and metadata', () => {
     await expect(page.getByRole('button', { name: /working/ })).toHaveCount(0)
 
     await page.evaluate(() =>
-      (window as any).__eventSource.emit(
+      window.__eventSource.emit(
         'terminal.metadata',
         JSON.stringify({
           data: {
@@ -182,7 +182,7 @@ test.describe('desktop terminal links and metadata', () => {
     await expect.poll(() => mocked.projectRequests()).toBeGreaterThan(1)
     const before = mocked.projectRequests()
     await page.evaluate(() =>
-      (window as any).__eventSource.emit(
+      window.__eventSource.emit(
         'connected',
         JSON.stringify({
           at: new Date().toISOString(),
@@ -205,7 +205,7 @@ test.describe('desktop terminal links and metadata', () => {
     ).toHaveCount(0)
 
     await page.evaluate(() => {
-      const socket = (window as any).__wsInstances.find((item: any) =>
+      const socket = window.__wsInstances.find((item: any) =>
         item.url.includes('term_pi')
       )
       socket.onmessage?.({
@@ -227,7 +227,7 @@ test.describe('desktop terminal links and metadata', () => {
     ).toBeVisible()
 
     await page.evaluate(() => {
-      const socket = (window as any).__wsInstances.find((item: any) =>
+      const socket = window.__wsInstances.find((item: any) =>
         item.url.includes('term_pi')
       )
       socket.onmessage?.({

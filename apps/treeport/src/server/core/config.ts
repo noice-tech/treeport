@@ -64,10 +64,7 @@ function defaultRuntimeDir(env: NodeJS.ProcessEnv): string {
     return path.join(expandHome(env.XDG_RUNTIME_DIR), 'treeport')
   }
 
-  return path.join(
-    os.tmpdir(),
-    `treeport-${typeof process.getuid === 'function' ? process.getuid() : 'user'}`
-  )
+  return path.join(os.tmpdir(), `treeport-${process.getuid?.() ?? 'user'}`)
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
@@ -100,7 +97,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     )
   }
 
-  return {
+  const config: AppConfig = {
     host,
     port: portValue,
     dataDir,
@@ -125,9 +122,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     instanceId: env.TREEPORT_INSTANCE_ID?.trim() || crypto.randomUUID(),
     installationMethod:
       env.TREEPORT_INSTALLATION_METHOD?.trim() || 'development',
-    webDevelopment: env.TREEPORT_WEB_DEVELOPMENT?.trim() === '1',
-    ...(env.TREEPORT_WEB_DIST?.trim()
-      ? { webDist: env.TREEPORT_WEB_DIST.trim() }
-      : {})
+    webDevelopment: env.TREEPORT_WEB_DEVELOPMENT?.trim() === '1'
   }
+  if (env.TREEPORT_WEB_DIST?.trim()) {
+    config.webDist = env.TREEPORT_WEB_DIST.trim()
+  }
+
+  return config
 }

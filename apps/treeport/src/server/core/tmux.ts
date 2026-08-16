@@ -1,6 +1,7 @@
 import crypto from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import { z } from 'zod'
 import {
   TERMINAL_SCROLL_EXIT_SEQUENCE,
   TERMINAL_SELECTION_CLEAR_SEQUENCE,
@@ -22,13 +23,13 @@ export const generateTmuxSessionName = (): string =>
 
 export interface LaunchSpec {
   argv: string[]
-  fallbackArgv?: string[]
+  fallbackArgv?: string[] | undefined
   cwd: string
   env: Record<string, string>
-  shellIntegrationDir?: string
-  tmuxExecutable?: string
-  setupTasks?: WorktreeSetupTask[]
-  setupError?: string
+  shellIntegrationDir?: string | undefined
+  tmuxExecutable?: string | undefined
+  setupTasks?: WorktreeSetupTask[] | undefined
+  setupError?: string | undefined
 }
 
 export interface TmuxSessionState {
@@ -71,7 +72,18 @@ export interface TmuxTerminalMetadata {
   updatedAt: string
 }
 
-const encodeMetadata = (value: unknown): string =>
+interface DecodedTmuxMetadata {
+  terminalId: string
+  worktreeId: string
+  name: string | undefined
+  argv: string[] | undefined
+  createdAt: string | undefined
+  updatedAt: string | undefined
+}
+
+type TmuxMetadataValue = string | readonly string[] | null
+
+const encodeMetadata = (value: TmuxMetadataValue): string =>
   Buffer.from(JSON.stringify(value), 'utf8').toString('base64url')
 
 function isAbsentTmuxServer(stderr: string): boolean {
@@ -83,12 +95,17 @@ function isAbsentTmuxServer(stderr: string): boolean {
   )
 }
 
-function decodeMetadata(value: string): unknown {
+function decodeMetadata<Output>(
+  value: string,
+  schema: z.ZodType<Output>
+): Output | undefined {
   if (!value) {
     return undefined
   }
 
-  return JSON.parse(Buffer.from(value, 'base64url').toString('utf8'))
+  return schema.parse(
+    JSON.parse(Buffer.from(value, 'base64url').toString('utf8'))
+  )
 }
 
 export const TMUX_SCROLL_EXIT_SEQUENCE = TERMINAL_SCROLL_EXIT_SEQUENCE
@@ -313,36 +330,40 @@ export class TmuxAdapter {
           await this.configureServer(input.socketName)
         }
 
+        const environment = { ...input.env }
+        if (sshAuthSock) {
+          environment.SSH_AUTH_SOCK = sshAuthSock
+        }
+
         const spec: LaunchSpec = {
           argv: [...input.argv],
-          ...(input.fallbackArgv
-            ? { fallbackArgv: [...input.fallbackArgv] }
-            : {}),
           cwd: input.cwd,
-          env: {
-            ...(sshAuthSock ? { SSH_AUTH_SOCK: sshAuthSock } : {}),
-            ...input.env
-          },
-          ...(shellIntegrationReady
-            ? {
-                shellIntegrationDir: this.shellIntegrationDir,
-                tmuxExecutable: resolveExecutablePath(
-                  this.executable,
-                  this.hostEnvironment
-                )
-              }
-            : {}),
-          ...(input.setupTasks?.length
-            ? {
-                setupTasks: input.setupTasks.map((task) => ({
-                  ...task,
-                  argv: [...task.argv],
-                  env: { ...task.env }
-                }))
-              }
-            : {}),
-          ...(input.setupError ? { setupError: input.setupError } : {})
+          env: environment
         }
+        if (input.fallbackArgv) {
+          spec.fallbackArgv = [...input.fallbackArgv]
+        }
+
+        if (shellIntegrationReady) {
+          spec.shellIntegrationDir = this.shellIntegrationDir
+          spec.tmuxExecutable = resolveExecutablePath(
+            this.executable,
+            this.hostEnvironment
+          )
+        }
+
+        if (input.setupTasks?.length) {
+          spec.setupTasks = input.setupTasks.map((task) => ({
+            ...task,
+            argv: [...task.argv],
+            env: { ...task.env }
+          }))
+        }
+
+        if (input.setupError) {
+          spec.setupError = input.setupError
+        }
+
         await fs.writeFile(specPath, JSON.stringify(spec), { mode: 0o600 })
         wroteSpec = true
         await runChecked(this.runner, {
@@ -543,37 +564,15 @@ export class TmuxAdapter {
         continue
       }
 
-      let metadata: {
-        terminalId: string
-        worktreeId: string
-        name: string | undefined
-        argv: string[] | undefined
-        createdAt: string | undefined
-        updatedAt: string | undefined
-      }
+      let metadata: DecodedTmuxMetadata
       try {
-        const name = decodeMetadata(encodedName ?? '')
-        const argv = decodeMetadata(encodedArgv ?? '')
-        const createdAt = decodeMetadata(encodedCreatedAt ?? '')
-        const updatedAt = decodeMetadata(encodedUpdatedAt ?? '')
-        if (
-          (name !== undefined && typeof name !== 'string') ||
-          (argv !== undefined &&
-            (!Array.isArray(argv) ||
-              !argv.every((value) => typeof value === 'string'))) ||
-          (createdAt !== undefined && typeof createdAt !== 'string') ||
-          (updatedAt !== undefined && typeof updatedAt !== 'string')
-        ) {
-          continue
-        }
-
         metadata = {
           terminalId,
           worktreeId,
-          name,
-          argv: argv as string[] | undefined,
-          createdAt,
-          updatedAt
+          name: decodeMetadata(encodedName ?? '', z.string()),
+          argv: decodeMetadata(encodedArgv ?? '', z.array(z.string())),
+          createdAt: decodeMetadata(encodedCreatedAt ?? '', z.string()),
+          updatedAt: decodeMetadata(encodedUpdatedAt ?? '', z.string())
         }
       } catch {
         continue
@@ -820,8 +819,7 @@ export class TmuxAdapter {
     const encodedShellTitle = result.stdout.slice(0, firstSeparator).trim()
     let shellTitle: string | null = null
     try {
-      const decoded = decodeMetadata(encodedShellTitle)
-      shellTitle = typeof decoded === 'string' ? decoded : null
+      shellTitle = decodeMetadata(encodedShellTitle, z.string()) ?? null
     } catch {
       // Ignore malformed optional metadata from an external session.
     }

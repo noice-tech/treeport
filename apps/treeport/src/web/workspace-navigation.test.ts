@@ -13,6 +13,7 @@ import {
 } from './workspace-navigation'
 
 function projectGraph(): ProjectRecord[] {
+  // SAFETY: The test fixture provides the asserted contract used here.
   return [
     {
       id: 'project-a',

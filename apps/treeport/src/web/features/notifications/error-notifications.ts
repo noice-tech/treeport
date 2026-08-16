@@ -2,10 +2,10 @@ import { toast } from 'sonner'
 import { errorDetails } from '../../error-message'
 
 export function notifyError(
-  error: unknown,
+  cause: unknown,
   { operation }: { operation: string }
 ): void {
-  const details = errorDetails(error)
+  const details = errorDetails(cause)
   const description = [
     details.message,
     details.recoveryHint,

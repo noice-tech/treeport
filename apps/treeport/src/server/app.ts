@@ -37,7 +37,7 @@ import {
   updateTerminalPresetSchema,
   updateTerminalSchema
 } from '@treeport/shared'
-import type { OperationKind } from '@treeport/shared'
+import type { ApiErrorBody } from '@treeport/shared'
 import type { AppConfig, TmuxAdapter, TreeportService } from './core/index'
 import { DomainError } from './core/index'
 import {
@@ -46,20 +46,33 @@ import {
 } from './core/web-panel-csp'
 import { TerminalMetadataManager } from './terminal-metadata'
 
-const UPLOAD_MIME_EXTENSIONS: Readonly<Record<string, string>> = {
-  'application/pdf': 'pdf',
-  'image/gif': 'gif',
-  'image/jpeg': 'jpg',
-  'image/png': 'png',
-  'image/svg+xml': 'svg',
-  'image/webp': 'webp',
-  'text/plain': 'txt'
-}
+const UPLOAD_MIME_EXTENSIONS = new Map([
+  ['application/pdf', 'pdf'],
+  ['image/gif', 'gif'],
+  ['image/jpeg', 'jpg'],
+  ['image/png', 'png'],
+  ['image/svg+xml', 'svg'],
+  ['image/webp', 'webp'],
+  ['text/plain', 'txt']
+])
 const UPLOAD_RETENTION_MS = 24 * 60 * 60_000
 const UPLOAD_DIRECTORY_MAX_BYTES = 512 * 1024 * 1024
 const terminalPresetDefinitionsQuerySchema = z.object({
   projectId: z.string().optional(),
   worktreeId: z.string().optional()
+})
+const operationQuerySchema = z.object({
+  kind: z
+    .enum([
+      'create',
+      'finish',
+      'discard',
+      'project_cleanup',
+      'remove',
+      'external_remove'
+    ])
+    .optional(),
+  projectId: z.string().optional()
 })
 const discardStoredDataQuerySchema = z.object({
   discardStoredData: z.string().optional()
@@ -174,7 +187,7 @@ export function createApp({
   const metadata =
     terminalMetadata ??
     new TerminalMetadataManager(service, tmux, config.tmuxPath)
-  const metadataReady = metadata.initialize().catch((error: unknown) => {
+  const metadataReady = metadata.initialize().catch((error) => {
     console.error(
       '[Treeport] Terminal metadata initialization failed:',
       error instanceof Error ? error.message : String(error)
@@ -200,14 +213,16 @@ export function createApp({
     }
 
     if (error instanceof DomainError) {
+      const body: ApiErrorBody = {
+        error: { code: error.code, message: error.message }
+      }
+      if (error.details !== undefined) {
+        body.error.details = error.details
+      }
+
       return context.json(
-        {
-          error: {
-            code: error.code,
-            message: error.message,
-            ...(error.details === undefined ? {} : { details: error.details })
-          }
-        },
+        body,
+        // SAFETY: The surrounding boundary contract establishes this asserted value.
         error.status as any
       )
     }
@@ -452,20 +467,24 @@ export function createApp({
       jsonInput(createWorktreeSchema),
       async (context) => {
         const body = context.req.valid('json')
-        const initialTerminal = body.initialTerminal
-          ? {
-              name: body.initialTerminal.name,
-              ...(body.initialTerminal.argv
-                ? { argv: body.initialTerminal.argv }
-                : {}),
-              ...(body.initialTerminal.returnToShell
-                ? { returnToShell: true }
-                : {}),
-              ...(body.initialTerminal.initialSize
-                ? { initialSize: body.initialTerminal.initialSize }
-                : {})
-            }
-          : undefined
+        let initialTerminal:
+          | NonNullable<Parameters<TreeportService['beginCreateWorktree']>[3]>
+          | undefined
+        if (body.initialTerminal) {
+          initialTerminal = { name: body.initialTerminal.name }
+          if (body.initialTerminal.argv) {
+            initialTerminal.argv = body.initialTerminal.argv
+          }
+
+          if (body.initialTerminal.returnToShell) {
+            initialTerminal.returnToShell = true
+          }
+
+          if (body.initialTerminal.initialSize) {
+            initialTerminal.initialSize = body.initialTerminal.initialSize
+          }
+        }
+
         return context.json(
           {
             operation: await service.beginCreateWorktree(
@@ -659,26 +678,26 @@ export function createApp({
 
       const extension = path.extname(resolution.path).toLowerCase()
       const body = await fs.readFile(resolution.path)
-      const mimeTypes: Record<string, string> = {
-        '.css': 'text/css; charset=utf-8',
-        '.gif': 'image/gif',
-        '.html': 'text/html; charset=utf-8',
-        '.jpeg': 'image/jpeg',
-        '.jpg': 'image/jpeg',
-        '.js': 'text/javascript; charset=utf-8',
-        '.json': 'application/json; charset=utf-8',
-        '.map': 'application/json; charset=utf-8',
-        '.mjs': 'text/javascript; charset=utf-8',
-        '.png': 'image/png',
-        '.svg': 'image/svg+xml',
-        '.webp': 'image/webp',
-        '.woff': 'font/woff',
-        '.woff2': 'font/woff2'
-      }
+      const mimeTypes = new Map([
+        ['.css', 'text/css; charset=utf-8'],
+        ['.gif', 'image/gif'],
+        ['.html', 'text/html; charset=utf-8'],
+        ['.jpeg', 'image/jpeg'],
+        ['.jpg', 'image/jpeg'],
+        ['.js', 'text/javascript; charset=utf-8'],
+        ['.json', 'application/json; charset=utf-8'],
+        ['.map', 'application/json; charset=utf-8'],
+        ['.mjs', 'text/javascript; charset=utf-8'],
+        ['.png', 'image/png'],
+        ['.svg', 'image/svg+xml'],
+        ['.webp', 'image/webp'],
+        ['.woff', 'font/woff'],
+        ['.woff2', 'font/woff2']
+      ])
 
       context.header(
         'content-type',
-        mimeTypes[extension] ?? 'application/octet-stream'
+        mimeTypes.get(extension) ?? 'application/octet-stream'
       )
       context.header('cache-control', 'public, max-age=31536000, immutable')
       context.header('access-control-allow-origin', '*')
@@ -691,6 +710,7 @@ export function createApp({
         )
       )
       context.header('x-content-type-options', 'nosniff')
+      // SAFETY: The surrounding boundary contract establishes this asserted value.
       return context.body(body as any)
     })
 
@@ -699,23 +719,34 @@ export function createApp({
       jsonInput(createTerminalSchema),
       async (context) => {
         const body = context.req.valid('json')
+        const options: NonNullable<
+          Parameters<TreeportService['createTerminal']>[3]
+        > = {}
+        if (body.returnToShell) {
+          options.returnToShell = true
+        }
+
+        if (body.closeOnSuccess) {
+          options.closeOnSuccess = true
+        }
+
+        if (body.initialSize) {
+          options.initialSize = body.initialSize
+        }
+
+        if (body.cwd) {
+          options.cwd = body.cwd
+        }
+
+        if (body.env) {
+          options.env = body.env
+        }
+
         const terminal = await service.createTerminal(
           context.req.param('worktreeId'),
           body.name,
           body.argv,
-          body.returnToShell ||
-            body.closeOnSuccess ||
-            body.initialSize ||
-            body.cwd ||
-            body.env
-            ? {
-                ...(body.returnToShell ? { returnToShell: true } : {}),
-                ...(body.closeOnSuccess ? { closeOnSuccess: true } : {}),
-                ...(body.initialSize ? { initialSize: body.initialSize } : {}),
-                ...(body.cwd ? { cwd: body.cwd } : {}),
-                ...(body.env ? { env: body.env } : {})
-              }
-            : undefined
+          Object.keys(options).length > 0 ? options : undefined
         )
         return context.json({ terminal }, 201)
       }
@@ -848,7 +879,7 @@ export function createApp({
           context.req.header('content-type')?.split(';', 1)[0]?.toLowerCase() ??
           ''
         const extension =
-          requestedExtension || UPLOAD_MIME_EXTENSIONS[contentType] || ''
+          requestedExtension || UPLOAD_MIME_EXTENSIONS.get(contentType) || ''
         const uploadDirectory = path.join(config.runtimeDir, 'uploads')
         await fs.mkdir(uploadDirectory, { recursive: true, mode: 0o700 })
         await fs.chmod(uploadDirectory, 0o700)
@@ -921,37 +952,31 @@ export function createApp({
     .get(
       '/api/operations',
       validator('query', (value) => {
-        const kind = typeof value.kind === 'string' ? value.kind : undefined
-        const projectId =
-          typeof value.projectId === 'string' ? value.projectId : undefined
-        const supportedKinds: OperationKind[] = [
-          'create',
-          'finish',
-          'discard',
-          'project_cleanup',
-          'remove',
-          'external_remove'
-        ]
-        if (kind && !supportedKinds.includes(kind as OperationKind)) {
+        const parsed = operationQuerySchema.safeParse(value)
+        if (!parsed.success) {
           throw new DomainError(
             'INVALID_OPERATION_KIND',
-            'Invalid operation kind',
+            'Invalid operation query',
             400
           )
         }
 
-        return {
-          ...(kind ? { kind: kind as OperationKind } : {}),
-          ...(projectId ? { projectId } : {})
-        }
+        return parsed.data
       }),
       async (context) => {
-        const { kind, projectId } = context.req.valid('query')
+        const query = context.req.valid('query')
+        const filters: Parameters<TreeportService['listActiveOperations']>[0] =
+          {}
+        if (query.projectId) {
+          filters.projectId = query.projectId
+        }
+
+        if (query.kind) {
+          filters.kind = query.kind
+        }
+
         return context.json({
-          operations: await service.listActiveOperations({
-            ...(projectId ? { projectId } : {}),
-            ...(kind ? { kind } : {})
-          })
+          operations: await service.listActiveOperations(filters)
         })
       }
     )

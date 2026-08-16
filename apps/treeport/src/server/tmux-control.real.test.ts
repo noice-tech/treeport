@@ -133,6 +133,7 @@ describe.skipIf(!enabled)('real tmux control-mode characterization', () => {
         controlAttachArgs(socket, tmux.configPath, session),
         {
           stdio: ['pipe', 'pipe', 'pipe'],
+          // SAFETY: The test fixture provides the asserted contract used here.
           env: Object.fromEntries(
             Object.entries(process.env).filter(
               ([key, value]) =>
@@ -149,6 +150,7 @@ describe.skipIf(!enabled)('real tmux control-mode characterization', () => {
         try {
           events.push(...parser.push(chunk))
         } catch (error) {
+          // SAFETY: The test fixture provides the asserted contract used here.
           parserError = error as Error
         }
       })
@@ -206,6 +208,7 @@ describe.skipIf(!enabled)('real tmux control-mode characterization', () => {
         progressControlAttachArgs(socket, tmux.configPath, session),
         {
           stdio: ['pipe', 'pipe', 'pipe'],
+          // SAFETY: The test fixture provides the asserted contract used here.
           env: Object.fromEntries(
             Object.entries(process.env).filter(
               ([key, value]) =>
@@ -289,6 +292,7 @@ describe.skipIf(!enabled)('real tmux control-mode characterization', () => {
         executable: 'tmux',
         args: progressControlAttachArgs(socket, tmux.configPath, session),
         cwd: root,
+        // SAFETY: The test fixture provides the asserted contract used here.
         env: Object.fromEntries(
           Object.entries(process.env).filter(
             ([key, value]) =>

@@ -1,6 +1,7 @@
 import { ChevronLeftIcon, ChevronRightIcon, DownloadIcon } from 'lucide-react'
 import {
   type PointerEvent as ReactPointerEvent,
+  useCallback,
   useEffect,
   useState
 } from 'react'
@@ -70,6 +71,19 @@ export function App() {
     setDialog(nextDialog)
   }
   const computer = state ? selectedComputer(state) : undefined
+  const webviewUrl =
+    state?.connection.status === 'ready' ? state.connection.url : null
+  const attachWebview = useCallback(
+    (webview: Electron.WebviewTag | null) => {
+      if (!webview || !webviewUrl) {
+        return
+      }
+
+      webview.setAttribute('allowpopups', 'true')
+      webview.src = webviewUrl
+    },
+    [webviewUrl]
+  )
   const captureTerminalSelectionPointer = (
     event: ReactPointerEvent<HTMLDivElement>
   ) => {
@@ -97,14 +111,11 @@ export function App() {
           }
         />
       ) : null}
-      {state?.connection.status === 'ready' && computer ? (
+      {state && webviewUrl && computer ? (
         <webview
           key={computer.origin}
-          src={state.connection.url}
+          ref={attachWebview}
           partition="persist:treeport-desktop"
-          // React removes a boolean allowpopups value, but Electron requires the
-          // attribute to exist before the guest can request a new window.
-          allowpopups={'true' as unknown as boolean}
           className={
             state.platform === 'darwin' && state.fullscreen
               ? 'fixed inset-0 h-full w-full'

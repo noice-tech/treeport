@@ -14,6 +14,7 @@ import {
   shell,
   webContents,
   type IpcMainEvent,
+  type BrowserWindowConstructorOptions,
   type IpcMainInvokeEvent,
   type MenuItemConstructorOptions,
   type WebContents
@@ -78,11 +79,22 @@ let dockBounceId: number | null = null
 let frameFlashing = false
 
 function shellUrl(): string {
-  if (
-    typeof MAIN_WINDOW_VITE_DEV_SERVER_URL !== 'undefined' &&
-    MAIN_WINDOW_VITE_DEV_SERVER_URL
-  ) {
-    return MAIN_WINDOW_VITE_DEV_SERVER_URL
+  let developmentServerUrl: string | null = null
+  try {
+    const parsedDevelopmentServerUrl = z
+      .string()
+      .safeParse(MAIN_WINDOW_VITE_DEV_SERVER_URL)
+    if (parsedDevelopmentServerUrl.success && parsedDevelopmentServerUrl.data) {
+      developmentServerUrl = parsedDevelopmentServerUrl.data
+    }
+  } catch (error) {
+    if (!(error instanceof ReferenceError)) {
+      throw error
+    }
+  }
+
+  if (developmentServerUrl) {
+    return developmentServerUrl
   }
 
   return pathToFileURL(
@@ -105,18 +117,20 @@ function navigationState(): DesktopNavigationState {
 }
 
 function shellState(): DesktopShellState {
-  return {
+  const state: DesktopShellState = {
     appVersion: app.getVersion(),
     platform: process.platform,
     fullscreen,
     updateReady,
-    ...(store?.selectedComputer
-      ? { selectedComputerId: store.selectedComputer.id }
-      : {}),
     computers: store?.summaries() ?? [],
     connection,
     navigation: navigationState()
   }
+  if (store?.selectedComputer) {
+    state.selectedComputerId = store.selectedComputer.id
+  }
+
+  return state
 }
 
 function broadcastState(): void {
@@ -580,26 +594,26 @@ function installMenu(): void {
     { role: 'editMenu' },
     {
       label: 'Navigate',
-      submenu: [
-        {
+      submenu: (() => {
+        const back: MenuItemConstructorOptions = {
           id: 'navigate-back',
           label: 'Back',
-          ...(process.platform === 'darwin'
-            ? { accelerator: 'Command+[' }
-            : {}),
           enabled: navigation.canGoBack,
           click: () => navigateGuestHistory('back')
-        },
-        {
+        }
+        const forward: MenuItemConstructorOptions = {
           id: 'navigate-forward',
           label: 'Forward',
-          ...(process.platform === 'darwin'
-            ? { accelerator: 'Command+]' }
-            : {}),
           enabled: navigation.canGoForward,
           click: () => navigateGuestHistory('forward')
         }
-      ]
+        if (process.platform === 'darwin') {
+          back.accelerator = 'Command+['
+          forward.accelerator = 'Command+]'
+        }
+
+        return [back, forward]
+      })()
     },
     {
       label: 'View',
@@ -653,7 +667,7 @@ function installMenu(): void {
 }
 
 function createWindow(url?: string): BrowserWindow {
-  const window = new BrowserWindow({
+  const options: BrowserWindowConstructorOptions = {
     show: !desktopE2e,
     width: 1440,
     height: 900,
@@ -668,22 +682,25 @@ function createWindow(url?: string): BrowserWindow {
       symbolColor: '#f4f4f5',
       height: TITLEBAR_HEIGHT
     },
-    ...(process.platform === 'darwin'
-      ? { trafficLightPosition: { x: 12, y: 9 } }
-      : {}),
     webPreferences: shellWindowPreferences()
-  })
+  }
+  if (process.platform === 'darwin') {
+    options.trafficLightPosition = { x: 12, y: 9 }
+  }
+
+  const window = new BrowserWindow(options)
   mainWindow = window
   window.webContents.on(
     'will-attach-webview',
     (event, webPreferences, params) => {
       const origin = selectedOrigin()
+      const parsedSource = z.string().url().safeParse(params.src)
       if (
         connection.status !== 'ready' ||
         !origin ||
-        typeof params.src !== 'string' ||
-        !URL.canParse(params.src) ||
-        new URL(params.src).origin !== origin
+        !parsedSource.success ||
+        !URL.canParse(parsedSource.data) ||
+        new URL(parsedSource.data).origin !== origin
       ) {
         event.preventDefault()
         return
@@ -718,7 +735,7 @@ function createWindow(url?: string): BrowserWindow {
     installGuestSecurity(guest, origin)
     broadcastState()
   })
-  void loadShellContents(window.webContents).catch((error: unknown) => {
+  void loadShellContents(window.webContents).catch((error) => {
     console.error('[Treeport] Could not load desktop shell', error)
   })
 
@@ -745,11 +762,11 @@ function createWindow(url?: string): BrowserWindow {
   return window
 }
 
-function mutationError(error: unknown): ComputerMutationResult {
+function mutationError(cause: unknown): ComputerMutationResult {
   return {
     ok: false,
     error:
-      error instanceof Error ? error.message : 'Could not save the computer.'
+      cause instanceof Error ? cause.message : 'Could not save the computer.'
   }
 }
 
@@ -757,26 +774,28 @@ function registerIpc(): void {
   ipcMain.handle('shell:get-state', (event) =>
     isAuthorizedShellEvent(event) ? shellState() : null
   )
-  ipcMain.handle('shell:select-computer', async (event, id: unknown) => {
-    if (!isAuthorizedShellEvent(event) || typeof id !== 'string' || !store) {
+  ipcMain.handle('shell:select-computer', async (event, id) => {
+    const parsedId = z.string().safeParse(id)
+    if (!isAuthorizedShellEvent(event) || !parsedId.success || !store) {
       return false
     }
 
-    const selected = await store.select(id)
+    const selected = await store.select(parsedId.data)
     if (selected) {
       void connectSelected()
     }
 
     return selected
   })
-  ipcMain.handle('shell:add-computer', async (event, input: unknown) => {
-    if (!isAuthorizedShellEvent(event) || typeof input !== 'string' || !store) {
+  ipcMain.handle('shell:add-computer', async (event, input) => {
+    const parsedInput = z.string().safeParse(input)
+    if (!isAuthorizedShellEvent(event) || !parsedInput.success || !store) {
       return { ok: false, error: 'Could not save the computer.' }
     }
 
     let origin: string
     try {
-      origin = parseComputerUrl(input).origin
+      origin = parseComputerUrl(parsedInput.data).origin
     } catch (error) {
       return mutationError(error)
     }
@@ -797,7 +816,7 @@ function registerIpc(): void {
       return mutationError(error)
     }
   })
-  ipcMain.handle('shell:update-computer', async (event, value: unknown) => {
+  ipcMain.handle('shell:update-computer', async (event, value) => {
     if (!isAuthorizedShellEvent(event) || !store) {
       return { ok: false, error: 'Could not save the computer.' }
     }
@@ -809,11 +828,12 @@ function registerIpc(): void {
 
     const update: ComputerUpdate = {
       id: parsed.data.id,
-      origin: parsed.data.origin,
-      ...(parsed.data.nameOverride !== undefined
-        ? { nameOverride: parsed.data.nameOverride }
-        : {})
+      origin: parsed.data.origin
     }
+    if (parsed.data.nameOverride !== undefined) {
+      update.nameOverride = parsed.data.nameOverride
+    }
+
     try {
       const result = await store.update(update.id, update)
       if (!result) {
@@ -831,16 +851,18 @@ function registerIpc(): void {
       return mutationError(error)
     }
   })
-  ipcMain.handle('shell:remove-computer', async (event, id: unknown) => {
-    if (!isAuthorizedShellEvent(event) || typeof id !== 'string' || !store) {
+  ipcMain.handle('shell:remove-computer', async (event, id) => {
+    const parsedId = z.string().safeParse(id)
+    if (!isAuthorizedShellEvent(event) || !parsedId.success || !store) {
       return false
     }
 
-    if (!store.getComputer(id)) {
+    const computerId = parsedId.data
+    if (!store.getComputer(computerId)) {
       return false
     }
 
-    const result = await store.remove(id)
+    const result = await store.remove(computerId)
     if (result.selectedChanged) {
       void connectSelected()
     } else {
@@ -867,12 +889,10 @@ function registerIpc(): void {
 
     autoUpdater.quitAndInstall()
   })
-  ipcMain.on('shell:navigate-history', (event, direction: unknown) => {
-    if (
-      isAuthorizedShellEvent(event) &&
-      (direction === 'back' || direction === 'forward')
-    ) {
-      navigateGuestHistory(direction)
+  ipcMain.on('shell:navigate-history', (event, direction) => {
+    const parsed = z.enum(['back', 'forward']).safeParse(direction)
+    if (isAuthorizedShellEvent(event) && parsed.success) {
+      navigateGuestHistory(parsed.data)
     }
   })
   ipcMain.handle('shell:copy-start-command', (event) => {
@@ -888,7 +908,7 @@ function registerIpc(): void {
     }
   })
 
-  ipcMain.handle('open-file-url', async (event, value: unknown) => {
+  ipcMain.handle('open-file-url', async (event, value) => {
     if (!isActiveGuestEvent(event)) {
       return 'rejected'
     }
@@ -905,12 +925,13 @@ function registerIpc(): void {
 
     return (await shell.openPath(filePath)) === '' ? 'opened' : 'rejected'
   })
-  ipcMain.on('terminal-selection:set-active', (event, active: unknown) => {
-    if (!isActiveGuestEvent(event) || typeof active !== 'boolean') {
+  ipcMain.on('terminal-selection:set-active', (event, active) => {
+    const parsedActive = z.boolean().safeParse(active)
+    if (!isActiveGuestEvent(event) || !parsedActive.success) {
       return
     }
 
-    if (active) {
+    if (parsedActive.data) {
       setTerminalSelectionGuest(event.sender)
     } else if (terminalSelectionGuest === event.sender) {
       setTerminalSelectionGuest(null)
@@ -967,12 +988,14 @@ function queueWorkspaceTarget(target: WorkspaceTarget): void {
 
   workspaceTargetQueue = workspaceTargetQueue
     .then(() => openWorkspaceTarget(target))
-    .catch((error: unknown) => {
+    .catch((error) => {
       console.error('[Treeport] Could not open workspace link', error)
     })
 }
 
-function receiveWorkspaceLink(value: unknown): boolean {
+function receiveWorkspaceLink(
+  value: Parameters<typeof parseWorkspaceLink>[0]
+): boolean {
   const target = parseWorkspaceLink(value)
   if (!target) {
     return false
@@ -1054,7 +1077,7 @@ if (!hasSingleInstanceLock) {
         }
       })
     })
-    .catch((error: unknown) => {
+    .catch((error) => {
       console.error('[Treeport] Could not start desktop app', error)
       app.quit()
     })

@@ -38,6 +38,7 @@ async function executable(command: string, args: string[]) {
 }
 
 function ptyEnvironment(): Record<string, string> {
+  // SAFETY: The test fixture provides the asserted contract used here.
   return Object.fromEntries(
     Object.entries(process.env).filter(
       ([key, value]) =>

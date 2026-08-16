@@ -2,6 +2,7 @@ import crypto from 'node:crypto'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import { z } from 'zod'
 import {
   createTerminalPresetSchema,
   type PackageListing,
@@ -21,6 +22,17 @@ interface TreeportSettings {
   raw: object
   packages: PackageSource[]
   npmCommand?: string[]
+}
+
+interface ParsedSettingsResult {
+  settings?: TreeportSettings
+  diagnostic?: PackageResourceDiagnostic
+}
+
+interface SettingsFileReadResult {
+  fingerprint: string
+  content: string | null
+  error?: Error
 }
 
 interface ProjectPackageContext {
@@ -112,15 +124,57 @@ interface PackageManifest {
   terminalPresets: string[]
 }
 
+const packageManifestInputSchema = z.unknown()
+type PackageManifestInput = z.input<typeof packageManifestInputSchema>
+const manifestPatternsSchema = z.array(z.string())
+const webPanelManifestEntrySchema = z.union([
+  z.string(),
+  z.strictObject({
+    source: z.string(),
+    permissions: z.array(z.enum(['same-origin'])).optional()
+  })
+])
+
 const EMPTY_SETTINGS: TreeportSettings = { raw: {}, packages: [] }
 const PACKAGE_OPERATION_TIMEOUT_MS = 5 * 60_000
 
 function sourceString(source: PackageSource): string {
-  return typeof source === 'string' ? source : source.source
+  const parsed = z.string().safeParse(source)
+  if (parsed.success) {
+    return parsed.data
+  }
+
+  return z.object({ source: z.string() }).parse(source).source
 }
 
 function packageFilter(source: PackageSource): PackageSourceObject | undefined {
-  return typeof source === 'string' ? undefined : source
+  const parsed = z.string().safeParse(source)
+  if (parsed.success) {
+    return undefined
+  }
+
+  const data = z
+    .object({
+      source: z.string(),
+      autoload: z.boolean().optional(),
+      webPanels: z.array(z.string()).optional(),
+      terminalPresets: z.array(z.string()).optional()
+    })
+    .parse(source)
+  const result: PackageSourceObject = { source: data.source }
+  if (data.autoload !== undefined) {
+    result.autoload = data.autoload
+  }
+
+  if (data.webPanels !== undefined) {
+    result.webPanels = data.webPanels
+  }
+
+  if (data.terminalPresets !== undefined) {
+    result.terminalPresets = data.terminalPresets
+  }
+
+  return result
 }
 
 function toPosix(value: string): string {
@@ -164,19 +218,28 @@ function diagnostic(
     path?: string | undefined
   } = {}
 ): PackageResourceDiagnostic {
-  return {
+  const result: PackageResourceDiagnostic = {
     severity: options.severity ?? 'error',
     scope,
-    message,
-    ...(options.source === undefined ? {} : { source: options.source }),
-    ...(options.projectId === undefined
-      ? {}
-      : { projectId: options.projectId }),
-    ...(options.resourceType === undefined
-      ? {}
-      : { resourceType: options.resourceType }),
-    ...(options.path === undefined ? {} : { path: options.path })
+    message
   }
+  if (options.source !== undefined) {
+    result.source = options.source
+  }
+
+  if (options.projectId !== undefined) {
+    result.projectId = options.projectId
+  }
+
+  if (options.resourceType !== undefined) {
+    result.resourceType = options.resourceType
+  }
+
+  if (options.path !== undefined) {
+    result.path = options.path
+  }
+
+  return result
 }
 
 function normalizePattern(value: string): string {
@@ -354,31 +417,35 @@ export class PackageSystem {
     }
   }
 
-  private async readSettingsFile(settingsPath: string): Promise<{
-    fingerprint: string
-    content: string | null
-    error?: Error
-  }> {
+  private async readSettingsFile(
+    settingsPath: string
+  ): Promise<SettingsFileReadResult> {
     let readError: Error | undefined
-    const content = await fs
-      .readFile(settingsPath, 'utf8')
-      .catch((error: unknown) => {
-        if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-          return null
-        }
-
-        readError = error instanceof Error ? error : new Error(String(error))
+    const content = await fs.readFile(settingsPath, 'utf8').catch((error) => {
+      if (
+        error instanceof Error &&
+        'code' in error &&
+        error.code === 'ENOENT'
+      ) {
         return null
-      })
-    return {
+      }
+
+      readError = error instanceof Error ? error : new Error(String(error))
+      return null
+    })
+    const result: SettingsFileReadResult = {
       fingerprint: readError
         ? `error:${readError.message}`
         : content === null
           ? 'missing'
           : crypto.createHash('sha256').update(content).digest('hex'),
-      content,
-      ...(readError ? { error: readError } : {})
+      content
     }
+    if (readError) {
+      result.error = readError
+    }
+
+    return result
   }
 
   private parseSettings(
@@ -386,14 +453,14 @@ export class PackageSystem {
     settingsPath: string,
     scope: PackageScope,
     projectId?: string
-  ): { settings?: TreeportSettings; diagnostic?: PackageResourceDiagnostic } {
+  ): ParsedSettingsResult {
     if (content === null || content.trim() === '') {
       return { settings: { raw: {}, packages: [] } }
     }
 
-    let raw: unknown
+    let input
     try {
-      raw = JSON.parse(content)
+      input = JSON.parse(content)
     } catch (error) {
       return {
         diagnostic: diagnostic(
@@ -403,29 +470,28 @@ export class PackageSystem {
         )
       }
     }
-    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+
+    const parsedRaw = z
+      .looseObject({
+        npmCommand: z.unknown().optional(),
+        packages: z.unknown().optional()
+      })
+      .safeParse(input)
+    if (!parsedRaw.success) {
       return {
         diagnostic: diagnostic(
           scope,
           `${settingsPath} must contain a JSON object`,
-          {
-            projectId,
-            path: settingsPath
-          }
+          { projectId, path: settingsPath }
         )
       }
     }
 
-    const npmCommand: unknown = Reflect.get(raw, 'npmCommand')
-    const packageEntries: unknown = Reflect.get(raw, 'packages')
-    if (
-      npmCommand !== undefined &&
-      (!Array.isArray(npmCommand) ||
-        npmCommand.length === 0 ||
-        npmCommand.some(
-          (value) => typeof value !== 'string' || value.length === 0
-        ))
-    ) {
+    const parsedNpmCommand = z
+      .array(z.string().min(1))
+      .min(1)
+      .safeParse(parsedRaw.data.npmCommand)
+    if (parsedRaw.data.npmCommand !== undefined && !parsedNpmCommand.success) {
       return {
         diagnostic: diagnostic(
           scope,
@@ -435,27 +501,35 @@ export class PackageSystem {
       }
     }
 
-    if (packageEntries !== undefined && !Array.isArray(packageEntries)) {
+    const parsedPackageEntries = z
+      .array(z.unknown())
+      .safeParse(parsedRaw.data.packages ?? [])
+    if (!parsedPackageEntries.success) {
       return {
         diagnostic: diagnostic(
           scope,
           `${settingsPath} packages must be an array`,
-          {
-            projectId,
-            path: settingsPath
-          }
+          { projectId, path: settingsPath }
         )
       }
     }
 
+    const packageObjectSchema = z.looseObject({
+      source: z.unknown().optional(),
+      autoload: z.unknown().optional(),
+      webPanels: z.unknown().optional(),
+      terminalPresets: z.unknown().optional()
+    })
     const packages: PackageSource[] = []
-    for (const [index, entry] of (packageEntries ?? []).entries()) {
-      if (typeof entry === 'string' && entry.trim()) {
-        packages.push(entry)
+    for (const [index, entry] of parsedPackageEntries.data.entries()) {
+      const parsedSourceString = z.string().safeParse(entry)
+      if (parsedSourceString.success && parsedSourceString.data.trim()) {
+        packages.push(parsedSourceString.data)
         continue
       }
 
-      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      const parsedEntry = packageObjectSchema.safeParse(entry)
+      if (!parsedEntry.success) {
         return {
           diagnostic: diagnostic(
             scope,
@@ -465,11 +539,8 @@ export class PackageSystem {
         }
       }
 
-      const source: unknown = Reflect.get(entry, 'source')
-      const autoload: unknown = Reflect.get(entry, 'autoload')
-      const webPanels: unknown = Reflect.get(entry, 'webPanels')
-      const terminalPresets: unknown = Reflect.get(entry, 'terminalPresets')
-      if (typeof source !== 'string' || !source.trim()) {
+      const parsedSource = z.string().safeParse(parsedEntry.data.source)
+      if (!parsedSource.success || !parsedSource.data.trim()) {
         return {
           diagnostic: diagnostic(
             scope,
@@ -479,7 +550,8 @@ export class PackageSystem {
         }
       }
 
-      if (autoload !== undefined && typeof autoload !== 'boolean') {
+      const parsedAutoload = z.boolean().safeParse(parsedEntry.data.autoload)
+      if (parsedEntry.data.autoload !== undefined && !parsedAutoload.success) {
         return {
           diagnostic: diagnostic(
             scope,
@@ -489,15 +561,21 @@ export class PackageSystem {
         }
       }
 
-      for (const [key, value] of [
-        ['webPanels', webPanels],
-        ['terminalPresets', terminalPresets]
+      const parsedWebPanels = z
+        .array(z.string())
+        .safeParse(parsedEntry.data.webPanels)
+      const parsedTerminalPresets = z
+        .array(z.string())
+        .safeParse(parsedEntry.data.terminalPresets)
+      for (const [key, original, parsed] of [
+        ['webPanels', parsedEntry.data.webPanels, parsedWebPanels],
+        [
+          'terminalPresets',
+          parsedEntry.data.terminalPresets,
+          parsedTerminalPresets
+        ]
       ] as const) {
-        if (
-          value !== undefined &&
-          (!Array.isArray(value) ||
-            value.some((pattern) => typeof pattern !== 'string'))
-        ) {
+        if (original !== undefined && !parsed.success) {
           return {
             diagnostic: diagnostic(
               scope,
@@ -507,38 +585,29 @@ export class PackageSystem {
           }
         }
       }
-      const parsedWebPanels = Array.isArray(webPanels)
-        ? webPanels.filter(
-            (pattern): pattern is string => typeof pattern === 'string'
-          )
-        : undefined
-      const parsedTerminalPresets = Array.isArray(terminalPresets)
-        ? terminalPresets.filter(
-            (pattern): pattern is string => typeof pattern === 'string'
-          )
-        : undefined
-      packages.push({
-        source,
-        ...(autoload === undefined ? {} : { autoload }),
-        ...(parsedWebPanels ? { webPanels: parsedWebPanels } : {}),
-        ...(parsedTerminalPresets
-          ? { terminalPresets: parsedTerminalPresets }
-          : {})
-      })
+
+      const configured: PackageSourceObject = { source: parsedSource.data }
+      if (parsedAutoload.success) {
+        configured.autoload = parsedAutoload.data
+      }
+
+      if (parsedWebPanels.success) {
+        configured.webPanels = parsedWebPanels.data
+      }
+
+      if (parsedTerminalPresets.success) {
+        configured.terminalPresets = parsedTerminalPresets.data
+      }
+
+      packages.push(configured)
     }
 
-    const parsedNpmCommand = Array.isArray(npmCommand)
-      ? npmCommand.filter(
-          (argument): argument is string => typeof argument === 'string'
-        )
-      : undefined
-    return {
-      settings: {
-        raw,
-        packages,
-        ...(parsedNpmCommand ? { npmCommand: parsedNpmCommand } : {})
-      }
+    const settings: TreeportSettings = { raw: parsedRaw.data, packages }
+    if (parsedNpmCommand.success) {
+      settings.npmCommand = parsedNpmCommand.data
     }
+
+    return { settings }
   }
 
   private async parseSource(
@@ -576,16 +645,20 @@ export class PackageSystem {
       }
 
       const identity = `npm:${name}`
-      return {
+      const parsed: ParsedNpmSource = {
         type: 'npm',
         source: trimmed,
         spec,
         name,
-        ...(version === undefined ? {} : { version }),
         exact: isExactNpmVersion(version),
         identity,
         packageId: identity
       }
+      if (version !== undefined) {
+        parsed.version = version
+      }
+
+      return parsed
     }
 
     if (
@@ -776,9 +849,12 @@ export class PackageSystem {
     } else if (source.exact) {
       const installedVersion = await fs
         .readFile(path.join(installedPath, 'package.json'), 'utf8')
-        .then(
-          (content) => (JSON.parse(content) as { version?: unknown }).version
-        )
+        .then((content) => {
+          const parsed = z
+            .object({ version: z.string().optional() })
+            .safeParse(JSON.parse(content))
+          return parsed.success ? parsed.data.version : undefined
+        })
         .catch(() => undefined)
       shouldInstall = installedVersion !== source.version
     }
@@ -803,20 +879,18 @@ export class PackageSystem {
   }
 
   private validateManifestPatterns(
-    patterns: unknown,
+    patterns: PackageManifestInput,
     field: string,
     packageJsonPath: string
   ): string[] {
-    if (
-      !Array.isArray(patterns) ||
-      patterns.some((pattern) => typeof pattern !== 'string')
-    ) {
+    const parsed = manifestPatternsSchema.safeParse(patterns)
+    if (!parsed.success) {
       throw new Error(
         `${packageJsonPath} treeport.${field} must be a string array`
       )
     }
 
-    for (const pattern of patterns as string[]) {
+    for (const pattern of parsed.data) {
       const target = pattern.startsWith('!') ? pattern.slice(1) : pattern
       const normalized = normalizePattern(target)
       if (
@@ -833,50 +907,51 @@ export class PackageSystem {
         )
       }
     }
-    return [...(patterns as string[])]
+    return [...parsed.data]
   }
 
   private validateWebPanelManifest(
-    entries: unknown,
+    entries: PackageManifestInput,
     packageJsonPath: string
   ): WebPanelManifestEntry[] {
-    if (!Array.isArray(entries)) {
+    const parsedEntries = z.array(z.unknown()).safeParse(entries)
+    if (!parsedEntries.success) {
       throw new Error(`${packageJsonPath} treeport.webPanels must be an array`)
     }
 
-    return entries.map((entry): WebPanelManifestEntry => {
-      if (typeof entry === 'string') {
-        this.validateManifestPatterns([entry], 'webPanels', packageJsonPath)
-        return { source: entry, allowSameOrigin: false }
-      }
-
-      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+    return parsedEntries.data.map((entry): WebPanelManifestEntry => {
+      const parsed = webPanelManifestEntrySchema.safeParse(entry)
+      if (!parsed.success) {
         throw new Error(
-          `${packageJsonPath} treeport.webPanels entries must be package-relative patterns or panel definitions`
+          `${packageJsonPath} contains an invalid web panel definition`
         )
       }
 
-      const keys = Object.keys(entry)
-      const source: unknown = Reflect.get(entry, 'source')
-      const permissions: unknown = Reflect.get(entry, 'permissions') ?? []
-      if (
-        keys.some((key) => !['source', 'permissions'].includes(key)) ||
-        typeof source !== 'string' ||
-        source.startsWith('!') ||
-        !Array.isArray(permissions) ||
-        permissions.some((permission) => typeof permission !== 'string')
-      ) {
+      const parsedSource = z.string().safeParse(parsed.data)
+      if (parsedSource.success) {
+        this.validateManifestPatterns(
+          [parsedSource.data],
+          'webPanels',
+          packageJsonPath
+        )
+        return { source: parsedSource.data, allowSameOrigin: false }
+      }
+
+      const parsedDefinition = z
+        .strictObject({
+          source: z.string(),
+          permissions: z.array(z.enum(['same-origin'])).optional()
+        })
+        .parse(parsed.data)
+      const { source, permissions = [] } = parsedDefinition
+      if (source.startsWith('!')) {
         throw new Error(
           `${packageJsonPath} contains an invalid web panel definition`
         )
       }
 
       this.validateManifestPatterns([source], 'webPanels', packageJsonPath)
-      const uniquePermissions = new Set(permissions)
-      if (
-        uniquePermissions.size !== permissions.length ||
-        permissions.some((permission) => permission !== 'same-origin')
-      ) {
+      if (new Set(permissions).size !== permissions.length) {
         throw new Error(
           `${packageJsonPath} contains an invalid web panel permission`
         )
@@ -884,7 +959,7 @@ export class PackageSystem {
 
       return {
         source,
-        allowSameOrigin: uniquePermissions.has('same-origin')
+        allowSameOrigin: permissions.includes('same-origin')
       }
     })
   }
@@ -929,7 +1004,7 @@ export class PackageSystem {
         .then((values) =>
           values.sort((left, right) => left.name.localeCompare(right.name))
         )
-        .catch((error: unknown) => {
+        .catch((error) => {
           diagnostics.push(
             diagnostic(
               scope,
@@ -1045,8 +1120,12 @@ export class PackageSystem {
     const packageJsonPath = path.join(root, 'package.json')
     const packageJsonContent = await fs
       .readFile(packageJsonPath, 'utf8')
-      .catch((error: unknown) => {
-        if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      .catch((error) => {
+        if (
+          error instanceof Error &&
+          'code' in error &&
+          error.code === 'ENOENT'
+        ) {
           return null
         }
 
@@ -1062,38 +1141,33 @@ export class PackageSystem {
           `Could not parse ${packageJsonPath}: ${error instanceof Error ? error.message : String(error)}`
         )
       }
-      if (
-        !packageJson ||
-        typeof packageJson !== 'object' ||
-        Array.isArray(packageJson)
-      ) {
+      const parsedPackageJson = z
+        .looseObject({ treeport: z.unknown().optional() })
+        .safeParse(packageJson)
+      if (!parsedPackageJson.success) {
         throw new Error(`${packageJsonPath} must contain a JSON object`)
       }
 
-      const treeport: unknown = Reflect.get(packageJson, 'treeport')
-      if (treeport !== undefined) {
-        if (
-          !treeport ||
-          typeof treeport !== 'object' ||
-          Array.isArray(treeport)
-        ) {
+      if (parsedPackageJson.data.treeport !== undefined) {
+        const parsedTreeport = z
+          .looseObject({
+            webPanels: z.unknown().optional(),
+            terminalPresets: z.unknown().optional()
+          })
+          .safeParse(parsedPackageJson.data.treeport)
+        if (!parsedTreeport.success) {
           throw new Error(
             `${packageJsonPath} treeport manifest must be an object`
           )
         }
 
-        const webPanels: unknown = Reflect.get(treeport, 'webPanels')
-        const terminalPresets: unknown = Reflect.get(
-          treeport,
-          'terminalPresets'
-        )
         manifest = {
           webPanels: this.validateWebPanelManifest(
-            webPanels ?? [],
+            parsedTreeport.data.webPanels ?? [],
             packageJsonPath
           ),
           terminalPresets: this.validateManifestPatterns(
-            terminalPresets ?? [],
+            parsedTreeport.data.terminalPresets ?? [],
             'terminalPresets',
             packageJsonPath
           )
@@ -1154,7 +1228,7 @@ export class PackageSystem {
           ).then((values) => values.find(Boolean))
         : undefined
     const webPanels = applyNormalFilter(
-      panelCandidates.map((candidate) => {
+      panelCandidates.map((candidate): ResolvedWebPanel => {
         const resourceId = encodeURIComponent(
           path.posix.basename(candidate.relativePath)
         )
@@ -1168,7 +1242,7 @@ export class PackageSystem {
                 'web-panel'
               )
           ) ?? false
-        return {
+        const resolved: ResolvedWebPanel = {
           definition: {
             id: `package:${parsed.packageId}:web-panel:${resourceId}`,
             title: titleFromPath(candidate.relativePath),
@@ -1179,10 +1253,14 @@ export class PackageSystem {
           entry: 'index.html',
           packageRoot: root,
           development: parsed.type === 'local',
-          ...(packageLockPath ? { packageLockPath } : {}),
           relativePath: candidate.relativePath,
           enabled: true
         }
+        if (packageLockPath) {
+          resolved.packageLockPath = packageLockPath
+        }
+
+        return resolved
       }),
       filter?.webPanels,
       autoload
@@ -1910,11 +1988,8 @@ export class PackageSystem {
           if (existing.identity !== parsed.identity) {
             next.push(configured)
           } else if (!replaced) {
-            next.push(
-              typeof configured === 'string'
-                ? persisted
-                : { ...configured, source: persisted }
-            )
+            const filter = packageFilter(configured)
+            next.push(filter ? { ...filter, source: persisted } : persisted)
             replaced = true
           }
         }

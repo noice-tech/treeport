@@ -26,7 +26,12 @@ interface DesktopSettings {
   computers: SavedComputer[]
 }
 
-function parseSettings(value: unknown): DesktopSettings | null {
+interface ComputerUpdateInput {
+  origin: string
+  nameOverride?: string
+}
+
+const parseSettings = z.unknown().transform((value): DesktopSettings | null => {
   const result = desktopSettingsSchema.safeParse(value)
   if (!result.success) {
     return null
@@ -48,31 +53,34 @@ function parseSettings(value: unknown): DesktopSettings | null {
 
     origins.add(origin)
     ids.add(candidate.id)
-    computers.push({
+    const computer: SavedComputer = {
       id: candidate.id,
       origin,
-      createdAt: candidate.createdAt,
-      ...(candidate.nameOverride?.trim()
-        ? { nameOverride: candidate.nameOverride.trim() }
-        : {}),
-      ...(candidate.advertisedHostname?.trim()
-        ? { advertisedHostname: candidate.advertisedHostname.trim() }
-        : {}),
-      ...(candidate.lastSelectedAt
-        ? { lastSelectedAt: candidate.lastSelectedAt }
-        : {})
-    })
+      createdAt: candidate.createdAt
+    }
+    if (candidate.nameOverride?.trim()) {
+      computer.nameOverride = candidate.nameOverride.trim()
+    }
+
+    if (candidate.advertisedHostname?.trim()) {
+      computer.advertisedHostname = candidate.advertisedHostname.trim()
+    }
+
+    if (candidate.lastSelectedAt) {
+      computer.lastSelectedAt = candidate.lastSelectedAt
+    }
+
+    computers.push(computer)
   }
 
   const { selectedComputerId } = result.data
-  return {
-    version: 1,
-    computers,
-    ...(selectedComputerId && ids.has(selectedComputerId)
-      ? { selectedComputerId }
-      : {})
+  const settings: DesktopSettings = { version: 1, computers }
+  if (selectedComputerId && ids.has(selectedComputerId)) {
+    settings.selectedComputerId = selectedComputerId
   }
-}
+
+  return settings
+}).parse
 
 export function computerName(computer: SavedComputer): string {
   if (computer.nameOverride) {
@@ -103,24 +111,21 @@ export class ComputerStore {
     seedOrigin: string,
     options: { synchronizeSelectedLoopback?: boolean } = {}
   ): Promise<ComputerStore> {
-    const contents = await fs
-      .readFile(filePath, 'utf8')
-      .catch((error: unknown) => {
-        if (
-          typeof error === 'object' &&
-          error !== null &&
-          'code' in error &&
-          error.code === 'ENOENT'
-        ) {
-          return null
-        }
+    const contents = await fs.readFile(filePath, 'utf8').catch((error) => {
+      if (
+        error instanceof Error &&
+        'code' in error &&
+        error.code === 'ENOENT'
+      ) {
+        return null
+      }
 
-        throw error
-      })
+      throw error
+    })
 
     if (contents !== null) {
       const parsed = await Promise.resolve()
-        .then(() => JSON.parse(contents) as unknown)
+        .then(() => JSON.parse(contents))
         .then(parseSettings)
         .catch(() => null)
       if (parsed) {
@@ -137,12 +142,12 @@ export class ComputerStore {
             if (existing) {
               await store.select(existing.id)
             } else {
-              await store.update(selected.id, {
-                origin,
-                ...(selected.nameOverride
-                  ? { nameOverride: selected.nameOverride }
-                  : {})
-              })
+              const update: ComputerUpdateInput = { origin }
+              if (selected.nameOverride) {
+                update.nameOverride = selected.nameOverride
+              }
+
+              await store.update(selected.id, update)
             }
           }
         }
@@ -192,7 +197,7 @@ export class ComputerStore {
       const previousSettings = structuredClone(this.settings)
       return mutation().then(
         (value) => value,
-        (error: unknown) => {
+        (error) => {
           this.settings = previousSettings
           throw error
         }
@@ -282,7 +287,7 @@ export class ComputerStore {
 
   async update(
     id: string,
-    input: { origin: string; nameOverride?: string }
+    input: ComputerUpdateInput
   ): Promise<{ computer: SavedComputer; originChanged: boolean } | null> {
     return this.enqueueMutation(async () => {
       const computer = this.getComputer(id)

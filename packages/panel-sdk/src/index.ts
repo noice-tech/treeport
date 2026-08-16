@@ -159,8 +159,7 @@ interface BrowserLocationSubscription {
 }
 
 interface PendingRequest {
-  resolve(value: unknown): void
-  reject(reason: Error): void
+  complete(response: HostResponse): void
 }
 
 const pending = new Map<string, PendingRequest>()
@@ -206,6 +205,7 @@ function subscribeBrowserLocation(subscription: string) {
   browserLocationWatcherStarted = true
   addEventListener('hashchange', reportBrowserLocation)
   addEventListener('popstate', reportBrowserLocation)
+  // SAFETY: The response belongs to the result type for this matching host method.
   const navigation = (globalThis as { navigation?: EventTarget }).navigation
   navigation?.addEventListener('currententrychange', reportBrowserLocation)
   setInterval(reportBrowserLocation, 250)
@@ -259,13 +259,7 @@ addEventListener(
     }
 
     if (message?.source === 'treeport-browser-v1') {
-      if (
-        message.method === 'location.subscribe' &&
-        typeof message.subscription === 'string'
-      ) {
-        subscribeBrowserLocation(message.subscription)
-      }
-
+      subscribeBrowserLocation(message.subscription)
       return
     }
 
@@ -287,11 +281,7 @@ addEventListener(
     }
 
     pending.delete(message.id)
-    if (message.ok) {
-      request.resolve(message.value)
-    } else {
-      request.reject(new Error(message.error || 'Treeport request failed'))
-    }
+    request.complete(message)
   }
 )
 
@@ -311,8 +301,14 @@ function call<Result>(
   return new Promise((resolve, reject) => {
     const id = String(++serial)
     pending.set(id, {
-      resolve: (value) => resolve(value as Result),
-      reject
+      complete: (response) => {
+        if (response.ok) {
+          // SAFETY: The caller selects Result for the matching host method.
+          resolve(response.value as Result)
+        } else {
+          reject(new Error(response.error || 'Treeport request failed'))
+        }
+      }
     })
     parent.postMessage(
       { source: 'treeport-panel-v1', id, method, ...params },

@@ -12,10 +12,10 @@ import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { z } from 'zod'
 
 const loopbackHost = '127.0.0.1'
-const developmentUser =
-  typeof process.getuid === 'function' ? process.getuid() : 'user'
+const developmentUser = process.getuid?.() ?? 'user'
 const startupLockPath = path.join(
   os.tmpdir(),
   `treeport-development-${developmentUser}.lock`
@@ -55,9 +55,11 @@ function tailscale(args) {
 
 function tailscaleJson(args) {
   try {
-    const value = JSON.parse(tailscale(args))
-    if (typeof value === 'object' && value !== null) {
-      return value
+    const parsed = z
+      .record(z.string(), z.unknown())
+      .safeParse(JSON.parse(tailscale(args)))
+    if (parsed.success) {
+      return parsed.data
     }
   } catch (error) {
     if (error instanceof SyntaxError) {
@@ -78,56 +80,58 @@ function tailscaleDnsName() {
     )
   }
 
-  const dnsName = status.Self?.DNSName
-  if (typeof dnsName !== 'string' || !dnsName.trim()) {
+  const parsedDnsName = z
+    .string()
+    .safeParse(
+      z.record(z.string(), z.unknown()).safeParse(status.Self).data?.DNSName
+    )
+  if (!parsedDnsName.success || !parsedDnsName.data.trim()) {
     throw new Error(
       'Tailscale did not report a DNS name. Enable MagicDNS, then retry `pnpm dev:tailscale`.'
     )
   }
 
-  return dnsName.trim().replace(/\.$/, '')
+  return parsedDnsName.data.trim().replace(/\.$/, '')
 }
 
 function tailscalePortIsServed(config, port) {
+  const tcp = z.record(z.string(), z.unknown()).safeParse(config.TCP)
+  if (tcp.success && Object.hasOwn(tcp.data, String(port))) {
+    return true
+  }
+
+  const web = z.record(z.string(), z.unknown()).safeParse(config.Web)
   if (
-    typeof config.TCP === 'object' &&
-    config.TCP !== null &&
-    Object.hasOwn(config.TCP, String(port))
+    web.success &&
+    Object.keys(web.data).some((hostPort) => hostPort.endsWith(`:${port}`))
   ) {
     return true
   }
 
-  if (
-    typeof config.Web === 'object' &&
-    config.Web !== null &&
-    Object.keys(config.Web).some((hostPort) => hostPort.endsWith(`:${port}`))
-  ) {
-    return true
-  }
-
+  const foreground = z
+    .record(z.string(), z.record(z.string(), z.unknown()))
+    .safeParse(config.Foreground)
   return (
-    typeof config.Foreground === 'object' &&
-    config.Foreground !== null &&
-    Object.values(config.Foreground).some(
-      (value) =>
-        typeof value === 'object' &&
-        value !== null &&
-        tailscalePortIsServed(value, port)
+    foreground.success &&
+    Object.values(foreground.data).some((value) =>
+      tailscalePortIsServed(value, port)
     )
   )
 }
 
 function tailscaleProxyForPort(config, port) {
-  if (typeof config.Web !== 'object' || config.Web === null) {
+  const web = z.record(z.string(), z.unknown()).safeParse(config.Web)
+  if (!web.success) {
     return null
   }
 
-  for (const [hostPort, server] of Object.entries(config.Web)) {
-    if (
-      hostPort.endsWith(`:${port}`) &&
-      typeof server?.Handlers?.['/']?.Proxy === 'string'
-    ) {
-      return server.Handlers['/'].Proxy
+  const serverSchema = z.object({
+    Handlers: z.object({ '/': z.object({ Proxy: z.string() }) })
+  })
+  for (const [hostPort, server] of Object.entries(web.data)) {
+    const parsedServer = serverSchema.safeParse(server)
+    if (hostPort.endsWith(`:${port}`) && parsedServer.success) {
+      return parsedServer.data.Handlers['/'].Proxy
     }
   }
 
@@ -145,19 +149,22 @@ async function cleanStaleTailscaleLeases(config) {
     }
 
     const leasePath = path.join(tailscaleLeaseDirectory, entry.name)
-    const lease = await readFile(leasePath, 'utf8')
+    let lease = await readFile(leasePath, 'utf8')
       .then(JSON.parse)
       .catch(() => null)
-    if (
-      !lease ||
-      !Number.isInteger(lease.pid) ||
-      !Number.isInteger(lease.port) ||
-      typeof lease.target !== 'string'
-    ) {
+    const parsedLease = z
+      .object({
+        pid: z.number().int(),
+        port: z.number().int(),
+        target: z.string()
+      })
+      .safeParse(lease)
+    if (!parsedLease.success) {
       await rm(leasePath, { force: true })
       continue
     }
 
+    lease = parsedLease.data
     if (await processIsRunning(lease.pid)) {
       continue
     }

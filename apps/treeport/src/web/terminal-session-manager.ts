@@ -26,7 +26,7 @@ export class TerminalSessionManager {
     sendBellAcknowledgement?: (
       terminalId: string,
       sequence: number
-    ) => Promise<unknown>
+    ) => Promise<void>
   ) {
     this.runtimeMetadata = new TerminalRuntimeMetadataStore(
       sendBellAcknowledgement

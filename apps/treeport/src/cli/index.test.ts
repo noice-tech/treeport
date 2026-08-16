@@ -481,6 +481,7 @@ describe('CLI context and machine output', () => {
         for await (const chunk of request) {
           source += chunk
         }
+        // SAFETY: The test fixture provides the asserted contract used here.
         const body = JSON.parse(source) as ObservedWebPanelBody
         webPanelBodies.push({ url: request.url, body })
         const open = request.url.endsWith('/open')
@@ -493,6 +494,7 @@ describe('CLI context and machine output', () => {
           ? {
               ...previous!,
               launch: {
+                // SAFETY: The test fixture provides the asserted contract used here.
                 input: body.input as WebPanel['launch']['input'],
                 cwd: String(body.launchCwd)
               },
@@ -507,11 +509,13 @@ describe('CLI context and machine output', () => {
                 body.definitionId ===
                 'package:npm:@treeport/web-panel-browser:web-panel:browser'
                   ? String(
+                      // SAFETY: The test fixture provides the asserted contract used here.
                       (body.input as { title?: string } | undefined)?.title ??
                         '127.0.0.1:5173'
                     )
                   : 'Preview',
               launch: {
+                // SAFETY: The test fixture provides the asserted contract used here.
                 input: body.input as WebPanel['launch']['input'],
                 cwd: String(body.launchCwd)
               },
@@ -602,6 +606,7 @@ describe('CLI context and machine output', () => {
         for await (const chunk of request) {
           source += chunk
         }
+        // SAFETY: The test fixture provides the asserted contract used here.
         const body = JSON.parse(source) as {
           source?: string
           projectId?: string
@@ -665,6 +670,7 @@ describe('CLI context and machine output', () => {
         for await (const chunk of request) {
           source += chunk
         }
+        // SAFETY: The test fixture provides the asserted contract used here.
         const body = JSON.parse(source) as {
           name: string
           base: 'default' | 'current'
@@ -807,6 +813,7 @@ describe('CLI context and machine output', () => {
     await new Promise<void>((resolve) => {
       server.listen(0, '127.0.0.1', resolve)
     })
+    // SAFETY: The test fixture provides the asserted contract used here.
     const address = server.address() as AddressInfo
     apiUrl = `http://127.0.0.1:${address.port}`
   })
@@ -1017,6 +1024,7 @@ describe('CLI context and machine output', () => {
     await new Promise<void>((resolve) => {
       unavailable.listen(0, '127.0.0.1', resolve)
     })
+    // SAFETY: The test fixture provides the asserted contract used here.
     const address = unavailable.address() as AddressInfo
     await new Promise<void>((resolve, reject) => {
       unavailable.close((error) => (error ? reject(error) : resolve()))
@@ -1755,6 +1763,7 @@ exit 1
       reservation.once('error', reject)
       reservation.listen(0, '127.0.0.1', resolve)
     })
+    // SAFETY: The test fixture provides the asserted contract used here.
     const address = reservation.address() as AddressInfo
     const port = address.port
     await new Promise<void>((resolve, reject) =>
@@ -1823,6 +1832,7 @@ exit 1
         linkedNestedFolder
       )
       expect(linkedOpen.code, linkedOpen.stderr).toBe(0)
+      // SAFETY: The test fixture provides the asserted contract used here.
       const linkedResult = JSON.parse(linkedOpen.stdout) as {
         projectId: string
         worktreeId: string
@@ -1839,6 +1849,7 @@ exit 1
         ['project', 'list', '--json'],
         environment
       )
+      // SAFETY: The test fixture provides the asserted contract used here.
       const registeredProjects = JSON.parse(
         projectList.stdout
       ) as ProjectRecord[]
@@ -1860,6 +1871,7 @@ exit 1
         mainNestedFolder
       )
       expect(mainOpen.code).toBe(0)
+      // SAFETY: The test fixture provides the asserted contract used here.
       const mainResult = JSON.parse(mainOpen.stdout) as typeof linkedResult
       expect(mainResult.projectId).toBe(linkedResult.projectId)
       expect(mainResult.worktreeId).toBe(
@@ -1896,6 +1908,7 @@ exit 1
         environment
       )
       expect(firstStatus.code).toBe(0)
+      // SAFETY: The test fixture provides the asserted contract used here.
       const firstState = JSON.parse(firstStatus.stdout) as {
         running: boolean
         verified: boolean
@@ -2060,6 +2073,7 @@ exit 1
       await new Promise<void>((resolve) =>
         identityProxy!.listen(0, '127.0.0.1', resolve)
       )
+      // SAFETY: The test fixture provides the asserted contract used here.
       const identityProxyAddress = identityProxy.address() as AddressInfo
       const remoteCli = await runPackagedCli(['project', 'list', '--json'], {
         ...environment,

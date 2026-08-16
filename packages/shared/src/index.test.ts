@@ -209,6 +209,7 @@ describe('API input validation', () => {
   })
 
   it('bounds every terminal preset field', () => {
+    // SAFETY: The test fixture provides the asserted contract used here.
     const valid = { name: 'Preset', executable: 'tool', args: [] as string[] }
     expect(
       createTerminalPresetSchema.safeParse({

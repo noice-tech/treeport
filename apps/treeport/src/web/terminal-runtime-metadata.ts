@@ -46,13 +46,14 @@ export class TerminalRuntimeMetadataStore {
     private readonly sendBellAcknowledgement: (
       terminalId: string,
       sequence: number
-    ) => Promise<unknown> = (terminalId, sequence) =>
-      parseResponse(
+    ) => Promise<void> = async (terminalId, sequence) => {
+      await parseResponse(
         rpc.api.terminals[':terminalId'].bell.acknowledge.$post({
           param: { terminalId },
           json: { sequence }
         })
       )
+    }
   ) {}
 
   subscribe = (listener: () => void): (() => void) => {
@@ -382,7 +383,7 @@ export class TerminalRuntimeMetadataStore {
 
         await this.sendBellAcknowledgement(terminalId, sequence)
       })
-      .catch((error: unknown) => {
+      .catch((error) => {
         if (this.bellAcknowledgementTargets.get(terminalId) === sequence) {
           this.bellAcknowledgementTargets.delete(terminalId)
         }

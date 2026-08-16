@@ -60,7 +60,7 @@ test.describe('desktop terminal input and removal', () => {
     await page.getByRole('button', { name: 'Pi, running', exact: true }).click()
     await expect(page.getByText('Viewing', { exact: true })).toBeVisible()
     await page.evaluate(() => {
-      const socket = (window as any).__lastWs
+      const socket = window.__lastWs
       socket.onmessage?.({
         data: JSON.stringify({
           version: 1,
@@ -70,9 +70,9 @@ test.describe('desktop terminal input and removal', () => {
           data: '\u001b[?2004h'
         })
       })
-      ;(window as any).__wsSent = []
-      ;(window as any).__delayTakeControl = true
-      ;(window as any).__pasteTerminalFile = () => {
+      window.__wsSent = []
+      window.__delayTakeControl = true
+      window.__pasteTerminalFile = () => {
         const textarea = document.querySelector('.xterm-helper-textarea')!
         const clipboard = new DataTransfer()
         clipboard.items.add(
@@ -90,7 +90,7 @@ test.describe('desktop terminal input and removal', () => {
     })
 
     const pasteWhileViewing = await page.evaluate(() =>
-      (window as any).__pasteTerminalFile()
+      window.__pasteTerminalFile()
     )
     expect(pasteWhileViewing).toEqual({ files: 1, prevented: true })
     await expect(page.getByRole('alert')).toContainText(
@@ -98,17 +98,15 @@ test.describe('desktop terminal input and removal', () => {
     )
     expect(mocked.fileUploadRequests()).toBe(0)
 
-    await page.evaluate(() => (window as any).__releaseTakeControl())
+    await page.evaluate(() => window.__releaseTakeControl())
     await waitForTerminalControl(page)
-    const paste = await page.evaluate(() =>
-      (window as any).__pasteTerminalFile()
-    )
+    const paste = await page.evaluate(() => window.__pasteTerminalFile())
     expect(paste).toEqual({ files: 1, prevented: true })
     await expect.poll(mocked.fileUploadRequests).toBe(1)
     await expect
       .poll(() =>
         page.evaluate(() =>
-          (window as any).__wsSent
+          window.__wsSent
             .filter((message: any) => message.type === 'input')
             .map((message: any) => message.data)
             .join('')
@@ -148,7 +146,7 @@ test.describe('desktop terminal input and removal', () => {
     await expect
       .poll(() =>
         page.evaluate(() =>
-          (window as any).__wsSent
+          window.__wsSent
             .filter((message: any) => message.type === 'input')
             .map((message: any) => message.data)
             .join('')
@@ -168,7 +166,7 @@ test.describe('desktop terminal input and removal', () => {
     await requestTerminalControl(page)
     await page.locator('.xterm-helper-textarea').focus()
     await page.evaluate(() => {
-      ;(window as any).__wsSent = []
+      window.__wsSent = []
     })
     await page.keyboard.press('Shift+Enter')
     await page.keyboard.press('Meta+ArrowLeft')
@@ -178,7 +176,7 @@ test.describe('desktop terminal input and removal', () => {
     await expect
       .poll(() =>
         page.evaluate(() =>
-          (window as any).__wsSent
+          window.__wsSent
             .filter((message: any) => message.type === 'input')
             .map((message: any) => message.data)
         )
@@ -186,13 +184,13 @@ test.describe('desktop terminal input and removal', () => {
       .toEqual(['\u001b[13;2u', '\u001b[H', '\u001b[F', '\u001bb', '\u001bf'])
 
     await page.evaluate(() => {
-      ;(window as any).__wsSent = []
-      ;(window as any).__openedTerminalLinks = []
+      window.__wsSent = []
+      window.__openedTerminalLinks = []
       window.open = (...args) => {
-        ;(window as any).__openedTerminalLinks.push(args)
+        window.__openedTerminalLinks.push(args)
         return null
       }
-      const socket = (window as any).__lastWs
+      const socket = window.__lastWs
       socket.onmessage?.({
         data: JSON.stringify({
           version: 1,
@@ -202,21 +200,25 @@ test.describe('desktop terminal input and removal', () => {
           data: '\u001b[2J\u001b[Hhttps://example.test/select-me\r\n\u001b[?1000h\u001b[?1006h'
         })
       })
-      ;(window as any).__wsSent = []
+      window.__wsSent = []
     })
     const screen = page.locator('.xterm-screen')
     const bounds = await screen.boundingBox()
     expect(bounds).not.toBeNull()
-    await page.mouse.move(bounds!.x + 8, bounds!.y + 8)
+    const columns = await page.evaluate(() => window.__lastWs.cols)
+    const cellWidth = bounds!.width / columns
+    await page.mouse.move(bounds!.x + cellWidth * 1.25, bounds!.y + 8)
     await page.keyboard.down('Alt')
     await page.mouse.down()
-    await page.mouse.move(bounds!.x + 160, bounds!.y + 8, { steps: 5 })
+    await page.mouse.move(bounds!.x + cellWidth * 5.75, bounds!.y + 8, {
+      steps: 5
+    })
     await page.mouse.up()
     await page.keyboard.up('Alt')
 
     const inViewportSelection = 'https://example.test/select-me'
     await page.evaluate((encoded) => {
-      const socket = (window as any).__lastWs
+      const socket = window.__lastWs
       socket.onmessage?.({
         data: JSON.stringify({
           version: 1,
@@ -241,21 +243,27 @@ test.describe('desktop terminal input and removal', () => {
         return clipboard.getData('text/plain')
       })
     expect(copied).toContain('example.tes')
-    expect(
-      await page.evaluate(() => (window as any).__openedTerminalLinks)
-    ).toEqual([])
-    const sent = await page.evaluate(() => (window as any).__wsSent)
+    expect(await page.evaluate(() => window.__openedTerminalLinks)).toEqual([])
+    const sent = await page.evaluate(() => window.__wsSent)
     const inViewportSelectionInput = sent
       .filter((message: any) => message.type === 'input')
       .map((message: any) => String(message.data))
     expect(inViewportSelectionInput.join('')).toContain(
       TERMINAL_SELECTION_START_SEQUENCE
     )
+    const selectionStartInput = inViewportSelectionInput.find((data: string) =>
+      data.includes(TERMINAL_SELECTION_START_SEQUENCE)
+    )
+    expect(selectionStartInput).toContain(
+      `${TERMINAL_SELECTION_START_SEQUENCE}\u001b[<0;2;`
+    )
+    expect(selectionStartInput).toContain('M\u001b[<32;2;')
+    expect(inViewportSelectionInput.at(-1)).toContain('\u001b[<32;7;')
     expect(inViewportSelectionInput.at(-1)).toContain('\u001b[<0;')
     expect(inViewportSelectionInput.at(-1)).toMatch(/m$/)
 
     await page.evaluate(() => {
-      ;(window as any).__wsSent = []
+      window.__wsSent = []
     })
     await page.mouse.move(
       bounds!.x + bounds!.width / 2,
@@ -264,7 +272,7 @@ test.describe('desktop terminal input and removal', () => {
     await page.mouse.down()
     await page.mouse.move(bounds!.x + bounds!.width / 2, bounds!.y - 30)
     await page.evaluate(() => {
-      const socket = (window as any).__lastWs
+      const socket = window.__lastWs
       socket.onmessage?.({
         data: JSON.stringify({
           version: 1,
@@ -280,7 +288,7 @@ test.describe('desktop terminal input and removal', () => {
     await page.mouse.up()
 
     const selectionInput = await page.evaluate(() =>
-      (window as any).__wsSent
+      window.__wsSent
         .filter((message: any) => message.type === 'input')
         .map((message: any) => String(message.data))
     )
@@ -298,7 +306,7 @@ test.describe('desktop terminal input and removal', () => {
     expect(
       await page.evaluate(
         () =>
-          (window as any).__wsSent.filter(
+          window.__wsSent.filter(
             (message: any) =>
               message.type === 'input' &&
               String(message.data).includes('\u001b[<32;')
@@ -311,7 +319,7 @@ test.describe('desktop terminal input and removal', () => {
       'base64'
     )
     await page.evaluate((encoded) => {
-      const socket = (window as any).__lastWs
+      const socket = window.__lastWs
       socket.onmessage?.({
         data: JSON.stringify({
           version: 1,
@@ -338,7 +346,7 @@ test.describe('desktop terminal input and removal', () => {
     expect(autoscrolledCopy).toBe(tmuxSelection)
 
     await page.evaluate(() => {
-      const socket = (window as any).__lastWs
+      const socket = window.__lastWs
       socket.onmessage?.({
         data: JSON.stringify({
           version: 1,
@@ -346,7 +354,7 @@ test.describe('desktop terminal input and removal', () => {
           viewing: true
         })
       })
-      ;(window as any).__wsSent = []
+      window.__wsSent = []
     })
     await expect(
       page.getByText('Selection is active', { exact: true })
@@ -358,7 +366,7 @@ test.describe('desktop terminal input and removal', () => {
     await expect
       .poll(() =>
         page.evaluate(() =>
-          (window as any).__wsSent
+          window.__wsSent
             .filter((message: any) => message.type === 'input')
             .map((message: any) => message.data)
         )
@@ -388,14 +396,14 @@ test.describe('desktop terminal input and removal', () => {
     expect(selectionAfterClear).toBe('')
 
     await page.evaluate(() => {
-      ;(window as any).__wsSent = []
+      window.__wsSent = []
     })
     await screen.hover()
     await page.mouse.wheel(0, -120)
     await expect
       .poll(() =>
         page.evaluate(() =>
-          (window as any).__wsSent
+          window.__wsSent
             .filter((message: any) => message.type === 'input')
             .map((message: any) => String(message.data))
         )
@@ -403,7 +411,7 @@ test.describe('desktop terminal input and removal', () => {
       .toEqual([expect.stringContaining('\u001b[<64;')])
     await page.mouse.wheel(0, 120)
     await page.evaluate(() => {
-      const socket = (window as any).__lastWs
+      const socket = window.__lastWs
       socket.onmessage?.({
         data: JSON.stringify({
           version: 1,
@@ -414,14 +422,14 @@ test.describe('desktop terminal input and removal', () => {
     })
     await page.waitForTimeout(50)
     await page.evaluate(() => {
-      ;(window as any).__wsSent = []
+      window.__wsSent = []
     })
     await page.locator('.xterm-helper-textarea').focus()
     await page.keyboard.type('x')
     await expect
       .poll(() =>
         page.evaluate(() =>
-          (window as any).__wsSent
+          window.__wsSent
             .filter((message: any) => message.type === 'input')
             .map((message: any) => String(message.data))
         )
@@ -443,7 +451,7 @@ test.describe('desktop terminal input and removal', () => {
     expect(selectionAfterInput).toBe('')
 
     await page.evaluate(() => {
-      ;(window as any).__wsSent = []
+      window.__wsSent = []
     })
     await page.mouse.move(bounds!.x + bounds!.width / 4, bounds!.y + 8)
     await page.mouse.down()
@@ -453,20 +461,19 @@ test.describe('desktop terminal input and removal', () => {
     )
     await page.waitForTimeout(160)
     await page.evaluate(() => {
-      ;(window as any).__dispatchTerminalSelectionRelease()
+      window.__dispatchTerminalSelectionRelease()
     })
     await page.waitForTimeout(160)
     const downwardSelectionInput = await page.evaluate(() =>
-      (window as any).__wsSent
+      window.__wsSent
         .filter((message: any) => message.type === 'input')
         .map((message: any) => String(message.data))
     )
     await page.waitForTimeout(160)
     const inputCountAfterRelease = await page.evaluate(
       () =>
-        (window as any).__wsSent.filter(
-          (message: any) => message.type === 'input'
-        ).length
+        window.__wsSent.filter((message: any) => message.type === 'input')
+          .length
     )
     expect(inputCountAfterRelease).toBe(downwardSelectionInput.length)
     await page.mouse.up()
@@ -483,7 +490,7 @@ test.describe('desktop terminal input and removal', () => {
     expect(downwardSelectionInput.at(-1)).toMatch(/m$/)
 
     await page.evaluate(() => {
-      ;(window as any).__wsSent = []
+      window.__wsSent = []
     })
     await page.mouse.move(
       bounds!.x + bounds!.width / 4,
@@ -496,13 +503,22 @@ test.describe('desktop terminal input and removal', () => {
     const dragReports = () =>
       page.evaluate(
         () =>
-          (window as any).__wsSent.filter(
+          window.__wsSent.filter(
             (message: any) =>
               message.type === 'input' &&
               String(message.data).includes('\u001b[<32;')
           ).length
       )
     const reportsAfterLeavingSide = await dragReports()
+    expect(
+      await page.evaluate(() =>
+        window.__wsSent.some(
+          (message: any) =>
+            message.type === 'input' &&
+            String(message.data).endsWith('\u001b[F')
+        )
+      )
+    ).toBe(true)
     await page.waitForTimeout(160)
     expect(await dragReports()).toBe(reportsAfterLeavingSide)
     await page.mouse.up()
@@ -513,7 +529,7 @@ test.describe('desktop terminal input and removal', () => {
 
     await page.locator('.xterm-helper-textarea').focus()
     await page.evaluate(() => {
-      const socket = (window as any).__lastWs
+      const socket = window.__lastWs
       socket.onmessage?.({
         data: JSON.stringify({
           version: 1,
@@ -523,11 +539,11 @@ test.describe('desktop terminal input and removal', () => {
           data: '\u001b[?1000h\u001b[?1006h'
         })
       })
-      ;(window as any).__wsSent = []
+      window.__wsSent = []
     })
     await page.locator('.xterm-screen').dispatchEvent('wheel', { deltaY: -120 })
     await expect
-      .poll(() => page.evaluate(() => (window as any).__wsSent))
+      .poll(() => page.evaluate(() => window.__wsSent))
       .toEqual(
         expect.arrayContaining([
           expect.objectContaining({
@@ -535,7 +551,7 @@ test.describe('desktop terminal input and removal', () => {
           })
         ])
       )
-    const wheelSent = await page.evaluate(() => (window as any).__wsSent)
+    const wheelSent = await page.evaluate(() => window.__wsSent)
     expect(wheelSent.some((message: any) => message.data === '\u001b[A')).toBe(
       false
     )
@@ -551,7 +567,7 @@ test.describe('desktop terminal input and removal', () => {
       .poll(() =>
         page.evaluate(
           () =>
-            (window as any).__wsSent
+            window.__wsSent
               .filter((message: any) => message.type === 'input')
               .at(-1)?.data
         )
@@ -728,9 +744,7 @@ test.describe('desktop terminal input and removal', () => {
         response.request().method() === 'GET' &&
         new URL(response.url()).pathname === '/api/projects'
     )
-    await page.evaluate(() =>
-      (window as any).__eventSource.emit('worktree.removed')
-    )
+    await page.evaluate(() => window.__eventSource.emit('worktree.removed'))
     await removedRefresh
     await expect(
       page.getByRole('button', { name: 'topic', exact: true })

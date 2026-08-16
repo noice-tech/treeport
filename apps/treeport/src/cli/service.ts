@@ -206,13 +206,19 @@ function managerForPlatform(
       : null
 }
 
-function servicePaths(env: NodeJS.ProcessEnv = process.env): {
+interface ServicePaths {
   directory: string
   recordPath: string
   runnerPath: string
   requestsDirectory: string
   stagedDefinitionPath: string
-} {
+}
+
+interface ServiceEnvironment {
+  [name: string]: string
+}
+
+function servicePaths(env: NodeJS.ProcessEnv = process.env): ServicePaths {
   const paths = localPaths(env)
   const directory = path.join(paths.dataDir, 'service')
   return {
@@ -234,7 +240,7 @@ async function readJson<Output>(
     .catch(() => null)
 }
 
-async function writeJson(filePath: string, value: unknown): Promise<void> {
+async function writeJson<Value>(filePath: string, value: Value): Promise<void> {
   await fs.mkdir(path.dirname(filePath), { recursive: true, mode: 0o700 })
   const temporaryPath = `${filePath}.${process.pid}.${crypto.randomUUID()}.tmp`
   await fs.writeFile(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, {
@@ -244,16 +250,16 @@ async function writeJson(filePath: string, value: unknown): Promise<void> {
 }
 
 function fingerprint(value: string | Record<string, string>): string {
-  const source =
-    typeof value === 'string'
-      ? value
-      : JSON.stringify(
-          Object.fromEntries(
-            Object.entries(value).sort(([left], [right]) =>
-              left.localeCompare(right)
-            )
+  const parsed = z.string().safeParse(value)
+  const source = parsed.success
+    ? parsed.data
+    : JSON.stringify(
+        Object.fromEntries(
+          Object.entries(value).sort(([left], [right]) =>
+            left.localeCompare(right)
           )
         )
+      )
   return crypto.createHash('sha256').update(source).digest('hex')
 }
 
@@ -588,11 +594,11 @@ export function createServiceEnvironment(input: {
   recordPath: string
   installationMethod: 'curl' | 'npm'
   env?: NodeJS.ProcessEnv
-}): Record<string, string> {
+}): ServiceEnvironment {
   const env = input.env ?? process.env
   const url = new URL(input.apiUrl)
   assertLoopbackHost(url.hostname)
-  const result: Record<string, string> = {
+  const result: ServiceEnvironment = {
     HOME: input.user.homedir,
     USER: input.user.username,
     LOGNAME: input.user.username,
@@ -1349,7 +1355,7 @@ export async function serviceEnable(): Promise<ServiceActionResult> {
 
   const startupError = await waitForService(record).then(
     () => null,
-    (error: unknown) => error
+    (error) => error
   )
   if (startupError) {
     await runCommand(systemctl, [

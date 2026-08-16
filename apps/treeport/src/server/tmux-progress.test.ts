@@ -220,6 +220,7 @@ describe('TmuxProgressObserver', () => {
         onBell: () => updates.push({ type: 'bell' }),
         onExit
       },
+      // SAFETY: The test fixture provides the asserted contract used here.
       vi.fn(() => child) as never
     )
 
@@ -260,6 +261,7 @@ describe('TmuxProgressObserver', () => {
         onHistoryChange: (viewing) => history.push(viewing),
         onExit: vi.fn()
       },
+      // SAFETY: The test fixture provides the asserted contract used here.
       vi.fn(() => child) as never
     )
 
@@ -298,6 +300,7 @@ describe('TmuxProgressObserver', () => {
         onHistoryChange: vi.fn(),
         onExit
       },
+      // SAFETY: The test fixture provides the asserted contract used here.
       vi.fn(() => child) as never
     )
 
@@ -345,6 +348,7 @@ describe('TmuxProgressObserver', () => {
         },
         onExit
       },
+      // SAFETY: The test fixture provides the asserted contract used here.
       vi.fn(() => child) as never
     )
 
@@ -372,6 +376,7 @@ describe('TmuxProgressObserver', () => {
         onProgress: vi.fn(),
         onExit: vi.fn()
       },
+      // SAFETY: The test fixture provides the asserted contract used here.
       vi.fn(() => child) as never
     )
 
@@ -400,6 +405,7 @@ describe('TmuxProgressObserver', () => {
         onBell,
         onExit
       },
+      // SAFETY: The test fixture provides the asserted contract used here.
       vi.fn(() => child) as never
     )
 

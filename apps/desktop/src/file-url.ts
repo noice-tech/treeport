@@ -1,19 +1,21 @@
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { z } from 'zod'
 
 const MAX_FILE_URL_LENGTH = 16_384
 
-export function filePathFromUrl(value: unknown): string | null {
+const filePathParser = z.unknown().transform((value): string | null => {
+  const parsed = z.string().safeParse(value)
   if (
-    typeof value !== 'string' ||
-    value.length > MAX_FILE_URL_LENGTH ||
-    !value.startsWith('file:///') ||
-    !URL.canParse(value)
+    !parsed.success ||
+    parsed.data.length > MAX_FILE_URL_LENGTH ||
+    !parsed.data.startsWith('file:///') ||
+    !URL.canParse(parsed.data)
   ) {
     return null
   }
 
-  const url = new URL(value)
+  const url = new URL(parsed.data)
   if (
     url.protocol !== 'file:' ||
     url.hostname ||
@@ -34,4 +36,6 @@ export function filePathFromUrl(value: unknown): string | null {
   } catch {
     return null
   }
-}
+})
+
+export const filePathFromUrl = filePathParser.parse

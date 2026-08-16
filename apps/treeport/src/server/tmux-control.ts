@@ -282,10 +282,15 @@ export class TmuxControlParser {
     }
 
     const lifecycle = text.match(/^%(pause|continue) (%\d+)$/)
-    if (lifecycle) {
+    const lifecycleType = lifecycle?.[1]
+    const lifecyclePaneId = lifecycle?.[2]
+    if (
+      (lifecycleType === 'pause' || lifecycleType === 'continue') &&
+      lifecyclePaneId
+    ) {
       events.push({
-        type: lifecycle[1] as 'pause' | 'continue',
-        paneId: lifecycle[2]!
+        type: lifecycleType,
+        paneId: lifecyclePaneId
       })
       return
     }

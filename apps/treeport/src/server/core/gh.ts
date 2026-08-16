@@ -1,14 +1,19 @@
 import type { PrInfo, PrState } from '@treeport/shared'
+import { z } from 'zod'
 import type { CommandRunner } from './command'
 
-interface GhPrJson {
-  number?: number
-  state?: string
-  url?: string
-  baseRefName?: string
-  headRefName?: string
-  mergedAt?: string | null
-}
+const ghPrSchema = z
+  .object({
+    number: z.number().optional(),
+    state: z.string().optional(),
+    url: z.string().optional(),
+    baseRefName: z.string().optional(),
+    headRefName: z.string().optional(),
+    mergedAt: z.string().nullable().optional()
+  })
+  .strict()
+
+type GhPrJson = z.infer<typeof ghPrSchema>
 
 export function mapPrState(pr: GhPrJson | null): PrState {
   if (!pr) {
@@ -80,7 +85,7 @@ export class GhAdapter {
         return unknownPr()
       }
 
-      const values = JSON.parse(result.stdout) as GhPrJson[]
+      const values = z.array(ghPrSchema).parse(JSON.parse(result.stdout))
       const pr = values[0] ?? null
       return {
         state: mapPrState(pr),

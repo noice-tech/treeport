@@ -25,11 +25,13 @@ import {
   TERMINAL_SELECTION_STOP_SEQUENCE,
   type TerminalClientToServerEvents,
   type TerminalServerEvent,
+  type TerminalProtocolInput,
   type TerminalSize,
   type TerminalServerToClientEvents
 } from '@treeport/shared'
 
 type ConnectionPhase = 'connecting' | 'ready' | 'reconnecting' | 'closed'
+export type TerminalSocketFactory = typeof io
 export type ArrowDirection = 'up' | 'down' | 'left' | 'right'
 export type TerminalFileTransfer = {
   state: 'uploading' | 'error'
@@ -48,9 +50,9 @@ const IOS_KEYBOARD_TOOLBAR_CLEARANCE = 24
 const IOS_BROWSER_TOOLBAR_CLEARANCE = 44
 
 function normalizeTerminalDimensions(
-  dimensions: { cols: number; rows: number },
-  fallback: { cols: number; rows: number } = { cols: 100, rows: 30 }
-): { cols: number; rows: number } {
+  dimensions: TerminalSize,
+  fallback: TerminalSize = { cols: 100, rows: 30 }
+): TerminalSize {
   return {
     cols: Number.isFinite(dimensions.cols)
       ? Math.min(
@@ -118,7 +120,7 @@ function getClientId(): string {
   }
 
   const bytes = new Uint8Array(16)
-  if (typeof globalThis.crypto?.getRandomValues === 'function') {
+  if (globalThis.crypto?.getRandomValues) {
     globalThis.crypto.getRandomValues(bytes)
   } else {
     for (let index = 0; index < bytes.length; index += 1) {
@@ -139,6 +141,9 @@ function getClientId(): string {
   return (fallbackClientId = created)
 }
 
+const TERMINAL_CURSOR_RESTORE_DELAY_MS = 50
+const TERMINAL_CURSOR_RESTORE_MAX_DELAY_MS = 250
+
 export class TerminalSession {
   readonly terminalId: string
   private readonly listeners = new Set<() => void>()
@@ -156,6 +161,8 @@ export class TerminalSession {
   private degradedTimer: number | null = null
   private bellTimer: number | null = null
   private fileTransferTimer: number | null = null
+  private cursorRestoreTimer: number | null = null
+  private cursorRestoreStartedAt: number | null = null
   private fileTransferQueue: Promise<void> = Promise.resolve()
   private resizeFrame: number | null = null
   private resizeSettleTimer: number | null = null
@@ -206,7 +213,10 @@ export class TerminalSession {
     }
   }
 
-  constructor(terminalId: string) {
+  constructor(
+    terminalId: string,
+    private readonly createSocket: TerminalSocketFactory = io
+  ) {
     this.terminalId = terminalId
   }
 
@@ -294,6 +304,7 @@ export class TerminalSession {
           const standalone =
             window.matchMedia('(display-mode: standalone)').matches ||
             Boolean(
+              // SAFETY: The terminal protocol and xterm contracts establish this asserted value.
               (navigator as Navigator & { standalone?: boolean }).standalone
             )
           const browserToolbarGap = standalone
@@ -523,7 +534,6 @@ export class TerminalSession {
 
     this.tmuxSelectionPending = false
     this.tmuxSelectionText = null
-    this.wrapper?.classList.remove('terminal-tmux-selection')
     this.terminal?.clearSelection()
     this.update({ selecting: false, hasSelection: false })
     this.focus()
@@ -544,7 +554,6 @@ export class TerminalSession {
     this.tmuxSelectionPending = false
     this.tmuxSelectionText = null
     this.update({ selecting: false })
-    this.wrapper?.classList.remove('terminal-tmux-selection')
     this.terminal?.clearSelection()
     this.updateSelectionState()
   }
@@ -592,6 +601,18 @@ export class TerminalSession {
     terminal.loadAddon(new WebLinksAddon(activateTerminalLink))
     terminal.open(this.wrapper)
     terminal.onSelectionChange(() => this.updateSelectionState())
+    terminal.onRender(() => {
+      // xterm puts the block cursor and glyph on one span. Remove only the
+      // cursor class so ANSI foreground colors remain unchanged.
+      if (this.wrapper?.classList.contains('terminal-scrolling')) {
+        this.hideTerminalCursor()
+      }
+    })
+    terminal.onWriteParsed(() => {
+      if (this.cursorRestoreTimer !== null) {
+        this.scheduleTerminalCursorRestore()
+      }
+    })
     this.selectionDragCancel = trackTerminalSelectionAutoscroll(
       this.wrapper,
       terminal,
@@ -608,10 +629,7 @@ export class TerminalSession {
         onTmuxSelectionStart: () => {
           this.scrollExitPending = true
           this.update({ selecting: true })
-          this.wrapper?.classList.add(
-            'terminal-scrolling',
-            'terminal-tmux-selection'
-          )
+          this.setTerminalScrolling(true)
         },
         onTmuxSelectionFinish: () => {
           this.tmuxSelectionPending = true
@@ -897,22 +915,17 @@ export class TerminalSession {
       const paths: string[] = []
       for (const file of files) {
         const extension = /\.([a-z0-9]{1,16})$/i.exec(file.name)?.[1]
+        const headers = new Headers({
+          'content-type': file.type || 'application/octet-stream'
+        })
+        if (extension) {
+          headers.set('x-treeport-file-extension', extension.toLowerCase())
+        }
+
         const result = await parseResponse(
           rpc.api.terminals[':terminalId'].files.$post(
             { param: { terminalId: this.terminalId } },
-            {
-              init: {
-                body: file,
-                headers: {
-                  'content-type': file.type || 'application/octet-stream',
-                  ...(extension
-                    ? {
-                        'x-treeport-file-extension': extension.toLowerCase()
-                      }
-                    : {})
-                }
-              }
-            }
+            { init: { body: file, headers } }
           )
         )
         paths.push(result.file.path)
@@ -1012,22 +1025,78 @@ export class TerminalSession {
     this.selectionClearRequested = false
   }
 
+  private hideTerminalCursor(): void {
+    this.terminal?.element
+      ?.querySelector('.xterm-cursor')
+      ?.classList.remove('xterm-cursor')
+  }
+
+  private scheduleTerminalCursorRestore(): void {
+    // tmux emits intermediate copy-cursor frames while it returns to the live
+    // pane. Wait for terminal writes to settle, but do not hide a cursor
+    // indefinitely when an application produces continuous output.
+    if (this.cursorRestoreTimer !== null) {
+      window.clearTimeout(this.cursorRestoreTimer)
+    }
+
+    this.cursorRestoreStartedAt ??= Date.now()
+    const remainingDelay = Math.max(
+      0,
+      TERMINAL_CURSOR_RESTORE_MAX_DELAY_MS -
+        (Date.now() - this.cursorRestoreStartedAt)
+    )
+    this.cursorRestoreTimer = window.setTimeout(
+      () => {
+        this.cursorRestoreTimer = null
+        this.cursorRestoreStartedAt = null
+        if (
+          !this.wrapper ||
+          this.scrollExitPending ||
+          this.snapshotValue.viewingHistory
+        ) {
+          return
+        }
+
+        this.wrapper.classList.remove('terminal-scrolling')
+        this.terminal?.refresh(0, this.terminal.rows - 1)
+      },
+      Math.min(TERMINAL_CURSOR_RESTORE_DELAY_MS, remainingDelay)
+    )
+  }
+
+  private setTerminalScrolling(scrolling: boolean): void {
+    if (!this.wrapper) {
+      return
+    }
+
+    if (scrolling) {
+      if (this.cursorRestoreTimer !== null) {
+        window.clearTimeout(this.cursorRestoreTimer)
+        this.cursorRestoreTimer = null
+      }
+
+      this.cursorRestoreStartedAt = null
+
+      this.wrapper.classList.add('terminal-scrolling')
+      this.hideTerminalCursor()
+      return
+    }
+
+    if (this.wrapper.classList.contains('terminal-scrolling')) {
+      this.scheduleTerminalCursorRestore()
+    }
+  }
+
   private setViewingHistory(viewing: boolean): void {
     if (viewing) {
       this.scrollExitPending = true
-      this.wrapper?.classList.add('terminal-scrolling')
-      if (this.tmuxSelectionText !== null) {
-        this.wrapper?.classList.add('terminal-tmux-selection')
-      }
     } else {
       this.scrollExitPending = false
       this.resumeOnNextInput = false
       this.historyExitRequested = false
-      this.wrapper?.classList.remove(
-        'terminal-scrolling',
-        'terminal-tmux-selection'
-      )
     }
+
+    this.setTerminalScrolling(viewing)
 
     if (viewing !== this.snapshotValue.viewingHistory) {
       this.update({ viewingHistory: viewing })
@@ -1075,7 +1144,7 @@ export class TerminalSession {
     const socket: Socket<
       TerminalServerToClientEvents,
       TerminalClientToServerEvents
-    > = io('/terminals', {
+    > = this.createSocket('/terminals', {
       path: SOCKET_IO_PATH,
       transports: ['websocket'],
       forceNew: true,
@@ -1183,7 +1252,10 @@ export class TerminalSession {
     socket.connect()
   }
 
-  private handleServerEvent(event: TerminalServerEvent, value: unknown): void {
+  private handleServerEvent(
+    event: TerminalServerEvent,
+    value: TerminalProtocolInput
+  ): void {
     if (event === 'ready') {
       const message = parseTerminalServerEvent('ready', value)
       if (!message) {
@@ -1468,7 +1540,7 @@ export class TerminalSession {
     this.renderQueue = queued
     // Rendering is a fatal UI boundary: keep the causal queue rejected so no
     // later operation runs, while observing the rejection to close explicitly.
-    void queued.catch((error: unknown) => this.failRendering(error))
+    void queued.catch((error) => this.failRendering(error))
   }
 
   private applyCanonicalDimensions(
@@ -1516,17 +1588,21 @@ export class TerminalSession {
       event === 'resize' ||
       event === 'take_control'
     ) {
-      ;(this.socket.emit as (event: string, payload: unknown) => void)(
-        event,
-        payload
-      )
+      // SAFETY: The generic event selects its matching protocol payload.
+      const emit = this.socket.emit.bind(this.socket) as (
+        event: E,
+        payload: Parameters<TerminalClientToServerEvents[E]>[0]
+      ) => void
+      emit(event, payload)
       return
     }
 
-    ;(this.socket.volatile.emit as (event: string, payload: unknown) => void)(
-      event,
-      payload
-    )
+    // SAFETY: The generic event selects its matching protocol payload.
+    const emit = this.socket.volatile.emit.bind(this.socket.volatile) as (
+      event: E,
+      payload: Parameters<TerminalClientToServerEvents[E]>[0]
+    ) => void
+    emit(event, payload)
   }
 
   private scheduleFit(): void {
@@ -1770,14 +1846,14 @@ export class TerminalSession {
     }, 180)
   }
 
-  private failRendering(error: unknown): void {
+  private failRendering(cause: unknown): void {
     if (this.renderFailed || this.disposed) {
       return
     }
 
     this.renderFailed = true
     const detail = (
-      error instanceof Error ? error.message : String(error)
+      cause instanceof Error ? cause.message : String(cause)
     ).trim()
     this.reconnectAllowed = false
     this.stopWithError(
@@ -1834,6 +1910,10 @@ export class TerminalSession {
       window.clearTimeout(this.fileTransferTimer)
     }
 
+    if (this.cursorRestoreTimer !== null) {
+      window.clearTimeout(this.cursorRestoreTimer)
+    }
+
     if (this.resizeFrame !== null) {
       cancelAnimationFrame(this.resizeFrame)
     }
@@ -1845,6 +1925,8 @@ export class TerminalSession {
     this.degradedTimer = null
     this.bellTimer = null
     this.fileTransferTimer = null
+    this.cursorRestoreTimer = null
+    this.cursorRestoreStartedAt = null
     this.resizeFrame = null
     this.resizeSettleTimer = null
     this.resizePending = false

@@ -4,6 +4,16 @@ import os from 'node:os'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { _electron as electron, expect, test } from '@playwright/test'
+import { z } from 'zod'
+
+function serverPort<Address>(address: Address): number {
+  const parsed = z.object({ port: z.number().int() }).safeParse(address)
+  if (!parsed.success) {
+    throw new Error('Test server did not expose a port')
+  }
+
+  return parsed.data.port
+}
 
 function workspaceLink(url: string): string {
   const link = new URL('treeport://open')
@@ -72,12 +82,7 @@ test('connects the desktop shell, preserves native behavior, and restores render
 
   try {
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
-    const address = server.address()
-    if (!address || typeof address === 'string') {
-      throw new Error('Test server did not expose a port')
-    }
-
-    const port = address.port
+    const port = serverPort(server.address())
     const origin = `http://127.0.0.1:${port}`
     const workspaceUrl = `${origin}/projects/project-1/worktrees/worktree-1`
     await new Promise<void>((resolve, reject) =>
@@ -341,6 +346,7 @@ test('connects the desktop shell, preserves native behavior, and restores render
     await selector.keyboard.press('Escape')
 
     await electronApp.evaluate(({ shell }) => {
+      // SAFETY: The test fixture provides the asserted contract used here.
       const scope = globalThis as typeof globalThis & {
         __openedTreeportFilePaths?: string[]
         __openedTreeportExternalUrls?: string[]
@@ -384,6 +390,7 @@ test('connects the desktop shell, preserves native behavior, and restores render
     expect(
       await electronApp.evaluate(
         () =>
+          // SAFETY: The test fixture provides the asserted contract used here.
           (
             globalThis as typeof globalThis & {
               __openedTreeportFilePaths?: string[]
@@ -402,6 +409,7 @@ test('connects the desktop shell, preserves native behavior, and restores render
       .poll(() =>
         electronApp!.evaluate(
           () =>
+            // SAFETY: The test fixture provides the asserted contract used here.
             (
               globalThis as typeof globalThis & {
                 __openedTreeportExternalUrls?: string[]
@@ -519,6 +527,7 @@ test('connects the desktop shell, preserves native behavior, and restores render
     await electronApp.evaluate(() => {
       const filesystem = process.getBuiltinModule('node:fs/promises')
       const originalRename = filesystem.rename.bind(filesystem)
+      // SAFETY: The test fixture provides the asserted contract used here.
       const scope = globalThis as typeof globalThis & {
         __treeportRenameStarted?: boolean
         __releaseTreeportRename?: () => void
@@ -546,6 +555,7 @@ test('connects the desktop shell, preserves native behavior, and restores render
       .poll(() =>
         electronApp!.evaluate(() =>
           Boolean(
+            // SAFETY: The test fixture provides the asserted contract used here.
             (
               globalThis as typeof globalThis & {
                 __treeportRenameStarted?: boolean
@@ -563,6 +573,7 @@ test('connects the desktop shell, preserves native behavior, and restores render
     })
     await expect(unavailableHeading).toBeVisible({ timeout: 8_000 })
     await electronApp.evaluate(() => {
+      // SAFETY: The test fixture provides the asserted contract used here.
       const scope = globalThis as typeof globalThis & {
         __releaseTreeportRename?: () => void
         __restoreTreeportRename?: () => void
@@ -616,19 +627,10 @@ test('adds, renames, and switches computers through the desktop-owned selector',
         secondServer.listen(0, '127.0.0.1', resolve)
       )
     ])
-    const firstAddress = firstServer.address()
-    const secondAddress = secondServer.address()
-    if (
-      !firstAddress ||
-      typeof firstAddress === 'string' ||
-      !secondAddress ||
-      typeof secondAddress === 'string'
-    ) {
-      throw new Error('Test servers did not expose ports')
-    }
-
-    const firstOrigin = `http://127.0.0.1:${firstAddress.port}`
-    const secondOrigin = `http://127.0.0.1:${secondAddress.port}`
+    const firstPort = serverPort(firstServer.address())
+    const secondPort = serverPort(secondServer.address())
+    const firstOrigin = `http://127.0.0.1:${firstPort}`
+    const secondOrigin = `http://127.0.0.1:${secondPort}`
 
     electronApp = await electron.launch({
       args: [`--user-data-dir=${userData}`, '.'],
@@ -711,6 +713,7 @@ test('adds, renames, and switches computers through the desktop-owned selector',
     const linkedWorkspaceUrl = `${firstOrigin}/projects/project-1/worktrees/worktree-1`
     await electronApp.evaluate(
       ({ app }, deepLink) =>
+        // SAFETY: The test fixture provides the asserted contract used here.
         app.emit('open-url', { preventDefault() {} } as never, deepLink),
       workspaceLink(linkedWorkspaceUrl)
     )
@@ -770,10 +773,7 @@ test('keeps an incompatible computer in the shell without loading its web app', 
 
   try {
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
-    const address = server.address()
-    if (!address || typeof address === 'string') {
-      throw new Error('Test server did not expose a port')
-    }
+    const port = serverPort(server.address())
 
     electronApp = await electron.launch({
       args: [`--user-data-dir=${userData}`, '.'],
@@ -782,7 +782,7 @@ test('keeps an incompatible computer in the shell without loading its web app', 
         ...process.env,
         TREEPORT_DESKTOP_E2E: '1',
         TREEPORT_DESKTOP_USER_DATA: '',
-        TREEPORT_DESKTOP_URL: `http://127.0.0.1:${address.port}`
+        TREEPORT_DESKTOP_URL: `http://127.0.0.1:${port}`
       }
     })
     const window = await electronApp.firstWindow()

@@ -76,9 +76,7 @@ test.describe('desktop worktree and terminal workflows', () => {
       await expect(pending).toHaveText('new-topic-preview')
       await expect(pending).toBeFocused()
       const projectRequestsBeforeEvent = mocked.projectRequests()
-      await page.evaluate(() =>
-        (window as any).__eventSource.emit('worktree.created')
-      )
+      await page.evaluate(() => window.__eventSource.emit('worktree.created'))
       await expect
         .poll(() => mocked.projectRequests())
         .toBeGreaterThan(projectRequestsBeforeEvent)
@@ -103,8 +101,8 @@ test.describe('desktop worktree and terminal workflows', () => {
       await expect
         .poll(() =>
           page.evaluate(() =>
-            ((window as any).__wsInstances || []).some(
-              (socket: { url: string }) => socket.url.includes('term_new')
+            (window.__wsInstances || []).some((socket: { url: string }) =>
+              socket.url.includes('term_new')
             )
           )
         )
@@ -200,8 +198,8 @@ test.describe('desktop worktree and terminal workflows', () => {
     await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
     await expect(page.getByText('Viewing', { exact: true })).toBeVisible()
     await page.evaluate(() => {
-      ;(window as any).__wsSent = []
-      ;(window as any).__delayTakeControl = true
+      window.__wsSent = []
+      window.__delayTakeControl = true
       document.querySelector('.xterm-helper-textarea')!.dispatchEvent(
         new KeyboardEvent('keydown', {
           bubbles: true,
@@ -214,9 +212,7 @@ test.describe('desktop worktree and terminal workflows', () => {
     await expect(page.getByText('Viewing', { exact: true })).toBeVisible()
     expect(
       await page.evaluate(() =>
-        (window as any).__wsSent.some(
-          (message: any) => message.type === 'take_control'
-        )
+        window.__wsSent.some((message: any) => message.type === 'take_control')
       )
     ).toBe(false)
 
@@ -226,17 +222,17 @@ test.describe('desktop worktree and terminal workflows', () => {
     ).toBeVisible()
     expect(
       await page.evaluate(() =>
-        (window as any).__wsSent.some(
+        window.__wsSent.some(
           (message: any) => message.type === 'input' && message.data === 'x'
         )
       )
     ).toBe(false)
 
-    await page.evaluate(() => (window as any).__releaseTakeControl())
+    await page.evaluate(() => window.__releaseTakeControl())
     await waitForTerminalControl(page)
     expect(
       await page.evaluate(() =>
-        (window as any).__wsSent.some(
+        window.__wsSent.some(
           (message: any) => message.type === 'input' && message.data === 'x'
         )
       )
@@ -246,7 +242,7 @@ test.describe('desktop worktree and terminal workflows', () => {
     await expect
       .poll(() =>
         page.evaluate(() =>
-          (window as any).__wsSent.some(
+          window.__wsSent.some(
             (message: any) => message.type === 'input' && message.data === 'y'
           )
         )
@@ -254,11 +250,11 @@ test.describe('desktop worktree and terminal workflows', () => {
       .toBe(true)
 
     const socketsBeforeReconnect = await page.evaluate(
-      () => (window as any).__wsInstances.length
+      () => window.__wsInstances.length
     )
-    await page.evaluate(() => (window as any).__lastWs.onclose())
+    await page.evaluate(() => window.__lastWs.onclose())
     await expect
-      .poll(() => page.evaluate(() => (window as any).__wsInstances.length))
+      .poll(() => page.evaluate(() => window.__wsInstances.length))
       .toBeGreaterThan(socketsBeforeReconnect)
   })
 
@@ -268,8 +264,8 @@ test.describe('desktop worktree and terminal workflows', () => {
     await mockApp(page)
     await page.getByRole('button', { name: 'Pi, running', exact: true }).click()
     await page.evaluate(() => {
-      ;(window as any).__wsSent = []
-      ;(window as any).__delayTakeControl = true
+      window.__wsSent = []
+      window.__delayTakeControl = true
       const clipboard = new DataTransfer()
       clipboard.setData('text/plain', 'pasted while viewing')
       const event = new Event('paste', { bubbles: true, cancelable: true })
@@ -282,7 +278,7 @@ test.describe('desktop worktree and terminal workflows', () => {
     ).toBeVisible()
     expect(
       await page.evaluate(() =>
-        (window as any).__wsSent.some(
+        window.__wsSent.some(
           (message: any) =>
             message.type === 'input' &&
             String(message.data).includes('pasted while viewing')
@@ -290,11 +286,11 @@ test.describe('desktop worktree and terminal workflows', () => {
       )
     ).toBe(false)
 
-    await page.evaluate(() => (window as any).__releaseTakeControl())
+    await page.evaluate(() => window.__releaseTakeControl())
     await waitForTerminalControl(page)
     expect(
       await page.evaluate(() =>
-        (window as any).__wsSent.some(
+        window.__wsSent.some(
           (message: any) =>
             message.type === 'input' &&
             String(message.data).includes('pasted while viewing')
@@ -342,7 +338,7 @@ test.describe('desktop worktree and terminal workflows', () => {
       )
     )
     const viewerSocketState = await viewer.evaluate(() => {
-      const socket = (window as any).__lastWs
+      const socket = window.__lastWs
       return {
         cols: socket.cols,
         rows: socket.rows,
@@ -368,7 +364,7 @@ test.describe('desktop worktree and terminal workflows', () => {
     await expect(viewer.getByText('Viewing', { exact: true })).toHaveCount(0)
     await expect(page.getByText('Viewing', { exact: true })).toBeVisible()
     const takeoverState = await viewer.evaluate(() => {
-      const socket = (window as any).__lastWs
+      const socket = window.__lastWs
       return {
         state: JSON.parse(
           localStorage.getItem('__treeport_terminal_state__:term_pi') || '{}'
@@ -407,7 +403,7 @@ test.describe('desktop worktree and terminal workflows', () => {
       await expect
         .poll(() =>
           target.evaluate(() => {
-            const socket = (window as any).__lastWs
+            const socket = window.__lastWs
             return {
               cols: socket.cols,
               rows: socket.rows,
@@ -426,7 +422,7 @@ test.describe('desktop worktree and terminal workflows', () => {
     await page.getByRole('button', { name: 'Pi, running', exact: true }).click()
     await expect(page.getByText('Viewing', { exact: true })).toBeVisible()
     await page.evaluate(async () => {
-      const socket = (window as any).__lastWs
+      const socket = window.__lastWs
       socket.onmessage?.({
         data: JSON.stringify({
           version: 1,
@@ -440,17 +436,13 @@ test.describe('desktop worktree and terminal workflows', () => {
       socket.close()
     })
     await expect(page.getByRole('button', { name: 'Retry' })).toBeVisible()
-    const before = await page.evaluate(
-      () => (window as any).__wsInstances.length
-    )
+    const before = await page.evaluate(() => window.__wsInstances.length)
     await page.evaluate(() => window.dispatchEvent(new Event('online')))
     await page.waitForTimeout(750)
-    expect(
-      await page.evaluate(() => (window as any).__wsInstances.length)
-    ).toBe(before)
+    expect(await page.evaluate(() => window.__wsInstances.length)).toBe(before)
     await page.getByRole('button', { name: 'Retry' }).click()
     await expect
-      .poll(() => page.evaluate(() => (window as any).__wsInstances.length))
+      .poll(() => page.evaluate(() => window.__wsInstances.length))
       .toBeGreaterThan(before)
   })
 
@@ -481,7 +473,7 @@ test.describe('desktop worktree and terminal workflows', () => {
     await expect(piTreeRow).toBeVisible()
     await expect(notificationTrigger).toBeVisible()
     await expect
-      .poll(() => page.evaluate(() => (window as any).__attentionRequests))
+      .poll(() => page.evaluate(() => window.__attentionRequests))
       .toBe(0)
     await page.reload()
     await expect(piTreeRow).toBeVisible()
@@ -500,7 +492,7 @@ test.describe('desktop worktree and terminal workflows', () => {
 
     await notificationTrigger.click()
     await page.evaluate(() => {
-      ;(window as any).__wsSent = []
+      window.__wsSent = []
     })
     const terminalScreen = page.locator('.xterm-screen')
     const terminalBounds = await terminalScreen.boundingBox()
@@ -512,7 +504,7 @@ test.describe('desktop worktree and terminal workflows', () => {
     await expect(notificationCenter).toHaveCount(0)
     expect(
       await page.evaluate(() =>
-        (window as any).__wsSent.filter(
+        window.__wsSent.filter(
           (message: any) =>
             message.type === 'input' || message.type === 'take_control'
         )
@@ -561,7 +553,7 @@ test.describe('desktop worktree and terminal workflows', () => {
     await expect(piTreeRow).toBeVisible()
 
     await page.evaluate(() =>
-      (window as any).__eventSource.emit(
+      window.__eventSource.emit(
         'terminal.metadata',
         JSON.stringify({
           data: {
@@ -583,7 +575,7 @@ test.describe('desktop worktree and terminal workflows', () => {
       page.getByRole('button', { name: /zsh · \/worktrees\/topic.*bell/ })
     ).toHaveCount(0)
     await page.evaluate(() => {
-      const socket = (window as any).__wsInstances.find((item: any) =>
+      const socket = window.__wsInstances.find((item: any) =>
         item.url.includes('term_pi')
       )
       socket.onmessage?.({
@@ -608,7 +600,7 @@ test.describe('desktop worktree and terminal workflows', () => {
     const emitBell = (sequence: number, unread = true) =>
       page.evaluate(
         ({ nextSequence, nextUnread }) => {
-          ;(window as any).__eventSource.emit(
+          window.__eventSource.emit(
             'terminal.metadata',
             JSON.stringify({
               data: {
@@ -641,7 +633,7 @@ test.describe('desktop worktree and terminal workflows', () => {
       })
     ).toBeVisible()
     await expect
-      .poll(() => page.evaluate(() => (window as any).__attentionRequests))
+      .poll(() => page.evaluate(() => window.__attentionRequests))
       .toBe(1)
 
     await emitBell(5, false)
@@ -684,7 +676,7 @@ test.describe('desktop worktree and terminal workflows', () => {
     await expect(activeBellTerminal).toBeVisible()
 
     await page.evaluate(() =>
-      (window as any).__eventSource.emit(
+      window.__eventSource.emit(
         'terminal.metadata',
         JSON.stringify({
           data: {
@@ -1134,7 +1126,7 @@ test.describe('desktop worktree and terminal workflows', () => {
     ).toBeVisible()
     await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
     const socketsBeforeSwitch = await page.evaluate(
-      () => (window as any).__wsInstances.length
+      () => window.__wsInstances.length
     )
     const zshTerminal = topicTerminals.getByRole('button', {
       name: /^zsh · \/worktrees\/topic,/
@@ -1144,7 +1136,7 @@ test.describe('desktop worktree and terminal workflows', () => {
     await zshTerminal.click()
     await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
     await expect
-      .poll(() => page.evaluate(() => (window as any).__wsInstances.length))
+      .poll(() => page.evaluate(() => window.__wsInstances.length))
       .toBe(socketsBeforeSwitch)
     await expect(
       topicTerminals.getByRole('button', {
@@ -1452,9 +1444,7 @@ test.describe('desktop worktree and terminal workflows', () => {
         request.method() === 'POST' &&
         new URL(request.url()).pathname === '/api/worktrees/wt_topic/terminals'
     )
-    await page.evaluate(() =>
-      (window as any).__dispatchDesktopCommand('new-terminal')
-    )
+    await page.evaluate(() => window.__dispatchDesktopCommand('new-terminal'))
     expect((await createRequest).postDataJSON()).toMatchObject({
       name: 'Shell'
     })
@@ -1462,9 +1452,7 @@ test.describe('desktop worktree and terminal workflows', () => {
       page.getByRole('button', { name: 'Shell, starting' })
     ).toBeVisible()
     await expect(page.getByRole('status')).toHaveText('Starting Shell…')
-    await page.evaluate(() =>
-      (window as any).__dispatchDesktopCommand('new-terminal')
-    )
+    await page.evaluate(() => window.__dispatchDesktopCommand('new-terminal'))
     await expect.poll(() => mocked.terminalCreations()).toBe(2)
     await expect(
       page.getByRole('button', { name: 'Shell, starting' })
@@ -1489,9 +1477,7 @@ test.describe('desktop worktree and terminal workflows', () => {
         request.method() === 'DELETE' &&
         new URL(request.url()).pathname === '/api/terminals/term_dev'
     )
-    await page.evaluate(() =>
-      (window as any).__dispatchDesktopCommand('close-panel')
-    )
+    await page.evaluate(() => window.__dispatchDesktopCommand('close-panel'))
     await closeRequest
     await expect(createdDevTerminal).toHaveCount(0)
     await expect(topicTerminals).toHaveCount(2)
@@ -1499,7 +1485,7 @@ test.describe('desktop worktree and terminal workflows', () => {
       .poll(() =>
         page.evaluate(
           () =>
-            (window as any).__wsInstances.find(
+            window.__wsInstances.find(
               (socket: any) => socket.terminalId === 'term_dev'
             )?.readyState
         )
@@ -1515,9 +1501,7 @@ test.describe('desktop worktree and terminal workflows', () => {
         request.method() === 'DELETE' &&
         new URL(request.url()).pathname === '/api/terminals/term_dev_2'
     )
-    await page.evaluate(() =>
-      (window as any).__dispatchDesktopCommand('close-panel')
-    )
+    await page.evaluate(() => window.__dispatchDesktopCommand('close-panel'))
     await failedCloseRequest
     await expect(topicTerminals).toHaveCount(1)
     releaseFailedDelete()
@@ -1529,9 +1513,7 @@ test.describe('desktop worktree and terminal workflows', () => {
 
     mocked.failNextTerminalCreate()
     const releaseFailedCreate = mocked.delayNextTerminalCreate()
-    await page.evaluate(() =>
-      (window as any).__dispatchDesktopCommand('new-terminal')
-    )
+    await page.evaluate(() => window.__dispatchDesktopCommand('new-terminal'))
     await expect(
       page.getByRole('button', { name: 'Shell, starting' })
     ).toBeVisible()
@@ -1548,9 +1530,7 @@ test.describe('desktop worktree and terminal workflows', () => {
     ).toHaveCount(0)
 
     mocked.failNextTerminalCreateWithGateway()
-    await page.evaluate(() =>
-      (window as any).__dispatchDesktopCommand('new-terminal')
-    )
+    await page.evaluate(() => window.__dispatchDesktopCommand('new-terminal'))
     const gatewayToast = page
       .getByRole('region', { name: /Notifications/ })
       .getByRole('listitem')
@@ -1565,9 +1545,7 @@ test.describe('desktop worktree and terminal workflows', () => {
     ).toHaveCount(0)
 
     mocked.failNextTerminalCreateWithNetwork()
-    await page.evaluate(() =>
-      (window as any).__dispatchDesktopCommand('new-terminal')
-    )
+    await page.evaluate(() => window.__dispatchDesktopCommand('new-terminal'))
     const networkToast = page
       .getByRole('region', { name: /Notifications/ })
       .getByRole('listitem')
@@ -1581,9 +1559,7 @@ test.describe('desktop worktree and terminal workflows', () => {
       page.getByRole('button', { name: 'Shell, starting' })
     ).toHaveCount(0)
 
-    await page.evaluate(() =>
-      (window as any).__dispatchDesktopCommand('new-panel')
-    )
+    await page.evaluate(() => window.__dispatchDesktopCommand('new-panel'))
     const launcherSearch = page.getByLabel('Search panels')
     await expect(launcherSearch).toBeFocused()
     await launcherSearch.fill('Hunk')
@@ -1595,9 +1571,7 @@ test.describe('desktop worktree and terminal workflows', () => {
     await page.keyboard.press('Enter')
     expect((await presetRequest).postDataJSON()).toMatchObject({ name: 'Hunk' })
 
-    await page.evaluate(() =>
-      (window as any).__dispatchDesktopCommand('new-panel')
-    )
+    await page.evaluate(() => window.__dispatchDesktopCommand('new-panel'))
     await page.getByLabel('Search panels').fill('Review')
     const panelCreateRequest = page.waitForRequest(
       (request) =>
@@ -1711,18 +1685,14 @@ test.describe('desktop worktree and terminal workflows', () => {
         request.method() === 'POST' &&
         new URL(request.url()).pathname === '/api/worktrees/wt_topic/terminals'
     )
-    await page.evaluate(() =>
-      (window as any).__dispatchDesktopCommand('new-terminal')
-    )
+    await page.evaluate(() => window.__dispatchDesktopCommand('new-terminal'))
     await terminalFromPanelRequest
     await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
 
     await page.getByRole('button', { name: 'Review, web panel' }).click()
     await expect(panelFrame.getByText('Unsaved panel draft')).toBeVisible()
     mocked.setWebPanelHasStorage(true)
-    await page.evaluate(() =>
-      (window as any).__dispatchDesktopCommand('close-panel')
-    )
+    await page.evaluate(() => window.__dispatchDesktopCommand('close-panel'))
     const closePanelDialog = page.getByRole('alertdialog', {
       name: 'Close Review?'
     })
@@ -1755,9 +1725,7 @@ test.describe('desktop worktree and terminal workflows', () => {
     ).toHaveCount(0)
     await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
 
-    await page.evaluate(() =>
-      (window as any).__dispatchDesktopCommand('new-worktree')
-    )
+    await page.evaluate(() => window.__dispatchDesktopCommand('new-worktree'))
     await expect(
       page.getByRole('dialog', { name: 'Create worktree' })
     ).toBeVisible()

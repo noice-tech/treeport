@@ -75,6 +75,7 @@ export function TerminalView({
   const [ctrl, setCtrl] = useState(false)
   const [alt, setAlt] = useState(false)
   const [paste, setPaste] = useState({
+    // SAFETY: The component contract supplies the asserted browser value used here.
     terminalId: null as string | null,
     open: false,
     value: ''

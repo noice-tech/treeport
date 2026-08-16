@@ -17,6 +17,11 @@ import { Label } from '../../components/ui/label'
 import { cn } from '../../lib/utils'
 import { notifyError } from '../notifications/error-notifications'
 
+interface DirectoryQuery {
+  input: string
+  hidden?: 'true'
+}
+
 export function ProjectForm({
   onOpened
 }: {
@@ -37,15 +42,16 @@ export function ProjectForm({
 
   const directoryQuery = useQuery({
     queryKey: ['filesystem-directories', debouncedPath, showHidden],
-    queryFn: () =>
-      parseResponse(
-        rpc.api.filesystem.directories.$get({
-          query: {
-            input: debouncedPath,
-            ...(showHidden ? { hidden: 'true' } : {})
-          }
-        })
-      ),
+    queryFn: () => {
+      const query: DirectoryQuery = {
+        input: debouncedPath
+      }
+      if (showHidden) {
+        query.hidden = 'true'
+      }
+
+      return parseResponse(rpc.api.filesystem.directories.$get({ query }))
+    },
     enabled: Boolean(debouncedPath),
     retry: false
   })

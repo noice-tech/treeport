@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url'
 import { extractFile, listPackage } from '@electron/asar'
 import electronFuses from '@electron/fuses'
 import electronFuseConstants from '@electron/fuses/dist/constants.js'
+import { z } from 'zod'
 
 const { FuseV1Options, getCurrentFuseWire } = electronFuses
 const { FuseState } = electronFuseConstants
@@ -82,14 +83,13 @@ const urlTypes = JSON.parse(
     { encoding: 'utf8' }
   )
 )
+const parsedUrlTypes = z
+  .array(z.object({ CFBundleURLSchemes: z.array(z.string()) }))
+  .safeParse(urlTypes)
 if (
-  !Array.isArray(urlTypes) ||
-  !urlTypes.some(
-    (entry) =>
-      entry &&
-      typeof entry === 'object' &&
-      Array.isArray(entry.CFBundleURLSchemes) &&
-      entry.CFBundleURLSchemes.includes('treeport')
+  !parsedUrlTypes.success ||
+  !parsedUrlTypes.data.some((entry) =>
+    entry.CFBundleURLSchemes.includes('treeport')
   )
 ) {
   throw new Error('Packaged app does not declare the treeport URL scheme')
