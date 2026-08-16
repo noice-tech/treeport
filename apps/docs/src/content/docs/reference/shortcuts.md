@@ -118,8 +118,10 @@ A browser client does not open terminal `file:` links.
 
 Take control before you drop files on a terminal. Also take control before you paste files or clipboard images.
 
-Treeport uploads each file to the backend. It then pastes the temporary backend path into the terminal.
+When the client and Treeport run on the same computer, Treeport can paste the original file path without an upload. The desktop client uses this operation for local connections. A browser uses this operation only when its platform supplies a trusted absolute path.
 
-This operation makes a client file available to a command on the backend computer.
+For a remote connection, Treeport uploads each file to the backend. It also uploads the file when the client cannot get a trusted absolute path. Treeport then pastes the temporary backend path into the terminal.
+
+Treeport quotes multiple paths. Thus, spaces and shell-special characters do not make the paths ambiguous.
 
 One transfer can contain a maximum of eight files. Each file can have a maximum size of 50 MiB.

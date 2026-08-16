@@ -53,10 +53,17 @@ test.describe('desktop terminal input and removal', () => {
       .getByRole('button', { name: 'Close', exact: true })
       .click()
   })
-  test('uploads pasted and dropped files and pastes their server paths', async ({
+  test('uses trusted local file paths and uploads files without one', async ({
     page
   }) => {
-    const mocked = await mockApp(page)
+    const directPaths = {
+      'shot one.png': '/Users/example/Desktop/shot one.png',
+      "notes '$draft.txt": "/Users/example/Desktop/notes '$draft.txt"
+    }
+    const mocked = await mockApp(page, [], {
+      desktopBridge: true,
+      desktopFilePaths: directPaths
+    })
     await page.getByRole('button', { name: 'Pi, running', exact: true }).click()
     await expect(page.getByText('Viewing', { exact: true })).toBeVisible()
     await page.evaluate(() => {
@@ -76,9 +83,12 @@ test.describe('desktop terminal input and removal', () => {
         const textarea = document.querySelector('.xterm-helper-textarea')!
         const clipboard = new DataTransfer()
         clipboard.items.add(
-          new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], 'shot.png', {
+          new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], 'shot one.png', {
             type: 'image/png'
           })
+        )
+        clipboard.items.add(
+          new File(['draft'], "notes '$draft.txt", { type: 'text/plain' })
         )
         const event = new Event('paste', { bubbles: true, cancelable: true })
         Object.defineProperty(event, 'clipboardData', { value: clipboard })
@@ -92,7 +102,7 @@ test.describe('desktop terminal input and removal', () => {
     const pasteWhileViewing = await page.evaluate(() =>
       window.__pasteTerminalFile()
     )
-    expect(pasteWhileViewing).toEqual({ files: 1, prevented: true })
+    expect(pasteWhileViewing).toEqual({ files: 2, prevented: true })
     await expect(page.getByRole('alert')).toContainText(
       'Couldn’t paste file: taking control; try again in a moment'
     )
@@ -101,8 +111,8 @@ test.describe('desktop terminal input and removal', () => {
     await page.evaluate(() => window.__releaseTakeControl())
     await waitForTerminalControl(page)
     const paste = await page.evaluate(() => window.__pasteTerminalFile())
-    expect(paste).toEqual({ files: 1, prevented: true })
-    await expect.poll(mocked.fileUploadRequests).toBe(1)
+    expect(paste).toEqual({ files: 2, prevented: true })
+    expect(mocked.fileUploadRequests()).toBe(0)
     await expect
       .poll(() =>
         page.evaluate(() =>
@@ -112,7 +122,9 @@ test.describe('desktop terminal input and removal', () => {
             .join('')
         )
       )
-      .toContain('\u001b[200~/tmp/treeport-upload-1.png\u001b[201~')
+      .toContain(
+        "\u001b[200~'/Users/example/Desktop/shot one.png' '/Users/example/Desktop/notes '\\''$draft.txt'\u001b[201~"
+      )
 
     const drop = await page
       .locator('.xterm-screen')
@@ -142,7 +154,7 @@ test.describe('desktop terminal input and removal', () => {
       dropPrevented: true
     })
 
-    await expect.poll(mocked.fileUploadRequests).toBe(2)
+    await expect.poll(mocked.fileUploadRequests).toBe(1)
     await expect
       .poll(() =>
         page.evaluate(() =>
@@ -152,7 +164,7 @@ test.describe('desktop terminal input and removal', () => {
             .join('')
         )
       )
-      .toContain('/tmp/treeport-upload-2.txt')
+      .toContain('/tmp/treeport-upload-1.txt')
   })
 
   test('selects, autoscrolls beyond the viewport, and forwards application wheel events', async ({

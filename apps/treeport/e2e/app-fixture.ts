@@ -159,6 +159,7 @@ export async function mockApp(
     worktreeFree?: boolean
     includeSecondProject?: boolean
     desktopBridge?: boolean
+    desktopFilePaths?: Record<string, string>
     initialPath?: string
     delayProjects?: boolean
     transientProjectFailures?: number
@@ -233,7 +234,7 @@ export async function mockApp(
   }
 
   if (options.desktopBridge) {
-    await page.addInitScript(() => {
+    await page.addInitScript((filePaths) => {
       const scope = window
       type DesktopCommand =
         | 'new-worktree'
@@ -250,6 +251,9 @@ export async function mockApp(
         openFileUrl(url: string) {
           scope.__openedDesktopFileUrls.push(url)
           return Promise.resolve(true)
+        },
+        getPathForFile(file: File) {
+          return Promise.resolve(filePaths[file.name] ?? null)
         },
         onFullscreenChange(next: (fullscreen: boolean) => void) {
           fullscreenListener = next
@@ -278,7 +282,7 @@ export async function mockApp(
         terminalSelectionReleaseListeners.forEach((listener) => listener())
       scope.__dispatchDesktopFullscreen = (fullscreen: boolean) =>
         fullscreenListener?.(fullscreen)
-    })
+    }, options.desktopFilePaths ?? {})
   }
 
   await page.addInitScript((initialMetadata) => {

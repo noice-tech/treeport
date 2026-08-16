@@ -1,9 +1,16 @@
-import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
+import {
+  contextBridge,
+  ipcRenderer,
+  webUtils,
+  type IpcRendererEvent
+} from 'electron'
 import { z } from 'zod'
 import type {
   DesktopCommand,
   DesktopFileActionResult
 } from './desktop-contract'
+
+const localSourcePathResultSchema = z.string().nullable().catch(null)
 
 const desktopBridge = Object.freeze({
   platform: process.platform,
@@ -11,6 +18,16 @@ const desktopBridge = Object.freeze({
     return ipcRenderer
       .invoke('open-file-url', url)
       .then((result) => (result === 'opened' ? result : 'rejected'))
+  },
+  getPathForFile(file: File): Promise<string | null> {
+    const filePath = webUtils.getPathForFile(file)
+    if (!filePath) {
+      return Promise.resolve(null)
+    }
+
+    return ipcRenderer
+      .invoke('terminal-file:resolve-source-path', filePath)
+      .then((result) => localSourcePathResultSchema.parse(result))
   },
   onFullscreenChange(listener: (fullscreen: boolean) => void) {
     const receive: Parameters<typeof ipcRenderer.on>[1] = (

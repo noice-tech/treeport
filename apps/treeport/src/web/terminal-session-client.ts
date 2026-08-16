@@ -3,6 +3,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links'
 import { Terminal } from '@xterm/xterm'
 import { io, type Socket } from 'socket.io-client'
 import { parseResponse } from 'hono/client'
+import { z } from 'zod'
 import { rpc } from './api'
 import { errorMessage } from './error-message'
 import {
@@ -17,6 +18,7 @@ import {
   parseTerminalServerEvent,
   SOCKET_IO_PATH,
   TERMINAL_MAX_INPUT_BYTES,
+  TERMINAL_MAX_UPLOAD_BYTES,
   TERMINAL_PROTOCOL_VERSION,
   TERMINAL_SCROLL_EXIT_SEQUENCE,
   TERMINAL_SELECTION_CLEAR_SEQUENCE,
@@ -39,6 +41,17 @@ export type TerminalFileTransfer = {
 }
 
 const TERMINAL_MAX_FILES_PER_TRANSFER = 8
+const BROWSER_LOCAL_FILE_PATH_SCHEMA = z
+  .string()
+  .max(16_384)
+  .startsWith('/')
+  .refine((filePath) =>
+    Array.from(filePath).every((character) => {
+      const codePoint = character.codePointAt(0)!
+      return codePoint > 31 && codePoint !== 127
+    })
+  )
+const LOOPBACK_BROWSER_HOSTNAMES = new Set(['127.0.0.1', 'localhost', '[::1]'])
 const TERMINAL_MAX_SELECTION_ENCODED_LENGTH = 8 * 1024 * 1024
 const TERMINAL_MIN_VIEWER_FONT_SIZE = 4
 const TERMINAL_MIN_COLS = 2
@@ -761,7 +774,7 @@ export class TerminalSession {
       event.stopPropagation()
       wrapper.classList.remove('terminal-file-drag')
       this.requestControl()
-      this.queueFileUpload(filesFromTransfer(event.dataTransfer))
+      this.queueFileTransfer(filesFromTransfer(event.dataTransfer))
     })
     wrapper.addEventListener(
       'paste',
@@ -774,7 +787,7 @@ export class TerminalSession {
         event.preventDefault()
         event.stopPropagation()
         this.requestControl()
-        this.queueFileUpload(files)
+        this.queueFileTransfer(files)
       },
       true
     )
@@ -867,13 +880,13 @@ export class TerminalSession {
     terminal.onBell(() => this.handleBell())
   }
 
-  private queueFileUpload(files: File[]): void {
+  private queueFileTransfer(files: File[]): void {
     this.fileTransferQueue = this.fileTransferQueue
       .catch(() => undefined)
-      .then(() => this.uploadFiles(files))
+      .then(() => this.transferFiles(files))
   }
 
-  private async uploadFiles(files: File[]): Promise<void> {
+  private async transferFiles(files: File[]): Promise<void> {
     if (!files.length || this.disposed) {
       return
     }
@@ -881,6 +894,13 @@ export class TerminalSession {
     if (files.length > TERMINAL_MAX_FILES_PER_TRANSFER) {
       this.showFileTransferError(
         `Choose no more than ${TERMINAL_MAX_FILES_PER_TRANSFER} files at a time`
+      )
+      return
+    }
+
+    if (files.some((file) => file.size > TERMINAL_MAX_UPLOAD_BYTES)) {
+      this.showFileTransferError(
+        `Files are limited to ${TERMINAL_MAX_UPLOAD_BYTES} bytes`
       )
       return
     }
@@ -904,16 +924,48 @@ export class TerminalSession {
       this.fileTransferTimer = null
     }
 
-    this.update({
-      fileTransfer: {
-        state: 'uploading',
-        message: `Uploading ${files.length === 1 ? 'file' : `${files.length} files`}…`
-      }
-    })
-
     try {
+      const desktopBridge = window.treeportDesktop
+      let sourcePaths: Array<string | null>
+      if (desktopBridge?.getPathForFile) {
+        sourcePaths = await Promise.all(
+          files.map((file) =>
+            Promise.resolve()
+              .then(() => desktopBridge.getPathForFile?.(file) ?? null)
+              .catch(() => null)
+          )
+        )
+      } else if (LOOPBACK_BROWSER_HOSTNAMES.has(window.location.hostname)) {
+        sourcePaths = files.map((file) => {
+          // SAFETY: Privileged browser platforms can add this optional, read-only capability to a File.
+          const platformFile = file as File & { readonly path?: string }
+          const parsedPath = BROWSER_LOCAL_FILE_PATH_SCHEMA.safeParse(
+            platformFile.path
+          )
+          return parsedPath.success ? parsedPath.data : null
+        })
+      } else {
+        sourcePaths = files.map(() => null)
+      }
+
+      const uploadCount = sourcePaths.filter((filePath) => !filePath).length
+      if (uploadCount > 0) {
+        this.update({
+          fileTransfer: {
+            state: 'uploading',
+            message: `Uploading ${uploadCount === 1 ? 'file' : `${uploadCount} files`}…`
+          }
+        })
+      }
+
       const paths: string[] = []
-      for (const file of files) {
+      for (const [index, file] of files.entries()) {
+        const sourcePath = sourcePaths[index]
+        if (sourcePath) {
+          paths.push(sourcePath)
+          continue
+        }
+
         const extension = /\.([a-z0-9]{1,16})$/i.exec(file.name)?.[1]
         const headers = new Headers({
           'content-type': file.type || 'application/octet-stream'
@@ -947,12 +999,18 @@ export class TerminalSession {
         return
       }
 
-      const input = paths.join(' ')
+      const input = paths
+        .map((filePath) =>
+          /^[A-Za-z0-9_+,./:@%=-]+$/u.test(filePath)
+            ? filePath
+            : `'${filePath.replaceAll("'", "'\\''")}'`
+        )
+        .join(' ')
       if (
         new TextEncoder().encode(input).byteLength >
         TERMINAL_MAX_INPUT_BYTES - 32
       ) {
-        this.showFileTransferError('The uploaded file paths are too long')
+        this.showFileTransferError('The file paths are too long')
         return
       }
 
