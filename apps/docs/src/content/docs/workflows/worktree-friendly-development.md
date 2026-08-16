@@ -1,14 +1,18 @@
 ---
 title: Worktree-friendly development
-description: Let every worktree run an independent copy of your application.
+description: Run an independent copy of your application in each worktree.
 ---
 
-A worktree is most useful when it can run the application independently.
+A worktree is most useful when it can run an independent copy of the application.
 
-## Make sure your ports don't conflict
+## Prevent port conflicts
 
-Two worktrees should not contend for the same development ports. Do not require every development server to use one fixed port. Accept a port through a command-line option or environment variable, or choose an unused port automatically.
+Do not configure all development servers to use one fixed port.
 
-Print the selected URL clearly so it can be opened or passed to another tool. If several processes make up the application, start them through one development command that assigns a compatible set of ports.
+Accept a port in a command option or environment variable. Alternatively, select an unused port automatically.
 
-Avoid solving conflicts by silently stopping the process that already owns a port. It may belong to another active worktree.
+Print the selected URL so another tool can open it.
+
+If the application has multiple processes, use one development command. Configure that command to select a compatible group of ports.
+
+Do not stop an existing process without approval to resolve a port conflict. The process can belong to another active worktree.

@@ -1,75 +1,125 @@
 ---
 title: Shortcuts
-description: Use Treeport shortcuts and non-obvious terminal interactions.
+description: Use Treeport shortcuts and terminal controls.
 ---
 
-Treeport can reserve application shortcuts in the macOS desktop client. In a browser, new-window, new-tab, reopen-tab, close-tab, numbered-tab, and history shortcuts remain browser-owned. Treeport shortcuts work when Treeport itself has keyboard focus; an embedded web panel can handle keys inside its own frame.
+The macOS desktop client can reserve application shortcuts.
 
-This page lists Treeport-specific commands. Standard terminal, browser, and operating-system shortcuts are not included.
+In a browser, shortcuts for windows, tabs, history, and numbered tabs stay under browser control.
 
-## Shortcut reference
+Treeport shortcuts work when Treeport has keyboard focus. An embedded web panel can process keys in its own frame.
+
+This page includes only Treeport-specific operations.
+
+## Use application shortcuts
 
 | Action                                   | Browser                                                    | macOS desktop           |
 | ---------------------------------------- | ---------------------------------------------------------- | ----------------------- |
 | Switch project                           | `Cmd+Shift+P` on Apple keyboards; `Ctrl+Shift+P` elsewhere | `Cmd+Shift+P`           |
-| Select numbered panel 1–9                | Use the sidebar                                            | `Cmd+1` through `Cmd+9` |
+| Select panel 1 through 9                 | Use the sidebar                                            | `Cmd+1` through `Cmd+9` |
 | Create a worktree                        | Use **New worktree**                                       | `Cmd+N`                 |
 | Create a shell terminal                  | Use **New panel**                                          | `Cmd+T`                 |
-| Choose a new panel                       | Use **New panel**                                          | `Cmd+Shift+T`           |
-| Close the selected terminal or web panel | Use its close action                                       | `Cmd+W`                 |
+| Select a new panel                       | Use **New panel**                                          | `Cmd+Shift+T`           |
+| Close the selected terminal or web panel | Use its close operation                                    | `Cmd+W`                 |
 | Go back or forward                       | Use browser history                                        | `Cmd+[` or `Cmd+]`      |
 
-Numbered selection follows the terminal and web panel order in the selected worktree. Only the first nine entries have numbered shortcuts.
+Numbered selection follows the panel order in the selected worktree. Only the first nine panels have numbered shortcuts.
 
-`Cmd+T` creates a shell immediately. `Cmd+Shift+T` opens **New panel**, where you can choose Shell, a preset, or a web panel.
+`Cmd+T` creates a shell immediately.
 
-`Cmd+W` keeps the normal close safeguards. Treeport can ask for confirmation before it stops a foreground process or deletes stored web panel data. A worktree always keeps at least one terminal.
+`Cmd+Shift+T` opens **New panel**. You can select Shell, a preset, or a web panel.
 
-## Terminal control
+`Cmd+W` uses the standard close safeguards.
 
-At most one attached client controls a terminal at a time. Other clients continue to receive output and show **Viewing**.
+Treeport can request approval before it stops a foreground process or deletes panel data. A worktree always keeps at least one terminal.
 
-Clicking, tapping, typing, pasting, or using a terminal accessory control requests control. The client shows **Taking control…** during the transfer. When the badge disappears, that client controls terminal input, and the previous controller changes to **Viewing**. Assistive technology announces **Controlling terminal**.
+## Take terminal control
 
-The action that requests control might not reach the terminal. Wait for **Taking control…** to finish before you repeat important input.
+Only one connected client can control a terminal. Other clients continue to receive output and show **Viewing**.
+
+Click, tap, type, paste, or use a terminal control to request control.
+
+The client shows **Taking control…** during the transfer.
+
+When the label disappears, that client controls terminal input. The prior controller changes to **Viewing**.
+
+Assistive technology announces **Controlling terminal**.
+
+The operation that requested control can occur before the transfer completes.
+
+Wait until **Taking control…** disappears before you repeat important input.
 
 ## Shared terminal size
 
-A terminal has one shared row-and-column grid across all attachments. The controlling client sets that grid when it takes control or when its terminal area changes size. Resizing a viewer does not change the shared terminal.
+A terminal has one row-and-column grid for all clients.
 
-Viewers render the controller's grid and reduce the font size when needed to fit it. Taking control from a differently sized device can therefore reflow the terminal for all attached clients.
+The controlling client sets this grid when it takes control or changes the terminal area size.
+
+A size change on a viewing client does not change the shared grid.
+
+Viewing clients show the controller grid. They reduce the font size when necessary to fit it.
+
+When a different device takes control, the terminal layout can change for all clients.
 
 ## Selection, scrolling, and clipboard
 
-### Pointer and keyboard
+### Use a pointer or keyboard
 
-Drag across terminal output to select text. Selection also works when a terminal application has mouse reporting enabled. Drag above or below the terminal to extend the selection through tmux history.
+Drag across terminal output to select text.
 
-Scrolling up enters tmux history. Treeport shows **Scrolled back in tmux** while new output continues outside the visible area. If a selection is active, Treeport preserves it while new output continues.
+Selection also works when a terminal application has mouse reporting enabled.
 
-- **Follow latest** returns to live output when no selection is active.
-- **Clear** in the scrollback status clears the selection and returns to live output.
-- Reaching the end of history returns to live output when no selection is active.
-- Terminal input, paste, a terminal click, or a new selection clears the retained selection.
+Drag above or below the terminal to extend the selection through tmux history.
 
-Use the displayed **Copy** and **Clear** actions or your client's normal clipboard commands. Use the normal terminal paste action for text. Treeport does not replace browser-owned clipboard shortcuts.
+Scroll up to enter tmux history.
 
-### Touch
+Treeport shows **Scrolled back in tmux** while new output continues outside the visible area.
 
-Swipe with one finger to scroll terminal history. Touch and hold with one finger to start text selection, then drag to extend it. Use **Copy** or **Clear** when the selection actions appear.
+If text is selected, Treeport keeps the selection while new output continues.
 
-Use the **Paste** terminal accessory action, or touch and hold with two fingers, to open the paste interface. If the browser cannot read the clipboard directly, paste into the editable field and send the text from there.
+- Select **Follow latest** to show current output when no selection is active.
+- Select **Clear** to remove the selection and show current output.
+- Reach the end of history to show current output when no selection is active.
+- Send input, paste, click, or start a new selection to clear the retained selection.
 
-## Links and files
+Use the shown **Copy** and **Clear** controls or the standard client clipboard commands.
+
+Use the standard terminal paste operation for text. Treeport does not replace browser clipboard shortcuts.
+
+### Use touch controls
+
+Swipe with one finger to scroll through terminal history.
+
+Touch and hold with one finger to start text selection. Then, drag to extend the selection.
+
+Select **Copy** or **Clear** when the selection controls appear.
+
+Use the **Paste** terminal control to open the paste interface.
+
+Alternatively, touch and hold with two fingers.
+
+If the browser cannot read the clipboard, paste into the editable field. Then, send the text from that field.
+
+## Open links and transfer files
 
 ### Open links
 
-Use `Cmd`-click on an Apple keyboard or `Ctrl`-click elsewhere to open a link in terminal output. HTTP and HTTPS links open outside the terminal.
+On an Apple keyboard, press `Cmd` and select a link in terminal output.
 
-A `file:` link opens with the system default application only in the macOS desktop client. Treeport does not open terminal `file:` links from a browser.
+On other keyboards, press `Ctrl` and select the link.
+
+HTTP and HTTPS links open outside the terminal.
+
+A `file:` link opens in the default system application only in the macOS desktop client.
+
+A browser client does not open terminal `file:` links.
 
 ### Drop or paste files
 
-Take control before you drop files on a terminal or paste files or clipboard images. Treeport uploads them to the backend and pastes their temporary backend paths into the terminal. This makes a file from a browser or remote device readable to a command that runs on the backend computer.
+Take control before you drop files on a terminal. Also take control before you paste files or clipboard images.
 
-Each transfer can contain up to eight files. Each file can be up to 50 MiB.
+Treeport uploads each file to the backend. It then pastes the temporary backend path into the terminal.
+
+This operation makes a client file available to a command on the backend computer.
+
+One transfer can contain a maximum of eight files. Each file can have a maximum size of 50 MiB.

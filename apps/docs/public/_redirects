@@ -1,0 +1,16 @@
+/concepts/product-principles /concepts/philosophy/ 301
+/concepts/product-principles/ /concepts/philosophy/ 301
+/concepts/worktree-first /concepts/projects-worktrees-terminals/ 301
+/concepts/worktree-first/ /concepts/projects-worktrees-terminals/ 301
+/features/interfaces /concepts/fits-around-your-tools/ 301
+/features/interfaces/ /concepts/fits-around-your-tools/ 301
+/getting-started/first-workspace /getting-started/installation/ 301
+/getting-started/first-workspace/ /getting-started/installation/ 301
+/guides/agent-workflows /building-apps/coding-agents/ 301
+/guides/agent-workflows/ /building-apps/coding-agents/ 301
+/guides/private-network-access /features/remote-access/ 301
+/guides/private-network-access/ /features/remote-access/ 301
+/guides/removing-a-worktree /reference/cli/#manage-worktrees 301
+/guides/removing-a-worktree/ /reference/cli/#manage-worktrees 301
+/features/safe-cleanup /reference/cli/#manage-worktrees 301
+/features/safe-cleanup/ /reference/cli/#manage-worktrees 301

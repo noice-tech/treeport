@@ -1,42 +1,56 @@
 ---
 title: Attention and progress
-description: Show terminal context, progress, and attention in Treeport.
+description: Show terminal titles, progress, and attention in Treeport.
 ---
 
-A terminal can give Treeport three small pieces of information: a title, progress, and a request for attention. Treeport displays them next to the terminal; it does not infer them by parsing command output.
+A terminal can give Treeport a title, progress state, and attention signal. Treeport does not parse command output to find this information.
 
-## Title and progress
+## Set a title and progress state
 
-A terminal title replaces an unhelpful process name with useful context in the Treeport interface. For example, an agent can set its title to `PR #123`, and a task can publish that it is currently working.
+Use a terminal title to replace a process name with useful context. For example, an agent can set its title to `PR #123`.
 
 ```sh
 # Set the terminal title.
 printf '\033]2;PR #123\007'
 
-# Report indeterminate active work.
+# Report active work without a percentage.
 printf '\033]9;4;3\007'
 ```
 
-Treeport keeps normal process status even when an application sends none of these signals.
+If an application sends no signals, Treeport continues to show the standard process status.
 
-## Attention notifications
+## Send an attention notification
 
-Emit BEL when a terminal needs a person to look at it:
+Send BEL when a terminal requires attention:
 
 ```sh
 printf '\007'
 ```
 
-Treeport marks the terminal as needing attention and, unless you are already viewing it, adds it to the notification center. The desktop app also requests your attention when a new background BEL arrives. Unread notifications survive Treeport restarts and are shared by connected clients.
+Treeport marks the terminal for attention. If you do not view the terminal, Treeport also adds a notification.
 
-Opening a notification adds its terminal to your workspace navigation history. In the desktop app, use the title-bar Back control or `Command+[` to return to your previous workspace. Use Forward or `Command+]` to open the notification target again.
+The desktop client requests your attention when a new BEL comes from a background terminal. Unread notifications remain after Treeport restarts.
 
-Opening the terminal clears its notification and attention state. Closing the notification center does not mark anything as read. Treeport keeps the latest notification for each terminal rather than a history of every BEL.
+Notifications are the same on all connected clients.
 
-Useful moments for BEL include a failed check, an input prompt, completed CI, or an agent that has finished a task.
+Open a notification to add its terminal to the workspace navigation history.
+
+In the desktop client, select **Back** or press `Command+[` to return to the previous workspace.
+
+Select **Forward** or press `Command+]` to open the notification target again.
+
+When you open the terminal, Treeport clears its notification and attention state. Closing the notification center does not clear notifications.
+
+Treeport keeps only the most recent notification for each terminal.
+
+Send BEL after an important event. Examples include a failed check, an input prompt, completed CI, or a completed agent task.
 
 ## Example: Pi and CI
 
-A Pi extension can look up the pull request it created, set the terminal title to `PR #123`, and report progress while it works. It can then wait for the pull request's CI checks and emit BEL on completion or failure. Treeport provides the UI state and notification; the extension owns the GitHub and CI logic.
+A Pi extension can set a title after it creates a pull request. It can also report progress while it works.
 
-See [Terminal signals](/reference/terminal-signals/) for the complete title, BEL, and progress protocols.
+The extension can then monitor CI and send BEL when CI completes or fails.
+
+Treeport supplies the interface state and notification. The extension controls the GitHub and CI operations.
+
+See [Terminal signals](/reference/terminal-signals/) for the supported title, BEL, and progress protocols.

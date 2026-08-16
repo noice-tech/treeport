@@ -1,14 +1,14 @@
 ---
 title: Treeport
-description: Use Git worktrees as your development task system.
+description: Use Git worktrees as separate development workspaces.
 template: splash
 hero:
-  tagline: Persistent terminals for every Git worktree. Leave, reconnect, and keep working from desktop, browser, or phone.
+  tagline: Use persistent terminals in each Git worktree. Disconnect and reconnect from a desktop, browser, or phone.
   actions:
-    - text: Get started
+    - text: Install Treeport
       link: /getting-started/installation/
       icon: right-arrow
-    - text: View on GitHub
+    - text: View the source on GitHub
       link: https://github.com/noice-tech/treeport
       icon: external
       variant: minimal
@@ -16,27 +16,29 @@ hero:
 
 import { Card, CardGrid } from '@astrojs/starlight/components'
 
-## Every task starts with a worktree
+## Start each task in a worktree
 
-Treeport turns each Git worktree into a persistent workspace for coding agents, shells, and development servers.
+Treeport gives each Git worktree a persistent workspace for coding agents, shells, and development servers.
 
 <CardGrid>
-  <Card title="Worktree-first" icon="seti:git">
-    Finds the main checkout and linked worktrees.
+  <Card title="Use your worktrees" icon="seti:git">
+    Treeport finds the main worktree and all linked worktrees.
   </Card>
-  <Card title="Persistent terminals" icon="seti:shell">
-    Terminals keep running when you disconnect.
+  <Card title="Keep terminals active" icon="seti:shell">
+    Terminal processes continue when you disconnect.
   </Card>
-  <Card title="Open from anywhere" icon="laptop">
-    Reconnect from the desktop app or browser.
+  <Card title="Connect from another device" icon="laptop">
+    Use the macOS desktop client or a supported browser.
   </Card>
-  <Card title="Built for agents and humans" icon="puzzle">
+  <Card title="Use your terminal tools" icon="puzzle">
     Run Pi, Claude Code, Codex, shells, and development servers.
   </Card>
 </CardGrid>
 
-## A normal app around terminal tools
+## Use a standard application interface
 
-Treeport is built for people who want persistent terminals without learning a terminal multiplexer or giving up familiar tabs, mouse navigation, editors, agents, and pull-request workflows. It deliberately composes tools that already work instead of replacing them.
+Treeport gives terminal tools a familiar application interface. You can use tabs, mouse navigation, editors, agents, and pull-request workflows.
 
-Read the [philosophy behind Treeport](/concepts/philosophy/).
+Treeport uses existing tools. It does not replace them.
+
+Read the [Treeport design principles](/concepts/philosophy/).

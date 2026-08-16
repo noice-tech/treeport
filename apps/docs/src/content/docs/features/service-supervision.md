@@ -1,64 +1,100 @@
 ---
 title: Service supervision
-description: Start Treeport after reboot and restart it after an unexpected exit.
+description: Start Treeport after a reboot and restart it after an unexpected exit.
 ---
 
-Treeport normally starts a local background daemon when you open a folder or run `treeport start`. You can explicitly register the backend with the operating system when the host must recover without a user login:
+Treeport usually starts a background daemon when you open a folder or run `treeport start`.
+
+Enable service mode when the host must recover without a user login:
 
 ```sh
 treeport service enable
 ```
 
-Service mode is optional. Installing or starting Treeport does not enable it.
+Service mode is optional. A normal installation or start does not enable it.
 
-The supervised backend still runs as your user and listens only on loopback. It keeps the same data, projects, worktrees, tmux terminals, listener, and Tailscale Serve route as normal background mode.
+The supervised backend runs as your user and listens only on loopback.
+
+It uses the same data, projects, worktrees, terminals, listener, and Tailscale Serve route as the standard background daemon.
 
 ## macOS
 
-Treeport uses a system LaunchDaemon so it can start before a GUI login. Run `treeport service enable` as the user who owns the Treeport data. Do not run it as root.
+Treeport uses a system LaunchDaemon to start before GUI login.
 
-Treeport prepares the definition and prints one command for an administrator. For a curl installation, it is similar to:
+Run `treeport service enable` as the user who owns the Treeport data. Do not run this command as the root user.
+
+Treeport prepares the service definition and prints one administrator command. For a curl installation, the command has this form:
 
 ```sh
 sudo '/absolute/path/to/treeport' service apply --request '/absolute/path/to/request.json'
 ```
 
-An npm installation can include the absolute Node runtime and package CLI entrypoint in the command. An administrator can run the printed command from another account, even when that account has a different restricted `PATH`. The command uses the Node runtime and Treeport installation selected by the Treeport owner. It installs the system definition, but the definition tells launchd to run Treeport as the original user. Treeport does not run the backend as root.
+An npm installation can include the absolute Node.js runtime and package CLI entry point.
 
-macOS also requires a printed administrator command when `treeport start`, `treeport stop`, or `treeport service disable` changes the system LaunchDaemon. Requests expire. If one expires, run the original Treeport command again.
+An administrator can run the printed command from another account. The command does not depend on the administrator account's `PATH`.
+
+The command uses the Node.js runtime and Treeport installation that the Treeport owner selected.
+
+The administrator installs the system definition. The definition instructs launchd to run Treeport as the original user.
+
+The backend does not run as the root user.
+
+Treeport can also print an administrator command after `treeport start`, `treeport stop`, or `treeport service disable`.
+
+This occurs when the command must change the system LaunchDaemon. Administrator requests expire.
+
+If a request expires, run the original Treeport command again.
 
 ## Linux
 
 Treeport uses a systemd user service. It enables and starts `treeport.service` through your user manager.
 
-A user service needs lingering to start after reboot without a login. If lingering is off, `treeport service enable` starts the service for the current session and prints this administrator action:
+User lingering is necessary for startup after a reboot without login.
+
+If lingering is off, `treeport service enable` starts Treeport for the current session. It also prints this administrator command:
 
 ```sh
 sudo loginctl enable-linger <user>
 ```
 
-Run `treeport service status` after the administrator completes it. Treeport does not install a system unit. `treeport service disable` does not turn lingering off because other user services can depend on that setting.
+After the administrator runs the command, check the service:
 
-A Linux system without a usable systemd user manager is not supported for service mode.
+```sh
+treeport service status
+```
 
-## Start and stop
+Treeport does not install a system unit.
 
-While service mode is installed, normal lifecycle commands use the OS manager:
+The command `treeport service disable` does not turn lingering off. Other user services can require this setting.
+
+Service mode does not support a Linux system without a usable systemd user manager.
+
+## Start and stop the service
+
+When service mode is installed, use the standard lifecycle commands:
 
 ```sh
 treeport start
 treeport stop
 ```
 
-`treeport stop` prevents an immediate automatic restart but keeps startup after reboot registered. `treeport start` starts it again. If the host reboots while Treeport is stopped, the OS starts it during that boot.
+These commands use the operating-system service manager.
 
-Normal stop and service disable preserve Treeport-owned tmux sessions. Use the explicit destructive option only when you want to terminate every session:
+The stop command prevents an immediate automatic restart. It keeps startup after a reboot enabled.
+
+The start command starts the service again. If the host reboots while Treeport is stopped, the operating system starts it.
+
+A normal stop or service removal keeps Treeport tmux sessions.
+
+To terminate all sessions, use the explicit destructive command:
 
 ```sh
 treeport stop --terminate-terminals --force
 ```
 
-## Status, health, and logs
+## Check status, health, and logs
+
+Use these commands:
 
 ```sh
 treeport service status
@@ -67,7 +103,7 @@ treeport doctor
 treeport logs
 ```
 
-Service status distinguishes these conditions:
+The service status has these possible conditions:
 
 - disabled;
 - waiting for an administrator action;
@@ -77,27 +113,37 @@ Service status distinguishes these conditions:
 - unhealthy;
 - stale configuration or installation path.
 
-`treeport service status` exits with status 1 when an administrator action or repair is required. Add `--json` for structured output. An intentionally stopped service is valid and exits successfully.
+`treeport service status` exits with code `1` when an administrator action or repair is necessary.
 
-On macOS, `treeport logs` reads Treeport's daemon log. On Linux, it reads the systemd user journal for `treeport.service`.
+Use `--json` for structured output. An intentionally stopped service is valid and exits successfully.
 
-Run `treeport service enable` again when status reports a stale definition, changed environment, or moved npm installation.
+On macOS, `treeport logs` reads the Treeport daemon log.
 
-## Unexpected exits and terminal persistence
+On Linux, it reads the systemd user journal for `treeport.service`.
 
-launchd and systemd restart Treeport after an unexpected daemon exit. The existing Treeport ownership lock still permits only one daemon for a data directory.
+Run `treeport service enable` again when the status reports a stale definition, environment, or installation path.
 
-The OS manager stops only the daemon process. Treeport's tmux servers remain independent, so terminals survive a daemon restart and reconnect when the replacement is healthy.
+## Recover after an unexpected exit
 
-## Remote access after reboot
+launchd and systemd restart Treeport after an unexpected daemon exit.
 
-Service supervision restores only the loopback Treeport daemon. It does not create or change remote access.
+The Treeport ownership lock continues to permit only one daemon for each data directory.
 
-If you already ran `treeport remote enable`, Tailscale Serve keeps that route independently. After reboot, the same private URL becomes available when the supervised loopback daemon is healthy. See [Remote access](/features/remote-access/).
+The service manager stops only the daemon process. Treeport tmux servers continue to run.
 
-## Upgrade and uninstall
+Terminals connect again when the replacement daemon is healthy.
 
-For npm upgrades:
+## Restore remote access after a reboot
+
+Service mode restores only the loopback daemon. It does not create or change remote access.
+
+If you enabled remote access, Tailscale Serve keeps its route separately.
+
+After a reboot, the same private URL works when the supervised daemon is healthy. See [Remote access](/features/remote-access/).
+
+## Update or remove Treeport
+
+For an npm update, run:
 
 ```sh
 treeport stop
@@ -105,15 +151,23 @@ npm install --global @treeport/treeport@latest
 treeport start
 ```
 
-If your npm prefix or Node installation changes, run `treeport service enable` again to refresh the stable CLI path and service environment.
+If the npm prefix or Node.js installation changes, run `treeport service enable` again.
 
-Disable service mode before npm removes Treeport:
+This command updates the stable CLI path and service environment.
+
+Disable service mode before you remove the npm package:
 
 ```sh
 treeport service disable
 npm uninstall --global @treeport/treeport
 ```
 
-npm does not provide a reliable uninstall hook. If you remove the package first, the persistent service runner fails closed and writes a recovery message instead of starting a partial daemon. Reinstall Treeport, then run `treeport service enable` to repair it or `treeport service disable` to remove supervision.
+npm does not have a reliable removal hook.
 
-The curl uninstaller checks service mode. On macOS it stops before package removal and tells you to complete the administrator action, then rerun the uninstaller.
+If you remove the package first, the service runner stops safely and writes a recovery message. It does not start an incomplete daemon.
+
+Reinstall Treeport. Then, enable service mode to repair it or disable service mode to remove it.
+
+The curl removal program checks service mode.
+
+On macOS, it can stop and ask for an administrator action. Complete that action, and then run the removal program again.

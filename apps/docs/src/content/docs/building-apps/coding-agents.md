@@ -3,36 +3,52 @@ title: Coding agents
 description: Use coding agents in persistent, observable worktrees.
 ---
 
-Treeport works with terminal-based coding agents without adapting or replacing their interfaces. An agent runs in a normal persistent terminal in its worktree, so you can reconnect, observe its output, or take over when needed.
+Treeport runs terminal coding agents without a change to their interfaces.
 
-## Pi
+An agent runs in a persistent terminal in its worktree. You can connect again, read its output, or take control.
 
-[Pi](https://pi.dev) is the best extensible coding agent for Treeport. Its extension model lets you add Treeport-aware behavior without changing the normal agent experience: extensions can create worktrees and terminals, report custom progress, and ring the terminal bell when attention is needed.
+## Use Pi
 
-That follows Treeport's model of progressive enhancement. Pi remains a normal terminal application when no integration is needed; extensions can opt into Treeport features where they help.
+[Pi](https://pi.dev) has an extension model that can add Treeport functions.
 
-## Other coding agents
+An extension can create worktrees and terminals, report progress, and send BEL when the agent requires attention.
 
-Other coding agents have not been tested yet. They should work well when they can emit supported terminal signals, such as progress updates and BEL notifications, because Treeport can surface them without parsing agent output. Treeport does not require a particular agent, provider, or workflow.
+Pi stays a standard terminal application. The extension adds Treeport functions only where they are useful.
 
-## Skills
+## Use other coding agents
 
-The Treeport skill is an [Agent Skills](https://agentskills.io/)-compatible instruction set for coding agents. It teaches an agent how to use Treeport without imposing a task system, provider, or workflow.
+Treeport does not require a specified agent, provider, or workflow.
+
+Other terminal agents can use supported signals, such as progress updates and BEL notifications.
+
+Treeport can show these signals without parsing agent output.
+
+## Give the Treeport skill to an agent
+
+The Treeport skill is compatible with the [Agent Skills](https://agentskills.io/) format.
+
+The skill teaches an agent to use Treeport. It does not add a task system, provider, or required workflow.
 
 With the skill, an agent can:
 
-- identify its current Treeport project, worktree, and terminal;
-- create persistent terminals in its current worktree;
-- spawn child worktrees with persistent terminals for other agents, so work can run in parallel;
-- inspect terminal status and recent output; and
-- wait for progress, attention (BEL), or process exit without scraping terminal output.
+- find its current Treeport project, worktree, and terminal;
+- create persistent terminals in the current worktree;
+- create child worktrees and terminals for parallel agents;
+- inspect terminal status and recent output;
+- wait for progress, BEL, or process exit without output parsing.
 
-The resulting sessions remain normal Treeport terminals: you can open them, observe their work, or take control of the agent's usual terminal interface.
+These sessions stay as standard Treeport terminals. You can open them, monitor their work, or take control.
 
-Every Treeport CLI includes the skill. An agent can read it directly without installing anything else:
+Each Treeport CLI package contains the skill.
+
+To show its location, run:
 
 ```sh
 treeport skills
 ```
 
-To load it automatically, add [`apps/treeport/skills/treeport/SKILL.md`](https://github.com/noice-tech/treeport/blob/main/apps/treeport/skills/treeport/SKILL.md) to the location where your coding agent discovers Agent Skills. The skill requires the `treeport` command on `PATH` and a reachable Treeport daemon. It also tells agents to preserve user control: they must not delete terminals or worktrees unless explicitly asked.
+To load it automatically, copy the [Treeport skill](https://github.com/noice-tech/treeport/blob/main/apps/treeport/skills/treeport/SKILL.md) to your agent skill directory.
+
+The skill requires the `treeport` command on `PATH` and an available Treeport daemon.
+
+It also protects user control. An agent must not delete a terminal or worktree unless the user requests that operation.

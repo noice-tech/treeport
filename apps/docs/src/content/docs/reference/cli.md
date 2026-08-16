@@ -1,9 +1,11 @@
 ---
 title: CLI reference
-description: Commands for projects, worktrees, terminals, context, and automation.
+description: Use commands for projects, worktrees, terminals, context, and automation.
 ---
 
-Running `treeport` without a folder or command shows help. Identifiers can usually be exact IDs or paths inside a registered project or worktree.
+Run `treeport` without a folder or command to show help.
+
+Most identifiers can be exact IDs or paths in a registered project or worktree.
 
 ## Open a folder
 
@@ -11,13 +13,31 @@ Running `treeport` without a folder or command shows help. Identifiers can usual
 treeport [folder] [--json]
 ```
 
-Pass a relative or absolute folder anywhere inside a Git worktree. Treeport starts its managed daemon if necessary, registers or reopens the containing repository, discovers its main and linked worktrees, and opens the worktree containing the folder. Repeating the command reuses the existing project registration. Missing paths, files, and folders outside a Git repository are rejected with an actionable error.
+Give a relative or absolute folder in a Git worktree.
 
-On macOS, Treeport prefers the installed desktop app for loopback or HTTPS backends and falls back to the default browser when the app is unavailable. Other backend URLs and Linux use the default browser. Running `treeport` without a folder still shows help.
+Treeport starts its daemon when necessary. It registers or opens the repository and finds its main and linked worktrees.
 
-With `--json`, success output contains `projectId`, `worktreeId`, the canonical input `path`, the direct `url`, and `client`, which is either `desktop` or `browser`.
+It then opens the worktree that contains the folder.
 
-## Lifecycle
+A repeated command uses the current project registration.
+
+Treeport rejects missing paths, files, and folders outside a Git repository. The error gives a corrective action.
+
+On macOS, Treeport uses the installed desktop client for loopback or HTTPS backends.
+
+If the desktop client is not available, Treeport uses the default browser.
+
+Linux and other backend URLs use the default browser.
+
+With `--json`, success output contains these fields:
+
+- `projectId`
+- `worktreeId`
+- canonical input `path`
+- direct `url`
+- `client`, with a value of `desktop` or `browser`
+
+## Control the daemon lifecycle
 
 ```sh
 treeport start [--host <address>] [--port <port>] [--foreground]
@@ -36,27 +56,73 @@ treeport remote status
 treeport remote disable
 ```
 
-`treeport start` starts the daemon in the background, waits until it is ready, and prints its URL. Repeating it is safe: it reports the existing healthy daemon rather than starting another. `treeport stop` stops only a verified Treeport-owned daemon. It preserves Treeport's tmux sessions so the next start can reconcile them. `treeport stop --terminate-terminals --force` is the explicit destructive alternative.
+`treeport start` starts the daemon in the background and waits until it is ready. It then prints the URL.
 
-Service mode is an explicit option for startup after reboot and restart after an unexpected exit. `service enable` registers it, `service status` checks it even when the daemon is stopped, and `service disable` stops and unregisters it. While service mode is installed, normal `start`, `stop`, `status`, `logs`, and `doctor` commands use the OS manager. See [Service supervision](/features/service-supervision/) for platform requirements and administrator actions.
+You can run the command again safely. It reports the active healthy daemon instead of starting another daemon.
 
-With `--json`, service status reports support, manager, state, installation, boot enablement, active and healthy state, reboot readiness, definition and environment matches, expected paths, daemon state, issues, recovery commands, and a pending administrator command. Stable states are `disabled`, `action_required`, `starting`, `healthy`, `stopped`, `unhealthy`, and `stale`.
+`treeport stop` stops only a verified Treeport daemon. It keeps Treeport tmux sessions for the next start.
 
-The default listener is `http://127.0.0.1:8733`. Host and port options are persisted for later starts. `--host` accepts only `127.0.0.1`, `::1`, or `localhost`. Treeport refuses a non-loopback option, environment value, or saved preference. Repair an old preference with `treeport start --host 127.0.0.1`.
+Use `treeport stop --terminate-terminals --force` only when you intend to terminate all terminal sessions.
 
-`remote enable` starts the loopback daemon if needed, then configures a persistent private HTTPS [Tailscale Serve](https://tailscale.com/docs/features/tailscale-serve) endpoint. It uses port `8733` by default. Serve authenticates each remote user, and tailnet policy controls access. Treeport does not create a separate credential.
+Service mode starts Treeport after a reboot and restarts it after an unexpected exit.
 
-A CLI on another permitted tailnet device can set `TREEPORT_API_URL` to the Serve HTTPS URL for API commands. Keep `start`, `stop`, `service`, `status`, `logs`, `doctor`, and `remote` lifecycle operations on the computer that runs Treeport. See [Remote access](/features/remote-access/) for prerequisites, persistence, tagged-device limits, and access-policy guidance.
+`service enable` registers service mode. `service status` checks it, including when the daemon is stopped.
 
-## Context
+`service disable` stops and removes service mode.
+
+When service mode is installed, lifecycle commands use the operating-system manager.
+
+See [Service supervision](/features/service-supervision/) for platform requirements and administrator actions.
+
+With `--json`, service status reports service support, manager, state, installation, health, expected paths, issues, and recovery commands.
+
+Stable service states are:
+
+- `disabled`
+- `action_required`
+- `starting`
+- `healthy`
+- `stopped`
+- `unhealthy`
+- `stale`
+
+The default listener is `http://127.0.0.1:8733`.
+
+Treeport saves host and port options for later starts.
+
+`--host` accepts only `127.0.0.1`, `::1`, or `localhost`.
+
+Treeport rejects a non-loopback option, environment value, or saved preference.
+
+To repair an old preference, run `treeport start --host 127.0.0.1`.
+
+`remote enable` starts the loopback daemon when necessary. It then configures a persistent private HTTPS Tailscale Serve endpoint.
+
+The default HTTPS port is `8733`.
+
+Tailscale Serve authenticates remote users. Tailnet policy controls access.
+
+Treeport does not create a separate credential.
+
+A remote CLI can set `TREEPORT_API_URL` to the Serve HTTPS URL for API commands.
+
+Run lifecycle commands on the computer that runs Treeport.
+
+These commands include `start`, `stop`, `service`, `status`, `logs`, `doctor`, and `remote`.
+
+See [Remote access](/features/remote-access/) for setup and security information.
+
+## Get terminal context
 
 ```sh
 treeport context [--json]
 ```
 
-Reports exact managed project, worktree, and terminal context. Outside a managed terminal it exits successfully and reports that no managed context is present.
+This command reports the exact managed project, worktree, and terminal context.
 
-## Packages
+Outside a managed terminal, it exits successfully and reports that no managed context is present.
+
+## Manage packages
 
 ```sh
 treeport install <source> [-l|--local] [--json]
@@ -68,22 +134,38 @@ treeport update --packages [--json]
 treeport reload [-l|--local] [--json]
 ```
 
-Sources must be explicit npm sources such as `npm:@acme/treeport-tools@1.2.0` or local directory paths such as `./packages/tools`. Global scope is the default. `-l` resolves the registered repository containing the current directory and uses its main-worktree settings.
+Use explicit npm sources, such as `npm:@acme/treeport-tools@1.2.0`.
 
-`update` changes only eligible configured npm packages. Exact versions and local directories are skipped. Bare `treeport update` is reserved for a future Treeport self-update, so package-wide updates require `--packages`.
+You can also use local directory paths, such as `./packages/tools`.
 
-`reload` rereads settings, installs missing configured packages, and refreshes resources without restarting the daemon. Without `-l`, it reloads global settings and every registered repository. See [Packages](/features/packages/) for manifests, filters, and failure behavior.
+The default scope is global.
 
-## Projects
+`-l` selects the registered repository for the current directory. It changes settings in the main worktree.
+
+`update` changes only configured npm packages that are eligible for update. It skips exact versions and local directories.
+
+`treeport update` without a source is reserved for a future Treeport update function.
+
+Use `--packages` to update all eligible packages.
+
+`reload` reads settings again, installs missing packages, and refreshes resources. It does not restart the daemon.
+
+Without `-l`, it reloads global settings and settings for all registered repositories.
+
+See [Packages](/features/packages/) for manifests, filters, and error behavior.
+
+## Manage projects
 
 ```sh
 treeport project add <path> [--json]
 treeport project list [--json]
 ```
 
-`project add` registers a Git repository and discovers its main and linked worktrees. `project list` prints all registered repositories.
+`project add` registers a Git repository. It also finds the main and linked worktrees.
 
-## Worktrees
+`project list` shows all registered repositories.
+
+## Manage worktrees
 
 ```sh
 treeport worktree list [--project <id-or-path>] [--json]
@@ -96,11 +178,23 @@ treeport worktree create \
 treeport worktree remove <id-or-path-or-dot> [--force] [--json]
 ```
 
-By default, creation starts from the fetched remote default branch. `--from-current` uses the current worktree's committed `HEAD`; it does not copy uncommitted changes. Treeport lowercases and slugifies worktree names, replacing whitespace and punctuation with hyphens.
+By default, creation starts from the fetched remote default branch.
 
-Removal obtains a fresh safety preview. `--force` confirms reported warnings when removal is eligible. Once accepted, removal continues independently of the browser and resumes after a Treeport restart. The worktree disappears when Git stops reporting it; Treeport handles any safely identifiable residual files separately.
+`--from-current` uses the committed `HEAD` of the current worktree. It does not copy uncommitted changes.
 
-## Web panels
+Treeport changes worktree names to lowercase slugs. It replaces spaces and punctuation with hyphens.
+
+Before removal, Treeport gets a current safety preview.
+
+`--force` confirms the reported warnings when removal is permitted.
+
+After confirmation, removal continues without the browser. It also continues after a Treeport restart.
+
+The worktree disappears when Git no longer reports it.
+
+Treeport separately handles residual files that it can identify safely.
+
+## Open web panels
 
 ```sh
 treeport web-panel open <definition> \
@@ -108,13 +202,25 @@ treeport web-panel open <definition> \
   [--input <json-object>] [--new] [--json]
 ```
 
-`open` reuses the newest instance of the same definition by default. Use `--new` to create a separate instance. When it runs inside a managed terminal, clients that currently show that terminal select the resulting panel. Other clients keep their current selection.
+By default, `open` uses the newest instance of the same definition.
 
-`--input` accepts one inline JSON object. Treeport stores this input with the panel. It also stores the current directory relative to the worktree. Do not put secrets in panel input. The first version does not read panel input from files or standard input.
+Use `--new` to create a separate instance.
 
-A definition can be an exact ID or an unambiguous short name.
+In a managed terminal, the command selects the panel on clients that show that terminal.
 
-## Terminals
+Other clients keep their current selection.
+
+`--input` accepts one inline JSON object. Treeport saves this input with the panel.
+
+It also saves the current directory relative to the worktree.
+
+Do not put secrets in panel input.
+
+This command does not read panel input from a file or standard input.
+
+A definition can be an exact ID or one clear short name.
+
+## Manage terminals
 
 ```sh
 treeport terminal list [--worktree <id-or-path>] [--json]
@@ -135,22 +241,32 @@ treeport terminal wait <terminal-id-or-dot> \
 treeport terminal delete <terminal-id> [--json]
 ```
 
-Omitting a command from `terminal create` starts a login shell. Arguments after `--` are passed directly as an argv array.
+If you omit the `terminal create` command, Treeport starts a login shell.
 
-`terminal capture` returns recent terminal contents. It returns up to 200 pane rows by default; use `--lines` to request between 1 and 5,000. Plain output is the captured text. JSON output includes `terminalId`, `capturedAt`, `lineLimit`, and `content`.
+Treeport passes arguments after `--` directly as an argument array.
 
-Wait conditions mean:
+`terminal capture` returns recent terminal content.
 
-- `idle`: no OSC progress is currently observed;
-- `working`: active OSC progress is currently observed;
-- `bell`: the next real BEL after event subscription;
-- `exit`: the retained terminal process has exited.
+The default maximum is 200 pane rows. Use `--lines` to request from 1 through 5,000 rows.
 
-There is no default timeout. Valid timeout units are `ms`, `s`, `m`, and `h`, such as `500ms`, `30s`, or `2h`.
+Plain output contains the captured text.
 
-## Spawn
+JSON output includes `terminalId`, `capturedAt`, `lineLimit`, and `content`.
 
-Create a linked worktree and its first terminal in one operation:
+Wait conditions have these meanings:
+
+- `idle`: Treeport currently sees no OSC progress.
+- `working`: Treeport currently sees active OSC progress.
+- `bell`: The next actual BEL after event subscription.
+- `exit`: The retained terminal process has exited.
+
+There is no default timeout.
+
+Use `ms`, `s`, `m`, or `h` for a timeout. Examples are `500ms`, `30s`, and `2h`.
+
+## Create a worktree and terminal
+
+Use `spawn` to create a linked worktree and its first terminal:
 
 ```sh
 treeport spawn \
@@ -161,15 +277,23 @@ treeport spawn \
   [-- <program> <arg> ...] [--json]
 ```
 
-Creation is intentionally non-atomic after Git creates the worktree. In JSON output, inspect `terminal`, `terminalError`, and `setupError`; a retained worktree can exist even if setup or terminal creation fails. Do not blindly rerun `spawn` after a partial result.
+After Git creates the worktree, the remaining operation is not atomic.
 
-## Dot shorthand
+In JSON output, inspect `terminal`, `terminalError`, and `setupError`.
 
-Inside a managed terminal, `.` can resolve the current project, worktree, or terminal where the command supports it. `treeport context` provides the exact IDs for scripts that should avoid path inference.
+A worktree can remain when setup or terminal creation fails.
 
-## JSON output
+Do not run `spawn` again until you inspect a partial result.
 
-Place `--json` before the command separator:
+## Use dot shorthand
+
+In a managed terminal, `.` can identify the current project, worktree, or terminal when the command supports it.
+
+For scripts, use `treeport context` to get exact IDs instead of path inference.
+
+## Use JSON output
+
+Put `--json` before the command separator:
 
 ```sh
 treeport terminal create \
@@ -178,18 +302,18 @@ treeport terminal create \
   --json -- pnpm test
 ```
 
-Success output is JSON on stdout. Errors are JSON on stderr:
+Success output is JSON on standard output. Error output is JSON on standard error:
 
 ```json
 { "error": { "code": "DOMAIN_ERROR", "message": "…", "details": {} } }
 ```
 
-| Exit code | Meaning                                               |
-| --------- | ----------------------------------------------------- |
-| `0`       | Command completed; inspect partial `spawn` fields.    |
-| `1`       | Startup failed or a service action is still required. |
-| `2`       | Invalid CLI usage.                                    |
-| `3`       | Daemon unreachable or event stream failed.            |
-| `4`       | Terminal wait timed out.                              |
-| `5`       | API, domain, or invalid-context refusal.              |
-| `130`     | Wait interrupted with Ctrl+C.                         |
+| Exit code | Meaning                                                |
+| --------- | ------------------------------------------------------ |
+| `0`       | The command completed. Inspect partial `spawn` fields. |
+| `1`       | Startup failed, or a service action is necessary.      |
+| `2`       | The CLI use is invalid.                                |
+| `3`       | The daemon or event stream is not available.           |
+| `4`       | The terminal wait reached its time limit.              |
+| `5`       | The API, domain, or context refused the operation.     |
+| `130`     | The user stopped the wait with Ctrl+C.                 |

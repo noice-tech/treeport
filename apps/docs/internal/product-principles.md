@@ -1,78 +1,82 @@
 ---
 title: Product principles
-description: Principles that define Treeport's product boundary.
+description: Principles that define the Treeport product boundary.
 ---
 
-Treeport is a persistent terminal workspace built around Git worktrees.
+Treeport is a persistent terminal workspace that uses Git worktrees.
 
-These principles describe the product boundary. They should guide feature design, issue triage, integrations, and architectural decisions.
+Use these principles for product design, issue review, integrations, and architecture decisions.
 
-## A worktree is the unit of work
+## Use a worktree as the unit of work
 
-Treeport treats a Git worktree as the concrete representation of a piece of development work.
+Treeport uses a Git worktree as the concrete form of one unit of development work.
 
-A worktree already contains useful and authoritative state:
+A worktree contains useful source state:
 
-- an isolated checkout;
+- a separate checkout;
 - a starting revision;
 - staged, unstaged, untracked, and conflicted files;
 - commits;
 - a branch or detached revision;
 - persistent terminals and processes;
 - optional pull-request context;
-- a natural cleanup lifecycle.
+- a cleanup lifecycle.
 
-Treeport should enrich this object rather than introduce a parallel task model.
+Add information to this object instead of making a parallel task model.
 
-Human-facing titles, reminders, provenance, and presentation metadata may be attached to a worktree. They must not replace or obscure its Git identity.
+A worktree can have user titles, reminders, provenance, and presentation information.
 
-## Git is authoritative
+This information must not replace or hide its Git identity.
 
-Treeport does not assume exclusive ownership of repositories or worktrees.
+## Keep Git authoritative
 
-Worktrees may be created, moved, modified, or removed by:
+Treeport does not have exclusive control of repositories or worktrees.
+
+These tools can create, move, change, or remove worktrees:
 
 - Git;
 - Zed or another editor;
 - scripts;
 - coding agents;
-- other worktree-aware tools;
-- Treeport itself.
+- other worktree tools;
+- Treeport.
 
-Treeport must reconcile its state with Git rather than require users to import or convert externally created worktrees.
+Treeport must compare its state with Git.
 
-Treeport-owned metadata must degrade safely when the underlying Git state changes.
+It must not require an import or conversion for an external worktree.
 
-## Do not introduce a parallel task lifecycle
+Treeport information must fail safely when Git state changes.
 
-A separate task entity creates synchronization questions that the worktree model avoids:
+## Do not add a parallel task lifecycle
 
-- Can a task be complete while its worktree remains dirty?
-- Can a task be active after its workspace was removed?
-- Does archiving a task remove its terminals?
-- Does deleting a task delete its branch?
-- What happens when a pull request merges outside Treeport?
-- How does an external worktree become associated with a task?
+A separate task entity causes synchronization questions:
 
-Treeport should not create statuses, archive states, or completion semantics that duplicate Git, process, or provider state.
+- Can a task be complete when its worktree has changes?
+- Can a task be active after workspace removal?
+- Does task archiving remove terminals?
+- Does task deletion remove its branch?
+- What occurs when a pull request merges outside Treeport?
+- How does an external worktree connect to a task?
 
-“Finished” should normally be expressed through concrete actions and observations:
+Treeport must not add status or archive behavior that copies Git, process, or provider state.
 
-- changes were committed or discarded;
-- commits became reachable elsewhere;
-- a pull request merged, when applicable;
-- running terminals were stopped;
-- the worktree was safely removed.
+Use concrete actions and observations for completion:
 
-## Progressive enhancement
+- Commit or discard changes.
+- Make commits available from another reference.
+- Merge the pull request when applicable.
+- Stop active terminals.
+- Remove the worktree safely.
 
-Treeport must remain useful with minimal dependencies:
+## Use progressive enhancement
+
+Treeport must be useful with these minimum tools:
 
 ```text
 Git + tmux + shell
 ```
 
-Additional tools can provide richer behavior without becoming requirements:
+Optional tools can add functions without becoming requirements:
 
 - coding agents;
 - terminal integrations;
@@ -80,112 +84,116 @@ Additional tools can provide richer behavior without becoming requirements:
 - pull requests;
 - diff viewers;
 - Tailscale;
-- desktop packaging;
-- alternative terminal runtimes.
+- desktop distribution;
+- other terminal runtimes.
 
-The baseline experience must not become broken or confusing when an optional integration is absent.
+A missing optional integration must not damage or confuse the baseline workflow.
 
 For example:
 
-- without an agent integration, Treeport can still show that a terminal is running;
-- without OSC progress, Treeport can still preserve and render the terminal;
-- without BEL signals, users can still open and control the session;
-- without GitHub authentication, Git and worktree lifecycle still function;
-- without a pull request, work can still be completed or discarded.
+- Without an agent integration, Treeport can show an active terminal.
+- Without OSC progress, Treeport can preserve and show the terminal.
+- Without BEL, users can open and control the terminal.
+- Without GitHub authentication, Git and worktree operations continue.
+- Without a pull request, users can complete or discard work.
 
-Integrations should enrich the product rather than define its basic workflow.
+Integrations add information. They do not define the basic workflow.
 
-## Applications publish semantic state
+## Let applications publish state
 
-Treeport should avoid parsing arbitrary terminal output or embedding provider-specific agent logic into core.
+Treeport must not parse arbitrary terminal output or add provider logic to core.
 
-Terminal applications and integrations can publish useful state through standard terminal mechanisms:
+Applications can publish state through general terminal mechanisms:
 
 - terminal titles;
-- BEL attention signals;
-- OSC progress sequences;
+- BEL attention;
+- OSC progress;
 - process exit;
-- other documented generic protocols.
+- other documented protocols.
 
-For example, a Pi extension may:
+For example, a Pi extension can:
 
-- set the terminal title to `PR MERGED`;
-- emit BEL when checks pass;
-- publish active progress while the agent is working.
+- set the title to `PR MERGED`;
+- send BEL when checks pass;
+- send active progress while the agent works.
 
-Treeport presents these signals consistently. It does not need to independently query and duplicate every workflow state that the application already understands.
+Treeport shows these signals in a consistent form.
 
-## Real terminal applications remain real terminal applications
+It does not separately get and copy state that the application already understands.
 
-Treeport runs and attaches to normal TUIs.
+## Keep terminal applications unchanged
 
-It should not replace Pi, Claude Code, Codex, Hunk, `gh`, shells, or other tools with normalized internal interfaces merely to make their workflows look consistent.
+Treeport starts and connects to standard terminal user interfaces.
 
-Specialist tools should continue to own specialist experiences:
+It must not replace specialist tools with simplified internal interfaces.
 
-- agents own their coding workflow;
-- diff viewers own code review;
-- Git and provider CLIs own commits, pull requests, and merges;
-- editors own file navigation and editing.
+Specialist tools keep their responsibilities:
 
-Treeport owns the persistent worktree and terminal context around them.
+- Agents control coding workflows.
+- Diff viewers control code review.
+- Git and provider CLIs control commits, pull requests, and merges.
+- Editors control file navigation and editing.
 
-## Application-style navigation is core
+Treeport controls the persistent worktree and terminal context around them.
 
-Treeport provides a desktop, browser, and mobile interface around terminal sessions.
+## Use application navigation
 
-Its interaction model may use familiar application conventions such as:
+Treeport supplies desktop, browser, and phone interfaces for terminal sessions.
+
+It can use familiar application operations:
 
 - terminal tabs;
 - `Cmd+T` to create;
 - `Cmd+W` to close;
-- numeric shortcuts to switch;
-- mouse-based navigation;
+- numbered selection shortcuts;
+- mouse navigation;
 - a persistent repository and worktree hierarchy.
 
-An optional terminal runtime must not force Treeport to expose the runtime’s native workspace, tab, or pane hierarchy as the primary product interface.
+A terminal runtime must not force its native session, tab, or pane hierarchy into the main Treeport interface.
 
-## Cleanup should be safer than creation
+## Make cleanup safer than creation
 
-Creating a worktree should be inexpensive and encouraged.
+Worktree creation must be low cost and easy.
 
-Removing one must be conservative.
+Worktree removal must be conservative.
 
-Treeport should account for:
+Treeport must review these conditions:
 
 - staged, unstaged, untracked, and conflicted files;
 - detached commits;
 - commit reachability;
-- running terminals;
-- external changes since confirmation;
-- Git administrative identity;
+- active terminals;
+- changes after confirmation;
+- Git administration identity;
 - filesystem identity;
 - interrupted operations.
 
-When Treeport cannot prove that cleanup is safe and still targets the originally approved checkout, it should preserve state and require manual intervention.
+If Treeport cannot prove safe cleanup of the approved checkout, it must keep state and require manual action.
 
 ## Keep core small
 
-Treeport should not become:
+Treeport must not become:
 
 - an editor;
 - a file browser;
 - a task board;
 - an issue tracker;
-- a full Git client;
+- a complete Git client;
 - a first-party diff viewer;
-- a provider-specific coding-agent chat UI;
+- a provider-specific agent chat interface;
 - a CI dashboard;
-- a cloud execution platform;
-- a general-purpose terminal multiplexer.
+- a cloud execution system;
+- a general terminal multiplexer.
 
-Useful surrounding workflows should normally be enabled through:
+Use these extension points for related workflows:
 
 - terminal presets;
 - documented terminal protocols;
 - CLI and API operations;
-- lightweight integrations;
+- small integrations;
 - optional runtime adapters;
-- constrained extensions where justified.
+- limited extensions with a verified need.
 
-A feature belongs in core when it strengthens the shared worktree and terminal lifecycle rather than reproducing a specialist tool.
+Add a function to core only when it improves the shared worktree and terminal lifecycle.
+
+Do not add a core function that copies a specialist tool.

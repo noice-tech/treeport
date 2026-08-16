@@ -33,9 +33,11 @@ If no version was supplied:
 2. Confirm `git`, `gh`, `node`, and `pnpm` are available.
 3. Confirm GitHub authentication and access with `gh auth status` and `gh repo view noice-tech/treeport`.
 4. Confirm the requested tag and GitHub Release do not already exist.
-5. Require a clean `main` branch exactly matching `origin/main`.
+5. Complete the release review in `apps/docs/internal/documentation.md`.
+6. Run `pnpm --filter @treeport/docs check`.
+7. Require a clean `main` branch exactly matching `origin/main`.
 
-Do not work around failed checks, authentication failures, a dirty tree, another branch, divergence, or version conflicts.
+Stop when the documentation does not match a supported release workflow. Do not work around failed checks, authentication failures, a dirty tree, another branch, divergence, or version conflicts.
 
 ## Prepare the release
 

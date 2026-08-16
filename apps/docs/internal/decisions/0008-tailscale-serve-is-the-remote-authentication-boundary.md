@@ -5,32 +5,91 @@
 
 ## Context
 
-Treeport provides arbitrary terminal access and can operate on registered repositories. A caller that reaches its HTTP API or terminal socket has authority similar to the local user who runs the daemon. Network location alone is not a sufficient user identity, even on a private LAN.
+Treeport gives full terminal access and can change registered repositories.
 
-Treeport already uses a loopback daemon for local access and Tailscale Serve for its supported remote workflow. Serve terminates private HTTPS, authenticates the Tailscale user and device, applies tailnet policy, removes client-supplied Tailscale identity headers, and adds authenticated identity headers before it proxies to the loopback backend.
+A caller with HTTP API or terminal socket access has authority similar to the daemon user.
 
-Application-managed OIDC would add account, session, secret, callback, recovery, and migration responsibilities. Browser sessions would not by themselves authenticate the CLI. Tailscale's experimental `tsidp` service would also add a separate service and client configuration to a workflow that already has an authenticated ingress.
+A network location is not a sufficient user identity, including on a private LAN.
+
+Treeport uses a loopback daemon for local access. Its supported remote workflow uses Tailscale Serve.
+
+Serve supplies private HTTPS, authenticates the user and device, and applies tailnet policy.
+
+It removes identity headers from the client. Then, it adds authenticated identity headers before proxying to the loopback backend.
+
+Application-managed OIDC would add account, session, secret, callback, recovery, and migration requirements.
+
+Browser sessions alone would not authenticate the CLI.
+
+Tailscale `tsidp` would add another service and client configuration to an ingress that already has authentication.
 
 ## Decision
 
-Treeport supports direct requests only through an explicit loopback listener. The local operating-system account is the trust boundary for these requests.
+Treeport accepts direct requests only on an explicit loopback listener.
 
-Treeport supports remote requests only through Tailscale Serve. The daemon remains on loopback and requires `Tailscale-User-Login` on a proxied request. Optional Tailscale name and profile headers do not determine authentication. Treeport applies this decision before HTTP application handling and during every Socket.IO upgrade.
+The local operating-system account is the security boundary for these requests.
 
-The identity headers are not cryptographically verified by Treeport. Treeport trusts them only because the backend peer and listener are loopback and Serve strips incoming copies before it adds its own values. A local process can forge the headers, but a local process already has direct authority to use Treeport.
+Treeport accepts remote requests only through Tailscale Serve.
 
-Treeport trusts forwarded host and protocol values only after it accepts the Tailscale identity. Browser origin checks use that effective external origin. Direct local requests do not gain authority from forwarded headers.
+The daemon stays on loopback and requires `Tailscale-User-Login` on a proxied request.
 
-Treeport refuses non-loopback listeners. It does not support direct LAN or Tailscale-IP binding, arbitrary reverse proxies, Tailscale Funnel, tagged devices without a user identity, or public deployment.
+Optional Tailscale name and profile headers do not control authentication.
 
-Tailscale owns login, tailnet membership, policy, device-key expiration, revocation, and credential rotation. Treeport does not create a second account or session for this access path.
+Treeport applies this rule before HTTP application processing and during each Socket.IO upgrade.
+
+Treeport does not verify identity headers with cryptography.
+
+It trusts them because the backend peer and listener are loopback.
+
+Serve removes client copies of the headers before it adds authenticated values.
+
+A local process can make false identity headers. However, a local process already has direct Treeport authority.
+
+Treeport trusts forwarded host and protocol values only after it accepts the Tailscale identity.
+
+Browser origin checks use the effective external origin.
+
+Forwarded headers do not give more authority to direct local requests.
+
+Treeport rejects non-loopback listeners.
+
+It does not support these access methods:
+
+- direct LAN or Tailscale IP binding;
+- arbitrary reverse proxies;
+- Tailscale Funnel;
+- tagged devices without a user identity;
+- public deployment.
+
+Tailscale controls login, tailnet membership, policy, device key expiration, access removal, and credential rotation.
+
+Treeport does not create another account or session for this access method.
 
 ## Consequences
 
-Local browser, desktop, CLI, and managed-terminal workflows remain credential-free. Remote browser, desktop, and CLI requests also need no Treeport credential because Serve adds identity at ingress.
+Local browser, desktop, CLI, and managed terminal use does not require a credential.
 
-The design has a deliberate Tailscale dependency. Users cannot replace Serve with another proxy by copying header names. An old non-loopback listener preference now fails and must be repaired before Treeport starts.
+Remote clients also do not need a Treeport credential because Serve adds identity at the connection point.
 
-There is no Treeport logout action. Revocation and expiration occur in Tailscale. A tagged Tailscale device cannot connect because it does not identify a user.
+This design has an intentional Tailscale dependency.
 
-A future remote provider needs a separate design. The design must authenticate browser HTTP, both Socket.IO namespaces, desktop traffic, and CLI traffic without credentials in arguments or URLs. It must define HTTPS, origin, trusted-ingress, spoofing, expiration, revocation, setup, recovery, and fail-closed listener behavior. Adding such a provider must not weaken the loopback and Tailscale defaults.
+A user cannot replace Serve with another proxy by copying the header names.
+
+An old non-loopback listener setting causes startup failure. The user must repair it before Treeport starts.
+
+Treeport does not have a logout operation. Tailscale controls access removal and expiration.
+
+A tagged device cannot connect because it does not identify a user.
+
+A future remote provider needs a separate design for all these traffic types:
+
+- browser HTTP;
+- both Socket.IO namespaces;
+- desktop traffic;
+- CLI traffic.
+
+The design must not put credentials in arguments or URLs.
+
+It must define HTTPS, origin, trusted ingress, false-header prevention, expiration, access removal, setup, recovery, and safe listener failure.
+
+A new provider must not weaken the loopback and Tailscale defaults.
