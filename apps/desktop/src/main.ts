@@ -32,6 +32,10 @@ import type {
   DesktopShellState
 } from './desktop-contract'
 import { filePathFromUrl } from './file-url'
+import {
+  localSourcePathSchema,
+  resolveLocalSourcePath
+} from './local-source-path'
 import { isLoopbackUrl, parseComputerUrl } from './renderer-url'
 import { parseWorkspaceLink, type WorkspaceTarget } from './workspace-link'
 
@@ -924,6 +928,12 @@ function registerIpc(): void {
     }
 
     return (await shell.openPath(filePath)) === '' ? 'opened' : 'rejected'
+  })
+  ipcMain.handle('terminal-file:resolve-source-path', (event, value) => {
+    const parsedPath = localSourcePathSchema.safeParse(value)
+    return isActiveGuestEvent(event) && parsedPath.success
+      ? resolveLocalSourcePath(selectedOrigin(), parsedPath.data)
+      : null
   })
   ipcMain.on('terminal-selection:set-active', (event, active) => {
     const parsedActive = z.boolean().safeParse(active)

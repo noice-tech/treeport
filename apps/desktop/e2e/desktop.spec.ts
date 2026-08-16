@@ -44,6 +44,8 @@ test('connects the desktop shell, preserves native behavior, and restores render
   const userData = await fs.mkdtemp(
     path.join(os.tmpdir(), 'treeport-electron-')
   )
+  const sourceFilePath = path.join(userData, "résumé '$draft.txt")
+  await fs.writeFile(sourceFilePath, 'local source')
   let healthAvailable = true
   let hostname = 'desktop-test'
   const server = http.createServer((request, response) => {
@@ -70,6 +72,7 @@ test('connects the desktop shell, preserves native behavior, and restores render
     response.end(`<!doctype html>
       <body data-command="none">
         Treeport desktop test
+        <input id="source-file" type="file">
         <a href="https://example.test/docs" target="_blank" rel="noopener noreferrer">Open docs</a>
       </body>
       <script>
@@ -314,6 +317,53 @@ test('connects the desktop shell, preserves native behavior, and restores render
       contextIsolation: true,
       sandbox: true
     })
+
+    await electronApp.evaluate(
+      async ({ webContents }, input) => {
+        const guest = webContents
+          .getAllWebContents()
+          .find((contents) => contents.getURL().startsWith(input.origin))
+        if (!guest) {
+          throw new Error('Guest web contents were not found')
+        }
+
+        guest.debugger.attach('1.3')
+        const document = await guest.debugger.sendCommand('DOM.getDocument')
+        const sourceInput = await guest.debugger.sendCommand(
+          'DOM.querySelector',
+          {
+            nodeId: document.root.nodeId,
+            selector: '#source-file'
+          }
+        )
+        await guest.debugger.sendCommand('DOM.setFileInputFiles', {
+          files: [input.filePath],
+          nodeId: sourceInput.nodeId
+        })
+        guest.debugger.detach()
+      },
+      { origin, filePath: sourceFilePath }
+    )
+    expect(
+      await electronApp.evaluate(async ({ webContents }, expectedOrigin) => {
+        const guest = webContents
+          .getAllWebContents()
+          .find((contents) => contents.getURL().startsWith(expectedOrigin))
+        return guest?.executeJavaScript(
+          'window.treeportDesktop.getPathForFile(document.querySelector("#source-file").files[0])'
+        )
+      }, origin)
+    ).toBe(sourceFilePath)
+    expect(
+      await electronApp.evaluate(async ({ webContents }, expectedOrigin) => {
+        const guest = webContents
+          .getAllWebContents()
+          .find((contents) => contents.getURL().startsWith(expectedOrigin))
+        return guest?.executeJavaScript(
+          'window.treeportDesktop.getPathForFile(new File(["synthetic"], "synthetic.txt"))'
+        )
+      }, origin)
+    ).toBeNull()
 
     await electronApp.evaluate(({ webContents }, expectedOrigin) => {
       const guest = webContents
