@@ -664,7 +664,7 @@ function WorkspaceApp() {
 
       if (command === 'new-worktree') {
         if (
-          activeProject &&
+          activeProject?.kind === 'repository' &&
           activeProject.availability.state !== 'unavailable'
         ) {
           openDialog({ type: 'worktree', project: activeProject })

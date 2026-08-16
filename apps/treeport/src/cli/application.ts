@@ -390,7 +390,7 @@ async function resolveProject(identifier: string): Promise<ProjectRecord> {
   const candidate = await canonical(identifier)
   const match = list.find(
     (project) =>
-      pathContains(candidate, project.repositoryPath) ||
+      pathContains(candidate, project.rootPath) ||
       project.worktrees.some((worktree) =>
         pathContains(candidate, worktree.path)
       )
@@ -889,7 +889,7 @@ async function main(args: string[]): Promise<void> {
     .name('treeport')
     .usage('[options] [folder] [command]')
     .description('Manage Treeport projects, trees, and terminals.')
-    .argument('[folder]', 'folder inside a Git repository to open')
+    .argument('[folder]', 'folder or folder inside a Git repository to open')
     .option('--json', 'emit machine-readable JSON')
     .addHelpText('beforeAll', agentGuidance)
     .configureOutput({
@@ -968,18 +968,7 @@ async function main(args: string[]): Promise<void> {
         method: 'POST',
         body: JSON.stringify({ path: canonicalFolder })
       }
-    ).catch((error) => {
-      if (error instanceof CliError && error.code === 'NOT_A_GIT_REPOSITORY') {
-        throw new CliError(
-          `No Git repository contains ${canonicalFolder}.`,
-          error.exitCode,
-          error.code,
-          error.details
-        )
-      }
-
-      throw error
-    })
+    )
     const targetWorktree = registered.project.worktrees
       .filter(
         (worktree) =>
@@ -988,7 +977,7 @@ async function main(args: string[]): Promise<void> {
       .sort((left, right) => right.path.length - left.path.length)[0]
     if (!targetWorktree) {
       throw new CliError(
-        `Git did not report an active worktree containing ${canonicalFolder}.`,
+        `Treeport did not find a workspace containing ${canonicalFolder}.`,
         5,
         'WORKTREE_NOT_FOUND',
         { path: canonicalFolder, projectId: registered.project.id }
@@ -1012,6 +1001,7 @@ async function main(args: string[]): Promise<void> {
       projectId: registered.project.id,
       worktreeId: targetWorktree.id,
       path: canonicalFolder,
+      projectKind: registered.project.kind,
       url: target.href,
       client: opened.client
     }
@@ -1462,6 +1452,8 @@ async function main(args: string[]): Promise<void> {
       project: {
         id: project.id,
         name: project.name,
+        kind: project.kind,
+        rootPath: project.rootPath,
         repositoryPath: project.repositoryPath,
         mainWorktreePath: project.mainWorktreePath,
         defaultBranch: project.defaultBranch,
@@ -1657,8 +1649,8 @@ async function main(args: string[]): Promise<void> {
 
   const projectAddCommand = projectCommand
     .command('add')
-    .description('Register a Git repository')
-    .argument('<path>', 'repository path')
+    .description('Register a folder or Git repository')
+    .argument('<path>', 'folder path')
     .option('--json', 'emit machine-readable JSON')
   projectAddCommand.action(async (repository: string) => {
     const body = await request<{ project: ProjectRecord }>('/api/projects', {
@@ -1668,7 +1660,7 @@ async function main(args: string[]): Promise<void> {
     print(
       body.project,
       () =>
-        `Registered ${body.project.name} (${body.project.id})\n${body.project.repositoryPath}`
+        `Registered ${body.project.name} (${body.project.id})\n${body.project.rootPath}`
     )
   })
 
@@ -1682,7 +1674,7 @@ async function main(args: string[]): Promise<void> {
       list
         .map(
           (project) =>
-            `${project.id}\t${project.name}\t${project.repositoryPath}`
+            `${project.id}\t${project.name}\t${project.kind}\t${project.rootPath}`
         )
         .join('\n')
     )
@@ -1711,7 +1703,7 @@ async function main(args: string[]): Promise<void> {
       list
         .map(
           (worktree) =>
-            `${worktree.id}\t${worktree.name}\t${worktree.branch ?? `detached@${worktree.head.slice(0, 8)}`}\t${worktree.path}`
+            `${worktree.id}\t${worktree.name}\t${worktree.kind === 'folder' ? 'folder' : (worktree.branch ?? `detached@${worktree.head.slice(0, 8)}`)}\t${worktree.path}`
         )
         .join('\n')
     )

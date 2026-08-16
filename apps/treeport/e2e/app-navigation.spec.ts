@@ -59,7 +59,7 @@ test.describe('desktop worktree terminal UI', () => {
       delayProjects: true
     })
 
-    await expect(page.getByText('Loading repositories…')).toBeVisible()
+    await expect(page.getByText('Loading projects…')).toBeVisible()
     await expect(
       page.getByRole('status', { name: 'Loading workspace' })
     ).toBeVisible()
@@ -265,12 +265,47 @@ test.describe('desktop worktree terminal UI', () => {
     )
   })
 
+  test('opens an ordinary folder in browser and desktop flows', async ({
+    page
+  }) => {
+    const mocked = await mockApp(page, [], { desktopBridge: true })
+    await page
+      .getByRole('button', {
+        name: 'Switch project, current project example'
+      })
+      .click()
+    await page.getByRole('button', { name: 'Open project…' }).click()
+
+    const dialog = page.getByRole('dialog', { name: 'Open project' })
+    await dialog.getByLabel('Server folder path').fill('/home/test/Projects')
+    await expect(
+      dialog.getByText('Will open folder: /home/test/Projects')
+    ).toBeVisible()
+    await dialog.getByRole('button', { name: 'Open project' }).click()
+
+    await expect(
+      page.getByRole('button', {
+        name: 'Switch project, current project Projects'
+      })
+    ).toBeVisible()
+    await expect(
+      page.getByRole('button', { name: 'Projects', exact: true })
+    ).toBeVisible()
+    await expect(page.getByRole('button', { name: 'New tree' })).toHaveCount(0)
+    expect(mocked.registeredProjectPaths()).toEqual(['/home/test/Projects'])
+
+    await page.evaluate(() => window.__dispatchDesktopCommand('new-worktree'))
+    await expect(page.getByRole('dialog', { name: 'Create tree' })).toHaveCount(
+      0
+    )
+  })
+
   test('opens and closes a project across its full lifecycle', async ({
     page
   }) => {
     const mocked = await mockApp(page, [], { startClosed: true })
     await expect(
-      page.getByText('Open a Git repository to begin.')
+      page.getByText('Open a folder or Git repository to begin.')
     ).toBeVisible()
 
     await page.getByRole('button', { name: 'Open project' }).click()
@@ -359,7 +394,7 @@ test.describe('desktop worktree terminal UI', () => {
     await expect(
       dialog.getByText('Browse folders on the Treeport server.')
     ).toBeVisible()
-    await expect(openButton).toBeDisabled()
+    await expect(openButton).toBeEnabled()
 
     await serverPath.fill('/home/test/Pro')
     await expect(
@@ -375,15 +410,17 @@ test.describe('desktop worktree terminal UI', () => {
     await expect(serverPath).toHaveValue('/home/test/Projects')
     await expect(serverPath).toBeFocused()
     await expect(
-      dialog.getByText('This folder is not inside a Git repository.')
+      dialog.getByText('Will open folder: /home/test/Projects')
     ).toBeVisible()
-    await expect(openButton).toBeDisabled()
+    await expect(openButton).toBeEnabled()
 
     await serverPath.fill('/repo')
     await serverPath.press('ArrowDown')
     await expect(serverPath).toBeFocused()
     await expect(openButton).toBeDisabled()
-    await expect(dialog.getByText('Will open repository: /repo')).toBeVisible()
+    await expect(
+      dialog.getByText('Will open Git repository: /repo')
+    ).toBeVisible()
 
     const showHidden = dialog.getByLabel('Show hidden folders')
     await showHidden.check()
@@ -396,7 +433,9 @@ test.describe('desktop worktree terminal UI', () => {
     await expect(openButton).toBeDisabled()
 
     await dialog.getByRole('button', { name: 'Retry' }).click()
-    await expect(dialog.getByText('Will open repository: /repo')).toBeVisible()
+    await expect(
+      dialog.getByText('Will open Git repository: /repo')
+    ).toBeVisible()
     const releaseProjectsRefresh = mocked.delayNextProjects()
     await serverPath.press('Enter')
     await expect(dialog.getByRole('button', { name: 'Opening…' })).toBeVisible()

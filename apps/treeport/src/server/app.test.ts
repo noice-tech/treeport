@@ -43,6 +43,8 @@ function fixture(webDist = '/missing') {
       {
         id: 'recent',
         name: 'Recent',
+        kind: 'folder',
+        rootPath: '/recent',
         repositoryPath: '/recent',
         lastOpenedAt: '2026-01-01T00:00:00.000Z'
       }
@@ -59,6 +61,11 @@ function fixture(webDist = '/missing') {
         breadcrumbs: [{ name: '/', path: '/' }],
         entries: [],
         truncated: false
+      },
+      project: {
+        state: 'valid' as const,
+        kind: 'folder' as const,
+        path: input
       },
       repository: { state: 'not-repository' as const, message: 'Not a repo' }
     })),
@@ -840,6 +847,13 @@ describe('HTTP API validation', () => {
       '/api/filesystem/directories?input=%2Frepos%2Fwith%20spaces&hidden=true'
     )
     expect(browsed.status).toBe(200)
+    expect(await browsed.json()).toMatchObject({
+      project: {
+        state: 'valid',
+        kind: 'folder',
+        path: '/repos/with spaces'
+      }
+    })
     expect(service.browseDirectory).toHaveBeenCalledWith(
       '/repos/with spaces',
       true
@@ -858,7 +872,14 @@ describe('HTTP API validation', () => {
     const recent = await app.request('/api/projects/recent')
     expect(recent.status).toBe(200)
     expect(await recent.json()).toMatchObject({
-      projects: [{ id: 'recent', repositoryPath: '/recent' }]
+      projects: [
+        {
+          id: 'recent',
+          kind: 'folder',
+          rootPath: '/recent',
+          repositoryPath: '/recent'
+        }
+      ]
     })
     expect(service.getProjectSnapshot).not.toHaveBeenCalledWith('recent')
 

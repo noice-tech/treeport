@@ -206,7 +206,30 @@ export class SystemDouble implements CommandRunner {
       exitCode: 1
     })
     if (args[0] === 'rev-parse' && args[1] === '--show-toplevel') {
-      return ok(`${this.main}\n`)
+      const cwd = request.cwd ?? ''
+      const containingWorktree = (
+        await Promise.all(
+          [this.main, ...this.worktrees.map((worktree) => worktree.path)].map(
+            async (worktreePath) => ({
+              worktreePath,
+              canonicalPath: await fs
+                .realpath(worktreePath)
+                .catch(() => worktreePath)
+            })
+          )
+        )
+      ).find((candidate) => {
+        const relative = path.relative(candidate.canonicalPath, cwd)
+        return (
+          relative === '' ||
+          (!relative.startsWith(`..${path.sep}`) &&
+            relative !== '..' &&
+            !path.isAbsolute(relative))
+        )
+      })
+      return containingWorktree
+        ? ok(`${this.main}\n`)
+        : fail('fatal: not a git repository (or any parent directory): .git')
     }
 
     if (args[0] === 'rev-parse' && args[1] === '--verify') {

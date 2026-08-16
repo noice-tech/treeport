@@ -90,10 +90,14 @@ export function normalizeWorktreeName(input: string): string {
 export function inferWorktreeName(
   mainWorktreePath: string,
   worktreePath: string,
-  kind: 'main' | 'linked'
+  kind: 'main' | 'linked' | 'folder'
 ): string {
   if (kind === 'main') {
     return 'main tree'
+  }
+
+  if (kind === 'folder') {
+    return path.basename(worktreePath)
   }
 
   const checkoutName = path.basename(worktreePath)
@@ -446,7 +450,9 @@ export async function loadZedTerminalPresetDefinitions(input: {
         {
           path: ZED_TASKS_CONFIG_PATH,
           itemId: null,
-          message: `Could not load Zed tasks: ${error instanceof Error ? error.message : String(error)}`
+          message: `Could not load Zed tasks: ${
+            error instanceof Error ? error.message : String(error)
+          }`
         }
       ]
     }

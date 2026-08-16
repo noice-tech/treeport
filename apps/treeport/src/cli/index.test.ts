@@ -88,6 +88,8 @@ const worktree: WorktreeRecord = {
 const project: ProjectRecord = {
   id: 'proj_context',
   name: 'treeport',
+  kind: 'repository',
+  rootPath: '/repo/treeport',
   repositoryPath: '/repo/treeport',
   mainWorktreePath: '/repo/treeport',
   defaultBranch: 'main',
@@ -1904,13 +1906,34 @@ exit 1
         [nonGitDirectory, '--json'],
         environment
       )
-      expect(nonGit.code).toBe(5)
-      expect(JSON.parse(nonGit.stderr)).toMatchObject({
-        error: {
-          code: 'NOT_A_GIT_REPOSITORY',
-          message: `No Git repository contains ${await realpath(nonGitDirectory)}.`
-        }
+      expect(nonGit.code, nonGit.stderr).toBe(0)
+      expect(JSON.parse(nonGit.stdout)).toMatchObject({
+        projectKind: 'folder',
+        path: await realpath(nonGitDirectory),
+        client: process.platform === 'darwin' ? 'desktop' : 'browser'
       })
+      // SAFETY: The packaged CLI returned its documented project-list JSON.
+      const projectsWithFolder = JSON.parse(
+        (await runPackagedCli(['project', 'list', '--json'], environment))
+          .stdout
+      ) as ProjectRecord[]
+      expect(projectsWithFolder).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            kind: 'folder',
+            rootPath: await realpath(nonGitDirectory),
+            worktrees: [
+              expect.objectContaining({
+                kind: 'folder',
+                path: await realpath(nonGitDirectory),
+                terminals: [
+                  expect.objectContaining({ name: 'Shell', status: 'running' })
+                ]
+              })
+            ]
+          })
+        ])
+      )
 
       const firstStatus = await runPackagedCli(
         ['status', '--json'],
@@ -2089,7 +2112,7 @@ exit 1
         TREEPORT_API_URL: `http://127.0.0.1:${identityProxyAddress.port}`
       })
       expect(remoteCli.code).toBe(0)
-      expect(JSON.parse(remoteCli.stdout)).toHaveLength(1)
+      expect(JSON.parse(remoteCli.stdout)).toHaveLength(2)
       expect(ingressRequests).toEqual([
         { authorization: undefined, url: '/api/projects' }
       ])

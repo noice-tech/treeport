@@ -1,6 +1,6 @@
 ---
 title: Packages
-description: Install web panels and terminal presets globally or for one repository.
+description: Install web panels and terminal presets globally or for one project.
 ---
 
 A Treeport package is an npm package or local directory. It can supply declarative web panels and terminal presets.
@@ -30,7 +30,7 @@ An npm name can include a distribution tag, version range, or exact version afte
 
 Commands use global scope by default.
 
-Add `-l` to `install`, `remove`, or `reload` to select the registered repository for the current directory:
+Add `-l` to `install`, `remove`, or `reload` to select the registered project for the current directory:
 
 ```sh
 treeport install -l npm:@acme/treeport-tools
@@ -38,11 +38,13 @@ treeport remove -l npm:@acme/treeport-tools
 treeport reload -l
 ```
 
-Repository settings always belong to the main tree.
+Repository settings belong to the main tree.
 
-Package resources are available in all trees for that repository.
+Folder project settings belong to the selected folder.
 
-`treeport reload` reads global settings and all registered repository settings again. It does not restart the daemon.
+Project package resources are available in all trees for that project.
+
+`treeport reload` reads global settings and all registered project settings again. It does not restart the daemon.
 
 Treeport installs missing npm packages when it applies settings. This can occur after registration, reopen, or a daemon restart.
 
@@ -58,7 +60,7 @@ After you change a local package manifest or resource, run `treeport reload`.
 
 Global package settings are in `settings.json` in the Treeport data directory.
 
-Repository package settings are in `.treeport/settings.json` in the main tree:
+Project package settings are in `.treeport/settings.json` at the project root. The project root is the main tree for a repository or the selected folder for a folder project:
 
 ```json
 {
@@ -98,7 +100,7 @@ Filters can reduce only the resources from the package manifest or standard dire
 
 They cannot give access to other package paths.
 
-A repository package replaces the same global package for that repository.
+A project package replaces the same global package for that project.
 
 Use `"autoload": false` to change only the resource selection for an inherited global package:
 

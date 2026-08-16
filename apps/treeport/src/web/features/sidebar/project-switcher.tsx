@@ -127,9 +127,7 @@ export function ProjectSwitcher({
     (project) =>
       !normalizedProjectSearch ||
       project.name.toLocaleLowerCase().includes(normalizedProjectSearch) ||
-      project.repositoryPath
-        .toLocaleLowerCase()
-        .includes(normalizedProjectSearch)
+      project.rootPath.toLocaleLowerCase().includes(normalizedProjectSearch)
   )
   const openProjectIds = new Set(projects.map((project) => project.id))
   const recentProjects = (recentProjectsQuery.data ?? []).filter(
@@ -139,9 +137,7 @@ export function ProjectSwitcher({
     (project) =>
       !normalizedProjectSearch ||
       project.name.toLocaleLowerCase().includes(normalizedProjectSearch) ||
-      project.repositoryPath
-        .toLocaleLowerCase()
-        .includes(normalizedProjectSearch)
+      project.rootPath.toLocaleLowerCase().includes(normalizedProjectSearch)
   )
   const projectSwitcherOptions = [
     ...filteredOpenProjects.map((project) => ({
@@ -183,7 +179,7 @@ export function ProjectSwitcher({
           aria-keyshortcuts={
             usesMacKeyboard ? 'Meta+Shift+P' : 'Control+Shift+P'
           }
-          title={`${activeProject?.repositoryPath ?? 'Open project'} — ${
+          title={`${activeProject?.rootPath ?? 'Open project'} — ${
             usesMacKeyboard ? '⌘⇧P' : 'Ctrl+Shift+P'
           }`}
         >

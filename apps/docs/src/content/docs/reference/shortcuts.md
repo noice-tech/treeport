@@ -17,7 +17,7 @@ This page includes only Treeport-specific operations.
 | ---------------------------------------- | ---------------------------------------------------------- | ----------------------- |
 | Switch project                           | `Cmd+Shift+P` on Apple keyboards; `Ctrl+Shift+P` elsewhere | `Cmd+Shift+P`           |
 | Select panel 1 through 9                 | Use the sidebar                                            | `Cmd+1` through `Cmd+9` |
-| Create a tree                            | Use **New tree**                                           | `Cmd+N`                 |
+| Create a tree in a repository            | Use **New tree**                                           | `Cmd+N`                 |
 | Create a shell terminal                  | Use **New panel**                                          | `Cmd+T`                 |
 | Select a new panel                       | Use **New panel**                                          | `Cmd+Shift+T`           |
 | Close the selected terminal or web panel | Use its close operation                                    | `Cmd+W`                 |
