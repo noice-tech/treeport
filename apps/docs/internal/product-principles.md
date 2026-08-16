@@ -5,17 +5,19 @@ description: Principles that define the Treeport product boundary.
 
 Treeport is a persistent terminal workspace that uses Git worktrees.
 
-Treeport shows each Git worktree as a Tree. Use **Tree** and **Trees** for these items in product copy.
+Treeport shows each Git worktree as a tree. Use **tree** and **trees** as common nouns in product copy.
+
+Capitalize **tree** only at the start of a sentence or a sentence-style label.
 
 Use **Git worktree** only when the text explains the underlying Git concept or names a stable technical contract.
 
 Use these principles for product design, issue review, integrations, and architecture decisions.
 
-## Use a Tree as the unit of work
+## Use a tree as the unit of work
 
-Each Tree represents a Git worktree as one unit of development work.
+Each tree represents a Git worktree as one unit of development work.
 
-A Tree contains useful source state:
+A tree contains useful source state:
 
 - a separate checkout;
 - a starting revision;
@@ -28,7 +30,7 @@ A Tree contains useful source state:
 
 Add information to this object instead of making a parallel task model.
 
-A Tree can have user titles, reminders, provenance, and presentation information.
+A tree can have user titles, reminders, provenance, and presentation information.
 
 This information must not replace or hide its Git worktree identity.
 
@@ -55,7 +57,7 @@ Treeport information must fail safely when Git state changes.
 
 A separate task entity causes synchronization questions:
 
-- Can a task be complete when its Tree has changes?
+- Can a task be complete when its tree has changes?
 - Can a task be active after workspace removal?
 - Does task archiving remove terminals?
 - Does task deletion remove its branch?
@@ -70,7 +72,7 @@ Use concrete actions and observations for completion:
 - Make commits available from another reference.
 - Merge the pull request when applicable.
 - Stop active terminals.
-- Remove the Tree safely.
+- Remove the tree safely.
 
 ## Use progressive enhancement
 
@@ -98,7 +100,7 @@ For example:
 - Without an agent integration, Treeport can show an active terminal.
 - Without OSC progress, Treeport can preserve and show the terminal.
 - Without BEL, users can open and control the terminal.
-- Without GitHub authentication, Git and Tree operations continue.
+- Without GitHub authentication, Git and tree operations continue.
 - Without a pull request, users can complete or discard work.
 
 Integrations add information. They do not define the basic workflow.
@@ -138,7 +140,7 @@ Specialist tools keep their responsibilities:
 - Git and provider CLIs control commits, pull requests, and merges.
 - Editors control file navigation and editing.
 
-Treeport controls the persistent Tree and terminal context around them.
+Treeport controls the persistent tree and terminal context around them.
 
 ## Use application navigation
 
@@ -151,7 +153,7 @@ It can use familiar application operations:
 - `Cmd+W` to close;
 - numbered selection shortcuts;
 - mouse navigation;
-- a persistent project and Tree hierarchy.
+- a persistent project and tree hierarchy.
 
 A terminal runtime must not force its native session, tab, or pane hierarchy into the main Treeport interface.
 
@@ -198,6 +200,6 @@ Use these extension points for related workflows:
 - optional runtime adapters;
 - limited extensions with a verified need.
 
-Add a function to core only when it improves the shared Tree and terminal lifecycle.
+Add a function to core only when it improves the shared tree and terminal lifecycle.
 
 Do not add a core function that copies a specialist tool.

@@ -23,7 +23,7 @@ for (const listener of discovery.listeners) {
   console.log(listener.host, listener.port, listener.command)
 }
 
-// The unified patch is the final combined Tree result. Paths can occur in
+// The unified patch is the final combined tree result. Paths can occur in
 // more than one set, such as a branch file that was also edited locally.
 console.log(diff.unified)
 console.log(diff.changeSets.branch)
@@ -41,9 +41,9 @@ const stopFind = treeport.shortcuts.onFind(() => {
 
 `treeport.panel.setTitle(title)` sets a runtime title in the current Treeport client. Pass `null` to restore the configured title. Treeport does not persist or synchronize runtime titles.
 
-`treeport.context()` includes the stored JSON launch input and Tree-relative launch directory.
+`treeport.context()` includes the stored JSON launch input and tree-relative launch directory.
 
-`treeport.network.listeners()` returns listening TCP sockets conservatively attributed to the panel's Tree by Treeport terminal ancestry or process working directory. Each listener includes its PID, short command, host, port, and a nullable Treeport terminal ID. Processes Treeport cannot access or confidently attribute are omitted. Unsupported platforms return `supported: false` instead of failing. A listener does not guarantee HTTP and the SDK does not turn it into a routed or proxied URL.
+`treeport.network.listeners()` returns listening TCP sockets conservatively attributed to the panel's tree by Treeport terminal ancestry or process working directory. Each listener includes its PID, short command, host, port, and a nullable Treeport terminal ID. Processes Treeport cannot access or confidently attribute are omitted. Unsupported platforms return `supported: false` instead of failing. A listener does not guarantee HTTP and the SDK does not turn it into a routed or proxied URL.
 
 `treeport.diff()` returns a combined unified patch from the default-branch merge base through the final working-tree state. Its relative file paths are also grouped into `changeSets.branch` (merge base to `HEAD`), `changeSets.staged` (`HEAD` to index), `changeSets.unstaged` (index to working tree), and `changeSets.untracked`. A path can occur in more than one group.
 

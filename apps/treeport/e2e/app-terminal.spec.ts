@@ -11,13 +11,13 @@ test.describe('desktop worktree and terminal workflows', () => {
   }) => {
     const mocked = await mockApp(page)
     {
-      const trigger = page.getByRole('button', { name: 'New Tree' })
+      const trigger = page.getByRole('button', { name: 'New tree' })
       await trigger.click()
-      const dialog = page.getByRole('dialog', { name: 'Create Tree' })
+      const dialog = page.getByRole('dialog', { name: 'Create tree' })
       await expect(dialog).toBeVisible()
       await expect(dialog.getByLabel('Tree name')).toBeFocused()
       await dialog.getByLabel('Tree name').fill('focus-test')
-      const submit = dialog.getByRole('button', { name: 'Create Tree' })
+      const submit = dialog.getByRole('button', { name: 'Create tree' })
       await expect(submit).toBeEnabled()
       await submit.focus()
       await submit.press('Tab')
@@ -29,14 +29,14 @@ test.describe('desktop worktree and terminal workflows', () => {
     {
       const releaseCreate = mocked.delayNextCreate()
       mocked.failNextCreate()
-      await page.getByRole('button', { name: 'New Tree' }).click()
+      await page.getByRole('button', { name: 'New tree' }).click()
       await page.getByLabel('Tree name').fill('will fail')
-      await page.getByRole('button', { name: 'Create Tree' }).click()
+      await page.getByRole('button', { name: 'Create tree' }).click()
       await expect(
-        page.getByRole('heading', { name: 'Create Tree' })
+        page.getByRole('heading', { name: 'Create tree' })
       ).toHaveCount(0)
       const pending = page.getByRole('status', {
-        name: 'Creating Tree will-fail'
+        name: 'Creating tree will-fail'
       })
       await expect(pending).toHaveText('will-fail')
 
@@ -46,7 +46,7 @@ test.describe('desktop worktree and terminal workflows', () => {
     }
     {
       const releaseCreate = mocked.delayNextCreate()
-      await page.getByRole('button', { name: 'New Tree' }).click()
+      await page.getByRole('button', { name: 'New tree' }).click()
       await page.getByLabel('Tree name').fill('New Tópic / Preview!')
       const requestPromise = page.waitForRequest(
         (request) =>
@@ -54,7 +54,7 @@ test.describe('desktop worktree and terminal workflows', () => {
           new URL(request.url()).pathname ===
             '/api/projects/proj_1/worktree-operations'
       )
-      await page.getByRole('button', { name: 'Create Tree' }).click()
+      await page.getByRole('button', { name: 'Create tree' }).click()
       const request = await requestPromise
       expect(request.postDataJSON()).toEqual({
         name: 'New Tópic / Preview!',
@@ -68,10 +68,10 @@ test.describe('desktop worktree and terminal workflows', () => {
         }
       })
       await expect(
-        page.getByRole('heading', { name: 'Create Tree' })
+        page.getByRole('heading', { name: 'Create tree' })
       ).toHaveCount(0)
       const pending = page.getByRole('status', {
-        name: 'Creating Tree new-topic-preview'
+        name: 'Creating tree new-topic-preview'
       })
       await expect(pending).toHaveText('new-topic-preview')
       await expect(pending).toBeFocused()
@@ -95,9 +95,9 @@ test.describe('desktop worktree and terminal workflows', () => {
       expect(await pending.count()).toBe(0)
       await expect(
         page.getByRole('button', {
-          name: /^(main Tree|topic|new-topic-preview)$/
+          name: /^(main tree|topic|new-topic-preview)$/
         })
-      ).toHaveText(['main Tree', 'topic', 'new-topic-preview'])
+      ).toHaveText(['main tree', 'topic', 'new-topic-preview'])
       await expect
         .poll(() =>
           page.evaluate(() =>
@@ -116,7 +116,7 @@ test.describe('desktop worktree and terminal workflows', () => {
       )
     }
     {
-      await page.getByRole('button', { name: 'New Tree' }).click()
+      await page.getByRole('button', { name: 'New tree' }).click()
       await page.getByLabel('Initial terminal').selectOption('preset_hunk')
       await expect
         .poll(() =>
@@ -127,7 +127,7 @@ test.describe('desktop worktree and terminal workflows', () => {
         .toBe('preset_hunk')
       await page.keyboard.press('Escape')
       await page.reload()
-      await page.getByRole('button', { name: 'New Tree' }).click()
+      await page.getByRole('button', { name: 'New tree' }).click()
       await expect(page.getByLabel('Initial terminal')).toHaveValue(
         'preset_hunk'
       )
@@ -138,7 +138,7 @@ test.describe('desktop worktree and terminal workflows', () => {
           new URL(request.url()).pathname ===
             '/api/projects/proj_1/worktree-operations'
       )
-      await page.getByRole('button', { name: 'Create Tree' }).click()
+      await page.getByRole('button', { name: 'Create tree' }).click()
       expect((await requestPromise).postDataJSON()).toEqual({
         name: 'preset topic',
         base: 'default',
@@ -151,13 +151,13 @@ test.describe('desktop worktree and terminal workflows', () => {
           }
         })
       })
-      await page.getByRole('button', { name: 'New Tree' }).click()
+      await page.getByRole('button', { name: 'New tree' }).click()
       await expect(page.getByLabel('Initial terminal')).toHaveValue(
         'preset_hunk'
       )
       await page.getByLabel('Initial terminal').selectOption('shell')
       await page.keyboard.press('Escape')
-      await page.getByRole('button', { name: 'New Tree' }).click()
+      await page.getByRole('button', { name: 'New tree' }).click()
       await expect(page.getByLabel('Initial terminal')).toHaveValue('shell')
     }
   })
@@ -167,22 +167,22 @@ test.describe('desktop worktree and terminal workflows', () => {
   }) => {
     const mocked = await mockApp(page)
     const releaseCreate = mocked.delayNextCreate()
-    await page.getByRole('button', { name: 'New Tree' }).click()
+    await page.getByRole('button', { name: 'New tree' }).click()
     await page.getByLabel('Tree name').fill('reload topic')
-    await page.getByRole('button', { name: 'Create Tree' }).click()
+    await page.getByRole('button', { name: 'Create tree' }).click()
     await expect(
-      page.getByRole('status', { name: 'Creating Tree reload-topic' })
+      page.getByRole('status', { name: 'Creating tree reload-topic' })
     ).toBeVisible()
 
     await page.reload()
     await expect(
-      page.getByRole('status', { name: 'Creating Tree reload-topic' })
+      page.getByRole('status', { name: 'Creating tree reload-topic' })
     ).toBeVisible()
     const activeTerminal = page.getByRole('main', { name: /terminal$/ })
     await expect(activeTerminal).toBeVisible()
     releaseCreate()
     await expect(
-      page.getByRole('status', { name: 'Creating Tree reload-topic' })
+      page.getByRole('status', { name: 'Creating tree reload-topic' })
     ).toHaveCount(0)
     await expect(
       page.getByRole('button', { name: 'reload-topic', exact: true })
@@ -592,7 +592,7 @@ test.describe('desktop worktree and terminal workflows', () => {
     await expect(
       page.getByRole('button', { name: /zsh · \/worktrees\/topic.*bell/ })
     ).toHaveCount(0)
-    await page.getByRole('button', { name: 'main Tree', exact: true }).click()
+    await page.getByRole('button', { name: 'main tree', exact: true }).click()
     await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
 
     const emitBell = (sequence: number, unread = true) =>
@@ -665,7 +665,7 @@ test.describe('desktop worktree and terminal workflows', () => {
         name: 'Pi build · /worktrees/topic terminal'
       })
     ).toBeVisible()
-    await page.getByRole('button', { name: 'main Tree', exact: true }).click()
+    await page.getByRole('button', { name: 'main tree', exact: true }).click()
     const activeBellTerminal = page.getByRole('main', {
       name: 'zsh · /worktrees/topic terminal'
     })
@@ -1192,7 +1192,7 @@ test.describe('desktop worktree and terminal workflows', () => {
       updatedAt: '2026-01-04T00:00:00.000Z'
     }
     await page.reload()
-    await page.getByRole('button', { name: 'New Tree' }).click()
+    await page.getByRole('button', { name: 'New tree' }).click()
     await expect(
       page.getByLabel('Initial terminal').getByRole('option', {
         name: 'Open editor'
@@ -1723,7 +1723,7 @@ test.describe('desktop worktree and terminal workflows', () => {
 
     await page.evaluate(() => window.__dispatchDesktopCommand('new-worktree'))
     await expect(
-      page.getByRole('dialog', { name: 'Create Tree' })
+      page.getByRole('dialog', { name: 'Create tree' })
     ).toBeVisible()
   })
 })

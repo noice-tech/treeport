@@ -41,7 +41,7 @@ export function RemoveWorktreeDialog({
             <p className="eyebrow">
               {destructive ? 'Destructive removal' : 'Tree'}
             </p>
-            <AlertDialogTitle>Remove Tree</AlertDialogTitle>
+            <AlertDialogTitle>Remove tree</AlertDialogTitle>
             <AlertDialogDescription>
               Review what will be removed before continuing.
             </AlertDialogDescription>
@@ -114,7 +114,7 @@ export function RemoveWorktreeDialog({
                   ? 'Removing…'
                   : destructive
                     ? 'Remove anyway'
-                    : 'Remove Tree'}
+                    : 'Remove tree'}
               </Button>
             </AlertDialogAction>
           </AlertDialogFooter>

@@ -62,7 +62,7 @@ export default defineConfig({
           items: [
             { label: 'Design principles', slug: 'concepts/philosophy' },
             {
-              label: 'Projects, Trees, and terminals',
+              label: 'Projects, trees, and terminals',
               slug: 'concepts/projects-worktrees-terminals'
             },
             {

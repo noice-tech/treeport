@@ -63,7 +63,7 @@ test.describe('desktop worktree terminal UI', () => {
     await expect(
       page.getByRole('status', { name: 'Loading workspace' })
     ).toBeVisible()
-    await expect(page.getByText('Choose a Tree.')).toHaveCount(0)
+    await expect(page.getByText('Choose a tree.')).toHaveCount(0)
     mocked.releaseProjects()
     await expect(
       page.getByRole('button', {
@@ -90,7 +90,7 @@ test.describe('desktop worktree terminal UI', () => {
         name: 'Switch project, current project example'
       })
     ).toBeVisible()
-    await expect(page.getByRole('button', { name: 'New Tree' })).toBeEnabled()
+    await expect(page.getByRole('button', { name: 'New tree' })).toBeEnabled()
   })
 
   test('shows a worktree with no terminals', async ({ page }) => {
@@ -140,8 +140,8 @@ test.describe('desktop worktree terminal UI', () => {
       .toBe(1)
     await expect(page.getByText('topic', { exact: true })).toBeVisible()
     await expect(
-      page.getByRole('button', { name: /^(main Tree|topic)$/ })
-    ).toHaveText(['main Tree', 'topic'])
+      page.getByRole('button', { name: /^(main tree|topic)$/ })
+    ).toHaveText(['main tree', 'topic'])
 
     await page.getByRole('button', { name: 'Pi, running', exact: true }).click()
     await expect(page.locator('.xterm')).toBeVisible()
@@ -243,7 +243,7 @@ test.describe('desktop worktree terminal UI', () => {
       initialPath: '/projects/proj_1/worktrees/wt_topic/terminals/term_pi'
     })
     const topicWorktree = page
-      .getByRole('navigation', { name: 'Projects and Trees' })
+      .getByRole('navigation', { name: 'Projects and trees' })
       .getByRole('button', { name: /^topic(?:,|$)/ })
     await expect(topicWorktree).toBeVisible()
 
@@ -258,7 +258,7 @@ test.describe('desktop worktree terminal UI', () => {
 
     await expect(topicWorktree).toHaveCount(0)
     await expect(
-      page.getByRole('button', { name: 'main Tree', exact: true })
+      page.getByRole('button', { name: 'main tree', exact: true })
     ).toBeVisible()
     await expect(page.locator('.xterm-rows')).toContainText(
       'same persistent terminal session'

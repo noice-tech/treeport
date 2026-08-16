@@ -12,11 +12,11 @@ export type WebPanelInput = Record<string, JsonValue>
 /** Launch data for a persistent web panel instance. */
 export interface WebPanelLaunch {
   input: WebPanelInput | null
-  /** Directory relative to the Tree root. */
+  /** Directory relative to the tree root. */
   cwd: string | null
 }
 
-/** A persistent web panel instance scoped to one Tree. */
+/** A persistent web panel instance scoped to one tree. */
 export interface WebPanel {
   id: string
   kind: 'web'
@@ -33,7 +33,7 @@ export interface WebPanel {
   updatedAt: string
 }
 
-/** Project and Tree information available to the current panel. */
+/** Project and tree information available to the current panel. */
 export interface WebPanelContext {
   apiVersion: 1
   panel: WebPanel
@@ -64,7 +64,7 @@ export interface GitDiffChangeSets {
 }
 
 /**
- * A read-only diff from the default-branch merge base through the Tree's
+ * A read-only diff from the default-branch merge base through the tree's
  * committed, tracked local, and untracked changes.
  */
 export interface GitDiff {
@@ -79,7 +79,7 @@ export interface GitDiff {
   changeSets: GitDiffChangeSets
 }
 
-/** A listening TCP socket attributed to the current Tree. */
+/** A listening TCP socket attributed to the current tree. */
 export interface WorktreeListener {
   pid: number
   command: string
@@ -88,7 +88,7 @@ export interface WorktreeListener {
   terminalId: string | null
 }
 
-/** The result of scanning for Tree-scoped listening TCP sockets. */
+/** The result of scanning for tree-scoped listening TCP sockets. */
 export interface WorktreeListenerDiscovery {
   supported: boolean
   message: string | null
@@ -119,16 +119,16 @@ export interface WebPanelShortcuts {
   onFind(handler: () => void): () => void
 }
 
-/** The Tree-scoped API available to a Treeport web panel. */
+/** The tree-scoped API available to a Treeport web panel. */
 export interface TreeportPanelSdk {
   readonly version: 1
   /** Client-local controls for the current panel. */
   readonly panel: WebPanelControls
   /** Return the identity and Git context for the current panel. */
   context(): Promise<WebPanelContext>
-  /** Return the combined Tree diff and its Git-layer file groups. */
+  /** Return the combined tree diff and its Git-layer file groups. */
   diff(): Promise<GitDiff>
-  /** Listening TCP sockets conservatively attributed to this Tree. */
+  /** Listening TCP sockets conservatively attributed to this tree. */
   readonly network: {
     listeners(): Promise<WorktreeListenerDiscovery>
   }
@@ -317,7 +317,7 @@ function call<Result>(
   })
 }
 
-/** The Tree-scoped API available to this web panel. */
+/** The tree-scoped API available to this web panel. */
 export const treeport: TreeportPanelSdk = Object.freeze({
   version: 1,
   panel: Object.freeze({

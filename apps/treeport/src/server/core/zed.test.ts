@@ -49,7 +49,7 @@ describe('Zed worktree compatibility', () => {
       )
     ).toBe('test')
     expect(inferWorktreeName('/Projects/repo', '/Projects/repo', 'main')).toBe(
-      'main Tree'
+      'main tree'
     )
   })
 

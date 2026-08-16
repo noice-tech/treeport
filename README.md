@@ -4,11 +4,11 @@
 >
 > Treeport was built quickly because I needed the tool myself. Some parts were scaffolded in the fastest way that worked, so please don’t laugh at the code too hard. I’ll clean up the mess as the core workflow stabilizes.
 
-**Use Trees as your development task system.**
+**Use trees as your development task system.**
 
-A Tree is Treeport's persistent workspace for a Git worktree. Run coding agents, shells, development servers, test watchers, and normal TUIs. Then, reconnect from the desktop app, browser, or phone.
+A tree is Treeport's persistent workspace for a Git worktree. Run coding agents, shells, development servers, test watchers, and normal TUIs. Then, reconnect from the desktop app, browser, or phone.
 
-Treeport finds Git worktrees that Git, editors, agents, scripts, and other tools create. It shows each worktree as a Tree. Git remains the source of truth.
+Treeport finds Git worktrees that Git, editors, agents, scripts, and other tools create. It shows each worktree as a tree. Git remains the source of truth.
 
 ## Quick start
 
@@ -28,7 +28,7 @@ cd /path/to/repository
 treeport .
 ```
 
-Treeport starts its local backend if needed, registers the repository and its Trees, and opens the current Tree in the desktop app or browser. Run `treeport start` to start only the backend and print its local URL, `http://127.0.0.1:8733`. Use `treeport service enable` when a host must start Treeport after reboot.
+Treeport starts its local backend if needed, registers the repository and its trees, and opens the current tree in the desktop app or browser. Run `treeport start` to start only the backend and print its local URL, `http://127.0.0.1:8733`. Use `treeport service enable` when a host must start Treeport after reboot.
 
 ## Documentation
 
@@ -38,7 +38,7 @@ Read the documentation at [treeport.app](https://treeport.app).
 
 Contributor requirements: Node.js 24+, pnpm 11, Git, and tmux 3.2+.
 
-`pnpm dev` starts the daemon, web UI, and Electron app together using available per-Tree ports. It binds both development services to loopback by default.
+`pnpm dev` starts the daemon, web UI, and Electron app together using available per-tree ports. It binds both development services to loopback by default.
 
 ```sh
 pnpm install

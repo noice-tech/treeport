@@ -93,7 +93,7 @@ export function inferWorktreeName(
   kind: 'main' | 'linked'
 ): string {
   if (kind === 'main') {
-    return 'main Tree'
+    return 'main tree'
   }
 
   const checkoutName = path.basename(worktreePath)

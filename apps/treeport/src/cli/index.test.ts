@@ -1119,7 +1119,7 @@ describe('CLI context and machine output', () => {
     )
 
     expect(result.code).toBe(0)
-    expect(result.stdout).toContain('Created Tree child (wt_context)')
+    expect(result.stdout).toContain('Created tree child (wt_context)')
     expect(result.stdout).toContain('Terminal: Pi (term_context) — running')
   })
 
@@ -1473,7 +1473,7 @@ describe('CLI context and machine output', () => {
       'Usage: treeport [options] [folder] [command]'
     )
     expect(help.stdout).toContain(
-      'Manage Treeport projects, Trees, and terminals.'
+      'Manage Treeport projects, trees, and terminals.'
     )
     expect(help.stdout).not.toContain('\n  open')
     expect(help.stdout.indexOf('AI agents:')).toBeLessThan(
@@ -1526,7 +1526,7 @@ describe('CLI context and machine output', () => {
       commandHelp[
         commandPaths.findIndex((command) => command.join(' ') === 'worktree')
       ]!.stdout
-    ).toContain('List, create, and remove Trees')
+    ).toContain('List, create, and remove trees')
 
     const skills = await runCli(['skills'])
 
@@ -1534,7 +1534,7 @@ describe('CLI context and machine output', () => {
     expect(skills.stderr).toBe('')
     expect(skills.stdout).toContain('# Treeport')
     expect(skills.stdout).toContain('## Operating rules')
-    expect(skills.stdout).toContain('## Create a child Tree and terminal')
+    expect(skills.stdout).toContain('## Create a child tree and terminal')
     expect(skills.stdout).toContain('treeport context')
     expect(skills.stdout).toContain('treeport spawn')
     expect(skills.stdout).not.toContain(

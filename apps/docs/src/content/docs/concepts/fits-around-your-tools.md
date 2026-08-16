@@ -3,7 +3,7 @@ title: How Treeport uses your tools
 description: Add context and automation without a required Treeport workflow.
 ---
 
-Treeport adds persistent terminals to your Trees. It does not replace Git, your editor, coding agent, shell, or other tools.
+Treeport adds persistent terminals to your trees. It does not replace Git, your editor, coding agent, shell, or other tools.
 
 Treeport works without an integration. A tool can add more context when it has useful information.
 

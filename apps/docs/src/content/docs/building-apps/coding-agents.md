@@ -1,17 +1,17 @@
 ---
 title: Coding agents
-description: Use coding agents in persistent, observable Trees.
+description: Use coding agents in persistent, observable trees.
 ---
 
 Treeport runs terminal coding agents without a change to their interfaces.
 
-An agent runs in a persistent terminal in its Tree. You can connect again, read its output, or take control.
+An agent runs in a persistent terminal in its tree. You can connect again, read its output, or take control.
 
 ## Use Pi
 
 [Pi](https://pi.dev) has an extension model that can add Treeport functions.
 
-An extension can create Trees and terminals, report progress, and send BEL when the agent requires attention.
+An extension can create trees and terminals, report progress, and send BEL when the agent requires attention.
 
 Pi stays a standard terminal application. The extension adds Treeport functions only where they are useful.
 
@@ -31,9 +31,9 @@ The skill teaches an agent to use Treeport. It does not add a task system, provi
 
 With the skill, an agent can:
 
-- find its current Treeport project, Tree, and terminal;
-- create persistent terminals in the current Tree;
-- create child Trees and terminals for parallel agents;
+- find its current Treeport project, tree, and terminal;
+- create persistent terminals in the current tree;
+- create child trees and terminals for parallel agents;
 - inspect terminal status and recent output;
 - wait for progress, BEL, or process exit without output parsing.
 
@@ -51,4 +51,4 @@ To load it automatically, copy the [Treeport skill](https://github.com/noice-tec
 
 The skill requires the `treeport` command on `PATH` and an available Treeport daemon.
 
-It also protects user control. An agent must not delete a terminal or Tree unless the user requests that operation.
+It also protects user control. An agent must not delete a terminal or tree unless the user requests that operation.

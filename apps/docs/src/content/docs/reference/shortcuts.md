@@ -17,13 +17,13 @@ This page includes only Treeport-specific operations.
 | ---------------------------------------- | ---------------------------------------------------------- | ----------------------- |
 | Switch project                           | `Cmd+Shift+P` on Apple keyboards; `Ctrl+Shift+P` elsewhere | `Cmd+Shift+P`           |
 | Select panel 1 through 9                 | Use the sidebar                                            | `Cmd+1` through `Cmd+9` |
-| Create a Tree                            | Use **New Tree**                                           | `Cmd+N`                 |
+| Create a tree                            | Use **New tree**                                           | `Cmd+N`                 |
 | Create a shell terminal                  | Use **New panel**                                          | `Cmd+T`                 |
 | Select a new panel                       | Use **New panel**                                          | `Cmd+Shift+T`           |
 | Close the selected terminal or web panel | Use its close operation                                    | `Cmd+W`                 |
 | Go back or forward                       | Use browser history                                        | `Cmd+[` or `Cmd+]`      |
 
-Numbered selection follows the panel order in the selected Tree. Only the first nine panels have numbered shortcuts.
+Numbered selection follows the panel order in the selected tree. Only the first nine panels have numbered shortcuts.
 
 `Cmd+T` creates a shell immediately.
 
@@ -31,7 +31,7 @@ Numbered selection follows the panel order in the selected Tree. Only the first 
 
 `Cmd+W` uses the standard close safeguards.
 
-Treeport can request approval before it stops a foreground process or deletes panel data. A Tree always keeps at least one terminal.
+Treeport can request approval before it stops a foreground process or deletes panel data. A tree always keeps at least one terminal.
 
 ## Take terminal control
 

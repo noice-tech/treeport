@@ -26,7 +26,7 @@ Project
     └── Terminals
 ```
 
-Each Tree represents a Git worktree. The Tree term does not add a separate lifecycle abstraction.
+Each tree represents a Git worktree. The tree term does not add a separate lifecycle abstraction.
 
 ## Prerelease change
 

@@ -1,9 +1,9 @@
 ---
 title: Tree-friendly development
-description: Run an independent copy of your application in each Tree.
+description: Run an independent copy of your application in each tree.
 ---
 
-A Tree is most useful when it can run an independent copy of the application.
+A tree is most useful when it can run an independent copy of the application.
 
 ## Prevent port conflicts
 
@@ -15,4 +15,4 @@ Print the selected URL so another tool can open it.
 
 If the application has multiple processes, use one development command. Configure that command to select a compatible group of ports.
 
-Do not stop an existing process without approval to resolve a port conflict. The process can belong to another active Tree.
+Do not stop an existing process without approval to resolve a port conflict. The process can belong to another active tree.

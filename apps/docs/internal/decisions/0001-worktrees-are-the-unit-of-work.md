@@ -8,7 +8,7 @@
 
 Treeport needs a stable user model for development work.
 
-Current product copy calls this item a **Tree**. This decision uses **Git worktree** for the underlying Git concept.
+Current product copy calls this item a **tree**. This decision uses **Git worktree** for the underlying Git concept.
 
 One proposal added a separate `Task` entity:
 
@@ -38,12 +38,12 @@ Project
 
 Treeport will not add a separate task entity at this stage.
 
-A Tree can have Treeport presentation information:
+A tree can have Treeport presentation information:
 
 - a user title;
 - a reminder or note;
 - provenance;
-- optional parent-Tree context;
+- optional parent-tree context;
 - other small items that do not copy Git lifecycle state.
 
 This information adds context but does not replace Git worktree identity.
@@ -72,16 +72,16 @@ This synchronization can cause contradictions:
 - An external Git worktree can have no task record.
 - Task removal can have an unclear effect on branches, workspaces, and terminals.
 
-The Tree model prevents these contradictions. Development work stays connected to the concrete workspace that contains it.
+The tree model prevents these contradictions. Development work stays connected to the concrete workspace that contains it.
 
 ## Consequences
 
 ### Positive consequences
 
 - Git stays the source of truth.
-- Git worktrees from Git, editors, scripts, agents, and Treeport are first-class Trees.
+- Git worktrees from Git, editors, scripts, agents, and Treeport are first-class trees.
 - Treeport does not need an import or conversion workflow.
-- Git state controls Tree existence and removal.
+- Git state controls tree existence and removal.
 - Operation-owned cleanup controls residual files.
 - The product is direct and easy to explain.
 - Presentation information can differ from branch names and paths.
@@ -90,7 +90,7 @@ The Tree model prevents these contradictions. Development work stays connected t
 
 - Treeport is specific to Git worktrees.
 - Work that cannot use a Git worktree can be outside the primary product model.
-- A removed Tree does not keep an active workspace representation.
+- A removed tree does not keep an active workspace representation.
 - A future isolation method can require a new decision or abstraction.
 
 Treeport accepts these limits. Current product clarity is more important than possible future backends.
@@ -109,7 +109,7 @@ Optional applications can add information through:
 - Treeport CLI and API operations;
 - provider extensions.
 
-The Tree model must stay valid when these integrations are not present.
+The tree model must stay valid when these integrations are not present.
 
 ## Rejected alternatives
 

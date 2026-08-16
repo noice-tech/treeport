@@ -27,8 +27,8 @@ export function WorkspaceSidebar({
     <Sidebar
       id="worktree-sidebar"
       collapsible="none"
-      mobileTitle="Projects and Trees"
-      mobileDescription="Navigate projects, Trees, and terminals."
+      mobileTitle="Projects and trees"
+      mobileDescription="Navigate projects, trees, and terminals."
       className="sidebar relative min-h-0 border-r border-white/8 bg-zinc-900/80 text-zinc-200 backdrop-blur-xl"
     >
       <SidebarHeader className="gap-0 border-b border-white/8 p-0">
@@ -79,7 +79,7 @@ export function WorkspaceMobileHeader({
         type="button"
         size="icon"
         className="icon-button text-zinc-400 hover:bg-white/5 hover:text-zinc-100"
-        aria-label="Open Tree drawer"
+        aria-label="Open tree drawer"
       >
         <Bars3Icon />
         <span className="touch-target" aria-hidden="true" />

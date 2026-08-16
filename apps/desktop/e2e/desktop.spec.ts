@@ -448,7 +448,7 @@ test('connects the desktop shell, preserves native behavior, and restores render
     })
     expect(accelerators).toEqual({
       newWorktree: 'CommandOrControl+N',
-      newTreeLabel: 'New Tree…',
+      newTreeLabel: 'New tree…',
       newTerminal: 'CommandOrControl+T',
       newPanel: 'CommandOrControl+Shift+T',
       newPanelLabel: 'New Panel…',

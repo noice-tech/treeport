@@ -201,7 +201,7 @@ export function WorktreeForm({
           className="ml-auto"
           disabled={busy || waitingForInitialPreset || !name.trim()}
         >
-          {busy ? 'Creating…' : 'Create Tree'}
+          {busy ? 'Creating…' : 'Create tree'}
         </Button>
       </div>
     </form>

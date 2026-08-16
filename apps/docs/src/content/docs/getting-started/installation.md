@@ -62,9 +62,9 @@ cd /path/to/repository
 treeport .
 ```
 
-Treeport starts the backend in the background when necessary. It registers the repository and finds its Trees.
+Treeport starts the backend in the background when necessary. It registers the repository and finds its trees.
 
-It then opens the current Tree in the macOS desktop client or the default browser.
+It then opens the current tree in the macOS desktop client or the default browser.
 
 To start only the backend, run:
 
@@ -117,7 +117,7 @@ If Treeport is active, the desktop client opens your projects. If Treeport is no
 treeport /path/to/repository
 ```
 
-This command starts the backend and opens its Tree.
+This command starts the backend and opens its tree.
 
 To use another computer, select **Connect to another computer…**. Enter a private HTTPS Treeport URL.
 

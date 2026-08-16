@@ -53,7 +53,7 @@ const project: ProjectRecord = {
     {
       id: 'wt_main',
       projectId: 'proj_1',
-      name: 'main Tree',
+      name: 'main tree',
       path: '/repo',
       head: 'aaaaaaaa',
       branch: 'trunk',

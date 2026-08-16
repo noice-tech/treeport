@@ -1,11 +1,11 @@
 ---
 title: CLI reference
-description: Use commands for projects, Trees, terminals, context, and automation.
+description: Use commands for projects, trees, terminals, context, and automation.
 ---
 
 Run `treeport` without a folder or command to show help.
 
-Most identifiers can be exact IDs or paths in a registered project or Tree.
+Most identifiers can be exact IDs or paths in a registered project or tree.
 
 ## Open a folder
 
@@ -15,9 +15,9 @@ treeport [folder] [--json]
 
 Give a relative or absolute folder in a Git worktree.
 
-Treeport starts its daemon when necessary. It registers or opens the repository and finds its Trees.
+Treeport starts its daemon when necessary. It registers or opens the repository and finds its trees.
 
-It then opens the Tree that contains the folder.
+It then opens the tree that contains the folder.
 
 A repeated command uses the current project registration.
 
@@ -118,7 +118,7 @@ See [Remote access](/features/remote-access/) for setup and security information
 treeport context [--json]
 ```
 
-This command reports the exact managed project, Tree, and terminal context.
+This command reports the exact managed project, tree, and terminal context.
 
 Outside a managed terminal, it exits successfully and reports that no managed context is present.
 
@@ -140,7 +140,7 @@ You can also use local directory paths, such as `./packages/tools`.
 
 The default scope is global.
 
-`-l` selects the registered repository for the current directory. It changes settings in the main Tree.
+`-l` selects the registered repository for the current directory. It changes settings in the main tree.
 
 `update` changes only configured npm packages that are eligible for update. It skips exact versions and local directories.
 
@@ -161,13 +161,13 @@ treeport project add <path> [--json]
 treeport project list [--json]
 ```
 
-`project add` registers a Git repository. It also finds the main and linked Trees.
+`project add` registers a Git repository. It also finds the main and linked trees.
 
 `project list` shows all registered repositories.
 
 <a id="manage-worktrees"></a>
 
-## Manage Trees
+## Manage trees
 
 ```sh
 treeport worktree list [--project <id-or-path>] [--json]
@@ -182,9 +182,9 @@ treeport worktree remove <id-or-path-or-dot> [--force] [--json]
 
 By default, creation starts from the fetched remote default branch.
 
-`--from-current` uses the committed `HEAD` of the current Tree. It does not copy uncommitted changes.
+`--from-current` uses the committed `HEAD` of the current tree. It does not copy uncommitted changes.
 
-Treeport changes Tree names to lowercase slugs. It replaces spaces and punctuation with hyphens.
+Treeport changes tree names to lowercase slugs. It replaces spaces and punctuation with hyphens.
 
 Before removal, Treeport gets a current safety preview.
 
@@ -192,7 +192,7 @@ Before removal, Treeport gets a current safety preview.
 
 After confirmation, removal continues without the browser. It also continues after a Treeport restart.
 
-The Tree disappears when Git no longer reports its worktree.
+The tree disappears when Git no longer reports its worktree.
 
 Treeport separately handles residual files that it can identify safely.
 
@@ -214,7 +214,7 @@ Other clients keep their current selection.
 
 `--input` accepts one inline JSON object. Treeport saves this input with the panel.
 
-It also saves the current directory relative to the Tree.
+It also saves the current directory relative to the tree.
 
 Do not put secrets in panel input.
 
@@ -266,9 +266,9 @@ There is no default timeout.
 
 Use `ms`, `s`, `m`, or `h` for a timeout. Examples are `500ms`, `30s`, and `2h`.
 
-## Create a Tree and terminal
+## Create a tree and terminal
 
-Use `spawn` to create a linked Tree and its first terminal:
+Use `spawn` to create a linked tree and its first terminal:
 
 ```sh
 treeport spawn \
@@ -283,13 +283,13 @@ After Git creates the worktree, the remaining operation is not atomic.
 
 In JSON output, inspect `terminal`, `terminalError`, and `setupError`.
 
-A Tree can remain when setup or terminal creation fails.
+A tree can remain when setup or terminal creation fails.
 
 Do not run `spawn` again until you inspect a partial result.
 
 ## Use dot shorthand
 
-In a managed terminal, `.` can identify the current project, Tree, or terminal when the command supports it.
+In a managed terminal, `.` can identify the current project, tree, or terminal when the command supports it.
 
 For scripts, use `treeport context` to get exact IDs instead of path inference.
 

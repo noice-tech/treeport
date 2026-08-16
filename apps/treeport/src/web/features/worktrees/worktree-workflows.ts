@@ -213,7 +213,7 @@ export function useWorktreeWorkflows({
     onError: (mutationError, request) => {
       setDrawerOpen(false)
       notifyError(mutationError, {
-        operation: `create Tree “${request.typedName}”`
+        operation: `create tree “${request.typedName}”`
       })
     }
   })
@@ -254,7 +254,7 @@ export function useWorktreeWorkflows({
         })
         if (operation.status === 'failed') {
           notifyError(operation.error ?? 'Tree creation failed', {
-            operation: `create Tree “${owned.typedName}”`
+            operation: `create tree “${owned.typedName}”`
           })
         } else {
           await queryClient.invalidateQueries({ queryKey: projectsQueryKey })
@@ -278,11 +278,11 @@ export function useWorktreeWorkflows({
 
           if (result?.setupError) {
             notifyError(result.setupError, {
-              operation: `start setup for newly created Tree “${owned.typedName}”`
+              operation: `start setup for newly created tree “${owned.typedName}”`
             })
           } else if (result?.terminalError) {
             notifyError(result.terminalError, {
-              operation: `start a terminal for newly created Tree “${owned.typedName}”`
+              operation: `start a terminal for newly created tree “${owned.typedName}”`
             })
           }
         }
@@ -418,14 +418,14 @@ export function useWorktreeWorkflows({
         } catch (refreshError) {
           releaseRemoval(worktree.id)
           notifyError(refreshError, {
-            operation: `refresh removal details for Tree “${worktree.name}”`
+            operation: `refresh removal details for tree “${worktree.name}”`
           })
           return
         }
       }
 
       releaseRemoval(worktree.id)
-      notifyError(error, { operation: `remove Tree “${worktree.name}”` })
+      notifyError(error, { operation: `remove tree “${worktree.name}”` })
     }
   }
 
@@ -460,7 +460,7 @@ export function useWorktreeWorkflows({
     } catch (error) {
       releaseRemoval(worktree.id)
       notifyError(error, {
-        operation: `check whether Tree “${worktree.name}” can be removed`
+        operation: `check whether tree “${worktree.name}” can be removed`
       })
     }
   }
