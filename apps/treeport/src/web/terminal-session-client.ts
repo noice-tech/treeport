@@ -59,7 +59,6 @@ const TERMINAL_MAX_COLS = 1_000
 const TERMINAL_MIN_ROWS = 2
 const TERMINAL_MAX_ROWS = 500
 const TERMINAL_RESIZE_SETTLE_MS = 150
-const IOS_KEYBOARD_TOOLBAR_CLEARANCE = 24
 const IOS_BROWSER_TOOLBAR_CLEARANCE = 44
 
 function normalizeTerminalDimensions(
@@ -275,21 +274,19 @@ export class TerminalSession {
       /iPad|iPhone|iPod/.test(navigator.userAgent) ||
       (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
     const viewport = window.visualViewport
-    if (isIOS && viewport) {
-      // WebKit shrinks the visual viewport for the keyboard but leaves the
-      // layout viewport (and 100dvh) unchanged. Its keyboard and browser
-      // toolbars then overlay the page without exposing their dimensions.
-      // A temporary bottom spacer gives scrollIntoView enough range to pan
-      // Treeport's accessory row above those native controls.
-      let keyboardToolbarSpacer: HTMLDivElement | null = null
-      let revealFrame: number | null = null
-      const revealTerminalControls = () => {
-        if (revealFrame !== null) {
-          window.cancelAnimationFrame(revealFrame)
+    const appFrame = document.querySelector<HTMLElement>('.app-frame')
+    if (isIOS && viewport && appFrame) {
+      // WebKit leaves the layout viewport unchanged when the software keyboard
+      // opens. Size and position the application against the visual viewport
+      // instead of scrolling the document between the cursor and accessory row.
+      let viewportFrame: number | null = null
+      const syncKeyboardViewport = () => {
+        if (viewportFrame !== null) {
+          window.cancelAnimationFrame(viewportFrame)
         }
 
-        revealFrame = window.requestAnimationFrame(() => {
-          revealFrame = null
+        viewportFrame = window.requestAnimationFrame(() => {
+          viewportFrame = null
           const textarea = this.wrapper?.querySelector<HTMLTextAreaElement>(
             '.xterm-helper-textarea'
           )
@@ -297,23 +294,11 @@ export class TerminalSession {
             document.activeElement === textarea &&
             viewport.height < document.documentElement.clientHeight - 100
           if (!keyboardOpen) {
-            keyboardToolbarSpacer?.remove()
-            keyboardToolbarSpacer = null
-            document
-              .querySelector<HTMLElement>('.app-frame')
-              ?.scrollIntoView({ block: 'start', inline: 'nearest' })
+            appFrame.style.removeProperty('--app-visual-viewport-height')
+            appFrame.style.removeProperty('--app-visual-viewport-offset-top')
             return
           }
 
-          const accessory =
-            document.querySelector<HTMLElement>('.accessory-row')
-          if (!accessory) {
-            return
-          }
-
-          keyboardToolbarSpacer ??= document.createElement('div')
-          keyboardToolbarSpacer.className = 'ios-keyboard-viewport-spacer'
-          keyboardToolbarSpacer.setAttribute('aria-hidden', 'true')
           const standalone =
             window.matchMedia('(display-mode: standalone)').matches ||
             Boolean(
@@ -323,23 +308,28 @@ export class TerminalSession {
           const browserToolbarGap = standalone
             ? 0
             : IOS_BROWSER_TOOLBAR_CLEARANCE
-          keyboardToolbarSpacer.style.height = `${accessory.getBoundingClientRect().height + IOS_KEYBOARD_TOOLBAR_CLEARANCE + browserToolbarGap}px`
-          document.body.appendChild(keyboardToolbarSpacer)
-          keyboardToolbarSpacer.scrollIntoView({
-            block: 'end',
-            inline: 'nearest'
-          })
+          appFrame.style.setProperty(
+            '--app-visual-viewport-height',
+            `${Math.max(0, viewport.height - browserToolbarGap)}px`
+          )
+          appFrame.style.setProperty(
+            '--app-visual-viewport-offset-top',
+            `${viewport.offsetTop}px`
+          )
         })
       }
-      viewport.addEventListener('resize', revealTerminalControls)
-      revealTerminalControls()
+      viewport.addEventListener('resize', syncKeyboardViewport)
+      viewport.addEventListener('scroll', syncKeyboardViewport)
+      syncKeyboardViewport()
       this.keyboardViewportCleanup = () => {
-        viewport.removeEventListener('resize', revealTerminalControls)
-        if (revealFrame !== null) {
-          window.cancelAnimationFrame(revealFrame)
+        viewport.removeEventListener('resize', syncKeyboardViewport)
+        viewport.removeEventListener('scroll', syncKeyboardViewport)
+        if (viewportFrame !== null) {
+          window.cancelAnimationFrame(viewportFrame)
         }
 
-        keyboardToolbarSpacer?.remove()
+        appFrame.style.removeProperty('--app-visual-viewport-height')
+        appFrame.style.removeProperty('--app-visual-viewport-offset-top')
       }
     }
 
@@ -443,7 +433,7 @@ export class TerminalSession {
     this.inputModifiers = ctrl || alt ? { ctrl, alt, onConsumed } : null
   }
 
-  sendText(data: string): void {
+  sendText(data: string, options: { focus?: boolean } = {}): void {
     this.requestControl()
     this.clearSelection()
     this.prepareScrollExit()
@@ -455,7 +445,9 @@ export class TerminalSession {
       })
     }
 
-    this.focus()
+    if (options.focus !== false) {
+      this.focus()
+    }
   }
 
   pasteText(data: string): void {
@@ -475,12 +467,16 @@ export class TerminalSession {
     this.focus()
   }
 
-  sendArrow(direction: ArrowDirection, alt = false): void {
+  sendArrow(
+    direction: ArrowDirection,
+    alt = false,
+    options: { focus?: boolean } = {}
+  ): void {
     const final = { up: 'A', down: 'B', right: 'C', left: 'D' }[direction]
     const prefix = this.terminal?.modes.applicationCursorKeysMode
       ? '\u001bO'
       : '\u001b['
-    this.sendText(`${alt ? '\u001b' : ''}${prefix}${final}`)
+    this.sendText(`${alt ? '\u001b' : ''}${prefix}${final}`, options)
   }
 
   jumpToLatest(): void {

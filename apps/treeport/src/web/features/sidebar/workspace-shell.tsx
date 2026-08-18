@@ -95,7 +95,7 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
       >
         <SidebarProvider
           className={cn(
-            'app-frame isolate grid h-dvh min-h-0 grid-cols-[var(--sidebar-width)_minmax(0,1fr)] bg-zinc-950 max-[700px]:grid-cols-1 max-[700px]:grid-rows-[3.25rem_minmax(0,1fr)]',
+            'app-frame isolate grid min-h-0 grid-cols-[var(--sidebar-width)_minmax(0,1fr)] bg-zinc-950 max-[700px]:grid-cols-1 max-[700px]:grid-rows-[3.25rem_minmax(0,1fr)]',
             resizingSidebar && 'select-none'
           )}
           style={
