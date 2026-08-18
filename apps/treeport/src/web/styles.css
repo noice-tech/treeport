@@ -48,6 +48,11 @@ body {
   @apply m-0 antialiased;
 }
 
+.app-frame {
+  height: var(--app-visual-viewport-height, 100dvh);
+  transform: translateY(var(--app-visual-viewport-offset-top, 0px));
+}
+
 @media (max-width: 700px) {
   .keyboard-safe-dialog {
     top: calc(

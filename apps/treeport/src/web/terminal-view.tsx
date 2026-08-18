@@ -173,13 +173,13 @@ export function TerminalView({
       data = `\u001b${data}`
     }
 
-    activeSession?.sendText(data)
+    activeSession?.sendText(data, { focus: false })
     setCtrl(false)
     setAlt(false)
   }
 
   const sendArrow = (direction: ArrowDirection) => {
-    activeSession?.sendArrow(direction, alt)
+    activeSession?.sendArrow(direction, alt, { focus: false })
     setCtrl(false)
     setAlt(false)
   }
@@ -506,6 +506,7 @@ export function TerminalView({
           className="accessory-row hidden min-w-0 touch-pan-x overflow-x-auto overflow-y-hidden border-t border-white/8 bg-zinc-900 pt-1 pr-[env(safe-area-inset-right)] pb-[calc(0.25rem+env(safe-area-inset-bottom))] pl-[env(safe-area-inset-left)] max-[700px]:flex [&_button]:h-11 [&_button]:min-w-11 [&_button]:grow [&_button]:rounded-none [&_button]:border-r [&_button]:border-white/8 [&_button]:text-sm [&_button:last-child]:border-r-0"
           aria-label="Terminal accessory keys"
           onPointerDownCapture={() => activeSession?.requestControl()}
+          onMouseDownCapture={(event) => event.preventDefault()}
         >
           <Button
             variant="ghost"
@@ -519,10 +520,7 @@ export function TerminalView({
             type="button"
             className={ctrl ? 'latched bg-cyan-950 text-cyan-100' : ''}
             aria-pressed={ctrl}
-            onClick={() => {
-              setCtrl((value) => !value)
-              activeSession?.focus()
-            }}
+            onClick={() => setCtrl((value) => !value)}
           >
             Ctrl
           </Button>
@@ -531,10 +529,7 @@ export function TerminalView({
             type="button"
             className={alt ? 'latched bg-cyan-950 text-cyan-100' : ''}
             aria-pressed={alt}
-            onClick={() => {
-              setAlt((value) => !value)
-              activeSession?.focus()
-            }}
+            onClick={() => setAlt((value) => !value)}
           >
             Alt
           </Button>
@@ -554,7 +549,7 @@ export function TerminalView({
             type="button"
             onClick={() => {
               // Shift+Tab has a fixed terminal sequence and ignores modifier latches.
-              activeSession?.sendText('\u001b[Z')
+              activeSession?.sendText('\u001b[Z', { focus: false })
               setCtrl(false)
               setAlt(false)
             }}

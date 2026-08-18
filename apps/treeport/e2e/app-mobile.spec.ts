@@ -140,6 +140,24 @@ test.describe('mobile terminal UI', () => {
         )
       )
       .toEqual(['\u001b[Z'])
+
+    const esc = page.getByRole('button', { name: 'Esc', exact: true })
+    await esc.focus()
+    await page.evaluate(() => {
+      window.__wsSent = []
+    })
+    await esc.click()
+    await expect(page.locator('.xterm-helper-textarea')).not.toBeFocused()
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          window.__wsSent
+            .filter((message: any) => message.type === 'input')
+            .map((message: any) => message.data)
+        )
+      )
+      .toEqual(['\u001b'])
+
     await page.setViewportSize({ width: 412, height: 915 })
     const presetRequest = page.waitForRequest(
       (request) =>
