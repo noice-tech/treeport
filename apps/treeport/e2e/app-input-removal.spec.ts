@@ -419,7 +419,7 @@ test.describe('desktop terminal input and removal', () => {
             .filter((message: any) => message.type === 'input')
             .map((message: any) => String(message.data))
             .join('')
-          return input.match(/\u001b\[<64;/g)?.length ?? 0
+          return input.split('\u001b[<64;').length - 1
         })
       )
       .toBeGreaterThan(1)
