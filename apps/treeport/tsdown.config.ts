@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
+import path from 'node:path'
 import { defineConfig } from 'tsdown'
 
 let serverStopped = Promise.resolve()
@@ -30,7 +31,15 @@ export default defineConfig({
 
       const server = spawn(
         process.execPath,
-        ['--enable-source-maps', 'dist/node/server/index.js'],
+        [
+          '--enable-source-maps',
+          path.join(
+            resolvedConfig.outDir ?? 'dist',
+            'node',
+            'server',
+            'index.js'
+          )
+        ],
         { cwd: resolvedConfig.cwd, stdio: 'inherit' }
       )
       const stop = () => server.kill('SIGTERM')

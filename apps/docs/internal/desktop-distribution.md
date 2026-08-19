@@ -161,6 +161,10 @@ pnpm release:publish X.Y.Z
 
 This command checks Git references, the repository, the stable release, exact files, and npm state.
 
+It does not run `pnpm check`.
+
+Release preparation and tagged CI already run the repository checks.
+
 It then publishes with the `latest` tag.
 
 It does not create or change the GitHub Release.

@@ -48,8 +48,13 @@ await new Promise((resolve, reject) =>
   reservation.close((error) => (error ? reject(error) : resolve()))
 )
 
-const environment = {
-  ...process.env,
+const environment = { ...process.env }
+for (const name of Object.keys(environment)) {
+  if (name.startsWith('TREEPORT_')) {
+    delete environment[name]
+  }
+}
+Object.assign(environment, {
   TREEPORT_API_URL: '',
   TREEPORT_HOST: '127.0.0.1',
   TREEPORT_PORT: String(port),
@@ -61,15 +66,17 @@ const environment = {
   TREEPORT_TERMINAL_ID: '',
   TREEPORT_WEB_DEVELOPMENT: '',
   TREEPORT_WEB_DIST: ''
-}
+})
 
 try {
-  await execute('pnpm', ['pack', '--pack-destination', temporaryDirectory], {
-    cwd: panelSdkDirectory
-  })
-  await execute('pnpm', ['pack', '--pack-destination', temporaryDirectory], {
-    cwd: packageDirectory
-  })
+  const packArguments = [
+    '--config.ignore-scripts=true',
+    'pack',
+    '--pack-destination',
+    temporaryDirectory
+  ]
+  await execute('pnpm', packArguments, { cwd: panelSdkDirectory })
+  await execute('pnpm', packArguments, { cwd: packageDirectory })
   const panelSdkTarball = path.join(
     temporaryDirectory,
     `treeport-panel-sdk-${version}.tgz`

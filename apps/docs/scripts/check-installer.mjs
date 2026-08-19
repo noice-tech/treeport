@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -72,16 +72,32 @@ try {
   ])
 
   async function runInstaller(operatingSystem = 'Linux') {
-    return execute('/bin/sh', [path.join(docsDirectory, 'public/install.sh')], {
-      env: {
-        HOME: temporaryDirectory,
-        PATH: temporaryDirectory,
-        TREEPORT_TEST_OS: operatingSystem
-      }
-    }).then(
-      () => ({ succeeded: true, stderr: '' }),
-      (error) => ({ succeeded: false, stderr: String(error.stderr) })
-    )
+    return new Promise((resolve) => {
+      const child = spawn(
+        '/bin/sh',
+        [path.join(docsDirectory, 'public/install.sh')],
+        {
+          detached: true,
+          env: {
+            HOME: temporaryDirectory,
+            PATH: temporaryDirectory,
+            TREEPORT_TEST_OS: operatingSystem
+          },
+          stdio: ['ignore', 'ignore', 'pipe']
+        }
+      )
+      let stderr = ''
+      child.stderr.setEncoding('utf8')
+      child.stderr.on('data', (value) => {
+        stderr += value
+      })
+      child.once('error', (error) => {
+        stderr += String(error)
+      })
+      child.once('close', (code) => {
+        resolve({ succeeded: code === 0, stderr })
+      })
+    })
   }
 
   let result = await runInstaller('FreeBSD')
