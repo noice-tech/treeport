@@ -1,4 +1,8 @@
+import { spawn } from 'node:child_process'
+import { once } from 'node:events'
 import { defineConfig } from 'tsdown'
+
+let serverStopped = Promise.resolve()
 
 export default defineConfig({
   entry: {
@@ -14,6 +18,30 @@ export default defineConfig({
   clean: false,
   sourcemap: false,
   dts: false,
+  onSuccess(resolvedConfig, signal) {
+    if (!resolvedConfig.watch) {
+      return
+    }
+
+    serverStopped = serverStopped.then(async () => {
+      if (signal.aborted) {
+        return
+      }
+
+      const server = spawn(
+        process.execPath,
+        ['--enable-source-maps', 'dist/node/server/index.js'],
+        { cwd: resolvedConfig.cwd, stdio: 'inherit' }
+      )
+      const stop = () => server.kill('SIGTERM')
+      signal.addEventListener('abort', stop, { once: true })
+
+      await once(server, 'exit').catch((error: Error) => {
+        console.error(`Could not start Treeport server: ${error.message}`)
+      })
+      signal.removeEventListener('abort', stop)
+    })
+  },
   deps: {
     neverBundle: true,
     alwaysBundle: ['@treeport/shared']
