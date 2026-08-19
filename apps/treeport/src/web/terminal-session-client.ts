@@ -695,7 +695,7 @@ export class TerminalSession {
       },
       true
     )
-    trackTerminalScrolling(
+    const expandWheelInput = trackTerminalScrolling(
       this.wrapper,
       terminal,
       (event) => {
@@ -841,6 +841,7 @@ export class TerminalSession {
     terminal.onKey(() => this.prepareScrollExit())
     terminal.onData((data) => {
       if (this.canInput()) {
+        data = expandWheelInput(data)
         const modifiers = this.inputModifiers
         if (modifiers) {
           this.inputModifiers = null
