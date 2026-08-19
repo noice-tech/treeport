@@ -129,16 +129,18 @@ function shutdown(): void {
   shuttingDown = true
   attachments.dispose()
   terminalMetadata.dispose()
+  const viteClosed = vite?.close()
   io.close(() => {
-    void Promise.all([service.drainMutations(), terminalMetadata.drain()]).then(
-      async () => {
-        await service.disposeWebPanelRuntime()
-        await vite?.close()
-        database.close()
-        await ownership.release()
-        process.exit(0)
-      }
-    )
+    void Promise.all([
+      service.drainMutations(),
+      terminalMetadata.drain(),
+      viteClosed
+    ]).then(async () => {
+      await service.disposeWebPanelRuntime()
+      database.close()
+      await ownership.release()
+      process.exit(0)
+    })
   })
   setTimeout(() => process.exit(1), 5_000).unref()
 }

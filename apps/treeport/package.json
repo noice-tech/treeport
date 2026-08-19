@@ -24,7 +24,7 @@
     "check:package": "node scripts/check-package.mjs",
     "test:package": "node scripts/smoke-package.mjs",
     "dev": "node scripts/development.mjs",
-    "dev:server": "TREEPORT_DATA_DIR=.treeport-dev/data TREEPORT_RUNTIME_DIR=.treeport-dev/runtime TREEPORT_DAEMON_LIFECYCLE=external tsdown --watch --on-success \"node --enable-source-maps dist/node/server/index.js\"",
+    "dev:server": "TREEPORT_DATA_DIR=.treeport-dev/data TREEPORT_RUNTIME_DIR=.treeport-dev/runtime TREEPORT_DAEMON_LIFECYCLE=external tsdown --watch",
     "start": "TREEPORT_WEB_DIST=dist/web node dist/node/server/index.js",
     "db:generate": "drizzle-kit generate",
     "typecheck": "pnpm typecheck:node && pnpm typecheck:web",
