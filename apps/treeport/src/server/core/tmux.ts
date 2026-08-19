@@ -173,8 +173,10 @@ bind-key -T copy-mode-vi User4 select-pane -t .
 bind-key -T copy-mode MouseDragEnd1Pane send-keys -X stop-selection
 bind-key -T copy-mode-vi MouseDragEnd1Pane send-keys -X stop-selection
 # Keep these explicit so source-file replaces stale bindings in existing servers.
-bind-key -T copy-mode WheelDownPane { select-pane ; send-keys -X -N 5 scroll-down ; if-shell -F '#{&&:#{==:#{scroll_position},0},#{==:#{selection_present},0}}' { send-keys -X cancel } }
-bind-key -T copy-mode-vi WheelDownPane { select-pane ; send-keys -X -N 5 scroll-down ; if-shell -F '#{&&:#{==:#{scroll_position},0},#{==:#{selection_present},0}}' { send-keys -X cancel } }
+bind-key -T copy-mode WheelUpPane { select-pane ; send-keys -X -N 1 scroll-up }
+bind-key -T copy-mode-vi WheelUpPane { select-pane ; send-keys -X -N 1 scroll-up }
+bind-key -T copy-mode WheelDownPane { select-pane ; send-keys -X -N 1 scroll-down ; if-shell -F '#{&&:#{==:#{scroll_position},0},#{==:#{selection_present},0}}' { send-keys -X cancel } }
+bind-key -T copy-mode-vi WheelDownPane { select-pane ; send-keys -X -N 1 scroll-down ; if-shell -F '#{&&:#{==:#{scroll_position},0},#{==:#{selection_present},0}}' { send-keys -X cancel } }
 bind-key -T root WheelUpPane if-shell -F '#{||:#{alternate_on},#{pane_in_mode},#{mouse_any_flag}}' { send-keys -M } { copy-mode -H }
 `
 

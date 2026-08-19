@@ -414,13 +414,15 @@ test.describe('desktop terminal input and removal', () => {
     await page.mouse.wheel(0, -120)
     await expect
       .poll(() =>
-        page.evaluate(() =>
-          window.__wsSent
+        page.evaluate(() => {
+          const input = window.__wsSent
             .filter((message: any) => message.type === 'input')
             .map((message: any) => String(message.data))
-        )
+            .join('')
+          return input.split('\u001b[<64;').length - 1
+        })
       )
-      .toEqual([expect.stringContaining('\u001b[<64;')])
+      .toBeGreaterThan(1)
     await page.mouse.wheel(0, 120)
     await page.evaluate(() => {
       const socket = window.__lastWs
