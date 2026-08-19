@@ -467,6 +467,15 @@ export class TerminalSession {
     this.focus()
   }
 
+  pasteFiles(files: File[]): void {
+    if (!files.length) {
+      return
+    }
+
+    this.requestControl()
+    this.queueFileTransfer(files)
+  }
+
   sendArrow(
     direction: ArrowDirection,
     alt = false,
@@ -769,8 +778,7 @@ export class TerminalSession {
       event.preventDefault()
       event.stopPropagation()
       wrapper.classList.remove('terminal-file-drag')
-      this.requestControl()
-      this.queueFileTransfer(filesFromTransfer(event.dataTransfer))
+      this.pasteFiles(filesFromTransfer(event.dataTransfer))
     })
     wrapper.addEventListener(
       'paste',
@@ -782,8 +790,7 @@ export class TerminalSession {
 
         event.preventDefault()
         event.stopPropagation()
-        this.requestControl()
-        this.queueFileTransfer(files)
+        this.pasteFiles(files)
       },
       true
     )

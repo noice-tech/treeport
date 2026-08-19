@@ -70,6 +70,7 @@ export function TerminalView({
 }: TerminalViewProps) {
   const shellRef = useRef<HTMLElement>(null)
   const hostRef = useRef<HTMLDivElement>(null)
+  const uploadInputRef = useRef<HTMLInputElement>(null)
   const pasteTriggerRef = useRef<HTMLButtonElement>(null)
   const [session, setSession] = useState<TerminalSession | null>(null)
   const [ctrl, setCtrl] = useState(false)
@@ -532,6 +533,24 @@ export function TerminalView({
             onClick={() => setAlt((value) => !value)}
           >
             Alt
+          </Button>
+          <input
+            ref={uploadInputRef}
+            type="file"
+            multiple
+            hidden
+            onChange={(event) => {
+              const files = Array.from(event.currentTarget.files ?? [])
+              event.currentTarget.value = ''
+              activeSession?.pasteFiles(files)
+            }}
+          />
+          <Button
+            variant="ghost"
+            type="button"
+            onClick={() => uploadInputRef.current?.click()}
+          >
+            Upload
           </Button>
           <Button
             ref={pasteTriggerRef}

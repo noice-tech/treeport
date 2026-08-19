@@ -96,7 +96,9 @@ Select **Copy** or **Clear** when the selection controls appear.
 
 Use the **Paste** terminal control to open the paste interface.
 
-Alternatively, touch and hold with two fingers.
+Use the **Upload** terminal control to choose one or more photos or files.
+
+Alternatively, touch and hold with two fingers to open the paste interface.
 
 If the browser cannot read the clipboard, paste into the editable field. Then, send the text from that field.
 
@@ -114,7 +116,7 @@ A `file:` link opens in the default system application only in the macOS desktop
 
 A browser client does not open terminal `file:` links.
 
-### Drop or paste files
+### Drop, paste, or upload files
 
 Take control before you drop files on a terminal. Also take control before you paste files or clipboard images.
 
