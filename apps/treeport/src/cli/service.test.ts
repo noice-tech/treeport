@@ -9,14 +9,115 @@ import {
   createLaunchdDefinition,
   createServiceEnvironment,
   createSystemdDefinition,
+  launchdLocation,
   serializeLaunchdDefinition,
-  serializeSystemdDefinition
+  serializeSystemdDefinition,
+  storedServiceMode,
+  userLaunchdCommands
 } from './service.js'
 
 const execute = promisify(execFile)
 
 describe('OS service definitions', () => {
-  it('keeps Treeport under the target account and preserves tmux processes on macOS', () => {
+  it('uses a per-user LaunchAgent for the normal macOS service lifecycle', () => {
+    const home = '/Users/tree port'
+    const location = launchdLocation({ uid: 501, home, mode: 'user' })
+    const definition = createLaunchdDefinition({
+      label: location.name,
+      mode: 'user',
+      runnerPath:
+        '/Users/tree port/Library/Application Support/treeport/service/run',
+      username: 'treeport',
+      group: 'staff',
+      environment: {
+        HOME: home,
+        PATH: '/opt/tree port/bin:/usr/bin'
+      },
+      home,
+      logPath:
+        '/Users/tree port/Library/Application Support/treeport/logs/daemon.log'
+    })
+
+    expect(location).toEqual({
+      name: 'app.treeport.daemon.501',
+      path: '/Users/tree port/Library/LaunchAgents/app.treeport.daemon.501.plist',
+      domain: 'gui/501',
+      target: 'gui/501/app.treeport.daemon.501'
+    })
+    expect(definition).toMatchObject({
+      mode: 'user',
+      username: null,
+      group: null,
+      keepAlive: true,
+      abandonProcessGroup: true
+    })
+    const plist = serializeLaunchdDefinition(definition)
+    expect(plist).not.toContain('<key>UserName</key>')
+    expect(plist).not.toContain('<key>GroupName</key>')
+    expect(plist).toContain('<key>KeepAlive</key>\n    <true/>')
+
+    const lifecycle = [
+      userLaunchdCommands({
+        operation: 'enable',
+        location,
+        definitionPath: location.path
+      }),
+      userLaunchdCommands({
+        operation: 'start',
+        location,
+        definitionPath: location.path,
+        active: false
+      }),
+      userLaunchdCommands({
+        operation: 'start',
+        location,
+        definitionPath: location.path,
+        active: true
+      }),
+      userLaunchdCommands({
+        operation: 'stop',
+        location,
+        definitionPath: location.path
+      }),
+      userLaunchdCommands({
+        operation: 'disable',
+        location,
+        definitionPath: location.path
+      })
+    ]
+    expect(lifecycle).toEqual([
+      {
+        bootout: ['bootout', location.target],
+        enable: ['enable', location.target],
+        activate: ['bootstrap', location.domain, location.path]
+      },
+      {
+        bootout: null,
+        enable: ['enable', location.target],
+        activate: ['bootstrap', location.domain, location.path]
+      },
+      {
+        bootout: null,
+        enable: ['enable', location.target],
+        activate: ['kickstart', '-k', location.target]
+      },
+      {
+        bootout: ['bootout', location.target],
+        enable: null,
+        activate: null
+      },
+      {
+        bootout: ['bootout', location.target],
+        enable: null,
+        activate: null
+      }
+    ])
+    expect(JSON.stringify(lifecycle)).not.toMatch(
+      /sudo|--request|LaunchDaemons/
+    )
+  })
+
+  it('keeps advanced headless compatibility under the target macOS account', () => {
     const environment = {
       HOME: '/Users/tree port',
       PATH: '/opt/tree port/bin:/usr/bin',
@@ -24,6 +125,7 @@ describe('OS service definitions', () => {
     }
     const definition = createLaunchdDefinition({
       label: 'app.treeport.daemon.501',
+      mode: 'headless',
       runnerPath:
         '/Users/tree port/Library/Application Support/treeport/service/run',
       username: 'treeport',
@@ -54,6 +156,25 @@ describe('OS service definitions', () => {
     expect(plist).toContain(
       '<string>/Users/tree port/Library/Application Support/treeport/service/run</string>'
     )
+  })
+
+  it('recognizes released service records as their compatible service modes', () => {
+    expect(storedServiceMode({ manager: 'launchd' })).toBe('headless')
+    expect(storedServiceMode({ manager: 'systemd' })).toBe('user')
+    expect(storedServiceMode({ manager: 'launchd', mode: 'user' })).toBe('user')
+
+    expect(
+      launchdLocation({
+        uid: 501,
+        home: '/Users/treeport',
+        mode: storedServiceMode({ manager: 'launchd' })
+      })
+    ).toEqual({
+      name: 'app.treeport.daemon.501',
+      path: '/Library/LaunchDaemons/app.treeport.daemon.501.plist',
+      domain: 'system',
+      target: 'system/app.treeport.daemon.501'
+    })
   })
 
   it('restarts the direct daemon process without killing tmux on systemd', () => {

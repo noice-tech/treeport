@@ -144,10 +144,19 @@ async function resolveDaemonLifecycle(): Promise<
 }
 
 function formatServiceStatus(status: ServiceStatus): string {
+  const mode =
+    status.mode === 'headless'
+      ? 'advanced headless (starts before login)'
+      : status.mode === 'user' && status.manager === 'launchd'
+        ? 'user/login (starts after login)'
+        : status.mode === 'user'
+          ? 'user service'
+          : 'not installed'
   const lines = [
     `Treeport service: ${status.state}`,
+    `Mode: ${mode}`,
     `Manager: ${status.manager ?? 'unsupported'}`,
-    `Starts at boot: ${status.enabledAtBoot ? 'yes' : 'no'}`,
+    `Starts before login: ${status.enabledAtBoot ? 'yes' : 'no'}`,
     `Active: ${status.active ? 'yes' : 'no'}`,
     `Definition: ${status.definitionPath ?? 'not installed'}`
   ]
@@ -1143,10 +1152,15 @@ async function main(args: string[]): Promise<void> {
 
   const serviceEnableCommand = serviceCommand
     .command('enable')
-    .description('Enable startup after reboot and unexpected-exit restarts')
+    .description('Enable automatic startup and unexpected-exit restarts')
+    .option(
+      '--headless',
+      'use advanced macOS startup before login (requires an administrator)'
+    )
     .option('--json', 'emit machine-readable JSON')
   serviceEnableCommand.action(async () => {
-    const result = await serviceEnable()
+    const options = serviceEnableCommand.opts<{ headless?: boolean }>()
+    const result = await serviceEnable(options.headless ? 'headless' : 'user')
     print(result, () => formatServiceStatus(result.status))
     if (result.status.state === 'action_required') {
       requestedExitCode = 1

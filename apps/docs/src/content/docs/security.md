@@ -41,7 +41,11 @@ On a virtual private server, keep the daemon on loopback. Use Tailscale Serve as
 
 Service mode does not change the network boundary. The backend continues to listen only on loopback.
 
-On macOS, an administrator installs a system LaunchDaemon definition. launchd runs Treeport as the user who enabled it.
+On macOS, normal service mode uses a per-user LaunchAgent and does not require administrator access.
+
+Advanced headless mode uses a system LaunchDaemon. An administrator must approve changes to its root-owned definition.
+
+Both macOS modes run Treeport as the user who enabled the service.
 
 On Linux, Treeport uses the systemd manager for that user. The backend never runs as the root user.
 

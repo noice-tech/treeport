@@ -1,11 +1,11 @@
 ---
 title: Service supervision
-description: Start Treeport after a reboot and restart it after an unexpected exit.
+description: Start Treeport after login and restart it after an unexpected exit.
 ---
 
 Treeport usually starts a background daemon when you open a folder or run `treeport start`.
 
-Enable service mode when the host must recover without a user login:
+Enable service mode when Treeport must restart after an unexpected exit:
 
 ```sh
 treeport service enable
@@ -17,33 +17,67 @@ The supervised backend runs as your user and listens only on loopback.
 
 It uses the same data, projects, trees, terminals, listener, and Tailscale Serve route as the standard background daemon.
 
-## macOS
+## macOS user/login mode
 
-Treeport uses a system LaunchDaemon to start before GUI login.
+The normal macOS service is a per-user LaunchAgent.
 
-Run `treeport service enable` as the user who owns the Treeport data. Do not run this command as the root user.
+It starts after you log in to macOS. launchd restarts it after an unexpected exit.
 
-Treeport prepares the service definition and prints one administrator command. For a curl installation, the command has this form:
+Enable it as the user who owns the Treeport data:
+
+```sh
+treeport service enable
+```
+
+This command does not use `sudo`. It does not create an administrator request.
+
+Normal start, stop, disable, and curl update operations do not need an administrator.
+
+## Advanced macOS headless mode
+
+Use advanced headless mode only when Treeport must start before a user logs in.
+
+Enable this mode explicitly:
+
+```sh
+treeport service enable --headless
+```
+
+This option prepares a system LaunchDaemon. It tells you that an administrator must approve the system change.
+
+Treeport prints one administrator command. The command has this form for a curl installation:
 
 ```sh
 sudo '/absolute/path/to/treeport' service apply --request '/absolute/path/to/request.json'
 ```
 
-An npm installation can include the absolute Node.js runtime and package CLI entry point.
+Run `treeport service enable --headless` as the Treeport data owner. Do not run it as the root user.
 
-An administrator can run the printed command from another account. The command does not depend on the administrator account's `PATH`.
+An administrator can run the printed command from a different account.
 
-The command uses the Node.js runtime and Treeport installation that the Treeport owner selected.
+The LaunchDaemon starts Treeport as the data owner. The backend does not run as the root user.
 
-The administrator installs the system definition. The definition instructs launchd to run Treeport as the original user.
+Treeport can also print an administrator command after start, stop, or disable operations in advanced headless mode.
 
-The backend does not run as the root user.
+Administrator requests expire. If a request expires, run the original Treeport command again.
 
-Treeport can also print an administrator command after `treeport start`, `treeport stop`, or `treeport service disable`.
+Normal service commands do not select advanced headless mode automatically.
 
-This occurs when the command must change the system LaunchDaemon. Administrator requests expire.
+## Existing macOS LaunchDaemons
 
-If a request expires, run the original Treeport command again.
+Treeport identifies an existing system LaunchDaemon as advanced headless mode.
+
+Status, start, stop, and disable operations continue to use the protected administrator approval process.
+
+A package update does not rewrite the system definition when its stable Treeport entrypoint is still valid.
+
+To migrate to user/login mode:
+
+1. Run `treeport service disable`.
+2. Complete the administrator action that Treeport prints.
+3. Run `treeport service enable`.
+
+Treeport never removes a root-owned LaunchDaemon without administrator approval.
 
 ## Linux
 
@@ -51,7 +85,9 @@ Treeport uses a systemd user service. It enables and starts `treeport.service` t
 
 User lingering is necessary for startup after a reboot without login.
 
-If lingering is off, `treeport service enable` starts Treeport for the current session. It also prints this administrator command:
+If lingering is off, `treeport service enable` starts Treeport for the current session.
+
+It also prints this administrator command:
 
 ```sh
 sudo loginctl enable-linger <user>
@@ -80,9 +116,9 @@ treeport stop
 
 These commands use the operating-system service manager.
 
-The stop command prevents an immediate automatic restart. It keeps startup after a reboot enabled.
+The stop command prevents an immediate automatic restart. It keeps automatic startup enabled.
 
-The start command starts the service again. If the host reboots while Treeport is stopped, the operating system starts it.
+The start command starts the service again.
 
 A normal stop or service removal keeps Treeport tmux sessions.
 
@@ -103,6 +139,12 @@ treeport doctor
 treeport logs
 ```
 
+The service status shows one of these modes:
+
+- user/login mode on macOS;
+- advanced headless mode on macOS;
+- user service mode on Linux.
+
 The service status has these possible conditions:
 
 - disabled;
@@ -115,13 +157,17 @@ The service status has these possible conditions:
 
 `treeport service status` exits with code `1` when an administrator action or repair is necessary.
 
-Use `--json` for structured output. An intentionally stopped service is valid and exits successfully.
+Use `--json` for structured output. The `mode` field is `user`, `headless`, or `null` when disabled.
+
+An intentionally stopped service is valid and exits successfully.
 
 On macOS, `treeport logs` reads the Treeport daemon log.
 
 On Linux, it reads the systemd user journal for `treeport.service`.
 
-Run `treeport service enable` again when the status reports a stale definition, environment, or installation path.
+When the status reports stale configuration, run the applicable enable command again.
+
+Use `--headless` only to repair an advanced headless installation.
 
 ## Recover after an unexpected exit
 
@@ -133,15 +179,19 @@ The service manager stops only the daemon process. Treeport tmux servers continu
 
 Terminals connect again when the replacement daemon is healthy.
 
-## Restore remote access after a reboot
+## Restore remote access
 
 Service mode restores only the loopback daemon. It does not create or change remote access.
 
 If you enabled remote access, Tailscale Serve keeps its route separately.
 
-After a reboot, the same private URL works when the supervised daemon is healthy. See [Remote access](/features/remote-access/).
+The same private URL works when the supervised daemon is healthy. See [Remote access](/features/remote-access/).
 
 ## Update or remove Treeport
+
+For a curl update, run the curl installer again.
+
+The installer stops and starts a running user/login service without an administrator action.
 
 For an npm update, run:
 
@@ -151,9 +201,7 @@ npm install --global @treeport/treeport@latest
 treeport start
 ```
 
-If the npm prefix or Node.js installation changes, run `treeport service enable` again.
-
-This command updates the stable CLI path and service environment.
+If the npm prefix or Node.js installation changes, run the applicable service enable command again.
 
 Disable service mode before you remove the npm package:
 
@@ -164,10 +212,10 @@ npm uninstall --global @treeport/treeport
 
 npm does not have a reliable removal hook.
 
-If you remove the package first, the service runner stops safely and writes a recovery message. It does not start an incomplete daemon.
+If you remove the package first, the service runner stops safely and writes a recovery message.
 
 Reinstall Treeport. Then, enable service mode to repair it or disable service mode to remove it.
 
-The curl removal program checks service mode.
+The curl removal program checks service mode before it removes package files.
 
-On macOS, it can stop and ask for an administrator action. Complete that action, and then run the removal program again.
+Advanced headless mode can require an administrator action during removal.
