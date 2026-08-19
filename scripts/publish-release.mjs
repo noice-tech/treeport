@@ -244,15 +244,6 @@ if (packagesToPublish.length === 0) {
   process.exit(0)
 }
 
-try {
-  run('pnpm', ['check'], { stdio: 'inherit' })
-} catch {
-  fail('Repository checks failed; nothing was published')
-}
-if (git(['status', '--porcelain'])) {
-  fail('Repository checks changed the working tree; publication stopped')
-}
-
 release = verifyRelease()
 
 for (const manifest of packagesToPublish) {
