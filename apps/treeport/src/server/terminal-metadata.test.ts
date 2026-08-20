@@ -430,6 +430,62 @@ describe('TerminalMetadataManager', () => {
     expect(manager.get(shellWrapped.id).title).toBe('Remotion Studio')
   })
 
+  it('switches a command terminal to shell title tracking after fallback starts', async () => {
+    vi.useFakeTimers()
+    const item = {
+      ...terminal('one'),
+      argv: ['/opt/custom/fish', '-lc', 'bun remotion'],
+      shellCommand: 'bun remotion'
+    }
+    const { manager, sessionTitleState } = fixture([item])
+    managers.push(manager)
+    sessionTitleState.mockResolvedValue({
+      paneTitle: 'Treeport launcher',
+      currentCommand: 'bun',
+      commandLine: null,
+      fallbackShell: null
+    })
+
+    await manager.initialize()
+    expect(manager.get(item.id).title).toBe('bun remotion')
+
+    sessionTitleState.mockResolvedValue({
+      paneTitle: 'fish · /repo',
+      currentCommand: 'fish',
+      commandLine: null,
+      fallbackShell: '/opt/custom/fish'
+    })
+    await vi.advanceTimersByTimeAsync(TERMINAL_METADATA_POLL_MS)
+    expect(manager.get(item.id)).toMatchObject({
+      title: 'fish · /repo',
+      hasForegroundProcess: false
+    })
+
+    sessionTitleState.mockResolvedValue({
+      paneTitle: 'pnpm test',
+      currentCommand: 'node',
+      commandLine: 'pnpm test',
+      fallbackShell: '/opt/custom/fish'
+    })
+    await vi.advanceTimersByTimeAsync(TERMINAL_METADATA_POLL_MS)
+    expect(manager.get(item.id)).toMatchObject({
+      title: 'pnpm test',
+      hasForegroundProcess: true
+    })
+
+    sessionTitleState.mockResolvedValue({
+      paneTitle: 'fish · /repo',
+      currentCommand: 'fish',
+      commandLine: null,
+      fallbackShell: '/opt/custom/fish'
+    })
+    await vi.advanceTimersByTimeAsync(TERMINAL_METADATA_POLL_MS)
+    expect(manager.get(item.id)).toMatchObject({
+      title: 'fish · /repo',
+      hasForegroundProcess: false
+    })
+  })
+
   it('shows the captured command, permits an application title, and restores the shell title', async () => {
     vi.useFakeTimers()
     const item = {

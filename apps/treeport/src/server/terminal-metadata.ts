@@ -820,6 +820,17 @@ export class TerminalMetadataManager {
   ): void {
     const paneTitle = state.paneTitle?.trim().slice(0, 256) || null
     const currentCommand = state.currentCommand?.trim().slice(0, 256) || null
+    const fallbackShellCommand = path
+      .basename(state.fallbackShell ?? '')
+      .replace(/^-/, '')
+      .replace(/\p{Cc}/gu, '')
+      .trim()
+      .slice(0, 256)
+    if (fallbackShellCommand) {
+      entry.launchCommandLine = null
+      entry.interactiveShellCommand = fallbackShellCommand
+    }
+
     const commandLine =
       state.commandLine?.trim().slice(0, 256) || entry.launchCommandLine
     const previousCommand = entry.currentCommand

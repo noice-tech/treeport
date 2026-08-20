@@ -100,7 +100,7 @@ describe('terminal launcher setup pipeline', () => {
       argv: string[]
       env: NodeJS.ProcessEnv
     }> = []
-    const results = [23, 0]
+    const results = [23, 0, 0]
     const spawnProcess = vi.fn(
       (
         executable: string,
@@ -124,16 +124,27 @@ describe('terminal launcher setup pipeline', () => {
         }),
         {
           spawnProcess,
-          signalSource: new EventEmitter()
+          signalSource: new EventEmitter(),
+          tmuxPane: '%7'
         }
       )
     ).resolves.toBe(0)
     expect(calls.map((call) => call.argv)).toEqual([
       ['final', 'hostile;argument'],
+      [
+        '/opt/treeport/tmux',
+        'set-option',
+        '-p',
+        '-t',
+        '%7',
+        '--',
+        '@treeport-fallback-shell',
+        Buffer.from(JSON.stringify('/bin/zsh'), 'utf8').toString('base64url')
+      ],
       ['/bin/zsh', '-l']
     ])
     expect(calls[0]?.env).not.toHaveProperty('TREEPORT_USER_ZDOTDIR')
-    expect(calls[1]?.env).toMatchObject({
+    expect(calls[2]?.env).toMatchObject({
       TREEPORT_USER_ZDOTDIR: '/home/user/.config/zsh',
       TREEPORT_TMUX_EXECUTABLE: '/opt/treeport/tmux',
       ZDOTDIR: '/treeport/integration/zsh'

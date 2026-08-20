@@ -42,6 +42,7 @@ export interface TmuxSessionTitleState {
   currentCommand: string | null
   commandLine?: string | null
   shellTitle?: string | null
+  fallbackShell?: string | null
 }
 
 export interface TmuxTerminalSession {
@@ -353,12 +354,12 @@ export class TmuxAdapter {
           spec.fallbackArgv = [...input.fallbackArgv]
         }
 
+        spec.tmuxExecutable = resolveExecutablePath(
+          this.executable,
+          this.hostEnvironment
+        )
         if (shellIntegrationReady) {
           spec.shellIntegrationDir = this.shellIntegrationDir
-          spec.tmuxExecutable = resolveExecutablePath(
-            this.executable,
-            this.hostEnvironment
-          )
         }
 
         if (input.setupTasks?.length) {
@@ -830,7 +831,7 @@ export class TmuxAdapter {
         '-p',
         '-t',
         sessionName,
-        '#{@treeport-shell-title}\t#{pane_current_command}\t#{@treeport-command}\t#{pane_title}'
+        '#{@treeport-fallback-shell}\t#{@treeport-shell-title}\t#{pane_current_command}\t#{@treeport-command}\t#{pane_title}'
       ],
       env: this.environment(),
       timeoutMs: 10_000
@@ -842,28 +843,45 @@ export class TmuxAdapter {
     const firstSeparator = result.stdout.indexOf('\t')
     const secondSeparator = result.stdout.indexOf('\t', firstSeparator + 1)
     const thirdSeparator = result.stdout.indexOf('\t', secondSeparator + 1)
+    const fourthSeparator = result.stdout.indexOf('\t', thirdSeparator + 1)
     if (
       firstSeparator === -1 ||
       secondSeparator === -1 ||
-      thirdSeparator === -1
+      thirdSeparator === -1 ||
+      fourthSeparator === -1
     ) {
       return null
     }
 
-    const encodedShellTitle = result.stdout.slice(0, firstSeparator).trim()
+    let fallbackShell: string | null = null
     let shellTitle: string | null = null
     try {
-      shellTitle = decodeMetadata(encodedShellTitle, z.string()) ?? null
+      fallbackShell =
+        decodeMetadata(
+          result.stdout.slice(0, firstSeparator).trim(),
+          z.string()
+        ) ?? null
+      shellTitle =
+        decodeMetadata(
+          result.stdout.slice(firstSeparator + 1, secondSeparator).trim(),
+          z.string()
+        ) ?? null
     } catch {
       // Ignore malformed optional metadata from an external session.
     }
 
     const currentCommand =
-      result.stdout.slice(firstSeparator + 1, secondSeparator).trim() || null
-    const commandLine =
       result.stdout.slice(secondSeparator + 1, thirdSeparator).trim() || null
-    const paneTitle = result.stdout.slice(thirdSeparator + 1).trim() || null
-    return { paneTitle, currentCommand, commandLine, shellTitle }
+    const commandLine =
+      result.stdout.slice(thirdSeparator + 1, fourthSeparator).trim() || null
+    const paneTitle = result.stdout.slice(fourthSeparator + 1).trim() || null
+    return {
+      paneTitle,
+      currentCommand,
+      commandLine,
+      shellTitle,
+      fallbackShell
+    }
   }
 
   async setSessionShellTitle(

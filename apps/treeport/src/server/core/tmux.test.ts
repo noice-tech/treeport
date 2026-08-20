@@ -482,7 +482,7 @@ describe('TmuxAdapter', () => {
     const encode = (value: string) =>
       Buffer.from(JSON.stringify(value), 'utf8').toString('base64url')
     runner.responses.push({
-      stdout: `${encode(shellTitle)}\tnode\tpnpm dev\t${shellTitle}\n`,
+      stdout: `${encode('/bin/zsh')}\t${encode(shellTitle)}\tnode\tpnpm dev\t${shellTitle}\n`,
       stderr: '',
       exitCode: 0
     })
@@ -494,10 +494,11 @@ describe('TmuxAdapter', () => {
       paneTitle: shellTitle,
       currentCommand: 'node',
       commandLine: 'pnpm dev',
-      shellTitle
+      shellTitle,
+      fallbackShell: '/bin/zsh'
     })
     expect(runner.calls[0]!.args).toContain(
-      '#{@treeport-shell-title}\t#{pane_current_command}\t#{@treeport-command}\t#{pane_title}'
+      '#{@treeport-fallback-shell}\t#{@treeport-shell-title}\t#{pane_current_command}\t#{@treeport-command}\t#{pane_title}'
     )
   })
 
