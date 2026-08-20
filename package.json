@@ -10,7 +10,7 @@
     "dev:desktop": "pnpm dev",
     "dev:docs": "pnpm --filter @treeport/docs start",
     "build": "turbo run build",
-    "check": "turbo run fmt:check lint typecheck test:unit test:integration test:desktop --ui=stream && turbo run test:package --ui=stream && pnpm --filter @treeport/docs build",
+    "check": "pnpm knip && turbo run fmt:check lint typecheck test:unit test:integration test:desktop --ui=stream && turbo run test:package --ui=stream && pnpm --filter @treeport/docs build",
     "ci:local": "bash scripts/ci-local.sh",
     "release:prepare": "node scripts/prepare-release.mjs",
     "release:publish": "node scripts/publish-release.mjs",

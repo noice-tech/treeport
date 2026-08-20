@@ -143,7 +143,7 @@ interface FakeWorktree {
   prunable?: boolean
 }
 
-export class SystemDouble implements CommandRunner {
+class SystemDouble implements CommandRunner {
   readonly calls: CommandRequest[] = []
   readonly worktrees: FakeWorktree[]
   readonly sessions = new Map<
