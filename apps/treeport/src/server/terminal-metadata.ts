@@ -38,23 +38,6 @@ const PROGRAM_COMMANDS = new Map<string, TerminalProgram>([
   ['codex', 'codex']
 ])
 
-const SHELL_COMMANDS = new Set([
-  'ash',
-  'bash',
-  'csh',
-  'dash',
-  'elvish',
-  'fish',
-  'ksh',
-  'mksh',
-  'nu',
-  'pwsh',
-  'sh',
-  'tcsh',
-  'xonsh',
-  'zsh'
-])
-
 type MetadataListener = (metadata: TerminalRuntimeMetadata) => void
 type HistoryListener = (viewing: boolean) => void
 
@@ -85,7 +68,7 @@ interface TerminalMetadataEntry extends TerminalRuntimeMetadata {
   currentCommand: string | null
   commandLine: string | null
   launchCommandLine: string | null
-  shellCommand: string | null
+  interactiveShellCommand: string | null
   launchProgram: TerminalProgram | null
   shellTitle: string | null
   persistedShellTitle: string | null
@@ -237,16 +220,22 @@ export class TerminalMetadataManager {
 
     if (!entry) {
       const launchCommand = path
-        .basename(terminal.argv?.[0] ?? '')
+        .basename(terminal.argv[0] ?? '')
         .replace(/^-/, '')
-      const launchProgram = PROGRAM_COMMANDS.get(launchCommand) ?? null
-      const shellCommand = SHELL_COMMANDS.has(launchCommand)
+      const launchProgram =
+        !terminal.interactiveShell && terminal.shellCommand === null
+          ? (PROGRAM_COMMANDS.get(launchCommand) ?? null)
+          : null
+      const interactiveShellCommand = terminal.interactiveShell
         ? launchCommand
         : null
-      const launchCommandLine = shellCommand
+      const launchCommandLine = terminal.interactiveShell
         ? null
-        : formatCommandLine(
-            terminal.argv.map((value) => value.replace(/\p{Cc}/gu, ''))
+        : (
+            terminal.shellCommand?.replace(/\p{Cc}/gu, '') ??
+            formatCommandLine(
+              terminal.argv.map((value) => value.replace(/\p{Cc}/gu, ''))
+            )
           )
             .trim()
             .slice(0, 256) || null
@@ -281,7 +270,7 @@ export class TerminalMetadataManager {
         currentCommand: null,
         commandLine: null,
         launchCommandLine,
-        shellCommand,
+        interactiveShellCommand,
         launchProgram,
         shellTitle: null,
         persistedShellTitle: null,
@@ -866,10 +855,14 @@ export class TerminalMetadataManager {
       null
     this.update(entry, {
       program:
-        observedProgram ?? (!entry.shellCommand ? entry.launchProgram : null)
+        observedProgram ??
+        (!entry.interactiveShellCommand ? entry.launchProgram : null)
     })
 
-    if (entry.shellCommand && currentCommand === entry.shellCommand) {
+    if (
+      entry.interactiveShellCommand &&
+      currentCommand === entry.interactiveShellCommand
+    ) {
       const applicationTitleWasActive = entry.applicationTitleActive
       const freshShellTitle =
         observedTitlePending || (previousCommand !== null && paneTitleChanged)
@@ -897,7 +890,7 @@ export class TerminalMetadataManager {
           paneTitle !== null && paneTitle !== commandLine
       } else if (commandLineChanged) {
         entry.applicationTitleActive =
-          entry.shellCommand !== null &&
+          entry.interactiveShellCommand !== null &&
           previousCommand === null &&
           paneTitle !== null &&
           paneTitle !== commandLine &&
@@ -914,7 +907,7 @@ export class TerminalMetadataManager {
       return
     }
 
-    if (!entry.shellCommand) {
+    if (!entry.interactiveShellCommand) {
       this.update(entry, { title: paneTitle ?? currentCommand })
       return
     }
@@ -967,7 +960,7 @@ export class TerminalMetadataManager {
           ? false
           : command === null
             ? null
-            : command !== entry.shellCommand
+            : command !== entry.interactiveShellCommand
     })
   }
 

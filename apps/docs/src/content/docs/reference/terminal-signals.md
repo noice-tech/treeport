@@ -33,11 +33,13 @@ Treeport keeps your shell startup files when it installs these hooks.
 
 Nushell keeps its native title behavior.
 
-Other shells and noninteractive commands use the foreground executable name.
+A terminal started with a command uses that command as the initial title.
+
+Other interactive shells use the foreground executable name.
 
 This fallback also applies when Bash configuration replaces the one-time Treeport prompt setup.
 
-An application can send a more useful title with OSC `0` or `2`.
+An application can replace the initial title with a more useful OSC `0` or `2` title.
 
 A current application title has priority over a captured shell command.
 

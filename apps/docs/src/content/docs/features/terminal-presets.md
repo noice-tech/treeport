@@ -112,7 +112,7 @@ A simple command, such as `pnpm`, starts directly with its arguments.
 
 A command with shell syntax runs through the configured shell. For example, `pnpm build && pnpm test` uses a shell.
 
-Explicit `args` keep their argument boundaries. The picker shows the actual shell command before start.
+Explicit `args` keep their argument boundaries. The picker shows the resolved Zed command before start.
 
 Treeport does not support the Zed `shell` field.
 

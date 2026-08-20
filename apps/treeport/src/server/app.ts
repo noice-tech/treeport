@@ -742,6 +742,10 @@ export function createApp({
           options.env = body.env
         }
 
+        if (body.shellCommand) {
+          options.shellCommand = body.shellCommand
+        }
+
         const terminal = await service.createTerminal(
           context.req.param('worktreeId'),
           body.name,

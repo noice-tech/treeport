@@ -18,8 +18,10 @@ import {
   DialogDescription,
   DialogTitle
 } from '../../components/ui/dialog'
-import { formatCommandLine } from '../../command-line'
-import { terminalPresetProvenance } from '../../terminal-preset-definition'
+import {
+  terminalPresetCommand,
+  terminalPresetProvenance
+} from '../../terminal-preset-definition'
 import type { CreateTerminalInput } from '../terminals/terminal-workspace'
 
 export function NewPanelDialog({
@@ -62,9 +64,9 @@ export function NewPanelDialog({
   const filteredPresets = presets.filter((preset) =>
     [
       preset.name,
-      preset.executable,
+      preset.executable ?? '',
       terminalPresetProvenance(preset),
-      formatCommandLine([preset.executable, ...preset.args])
+      terminalPresetCommand(preset)
     ].some((value) => value.toLocaleLowerCase().includes(normalizedQuery))
   )
   const filteredWebPanelDefinitions = webPanelDefinitions.filter((definition) =>
@@ -212,10 +214,7 @@ export function NewPanelDialog({
             {filteredPresets.map((preset, index) => {
               const actionIndex = index + (showShell ? 1 : 0)
               const provenance = terminalPresetProvenance(preset)
-              const command = formatCommandLine([
-                preset.executable,
-                ...preset.args
-              ])
+              const command = terminalPresetCommand(preset)
               return (
                 <Button
                   key={preset.id}
@@ -232,9 +231,16 @@ export function NewPanelDialog({
                     setQuery('')
                     setSelectedIndex(0)
                     const input: CreateTerminalInput = {
-                      name: preset.name,
-                      argv: [preset.executable, ...preset.args]
+                      name: preset.name
                     }
+                    if (preset.shellCommand !== null) {
+                      input.shellCommand = preset.shellCommand
+                    } else if (preset.executable) {
+                      input.argv = [preset.executable, ...preset.args]
+                    } else {
+                      return
+                    }
+
                     if (preset.cwd) {
                       input.cwd = preset.cwd
                     }

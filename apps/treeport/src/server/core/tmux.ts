@@ -50,6 +50,8 @@ export interface TmuxTerminalSession {
   name: string
   sessionName: string
   argv: string[]
+  shellCommand: string | null
+  interactiveShell: boolean
   closeOnSuccess: boolean
   status: Exclude<TerminalStatus, 'missing'>
   exitCode: number | null
@@ -67,6 +69,8 @@ export interface TmuxTerminalMetadata {
   worktreeId: string
   name: string
   argv: string[]
+  shellCommand: string | null
+  interactiveShell: boolean
   closeOnSuccess: boolean
   createdAt: string
   updatedAt: string
@@ -77,6 +81,7 @@ interface DecodedTmuxMetadata {
   worktreeId: string
   name: string | undefined
   argv: string[] | undefined
+  shellCommand: string | null | undefined
   createdAt: string | undefined
   updatedAt: string | undefined
 }
@@ -252,6 +257,8 @@ export class TmuxAdapter {
     createdAt: string
     cwd: string
     argv: string[]
+    shellCommand: string | null
+    interactiveShell: boolean
     fallbackArgv?: string[]
     closeOnSuccess?: boolean
     initialSize?: TerminalSize
@@ -400,6 +407,8 @@ export class TmuxAdapter {
           worktreeId: input.worktreeId,
           name: input.name,
           argv: input.argv,
+          shellCommand: input.shellCommand,
+          interactiveShell: input.interactiveShell,
           closeOnSuccess: input.closeOnSuccess ?? false,
           createdAt: input.createdAt,
           updatedAt: input.createdAt
@@ -458,6 +467,8 @@ export class TmuxAdapter {
     const values = [
       ['@treeport-name', encodeMetadata(metadata.name)],
       ['@treeport-argv', encodeMetadata(metadata.argv)],
+      ['@treeport-shell-command', encodeMetadata(metadata.shellCommand)],
+      ['@treeport-interactive-shell', metadata.interactiveShell ? '1' : '0'],
       ['@treeport-close-on-success', metadata.closeOnSuccess ? '1' : '0'],
       ['@treeport-created-at', encodeMetadata(metadata.createdAt)],
       ['@treeport-updated-at', encodeMetadata(metadata.updatedAt)],
@@ -522,7 +533,7 @@ export class TmuxAdapter {
         'list-panes',
         '-a',
         '-F',
-        '#{session_name}\t#{@treeport-terminal-id}\t#{@treeport-worktree-id}\t#{@treeport-name}\t#{@treeport-argv}\t#{@treeport-close-on-success}\t#{@treeport-created-at}\t#{@treeport-updated-at}\t#{session_created}\t#{pane_dead}\t#{pane_dead_status}'
+        '#{session_name}\t#{@treeport-terminal-id}\t#{@treeport-worktree-id}\t#{@treeport-name}\t#{@treeport-argv}\t#{@treeport-shell-command}\t#{@treeport-interactive-shell}\t#{@treeport-close-on-success}\t#{@treeport-created-at}\t#{@treeport-updated-at}\t#{session_created}\t#{pane_dead}\t#{pane_dead_status}'
       ],
       env: this.environment(),
       timeoutMs: 10_000
@@ -550,6 +561,8 @@ export class TmuxAdapter {
         worktreeId,
         encodedName,
         encodedArgv,
+        encodedShellCommand,
+        encodedInteractiveShell,
         closeOnSuccess,
         encodedCreatedAt,
         encodedUpdatedAt,
@@ -573,10 +586,27 @@ export class TmuxAdapter {
           worktreeId,
           name: decodeMetadata(encodedName ?? '', z.string()),
           argv: decodeMetadata(encodedArgv ?? '', z.array(z.string())),
+          shellCommand: decodeMetadata(
+            encodedShellCommand ?? '',
+            z.string().nullable()
+          ),
           createdAt: decodeMetadata(encodedCreatedAt ?? '', z.string()),
           updatedAt: decodeMetadata(encodedUpdatedAt ?? '', z.string())
         }
       } catch {
+        continue
+      }
+
+      const interactiveShell =
+        encodedInteractiveShell === '1'
+          ? true
+          : encodedInteractiveShell === '0'
+            ? false
+            : undefined
+      if (
+        metadata.shellCommand === undefined ||
+        interactiveShell === undefined
+      ) {
         continue
       }
 
@@ -592,6 +622,8 @@ export class TmuxAdapter {
         name: metadata.name ?? sessionName,
         sessionName,
         argv: metadata.argv ?? [],
+        shellCommand: metadata.shellCommand,
+        interactiveShell,
         closeOnSuccess: closeOnSuccess === '1',
         status: dead ? 'exited' : 'running',
         exitCode: Number.isNaN(exitCode) ? null : exitCode,

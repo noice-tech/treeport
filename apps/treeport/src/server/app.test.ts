@@ -786,6 +786,19 @@ describe('HTTP API validation', () => {
       }
     )
     expect(invalidEnvironment.status).toBe(400)
+    const ambiguousCommand = await app.request(
+      '/api/worktrees/wt_1/terminals',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          name: 'bad command',
+          argv: ['bun'],
+          shellCommand: 'bun remotion'
+        })
+      }
+    )
+    expect(ambiguousCommand.status).toBe(400)
     expect(service.createTerminal).not.toHaveBeenCalled()
   })
 
@@ -831,6 +844,23 @@ describe('HTTP API validation', () => {
       'Open editor',
       ['code', '.'],
       { closeOnSuccess: true }
+    )
+
+    const shellCommand = await app.request('/api/worktrees/wt_1/terminals', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        name: 'Remotion',
+        shellCommand: 'bun remotion',
+        returnToShell: true
+      })
+    })
+    expect(shellCommand.status).toBe(201)
+    expect(service.createTerminal).toHaveBeenLastCalledWith(
+      'wt_1',
+      'Remotion',
+      undefined,
+      { returnToShell: true, shellCommand: 'bun remotion' }
     )
   })
 

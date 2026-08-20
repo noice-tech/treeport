@@ -102,6 +102,7 @@ interface TerminalLaunchOptions {
   initialSize?: TerminalSize
   cwd?: string
   env?: Record<string, string>
+  shellCommand?: string
 }
 
 function mapWebPanel(
@@ -751,6 +752,8 @@ export class TreeportService {
           name: terminal.name,
           tmuxSessionName: terminal.sessionName,
           argv: terminal.argv,
+          shellCommand: terminal.shellCommand,
+          interactiveShell: terminal.interactiveShell,
           status: terminal.status,
           exitCode: terminal.exitCode,
           createdAt: terminal.createdAt,
@@ -1047,6 +1050,7 @@ export class TreeportService {
           name: preset.name,
           executable: preset.executable,
           args: [...preset.args],
+          shellCommand: null,
           cwd: null,
           env: {},
           closeOnSuccess: preset.closeOnSuccess,
@@ -3470,7 +3474,13 @@ export class TreeportService {
     const project = await this.requireOpenProject(worktree.projectId)
     const terminalId = id('term')
     const sessionName = generateTmuxSessionName()
-    const commandArgv = argv ? [...argv] : [this.deps.config.shell, '-l']
+    const shellCommand = options?.shellCommand ?? null
+    const interactiveShell = !argv && shellCommand === null
+    const commandArgv = argv
+      ? [...argv]
+      : shellCommand
+        ? [this.deps.config.shell, '-lc', shellCommand]
+        : [this.deps.config.shell, '-l']
     const timestamp = now()
     const session: Parameters<TmuxAdapter['createSession']>[0] = {
       socketName: worktree.tmuxSocketName,
@@ -3481,6 +3491,8 @@ export class TreeportService {
       createdAt: timestamp,
       cwd: options?.cwd ?? worktree.path,
       argv: commandArgv,
+      shellCommand,
+      interactiveShell,
       env: {
         ...(options?.env ?? {}),
         TREEPORT_API_URL: this.deps.config.apiUrl,
@@ -3495,7 +3507,7 @@ export class TreeportService {
         TREEPORT_TERMINAL_ID: terminalId
       }
     }
-    if (options?.returnToShell && argv) {
+    if (options?.returnToShell && !interactiveShell) {
       session.fallbackArgv = [this.deps.config.shell, '-l']
     }
 
@@ -3531,6 +3543,8 @@ export class TreeportService {
       name,
       tmuxSessionName: sessionName,
       argv: commandArgv,
+      shellCommand,
+      interactiveShell,
       status: 'running',
       exitCode: null,
       createdAt: timestamp,

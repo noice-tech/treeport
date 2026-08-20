@@ -156,6 +156,8 @@ describe('TmuxAdapter', () => {
       createdAt: '2026-01-02T03:04:05.000Z',
       cwd: '/repo',
       argv: ['hunk', 'diff', 'HEAD'],
+      shellCommand: null,
+      interactiveShell: false,
       initialSize: { cols: 132, rows: 47 },
       env: {}
     })
@@ -207,6 +209,8 @@ describe('TmuxAdapter', () => {
       createdAt: '2026-01-02T03:04:05.000Z',
       cwd: '/repo with spaces',
       argv,
+      shellCommand: null,
+      interactiveShell: false,
       fallbackArgv: ['/bin/zsh', '-l'],
       closeOnSuccess: true,
       env: { TREEPORT_TERMINAL_ID: 'term_safe' },
@@ -235,6 +239,8 @@ describe('TmuxAdapter', () => {
         'window-size',
         '@treeport-name',
         '@treeport-argv',
+        '@treeport-shell-command',
+        '@treeport-interactive-shell',
         '@treeport-close-on-success',
         '@treeport-created-at',
         '@treeport-updated-at',
@@ -270,6 +276,8 @@ describe('TmuxAdapter', () => {
       createdAt: '2026-01-02T03:04:05.000Z',
       cwd: '/tmp',
       argv: ['pi'],
+      shellCommand: null,
+      interactiveShell: false,
       env: { TREEPORT_TERMINAL_ID: 'term' }
     })
 
@@ -282,6 +290,8 @@ describe('TmuxAdapter', () => {
       createdAt: '2026-01-02T03:04:06.000Z',
       cwd: '/tmp',
       argv: ['pi'],
+      shellCommand: null,
+      interactiveShell: false,
       env: { TREEPORT_TERMINAL_ID: 'term-2' }
     })
 
@@ -338,6 +348,8 @@ describe('TmuxAdapter', () => {
       createdAt: '2026-01-02T03:04:05.000Z',
       cwd: '/tmp',
       argv: ['pi'],
+      shellCommand: null,
+      interactiveShell: false,
       env: {}
     })
 
@@ -377,6 +389,8 @@ describe('TmuxAdapter', () => {
       createdAt: '2026-01-02T03:04:05.000Z',
       cwd: '/tmp',
       argv: ['pi'],
+      shellCommand: null,
+      interactiveShell: false,
       env: {}
     })
 
@@ -411,6 +425,8 @@ describe('TmuxAdapter', () => {
         createdAt: '2026-01-02T03:04:05.000Z',
         cwd: '/tmp',
         argv: ['pi'],
+        shellCommand: null,
+        interactiveShell: false,
         env: {}
       })
     ).rejects.toThrow()
@@ -446,6 +462,8 @@ describe('TmuxAdapter', () => {
         createdAt: '2026-01-02T03:04:05.000Z',
         cwd: '/tmp',
         argv: ['pi'],
+        shellCommand: null,
+        interactiveShell: false,
         env: {}
       })
     ).rejects.toThrow('invalid config')
@@ -499,7 +517,7 @@ describe('TmuxAdapter', () => {
     ).toEqual(['@treeport-shell-title'])
   })
 
-  it('discovers live tmux terminals from encoded session metadata', async () => {
+  it('discovers terminals with complete encoded session metadata', async () => {
     const runtime = await fs.mkdtemp(
       path.join(os.tmpdir(), 'treeport-runtime-')
     )
@@ -515,6 +533,8 @@ describe('TmuxAdapter', () => {
           'wt_one',
           encode('Pi\t☃'),
           encode(['pi', 'a b', '☃']),
+          encode(null),
+          '0',
           '1',
           encode('2026-01-01T00:00:00.000Z'),
           encode('2026-01-02T00:00:00.000Z'),
@@ -527,7 +547,9 @@ describe('TmuxAdapter', () => {
           'term_two',
           'wt_one',
           encode('Done'),
-          encode(['sh']),
+          encode(['/bin/fish', '-lc', 'echo done']),
+          encode('echo done'),
+          '0',
           '0',
           encode('2026-01-03T00:00:00.000Z'),
           encode('2026-01-03T00:00:00.000Z'),
@@ -542,13 +564,15 @@ describe('TmuxAdapter', () => {
           encode('Persisted'),
           encode(['bash']),
           '',
+          '',
+          '',
           encode('2025-12-01T00:00:00.000Z'),
           encode('2025-12-02T00:00:00.000Z'),
           '1764547200',
           '0',
           ''
         ].join('\t'),
-        'unrelated\t\t\t\t\t\t\t\t1767398400\t0\t'
+        'unrelated\t\t\t\t\t\t\t\t\t\t1767398400\t0\t'
       ].join('\n'),
       stderr: '',
       exitCode: 0
@@ -562,6 +586,8 @@ describe('TmuxAdapter', () => {
         name: 'Pi\t☃',
         sessionName: 'treeport-term-one',
         argv: ['pi', 'a b', '☃'],
+        shellCommand: null,
+        interactiveShell: false,
         closeOnSuccess: true,
         status: 'running',
         exitCode: null,
@@ -573,24 +599,14 @@ describe('TmuxAdapter', () => {
         worktreeId: 'wt_one',
         name: 'Done',
         sessionName: 'treeport-term-two',
-        argv: ['sh'],
+        argv: ['/bin/fish', '-lc', 'echo done'],
+        shellCommand: 'echo done',
+        interactiveShell: false,
         closeOnSuccess: false,
         status: 'exited',
         exitCode: 17,
         createdAt: '2026-01-03T00:00:00.000Z',
         updatedAt: '2026-01-03T00:00:00.000Z'
-      },
-      {
-        id: 'term_persisted',
-        worktreeId: 'wt_one',
-        name: 'Persisted',
-        sessionName: 'opaque-persisted-session-7f31',
-        argv: ['bash'],
-        closeOnSuccess: false,
-        status: 'running',
-        exitCode: null,
-        createdAt: '2025-12-01T00:00:00.000Z',
-        updatedAt: '2025-12-02T00:00:00.000Z'
       }
     ])
   })
@@ -698,6 +714,8 @@ describe('TmuxAdapter', () => {
           'wt_one',
           encode('Terminal'),
           encode(['sh']),
+          encode(null),
+          '0',
           '0',
           encode('2026-01-01T00:00:00.000Z'),
           encode('2026-01-01T00:00:00.000Z'),

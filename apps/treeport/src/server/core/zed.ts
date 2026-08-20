@@ -378,7 +378,8 @@ function shellQuote(value: string): string {
 
 interface ResolvedZedTask {
   label: string
-  argv: string[]
+  argv: string[] | null
+  shellCommand: string | null
   cwd: string
   env: Record<string, string>
 }
@@ -415,9 +416,10 @@ function resolveTask(
   const useShell = /[\s;&|<>`$()]/u.test(command)
   return {
     label: expand(task.label, compatibilityEnvironment),
-    argv: useShell
-      ? [input.shell, '-lc', [command, ...args.map(shellQuote)].join(' ')]
-      : [command, ...args],
+    argv: useShell ? null : [command, ...args],
+    shellCommand: useShell
+      ? [command, ...args.map(shellQuote)].join(' ')
+      : null,
     cwd,
     env: protectCompatibilityEnvironment
       ? { ...taskEnvironment, ...compatibilityEnvironment }
@@ -493,8 +495,9 @@ export async function loadZedTerminalPresetDefinitions(input: {
     definitions.push({
       id: `repository:${input.projectId}:zed-task:${index}`,
       name: resolved.label,
-      executable: resolved.argv[0]!,
-      args: resolved.argv.slice(1),
+      executable: resolved.argv?.[0] ?? null,
+      args: resolved.argv?.slice(1) ?? [],
+      shellCommand: resolved.shellCommand,
       cwd: resolved.cwd,
       env: resolved.env,
       closeOnSuccess: false,
@@ -513,9 +516,18 @@ export async function resolveZedCreateWorktreeSetupTasks(input: {
   const tasks = await loadCreateWorktreeTasks(input.mainWorktreePath)
   return tasks.map((task) => {
     const resolved = resolveTask(task, input, false)
+    let argv = resolved.argv
+    if (!argv) {
+      if (!resolved.shellCommand) {
+        throw new Error(`Zed task ${task.label} has no resolved command`)
+      }
+
+      argv = [input.shell, '-lc', resolved.shellCommand]
+    }
+
     return {
       label: task.label,
-      argv: resolved.argv,
+      argv,
       cwd: resolved.cwd,
       env: resolved.env,
       timeoutMs: 30 * 60_000
