@@ -6,7 +6,7 @@ test.describe('mobile terminal UI', () => {
   test('uses the mobile drawer and terminal controls end to end', async ({
     page
   }) => {
-    await mockApp(page, [
+    const mocked = await mockApp(page, [
       {
         terminalId: 'term_pi',
         title: 'background · /repo',
@@ -97,6 +97,29 @@ test.describe('mobile terminal UI', () => {
           expect.objectContaining({ type: 'input', data: '\u001bOA' })
         ])
       )
+
+    await page.evaluate(() => {
+      window.__wsSent = []
+    })
+    const fileChooserPromise = page.waitForEvent('filechooser')
+    await page.getByRole('button', { name: 'Upload', exact: true }).click()
+    const fileChooser = await fileChooserPromise
+    await fileChooser.setFiles({
+      name: 'mobile-photo.jpg',
+      mimeType: 'image/jpeg',
+      buffer: Buffer.from('photo')
+    })
+    await expect.poll(mocked.fileUploadRequests).toBe(1)
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          window.__wsSent
+            .filter((message: any) => message.type === 'input')
+            .map((message: any) => message.data)
+            .join('')
+        )
+      )
+      .toContain('/tmp/treeport-upload-1.jpg')
 
     await page.setViewportSize({ width: 320, height: 700 })
     const ctrl = page.getByRole('button', { name: 'Ctrl', exact: true })
