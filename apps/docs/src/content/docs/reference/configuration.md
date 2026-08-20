@@ -123,7 +123,7 @@ This configuration includes Treeport paths, listener, tool paths, `PATH`, and lo
 
 It does not include terminal context, SSH agent state, or unrelated shell variables.
 
-Run `treeport service enable` again after you change one of these items:
+In user service mode, run `treeport service enable` again after you change one of these items:
 
 - the Node.js installation;
 - the npm prefix;
@@ -133,6 +133,8 @@ Run `treeport service enable` again after you change one of these items:
 - the shell;
 - the Git path;
 - the tmux path.
+
+In advanced headless mode, use `treeport service enable --headless` instead.
 
 `treeport service status` and `treeport doctor` report an old service environment.
 

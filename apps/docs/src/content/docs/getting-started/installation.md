@@ -78,9 +78,9 @@ This command prints the local URL. The default URL is `http://127.0.0.1:8733`.
 
 Run the same curl command to install a newer version. The installer keeps the current daemon state.
 
-On macOS, an update can require an administrator action for service mode.
+A running macOS user/login service stops and starts without an administrator action.
 
-Complete the action that the installer prints. Then, run the installer again before you remove old package files.
+An existing advanced headless service can require administrator approval for its lifecycle operations.
 
 ## Install the backend with npm
 
@@ -135,21 +135,27 @@ treeport version
 
 The command `treeport stop` stops the daemon but keeps persistent tmux sessions. A later `treeport start` connects them again.
 
-## Start Treeport after a reboot
+## Start Treeport automatically
 
 A normal installation does not register an operating-system service.
 
-To start Treeport after a reboot, enable service mode:
+On macOS, enable startup after login:
 
 ```sh
 treeport service enable
 ```
 
+This command installs a per-user LaunchAgent without `sudo` or an administrator request.
+
 Service mode also restarts Treeport after an unexpected exit.
 
-On macOS, Treeport prepares a LaunchDaemon and prints one administrator command.
+For startup before login on macOS, select advanced headless mode explicitly:
 
-The LaunchDaemon starts before GUI login. It runs the backend as your user, not as the root user.
+```sh
+treeport service enable --headless
+```
+
+Advanced headless mode uses a system LaunchDaemon and requires administrator approval.
 
 On Linux, Treeport installs a systemd user unit.
 

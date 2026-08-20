@@ -47,7 +47,7 @@ treeport logs [--lines <count>]
 treeport doctor
 treeport version
 
-treeport service enable
+treeport service enable [--headless]
 treeport service status
 treeport service disable
 
@@ -64,9 +64,13 @@ You can run the command again safely. It reports the active healthy daemon inste
 
 Use `treeport stop --terminate-terminals --force` only when you intend to terminate all terminal sessions.
 
-Service mode starts Treeport after a reboot and restarts it after an unexpected exit.
+Service mode starts Treeport automatically and restarts it after an unexpected exit.
 
-`service enable` registers service mode. `service status` checks it, including when the daemon is stopped.
+On macOS, `service enable` registers user/login mode without administrator access.
+
+Use `--headless` only for explicit startup before login. This advanced macOS mode requires administrator approval.
+
+`service status` checks the service, including when the daemon is stopped. It shows the selected mode.
 
 `service disable` stops and removes service mode.
 
@@ -74,7 +78,7 @@ When service mode is installed, lifecycle commands use the operating-system mana
 
 See [Service supervision](/features/service-supervision/) for platform requirements and administrator actions.
 
-With `--json`, service status reports service support, manager, state, installation, health, expected paths, issues, and recovery commands.
+With `--json`, service status reports the mode, manager, state, installation, health, expected paths, issues, and recovery commands.
 
 Stable service states are:
 

@@ -1527,6 +1527,14 @@ describe('CLI context and machine output', () => {
         commandPaths.findIndex((command) => command.join(' ') === 'worktree')
       ]!.stdout
     ).toContain('List, create, and remove trees')
+    const serviceEnableHelp =
+      commandHelp[
+        commandPaths.findIndex(
+          (command) => command.join(' ') === 'service enable'
+        )
+      ]!.stdout
+    expect(serviceEnableHelp).toContain('--headless')
+    expect(serviceEnableHelp).toMatch(/requires an\s+administrator/)
 
     const skills = await runCli(['skills'])
 
@@ -1537,6 +1545,9 @@ describe('CLI context and machine output', () => {
     expect(skills.stdout).toContain('## Create a child tree and terminal')
     expect(skills.stdout).toContain('treeport context')
     expect(skills.stdout).toContain('treeport spawn')
+    expect(skills.stdout).toContain(
+      'Never invoke `sudo` for a normal service or update operation.'
+    )
     expect(skills.stdout).not.toContain(
       '> **Externally managed daemon lifecycle:**'
     )

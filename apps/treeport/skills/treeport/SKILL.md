@@ -17,7 +17,14 @@ Treeport does not define task sources, planning or approval states, agent tool p
 - Do not use `eval` or an implicit `sh -lc`. Launch a shell explicitly only when the caller intentionally requests shell semantics.
 - Do not place untrusted titles, prompts, or other external text into interpolated shell fragments. Pass each value as one argument or use a caller-managed file when the child supports file arguments.
 - Never delete a terminal or remove a tree unless the user explicitly asks.
-- Obey the daemon lifecycle reported by `treeport context`. When it is `external`, never run `treeport start`, `treeport stop`, or `treeport remote enable`; the parent process owns startup, shutdown, and remote exposure. When it is `service`, normal `start` and `stop` delegate to the OS manager and can require the printed administrator action.
+- Obey the daemon lifecycle reported by `treeport context`.
+- When the lifecycle is `external`, never run `treeport start`, `treeport stop`, or `treeport remote enable`.
+- In the external lifecycle, the parent process owns startup, shutdown, and remote exposure.
+- When the lifecycle is `service`, normal `start` and `stop` delegate to the OS manager.
+- Never invoke `sudo` for a normal service or update operation.
+- Normal macOS service mode is a user/login LaunchAgent and does not need an administrator.
+- Advanced headless mode is explicit.
+- If an existing headless service prints an administrator command, report the command and wait for the user.
 - Do not restrict a launched agent's normal tools or make it ephemeral unless the caller explicitly asks. The persistent interactive session is intended to remain useful when the user takes over.
 
 ## Understand the current context
