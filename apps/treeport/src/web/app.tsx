@@ -231,20 +231,43 @@ function WorkspaceApp() {
           }
         })
       ).then((result) => result.panel),
-    onSuccess: async (panel) => {
+    onSuccess: async (panel, { worktree }) => {
       setDialog(null)
-      await queryClient.invalidateQueries({
-        queryKey: projectsQueryOptions.queryKey
-      })
+      queryClient.setQueryData<ProjectRecord[]>(
+        projectsQueryOptions.queryKey,
+        (current) =>
+          current?.map((project) =>
+            project.id !== worktree.projectId
+              ? project
+              : {
+                  ...project,
+                  worktrees: project.worktrees.map((candidate) =>
+                    candidate.id !== worktree.id ||
+                    candidate.panels.some(
+                      (existing) => existing.id === panel.id
+                    )
+                      ? candidate
+                      : {
+                          ...candidate,
+                          panels: [...candidate.panels, panel]
+                        }
+                  )
+                }
+          )
+      )
       const target = targetForWebPanel(
         queryClient.getQueryData<ProjectRecord[]>(
           projectsQueryOptions.queryKey
         ) ?? projects,
         panel
       )
-      if (target) {
-        await navigateToWorkspace(target)
-      }
+      const navigation = target
+        ? navigateToWorkspace(target)
+        : Promise.resolve()
+      void queryClient.invalidateQueries({
+        queryKey: projectsQueryOptions.queryKey
+      })
+      await navigation
     },
     onError: (error, { worktree, definition }) => {
       notifyError(error, {
