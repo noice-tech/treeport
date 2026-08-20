@@ -69,6 +69,8 @@ function terminal(id: string): TerminalRecord {
     name: 'Terminal',
     tmuxSessionName: `session-${id}`,
     argv: ['pi'],
+    shellCommand: null,
+    interactiveShell: false,
     status: 'running',
     exitCode: null,
     createdAt: '2026-01-01',
@@ -382,13 +384,21 @@ describe('TerminalMetadataManager', () => {
     expect(observers[0]!.disposed).toBe(true)
   })
 
-  it('shows sanitized launch argv until a direct application reports a title', async () => {
+  it('shows sanitized direct and shell launch commands until an application reports a title', async () => {
     vi.useFakeTimers()
     const item = {
       ...terminal('one'),
       argv: ['pnpm', 'signoff', '\u001b', 'x'.repeat(300)]
     }
-    const { manager, observers, sessionTitleState } = fixture([item])
+    const shellWrapped = {
+      ...terminal('two'),
+      argv: ['/bin/zsh', '-lc', 'bun\u001b remotion'],
+      shellCommand: 'bun\u001b remotion'
+    }
+    const { manager, observers, sessionTitleState } = fixture([
+      item,
+      shellWrapped
+    ])
     managers.push(manager)
     sessionTitleState.mockResolvedValue({
       paneTitle: 'Treeport launcher',
@@ -400,19 +410,89 @@ describe('TerminalMetadataManager', () => {
     expect(manager.get(item.id).title).toBe(
       `pnpm signoff "" ${'x'.repeat(300)}`.slice(0, 256)
     )
+    expect(manager.get(shellWrapped.id).title).toBe('bun remotion')
 
     observers[0]!.title('Signoff progress')
-    sessionTitleState.mockResolvedValue({
-      paneTitle: 'Signoff progress',
-      currentCommand: 'node'
-    })
+    observers[1]!.title('Remotion Studio')
+    sessionTitleState.mockImplementation(async (_socket, sessionName) =>
+      sessionName === shellWrapped.tmuxSessionName
+        ? {
+            paneTitle: 'Remotion Studio',
+            currentCommand: 'bun'
+          }
+        : {
+            paneTitle: 'Signoff progress',
+            currentCommand: 'node'
+          }
+    )
     await vi.advanceTimersByTimeAsync(TERMINAL_METADATA_POLL_MS)
     expect(manager.get(item.id).title).toBe('Signoff progress')
+    expect(manager.get(shellWrapped.id).title).toBe('Remotion Studio')
+  })
+
+  it('switches a command terminal to shell title tracking after fallback starts', async () => {
+    vi.useFakeTimers()
+    const item = {
+      ...terminal('one'),
+      argv: ['/opt/custom/fish', '-lc', 'bun remotion'],
+      shellCommand: 'bun remotion'
+    }
+    const { manager, sessionTitleState } = fixture([item])
+    managers.push(manager)
+    sessionTitleState.mockResolvedValue({
+      paneTitle: 'Treeport launcher',
+      currentCommand: 'bun',
+      commandLine: null,
+      fallbackShell: null
+    })
+
+    await manager.initialize()
+    expect(manager.get(item.id).title).toBe('bun remotion')
+
+    sessionTitleState.mockResolvedValue({
+      paneTitle: 'fish · /repo',
+      currentCommand: 'fish',
+      commandLine: null,
+      fallbackShell: '/opt/custom/fish'
+    })
+    await vi.advanceTimersByTimeAsync(TERMINAL_METADATA_POLL_MS)
+    expect(manager.get(item.id)).toMatchObject({
+      title: 'fish · /repo',
+      hasForegroundProcess: false
+    })
+
+    sessionTitleState.mockResolvedValue({
+      paneTitle: 'pnpm test',
+      currentCommand: 'node',
+      commandLine: 'pnpm test',
+      fallbackShell: '/opt/custom/fish'
+    })
+    await vi.advanceTimersByTimeAsync(TERMINAL_METADATA_POLL_MS)
+    expect(manager.get(item.id)).toMatchObject({
+      title: 'pnpm test',
+      hasForegroundProcess: true
+    })
+
+    sessionTitleState.mockResolvedValue({
+      paneTitle: 'fish · /repo',
+      currentCommand: 'fish',
+      commandLine: null,
+      fallbackShell: '/opt/custom/fish'
+    })
+    await vi.advanceTimersByTimeAsync(TERMINAL_METADATA_POLL_MS)
+    expect(manager.get(item.id)).toMatchObject({
+      title: 'fish · /repo',
+      hasForegroundProcess: false
+    })
   })
 
   it('shows the captured command, permits an application title, and restores the shell title', async () => {
     vi.useFakeTimers()
-    const item = { ...terminal('one'), argv: ['/bin/zsh', '-l'] }
+    const item = {
+      ...terminal('one'),
+      argv: ['/bin/zsh', '-l'],
+      interactiveShell: true
+    }
     const { manager, observers, sessionTitleState } = fixture([item])
     managers.push(manager)
     sessionTitleState.mockResolvedValue({
@@ -455,7 +535,11 @@ describe('TerminalMetadataManager', () => {
 
   it('detects supported CLI programs and clears the program after returning to the shell', async () => {
     vi.useFakeTimers()
-    const item = { ...terminal('one'), argv: ['/bin/zsh', '-l'] }
+    const item = {
+      ...terminal('one'),
+      argv: ['/bin/zsh', '-l'],
+      interactiveShell: true
+    }
     const { manager, sessionTitleState } = fixture([item])
     managers.push(manager)
     sessionTitleState.mockResolvedValue({
@@ -504,7 +588,11 @@ describe('TerminalMetadataManager', () => {
   })
 
   it('prefers the existing pane title when no remembered shell title can identify it as stale', async () => {
-    const item = { ...terminal('one'), argv: ['/bin/zsh', '-l'] }
+    const item = {
+      ...terminal('one'),
+      argv: ['/bin/zsh', '-l'],
+      interactiveShell: true
+    }
     const { manager, sessionTitleState } = fixture([item])
     managers.push(manager)
     sessionTitleState.mockResolvedValue({
@@ -519,7 +607,11 @@ describe('TerminalMetadataManager', () => {
 
   it('waits for a fresh shell title after an application started without a remembered shell title', async () => {
     vi.useFakeTimers()
-    const item = { ...terminal('one'), argv: ['/bin/zsh', '-l'] }
+    const item = {
+      ...terminal('one'),
+      argv: ['/bin/zsh', '-l'],
+      interactiveShell: true
+    }
     const { manager, sessionTitleState, setSessionShellTitle } = fixture([item])
     managers.push(manager)
     sessionTitleState.mockResolvedValue({
@@ -554,7 +646,11 @@ describe('TerminalMetadataManager', () => {
 
   it('uses a remembered shell title to identify a title-less foreground command after restart', async () => {
     vi.useFakeTimers()
-    const item = { ...terminal('one'), argv: ['/bin/zsh', '-l'] }
+    const item = {
+      ...terminal('one'),
+      argv: ['/bin/zsh', '-l'],
+      interactiveShell: true
+    }
     const { manager, sessionTitleState } = fixture([item])
     managers.push(manager)
     sessionTitleState.mockResolvedValue({
@@ -577,7 +673,11 @@ describe('TerminalMetadataManager', () => {
 
   it('coalesces shell title writes without losing a title observed in flight', async () => {
     vi.useFakeTimers()
-    const item = { ...terminal('one'), argv: ['/bin/zsh', '-l'] }
+    const item = {
+      ...terminal('one'),
+      argv: ['/bin/zsh', '-l'],
+      interactiveShell: true
+    }
     const { manager, observers, sessionTitleState, setSessionShellTitle } =
       fixture([item])
     managers.push(manager)
@@ -648,7 +748,11 @@ describe('TerminalMetadataManager', () => {
 
   it('retries a failed shell title persistence write on a later reconciliation', async () => {
     vi.useFakeTimers()
-    const item = { ...terminal('one'), argv: ['/bin/zsh', '-l'] }
+    const item = {
+      ...terminal('one'),
+      argv: ['/bin/zsh', '-l'],
+      interactiveShell: true
+    }
     const { manager, sessionTitleState, setSessionShellTitle } = fixture([item])
     managers.push(manager)
     setSessionShellTitle.mockRejectedValueOnce(new Error('tmux unavailable'))
@@ -675,7 +779,11 @@ describe('TerminalMetadataManager', () => {
 
   it('keeps an application title while the application runs helper processes', async () => {
     vi.useFakeTimers()
-    const item = { ...terminal('one'), argv: ['/bin/zsh', '-l'] }
+    const item = {
+      ...terminal('one'),
+      argv: ['/bin/zsh', '-l'],
+      interactiveShell: true
+    }
     const { manager, observers, sessionTitleState } = fixture([item])
     managers.push(manager)
     sessionTitleState.mockResolvedValue({

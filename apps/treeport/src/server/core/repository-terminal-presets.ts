@@ -99,6 +99,7 @@ export async function loadRepositoryTerminalPresets(
       name: preset.data.name,
       executable: preset.data.executable,
       args: [...preset.data.args],
+      shellCommand: null,
       cwd: null,
       env: {},
       closeOnSuccess: preset.data.closeOnSuccess,

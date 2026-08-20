@@ -654,6 +654,8 @@ describe.skipIf(!enabled)(
             '-e',
             `require('node:fs').writeFileSync(${JSON.stringify(outputPath)}, JSON.stringify({ cols: process.stdout.columns, rows: process.stdout.rows }))`
           ],
+          shellCommand: null,
+          interactiveShell: false,
           initialSize: { cols: 132, rows: 47 },
           env: {}
         })

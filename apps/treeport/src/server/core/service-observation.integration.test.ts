@@ -582,7 +582,12 @@ describe('TreeportService with injected command adapters', () => {
     const linked = (
       await service.createWorktree(project.id, 'restart-main-rename', 'default')
     ).worktree
-    const terminal = await service.createTerminal(linked.id, 'Preserved')
+    const terminal = await service.createTerminal(
+      linked.id,
+      'Preserved',
+      undefined,
+      { shellCommand: 'bun remotion' }
+    )
     const linkedGitKey = runner.worktrees.find(
       (worktree) => worktree.path === linked.path
     )!.gitWorktreeKey
@@ -629,7 +634,12 @@ describe('TreeportService with injected command adapters', () => {
       path: await fs.realpath(movedLinked),
       tmuxSocketName: linked.tmuxSocketName,
       terminals: expect.arrayContaining([
-        expect.objectContaining({ id: terminal.id })
+        expect.objectContaining({
+          id: terminal.id,
+          argv: ['/bin/zsh', '-lc', 'bun remotion'],
+          shellCommand: 'bun remotion',
+          interactiveShell: false
+        })
       ])
     })
   })

@@ -29,6 +29,7 @@ export interface PendingTerminalCreation {
 export interface CreateTerminalInput {
   name: string
   argv?: string[]
+  shellCommand?: string
   cwd?: string
   env?: Record<string, string>
   returnToShell?: boolean
@@ -77,6 +78,7 @@ export function useTerminalWorkflows({
       worktreeId,
       name,
       argv,
+      shellCommand,
       cwd,
       env,
       returnToShell,
@@ -88,6 +90,10 @@ export function useTerminalWorkflows({
       }
       if (argv) {
         json.argv = argv
+      }
+
+      if (shellCommand) {
+        json.shellCommand = shellCommand
       }
 
       if (cwd) {
@@ -270,6 +276,10 @@ export function useTerminalWorkflows({
     }
     if (input.argv) {
       mutation.argv = [...input.argv]
+    }
+
+    if (input.shellCommand) {
+      mutation.shellCommand = input.shellCommand
     }
 
     if (input.cwd) {

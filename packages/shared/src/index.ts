@@ -76,6 +76,8 @@ export interface TerminalRecord {
   name: string
   tmuxSessionName: string
   argv: string[]
+  shellCommand: string | null
+  interactiveShell: boolean
   status: TerminalStatus
   exitCode: number | null
   createdAt: string
@@ -161,8 +163,9 @@ export interface TerminalPresetDefinitionListing {
 export interface TerminalPresetDefinition {
   id: string
   name: string
-  executable: string
+  executable: string | null
   args: string[]
+  shellCommand: string | null
   cwd: string | null
   env: Record<string, string>
   closeOnSuccess: boolean
@@ -587,6 +590,13 @@ const terminalEnvironmentKeySchema = z
   .refine((value) => !value.includes('=') && !value.includes('\0'), {
     message: 'Environment keys cannot contain equals or NUL'
   })
+const terminalShellCommandSchema = z
+  .string()
+  .min(1)
+  .max(TERMINAL_ARGUMENT_MAX_LENGTH)
+  .refine((value) => value.trim().length > 0 && !value.includes('\0'), {
+    message: 'Shell command cannot be blank or contain NUL'
+  })
 const terminalEnvironmentSchema = z
   .record(
     terminalEnvironmentKeySchema,
@@ -605,11 +615,15 @@ export const createTerminalSchema = z
   .object({
     name: terminalNameSchema,
     argv: terminalArgvSchema.optional(),
+    shellCommand: terminalShellCommandSchema.optional(),
     cwd: terminalCwdSchema.optional(),
     env: terminalEnvironmentSchema.optional(),
     returnToShell: z.boolean().optional(),
     closeOnSuccess: z.boolean().optional(),
     initialSize: terminalSizeSchema.optional()
+  })
+  .refine((value) => !(value.argv && value.shellCommand), {
+    message: 'A terminal cannot have both argv and a shell command'
   })
   .refine((value) => !(value.returnToShell && value.closeOnSuccess), {
     message: 'A terminal cannot return to a shell and close on success'

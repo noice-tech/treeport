@@ -42,6 +42,7 @@ export interface TmuxSessionTitleState {
   currentCommand: string | null
   commandLine?: string | null
   shellTitle?: string | null
+  fallbackShell?: string | null
 }
 
 export interface TmuxTerminalSession {
@@ -50,6 +51,8 @@ export interface TmuxTerminalSession {
   name: string
   sessionName: string
   argv: string[]
+  shellCommand: string | null
+  interactiveShell: boolean
   closeOnSuccess: boolean
   status: Exclude<TerminalStatus, 'missing'>
   exitCode: number | null
@@ -67,6 +70,8 @@ export interface TmuxTerminalMetadata {
   worktreeId: string
   name: string
   argv: string[]
+  shellCommand: string | null
+  interactiveShell: boolean
   closeOnSuccess: boolean
   createdAt: string
   updatedAt: string
@@ -77,6 +82,7 @@ interface DecodedTmuxMetadata {
   worktreeId: string
   name: string | undefined
   argv: string[] | undefined
+  shellCommand: string | null | undefined
   createdAt: string | undefined
   updatedAt: string | undefined
 }
@@ -252,6 +258,8 @@ export class TmuxAdapter {
     createdAt: string
     cwd: string
     argv: string[]
+    shellCommand: string | null
+    interactiveShell: boolean
     fallbackArgv?: string[]
     closeOnSuccess?: boolean
     initialSize?: TerminalSize
@@ -346,12 +354,12 @@ export class TmuxAdapter {
           spec.fallbackArgv = [...input.fallbackArgv]
         }
 
+        spec.tmuxExecutable = resolveExecutablePath(
+          this.executable,
+          this.hostEnvironment
+        )
         if (shellIntegrationReady) {
           spec.shellIntegrationDir = this.shellIntegrationDir
-          spec.tmuxExecutable = resolveExecutablePath(
-            this.executable,
-            this.hostEnvironment
-          )
         }
 
         if (input.setupTasks?.length) {
@@ -400,6 +408,8 @@ export class TmuxAdapter {
           worktreeId: input.worktreeId,
           name: input.name,
           argv: input.argv,
+          shellCommand: input.shellCommand,
+          interactiveShell: input.interactiveShell,
           closeOnSuccess: input.closeOnSuccess ?? false,
           createdAt: input.createdAt,
           updatedAt: input.createdAt
@@ -458,6 +468,8 @@ export class TmuxAdapter {
     const values = [
       ['@treeport-name', encodeMetadata(metadata.name)],
       ['@treeport-argv', encodeMetadata(metadata.argv)],
+      ['@treeport-shell-command', encodeMetadata(metadata.shellCommand)],
+      ['@treeport-interactive-shell', metadata.interactiveShell ? '1' : '0'],
       ['@treeport-close-on-success', metadata.closeOnSuccess ? '1' : '0'],
       ['@treeport-created-at', encodeMetadata(metadata.createdAt)],
       ['@treeport-updated-at', encodeMetadata(metadata.updatedAt)],
@@ -522,7 +534,7 @@ export class TmuxAdapter {
         'list-panes',
         '-a',
         '-F',
-        '#{session_name}\t#{@treeport-terminal-id}\t#{@treeport-worktree-id}\t#{@treeport-name}\t#{@treeport-argv}\t#{@treeport-close-on-success}\t#{@treeport-created-at}\t#{@treeport-updated-at}\t#{session_created}\t#{pane_dead}\t#{pane_dead_status}'
+        '#{session_name}\t#{@treeport-terminal-id}\t#{@treeport-worktree-id}\t#{@treeport-name}\t#{@treeport-argv}\t#{@treeport-shell-command}\t#{@treeport-interactive-shell}\t#{@treeport-close-on-success}\t#{@treeport-created-at}\t#{@treeport-updated-at}\t#{session_created}\t#{pane_dead}\t#{pane_dead_status}'
       ],
       env: this.environment(),
       timeoutMs: 10_000
@@ -550,6 +562,8 @@ export class TmuxAdapter {
         worktreeId,
         encodedName,
         encodedArgv,
+        encodedShellCommand,
+        encodedInteractiveShell,
         closeOnSuccess,
         encodedCreatedAt,
         encodedUpdatedAt,
@@ -573,10 +587,27 @@ export class TmuxAdapter {
           worktreeId,
           name: decodeMetadata(encodedName ?? '', z.string()),
           argv: decodeMetadata(encodedArgv ?? '', z.array(z.string())),
+          shellCommand: decodeMetadata(
+            encodedShellCommand ?? '',
+            z.string().nullable()
+          ),
           createdAt: decodeMetadata(encodedCreatedAt ?? '', z.string()),
           updatedAt: decodeMetadata(encodedUpdatedAt ?? '', z.string())
         }
       } catch {
+        continue
+      }
+
+      const interactiveShell =
+        encodedInteractiveShell === '1'
+          ? true
+          : encodedInteractiveShell === '0'
+            ? false
+            : undefined
+      if (
+        metadata.shellCommand === undefined ||
+        interactiveShell === undefined
+      ) {
         continue
       }
 
@@ -592,6 +623,8 @@ export class TmuxAdapter {
         name: metadata.name ?? sessionName,
         sessionName,
         argv: metadata.argv ?? [],
+        shellCommand: metadata.shellCommand,
+        interactiveShell,
         closeOnSuccess: closeOnSuccess === '1',
         status: dead ? 'exited' : 'running',
         exitCode: Number.isNaN(exitCode) ? null : exitCode,
@@ -798,7 +831,7 @@ export class TmuxAdapter {
         '-p',
         '-t',
         sessionName,
-        '#{@treeport-shell-title}\t#{pane_current_command}\t#{@treeport-command}\t#{pane_title}'
+        '#{@treeport-fallback-shell}\t#{@treeport-shell-title}\t#{pane_current_command}\t#{@treeport-command}\t#{pane_title}'
       ],
       env: this.environment(),
       timeoutMs: 10_000
@@ -810,28 +843,45 @@ export class TmuxAdapter {
     const firstSeparator = result.stdout.indexOf('\t')
     const secondSeparator = result.stdout.indexOf('\t', firstSeparator + 1)
     const thirdSeparator = result.stdout.indexOf('\t', secondSeparator + 1)
+    const fourthSeparator = result.stdout.indexOf('\t', thirdSeparator + 1)
     if (
       firstSeparator === -1 ||
       secondSeparator === -1 ||
-      thirdSeparator === -1
+      thirdSeparator === -1 ||
+      fourthSeparator === -1
     ) {
       return null
     }
 
-    const encodedShellTitle = result.stdout.slice(0, firstSeparator).trim()
+    let fallbackShell: string | null = null
     let shellTitle: string | null = null
     try {
-      shellTitle = decodeMetadata(encodedShellTitle, z.string()) ?? null
+      fallbackShell =
+        decodeMetadata(
+          result.stdout.slice(0, firstSeparator).trim(),
+          z.string()
+        ) ?? null
+      shellTitle =
+        decodeMetadata(
+          result.stdout.slice(firstSeparator + 1, secondSeparator).trim(),
+          z.string()
+        ) ?? null
     } catch {
       // Ignore malformed optional metadata from an external session.
     }
 
     const currentCommand =
-      result.stdout.slice(firstSeparator + 1, secondSeparator).trim() || null
-    const commandLine =
       result.stdout.slice(secondSeparator + 1, thirdSeparator).trim() || null
-    const paneTitle = result.stdout.slice(thirdSeparator + 1).trim() || null
-    return { paneTitle, currentCommand, commandLine, shellTitle }
+    const commandLine =
+      result.stdout.slice(thirdSeparator + 1, fourthSeparator).trim() || null
+    const paneTitle = result.stdout.slice(fourthSeparator + 1).trim() || null
+    return {
+      paneTitle,
+      currentCommand,
+      commandLine,
+      shellTitle,
+      fallbackShell
+    }
   }
 
   async setSessionShellTitle(

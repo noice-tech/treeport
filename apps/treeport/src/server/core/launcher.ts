@@ -65,6 +65,7 @@ export interface LauncherDependencies {
   stdout?: Writable
   stderr?: Writable
   signalSource?: SignalSource
+  tmuxPane?: string | null
 }
 
 interface ChildResult {
@@ -202,6 +203,10 @@ export async function runLaunchSpec(
   const stdout = dependencies.stdout ?? process.stdout
   const stderr = dependencies.stderr ?? process.stderr
   const signalSource = dependencies.signalSource ?? process
+  const tmuxPane =
+    dependencies.tmuxPane === undefined
+      ? process.env.TMUX_PANE
+      : (dependencies.tmuxPane ?? undefined)
 
   if (spec.setupError) {
     stderr.write(
@@ -284,6 +289,29 @@ export async function runLaunchSpec(
   }
 
   if (spec.fallbackArgv) {
+    if (spec.tmuxExecutable && tmuxPane && spec.fallbackArgv[0]) {
+      await runChild(
+        [
+          spec.tmuxExecutable,
+          'set-option',
+          '-p',
+          '-t',
+          tmuxPane,
+          '--',
+          '@treeport-fallback-shell',
+          Buffer.from(JSON.stringify(spec.fallbackArgv[0]), 'utf8').toString(
+            'base64url'
+          )
+        ],
+        {
+          cwd: spec.cwd,
+          env: process.env,
+          spawnProcess,
+          signalSource
+        }
+      )
+    }
+
     const fallback = integrateShellLaunch(
       spec.fallbackArgv,
       commandEnvironment,

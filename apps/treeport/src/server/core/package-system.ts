@@ -1313,6 +1313,7 @@ export class PackageSystem {
           name: result.data.name,
           executable: result.data.executable,
           args: [...result.data.args],
+          shellCommand: null,
           cwd: null,
           env: {},
           closeOnSuccess: result.data.closeOnSuccess,

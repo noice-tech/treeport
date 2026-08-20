@@ -468,6 +468,8 @@ export class SystemDouble implements CommandRunner {
             state.options['@treeport-worktree-id'] ?? '',
             state.options['@treeport-name'] ?? '',
             state.options['@treeport-argv'] ?? '',
+            state.options['@treeport-shell-command'] ?? '',
+            state.options['@treeport-interactive-shell'] ?? '',
             state.options['@treeport-close-on-success'] ?? '',
             state.options['@treeport-created-at'] ?? '',
             state.options['@treeport-updated-at'] ?? '',

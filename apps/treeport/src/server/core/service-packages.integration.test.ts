@@ -99,7 +99,9 @@ describe('TreeportService with injected command adapters', () => {
       },
       {
         name: 'Duplicate',
-        executable: '/bin/zsh',
+        executable: null,
+        args: [],
+        shellCommand: 'echo one',
         source: { type: 'repository', format: 'zed' }
       },
       {
@@ -189,13 +191,17 @@ describe('TreeportService with injected command adapters', () => {
 
     const resolvedZed = linkedDefinitions.definitions.find(
       (definition) => definition.name === `Shared ${linked.path}`
-    )!
+    )
+    if (!resolvedZed?.executable || !resolvedZed.cwd) {
+      throw new Error('Direct Zed preset was not resolved')
+    }
+
     const terminal = await service.createTerminal(
       linked.id,
       resolvedZed.name,
       [resolvedZed.executable, ...resolvedZed.args],
       {
-        cwd: resolvedZed.cwd!,
+        cwd: resolvedZed.cwd,
         env: resolvedZed.env,
         returnToShell: true
       }
@@ -228,6 +234,45 @@ describe('TreeportService with injected command adapters', () => {
         TREEPORT_WORKTREE_ID: linked.id,
         TREEPORT_TERMINAL_ID: terminal.id
       }
+    })
+
+    const resolvedShell = linkedDefinitions.definitions.find(
+      (definition) => definition.shellCommand === 'echo one'
+    )
+    if (!resolvedShell?.shellCommand || !resolvedShell.cwd) {
+      throw new Error('Shell Zed preset was not resolved')
+    }
+
+    const shellTerminal = await service.createTerminal(
+      linked.id,
+      resolvedShell.name,
+      undefined,
+      {
+        shellCommand: resolvedShell.shellCommand,
+        cwd: resolvedShell.cwd,
+        env: resolvedShell.env,
+        returnToShell: true
+      }
+    )
+    expect(shellTerminal).toMatchObject({
+      argv: ['/bin/zsh', '-lc', 'echo one'],
+      shellCommand: 'echo one',
+      interactiveShell: false
+    })
+    await expect(
+      fs
+        .readFile(
+          path.join(
+            config.runtimeDir,
+            'launch-specs',
+            `${shellTerminal.id}.json`
+          ),
+          'utf8'
+        )
+        .then(JSON.parse)
+    ).resolves.toMatchObject({
+      argv: ['/bin/zsh', '-lc', 'echo one'],
+      fallbackArgv: ['/bin/zsh', '-l']
     })
 
     await fs.writeFile(configPath, '{ invalid json')

@@ -1,4 +1,17 @@
 import type { TerminalPresetDefinition } from '@treeport/shared'
+import { formatCommandLine } from './command-line'
+
+export function terminalPresetCommand(
+  preset: TerminalPresetDefinition
+): string {
+  if (preset.shellCommand !== null) {
+    return preset.shellCommand
+  }
+
+  return preset.executable
+    ? formatCommandLine([preset.executable, ...preset.args])
+    : ''
+}
 
 export function terminalPresetProvenance(
   preset: TerminalPresetDefinition

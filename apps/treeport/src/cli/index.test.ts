@@ -49,6 +49,8 @@ const terminal: TerminalRecord = {
   name: 'Pi',
   tmuxSessionName: 'treeport-term-context',
   argv: ['pi'],
+  shellCommand: null,
+  interactiveShell: false,
   status: 'running',
   exitCode: null,
   createdAt: timestamp,

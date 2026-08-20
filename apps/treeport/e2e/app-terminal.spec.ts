@@ -1003,6 +1003,7 @@ test.describe('desktop worktree and terminal workflows', () => {
       name: 'Hunk',
       executable: 'repo-tool',
       args: ['argument with spaces', 'semi;$HOME'],
+      shellCommand: null,
       cwd: null,
       env: {},
       closeOnSuccess: false,
@@ -1011,8 +1012,9 @@ test.describe('desktop worktree and terminal workflows', () => {
     const zedPreset = {
       id: 'repository:proj_1:zed-task:0',
       name: 'Zed build',
-      executable: '/bin/zsh',
-      args: ['-lc', "pnpm build '$HOME'"],
+      executable: null,
+      args: [],
+      shellCommand: 'bun remotion',
       cwd: '/worktrees/topic/packages/app',
       env: {
         ZED_WORKTREE_ROOT: '/worktrees/topic',
@@ -1036,12 +1038,13 @@ test.describe('desktop worktree and terminal workflows', () => {
     const launcher = page.getByRole('dialog', { name: 'New panel' })
     await launcher
       .getByRole('button', {
-        name: /^Zed build, Repository · Zed, \/bin\/zsh/
+        name: 'Zed build, Repository · Zed, bun remotion'
       })
       .click()
-    expect((await createRequest).postDataJSON()).toMatchObject({
+    const requestBody = (await createRequest).postDataJSON()
+    expect(requestBody).toMatchObject({
       name: 'Zed build',
-      argv: ['/bin/zsh', '-lc', "pnpm build '$HOME'"],
+      shellCommand: 'bun remotion',
       cwd: '/worktrees/topic/packages/app',
       env: {
         ZED_WORKTREE_ROOT: '/worktrees/topic',
@@ -1050,6 +1053,7 @@ test.describe('desktop worktree and terminal workflows', () => {
       },
       returnToShell: true
     })
+    expect(requestBody).not.toHaveProperty('argv')
 
     mocked.repositoryTerminalPresets.splice(0, 1, {
       ...repositoryPreset,
