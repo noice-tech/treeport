@@ -162,9 +162,13 @@ function fixture() {
     refreshTerminalStatus: vi.fn(async () => ({
       id: 'term',
       worktreeId: 'wt',
+      name: 'Terminal',
       tmuxSessionName: 'session',
+      argv: ['/bin/zsh', '-l'],
       status: 'running',
-      exitCode: null
+      exitCode: null,
+      createdAt: '2026-01-01',
+      updatedAt: '2026-01-01'
     })),
     getWorktree: vi.fn(async () => ({
       id: 'wt',

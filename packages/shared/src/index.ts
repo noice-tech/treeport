@@ -32,6 +32,22 @@ export const TERMINAL_CAPTURE_DEFAULT_LINES = 200
 export const TERMINAL_CAPTURE_MAX_LINES = 5_000
 export const WEB_PANEL_INPUT_MAX_BYTES = 64 * 1024
 
+export function formatCommandLine(argv: readonly string[]): string {
+  return argv
+    .map((value) => {
+      if (value === '') {
+        return '""'
+      }
+
+      if (!/[\s"'\\]/.test(value)) {
+        return value
+      }
+
+      return `"${value.replace(/["\\]/g, '\\$&')}"`
+    })
+    .join(' ')
+}
+
 export type WorktreeKind = 'main' | 'linked'
 export type TerminalStatus = 'running' | 'exited' | 'missing'
 export type PrState = 'no_pr' | 'open' | 'merged' | 'closed' | 'unknown'
