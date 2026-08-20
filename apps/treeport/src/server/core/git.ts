@@ -26,14 +26,14 @@ const repositoryIdentityKey = 'treeport.repositoryId'
 const uuidPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu
 
-export class InvalidRepositoryIdentityError extends Error {
+class InvalidRepositoryIdentityError extends Error {
   constructor(message: string) {
     super(message)
     this.name = 'InvalidRepositoryIdentityError'
   }
 }
 
-export class GitMetadataNotWritableError extends Error {
+class GitMetadataNotWritableError extends Error {
   constructor(cwd: string, details: string) {
     super(
       `Treeport could not write repository-local Git metadata for ${cwd}: ${details}`

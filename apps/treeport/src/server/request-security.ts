@@ -6,7 +6,7 @@ const MAX_NAME_BYTES = 512
 const MAX_PROFILE_PICTURE_BYTES = 2_048
 const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
 
-export interface RequestPrincipal {
+interface RequestPrincipal {
   source: 'local' | 'tailscale'
   login: string | null
   name: string | null

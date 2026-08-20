@@ -24,8 +24,8 @@ import {
 
 export type ServiceManager = 'launchd' | 'systemd'
 export type ServiceMode = 'user' | 'headless'
-export type ServiceRequestedState = 'running' | 'stopped'
-export type ServiceState =
+type ServiceRequestedState = 'running' | 'stopped'
+type ServiceState =
   | 'disabled'
   | 'action_required'
   | 'starting'
