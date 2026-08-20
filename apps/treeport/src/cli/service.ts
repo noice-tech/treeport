@@ -51,7 +51,7 @@ interface ServiceRecord {
   cliEntrypoint: string
   runtimeExecutable: string | null
   runtimeEntrypoint: string | null
-  installationMethod: 'curl' | 'npm'
+  installationMethod: string
   definitionName: string
   definitionPath: string
   definitionHash: string
@@ -169,7 +169,7 @@ const serviceRecordSchema: z.ZodType<StoredServiceRecord> = z.strictObject({
   cliEntrypoint: z.string().min(1),
   runtimeExecutable: z.string().min(1).nullable().default(null),
   runtimeEntrypoint: z.string().min(1).nullable().default(null),
-  installationMethod: z.enum(['curl', 'npm']),
+  installationMethod: z.string().min(1),
   definitionName: z.string().min(1),
   definitionPath: z.string().min(1),
   definitionHash: z.string().length(64),
@@ -348,17 +348,11 @@ function shellQuote(value: string): string {
 }
 
 export function createAdministratorCommand(input: {
-  installationMethod: 'curl' | 'npm'
-  cliEntrypoint: string
   runtimeExecutable: string
   runtimeEntrypoint: string
   requestPath: string
 }): string {
-  const command =
-    input.installationMethod === 'curl'
-      ? shellQuote(input.cliEntrypoint)
-      : `${shellQuote(input.runtimeExecutable)} ${shellQuote(input.runtimeEntrypoint)}`
-  return `sudo ${command} service apply --request ${shellQuote(input.requestPath)}`
+  return `sudo ${shellQuote(input.runtimeExecutable)} ${shellQuote(input.runtimeEntrypoint)} service apply --request ${shellQuote(input.requestPath)}`
 }
 
 function systemdValue(value: string): string {
@@ -575,13 +569,11 @@ function currentEntrypoint(): string | null {
   return value ? path.resolve(value) : null
 }
 
-async function ensureEntrypoint(
-  installationMethod: 'curl' | 'npm'
-): Promise<string> {
+async function ensureEntrypoint(): Promise<string> {
   const entrypoint = currentEntrypoint()
   if (!entrypoint) {
     throw new Error(
-      'Treeport could not identify a stable CLI entrypoint. Install Treeport with npm or the curl installer, then retry.'
+      'Treeport could not identify a stable CLI entrypoint. Install Treeport with npm, then retry.'
     )
   }
 
@@ -590,16 +582,14 @@ async function ensureEntrypoint(
       `Treeport cannot execute its stable CLI entrypoint at ${entrypoint}. Reinstall Treeport, then retry.`
     )
   })
-  if (installationMethod === 'npm') {
-    const [actual, expected] = await Promise.all([
-      fs.realpath(entrypoint),
-      fs.realpath(await resolvePackagePath('bin', 'treeport.mjs'))
-    ])
-    if (actual !== expected) {
-      throw new Error(
-        `The current CLI entrypoint is not the installed Treeport npm bin: ${entrypoint}`
-      )
-    }
+  const [actual, expected] = await Promise.all([
+    fs.realpath(entrypoint),
+    fs.realpath(await resolvePackagePath('bin', 'treeport.mjs'))
+  ])
+  if (actual !== expected) {
+    throw new Error(
+      `The current CLI entrypoint is not the installed Treeport npm bin: ${entrypoint}`
+    )
   }
 
   return entrypoint
@@ -665,7 +655,7 @@ export function createServiceEnvironment(input: {
   paths: ReturnType<typeof localPaths>
   apiUrl: string
   recordPath: string
-  installationMethod: 'curl' | 'npm'
+  installationMethod: string
   env?: NodeJS.ProcessEnv
 }): ServiceEnvironment {
   const env = input.env ?? process.env
@@ -852,8 +842,6 @@ function administratorCommand(record: ServiceRecord): string | null {
     `${requestId}.json`
   )
   return createAdministratorCommand({
-    installationMethod: record.installationMethod,
-    cliEntrypoint: record.cliEntrypoint,
     runtimeExecutable: record.runtimeExecutable,
     runtimeEntrypoint: record.runtimeEntrypoint,
     requestPath
@@ -1215,10 +1203,8 @@ async function prepareRecord(requestedMode: ServiceMode): Promise<{
   }
 
   assertLoopbackHost(listener.hostname)
-  const installationMethod =
-    process.env.TREEPORT_INSTALLATION_METHOD?.trim() === 'curl' ? 'curl' : 'npm'
   const [cliEntrypoint, administratorRuntime] = await Promise.all([
-    ensureEntrypoint(installationMethod),
+    ensureEntrypoint(),
     manager === 'launchd' && mode === 'headless'
       ? currentAdministratorRuntime()
       : Promise.resolve(null)
@@ -1242,7 +1228,7 @@ async function prepareRecord(requestedMode: ServiceMode): Promise<{
     paths,
     apiUrl,
     recordPath: locations.recordPath,
-    installationMethod
+    installationMethod: 'npm'
   })
   const now = new Date().toISOString()
   const previous = await currentRecord()
@@ -1293,7 +1279,7 @@ async function prepareRecord(requestedMode: ServiceMode): Promise<{
     cliEntrypoint,
     runtimeExecutable: administratorRuntime?.runtimeExecutable ?? null,
     runtimeEntrypoint: administratorRuntime?.runtimeEntrypoint ?? null,
-    installationMethod,
+    installationMethod: 'npm',
     definitionName,
     definitionPath,
     definitionHash: '0'.repeat(64),

@@ -221,10 +221,6 @@ describe('OS service definitions', () => {
       installationDirectory,
       "treeport's cli.mjs"
     )
-    const cliEntrypoint = path.join(
-      installationDirectory,
-      "treeport's shell shim"
-    )
     const requestPath = path.join(
       installationDirectory,
       "request's folder",
@@ -241,49 +237,37 @@ describe('OS service definitions', () => {
         "import fs from 'node:fs'; fs.writeFileSync(process.env.TREEPORT_TEST_OUTPUT, JSON.stringify(process.argv.slice(2)))\n"
       ),
       fs.writeFile(
-        cliEntrypoint,
-        `#!/bin/sh\nexec ${JSON.stringify(runtimeExecutable)} ${JSON.stringify(runtimeEntrypoint)} "$@"\n`,
-        { mode: 0o755 }
-      ),
-      fs.writeFile(
         path.join(restrictedBinDirectory, 'sudo'),
         '#!/bin/sh\nexec "$@"\n',
         { mode: 0o755 }
       )
     ])
 
-    for (const installationMethod of ['curl', 'npm'] as const) {
-      const outputPath = path.join(
-        temporaryDirectory,
-        `${installationMethod}-arguments.json`
-      )
-      await execute(
-        '/bin/sh',
-        [
-          '-c',
-          createAdministratorCommand({
-            installationMethod,
-            cliEntrypoint,
-            runtimeExecutable,
-            runtimeEntrypoint,
-            requestPath
-          })
-        ],
-        {
-          env: {
-            PATH: restrictedBinDirectory,
-            TREEPORT_TEST_OUTPUT: outputPath
-          }
+    const outputPath = path.join(temporaryDirectory, 'arguments.json')
+    await execute(
+      '/bin/sh',
+      [
+        '-c',
+        createAdministratorCommand({
+          runtimeExecutable,
+          runtimeEntrypoint,
+          requestPath
+        })
+      ],
+      {
+        env: {
+          PATH: restrictedBinDirectory,
+          TREEPORT_TEST_OUTPUT: outputPath
         }
-      )
+      }
+    )
 
-      expect(JSON.parse(await fs.readFile(outputPath, 'utf8'))).toEqual([
-        'service',
-        'apply',
-        '--request',
-        requestPath
-      ])
-    }
+    expect(JSON.parse(await fs.readFile(outputPath, 'utf8'))).toEqual([
+      'service',
+      'apply',
+      '--request',
+      requestPath
+    ])
   })
 
   it('captures only the supported service environment', () => {

@@ -15,14 +15,6 @@ Treeport finds Git worktrees that Git, editors, agents, scripts, and other tools
 Requirements: macOS or Linux, Node.js 24+, npm, Git, and tmux 3.2+.
 
 ```sh
-curl -fsSL https://treeport.app/install.sh | sh
-cd /path/to/repository
-treeport .
-```
-
-The installer uses your existing Node.js installation. You can alternatively install the same package directly with npm:
-
-```sh
 npm install --global @treeport/treeport
 cd /path/to/repository
 treeport .
@@ -59,7 +51,7 @@ Start a release from a clean, up-to-date `main` branch:
 pnpm release:prepare X.Y.Z
 ```
 
-Preparation updates the npm package, desktop client, and curl installer together, runs the complete checks, commits, tags, and atomically pushes `main` and `vX.Y.Z`. The tag starts the desktop release workflow. CI builds a signed and notarized universal macOS app, attaches its DMG and updater ZIP to one draft GitHub Release, verifies them, and publishes that same release.
+Preparation updates the npm package, desktop client, and panel SDK together. It runs the complete checks, commits, tags, and atomically pushes `main` and `vX.Y.Z`. The tag starts the desktop release workflow. CI builds a signed and notarized universal macOS app. It attaches the DMG and updater ZIP to one draft GitHub Release, verifies them, and publishes that release.
 
 After the workflow succeeds, publish the npm package from the maintainer's authenticated machine:
 

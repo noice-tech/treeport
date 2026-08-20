@@ -47,7 +47,7 @@ Set `version` to the confirmed version and `tag` to `v${version}`. Run:
 pnpm release:prepare "$version"
 ```
 
-This updates the npm package, desktop client, and installer versions when needed, runs the complete repository checks, commits `Release X.Y.Z` (using an empty release commit when every version surface is already aligned), creates an annotated tag, and atomically pushes `main` and the tag. It does not publish to npm.
+This updates the npm package, desktop client, and panel SDK versions when needed. It runs the complete repository checks. It commits `Release X.Y.Z`, creates an annotated tag, and atomically pushes `main` and the tag. It uses an empty release commit when each version is aligned. It does not publish to npm.
 
 If it fails, stop and preserve the state for diagnosis. Follow the recovery instructions from the script rather than rerunning blindly.
 
