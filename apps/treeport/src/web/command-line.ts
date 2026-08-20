@@ -1,3 +1,5 @@
+export { formatCommandLine } from '@treeport/shared'
+
 export type ParsedCommandLine =
   | { argv: string[]; error: null }
   | { argv: null; error: string }
@@ -84,20 +86,4 @@ export function parseCommandLine(input: string): ParsedCommandLine {
   }
 
   return { argv, error: null }
-}
-
-export function formatCommandLine(argv: string[]): string {
-  return argv
-    .map((value) => {
-      if (value === '') {
-        return '""'
-      }
-
-      if (!/[\s"'\\]/.test(value)) {
-        return value
-      }
-
-      return `"${value.replace(/["\\]/g, '\\$&')}"`
-    })
-    .join(' ')
 }

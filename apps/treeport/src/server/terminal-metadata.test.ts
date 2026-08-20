@@ -302,7 +302,7 @@ describe('TerminalMetadataManager', () => {
     expect(manager.snapshot()).toEqual([
       {
         terminalId: 'one',
-        title: 'title session-one',
+        title: 'pi',
         program: 'pi',
         hasForegroundProcess: true,
         progress: null,
@@ -312,7 +312,7 @@ describe('TerminalMetadataManager', () => {
       },
       {
         terminalId: 'two',
-        title: 'title session-two',
+        title: 'pi',
         program: 'pi',
         hasForegroundProcess: true,
         progress: null,
@@ -380,6 +380,34 @@ describe('TerminalMetadataManager', () => {
       bell: null
     })
     expect(observers[0]!.disposed).toBe(true)
+  })
+
+  it('shows sanitized launch argv until a direct application reports a title', async () => {
+    vi.useFakeTimers()
+    const item = {
+      ...terminal('one'),
+      argv: ['pnpm', 'signoff', '\u001b', 'x'.repeat(300)]
+    }
+    const { manager, observers, sessionTitleState } = fixture([item])
+    managers.push(manager)
+    sessionTitleState.mockResolvedValue({
+      paneTitle: 'Treeport launcher',
+      currentCommand: 'node'
+    })
+
+    await manager.initialize()
+
+    expect(manager.get(item.id).title).toBe(
+      `pnpm signoff "" ${'x'.repeat(300)}`.slice(0, 256)
+    )
+
+    observers[0]!.title('Signoff progress')
+    sessionTitleState.mockResolvedValue({
+      paneTitle: 'Signoff progress',
+      currentCommand: 'node'
+    })
+    await vi.advanceTimersByTimeAsync(TERMINAL_METADATA_POLL_MS)
+    expect(manager.get(item.id).title).toBe('Signoff progress')
   })
 
   it('shows the captured command, permits an application title, and restores the shell title', async () => {
@@ -1024,7 +1052,7 @@ describe('TerminalMetadataManager', () => {
     await vi.waitFor(() =>
       expect(manager.snapshot()).toContainEqual({
         terminalId: created.id,
-        title: 'title session-new',
+        title: 'pi',
         program: 'pi',
         hasForegroundProcess: true,
         progress: null,

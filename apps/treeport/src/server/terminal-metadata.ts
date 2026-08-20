@@ -1,10 +1,11 @@
 import path from 'node:path'
-import type {
-  ProductEvent,
-  TerminalProgram,
-  TerminalRecord,
-  TerminalRuntimeMetadata,
-  WorktreeRecord
+import {
+  formatCommandLine,
+  type ProductEvent,
+  type TerminalProgram,
+  type TerminalRecord,
+  type TerminalRuntimeMetadata,
+  type WorktreeRecord
 } from '@treeport/shared'
 import type {
   TreeportService,
@@ -83,6 +84,7 @@ interface TerminalMetadataEntry extends TerminalRuntimeMetadata {
   paneTitle: string | null
   currentCommand: string | null
   commandLine: string | null
+  launchCommandLine: string | null
   shellCommand: string | null
   launchProgram: TerminalProgram | null
   shellTitle: string | null
@@ -238,6 +240,16 @@ export class TerminalMetadataManager {
         .basename(terminal.argv?.[0] ?? '')
         .replace(/^-/, '')
       const launchProgram = PROGRAM_COMMANDS.get(launchCommand) ?? null
+      const shellCommand = SHELL_COMMANDS.has(launchCommand)
+        ? launchCommand
+        : null
+      const launchCommandLine = shellCommand
+        ? null
+        : formatCommandLine(
+            terminal.argv.map((value) => value.replace(/\p{Cc}/gu, ''))
+          )
+            .trim()
+            .slice(0, 256) || null
       this.bellDeletionVersions.set(
         terminal.id,
         (this.bellDeletionVersions.get(terminal.id) ?? 0) + 1
@@ -268,7 +280,8 @@ export class TerminalMetadataManager {
         paneTitle: null,
         currentCommand: null,
         commandLine: null,
-        shellCommand: SHELL_COMMANDS.has(launchCommand) ? launchCommand : null,
+        launchCommandLine,
+        shellCommand,
         launchProgram,
         shellTitle: null,
         persistedShellTitle: null,
@@ -818,7 +831,8 @@ export class TerminalMetadataManager {
   ): void {
     const paneTitle = state.paneTitle?.trim().slice(0, 256) || null
     const currentCommand = state.currentCommand?.trim().slice(0, 256) || null
-    const commandLine = state.commandLine?.trim().slice(0, 256) || null
+    const commandLine =
+      state.commandLine?.trim().slice(0, 256) || entry.launchCommandLine
     const previousCommand = entry.currentCommand
     const previousCommandLine = entry.commandLine
     const paneTitleChanged = paneTitle !== entry.paneTitle
@@ -855,12 +869,7 @@ export class TerminalMetadataManager {
         observedProgram ?? (!entry.shellCommand ? entry.launchProgram : null)
     })
 
-    if (!entry.shellCommand) {
-      this.update(entry, { title: paneTitle ?? commandLine ?? currentCommand })
-      return
-    }
-
-    if (currentCommand === entry.shellCommand) {
+    if (entry.shellCommand && currentCommand === entry.shellCommand) {
       const applicationTitleWasActive = entry.applicationTitleActive
       const freshShellTitle =
         observedTitlePending || (previousCommand !== null && paneTitleChanged)
@@ -888,6 +897,7 @@ export class TerminalMetadataManager {
           paneTitle !== null && paneTitle !== commandLine
       } else if (commandLineChanged) {
         entry.applicationTitleActive =
+          entry.shellCommand !== null &&
           previousCommand === null &&
           paneTitle !== null &&
           paneTitle !== commandLine &&
@@ -901,6 +911,11 @@ export class TerminalMetadataManager {
           ? (paneTitle ?? entry.title ?? commandLine)
           : commandLine
       })
+      return
+    }
+
+    if (!entry.shellCommand) {
+      this.update(entry, { title: paneTitle ?? currentCommand })
       return
     }
 
