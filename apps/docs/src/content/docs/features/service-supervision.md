@@ -31,7 +31,7 @@ treeport service enable
 
 This command does not use `sudo`. It does not create an administrator request.
 
-Normal start, stop, disable, and curl update operations do not need an administrator.
+Normal start, stop, disable, and update operations do not need an administrator.
 
 ## Advanced macOS headless mode
 
@@ -45,10 +45,10 @@ treeport service enable --headless
 
 This option prepares a system LaunchDaemon. It tells you that an administrator must approve the system change.
 
-Treeport prints one administrator command. The command has this form for a curl installation:
+Treeport prints one administrator command. The command uses absolute paths to Node.js and the Treeport CLI:
 
 ```sh
-sudo '/absolute/path/to/treeport' service apply --request '/absolute/path/to/request.json'
+sudo '/absolute/path/to/node' '/absolute/path/to/treeport.mjs' service apply --request '/absolute/path/to/request.json'
 ```
 
 Run `treeport service enable --headless` as the Treeport data owner. Do not run it as the root user.
@@ -189,11 +189,7 @@ The same private URL works when the supervised daemon is healthy. See [Remote ac
 
 ## Update or remove Treeport
 
-For a curl update, run the curl installer again.
-
-The installer stops and starts a running user/login service without an administrator action.
-
-For an npm update, run:
+To update Treeport, run:
 
 ```sh
 treeport stop
@@ -215,7 +211,5 @@ npm does not have a reliable removal hook.
 If you remove the package first, the service runner stops safely and writes a recovery message.
 
 Reinstall Treeport. Then, enable service mode to repair it or disable service mode to remove it.
-
-The curl removal program checks service mode before it removes package files.
 
 Advanced headless mode can require an administrator action during removal.

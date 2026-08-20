@@ -133,7 +133,7 @@ pnpm release:prepare X.Y.Z
 
 This command performs these operations:
 
-1. Synchronize the npm package, desktop client, curl manifest, and installer version.
+1. Synchronize the npm package, desktop client, and panel SDK version.
 2. Run `pnpm check`.
 3. Create the `Release X.Y.Z` commit.
 4. Create the annotated `vX.Y.Z` tag.

@@ -45,15 +45,14 @@ pnpm --filter @treeport/docs check
 
 For a distribution release, also complete these tests on clean supported systems:
 
-1. Install the backend with the documented curl process.
-2. Install the backend with the documented npm process.
-3. Install the macOS desktop client from the release DMG.
-4. Open a repository and connect to its worktree.
-5. Run `treeport status`, `treeport doctor`, and `treeport version`.
-6. Enable and disable Tailscale Serve remote access.
-7. Update the backend with each documented installation method.
-8. Install one desktop update from version N-1.
-9. Remove Treeport with each documented installation method.
+1. Install the backend with the documented npm process.
+2. Install the macOS desktop client from the release DMG.
+3. Open a repository and connect to its worktree.
+4. Run `treeport status`, `treeport doctor`, and `treeport version`.
+5. Enable and disable Tailscale Serve remote access.
+6. Update the backend with the documented npm process.
+7. Install one desktop update from version N-1.
+8. Remove Treeport with the documented npm process.
 
 Stop release preparation when a supported workflow does not match the documentation.
 

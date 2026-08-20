@@ -3,12 +3,16 @@ title: Install Treeport
 description: Install the Treeport backend and macOS desktop client.
 ---
 
-The Treeport backend supports macOS and Linux. It requires these tools:
+The Treeport backend supports macOS and Linux.
+
+Install these required tools before you install Treeport:
 
 - Node.js 24 or a newer version
 - npm
 - Git
 - tmux 3.2 or a newer version
+
+Treeport does not install these tools.
 
 The desktop client supports macOS 12 Monterey or a newer version. It supports Apple Silicon and Intel Macs.
 
@@ -22,7 +26,7 @@ The universal application has an Apple Developer ID signature and Apple notariza
 
 The desktop client connects to a separate Treeport backend. It does not contain the backend.
 
-Install the backend on this Mac with curl or npm. Alternatively, connect to a private HTTPS backend on another computer.
+Install the backend on this Mac with npm. Alternatively, connect to a private HTTPS backend on another computer.
 
 The desktop client checks for stable updates automatically. After it downloads an update, it shows **Update & restart** in the title bar.
 
@@ -30,59 +34,7 @@ Select this control to restart the client and install the update.
 
 A desktop update does not upgrade or restart the selected backend.
 
-## Install the backend with curl
-
-Use the recommended installer:
-
-```sh
-curl -fsSL https://treeport.app/install.sh | sh
-```
-
-The installer puts the Treeport npm package in a directory that Treeport manages.
-
-The installer checks for Node.js 24 or a newer version and npm on `PATH`. It does not install Node.js or a package manager.
-
-If tmux is not available, the installer can use a recognized package manager. The installer asks for approval before it installs tmux.
-
-The installer supports these package managers:
-
-- Homebrew and MacPorts on macOS
-- APT, DNF, YUM, pacman, Zypper, and apk on Linux
-
-You can install tmux 3.2 or a newer version before you run the installer again.
-
-If Git is not available, install it with your package manager.
-
-If the installer asks you, add `~/.local/bin` to `PATH`.
-
-Open a Git repository:
-
-```sh
-cd /path/to/repository
-treeport .
-```
-
-Treeport starts the backend in the background when necessary. It registers the repository and finds its trees.
-
-It then opens the current tree in the macOS desktop client or the default browser.
-
-To start only the backend, run:
-
-```sh
-treeport start
-```
-
-This command prints the local URL. The default URL is `http://127.0.0.1:8733`.
-
-### Update a curl installation
-
-Run the same curl command to install a newer version. The installer keeps the current daemon state.
-
-A running macOS user/login service stops and starts without an administrator action.
-
-An existing advanced headless service can require administrator approval for its lifecycle operations.
-
-## Install the backend with npm
+## Install the backend
 
 Install Treeport globally:
 
@@ -97,7 +49,19 @@ cd /path/to/repository
 treeport .
 ```
 
-### Update an npm installation
+Treeport starts the backend when necessary. It registers the repository and finds its trees.
+
+It then opens the current tree in the macOS desktop client or the default browser.
+
+To start only the backend, run:
+
+```sh
+treeport start
+```
+
+This command prints the local URL. The default URL is `http://127.0.0.1:8733`.
+
+### Update the backend
 
 Stop Treeport before npm replaces package files:
 
@@ -172,19 +136,7 @@ See [Service supervision](/features/service-supervision/) for service behavior, 
 
 ## Remove Treeport
 
-To remove a curl installation and keep application data, run:
-
-```sh
-curl -fsSL https://treeport.app/uninstall.sh | sh
-```
-
-To also terminate all terminals and remove application data, run:
-
-```sh
-curl -fsSL https://treeport.app/uninstall.sh | TREEPORT_PURGE=1 sh
-```
-
-For an npm installation, disable service mode before you remove the CLI:
+Disable service mode before you remove the CLI:
 
 ```sh
 treeport service disable

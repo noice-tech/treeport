@@ -85,11 +85,11 @@ It does not disable lingering during removal because other user units can requir
 
 All service definitions start a stable runner in the Treeport data directory.
 
-The runner uses the stable curl shim or npm global binary link.
+The runner uses the stable npm global binary link.
 
 It then replaces itself with the foreground Treeport process.
 
-Service definitions do not point to a versioned curl directory or an npm package implementation file.
+Service definitions do not point to an npm package implementation file.
 
 A missing package path stops safely and supplies a diagnostic.
 
@@ -126,8 +126,6 @@ A normal stop does not remove automatic startup. Disable service mode to remove 
 Service configuration uses a reviewed environment, not the interactive shell environment.
 
 After a related path or configuration change, run the applicable service enable command again.
-
-The curl removal program must not remove package files before service mode is disabled.
 
 npm does not have a reliable removal hook.
 

@@ -5,9 +5,8 @@
   "type": "module",
   "scripts": {
     "start": "astro dev",
-    "build": "node scripts/check-installer.mjs && node scripts/check-links.mjs && astro build",
+    "build": "node scripts/check-links.mjs && astro build",
     "check": "pnpm typecheck && pnpm build",
-    "check:installer": "node scripts/check-installer.mjs",
     "check:links": "node scripts/check-links.mjs",
     "preview": "pnpm build && wrangler dev",
     "deploy": "pnpm build && wrangler deploy",
