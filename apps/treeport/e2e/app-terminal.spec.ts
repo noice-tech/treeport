@@ -826,7 +826,7 @@ test.describe('desktop worktree and terminal workflows', () => {
           </script>`
       })
     })
-    await mockApp(page)
+    const mocked = await mockApp(page)
     await page.getByRole('button', { name: /^topic(?:,|\s|$)/ }).click()
 
     await page.getByRole('button', { name: /^New panel/ }).click()
@@ -836,6 +836,7 @@ test.describe('desktop worktree and terminal workflows', () => {
         request.method() === 'POST' &&
         new URL(request.url()).pathname === '/api/worktrees/wt_topic/panels'
     )
+    const releaseProjects = mocked.delayNextProjects()
     await launcher.getByRole('button', { name: 'Browser, web panel' }).click()
     expect((await createRequest).postDataJSON()).toEqual({
       definitionId: 'package:npm:@treeport/web-panel-browser:web-panel:browser',
@@ -843,6 +844,7 @@ test.describe('desktop worktree and terminal workflows', () => {
       launchCwd: null
     })
 
+    await expect(page).toHaveURL(/\/panels\/panel_1$/)
     await expect(
       page.getByRole('button', { name: 'Browser, web panel' })
     ).toBeVisible()
@@ -855,6 +857,7 @@ test.describe('desktop worktree and terminal workflows', () => {
           )
       )
       .toBe(true)
+    releaseProjects()
     await expect(page.locator('iframe[title="Browser"]')).toHaveAttribute(
       'sandbox',
       /allow-same-origin/
