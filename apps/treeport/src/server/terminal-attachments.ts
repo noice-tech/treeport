@@ -438,7 +438,7 @@ export class TerminalAttachmentManager {
 
     return Effect.gen(this, function* () {
       const terminal = yield* promisePhase('refresh_terminal', () =>
-        this.service.refreshTerminalStatus(connection.terminalId)
+        this.service.refreshTerminalStatus(connection.terminalId, false)
       )
       if (!isInitializing()) {
         return
@@ -478,6 +478,11 @@ export class TerminalAttachmentManager {
               return null
             }
 
+            const current = this.dimensions.get(connection.terminalId)
+            if (current) {
+              return current
+            }
+
             await this.tmux
               .useManualWindowSize(
                 worktree.tmuxSocketName,
@@ -491,11 +496,6 @@ export class TerminalAttachmentManager {
               })
             if (!isInitializing()) {
               return null
-            }
-
-            const current = this.dimensions.get(connection.terminalId)
-            if (current) {
-              return current
             }
 
             const sessionSize = await this.tmux

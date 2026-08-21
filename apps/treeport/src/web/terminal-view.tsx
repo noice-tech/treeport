@@ -431,7 +431,9 @@ export function TerminalView({
                 <span className="max-w-[calc(100%-1.5rem)] rounded-full bg-zinc-900/90 px-3 py-1 text-center text-xs text-amber-200 shadow ring-1 ring-amber-400/20 backdrop-blur">
                   {snapshot.error
                     ? `${snapshot.error} Retrying…`
-                    : 'Reconnecting…'}
+                    : snapshot.phase === 'connecting'
+                      ? 'Connecting…'
+                      : 'Reconnecting…'}
                 </span>
               )}
               {snapshot.fileTransfer && (

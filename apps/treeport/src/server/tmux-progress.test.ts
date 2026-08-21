@@ -385,6 +385,7 @@ describe('TmuxProgressObserver', () => {
     await vi.advanceTimersByTimeAsync(250)
     expect(child.kill).toHaveBeenLastCalledWith('SIGKILL')
     child.emit('exit', null, 'SIGKILL')
+    await observer.closed
     vi.useRealTimers()
   })
 

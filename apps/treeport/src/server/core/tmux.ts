@@ -196,6 +196,10 @@ export class TmuxAdapter {
   private readonly uid: number | undefined
   private readonly creationTails = new Map<string, Promise<void>>()
   private readonly configuredSockets = new Set<string>()
+  private readonly socketConfigurationPromises = new Map<
+    string,
+    Promise<void>
+  >()
   private initializationPromise: Promise<boolean> | null = null
   private sshAuthSockPromise: Promise<string | undefined> | null = null
 
@@ -451,13 +455,29 @@ export class TmuxAdapter {
   }
 
   async configureServer(socketName: string): Promise<void> {
-    await runChecked(this.runner, {
+    if (this.configuredSockets.has(socketName)) {
+      return
+    }
+
+    const existing = this.socketConfigurationPromises.get(socketName)
+    if (existing) {
+      return existing
+    }
+
+    const configuring = runChecked(this.runner, {
       executable: this.executable,
       args: [...this.base(socketName), 'source-file', this.configPath],
       env: this.environment(),
       timeoutMs: 10_000
+    }).then(() => {
+      this.configuredSockets.add(socketName)
     })
-    this.configuredSockets.add(socketName)
+    this.socketConfigurationPromises.set(socketName, configuring)
+    return configuring.finally(() => {
+      if (this.socketConfigurationPromises.get(socketName) === configuring) {
+        this.socketConfigurationPromises.delete(socketName)
+      }
+    })
   }
 
   private async configureSession(
