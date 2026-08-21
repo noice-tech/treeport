@@ -420,5 +420,20 @@ test.describe('desktop worktree terminal UI', () => {
     ).toBeVisible()
     expect(confirmationShown).toBe(false)
     expect(mocked.closeRequests()).toBe(3)
+
+    await page.getByRole('button', { name: 'Open project' }).click()
+    const recentProjectOption = page.getByRole('listitem').filter({
+      has: page.getByRole('button', {
+        name: 'Remove recent project example'
+      })
+    })
+    await recentProjectOption.hover()
+    await page
+      .getByRole('button', { name: 'Remove recent project example' })
+      .click()
+    await expect(
+      page.getByRole('button', { name: 'example', exact: true })
+    ).toHaveCount(0)
+    expect(mocked.dismissRecentProjectRequests()).toBe(1)
   })
 })

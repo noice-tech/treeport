@@ -50,7 +50,7 @@ describe('SQLite migration and catalog ordering', () => {
       await database.db.get<{ count: number }>(
         sql`SELECT count(*) AS count FROM __drizzle_migrations`
       )
-    ).toEqual({ count: 8 })
+    ).toEqual({ count: 9 })
     expect(
       await database.db.get<{ count: number }>(sql`
         SELECT count(*) AS count FROM sqlite_master WHERE name='terminals'
@@ -349,6 +349,12 @@ describe('SQLite migration and catalog ordering', () => {
     await initial.db.transaction(async (tx) => {
       await tx.run(sql`DROP INDEX terminal_presets_order_idx`)
       await tx.run(sql`DROP TABLE terminal_presets`)
+      await tx.run(sql`DROP INDEX projects_recent_idx`)
+      await tx.run(sql`ALTER TABLE projects DROP COLUMN show_in_recents`)
+      await tx.run(sql`
+        CREATE INDEX projects_recent_idx
+        ON projects(is_open,last_opened_at DESC,id)
+      `)
       await tx.run(sql`DROP INDEX projects_repository_identity_idx`)
       await tx.run(sql`ALTER TABLE projects DROP COLUMN repository_identity`)
       await tx.run(sql`
@@ -407,7 +413,7 @@ describe('SQLite migration and catalog ordering', () => {
       await reopened.db.get<{ count: number }>(
         sql`SELECT count(*) AS count FROM __drizzle_migrations`
       )
-    ).toEqual({ count: 8 })
+    ).toEqual({ count: 9 })
 
     const backupDirectory = path.join(directory, 'database-backups')
     const [backupName] = await fs.readdir(backupDirectory)
@@ -473,6 +479,12 @@ describe('SQLite migration and catalog ordering', () => {
         FROM terminal_presets_latest
       `)
       await tx.run(sql`DROP TABLE terminal_presets_latest`)
+      await tx.run(sql`DROP INDEX projects_recent_idx`)
+      await tx.run(sql`ALTER TABLE projects DROP COLUMN show_in_recents`)
+      await tx.run(sql`
+        CREATE INDEX projects_recent_idx
+        ON projects(is_open,last_opened_at DESC,id)
+      `)
       await tx.run(sql`DROP INDEX projects_repository_identity_idx`)
       await tx.run(sql`ALTER TABLE projects DROP COLUMN repository_identity`)
       await tx.run(sql`
@@ -552,16 +564,18 @@ describe('SQLite migration and catalog ordering', () => {
       fs.rm(path.join(oldMigrations, '0005_git_authoritative_worktrees.sql')),
       fs.rm(path.join(oldMigrations, '0006_web_panel_launch_input.sql')),
       fs.rm(path.join(oldMigrations, '0007_dashing_pestilence.sql')),
+      fs.rm(path.join(oldMigrations, '0008_recent_project_visibility.sql')),
       fs.rm(path.join(oldMigrations, 'meta', '0005_snapshot.json')),
       fs.rm(path.join(oldMigrations, 'meta', '0006_snapshot.json')),
-      fs.rm(path.join(oldMigrations, 'meta', '0007_snapshot.json'))
+      fs.rm(path.join(oldMigrations, 'meta', '0007_snapshot.json')),
+      fs.rm(path.join(oldMigrations, 'meta', '0008_snapshot.json'))
     ])
     const journalPath = path.join(oldMigrations, 'meta', '_journal.json')
     // SAFETY: The test fixture provides the asserted contract used here.
     const journal = JSON.parse(await fs.readFile(journalPath, 'utf8')) as {
       entries: unknown[]
     }
-    journal.entries.splice(-3)
+    journal.entries.splice(-4)
     await fs.writeFile(journalPath, JSON.stringify(journal, null, 2))
 
     const filePath = path.join(directory, 'treeport.db')
@@ -571,10 +585,10 @@ describe('SQLite migration and catalog ordering', () => {
     await oldDatabase.db.run(sql`
       INSERT INTO projects(
         id,name,repository_path,main_worktree_path,default_branch,
-        repository_device,repository_inode,last_opened_at,created_at,updated_at
+        repository_device,repository_inode,is_open,last_opened_at,created_at,updated_at
       ) VALUES(
         'p_cutover','Cutover','/cutover','/cutover','main',
-        '1','1','2026-01-01','2026-01-01','2026-01-01'
+        '1','1',0,'2026-01-01','2026-01-01','2026-01-01'
       )
     `)
     await oldDatabase.db.run(sql`
@@ -590,6 +604,13 @@ describe('SQLite migration and catalog ordering', () => {
 
     const migrated = await openDatabase(filePath)
     databases.push(migrated)
+    expect(
+      await migrated.db
+        .select()
+        .from(projects)
+        .where(eq(projects.id, 'p_cutover'))
+        .then(([project]) => project)
+    ).toMatchObject({ id: 'p_cutover', showInRecents: 1 })
     expect(
       await migrated.db
         .select()
@@ -628,6 +649,12 @@ describe('SQLite migration and catalog ordering', () => {
       updatedAt: '2026-01-01'
     })
     await initial.db.transaction(async (tx) => {
+      await tx.run(sql`DROP INDEX projects_recent_idx`)
+      await tx.run(sql`ALTER TABLE projects DROP COLUMN show_in_recents`)
+      await tx.run(sql`
+        CREATE INDEX projects_recent_idx
+        ON projects(is_open,last_opened_at DESC,id)
+      `)
       await tx.run(sql`DROP INDEX projects_repository_identity_idx`)
       await tx.run(sql`ALTER TABLE projects DROP COLUMN repository_identity`)
       await tx.run(sql`
@@ -703,6 +730,6 @@ describe('SQLite migration and catalog ordering', () => {
       await recovered.db.get<{ count: number }>(
         sql`SELECT count(*) AS count FROM __drizzle_migrations`
       )
-    ).toEqual({ count: 8 })
+    ).toEqual({ count: 9 })
   })
 })

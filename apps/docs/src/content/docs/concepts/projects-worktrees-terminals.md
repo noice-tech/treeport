@@ -19,6 +19,12 @@ When you close a project, Treeport stops all terminals in that project. It does 
 
 You can open the project again later.
 
+You can remove a closed project from the Recent projects list.
+
+This action does not remove the repository, Git worktrees, or files.
+
+Use Open project with the repository path to show the project again.
+
 ## Trees
 
 A tree is Treeport's persistent workspace for an isolated development environment.

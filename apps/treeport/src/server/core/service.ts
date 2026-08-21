@@ -610,7 +610,7 @@ export class TreeportService {
         lastOpenedAt: projects.lastOpenedAt
       })
       .from(projects)
-      .where(eq(projects.isOpen, 0))
+      .where(and(eq(projects.isOpen, 0), eq(projects.showInRecents, 1)))
       .orderBy(desc(projects.lastOpenedAt), asc(projects.id))
   }
 
@@ -2211,11 +2211,11 @@ export class TreeportService {
         INSERT INTO projects(
           id,name,repository_path,main_worktree_path,default_branch,
           repository_identity,repository_device,repository_inode,name_is_custom,
-          is_open,last_opened_at,created_at,updated_at
+          is_open,show_in_recents,last_opened_at,created_at,updated_at
         ) VALUES(
           ${projectId},${name},${repositoryPath},${mainPath},${defaultBranch},
           ${repositoryIdentity},${repositoryDevice},${repositoryInode},
-          ${nameIsCustom ? 1 : 0},1,${timestamp},
+          ${nameIsCustom ? 1 : 0},1,0,${timestamp},
           ${existing?.createdAt ?? timestamp},${timestamp}
         )
         ON CONFLICT(id) DO UPDATE SET
@@ -2259,6 +2259,7 @@ export class TreeportService {
             .update(projects)
             .set({
               isOpen: 1,
+              showInRecents: 0,
               lastOpenedAt: timestamp,
               updatedAt: timestamp
             })
@@ -2363,6 +2364,7 @@ export class TreeportService {
           .update(projects)
           .set({
             isOpen: 1,
+            showInRecents: 0,
             lastOpenedAt: timestamp,
             updatedAt: timestamp
           })
@@ -2447,7 +2449,7 @@ export class TreeportService {
         try {
           await this.deps.database.db
             .update(projects)
-            .set({ isOpen: 0, updatedAt: now() })
+            .set({ isOpen: 0, showInRecents: 1, updatedAt: now() })
             .where(eq(projects.id, projectId))
         } catch (error) {
           throw new DomainError(
@@ -2471,6 +2473,25 @@ export class TreeportService {
         }
         this.projectLocks.delete(projectId)
       }
+    })
+  }
+
+  async dismissRecentProject(projectId: string): Promise<void> {
+    await this.serializeProjectObservation(projectId, async () => {
+      await this.getProject(projectId)
+      if ((await this.projectOpenState(projectId)) !== false) {
+        throw new DomainError(
+          'PROJECT_NOT_RECENT',
+          'Project is open and cannot be removed from Recent projects',
+          409
+        )
+      }
+
+      await this.deps.database.db
+        .update(projects)
+        .set({ showInRecents: 0, updatedAt: now() })
+        .where(and(eq(projects.id, projectId), eq(projects.isOpen, 0)))
+      this.events.publish('project.updated', { projectId })
     })
   }
 
