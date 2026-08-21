@@ -39,7 +39,9 @@ Inside a managed terminal, this reports the current project, tree, terminal, pat
 
 Outside Treeport it reports that the terminal is not managed and exits successfully. `TREEPORT_API_URL` may be configured outside a managed terminal; if any context ID is present, however, all injected values are required. Partial IDs or IDs that no longer belong together fail instead of falling back to path inference.
 
-Use the exact IDs from this command for subsequent operations. `.` is a convenient shorthand for the current project or tree. Exact IDs are clearer after context is resolved.
+Use the exact IDs from this command when an operation targets a different project or tree. `.` is a convenient shorthand for the current project or tree.
+
+When the current folder is in the target project, omit `--project` from `worktree create` and `spawn`. Treeport detects the registered project from the current folder.
 
 ## Create a terminal in the current tree
 
@@ -63,7 +65,6 @@ Create a linked tree and its first persistent terminal together:
 
 ```sh
 treeport spawn \
-  --project <project-id> \
   --worktree-name <tree-name> \
   --name <terminal-name> \
   -- <program> <arg> ...
@@ -143,7 +144,6 @@ treeport terminal create \
   --json -- <program> <arg> ...
 
 treeport spawn \
-  --project <project-id> \
   --worktree-name <tree-name> \
   --name <terminal-name> \
   --json -- <program> <arg> ...
