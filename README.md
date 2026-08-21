@@ -1,63 +1,76 @@
 # Treeport
 
-> **Local/trusted-network use only; no authentication yet.** Do not expose Treeport directly to the internet. See the [security guide](apps/docs/src/content/docs/security.md).
->
-> Treeport was built quickly because I needed the tool myself. Some parts were scaffolded in the fastest way that worked, so please don’t laugh at the code too hard. I’ll clean up the mess as the core workflow stabilizes.
+**Persistent terminals for Git worktrees.**
 
-**Use trees as your development task system.**
+Treeport's core is under active development. Treeport is already usable for daily development work, but some interfaces can change.
 
-A tree is Treeport's persistent workspace for a Git worktree. Run coding agents, shells, development servers, test watchers, and normal TUIs. Then, reconnect from the desktop app, browser, or phone.
+Treeport gives each Git worktree a persistent workspace called a tree. Your terminals continue to run when you disconnect.
 
-Treeport finds Git worktrees that Git, editors, agents, scripts, and other tools create. It shows each worktree as a tree. Git remains the source of truth.
+Reconnect from the macOS app, a browser, or a phone. Use your existing agents, shells, editors, and development tools without changing their interfaces.
+
+Treeport finds worktrees that Git, editors, agents, and scripts create. Git remains the source of truth.
 
 ## Quick start
 
-Requirements: macOS or Linux, Node.js 24+, npm, Git, and tmux 3.2+.
+Treeport supports macOS and Linux. It requires Node.js 24+, npm, Git, and tmux 3.2+.
 
 ```sh
 npm install --global @treeport/treeport
-cd /path/to/repository
-treeport .
+treeport start
 ```
 
-Treeport starts its local backend if needed, registers the repository and its trees, and opens the current tree in the desktop app or browser. Run `treeport start` to start only the backend and print its local URL, `http://127.0.0.1:8733`. Use `treeport service enable` when a host must start Treeport after reboot.
+`treeport start` starts the local backend and prints its URL. The default URL is `http://127.0.0.1:8733`.
+
+Open the URL. Then, select **Open project** and choose a Git repository.
+
+To start Treeport automatically after login or reboot, enable its operating-system service:
+
+```sh
+treeport service enable
+```
+
+See the [installation guide](https://treeport.app/getting-started/installation/) for the macOS app, updates, and service options.
+
+## Why Treeport
+
+- **Persistent terminals:** Processes continue when all clients disconnect.
+- **Worktree-first navigation:** Each tree keeps its terminals and tools together.
+- **Normal terminal interfaces:** Run Pi, Claude Code, Codex, shells, servers, and other TUIs.
+- **Multiple clients:** Reconnect from the macOS app or a supported browser.
+- **Tool-independent discovery:** Use worktrees created by Git, editors, agents, or scripts.
+
+## Security
+
+> [!IMPORTANT]
+> Treeport gives users full terminal access. Keep the backend on loopback unless you configure [supported private remote access](https://treeport.app/features/remote-access/).
+>
+> Do not expose Treeport directly to the public internet. Read the [security guide](https://treeport.app/security/).
 
 ## Documentation
 
-Read the documentation at [treeport.app](https://treeport.app).
+- [Install Treeport](https://treeport.app/getting-started/installation/)
+- [Understand projects, trees, and terminals](https://treeport.app/concepts/projects-worktrees-terminals/)
+- [Configure persistent service mode](https://treeport.app/features/service-supervision/)
+- [Connect through Tailscale](https://treeport.app/features/remote-access/)
+- [Use the CLI](https://treeport.app/reference/cli/)
 
 ## Development
 
-Contributor requirements: Node.js 24+, pnpm 11, Git, and tmux 3.2+.
-
-`pnpm dev` starts the daemon, web UI, and Electron app together using available per-tree ports. It binds both development services to loopback by default.
+Contributor requirements are Node.js 24+, pnpm 11, Git, and tmux 3.2+.
 
 ```sh
 pnpm install
 pnpm dev
-pnpm test
-pnpm typecheck
-pnpm lint
-pnpm build
 ```
 
-For private tailnet testing, run `tailscale up` and then `pnpm dev:tailscale`. The development stack stays on loopback for local browser and Electron use, while a temporary Tailscale Serve route provides remote access. Tailscale Funnel and direct LAN listeners are not supported. See the [contributor development guide](apps/docs/src/content/docs/building-apps/contributing.md) for the security model.
+`pnpm dev` starts the daemon, web interface, and Electron app with separate ports for this tree.
 
-## Releases
-
-Start a release from a clean, up-to-date `main` branch:
+Run the complete local pull-request check before you submit a change:
 
 ```sh
-pnpm release:prepare X.Y.Z
+pnpm ci:local
 ```
 
-Preparation updates the npm package, desktop client, and panel SDK together. It runs the complete checks, commits, tags, and atomically pushes `main` and `vX.Y.Z`. The tag starts the desktop release workflow. CI builds a signed and notarized universal macOS app. It attaches the DMG and updater ZIP to one draft GitHub Release, verifies them, and publishes that release.
+## License
 
-After the workflow succeeds, publish the npm package from the maintainer's authenticated machine:
-
-```sh
-npm login
-pnpm release:publish X.Y.Z
-```
-
-Publication verifies the tag, the single published GitHub Release, and both desktop assets before publishing `@treeport/treeport` with npm tag `latest`. Do not create the GitHub Release manually.
+Treeport uses the [MIT License](LICENSE).
