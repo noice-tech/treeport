@@ -166,6 +166,7 @@ export class TerminalSession {
   private host: HTMLElement | null = null
   private resizeObserver: ResizeObserver | null = null
   private keyboardViewportCleanup: (() => void) | null = null
+  private desktopLocalFilePasteCleanup: (() => void) | null = null
   private socket: Socket<
     TerminalServerToClientEvents,
     TerminalClientToServerEvents
@@ -598,6 +599,8 @@ export class TerminalSession {
 
     this.keyboardViewportCleanup?.()
     this.keyboardViewportCleanup = null
+    this.desktopLocalFilePasteCleanup?.()
+    this.desktopLocalFilePasteCleanup = null
     this.socket?.disconnect()
     this.socket = null
     this.wrapper?.remove()
@@ -735,6 +738,15 @@ export class TerminalSession {
       }
     )
     const wrapper = this.wrapper
+    this.desktopLocalFilePasteCleanup =
+      window.treeportDesktop?.onLocalFilePaste?.((paths) => {
+        if (!this.wrapper?.contains(document.activeElement)) {
+          return
+        }
+
+        this.requestControl()
+        this.pasteResolvedFilePaths(paths)
+      }) ?? null
     const transfersFiles = (transfer: DataTransfer | null) =>
       Boolean(
         transfer &&
@@ -987,47 +999,64 @@ export class TerminalSession {
         paths.push(result.file.path)
       }
 
-      if (this.disposed) {
-        return
-      }
-
-      if (!this.ready || !this.snapshotValue.controller) {
-        this.showFileTransferError(
-          'Terminal control was lost during the upload'
-        )
-        return
-      }
-
-      if (!this.canInput()) {
-        this.showFileTransferError('Wait for the terminal resize to finish')
-        return
-      }
-
-      const input = paths
-        .map((filePath) =>
-          /^[A-Za-z0-9_+,./:@%=-]+$/u.test(filePath)
-            ? filePath
-            : `'${filePath.replaceAll("'", "'\\''")}'`
-        )
-        .join(' ')
-      if (
-        new TextEncoder().encode(input).byteLength >
-        TERMINAL_MAX_INPUT_BYTES - 32
-      ) {
-        this.showFileTransferError('The file paths are too long')
-        return
-      }
-
-      this.clearSelection()
-      this.prepareScrollExit()
-      this.terminal?.paste(input)
-      this.focus()
-      this.update({ fileTransfer: null })
+      this.pasteResolvedFilePaths(
+        paths,
+        'Terminal control was lost during the upload'
+      )
     } catch (error) {
       if (!this.disposed) {
         this.showFileTransferError(errorMessage(error))
       }
     }
+  }
+
+  private pasteResolvedFilePaths(paths: string[], controlError?: string): void {
+    if (!paths.length || this.disposed) {
+      return
+    }
+
+    if (paths.length > TERMINAL_MAX_FILES_PER_TRANSFER) {
+      this.showFileTransferError(
+        `Choose no more than ${TERMINAL_MAX_FILES_PER_TRANSFER} files at a time`
+      )
+      return
+    }
+
+    if (!this.ready || !this.snapshotValue.controller) {
+      this.showFileTransferError(
+        controlError ??
+          (this.snapshotValue.controlPending
+            ? 'taking control; try again in a moment'
+            : 'interact with the terminal to take control first')
+      )
+      return
+    }
+
+    if (!this.canInput()) {
+      this.showFileTransferError('Wait for the terminal resize to finish')
+      return
+    }
+
+    const input = paths
+      .map((filePath) =>
+        /^[A-Za-z0-9_+,./:@%=-]+$/u.test(filePath)
+          ? filePath
+          : `'${filePath.replaceAll("'", "'\\''")}'`
+      )
+      .join(' ')
+    if (
+      new TextEncoder().encode(input).byteLength >
+      TERMINAL_MAX_INPUT_BYTES - 32
+    ) {
+      this.showFileTransferError('The file paths are too long')
+      return
+    }
+
+    this.clearSelection()
+    this.prepareScrollExit()
+    this.terminal?.paste(input)
+    this.focus()
+    this.update({ fileTransfer: null })
   }
 
   private showFileTransferError(message: string): void {
