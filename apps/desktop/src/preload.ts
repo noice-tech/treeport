@@ -11,6 +11,46 @@ import type {
 } from './desktop-contract'
 
 const localSourcePathResultSchema = z.string().nullable().catch(null)
+const localSourcePathsResultSchema = z.array(z.string()).max(1).catch([])
+const localFilePasteListeners = new Set<(paths: string[]) => void>()
+
+window.addEventListener(
+  'paste',
+  (event) => {
+    if (!event.isTrusted || localFilePasteListeners.size === 0) {
+      return
+    }
+
+    const files = Array.from(event.clipboardData?.files ?? [])
+    if (
+      files.length > 1 ||
+      (files.length === 1 && webUtils.getPathForFile(files[0]!)) ||
+      !event
+        .composedPath()
+        .some(
+          (target) =>
+            target instanceof Element &&
+            target.classList.contains('terminal-session-host')
+        )
+    ) {
+      return
+    }
+
+    const paths = localSourcePathsResultSchema.parse(
+      ipcRenderer.sendSync('terminal-file:read-clipboard-source-paths')
+    )
+    if (!paths.length) {
+      return
+    }
+
+    event.preventDefault()
+    event.stopPropagation()
+    for (const listener of localFilePasteListeners) {
+      listener(paths)
+    }
+  },
+  true
+)
 
 const desktopBridge = Object.freeze({
   platform: process.platform,
@@ -28,6 +68,10 @@ const desktopBridge = Object.freeze({
     return ipcRenderer
       .invoke('terminal-file:resolve-source-path', filePath)
       .then((result) => localSourcePathResultSchema.parse(result))
+  },
+  onLocalFilePaste(listener: (paths: string[]) => void) {
+    localFilePasteListeners.add(listener)
+    return () => localFilePasteListeners.delete(listener)
   },
   onFullscreenChange(listener: (fullscreen: boolean) => void) {
     const receive: Parameters<typeof ipcRenderer.on>[1] = (

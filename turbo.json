@@ -21,6 +21,10 @@
       "dependsOn": ["^build"],
       "outputs": []
     },
+    "@treeport/treeport#typecheck": {
+      "dependsOn": ["build"],
+      "outputs": []
+    },
     "@treeport/desktop#test:desktop": {
       "dependsOn": ["build"],
       "cache": false,

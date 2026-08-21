@@ -935,6 +935,20 @@ function registerIpc(): void {
       ? resolveLocalSourcePath(selectedOrigin(), parsedPath.data)
       : null
   })
+  ipcMain.on('terminal-file:read-clipboard-source-paths', (event) => {
+    event.returnValue = []
+    if (!isActiveGuestEvent(event) || process.platform !== 'darwin') {
+      return
+    }
+
+    // ponytail: This fallback reads one macOS file URL. Parse NSFilenamesPboardType if Electron omits multiple files from ClipboardEvent.
+    const filePath = filePathFromUrl(clipboard.read('public.file-url'))
+    const parsedPath = localSourcePathSchema.safeParse(filePath)
+    const resolvedPath = parsedPath.success
+      ? resolveLocalSourcePath(selectedOrigin(), parsedPath.data)
+      : null
+    event.returnValue = resolvedPath ? [resolvedPath] : []
+  })
   ipcMain.on('terminal-selection:set-active', (event, active) => {
     const parsedActive = z.boolean().safeParse(active)
     if (!isActiveGuestEvent(event) || !parsedActive.success) {
