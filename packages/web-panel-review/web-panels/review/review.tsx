@@ -7,6 +7,7 @@ import {
 import { FileTree, useFileTree } from '@pierre/trees/react'
 import {
   treeport,
+  type GitDiff,
   type GitDiffChangeSets
 } from '@treeport/panel-sdk'
 import {
@@ -56,6 +57,9 @@ interface LoadedReview {
 
 const COMMENTS_KEY = 'review-comments-v1'
 const VIEWED_KEY = 'review-viewed-files-v1'
+// ponytail: Unfocused panels stay stale, and focused panels can lag two seconds.
+// Add a host diff-change event when either limit matters.
+const AUTO_REFRESH_INTERVAL_MS = 2_000
 const DIFF_CSS = `
   [data-diffs-header] { position: sticky; top: -1rem; z-index: 2; }
   [data-change-icon] { width: 0.875rem; height: 0.875rem; }
@@ -423,12 +427,18 @@ function CommentEditor({
 
 function ReviewApp() {
   const [loaded, setLoaded] = useState<LoadedReview | null>(null)
+  const loadedRef = useRef(loaded)
+  loadedRef.current = loaded
+  const loadedDiff = useRef<GitDiff | null>(null)
+  const loadPending = useRef(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [comments, setComments] = useState<ReviewComment[]>([])
   const commentsRef = useRef(comments)
   commentsRef.current = comments
   const [viewedFiles, setViewedFiles] = useState<Set<string>>(new Set())
+  const viewedFilesRef = useRef(viewedFiles)
+  viewedFilesRef.current = viewedFiles
   const [collapsedFiles, setCollapsedFiles] = useState<Set<string>>(new Set())
   const collapsedFilesRef = useRef(collapsedFiles)
   collapsedFilesRef.current = collapsedFiles
@@ -520,30 +530,48 @@ function ReviewApp() {
   }, [])
 
   const load = useCallback(async () => {
-    setLoading(true)
+    if (loadPending.current) {
+      return
+    }
+
+    loadPending.current = true
+    const initial = loadedRef.current === null
+    if (initial) {
+      setLoading(true)
+    }
+
     setError(null)
-    setLoaded(null)
-    setSelectedFile(null)
-    setSelectedLines(null)
-    setActiveFindMatch(-1)
     try {
-      const [context, diff, storedComments, storedViewedFiles] =
-        await Promise.all([
-          treeport.context(),
-          treeport.diff(),
-          treeport.storage.get(COMMENTS_KEY),
-          treeport.storage.get(VIEWED_KEY)
-        ])
-      const parsedComments: ReviewComment[] = Array.isArray(storedComments)
-        ? storedComments.flatMap((comment): ReviewComment[] => {
-            const parsed = parseReviewComment(comment)
-            return parsed ? [parsed] : []
-          })
-        : []
-      const parsedViewedFiles = z.array(z.string()).safeParse(storedViewedFiles)
-      const parsedViewed = new Set(
-        parsedViewedFiles.success ? parsedViewedFiles.data : []
-      )
+      const [context, diff, storedComments, storedViewedFiles] = initial
+        ? await Promise.all([
+            treeport.context(),
+            treeport.diff(),
+            treeport.storage.get(COMMENTS_KEY),
+            treeport.storage.get(VIEWED_KEY)
+          ])
+        : [null, await treeport.diff(), null, null]
+      const previousDiff = loadedDiff.current
+      if (
+        previousDiff?.baseRef === diff.baseRef &&
+        previousDiff.baseCommit === diff.baseCommit &&
+        previousDiff.headCommit === diff.headCommit &&
+        previousDiff.unified === diff.unified &&
+        JSON.stringify(previousDiff.changeSets) ===
+          JSON.stringify(diff.changeSets)
+      ) {
+        return
+      }
+
+      const parsedComments: ReviewComment[] =
+        initial && Array.isArray(storedComments)
+          ? storedComments.flatMap((comment): ReviewComment[] => {
+              const parsed = parseReviewComment(comment)
+              return parsed ? [parsed] : []
+            })
+          : commentsRef.current
+      const parsedViewed = initial
+        ? new Set(z.array(z.string()).catch([]).parse(storedViewedFiles))
+        : viewedFilesRef.current
       const parsedFiles = diff.unified
         ? [
             ...new Map(
@@ -558,15 +586,22 @@ function ReviewApp() {
       }
 
       clearCopyFeedback()
-      setComments(parsedComments)
-      setActiveCommentId((current) =>
-        parsedComments.some(
-          ({ id, resolved }) => id === current && !resolved
+      setSelectedFile(null)
+      setSelectedLines(null)
+      setActiveFindMatch(-1)
+      if (initial) {
+        setComments(parsedComments)
+        setActiveCommentId((current) =>
+          parsedComments.some(
+            ({ id, resolved }) => id === current && !resolved
+          )
+            ? current
+            : null
         )
-          ? current
-          : null
-      )
-      setViewedFiles(parsedViewed)
+        setViewedFiles(parsedViewed)
+        setCommentStatus('')
+      }
+
       const uncommittedFiles = new Set([
         ...diff.changeSets.staged,
         ...diff.changeSets.unstaged,
@@ -596,23 +631,39 @@ function ReviewApp() {
       autoCollapsedFiles.current = nextAutoCollapsedFiles
       fileStateLoaded.current = true
 
-      setCommentStatus('')
-      setLoaded({
-        summary: `${context.project.name} / ${context.worktree.name} · ${diff.baseRef}`,
+      const nextLoaded = {
+        summary: context
+          ? `${context.project.name} / ${context.worktree.name} · ${diff.baseRef}`
+          : loadedRef.current!.summary,
         generatedAt: diff.generatedAt,
         files: parsedFiles,
         changeSets: diff.changeSets,
         searchableLines: searchableLinesFor(parsedFiles)
-      })
+      }
+      loadedDiff.current = diff
+      loadedRef.current = nextLoaded
+      setLoaded(nextLoaded)
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason))
     } finally {
+      loadPending.current = false
       setLoading(false)
     }
   }, [clearCopyFeedback])
 
   useEffect(() => {
-    void load()
+    const refresh = () => void load()
+    refresh()
+    addEventListener('focus', refresh)
+    const interval = setInterval(() => {
+      if (document.hasFocus()) {
+        refresh()
+      }
+    }, AUTO_REFRESH_INTERVAL_MS)
+    return () => {
+      removeEventListener('focus', refresh)
+      clearInterval(interval)
+    }
   }, [load])
 
   const setCollapsed = useCallback((file: string, collapsed: boolean) => {
@@ -1111,9 +1162,6 @@ function ReviewApp() {
           </div>
           <button type="button" disabled={!unresolved.length} onClick={copy}>
             {copyFeedback ?? `Copy unresolved (${unresolved.length})`}
-          </button>
-          <button type="button" disabled={loading} onClick={() => void load()}>
-            Refresh
           </button>
         </div>
         <div
