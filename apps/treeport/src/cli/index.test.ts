@@ -1046,7 +1046,7 @@ describe('CLI context and machine output', () => {
     })
   })
 
-  it('keeps terminal and spawn argv structured and exposes partial creation', async () => {
+  it('detects the current project and keeps command arguments structured', async () => {
     const created = await runCli(
       [
         'terminal',
@@ -1070,11 +1070,23 @@ describe('CLI context and machine output', () => {
       argv: ['pi', '--json', 'semi;colon']
     })
 
+    const createdWorktreeResult = await runCli(
+      ['worktree', 'create', '--name', 'from-folder', '--json'],
+      { TREEPORT_API_URL: apiUrl },
+      path.join(worktree.path, 'packages', 'client')
+    )
+    expect(createdWorktreeResult.code).toBe(0)
+    expect(JSON.parse(createdWorktreeResult.stdout)).toMatchObject({
+      worktree: { id: worktree.id, name: 'from-folder' }
+    })
+    expect(creationBodies.at(-1)).toEqual({
+      name: 'from-folder',
+      base: 'default'
+    })
+
     const result = await runCli(
       [
         'spawn',
-        '--project',
-        project.id,
         '--worktree-name',
         'partial',
         '--name',
@@ -1085,7 +1097,8 @@ describe('CLI context and machine output', () => {
         'semi;colon',
         '$HOME'
       ],
-      { TREEPORT_API_URL: apiUrl }
+      { TREEPORT_API_URL: apiUrl },
+      path.join(worktree.path, 'packages', 'client')
     )
 
     expect(result.code).toBe(0)

@@ -380,7 +380,7 @@ function pathContains(candidate: string, parent: string): boolean {
   )
 }
 
-async function resolveProject(identifier: string): Promise<ProjectRecord> {
+async function resolveProject(identifier?: string): Promise<ProjectRecord> {
   const list = await projects()
   const direct = list.find((project) => project.id === identifier)
   if (direct) {
@@ -396,16 +396,23 @@ async function resolveProject(identifier: string): Promise<ProjectRecord> {
     }
   }
 
-  const candidate = await canonical(identifier)
-  const match = list.find(
-    (project) =>
-      pathContains(candidate, project.repositoryPath) ||
-      project.worktrees.some((worktree) =>
-        pathContains(candidate, worktree.path)
-      )
-  )
+  const candidate = await canonical(identifier ?? '.')
+  const match = list
+    .flatMap((project) =>
+      [
+        project.repositoryPath,
+        ...project.worktrees.map((item) => item.path)
+      ].map((root) => ({ project, root }))
+    )
+    .filter(({ root }) => pathContains(candidate, root))
+    .sort((left, right) => right.root.length - left.root.length)[0]?.project
   if (!match) {
-    throw new CliError(`No registered project matches ${identifier}`, 5)
+    throw new CliError(
+      identifier === undefined
+        ? `No registered project contains ${candidate}. Specify --project <id-or-path>.`
+        : `No registered project matches ${identifier}`,
+      5
+    )
   }
 
   return match
@@ -1734,13 +1741,16 @@ async function main(args: string[]): Promise<void> {
   const worktreeCreateCommand = worktreeCommand
     .command('create')
     .description('Create a linked tree')
-    .requiredOption('--project <id-or-path>', 'project to create from')
+    .option(
+      '--project <id-or-path>',
+      'project to create from (default: current folder)'
+    )
     .requiredOption('--name <name>', 'Tree name')
     .option('--from-current', 'base the tree on the current tree')
     .option('--json', 'emit machine-readable JSON')
   worktreeCreateCommand.action(async () => {
     const options = worktreeCreateCommand.opts<{
-      project: string
+      project?: string
       name: string
       fromCurrent?: boolean
     }>()
@@ -2035,7 +2045,10 @@ async function main(args: string[]): Promise<void> {
     .command('spawn')
     .description('Create a tree and its first terminal')
     .usage('[options] [-- <command> args...]')
-    .requiredOption('--project <id-or-path-or-dot>', 'project to create from')
+    .option(
+      '--project <id-or-path-or-dot>',
+      'project to create from (default: current folder)'
+    )
     .requiredOption('--worktree-name <name>', 'Tree name')
     .requiredOption('--name <terminal-name>', 'terminal name')
     .option('--from-current', 'base the tree on the current tree')
@@ -2043,7 +2056,7 @@ async function main(args: string[]): Promise<void> {
     .addHelpText('after', '\nCommand arguments may be passed after --.\n')
   spawnCommand.action(async () => {
     const options = spawnCommand.opts<{
-      project: string
+      project?: string
       worktreeName: string
       name: string
       fromCurrent?: boolean

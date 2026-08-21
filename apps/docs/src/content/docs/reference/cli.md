@@ -177,12 +177,16 @@ treeport project list [--json]
 treeport worktree list [--project <id-or-path>] [--json]
 
 treeport worktree create \
-  --project <id-or-path> \
+  [--project <id-or-path>] \
   --name <name> \
   [--from-current] [--json]
 
 treeport worktree remove <id-or-path-or-dot> [--force] [--json]
 ```
+
+`worktree create` and `spawn` select the registered project that contains the current folder when you omit `--project`.
+
+Use `--project` to select a different project.
 
 By default, creation starts from the fetched remote default branch.
 
@@ -276,7 +280,7 @@ Use `spawn` to create a linked tree and its first terminal:
 
 ```sh
 treeport spawn \
-  --project <id-or-path-or-dot> \
+  [--project <id-or-path-or-dot>] \
   --worktree-name <name> \
   --name <terminal-name> \
   [--from-current] \
