@@ -666,6 +666,7 @@ export async function mockApp(
   let releaseNextProjects: (() => void) | null = null
   let closeRequests = 0
   let failClose = false
+  let dismissRecentProjectRequests = 0
   let removePreviewRequests = 0
   let removePreviewDelayMs = 0
   let removePreviewOverride: Partial<RemovePreview> = {}
@@ -1058,6 +1059,22 @@ export async function mockApp(
       for (const worktree of state.worktrees) {
         worktree.terminals = []
       }
+      await route.fulfill({ json: { ok: true } })
+      return
+    }
+
+    if (
+      pathname === '/api/projects/proj_1/recent' &&
+      route.request().method() === 'DELETE'
+    ) {
+      dismissRecentProjectRequests += 1
+      const recentIndex = recentProjects.findIndex(
+        (candidate) => candidate.id === state.id
+      )
+      if (recentIndex >= 0) {
+        recentProjects.splice(recentIndex, 1)
+      }
+
       await route.fulfill({ json: { ok: true } })
       return
     }
@@ -1801,6 +1818,7 @@ export async function mockApp(
     failNextClose: () => {
       failClose = true
     },
+    dismissRecentProjectRequests: () => dismissRecentProjectRequests,
     removePreviewRequests: () => removePreviewRequests,
     fileUploadRequests: () => fileUploadRequests,
     terminalCreations: () => terminalCreations,

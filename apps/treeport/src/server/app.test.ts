@@ -63,6 +63,7 @@ function fixture(webDist = '/missing') {
       repository: { state: 'not-repository' as const, message: 'Not a repo' }
     })),
     closeProject: vi.fn(async () => undefined),
+    dismissRecentProject: vi.fn(async () => undefined),
     deleteProject: vi.fn(async () => undefined),
     updateProjectColor: vi.fn((id: string, color: string | null) => ({
       id,
@@ -882,7 +883,7 @@ describe('HTTP API validation', () => {
     expect(service.browseDirectory).toHaveBeenCalledTimes(1)
   })
 
-  it('keeps recent, open, close, and destructive delete as distinct routes', async () => {
+  it('keeps recent, open, close, dismiss, and destructive delete as distinct routes', async () => {
     const { app, service } = fixture()
 
     const recent = await app.request('/api/projects/recent')
@@ -903,6 +904,12 @@ describe('HTTP API validation', () => {
     })
     expect(closed.status).toBe(200)
     expect(service.closeProject).toHaveBeenCalledWith('p')
+
+    const dismissed = await app.request('/api/projects/p/recent', {
+      method: 'DELETE'
+    })
+    expect(dismissed.status).toBe(200)
+    expect(service.dismissRecentProject).toHaveBeenCalledWith('p')
 
     const removed = await app.request('/api/projects/p', {
       method: 'DELETE'

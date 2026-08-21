@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useMutation, useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   ArrowPathIcon,
   CheckIcon,
@@ -22,7 +22,10 @@ import {
 } from '../../components/ui/popover'
 import { useSidebar } from '../../components/ui/sidebar'
 import { cn } from '../../lib/utils'
-import { recentProjectsQueryOptions } from '../../project-metadata'
+import {
+  recentProjectsQueryKey,
+  recentProjectsQueryOptions
+} from '../../project-metadata'
 import { terminalProgressLabel } from '../../terminal-session'
 import { useTerminalNavigationMetadata } from '../../terminal-runtime-metadata-react'
 import { notifyError } from '../notifications/error-notifications'
@@ -88,6 +91,7 @@ export function ProjectSwitcher({
   const usesMacKeyboard = /Mac|iPhone|iPad|iPod/.test(navigator.platform)
   const { isMobile } = useSidebar()
   const projectSwitcher = useProjectSwitcher()
+  const queryClient = useQueryClient()
   const { attention: bellAttention, progress: terminalProgress } =
     useTerminalNavigationMetadata()
   const [projectSearch, setProjectSearch] = useState('')
@@ -110,6 +114,28 @@ export function ProjectSwitcher({
     onSuccess: onProjectOpened,
     onError: (error, project) => {
       notifyError(error, { operation: `reopen project “${project.name}”` })
+    }
+  })
+  const removeRecentProject = useMutation({
+    mutationFn: (project: RecentProjectRecord) =>
+      parseResponse(
+        rpc.api.projects[':projectId'].recent.$delete({
+          param: { projectId: project.id }
+        })
+      ),
+    onSuccess: async (_, removedProject) => {
+      queryClient.setQueryData<RecentProjectRecord[]>(
+        recentProjectsQueryKey,
+        (current) =>
+          current?.filter((project) => project.id !== removedProject.id)
+      )
+      setHighlightedProjectId(null)
+      await queryClient.invalidateQueries({ queryKey: recentProjectsQueryKey })
+    },
+    onError: (error, project) => {
+      notifyError(error, {
+        operation: `remove project “${project.name}” from Recent projects`
+      })
     }
   })
   const selectOpenProject = (project: ProjectRecord) => {
@@ -235,7 +261,8 @@ export function ProjectSwitcher({
                   selectOpenProject(highlightedProjectOption.project)
                 } else if (
                   highlightedProjectOption?.kind === 'recent' &&
-                  !reopenProject.isPending
+                  !reopenProject.isPending &&
+                  !removeRecentProject.isPending
                 ) {
                   selectRecentProject(highlightedProjectOption.project)
                 }
@@ -415,29 +442,47 @@ export function ProjectSwitcher({
                   {filteredRecentProjects.map((project) => (
                     <li
                       key={project.id}
+                      className={cn(
+                        'group/project-option relative flex h-11 min-w-0 items-center gap-0.5 rounded-md pr-1 has-[button:hover]:bg-white/5 focus-within:bg-white/5 min-[701px]:h-7',
+                        highlightedProjectOption?.project.id === project.id &&
+                          'bg-white/8'
+                      )}
                       onMouseEnter={() => setHighlightedProjectId(project.id)}
                     >
                       <Button
                         id={`project-switcher-option-${project.id}`}
                         type="button"
                         variant="ghost"
-                        className={cn(
-                          'h-11 w-full min-w-0 justify-start px-2 text-left text-base min-[701px]:h-7 min-[701px]:px-1.5 min-[701px]:text-sm',
-                          highlightedProjectOption?.project.id === project.id &&
-                            'bg-white/8'
-                        )}
+                        className="h-11 min-w-0 flex-1 justify-start px-2 text-left text-base hover:bg-transparent min-[701px]:h-7 min-[701px]:px-1.5 min-[701px]:text-sm max-[700px]:pr-8"
                         data-highlighted={
                           highlightedProjectOption?.project.id === project.id
                             ? true
                             : undefined
                         }
-                        disabled={reopenProject.isPending}
+                        disabled={
+                          reopenProject.isPending ||
+                          removeRecentProject.isPending
+                        }
                         onClick={() => selectRecentProject(project)}
                       >
                         <span className="truncate font-medium text-zinc-200">
                           {project.name}
                         </span>
                       </Button>
+                      <SidebarAction
+                        label={`Remove recent project ${project.name}`}
+                        tooltip="Remove recent project"
+                        disabled={removeRecentProject.isPending}
+                        className="absolute right-1 shrink-0 fill-zinc-500 opacity-0 hover:bg-white/5 hover:fill-rose-300 group-hover/project-option:opacity-100 group-focus-within/project-option:opacity-100 max-[700px]:opacity-100"
+                        onClick={() => removeRecentProject.mutate(project)}
+                      >
+                        {removeRecentProject.isPending &&
+                        removeRecentProject.variables?.id === project.id ? (
+                          <ArrowPathIcon className="animate-spin" />
+                        ) : (
+                          <XMarkIcon />
+                        )}
+                      </SidebarAction>
                     </li>
                   ))}
                 </ul>

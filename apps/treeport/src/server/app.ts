@@ -420,6 +420,11 @@ export function createApp({
       return context.json({ ok: true })
     })
 
+    .delete('/api/projects/:projectId/recent', async (context) => {
+      await service.dismissRecentProject(context.req.param('projectId'))
+      return context.json({ ok: true })
+    })
+
     .get('/api/projects/:projectId', async (context) =>
       context.json({
         project: await service.getProjectSnapshot(
