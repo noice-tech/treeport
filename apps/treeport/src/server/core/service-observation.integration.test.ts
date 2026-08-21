@@ -465,6 +465,11 @@ describe('TreeportService with injected command adapters', () => {
         (call) => call.args[0] === 'worktree' && call.args[1] === 'list'
       )
     ).toHaveLength(0)
+    const tmuxPolls = runner.calls.filter((call) =>
+      call.args.includes('list-panes')
+    )
+    expect(tmuxPolls).toHaveLength(2)
+    expect(tmuxPolls.every((call) => call.args.includes('-t'))).toBe(true)
 
     await service.refreshTerminalStatus(terminal.id)
     expect(

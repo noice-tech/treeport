@@ -276,12 +276,13 @@ afterEach(() => {
 
 describe('TerminalAttachmentManager', () => {
   it('configures tmux, announces a fresh stream before output, and ACKs consumption', async () => {
-    const { manager, ptys, tmux } = fixture()
+    const { manager, ptys, service, tmux } = fixture()
     const transport = new FakeTransport()
     const id = attach(manager, transport, 'tab-a')
     const readyMessage = await ready(transport)
 
     expect(tmux.configureServer).toHaveBeenCalledWith('socket')
+    expect(service.refreshTerminalStatus).toHaveBeenCalledWith('term', false)
     expect(
       vi.mocked(tmux.configureServer).mock.invocationCallOrder[0]
     ).toBeLessThan(vi.mocked(tmux.sessionSize).mock.invocationCallOrder[0]!)
@@ -957,14 +958,14 @@ describe('TerminalAttachmentManager', () => {
     const controllerId = attach(value.manager, controller, 'tab-controller')
     await ready(controller)
 
-    const finishManualSize = deferred<void>()
-    vi.mocked(value.tmux.useManualWindowSize).mockReturnValueOnce(
-      finishManualSize.promise
+    const finishConfigure = deferred<void>()
+    vi.mocked(value.tmux.configureServer).mockReturnValueOnce(
+      finishConfigure.promise
     )
     const joining = new FakeTransport()
     attach(value.manager, joining, 'tab-joining')
     await vi.waitFor(() =>
-      expect(value.tmux.useManualWindowSize).toHaveBeenCalledTimes(2)
+      expect(value.tmux.configureServer).toHaveBeenCalledTimes(2)
     )
 
     value.manager.message(controllerId, 'resize', {
@@ -972,7 +973,15 @@ describe('TerminalAttachmentManager', () => {
       cols: 120,
       rows: 40
     })
-    finishManualSize.resolve()
+    await vi.waitFor(() =>
+      expect(value.tmux.resizeWindow).toHaveBeenCalledWith(
+        'socket',
+        'session',
+        120,
+        40
+      )
+    )
+    finishConfigure.resolve()
     const joiningReady = await ready(joining)
 
     expect(joiningReady).toMatchObject({
@@ -980,7 +989,6 @@ describe('TerminalAttachmentManager', () => {
       rows: 40,
       revision: 2
     })
-    expect(value.ptys[1]!.resizes).toEqual([[120, 40]])
     expect(value.tmux.resizeWindow).toHaveBeenCalledWith(
       'socket',
       'session',

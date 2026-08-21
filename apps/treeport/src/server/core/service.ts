@@ -3622,7 +3622,8 @@ export class TreeportService {
   ): Promise<TerminalRecord> {
     const terminal = observeGit
       ? await this.getTerminal(terminalId)
-      : await this.getTerminalFromBindings(terminalId)
+      : (this.terminalStates.get(terminalId) ??
+        (await this.getTerminalFromBindings(terminalId)))
     const worktree = await this.getWorktree(terminal.worktreeId)
     const state = await this.deps.tmux.sessionState(
       worktree.tmuxSocketName,

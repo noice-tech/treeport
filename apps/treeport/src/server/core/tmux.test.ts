@@ -43,6 +43,25 @@ describe('TmuxAdapter', () => {
     expect(generateTmuxSocketName()).not.toBe(generateTmuxSocketName())
   })
 
+  it('sources server configuration once across concurrent attachments', async () => {
+    const runtime = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'treeport-runtime-')
+    )
+    temporary.push(runtime)
+    const runner = new RecordingRunner()
+    const adapter = new TmuxAdapter(runner, runtime)
+
+    await Promise.all([
+      adapter.configureServer('socket'),
+      adapter.configureServer('socket')
+    ])
+    await adapter.configureServer('socket')
+
+    expect(
+      runner.calls.filter((call) => call.args.includes('source-file'))
+    ).toHaveLength(1)
+  })
+
   it('configures manual window sizing without changing the global default', async () => {
     const runtime = await fs.mkdtemp(
       path.join(os.tmpdir(), 'treeport-runtime-')
