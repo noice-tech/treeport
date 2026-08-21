@@ -265,6 +265,7 @@ export class TerminalSession {
     }
 
     host.appendChild(this.wrapper)
+    this.socket?.io.reconnection(true)
     if (!this.opened) {
       this.openTerminal()
     }
@@ -358,6 +359,7 @@ export class TerminalSession {
 
     this.resizeObserver?.disconnect()
     this.resizeObserver = null
+    this.socket?.io.reconnection(false)
     if (this.wakeListenersAttached) {
       window.removeEventListener('online', this.reconnectWhenOnline)
       document.removeEventListener(

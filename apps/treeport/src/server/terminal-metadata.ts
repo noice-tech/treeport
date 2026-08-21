@@ -107,6 +107,7 @@ export class TerminalMetadataManager {
   private readonly bellMutations = new KeyedTaskQueue<string>()
   private readonly bellDeletionVersions = new Map<string, number>()
   private readonly persistedBells = new Map<string, TerminalBellState>()
+  private readonly observerShutdowns = new Set<Promise<void>>()
   private readonly bellStateStore: TerminalBellStateStore
   private initializePromise: Promise<void> | null = null
   private unsubscribeEvents: (() => void) | null = null
@@ -433,8 +434,9 @@ export class TerminalMetadataManager {
     this.historyListeners.clear()
   }
 
-  drain(): Promise<void> {
-    return this.bellMutations.drain()
+  async drain(): Promise<void> {
+    await this.bellMutations.drain()
+    await Promise.allSettled([...this.observerShutdowns])
   }
 
   private handleProductEvent(event: ProductEvent): void {
@@ -760,7 +762,7 @@ export class TerminalMetadataManager {
           entry.runtimeGeneration !== runtimeGeneration ||
           entry.observerVersion !== version
         ) {
-          observer.dispose()
+          this.disposeObserver(observer)
         } else {
           entry.observer = observer
         }
@@ -806,10 +808,27 @@ export class TerminalMetadataManager {
     this.update(entry, { progress: null })
   }
 
+  private disposeObserver(observer: TerminalProgressObserver): void {
+    observer.dispose()
+    if (!observer.closed) {
+      return
+    }
+
+    const shutdown = observer.closed
+    this.observerShutdowns.add(shutdown)
+    void shutdown.then(
+      () => this.observerShutdowns.delete(shutdown),
+      () => this.observerShutdowns.delete(shutdown)
+    )
+  }
+
   private releaseRuntimeResources(entry: TerminalMetadataEntry): void {
     entry.observerVersion += 1
-    entry.observer?.dispose()
-    entry.observer = null
+    if (entry.observer) {
+      this.disposeObserver(entry.observer)
+      entry.observer = null
+    }
+
     this.clearProgressRuntime(entry)
     entry.shellTitleWriting = false
   }

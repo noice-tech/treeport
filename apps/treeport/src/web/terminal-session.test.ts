@@ -57,7 +57,9 @@ class FakeSocketIO {
   readonly managerHandlers = new Map<string, Array<() => void>>()
   readonly emit = vi.fn()
   readonly volatile = { emit: vi.fn() }
+  readonly reconnection = vi.fn()
   readonly io = {
+    reconnection: this.reconnection,
     on: (event: string, listener: () => void) => {
       this.managerHandlers.set(event, [
         ...(this.managerHandlers.get(event) ?? []),
@@ -525,6 +527,42 @@ describe('TerminalSession', () => {
     expect(setItem.mock.calls).toEqual([
       ['treeport-terminal-client-id', clientId]
     ])
+    session.dispose()
+  })
+
+  it('reconnects only mounted terminal sessions after a server interruption', () => {
+    const socket = new FakeSocketIO()
+    socket.connected = true
+    const session = createTerminalSession('terminal-one')
+    const host = testAccess<HTMLElement>({ appendChild: vi.fn() })
+    const wrapper = { remove: vi.fn() }
+    Object.assign(session, {
+      socket,
+      ready: true,
+      opened: true,
+      host,
+      wrapper
+    })
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        observe() {}
+        disconnect() {}
+      }
+    )
+    vi.stubGlobal('addEventListener', vi.fn())
+    vi.stubGlobal('removeEventListener', vi.fn())
+    vi.stubGlobal('document', {
+      querySelector: vi.fn(() => null),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn()
+    })
+
+    session.unmount(host)
+    expect(socket.reconnection).toHaveBeenLastCalledWith(false)
+
+    session.mount(host)
+    expect(socket.reconnection).toHaveBeenLastCalledWith(true)
     session.dispose()
   })
 
