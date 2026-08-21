@@ -2,13 +2,21 @@
 
 **Persistent terminals for Git worktrees.**
 
-Treeport's core is under active development. Treeport is already usable for daily development work, but some interfaces can change.
+Give each task an isolated Git worktree. Keep its agents, terminals, servers, and development tools active in one place.
 
-Treeport gives each Git worktree a persistent workspace called a tree. Your terminals continue to run when you disconnect.
+## Features
 
-Reconnect from the macOS app, a browser, or a phone. Use your existing agents, shells, editors, and development tools without changing their interfaces.
+- 🌳 **One task, one tree.** Keep each branch, agent, server, and test watcher in an isolated Git worktree.
+- 🤖 **Parallel coding agents.** The bundled skill lets agents create child trees and terminals while you monitor their work or take control.
+- ♾️ **Persistent terminal sessions.** Disconnect without stopping processes. Reconnect later with the same terminal history and state.
+- 🔔 **Attention without constant watching.** See terminal titles, progress, exit states, and notifications when a task needs you.
+- 🖥️ **Your terminal tools still work.** Run Pi, Claude Code, Codex, shells, servers, and other TUIs with their normal interfaces.
+- 🧩 **More than terminal tabs.** Start reusable presets, open development servers beside terminals, and build custom web panels for each tree.
+- 📱 **Access from another device.** Reconnect from the macOS app, a browser, or a phone through private Tailscale access.
+- 🔧 **Git stays in control.** Treeport finds worktrees made by Git, editors, agents, and scripts instead of replacing them.
 
-Treeport finds worktrees that Git, editors, agents, and scripts create. Git remains the source of truth.
+> [!NOTE]
+> Treeport's core is under active development. It is already usable for daily development work, but some interfaces can change.
 
 ## Quick start
 
@@ -30,14 +38,6 @@ treeport service enable
 ```
 
 See the [installation guide](https://treeport.app/getting-started/installation/) for the macOS app, updates, and service options.
-
-## Why Treeport
-
-- **Persistent terminals:** Processes continue when all clients disconnect.
-- **Worktree-first navigation:** Each tree keeps its terminals and tools together.
-- **Normal terminal interfaces:** Run Pi, Claude Code, Codex, shells, servers, and other TUIs.
-- **Multiple clients:** Reconnect from the macOS app or a supported browser.
-- **Tool-independent discovery:** Use worktrees created by Git, editors, agents, or scripts.
 
 ## Security
 
