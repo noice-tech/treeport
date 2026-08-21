@@ -1429,6 +1429,41 @@ test.describe('desktop worktree and terminal workflows', () => {
           resolved: false
         }
       ])
+
+    await expect(
+      reviewFrame.getByRole('button', { name: 'Refresh' })
+    ).toHaveCount(0)
+    await page.route('**/api/panels/panel_1/diff', (route) =>
+      route.fulfill({
+        json: {
+          diff: {
+            baseRef: 'origin/trunk',
+            baseCommit: 'base',
+            headCommit: 'head',
+            generatedAt: '2026-01-01T00:00:01.000Z',
+            unified: [
+              'diff --git a/src/fresh.ts b/src/fresh.ts',
+              'index 1111111..2222222 100644',
+              '--- a/src/fresh.ts',
+              '+++ b/src/fresh.ts',
+              '@@ -1 +1 @@',
+              '-old result',
+              '+fresh result',
+              ''
+            ].join('\n'),
+            changeSets: {
+              branch: [],
+              staged: [],
+              unstaged: ['src/fresh.ts'],
+              untracked: []
+            }
+          }
+        }
+      })
+    )
+    await expect(
+      reviewFrame.getByRole('treeitem', { name: 'fresh.ts', exact: true })
+    ).toBeVisible()
   })
 
   test('handles Electron commands through worktree, terminal, and web-panel flows', async ({
