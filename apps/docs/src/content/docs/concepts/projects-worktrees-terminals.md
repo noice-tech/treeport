@@ -19,6 +19,16 @@ A repository project includes a main tree and any linked trees. Each of these tr
 
 A folder project includes one tree for the selected folder. It does not have branches, commits, or linked trees.
 
+### Change a folder project to a repository project
+
+If you initialize Git in an open folder project, create an initial commit.
+
+Then open the same path again with **Open project** or run `treeport .` in that folder.
+
+Treeport changes the folder project to a repository project. The existing folder tree becomes the main tree.
+
+Treeport does not require a remote. Select the main tree's current commit when you create a linked tree.
+
 Treeport uses the canonical path as the persistent identity of a folder project. During one daemon session, it also uses filesystem metadata to recognize a moved folder and detect a replacement. Treeport refreshes this metadata after a daemon restart because device and inode values are not durable identifiers.
 
 If a folder moves while Treeport is not running, open its new path. Treeport can register it as a new project because it cannot reliably recognize that move without adding a marker to the folder.

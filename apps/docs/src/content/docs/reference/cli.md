@@ -201,7 +201,7 @@ Use `--project` to select a different project.
 
 Tree creation and removal apply only to Git repository projects.
 
-By default, creation starts from the fetched remote default branch.
+By default, creation uses the remote default branch when available. Otherwise, it uses the local default branch.
 
 `--from-current` uses the committed `HEAD` of the current tree. It does not copy uncommitted changes.
 
