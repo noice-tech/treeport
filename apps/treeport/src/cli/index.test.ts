@@ -1588,6 +1588,17 @@ describe('CLI context and machine output', () => {
         }
       })
     }
+
+    const updateRefusal = await runCli(['update', '--json'], {
+      TREEPORT_API_URL: apiUrl
+    })
+    expect(updateRefusal.code).toBe(5)
+    expect(JSON.parse(updateRefusal.stderr)).toMatchObject({
+      error: {
+        code: 'UPDATE_EXTERNAL_REFUSED',
+        message: expect.stringContaining('externally managed')
+      }
+    })
   })
 
   it('manages global and current-project packages in human and JSON modes', async () => {
@@ -1629,11 +1640,14 @@ describe('CLI context and machine output', () => {
       'global\tnpm:@acme/tools\t1 web panels, 1 terminal presets'
     )
 
-    const reserved = await runCli(['update', '--json'], environment)
-    expect(reserved.code).toBe(2)
-    expect(JSON.parse(reserved.stderr).error.message).toContain(
-      'reserved for a future Treeport self-update'
-    )
+    const selfUpdate = await runCli(['update', '--json'], environment)
+    expect(selfUpdate.code).toBe(5)
+    expect(JSON.parse(selfUpdate.stderr)).toMatchObject({
+      error: {
+        code: 'UPDATE_INSTALLATION_UNSUPPORTED',
+        message: expect.stringContaining('stable npm CLI entrypoint')
+      }
+    })
 
     const update = await runCli(
       ['update', 'npm:@acme/tools', '--json'],

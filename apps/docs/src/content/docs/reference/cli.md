@@ -46,6 +46,7 @@ treeport status
 treeport logs [--lines <count>]
 treeport doctor
 treeport version
+treeport update [--json]
 
 treeport service enable [--headless]
 treeport service status
@@ -112,7 +113,35 @@ A remote CLI can set `TREEPORT_API_URL` to the Serve HTTPS URL for API commands.
 
 Run lifecycle commands on the computer that runs Treeport.
 
-These commands include `start`, `stop`, `service`, `status`, `logs`, `doctor`, and `remote`.
+These commands include `start`, `stop`, `update`, `service`, `status`, `logs`, `doctor`, and `remote`.
+
+Bare `treeport update` resolves and verifies the latest stable npm release before it stops the local daemon. It preserves tmux terminals and an enabled service. It restarts the same lifecycle only when the daemon was running before the update. The command does not use `sudo` and refuses remote, external, development, and non-writable installations.
+
+With `--json`, update success has stable `schemaVersion`, `operationId`, `status`, `phase`, `fromVersion`, `toVersion`, `installation`, `daemon`, `terminals`, and `rollback` fields. `status` is `current` or `updated`. Update errors identify the failed phase, rollback safety, and the next safe action.
+
+Stable update refusal codes are:
+
+- `UPDATE_INSTALLATION_UNSUPPORTED`
+- `UPDATE_INSTALLATION_NOT_WRITABLE`
+- `UPDATE_REMOTE_REFUSED`
+- `UPDATE_EXTERNAL_REFUSED`
+- `UPDATE_IN_PROGRESS`
+- `UPDATE_DOWNGRADE_REFUSED`
+- `UPDATE_DAEMON_OWNERSHIP_FAILED`
+- `UPDATE_SERVICE_ADMINISTRATOR_ACTION_REQUIRED`
+
+Stable execution and recovery codes are:
+
+- `UPDATE_RELEASE_RESOLUTION_FAILED`
+- `UPDATE_RELEASE_INVALID`
+- `UPDATE_STAGING_FAILED`
+- `UPDATE_VERIFICATION_FAILED`
+- `UPDATE_INTERRUPTED`
+- `UPDATE_HEALTH_VERIFICATION_FAILED`
+- `UPDATE_TERMINAL_VERIFICATION_FAILED`
+- `UPDATE_ROLLED_BACK`
+- `UPDATE_ROLLBACK_FAILED`
+- `UPDATE_RECOVERY_REQUIRED`
 
 See [Remote access](/features/remote-access/) for setup and security information.
 
@@ -148,7 +177,7 @@ The default scope is global.
 
 `update` changes only configured npm packages that are eligible for update. It skips exact versions and local directories.
 
-`treeport update` without a source is reserved for a future Treeport update function.
+`treeport update` without a source updates Treeport itself. A source or `--packages` updates configured packages instead.
 
 Use `--packages` to update all eligible packages.
 
@@ -318,12 +347,12 @@ Success output is JSON on standard output. Error output is JSON on standard erro
 { "error": { "code": "DOMAIN_ERROR", "message": "…", "details": {} } }
 ```
 
-| Exit code | Meaning                                                |
-| --------- | ------------------------------------------------------ |
-| `0`       | The command completed. Inspect partial `spawn` fields. |
-| `1`       | Startup failed, or a service action is necessary.      |
-| `2`       | The CLI use is invalid.                                |
-| `3`       | The daemon or event stream is not available.           |
-| `4`       | The terminal wait reached its time limit.              |
-| `5`       | The API, domain, or context refused the operation.     |
-| `130`     | The user stopped the wait with Ctrl+C.                 |
+| Exit code | Meaning                                                             |
+| --------- | ------------------------------------------------------------------- |
+| `0`       | The command completed. Inspect partial `spawn` fields.              |
+| `1`       | Startup failed, an update failed, or a service action is necessary. |
+| `2`       | The CLI use is invalid.                                             |
+| `3`       | The daemon or event stream is not available.                        |
+| `4`       | The terminal wait reached its time limit.                           |
+| `5`       | The API, domain, or context refused the operation.                  |
+| `130`     | The user stopped the wait with Ctrl+C.                              |

@@ -34,6 +34,11 @@ import { parseDurationMs } from '../duration.js'
 import { extractJsonOutput } from './args.js'
 import { OpenWorkspaceError, openWorkspace } from './open.js'
 import {
+  LocalUpdateError,
+  runLocalUpdate,
+  type LocalUpdateOptions
+} from './update.js'
+import {
   daemonDown,
   daemonHealth,
   daemonStatus,
@@ -77,6 +82,7 @@ let writeStderr: (value: string) => void = (value) => {
   process.stderr.write(value)
 }
 let requestedExitCode = 0
+let cliEnvironment: NodeJS.ProcessEnv = process.env
 
 interface PackageMutationBody {
   source: string
@@ -1601,17 +1607,54 @@ async function main(args: string[]): Promise<void> {
 
   const updatePackagesCommand = program
     .command('update')
-    .description('Explicitly update configured Treeport packages')
+    .description('Update Treeport or explicitly update configured packages')
     .argument('[source]', 'one configured npm: source')
     .option('--packages', 'update every eligible configured package')
     .option('--json', 'emit machine-readable JSON')
   updatePackagesCommand.action(async (source: string | undefined) => {
     const options = updatePackagesCommand.opts<{ packages?: boolean }>()
-    if ((!source && !options.packages) || (source && options.packages)) {
-      throw new CliError(
-        'Specify a package source or --packages. Bare `treeport update` is reserved for a future Treeport self-update.',
-        2
-      )
+    if (source && options.packages) {
+      throw new CliError('Specify a package source or --packages, not both.', 2)
+    }
+
+    if (!source && !options.packages) {
+      if ((await resolveDaemonLifecycle()) === 'external') {
+        throw new CliError(
+          'Cannot update Treeport because this daemon lifecycle is externally managed.',
+          5,
+          'UPDATE_EXTERNAL_REFUSED'
+        )
+      }
+
+      const selfUpdateOptions: LocalUpdateOptions = {
+        environment: cliEnvironment
+      }
+      if (!jsonOutput) {
+        selfUpdateOptions.progress = (message) => writeStderr(`${message}\n`)
+      }
+
+      const result = await runLocalUpdate(selfUpdateOptions).catch((error) => {
+        if (error instanceof LocalUpdateError) {
+          throw new CliError(
+            error.message,
+            error.exitCode,
+            error.code,
+            error.details
+          )
+        }
+
+        throw error
+      })
+      print(result, () => {
+        if (result.status === 'current') {
+          return `Treeport ${result.toVersion} is current`
+        }
+
+        return result.daemon.wasRunning
+          ? `Updated Treeport from ${result.fromVersion} to ${result.toVersion} and restarted the ${result.daemon.lifecycle === 'service' ? 'service' : 'daemon'}`
+          : `Updated Treeport from ${result.fromVersion} to ${result.toVersion}; Treeport remains stopped`
+      })
+      return
     }
 
     const results = (
@@ -2108,6 +2151,7 @@ export async function runCliApplication(
   options: CliApplicationOptions
 ): Promise<number> {
   const environment = options.environment ?? process.env
+  cliEnvironment = environment
   configuredApiUrl = environment.TREEPORT_API_URL?.trim()
   apiUrl = (await resolveLocalApiUrl(environment)).replace(/\/$/, '')
   contextProjectId = environment.TREEPORT_PROJECT_ID?.trim() || undefined

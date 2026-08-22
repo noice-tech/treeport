@@ -42,6 +42,7 @@ The daemon uses Drizzle for the complete catalog boundary:
 - Drizzle controls all reads, writes, and transactions.
 - Only the daemon opens and migrates the production database.
 - Pending migrations run before service setup and before the server listens.
+- During a CLI-owned binary update, the daemon privately reports whether migration history stayed unchanged or advanced. The updater does not open the database.
 
 Published migration files come from `apps/treeport/drizzle`.
 
@@ -120,6 +121,8 @@ The legacy one-column adjustment is also transactional.
 If migration fails, Treeport does not initialize services or listen.
 
 The database and premigration snapshot stay available for a corrected binary.
+
+After an update startup failure, the CLI starts the previous binary only when the daemon proved that migration history did not advance. An advanced or unknown result keeps the new binary active. The CLI reports snapshots but never restores one automatically.
 
 ## Consequences
 

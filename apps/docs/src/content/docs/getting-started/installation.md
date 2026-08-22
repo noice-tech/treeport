@@ -63,13 +63,17 @@ This command prints the local URL. The default URL is `http://127.0.0.1:8733`.
 
 ### Update the backend
 
-Stop Treeport before npm replaces package files:
+Update Treeport with one command:
 
 ```sh
-treeport stop
-npm install --global @treeport/treeport@latest
-treeport start
+treeport update
 ```
+
+Treeport downloads and verifies the latest stable npm release before it stops anything. If the daemon was running, Treeport preserves its tmux terminals, activates the update, and restarts the same lifecycle. An enabled service stays enabled. An intentionally stopped daemon or service stays stopped.
+
+The global npm prefix must be writable by your user. Treeport never uses `sudo` for an update. If the prefix is not writable, install Node and npm under your user account, reinstall Treeport globally, and retry.
+
+Installations older than the first release that supports this command need one final manual npm update.
 
 ## Connect the desktop client
 
@@ -141,7 +145,10 @@ Disable service mode before you remove the CLI:
 ```sh
 treeport service disable
 npm uninstall --global @treeport/treeport
+rm -rf "$(npm prefix --global)/lib/treeport"
 ```
+
+The final command removes only the Treeport-owned update versions. Run it after npm removes the global command.
 
 If service mode was not enabled, `treeport service disable` is safe. It reports that the service is disabled.
 

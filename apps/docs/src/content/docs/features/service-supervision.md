@@ -192,19 +192,26 @@ The same private URL works when the supervised daemon is healthy. See [Remote ac
 To update Treeport, run:
 
 ```sh
-treeport stop
-npm install --global @treeport/treeport@latest
-treeport start
+treeport update
 ```
 
-If the npm prefix or Node.js installation changes, run the applicable service enable command again.
+A running service stops and starts through its existing operating-system manager. The service stays enabled, keeps its selected mode and definition, and reconnects to the preserved tmux terminals. An intentionally stopped service stays stopped.
+
+Normal macOS user service updates do not need administrator access. Stop an advanced headless service with the administrator action before you update it.
+
+If updated startup fails before a database migration, Treeport restores the previous version. If migration history advanced or is unknown, Treeport keeps the new version, stops the service without disabling it, and reports the daemon log and snapshot paths. It never starts an older daemon against a possibly newer database.
+
+The npm prefix must be writable by the service owner. If the npm prefix or Node.js installation changes outside Treeport, reinstall Treeport and run the applicable service enable command again.
 
 Disable service mode before you remove the npm package:
 
 ```sh
 treeport service disable
 npm uninstall --global @treeport/treeport
+rm -rf "$(npm prefix --global)/lib/treeport"
 ```
+
+The final command removes only the Treeport-owned update versions.
 
 npm does not have a reliable removal hook.
 
