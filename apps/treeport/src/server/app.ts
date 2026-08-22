@@ -45,6 +45,7 @@ import {
   webPanelBrowserOrigin,
   webPanelContentSecurityPolicy
 } from './core/web-panel-csp'
+import type { ApplicationUpdateManager } from './application-update'
 import { TerminalMetadataManager } from './terminal-metadata'
 
 const UPLOAD_MIME_EXTENSIONS = new Map([
@@ -140,6 +141,7 @@ interface AppDependencies {
   service: TreeportService
   config: AppConfig
   tmux: TmuxAdapter
+  applicationUpdate: ApplicationUpdateManager
   terminalMetadata?: TerminalMetadataManager
   webDist?: string
 }
@@ -174,6 +176,7 @@ export function createApp({
   service,
   config,
   tmux,
+  applicationUpdate,
   terminalMetadata,
   webDist
 }: AppDependencies) {
@@ -264,6 +267,16 @@ export function createApp({
         url: config.apiUrl
       })
     )
+
+    .get('/api/update', async (context) => {
+      context.header('Cache-Control', 'no-store')
+      return context.json(await applicationUpdate.status())
+    })
+
+    .post('/api/update', async (context) => {
+      context.header('Cache-Control', 'no-store')
+      return context.json(await applicationUpdate.start(), 202)
+    })
 
     .get('/api/terminal-presets', async (context) =>
       context.json({ presets: await service.listTerminalPresets() })

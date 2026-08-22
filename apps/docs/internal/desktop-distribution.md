@@ -111,13 +111,19 @@ It maps both macOS architectures to the universal ZIP. It does not offer drafts 
 
 After Squirrel.Mac downloads an update, the Electron prompt offers a restart or delay.
 
-The update replaces only the desktop client.
+The native update replaces only the desktop client.
 
 It does not update, restart, or migrate the selected backend.
 
-Backend-aware update control is in issue #166.
+The backend web interface has a separate update control. It uses the backend-owned npm update flow.
 
-Update checks are off for development, non-macOS, and `TREEPORT_DESKTOP_E2E=1` starts.
+A local Electron webview can use the backend control. The native shell stays active while the backend restarts.
+
+Electron does not offer the backend control for a selected remote backend. It never updates or restarts that remote backend.
+
+Issue #284 controls desktop and backend compatibility. It also controls future update sequence coordination.
+
+Native update checks are off for development, non-macOS, and `TREEPORT_DESKTOP_E2E=1` starts.
 
 Thus, tests and local development do not contact the public update service.
 

@@ -2,6 +2,7 @@ import path from 'node:path'
 import react from '@vitejs/plugin-react'
 import { expect, type Locator, type Page } from '@playwright/test'
 import { build as viteBuild } from 'vite'
+import type { ApplicationUpdateStatus } from '../src/server/application-update'
 import {
   type JsonValue,
   type OperationRecord,
@@ -171,6 +172,7 @@ export async function mockApp(
     transientProjectFailures?: number
     repositoryTerminalPresets?: TerminalPresetDefinition[]
     repositoryPresetDiagnostics?: TerminalPresetDefinitionDiagnostic[]
+    applicationUpdate?: ApplicationUpdateStatus
     realReviewPanel?: boolean
   } = {}
 ) {
@@ -738,9 +740,35 @@ export async function mockApp(
   let creationSequence = 0
   const creationOperations = new Map<string, OperationRecord>()
   let removeOperation: OperationRecord | null = null
+  let applicationUpdate: ApplicationUpdateStatus =
+    options.applicationUpdate ?? {
+      currentVersion: '0.4.0',
+      latestVersion: null,
+      updateAvailable: false,
+      checkedAt: '2026-03-20T12:00:00.000Z',
+      canUpdate: false,
+      blockedReason: null,
+      phase: 'idle',
+      operationId: null,
+      targetVersion: null,
+      error: null
+    }
+  let applicationUpdateRequests = 0
   await page.route('**/api/**', async (route) => {
     const url = new URL(route.request().url())
     const pathname = url.pathname
+    if (pathname === '/api/update') {
+      if (route.request().method() === 'POST') {
+        applicationUpdateRequests += 1
+        applicationUpdate = { ...applicationUpdate, phase: 'starting' }
+        await route.fulfill({ status: 202, json: applicationUpdate })
+        return
+      }
+
+      await route.fulfill({ json: applicationUpdate })
+      return
+    }
+
     if (
       pathname === '/api/terminal-preset-definitions' &&
       route.request().method() === 'GET'
@@ -1842,6 +1870,10 @@ export async function mockApp(
   return {
     state,
     terminalPresets,
+    applicationUpdateRequests: () => applicationUpdateRequests,
+    setApplicationUpdate: (status: ApplicationUpdateStatus) => {
+      applicationUpdate = status
+    },
     repositoryTerminalPresets,
     repositoryPresetDiagnostics,
     recentProjects,

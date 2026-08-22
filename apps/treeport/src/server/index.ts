@@ -14,6 +14,7 @@ import {
   TreeportService
 } from './core/index'
 import { createApp } from './app'
+import { createApplicationUpdateManager } from './application-update'
 import { acquireDaemonOwnership } from './daemon-ownership'
 import { authorizeRequest, rejectHttpRequest } from './request-security'
 import { createSocketServer } from './socket-server'
@@ -62,8 +63,15 @@ async function main(): Promise<void> {
       config.tmuxPath
     )
     await terminalMetadata.initialize()
+    const applicationUpdate = createApplicationUpdateManager(config)
 
-    const app = createApp({ service, config, tmux, terminalMetadata })
+    const app = createApp({
+      service,
+      config,
+      tmux,
+      applicationUpdate,
+      terminalMetadata
+    })
     const honoListener = getRequestListener(app.fetch)
     let vite: ViteDevServer | null = null
     const server = createServer((request, response) => {
@@ -132,6 +140,7 @@ async function main(): Promise<void> {
     })
     await ownership.publish()
     await updateStartup.ready()
+    applicationUpdate.beginPolling()
 
     console.log(`Treeport ${config.appVersion} listening on ${config.apiUrl}`)
     console.log(`database: ${config.databasePath}`)
@@ -145,6 +154,7 @@ async function main(): Promise<void> {
       }
 
       shuttingDown = true
+      applicationUpdate.dispose()
       attachments.dispose()
       terminalMetadata.dispose()
       const viteClosed = vite?.close()

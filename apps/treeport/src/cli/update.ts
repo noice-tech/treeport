@@ -28,7 +28,7 @@ const DESTRUCTIVE_PHASES = new Set([
   'recovery_required'
 ])
 
-type LocalUpdatePhase =
+export type LocalUpdatePhase =
   | 'inspect'
   | 'resolve'
   | 'stage'
@@ -124,6 +124,8 @@ const packedReleaseSchema = z.tuple([
     integrity: z.string().min(1)
   })
 ])
+
+export type TreeportRelease = z.infer<typeof releaseSchema>
 
 interface CommandResult {
   code: number
@@ -289,7 +291,56 @@ async function readOperation(
     .catch(() => null)
 }
 
-function compareVersions(left: string, right: string): number {
+export interface LocalUpdateProgress {
+  active: boolean
+  operationId: string | null
+  phase: LocalUpdatePhase | null
+  fromVersion: string | null
+  toVersion: string | null
+  recoveryAction: string | null
+  migrationState: UpdateMigrationState | null
+}
+
+export async function readLocalUpdateProgress(
+  dataDir: string
+): Promise<LocalUpdateProgress> {
+  const updateDirectory = path.join(dataDir, 'updates')
+  const [operation, lock] = await Promise.all([
+    readOperation(path.join(updateDirectory, 'operation.json')),
+    fs
+      .readFile(path.join(updateDirectory, 'update.lock'), 'utf8')
+      .then((value) => lockSchema.safeParse(JSON.parse(value)))
+      .then((result) => (result.success ? result.data : null))
+      .catch(() => null)
+  ])
+  const active = Boolean(lock && processExists(lock.pid))
+  const operationMatchesLock =
+    !lock || operation?.operationId === lock.operationId
+
+  return {
+    active,
+    operationId: operationMatchesLock
+      ? (operation?.operationId ?? lock?.operationId ?? null)
+      : (lock?.operationId ?? null),
+    phase: operationMatchesLock ? (operation?.phase ?? null) : null,
+    fromVersion: operationMatchesLock
+      ? (operation?.fromVersion ?? lock?.fromVersion ?? null)
+      : (lock?.fromVersion ?? null),
+    toVersion: operationMatchesLock ? (operation?.toVersion ?? null) : null,
+    recoveryAction: operationMatchesLock
+      ? (operation?.recoveryAction ?? null)
+      : null,
+    migrationState: operationMatchesLock
+      ? (operation?.migrationState ?? null)
+      : null
+  }
+}
+
+export function isCanonicalTreeportVersion(version: string): boolean {
+  return VERSION.test(version)
+}
+
+export function compareTreeportVersions(left: string, right: string): number {
   const leftMatch = VERSION.exec(left)
   const rightMatch = VERSION.exec(right)
   if (!leftMatch || !rightMatch) {
@@ -353,7 +404,7 @@ async function startThroughStableEntrypoint(
   }
 }
 
-async function inspectInstallation(environment: NodeJS.ProcessEnv): Promise<{
+export interface LocalUpdateInstallation {
   prefix: string
   packageDirectory: string
   entrypoint: string
@@ -362,7 +413,11 @@ async function inspectInstallation(environment: NodeJS.ProcessEnv): Promise<{
   currentLink: string
   versionsDirectory: string
   managed: boolean
-}> {
+}
+
+export async function inspectLocalUpdateInstallation(
+  environment: NodeJS.ProcessEnv = process.env
+): Promise<LocalUpdateInstallation> {
   const entrypointValue = environment.TREEPORT_CLI_ENTRYPOINT?.trim()
   if (!entrypointValue || !path.isAbsolute(entrypointValue)) {
     throw new LocalUpdateError(
@@ -490,6 +545,37 @@ async function inspectInstallation(environment: NodeJS.ProcessEnv): Promise<{
   }
 }
 
+export async function resolveLatestTreeportRelease(
+  environment: NodeJS.ProcessEnv = process.env,
+  operationId?: string
+): Promise<TreeportRelease> {
+  const releaseCommand = await runCommand(
+    'npm',
+    ['view', `${PACKAGE_NAME}@latest`, '--json'],
+    environment
+  )
+  if (releaseCommand.code !== 0) {
+    throw new LocalUpdateError(
+      'UPDATE_RELEASE_RESOLUTION_FAILED',
+      commandFailure('npm view', releaseCommand),
+      operationId ? { phase: 'resolve', operationId } : { phase: 'resolve' }
+    )
+  }
+
+  const release = await Promise.resolve(releaseCommand.stdout)
+    .then((value) => releaseSchema.safeParse(JSON.parse(value)))
+    .catch(() => null)
+  if (!release?.success || !VERSION.test(release.data.version)) {
+    throw new LocalUpdateError(
+      'UPDATE_RELEASE_INVALID',
+      'npm returned an invalid Treeport stable release.',
+      operationId ? { phase: 'resolve', operationId } : { phase: 'resolve' }
+    )
+  }
+
+  return release.data
+}
+
 export async function runLocalUpdate(
   options: LocalUpdateOptions = {}
 ): Promise<LocalUpdateResult> {
@@ -612,11 +698,12 @@ export async function runLocalUpdate(
 
     await writeJson(operationPath, operation)
   }
-  let installation: Awaited<ReturnType<typeof inspectInstallation>> | null =
-    null
+  let installation: Awaited<
+    ReturnType<typeof inspectLocalUpdateInstallation>
+  > | null = null
 
   try {
-    installation = await inspectInstallation(environment)
+    installation = await inspectLocalUpdateInstallation(environment)
     operation = {
       ...operation,
       fromVersion: installation.version,
@@ -770,39 +857,17 @@ export async function runLocalUpdate(
 
     await save('resolve')
     progress('Resolving the latest Treeport release…')
-    const releaseCommand = await runCommand(
-      'npm',
-      ['view', `${PACKAGE_NAME}@latest`, '--json'],
-      environment
-    )
-    if (releaseCommand.code !== 0) {
-      throw new LocalUpdateError(
-        'UPDATE_RELEASE_RESOLUTION_FAILED',
-        commandFailure('npm view', releaseCommand),
-        { phase: 'resolve', operationId }
-      )
-    }
+    const release = await resolveLatestTreeportRelease(environment, operationId)
 
-    const release = await Promise.resolve(releaseCommand.stdout)
-      .then((value) => releaseSchema.safeParse(JSON.parse(value)))
-      .catch(() => null)
-    if (!release?.success || !VERSION.test(release.data.version)) {
-      throw new LocalUpdateError(
-        'UPDATE_RELEASE_INVALID',
-        'npm returned an invalid Treeport stable release.',
-        { phase: 'resolve', operationId }
-      )
-    }
-
-    operation.toVersion = release.data.version
-    const comparison = compareVersions(
-      release.data.version,
+    operation.toVersion = release.version
+    const comparison = compareTreeportVersions(
+      release.version,
       installation.version
     )
     if (comparison < 0) {
       throw new LocalUpdateError(
         'UPDATE_DOWNGRADE_REFUSED',
-        `Treeport will not downgrade from ${installation.version} to ${release.data.version}.`,
+        `Treeport will not downgrade from ${installation.version} to ${release.version}.`,
         { phase: 'resolve', operationId }
       )
     }
@@ -841,7 +906,7 @@ export async function runLocalUpdate(
         status: 'current',
         phase: 'complete',
         fromVersion: installation.version,
-        toVersion: release.data.version,
+        toVersion: release.version,
         installation: { method: 'npm' },
         daemon: {
           wasRunning: initialDaemon.verified,
@@ -861,15 +926,15 @@ export async function runLocalUpdate(
 
     const stagingPath = path.join(
       installation.managedRoot,
-      `.staging-${release.data.version}-${operationId}`
+      `.staging-${release.version}-${operationId}`
     )
     const targetPath = path.join(
       installation.versionsDirectory,
-      release.data.version
+      release.version
     )
     operation.stagedTarget = stagingPath
     await save('stage')
-    progress(`Downloading Treeport ${release.data.version}…`)
+    progress(`Downloading Treeport ${release.version}…`)
     await fs.rm(stagingPath, { recursive: true, force: true })
     const downloadPath = path.join(
       installation.managedRoot,
@@ -881,7 +946,7 @@ export async function runLocalUpdate(
       'npm',
       [
         'pack',
-        `${PACKAGE_NAME}@${release.data.version}`,
+        `${PACKAGE_NAME}@${release.version}`,
         '--json',
         '--ignore-scripts',
         '--pack-destination',
@@ -898,7 +963,7 @@ export async function runLocalUpdate(
       .catch(() => null)
     if (
       !packedRelease?.success ||
-      packedRelease.data[0].integrity !== release.data.dist.integrity ||
+      packedRelease.data[0].integrity !== release.dist.integrity ||
       path.basename(packedRelease.data[0].filename) !==
         packedRelease.data[0].filename
     ) {
@@ -907,7 +972,7 @@ export async function runLocalUpdate(
         packed.code === 0
           ? 'The downloaded Treeport package did not match npm release integrity.'
           : commandFailure('npm pack', packed),
-        { phase: 'stage', operationId, toVersion: release.data.version }
+        { phase: 'stage', operationId, toVersion: release.version }
       )
     }
 
@@ -931,7 +996,7 @@ export async function runLocalUpdate(
       throw new LocalUpdateError(
         'UPDATE_STAGING_FAILED',
         commandFailure('npm install', install),
-        { phase: 'stage', operationId, toVersion: release.data.version }
+        { phase: 'stage', operationId, toVersion: release.version }
       )
     }
 
@@ -949,12 +1014,12 @@ export async function runLocalUpdate(
       .catch(() => null)
     if (
       !stagedManifest?.success ||
-      stagedManifest.data.version !== release.data.version
+      stagedManifest.data.version !== release.version
     ) {
       throw new LocalUpdateError(
         'UPDATE_VERIFICATION_FAILED',
         'The staged Treeport package does not match the resolved release.',
-        { phase: 'verify', operationId, toVersion: release.data.version }
+        { phase: 'verify', operationId, toVersion: release.version }
       )
     }
 
@@ -975,7 +1040,7 @@ export async function runLocalUpdate(
         `The staged Treeport package is incomplete: ${
           error instanceof Error ? error.message : String(error)
         }`,
-        { phase: 'verify', operationId, toVersion: release.data.version }
+        { phase: 'verify', operationId, toVersion: release.version }
       )
     })
     const verificationData = await fs.mkdtemp(
@@ -1006,12 +1071,12 @@ export async function runLocalUpdate(
       .catch(() => null)
     if (
       !verifiedVersion?.success ||
-      verifiedVersion.data.cli !== release.data.version
+      verifiedVersion.data.cli !== release.version
     ) {
       throw new LocalUpdateError(
         'UPDATE_VERIFICATION_FAILED',
-        `The staged Treeport CLI did not report version ${release.data.version}.`,
-        { phase: 'verify', operationId, toVersion: release.data.version }
+        `The staged Treeport CLI did not report version ${release.version}.`,
+        { phase: 'verify', operationId, toVersion: release.version }
       )
     }
 
@@ -1081,7 +1146,7 @@ export async function runLocalUpdate(
     }
 
     await save('activate')
-    progress(`Activating Treeport ${release.data.version}…`)
+    progress(`Activating Treeport ${release.version}…`)
     await fs.rm(targetPath, { recursive: true, force: true })
     await fs.rename(stagingPath, targetPath)
     operation.stagedTarget = targetPath
@@ -1125,7 +1190,7 @@ export async function runLocalUpdate(
       await writeJson(path.join(updateDirectory, 'pending-startup.json'), {
         schemaVersion: 1,
         operationId,
-        targetVersion: release.data.version,
+        targetVersion: release.version,
         createdAt: new Date().toISOString()
       })
       await fs.rm(path.join(updateDirectory, 'startup-report.json'), {
@@ -1147,7 +1212,7 @@ export async function runLocalUpdate(
       while (
         Date.now() < healthDeadline &&
         (!daemonAfter.verified ||
-          daemonAfter.health?.version !== release.data.version ||
+          daemonAfter.health?.version !== release.version ||
           report?.operationId !== operationId ||
           !report.ready)
       ) {
@@ -1160,7 +1225,7 @@ export async function runLocalUpdate(
       if (
         !daemonAfter.running ||
         !daemonAfter.verified ||
-        daemonAfter.health?.version !== release.data.version ||
+        daemonAfter.health?.version !== release.version ||
         daemonAfter.health.daemonLifecycle !== operation.daemonLifecycle ||
         path.resolve(daemonAfter.state!.dataDir) !== paths.dataDir ||
         report?.operationId !== operationId ||
@@ -1168,7 +1233,7 @@ export async function runLocalUpdate(
       ) {
         throw new LocalUpdateError(
           'UPDATE_HEALTH_VERIFICATION_FAILED',
-          `Treeport ${release.data.version} did not pass startup verification.`,
+          `Treeport ${release.version} did not pass startup verification.`,
           { phase: 'health_check', operationId }
         )
       }
@@ -1217,7 +1282,7 @@ export async function runLocalUpdate(
       .catch(() => [])
     const removable = versionDirectories.filter(
       (name) =>
-        name !== release.data.version &&
+        name !== release.version &&
         path.join(installation!.versionsDirectory, name) !==
           operation.previousTarget
     )
@@ -1235,7 +1300,7 @@ export async function runLocalUpdate(
       status: 'updated',
       phase: 'complete',
       fromVersion: installation.version,
-      toVersion: release.data.version,
+      toVersion: release.version,
       installation: { method: 'npm' },
       daemon: {
         wasRunning: operation.daemonWasRunning,
