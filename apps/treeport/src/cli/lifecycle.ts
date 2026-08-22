@@ -202,7 +202,9 @@ export async function resolveLocalApiUrl(
 export async function resolvePackagePath(
   ...segments: string[]
 ): Promise<string> {
+  // Shared build chunks can be at dist root or below dist/node.
   const candidates = [
+    fileURLToPath(new URL('../', import.meta.url)),
     fileURLToPath(new URL('../../../', import.meta.url)),
     fileURLToPath(new URL('../../', import.meta.url))
   ]

@@ -69,17 +69,29 @@ This command prints the local URL. The default URL is `http://127.0.0.1:8733`.
 
 ### Update the backend
 
-Update Treeport with one command:
+Treeport checks for stable backend updates approximately every ten minutes.
+
+When an update is available, a Download control appears before the notification bell. Select the control. Then, select **Update Treeport**.
+
+Treeport verifies the release before it stops the daemon. It preserves running tmux terminals and restarts the same daemon lifecycle.
+
+The page reconnects after the restart. It then opens the same workspace with the new web assets.
+
+The macOS desktop client shows this backend control when it uses a local backend. It does not show the control for a remote backend.
+
+You can also update the backend with this command:
 
 ```sh
 treeport update
 ```
 
-Treeport downloads and verifies the latest stable npm release before it stops anything. If the daemon was running, Treeport preserves its tmux terminals, activates the update, and restarts the same lifecycle. An enabled service stays enabled. An intentionally stopped daemon or service stays stopped.
+Use this command for automation or recovery. An enabled service stays enabled. An intentionally stopped daemon or service stays stopped.
 
-The global npm prefix must be writable by your user. Treeport never uses `sudo` for an update. If the prefix is not writable, install Node and npm under your user account, reinstall Treeport globally, and retry.
+Your user must have write access to the global npm prefix. Treeport never uses `sudo` for an update.
 
-Installations older than the first release that supports this command need one final manual npm update.
+If the prefix is not writable, install Node and npm under your user account. Then, install Treeport globally again.
+
+Installations older than the first release that supports updates need one final manual npm update.
 
 ## Connect the desktop client
 

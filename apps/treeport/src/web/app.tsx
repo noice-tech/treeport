@@ -34,6 +34,7 @@ import {
   WorkspaceShell
 } from './features/sidebar/workspace-shell'
 import { TerminalPresetsDialog } from './features/terminal-presets/terminal-presets-dialog'
+import { UpdateControl } from './features/updates/update-control'
 import { NewPanelDialog } from './features/panels/new-panel-dialog'
 import {
   TerminalWorkspace,
@@ -788,6 +789,7 @@ function WorkspaceApp() {
         }
         terminals={activeProjectTerminals}
         onSelectTerminal={selectTerminal}
+        updateControl={<UpdateControl />}
         notificationCenter={
           <NotificationCenter
             projects={projects}
@@ -798,6 +800,7 @@ function WorkspaceApp() {
         }
       />
       <WorkspaceSidebar
+        updateControl={<UpdateControl />}
         notificationCenter={
           <NotificationCenter
             projects={projects}
