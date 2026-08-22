@@ -18,7 +18,7 @@ A terminal preset is a named command in the **New panel** picker. Use presets fo
 2. Select **Manage global presets**.
 3. Enter a name and command.
 
-Treeport saves the preset for all repositories and trees.
+Treeport saves the preset for all projects and trees.
 
 [Treeport packages](/features/packages/) can also supply global or repository presets.
 
@@ -26,7 +26,7 @@ Package presets stay as read-only package resources. Treeport does not copy them
 
 ## Repository presets
 
-Add `.treeport/terminal-presets.json` to the repository:
+Add `.treeport/terminal-presets.json` to the repository or ordinary folder:
 
 ```json
 {
@@ -62,6 +62,8 @@ A preset supports these fields:
 Treeport reads the file from the tree where you open the panel.
 
 Each tree uses the file from its own branch. Thus, you can test a preset before you merge it.
+
+An ordinary folder project uses the file from its one tree.
 
 After you change the file, the picker updates in approximately five seconds.
 

@@ -90,6 +90,8 @@ const worktree: WorktreeRecord = {
 const project: ProjectRecord = {
   id: 'proj_context',
   name: 'treeport',
+  kind: 'repository',
+  rootPath: '/repo/treeport',
   repositoryPath: '/repo/treeport',
   mainWorktreePath: '/repo/treeport',
   defaultBranch: 'main',
@@ -228,6 +230,8 @@ describe('CLI context and machine output', () => {
     url: string
     body: { source?: string; projectId?: string }
   }> = []
+  const registeredFolderPaths: string[] = []
+  const workspaceOpenBodies: Array<{ sourceTerminalId: string }> = []
   let observedTerminal = terminal
   let observedMetadata: TerminalRuntimeMetadata = {
     terminalId: terminal.id,
@@ -269,6 +273,8 @@ describe('CLI context and machine output', () => {
     createdWorktree = null
     createdWebPanels = []
     webPanelBodies.length = 0
+    registeredFolderPaths.length = 0
+    workspaceOpenBodies.length = 0
   })
 
   beforeAll(async () => {
@@ -423,6 +429,56 @@ describe('CLI context and machine output', () => {
             }
           })
         )
+        return
+      }
+
+      if (request.method === 'POST' && request.url === '/api/projects') {
+        let source = ''
+        for await (const chunk of request) {
+          source += chunk
+        }
+        // SAFETY: The test fixture provides the asserted contract used here.
+        const body = JSON.parse(source) as { path: string }
+        registeredFolderPaths.push(body.path)
+        response.statusCode = 201
+        response.end(
+          JSON.stringify({
+            project: {
+              ...project,
+              id: 'proj_opened',
+              kind: 'folder',
+              rootPath: body.path,
+              repositoryPath: body.path,
+              mainWorktreePath: body.path,
+              defaultBranch: '',
+              worktrees: [
+                {
+                  ...worktree,
+                  id: 'wt_opened',
+                  projectId: 'proj_opened',
+                  path: body.path,
+                  kind: 'folder'
+                }
+              ]
+            }
+          })
+        )
+        return
+      }
+
+      if (
+        request.method === 'POST' &&
+        request.url === '/api/worktrees/wt_opened/open'
+      ) {
+        let source = ''
+        for await (const chunk of request) {
+          source += chunk
+        }
+        // SAFETY: The test fixture provides the asserted contract used here.
+        workspaceOpenBodies.push(
+          JSON.parse(source) as { sourceTerminalId: string }
+        )
+        response.end(JSON.stringify({ ok: true }))
         return
       }
 
@@ -935,6 +991,29 @@ describe('CLI context and machine output', () => {
     expect(overridden.stderr).toBe('')
     expect(overridden.stdout).toContain(`API:      ${apiUrl}`)
     await rm(runtimeDirectory, { recursive: true, force: true })
+  })
+
+  it('opens a folder in the client that contains the managed terminal', async () => {
+    observedDaemonLifecycle = 'external'
+    const result = await runCli(['.', '--json'], {
+      TREEPORT_API_URL: apiUrl,
+      TREEPORT_DAEMON_LIFECYCLE: 'external',
+      TREEPORT_PROJECT_ID: project.id,
+      TREEPORT_WORKTREE_ID: worktree.id,
+      TREEPORT_TERMINAL_ID: terminal.id
+    })
+    observedDaemonLifecycle = 'treeport'
+
+    expect(result.code).toBe(0)
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      projectId: 'proj_opened',
+      worktreeId: 'wt_opened',
+      path: await realpath(repositoryRoot),
+      projectKind: 'folder',
+      client: 'current'
+    })
+    expect(registeredFolderPaths).toEqual([await realpath(repositoryRoot)])
+    expect(workspaceOpenBodies).toEqual([{ sourceTerminalId: terminal.id }])
   })
 
   it('detects an unmanaged terminal without contacting the daemon', async () => {
@@ -1930,13 +2009,34 @@ exit 1
         [nonGitDirectory, '--json'],
         environment
       )
-      expect(nonGit.code).toBe(5)
-      expect(JSON.parse(nonGit.stderr)).toMatchObject({
-        error: {
-          code: 'NOT_A_GIT_REPOSITORY',
-          message: `No Git repository contains ${await realpath(nonGitDirectory)}.`
-        }
+      expect(nonGit.code, nonGit.stderr).toBe(0)
+      expect(JSON.parse(nonGit.stdout)).toMatchObject({
+        projectKind: 'folder',
+        path: await realpath(nonGitDirectory),
+        client: process.platform === 'darwin' ? 'desktop' : 'browser'
       })
+      // SAFETY: The packaged CLI returned its documented project-list JSON.
+      const projectsWithFolder = JSON.parse(
+        (await runPackagedCli(['project', 'list', '--json'], environment))
+          .stdout
+      ) as ProjectRecord[]
+      expect(projectsWithFolder).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            kind: 'folder',
+            rootPath: await realpath(nonGitDirectory),
+            worktrees: [
+              expect.objectContaining({
+                kind: 'folder',
+                path: await realpath(nonGitDirectory),
+                terminals: [
+                  expect.objectContaining({ name: 'Shell', status: 'running' })
+                ]
+              })
+            ]
+          })
+        ])
+      )
 
       const firstStatus = await runPackagedCli(
         ['status', '--json'],
@@ -2115,7 +2215,7 @@ exit 1
         TREEPORT_API_URL: `http://127.0.0.1:${identityProxyAddress.port}`
       })
       expect(remoteCli.code).toBe(0)
-      expect(JSON.parse(remoteCli.stdout)).toHaveLength(1)
+      expect(JSON.parse(remoteCli.stdout)).toHaveLength(2)
       expect(ingressRequests).toEqual([
         { authorization: undefined, url: '/api/projects' }
       ])

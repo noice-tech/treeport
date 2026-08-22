@@ -22,11 +22,16 @@ export function useProjectEventsBridge(
   projects: ProjectRecord[] | undefined,
   onPanelOpenRequested?: (
     request: ProductEventDataMap['panel.open_requested']
+  ) => void,
+  onWorkspaceOpenRequested?: (
+    request: ProductEventDataMap['workspace.open_requested']
   ) => void
 ): boolean {
   const queryClient = useQueryClient()
   const onPanelOpenRequestedRef = useRef(onPanelOpenRequested)
   onPanelOpenRequestedRef.current = onPanelOpenRequested
+  const onWorkspaceOpenRequestedRef = useRef(onWorkspaceOpenRequested)
+  onWorkspaceOpenRequestedRef.current = onWorkspaceOpenRequested
   const [eventsDisconnected, setEventsDisconnected] = useState(false)
 
   useEffect(() => {
@@ -107,6 +112,12 @@ export function useProjectEventsBridge(
       if (event.type === 'panel.open_requested') {
         refresh()
         onPanelOpenRequestedRef.current?.(event.data)
+        return
+      }
+
+      if (event.type === 'workspace.open_requested') {
+        refresh()
+        onWorkspaceOpenRequestedRef.current?.(event.data)
         return
       }
 

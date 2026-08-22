@@ -64,6 +64,13 @@
       "when": 1786600000000,
       "tag": "0008_recent_project_visibility",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1786800000000,
+      "tag": "0009_open_folders",
+      "breakpoints": true
     }
   ]
 }

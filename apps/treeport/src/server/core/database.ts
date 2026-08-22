@@ -418,6 +418,9 @@ export function mapProject(
   return {
     id: row.id,
     name: row.name,
+    // SAFETY: The database check constrains this value.
+    kind: row.kind as ProjectRecord['kind'],
+    rootPath: row.repositoryPath,
     repositoryPath: row.repositoryPath,
     mainWorktreePath: row.mainWorktreePath,
     defaultBranch: row.defaultBranch,
@@ -446,7 +449,7 @@ export function mapWorktree(
       row.kind as WorktreeRecord['kind']
     ),
     path: row.path,
-    head: row.head,
+    head: row.kind === 'folder' ? '' : row.head,
     branch: row.branch,
     detached: Boolean(row.detached),
     locked: Boolean(row.locked),

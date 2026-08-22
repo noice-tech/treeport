@@ -41,13 +41,15 @@ export interface WebPanelContext {
   project: {
     id: string
     name: string
-    defaultBranch: string
+    kind: 'repository' | 'folder'
+    defaultBranch: string | null
   }
   worktree: {
     id: string
     name: string
+    kind: 'main' | 'linked' | 'folder'
     branch: string | null
-    head: string
+    head: string | null
   }
 }
 

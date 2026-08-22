@@ -153,6 +153,8 @@ The Treeport Vite profile maps this import to the host SDK. You do not need a ru
 
 `treeport.context()` returns `panel`, `project`, `worktree`, and `launch` data.
 
+Use the project and worktree `kind` fields to identify an ordinary folder tree.
+
 The start input is a JSON object or `null`. The start `cwd` is relative to the tree root.
 
 Use `treeport.panel.setTitle(title)` to set a title on the current client.
@@ -161,7 +163,9 @@ Use `treeport.panel.setTitle(null)` to restore the configured title.
 
 Treeport does not save runtime titles or send them to other clients.
 
-`treeport.diff()` returns merge-base information and a read-only unified diff for the final tree state.
+For a repository project, `treeport.diff()` returns merge-base information and a read-only unified diff for the final tree state.
+
+A folder project does not have a Git diff. The call returns `GIT_NOT_AVAILABLE`.
 
 It groups relative file paths into these sets:
 

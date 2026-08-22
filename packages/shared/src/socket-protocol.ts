@@ -115,6 +115,13 @@ export const productEventSchema = z.discriminatedUnion('type', [
     z.strictObject({ worktreeId: identifierSchema, panelId: identifierSchema })
   ),
   eventEnvelope(
+    'workspace.open_requested',
+    z.strictObject({
+      worktreeId: identifierSchema,
+      sourceTerminalId: identifierSchema
+    })
+  ),
+  eventEnvelope(
     'remove.started',
     operationEventDataSchema.extend({ kind: z.literal('remove') })
   ),

@@ -110,7 +110,7 @@ export function useProjectWorkflows({
           terminalCount === 1
             ? 'session and its process'
             : 'sessions and their processes'
-        }. Git worktrees and files will remain on disk, and you can reopen the project from Recent projects.`
+        }. Folders, Git worktrees, and files will remain on disk. You can reopen the project from Recent projects.`
       )
     ) {
       return

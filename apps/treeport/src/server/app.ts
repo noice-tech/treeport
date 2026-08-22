@@ -28,6 +28,7 @@ import {
   packageRemoveSchema,
   packageUpdateSchema,
   registerProjectSchema,
+  requestWorkspaceOpenSchema,
   TERMINAL_MAX_UPLOAD_BYTES,
   removeWorktreeSchema,
   setWebPanelStorageSchema,
@@ -512,6 +513,18 @@ export function createApp({
         worktree: await service.getWorktreeSnapshot(worktreeId)
       })
     })
+
+    .post(
+      '/api/worktrees/:worktreeId/open',
+      jsonInput(requestWorkspaceOpenSchema),
+      async (context) => {
+        await service.requestWorkspaceOpen(
+          context.req.param('worktreeId'),
+          context.req.valid('json').sourceTerminalId
+        )
+        return context.json({ ok: true })
+      }
+    )
 
     .get('/api/worktrees/:worktreeId/web-panel-definitions', async (context) =>
       context.json({

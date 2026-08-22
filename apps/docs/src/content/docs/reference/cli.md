@@ -13,17 +13,23 @@ Most identifiers can be exact IDs or paths in a registered project or tree.
 treeport [folder] [--json]
 ```
 
-Give a relative or absolute folder in a Git worktree.
+Give a relative or absolute folder.
 
-Treeport starts its daemon when necessary. It registers or opens the repository and finds its trees.
+Treeport starts its daemon when necessary.
 
-It then opens the tree that contains the folder.
+If you select a Git repository root, Treeport opens the repository and finds its trees.
+
+If a repository with commits contains the folder, Treeport opens that repository.
+
+Otherwise, Treeport registers the selected folder with one folder tree.
 
 A repeated command uses the current project registration.
 
-Treeport rejects missing paths, files, and folders outside a Git repository. The error gives a corrective action.
+Treeport rejects missing paths and files.
 
-On macOS, Treeport uses the installed desktop client for loopback or HTTPS backends.
+In a managed terminal, Treeport opens the folder in clients that show that terminal.
+
+On macOS, other terminals use the installed desktop client for loopback or HTTPS backends.
 
 If the desktop client is not available, Treeport uses the default browser.
 
@@ -34,8 +40,9 @@ With `--json`, success output contains these fields:
 - `projectId`
 - `worktreeId`
 - canonical input `path`
+- `projectKind`, with a value of `repository` or `folder`
 - direct `url`
-- `client`, with a value of `desktop` or `browser`
+- `client`, with a value of `current`, `desktop`, or `browser`
 
 ## Control the daemon lifecycle
 
@@ -144,7 +151,9 @@ You can also use local directory paths, such as `./packages/tools`.
 
 The default scope is global.
 
-`-l` selects the registered repository for the current directory. It changes settings in the main tree.
+`-l` selects the registered project for the current directory.
+
+It changes settings in the repository main tree or the ordinary folder.
 
 `update` changes only configured npm packages that are eligible for update. It skips exact versions and local directories.
 
@@ -154,7 +163,7 @@ Use `--packages` to update all eligible packages.
 
 `reload` reads settings again, installs missing packages, and refreshes resources. It does not restart the daemon.
 
-Without `-l`, it reloads global settings and settings for all registered repositories.
+Without `-l`, it reloads global settings and settings for all registered projects.
 
 See [Packages](/features/packages/) for manifests, filters, and error behavior.
 
@@ -165,9 +174,11 @@ treeport project add <path> [--json]
 treeport project list [--json]
 ```
 
-`project add` registers a Git repository. It also finds the main and linked trees.
+`project add` registers a folder or Git repository.
 
-`project list` shows all registered repositories.
+For a repository, it also finds the main and linked trees.
+
+`project list` shows all registered projects.
 
 <a id="manage-worktrees"></a>
 
@@ -187,6 +198,8 @@ treeport worktree remove <id-or-path-or-dot> [--force] [--json]
 `worktree create` and `spawn` select the registered project that contains the current folder when you omit `--project`.
 
 Use `--project` to select a different project.
+
+Tree creation and removal apply only to Git repository projects.
 
 By default, creation starts from the fetched remote default branch.
 

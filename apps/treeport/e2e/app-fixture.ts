@@ -42,6 +42,8 @@ export async function openWorktreeContextMenu(
 const project: ProjectRecord = {
   id: 'proj_1',
   name: 'example',
+  kind: 'repository',
+  rootPath: '/repo',
   repositoryPath: '/repo',
   mainWorktreePath: '/repo',
   defaultBranch: 'trunk',
@@ -627,6 +629,7 @@ export async function mockApp(
   const secondState = structuredClone(project)
   secondState.id = 'proj_2'
   secondState.name = 'another-project'
+  secondState.rootPath = '/another'
   secondState.repositoryPath = '/another'
   secondState.mainWorktreePath = '/another'
   for (const worktree of secondState.worktrees) {
@@ -639,6 +642,26 @@ export async function mockApp(
       terminal.worktreeId = worktree.id
     }
   }
+  const folderState = structuredClone(project)
+  folderState.id = 'proj_folder'
+  folderState.name = 'Projects'
+  folderState.kind = 'folder'
+  folderState.rootPath = '/home/test/Projects'
+  folderState.repositoryPath = folderState.rootPath
+  folderState.mainWorktreePath = folderState.rootPath
+  folderState.defaultBranch = ''
+  folderState.worktrees = [folderState.worktrees[0]!]
+  folderState.worktrees[0]!.id = 'wt_folder'
+  folderState.worktrees[0]!.projectId = folderState.id
+  folderState.worktrees[0]!.name = 'Projects'
+  folderState.worktrees[0]!.path = folderState.rootPath
+  folderState.worktrees[0]!.kind = 'folder'
+  folderState.worktrees[0]!.head = ''
+  folderState.worktrees[0]!.branch = null
+  folderState.worktrees[0]!.dirty = null
+  folderState.worktrees[0]!.terminals[0]!.id = 'term_folder'
+  folderState.worktrees[0]!.terminals[0]!.worktreeId = 'wt_folder'
+
   const openProjects = options.startClosed
     ? []
     : [state, ...(options.includeSecondProject ? [secondState] : [])]
@@ -647,6 +670,8 @@ export async function mockApp(
         {
           id: state.id,
           name: state.name,
+          kind: state.kind,
+          rootPath: state.rootPath,
           repositoryPath: state.repositoryPath,
           lastOpenedAt: state.updatedAt
         }
@@ -940,6 +965,14 @@ export async function mockApp(
             })),
             truncated: false
           },
+          project: exact
+            ? input === '/repo'
+              ? { state: 'valid', kind: 'repository', path: '/repo' }
+              : { state: 'valid', kind: 'folder', path: directoryPath }
+            : {
+                state: 'incomplete',
+                message: 'Choose a matching folder to continue.'
+              },
           repository:
             input === '/repo'
               ? { state: 'valid', repositoryPath: '/repo' }
@@ -985,18 +1018,20 @@ export async function mockApp(
     if (pathname === '/api/projects' && route.request().method() === 'POST') {
       const body: { path: string } = route.request().postDataJSON()
       registeredProjectPaths.push(body.path)
-      if (!openProjects.some((candidate) => candidate.id === state.id)) {
-        openProjects.push(state)
+      const registered =
+        body.path === folderState.rootPath ? folderState : state
+      if (!openProjects.some((candidate) => candidate.id === registered.id)) {
+        openProjects.push(registered)
       }
 
       const recentIndex = recentProjects.findIndex(
-        (candidate) => candidate.id === state.id
+        (candidate) => candidate.id === registered.id
       )
       if (recentIndex >= 0) {
         recentProjects.splice(recentIndex, 1)
       }
 
-      await route.fulfill({ status: 201, json: { project: state } })
+      await route.fulfill({ status: 201, json: { project: registered } })
       return
     }
 
@@ -1051,6 +1086,8 @@ export async function mockApp(
         recentProjects.push({
           id: state.id,
           name: state.name,
+          kind: state.kind,
+          rootPath: state.rootPath,
           repositoryPath: state.repositoryPath,
           lastOpenedAt: state.updatedAt
         })
@@ -1299,7 +1336,10 @@ export async function mockApp(
           contentType: 'text/html',
           body: `<!doctype html><html><head><meta charset="UTF-8"><style>${reviewPanelCss}</style></head><body>
             <div id="root"></div>
-            <script type="module">${reviewPanelScript.replaceAll('</script', '<\\/script')}</script>
+            <script type="module">${reviewPanelScript.replaceAll(
+              '</script',
+              '<\\/script'
+            )}</script>
           </body></html>`
         })
         return
@@ -1784,7 +1824,10 @@ export async function mockApp(
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       }
-      await route.fulfill({ status: 202, json: { operation: removeOperation } })
+      await route.fulfill({
+        status: 202,
+        json: { operation: removeOperation }
+      })
       return
     }
 

@@ -39,11 +39,11 @@ When `XDG_RUNTIME_DIR` is set, Treeport uses `$XDG_RUNTIME_DIR/treeport`.
 
 Otherwise, it uses a user-specific directory in the operating-system temporary directory.
 
-## Configure repository terminal presets
+## Configure project terminal presets
 
-A repository can contain `.treeport/terminal-presets.json`.
+A project tree can contain `.treeport/terminal-presets.json`.
 
-Treeport reads this file from the selected tree. Thus, each tree uses the file from its branch.
+Treeport reads this file from the selected tree. In a repository, each tree uses the file from its branch.
 
 The file maps stable preset identifiers to a name, executable, literal argument array, and optional `closeOnSuccess` value.
 
@@ -57,7 +57,9 @@ See [Repository presets](/features/terminal-presets/#repository-presets) and [Ze
 
 Global package settings are at `<data-dir>/settings.json`.
 
-Repository settings are at `<main-tree>/.treeport/settings.json`. The main tree controls all linked trees.
+Project settings are at `<project-root>/.treeport/settings.json`.
+
+For a repository, the project root is the main tree, which controls all linked trees. For a folder project, the project root is the selected folder.
 
 Supported fields are:
 
@@ -80,7 +82,7 @@ You can use a wrapper without shell parsing:
 
 Global managed npm files are in `<data-dir>/npm`.
 
-Repository managed npm files are in `<main-tree>/.treeport/npm`.
+Project managed npm files are in `<project-root>/.treeport/npm`.
 
 Treeport creates an ignore file in this directory. This prevents accidental commits of dependencies and lock data.
 

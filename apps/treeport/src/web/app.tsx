@@ -54,7 +54,7 @@ import {
 import {
   LAST_PROJECT_TERMINAL_STORAGE_PREFIX,
   LAST_WORKSPACE_ROUTE_STORAGE_KEY,
-  panelOpenRequestMatchesTerminal,
+  openRequestMatchesTerminal,
   resolveWorkspaceRoute,
   targetForProject,
   targetForTerminal,
@@ -347,7 +347,7 @@ function WorkspaceApp() {
         [request.panelId]: (current[request.panelId] ?? 0) + 1
       }))
       if (
-        !panelOpenRequestMatchesTerminal(
+        !openRequestMatchesTerminal(
           request.sourceTerminalId,
           selectedTerminalId
         )
@@ -382,9 +382,46 @@ function WorkspaceApp() {
     },
     [navigateToWorkspace, queryClient, selectedTerminalId]
   )
+  const navigateWorkspaceOpenRequest = useCallback(
+    (request: ProductEventDataMap['workspace.open_requested']) => {
+      if (
+        !openRequestMatchesTerminal(
+          request.sourceTerminalId,
+          selectedTerminalId
+        )
+      ) {
+        return
+      }
+
+      void queryClient
+        .invalidateQueries({
+          queryKey: projectsQueryOptions.queryKey
+        })
+        .then(async () => {
+          const freshProjects =
+            queryClient.getQueryData<ProjectRecord[]>(
+              projectsQueryOptions.queryKey
+            ) ?? []
+          const worktree = freshProjects
+            .flatMap((project) => project.worktrees)
+            .find((candidate) => candidate.id === request.worktreeId)
+          const target = worktree
+            ? targetForWorktree(freshProjects, worktree)
+            : null
+          if (target) {
+            await navigateToWorkspace(target)
+          }
+        })
+        .catch((error) => {
+          notifyError(error, { operation: 'open workspace' })
+        })
+    },
+    [navigateToWorkspace, queryClient, selectedTerminalId]
+  )
   const eventsDisconnected = useProjectEventsBridge(
     projectsQuery.data,
-    navigatePanelOpenRequest
+    navigatePanelOpenRequest,
+    navigateWorkspaceOpenRequest
   )
   const [showSyncDegraded, setShowSyncDegraded] = useState(false)
   const dialogTriggerRef = useRef<HTMLElement | null>(null)
@@ -687,7 +724,7 @@ function WorkspaceApp() {
 
       if (command === 'new-worktree') {
         if (
-          activeProject &&
+          activeProject?.kind === 'repository' &&
           activeProject.availability.state !== 'unavailable'
         ) {
           openDialog({ type: 'worktree', project: activeProject })
