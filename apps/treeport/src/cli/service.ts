@@ -587,9 +587,31 @@ async function ensureEntrypoint(): Promise<string> {
     fs.realpath(await resolvePackagePath('bin', 'treeport.mjs'))
   ])
   if (actual !== expected) {
-    throw new Error(
-      `The current CLI entrypoint is not the installed Treeport npm bin: ${entrypoint}`
+    const prefix = path.dirname(path.dirname(entrypoint))
+    const managedEntrypoint = path.join(
+      prefix,
+      'lib',
+      'treeport',
+      'current',
+      'lib',
+      'node_modules',
+      '@treeport',
+      'treeport',
+      'bin',
+      'treeport.mjs'
     )
+    const [source, managed] = await Promise.all([
+      fs.readFile(entrypoint, 'utf8').catch(() => ''),
+      fs.realpath(managedEntrypoint).catch(() => null)
+    ])
+    if (
+      !source.includes('TREEPORT_MANAGED_LAUNCHER=1') ||
+      managed !== expected
+    ) {
+      throw new Error(
+        `The current CLI entrypoint is not the installed Treeport npm bin: ${entrypoint}`
+      )
+    }
   }
 
   return entrypoint

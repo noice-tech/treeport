@@ -85,7 +85,7 @@ It does not disable lingering during removal because other user units can requir
 
 All service definitions start a stable runner in the Treeport data directory.
 
-The runner uses the stable npm global binary link.
+The runner uses the stable npm global binary path. `treeport update` can replace the original npm link with a Treeport-managed launcher at the same path. The launcher selects one complete version through an atomic `current` symbolic link.
 
 It then replaces itself with the foreground Treeport process.
 
@@ -96,6 +96,8 @@ A missing package path stops safely and supplies a diagnostic.
 `treeport start` and `treeport stop` use the operating-system manager while service mode is installed.
 
 Stop prevents an immediate restart but keeps the service definition enabled for its next automatic start.
+
+A self-update stops and restarts a running service through the same manager. It does not disable or recreate the service. An intentionally stopped service stays stopped.
 
 `treeport service disable` removes automatic startup.
 
@@ -129,4 +131,6 @@ After a related path or configuration change, run the applicable service enable 
 
 npm does not have a reliable removal hook.
 
-Thus, public instructions require explicit service removal. The stable runner stops safely after an incorrect removal order.
+Thus, public instructions require explicit service removal and removal of the Treeport-owned update version store. The application data directory remains separate.
+
+The stable npm bin path and Treeport-owned version store must use the same writable npm prefix. An update does not change the service definition path. The stable runner stops safely after an incorrect removal order.

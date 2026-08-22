@@ -21,6 +21,8 @@ Treeport does not define task sources, planning or approval states, agent tool p
 - When the lifecycle is `external`, never run `treeport start`, `treeport stop`, or `treeport remote enable`.
 - In the external lifecycle, the parent process owns startup, shutdown, and remote exposure.
 - When the lifecycle is `service`, normal `start` and `stop` delegate to the OS manager.
+- Use bare `treeport update` to update a supported local npm installation. It preserves tmux terminals and an enabled service, and restarts only a daemon that was running.
+- Never run bare `treeport update` for an external or selected remote daemon.
 - Never invoke `sudo` for a normal service or update operation.
 - Normal macOS service mode is a user/login LaunchAgent and does not need an administrator.
 - Advanced headless mode is explicit.

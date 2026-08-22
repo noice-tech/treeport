@@ -77,6 +77,8 @@ describe('SQLite migration and catalog ordering', () => {
     const database = await openDatabase(path.join(directory, 'metadata.db'))
     databases.push(database)
 
+    expect(database.migrationState).toBe('advanced')
+    expect(database.migrationSnapshotPaths).toEqual([])
     expect(
       await database.db.get<{ journal_mode: string }>(sql`PRAGMA journal_mode`)
     ).toEqual({ journal_mode: 'wal' })
@@ -175,6 +177,8 @@ describe('SQLite migration and catalog ordering', () => {
 
     const reopened = await openDatabase(filePath)
     databases.push(reopened)
+    expect(reopened.migrationState).toBe('unchanged')
+    expect(reopened.migrationSnapshotPaths).toEqual([])
     expect(await reopened.db.select().from(terminalBellStates)).toEqual([
       {
         terminalId: 'term_bells',
@@ -732,6 +736,8 @@ describe('SQLite migration and catalog ordering', () => {
 
     const migrated = await openDatabase(filePath)
     databases.push(migrated)
+    expect(migrated.migrationState).toBe('advanced')
+    expect(migrated.migrationSnapshotPaths).toHaveLength(1)
     expect(
       await migrated.db
         .select()

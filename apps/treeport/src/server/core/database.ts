@@ -199,6 +199,8 @@ function deserializeOperation<Value extends object>(
 export interface TreeportDatabase {
   readonly filePath: string
   readonly db: TreeportOrm
+  readonly migrationState: 'unchanged' | 'advanced'
+  readonly migrationSnapshotPaths: string[]
   close(): void
 }
 
@@ -222,6 +224,8 @@ export async function openDatabase(
   const databaseExists = fs.existsSync(absoluteFilePath)
   let hasDurableSchema = false
   let hasLegacyMigrations = false
+  let migrationsPending = !databaseExists
+  const migrationSnapshotPaths: string[] = []
   let drizzleRows: Array<{ hash: string; createdAt: number | null }> = []
 
   if (!databaseExists) {
@@ -322,10 +326,10 @@ export async function openDatabase(
         )
       }
 
-      const pending =
+      migrationsPending =
         drizzleRows.length === 0 ||
         Number(drizzleRows.at(-1)?.createdAt) < latestMigration.folderMillis
-      if (pending && hasDurableSchema) {
+      if (migrationsPending && hasDurableSchema) {
         const backupDirectory = path.resolve(
           options.backupDirectory ??
             path.join(path.dirname(absoluteFilePath), 'database-backups')
@@ -348,6 +352,7 @@ export async function openDatabase(
             sql.raw(`VACUUM INTO '${backupPath.replaceAll("'", "''")}'`)
           )
           await fs.promises.chmod(backupPath, 0o600)
+          migrationSnapshotPaths.push(backupPath)
         } catch (error) {
           await fs.promises.rm(backupPath, { force: true })
           throw error
@@ -403,6 +408,8 @@ export async function openDatabase(
     return {
       filePath: absoluteFilePath,
       db,
+      migrationState: migrationsPending ? 'advanced' : 'unchanged',
+      migrationSnapshotPaths,
       close: () => client.close()
     }
   } catch (error) {
