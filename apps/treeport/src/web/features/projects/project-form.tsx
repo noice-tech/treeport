@@ -84,7 +84,10 @@ export function ProjectForm({
   const navigate = (nextPath: string) => {
     setPathValue(nextPath)
     setDebouncedPath(nextPath)
-    window.requestAnimationFrame(() => pathInputRef.current?.focus())
+    window.requestAnimationFrame(() => {
+      pathInputRef.current?.focus()
+      pathInputRef.current?.setSelectionRange(nextPath.length, nextPath.length)
+    })
   }
 
   return (
