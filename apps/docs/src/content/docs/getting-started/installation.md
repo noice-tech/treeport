@@ -42,16 +42,22 @@ Install Treeport globally:
 npm install --global @treeport/treeport
 ```
 
-Open a Git repository:
+Open a folder or Git repository:
 
 ```sh
-cd /path/to/repository
+cd /path/to/project
 treeport .
 ```
 
-Treeport starts the backend when necessary. It registers the repository and finds its trees.
+Treeport starts the backend when necessary.
 
-It then opens the current tree in the macOS desktop client or the default browser.
+For a repository, Treeport registers the repository and finds its trees.
+
+For an ordinary folder, Treeport creates one folder tree.
+
+In a managed terminal, it opens the selected tree in the current Treeport client.
+
+From another terminal, it opens the macOS desktop client or the default browser.
 
 To start only the backend, run:
 
@@ -75,13 +81,15 @@ treeport start
 
 At first start, the desktop client tries **This computer** at `http://127.0.0.1:8733`.
 
-If Treeport is active, the desktop client opens your projects. If Treeport is not active, open a repository from a terminal:
+If Treeport is active, the desktop client opens your projects.
+
+If Treeport is not active, open a folder or repository from a terminal:
 
 ```sh
-treeport /path/to/repository
+treeport /path/to/project
 ```
 
-This command starts the backend and opens its tree.
+This command starts the backend and opens the selected tree.
 
 To use another computer, select **Connect to another computer…**. Enter a private HTTPS Treeport URL.
 

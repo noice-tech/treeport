@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import { CrownIcon, GitBranchIcon } from 'lucide-react'
 import {
   ArrowPathIcon,
+  FolderIcon,
   PlusIcon,
   TrashIcon,
   WindowIcon,
@@ -195,7 +196,7 @@ export function WorkspaceTree({
     >
       {projectsPending ? (
         <p className="sidebar-note px-2 py-3 text-base text-zinc-500 min-[701px]:text-sm">
-          Loading repositories…
+          Loading projects…
         </p>
       ) : null}
       {projectsError && !projectsLoaded ? (
@@ -215,7 +216,7 @@ export function WorkspaceTree({
       ) : null}
       {!projectsPending && !projectsError && !projects.length ? (
         <p className="sidebar-note px-2 py-3 text-base text-pretty text-zinc-500 min-[701px]:text-sm">
-          Open a Git repository to begin.
+          Open a folder or Git repository to begin.
         </p>
       ) : null}
       <div className="grid gap-4">
@@ -228,7 +229,7 @@ export function WorkspaceTree({
                   className="mx-1 mb-2 rounded-md bg-amber-400/8 px-2 py-1.5 text-sm text-amber-200"
                   role="status"
                 >
-                  {project.availability.message || 'Git repository unavailable'}
+                  {project.availability.message || 'Project folder unavailable'}
                 </p>
               ) : null}
               <SidebarMenu className="gap-2 min-[701px]:gap-1">
@@ -252,11 +253,18 @@ export function WorkspaceTree({
                           <WorktreeShell
                             id={`worktree-${worktree.id}`}
                             name={worktree.name}
-                            title={`${worktree.path}${
-                              worktree.branch
-                                ? ` · ${worktree.branch}`
-                                : ` · detached at ${worktree.head.slice(0, 8)}`
-                            }`}
+                            title={
+                              worktree.kind === 'folder'
+                                ? worktree.path
+                                : `${worktree.path}${
+                                    worktree.branch
+                                      ? ` · ${worktree.branch}`
+                                      : ` · detached at ${worktree.head.slice(
+                                          0,
+                                          8
+                                        )}`
+                                  }`
+                            }
                             selected={selectedWorktree?.id === worktree.id}
                             className={cn(
                               selectedWorktree?.id === worktree.id &&
@@ -275,6 +283,11 @@ export function WorkspaceTree({
                               pendingRemovals[worktree.id] ? (
                                 <GitBranchIcon
                                   className="worktree-progress-icon worktree-removing-icon size-4 shrink-0 stroke-rose-400 stroke-[1.5] min-[701px]:size-3.5!"
+                                  aria-hidden="true"
+                                />
+                              ) : worktree.kind === 'folder' ? (
+                                <FolderIcon
+                                  className="size-4 shrink-0 fill-zinc-600 min-[701px]:size-3.5!"
                                   aria-hidden="true"
                                 />
                               ) : worktree.kind === 'main' ? (
@@ -644,42 +657,44 @@ export function WorkspaceTree({
                       />
                     </SidebarMenuItem>
                   ))}
-                <SidebarMenuItem className="min-w-0">
-                  <SidebarMenuButton asChild>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      className="h-auto min-h-11 w-full justify-start gap-1.5 px-2 py-1.5 text-base/5 font-normal text-zinc-500 hover:bg-white/5 hover:text-zinc-100 min-[701px]:min-h-8 min-[701px]:py-0.5 min-[701px]:text-sm/5"
-                      disabled={project.availability.state === 'unavailable'}
-                      aria-keyshortcuts={
-                        newWorktreeShortcut
-                          ? desktopBridge?.platform === 'darwin'
-                            ? 'Meta+N'
-                            : 'Control+N'
-                          : undefined
-                      }
-                      title={
-                        newWorktreeShortcut
-                          ? `New tree — ${newWorktreeShortcut}`
-                          : undefined
-                      }
-                      onClick={(event) =>
-                        onOpenWorktreeDialog(project, event.currentTarget)
-                      }
-                    >
-                      <PlusIcon className="min-[701px]:size-3.5!" />
-                      <span>New tree</span>
-                      {newWorktreeShortcut ? (
-                        <kbd
-                          className="ml-auto font-sans text-[0.6875rem] text-zinc-500"
-                          aria-hidden="true"
-                        >
-                          {newWorktreeShortcut}
-                        </kbd>
-                      ) : null}
-                    </Button>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
+                {project.kind === 'repository' ? (
+                  <SidebarMenuItem className="min-w-0">
+                    <SidebarMenuButton asChild>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        className="h-auto min-h-11 w-full justify-start gap-1.5 px-2 py-1.5 text-base/5 font-normal text-zinc-500 hover:bg-white/5 hover:text-zinc-100 min-[701px]:min-h-8 min-[701px]:py-0.5 min-[701px]:text-sm/5"
+                        disabled={project.availability.state === 'unavailable'}
+                        aria-keyshortcuts={
+                          newWorktreeShortcut
+                            ? desktopBridge?.platform === 'darwin'
+                              ? 'Meta+N'
+                              : 'Control+N'
+                            : undefined
+                        }
+                        title={
+                          newWorktreeShortcut
+                            ? `New tree — ${newWorktreeShortcut}`
+                            : undefined
+                        }
+                        onClick={(event) =>
+                          onOpenWorktreeDialog(project, event.currentTarget)
+                        }
+                      >
+                        <PlusIcon className="min-[701px]:size-3.5!" />
+                        <span>New tree</span>
+                        {newWorktreeShortcut ? (
+                          <kbd
+                            className="ml-auto font-sans text-[0.6875rem] text-zinc-500"
+                            aria-hidden="true"
+                          >
+                            {newWorktreeShortcut}
+                          </kbd>
+                        ) : null}
+                      </Button>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                ) : null}
               </SidebarMenu>
             </div>
           ))}

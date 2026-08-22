@@ -59,11 +59,11 @@ Keep the access policy narrow. A tagged device does not supply a user identity a
 
 ## Review repository configuration
 
-When you register a repository, Treeport can read these files:
+When you register a project, Treeport can read these files:
 
-- package settings from the main tree;
-- compatible `.zed/tasks.json` tasks from the main tree;
-- native terminal presets from each registered tree.
+- package settings from the project root;
+- native terminal presets from each registered tree;
+- compatible `.zed/tasks.json` tasks from a repository main tree.
 
 Review packages, `.treeport/terminal-presets.json`, and `.zed/tasks.json` commands before you use them.
 
@@ -127,7 +127,7 @@ Browser iframe restrictions continue to apply. Treeport does not bypass the fram
 
 ## Follow these operating rules
 
-- Register only repositories that you permit Treeport to control.
+- Register only folders and repositories that you permit Treeport to control.
 - Treat terminal output and history as sensitive information.
 - Do not put secrets in terminal names, command arguments, or URLs.
 - Keep Git, tmux, Node.js, Treeport, and Tailscale updated.

@@ -38,7 +38,7 @@ interface SettingsFileReadResult {
 interface ProjectPackageContext {
   id: string
   name: string
-  mainWorktreePath: string
+  rootPath: string
 }
 
 interface ParsedNpmSource {
@@ -393,7 +393,7 @@ export class PackageSystem {
       )
     }
 
-    return path.join(project.mainWorktreePath, '.treeport', 'settings.json')
+    return path.join(project.rootPath, '.treeport', 'settings.json')
   }
 
   private async serialize<T>(
@@ -465,7 +465,9 @@ export class PackageSystem {
       return {
         diagnostic: diagnostic(
           scope,
-          `Could not parse ${settingsPath}: ${error instanceof Error ? error.message : String(error)}`,
+          `Could not parse ${settingsPath}: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
           { projectId, path: settingsPath }
         )
       }
@@ -701,7 +703,7 @@ export class PackageSystem {
     return scope === 'global'
       ? path.join(this.config.dataDir, 'npm')
       : path.join(
-          this.projectContexts.get(projectId!)!.mainWorktreePath,
+          this.projectContexts.get(projectId!)!.rootPath,
           '.treeport',
           'npm'
         )
@@ -735,7 +737,11 @@ export class PackageSystem {
     if (!packageJsonExists) {
       await fs.writeFile(
         packageJsonPath,
-        `${JSON.stringify({ name: 'treeport-packages', private: true }, null, 2)}\n`,
+        `${JSON.stringify(
+          { name: 'treeport-packages', private: true },
+          null,
+          2
+        )}\n`,
         { mode: 0o600 }
       )
     }
@@ -1008,7 +1014,9 @@ export class PackageSystem {
           diagnostics.push(
             diagnostic(
               scope,
-              `Could not read package directory: ${error instanceof Error ? error.message : String(error)}`,
+              `Could not read package directory: ${
+                error instanceof Error ? error.message : String(error)
+              }`,
               {
                 source,
                 projectId: projectId ?? undefined,
@@ -1138,7 +1146,9 @@ export class PackageSystem {
         packageJson = JSON.parse(packageJsonContent)
       } catch (error) {
         throw new Error(
-          `Could not parse ${packageJsonPath}: ${error instanceof Error ? error.message : String(error)}`
+          `Could not parse ${packageJsonPath}: ${
+            error instanceof Error ? error.message : String(error)
+          }`
         )
       }
       const parsedPackageJson = z
@@ -1274,7 +1284,9 @@ export class PackageSystem {
         candidates.diagnostics.push(
           diagnostic(
             scope,
-            `Could not parse terminal preset: ${error instanceof Error ? error.message : String(error)}`,
+            `Could not parse terminal preset: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
             {
               source,
               projectId: projectId ?? undefined,
@@ -1309,7 +1321,9 @@ export class PackageSystem {
       const resourceName = path.posix.basename(candidate.relativePath, '.json')
       terminalPresets.push({
         definition: {
-          id: `package:${parsed.packageId}:terminal-preset:${encodeURIComponent(resourceName)}`,
+          id: `package:${parsed.packageId}:terminal-preset:${encodeURIComponent(
+            resourceName
+          )}`,
           name: result.data.name,
           executable: result.data.executable,
           args: [...result.data.args],
@@ -1438,7 +1452,9 @@ export class PackageSystem {
         preserved.diagnostics.push(
           diagnostic(
             scope,
-            `Reload failed; preserving the previous package resources: ${error instanceof Error ? error.message : String(error)}`,
+            `Reload failed; preserving the previous package resources: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
             {
               source: sourceString(configured),
               projectId: projectId ?? undefined
@@ -1740,17 +1756,17 @@ export class PackageSystem {
   }
 
   private context(
-    project: Pick<ProjectRecord, 'id' | 'name' | 'mainWorktreePath'>
+    project: Pick<ProjectRecord, 'id' | 'name' | 'rootPath'>
   ): ProjectPackageContext {
     return {
       id: project.id,
       name: project.name,
-      mainWorktreePath: project.mainWorktreePath
+      rootPath: project.rootPath
     }
   }
 
   syncProjects(
-    projects: Array<Pick<ProjectRecord, 'id' | 'name' | 'mainWorktreePath'>>
+    projects: Array<Pick<ProjectRecord, 'id' | 'name' | 'rootPath'>>
   ): void {
     for (const project of projects) {
       const next = this.context(project)
@@ -1758,8 +1774,7 @@ export class PackageSystem {
       this.projectContexts.set(project.id, next)
       if (
         previous &&
-        (previous.mainWorktreePath !== next.mainWorktreePath ||
-          previous.name !== next.name)
+        (previous.rootPath !== next.rootPath || previous.name !== next.name)
       ) {
         this.projectFingerprints.delete(project.id)
       }
@@ -1767,7 +1782,7 @@ export class PackageSystem {
   }
 
   async initialize(
-    projects: Array<Pick<ProjectRecord, 'id' | 'name' | 'mainWorktreePath'>>
+    projects: Array<Pick<ProjectRecord, 'id' | 'name' | 'rootPath'>>
   ): Promise<void> {
     this.syncProjects(projects)
     await this.reconcileGlobal(true)
@@ -1777,7 +1792,7 @@ export class PackageSystem {
   }
 
   async registerProject(
-    project: Pick<ProjectRecord, 'id' | 'name' | 'mainWorktreePath'>
+    project: Pick<ProjectRecord, 'id' | 'name' | 'rootPath'>
   ): Promise<void> {
     this.syncProjects([project])
     await this.reconcileGlobal()
@@ -1920,9 +1935,14 @@ export class PackageSystem {
     settings: TreeportSettings,
     packages: PackageSource[]
   ): Promise<void> {
-    await fs.mkdir(path.dirname(settingsPath), { recursive: true, mode: 0o700 })
+    await fs.mkdir(path.dirname(settingsPath), {
+      recursive: true,
+      mode: 0o700
+    })
     const raw = { ...settings.raw, packages }
-    const temporary = `${settingsPath}.${process.pid}.${crypto.randomBytes(6).toString('hex')}.tmp`
+    const temporary = `${settingsPath}.${process.pid}.${crypto
+      .randomBytes(6)
+      .toString('hex')}.tmp`
     await fs.writeFile(temporary, `${JSON.stringify(raw, null, 2)}\n`, {
       mode: 0o600
     })

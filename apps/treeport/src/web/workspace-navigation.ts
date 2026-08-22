@@ -9,7 +9,7 @@ export const LAST_WORKSPACE_ROUTE_STORAGE_KEY = 'treeport-last-workspace-route'
 export const LAST_PROJECT_TERMINAL_STORAGE_PREFIX =
   'treeport-last-project-terminal:'
 
-export function panelOpenRequestMatchesTerminal(
+export function openRequestMatchesTerminal(
   sourceTerminalId: string | null,
   selectedTerminalId: string | null
 ): boolean {

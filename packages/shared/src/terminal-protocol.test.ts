@@ -227,6 +227,17 @@ describe('Socket.IO contracts', () => {
     ).toMatchObject({ type: 'terminal.updated' })
     expect(
       parseProductEvent({
+        id: 'event-2',
+        type: 'workspace.open_requested',
+        at: '2026-01-01T00:00:00.000Z',
+        data: {
+          worktreeId: 'worktree',
+          sourceTerminalId: 'term'
+        }
+      })
+    ).toMatchObject({ type: 'workspace.open_requested' })
+    expect(
+      parseProductEvent({
         id: 'event-1',
         type: 'unknown',
         at: '2026-01-01T00:00:00.000Z',

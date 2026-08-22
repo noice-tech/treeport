@@ -3,7 +3,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import type { DirtyState, GitDiff } from '@treeport/shared'
 import type { CommandRunner } from './command'
-import { runChecked } from './command'
+import { ExternalCommandError, runChecked } from './command'
 
 export interface GitWorktreeInfo {
   path: string
@@ -150,13 +150,55 @@ export class GitAdapter {
     })
   }
 
-  async canonicalizeRepositoryPath(inputPath: string): Promise<string> {
+  async findRepositoryRoot(inputPath: string): Promise<string | null> {
     const canonicalInput = await fs.realpath(path.resolve(inputPath))
-    const result = await this.checked(canonicalInput, [
-      'rev-parse',
-      '--show-toplevel'
+    const request = {
+      executable: this.executable,
+      args: ['rev-parse', '--show-toplevel'],
+      cwd: canonicalInput,
+      timeoutMs: 30_000
+    } as const
+    const result = await this.runner.run(request)
+    if (result.exitCode === 0) {
+      return fs.realpath(result.stdout.trim())
+    }
+
+    if (/not a git repository|outside repository/iu.test(result.stderr)) {
+      return null
+    }
+
+    throw new ExternalCommandError(
+      `Could not inspect Git repository state: ${
+        result.stderr.trim() || `Git exited with code ${result.exitCode}`
+      }`,
+      request,
+      result
+    )
+  }
+
+  async findProjectRepositoryRoot(inputPath: string): Promise<string | null> {
+    const canonicalInput = await fs.realpath(path.resolve(inputPath))
+    const repositoryRoot = await this.findRepositoryRoot(canonicalInput)
+    if (!repositoryRoot || repositoryRoot === canonicalInput) {
+      return repositoryRoot
+    }
+
+    const commits = await this.checked(repositoryRoot, [
+      'rev-list',
+      '--all',
+      '--max-count=1'
     ])
-    return fs.realpath(result.stdout.trim())
+    return commits.stdout.trim() ? repositoryRoot : null
+  }
+
+  async canonicalizeRepositoryPath(inputPath: string): Promise<string> {
+    const repositoryRoot = await this.findRepositoryRoot(inputPath)
+    if (repositoryRoot) {
+      return repositoryRoot
+    }
+
+    const canonicalInput = await fs.realpath(path.resolve(inputPath))
+    throw new Error(`Not a Git repository: ${canonicalInput}`)
   }
 
   private async repositoryIdentityValues(cwd: string): Promise<string[]> {
@@ -178,7 +220,9 @@ export class GitAdapter {
 
     if (result.exitCode !== 0) {
       throw new InvalidRepositoryIdentityError(
-        `Could not read the local Treeport repository identity: ${result.stderr.trim() || `Git exited with code ${result.exitCode}`}`
+        `Could not read the local Treeport repository identity: ${
+          result.stderr.trim() || `Git exited with code ${result.exitCode}`
+        }`
       )
     }
 
