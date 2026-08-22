@@ -379,6 +379,19 @@ test.describe('desktop worktree terminal UI', () => {
     ).toBeVisible()
     await expect(openButton).toBeDisabled()
 
+    await dialog.getByRole('button', { name: 'example', exact: true }).click()
+    const selectedPath = '/home/test/Projects/example'
+    await expect(serverPath).toHaveValue(selectedPath)
+    await expect(serverPath).toBeFocused()
+    await expect(serverPath).toHaveJSProperty(
+      'selectionStart',
+      selectedPath.length
+    )
+    await expect(serverPath).toHaveJSProperty(
+      'selectionEnd',
+      selectedPath.length
+    )
+
     await serverPath.fill('/repo')
     await serverPath.press('ArrowDown')
     await expect(serverPath).toBeFocused()
