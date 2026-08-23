@@ -7,18 +7,49 @@ import {
   it,
   vi
 } from 'vitest'
-import { TERMINAL_SCROLL_EXIT_SEQUENCE } from '@treeport/shared'
+import {
+  TERMINAL_SCROLL_EXIT_SEQUENCE,
+  type JsonValue,
+  type TerminalSize
+} from '@treeport/shared'
 import type {
   terminalKeyboardInput as mapTerminalKeyboardInput,
   terminalOptions as createTerminalOptions,
   terminalProgressLabel as formatTerminalProgressLabel,
   TerminalSession as TerminalSessionInstance,
   TerminalSessionManager as TerminalSessionManagerInstance,
-  TerminalSessionSnapshot
+  TerminalSessionSnapshot,
+  TerminalSocketFactory
 } from './terminal-session'
 
-const socketClient = vi.hoisted(() => ({ io: vi.fn() }))
-vi.mock('socket.io-client', () => ({ io: socketClient.io }))
+interface TerminalSessionTestAccess {
+  terminal: object
+  fitAddon: { proposeDimensions: () => TerminalSize | undefined }
+  appliedRevision: number
+  proposedDimensions: unknown
+  connect(): void
+  fit(queueControllerResize?: boolean): void
+  canInput(): boolean
+  handleServerEvent(event: string, value: JsonValue): void
+  enqueueRender(epoch: number, operation: () => void): void
+}
+
+function testAccess<Value extends object, Fixture extends object = object>(
+  value: Fixture
+): Value {
+  // SAFETY: Each call names only fixture members installed by this test.
+  return Object(value) as Value
+}
+
+function terminalSessionTestAccess<Session extends object>(
+  session: Session
+): TerminalSessionTestAccess {
+  // SAFETY: Tests access actual TerminalSession members or fields installed by
+  // the test before use.
+  return session as TerminalSessionTestAccess
+}
+
+const socketClient = { io: vi.fn() }
 
 class FakeSocketIO {
   connected = false
@@ -26,7 +57,9 @@ class FakeSocketIO {
   readonly managerHandlers = new Map<string, Array<() => void>>()
   readonly emit = vi.fn()
   readonly volatile = { emit: vi.fn() }
+  readonly reconnection = vi.fn()
   readonly io = {
+    reconnection: this.reconnection,
     on: (event: string, listener: () => void) => {
       this.managerHandlers.set(event, [
         ...(this.managerHandlers.get(event) ?? []),
@@ -61,14 +94,19 @@ class FakeSocketIO {
   }
 }
 
+type TerminalSessionConstructor = new (
+  terminalId: string,
+  createSocket?: TerminalSocketFactory
+) => TerminalSessionInstance
+
 type TerminalSessionManagerConstructor = new (
   maxSessions?: number,
   idleMs?: number,
   createSession?: (terminalId: string) => TerminalSessionInstance,
-  acknowledgeBell?: (terminalId: string, sequence: number) => Promise<unknown>
+  acknowledgeBell?: (terminalId: string, sequence: number) => Promise<void>
 ) => TerminalSessionManagerInstance
 
-let TerminalSession: new (terminalId: string) => TerminalSessionInstance
+let TerminalSession: TerminalSessionConstructor
 let TerminalSessionManager: TerminalSessionManagerConstructor
 let terminalKeyboardInput: typeof mapTerminalKeyboardInput
 let terminalOptions: typeof createTerminalOptions
@@ -133,6 +171,13 @@ beforeAll(async () => {
   } = await import('./terminal-session'))
 })
 
+function createTerminalSession(terminalId: string): TerminalSessionInstance {
+  return new TerminalSession(
+    terminalId,
+    testAccess<TerminalSocketFactory>(socketClient.io)
+  )
+}
+
 beforeEach(() => {
   vi.useFakeTimers()
   vi.stubGlobal('window', globalThis)
@@ -159,7 +204,7 @@ function fixture(maxSessions = 3, idleMs = 1_000) {
     (terminalId) => {
       const session = new FakeSession()
       sessions.set(terminalId, session)
-      return session as unknown as TerminalSessionInstance
+      return testAccess<TerminalSessionInstance>(session)
     },
     acknowledgeBell
   )
@@ -170,9 +215,9 @@ function controllerSessionFixture() {
   const socket = new FakeSocketIO()
   socket.connected = true
   let proposal = { cols: 120, rows: 40 }
-  const host = {} as HTMLElement
+  const host = testAccess<HTMLElement>({})
   const resize = vi.fn()
-  const session = new TerminalSession('terminal-one')
+  const session = createTerminalSession('terminal-one')
   Object.assign(session, {
     socket,
     ready: true,
@@ -212,23 +257,20 @@ function controllerSessionFixture() {
   })
   const measure = (dimensions: { cols: number; rows: number }) => {
     proposal = dimensions
-    ;(session as unknown as { fit(queueControllerResize: boolean): void }).fit(
-      true
-    )
+    terminalSessionTestAccess(session).fit(true)
   }
   const dimensions = (cols: number, rows: number, revision: number) => {
-    ;(
-      session as unknown as {
-        handleServerEvent(event: 'dimensions', value: unknown): void
-      }
-    ).handleServerEvent('dimensions', { cols, rows, revision })
+    terminalSessionTestAccess(session).handleServerEvent('dimensions', {
+      cols,
+      rows,
+      revision
+    })
   }
   const control = (controller: boolean, generation: number) => {
-    ;(
-      session as unknown as {
-        handleServerEvent(event: 'control', value: unknown): void
-      }
-    ).handleServerEvent('control', { controller, generation })
+    terminalSessionTestAccess(session).handleServerEvent('control', {
+      controller,
+      generation
+    })
   }
   return { control, dimensions, host, measure, resize, session, socket }
 }
@@ -241,11 +283,20 @@ describe('terminal options', () => {
     const handler = terminalOptions().linkHandler
     const url = 'https://github.com/acme/project/pull/123'
 
-    handler.activate({ metaKey: false, ctrlKey: false } as MouseEvent, url)
-    handler.activate({ metaKey: false, ctrlKey: true } as MouseEvent, url)
+    handler.activate(
+      testAccess<MouseEvent>({ metaKey: false, ctrlKey: false }),
+      url
+    )
+    handler.activate(
+      testAccess<MouseEvent>({ metaKey: false, ctrlKey: true }),
+      url
+    )
     expect(open).not.toHaveBeenCalled()
 
-    handler.activate({ metaKey: true, ctrlKey: false } as MouseEvent, url)
+    handler.activate(
+      testAccess<MouseEvent>({ metaKey: true, ctrlKey: false }),
+      url
+    )
     expect(open).toHaveBeenCalledOnce()
     expect(open).toHaveBeenCalledWith(url, '_blank', 'noopener,noreferrer')
   })
@@ -257,11 +308,20 @@ describe('terminal options', () => {
     const handler = terminalOptions().linkHandler
     const url = 'http://example.test/docs'
 
-    handler.activate({ metaKey: false, ctrlKey: false } as MouseEvent, url)
-    handler.activate({ metaKey: true, ctrlKey: false } as MouseEvent, url)
+    handler.activate(
+      testAccess<MouseEvent>({ metaKey: false, ctrlKey: false }),
+      url
+    )
+    handler.activate(
+      testAccess<MouseEvent>({ metaKey: true, ctrlKey: false }),
+      url
+    )
     expect(open).not.toHaveBeenCalled()
 
-    handler.activate({ metaKey: false, ctrlKey: true } as MouseEvent, url)
+    handler.activate(
+      testAccess<MouseEvent>({ metaKey: false, ctrlKey: true }),
+      url
+    )
     expect(open).toHaveBeenCalledOnce()
     expect(open).toHaveBeenCalledWith(url, '_blank', 'noopener,noreferrer')
   })
@@ -277,11 +337,20 @@ describe('terminal options', () => {
     const handler = terminalOptions().linkHandler
     const url = 'file:///Users/example/project/readme%20draft.md'
 
-    handler.activate({ metaKey: false, ctrlKey: false } as MouseEvent, url)
-    handler.activate({ metaKey: false, ctrlKey: true } as MouseEvent, url)
+    handler.activate(
+      testAccess<MouseEvent>({ metaKey: false, ctrlKey: false }),
+      url
+    )
+    handler.activate(
+      testAccess<MouseEvent>({ metaKey: false, ctrlKey: true }),
+      url
+    )
     expect(openFileUrl).not.toHaveBeenCalled()
 
-    handler.activate({ metaKey: true, ctrlKey: false } as MouseEvent, url)
+    handler.activate(
+      testAccess<MouseEvent>({ metaKey: true, ctrlKey: false }),
+      url
+    )
     expect(openFileUrl).toHaveBeenCalledOnce()
     expect(openFileUrl).toHaveBeenCalledWith(url)
     expect(open).not.toHaveBeenCalled()
@@ -292,7 +361,7 @@ describe('terminal options', () => {
     vi.stubGlobal('navigator', { platform: 'Linux x86_64' })
     vi.stubGlobal('window', { open })
     const handler = terminalOptions().linkHandler
-    const click = { metaKey: false, ctrlKey: true } as MouseEvent
+    const click = testAccess<MouseEvent>({ metaKey: false, ctrlKey: true })
 
     for (const url of [
       'https://',
@@ -321,7 +390,7 @@ describe('terminal progress', () => {
 
 describe('terminal keyboard input', () => {
   const key = (overrides: Partial<KeyboardEvent> = {}) =>
-    ({
+    testAccess<KeyboardEvent>({
       type: 'keydown',
       key: 'Enter',
       isComposing: false,
@@ -330,7 +399,7 @@ describe('terminal keyboard input', () => {
       metaKey: false,
       shiftKey: false,
       ...overrides
-    }) as KeyboardEvent
+    })
 
   it('encodes Shift+Enter as CSI-u without changing plain Enter', () => {
     expect(terminalKeyboardInput(key({ shiftKey: true }))).toBe('\u001b[13;2u')
@@ -416,13 +485,13 @@ describe('TerminalSession', () => {
         key === 'treeport-terminal-client-id' ? clientId : null,
       setItem
     })
-    const session = new TerminalSession('terminal-one')
-    ;(session as unknown as { terminal: unknown }).terminal = {
+    const session = createTerminalSession('terminal-one')
+    terminalSessionTestAccess(session).terminal = {
       cols: 5_000,
       rows: 1,
       dispose: vi.fn()
     }
-    ;(session as unknown as { connect(): void }).connect()
+    terminalSessionTestAccess(session).connect()
     expect(socketClient.io).toHaveBeenCalledWith(
       '/terminals',
       expect.objectContaining({
@@ -437,9 +506,16 @@ describe('TerminalSession', () => {
         query: { terminalProtocol: '2' }
       })
     )
-    const options = socketClient.io.mock.calls[0]![1] as {
-      auth: (authorize: (auth: unknown) => void) => void
-    }
+    const options = testAccess<{
+      auth: (
+        authorize: (auth: {
+          terminalId: string
+          clientId: string
+          cols: number
+          rows: number
+        }) => void
+      ) => void
+    }>(socketClient.io.mock.calls[0]![1])
     const authorize = vi.fn()
     options.auth(authorize)
     expect(authorize).toHaveBeenCalledWith({
@@ -454,13 +530,49 @@ describe('TerminalSession', () => {
     session.dispose()
   })
 
+  it('reconnects only mounted terminal sessions after a server interruption', () => {
+    const socket = new FakeSocketIO()
+    socket.connected = true
+    const session = createTerminalSession('terminal-one')
+    const host = testAccess<HTMLElement>({ appendChild: vi.fn() })
+    const wrapper = { remove: vi.fn() }
+    Object.assign(session, {
+      socket,
+      ready: true,
+      opened: true,
+      host,
+      wrapper
+    })
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        observe() {}
+        disconnect() {}
+      }
+    )
+    vi.stubGlobal('addEventListener', vi.fn())
+    vi.stubGlobal('removeEventListener', vi.fn())
+    vi.stubGlobal('document', {
+      querySelector: vi.fn(() => null),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn()
+    })
+
+    session.unmount(host)
+    expect(socket.reconnection).toHaveBeenLastCalledWith(false)
+
+    session.mount(host)
+    expect(socket.reconnection).toHaveBeenLastCalledWith(true)
+    session.dispose()
+  })
+
   it('batches contiguous output writes while ACKing only parsed data', async () => {
     const socket = new FakeSocketIO()
     socketClient.io.mockReturnValue(socket)
-    const session = new TerminalSession('terminal-one')
+    const session = createTerminalSession('terminal-one')
     const writes: Array<{ data: string; callback: () => void }> = []
     const reset = vi.fn()
-    ;(session as unknown as { terminal: unknown }).terminal = {
+    terminalSessionTestAccess(session).terminal = {
       reset,
       resize: vi.fn(),
       options: { fontSize: 14 },
@@ -469,7 +581,7 @@ describe('TerminalSession', () => {
       },
       dispose: vi.fn()
     }
-    ;(session as unknown as { connect(): void }).connect()
+    terminalSessionTestAccess(session).connect()
     socket.emitServer('ready', {
       connectionId: 'connection-1',
       streamId: 'stream-1',
@@ -525,10 +637,10 @@ describe('TerminalSession', () => {
   it('drains earlier output before resizing and admitting later output', async () => {
     const socket = new FakeSocketIO()
     socketClient.io.mockReturnValue(socket)
-    const session = new TerminalSession('terminal-one')
+    const session = createTerminalSession('terminal-one')
     const writes: Array<{ data: string; callback: () => void }> = []
     const resize = vi.fn()
-    ;(session as unknown as { terminal: unknown }).terminal = {
+    terminalSessionTestAccess(session).terminal = {
       reset: vi.fn(),
       resize,
       options: { fontSize: 14 },
@@ -537,7 +649,7 @@ describe('TerminalSession', () => {
       },
       dispose: vi.fn()
     }
-    ;(session as unknown as { connect(): void }).connect()
+    terminalSessionTestAccess(session).connect()
     socket.emitServer('ready', {
       connectionId: 'connection-1',
       streamId: 'stream-1',
@@ -578,10 +690,10 @@ describe('TerminalSession', () => {
   it('drains stale output before a new stream reset without ACKing it', async () => {
     const socket = new FakeSocketIO()
     socketClient.io.mockReturnValue(socket)
-    const session = new TerminalSession('terminal-one')
+    const session = createTerminalSession('terminal-one')
     const writes: Array<{ data: string; callback: () => void }> = []
     const reset = vi.fn()
-    ;(session as unknown as { terminal: unknown }).terminal = {
+    terminalSessionTestAccess(session).terminal = {
       reset,
       resize: vi.fn(),
       options: { fontSize: 14 },
@@ -590,7 +702,7 @@ describe('TerminalSession', () => {
       },
       dispose: vi.fn()
     }
-    ;(session as unknown as { connect(): void }).connect()
+    terminalSessionTestAccess(session).connect()
     socket.emitServer('ready', {
       connectionId: 'connection-1',
       streamId: 'stream-1',
@@ -649,9 +761,10 @@ describe('TerminalSession', () => {
   it('refits as a viewer when takeover dimensions arrive before control loss', async () => {
     const { control, dimensions, resize, session, socket } =
       controllerSessionFixture()
-    ;(
-      session as unknown as { fitAddon: { proposeDimensions: () => unknown } }
-    ).fitAddon.proposeDimensions = () => ({ cols: 60, rows: 20 })
+    terminalSessionTestAccess(session).fitAddon.proposeDimensions = () => ({
+      cols: 60,
+      rows: 20
+    })
 
     dimensions(120, 40, 2)
     await vi.waitFor(() => expect(resize).toHaveBeenLastCalledWith(120, 40))
@@ -660,8 +773,9 @@ describe('TerminalSession', () => {
     fitCallback?.(0)
 
     expect(
-      (session as unknown as { terminal: { options: { fontSize: number } } })
-        .terminal.options.fontSize
+      testAccess<{ options: { fontSize: number } }>(
+        terminalSessionTestAccess(session).terminal
+      ).options.fontSize
     ).toBe(7)
     expect(resize).toHaveBeenLastCalledWith(120, 40)
     expect(socket.emit).not.toHaveBeenCalledWith('resize', expect.anything())
@@ -671,7 +785,7 @@ describe('TerminalSession', () => {
   it('uses an isolated legacy sizing and takeover path for an old server', async () => {
     const socket = new FakeSocketIO()
     socketClient.io.mockReturnValue(socket)
-    const session = new TerminalSession('terminal-one')
+    const session = createTerminalSession('terminal-one')
     let legacyDimensions = { cols: 120, rows: 40 }
     const terminal = {
       cols: 100,
@@ -693,7 +807,7 @@ describe('TerminalSession', () => {
         proposeDimensions: () => legacyDimensions
       }
     })
-    ;(session as unknown as { connect(): void }).connect()
+    terminalSessionTestAccess(session).connect()
     socket.emitServer('ready', {
       connectionId: 'legacy-connection',
       streamId: 'legacy-stream',
@@ -703,9 +817,7 @@ describe('TerminalSession', () => {
     })
     await vi.waitFor(() => expect(terminal.reset).toHaveBeenCalledOnce())
     legacyDimensions = { cols: 130, rows: 45 }
-    ;(session as unknown as { fit(queueControllerResize: boolean): void }).fit(
-      true
-    )
+    terminalSessionTestAccess(session).fit(true)
     await vi.advanceTimersByTimeAsync(150)
 
     expect(socket.emit).toHaveBeenCalledWith('resize', {
@@ -718,9 +830,7 @@ describe('TerminalSession', () => {
       generation: 3,
       data: 'legacy input'
     })
-    expect((session as unknown as { canInput(): boolean }).canInput()).toBe(
-      true
-    )
+    expect(terminalSessionTestAccess(session).canInput()).toBe(true)
     socket.emitServer('control', { generation: 4, controller: false })
     session.requestControl()
     expect(socket.emit).toHaveBeenCalledWith('take_control', { generation: 4 })
@@ -729,11 +839,8 @@ describe('TerminalSession', () => {
 
   it('reports history viewing and returns controllers and viewers to live output', () => {
     const { control, session, socket } = controllerSessionFixture()
-    const history = (
-      session as unknown as {
-        handleServerEvent(event: 'history', value: unknown): void
-      }
-    ).handleServerEvent.bind(session)
+    const history =
+      terminalSessionTestAccess(session).handleServerEvent.bind(session)
 
     history('history', { viewing: true })
     expect(session.getSnapshot().viewingHistory).toBe(true)
@@ -777,8 +884,8 @@ describe('TerminalSession', () => {
   it('closes on render queue failure and does not run later operations', async () => {
     const socket = new FakeSocketIO()
     socketClient.io.mockReturnValue(socket)
-    const session = new TerminalSession('terminal-one')
-    ;(session as unknown as { terminal: unknown }).terminal = {
+    const session = createTerminalSession('terminal-one')
+    terminalSessionTestAccess(session).terminal = {
       reset: () => {
         throw new Error('reset failed')
       },
@@ -786,7 +893,7 @@ describe('TerminalSession', () => {
       options: { fontSize: 14 },
       dispose: vi.fn()
     }
-    ;(session as unknown as { connect(): void }).connect()
+    terminalSessionTestAccess(session).connect()
     socket.emitServer('ready', {
       connectionId: 'connection-1',
       streamId: 'stream-1',
@@ -804,11 +911,7 @@ describe('TerminalSession', () => {
       })
     )
     const sentinel = vi.fn()
-    ;(
-      session as unknown as {
-        enqueueRender(epoch: number, operation: () => void): void
-      }
-    ).enqueueRender(1, sentinel)
+    terminalSessionTestAccess(session).enqueueRender(1, sentinel)
     await Promise.resolve()
     await Promise.resolve()
     expect(sentinel).not.toHaveBeenCalled()
@@ -824,7 +927,7 @@ describe('TerminalSession', () => {
   it('translates FitAddon exceptions through the fatal rendering boundary', () => {
     const socket = new FakeSocketIO()
     socket.connected = true
-    const session = new TerminalSession('terminal-one')
+    const session = createTerminalSession('terminal-one')
     Object.assign(session, {
       socket,
       ready: true,
@@ -844,7 +947,7 @@ describe('TerminalSession', () => {
       appliedRevision: 1
     })
 
-    ;(session as unknown as { fit(): void }).fit()
+    terminalSessionTestAccess(session).fit()
 
     expect(session.getSnapshot()).toMatchObject({
       phase: 'closed',
@@ -874,9 +977,7 @@ describe('TerminalSession', () => {
     })
     session.sendText('blocked during resize')
     expect(socket.volatile.emit).not.toHaveBeenCalled()
-    expect((session as unknown as { canInput(): boolean }).canInput()).toBe(
-      false
-    )
+    expect(terminalSessionTestAccess(session).canInput()).toBe(false)
     expect(resize).not.toHaveBeenCalled()
     session.dispose()
   })
@@ -892,9 +993,7 @@ describe('TerminalSession', () => {
     await vi.advanceTimersByTimeAsync(100)
     dimensions(120, 40, 2)
     await vi.advanceTimersByTimeAsync(0)
-    expect(
-      (session as unknown as { appliedRevision: number }).appliedRevision
-    ).toBe(2)
+    expect(terminalSessionTestAccess(session).appliedRevision).toBe(2)
     expect(socket.emit).toHaveBeenCalledTimes(1)
 
     await vi.advanceTimersByTimeAsync(49)
@@ -950,11 +1049,7 @@ describe('TerminalSession', () => {
     const { measure, session, socket } = controllerSessionFixture()
 
     measure({ cols: 120, rows: 40 })
-    ;(
-      session as unknown as {
-        handleServerEvent(event: 'ready', value: unknown): void
-      }
-    ).handleServerEvent('ready', {
+    terminalSessionTestAccess(session).handleServerEvent('ready', {
       connectionId: 'connection-2',
       streamId: 'stream-2',
       generation: 5,
@@ -983,7 +1078,7 @@ describe('TerminalSession', () => {
   })
 
   it('clears a pending resize when control is lost before a later takeover', () => {
-    const session = new TerminalSession('terminal-one')
+    const session = createTerminalSession('terminal-one')
     Object.assign(session, {
       ready: true,
       resizePending: true,
@@ -1005,26 +1100,21 @@ describe('TerminalSession', () => {
         error: null
       }
     })
-    const handleControl = (
-      session as unknown as {
-        handleServerEvent(event: 'control', value: unknown): void
-      }
-    ).handleServerEvent.bind(session)
+    const handleControl =
+      terminalSessionTestAccess(session).handleServerEvent.bind(session)
 
     handleControl('control', { generation: 5, controller: false })
     handleControl('control', { generation: 6, controller: true })
 
-    expect((session as unknown as { canInput(): boolean }).canInput()).toBe(
-      true
-    )
+    expect(terminalSessionTestAccess(session).canInput()).toBe(true)
     session.dispose()
   })
 
   it('never buffers takeover while disconnected or before application ready', () => {
     const socket = new FakeSocketIO()
     socketClient.io.mockReturnValue(socket)
-    const session = new TerminalSession('terminal-one')
-    ;(session as unknown as { connect(): void }).connect()
+    const session = createTerminalSession('terminal-one')
+    terminalSessionTestAccess(session).connect()
     session.requestControl()
     expect(socket.emit).not.toHaveBeenCalled()
 
@@ -1038,9 +1128,7 @@ describe('TerminalSession', () => {
       rows: 30,
       revision: 1
     })
-    ;(
-      session as unknown as { proposedDimensions: unknown }
-    ).proposedDimensions = {
+    terminalSessionTestAccess(session).proposedDimensions = {
       cols: 5_000,
       rows: 1
     }
@@ -1080,7 +1168,7 @@ describe('TerminalSession', () => {
     const socket = new FakeSocketIO()
     socketClient.io.mockReturnValue(socket)
     const focus = vi.fn()
-    const session = new TerminalSession('terminal-one')
+    const session = createTerminalSession('terminal-one')
     Object.assign(session, {
       terminal: {
         cols: 100,
@@ -1092,7 +1180,7 @@ describe('TerminalSession', () => {
         dispose: vi.fn()
       }
     })
-    ;(session as unknown as { connect(): void }).connect()
+    terminalSessionTestAccess(session).connect()
     socket.emitServer('ready', {
       connectionId: 'connection-1',
       streamId: 'stream-1',

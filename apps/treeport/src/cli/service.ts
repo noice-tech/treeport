@@ -23,8 +23,9 @@ import {
 } from './lifecycle.js'
 
 export type ServiceManager = 'launchd' | 'systemd'
-export type ServiceRequestedState = 'running' | 'stopped'
-export type ServiceState =
+export type ServiceMode = 'user' | 'headless'
+type ServiceRequestedState = 'running' | 'stopped'
+type ServiceState =
   | 'disabled'
   | 'action_required'
   | 'starting'
@@ -36,6 +37,7 @@ export type ServiceState =
 interface ServiceRecord {
   schemaVersion: 1
   manager: ServiceManager
+  mode: ServiceMode
   platform: string
   uid: number
   gid: number
@@ -49,7 +51,7 @@ interface ServiceRecord {
   cliEntrypoint: string
   runtimeExecutable: string | null
   runtimeEntrypoint: string | null
-  installationMethod: 'curl' | 'npm'
+  installationMethod: string
   definitionName: string
   definitionPath: string
   definitionHash: string
@@ -59,6 +61,10 @@ interface ServiceRecord {
   pendingAdministratorRequestId: string | null
   createdAt: string
   updatedAt: string
+}
+
+type StoredServiceRecord = Omit<ServiceRecord, 'mode'> & {
+  mode?: ServiceMode | undefined
 }
 
 interface AdministratorRequest {
@@ -87,6 +93,7 @@ interface AdministratorRequest {
 export interface ServiceStatus {
   supported: boolean
   manager: ServiceManager | null
+  mode: ServiceMode | null
   state: ServiceState
   installed: boolean
   enabledAtBoot: boolean
@@ -118,9 +125,10 @@ export interface ServiceActionResult {
 
 export interface LaunchdDefinition {
   label: string
+  mode: ServiceMode
   programArguments: string[]
-  username: string
-  group: string
+  username: string | null
+  group: string | null
   environment: Record<string, string>
   workingDirectory: string
   standardOutPath: string
@@ -144,9 +152,10 @@ export interface SystemdDefinition {
   wantedBy: 'default.target'
 }
 
-const serviceRecordSchema: z.ZodType<ServiceRecord> = z.strictObject({
+const serviceRecordSchema: z.ZodType<StoredServiceRecord> = z.strictObject({
   schemaVersion: z.literal(1),
   manager: z.enum(['launchd', 'systemd']),
+  mode: z.enum(['user', 'headless']).optional(),
   platform: z.string(),
   uid: z.number().int().nonnegative(),
   gid: z.number().int().nonnegative(),
@@ -160,7 +169,7 @@ const serviceRecordSchema: z.ZodType<ServiceRecord> = z.strictObject({
   cliEntrypoint: z.string().min(1),
   runtimeExecutable: z.string().min(1).nullable().default(null),
   runtimeEntrypoint: z.string().min(1).nullable().default(null),
-  installationMethod: z.enum(['curl', 'npm']),
+  installationMethod: z.string().min(1),
   definitionName: z.string().min(1),
   definitionPath: z.string().min(1),
   definitionHash: z.string().length(64),
@@ -206,13 +215,32 @@ function managerForPlatform(
       : null
 }
 
-function servicePaths(env: NodeJS.ProcessEnv = process.env): {
+interface ServicePaths {
   directory: string
   recordPath: string
   runnerPath: string
   requestsDirectory: string
   stagedDefinitionPath: string
-} {
+}
+
+interface LaunchdLocation {
+  name: string
+  path: string
+  domain: string
+  target: string
+}
+
+interface LaunchdCommands {
+  bootout: string[] | null
+  enable: string[] | null
+  activate: string[] | null
+}
+
+interface ServiceEnvironment {
+  [name: string]: string
+}
+
+function servicePaths(env: NodeJS.ProcessEnv = process.env): ServicePaths {
   const paths = localPaths(env)
   const directory = path.join(paths.dataDir, 'service')
   return {
@@ -221,6 +249,55 @@ function servicePaths(env: NodeJS.ProcessEnv = process.env): {
     runnerPath: path.join(directory, 'run'),
     requestsDirectory: path.join(directory, 'requests'),
     stagedDefinitionPath: path.join(directory, 'treeport.plist')
+  }
+}
+
+export function launchdLocation(input: {
+  uid: number
+  home: string
+  mode: ServiceMode
+}): LaunchdLocation {
+  const name = `app.treeport.daemon.${input.uid}`
+  const domain = input.mode === 'headless' ? 'system' : `gui/${input.uid}`
+  return {
+    name,
+    path:
+      input.mode === 'headless'
+        ? `/Library/LaunchDaemons/${name}.plist`
+        : path.join(input.home, 'Library', 'LaunchAgents', `${name}.plist`),
+    domain,
+    target: `${domain}/${name}`
+  }
+}
+
+export function userLaunchdCommands(input: {
+  operation: 'enable' | 'start' | 'stop' | 'disable'
+  location: LaunchdLocation
+  definitionPath: string
+  active?: boolean
+}): LaunchdCommands {
+  if (input.operation === 'enable') {
+    return {
+      bootout: ['bootout', input.location.target],
+      enable: ['enable', input.location.target],
+      activate: ['bootstrap', input.location.domain, input.definitionPath]
+    }
+  }
+
+  if (input.operation === 'start') {
+    return {
+      bootout: null,
+      enable: ['enable', input.location.target],
+      activate: input.active
+        ? ['kickstart', '-k', input.location.target]
+        : ['bootstrap', input.location.domain, input.definitionPath]
+    }
+  }
+
+  return {
+    bootout: ['bootout', input.location.target],
+    enable: null,
+    activate: null
   }
 }
 
@@ -234,7 +311,7 @@ async function readJson<Output>(
     .catch(() => null)
 }
 
-async function writeJson(filePath: string, value: unknown): Promise<void> {
+async function writeJson<Value>(filePath: string, value: Value): Promise<void> {
   await fs.mkdir(path.dirname(filePath), { recursive: true, mode: 0o700 })
   const temporaryPath = `${filePath}.${process.pid}.${crypto.randomUUID()}.tmp`
   await fs.writeFile(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, {
@@ -244,16 +321,16 @@ async function writeJson(filePath: string, value: unknown): Promise<void> {
 }
 
 function fingerprint(value: string | Record<string, string>): string {
-  const source =
-    typeof value === 'string'
-      ? value
-      : JSON.stringify(
-          Object.fromEntries(
-            Object.entries(value).sort(([left], [right]) =>
-              left.localeCompare(right)
-            )
+  const parsed = z.string().safeParse(value)
+  const source = parsed.success
+    ? parsed.data
+    : JSON.stringify(
+        Object.fromEntries(
+          Object.entries(value).sort(([left], [right]) =>
+            left.localeCompare(right)
           )
         )
+      )
   return crypto.createHash('sha256').update(source).digest('hex')
 }
 
@@ -271,17 +348,11 @@ function shellQuote(value: string): string {
 }
 
 export function createAdministratorCommand(input: {
-  installationMethod: 'curl' | 'npm'
-  cliEntrypoint: string
   runtimeExecutable: string
   runtimeEntrypoint: string
   requestPath: string
 }): string {
-  const command =
-    input.installationMethod === 'curl'
-      ? shellQuote(input.cliEntrypoint)
-      : `${shellQuote(input.runtimeExecutable)} ${shellQuote(input.runtimeEntrypoint)}`
-  return `sudo ${command} service apply --request ${shellQuote(input.requestPath)}`
+  return `sudo ${shellQuote(input.runtimeExecutable)} ${shellQuote(input.runtimeEntrypoint)} service apply --request ${shellQuote(input.requestPath)}`
 }
 
 function systemdValue(value: string): string {
@@ -294,6 +365,7 @@ function systemdValue(value: string): string {
 
 export function createLaunchdDefinition(input: {
   label: string
+  mode: ServiceMode
   runnerPath: string
   username: string
   group: string
@@ -303,9 +375,10 @@ export function createLaunchdDefinition(input: {
 }): LaunchdDefinition {
   return {
     label: input.label,
+    mode: input.mode,
     programArguments: [input.runnerPath],
-    username: input.username,
-    group: input.group,
+    username: input.mode === 'headless' ? input.username : null,
+    group: input.mode === 'headless' ? input.group : null,
     environment: input.environment,
     workingDirectory: input.home,
     standardOutPath: input.logPath,
@@ -332,6 +405,10 @@ export function serializeLaunchdDefinition(
   const argumentsXml = definition.programArguments
     .map((argument) => `      <string>${xml(argument)}</string>`)
     .join('\n')
+  const account =
+    definition.username && definition.group
+      ? `    <key>UserName</key>\n    <string>${xml(definition.username)}</string>\n    <key>GroupName</key>\n    <string>${xml(definition.group)}</string>\n`
+      : ''
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -342,11 +419,7 @@ export function serializeLaunchdDefinition(
     <array>
 ${argumentsXml}
     </array>
-    <key>UserName</key>
-    <string>${xml(definition.username)}</string>
-    <key>GroupName</key>
-    <string>${xml(definition.group)}</string>
-    <key>EnvironmentVariables</key>
+${account}    <key>EnvironmentVariables</key>
     <dict>
 ${environment}
     </dict>
@@ -496,13 +569,11 @@ function currentEntrypoint(): string | null {
   return value ? path.resolve(value) : null
 }
 
-async function ensureEntrypoint(
-  installationMethod: 'curl' | 'npm'
-): Promise<string> {
+async function ensureEntrypoint(): Promise<string> {
   const entrypoint = currentEntrypoint()
   if (!entrypoint) {
     throw new Error(
-      'Treeport could not identify a stable CLI entrypoint. Install Treeport with npm or the curl installer, then retry.'
+      'Treeport could not identify a stable CLI entrypoint. Install Treeport with npm, then retry.'
     )
   }
 
@@ -511,12 +582,32 @@ async function ensureEntrypoint(
       `Treeport cannot execute its stable CLI entrypoint at ${entrypoint}. Reinstall Treeport, then retry.`
     )
   })
-  if (installationMethod === 'npm') {
-    const [actual, expected] = await Promise.all([
-      fs.realpath(entrypoint),
-      fs.realpath(await resolvePackagePath('bin', 'treeport.mjs'))
+  const [actual, expected] = await Promise.all([
+    fs.realpath(entrypoint),
+    fs.realpath(await resolvePackagePath('bin', 'treeport.mjs'))
+  ])
+  if (actual !== expected) {
+    const prefix = path.dirname(path.dirname(entrypoint))
+    const managedEntrypoint = path.join(
+      prefix,
+      'lib',
+      'treeport',
+      'current',
+      'lib',
+      'node_modules',
+      '@treeport',
+      'treeport',
+      'bin',
+      'treeport.mjs'
+    )
+    const [source, managed] = await Promise.all([
+      fs.readFile(entrypoint, 'utf8').catch(() => ''),
+      fs.realpath(managedEntrypoint).catch(() => null)
     ])
-    if (actual !== expected) {
+    if (
+      !source.includes('TREEPORT_MANAGED_LAUNCHER=1') ||
+      managed !== expected
+    ) {
       throw new Error(
         `The current CLI entrypoint is not the installed Treeport npm bin: ${entrypoint}`
       )
@@ -586,13 +677,13 @@ export function createServiceEnvironment(input: {
   paths: ReturnType<typeof localPaths>
   apiUrl: string
   recordPath: string
-  installationMethod: 'curl' | 'npm'
+  installationMethod: string
   env?: NodeJS.ProcessEnv
-}): Record<string, string> {
+}): ServiceEnvironment {
   const env = input.env ?? process.env
   const url = new URL(input.apiUrl)
   assertLoopbackHost(url.hostname)
-  const result: Record<string, string> = {
+  const result: ServiceEnvironment = {
     HOME: input.user.homedir,
     USER: input.user.username,
     LOGNAME: input.user.username,
@@ -631,6 +722,7 @@ function definitionForRecord(record: ServiceRecord): string {
     return serializeLaunchdDefinition(
       createLaunchdDefinition({
         label: record.definitionName,
+        mode: record.mode,
         runnerPath: servicePaths({ TREEPORT_DATA_DIR: record.dataDir })
           .runnerPath,
         username: record.username,
@@ -671,8 +763,29 @@ exec "$entrypoint" service run
 `
 }
 
+export function storedServiceMode(input: {
+  manager: ServiceManager
+  mode?: ServiceMode | undefined
+}): ServiceMode {
+  return input.mode ?? (input.manager === 'launchd' ? 'headless' : 'user')
+}
+
+async function readServiceRecord(
+  recordPath: string
+): Promise<ServiceRecord | null> {
+  const record = await readJson(recordPath, serviceRecordSchema)
+  if (!record) {
+    return null
+  }
+
+  return {
+    ...record,
+    mode: storedServiceMode(record)
+  }
+}
+
 async function currentRecord(): Promise<ServiceRecord | null> {
-  return readJson(servicePaths().recordPath, serviceRecordSchema)
+  return readServiceRecord(servicePaths().recordPath)
 }
 
 async function saveRecord(record: ServiceRecord): Promise<void> {
@@ -690,9 +803,14 @@ async function managerState(record: ServiceRecord): Promise<{
 }> {
   if (record.manager === 'launchd') {
     const launchctl = await executablePath('launchctl')
+    const location = launchdLocation({
+      uid: record.uid,
+      home: record.home,
+      mode: record.mode
+    })
     const [active, disabled, definitionExists] = await Promise.all([
-      runCommand(launchctl, ['print', `system/${record.definitionName}`]),
-      runCommand(launchctl, ['print-disabled', 'system']),
+      runCommand(launchctl, ['print', location.target]),
+      runCommand(launchctl, ['print-disabled', location.domain]),
       fs
         .access(record.definitionPath)
         .then(() => true)
@@ -746,8 +864,6 @@ function administratorCommand(record: ServiceRecord): string | null {
     `${requestId}.json`
   )
   return createAdministratorCommand({
-    installationMethod: record.installationMethod,
-    cliEntrypoint: record.cliEntrypoint,
     runtimeExecutable: record.runtimeExecutable,
     runtimeEntrypoint: record.runtimeEntrypoint,
     requestPath
@@ -756,8 +872,10 @@ function administratorCommand(record: ServiceRecord): string | null {
 
 async function untrackedDefinition(): Promise<{
   manager: ServiceManager
+  mode: ServiceMode
   name: string
   path: string
+  target: string
 } | null> {
   const manager = managerForPlatform()
   if (!manager) {
@@ -765,25 +883,39 @@ async function untrackedDefinition(): Promise<{
   }
 
   const user = os.userInfo()
-  const name =
-    manager === 'launchd'
-      ? `app.treeport.daemon.${user.uid}`
-      : 'treeport.service'
-  const definitionPath =
-    manager === 'launchd'
-      ? `/Library/LaunchDaemons/${name}.plist`
-      : path.join(
-          process.env.XDG_CONFIG_HOME?.trim() ||
-            path.join(user.homedir, '.config'),
-          'systemd',
-          'user',
-          name
-        )
+  if (manager === 'launchd') {
+    for (const mode of ['headless', 'user'] as const) {
+      const location = launchdLocation({
+        uid: user.uid,
+        home: user.homedir,
+        mode
+      })
+      const exists = await fs
+        .access(location.path)
+        .then(() => true)
+        .catch(() => false)
+      if (exists) {
+        return { manager, mode, ...location }
+      }
+    }
+
+    return null
+  }
+
+  const name = 'treeport.service'
+  const definitionPath = path.join(
+    process.env.XDG_CONFIG_HOME?.trim() || path.join(user.homedir, '.config'),
+    'systemd',
+    'user',
+    name
+  )
   const exists = await fs
     .access(definitionPath)
     .then(() => true)
     .catch(() => false)
-  return exists ? { manager, name, path: definitionPath } : null
+  return exists
+    ? { manager, mode: 'user', name, path: definitionPath, target: name }
+    : null
 }
 
 export async function serviceInstalled(): Promise<boolean> {
@@ -799,6 +931,7 @@ export async function serviceStatus(): Promise<ServiceStatus> {
     return {
       supported: false,
       manager: null,
+      mode: null,
       state: 'disabled',
       installed: false,
       enabledAtBoot: false,
@@ -824,6 +957,7 @@ export async function serviceStatus(): Promise<ServiceStatus> {
       return {
         supported: true,
         manager,
+        mode: null,
         state: 'disabled',
         installed: false,
         enabledAtBoot: false,
@@ -847,7 +981,7 @@ export async function serviceStatus(): Promise<ServiceStatus> {
       untracked.manager === 'launchd'
         ? await runCommand(await executablePath('launchctl'), [
             'print',
-            `system/${untracked.name}`
+            untracked.target
           ])
         : await runCommand(await executablePath('systemctl'), [
             '--user',
@@ -857,9 +991,10 @@ export async function serviceStatus(): Promise<ServiceStatus> {
     return {
       supported: true,
       manager,
+      mode: untracked.mode,
       state: 'stale',
       installed: true,
-      enabledAtBoot: true,
+      enabledAtBoot: untracked.mode === 'headless',
       active: active.code === 0,
       healthy: false,
       rebootReady: false,
@@ -871,7 +1006,7 @@ export async function serviceStatus(): Promise<ServiceStatus> {
       entrypoint: null,
       daemon: null,
       issues: [
-        `A Treeport service definition exists at ${untracked.path}, but its service record is missing. Restore the original Treeport data directory or ask an administrator to inspect and remove the definition.`
+        `A Treeport ${untracked.mode === 'headless' ? 'advanced headless ' : ''}service definition exists at ${untracked.path}, but its service record is missing. Restore the original Treeport data directory before you manage it.${untracked.mode === 'headless' ? ' An administrator must approve removal of the system definition.' : ''}`
       ],
       recoveryCommands: [],
       administratorCommand: null
@@ -879,36 +1014,16 @@ export async function serviceStatus(): Promise<ServiceStatus> {
   }
 
   const paths = servicePaths({ TREEPORT_DATA_DIR: record.dataDir })
-  const [
-    managerStatus,
-    definitionContent,
-    entrypointExists,
-    runtimeExecutableExists,
-    runtimeEntrypointExists,
-    currentRuntime,
-    daemon
-  ] = await Promise.all([
-    managerState(record),
-    fs.readFile(record.definitionPath, 'utf8').catch(() => ''),
-    fs
-      .access(record.cliEntrypoint, fsConstants.X_OK)
-      .then(() => true)
-      .catch(() => false),
-    record.runtimeExecutable
-      ? fs
-          .access(record.runtimeExecutable, fsConstants.X_OK)
-          .then(() => true)
-          .catch(() => false)
-      : Promise.resolve(false),
-    record.runtimeEntrypoint
-      ? fs
-          .access(record.runtimeEntrypoint, fsConstants.R_OK)
-          .then(() => true)
-          .catch(() => false)
-      : Promise.resolve(false),
-    currentAdministratorRuntime().catch(() => null),
-    daemonStatus()
-  ])
+  const [managerStatus, definitionContent, entrypointExists, daemon] =
+    await Promise.all([
+      managerState(record),
+      fs.readFile(record.definitionPath, 'utf8').catch(() => ''),
+      fs
+        .access(record.cliEntrypoint, fsConstants.X_OK)
+        .then(() => true)
+        .catch(() => false),
+      daemonStatus()
+    ])
   const definitionPresent = definitionContent !== ''
   const definitionMatches =
     definitionPresent &&
@@ -916,11 +1031,6 @@ export async function serviceStatus(): Promise<ServiceStatus> {
   const invokedEntrypoint = currentEntrypoint()
   const entrypointMatches = Boolean(
     entrypointExists &&
-    runtimeExecutableExists &&
-    runtimeEntrypointExists &&
-    currentRuntime &&
-    record.runtimeExecutable === currentRuntime.runtimeExecutable &&
-    record.runtimeEntrypoint === currentRuntime.runtimeEntrypoint &&
     (invokedEntrypoint === null ||
       path.resolve(invokedEntrypoint) === path.resolve(record.cliEntrypoint))
   )
@@ -949,8 +1059,12 @@ export async function serviceStatus(): Promise<ServiceStatus> {
     path.resolve(daemon.state.dataDir) === path.resolve(record.dataDir)
   )
   const installed = managerStatus.enabled
-  const rebootReady =
-    installed && (record.manager === 'launchd' || managerStatus.lingering)
+  const enabledAtBoot =
+    installed &&
+    (record.manager === 'launchd'
+      ? record.mode === 'headless'
+      : managerStatus.lingering)
+  const rebootReady = enabledAtBoot
   const pendingCommand =
     administratorCommand(record) ??
     (record.manager === 'systemd' &&
@@ -960,6 +1074,10 @@ export async function serviceStatus(): Promise<ServiceStatus> {
       : null)
   const issues: string[] = []
   const recoveryCommands: string[] = []
+  const repairCommand =
+    record.manager === 'launchd' && record.mode === 'headless'
+      ? 'treeport service enable --headless'
+      : 'treeport service enable'
   if (record.manager !== manager) {
     issues.push(
       `The service record uses ${record.manager}, but this host requires ${manager}.`
@@ -972,7 +1090,7 @@ export async function serviceStatus(): Promise<ServiceStatus> {
         ? `The service definition at ${record.definitionPath} was changed.`
         : `The service definition is missing at ${record.definitionPath}.`
     )
-    recoveryCommands.push('treeport service enable')
+    recoveryCommands.push(repairCommand)
   }
 
   if (
@@ -981,23 +1099,25 @@ export async function serviceStatus(): Promise<ServiceStatus> {
     !record.pendingAdministratorRequestId
   ) {
     issues.push(
-      'The service definition is not enabled for startup after reboot.'
+      record.manager === 'launchd' && record.mode === 'user'
+        ? 'The service definition is not enabled for startup after login.'
+        : 'The service definition is not enabled for startup after reboot.'
     )
-    recoveryCommands.push('treeport service enable')
+    recoveryCommands.push(repairCommand)
   }
 
   if (!entrypointMatches) {
     issues.push(
-      `The service CLI entrypoint or Node runtime is unavailable or moved: ${record.cliEntrypoint}`
+      `The service CLI entrypoint is unavailable or moved: ${record.cliEntrypoint}`
     )
-    recoveryCommands.push('treeport service enable')
+    recoveryCommands.push(repairCommand)
   }
 
   if (!environmentMatches) {
     issues.push(
       'The service environment differs from the current Treeport environment.'
     )
-    recoveryCommands.push('treeport service enable')
+    recoveryCommands.push(repairCommand)
   }
 
   if (record.manager === 'systemd' && installed && !managerStatus.lingering) {
@@ -1045,9 +1165,10 @@ export async function serviceStatus(): Promise<ServiceStatus> {
   return {
     supported: true,
     manager,
+    mode: record.mode,
     state,
     installed,
-    enabledAtBoot: installed,
+    enabledAtBoot,
     active: managerStatus.active,
     healthy,
     rebootReady,
@@ -1064,7 +1185,7 @@ export async function serviceStatus(): Promise<ServiceStatus> {
   }
 }
 
-async function prepareRecord(): Promise<{
+async function prepareRecord(requestedMode: ServiceMode): Promise<{
   record: ServiceRecord
   definition: string
 }> {
@@ -1087,6 +1208,13 @@ async function prepareRecord(): Promise<{
     assertLoopbackHost(explicit.hostname)
   }
 
+  if (manager !== 'launchd' && requestedMode === 'headless') {
+    throw new Error(
+      'The `--headless` option is only available for the advanced macOS LaunchDaemon mode.'
+    )
+  }
+
+  const mode = manager === 'launchd' ? requestedMode : 'user'
   const user = os.userInfo()
   const paths = localPaths()
   const locations = servicePaths()
@@ -1097,43 +1225,39 @@ async function prepareRecord(): Promise<{
   }
 
   assertLoopbackHost(listener.hostname)
-  const installationMethod =
-    process.env.TREEPORT_INSTALLATION_METHOD?.trim() === 'curl' ? 'curl' : 'npm'
   const [cliEntrypoint, administratorRuntime] = await Promise.all([
-    ensureEntrypoint(installationMethod),
-    currentAdministratorRuntime()
+    ensureEntrypoint(),
+    manager === 'launchd' && mode === 'headless'
+      ? currentAdministratorRuntime()
+      : Promise.resolve(null)
   ])
   const group = await primaryGroup(user.username)
-  const definitionName =
+  const launchd =
     manager === 'launchd'
-      ? `app.treeport.daemon.${user.uid}`
-      : 'treeport.service'
+      ? launchdLocation({ uid: user.uid, home: user.homedir, mode })
+      : null
+  const definitionName = launchd?.name ?? 'treeport.service'
   const definitionPath =
-    manager === 'launchd'
-      ? `/Library/LaunchDaemons/${definitionName}.plist`
-      : path.join(
-          process.env.XDG_CONFIG_HOME?.trim() ||
-            path.join(user.homedir, '.config'),
-          'systemd',
-          'user',
-          definitionName
-        )
+    launchd?.path ??
+    path.join(
+      process.env.XDG_CONFIG_HOME?.trim() || path.join(user.homedir, '.config'),
+      'systemd',
+      'user',
+      definitionName
+    )
   const environment = createServiceEnvironment({
     user,
     paths,
     apiUrl,
     recordPath: locations.recordPath,
-    installationMethod
+    installationMethod: 'npm'
   })
   const now = new Date().toISOString()
   const previous = await currentRecord()
-  const definitionExists = await fs
-    .access(definitionPath)
-    .then(() => true)
-    .catch(() => false)
-  if (definitionExists && !previous) {
+  const untracked = previous ? null : await untrackedDefinition()
+  if (untracked) {
     throw new Error(
-      `A Treeport service definition already exists at ${definitionPath}. Disable it from its original data directory before enabling another service.`
+      `A Treeport ${untracked.mode === 'headless' ? 'advanced headless ' : ''}service definition already exists at ${untracked.path}. Restore its original Treeport data directory before you manage or remove it.`
     )
   }
 
@@ -1143,9 +1267,27 @@ async function prepareRecord(): Promise<{
     )
   }
 
+  if (previous && previous.mode !== mode) {
+    throw new Error(
+      previous.mode === 'headless'
+        ? 'Treeport uses the advanced headless service mode. Run `treeport service disable` with administrator approval. Then run `treeport service enable` to migrate to user/login mode.'
+        : 'Treeport uses user/login service mode. Run `treeport service disable` first. Then run `treeport service enable --headless` to select advanced headless mode.'
+    )
+  }
+
+  if (
+    previous?.manager === 'launchd' &&
+    path.resolve(previous.definitionPath) !== path.resolve(definitionPath)
+  ) {
+    throw new Error(
+      `The service record points to an unexpected definition at ${previous.definitionPath}. Refusing to create another definition.`
+    )
+  }
+
   const base: ServiceRecord = {
     schemaVersion: 1,
     manager,
+    mode,
     platform: process.platform,
     uid: user.uid,
     gid: user.gid,
@@ -1157,9 +1299,9 @@ async function prepareRecord(): Promise<{
     logPath: paths.logPath,
     apiUrl,
     cliEntrypoint,
-    runtimeExecutable: administratorRuntime.runtimeExecutable,
-    runtimeEntrypoint: administratorRuntime.runtimeEntrypoint,
-    installationMethod,
+    runtimeExecutable: administratorRuntime?.runtimeExecutable ?? null,
+    runtimeEntrypoint: administratorRuntime?.runtimeEntrypoint ?? null,
+    installationMethod: 'npm',
     definitionName,
     definitionPath,
     definitionHash: '0'.repeat(64),
@@ -1182,15 +1324,22 @@ async function writeServiceFiles(
   definition: string
 ): Promise<void> {
   const locations = servicePaths({ TREEPORT_DATA_DIR: record.dataDir })
-  await Promise.all([
-    fs.mkdir(path.dirname(record.logPath), { recursive: true, mode: 0o700 }),
-    fs.mkdir(locations.requestsDirectory, { recursive: true, mode: 0o700 })
-  ])
+  await fs.mkdir(path.dirname(record.logPath), {
+    recursive: true,
+    mode: 0o700
+  })
+  if (record.mode === 'headless') {
+    await fs.mkdir(locations.requestsDirectory, {
+      recursive: true,
+      mode: 0o700
+    })
+  }
+
   await fs.writeFile(locations.runnerPath, runnerSource(record), {
     mode: 0o700
   })
   await fs.chmod(locations.runnerPath, 0o700)
-  if (record.manager === 'launchd') {
+  if (record.manager === 'launchd' && record.mode === 'headless') {
     await fs.writeFile(locations.stagedDefinitionPath, definition, {
       mode: 0o600
     })
@@ -1211,13 +1360,13 @@ async function prepareAdministratorRequest(
   record: ServiceRecord,
   operation: AdministratorRequest['operation']
 ): Promise<{ record: ServiceRecord; command: string }> {
-  const runtime =
-    record.runtimeExecutable && record.runtimeEntrypoint
-      ? {
-          runtimeExecutable: record.runtimeExecutable,
-          runtimeEntrypoint: record.runtimeEntrypoint
-        }
-      : await currentAdministratorRuntime()
+  if (record.manager !== 'launchd' || record.mode !== 'headless') {
+    throw new Error(
+      'Administrator requests are only available for advanced macOS headless service mode.'
+    )
+  }
+
+  const runtime = await currentAdministratorRuntime()
   const requestRecord = { ...record, ...runtime }
   const locations = servicePaths({ TREEPORT_DATA_DIR: record.dataDir })
   const id = crypto.randomUUID()
@@ -1275,9 +1424,12 @@ async function waitForService(record: ServiceRecord): Promise<void> {
   )
 }
 
-export async function serviceEnable(): Promise<ServiceActionResult> {
+export async function serviceEnable(
+  mode: ServiceMode = 'user'
+): Promise<ServiceActionResult> {
   const existing = await serviceStatus()
   if (
+    existing.mode === mode &&
     existing.state === 'healthy' &&
     existing.definitionMatches &&
     existing.environmentMatches &&
@@ -1286,7 +1438,7 @@ export async function serviceEnable(): Promise<ServiceActionResult> {
     return { status: existing, changed: false, administratorCommand: null }
   }
 
-  const { record, definition } = await prepareRecord()
+  const { record, definition } = await prepareRecord(mode)
   const failedChecks = (await runDoctor()).filter((check) => !check.ok)
   if (failedChecks.length) {
     throw new Error(
@@ -1308,13 +1460,68 @@ export async function serviceEnable(): Promise<ServiceActionResult> {
 
   await writeServiceFiles(record, definition)
   if (record.manager === 'launchd') {
+    if (record.mode === 'headless') {
+      await daemonDown()
+      const prepared = await prepareAdministratorRequest(record, 'enable')
+      const status = await serviceStatus()
+      return {
+        status,
+        changed: true,
+        administratorCommand: prepared.command
+      }
+    }
+
+    const launchctl = await executablePath('launchctl')
+    const location = launchdLocation({
+      uid: record.uid,
+      home: record.home,
+      mode: record.mode
+    })
+    const commands = userLaunchdCommands({
+      operation: 'enable',
+      location,
+      definitionPath: record.definitionPath
+    })
+    await runCommand(launchctl, commands.bootout!)
     await daemonDown()
-    const prepared = await prepareAdministratorRequest(record, 'enable')
-    const status = await serviceStatus()
+    const enabled = await runCommand(launchctl, commands.enable!)
+    if (enabled.code !== 0) {
+      await Promise.all([
+        fs.rm(record.definitionPath, { force: true }),
+        fs.rm(servicePaths().directory, { recursive: true, force: true })
+      ])
+      await daemonUp({})
+      throw commandError('launchctl enable', enabled)
+    }
+
+    const bootstrapped = await runCommand(launchctl, commands.activate!)
+    if (bootstrapped.code !== 0) {
+      await Promise.all([
+        fs.rm(record.definitionPath, { force: true }),
+        fs.rm(servicePaths().directory, { recursive: true, force: true })
+      ])
+      await daemonUp({})
+      throw commandError('launchctl bootstrap', bootstrapped)
+    }
+
+    const startupError = await waitForService(record).then(
+      () => null,
+      (error) => error
+    )
+    if (startupError) {
+      await runCommand(launchctl, ['bootout', location.target])
+      await Promise.all([
+        fs.rm(record.definitionPath, { force: true }),
+        fs.rm(servicePaths().directory, { recursive: true, force: true })
+      ])
+      await daemonUp({})
+      throw startupError
+    }
+
     return {
-      status,
+      status: await serviceStatus(),
       changed: true,
-      administratorCommand: prepared.command
+      administratorCommand: null
     }
   }
 
@@ -1349,7 +1556,7 @@ export async function serviceEnable(): Promise<ServiceActionResult> {
 
   const startupError = await waitForService(record).then(
     () => null,
-    (error: unknown) => error
+    (error) => error
   )
   if (startupError) {
     await runCommand(systemctl, [
@@ -1396,7 +1603,9 @@ export async function serviceStart(): Promise<ServiceActionResult> {
 
   if (!current.definitionMatches || !current.entrypointMatches) {
     throw new Error(
-      'The Treeport service definition is stale. Run `treeport service enable` to repair it.'
+      record.manager === 'launchd' && record.mode === 'headless'
+        ? 'The Treeport service definition is stale. Run `treeport service enable --headless` to repair it.'
+        : 'The Treeport service definition is stale. Run `treeport service enable` to repair it.'
     )
   }
 
@@ -1408,11 +1617,45 @@ export async function serviceStart(): Promise<ServiceActionResult> {
   }
   await saveRecord(next)
   if (record.manager === 'launchd') {
-    const prepared = await prepareAdministratorRequest(next, 'start')
+    if (record.mode === 'headless') {
+      const prepared = await prepareAdministratorRequest(next, 'start')
+      return {
+        status: await serviceStatus(),
+        changed: true,
+        administratorCommand: prepared.command
+      }
+    }
+
+    const launchctl = await executablePath('launchctl')
+    const location = launchdLocation({
+      uid: record.uid,
+      home: record.home,
+      mode: record.mode
+    })
+    const active = await runCommand(launchctl, ['print', location.target])
+    const commands = userLaunchdCommands({
+      operation: 'start',
+      location,
+      definitionPath: record.definitionPath,
+      active: active.code === 0
+    })
+    const enabled = await runCommand(launchctl, commands.enable!)
+    if (enabled.code !== 0) {
+      await saveRecord(record)
+      throw commandError('launchctl enable', enabled)
+    }
+
+    const started = await runCommand(launchctl, commands.activate!)
+    if (started.code !== 0) {
+      await saveRecord(record)
+      throw commandError('launchctl start', started)
+    }
+
+    await waitForService(next)
     return {
       status: await serviceStatus(),
       changed: true,
-      administratorCommand: prepared.command
+      administratorCommand: null
     }
   }
 
@@ -1452,11 +1695,38 @@ export async function serviceStop(): Promise<ServiceActionResult> {
   }
   await saveRecord(next)
   if (record.manager === 'launchd') {
-    const prepared = await prepareAdministratorRequest(next, 'stop')
+    if (record.mode === 'headless') {
+      const prepared = await prepareAdministratorRequest(next, 'stop')
+      return {
+        status: await serviceStatus(),
+        changed: true,
+        administratorCommand: prepared.command
+      }
+    }
+
+    const location = launchdLocation({
+      uid: record.uid,
+      home: record.home,
+      mode: record.mode
+    })
+    const commands = userLaunchdCommands({
+      operation: 'stop',
+      location,
+      definitionPath: record.definitionPath
+    })
+    const result = await runCommand(
+      await executablePath('launchctl'),
+      commands.bootout!
+    )
+    if (result.code !== 0 && !result.stderr.includes('No such process')) {
+      await saveRecord(record)
+      throw commandError('launchctl bootout', result)
+    }
+
     return {
       status: await serviceStatus(),
       changed: true,
-      administratorCommand: prepared.command
+      administratorCommand: null
     }
   }
 
@@ -1488,14 +1758,58 @@ export async function serviceDisable(): Promise<ServiceActionResult> {
   }
 
   if (record.manager === 'launchd') {
-    const prepared = await prepareAdministratorRequest(
-      { ...record, pendingAdministratorRequestId: null },
-      'disable'
+    if (record.mode === 'headless') {
+      const prepared = await prepareAdministratorRequest(
+        { ...record, pendingAdministratorRequestId: null },
+        'disable'
+      )
+      return {
+        status: await serviceStatus(),
+        changed: true,
+        administratorCommand: prepared.command
+      }
+    }
+
+    const installed = await fs
+      .readFile(record.definitionPath, 'utf8')
+      .catch((error: NodeJS.ErrnoException) => {
+        if (error.code === 'ENOENT') {
+          return ''
+        }
+
+        throw error
+      })
+
+    if (installed && fingerprint(installed) !== record.definitionHash) {
+      throw new Error(
+        'Refusing to remove a LaunchAgent definition that Treeport did not create.'
+      )
+    }
+
+    const location = launchdLocation({
+      uid: record.uid,
+      home: record.home,
+      mode: record.mode
+    })
+    const commands = userLaunchdCommands({
+      operation: 'disable',
+      location,
+      definitionPath: record.definitionPath
+    })
+    const stopped = await runCommand(
+      await executablePath('launchctl'),
+      commands.bootout!
     )
+    if (stopped.code !== 0 && !stopped.stderr.includes('No such process')) {
+      throw commandError('launchctl bootout', stopped)
+    }
+
+    await fs.rm(record.definitionPath, { force: true })
+    await fs.rm(servicePaths().directory, { recursive: true, force: true })
     return {
       status: await serviceStatus(),
       changed: true,
-      administratorCommand: prepared.command
+      administratorCommand: null
     }
   }
 
@@ -1606,12 +1920,13 @@ export async function serviceApply(requestPath: string): Promise<{
     )
   }
 
-  const record = await readJson(request.serviceRecordPath, serviceRecordSchema)
+  const record = await readServiceRecord(request.serviceRecordPath)
   if (
     !record ||
     record.uid !== request.uid ||
     record.username !== request.username ||
     record.manager !== 'launchd' ||
+    record.mode !== 'headless' ||
     record.definitionName !== request.definitionName ||
     record.definitionPath !== request.definitionPath ||
     record.cliEntrypoint !== request.cliEntrypoint ||
@@ -1731,7 +2046,7 @@ export async function serviceRun(): Promise<void> {
     throw new Error('Treeport service run requires a valid service record.')
   }
 
-  const record = await readJson(recordPath, serviceRecordSchema)
+  const record = await readServiceRecord(recordPath)
   if (!record) {
     throw new Error(`Treeport service record is invalid: ${recordPath}`)
   }
@@ -1817,7 +2132,10 @@ export async function serviceDoctorCheck(): Promise<DoctorCheck> {
     return {
       name: 'Service supervision',
       ok: true,
-      detail: `${status.manager}; enabled at boot and healthy`
+      detail:
+        status.mode === 'headless'
+          ? `${status.manager}; advanced headless mode; healthy`
+          : `${status.manager}; user service mode; healthy`
     }
   }
 
@@ -1825,7 +2143,10 @@ export async function serviceDoctorCheck(): Promise<DoctorCheck> {
     return {
       name: 'Service supervision',
       ok: true,
-      detail: `${status.manager}; intentionally stopped and enabled for next boot`
+      detail:
+        status.mode === 'headless'
+          ? `${status.manager}; advanced headless mode; intentionally stopped`
+          : `${status.manager}; user service mode; intentionally stopped`
     }
   }
 

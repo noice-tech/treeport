@@ -1,30 +1,69 @@
-# Decision 0007: Git inventory defines worktree existence
+# Decision 0007: Git inventory defines tree existence
 
 - Status: Accepted
 - Date: 2026-08-10
 
 ## Context
 
-Treeport previously stored cleanup lifecycle states on worktrees. A removal could succeed in Git but leave a partial checkout directory, after which Treeport exposed the old worktree as `cleanup_failed` and asked the user to retry or clean it manually. This contradicted Git, retained terminal and navigation identity for a workspace that no longer existed, and made browser and daemon recovery depend on a filesystem-cleanup detail.
+Treeport previously saved cleanup lifecycle states on trees.
 
-Removal is also an accepted destructive command. Once the preview and confirmation have been validated, closing the browser or restarting the daemon must not discard that accepted intent.
+Git removal could succeed while some checkout files stayed on disk.
+
+Treeport then showed the old tree as `cleanup_failed` and requested another cleanup operation.
+
+This behavior contradicted Git and kept terminal identity for a tree whose Git worktree did not exist.
+
+It also made daemon and browser recovery depend on filesystem cleanup.
+
+Tree removal is an approved destructive operation.
+
+After safety review and confirmation, a browser close or daemon restart must not cancel the approved operation.
 
 ## Decision
 
-Git's current worktree inventory is the authority for whether a worktree exists in Treeport. A database worktree row and every user-facing worktree projection represent a worktree Git currently reports. Reconciliation retires an unmatched linked worktree even when files remain at its former checkout path.
+The current Git worktree inventory controls tree existence in Treeport.
 
-Removal is a durable, idempotent operation. Treeport persists the accepted preview, repository and checkout identities, Git administrative key, quarantine path, terminal server identity, and progress before side effects. Browser clients derive transient removal progress from active operations. After a daemon restart, Treeport re-observes Git and resumes the accepted operation without requesting confirmation again.
+A database worktree row and user-visible tree represent a Git worktree that Git currently reports.
 
-Crossing the Git removal boundary retires the worktree identity immediately. Residual checkout cleanup then belongs to the operation. Treeport deletes a residual path only when the persisted short-lived filesystem authorization still matches. A changed or unverifiable path is preserved and recorded as a cleanup warning on an otherwise successful removal; it never resurrects the worktree.
+Reconciliation removes an unmatched linked tree even when files stay at the old checkout path.
 
-A Git worktree later created at the same path receives a new Treeport identity and is not cleanup material for the earlier operation.
+Removal is a durable operation that is safe to repeat.
+
+Before effects, Treeport saves these items:
+
+- the approved safety preview;
+- repository and checkout identities;
+- Git administration key;
+- quarantine path;
+- terminal server identity;
+- operation progress.
+
+Browser clients get temporary removal progress from active operations.
+
+After a daemon restart, Treeport checks Git again and continues the approved operation.
+
+It does not request a second confirmation.
+
+When Git removes the worktree, Treeport immediately removes the tree identity.
+
+Residual file cleanup stays with the operation.
+
+Treeport removes a residual path only when the saved short-duration filesystem authorization still matches.
+
+If the path changed or cannot be verified, Treeport keeps it.
+
+The successful removal records a cleanup warning. The residual path does not restore the tree.
+
+A later Git worktree at the same path gets a new tree identity.
+
+It is not cleanup material for the earlier operation.
 
 ## Consequences
 
-- Users see the binary model Git provides: a worktree exists or it does not.
-- Refreshing the browser reconstructs “removing” state from the durable operation.
-- Restarting the daemon resumes accepted removal on either side of the Git boundary.
-- Failures before Git removal leave an ordinary, retryable worktree.
-- Failures after Git removal may preserve files but cannot retain a zombie worktree.
-- Operation recovery must revalidate repository, Git, and filesystem observations before every destructive boundary.
-- Worktree records do not contain cleanup lifecycle status or cleanup errors.
+- Users see whether Git reports the underlying worktree for a tree.
+- A browser refresh gets removal state from the durable operation.
+- A daemon restart continues approved removal before or after the Git boundary.
+- A failure before Git removal keeps a standard tree that the user can remove again.
+- A failure after Git removal can keep files but cannot keep an invalid tree.
+- Recovery checks repository, Git, and filesystem observations before each destructive boundary.
+- Worktree records do not contain cleanup lifecycle state or cleanup errors.

@@ -2,9 +2,7 @@ import * as Effect from 'effect/Effect'
 import * as Queue from 'effect/Queue'
 
 interface QueuedTask {
-  run: () => PromiseLike<unknown> | unknown
-  resolve: (value: unknown) => void
-  reject: (reason: unknown) => void
+  run: () => Promise<void>
 }
 
 interface KeyQueue {
@@ -42,9 +40,13 @@ export class KeyedTaskQueue<Key> {
       state.pending += 1
       Effect.runSync(
         Queue.offer(state.queue, {
-          run: task,
-          resolve: (value) => resolve(value as Result),
-          reject
+          run: async () => {
+            try {
+              resolve(await task())
+            } catch (error) {
+              reject(error)
+            }
+          }
         })
       )
     })
@@ -70,13 +72,8 @@ export class KeyedTaskQueue<Key> {
   private async run(key: Key, state: KeyQueue): Promise<void> {
     while (state.pending > 0) {
       const task = await Effect.runPromise(Queue.take(state.queue))
-      try {
-        task.resolve(await task.run())
-      } catch (error) {
-        task.reject(error)
-      } finally {
-        state.pending -= 1
-      }
+      await task.run()
+      state.pending -= 1
     }
 
     state.running = false

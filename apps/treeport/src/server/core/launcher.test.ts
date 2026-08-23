@@ -1,17 +1,18 @@
 import { EventEmitter } from 'node:events'
-import type { ChildProcess, spawn } from 'node:child_process'
 import { describe, expect, it, vi } from 'vitest'
-import { runLaunchSpec } from './launcher'
+import { runLaunchSpec, type LauncherDependencies } from './launcher'
 import type { LaunchSpec } from './tmux'
 
 class FakeChild extends EventEmitter {
-  readonly kill = vi.fn((signal?: NodeJS.Signals | number) => {
-    queueMicrotask(() =>
-      this.emit('exit', null, typeof signal === 'string' ? signal : 'SIGTERM')
-    )
+  readonly kill = vi.fn((signal: NodeJS.Signals) => {
+    queueMicrotask(() => this.emit('exit', null, signal))
     return true
   })
 }
+
+type SpawnOptions = Parameters<
+  NonNullable<LauncherDependencies['spawnProcess']>
+>[2]
 
 function writable() {
   let value = ''
@@ -37,17 +38,17 @@ describe('terminal launcher setup pipeline', () => {
     const calls: Array<{
       executable: string
       args: readonly string[]
-      options: unknown
+      options: SpawnOptions
     }> = []
     const results = [0, 0, 7]
     const spawnProcess = vi.fn(
-      (executable: string, args: readonly string[], options: unknown) => {
+      (executable: string, args: readonly string[], options: SpawnOptions) => {
         calls.push({ executable, args, options })
         const child = new FakeChild()
         queueMicrotask(() => child.emit('exit', results.shift(), null))
-        return child as unknown as ChildProcess
+        return child
       }
-    ) as unknown as typeof spawn
+    )
     const output = writable()
     const error = writable()
     const code = await runLaunchSpec(
@@ -99,7 +100,7 @@ describe('terminal launcher setup pipeline', () => {
       argv: string[]
       env: NodeJS.ProcessEnv
     }> = []
-    const results = [23, 0]
+    const results = [23, 0, 0]
     const spawnProcess = vi.fn(
       (
         executable: string,
@@ -109,9 +110,9 @@ describe('terminal launcher setup pipeline', () => {
         calls.push({ argv: [executable, ...args], env: options.env })
         const child = new FakeChild()
         queueMicrotask(() => child.emit('exit', results.shift(), null))
-        return child as unknown as ChildProcess
+        return child
       }
-    ) as unknown as typeof spawn
+    )
 
     await expect(
       runLaunchSpec(
@@ -123,16 +124,27 @@ describe('terminal launcher setup pipeline', () => {
         }),
         {
           spawnProcess,
-          signalSource: new EventEmitter()
+          signalSource: new EventEmitter(),
+          tmuxPane: '%7'
         }
       )
     ).resolves.toBe(0)
     expect(calls.map((call) => call.argv)).toEqual([
       ['final', 'hostile;argument'],
+      [
+        '/opt/treeport/tmux',
+        'set-option',
+        '-p',
+        '-t',
+        '%7',
+        '--',
+        '@treeport-fallback-shell',
+        Buffer.from(JSON.stringify('/bin/zsh'), 'utf8').toString('base64url')
+      ],
       ['/bin/zsh', '-l']
     ])
     expect(calls[0]?.env).not.toHaveProperty('TREEPORT_USER_ZDOTDIR')
-    expect(calls[1]?.env).toMatchObject({
+    expect(calls[2]?.env).toMatchObject({
       TREEPORT_USER_ZDOTDIR: '/home/user/.config/zsh',
       TREEPORT_TMUX_EXECUTABLE: '/opt/treeport/tmux',
       ZDOTDIR: '/treeport/integration/zsh'
@@ -150,9 +162,9 @@ describe('terminal launcher setup pipeline', () => {
         calls.push({ argv: [executable, ...args], env: options.env })
         const child = new FakeChild()
         queueMicrotask(() => child.emit('exit', 0, null))
-        return child as unknown as ChildProcess
+        return child
       }
-    ) as unknown as typeof spawn
+    )
     const dependencies = {
       spawnProcess,
       signalSource: new EventEmitter()
@@ -223,9 +235,9 @@ describe('terminal launcher setup pipeline', () => {
             ? child.emit('error', new Error('not found'))
             : child.emit('exit', 0, null)
         )
-        return child as unknown as ChildProcess
+        return child
       }
-    ) as unknown as typeof spawn
+    )
     const error = writable()
 
     await expect(
@@ -247,11 +259,11 @@ describe('terminal launcher setup pipeline', () => {
     const shell = new FakeChild()
     const spawnProcess = vi
       .fn()
-      .mockReturnValueOnce(firstChild as unknown as ChildProcess)
+      .mockReturnValueOnce(firstChild)
       .mockImplementationOnce(() => {
         queueMicrotask(() => shell.emit('exit', 0, null))
-        return shell as unknown as ChildProcess
-      }) as unknown as typeof spawn
+        return shell
+      })
     const signalSource = new EventEmitter()
     const launch = runLaunchSpec(spec({ fallbackArgv: ['/bin/zsh', '-l'] }), {
       spawnProcess,
@@ -263,9 +275,7 @@ describe('terminal launcher setup pipeline', () => {
     expect(spawnProcess).toHaveBeenCalledTimes(2)
 
     const teardownChild = new FakeChild()
-    const teardownSpawn = vi.fn(
-      () => teardownChild as unknown as ChildProcess
-    ) as unknown as typeof spawn
+    const teardownSpawn = vi.fn(() => teardownChild)
     const teardownSignals = new EventEmitter()
     const teardown = runLaunchSpec(spec({ fallbackArgv: ['/bin/zsh', '-l'] }), {
       spawnProcess: teardownSpawn,
@@ -281,8 +291,8 @@ describe('terminal launcher setup pipeline', () => {
     const spawnProcess = vi.fn(() => {
       const child = new FakeChild()
       queueMicrotask(() => child.emit('exit', 23, null))
-      return child as unknown as ChildProcess
-    }) as unknown as typeof spawn
+      return child
+    })
     const error = writable()
     const code = await runLaunchSpec(
       spec({
@@ -318,9 +328,7 @@ describe('terminal launcher setup pipeline', () => {
 
   it('forwards termination signals to the active child', async () => {
     const child = new FakeChild()
-    const spawnProcess = vi.fn(
-      () => child as unknown as ChildProcess
-    ) as unknown as typeof spawn
+    const spawnProcess = vi.fn(() => child)
     const signalSource = new EventEmitter()
     const launch = runLaunchSpec(spec(), { spawnProcess, signalSource })
     await vi.waitFor(() => expect(spawnProcess).toHaveBeenCalledTimes(1))
@@ -330,16 +338,12 @@ describe('terminal launcher setup pipeline', () => {
   })
 
   it('does not continue when a setup child handles a forwarded signal and exits cleanly', async () => {
-    const child = new EventEmitter() as EventEmitter & {
-      kill: ReturnType<typeof vi.fn>
-    }
-    child.kill = vi.fn(() => {
+    const child = new FakeChild()
+    child.kill.mockImplementation(() => {
       queueMicrotask(() => child.emit('exit', 0, null))
       return true
     })
-    const spawnProcess = vi.fn(
-      () => child as unknown as ChildProcess
-    ) as unknown as typeof spawn
+    const spawnProcess = vi.fn(() => child)
     const signalSource = new EventEmitter()
     const error = writable()
     const launch = runLaunchSpec(
@@ -372,8 +376,8 @@ describe('terminal launcher setup pipeline', () => {
     const spawnProcess = vi.fn(() => {
       const child = new FakeChild()
       queueMicrotask(() => child.emit('exit', 2, null))
-      return child as unknown as ChildProcess
-    }) as unknown as typeof spawn
+      return child
+    })
     const output = writable()
     const error = writable()
     await runLaunchSpec(
@@ -400,7 +404,7 @@ describe('terminal launcher setup pipeline', () => {
   })
 
   it('prints a preparation error without spawning any command', async () => {
-    const spawnProcess = vi.fn() as unknown as typeof spawn
+    const spawnProcess = vi.fn()
     const error = writable()
     await expect(
       runLaunchSpec(spec({ setupError: 'invalid compatible task file' }), {
@@ -415,9 +419,7 @@ describe('terminal launcher setup pipeline', () => {
 
   it('times out a setup task and skips the final command', async () => {
     const child = new FakeChild()
-    const spawnProcess = vi.fn(
-      () => child as unknown as ChildProcess
-    ) as unknown as typeof spawn
+    const spawnProcess = vi.fn(() => child)
     const error = writable()
     const code = await runLaunchSpec(
       spec({

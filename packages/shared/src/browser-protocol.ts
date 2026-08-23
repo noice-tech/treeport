@@ -144,8 +144,14 @@ export const browserAuthSchema = z.strictObject({
 
 export type BrowserAuth = z.infer<typeof browserAuthSchema>
 
+export interface BrowserAuthInput {
+  ticket?: string
+  protocolVersion?: number
+  panelId?: string
+}
+
 export interface BrowserClientToServerEvents {
-  command: (message: unknown) => void
+  command: (message: BrowserClientMessage) => void
 }
 
 export interface BrowserServerToClientEvents {
@@ -153,13 +159,13 @@ export interface BrowserServerToClientEvents {
   frame: (frame: BrowserFrame) => void
 }
 
-export function parseBrowserAuth(value: unknown): BrowserAuth | null {
+export function parseBrowserAuth(value: BrowserAuthInput): BrowserAuth | null {
   const result = browserAuthSchema.safeParse(value)
   return result.success ? result.data : null
 }
 
 export function parseBrowserClientMessage(
-  value: unknown
+  value: BrowserClientMessage
 ): BrowserClientMessage | null {
   const result = browserClientMessageSchema.safeParse(value)
   return result.success ? result.data : null

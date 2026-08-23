@@ -17,7 +17,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import { Server as SocketIOServer } from 'socket.io'
-import { SOCKET_IO_PATH } from '@treeport/shared'
+import { browserAgentCommandSchema, SOCKET_IO_PATH } from '@treeport/shared'
 import type {
   OperationRecord,
   ProjectRecord,
@@ -49,6 +49,8 @@ const terminal: TerminalRecord = {
   name: 'Pi',
   tmuxSessionName: 'treeport-term-context',
   argv: ['pi'],
+  shellCommand: null,
+  interactiveShell: false,
   status: 'running',
   exitCode: null,
   createdAt: timestamp,
@@ -88,6 +90,8 @@ const worktree: WorktreeRecord = {
 const project: ProjectRecord = {
   id: 'proj_context',
   name: 'treeport',
+  kind: 'repository',
+  rootPath: '/repo/treeport',
   repositoryPath: '/repo/treeport',
   mainWorktreePath: '/repo/treeport',
   defaultBranch: 'main',
@@ -227,6 +231,8 @@ describe('CLI context and machine output', () => {
     url: string
     body: { source?: string; projectId?: string }
   }> = []
+  const registeredFolderPaths: string[] = []
+  const workspaceOpenBodies: Array<{ sourceTerminalId: string }> = []
   let observedTerminal = terminal
   let observedMetadata: TerminalRuntimeMetadata = {
     terminalId: terminal.id,
@@ -269,6 +275,8 @@ describe('CLI context and machine output', () => {
     createdWebPanels = []
     webPanelBodies.length = 0
     browserAgentBodies.length = 0
+    registeredFolderPaths.length = 0
+    workspaceOpenBodies.length = 0
   })
 
   beforeAll(async () => {
@@ -426,6 +434,56 @@ describe('CLI context and machine output', () => {
         return
       }
 
+      if (request.method === 'POST' && request.url === '/api/projects') {
+        let source = ''
+        for await (const chunk of request) {
+          source += chunk
+        }
+        // SAFETY: The test fixture provides the asserted contract used here.
+        const body = JSON.parse(source) as { path: string }
+        registeredFolderPaths.push(body.path)
+        response.statusCode = 201
+        response.end(
+          JSON.stringify({
+            project: {
+              ...project,
+              id: 'proj_opened',
+              kind: 'folder',
+              rootPath: body.path,
+              repositoryPath: body.path,
+              mainWorktreePath: body.path,
+              defaultBranch: '',
+              worktrees: [
+                {
+                  ...worktree,
+                  id: 'wt_opened',
+                  projectId: 'proj_opened',
+                  path: body.path,
+                  kind: 'folder'
+                }
+              ]
+            }
+          })
+        )
+        return
+      }
+
+      if (
+        request.method === 'POST' &&
+        request.url === '/api/worktrees/wt_opened/open'
+      ) {
+        let source = ''
+        for await (const chunk of request) {
+          source += chunk
+        }
+        // SAFETY: The test fixture provides the asserted contract used here.
+        workspaceOpenBodies.push(
+          JSON.parse(source) as { sourceTerminalId: string }
+        )
+        response.end(JSON.stringify({ ok: true }))
+        return
+      }
+
       if (
         request.method === 'GET' &&
         request.url === '/api/worktrees/wt_context/web-panel-definitions'
@@ -485,10 +543,7 @@ describe('CLI context and machine output', () => {
         for await (const chunk of request) {
           source += chunk
         }
-        const body = JSON.parse(source) as {
-          command: string
-          args: string[]
-        }
+        const body = browserAgentCommandSchema.parse(JSON.parse(source))
         browserAgentBodies.push(body)
         response.end(
           JSON.stringify({
@@ -507,6 +562,7 @@ describe('CLI context and machine output', () => {
         for await (const chunk of request) {
           source += chunk
         }
+        // SAFETY: The test fixture provides the asserted contract used here.
         const body = JSON.parse(source) as ObservedWebPanelBody
         webPanelBodies.push({ url: request.url, body })
         const open = request.url.endsWith('/open')
@@ -519,6 +575,7 @@ describe('CLI context and machine output', () => {
           ? {
               ...previous!,
               launch: {
+                // SAFETY: The test fixture provides the asserted contract used here.
                 input: body.input as WebPanel['launch']['input'],
                 cwd: String(body.launchCwd)
               },
@@ -533,11 +590,13 @@ describe('CLI context and machine output', () => {
                 body.definitionId ===
                 'package:npm:@treeport/web-panel-browser:web-panel:remote-browser'
                   ? String(
+                      // SAFETY: The test fixture provides the asserted contract used here.
                       (body.input as { title?: string } | undefined)?.title ??
                         '127.0.0.1:5173'
                     )
                   : 'Preview',
               launch: {
+                // SAFETY: The test fixture provides the asserted contract used here.
                 input: body.input as WebPanel['launch']['input'],
                 cwd: String(body.launchCwd)
               },
@@ -633,6 +692,7 @@ describe('CLI context and machine output', () => {
         for await (const chunk of request) {
           source += chunk
         }
+        // SAFETY: The test fixture provides the asserted contract used here.
         const body = JSON.parse(source) as {
           source?: string
           projectId?: string
@@ -696,6 +756,7 @@ describe('CLI context and machine output', () => {
         for await (const chunk of request) {
           source += chunk
         }
+        // SAFETY: The test fixture provides the asserted contract used here.
         const body = JSON.parse(source) as {
           name: string
           base: 'default' | 'current'
@@ -838,6 +899,7 @@ describe('CLI context and machine output', () => {
     await new Promise<void>((resolve) => {
       server.listen(0, '127.0.0.1', resolve)
     })
+    // SAFETY: The test fixture provides the asserted contract used here.
     const address = server.address() as AddressInfo
     apiUrl = `http://127.0.0.1:${address.port}`
   })
@@ -858,7 +920,7 @@ describe('CLI context and machine output', () => {
     expect(result.stderr).toBe('')
     expect(result.stdout).toContain('Treeport context')
     expect(result.stdout).toContain('Project:  treeport (proj_context)')
-    expect(result.stdout).toContain('Worktree: agent-tools (wt_context)')
+    expect(result.stdout).toContain('Tree:     agent-tools (wt_context)')
     expect(result.stdout).toContain('Terminal: Pi (term_context) — running')
     expect(result.stdout).toContain('Lifecycle: managed by Treeport')
     expect(result.stdout.trimStart().startsWith('{')).toBe(false)
@@ -959,6 +1021,29 @@ describe('CLI context and machine output', () => {
     await rm(runtimeDirectory, { recursive: true, force: true })
   })
 
+  it('opens a folder in the client that contains the managed terminal', async () => {
+    observedDaemonLifecycle = 'external'
+    const result = await runCli(['.', '--json'], {
+      TREEPORT_API_URL: apiUrl,
+      TREEPORT_DAEMON_LIFECYCLE: 'external',
+      TREEPORT_PROJECT_ID: project.id,
+      TREEPORT_WORKTREE_ID: worktree.id,
+      TREEPORT_TERMINAL_ID: terminal.id
+    })
+    observedDaemonLifecycle = 'treeport'
+
+    expect(result.code).toBe(0)
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      projectId: 'proj_opened',
+      worktreeId: 'wt_opened',
+      path: await realpath(repositoryRoot),
+      projectKind: 'folder',
+      client: 'current'
+    })
+    expect(registeredFolderPaths).toEqual([await realpath(repositoryRoot)])
+    expect(workspaceOpenBodies).toEqual([{ sourceTerminalId: terminal.id }])
+  })
+
   it('detects an unmanaged terminal without contacting the daemon', async () => {
     const requestCount = requests.length
     const result = await runCli(['context', '--json'], {
@@ -1048,6 +1133,7 @@ describe('CLI context and machine output', () => {
     await new Promise<void>((resolve) => {
       unavailable.listen(0, '127.0.0.1', resolve)
     })
+    // SAFETY: The test fixture provides the asserted contract used here.
     const address = unavailable.address() as AddressInfo
     await new Promise<void>((resolve, reject) => {
       unavailable.close((error) => (error ? reject(error) : resolve()))
@@ -1067,7 +1153,7 @@ describe('CLI context and machine output', () => {
     })
   })
 
-  it('keeps terminal and spawn argv structured and exposes partial creation', async () => {
+  it('detects the current project and keeps command arguments structured', async () => {
     const created = await runCli(
       [
         'terminal',
@@ -1091,11 +1177,23 @@ describe('CLI context and machine output', () => {
       argv: ['pi', '--json', 'semi;colon']
     })
 
+    const createdWorktreeResult = await runCli(
+      ['worktree', 'create', '--name', 'from-folder', '--json'],
+      { TREEPORT_API_URL: apiUrl },
+      path.join(worktree.path, 'packages', 'client')
+    )
+    expect(createdWorktreeResult.code).toBe(0)
+    expect(JSON.parse(createdWorktreeResult.stdout)).toMatchObject({
+      worktree: { id: worktree.id, name: 'from-folder' }
+    })
+    expect(creationBodies.at(-1)).toEqual({
+      name: 'from-folder',
+      base: 'default'
+    })
+
     const result = await runCli(
       [
         'spawn',
-        '--project',
-        project.id,
         '--worktree-name',
         'partial',
         '--name',
@@ -1106,7 +1204,8 @@ describe('CLI context and machine output', () => {
         'semi;colon',
         '$HOME'
       ],
-      { TREEPORT_API_URL: apiUrl }
+      { TREEPORT_API_URL: apiUrl },
+      path.join(worktree.path, 'packages', 'client')
     )
 
     expect(result.code).toBe(0)
@@ -1142,7 +1241,7 @@ describe('CLI context and machine output', () => {
     )
 
     expect(result.code).toBe(0)
-    expect(result.stdout).toContain('Created worktree child (wt_context)')
+    expect(result.stdout).toContain('Created tree child (wt_context)')
     expect(result.stdout).toContain('Terminal: Pi (term_context) — running')
   })
 
@@ -1517,6 +1616,9 @@ describe('CLI context and machine output', () => {
     expect(help.stdout).toContain(
       'Usage: treeport [options] [folder] [command]'
     )
+    expect(help.stdout).toContain(
+      'Manage Treeport projects, trees, and terminals.'
+    )
     expect(help.stdout).not.toContain('\n  open')
     expect(help.stdout.indexOf('AI agents:')).toBeLessThan(
       help.stdout.indexOf('Usage:')
@@ -1564,6 +1666,19 @@ describe('CLI context and machine output', () => {
       )
       expect(result.stdout).toContain('-h, --help')
     }
+    expect(
+      commandHelp[
+        commandPaths.findIndex((command) => command.join(' ') === 'worktree')
+      ]!.stdout
+    ).toContain('List, create, and remove trees')
+    const serviceEnableHelp =
+      commandHelp[
+        commandPaths.findIndex(
+          (command) => command.join(' ') === 'service enable'
+        )
+      ]!.stdout
+    expect(serviceEnableHelp).toContain('--headless')
+    expect(serviceEnableHelp).toMatch(/requires an\s+administrator/)
 
     const skills = await runCli(['skills'])
 
@@ -1571,8 +1686,12 @@ describe('CLI context and machine output', () => {
     expect(skills.stderr).toBe('')
     expect(skills.stdout).toContain('# Treeport')
     expect(skills.stdout).toContain('## Operating rules')
+    expect(skills.stdout).toContain('## Create a child tree and terminal')
     expect(skills.stdout).toContain('treeport context')
     expect(skills.stdout).toContain('treeport spawn')
+    expect(skills.stdout).toContain(
+      'Never invoke `sudo` for a normal service or update operation.'
+    )
     expect(skills.stdout).not.toContain(
       '> **Externally managed daemon lifecycle:**'
     )
@@ -1598,6 +1717,17 @@ describe('CLI context and machine output', () => {
         }
       })
     }
+
+    const updateRefusal = await runCli(['update', '--json'], {
+      TREEPORT_API_URL: apiUrl
+    })
+    expect(updateRefusal.code).toBe(5)
+    expect(JSON.parse(updateRefusal.stderr)).toMatchObject({
+      error: {
+        code: 'UPDATE_EXTERNAL_REFUSED',
+        message: expect.stringContaining('externally managed')
+      }
+    })
   })
 
   it('manages global and current-project packages in human and JSON modes', async () => {
@@ -1639,11 +1769,14 @@ describe('CLI context and machine output', () => {
       'global\tnpm:@acme/tools\t1 web panels, 1 terminal presets'
     )
 
-    const reserved = await runCli(['update', '--json'], environment)
-    expect(reserved.code).toBe(2)
-    expect(JSON.parse(reserved.stderr).error.message).toContain(
-      'reserved for a future Treeport self-update'
-    )
+    const selfUpdate = await runCli(['update', '--json'], environment)
+    expect(selfUpdate.code).toBe(5)
+    expect(JSON.parse(selfUpdate.stderr)).toMatchObject({
+      error: {
+        code: 'UPDATE_INSTALLATION_UNSUPPORTED',
+        message: expect.stringContaining('stable npm CLI entrypoint')
+      }
+    })
 
     const update = await runCli(
       ['update', 'npm:@acme/tools', '--json'],
@@ -1808,6 +1941,7 @@ exit 1
       reservation.once('error', reject)
       reservation.listen(0, '127.0.0.1', resolve)
     })
+    // SAFETY: The test fixture provides the asserted contract used here.
     const address = reservation.address() as AddressInfo
     const port = address.port
     await new Promise<void>((resolve, reject) =>
@@ -1876,6 +2010,7 @@ exit 1
         linkedNestedFolder
       )
       expect(linkedOpen.code, linkedOpen.stderr).toBe(0)
+      // SAFETY: The test fixture provides the asserted contract used here.
       const linkedResult = JSON.parse(linkedOpen.stdout) as {
         projectId: string
         worktreeId: string
@@ -1892,6 +2027,7 @@ exit 1
         ['project', 'list', '--json'],
         environment
       )
+      // SAFETY: The test fixture provides the asserted contract used here.
       const registeredProjects = JSON.parse(
         projectList.stdout
       ) as ProjectRecord[]
@@ -1913,6 +2049,7 @@ exit 1
         mainNestedFolder
       )
       expect(mainOpen.code).toBe(0)
+      // SAFETY: The test fixture provides the asserted contract used here.
       const mainResult = JSON.parse(mainOpen.stdout) as typeof linkedResult
       expect(mainResult.projectId).toBe(linkedResult.projectId)
       expect(mainResult.worktreeId).toBe(
@@ -1936,19 +2073,41 @@ exit 1
         [nonGitDirectory, '--json'],
         environment
       )
-      expect(nonGit.code).toBe(5)
-      expect(JSON.parse(nonGit.stderr)).toMatchObject({
-        error: {
-          code: 'NOT_A_GIT_REPOSITORY',
-          message: `No Git repository contains ${await realpath(nonGitDirectory)}.`
-        }
+      expect(nonGit.code, nonGit.stderr).toBe(0)
+      expect(JSON.parse(nonGit.stdout)).toMatchObject({
+        projectKind: 'folder',
+        path: await realpath(nonGitDirectory),
+        client: process.platform === 'darwin' ? 'desktop' : 'browser'
       })
+      // SAFETY: The packaged CLI returned its documented project-list JSON.
+      const projectsWithFolder = JSON.parse(
+        (await runPackagedCli(['project', 'list', '--json'], environment))
+          .stdout
+      ) as ProjectRecord[]
+      expect(projectsWithFolder).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            kind: 'folder',
+            rootPath: await realpath(nonGitDirectory),
+            worktrees: [
+              expect.objectContaining({
+                kind: 'folder',
+                path: await realpath(nonGitDirectory),
+                terminals: [
+                  expect.objectContaining({ name: 'Shell', status: 'running' })
+                ]
+              })
+            ]
+          })
+        ])
+      )
 
       const firstStatus = await runPackagedCli(
         ['status', '--json'],
         environment
       )
       expect(firstStatus.code).toBe(0)
+      // SAFETY: The test fixture provides the asserted contract used here.
       const firstState = JSON.parse(firstStatus.stdout) as {
         running: boolean
         verified: boolean
@@ -2113,13 +2272,14 @@ exit 1
       await new Promise<void>((resolve) =>
         identityProxy!.listen(0, '127.0.0.1', resolve)
       )
+      // SAFETY: The test fixture provides the asserted contract used here.
       const identityProxyAddress = identityProxy.address() as AddressInfo
       const remoteCli = await runPackagedCli(['project', 'list', '--json'], {
         ...environment,
         TREEPORT_API_URL: `http://127.0.0.1:${identityProxyAddress.port}`
       })
       expect(remoteCli.code).toBe(0)
-      expect(JSON.parse(remoteCli.stdout)).toHaveLength(1)
+      expect(JSON.parse(remoteCli.stdout)).toHaveLength(2)
       expect(ingressRequests).toEqual([
         { authorization: undefined, url: '/api/projects' }
       ])

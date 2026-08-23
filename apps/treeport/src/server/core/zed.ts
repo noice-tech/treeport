@@ -54,6 +54,7 @@ async function assertNoSymlinkComponents(
     try {
       stat = await fs.lstat(current)
     } catch (error) {
+      // SAFETY: The surrounding boundary contract establishes this asserted value.
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
         return
       }
@@ -76,11 +77,11 @@ export function normalizeWorktreeName(input: string): string {
     .replace(/[^\p{Letter}\p{Number}]+/gu, '-')
     .replace(/^-+|-+$/gu, '')
   if (!name) {
-    throw new Error('Worktree name is required')
+    throw new Error('Tree name is required')
   }
 
   if (name.length > 120) {
-    throw new Error('Worktree name must be 120 characters or fewer')
+    throw new Error('Tree name must be 120 characters or fewer')
   }
 
   return name
@@ -89,10 +90,14 @@ export function normalizeWorktreeName(input: string): string {
 export function inferWorktreeName(
   mainWorktreePath: string,
   worktreePath: string,
-  kind: 'main' | 'linked'
+  kind: 'main' | 'linked' | 'folder'
 ): string {
   if (kind === 'main') {
-    return 'main worktree'
+    return 'main tree'
+  }
+
+  if (kind === 'folder') {
+    return path.basename(worktreePath)
   }
 
   const checkoutName = path.basename(worktreePath)
@@ -180,6 +185,7 @@ export async function prepareZedWorktreeWrapper(
       throw new Error(`Zed worktree wrapper is not a directory: ${wrapper}`)
     }
   } catch (error) {
+    // SAFETY: The surrounding boundary contract establishes this asserted value.
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
       throw error
     }
@@ -203,44 +209,55 @@ export async function prepareZedWorktreeWrapper(
 }
 
 const ZED_TASKS_CONFIG_PATH = path.join('.zed', 'tasks.json')
+const zedTaskInputSchema = z.unknown()
+type ZedTaskInput = z.input<typeof zedTaskInputSchema>
+const zedTaskRecordSchema = z.looseObject({
+  command: z.unknown().optional(),
+  args: z.unknown().optional(),
+  env: z.unknown().optional(),
+  cwd: z.unknown().optional(),
+  label: z.unknown().optional(),
+  hooks: z.unknown().optional()
+})
 
-function taskArray(value: unknown): unknown[] | null {
-  if (Array.isArray(value)) {
-    return value
+function taskArray(value: ZedTaskInput): ZedTaskInput[] | null {
+  const direct = z.array(z.unknown()).safeParse(value)
+  if (direct.success) {
+    return direct.data
   }
 
-  if (value && typeof value === 'object') {
-    const tasks: unknown = Reflect.get(value, 'tasks')
-    if (Array.isArray(tasks)) {
-      return tasks
-    }
-  }
-
-  return null
+  const wrapped = z.object({ tasks: z.array(z.unknown()) }).safeParse(value)
+  return wrapped.success ? wrapped.data.tasks : null
 }
 
 function parseTask(
-  entry: unknown,
+  entry: ZedTaskInput,
   index: number,
   options: { requireLabel: boolean; validateLaunchFields: boolean }
 ): ZedTask {
   const prefix = `Zed task ${index + 1}`
-  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+  const parsedEntry = zedTaskRecordSchema.safeParse(entry)
+  if (!parsedEntry.success) {
     throw new Error(`${prefix} must be an object`)
   }
 
-  const command: unknown = Reflect.get(entry, 'command')
-  const argsInput: unknown = Reflect.get(entry, 'args')
-  const environmentInput: unknown = Reflect.get(entry, 'env')
-  const cwd: unknown = Reflect.get(entry, 'cwd')
-  const label: unknown = Reflect.get(entry, 'label')
-  if (typeof label !== 'string' || !label.trim()) {
-    if (options.requireLabel) {
-      throw new Error(`${prefix} is missing a label`)
-    }
+  const {
+    args: argsInput,
+    command,
+    cwd,
+    env: environmentInput,
+    label
+  } = parsedEntry.data
+  const parsedLabel = z.string().safeParse(label)
+  if (
+    (!parsedLabel.success || !parsedLabel.data.trim()) &&
+    options.requireLabel
+  ) {
+    throw new Error(`${prefix} is missing a label`)
   }
 
-  if (typeof command !== 'string' || !command.trim()) {
+  const parsedCommand = z.string().safeParse(command)
+  if (!parsedCommand.success || !parsedCommand.data.trim()) {
     throw new Error(`${prefix} is missing a command`)
   }
 
@@ -248,31 +265,30 @@ function parseTask(
     throw new Error(`${prefix} has invalid args`)
   }
 
-  const args = (argsInput ?? []).map((argument) => {
-    if (typeof argument !== 'string') {
-      throw new Error(`${prefix} has a non-string argument`)
-    }
+  const parsedArgs = z.array(z.string()).safeParse(argsInput ?? [])
+  if (!parsedArgs.success) {
+    throw new Error(`${prefix} has a non-string argument`)
+  }
 
-    return argument
-  })
   const env: Record<string, string> = {}
   if (environmentInput !== undefined) {
-    if (
-      !environmentInput ||
-      typeof environmentInput !== 'object' ||
-      Array.isArray(environmentInput)
-    ) {
+    const parsedEnvironment = z
+      .record(z.string(), z.unknown())
+      .safeParse(environmentInput)
+    if (!parsedEnvironment.success) {
       throw new Error(`${prefix} has invalid env`)
     }
 
     if (
       options.validateLaunchFields &&
-      Object.keys(environmentInput).length > 128
+      Object.keys(parsedEnvironment.data).length > 128
     ) {
       throw new Error(`${prefix} has more than 128 environment variables`)
     }
 
-    for (const [key, environmentValue] of Object.entries(environmentInput)) {
+    for (const [key, environmentValue] of Object.entries(
+      parsedEnvironment.data
+    )) {
       if (
         options.validateLaunchFields &&
         (!key || key.length > 256 || key.includes('=') || key.includes('\0'))
@@ -280,41 +296,51 @@ function parseTask(
         throw new Error(`${prefix} has an invalid env key`)
       }
 
-      if (typeof environmentValue !== 'string') {
+      const parsedValue = z.string().safeParse(environmentValue)
+      if (!parsedValue.success) {
         throw new Error(`${prefix} has a non-string env value`)
       }
 
       if (
         options.validateLaunchFields &&
-        (environmentValue.length > 4_096 || environmentValue.includes('\0'))
+        (parsedValue.data.length > 4_096 || parsedValue.data.includes('\0'))
       ) {
         throw new Error(`${prefix} has an invalid env value`)
       }
 
-      env[key] = environmentValue
+      env[key] = parsedValue.data
     }
   }
 
-  if (cwd !== undefined && typeof cwd !== 'string') {
+  const parsedCwd = z.string().safeParse(cwd)
+  if (cwd !== undefined && !parsedCwd.success) {
     throw new Error(`${prefix} has invalid cwd`)
   }
 
   if (
     options.validateLaunchFields &&
-    typeof cwd === 'string' &&
-    (!cwd.trim() || cwd.length > 4_096 || cwd.includes('\0'))
+    parsedCwd.success &&
+    (!parsedCwd.data.trim() ||
+      parsedCwd.data.length > 4_096 ||
+      parsedCwd.data.includes('\0'))
   ) {
     throw new Error(`${prefix} has invalid cwd`)
   }
 
-  return {
+  const task: ZedTask = {
     label:
-      typeof label === 'string' && label.trim() ? label : `Task ${index + 1}`,
-    command,
-    args,
-    ...(typeof cwd === 'string' ? { cwd } : {}),
+      parsedLabel.success && parsedLabel.data.trim()
+        ? parsedLabel.data
+        : `Task ${index + 1}`,
+    command: parsedCommand.data,
+    args: parsedArgs.data,
     env
   }
+  if (parsedCwd.success) {
+    task.cwd = parsedCwd.data
+  }
+
+  return task
 }
 
 export async function loadCreateWorktreeTasks(
@@ -325,12 +351,11 @@ export async function loadCreateWorktreeTasks(
   )
   const entries = taskArray(tasksFile.found ? tasksFile.value : null) ?? []
   return entries.flatMap((entry, index) => {
-    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
-      return []
-    }
-
-    const hooks: unknown = Reflect.get(entry, 'hooks')
-    if (!Array.isArray(hooks) || !hooks.includes('create_worktree')) {
+    const parsedEntry = zedTaskRecordSchema.safeParse(entry)
+    const parsedHooks = z
+      .array(z.string())
+      .safeParse(parsedEntry.success ? parsedEntry.data.hooks : undefined)
+    if (!parsedHooks.success || !parsedHooks.data.includes('create_worktree')) {
       return []
     }
 
@@ -355,6 +380,14 @@ function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'"'"'`)}'`
 }
 
+interface ResolvedZedTask {
+  label: string
+  argv: string[] | null
+  shellCommand: string | null
+  cwd: string
+  env: Record<string, string>
+}
+
 function resolveTask(
   task: ZedTask,
   input: {
@@ -363,12 +396,7 @@ function resolveTask(
     worktreePath: string
   },
   protectCompatibilityEnvironment: boolean
-): {
-  label: string
-  argv: string[]
-  cwd: string
-  env: Record<string, string>
-} {
+): ResolvedZedTask {
   const compatibilityEnvironment = {
     ZED_WORKTREE_ROOT: input.worktreePath,
     ZED_MAIN_GIT_WORKTREE: input.mainWorktreePath
@@ -392,9 +420,10 @@ function resolveTask(
   const useShell = /[\s;&|<>`$()]/u.test(command)
   return {
     label: expand(task.label, compatibilityEnvironment),
-    argv: useShell
-      ? [input.shell, '-lc', [command, ...args.map(shellQuote)].join(' ')]
-      : [command, ...args],
+    argv: useShell ? null : [command, ...args],
+    shellCommand: useShell
+      ? [command, ...args.map(shellQuote)].join(' ')
+      : null,
     cwd,
     env: protectCompatibilityEnvironment
       ? { ...taskEnvironment, ...compatibilityEnvironment }
@@ -423,7 +452,9 @@ export async function loadZedTerminalPresetDefinitions(input: {
         {
           path: ZED_TASKS_CONFIG_PATH,
           itemId: null,
-          message: `Could not load Zed tasks: ${error instanceof Error ? error.message : String(error)}`
+          message: `Could not load Zed tasks: ${
+            error instanceof Error ? error.message : String(error)
+          }`
         }
       ]
     }
@@ -470,8 +501,9 @@ export async function loadZedTerminalPresetDefinitions(input: {
     definitions.push({
       id: `repository:${input.projectId}:zed-task:${index}`,
       name: resolved.label,
-      executable: resolved.argv[0]!,
-      args: resolved.argv.slice(1),
+      executable: resolved.argv?.[0] ?? null,
+      args: resolved.argv?.slice(1) ?? [],
+      shellCommand: resolved.shellCommand,
       cwd: resolved.cwd,
       env: resolved.env,
       closeOnSuccess: false,
@@ -490,9 +522,18 @@ export async function resolveZedCreateWorktreeSetupTasks(input: {
   const tasks = await loadCreateWorktreeTasks(input.mainWorktreePath)
   return tasks.map((task) => {
     const resolved = resolveTask(task, input, false)
+    let argv = resolved.argv
+    if (!argv) {
+      if (!resolved.shellCommand) {
+        throw new Error(`Zed task ${task.label} has no resolved command`)
+      }
+
+      argv = [input.shell, '-lc', resolved.shellCommand]
+    }
+
     return {
       label: task.label,
-      argv: resolved.argv,
+      argv,
       cwd: resolved.cwd,
       env: resolved.env,
       timeoutMs: 30 * 60_000

@@ -4,6 +4,16 @@ import os from 'node:os'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { _electron as electron, expect, test } from '@playwright/test'
+import { z } from 'zod'
+
+function serverPort<Address>(address: Address): number {
+  const parsed = z.object({ port: z.number().int() }).safeParse(address)
+  if (!parsed.success) {
+    throw new Error('Test server did not expose a port')
+  }
+
+  return parsed.data.port
+}
 
 function workspaceLink(url: string): string {
   const link = new URL('treeport://open')
@@ -34,6 +44,8 @@ test('connects the desktop shell, preserves native behavior, and restores render
   const userData = await fs.mkdtemp(
     path.join(os.tmpdir(), 'treeport-electron-')
   )
+  const sourceFilePath = path.join(userData, "résumé '$draft.txt")
+  await fs.writeFile(sourceFilePath, 'local source')
   let healthAvailable = true
   let hostname = 'desktop-test'
   const server = http.createServer((request, response) => {
@@ -60,6 +72,7 @@ test('connects the desktop shell, preserves native behavior, and restores render
     response.end(`<!doctype html>
       <body data-command="none">
         Treeport desktop test
+        <input id="source-file" type="file">
         <a href="https://example.test/docs" target="_blank" rel="noopener noreferrer">Open docs</a>
       </body>
       <script>
@@ -72,12 +85,7 @@ test('connects the desktop shell, preserves native behavior, and restores render
 
   try {
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
-    const address = server.address()
-    if (!address || typeof address === 'string') {
-      throw new Error('Test server did not expose a port')
-    }
-
-    const port = address.port
+    const port = serverPort(server.address())
     const origin = `http://127.0.0.1:${port}`
     const workspaceUrl = `${origin}/projects/project-1/worktrees/worktree-1`
     await new Promise<void>((resolve, reject) =>
@@ -90,12 +98,19 @@ test('connects the desktop shell, preserves native behavior, and restores render
       env: {
         ...process.env,
         TREEPORT_DESKTOP_E2E: '1',
+        TREEPORT_DESKTOP_E2E_UPDATE_READY: '1',
         TREEPORT_DESKTOP_USER_DATA: '',
         TREEPORT_DESKTOP_URL: origin
       }
     })
 
     let selector = await electronApp.firstWindow()
+    const installUpdate = selector.getByRole('button', {
+      name: 'Update & restart'
+    })
+    await expect(installUpdate).toBeVisible()
+    await installUpdate.click()
+    await expect(installUpdate).not.toBeVisible()
     await expect(selector.getByRole('button', { name: 'Back' })).toBeDisabled()
     await expect(
       selector.getByRole('button', { name: 'Forward' })
@@ -303,6 +318,53 @@ test('connects the desktop shell, preserves native behavior, and restores render
       sandbox: true
     })
 
+    await electronApp.evaluate(
+      async ({ webContents }, input) => {
+        const guest = webContents
+          .getAllWebContents()
+          .find((contents) => contents.getURL().startsWith(input.origin))
+        if (!guest) {
+          throw new Error('Guest web contents were not found')
+        }
+
+        guest.debugger.attach('1.3')
+        const document = await guest.debugger.sendCommand('DOM.getDocument')
+        const sourceInput = await guest.debugger.sendCommand(
+          'DOM.querySelector',
+          {
+            nodeId: document.root.nodeId,
+            selector: '#source-file'
+          }
+        )
+        await guest.debugger.sendCommand('DOM.setFileInputFiles', {
+          files: [input.filePath],
+          nodeId: sourceInput.nodeId
+        })
+        guest.debugger.detach()
+      },
+      { origin, filePath: sourceFilePath }
+    )
+    expect(
+      await electronApp.evaluate(async ({ webContents }, expectedOrigin) => {
+        const guest = webContents
+          .getAllWebContents()
+          .find((contents) => contents.getURL().startsWith(expectedOrigin))
+        return guest?.executeJavaScript(
+          'window.treeportDesktop.getPathForFile(document.querySelector("#source-file").files[0])'
+        )
+      }, origin)
+    ).toBe(sourceFilePath)
+    expect(
+      await electronApp.evaluate(async ({ webContents }, expectedOrigin) => {
+        const guest = webContents
+          .getAllWebContents()
+          .find((contents) => contents.getURL().startsWith(expectedOrigin))
+        return guest?.executeJavaScript(
+          'window.treeportDesktop.getPathForFile(new File(["synthetic"], "synthetic.txt"))'
+        )
+      }, origin)
+    ).toBeNull()
+
     await electronApp.evaluate(({ webContents }, expectedOrigin) => {
       const guest = webContents
         .getAllWebContents()
@@ -334,6 +396,7 @@ test('connects the desktop shell, preserves native behavior, and restores render
     await selector.keyboard.press('Escape')
 
     await electronApp.evaluate(({ shell }) => {
+      // SAFETY: The test fixture provides the asserted contract used here.
       const scope = globalThis as typeof globalThis & {
         __openedTreeportFilePaths?: string[]
         __openedTreeportExternalUrls?: string[]
@@ -377,6 +440,7 @@ test('connects the desktop shell, preserves native behavior, and restores render
     expect(
       await electronApp.evaluate(
         () =>
+          // SAFETY: The test fixture provides the asserted contract used here.
           (
             globalThis as typeof globalThis & {
               __openedTreeportFilePaths?: string[]
@@ -395,6 +459,7 @@ test('connects the desktop shell, preserves native behavior, and restores render
       .poll(() =>
         electronApp!.evaluate(
           () =>
+            // SAFETY: The test fixture provides the asserted contract used here.
             (
               globalThis as typeof globalThis & {
                 __openedTreeportExternalUrls?: string[]
@@ -419,6 +484,7 @@ test('connects the desktop shell, preserves native behavior, and restores render
       const menu = Menu.getApplicationMenu()
       return {
         newWorktree: menu?.getMenuItemById('new-worktree')?.accelerator,
+        newTreeLabel: menu?.getMenuItemById('new-worktree')?.label,
         newTerminal: menu?.getMenuItemById('new-terminal')?.accelerator,
         newPanel: menu?.getMenuItemById('new-panel')?.accelerator,
         newPanelLabel: menu?.getMenuItemById('new-panel')?.label,
@@ -432,6 +498,7 @@ test('connects the desktop shell, preserves native behavior, and restores render
     })
     expect(accelerators).toEqual({
       newWorktree: 'CommandOrControl+N',
+      newTreeLabel: 'New tree…',
       newTerminal: 'CommandOrControl+T',
       newPanel: 'CommandOrControl+Shift+T',
       newPanelLabel: 'New Panel…',
@@ -512,6 +579,7 @@ test('connects the desktop shell, preserves native behavior, and restores render
     await electronApp.evaluate(() => {
       const filesystem = process.getBuiltinModule('node:fs/promises')
       const originalRename = filesystem.rename.bind(filesystem)
+      // SAFETY: The test fixture provides the asserted contract used here.
       const scope = globalThis as typeof globalThis & {
         __treeportRenameStarted?: boolean
         __releaseTreeportRename?: () => void
@@ -539,6 +607,7 @@ test('connects the desktop shell, preserves native behavior, and restores render
       .poll(() =>
         electronApp!.evaluate(() =>
           Boolean(
+            // SAFETY: The test fixture provides the asserted contract used here.
             (
               globalThis as typeof globalThis & {
                 __treeportRenameStarted?: boolean
@@ -556,6 +625,7 @@ test('connects the desktop shell, preserves native behavior, and restores render
     })
     await expect(unavailableHeading).toBeVisible({ timeout: 8_000 })
     await electronApp.evaluate(() => {
+      // SAFETY: The test fixture provides the asserted contract used here.
       const scope = globalThis as typeof globalThis & {
         __releaseTreeportRename?: () => void
         __restoreTreeportRename?: () => void
@@ -609,19 +679,10 @@ test('adds, renames, and switches computers through the desktop-owned selector',
         secondServer.listen(0, '127.0.0.1', resolve)
       )
     ])
-    const firstAddress = firstServer.address()
-    const secondAddress = secondServer.address()
-    if (
-      !firstAddress ||
-      typeof firstAddress === 'string' ||
-      !secondAddress ||
-      typeof secondAddress === 'string'
-    ) {
-      throw new Error('Test servers did not expose ports')
-    }
-
-    const firstOrigin = `http://127.0.0.1:${firstAddress.port}`
-    const secondOrigin = `http://127.0.0.1:${secondAddress.port}`
+    const firstPort = serverPort(firstServer.address())
+    const secondPort = serverPort(secondServer.address())
+    const firstOrigin = `http://127.0.0.1:${firstPort}`
+    const secondOrigin = `http://127.0.0.1:${secondPort}`
 
     electronApp = await electron.launch({
       args: [`--user-data-dir=${userData}`, '.'],
@@ -704,6 +765,7 @@ test('adds, renames, and switches computers through the desktop-owned selector',
     const linkedWorkspaceUrl = `${firstOrigin}/projects/project-1/worktrees/worktree-1`
     await electronApp.evaluate(
       ({ app }, deepLink) =>
+        // SAFETY: The test fixture provides the asserted contract used here.
         app.emit('open-url', { preventDefault() {} } as never, deepLink),
       workspaceLink(linkedWorkspaceUrl)
     )
@@ -763,10 +825,7 @@ test('keeps an incompatible computer in the shell without loading its web app', 
 
   try {
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
-    const address = server.address()
-    if (!address || typeof address === 'string') {
-      throw new Error('Test server did not expose a port')
-    }
+    const port = serverPort(server.address())
 
     electronApp = await electron.launch({
       args: [`--user-data-dir=${userData}`, '.'],
@@ -775,7 +834,7 @@ test('keeps an incompatible computer in the shell without loading its web app', 
         ...process.env,
         TREEPORT_DESKTOP_E2E: '1',
         TREEPORT_DESKTOP_USER_DATA: '',
-        TREEPORT_DESKTOP_URL: `http://127.0.0.1:${address.port}`
+        TREEPORT_DESKTOP_URL: `http://127.0.0.1:${port}`
       }
     })
     const window = await electronApp.firstWindow()

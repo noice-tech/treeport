@@ -1,43 +1,89 @@
 import { io, type Socket } from 'socket.io-client'
+import { z } from 'zod'
 import type {
+  BrowserClientMessage,
   BrowserClientToServerEvents,
   BrowserFrame,
   BrowserServerMessage,
   BrowserServerToClientEvents
 } from '@treeport/shared'
-import { BROWSER_PROTOCOL_VERSION, SOCKET_IO_PATH } from '@treeport/shared'
+import {
+  BROWSER_PROTOCOL_VERSION,
+  parseBrowserClientMessage,
+  SOCKET_IO_PATH
+} from '@treeport/shared'
 
-export interface BrowserPanelConnectMessage {
-  source: 'treeport-browser-panel-v1'
-  method: 'browser.connect'
+const browserPanelConnectMessageSchema = z.strictObject({
+  source: z.literal('treeport-browser-panel-v1'),
+  method: z.literal('browser.connect')
+})
+
+const browserTicketResponseSchema = z.object({
+  ticket: z.string().optional(),
+  error: z.object({ message: z.string().optional() }).optional()
+})
+
+export interface BrowserPanelConnection {
+  dispose(): void
+  setVisible(visible: boolean): void
+}
+
+export interface BrowserPanelSocket {
+  connected: boolean
+  emit(event: 'command', message: BrowserClientMessage): void
+  on(event: 'message', listener: (message: BrowserServerMessage) => void): void
+  on(event: 'frame', listener: (frame: BrowserFrame) => void): void
+  on(event: 'disconnect', listener: () => void): void
+  on(event: 'connect_error', listener: (error: Error) => void): void
+  disconnect(): void
+}
+
+interface BrowserPanelSocketOptions {
+  path: string
+  transports: ['websocket']
+  forceNew: true
+  reconnection: false
+  auth: {
+    ticket: string
+    protocolVersion: typeof BROWSER_PROTOCOL_VERSION
+  }
+}
+
+export type BrowserPanelSocketFactory = (
+  namespace: string,
+  options: BrowserPanelSocketOptions
+) => BrowserPanelSocket
+
+const defaultSocketFactory: BrowserPanelSocketFactory = (
+  namespace,
+  options
+) => {
+  // SAFETY: The adapter uses only the typed events in BrowserPanelSocket.
+  return io(namespace, options) as Socket<
+    BrowserServerToClientEvents,
+    BrowserClientToServerEvents
+  >
 }
 
 export function isBrowserPanelConnectMessage(
-  value: unknown
-): value is BrowserPanelConnectMessage {
-  return (
-    typeof value === 'object' &&
-    value !== null &&
-    Reflect.get(value, 'source') === 'treeport-browser-panel-v1' &&
-    Reflect.get(value, 'method') === 'browser.connect'
-  )
+  value: z.input<typeof browserPanelConnectMessageSchema>
+): boolean {
+  return browserPanelConnectMessageSchema.safeParse(value).success
 }
 
 export function connectBrowserPanel(
   panelId: string,
   port: MessagePort,
-  initialVisible: boolean
-): { dispose(): void; setVisible(visible: boolean): void } {
+  initialVisible: boolean,
+  socketFactory: BrowserPanelSocketFactory = defaultSocketFactory
+): BrowserPanelConnection {
   const clientId = crypto.randomUUID()
   let disposed = false
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null
   let currentVisible = initialVisible
   let ready = false
-  let socket: Socket<
-    BrowserServerToClientEvents,
-    BrowserClientToServerEvents
-  > | null = null
-  const pendingCommands: unknown[] = []
+  let socket: BrowserPanelSocket | null = null
+  const pendingCommands: BrowserClientMessage[] = []
 
   const connect = async () => {
     const response = await fetch(
@@ -48,10 +94,7 @@ export function connectBrowserPanel(
         body: JSON.stringify({ clientId })
       }
     )
-    const result = (await response.json()) as {
-      ticket?: string
-      error?: { message?: string }
-    }
+    const result = browserTicketResponseSchema.parse(await response.json())
     if (!response.ok || !result.ticket) {
       throw new Error(
         result.error?.message ?? 'Could not attach hosted browser'
@@ -63,14 +106,14 @@ export function connectBrowserPanel(
       return
     }
 
-    socket = io('/browsers', {
+    socket = socketFactory('/browsers', {
       path: SOCKET_IO_PATH,
       transports: ['websocket'],
       forceNew: true,
       reconnection: false,
       auth: { ticket, protocolVersion: BROWSER_PROTOCOL_VERSION }
     })
-    socket.on('message', (message: BrowserServerMessage) => {
+    socket.on('message', (message) => {
       port.postMessage(message)
       if (message.type !== 'ready') {
         return
@@ -82,10 +125,10 @@ export function connectBrowserPanel(
         visible: currentVisible
       })
       while (pendingCommands.length) {
-        socket?.emit('command', pendingCommands.shift())
+        socket?.emit('command', pendingCommands.shift()!)
       }
     })
-    socket.on('frame', (frame: BrowserFrame) => {
+    socket.on('frame', (frame) => {
       const bytes = new Uint8Array(frame.data)
       const copy = bytes.slice()
       port.postMessage({ type: 'frame', ...frame, data: copy.buffer }, [
@@ -109,19 +152,24 @@ export function connectBrowserPanel(
     })
   }
 
-  const reportError = (error: unknown) => {
+  const reportError = (cause: unknown) => {
     port.postMessage({
       type: 'browserUnavailable',
-      message: error instanceof Error ? error.message : String(error),
+      message: cause instanceof Error ? cause.message : String(cause),
       installCommand: null
     } satisfies BrowserServerMessage)
   }
 
   port.onmessage = (event) => {
+    const command = parseBrowserClientMessage(event.data)
+    if (!command) {
+      return
+    }
+
     if (socket?.connected && ready) {
-      socket.emit('command', event.data)
+      socket.emit('command', command)
     } else {
-      pendingCommands.push(event.data)
+      pendingCommands.push(command)
       if (pendingCommands.length > 32) {
         pendingCommands.shift()
       }

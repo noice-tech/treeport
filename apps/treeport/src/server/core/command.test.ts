@@ -178,6 +178,44 @@ describe('SpawnCommandRunner', () => {
     expect(Date.now() - startedAt).toBeGreaterThanOrEqual(180)
   })
 
+  it('does not leave a spawned descendant alive after a timeout', async () => {
+    const root = await temporaryRoot()
+    const descendantPidFile = path.join(root, 'descendant-pid')
+    const descendantScript = `process.on('SIGTERM', () => {}); require('fs').writeFileSync(${JSON.stringify(descendantPidFile)}, String(process.pid)); setInterval(() => {}, 1000)`
+    const runner = new SpawnCommandRunner()
+
+    const error = await runner
+      .run({
+        executable: process.execPath,
+        args: [
+          '-e',
+          `require('child_process').spawn(process.execPath, ['-e', ${JSON.stringify(descendantScript)}], { stdio: 'ignore' }); setInterval(() => {}, 1000)`
+        ],
+        timeoutMs: 300,
+        killGraceMs: 100
+      })
+      .catch((cause) => cause)
+    const descendantPid = Number(await waitForFile(descendantPidFile))
+
+    expect(error).toBeInstanceOf(TimeoutCommandError)
+
+    let descendantAlive = true
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      try {
+        process.kill(descendantPid, 0)
+      } catch {
+        descendantAlive = false
+        break
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+    if (descendantAlive) {
+      process.kill(descendantPid, 'SIGKILL')
+    }
+
+    expect(descendantAlive).toBe(false)
+  })
+
   it('reports a broken stdin pipe and terminates the child', async () => {
     const runner = new SpawnCommandRunner()
     const error = await runner

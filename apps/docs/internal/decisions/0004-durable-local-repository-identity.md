@@ -5,46 +5,115 @@
 
 ## Context
 
-Treeport must recognize a registered local repository after daemon restarts, filesystem remounts, and ordinary directory moves. A persisted `(st_dev, st_ino)` pair cannot provide that identity: POSIX only identifies a filesystem object at one observation in time, device numbers can change after a reboot or remount, and both values can eventually be reused.
+Treeport must identify a registered repository after daemon restarts, filesystem mounts, and directory moves.
 
-Remote URLs and Git history are also unsuitable. Clones, forks, empty repositories, and mutable remotes can legitimately share or change those values. Treeport identifies a local repository instance, not a remote or a line of history.
+A saved `(st_dev, st_ino)` pair cannot supply this identity.
+
+POSIX identifies a filesystem object only at the time of observation. Device numbers can change, and both values can have later reuse.
+
+Remote URLs and Git history are also not suitable.
+
+Clones, forks, empty repositories, and changed remotes can share or change these values.
+
+Treeport identifies one local repository instance, not a remote repository or history line.
 
 ## Decision
 
-Each enrolled repository has a random UUID in its common repository-local Git config:
+Each registered repository has a random UUID in its common local Git configuration:
 
 ```ini
 [treeport]
     repositoryId = 9c31d261-...
 ```
 
-Treeport reads and writes `treeport.repositoryId` with `git config --local`. Git config includes are disabled while reading so global and conditional configuration cannot impersonate a repository marker. Linked worktrees share the common config, while a normal fresh clone does not copy it. The marker is local and uncommitted, and it is independent of any one Treeport database profile.
+Treeport reads and writes `treeport.repositoryId` with `git config --local`.
 
-The SQLite `projects.repository_identity` column stores the same UUID and uniquely associates it with a project. `repository_path` remains only the last-known location. The retained device and inode columns are migration observations for legacy rows whose durable identity is null; they are not repository identity after enrollment.
+Treeport disables Git configuration includes during a read. Thus, global and conditional configuration cannot supply a false repository marker.
 
-Treeport does not remove the Git marker when a registration is deleted because another local Treeport profile may still refer to it.
+Linked worktrees share the common configuration. A new clone does not copy it.
 
-## Enrollment and recovery
+The marker is local, uncommitted, and separate from a Treeport database profile.
 
-New registration initializes the marker, verifies the Git main checkout, and records the UUID. Registration reconnects an existing marked project even after a move, preserving project, worktree, terminal, tmux, and presentation identities.
+The SQLite `projects.repository_identity` column contains the same UUID. A unique constraint connects it to one project.
 
-Legacy rows enroll lazily under the project observation lock. Without an existing marker, enrollment is permitted only at the exact stored canonical path, with the same inode, a complete verified Git inventory, and an unchanged operation-scoped stat. A changed device is permitted for this one-time migration. The fallback is never used after a durable UUID is stored.
+`repository_path` is only the last known location.
 
-Normal reconciliation requires the stored marker at the last-known path. If it is absent or different, Treeport scans only the bounded recovery area (currently the path's parent), deduplicates candidates, and adopts a move only when exactly one main checkout has the expected marker. A move outside that area requires explicit registration.
+Device and inode columns are migration observations for old rows without a UUID.
 
-A different marker at the stored path is a different repository. A missing, invalid, or repeated marker is not recreated during observation. Multiple matching paths are treated as a copied identity and remain ambiguous. Treeport preserves existing metadata and asks for explicit recovery rather than guessing.
+After registration, they are not the repository identity.
+
+Treeport does not remove the Git marker when it removes a registration.
+
+Another local Treeport profile can still use that marker.
+
+## Registration and recovery
+
+New registration creates the marker, verifies the main worktree, and saves the UUID.
+
+Registration can connect a moved, marked repository to its existing project.
+
+This keeps project, worktree, terminal, tmux, and presentation identities.
+
+Old rows register markers under the project observation lock.
+
+Without a marker, registration is permitted only when all these conditions are true:
+
+- The path is the exact saved canonical path.
+- The inode is unchanged.
+- Git supplies a complete verified inventory.
+- An operation-level filesystem observation is unchanged.
+
+A changed device number is permitted for this one-time migration.
+
+Treeport does not use this fallback after it saves a UUID.
+
+Normal reconciliation requires the saved marker at the last known path.
+
+If the marker is absent or different, Treeport searches only the limited recovery area. Currently, this area is the path parent.
+
+Treeport removes duplicate candidates. It accepts a move only when exactly one main worktree has the expected marker.
+
+A move outside the recovery area requires explicit registration.
+
+A different marker at the saved path identifies a different repository.
+
+Treeport does not recreate a missing, invalid, or repeated marker during observation.
+
+Multiple matching paths indicate a copied identity. Treeport keeps current information and requests explicit recovery.
+
+It does not select one path.
 
 ## Observation safety
 
-The durable UUID proves repository continuity across daemon runs. It does not replace short-lived filesystem observations used to authorize an operation.
+The UUID proves repository continuity between daemon runs.
 
-Registration and reconciliation capture a path's `(st_dev, st_ino)`, inspect Git and the marker, then require the same stat and marker before committing metadata. Destructive worktree removal additionally persists and revalidates the accepted path, stat, `.git` marker, Git administrative key, repository UUID, and quarantine path immediately before cleanup. A restart or remount that changes an operation-scoped stat intentionally fails closed and preserves the uncertain filesystem path. As established by Decision 0007, preserving residual files does not preserve or resurrect a worktree that Git no longer reports.
+It does not replace short-duration filesystem observations that authorize an operation.
+
+Registration and reconciliation record a path `(st_dev, st_ino)`. They then inspect Git and the marker.
+
+Before they save information, they require the same filesystem observation and marker.
+
+Worktree removal saves and checks more information immediately before cleanup:
+
+- approved path;
+- filesystem observation;
+- `.git` marker;
+- Git administration key;
+- repository UUID;
+- quarantine path.
+
+A restart or mount change can change an operation observation.
+
+In this case, Treeport stops cleanup and keeps the uncertain filesystem path.
+
+Decision 0007 controls worktree existence. Residual files do not keep or restore a worktree that Git no longer reports.
 
 ## Consequences
 
-- Reboots and remounts do not make an enrolled repository unavailable merely because `st_dev` changed.
-- Replacing a repository at a registered path cannot inherit the old project's metadata.
-- Ordinary moves preserve Treeport-owned IDs and terminal bindings when the marker can be found or the new path is explicitly registered.
-- Copied local config requires an explicit future marker-rotation action; automatic recovery never chooses between copies.
-- Read-only common Git metadata prevents enrollment and produces a writable-metadata error.
-- A later migration may drop the legacy device and inode columns after supported databases have enrolled or been explicitly re-linked.
+- A device-number change after a reboot or mount does not make an enrolled repository unavailable.
+- A different repository at a registered path cannot get old project information.
+- A normal move keeps Treeport identifiers when the marker is found or the user registers the new path.
+- A copied marker requires a future explicit rotation operation.
+- Automatic recovery does not select one copied marker.
+- Read-only common Git information prevents registration and causes a writable-information error.
+- A later migration can remove old device and inode columns after all supported databases have UUIDs.

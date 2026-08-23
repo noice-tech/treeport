@@ -1,6 +1,7 @@
 import { Activity, useEffect, useRef, useState } from 'react'
 import type { WebPanel } from '@treeport/shared'
 import { parseResponse } from 'hono/client'
+import { z } from 'zod'
 import { rpc } from '../../api'
 import { errorMessage } from '../../error-message'
 import { cn } from '../../lib/utils'
@@ -8,6 +9,31 @@ import {
   connectBrowserPanel,
   isBrowserPanelConnectMessage
 } from '../../browser-session-client'
+
+const panelTitleMessageSchema = z.object({
+  source: z.literal('treeport-panel-v1'),
+  method: z.literal('panel.title.set'),
+  title: z.string().nullable()
+})
+const workspaceSelectionMessageSchema = z.object({
+  source: z.literal('treeport-panel-v1'),
+  method: z.literal('workspace.select'),
+  index: z.number().int().min(0).max(8)
+})
+const panelRequestMessageSchema = z.object({
+  source: z.literal('treeport-panel-v1'),
+  id: z.string(),
+  method: z.enum([
+    'context',
+    'diff',
+    'network.listeners',
+    'storage.get',
+    'storage.set',
+    'storage.delete'
+  ]),
+  key: z.string().optional(),
+  value: z.json().optional()
+})
 
 export function WebPanelWorkspace({
   panel,
@@ -130,31 +156,30 @@ export function WebPanelWorkspace({
         return
       }
 
-      const method = event.data.method
-      if (method === 'panel.title.set') {
-        if (event.data.title === null) {
-          onTitleChange(panel.id, null)
-        } else if (typeof event.data.title === 'string') {
-          onTitleChange(panel.id, event.data.title.trim().slice(0, 256) || null)
-        }
-
+      const titleMessage = panelTitleMessageSchema.safeParse(event.data)
+      if (titleMessage.success) {
+        onTitleChange(
+          panel.id,
+          titleMessage.data.title?.trim().slice(0, 256) || null
+        )
         return
       }
 
-      if (
-        method === 'workspace.select' &&
-        Number.isInteger(event.data.index) &&
-        event.data.index >= 0 &&
-        event.data.index <= 8
-      ) {
-        onSelectWorkspace(event.data.index)
+      const selectionMessage = workspaceSelectionMessageSchema.safeParse(
+        event.data
+      )
+      if (selectionMessage.success) {
+        onSelectWorkspace(selectionMessage.data.index)
         return
       }
 
-      if (typeof event.data.id !== 'string') {
+      const parsedRequest = panelRequestMessageSchema.safeParse(event.data)
+      if (!parsedRequest.success) {
         return
       }
 
+      const message = parsedRequest.data
+      const { method } = message
       let request: Promise<unknown>
       if (method === 'context') {
         request = parseResponse(
@@ -174,34 +199,29 @@ export function WebPanelWorkspace({
             param: { panelId: panel.id }
           })
         ).then((result) => result.discovery)
-      } else if (
-        method === 'storage.get' &&
-        typeof event.data.key === 'string'
-      ) {
+      } else if (method === 'storage.get' && message.key) {
         request = parseResponse(
           rpc.api.panels[':panelId'].storage.get.$post({
             param: { panelId: panel.id },
-            json: { key: event.data.key }
+            json: { key: message.key }
           })
         ).then((result) => result.value)
       } else if (
         method === 'storage.set' &&
-        typeof event.data.key === 'string'
+        message.key &&
+        message.value !== undefined
       ) {
         request = parseResponse(
           rpc.api.panels[':panelId'].storage.$put({
             param: { panelId: panel.id },
-            json: { key: event.data.key, value: event.data.value }
+            json: { key: message.key, value: message.value }
           })
         ).then(() => undefined)
-      } else if (
-        method === 'storage.delete' &&
-        typeof event.data.key === 'string'
-      ) {
+      } else if (method === 'storage.delete' && message.key) {
         request = parseResponse(
           rpc.api.panels[':panelId'].storage.$delete({
             param: { panelId: panel.id },
-            json: { key: event.data.key }
+            json: { key: message.key }
           })
         ).then(() => undefined)
       } else {
@@ -211,14 +231,14 @@ export function WebPanelWorkspace({
       void request.then(
         (value) =>
           panelWindow?.postMessage(
-            { source: 'treeport-host-v1', id: event.data.id, ok: true, value },
+            { source: 'treeport-host-v1', id: message.id, ok: true, value },
             '*'
           ),
-        (error: unknown) =>
+        (error) =>
           panelWindow?.postMessage(
             {
               source: 'treeport-host-v1',
-              id: event.data.id,
+              id: message.id,
               ok: false,
               error: errorMessage(error)
             },

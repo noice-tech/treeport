@@ -38,7 +38,24 @@ export const TERMINAL_CAPTURE_DEFAULT_LINES = 200
 export const TERMINAL_CAPTURE_MAX_LINES = 5_000
 export const WEB_PANEL_INPUT_MAX_BYTES = 64 * 1024
 
-export type WorktreeKind = 'main' | 'linked'
+export function formatCommandLine(argv: readonly string[]): string {
+  return argv
+    .map((value) => {
+      if (value === '') {
+        return '""'
+      }
+
+      if (!/[\s"'\\]/.test(value)) {
+        return value
+      }
+
+      return `"${value.replace(/["\\]/g, '\\$&')}"`
+    })
+    .join(' ')
+}
+
+export type ProjectKind = 'repository' | 'folder'
+export type WorktreeKind = 'main' | 'linked' | 'folder'
 export type TerminalStatus = 'running' | 'exited' | 'missing'
 export type PrState = 'no_pr' | 'open' | 'merged' | 'closed' | 'unknown'
 export type OperationStatus = 'pending' | 'running' | 'completed' | 'failed'
@@ -66,6 +83,8 @@ export interface TerminalRecord {
   name: string
   tmuxSessionName: string
   argv: string[]
+  shellCommand: string | null
+  interactiveShell: boolean
   status: TerminalStatus
   exitCode: number | null
   createdAt: string
@@ -151,8 +170,9 @@ export interface TerminalPresetDefinitionListing {
 export interface TerminalPresetDefinition {
   id: string
   name: string
-  executable: string
+  executable: string | null
   args: string[]
+  shellCommand: string | null
   cwd: string | null
   env: Record<string, string>
   closeOnSuccess: boolean
@@ -244,8 +264,20 @@ export type ProjectColor = (typeof PROJECT_COLORS)[number]
 export interface ProjectRecord {
   id: string
   name: string
+  kind: ProjectKind
+  /** Canonical root folder for this project. */
+  rootPath: string
+  /**
+   * Repository root for repository projects. Folder projects use rootPath here
+   * to preserve the version 1 API shape; inspect kind before using Git fields.
+   */
   repositoryPath: string
+  /**
+   * Main checkout for repository projects. Folder projects use rootPath here
+   * to preserve the version 1 API shape; inspect kind before using Git fields.
+   */
   mainWorktreePath: string
+  /** Empty for folder projects. */
   defaultBranch: string
   color: ProjectColor | null
   availability: {
@@ -260,6 +292,8 @@ export interface ProjectRecord {
 export interface RecentProjectRecord {
   id: string
   name: string
+  kind: ProjectKind
+  rootPath: string
   repositoryPath: string
   lastOpenedAt: string
 }
@@ -277,6 +311,8 @@ export type TreeportContext =
         ProjectRecord,
         | 'id'
         | 'name'
+        | 'kind'
+        | 'rootPath'
         | 'repositoryPath'
         | 'mainWorktreePath'
         | 'defaultBranch'
@@ -457,6 +493,10 @@ export type DirectoryRepositoryStatus =
   | { state: 'incomplete'; message: string }
   | { state: 'not-repository'; message: string }
 
+export type DirectoryProjectStatus =
+  | { state: 'valid'; kind: ProjectKind; path: string }
+  | { state: 'incomplete'; message: string }
+
 export interface DirectoryBrowseResponse {
   input: string
   exact: boolean
@@ -469,6 +509,7 @@ export interface DirectoryBrowseResponse {
     entries: DirectoryEntry[]
     truncated: boolean
   }
+  project: DirectoryProjectStatus
   repository: DirectoryRepositoryStatus
 }
 
@@ -560,7 +601,7 @@ export const createWorktreeSchema = z
       context.addIssue({
         code: 'custom',
         path: ['sourceWorktreeId'],
-        message: 'A source worktree is required when starting from current'
+        message: 'A source tree is required when starting from current'
       })
     }
   })
@@ -578,6 +619,13 @@ const terminalEnvironmentKeySchema = z
   .max(256)
   .refine((value) => !value.includes('=') && !value.includes('\0'), {
     message: 'Environment keys cannot contain equals or NUL'
+  })
+const terminalShellCommandSchema = z
+  .string()
+  .min(1)
+  .max(TERMINAL_ARGUMENT_MAX_LENGTH)
+  .refine((value) => value.trim().length > 0 && !value.includes('\0'), {
+    message: 'Shell command cannot be blank or contain NUL'
   })
 const terminalEnvironmentSchema = z
   .record(
@@ -597,11 +645,15 @@ export const createTerminalSchema = z
   .object({
     name: terminalNameSchema,
     argv: terminalArgvSchema.optional(),
+    shellCommand: terminalShellCommandSchema.optional(),
     cwd: terminalCwdSchema.optional(),
     env: terminalEnvironmentSchema.optional(),
     returnToShell: z.boolean().optional(),
     closeOnSuccess: z.boolean().optional(),
     initialSize: terminalSizeSchema.optional()
+  })
+  .refine((value) => !(value.argv && value.shellCommand), {
+    message: 'A terminal cannot have both argv and a shell command'
   })
   .refine((value) => !(value.returnToShell && value.closeOnSuccess), {
     message: 'A terminal cannot return to a shell and close on success'
@@ -630,6 +682,10 @@ export const updateWebPanelPermissionGrantSchema = z.strictObject({
 export const openWebPanelSchema = createWebPanelSchema.extend({
   newInstance: z.boolean().optional(),
   sourceTerminalId: z.string().min(1).max(128).nullable().optional()
+})
+
+export const requestWorkspaceOpenSchema = z.object({
+  sourceTerminalId: z.string().min(1).max(128)
 })
 
 export const webPanelStorageKeySchema = z.string().min(1).max(128)
@@ -700,7 +756,7 @@ export const spawnSchema = z
       context.addIssue({
         code: 'custom',
         path: ['sourceWorktreeId'],
-        message: 'A source worktree is required when starting from current'
+        message: 'A source tree is required when starting from current'
       })
     }
   })
@@ -736,6 +792,10 @@ interface ProductEventPayloadMap {
     sourceTerminalId: string | null
   }
   'panel.removed': { worktreeId: string; panelId: string }
+  'workspace.open_requested': {
+    worktreeId: string
+    sourceTerminalId: string
+  }
   'remove.started': {
     operationId: string
     worktreeId: string

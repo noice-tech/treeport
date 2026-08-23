@@ -179,7 +179,9 @@ export interface DatabaseOpenOptions {
   backupDirectory?: string
 }
 
-export function serializeOperation(value: object | null): string | null {
+export function serializeOperation<Value extends object>(
+  value: Value | null
+): string | null {
   return value === null ? null : JSON.stringify(value)
 }
 
@@ -197,6 +199,8 @@ function deserializeOperation<Value extends object>(
 export interface TreeportDatabase {
   readonly filePath: string
   readonly db: TreeportOrm
+  readonly migrationState: 'unchanged' | 'advanced'
+  readonly migrationSnapshotPaths: string[]
   close(): void
 }
 
@@ -220,6 +224,8 @@ export async function openDatabase(
   const databaseExists = fs.existsSync(absoluteFilePath)
   let hasDurableSchema = false
   let hasLegacyMigrations = false
+  let migrationsPending = !databaseExists
+  const migrationSnapshotPaths: string[] = []
   let drizzleRows: Array<{ hash: string; createdAt: number | null }> = []
 
   if (!databaseExists) {
@@ -320,10 +326,10 @@ export async function openDatabase(
         )
       }
 
-      const pending =
+      migrationsPending =
         drizzleRows.length === 0 ||
         Number(drizzleRows.at(-1)?.createdAt) < latestMigration.folderMillis
-      if (pending && hasDurableSchema) {
+      if (migrationsPending && hasDurableSchema) {
         const backupDirectory = path.resolve(
           options.backupDirectory ??
             path.join(path.dirname(absoluteFilePath), 'database-backups')
@@ -346,6 +352,7 @@ export async function openDatabase(
             sql.raw(`VACUUM INTO '${backupPath.replaceAll("'", "''")}'`)
           )
           await fs.promises.chmod(backupPath, 0o600)
+          migrationSnapshotPaths.push(backupPath)
         } catch (error) {
           await fs.promises.rm(backupPath, { force: true })
           throw error
@@ -401,6 +408,8 @@ export async function openDatabase(
     return {
       filePath: absoluteFilePath,
       db,
+      migrationState: migrationsPending ? 'advanced' : 'unchanged',
+      migrationSnapshotPaths,
       close: () => client.close()
     }
   } catch (error) {
@@ -416,9 +425,13 @@ export function mapProject(
   return {
     id: row.id,
     name: row.name,
+    // SAFETY: The database check constrains this value.
+    kind: row.kind as ProjectRecord['kind'],
+    rootPath: row.repositoryPath,
     repositoryPath: row.repositoryPath,
     mainWorktreePath: row.mainWorktreePath,
     defaultBranch: row.defaultBranch,
+    // SAFETY: The query selects the columns required by this database row contract.
     color: row.color as ProjectRecord['color'],
     availability: { state: 'available', message: null },
     worktrees: worktreeRows.map((worktree) =>
@@ -439,19 +452,22 @@ export function mapWorktree(
     name: inferWorktreeName(
       mainWorktreePath,
       row.path,
+      // SAFETY: The query selects the columns required by this database row contract.
       row.kind as WorktreeRecord['kind']
     ),
     path: row.path,
-    head: row.head,
+    head: row.kind === 'folder' ? '' : row.head,
     branch: row.branch,
     detached: Boolean(row.detached),
     locked: Boolean(row.locked),
     lockReason: row.lockReason,
     prunable: Boolean(row.prunable),
+    // SAFETY: The query selects the columns required by this database row contract.
     kind: row.kind as WorktreeRecord['kind'],
     tmuxSocketName: row.tmuxSocketName,
     managedWrapperPath: row.managedWrapperPath,
     pr: {
+      // SAFETY: The query selects the columns required by this database row contract.
       state: row.prState as PrInfo['state'],
       number: row.prNumber,
       url: row.prUrl,
@@ -473,6 +489,7 @@ export function mapTerminalPreset(row: TerminalPresetRow): TerminalPreset {
     id: row.id,
     name: row.name,
     executable: row.executable,
+    // SAFETY: The query selects the columns required by this database row contract.
     args: JSON.parse(row.argsJson) as string[],
     closeOnSuccess: Boolean(row.closeOnSuccess),
     createdAt: row.createdAt,

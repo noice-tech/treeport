@@ -54,7 +54,7 @@ describe('TreeportService with injected command adapters', () => {
       .createTerminal(mainWorktree.id, 'Created during setup', ['pi'])
       .then(
         (terminal) => ({ terminal, error: null }),
-        (error: unknown) => ({ terminal: null, error })
+        (error) => ({ terminal: null, error })
       )
     expect(creationSettled).toBe(false)
 
@@ -67,7 +67,7 @@ describe('TreeportService with injected command adapters', () => {
       })
       .then(
         (operation) => ({ operation, error: null }),
-        (error: unknown) => ({ operation: null, error })
+        (error) => ({ operation: null, error })
       )
       .finally(() => {
         removalSettled = true
@@ -198,6 +198,9 @@ describe('TreeportService with injected command adapters', () => {
     )
     const linked = linkedResult.worktree
     expect(runner.sessions.size).toBe(3)
+    await expect(
+      service.dismissRecentProject(project.id)
+    ).rejects.toMatchObject({ code: 'PROJECT_NOT_RECENT' })
 
     await service.closeProject(project.id)
 
@@ -209,6 +212,14 @@ describe('TreeportService with injected command adapters', () => {
       })
     ])
     expect(runner.sessions.size).toBe(0)
+    expect(
+      (await persistedProject(service.database, project.id))?.worktrees.map(
+        ({ id }) => id
+      )
+    ).toEqual(expect.arrayContaining([mainWorktree.id, linked.id]))
+
+    await service.dismissRecentProject(project.id)
+    expect(await service.listRecentProjects()).toEqual([])
     expect(
       (await persistedProject(service.database, project.id))?.worktrees.map(
         ({ id }) => id
@@ -233,6 +244,9 @@ describe('TreeportService with injected command adapters', () => {
     expect(await service.listRecentProjects()).toEqual([])
 
     await service.closeProject(project.id)
+    expect(await service.listRecentProjects()).toEqual([
+      expect.objectContaining({ id: project.id })
+    ])
     const pathReopened = await service.registerProject(main)
     expect(pathReopened.id).toBe(project.id)
     await expect(

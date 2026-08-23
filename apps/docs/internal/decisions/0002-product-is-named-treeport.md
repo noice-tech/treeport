@@ -1,4 +1,4 @@
-# Decision 0002: The product is named Treeport
+# Decision 0002: The product name is Treeport
 
 - Status: Accepted
 - Date: 2026-07-25
@@ -6,22 +6,38 @@
 
 ## Context
 
-The original TaskTTY name emphasized terminals, but Decision 0001 established Git worktrees—not terminal emulation or a separate task model—as the product's primary unit of work. The original name was never released.
+The original TaskTTY name focused on terminals.
+
+Decision 0001 made Git worktrees the primary unit of work. Terminal emulation and a separate task model are not primary concepts.
+
+The original name did not have a public release.
 
 ## Decision
 
-The product and GitHub repository are named **Treeport**. The name reflects a stable place for entering and returning to worktree-backed development environments. The product hierarchy remains:
+The product and GitHub repository name is **Treeport**.
+
+The name identifies a stable place to enter Git worktree development environments and return to them.
+
+The product hierarchy is:
 
 ```text
-Repository
-└── Worktree
+Project
+└── Tree
     └── Terminals
 ```
 
-This rename does not introduce task, tree, workspace, or provider-specific lifecycle abstractions.
+Each tree represents a Git worktree. The tree term does not add a separate lifecycle abstraction.
 
-## Pre-release cutover
+## Prerelease change
 
-This is a hard pre-release rename, not a supported compatibility transition. Production code, configuration, metadata, APIs, storage, and newly created runtime identifiers use only Treeport names.
+This change is a complete prerelease name change. It is not a supported compatibility transition.
 
-Existing local development data requires a one-time operational migration before the renamed server starts. That migration moves the database and data directories and rewrites persisted tmux metadata while retaining persisted tmux socket and session names exactly as stored; those values are opaque identifiers. No permanent fallback, dual read, or dual write is provided.
+Production code, configuration, metadata, APIs, storage, and new runtime identifiers use only Treeport names.
+
+Existing development data needs a one-time migration before the renamed server starts.
+
+The migration moves the database and data directories. It also changes saved tmux metadata.
+
+Saved tmux socket and session names do not change because they are opaque identifiers.
+
+Treeport does not have a permanent fallback, dual read, or dual write.

@@ -85,6 +85,23 @@ describe('API input validation', () => {
       }).success
     ).toBe(false)
     expect(
+      createTerminalSchema.parse({
+        name: 'Zed task',
+        shellCommand: 'bun remotion',
+        returnToShell: true
+      })
+    ).toMatchObject({
+      shellCommand: 'bun remotion',
+      returnToShell: true
+    })
+    expect(
+      createTerminalSchema.safeParse({
+        name: 'ambiguous',
+        argv,
+        shellCommand: 'bun remotion'
+      }).success
+    ).toBe(false)
+    expect(
       spawnSchema.parse({
         project: '.',
         worktreeName: 'topic',
@@ -100,6 +117,16 @@ describe('API input validation', () => {
     ).toBe(false)
     expect(
       createTerminalSchema.safeParse({ name: 'bad', argv: 'pnpm dev' }).success
+    ).toBe(false)
+    expect(
+      createTerminalSchema.safeParse({ name: 'bad', shellCommand: ' \t ' })
+        .success
+    ).toBe(false)
+    expect(
+      createTerminalSchema.safeParse({
+        name: 'bad',
+        shellCommand: 'bun\0remotion'
+      }).success
     ).toBe(false)
     expect(
       createTerminalSchema.safeParse({
@@ -152,6 +179,12 @@ describe('API input validation', () => {
         argv: ['tool', longArgument]
       }).success
     ).toBe(true)
+    expect(
+      createTerminalSchema.safeParse({
+        name: 'Shell command',
+        shellCommand: longArgument
+      }).success
+    ).toBe(false)
   })
 
   it('validates preset fields separately and preserves literal arguments', () => {
@@ -209,6 +242,7 @@ describe('API input validation', () => {
   })
 
   it('bounds every terminal preset field', () => {
+    // SAFETY: The test fixture provides the asserted contract used here.
     const valid = { name: 'Preset', executable: 'tool', args: [] as string[] }
     expect(
       createTerminalPresetSchema.safeParse({

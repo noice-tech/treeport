@@ -28,8 +28,10 @@ import {
   DialogDescription,
   DialogTitle
 } from '../../components/ui/dialog'
-import { formatCommandLine } from '../../command-line'
-import { terminalPresetProvenance } from '../../terminal-preset-definition'
+import {
+  terminalPresetCommand,
+  terminalPresetProvenance
+} from '../../terminal-preset-definition'
 import type { CreateTerminalInput } from '../terminals/terminal-workspace'
 
 export function NewPanelDialog({
@@ -89,9 +91,9 @@ export function NewPanelDialog({
   const filteredPresets = presets.filter((preset) =>
     [
       preset.name,
-      preset.executable,
+      preset.executable ?? '',
       terminalPresetProvenance(preset),
-      formatCommandLine([preset.executable, ...preset.args])
+      terminalPresetCommand(preset)
     ].some((value) => value.toLocaleLowerCase().includes(normalizedQuery))
   )
   const filteredWebPanelDefinitions = webPanelDefinitions.filter((definition) =>
@@ -191,6 +193,7 @@ export function NewPanelDialog({
                 '[data-panel-launch]:not(:disabled)'
               )
             )
+            // SAFETY: The component contract supplies the asserted browser value used here.
             const index = actions.indexOf(event.target as HTMLButtonElement)
             if (index < 0 || actions.length < 2) {
               return
@@ -238,10 +241,7 @@ export function NewPanelDialog({
             {filteredPresets.map((preset, index) => {
               const actionIndex = index + (showShell ? 1 : 0)
               const provenance = terminalPresetProvenance(preset)
-              const command = formatCommandLine([
-                preset.executable,
-                ...preset.args
-              ])
+              const command = terminalPresetCommand(preset)
               return (
                 <Button
                   key={preset.id}
@@ -257,17 +257,32 @@ export function NewPanelDialog({
                   onClick={() => {
                     setQuery('')
                     setSelectedIndex(0)
-                    onCreateTerminal({
-                      name: preset.name,
-                      argv: [preset.executable, ...preset.args],
-                      ...(preset.cwd ? { cwd: preset.cwd } : {}),
-                      ...(Object.keys(preset.env).length
-                        ? { env: { ...preset.env } }
-                        : {}),
-                      ...(preset.closeOnSuccess
-                        ? { closeOnSuccess: true }
-                        : { returnToShell: true })
-                    })
+                    const input: CreateTerminalInput = {
+                      name: preset.name
+                    }
+                    if (preset.shellCommand !== null) {
+                      input.shellCommand = preset.shellCommand
+                    } else if (preset.executable) {
+                      input.argv = [preset.executable, ...preset.args]
+                    } else {
+                      return
+                    }
+
+                    if (preset.cwd) {
+                      input.cwd = preset.cwd
+                    }
+
+                    if (Object.keys(preset.env).length) {
+                      input.env = { ...preset.env }
+                    }
+
+                    if (preset.closeOnSuccess) {
+                      input.closeOnSuccess = true
+                    } else {
+                      input.returnToShell = true
+                    }
+
+                    onCreateTerminal(input)
                   }}
                 >
                   <CommandLineIcon

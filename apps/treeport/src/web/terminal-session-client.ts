@@ -3,6 +3,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links'
 import { Terminal } from '@xterm/xterm'
 import { io, type Socket } from 'socket.io-client'
 import { parseResponse } from 'hono/client'
+import { z } from 'zod'
 import { rpc } from './api'
 import { errorMessage } from './error-message'
 import {
@@ -17,6 +18,7 @@ import {
   parseTerminalServerEvent,
   SOCKET_IO_PATH,
   TERMINAL_MAX_INPUT_BYTES,
+  TERMINAL_MAX_UPLOAD_BYTES,
   TERMINAL_PROTOCOL_VERSION,
   TERMINAL_SCROLL_EXIT_SEQUENCE,
   TERMINAL_SELECTION_CLEAR_SEQUENCE,
@@ -25,11 +27,13 @@ import {
   TERMINAL_SELECTION_STOP_SEQUENCE,
   type TerminalClientToServerEvents,
   type TerminalServerEvent,
+  type TerminalProtocolInput,
   type TerminalSize,
   type TerminalServerToClientEvents
 } from '@treeport/shared'
 
 type ConnectionPhase = 'connecting' | 'ready' | 'reconnecting' | 'closed'
+export type TerminalSocketFactory = typeof io
 export type ArrowDirection = 'up' | 'down' | 'left' | 'right'
 export type TerminalFileTransfer = {
   state: 'uploading' | 'error'
@@ -37,6 +41,17 @@ export type TerminalFileTransfer = {
 }
 
 const TERMINAL_MAX_FILES_PER_TRANSFER = 8
+const BROWSER_LOCAL_FILE_PATH_SCHEMA = z
+  .string()
+  .max(16_384)
+  .startsWith('/')
+  .refine((filePath) =>
+    Array.from(filePath).every((character) => {
+      const codePoint = character.codePointAt(0)!
+      return codePoint > 31 && codePoint !== 127
+    })
+  )
+const LOOPBACK_BROWSER_HOSTNAMES = new Set(['127.0.0.1', 'localhost', '[::1]'])
 const TERMINAL_MAX_SELECTION_ENCODED_LENGTH = 8 * 1024 * 1024
 const TERMINAL_MIN_VIEWER_FONT_SIZE = 4
 const TERMINAL_MIN_COLS = 2
@@ -44,13 +59,12 @@ const TERMINAL_MAX_COLS = 1_000
 const TERMINAL_MIN_ROWS = 2
 const TERMINAL_MAX_ROWS = 500
 const TERMINAL_RESIZE_SETTLE_MS = 150
-const IOS_KEYBOARD_TOOLBAR_CLEARANCE = 24
 const IOS_BROWSER_TOOLBAR_CLEARANCE = 44
 
 function normalizeTerminalDimensions(
-  dimensions: { cols: number; rows: number },
-  fallback: { cols: number; rows: number } = { cols: 100, rows: 30 }
-): { cols: number; rows: number } {
+  dimensions: TerminalSize,
+  fallback: TerminalSize = { cols: 100, rows: 30 }
+): TerminalSize {
   return {
     cols: Number.isFinite(dimensions.cols)
       ? Math.min(
@@ -118,7 +132,7 @@ function getClientId(): string {
   }
 
   const bytes = new Uint8Array(16)
-  if (typeof globalThis.crypto?.getRandomValues === 'function') {
+  if (globalThis.crypto?.getRandomValues) {
     globalThis.crypto.getRandomValues(bytes)
   } else {
     for (let index = 0; index < bytes.length; index += 1) {
@@ -139,6 +153,9 @@ function getClientId(): string {
   return (fallbackClientId = created)
 }
 
+const TERMINAL_CURSOR_RESTORE_DELAY_MS = 50
+const TERMINAL_CURSOR_RESTORE_MAX_DELAY_MS = 250
+
 export class TerminalSession {
   readonly terminalId: string
   private readonly listeners = new Set<() => void>()
@@ -149,6 +166,7 @@ export class TerminalSession {
   private host: HTMLElement | null = null
   private resizeObserver: ResizeObserver | null = null
   private keyboardViewportCleanup: (() => void) | null = null
+  private desktopLocalFilePasteCleanup: (() => void) | null = null
   private socket: Socket<
     TerminalServerToClientEvents,
     TerminalClientToServerEvents
@@ -156,6 +174,8 @@ export class TerminalSession {
   private degradedTimer: number | null = null
   private bellTimer: number | null = null
   private fileTransferTimer: number | null = null
+  private cursorRestoreTimer: number | null = null
+  private cursorRestoreStartedAt: number | null = null
   private fileTransferQueue: Promise<void> = Promise.resolve()
   private resizeFrame: number | null = null
   private resizeSettleTimer: number | null = null
@@ -206,7 +226,10 @@ export class TerminalSession {
     }
   }
 
-  constructor(terminalId: string) {
+  constructor(
+    terminalId: string,
+    private readonly createSocket: TerminalSocketFactory = io
+  ) {
     this.terminalId = terminalId
   }
 
@@ -242,6 +265,7 @@ export class TerminalSession {
     }
 
     host.appendChild(this.wrapper)
+    this.socket?.io.reconnection(true)
     if (!this.opened) {
       this.openTerminal()
     }
@@ -252,21 +276,19 @@ export class TerminalSession {
       /iPad|iPhone|iPod/.test(navigator.userAgent) ||
       (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
     const viewport = window.visualViewport
-    if (isIOS && viewport) {
-      // WebKit shrinks the visual viewport for the keyboard but leaves the
-      // layout viewport (and 100dvh) unchanged. Its keyboard and browser
-      // toolbars then overlay the page without exposing their dimensions.
-      // A temporary bottom spacer gives scrollIntoView enough range to pan
-      // Treeport's accessory row above those native controls.
-      let keyboardToolbarSpacer: HTMLDivElement | null = null
-      let revealFrame: number | null = null
-      const revealTerminalControls = () => {
-        if (revealFrame !== null) {
-          window.cancelAnimationFrame(revealFrame)
+    const appFrame = document.querySelector<HTMLElement>('.app-frame')
+    if (isIOS && viewport && appFrame) {
+      // WebKit leaves the layout viewport unchanged when the software keyboard
+      // opens. Size and position the application against the visual viewport
+      // instead of scrolling the document between the cursor and accessory row.
+      let viewportFrame: number | null = null
+      const syncKeyboardViewport = () => {
+        if (viewportFrame !== null) {
+          window.cancelAnimationFrame(viewportFrame)
         }
 
-        revealFrame = window.requestAnimationFrame(() => {
-          revealFrame = null
+        viewportFrame = window.requestAnimationFrame(() => {
+          viewportFrame = null
           const textarea = this.wrapper?.querySelector<HTMLTextAreaElement>(
             '.xterm-helper-textarea'
           )
@@ -274,48 +296,42 @@ export class TerminalSession {
             document.activeElement === textarea &&
             viewport.height < document.documentElement.clientHeight - 100
           if (!keyboardOpen) {
-            keyboardToolbarSpacer?.remove()
-            keyboardToolbarSpacer = null
-            document
-              .querySelector<HTMLElement>('.app-frame')
-              ?.scrollIntoView({ block: 'start', inline: 'nearest' })
+            appFrame.style.removeProperty('--app-visual-viewport-height')
+            appFrame.style.removeProperty('--app-visual-viewport-offset-top')
             return
           }
 
-          const accessory =
-            document.querySelector<HTMLElement>('.accessory-row')
-          if (!accessory) {
-            return
-          }
-
-          keyboardToolbarSpacer ??= document.createElement('div')
-          keyboardToolbarSpacer.className = 'ios-keyboard-viewport-spacer'
-          keyboardToolbarSpacer.setAttribute('aria-hidden', 'true')
           const standalone =
             window.matchMedia('(display-mode: standalone)').matches ||
             Boolean(
+              // SAFETY: The terminal protocol and xterm contracts establish this asserted value.
               (navigator as Navigator & { standalone?: boolean }).standalone
             )
           const browserToolbarGap = standalone
             ? 0
             : IOS_BROWSER_TOOLBAR_CLEARANCE
-          keyboardToolbarSpacer.style.height = `${accessory.getBoundingClientRect().height + IOS_KEYBOARD_TOOLBAR_CLEARANCE + browserToolbarGap}px`
-          document.body.appendChild(keyboardToolbarSpacer)
-          keyboardToolbarSpacer.scrollIntoView({
-            block: 'end',
-            inline: 'nearest'
-          })
+          appFrame.style.setProperty(
+            '--app-visual-viewport-height',
+            `${Math.max(0, viewport.height - browserToolbarGap)}px`
+          )
+          appFrame.style.setProperty(
+            '--app-visual-viewport-offset-top',
+            `${viewport.offsetTop}px`
+          )
         })
       }
-      viewport.addEventListener('resize', revealTerminalControls)
-      revealTerminalControls()
+      viewport.addEventListener('resize', syncKeyboardViewport)
+      viewport.addEventListener('scroll', syncKeyboardViewport)
+      syncKeyboardViewport()
       this.keyboardViewportCleanup = () => {
-        viewport.removeEventListener('resize', revealTerminalControls)
-        if (revealFrame !== null) {
-          window.cancelAnimationFrame(revealFrame)
+        viewport.removeEventListener('resize', syncKeyboardViewport)
+        viewport.removeEventListener('scroll', syncKeyboardViewport)
+        if (viewportFrame !== null) {
+          window.cancelAnimationFrame(viewportFrame)
         }
 
-        keyboardToolbarSpacer?.remove()
+        appFrame.style.removeProperty('--app-visual-viewport-height')
+        appFrame.style.removeProperty('--app-visual-viewport-offset-top')
       }
     }
 
@@ -343,6 +359,7 @@ export class TerminalSession {
 
     this.resizeObserver?.disconnect()
     this.resizeObserver = null
+    this.socket?.io.reconnection(false)
     if (this.wakeListenersAttached) {
       window.removeEventListener('online', this.reconnectWhenOnline)
       document.removeEventListener(
@@ -419,7 +436,7 @@ export class TerminalSession {
     this.inputModifiers = ctrl || alt ? { ctrl, alt, onConsumed } : null
   }
 
-  sendText(data: string): void {
+  sendText(data: string, options: { focus?: boolean } = {}): void {
     this.requestControl()
     this.clearSelection()
     this.prepareScrollExit()
@@ -431,7 +448,9 @@ export class TerminalSession {
       })
     }
 
-    this.focus()
+    if (options.focus !== false) {
+      this.focus()
+    }
   }
 
   pasteText(data: string): void {
@@ -451,12 +470,25 @@ export class TerminalSession {
     this.focus()
   }
 
-  sendArrow(direction: ArrowDirection, alt = false): void {
+  pasteFiles(files: File[]): void {
+    if (!files.length) {
+      return
+    }
+
+    this.requestControl()
+    this.queueFileTransfer(files)
+  }
+
+  sendArrow(
+    direction: ArrowDirection,
+    alt = false,
+    options: { focus?: boolean } = {}
+  ): void {
     const final = { up: 'A', down: 'B', right: 'C', left: 'D' }[direction]
     const prefix = this.terminal?.modes.applicationCursorKeysMode
       ? '\u001bO'
       : '\u001b['
-    this.sendText(`${alt ? '\u001b' : ''}${prefix}${final}`)
+    this.sendText(`${alt ? '\u001b' : ''}${prefix}${final}`, options)
   }
 
   jumpToLatest(): void {
@@ -523,7 +555,6 @@ export class TerminalSession {
 
     this.tmuxSelectionPending = false
     this.tmuxSelectionText = null
-    this.wrapper?.classList.remove('terminal-tmux-selection')
     this.terminal?.clearSelection()
     this.update({ selecting: false, hasSelection: false })
     this.focus()
@@ -544,7 +575,6 @@ export class TerminalSession {
     this.tmuxSelectionPending = false
     this.tmuxSelectionText = null
     this.update({ selecting: false })
-    this.wrapper?.classList.remove('terminal-tmux-selection')
     this.terminal?.clearSelection()
     this.updateSelectionState()
   }
@@ -571,6 +601,8 @@ export class TerminalSession {
 
     this.keyboardViewportCleanup?.()
     this.keyboardViewportCleanup = null
+    this.desktopLocalFilePasteCleanup?.()
+    this.desktopLocalFilePasteCleanup = null
     this.socket?.disconnect()
     this.socket = null
     this.wrapper?.remove()
@@ -592,6 +624,18 @@ export class TerminalSession {
     terminal.loadAddon(new WebLinksAddon(activateTerminalLink))
     terminal.open(this.wrapper)
     terminal.onSelectionChange(() => this.updateSelectionState())
+    terminal.onRender(() => {
+      // xterm puts the block cursor and glyph on one span. Remove only the
+      // cursor class so ANSI foreground colors remain unchanged.
+      if (this.wrapper?.classList.contains('terminal-scrolling')) {
+        this.hideTerminalCursor()
+      }
+    })
+    terminal.onWriteParsed(() => {
+      if (this.cursorRestoreTimer !== null) {
+        this.scheduleTerminalCursorRestore()
+      }
+    })
     this.selectionDragCancel = trackTerminalSelectionAutoscroll(
       this.wrapper,
       terminal,
@@ -608,10 +652,7 @@ export class TerminalSession {
         onTmuxSelectionStart: () => {
           this.scrollExitPending = true
           this.update({ selecting: true })
-          this.wrapper?.classList.add(
-            'terminal-scrolling',
-            'terminal-tmux-selection'
-          )
+          this.setTerminalScrolling(true)
         },
         onTmuxSelectionFinish: () => {
           this.tmuxSelectionPending = true
@@ -668,7 +709,7 @@ export class TerminalSession {
       },
       true
     )
-    trackTerminalScrolling(
+    const expandWheelInput = trackTerminalScrolling(
       this.wrapper,
       terminal,
       (event) => {
@@ -699,6 +740,15 @@ export class TerminalSession {
       }
     )
     const wrapper = this.wrapper
+    this.desktopLocalFilePasteCleanup =
+      window.treeportDesktop?.onLocalFilePaste?.((paths) => {
+        if (!this.wrapper?.contains(document.activeElement)) {
+          return
+        }
+
+        this.requestControl()
+        this.pasteResolvedFilePaths(paths)
+      }) ?? null
     const transfersFiles = (transfer: DataTransfer | null) =>
       Boolean(
         transfer &&
@@ -742,8 +792,7 @@ export class TerminalSession {
       event.preventDefault()
       event.stopPropagation()
       wrapper.classList.remove('terminal-file-drag')
-      this.requestControl()
-      this.queueFileUpload(filesFromTransfer(event.dataTransfer))
+      this.pasteFiles(filesFromTransfer(event.dataTransfer))
     })
     wrapper.addEventListener(
       'paste',
@@ -755,8 +804,7 @@ export class TerminalSession {
 
         event.preventDefault()
         event.stopPropagation()
-        this.requestControl()
-        this.queueFileUpload(files)
+        this.pasteFiles(files)
       },
       true
     )
@@ -814,6 +862,7 @@ export class TerminalSession {
     terminal.onKey(() => this.prepareScrollExit())
     terminal.onData((data) => {
       if (this.canInput()) {
+        data = expandWheelInput(data)
         const modifiers = this.inputModifiers
         if (modifiers) {
           this.inputModifiers = null
@@ -849,13 +898,13 @@ export class TerminalSession {
     terminal.onBell(() => this.handleBell())
   }
 
-  private queueFileUpload(files: File[]): void {
+  private queueFileTransfer(files: File[]): void {
     this.fileTransferQueue = this.fileTransferQueue
       .catch(() => undefined)
-      .then(() => this.uploadFiles(files))
+      .then(() => this.transferFiles(files))
   }
 
-  private async uploadFiles(files: File[]): Promise<void> {
+  private async transferFiles(files: File[]): Promise<void> {
     if (!files.length || this.disposed) {
       return
     }
@@ -863,6 +912,13 @@ export class TerminalSession {
     if (files.length > TERMINAL_MAX_FILES_PER_TRANSFER) {
       this.showFileTransferError(
         `Choose no more than ${TERMINAL_MAX_FILES_PER_TRANSFER} files at a time`
+      )
+      return
+    }
+
+    if (files.some((file) => file.size > TERMINAL_MAX_UPLOAD_BYTES)) {
+      this.showFileTransferError(
+        `Files are limited to ${TERMINAL_MAX_UPLOAD_BYTES} bytes`
       )
       return
     }
@@ -886,73 +942,123 @@ export class TerminalSession {
       this.fileTransferTimer = null
     }
 
-    this.update({
-      fileTransfer: {
-        state: 'uploading',
-        message: `Uploading ${files.length === 1 ? 'file' : `${files.length} files`}…`
-      }
-    })
-
     try {
+      const desktopBridge = window.treeportDesktop
+      let sourcePaths: Array<string | null>
+      if (desktopBridge?.getPathForFile) {
+        sourcePaths = await Promise.all(
+          files.map((file) =>
+            Promise.resolve()
+              .then(() => desktopBridge.getPathForFile?.(file) ?? null)
+              .catch(() => null)
+          )
+        )
+      } else if (LOOPBACK_BROWSER_HOSTNAMES.has(window.location.hostname)) {
+        sourcePaths = files.map((file) => {
+          // SAFETY: Privileged browser platforms can add this optional, read-only capability to a File.
+          const platformFile = file as File & { readonly path?: string }
+          const parsedPath = BROWSER_LOCAL_FILE_PATH_SCHEMA.safeParse(
+            platformFile.path
+          )
+          return parsedPath.success ? parsedPath.data : null
+        })
+      } else {
+        sourcePaths = files.map(() => null)
+      }
+
+      const uploadCount = sourcePaths.filter((filePath) => !filePath).length
+      if (uploadCount > 0) {
+        this.update({
+          fileTransfer: {
+            state: 'uploading',
+            message: `Uploading ${uploadCount === 1 ? 'file' : `${uploadCount} files`}…`
+          }
+        })
+      }
+
       const paths: string[] = []
-      for (const file of files) {
+      for (const [index, file] of files.entries()) {
+        const sourcePath = sourcePaths[index]
+        if (sourcePath) {
+          paths.push(sourcePath)
+          continue
+        }
+
         const extension = /\.([a-z0-9]{1,16})$/i.exec(file.name)?.[1]
+        const headers = new Headers({
+          'content-type': file.type || 'application/octet-stream'
+        })
+        if (extension) {
+          headers.set('x-treeport-file-extension', extension.toLowerCase())
+        }
+
         const result = await parseResponse(
           rpc.api.terminals[':terminalId'].files.$post(
             { param: { terminalId: this.terminalId } },
-            {
-              init: {
-                body: file,
-                headers: {
-                  'content-type': file.type || 'application/octet-stream',
-                  ...(extension
-                    ? {
-                        'x-treeport-file-extension': extension.toLowerCase()
-                      }
-                    : {})
-                }
-              }
-            }
+            { init: { body: file, headers } }
           )
         )
         paths.push(result.file.path)
       }
 
-      if (this.disposed) {
-        return
-      }
-
-      if (!this.ready || !this.snapshotValue.controller) {
-        this.showFileTransferError(
-          'Terminal control was lost during the upload'
-        )
-        return
-      }
-
-      if (!this.canInput()) {
-        this.showFileTransferError('Wait for the terminal resize to finish')
-        return
-      }
-
-      const input = paths.join(' ')
-      if (
-        new TextEncoder().encode(input).byteLength >
-        TERMINAL_MAX_INPUT_BYTES - 32
-      ) {
-        this.showFileTransferError('The uploaded file paths are too long')
-        return
-      }
-
-      this.clearSelection()
-      this.prepareScrollExit()
-      this.terminal?.paste(input)
-      this.focus()
-      this.update({ fileTransfer: null })
+      this.pasteResolvedFilePaths(
+        paths,
+        'Terminal control was lost during the upload'
+      )
     } catch (error) {
       if (!this.disposed) {
         this.showFileTransferError(errorMessage(error))
       }
     }
+  }
+
+  private pasteResolvedFilePaths(paths: string[], controlError?: string): void {
+    if (!paths.length || this.disposed) {
+      return
+    }
+
+    if (paths.length > TERMINAL_MAX_FILES_PER_TRANSFER) {
+      this.showFileTransferError(
+        `Choose no more than ${TERMINAL_MAX_FILES_PER_TRANSFER} files at a time`
+      )
+      return
+    }
+
+    if (!this.ready || !this.snapshotValue.controller) {
+      this.showFileTransferError(
+        controlError ??
+          (this.snapshotValue.controlPending
+            ? 'taking control; try again in a moment'
+            : 'interact with the terminal to take control first')
+      )
+      return
+    }
+
+    if (!this.canInput()) {
+      this.showFileTransferError('Wait for the terminal resize to finish')
+      return
+    }
+
+    const input = paths
+      .map((filePath) =>
+        /^[A-Za-z0-9_+,./:@%=-]+$/u.test(filePath)
+          ? filePath
+          : `'${filePath.replaceAll("'", "'\\''")}'`
+      )
+      .join(' ')
+    if (
+      new TextEncoder().encode(input).byteLength >
+      TERMINAL_MAX_INPUT_BYTES - 32
+    ) {
+      this.showFileTransferError('The file paths are too long')
+      return
+    }
+
+    this.clearSelection()
+    this.prepareScrollExit()
+    this.terminal?.paste(input)
+    this.focus()
+    this.update({ fileTransfer: null })
   }
 
   private showFileTransferError(message: string): void {
@@ -1012,22 +1118,78 @@ export class TerminalSession {
     this.selectionClearRequested = false
   }
 
+  private hideTerminalCursor(): void {
+    this.terminal?.element
+      ?.querySelector('.xterm-cursor')
+      ?.classList.remove('xterm-cursor')
+  }
+
+  private scheduleTerminalCursorRestore(): void {
+    // tmux emits intermediate copy-cursor frames while it returns to the live
+    // pane. Wait for terminal writes to settle, but do not hide a cursor
+    // indefinitely when an application produces continuous output.
+    if (this.cursorRestoreTimer !== null) {
+      window.clearTimeout(this.cursorRestoreTimer)
+    }
+
+    this.cursorRestoreStartedAt ??= Date.now()
+    const remainingDelay = Math.max(
+      0,
+      TERMINAL_CURSOR_RESTORE_MAX_DELAY_MS -
+        (Date.now() - this.cursorRestoreStartedAt)
+    )
+    this.cursorRestoreTimer = window.setTimeout(
+      () => {
+        this.cursorRestoreTimer = null
+        this.cursorRestoreStartedAt = null
+        if (
+          !this.wrapper ||
+          this.scrollExitPending ||
+          this.snapshotValue.viewingHistory
+        ) {
+          return
+        }
+
+        this.wrapper.classList.remove('terminal-scrolling')
+        this.terminal?.refresh(0, this.terminal.rows - 1)
+      },
+      Math.min(TERMINAL_CURSOR_RESTORE_DELAY_MS, remainingDelay)
+    )
+  }
+
+  private setTerminalScrolling(scrolling: boolean): void {
+    if (!this.wrapper) {
+      return
+    }
+
+    if (scrolling) {
+      if (this.cursorRestoreTimer !== null) {
+        window.clearTimeout(this.cursorRestoreTimer)
+        this.cursorRestoreTimer = null
+      }
+
+      this.cursorRestoreStartedAt = null
+
+      this.wrapper.classList.add('terminal-scrolling')
+      this.hideTerminalCursor()
+      return
+    }
+
+    if (this.wrapper.classList.contains('terminal-scrolling')) {
+      this.scheduleTerminalCursorRestore()
+    }
+  }
+
   private setViewingHistory(viewing: boolean): void {
     if (viewing) {
       this.scrollExitPending = true
-      this.wrapper?.classList.add('terminal-scrolling')
-      if (this.tmuxSelectionText !== null) {
-        this.wrapper?.classList.add('terminal-tmux-selection')
-      }
     } else {
       this.scrollExitPending = false
       this.resumeOnNextInput = false
       this.historyExitRequested = false
-      this.wrapper?.classList.remove(
-        'terminal-scrolling',
-        'terminal-tmux-selection'
-      )
     }
+
+    this.setTerminalScrolling(viewing)
 
     if (viewing !== this.snapshotValue.viewingHistory) {
       this.update({ viewingHistory: viewing })
@@ -1075,7 +1237,7 @@ export class TerminalSession {
     const socket: Socket<
       TerminalServerToClientEvents,
       TerminalClientToServerEvents
-    > = io('/terminals', {
+    > = this.createSocket('/terminals', {
       path: SOCKET_IO_PATH,
       transports: ['websocket'],
       forceNew: true,
@@ -1183,7 +1345,10 @@ export class TerminalSession {
     socket.connect()
   }
 
-  private handleServerEvent(event: TerminalServerEvent, value: unknown): void {
+  private handleServerEvent(
+    event: TerminalServerEvent,
+    value: TerminalProtocolInput
+  ): void {
     if (event === 'ready') {
       const message = parseTerminalServerEvent('ready', value)
       if (!message) {
@@ -1468,7 +1633,7 @@ export class TerminalSession {
     this.renderQueue = queued
     // Rendering is a fatal UI boundary: keep the causal queue rejected so no
     // later operation runs, while observing the rejection to close explicitly.
-    void queued.catch((error: unknown) => this.failRendering(error))
+    void queued.catch((error) => this.failRendering(error))
   }
 
   private applyCanonicalDimensions(
@@ -1516,17 +1681,21 @@ export class TerminalSession {
       event === 'resize' ||
       event === 'take_control'
     ) {
-      ;(this.socket.emit as (event: string, payload: unknown) => void)(
-        event,
-        payload
-      )
+      // SAFETY: The generic event selects its matching protocol payload.
+      const emit = this.socket.emit.bind(this.socket) as (
+        event: E,
+        payload: Parameters<TerminalClientToServerEvents[E]>[0]
+      ) => void
+      emit(event, payload)
       return
     }
 
-    ;(this.socket.volatile.emit as (event: string, payload: unknown) => void)(
-      event,
-      payload
-    )
+    // SAFETY: The generic event selects its matching protocol payload.
+    const emit = this.socket.volatile.emit.bind(this.socket.volatile) as (
+      event: E,
+      payload: Parameters<TerminalClientToServerEvents[E]>[0]
+    ) => void
+    emit(event, payload)
   }
 
   private scheduleFit(): void {
@@ -1770,14 +1939,14 @@ export class TerminalSession {
     }, 180)
   }
 
-  private failRendering(error: unknown): void {
+  private failRendering(cause: unknown): void {
     if (this.renderFailed || this.disposed) {
       return
     }
 
     this.renderFailed = true
     const detail = (
-      error instanceof Error ? error.message : String(error)
+      cause instanceof Error ? cause.message : String(cause)
     ).trim()
     this.reconnectAllowed = false
     this.stopWithError(
@@ -1834,6 +2003,10 @@ export class TerminalSession {
       window.clearTimeout(this.fileTransferTimer)
     }
 
+    if (this.cursorRestoreTimer !== null) {
+      window.clearTimeout(this.cursorRestoreTimer)
+    }
+
     if (this.resizeFrame !== null) {
       cancelAnimationFrame(this.resizeFrame)
     }
@@ -1845,6 +2018,8 @@ export class TerminalSession {
     this.degradedTimer = null
     this.bellTimer = null
     this.fileTransferTimer = null
+    this.cursorRestoreTimer = null
+    this.cursorRestoreStartedAt = null
     this.resizeFrame = null
     this.resizeSettleTimer = null
     this.resizePending = false

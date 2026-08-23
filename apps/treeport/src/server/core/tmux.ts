@@ -1,6 +1,7 @@
 import crypto from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import { z } from 'zod'
 import {
   TERMINAL_SCROLL_EXIT_SEQUENCE,
   TERMINAL_SELECTION_CLEAR_SEQUENCE,
@@ -22,13 +23,13 @@ export const generateTmuxSessionName = (): string =>
 
 export interface LaunchSpec {
   argv: string[]
-  fallbackArgv?: string[]
+  fallbackArgv?: string[] | undefined
   cwd: string
   env: Record<string, string>
-  shellIntegrationDir?: string
-  tmuxExecutable?: string
-  setupTasks?: WorktreeSetupTask[]
-  setupError?: string
+  shellIntegrationDir?: string | undefined
+  tmuxExecutable?: string | undefined
+  setupTasks?: WorktreeSetupTask[] | undefined
+  setupError?: string | undefined
 }
 
 export interface TmuxSessionState {
@@ -41,6 +42,7 @@ export interface TmuxSessionTitleState {
   currentCommand: string | null
   commandLine?: string | null
   shellTitle?: string | null
+  fallbackShell?: string | null
 }
 
 export interface TmuxTerminalSession {
@@ -49,6 +51,8 @@ export interface TmuxTerminalSession {
   name: string
   sessionName: string
   argv: string[]
+  shellCommand: string | null
+  interactiveShell: boolean
   closeOnSuccess: boolean
   status: Exclude<TerminalStatus, 'missing'>
   exitCode: number | null
@@ -66,12 +70,26 @@ export interface TmuxTerminalMetadata {
   worktreeId: string
   name: string
   argv: string[]
+  shellCommand: string | null
+  interactiveShell: boolean
   closeOnSuccess: boolean
   createdAt: string
   updatedAt: string
 }
 
-const encodeMetadata = (value: unknown): string =>
+interface DecodedTmuxMetadata {
+  terminalId: string
+  worktreeId: string
+  name: string | undefined
+  argv: string[] | undefined
+  shellCommand: string | null | undefined
+  createdAt: string | undefined
+  updatedAt: string | undefined
+}
+
+type TmuxMetadataValue = string | readonly string[] | null
+
+const encodeMetadata = (value: TmuxMetadataValue): string =>
   Buffer.from(JSON.stringify(value), 'utf8').toString('base64url')
 
 function isAbsentTmuxServer(stderr: string): boolean {
@@ -83,12 +101,17 @@ function isAbsentTmuxServer(stderr: string): boolean {
   )
 }
 
-function decodeMetadata(value: string): unknown {
+function decodeMetadata<Output>(
+  value: string,
+  schema: z.ZodType<Output>
+): Output | undefined {
   if (!value) {
     return undefined
   }
 
-  return JSON.parse(Buffer.from(value, 'base64url').toString('utf8'))
+  return schema.parse(
+    JSON.parse(Buffer.from(value, 'base64url').toString('utf8'))
+  )
 }
 
 export const TMUX_SCROLL_EXIT_SEQUENCE = TERMINAL_SCROLL_EXIT_SEQUENCE
@@ -156,8 +179,10 @@ bind-key -T copy-mode-vi User4 select-pane -t .
 bind-key -T copy-mode MouseDragEnd1Pane send-keys -X stop-selection
 bind-key -T copy-mode-vi MouseDragEnd1Pane send-keys -X stop-selection
 # Keep these explicit so source-file replaces stale bindings in existing servers.
-bind-key -T copy-mode WheelDownPane { select-pane ; send-keys -X -N 5 scroll-down ; if-shell -F '#{&&:#{==:#{scroll_position},0},#{==:#{selection_present},0}}' { send-keys -X cancel } }
-bind-key -T copy-mode-vi WheelDownPane { select-pane ; send-keys -X -N 5 scroll-down ; if-shell -F '#{&&:#{==:#{scroll_position},0},#{==:#{selection_present},0}}' { send-keys -X cancel } }
+bind-key -T copy-mode WheelUpPane { select-pane ; send-keys -X -N 1 scroll-up }
+bind-key -T copy-mode-vi WheelUpPane { select-pane ; send-keys -X -N 1 scroll-up }
+bind-key -T copy-mode WheelDownPane { select-pane ; send-keys -X -N 1 scroll-down ; if-shell -F '#{&&:#{==:#{scroll_position},0},#{==:#{selection_present},0}}' { send-keys -X cancel } }
+bind-key -T copy-mode-vi WheelDownPane { select-pane ; send-keys -X -N 1 scroll-down ; if-shell -F '#{&&:#{==:#{scroll_position},0},#{==:#{selection_present},0}}' { send-keys -X cancel } }
 bind-key -T root WheelUpPane if-shell -F '#{||:#{alternate_on},#{pane_in_mode},#{mouse_any_flag}}' { send-keys -M } { copy-mode -H }
 `
 
@@ -171,6 +196,10 @@ export class TmuxAdapter {
   private readonly uid: number | undefined
   private readonly creationTails = new Map<string, Promise<void>>()
   private readonly configuredSockets = new Set<string>()
+  private readonly socketConfigurationPromises = new Map<
+    string,
+    Promise<void>
+  >()
   private initializationPromise: Promise<boolean> | null = null
   private sshAuthSockPromise: Promise<string | undefined> | null = null
 
@@ -233,6 +262,8 @@ export class TmuxAdapter {
     createdAt: string
     cwd: string
     argv: string[]
+    shellCommand: string | null
+    interactiveShell: boolean
     fallbackArgv?: string[]
     closeOnSuccess?: boolean
     initialSize?: TerminalSize
@@ -313,36 +344,40 @@ export class TmuxAdapter {
           await this.configureServer(input.socketName)
         }
 
+        const environment = { ...input.env }
+        if (sshAuthSock) {
+          environment.SSH_AUTH_SOCK = sshAuthSock
+        }
+
         const spec: LaunchSpec = {
           argv: [...input.argv],
-          ...(input.fallbackArgv
-            ? { fallbackArgv: [...input.fallbackArgv] }
-            : {}),
           cwd: input.cwd,
-          env: {
-            ...(sshAuthSock ? { SSH_AUTH_SOCK: sshAuthSock } : {}),
-            ...input.env
-          },
-          ...(shellIntegrationReady
-            ? {
-                shellIntegrationDir: this.shellIntegrationDir,
-                tmuxExecutable: resolveExecutablePath(
-                  this.executable,
-                  this.hostEnvironment
-                )
-              }
-            : {}),
-          ...(input.setupTasks?.length
-            ? {
-                setupTasks: input.setupTasks.map((task) => ({
-                  ...task,
-                  argv: [...task.argv],
-                  env: { ...task.env }
-                }))
-              }
-            : {}),
-          ...(input.setupError ? { setupError: input.setupError } : {})
+          env: environment
         }
+        if (input.fallbackArgv) {
+          spec.fallbackArgv = [...input.fallbackArgv]
+        }
+
+        spec.tmuxExecutable = resolveExecutablePath(
+          this.executable,
+          this.hostEnvironment
+        )
+        if (shellIntegrationReady) {
+          spec.shellIntegrationDir = this.shellIntegrationDir
+        }
+
+        if (input.setupTasks?.length) {
+          spec.setupTasks = input.setupTasks.map((task) => ({
+            ...task,
+            argv: [...task.argv],
+            env: { ...task.env }
+          }))
+        }
+
+        if (input.setupError) {
+          spec.setupError = input.setupError
+        }
+
         await fs.writeFile(specPath, JSON.stringify(spec), { mode: 0o600 })
         wroteSpec = true
         await runChecked(this.runner, {
@@ -377,6 +412,8 @@ export class TmuxAdapter {
           worktreeId: input.worktreeId,
           name: input.name,
           argv: input.argv,
+          shellCommand: input.shellCommand,
+          interactiveShell: input.interactiveShell,
           closeOnSuccess: input.closeOnSuccess ?? false,
           createdAt: input.createdAt,
           updatedAt: input.createdAt
@@ -418,13 +455,29 @@ export class TmuxAdapter {
   }
 
   async configureServer(socketName: string): Promise<void> {
-    await runChecked(this.runner, {
+    if (this.configuredSockets.has(socketName)) {
+      return
+    }
+
+    const existing = this.socketConfigurationPromises.get(socketName)
+    if (existing) {
+      return existing
+    }
+
+    const configuring = runChecked(this.runner, {
       executable: this.executable,
       args: [...this.base(socketName), 'source-file', this.configPath],
       env: this.environment(),
       timeoutMs: 10_000
+    }).then(() => {
+      this.configuredSockets.add(socketName)
     })
-    this.configuredSockets.add(socketName)
+    this.socketConfigurationPromises.set(socketName, configuring)
+    return configuring.finally(() => {
+      if (this.socketConfigurationPromises.get(socketName) === configuring) {
+        this.socketConfigurationPromises.delete(socketName)
+      }
+    })
   }
 
   private async configureSession(
@@ -435,6 +488,8 @@ export class TmuxAdapter {
     const values = [
       ['@treeport-name', encodeMetadata(metadata.name)],
       ['@treeport-argv', encodeMetadata(metadata.argv)],
+      ['@treeport-shell-command', encodeMetadata(metadata.shellCommand)],
+      ['@treeport-interactive-shell', metadata.interactiveShell ? '1' : '0'],
       ['@treeport-close-on-success', metadata.closeOnSuccess ? '1' : '0'],
       ['@treeport-created-at', encodeMetadata(metadata.createdAt)],
       ['@treeport-updated-at', encodeMetadata(metadata.updatedAt)],
@@ -499,7 +554,7 @@ export class TmuxAdapter {
         'list-panes',
         '-a',
         '-F',
-        '#{session_name}\t#{@treeport-terminal-id}\t#{@treeport-worktree-id}\t#{@treeport-name}\t#{@treeport-argv}\t#{@treeport-close-on-success}\t#{@treeport-created-at}\t#{@treeport-updated-at}\t#{session_created}\t#{pane_dead}\t#{pane_dead_status}'
+        '#{session_name}\t#{@treeport-terminal-id}\t#{@treeport-worktree-id}\t#{@treeport-name}\t#{@treeport-argv}\t#{@treeport-shell-command}\t#{@treeport-interactive-shell}\t#{@treeport-close-on-success}\t#{@treeport-created-at}\t#{@treeport-updated-at}\t#{session_created}\t#{pane_dead}\t#{pane_dead_status}'
       ],
       env: this.environment(),
       timeoutMs: 10_000
@@ -527,6 +582,8 @@ export class TmuxAdapter {
         worktreeId,
         encodedName,
         encodedArgv,
+        encodedShellCommand,
+        encodedInteractiveShell,
         closeOnSuccess,
         encodedCreatedAt,
         encodedUpdatedAt,
@@ -543,39 +600,34 @@ export class TmuxAdapter {
         continue
       }
 
-      let metadata: {
-        terminalId: string
-        worktreeId: string
-        name: string | undefined
-        argv: string[] | undefined
-        createdAt: string | undefined
-        updatedAt: string | undefined
-      }
+      let metadata: DecodedTmuxMetadata
       try {
-        const name = decodeMetadata(encodedName ?? '')
-        const argv = decodeMetadata(encodedArgv ?? '')
-        const createdAt = decodeMetadata(encodedCreatedAt ?? '')
-        const updatedAt = decodeMetadata(encodedUpdatedAt ?? '')
-        if (
-          (name !== undefined && typeof name !== 'string') ||
-          (argv !== undefined &&
-            (!Array.isArray(argv) ||
-              !argv.every((value) => typeof value === 'string'))) ||
-          (createdAt !== undefined && typeof createdAt !== 'string') ||
-          (updatedAt !== undefined && typeof updatedAt !== 'string')
-        ) {
-          continue
-        }
-
         metadata = {
           terminalId,
           worktreeId,
-          name,
-          argv: argv as string[] | undefined,
-          createdAt,
-          updatedAt
+          name: decodeMetadata(encodedName ?? '', z.string()),
+          argv: decodeMetadata(encodedArgv ?? '', z.array(z.string())),
+          shellCommand: decodeMetadata(
+            encodedShellCommand ?? '',
+            z.string().nullable()
+          ),
+          createdAt: decodeMetadata(encodedCreatedAt ?? '', z.string()),
+          updatedAt: decodeMetadata(encodedUpdatedAt ?? '', z.string())
         }
       } catch {
+        continue
+      }
+
+      const interactiveShell =
+        encodedInteractiveShell === '1'
+          ? true
+          : encodedInteractiveShell === '0'
+            ? false
+            : undefined
+      if (
+        metadata.shellCommand === undefined ||
+        interactiveShell === undefined
+      ) {
         continue
       }
 
@@ -591,6 +643,8 @@ export class TmuxAdapter {
         name: metadata.name ?? sessionName,
         sessionName,
         argv: metadata.argv ?? [],
+        shellCommand: metadata.shellCommand,
+        interactiveShell,
         closeOnSuccess: closeOnSuccess === '1',
         status: dead ? 'exited' : 'running',
         exitCode: Number.isNaN(exitCode) ? null : exitCode,
@@ -797,7 +851,7 @@ export class TmuxAdapter {
         '-p',
         '-t',
         sessionName,
-        '#{@treeport-shell-title}\t#{pane_current_command}\t#{@treeport-command}\t#{pane_title}'
+        '#{@treeport-fallback-shell}\t#{@treeport-shell-title}\t#{pane_current_command}\t#{@treeport-command}\t#{pane_title}'
       ],
       env: this.environment(),
       timeoutMs: 10_000
@@ -809,29 +863,45 @@ export class TmuxAdapter {
     const firstSeparator = result.stdout.indexOf('\t')
     const secondSeparator = result.stdout.indexOf('\t', firstSeparator + 1)
     const thirdSeparator = result.stdout.indexOf('\t', secondSeparator + 1)
+    const fourthSeparator = result.stdout.indexOf('\t', thirdSeparator + 1)
     if (
       firstSeparator === -1 ||
       secondSeparator === -1 ||
-      thirdSeparator === -1
+      thirdSeparator === -1 ||
+      fourthSeparator === -1
     ) {
       return null
     }
 
-    const encodedShellTitle = result.stdout.slice(0, firstSeparator).trim()
+    let fallbackShell: string | null = null
     let shellTitle: string | null = null
     try {
-      const decoded = decodeMetadata(encodedShellTitle)
-      shellTitle = typeof decoded === 'string' ? decoded : null
+      fallbackShell =
+        decodeMetadata(
+          result.stdout.slice(0, firstSeparator).trim(),
+          z.string()
+        ) ?? null
+      shellTitle =
+        decodeMetadata(
+          result.stdout.slice(firstSeparator + 1, secondSeparator).trim(),
+          z.string()
+        ) ?? null
     } catch {
       // Ignore malformed optional metadata from an external session.
     }
 
     const currentCommand =
-      result.stdout.slice(firstSeparator + 1, secondSeparator).trim() || null
-    const commandLine =
       result.stdout.slice(secondSeparator + 1, thirdSeparator).trim() || null
-    const paneTitle = result.stdout.slice(thirdSeparator + 1).trim() || null
-    return { paneTitle, currentCommand, commandLine, shellTitle }
+    const commandLine =
+      result.stdout.slice(thirdSeparator + 1, fourthSeparator).trim() || null
+    const paneTitle = result.stdout.slice(fourthSeparator + 1).trim() || null
+    return {
+      paneTitle,
+      currentCommand,
+      commandLine,
+      shellTitle,
+      fallbackShell
+    }
   }
 
   async setSessionShellTitle(
@@ -916,9 +986,7 @@ export class TmuxAdapter {
       timeoutMs: 15_000
     })
     if (result.exitCode !== 0 && !isAbsentTmuxServer(result.stderr)) {
-      throw new Error(
-        result.stderr.trim() || 'Failed to kill worktree tmux server'
-      )
+      throw new Error(result.stderr.trim() || 'Failed to kill tree tmux server')
     }
 
     await Promise.all(

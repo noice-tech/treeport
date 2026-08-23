@@ -1,3 +1,4 @@
+import { z } from 'zod'
 import {
   treeport,
   type JsonValue,
@@ -34,22 +35,24 @@ const serverEmpty =
   document.querySelector<HTMLParagraphElement>('.server-empty')!
 const frame = document.querySelector<HTMLIFrameElement>('iframe')!
 
-function browserUrl(value: unknown): URL | null {
-  if (
-    typeof value !== 'string' ||
-    value.length > 4_096 ||
-    !URL.canParse(value)
-  ) {
+const browserUrl = z.unknown().transform((value): URL | null => {
+  const parsed = z.string().max(4_096).safeParse(value)
+  if (!parsed.success || !URL.canParse(parsed.data)) {
     return null
   }
 
-  const url = new URL(value)
+  const url = new URL(parsed.data)
   return (url.protocol === 'http:' || url.protocol === 'https:') &&
     url.username === '' &&
     url.password === ''
     ? url
     : null
-}
+}).parse
+
+const browserStateSchema = z.object({
+  url: z.unknown().optional(),
+  launchUpdatedAt: z.string().optional()
+})
 
 function listenerUrl(listener: WorktreeListener): URL | null {
   let host = listener.host
@@ -244,27 +247,20 @@ void Promise.all([
   ([context, storedValue]) => {
     const configuredInput = context.launch.input
     const configuredUrl = browserUrl(configuredInput?.url)
-    const configuredTitle =
-      typeof configuredInput?.title === 'string'
-        ? configuredInput.title.trim().slice(0, 256)
-        : ''
-    const storedState =
-      storedValue !== null &&
-      typeof storedValue === 'object' &&
-      !Array.isArray(storedValue)
-        ? storedValue
-        : null
+    const parsedTitle = z.string().safeParse(configuredInput?.title)
+    const configuredTitle = parsedTitle.success
+      ? parsedTitle.data.trim().slice(0, 256)
+      : ''
+    const parsedState = browserStateSchema.safeParse(storedValue)
+    const storedState = parsedState.success ? parsedState.data : null
     const storedUrl = browserUrl(storedState?.url)
-    const storedLaunchUpdatedAt =
-      typeof storedState?.launchUpdatedAt === 'string'
-        ? storedState.launchUpdatedAt
-        : null
+    const storedLaunchUpdatedAt = storedState?.launchUpdatedAt ?? null
     currentUrl =
       configuredUrl && storedLaunchUpdatedAt !== context.panel.updatedAt
         ? configuredUrl
         : (storedUrl ?? configuredUrl)
 
-    let storageWrites: Promise<unknown> = Promise.resolve()
+    let storageWrites: Promise<void> = Promise.resolve()
     const storeUrl = (url: URL) => {
       const write = storageWrites.then(() =>
         treeport.storage.set('browser-state', {
@@ -284,7 +280,7 @@ void Promise.all([
       showError(null)
       currentUrl = url
       input.value = url.href
-      void storeUrl(url).catch((reason: unknown) => {
+      void storeUrl(url).catch((reason) => {
         showError(reason instanceof Error ? reason.message : String(reason))
       })
     }
@@ -304,7 +300,7 @@ void Promise.all([
           navigate(url)
           treeport.panel.setTitle(configuredTitle || url.host)
         })
-        .catch((reason: unknown) => {
+        .catch((reason) => {
           showError(reason instanceof Error ? reason.message : String(reason))
         })
         .finally(() => {
@@ -321,7 +317,7 @@ void Promise.all([
       input.value = currentUrl.href
       navigate(currentUrl)
       treeport.panel.setTitle(configuredTitle || currentUrl.host)
-      void storeUrl(currentUrl).catch((reason: unknown) => {
+      void storeUrl(currentUrl).catch((reason) => {
         showError(reason instanceof Error ? reason.message : String(reason))
       })
     } else {
@@ -330,10 +326,10 @@ void Promise.all([
       treeport.panel.setTitle(null)
       showHomepage()
       if (configuredInput?.url !== undefined) {
-        input.value =
-          typeof configuredInput.url === 'string'
-            ? configuredInput.url
-            : 'http://localhost:3000/'
+        const parsedInput = z.string().safeParse(configuredInput.url)
+        input.value = parsedInput.success
+          ? parsedInput.data
+          : 'http://localhost:3000/'
         showError('Enter an absolute HTTP or HTTPS URL without credentials.')
       }
     }
@@ -368,7 +364,7 @@ void Promise.all([
       }
     })
   },
-  (reason: unknown) => {
+  (reason) => {
     loading.hidden = true
     showError(reason instanceof Error ? reason.message : String(reason))
   }
@@ -385,8 +381,11 @@ addEventListener('message', (event) => {
   if (event.data.method === 'panel.title.set') {
     if (event.data.title === null) {
       treeport.panel.setTitle(null)
-    } else if (typeof event.data.title === 'string') {
-      treeport.panel.setTitle(event.data.title.trim().slice(0, 256) || null)
+    } else {
+      const parsedTitle = z.string().safeParse(event.data.title)
+      if (parsedTitle.success) {
+        treeport.panel.setTitle(parsedTitle.data.trim().slice(0, 256) || null)
+      }
     }
 
     return

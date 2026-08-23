@@ -9,6 +9,8 @@ import {
 import type {
   EventsClientToServerEvents,
   EventsServerToClientEvents,
+  EventsSnapshot,
+  ProductEvent,
   ProductEventDataMap,
   ProjectRecord
 } from '@treeport/shared'
@@ -20,11 +22,16 @@ export function useProjectEventsBridge(
   projects: ProjectRecord[] | undefined,
   onPanelOpenRequested?: (
     request: ProductEventDataMap['panel.open_requested']
+  ) => void,
+  onWorkspaceOpenRequested?: (
+    request: ProductEventDataMap['workspace.open_requested']
   ) => void
 ): boolean {
   const queryClient = useQueryClient()
   const onPanelOpenRequestedRef = useRef(onPanelOpenRequested)
   onPanelOpenRequestedRef.current = onPanelOpenRequested
+  const onWorkspaceOpenRequestedRef = useRef(onWorkspaceOpenRequested)
+  onWorkspaceOpenRequestedRef.current = onWorkspaceOpenRequested
   const [eventsDisconnected, setEventsDisconnected] = useState(false)
 
   useEffect(() => {
@@ -61,7 +68,7 @@ export function useProjectEventsBridge(
           { queryKey: ['web-panel-definitions'] },
           { cancelRefetch: false }
         )
-      ])
+      ]).then(() => undefined)
     )
     const refresh = () => {
       refreshes.schedule()
@@ -71,7 +78,7 @@ export function useProjectEventsBridge(
       ])
     }
     const refreshProjects = () => projectRefreshes.schedule()
-    const snapshot = (value: unknown) => {
+    const snapshot = (value: EventsSnapshot) => {
       const payload = parseEventsSnapshot(value)
       if (!payload) {
         setEventsDisconnected(true)
@@ -82,7 +89,7 @@ export function useProjectEventsBridge(
       setEventsDisconnected(false)
       refresh()
     }
-    const productEvent = (value: unknown) => {
+    const productEvent = (value: ProductEvent) => {
       const event = parseProductEvent(value)
       if (!event) {
         return
@@ -105,6 +112,12 @@ export function useProjectEventsBridge(
       if (event.type === 'panel.open_requested') {
         refresh()
         onPanelOpenRequestedRef.current?.(event.data)
+        return
+      }
+
+      if (event.type === 'workspace.open_requested') {
+        refresh()
+        onWorkspaceOpenRequestedRef.current?.(event.data)
         return
       }
 

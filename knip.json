@@ -1,6 +1,5 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
-  "ignore": [".treeport/web-panels/**"],
   "ignoreBinaries": ["tailscale"],
   "workspaces": {
     ".": {
@@ -14,7 +13,22 @@
         "src/shell-preload.ts",
         "src/shell/shell.tsx",
         "src/shell/tailwind.css"
+      ],
+      "ignoreDependencies": [
+        "@electron-forge/maker-dmg",
+        "@electron-forge/maker-zip",
+        "@electron-forge/publisher-github"
+      ],
+      "ignoreBinaries": ["lipo", "plutil"]
+    },
+    "packages/web-panel-browser": {
+      "entry": [
+        "web-panels/browser/browser.ts",
+        "web-panels/remote-browser/remote-browser.ts"
       ]
+    },
+    "packages/web-panel-review": {
+      "entry": ["web-panels/review/review.tsx"]
     }
   }
 }

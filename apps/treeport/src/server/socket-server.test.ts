@@ -10,7 +10,9 @@ import {
   type TmuxAdapter
 } from './core/index'
 import type {
+  BrowserClientMessage,
   BrowserClientToServerEvents,
+  BrowserServerMessage,
   BrowserServerToClientEvents,
   EventsClientToServerEvents,
   EventsServerToClientEvents,
@@ -24,9 +26,13 @@ import {
   SOCKET_IO_PATH,
   TERMINAL_PROTOCOL_VERSION
 } from '@treeport/shared'
+import { testAccess } from './test-access'
 import { TerminalAttachmentManager } from './terminal-attachments'
-import { createSocketServer } from './socket-server'
-import type { BrowserSessionManager } from './browser-sessions'
+import {
+  createSocketServer,
+  type BrowserSessionController
+} from './socket-server'
+import type { BrowserTransport } from './browser-sessions'
 import type { TerminalMetadataManager } from './terminal-metadata'
 
 class FakePty {
@@ -81,11 +87,12 @@ interface NetworkFixture {
 const fixtures: NetworkFixture[] = []
 
 async function fixture(
-  browserSessions?: BrowserSessionManager
+  browserSessions?: BrowserSessionController
 ): Promise<NetworkFixture> {
   const events = new ProductEventBus()
   const ptys: FakePty[] = []
-  const service = {
+  // SAFETY: The test fixture provides the asserted contract used here.
+  const service = testAccess<TreeportService>({
     events,
     listWebPanels: vi.fn(async () => []),
     refreshTerminalStatus: vi.fn(async () => ({
@@ -100,14 +107,15 @@ async function fixture(
       path: '/tmp',
       tmuxSocketName: 'socket'
     }))
-  } as unknown as TreeportService
-  const tmux = {
+  })
+  // SAFETY: The test fixture provides the asserted contract used here.
+  const tmux = testAccess<TmuxAdapter>({
     configureServer: vi.fn(async () => undefined),
     useManualWindowSize: vi.fn(async () => undefined),
     resizeWindow: vi.fn(async () => undefined),
     sessionSize: vi.fn(async () => ({ cols: 100, rows: 30 })),
     attachArgs: vi.fn(() => ['attach-session', '-t', 'session'])
-  } as unknown as TmuxAdapter
+  })
   const currentMetadata: TerminalRuntimeMetadata = {
     terminalId: 'term',
     title: 'shell',
@@ -120,7 +128,8 @@ async function fixture(
   const metadataSnapshot = vi.fn<() => TerminalRuntimeMetadata[]>(() => [
     currentMetadata
   ])
-  const metadata = {
+  // SAFETY: The test fixture provides the asserted contract used here.
+  const metadata = testAccess<TerminalMetadataManager>({
     initialize: vi.fn(async () => undefined),
     snapshot: metadataSnapshot,
     get: vi.fn(() => currentMetadata),
@@ -128,16 +137,18 @@ async function fixture(
     subscribe: vi.fn(() => () => undefined),
     viewingHistory: vi.fn(() => false),
     subscribeHistory: vi.fn(() => () => undefined)
-  } as unknown as TerminalMetadataManager
+  })
   const attachmentManager = new TerminalAttachmentManager(
     service,
     tmux,
     process.execPath,
     metadata,
+    // SAFETY: The test fixture provides the asserted contract used here.
     (() => {
       const value = new FakePty()
       ptys.push(value)
-      return value as unknown as IPty
+      // SAFETY: The test fixture provides the asserted contract used here.
+      return testAccess<IPty>(value)
     }) as never
   )
   const server = http.createServer((_request, response) => {
@@ -159,15 +170,21 @@ async function fixture(
     daemonLifecycle: 'treeport',
     webDevelopment: false
   } satisfies AppConfig
-  const { io, attachments } = createSocketServer(server, {
+  const socketServerDependencies = {
     service,
     config,
     tmux,
     terminalMetadata: metadata,
-    attachmentManager,
-    ...(browserSessions ? { browserSessions } : {})
-  })
+    attachmentManager
+  }
+  const { io, attachments } = browserSessions
+    ? createSocketServer(server, {
+        ...socketServerDependencies,
+        browserSessions
+      })
+    : createSocketServer(server, socketServerDependencies)
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  // SAFETY: The test fixture provides the asserted contract used here.
   const address = server.address() as AddressInfo
   const value: NetworkFixture = {
     server,
@@ -207,16 +224,20 @@ function terminalClient(
   terminalProtocol: string | null = String(TERMINAL_PROTOCOL_VERSION),
   options: { extraHeaders?: Record<string, string> } = {}
 ): Socket<TerminalServerToClientEvents, TerminalClientToServerEvents> {
-  return createClient(`${url}/terminals`, {
+  const clientOptions: NonNullable<Parameters<typeof createClient>[1]> = {
     path: SOCKET_IO_PATH,
     transports: ['websocket'],
     forceNew: true,
     reconnection: true,
     reconnectionDelay: 10,
-    ...(terminalProtocol === null ? {} : { query: { terminalProtocol } }),
     auth: { terminalId: 'term', clientId, cols: 100, rows: 30 },
     ...options
-  })
+  }
+  if (terminalProtocol !== null) {
+    clientOptions.query = { terminalProtocol }
+  }
+
+  return createClient(`${url}/terminals`, clientOptions)
 }
 
 async function closeClient(socket: Socket): Promise<void> {
@@ -343,11 +364,13 @@ describe('Socket.IO real network', () => {
     const secondEvents: TerminalRuntimeMetadata[] = []
     first.on('product_event', (event) => {
       if (event.type === 'terminal.metadata') {
+        // SAFETY: The test fixture provides the asserted contract used here.
         firstEvents.push(event.data as TerminalRuntimeMetadata)
       }
     })
     second.on('product_event', (event) => {
       if (event.type === 'terminal.metadata') {
+        // SAFETY: The test fixture provides the asserted contract used here.
         secondEvents.push(event.data as TerminalRuntimeMetadata)
       }
     })
@@ -381,37 +404,33 @@ describe('Socket.IO real network', () => {
   })
 
   it('uses one-use browser authorization before relaying hosted browser commands', async () => {
-    const messages: unknown[] = []
+    const messages: BrowserClientMessage[] = []
     const closes: string[] = []
     const browserSessions = {
-      accept: vi.fn(
-        async (
-          ticket: string,
-          transport: { sendMessage(message: unknown): boolean }
-        ) => {
-          expect(ticket).toBe('b'.repeat(43))
-          transport.sendMessage({
-            type: 'ready',
-            state: {
-              url: 'about:blank',
-              title: '',
-              loading: false,
-              canGoBack: false,
-              canGoForward: false,
-              controlled: true,
-              hasController: true,
-              controller: 'you',
-              viewport: { width: 800, height: 600 }
-            }
-          })
-          return 'browser-connection'
-        }
+      accept: vi.fn(async (ticket: string, transport: BrowserTransport) => {
+        expect(ticket).toBe('b'.repeat(43))
+        transport.sendMessage({
+          type: 'ready',
+          state: {
+            url: 'about:blank',
+            title: '',
+            loading: false,
+            canGoBack: false,
+            canGoForward: false,
+            controlled: true,
+            hasController: true,
+            controller: 'you',
+            viewport: { width: 800, height: 600 }
+          }
+        })
+        return 'browser-connection'
+      }),
+      message: vi.fn(
+        (_connectionId: string, message: BrowserClientMessage) =>
+          void messages.push(message)
       ),
-      message: vi.fn((_connectionId: string, message: unknown) =>
-        messages.push(message)
-      ),
-      close: vi.fn((connectionId: string) => closes.push(connectionId))
-    } as unknown as BrowserSessionManager
+      close: vi.fn((connectionId: string) => void closes.push(connectionId))
+    } satisfies BrowserSessionController
     const value = await fixture(browserSessions)
     const browser: Socket<
       BrowserServerToClientEvents,
@@ -423,7 +442,7 @@ describe('Socket.IO real network', () => {
       reconnection: false,
       auth: { ticket: 'b'.repeat(43), protocolVersion: 1 }
     })
-    const ready = await new Promise<unknown>((resolve) =>
+    const ready = await new Promise<BrowserServerMessage>((resolve) =>
       browser.once('message', resolve)
     )
     expect(ready).toMatchObject({
@@ -562,11 +581,14 @@ describe('Socket.IO real network', () => {
 
   it('does not finish attachment setup after a real pre-ready disconnect', async () => {
     const value = await fixture()
-    let finishRefresh!: (terminal: unknown) => void
+    type RefreshedTerminal = Awaited<
+      ReturnType<TreeportService['refreshTerminalStatus']>
+    >
+    let finishRefresh!: (terminal: RefreshedTerminal) => void
     vi.mocked(value.service.refreshTerminalStatus).mockReturnValueOnce(
-      new Promise((resolve) => {
+      new Promise<RefreshedTerminal>((resolve) => {
         finishRefresh = resolve
-      }) as never
+      })
     )
     const closeAttachment = vi.spyOn(value.attachments, 'close')
     const socket = terminalClient(value.url)
@@ -584,9 +606,15 @@ describe('Socket.IO real network', () => {
     finishRefresh({
       id: 'term',
       worktreeId: 'wt',
+      name: 'Terminal',
       tmuxSessionName: 'session',
+      argv: ['shell'],
+      shellCommand: null,
+      interactiveShell: false,
       status: 'running',
-      exitCode: null
+      exitCode: null,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z'
     })
 
     const probe = terminalClient(value.url, 'tab-probe')
@@ -638,6 +666,7 @@ describe('Socket.IO real network', () => {
     socket.io.reconnection(false)
     await new Promise<void>((resolve) => socket.once('ready', () => resolve()))
 
+    // SAFETY: The test fixture provides the asserted contract used here.
     socket.emit('input', undefined as never)
     await vi.waitFor(() => expect(socket.connected).toBe(false))
     expect(value.ptys[0]!.kills).toBe(1)

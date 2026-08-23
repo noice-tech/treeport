@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useLocation } from '@tanstack/react-router'
+import { z } from 'zod'
 import type {
   ProductEventDataMap,
   ProjectRecord,
@@ -34,6 +35,7 @@ import {
   WorkspaceShell
 } from './features/sidebar/workspace-shell'
 import { TerminalPresetsDialog } from './features/terminal-presets/terminal-presets-dialog'
+import { UpdateControl } from './features/updates/update-control'
 import { NewPanelDialog } from './features/panels/new-panel-dialog'
 import {
   TerminalWorkspace,
@@ -54,7 +56,7 @@ import {
 import {
   LAST_PROJECT_TERMINAL_STORAGE_PREFIX,
   LAST_WORKSPACE_ROUTE_STORAGE_KEY,
-  panelOpenRequestMatchesTerminal,
+  openRequestMatchesTerminal,
   resolveWorkspaceRoute,
   targetForProject,
   targetForTerminal,
@@ -64,6 +66,10 @@ import {
 import { useWorkspaceNavigate } from './workspace-router-navigation'
 import { ForceSpecificCursor } from './force-specific-cursor'
 
+const webPanelPermissionErrorSchema = z.object({
+  error: z.object({ message: z.string() })
+})
+
 type AppDialog =
   | { type: 'project' }
   | { type: 'worktree'; project: ProjectRecord }
@@ -72,6 +78,10 @@ type AppDialog =
   | { type: 'remove'; worktree: WorktreeRecord; preview: RemovePreview }
   | { type: 'close-web-panel'; panel: WebPanel }
   | null
+
+interface DeletePanelQuery {
+  discardStoredData?: string
+}
 
 export default function App() {
   return (
@@ -234,11 +244,13 @@ function WorkspaceApp() {
             }
           )
           if (!response.ok) {
-            const result = (await response.json().catch(() => null)) as {
-              error?: { message?: string }
-            } | null
+            const result = webPanelPermissionErrorSchema.safeParse(
+              await response.json().catch(() => null)
+            )
             throw new Error(
-              result?.error?.message ?? 'Could not grant web panel permission'
+              result.success
+                ? result.data.error.message
+                : 'Could not grant web panel permission'
             )
           }
         }
@@ -256,24 +268,47 @@ function WorkspaceApp() {
           )
         ).panel
       })(),
-    onSuccess: async (panel) => {
+    onSuccess: async (panel, { worktree }) => {
       setDialog(null)
-      await queryClient.invalidateQueries({
-        queryKey: projectsQueryOptions.queryKey
-      })
+      queryClient.setQueryData<ProjectRecord[]>(
+        projectsQueryOptions.queryKey,
+        (current) =>
+          current?.map((project) =>
+            project.id !== worktree.projectId
+              ? project
+              : {
+                  ...project,
+                  worktrees: project.worktrees.map((candidate) =>
+                    candidate.id !== worktree.id ||
+                    candidate.panels.some(
+                      (existing) => existing.id === panel.id
+                    )
+                      ? candidate
+                      : {
+                          ...candidate,
+                          panels: [...candidate.panels, panel]
+                        }
+                  )
+                }
+          )
+      )
       const target = targetForWebPanel(
         queryClient.getQueryData<ProjectRecord[]>(
           projectsQueryOptions.queryKey
         ) ?? projects,
         panel
       )
-      if (target) {
-        await navigateToWorkspace(target)
-      }
+      const navigation = target
+        ? navigateToWorkspace(target)
+        : Promise.resolve()
+      void queryClient.invalidateQueries({
+        queryKey: projectsQueryOptions.queryKey
+      })
+      await navigation
     },
     onError: (error, { worktree, definition }) => {
       notifyError(error, {
-        operation: `create web panel “${definition.title}” in worktree “${worktree.name}”`
+        operation: `create web panel “${definition.title}” in tree “${worktree.name}”`
       })
     }
   })
@@ -284,15 +319,19 @@ function WorkspaceApp() {
     }: {
       panel: WebPanel
       discardStoredData?: boolean
-    }) =>
-      parseResponse(
+    }) => {
+      const query: DeletePanelQuery = {}
+      if (discardStoredData) {
+        query.discardStoredData = 'true'
+      }
+
+      return parseResponse(
         rpc.api.panels[':panelId'].$delete({
           param: { panelId: panel.id },
-          query: {
-            ...(discardStoredData ? { discardStoredData: 'true' } : {})
-          }
+          query
         })
-      ),
+      )
+    },
     onSuccess: async (_, { panel }) => {
       setWebPanelRuntimeTitle(panel.id, null)
       setDialog((current) =>
@@ -331,7 +370,7 @@ function WorkspaceApp() {
           closeWebPanel.mutate({ panel })
         }
       },
-      (error: unknown) => {
+      (error) => {
         notifyError(error, {
           operation: `check stored data for web panel “${panel.title}”`
         })
@@ -345,7 +384,7 @@ function WorkspaceApp() {
         [request.panelId]: (current[request.panelId] ?? 0) + 1
       }))
       if (
-        !panelOpenRequestMatchesTerminal(
+        !openRequestMatchesTerminal(
           request.sourceTerminalId,
           selectedTerminalId
         )
@@ -374,15 +413,52 @@ function WorkspaceApp() {
             await navigateToWorkspace(target)
           }
         })
-        .catch((error: unknown) => {
+        .catch((error) => {
           notifyError(error, { operation: 'open web panel' })
+        })
+    },
+    [navigateToWorkspace, queryClient, selectedTerminalId]
+  )
+  const navigateWorkspaceOpenRequest = useCallback(
+    (request: ProductEventDataMap['workspace.open_requested']) => {
+      if (
+        !openRequestMatchesTerminal(
+          request.sourceTerminalId,
+          selectedTerminalId
+        )
+      ) {
+        return
+      }
+
+      void queryClient
+        .invalidateQueries({
+          queryKey: projectsQueryOptions.queryKey
+        })
+        .then(async () => {
+          const freshProjects =
+            queryClient.getQueryData<ProjectRecord[]>(
+              projectsQueryOptions.queryKey
+            ) ?? []
+          const worktree = freshProjects
+            .flatMap((project) => project.worktrees)
+            .find((candidate) => candidate.id === request.worktreeId)
+          const target = worktree
+            ? targetForWorktree(freshProjects, worktree)
+            : null
+          if (target) {
+            await navigateToWorkspace(target)
+          }
+        })
+        .catch((error) => {
+          notifyError(error, { operation: 'open workspace' })
         })
     },
     [navigateToWorkspace, queryClient, selectedTerminalId]
   )
   const eventsDisconnected = useProjectEventsBridge(
     projectsQuery.data,
-    navigatePanelOpenRequest
+    navigatePanelOpenRequest,
+    navigateWorkspaceOpenRequest
   )
   const [showSyncDegraded, setShowSyncDegraded] = useState(false)
   const dialogTriggerRef = useRef<HTMLElement | null>(null)
@@ -391,6 +467,7 @@ function WorkspaceApp() {
     trigger?: HTMLElement
   ) => {
     dialogTriggerRef.current =
+      // SAFETY: The component contract supplies the asserted browser value used here.
       trigger ?? (document.activeElement as HTMLElement | null)
     setDialog(nextDialog)
   }
@@ -684,7 +761,7 @@ function WorkspaceApp() {
 
       if (command === 'new-worktree') {
         if (
-          activeProject &&
+          activeProject?.kind === 'repository' &&
           activeProject.availability.state !== 'unavailable'
         ) {
           openDialog({ type: 'worktree', project: activeProject })
@@ -748,6 +825,7 @@ function WorkspaceApp() {
         }
         terminals={activeProjectTerminals}
         onSelectTerminal={selectTerminal}
+        updateControl={<UpdateControl />}
         notificationCenter={
           <NotificationCenter
             projects={projects}
@@ -758,6 +836,7 @@ function WorkspaceApp() {
         }
       />
       <WorkspaceSidebar
+        updateControl={<UpdateControl />}
         notificationCenter={
           <NotificationCenter
             projects={projects}

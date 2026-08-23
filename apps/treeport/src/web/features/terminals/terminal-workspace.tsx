@@ -29,10 +29,17 @@ export interface PendingTerminalCreation {
 export interface CreateTerminalInput {
   name: string
   argv?: string[]
+  shellCommand?: string
   cwd?: string
   env?: Record<string, string>
   returnToShell?: boolean
   closeOnSuccess?: boolean
+}
+
+interface CreateTerminalMutationInput extends CreateTerminalInput {
+  worktreeId: string
+  initialSize?: TerminalSize
+  pendingTerminal: PendingTerminalCreation
 }
 
 export function useTerminalWorkflows({
@@ -67,40 +74,56 @@ export function useTerminalWorkflows({
   const selectedTerminalId = selectedTerminal?.id ?? null
 
   const createTerminal = useMutation({
-    mutationFn: ({
+    mutationFn: async ({
       worktreeId,
       name,
       argv,
+      shellCommand,
       cwd,
       env,
       returnToShell,
       closeOnSuccess,
       initialSize
-    }: {
-      worktreeId: string
-      name: string
-      argv?: string[]
-      cwd?: string
-      env?: Record<string, string>
-      returnToShell?: boolean
-      closeOnSuccess?: boolean
-      initialSize?: TerminalSize
-      pendingTerminal: PendingTerminalCreation
-    }) =>
-      parseResponse(
+    }: CreateTerminalMutationInput) => {
+      const json: CreateTerminalInput & { initialSize?: TerminalSize } = {
+        name
+      }
+      if (argv) {
+        json.argv = argv
+      }
+
+      if (shellCommand) {
+        json.shellCommand = shellCommand
+      }
+
+      if (cwd) {
+        json.cwd = cwd
+      }
+
+      if (env) {
+        json.env = env
+      }
+
+      if (returnToShell) {
+        json.returnToShell = true
+      }
+
+      if (closeOnSuccess) {
+        json.closeOnSuccess = true
+      }
+
+      if (initialSize) {
+        json.initialSize = initialSize
+      }
+
+      const result = await parseResponse(
         rpc.api.worktrees[':worktreeId'].terminals.$post({
           param: { worktreeId },
-          json: {
-            name,
-            ...(argv ? { argv } : {}),
-            ...(cwd ? { cwd } : {}),
-            ...(env ? { env } : {}),
-            ...(returnToShell ? { returnToShell: true } : {}),
-            ...(closeOnSuccess ? { closeOnSuccess: true } : {}),
-            ...(initialSize ? { initialSize } : {})
-          }
+          json
         })
-      ).then((result) => result.terminal),
+      )
+      return result.terminal
+    },
     onSuccess: async (terminal, { pendingTerminal }) => {
       const pendingWasSelected =
         selectedPendingTerminalIdRef.current === pendingTerminal.id
@@ -246,17 +269,40 @@ export function useTerminalWorkflows({
     setPendingTerminals((current) => [...current, pendingTerminal])
     setSelectedPendingTerminalId(pendingTerminal.id)
     closeMobileWithoutFocusRestore()
-    createTerminal.mutate({
+    const mutation: CreateTerminalMutationInput = {
       worktreeId: currentWorktree.id,
       name: input.name,
-      ...(input.argv ? { argv: [...input.argv] } : {}),
-      ...(input.cwd ? { cwd: input.cwd } : {}),
-      ...(input.env ? { env: { ...input.env } } : {}),
-      ...(input.returnToShell ? { returnToShell: true } : {}),
-      ...(input.closeOnSuccess ? { closeOnSuccess: true } : {}),
-      ...(initialSize ? { initialSize } : {}),
       pendingTerminal
-    })
+    }
+    if (input.argv) {
+      mutation.argv = [...input.argv]
+    }
+
+    if (input.shellCommand) {
+      mutation.shellCommand = input.shellCommand
+    }
+
+    if (input.cwd) {
+      mutation.cwd = input.cwd
+    }
+
+    if (input.env) {
+      mutation.env = { ...input.env }
+    }
+
+    if (input.returnToShell) {
+      mutation.returnToShell = true
+    }
+
+    if (input.closeOnSuccess) {
+      mutation.closeOnSuccess = true
+    }
+
+    if (initialSize) {
+      mutation.initialSize = initialSize
+    }
+
+    createTerminal.mutate(mutation)
   }
 
   const requestCloseTerminal = (

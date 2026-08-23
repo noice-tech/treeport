@@ -10,7 +10,9 @@ import {
   TERMINAL_CAPTURE_DEFAULT_LINES,
   TERMINAL_CAPTURE_MAX_LINES,
   WEB_PANEL_INPUT_MAX_BYTES,
+  webPanelInputSchema,
   type ApiErrorBody,
+  type CreateOperationRequest,
   type EventsClientToServerEvents,
   type EventsServerToClientEvents,
   type PackageListing,
@@ -32,6 +34,11 @@ import {
 import { parseDurationMs } from '../duration.js'
 import { extractJsonOutput } from './args.js'
 import { OpenWorkspaceError, openWorkspace } from './open.js'
+import {
+  LocalUpdateError,
+  runLocalUpdate,
+  type LocalUpdateOptions
+} from './update.js'
 import {
   daemonDown,
   daemonHealth,
@@ -76,6 +83,17 @@ let writeStderr: (value: string) => void = (value) => {
   process.stderr.write(value)
 }
 let requestedExitCode = 0
+let cliEnvironment: NodeJS.ProcessEnv = process.env
+
+interface PackageMutationBody {
+  source: string
+  projectId?: string
+}
+
+interface TerminalCreateBody {
+  name: string
+  argv?: string[]
+}
 
 export interface CliApplicationOptions {
   args: string[]
@@ -85,15 +103,15 @@ export interface CliApplicationOptions {
   stderr?: (value: string) => void
 }
 
-class CliError extends Error {
+class CliError<Details = undefined> extends Error {
   readonly code: string
-  readonly details: unknown
+  readonly details: Details | undefined
 
   constructor(
     message: string,
     readonly exitCode: number,
     code?: string,
-    details?: unknown
+    details?: Details
   ) {
     super(message)
     this.code =
@@ -133,10 +151,19 @@ async function resolveDaemonLifecycle(): Promise<
 }
 
 function formatServiceStatus(status: ServiceStatus): string {
+  const mode =
+    status.mode === 'headless'
+      ? 'advanced headless (starts before login)'
+      : status.mode === 'user' && status.manager === 'launchd'
+        ? 'user/login (starts after login)'
+        : status.mode === 'user'
+          ? 'user service'
+          : 'not installed'
   const lines = [
     `Treeport service: ${status.state}`,
+    `Mode: ${mode}`,
     `Manager: ${status.manager ?? 'unsupported'}`,
-    `Starts at boot: ${status.enabledAtBoot ? 'yes' : 'no'}`,
+    `Starts before login: ${status.enabledAtBoot ? 'yes' : 'no'}`,
     `Active: ${status.active ? 'yes' : 'no'}`,
     `Definition: ${status.definitionPath ?? 'not installed'}`
   ]
@@ -207,17 +234,23 @@ async function request<T>(
 
   const timeout = setTimeout(abort, 90_000)
   try {
+    const headers = new Headers({ accept: 'application/json' })
+    if (options.body) {
+      headers.set('content-type', 'application/json')
+    }
+
+    new Headers(options.headers).forEach((value, key) =>
+      headers.set(key, value)
+    )
     const response = await fetch(`${apiUrl}${pathname}`, {
       ...options,
       signal: controller.signal,
-      headers: {
-        accept: 'application/json',
-        ...(options.body ? { 'content-type': 'application/json' } : {}),
-        ...options.headers
-      }
+      headers
     })
+    // SAFETY: The validated CLI or Node contract establishes this asserted value.
     const body = (await response.json().catch(() => ({}))) as T | ApiErrorBody
     if (!response.ok) {
+      // SAFETY: The validated CLI or Node contract establishes this asserted value.
       const error = (body as ApiErrorBody).error
       throw new CliError(
         error?.message || `HTTP ${response.status}`,
@@ -227,6 +260,7 @@ async function request<T>(
       )
     }
 
+    // SAFETY: The validated CLI or Node contract establishes this asserted value.
     return body as T
   } catch (error) {
     if (error instanceof CliError) {
@@ -246,12 +280,7 @@ async function request<T>(
 
 async function createWorktree(
   projectId: string,
-  input: {
-    name: string
-    base: 'default' | 'current'
-    initialTerminal?: { name: string; argv?: string[] }
-    sourceWorktreeId?: string
-  }
+  input: CreateOperationRequest
 ): Promise<{
   worktree: WorktreeRecord
   terminal: TerminalRecord | null
@@ -276,7 +305,7 @@ async function createWorktree(
 
   if (operation.status === 'failed') {
     throw new CliError(
-      operation.error ?? 'Worktree creation failed',
+      operation.error ?? 'Tree creation failed',
       5,
       'WORKTREE_CREATION_FAILED'
     )
@@ -284,19 +313,16 @@ async function createWorktree(
 
   if (operation.kind !== 'create') {
     throw new CliError(
-      'Worktree creation returned an unexpected operation kind',
+      'Tree creation returned an unexpected operation kind',
       5,
       'INVALID_OPERATION_RESULT'
     )
   }
 
-  const worktreeId =
-    typeof operation.result?.worktreeId === 'string'
-      ? operation.result.worktreeId
-      : operation.worktreeId
+  const worktreeId = operation.result?.worktreeId ?? operation.worktreeId
   if (!worktreeId) {
     throw new CliError(
-      'Completed worktree creation did not identify its worktree',
+      'Completed tree creation did not identify its tree',
       5,
       'INVALID_OPERATION_RESULT'
     )
@@ -310,28 +336,19 @@ async function createWorktree(
   const worktree = project.worktrees.find((item) => item.id === worktreeId)
   if (!worktree) {
     throw new CliError(
-      `Created worktree ${worktreeId} was not found`,
+      `Created tree ${worktreeId} was not found`,
       5,
       'INVALID_OPERATION_RESULT'
     )
   }
 
-  const terminalId =
-    typeof operation.result?.terminalId === 'string'
-      ? operation.result.terminalId
-      : null
+  const terminalId = operation.result?.terminalId ?? null
 
   return {
     worktree,
     terminal: worktree.terminals.find((item) => item.id === terminalId) ?? null,
-    terminalError:
-      typeof operation.result?.terminalError === 'string'
-        ? operation.result.terminalError
-        : null,
-    setupError:
-      typeof operation.result?.setupError === 'string'
-        ? operation.result.setupError
-        : null
+    terminalError: operation.result?.terminalError ?? null,
+    setupError: operation.result?.setupError ?? null
   }
 }
 
@@ -370,7 +387,7 @@ function pathContains(candidate: string, parent: string): boolean {
   )
 }
 
-async function resolveProject(identifier: string): Promise<ProjectRecord> {
+async function resolveProject(identifier?: string): Promise<ProjectRecord> {
   const list = await projects()
   const direct = list.find((project) => project.id === identifier)
   if (direct) {
@@ -386,16 +403,22 @@ async function resolveProject(identifier: string): Promise<ProjectRecord> {
     }
   }
 
-  const candidate = await canonical(identifier)
-  const match = list.find(
-    (project) =>
-      pathContains(candidate, project.repositoryPath) ||
-      project.worktrees.some((worktree) =>
-        pathContains(candidate, worktree.path)
+  const candidate = await canonical(identifier ?? '.')
+  const match = list
+    .flatMap((project) =>
+      [project.rootPath, ...project.worktrees.map((item) => item.path)].map(
+        (root) => ({ project, root })
       )
-  )
+    )
+    .filter(({ root }) => pathContains(candidate, root))
+    .sort((left, right) => right.root.length - left.root.length)[0]?.project
   if (!match) {
-    throw new CliError(`No registered project matches ${identifier}`, 5)
+    throw new CliError(
+      identifier === undefined
+        ? `No registered project contains ${candidate}. Specify --project <id-or-path>.`
+        : `No registered project matches ${identifier}`,
+      5
+    )
   }
 
   return match
@@ -453,7 +476,7 @@ async function resolveWorktree(identifier: string): Promise<WorktreeRecord> {
     .filter((worktree) => pathContains(candidate, worktree.path))
     .sort((a, b) => b.path.length - a.path.length)[0]
   if (!match) {
-    throw new CliError(`No registered worktree matches ${identifier}`, 5)
+    throw new CliError(`No registered tree matches ${identifier}`, 5)
   }
 
   return match
@@ -478,11 +501,12 @@ function parseWebPanelInput(value: string | undefined): WebPanelInput | null {
     )
   }
 
-  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+  const validated = webPanelInputSchema.safeParse(parsed)
+  if (!validated.success) {
     throw new CliError('--input must contain a JSON object', 2)
   }
 
-  return parsed as WebPanelInput
+  return validated.data
 }
 
 async function webPanelDefinition(
@@ -517,7 +541,7 @@ async function webPanelDefinition(
   }
 
   throw new CliError(
-    `Web panel ${identifier} is not available in this worktree`,
+    `Web panel ${identifier} is not available in this tree`,
     5,
     'WEB_PANEL_DEFINITION_NOT_FOUND'
   )
@@ -530,7 +554,7 @@ async function webPanelLaunchCwd(worktree: WorktreeRecord): Promise<string> {
   ])
   if (!pathContains(cwd, worktreeRoot)) {
     throw new CliError(
-      `The current directory is outside worktree ${worktree.name}`,
+      `The current directory is outside tree ${worktree.name}`,
       5,
       'INVALID_WEB_PANEL_LAUNCH_CWD',
       { cwd, worktreeId: worktree.id, worktreePath: worktree.path }
@@ -763,10 +787,10 @@ async function waitForTerminal(
           resolve(result)
         }
       }
-      const fail = (error: unknown) => {
+      const fail = (cause: unknown) => {
         if (!settled) {
           settled = true
-          reject(error)
+          reject(cause)
         }
       }
       const enqueue = (task: () => Promise<void>) => {
@@ -930,7 +954,7 @@ async function waitForTerminal(
   }
 }
 
-function print(value: unknown, human?: () => string): void {
+function print<Value>(value: Value, human?: () => string): void {
   writeStdout(
     `${jsonOutput ? JSON.stringify(value) : human ? human() : JSON.stringify(value, null, 2)}\n`
   )
@@ -949,8 +973,8 @@ async function main(args: string[]): Promise<void> {
   const program = new Command()
     .name('treeport')
     .usage('[options] [folder] [command]')
-    .description('Manage Treeport projects, worktrees, and terminals.')
-    .argument('[folder]', 'folder inside a Git repository to open')
+    .description('Manage Treeport projects, trees, and terminals.')
+    .argument('[folder]', 'folder or folder inside a Git repository to open')
     .option('--json', 'emit machine-readable JSON')
     .addHelpText('beforeAll', agentGuidance)
     .configureOutput({
@@ -969,29 +993,27 @@ async function main(args: string[]): Promise<void> {
     }
 
     const absoluteFolder = path.resolve(workingDirectory, folder)
-    const folderStatus = await fs
-      .stat(absoluteFolder)
-      .catch((error: unknown) => {
-        const code =
-          typeof error === 'object' && error !== null && 'code' in error
-            ? error.code
-            : undefined
-        if (code === 'ENOENT') {
-          throw new CliError(
-            `Folder does not exist: ${absoluteFolder}`,
-            5,
-            'FOLDER_NOT_FOUND',
-            { path: absoluteFolder }
-          )
-        }
-
+    const folderStatus = await fs.stat(absoluteFolder).catch((error) => {
+      if (
+        error instanceof Error &&
+        'code' in error &&
+        error.code === 'ENOENT'
+      ) {
         throw new CliError(
-          `Cannot access folder ${absoluteFolder}: ${error instanceof Error ? error.message : String(error)}`,
+          `Folder does not exist: ${absoluteFolder}`,
           5,
-          'FOLDER_UNREADABLE',
+          'FOLDER_NOT_FOUND',
           { path: absoluteFolder }
         )
-      })
+      }
+
+      throw new CliError(
+        `Cannot access folder ${absoluteFolder}: ${error instanceof Error ? error.message : String(error)}`,
+        5,
+        'FOLDER_UNREADABLE',
+        { path: absoluteFolder }
+      )
+    })
     if (!folderStatus.isDirectory()) {
       throw new CliError(
         `Path is not a folder: ${absoluteFolder}`,
@@ -1001,16 +1023,14 @@ async function main(args: string[]): Promise<void> {
       )
     }
 
-    const canonicalFolder = await fs
-      .realpath(absoluteFolder)
-      .catch((error: unknown) => {
-        throw new CliError(
-          `Cannot access folder ${absoluteFolder}: ${error instanceof Error ? error.message : String(error)}`,
-          5,
-          'FOLDER_UNREADABLE',
-          { path: absoluteFolder }
-        )
-      })
+    const canonicalFolder = await fs.realpath(absoluteFolder).catch((error) => {
+      throw new CliError(
+        `Cannot access folder ${absoluteFolder}: ${error instanceof Error ? error.message : String(error)}`,
+        5,
+        'FOLDER_UNREADABLE',
+        { path: absoluteFolder }
+      )
+    })
 
     const lifecycle = await resolveDaemonLifecycle()
     if (lifecycle === 'external') {
@@ -1033,18 +1053,7 @@ async function main(args: string[]): Promise<void> {
         method: 'POST',
         body: JSON.stringify({ path: canonicalFolder })
       }
-    ).catch((error: unknown) => {
-      if (error instanceof CliError && error.code === 'NOT_A_GIT_REPOSITORY') {
-        throw new CliError(
-          `No Git repository contains ${canonicalFolder}.`,
-          error.exitCode,
-          error.code,
-          error.details
-        )
-      }
-
-      throw error
-    })
+    )
     const targetWorktree = registered.project.worktrees
       .filter(
         (worktree) =>
@@ -1053,7 +1062,7 @@ async function main(args: string[]): Promise<void> {
       .sort((left, right) => right.path.length - left.path.length)[0]
     if (!targetWorktree) {
       throw new CliError(
-        `Git did not report an active worktree containing ${canonicalFolder}.`,
+        `Treeport did not find a workspace containing ${canonicalFolder}.`,
         5,
         'WORKTREE_NOT_FOUND',
         { path: canonicalFolder, projectId: registered.project.id }
@@ -1064,26 +1073,36 @@ async function main(args: string[]): Promise<void> {
     target.pathname = `/projects/${encodeURIComponent(registered.project.id)}/worktrees/${encodeURIComponent(targetWorktree.id)}`
     target.search = ''
     target.hash = ''
-    const opened = await openWorkspace(target.href).catch((error: unknown) => {
-      if (error instanceof OpenWorkspaceError) {
-        throw new CliError(error.message, 1, 'OPEN_FAILED', {
-          url: target.href
-        })
-      }
+    // ponytail: Managed commands assume a client shows the source terminal. Add request acknowledgements if background commands must open another client.
+    const opened = contextTerminalId
+      ? await request(
+          `/api/worktrees/${encodeURIComponent(targetWorktree.id)}/open`,
+          {
+            method: 'POST',
+            body: JSON.stringify({ sourceTerminalId: contextTerminalId })
+          }
+        ).then(() => ({ client: 'current' as const }))
+      : await openWorkspace(target.href).catch((error) => {
+          if (error instanceof OpenWorkspaceError) {
+            throw new CliError(error.message, 1, 'OPEN_FAILED', {
+              url: target.href
+            })
+          }
 
-      throw error
-    })
+          throw error
+        })
     const result = {
       projectId: registered.project.id,
       worktreeId: targetWorktree.id,
       path: canonicalFolder,
+      projectKind: registered.project.kind,
       url: target.href,
       client: opened.client
     }
     print(
       result,
       () =>
-        `Opened ${registered.project.name} / ${targetWorktree.name} in the ${opened.client === 'desktop' ? 'Treeport desktop app' : 'browser'}\n${target.href}`
+        `Opened ${registered.project.name} / ${targetWorktree.name} in the ${opened.client === 'desktop' ? 'Treeport desktop app' : opened.client === 'current' ? 'current Treeport client' : 'browser'}\n${target.href}`
     )
   })
 
@@ -1128,13 +1147,20 @@ async function main(args: string[]): Promise<void> {
     }
 
     const port = options.port === undefined ? undefined : Number(options.port)
-    const result = await daemonUp({
-      ...(options.host === undefined ? {} : { host: options.host }),
-      ...(port === undefined ? {} : { port }),
-      ...(options.foreground === undefined
-        ? {}
-        : { foreground: options.foreground })
-    })
+    const daemonOptions: Parameters<typeof daemonUp>[0] = {}
+    if (options.host !== undefined) {
+      daemonOptions.host = options.host
+    }
+
+    if (port !== undefined) {
+      daemonOptions.port = port
+    }
+
+    if (options.foreground !== undefined) {
+      daemonOptions.foreground = options.foreground
+    }
+
+    const result = await daemonUp(daemonOptions)
     if (options.foreground) {
       return
     }
@@ -1201,10 +1227,15 @@ async function main(args: string[]): Promise<void> {
 
   const serviceEnableCommand = serviceCommand
     .command('enable')
-    .description('Enable startup after reboot and unexpected-exit restarts')
+    .description('Enable automatic startup and unexpected-exit restarts')
+    .option(
+      '--headless',
+      'use advanced macOS startup before login (requires an administrator)'
+    )
     .option('--json', 'emit machine-readable JSON')
   serviceEnableCommand.action(async () => {
-    const result = await serviceEnable()
+    const options = serviceEnableCommand.opts<{ headless?: boolean }>()
+    const result = await serviceEnable(options.headless ? 'headless' : 'user')
     print(result, () => formatServiceStatus(result.status))
     if (result.status.state === 'action_required') {
       requestedExitCode = 1
@@ -1286,10 +1317,16 @@ async function main(args: string[]): Promise<void> {
 
     const serviceDaemon =
       lifecycle === 'service' ? await ensureServiceDaemon() : undefined
-    const result = await enableTailscaleRemote({
-      ...(port === undefined ? {} : { port }),
-      ...(serviceDaemon === undefined ? {} : { daemon: serviceDaemon })
-    })
+    const remoteOptions: Parameters<typeof enableTailscaleRemote>[0] = {}
+    if (port !== undefined) {
+      remoteOptions.port = port
+    }
+
+    if (serviceDaemon !== undefined) {
+      remoteOptions.daemon = serviceDaemon
+    }
+
+    const result = await enableTailscaleRemote(remoteOptions)
     print(
       result,
       () =>
@@ -1371,7 +1408,7 @@ async function main(args: string[]): Promise<void> {
         return `Treeport is unhealthy (PID ${status.state.pid})\nLogs: ${path.join(status.state.dataDir, 'logs', 'daemon.log')}`
       }
 
-      return `Treeport is running\n${status.state.apiUrl}\nLifecycle: ${status.health?.daemonLifecycle}\nVersion: ${status.health?.version}\nPID: ${status.state.pid}\nProjects: ${result.projects}\nWorktrees: ${result.worktrees}\nTerminals: ${result.terminals}`
+      return `Treeport is running\n${status.state.apiUrl}\nLifecycle: ${status.health?.daemonLifecycle}\nVersion: ${status.health?.version}\nPID: ${status.state.pid}\nProjects: ${result.projects}\nTrees: ${result.worktrees}\nTerminals: ${result.terminals}`
     })
   })
 
@@ -1488,7 +1525,7 @@ async function main(args: string[]): Promise<void> {
     )
     if (!worktree) {
       throw new CliError(
-        'Treeport context worktree does not belong to the current project',
+        'Treeport context tree does not belong to the current project',
         5,
         'TREEPORT_CONTEXT_INVALID',
         { projectId, worktreeId }
@@ -1500,7 +1537,7 @@ async function main(args: string[]): Promise<void> {
     )
     if (!terminal) {
       throw new CliError(
-        'Treeport context terminal does not belong to the current worktree',
+        'Treeport context terminal does not belong to the current tree',
         5,
         'TREEPORT_CONTEXT_INVALID',
         { worktreeId, terminalId }
@@ -1514,6 +1551,8 @@ async function main(args: string[]): Promise<void> {
       project: {
         id: project.id,
         name: project.name,
+        kind: project.kind,
+        rootPath: project.rootPath,
         repositoryPath: project.repositoryPath,
         mainWorktreePath: project.mainWorktreePath,
         defaultBranch: project.defaultBranch,
@@ -1540,7 +1579,7 @@ async function main(args: string[]): Promise<void> {
     print(
       context,
       () =>
-        `Treeport context\n\nProject:  ${context.project.name} (${context.project.id})\nWorktree: ${context.worktree.name} (${context.worktree.id})\nPath:     ${context.worktree.path}\nTerminal: ${context.terminal.name} (${context.terminal.id}) — ${context.terminal.status}\nAPI:      ${context.apiUrl}\nLifecycle: ${context.daemonLifecycle === 'external' ? 'externally managed' : context.daemonLifecycle === 'service' ? 'managed by the OS service' : 'managed by Treeport'}`
+        `Treeport context\n\nProject:  ${context.project.name} (${context.project.id})\nTree:     ${context.worktree.name} (${context.worktree.id})\nPath:     ${context.worktree.path}\nTerminal: ${context.terminal.name} (${context.terminal.id}) — ${context.terminal.status}\nAPI:      ${context.apiUrl}\nLifecycle: ${context.daemonLifecycle === 'external' ? 'externally managed' : context.daemonLifecycle === 'service' ? 'managed by the OS service' : 'managed by Treeport'}`
     )
   })
 
@@ -1747,18 +1786,17 @@ async function main(args: string[]): Promise<void> {
     .option('--json', 'emit machine-readable JSON')
   installCommand.action(async (source: string) => {
     const options = installCommand.opts<{ local?: boolean }>()
+    const body: PackageMutationBody = {
+      source: await packageSource(source)
+    }
+    if (options.local) {
+      body.projectId = await localPackageProjectId()
+    }
+
     const result = (
       await request<{ result: PackageOperationResult }>(
         '/api/packages/install',
-        {
-          method: 'POST',
-          body: JSON.stringify({
-            source: await packageSource(source),
-            ...(options.local
-              ? { projectId: await localPackageProjectId() }
-              : {})
-          })
-        }
+        { method: 'POST', body: JSON.stringify(body) }
       )
     ).result
     print(
@@ -1780,18 +1818,17 @@ async function main(args: string[]): Promise<void> {
     .option('--json', 'emit machine-readable JSON')
   removePackageCommand.action(async (source: string) => {
     const options = removePackageCommand.opts<{ local?: boolean }>()
+    const body: PackageMutationBody = {
+      source: await packageSource(source)
+    }
+    if (options.local) {
+      body.projectId = await localPackageProjectId()
+    }
+
     const result = (
       await request<{ result: PackageOperationResult }>(
         '/api/packages/remove',
-        {
-          method: 'POST',
-          body: JSON.stringify({
-            source: await packageSource(source),
-            ...(options.local
-              ? { projectId: await localPackageProjectId() }
-              : {})
-          })
-        }
+        { method: 'POST', body: JSON.stringify(body) }
       )
     ).result
     print(result, () => `Removed ${result.source}`)
@@ -1826,17 +1863,54 @@ async function main(args: string[]): Promise<void> {
 
   const updatePackagesCommand = program
     .command('update')
-    .description('Explicitly update configured Treeport packages')
+    .description('Update Treeport or explicitly update configured packages')
     .argument('[source]', 'one configured npm: source')
     .option('--packages', 'update every eligible configured package')
     .option('--json', 'emit machine-readable JSON')
   updatePackagesCommand.action(async (source: string | undefined) => {
     const options = updatePackagesCommand.opts<{ packages?: boolean }>()
-    if ((!source && !options.packages) || (source && options.packages)) {
-      throw new CliError(
-        'Specify a package source or --packages. Bare `treeport update` is reserved for a future Treeport self-update.',
-        2
-      )
+    if (source && options.packages) {
+      throw new CliError('Specify a package source or --packages, not both.', 2)
+    }
+
+    if (!source && !options.packages) {
+      if ((await resolveDaemonLifecycle()) === 'external') {
+        throw new CliError(
+          'Cannot update Treeport because this daemon lifecycle is externally managed.',
+          5,
+          'UPDATE_EXTERNAL_REFUSED'
+        )
+      }
+
+      const selfUpdateOptions: LocalUpdateOptions = {
+        environment: cliEnvironment
+      }
+      if (!jsonOutput) {
+        selfUpdateOptions.progress = (message) => writeStderr(`${message}\n`)
+      }
+
+      const result = await runLocalUpdate(selfUpdateOptions).catch((error) => {
+        if (error instanceof LocalUpdateError) {
+          throw new CliError(
+            error.message,
+            error.exitCode,
+            error.code,
+            error.details
+          )
+        }
+
+        throw error
+      })
+      print(result, () => {
+        if (result.status === 'current') {
+          return `Treeport ${result.toVersion} is current`
+        }
+
+        return result.daemon.wasRunning
+          ? `Updated Treeport from ${result.fromVersion} to ${result.toVersion} and restarted the ${result.daemon.lifecycle === 'service' ? 'service' : 'daemon'}`
+          : `Updated Treeport from ${result.fromVersion} to ${result.toVersion}; Treeport remains stopped`
+      })
+      return
     }
 
     const results = (
@@ -1903,8 +1977,8 @@ async function main(args: string[]): Promise<void> {
 
   const projectAddCommand = projectCommand
     .command('add')
-    .description('Register a Git repository')
-    .argument('<path>', 'repository path')
+    .description('Register a folder or Git repository')
+    .argument('<path>', 'folder path')
     .option('--json', 'emit machine-readable JSON')
   projectAddCommand.action(async (repository: string) => {
     const body = await request<{ project: ProjectRecord }>('/api/projects', {
@@ -1914,7 +1988,7 @@ async function main(args: string[]): Promise<void> {
     print(
       body.project,
       () =>
-        `Registered ${body.project.name} (${body.project.id})\n${body.project.repositoryPath}`
+        `Registered ${body.project.name} (${body.project.id})\n${body.project.rootPath}`
     )
   })
 
@@ -1928,7 +2002,7 @@ async function main(args: string[]): Promise<void> {
       list
         .map(
           (project) =>
-            `${project.id}\t${project.name}\t${project.repositoryPath}`
+            `${project.id}\t${project.name}\t${project.kind}\t${project.rootPath}`
         )
         .join('\n')
     )
@@ -1936,14 +2010,14 @@ async function main(args: string[]): Promise<void> {
 
   const worktreeCommand = program
     .command('worktree')
-    .description('List, create, and remove worktrees')
+    .description('List, create, and remove trees')
   worktreeCommand.action(() => {
     throw new CliError(worktreeCommand.helpInformation(), 2)
   })
 
   const worktreeListCommand = worktreeCommand
     .command('list')
-    .description('List discovered worktrees')
+    .description('List discovered trees')
     .option('--project <id-or-path>', 'limit results to a project')
     .option('--json', 'emit machine-readable JSON')
   worktreeListCommand.action(async () => {
@@ -1957,7 +2031,7 @@ async function main(args: string[]): Promise<void> {
       list
         .map(
           (worktree) =>
-            `${worktree.id}\t${worktree.name}\t${worktree.branch ?? `detached@${worktree.head.slice(0, 8)}`}\t${worktree.path}`
+            `${worktree.id}\t${worktree.name}\t${worktree.kind === 'folder' ? 'folder' : (worktree.branch ?? `detached@${worktree.head.slice(0, 8)}`)}\t${worktree.path}`
         )
         .join('\n')
     )
@@ -1965,14 +2039,17 @@ async function main(args: string[]): Promise<void> {
 
   const worktreeCreateCommand = worktreeCommand
     .command('create')
-    .description('Create a linked worktree')
-    .requiredOption('--project <id-or-path>', 'project to create from')
-    .requiredOption('--name <name>', 'worktree name')
-    .option('--from-current', 'base the worktree on the current worktree')
+    .description('Create a linked tree')
+    .option(
+      '--project <id-or-path>',
+      'project to create from (default: current folder)'
+    )
+    .requiredOption('--name <name>', 'Tree name')
+    .option('--from-current', 'base the tree on the current tree')
     .option('--json', 'emit machine-readable JSON')
   worktreeCreateCommand.action(async () => {
     const options = worktreeCreateCommand.opts<{
-      project: string
+      project?: string
       name: string
       fromCurrent?: boolean
     }>()
@@ -1980,22 +2057,26 @@ async function main(args: string[]): Promise<void> {
     const sourceWorktreeId = options.fromCurrent
       ? (await resolveWorktree('.')).id
       : undefined
-    const result = await createWorktree(project.id, {
+    const request: CreateOperationRequest = {
       name: options.name,
-      base: options.fromCurrent ? 'current' : 'default',
-      ...(sourceWorktreeId ? { sourceWorktreeId } : {})
-    })
+      base: options.fromCurrent ? 'current' : 'default'
+    }
+    if (sourceWorktreeId) {
+      request.sourceWorktreeId = sourceWorktreeId
+    }
+
+    const result = await createWorktree(project.id, request)
     print(
       result,
       () =>
-        `Created ${result.worktree.name} (${result.worktree.id})\n${result.worktree.path}${result.setupError ? `\nSetup error: ${result.setupError}` : ''}`
+        `Created tree ${result.worktree.name} (${result.worktree.id})\n${result.worktree.path}${result.setupError ? `\nSetup error: ${result.setupError}` : ''}`
     )
   })
 
   const worktreeRemoveCommand = worktreeCommand
     .command('remove')
-    .description('Remove a linked worktree')
-    .argument('<id-or-path-or-dot>', 'worktree to remove')
+    .description('Remove a linked tree')
+    .argument('<id-or-path-or-dot>', 'Tree to remove')
     .option('--force', 'confirm destructive removal warnings')
     .option('--json', 'emit machine-readable JSON')
   worktreeRemoveCommand.action(async (identifier: string) => {
@@ -2041,7 +2122,7 @@ async function main(args: string[]): Promise<void> {
     }
     if (operation.status === 'failed') {
       throw new CliError(
-        operation.error ?? 'Worktree removal failed',
+        operation.error ?? 'Tree removal failed',
         5,
         'WORKTREE_REMOVAL_FAILED'
       )
@@ -2049,7 +2130,7 @@ async function main(args: string[]): Promise<void> {
 
     if (operation.kind !== 'remove' || !operation.result) {
       throw new CliError(
-        'Worktree removal returned an unexpected operation result',
+        'Tree removal returned an unexpected operation result',
         5,
         'INVALID_OPERATION_RESULT'
       )
@@ -2057,7 +2138,7 @@ async function main(args: string[]): Promise<void> {
 
     print(operation.result, () => {
       const warning = operation.result?.cleanup.warning
-      return `Removed ${worktree.name} (${worktree.id})${warning ? `\nWarning: ${warning}` : ''}`
+      return `Removed tree ${worktree.name} (${worktree.id})${warning ? `\nWarning: ${warning}` : ''}`
     })
   })
 
@@ -2072,7 +2153,7 @@ async function main(args: string[]): Promise<void> {
     .command('open')
     .description('Create or reuse a web panel and request client navigation')
     .argument('<definition>', 'definition ID or unique short name')
-    .requiredOption('--worktree <id-or-path-or-dot>', 'owning worktree')
+    .requiredOption('--worktree <id-or-path-or-dot>', 'owning tree')
     .option('--input <json>', 'structured panel input as a JSON object')
     .option('--new', 'create a separate panel instance')
     .option('--json', 'emit machine-readable JSON')
@@ -2110,7 +2191,7 @@ async function main(args: string[]): Promise<void> {
 
   const terminalCommand = program
     .command('terminal')
-    .description('Manage persistent worktree terminals')
+    .description('Manage persistent tree terminals')
   terminalCommand.action(() => {
     throw new CliError(terminalCommand.helpInformation(), 2)
   })
@@ -2118,7 +2199,7 @@ async function main(args: string[]): Promise<void> {
   const terminalListCommand = terminalCommand
     .command('list')
     .description('List terminals')
-    .option('--worktree <id-or-path>', 'limit results to a worktree')
+    .option('--worktree <id-or-path>', 'limit results to a tree')
     .option('--json', 'emit machine-readable JSON')
   terminalListCommand.action(async () => {
     const { worktree: identifier } = terminalListCommand.opts<{
@@ -2143,7 +2224,7 @@ async function main(args: string[]): Promise<void> {
     .command('create')
     .description('Create a persistent terminal')
     .usage('[options] [-- <command> args...]')
-    .requiredOption('--worktree <id-or-path-or-dot>', 'owning worktree')
+    .requiredOption('--worktree <id-or-path-or-dot>', 'owning tree')
     .requiredOption('--name <name>', 'terminal name')
     .option('--json', 'emit machine-readable JSON')
     .addHelpText('after', '\nCommand arguments may be passed after --.\n')
@@ -2153,15 +2234,14 @@ async function main(args: string[]): Promise<void> {
       name: string
     }>()
     const worktree = await resolveWorktree(options.worktree)
+    const body: TerminalCreateBody = { name: options.name }
+    if (argv) {
+      body.argv = argv
+    }
+
     const result = await request<{ terminal: TerminalRecord }>(
       `/api/worktrees/${worktree.id}/terminals`,
-      {
-        method: 'POST',
-        body: JSON.stringify({
-          name: options.name,
-          ...(argv ? { argv } : {})
-        })
-      }
+      { method: 'POST', body: JSON.stringify(body) }
     )
     print(
       result.terminal,
@@ -2239,6 +2319,7 @@ async function main(args: string[]): Promise<void> {
 
     const result = await waitForTerminal(
       resolveTerminalId(identifier),
+      // SAFETY: The validated CLI or Node contract establishes this asserted value.
       options.until as WaitCondition,
       options.timeout === undefined ? undefined : parseDuration(options.timeout)
     )
@@ -2261,17 +2342,20 @@ async function main(args: string[]): Promise<void> {
 
   const spawnCommand = program
     .command('spawn')
-    .description('Create a worktree and its first terminal')
+    .description('Create a tree and its first terminal')
     .usage('[options] [-- <command> args...]')
-    .requiredOption('--project <id-or-path-or-dot>', 'project to create from')
-    .requiredOption('--worktree-name <name>', 'worktree name')
+    .option(
+      '--project <id-or-path-or-dot>',
+      'project to create from (default: current folder)'
+    )
+    .requiredOption('--worktree-name <name>', 'Tree name')
     .requiredOption('--name <terminal-name>', 'terminal name')
-    .option('--from-current', 'base the worktree on the current worktree')
+    .option('--from-current', 'base the tree on the current tree')
     .option('--json', 'emit machine-readable JSON')
     .addHelpText('after', '\nCommand arguments may be passed after --.\n')
   spawnCommand.action(async () => {
     const options = spawnCommand.opts<{
-      project: string
+      project?: string
       worktreeName: string
       name: string
       fromCurrent?: boolean
@@ -2280,19 +2364,27 @@ async function main(args: string[]): Promise<void> {
     const sourceWorktreeId = options.fromCurrent
       ? (await resolveWorktree('.')).id
       : undefined
-    const result = await createWorktree(project.id, {
+    const initialTerminal: NonNullable<
+      CreateOperationRequest['initialTerminal']
+    > = { name: options.name }
+    if (argv) {
+      initialTerminal.argv = argv
+    }
+
+    const request: CreateOperationRequest = {
       name: options.worktreeName,
       base: options.fromCurrent ? 'current' : 'default',
-      initialTerminal: {
-        name: options.name,
-        ...(argv ? { argv } : {})
-      },
-      ...(sourceWorktreeId ? { sourceWorktreeId } : {})
-    })
+      initialTerminal
+    }
+    if (sourceWorktreeId) {
+      request.sourceWorktreeId = sourceWorktreeId
+    }
+
+    const result = await createWorktree(project.id, request)
     print(
       result,
       () =>
-        `Created worktree ${result.worktree.name} (${result.worktree.id})\nPath: ${result.worktree.path}\n${result.terminal ? `Terminal: ${result.terminal.name} (${result.terminal.id}) — ${result.terminal.status}` : 'Terminal: not created'}${result.setupError ? `\nSetup error: ${result.setupError}` : ''}${result.terminalError ? `\nTerminal error: ${result.terminalError}` : ''}`
+        `Created tree ${result.worktree.name} (${result.worktree.id})\nPath: ${result.worktree.path}\n${result.terminal ? `Terminal: ${result.terminal.name} (${result.terminal.id}) — ${result.terminal.status}` : 'Terminal: not created'}${result.setupError ? `\nSetup error: ${result.setupError}` : ''}${result.terminalError ? `\nTerminal error: ${result.terminalError}` : ''}`
     )
   })
 
@@ -2315,6 +2407,7 @@ export async function runCliApplication(
   options: CliApplicationOptions
 ): Promise<number> {
   const environment = options.environment ?? process.env
+  cliEnvironment = environment
   configuredApiUrl = environment.TREEPORT_API_URL?.trim()
   apiUrl = (await resolveLocalApiUrl(environment)).replace(/\/$/, '')
   contextProjectId = environment.TREEPORT_PROJECT_ID?.trim() || undefined
@@ -2339,14 +2432,12 @@ export async function runCliApplication(
           )
     if (jsonOutput) {
       const body: ApiErrorBody = {
-        error: {
-          code: cliError.code,
-          message: cliError.message,
-          ...(cliError.details === undefined
-            ? {}
-            : { details: cliError.details })
-        }
+        error: { code: cliError.code, message: cliError.message }
       }
+      if (cliError.details !== undefined) {
+        body.error.details = cliError.details
+      }
+
       writeStderr(`${JSON.stringify(body)}\n`)
     } else {
       writeStderr(`${cliError.message}\n`)

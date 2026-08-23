@@ -48,6 +48,11 @@ body {
   @apply m-0 antialiased;
 }
 
+.app-frame {
+  height: var(--app-visual-viewport-height, 100dvh);
+  transform: translateY(var(--app-visual-viewport-offset-top, 0px));
+}
+
 @media (max-width: 700px) {
   .keyboard-safe-dialog {
     top: calc(
@@ -122,25 +127,6 @@ code {
 
 .terminal-session-host.terminal-scrolling .xterm-helper-textarea {
   cursor: default;
-}
-
-/* xterm's block cursor and glyph share one span; hiding it also hides the selected glyph. */
-.terminal-session-host.terminal-scrolling
-  .xterm-screen
-  .xterm-rows
-  .xterm-cursor.xterm-cursor-block {
-  visibility: visible;
-  animation: none !important;
-  background-color: transparent !important;
-  color: inherit !important;
-  cursor: default;
-}
-
-.terminal-session-host.terminal-tmux-selection
-  .xterm-screen
-  .xterm-rows
-  .xterm-cursor.xterm-cursor-block {
-  background-color: #1f1f22 !important;
 }
 
 .terminal-selection-actions {

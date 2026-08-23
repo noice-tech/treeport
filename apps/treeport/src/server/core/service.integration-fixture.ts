@@ -125,6 +125,7 @@ export async function persistedWebPanel(
     definitionId: row.definitionId,
     title: row.title,
     launch: {
+      // SAFETY: The test fixture provides the asserted contract used here.
       input: JSON.parse(row.inputJson) as WebPanel['launch']['input'],
       cwd: row.launchCwd
     },
@@ -144,7 +145,7 @@ interface FakeWorktree {
   prunable?: boolean
 }
 
-export class SystemDouble implements CommandRunner {
+class SystemDouble implements CommandRunner {
   readonly calls: CommandRequest[] = []
   readonly worktrees: FakeWorktree[]
   readonly sessions = new Map<
@@ -178,6 +179,7 @@ export class SystemDouble implements CommandRunner {
   readonly removeAfterDeregisterGates = new Map<string, Promise<void>>()
   worktreeDeregistered: ((worktreePath: string) => void) | null = null
   repositoryIdentity: string | null = null
+  headExists = true
 
   constructor(main: string) {
     this.main = main
@@ -207,11 +209,44 @@ export class SystemDouble implements CommandRunner {
       exitCode: 1
     })
     if (args[0] === 'rev-parse' && args[1] === '--show-toplevel') {
-      return ok(`${this.main}\n`)
+      const cwd = request.cwd ?? ''
+      const containingWorktree = (
+        await Promise.all(
+          [this.main, ...this.worktrees.map((worktree) => worktree.path)].map(
+            async (worktreePath) => ({
+              worktreePath,
+              canonicalPath: await fs
+                .realpath(worktreePath)
+                .catch(() => worktreePath)
+            })
+          )
+        )
+      ).find((candidate) => {
+        const relative = path.relative(candidate.canonicalPath, cwd)
+        return (
+          relative === '' ||
+          (!relative.startsWith(`..${path.sep}`) &&
+            relative !== '..' &&
+            !path.isAbsolute(relative))
+        )
+      })
+      return containingWorktree
+        ? ok(`${this.main}\n`)
+        : fail('fatal: not a git repository (or any parent directory): .git')
+    }
+
+    if (
+      args[0] === 'rev-list' &&
+      args[1] === '--all' &&
+      args[2] === '--max-count=1'
+    ) {
+      return ok(this.headExists ? 'base-commit\n' : '')
     }
 
     if (args[0] === 'rev-parse' && args[1] === '--verify') {
-      return ok('base-commit\n')
+      return this.headExists
+        ? ok('base-commit\n')
+        : fail('fatal: Needed a single revision')
     }
 
     if (args[0] === 'rev-parse' && args[1] === '--git-common-dir') {
@@ -469,6 +504,8 @@ export class SystemDouble implements CommandRunner {
             state.options['@treeport-worktree-id'] ?? '',
             state.options['@treeport-name'] ?? '',
             state.options['@treeport-argv'] ?? '',
+            state.options['@treeport-shell-command'] ?? '',
+            state.options['@treeport-interactive-shell'] ?? '',
             state.options['@treeport-close-on-success'] ?? '',
             state.options['@treeport-created-at'] ?? '',
             state.options['@treeport-updated-at'] ?? '',

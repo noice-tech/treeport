@@ -1,44 +1,46 @@
 ---
-title: Philosophy
-description: Why Treeport exists and why it deliberately builds on tools that already work.
+title: Design principles
+description: Understand the main design choices in Treeport.
 ---
 
-Treeport is for people who want the power of terminal tools without turning terminal mechanics into a hobby.
+Treeport gives terminal tools a standard application interface. You do not need detailed knowledge of terminal multiplexers.
 
-## 1. Terminal-native, not terminal-nerdy
+## 1. Keep terminal applications unchanged
 
-I am not a terminal nerd. I love [Pi](https://pi.dev/), but I still reach for [Zed](https://zed.dev/) as my code editor. I started learning programming in 2016 in a DOS-style Far Manager, enjoyed VS Code, and never completely switched to Neovim or another keyboard-only environment. Clicking with a mouse is cool.
+Treeport runs terminal applications as normal terminal applications. It does not replace their terminal user interfaces.
 
-Treeport reflects that preference. Terminal applications should remain real terminal applications, but the workspace around them should feel like a normal app. Tabs should respond to familiar shortcuts such as `Cmd+T` and `Cmd+W`. Repositories and worktrees should be navigable with a mouse. You should not need to adopt someone else's terminal lifestyle.
+Use familiar tabs, keyboard shortcuts, and mouse navigation to move between repositories, trees, and terminals.
 
-## 2. tmux should be invisible
+You can continue to use your editor, shell, coding agent, and review tools.
 
-Treeport uses tmux because tmux already solves persistent terminal sessions well. It is an implementation detail, not the product interface.
+## 2. Keep tmux out of the interface
 
-I do not care about learning tmux, and Treeport users should not have to care either. You should not need to understand tmux sessions, windows, panes, prefixes, or configuration to leave a process running and reconnect later.
+Treeport uses tmux because tmux keeps terminal sessions active. In Treeport, tmux is an implementation component, not the user interface.
 
-Projects such as [Herdr](https://herdr.dev/) are taking an exciting approach by rethinking the multiplexer itself. Treeport makes a different tradeoff: keep a proven multiplexer underneath and put a familiar application interface above it.
+You do not need to use tmux sessions, windows, panes, prefixes, or configuration.
 
-## 3. Compose tools that already work
+## 3. Use specialist tools
 
-Treeport would rather connect good tools than replace them:
+Treeport connects tools that have a specific purpose:
 
-- [Tailscale](https://tailscale.com/) already provides authenticated private networking;
-- Pi and other coding agents already provide strong coding workflows;
-- terminal CLIs already expose powerful development tools;
-- editors already provide excellent code navigation and editing; and
-- GitHub pull requests already provide a good review workflow.
+- Tailscale supplies authenticated private networking.
+- Coding agents supply coding workflows.
+- Terminal commands supply development tools.
+- Editors supply code navigation and editing.
+- GitHub pull requests supply a review workflow.
 
-Treeport owns the persistent worktree and terminal context around those tools. It should not grow weaker copies of their interfaces merely to keep everything inside one product.
+Treeport supplies the persistent tree and terminal context. It does not make less capable copies of specialist tools.
 
-## 4. One worktree is one task
+## 4. Use one tree for one task
 
-The workflow began with a habit: create one Git worktree for each piece of work. That gives every task its own checkout, branch, changes, terminals, agents, and development servers.
+A tree gives each task separate files, changes, terminals, agents, and development servers.
 
-Treeport treats that concrete workspace as the task instead of inventing a second task database and lifecycle. Git remains the source of truth, regardless of whether a worktree was created by Treeport, an editor, an agent, a script, or Git itself.
+Each tree represents a Git worktree. Treeport uses the tree as the task boundary.
 
-## 5. Deliberately unambitious
+Git remains the source of truth. This rule applies when Git, an editor, an agent, a script, or Treeport creates the worktree.
 
-You can think of Treeport as a shittier version of Codex: a convenient place to start and revisit coding work without trying to invent a new agent, editor, terminal protocol, review system, or cloud platform.
+## 5. Keep the product boundary small
 
-That lack of ambition is a product constraint. Treeport should make the worktree-per-task workflow pleasant, persistent, and accessible. Whenever an existing tool already solves a problem well, Treeport should integrate with it or get out of its way.
+Treeport makes tree-based development persistent and easy to access. It does not replace an agent, editor, review system, or cloud platform.
+
+When a suitable tool exists, Treeport connects to it or stays out of its operation.

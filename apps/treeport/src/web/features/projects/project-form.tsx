@@ -17,6 +17,11 @@ import { Label } from '../../components/ui/label'
 import { cn } from '../../lib/utils'
 import { notifyError } from '../notifications/error-notifications'
 
+interface DirectoryQuery {
+  input: string
+  hidden?: 'true'
+}
+
 export function ProjectForm({
   onOpened
 }: {
@@ -37,15 +42,16 @@ export function ProjectForm({
 
   const directoryQuery = useQuery({
     queryKey: ['filesystem-directories', debouncedPath, showHidden],
-    queryFn: () =>
-      parseResponse(
-        rpc.api.filesystem.directories.$get({
-          query: {
-            input: debouncedPath,
-            ...(showHidden ? { hidden: 'true' } : {})
-          }
-        })
-      ),
+    queryFn: () => {
+      const query: DirectoryQuery = {
+        input: debouncedPath
+      }
+      if (showHidden) {
+        query.hidden = 'true'
+      }
+
+      return parseResponse(rpc.api.filesystem.directories.$get({ query }))
+    },
     enabled: Boolean(debouncedPath),
     retry: false
   })
@@ -65,20 +71,23 @@ export function ProjectForm({
     directoryQuery.data?.input === debouncedPath
       ? directoryQuery.data
       : undefined
-  const validRepository =
+  const validProject =
     inputSettled &&
     directoryQuery.isSuccess &&
     !directoryQuery.isFetching &&
     data?.exact &&
-    data.repository.state === 'valid'
-      ? data.repository
+    data.project.state === 'valid'
+      ? data.project
       : null
   const busy = openProject.isPending
 
   const navigate = (nextPath: string) => {
     setPathValue(nextPath)
     setDebouncedPath(nextPath)
-    window.requestAnimationFrame(() => pathInputRef.current?.focus())
+    window.requestAnimationFrame(() => {
+      pathInputRef.current?.focus()
+      pathInputRef.current?.setSelectionRange(nextPath.length, nextPath.length)
+    })
   }
 
   return (
@@ -86,19 +95,19 @@ export function ProjectForm({
       className="flex flex-col gap-3 max-[700px]:gap-4"
       onSubmit={(event) => {
         event.preventDefault()
-        if (!validRepository || busy) {
+        if (!validProject || busy) {
           return
         }
 
-        openProject.mutate(validRepository.repositoryPath)
+        openProject.mutate(validProject.path)
       }}
     >
       <FormField>
-        <Label htmlFor="repository-path">Server folder</Label>
+        <Label htmlFor="project-path">Server folder</Label>
         <Input
           ref={pathInputRef}
-          id="repository-path"
-          name="repository-path"
+          id="project-path"
+          name="project-path"
           value={pathValue}
           onChange={(event) => setPathValue(event.target.value)}
           onKeyDown={(event) => {
@@ -106,7 +115,7 @@ export function ProjectForm({
               return
             }
 
-            if (event.key === 'Enter' && !validRepository) {
+            if (event.key === 'Enter' && !validProject) {
               event.preventDefault()
               setDebouncedPath(pathValue.trim())
               return
@@ -136,7 +145,7 @@ export function ProjectForm({
           }}
           placeholder="/Users/you/Projects/example"
           aria-label="Server folder path"
-          aria-describedby="repository-path-status"
+          aria-describedby="project-path-status"
           aria-invalid={directoryQuery.isError}
           autoFocus
           disabled={busy}
@@ -306,21 +315,16 @@ export function ProjectForm({
       </div>
 
       <p
-        id="repository-path-status"
+        id="project-path-status"
         className={cn(
           'form-note min-h-5 truncate',
-          data?.repository.state === 'valid'
+          data?.project.state === 'valid'
             ? 'text-emerald-300'
-            : directoryQuery.isError ||
-                data?.repository.state === 'not-repository'
+            : directoryQuery.isError
               ? 'text-rose-300'
               : undefined
         )}
-        title={
-          data?.repository.state === 'valid'
-            ? data.repository.repositoryPath
-            : undefined
-        }
+        title={data?.project.state === 'valid' ? data.project.path : undefined}
         aria-live="polite"
       >
         {!debouncedPath
@@ -329,15 +333,17 @@ export function ProjectForm({
             ? 'Checking folder…'
             : directoryQuery.isError
               ? errorMessage(directoryQuery.error)
-              : data?.repository.state === 'valid'
-                ? `Will open repository: ${data.repository.repositoryPath}`
-                : data?.repository.message}
+              : data?.project.state === 'valid'
+                ? data.project.kind === 'repository'
+                  ? `Will open Git repository: ${data.project.path}`
+                  : `Will open folder: ${data.project.path}`
+                : data?.project.message}
       </p>
 
       <Button
         type="submit"
         className="self-end"
-        disabled={!validRepository || busy}
+        disabled={!validProject || busy}
       >
         {busy ? 'Opening…' : 'Open project'}
       </Button>

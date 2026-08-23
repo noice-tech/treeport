@@ -14,12 +14,14 @@ import { ResizableSidebarRail } from './workspace-shell'
 
 export interface WorkspaceSidebarProps {
   projectSwitcher: ReactNode
+  updateControl: ReactNode
   notificationCenter: ReactNode
   children: ReactNode
 }
 
 export function WorkspaceSidebar({
   projectSwitcher,
+  updateControl,
   notificationCenter,
   children
 }: WorkspaceSidebarProps) {
@@ -27,8 +29,8 @@ export function WorkspaceSidebar({
     <Sidebar
       id="worktree-sidebar"
       collapsible="none"
-      mobileTitle="Projects and worktrees"
-      mobileDescription="Navigate projects, worktrees, and terminals."
+      mobileTitle="Projects and trees"
+      mobileDescription="Navigate projects, trees, and terminals."
       className="sidebar relative min-h-0 border-r border-white/8 bg-zinc-900/80 text-zinc-200 backdrop-blur-xl"
     >
       <SidebarHeader className="gap-0 border-b border-white/8 p-0">
@@ -45,6 +47,7 @@ export function WorkspaceSidebar({
         </div>
         <div className="flex items-center gap-1 p-2 max-[700px]:pt-0">
           <div className="min-w-0 flex-1">{projectSwitcher}</div>
+          <div className="max-[700px]:hidden">{updateControl}</div>
           <div className="max-[700px]:hidden">{notificationCenter}</div>
         </div>
       </SidebarHeader>
@@ -60,11 +63,13 @@ export function WorkspaceMobileHeader({
   selectedTerminalId,
   terminals,
   onSelectTerminal,
+  updateControl,
   notificationCenter
 }: {
   selectedTerminalId: string | null
   terminals: TerminalRecord[]
   onSelectTerminal: (terminal: TerminalRecord) => void
+  updateControl: ReactNode
   notificationCenter: ReactNode
 }) {
   const { isMobile, openMobile } = useSidebar()
@@ -72,14 +77,14 @@ export function WorkspaceMobileHeader({
 
   return (
     <header
-      className="mobile-bar hidden min-w-0 grid-cols-[2.75rem_minmax(0,1fr)_2.75rem] items-center gap-2 border-b border-white/8 bg-zinc-900/95 px-2 backdrop-blur max-[700px]:grid"
+      className="mobile-bar hidden min-w-0 grid-cols-[2.75rem_minmax(0,1fr)_2.25rem_2.75rem] items-center gap-2 border-b border-white/8 bg-zinc-900/95 px-2 backdrop-blur max-[700px]:grid"
       inert={isMobile && openMobile ? true : undefined}
     >
       <SidebarTrigger
         type="button"
         size="icon"
         className="icon-button text-zinc-400 hover:bg-white/5 hover:text-zinc-100"
-        aria-label="Open worktree drawer"
+        aria-label="Open tree drawer"
       >
         <Bars3Icon />
         <span className="touch-target" aria-hidden="true" />
@@ -105,6 +110,7 @@ export function WorkspaceMobileHeader({
           </option>
         ))}
       </NativeSelect>
+      {updateControl}
       {notificationCenter}
     </header>
   )

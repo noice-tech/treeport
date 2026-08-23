@@ -95,6 +95,22 @@ describe('GitAdapter', () => {
     )
     expect(runner.calls[0]?.args).toEqual(['rev-parse', '--show-toplevel'])
     expect(runner.calls[0]?.cwd).toBe(await fs.realpath(nested))
+
+    const unbornRunner = new FakeRunner((request) =>
+      request.args[1] === '--show-toplevel'
+        ? { stdout: `${directory}\n`, stderr: '', exitCode: 0 }
+        : { stdout: '', stderr: '', exitCode: 0 }
+    )
+    const unborn = new GitAdapter(unbornRunner)
+    await expect(unborn.findProjectRepositoryRoot(directory)).resolves.toBe(
+      await fs.realpath(directory)
+    )
+    await expect(unborn.findProjectRepositoryRoot(nested)).resolves.toBeNull()
+    expect(unbornRunner.calls.at(-1)?.args).toEqual([
+      'rev-list',
+      '--all',
+      '--max-count=1'
+    ])
   })
 
   it('returns committed, tracked local, and untracked changes from the default merge base', async () => {

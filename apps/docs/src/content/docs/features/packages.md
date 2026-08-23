@@ -1,11 +1,11 @@
 ---
 title: Packages
-description: Install reusable web panels and terminal presets globally or for one registered repository.
+description: Install web panels and terminal presets globally or for one project.
 ---
 
-Treeport packages are npm packages or local directories that contribute declarative web panels and terminal presets. Packages cannot load daemon code or register server hooks.
+A Treeport package is an npm package or local directory. It can supply declarative web panels and terminal presets.
 
-Treeport's package model is inspired by [Pi packages](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/packages.md). Pi's thoughtfully designed combination of global and project-local settings, package manifests, conventional resource directories, filtering, and source-aware deduplication provided the model for this system. Treeport adapts those ideas to daemon-served resources such as persistent web panels and terminal presets.
+A package cannot load daemon code or register server hooks.
 
 ## Install and manage packages
 
@@ -22,9 +22,15 @@ treeport update --packages
 treeport remove npm:@acme/treeport-tools
 ```
 
-`treeport uninstall` is an alias for `treeport remove`. Bare names are not interpreted as npm packages. An npm name may include a dist-tag, version range, or exact version after its final `@`.
+`treeport uninstall` is an alias for `treeport remove`.
 
-Commands are global by default. Add `-l` to `install`, `remove`, or `reload` to target the registered repository containing the current directory:
+Treeport does not interpret a bare name as an npm package.
+
+An npm name can include a distribution tag, version range, or exact version after its last `@`.
+
+Commands use global scope by default.
+
+Add `-l` to `install`, `remove`, or `reload` to select the registered project for the current directory:
 
 ```sh
 treeport install -l npm:@acme/treeport-tools
@@ -32,15 +38,29 @@ treeport remove -l npm:@acme/treeport-tools
 treeport reload -l
 ```
 
-Repository settings always belong to the registered main worktree, even when the command runs in a linked worktree. Package resources are then available in every worktree of that repository. `treeport reload` rereads global settings and all registered repository settings without restarting the daemon.
+Repository settings belong to the main tree.
 
-Treeport installs a missing npm package when settings are reconciled, including after registration, reopening, or daemon restart. Ordinary reloads never move an installed unpinned package. Updates happen only through `treeport update <source>` or `treeport update --packages`; exact npm versions are skipped.
+Folder project settings belong to the selected folder.
 
-Local packages remain at their original paths and are not copied. Run `treeport reload` after changing their manifest or resources.
+Project package resources are available in all trees for that project.
 
-## Package settings
+`treeport reload` reads global settings and all registered project settings again. It does not restart the daemon.
 
-Global desired state is stored in Treeport's data directory as `settings.json`. Repository desired state is stored in the main worktree at `.treeport/settings.json`:
+Treeport installs missing npm packages when it applies settings. This can occur after registration, reopen, or a daemon restart.
+
+A normal reload does not change the version of an installed package that is not pinned.
+
+Use `treeport update <source>` or `treeport update --packages` to update packages. Treeport does not update exact npm versions.
+
+Local packages stay at their original paths. Treeport does not copy them.
+
+After you change a local package manifest or resource, run `treeport reload`.
+
+## Configure package settings
+
+Global package settings are in `settings.json` in the Treeport data directory.
+
+Project package settings are in `.treeport/settings.json` at the project root. The project root is the main tree for a repository or the selected folder for a folder project:
 
 ```json
 {
@@ -51,7 +71,9 @@ Global desired state is stored in Treeport's data directory as `settings.json`. 
 }
 ```
 
-Relative local paths are resolved from the settings file. A package can use object form to select resources:
+Treeport resolves relative paths from the settings file.
+
+Use the object form to select resources:
 
 ```json
 {
@@ -67,16 +89,20 @@ Relative local paths are resolved from the settings file. A package can use obje
 
 For each resource type:
 
-- omit the key to load all resources of that type;
-- use `[]` to load none;
-- use a plain path or glob to include matches;
-- use `!pattern` to exclude matches;
-- use `+path` to force-include an exact package-relative path;
-- use `-path` to force-exclude an exact package-relative path.
+- Omit the key to load all resources of that type.
+- Use `[]` to load no resources of that type.
+- Use a path or glob to include matches.
+- Use `!pattern` to exclude matches.
+- Use `+path` to include one exact package-relative path.
+- Use `-path` to exclude one exact package-relative path.
 
-Filters can only narrow resources declared by the package manifest or conventional directories. They cannot grant access to arbitrary package paths.
+Filters can reduce only the resources from the package manifest or standard directories.
 
-When the same package exists globally and in repository settings, the repository entry replaces the global entry for that repository. Use `"autoload": false` to apply only explicit enable/disable changes to the inherited global package:
+They cannot give access to other package paths.
+
+A project package replaces the same global package for that project.
+
+Use `"autoload": false` to change only the resource selection for an inherited global package:
 
 ```json
 {
@@ -90,11 +116,11 @@ When the same package exists globally and in repository settings, the repository
 }
 ```
 
-Npm identity ignores the configured version. Local identity uses the canonical resolved path.
+For identity, Treeport ignores an npm package version. A local package uses its canonical resolved path.
 
 ## Create a package
 
-A package can declare resources in `package.json`:
+Declare package resources in `package.json`:
 
 ```json
 {
@@ -107,7 +133,9 @@ A package can declare resources in `package.json`:
 }
 ```
 
-Manifest paths and globs are relative to the package root and may include `!` exclusions. A web panel can use object form to request the high-trust `same-origin` permission:
+Manifest paths and globs are relative to the package root. They can include `!` exclusions.
+
+Use an object to request the high-trust `same-origin` permission for a web panel:
 
 ```json
 {
@@ -122,20 +150,30 @@ Manifest paths and globs are relative to the package root and may include `!` ex
 }
 ```
 
-Treeport shows the panel source and requested permission before the first open. It asks again if the requested permission set changes. The grant is scoped to that exact package source and project/global scope, so a repository package cannot inherit a global package grant. Removing the package revokes its grants and closes active privileged sessions.
+Treeport shows the panel source and permissions before the first open. Approve the permissions only when you trust the package.
 
-This permission lets the panel use normal same-origin browser storage. It also lets panel code access the same-origin Treeport page and API routes. Use it only for code that you trust. Exclusions remain string entries.
+Treeport requests approval again if the permission set changes.
 
-`host-browser` is reserved for the official package's Remote Browser panel. It is not a public web-panel capability in this version.
+A grant applies to the exact package source and its project or global scope. A project package cannot use a global package grant.
 
-A valid explicit `treeport` manifest is authoritative. Without one, Treeport discovers these conventional resources:
+Removing the package revokes its grants and closes its active privileged sessions.
+
+The `same-origin` permission lets a panel use standard browser storage in nested applications.
+
+It also lets the panel access the same-origin Treeport page and API routes. Use this permission only for trusted code.
+
+The `host-browser` permission is reserved for the official Remote Browser panel. Other package panels cannot request it.
+
+An explicit, valid `treeport` manifest controls package discovery.
+
+Without this manifest, Treeport finds resources in these standard locations:
 
 ```text
 web-panels/<resource-id>/index.html
 terminal-presets/*.json
 ```
 
-A terminal preset file contains one preset definition:
+A terminal preset file contains one preset:
 
 ```json
 {
@@ -146,14 +184,32 @@ A terminal preset file contains one preset definition:
 }
 ```
 
-Web panels are source-only Vite applications and require no package build step or committed output. Publish `index.html`, TypeScript/TSX or JavaScript, CSS, and imported assets in the declared panel directory. Put browser libraries in normal `dependencies`, not `devDependencies`; Treeport uses Vite to resolve and bundle the installed dependency graph. The host-provided `@treeport/panel-sdk` is the exception and belongs in `devDependencies` for authoring types. Local-path packages use development serving and HMR, while npm-installed packages are compiled into Treeport's immutable cache when opened. See [Web panels](/features/web-panels/) for the supported profile.
+Web panels are source-only Vite applications. They do not need a package build step or committed build output.
 
-Panel folder names supply humanized titles. Package resource identities do not include npm versions, so updating a package preserves persistent panel identity and storage.
+Publish the panel source and imported assets in the declared panel directory.
 
-## Failure and removal behavior
+Put browser libraries in `dependencies`. Put the host-supplied `@treeport/panel-sdk` in `devDependencies` for types.
 
-Malformed settings, manifests, or individual resources are reported by `treeport list`, `treeport reload`, and JSON output. Valid unrelated packages, direct project web panels, user-created terminal presets, and shells remain available. If settings become malformed, Treeport keeps the previous valid resource set where possible.
+Treeport uses development serving and HMR for local packages. It compiles installed npm panels into a fixed cache when you open them.
 
-Removing or temporarily losing a package does not stop terminals that were already launched from its presets. It also does not delete persistent panel instances or panel storage. An unavailable panel reports that its definition is missing and becomes usable again if the same package definition returns.
+See [Web panels](/features/web-panels/) for the supported source profile.
+
+The panel folder name supplies its default title.
+
+A package update keeps the panel identity and storage because the resource identity does not contain the npm version.
+
+## Understand failures and removal
+
+`treeport list`, `treeport reload`, and JSON output report invalid settings, manifests, and resources.
+
+A failure in one package does not remove unrelated valid resources.
+
+When settings become invalid, Treeport keeps the previous valid resource set when possible.
+
+Removing a package does not stop terminals that started from its presets.
+
+Removal also does not delete panel instances or panel storage.
+
+An unavailable panel reports its missing definition. It works again when the same package definition returns.
 
 See [Security](/security/) for the package execution boundary.

@@ -7,6 +7,7 @@ import {
 import { FileTree, useFileTree } from '@pierre/trees/react'
 import {
   treeport,
+  type GitDiff,
   type GitDiffChangeSets
 } from '@treeport/panel-sdk'
 import {
@@ -18,6 +19,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent
 } from 'react'
 import { createRoot } from 'react-dom/client'
+import { z } from 'zod'
 import './review.css'
 
 type CommentSide = 'additions' | 'deletions'
@@ -55,6 +57,9 @@ interface LoadedReview {
 
 const COMMENTS_KEY = 'review-comments-v1'
 const VIEWED_KEY = 'review-viewed-files-v1'
+// ponytail: Unfocused panels stay stale, and focused panels can lag two seconds.
+// Add a host diff-change event when either limit matters.
+const AUTO_REFRESH_INTERVAL_MS = 2_000
 const DIFF_CSS = `
   [data-diffs-header] { position: sticky; top: -1rem; z-index: 2; }
   [data-change-icon] { width: 0.875rem; height: 0.875rem; }
@@ -68,39 +73,24 @@ const TREE_CSS = `
   }
 `
 
-function parseReviewComment(value: unknown): ReviewComment | null {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
-    return null
-  }
+const reviewCommentSchema = z.object({
+  id: z.string(),
+  file: z.string(),
+  side: z.enum(['additions', 'deletions']),
+  lineNumber: z.number().int().nonnegative(),
+  body: z.string(),
+  resolved: z.boolean().optional()
+})
 
-  const id: unknown = Reflect.get(value, 'id')
-  const file: unknown = Reflect.get(value, 'file')
-  const side: unknown = Reflect.get(value, 'side')
-  const lineNumber: unknown = Reflect.get(value, 'lineNumber')
-  const body: unknown = Reflect.get(value, 'body')
-  const resolved: unknown = Reflect.get(value, 'resolved')
-  if (
-    typeof id !== 'string' ||
-    typeof file !== 'string' ||
-    (side !== 'additions' && side !== 'deletions') ||
-    !Number.isInteger(lineNumber) ||
-    typeof lineNumber !== 'number' ||
-    lineNumber < 0 ||
-    typeof body !== 'string' ||
-    (resolved !== undefined && typeof resolved !== 'boolean')
-  ) {
-    return null
-  }
-
-  return {
-    id,
-    file,
-    side,
-    lineNumber,
-    body,
-    resolved: resolved ?? false
-  }
-}
+const parseReviewComment = z
+  .unknown()
+  .transform((value): ReviewComment | null => {
+    const parsed = reviewCommentSchema.safeParse(value)
+    return parsed.success
+      ? { ...parsed.data, resolved: parsed.data.resolved ?? false }
+      : null
+  })
+  .parse
 
 function savedComments(comments: ReviewComment[]) {
   return comments.flatMap((comment) => {
@@ -437,12 +427,18 @@ function CommentEditor({
 
 function ReviewApp() {
   const [loaded, setLoaded] = useState<LoadedReview | null>(null)
+  const loadedRef = useRef(loaded)
+  loadedRef.current = loaded
+  const loadedDiff = useRef<GitDiff | null>(null)
+  const loadPending = useRef(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [comments, setComments] = useState<ReviewComment[]>([])
   const commentsRef = useRef(comments)
   commentsRef.current = comments
   const [viewedFiles, setViewedFiles] = useState<Set<string>>(new Set())
+  const viewedFilesRef = useRef(viewedFiles)
+  viewedFilesRef.current = viewedFiles
   const [collapsedFiles, setCollapsedFiles] = useState<Set<string>>(new Set())
   const collapsedFilesRef = useRef(collapsedFiles)
   collapsedFilesRef.current = collapsedFiles
@@ -511,7 +507,7 @@ function ReviewApp() {
     const operation = values.length
       ? treeport.storage.set(COMMENTS_KEY, values)
       : treeport.storage.delete(COMMENTS_KEY)
-    await operation.catch((reason: unknown) => {
+    await operation.catch((reason) => {
       setCommentStatus(
         reason instanceof Error
           ? `Could not save: ${reason.message}`
@@ -524,7 +520,7 @@ function ReviewApp() {
     const operation = next.size
       ? treeport.storage.set(VIEWED_KEY, [...next].sort())
       : treeport.storage.delete(VIEWED_KEY)
-    await operation.catch((reason: unknown) => {
+    await operation.catch((reason) => {
       setCommentStatus(
         reason instanceof Error
           ? `Could not save: ${reason.message}`
@@ -534,33 +530,48 @@ function ReviewApp() {
   }, [])
 
   const load = useCallback(async () => {
-    setLoading(true)
+    if (loadPending.current) {
+      return
+    }
+
+    loadPending.current = true
+    const initial = loadedRef.current === null
+    if (initial) {
+      setLoading(true)
+    }
+
     setError(null)
-    setLoaded(null)
-    setSelectedFile(null)
-    setSelectedLines(null)
-    setActiveFindMatch(-1)
     try {
-      const [context, diff, storedComments, storedViewedFiles] =
-        await Promise.all([
-          treeport.context(),
-          treeport.diff(),
-          treeport.storage.get(COMMENTS_KEY),
-          treeport.storage.get(VIEWED_KEY)
-        ])
-      const parsedComments: ReviewComment[] = Array.isArray(storedComments)
-        ? storedComments.flatMap((comment): ReviewComment[] => {
-            const parsed = parseReviewComment(comment)
-            return parsed ? [parsed] : []
-          })
-        : []
-      const parsedViewed = new Set(
-        Array.isArray(storedViewedFiles)
-          ? storedViewedFiles.filter(
-              (file): file is string => typeof file === 'string'
-            )
-          : []
-      )
+      const [context, diff, storedComments, storedViewedFiles] = initial
+        ? await Promise.all([
+            treeport.context(),
+            treeport.diff(),
+            treeport.storage.get(COMMENTS_KEY),
+            treeport.storage.get(VIEWED_KEY)
+          ])
+        : [null, await treeport.diff(), null, null]
+      const previousDiff = loadedDiff.current
+      if (
+        previousDiff?.baseRef === diff.baseRef &&
+        previousDiff.baseCommit === diff.baseCommit &&
+        previousDiff.headCommit === diff.headCommit &&
+        previousDiff.unified === diff.unified &&
+        JSON.stringify(previousDiff.changeSets) ===
+          JSON.stringify(diff.changeSets)
+      ) {
+        return
+      }
+
+      const parsedComments: ReviewComment[] =
+        initial && Array.isArray(storedComments)
+          ? storedComments.flatMap((comment): ReviewComment[] => {
+              const parsed = parseReviewComment(comment)
+              return parsed ? [parsed] : []
+            })
+          : commentsRef.current
+      const parsedViewed = initial
+        ? new Set(z.array(z.string()).catch([]).parse(storedViewedFiles))
+        : viewedFilesRef.current
       const parsedFiles = diff.unified
         ? [
             ...new Map(
@@ -571,19 +582,26 @@ function ReviewApp() {
           ]
         : []
       if (diff.unified && parsedFiles.length === 0) {
-        throw new Error('The worktree diff did not contain any file patches')
+        throw new Error('The tree diff did not contain any file patches')
       }
 
       clearCopyFeedback()
-      setComments(parsedComments)
-      setActiveCommentId((current) =>
-        parsedComments.some(
-          ({ id, resolved }) => id === current && !resolved
+      setSelectedFile(null)
+      setSelectedLines(null)
+      setActiveFindMatch(-1)
+      if (initial) {
+        setComments(parsedComments)
+        setActiveCommentId((current) =>
+          parsedComments.some(
+            ({ id, resolved }) => id === current && !resolved
+          )
+            ? current
+            : null
         )
-          ? current
-          : null
-      )
-      setViewedFiles(parsedViewed)
+        setViewedFiles(parsedViewed)
+        setCommentStatus('')
+      }
+
       const uncommittedFiles = new Set([
         ...diff.changeSets.staged,
         ...diff.changeSets.unstaged,
@@ -613,23 +631,39 @@ function ReviewApp() {
       autoCollapsedFiles.current = nextAutoCollapsedFiles
       fileStateLoaded.current = true
 
-      setCommentStatus('')
-      setLoaded({
-        summary: `${context.project.name} / ${context.worktree.name} · ${diff.baseRef}`,
+      const nextLoaded = {
+        summary: context
+          ? `${context.project.name} / ${context.worktree.name} · ${diff.baseRef}`
+          : loadedRef.current!.summary,
         generatedAt: diff.generatedAt,
         files: parsedFiles,
         changeSets: diff.changeSets,
         searchableLines: searchableLinesFor(parsedFiles)
-      })
+      }
+      loadedDiff.current = diff
+      loadedRef.current = nextLoaded
+      setLoaded(nextLoaded)
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason))
     } finally {
+      loadPending.current = false
       setLoading(false)
     }
   }, [clearCopyFeedback])
 
   useEffect(() => {
-    void load()
+    const refresh = () => void load()
+    refresh()
+    addEventListener('focus', refresh)
+    const interval = setInterval(() => {
+      if (document.hasFocus()) {
+        refresh()
+      }
+    }, AUTO_REFRESH_INTERVAL_MS)
+    return () => {
+      removeEventListener('focus', refresh)
+      clearInterval(interval)
+    }
   }, [load])
 
   const setCollapsed = useCallback((file: string, collapsed: boolean) => {
@@ -1129,9 +1163,6 @@ function ReviewApp() {
           <button type="button" disabled={!unresolved.length} onClick={copy}>
             {copyFeedback ?? `Copy unresolved (${unresolved.length})`}
           </button>
-          <button type="button" disabled={loading} onClick={() => void load()}>
-            Refresh
-          </button>
         </div>
         <div
           id="find-bar"
@@ -1218,7 +1249,7 @@ function ReviewApp() {
         />
         <main id="review" aria-live="polite">
           {loading ? (
-            <p className="empty">Reading worktree changes…</p>
+            <p className="empty">Reading tree changes…</p>
           ) : error ? (
             <p className="error">{error}</p>
           ) : files.length === 0 ? (

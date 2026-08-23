@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "714c2f6b-73d5-49e7-91d9-e27fb982cb5a",
+  "id": "03dee9a7-243d-4bbb-8131-7b65f287e377",
   "prevId": "05ca1b81-cda8-4fbd-94ec-1f533cac858d",
   "tables": {
     "operations": {
@@ -205,6 +205,14 @@
           "autoincrement": false,
           "default": 1
         },
+        "show_in_recents": {
+          "name": "show_in_recents",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
         "last_opened_at": {
           "name": "last_opened_at",
           "type": "text",
@@ -241,7 +249,12 @@
         },
         "projects_recent_idx": {
           "name": "projects_recent_idx",
-          "columns": ["is_open", "\"last_opened_at\" desc", "id"],
+          "columns": [
+            "is_open",
+            "show_in_recents",
+            "\"last_opened_at\" desc",
+            "id"
+          ],
           "isUnique": false
         }
       },
@@ -260,6 +273,10 @@
         "projects_is_open_check": {
           "name": "projects_is_open_check",
           "value": "\"projects\".\"is_open\" IN (0,1)"
+        },
+        "projects_show_in_recents_check": {
+          "name": "projects_show_in_recents_check",
+          "value": "\"projects\".\"show_in_recents\" IN (0,1)"
         }
       }
     },
@@ -397,57 +414,6 @@
           "value": "\"terminal_presets\".\"close_on_success\" IN (0,1)"
         }
       }
-    },
-    "web_panel_permission_grants": {
-      "name": "web_panel_permission_grants",
-      "columns": {
-        "source_key": {
-          "name": "source_key",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "definition_id": {
-          "name": "definition_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "permissions_json": {
-          "name": "permissions_json",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "granted_at": {
-          "name": "granted_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "web_panel_permission_definition_idx": {
-          "name": "web_panel_permission_definition_idx",
-          "columns": ["definition_id"],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
     },
     "web_panel_storage": {
       "name": "web_panel_storage",

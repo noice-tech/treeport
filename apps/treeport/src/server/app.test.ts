@@ -5,6 +5,7 @@ import path from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import {
   DESKTOP_PROTOCOL_VERSION,
+  type JsonValue,
   type TerminalRuntimeMetadata
 } from '@treeport/shared'
 import {
@@ -14,7 +15,12 @@ import {
   type TmuxAdapter,
   type TreeportService
 } from './core/index'
+import { testAccess } from './test-access'
 import { createApp } from './app'
+import type {
+  ApplicationUpdateManager,
+  ApplicationUpdateStatus
+} from './application-update'
 import type { TerminalMetadataManager } from './terminal-metadata'
 
 function fixture(webDist = '/missing') {
@@ -33,13 +39,16 @@ function fixture(webDist = '/missing') {
     daemonLifecycle: 'treeport',
     webDevelopment: false
   }
-  const service = {
+  // SAFETY: The test fixture provides the asserted contract used here.
+  const service = testAccess<TreeportService>({
     events: new ProductEventBus(),
     listProjects: vi.fn(async () => []),
     listRecentProjects: vi.fn(() => [
       {
         id: 'recent',
         name: 'Recent',
+        kind: 'folder',
+        rootPath: '/recent',
         repositoryPath: '/recent',
         lastOpenedAt: '2026-01-01T00:00:00.000Z'
       }
@@ -57,9 +66,15 @@ function fixture(webDist = '/missing') {
         entries: [],
         truncated: false
       },
+      project: {
+        state: 'valid' as const,
+        kind: 'folder' as const,
+        path: input
+      },
       repository: { state: 'not-repository' as const, message: 'Not a repo' }
     })),
     closeProject: vi.fn(async () => undefined),
+    dismissRecentProject: vi.fn(async () => undefined),
     deleteProject: vi.fn(async () => undefined),
     updateProjectColor: vi.fn((id: string, color: string | null) => ({
       id,
@@ -168,6 +183,7 @@ function fixture(webDist = '/missing') {
       id: 'wt_1',
       tmuxSocketName: 'treeport-wt-1'
     })),
+    requestWorkspaceOpen: vi.fn(async () => undefined),
     listWebPanelDefinitions: vi.fn(async () => [
       {
         id: 'project:review',
@@ -256,7 +272,7 @@ function fixture(webDist = '/missing') {
     getOperation: vi.fn(async (id: string) => ({ id, status: 'running' })),
     removePreview: vi.fn(async () => ({ worktreeId: 'wt_1' })),
     beginRemove: vi.fn(async () => ({ id: 'op_1' }))
-  } as unknown as TreeportService
+  })
   const runtimeMetadata: TerminalRuntimeMetadata = {
     terminalId: 'term',
     title: 'pi · /repo',
@@ -273,25 +289,47 @@ function fixture(webDist = '/missing') {
   }))
   const metadataTrack = vi.fn(async () => undefined)
   const metadataAcknowledgeBell = vi.fn(async () => undefined)
-  const terminalMetadata = {
+  // SAFETY: The test fixture provides the asserted contract used here.
+  const terminalMetadata = testAccess<TerminalMetadataManager>({
     initialize: vi.fn(async () => undefined),
     snapshot: metadataSnapshot,
     get: metadataGet,
     trackTerminal: metadataTrack,
     acknowledgeBell: metadataAcknowledgeBell
-  } as unknown as TerminalMetadataManager
+  })
   const capturePane = vi.fn(
     async (): Promise<string | null> => 'Preparing changes\nRunning tests'
   )
+  const applicationUpdateStatus: ApplicationUpdateStatus = {
+    currentVersion: '0.4.0',
+    latestVersion: null,
+    updateAvailable: false,
+    checkedAt: null,
+    canUpdate: false,
+    blockedReason: null,
+    phase: 'idle',
+    operationId: null,
+    targetVersion: null,
+    error: null
+  }
+  const applicationUpdate = testAccess<ApplicationUpdateManager>({
+    status: vi.fn(async () => applicationUpdateStatus),
+    check: vi.fn(async () => undefined),
+    beginPolling: vi.fn(),
+    start: vi.fn(async () => applicationUpdateStatus),
+    dispose: vi.fn()
+  })
   const app = createApp({
     service,
     config,
-    tmux: { capturePane } as unknown as TmuxAdapter,
+    tmux: testAccess<TmuxAdapter>({ capturePane }),
+    applicationUpdate,
     terminalMetadata,
     webDist
   })
   return {
     app,
+    applicationUpdate,
     capturePane,
     config,
     metadataAcknowledgeBell,
@@ -313,6 +351,61 @@ describe('HTTP API validation', () => {
       protocolVersion: DESKTOP_PROTOCOL_VERSION,
       hostname: os.hostname(),
       daemonLifecycle: 'treeport'
+    })
+  })
+
+  it('reports and starts only the server-selected application update', async () => {
+    const { app, applicationUpdate } = fixture()
+    const available: ApplicationUpdateStatus = {
+      currentVersion: '0.4.0',
+      latestVersion: '0.5.0',
+      updateAvailable: true,
+      checkedAt: '2026-03-20T12:00:00.000Z',
+      canUpdate: true,
+      blockedReason: null,
+      phase: 'idle',
+      operationId: null,
+      targetVersion: '0.5.0',
+      error: null
+    }
+    vi.mocked(applicationUpdate.status).mockResolvedValue(available)
+    vi.mocked(applicationUpdate.start).mockResolvedValue({
+      ...available,
+      phase: 'starting'
+    })
+
+    const status = await app.request('/api/update')
+    expect(status.status).toBe(200)
+    expect(status.headers.get('cache-control')).toBe('no-store')
+    expect(await status.json()).toEqual(available)
+
+    const started = await app.request('/api/update', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ version: '99.0.0' })
+    })
+    expect(started.status).toBe(202)
+    expect(await started.json()).toMatchObject({
+      currentVersion: '0.4.0',
+      targetVersion: '0.5.0',
+      phase: 'starting'
+    })
+    expect(applicationUpdate.start).toHaveBeenCalledWith()
+
+    vi.mocked(applicationUpdate.start).mockRejectedValue(
+      new DomainError(
+        'APPLICATION_UPDATE_IN_PROGRESS',
+        'Another Treeport update is already running.',
+        409
+      )
+    )
+    const conflict = await app.request('/api/update', { method: 'POST' })
+    expect(conflict.status).toBe(409)
+    expect(await conflict.json()).toEqual({
+      error: {
+        code: 'APPLICATION_UPDATE_IN_PROGRESS',
+        message: 'Another Treeport update is already running.'
+      }
     })
   })
 
@@ -453,22 +546,35 @@ describe('HTTP API validation', () => {
   })
 
   it('uses the panel SDK to broker scoped panel requests', async () => {
-    const listeners = new Map<string, (...args: unknown[]) => unknown>()
+    const listeners = new Map<string, EventListener>()
     const panelParent = { postMessage: vi.fn() }
     vi.stubGlobal('parent', panelParent)
     vi.stubGlobal('self', globalThis)
-    vi.stubGlobal('addEventListener', (type: string, listener: unknown) =>
-      listeners.set(type, listener as (...args: unknown[]) => unknown)
+    vi.stubGlobal('addEventListener', (type: string, listener: EventListener) =>
+      listeners.set(type, listener)
     )
+    const dispatch = <EventFixture extends object>(
+      type: string,
+      event: EventFixture
+    ) => listeners.get(type)!(testAccess<Event>(event))
+    const intervalHandlers: Array<() => void> = []
+    vi.stubGlobal('setInterval', (handler: () => void) => {
+      intervalHandlers.push(handler)
+      return 1
+    })
+    const targetLocation = { href: 'http://browser-app.test/start' }
+    vi.stubGlobal('location', targetLocation)
+
     try {
+      // SAFETY: The test fixture provides the asserted contract used here.
       const sdk = (await import('@treeport/panel-sdk')) as {
         treeport: {
           version: number
           panel: { setTitle: (title: string | null) => void }
-          context: () => Promise<unknown>
-          network: { listeners: () => Promise<unknown> }
+          context: () => Promise<object>
+          network: { listeners: () => Promise<object> }
           storage: {
-            set: (key: string, value: unknown) => Promise<void>
+            set: (key: string, value: JsonValue) => Promise<void>
           }
           shortcuts: {
             onFind: (handler: () => void) => () => void
@@ -477,7 +583,7 @@ describe('HTTP API validation', () => {
       }
       const context = sdk.treeport.context()
       const message = panelParent.postMessage.mock.calls[0]![0]
-      listeners.get('message')!({
+      dispatch('message', {
         source: panelParent,
         data: {
           source: 'treeport-host-v1',
@@ -506,7 +612,7 @@ describe('HTTP API validation', () => {
         source: 'treeport-panel-v1',
         method: 'network.listeners'
       })
-      listeners.get('message')!({
+      dispatch('message', {
         source: panelParent,
         data: {
           source: 'treeport-host-v1',
@@ -529,7 +635,7 @@ describe('HTTP API validation', () => {
         key: 'comments',
         value: [{ line: 12 }]
       })
-      listeners.get('message')!({
+      dispatch('message', {
         source: panelParent,
         data: {
           source: 'treeport-host-v1',
@@ -549,11 +655,41 @@ describe('HTTP API validation', () => {
         '*'
       )
 
+      dispatch('message', {
+        source: panelParent,
+        data: {
+          source: 'treeport-browser-v1',
+          method: 'location.subscribe',
+          subscription: 'browser-frame-1'
+        }
+      })
+      expect(panelParent.postMessage).toHaveBeenLastCalledWith(
+        {
+          source: 'treeport-panel-v1',
+          method: 'browser.location.set',
+          subscription: 'browser-frame-1',
+          url: 'http://browser-app.test/start'
+        },
+        '*'
+      )
+
+      targetLocation.href = 'http://browser-app.test/next'
+      intervalHandlers[0]!()
+      expect(panelParent.postMessage).toHaveBeenLastCalledWith(
+        {
+          source: 'treeport-panel-v1',
+          method: 'browser.location.set',
+          subscription: 'browser-frame-1',
+          url: 'http://browser-app.test/next'
+        },
+        '*'
+      )
+
       const findHandler = vi.fn()
       const unsubscribeFind = sdk.treeport.shortcuts.onFind(findHandler)
       const preventFindDefault = vi.fn()
       const stopFindPropagation = vi.fn()
-      listeners.get('keydown')!({
+      dispatch('keydown', {
         key: 'f',
         metaKey: true,
         altKey: false,
@@ -566,7 +702,7 @@ describe('HTTP API validation', () => {
       expect(preventFindDefault).toHaveBeenCalledOnce()
       expect(stopFindPropagation).toHaveBeenCalledOnce()
 
-      listeners.get('message')!({
+      dispatch('message', {
         source: panelParent,
         data: {
           source: 'treeport-host-v1',
@@ -577,7 +713,7 @@ describe('HTTP API validation', () => {
       expect(findHandler).toHaveBeenCalledTimes(2)
 
       unsubscribeFind()
-      listeners.get('message')!({
+      dispatch('message', {
         source: panelParent,
         data: {
           source: 'treeport-host-v1',
@@ -589,7 +725,7 @@ describe('HTTP API validation', () => {
 
       const preventDefault = vi.fn()
       const stopPropagation = vi.fn()
-      listeners.get('keydown')!({
+      dispatch('keydown', {
         key: '2',
         metaKey: true,
         altKey: false,
@@ -672,6 +808,7 @@ describe('HTTP API validation', () => {
         'text/javascript; charset=utf-8'
       )
       const moduleSource = await moduleResponse.text()
+      // SAFETY: The test fixture provides the asserted contract used here.
       const compiled = (await import(
         /* @vite-ignore */ `data:text/javascript;base64,${Buffer.from(moduleSource).toString('base64')}`
       )) as { answer: number }
@@ -738,6 +875,19 @@ describe('HTTP API validation', () => {
       }
     )
     expect(invalidEnvironment.status).toBe(400)
+    const ambiguousCommand = await app.request(
+      '/api/worktrees/wt_1/terminals',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          name: 'bad command',
+          argv: ['bun'],
+          shellCommand: 'bun remotion'
+        })
+      }
+    )
+    expect(ambiguousCommand.status).toBe(400)
     expect(service.createTerminal).not.toHaveBeenCalled()
   })
 
@@ -784,6 +934,38 @@ describe('HTTP API validation', () => {
       ['code', '.'],
       { closeOnSuccess: true }
     )
+
+    const shellCommand = await app.request('/api/worktrees/wt_1/terminals', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        name: 'Remotion',
+        shellCommand: 'bun remotion',
+        returnToShell: true
+      })
+    })
+    expect(shellCommand.status).toBe(201)
+    expect(service.createTerminal).toHaveBeenLastCalledWith(
+      'wt_1',
+      'Remotion',
+      undefined,
+      { returnToShell: true, shellCommand: 'bun remotion' }
+    )
+  })
+
+  it('targets workspace opening at the client that shows the source terminal', async () => {
+    const { app, service } = fixture()
+    const response = await app.request('/api/worktrees/wt_1/open', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sourceTerminalId: 'term_source' })
+    })
+
+    expect(response.status).toBe(200)
+    expect(service.requestWorkspaceOpen).toHaveBeenCalledWith(
+      'wt_1',
+      'term_source'
+    )
   })
 
   it('validates and forwards server directory browsing', async () => {
@@ -792,6 +974,13 @@ describe('HTTP API validation', () => {
       '/api/filesystem/directories?input=%2Frepos%2Fwith%20spaces&hidden=true'
     )
     expect(browsed.status).toBe(200)
+    expect(await browsed.json()).toMatchObject({
+      project: {
+        state: 'valid',
+        kind: 'folder',
+        path: '/repos/with spaces'
+      }
+    })
     expect(service.browseDirectory).toHaveBeenCalledWith(
       '/repos/with spaces',
       true
@@ -804,13 +993,20 @@ describe('HTTP API validation', () => {
     expect(service.browseDirectory).toHaveBeenCalledTimes(1)
   })
 
-  it('keeps recent, open, close, and destructive delete as distinct routes', async () => {
+  it('keeps recent, open, close, dismiss, and destructive delete as distinct routes', async () => {
     const { app, service } = fixture()
 
     const recent = await app.request('/api/projects/recent')
     expect(recent.status).toBe(200)
     expect(await recent.json()).toMatchObject({
-      projects: [{ id: 'recent', repositoryPath: '/recent' }]
+      projects: [
+        {
+          id: 'recent',
+          kind: 'folder',
+          rootPath: '/recent',
+          repositoryPath: '/recent'
+        }
+      ]
     })
     expect(service.getProjectSnapshot).not.toHaveBeenCalledWith('recent')
 
@@ -825,6 +1021,12 @@ describe('HTTP API validation', () => {
     })
     expect(closed.status).toBe(200)
     expect(service.closeProject).toHaveBeenCalledWith('p')
+
+    const dismissed = await app.request('/api/projects/p/recent', {
+      method: 'DELETE'
+    })
+    expect(dismissed.status).toBe(200)
+    expect(service.dismissRecentProject).toHaveBeenCalledWith('p')
 
     const removed = await app.request('/api/projects/p', {
       method: 'DELETE'
@@ -1199,6 +1401,7 @@ describe('HTTP API validation', () => {
 
       expect(response.status).toBe(201)
       expect(service.getTerminal).toHaveBeenCalledWith('term_1')
+      // SAFETY: The test fixture provides the asserted contract used here.
       const result = (await response.json()) as { file: { path: string } }
       expect(path.dirname(result.file.path)).toBe(
         path.join(config.runtimeDir, 'uploads')
@@ -1218,6 +1421,7 @@ describe('HTTP API validation', () => {
       expect(legacyHeader.status).toBe(201)
       expect(
         path.extname(
+          // SAFETY: The test fixture provides the asserted contract used here.
           ((await legacyHeader.json()) as { file: { path: string } }).file.path
         )
       ).toBe('.txt')

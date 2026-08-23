@@ -2,11 +2,43 @@ import { defineConfig } from 'astro/config'
 import starlight from '@astrojs/starlight'
 
 export default defineConfig({
+  site: 'https://treeport.app',
   integrations: [
     starlight({
       title: 'Treeport',
-      description:
-        'A worktree-first terminal driver for persistent development workspaces.',
+      description: 'Use persistent terminals in Git worktrees.',
+      favicon: '/favicon.svg',
+      disable404Route: true,
+      head: [
+        {
+          tag: 'meta',
+          attrs: {
+            property: 'og:image',
+            content: 'https://treeport.app/social-card.png'
+          }
+        },
+        {
+          tag: 'meta',
+          attrs: {
+            property: 'og:image:alt',
+            content: 'Treeport: Persistent terminals for Git worktrees.'
+          }
+        },
+        {
+          tag: 'meta',
+          attrs: {
+            name: 'twitter:image',
+            content: 'https://treeport.app/social-card.png'
+          }
+        },
+        {
+          tag: 'meta',
+          attrs: {
+            name: 'twitter:image:alt',
+            content: 'Treeport: Persistent terminals for Git worktrees.'
+          }
+        }
+      ],
       social: [
         {
           icon: 'github',
@@ -28,9 +60,9 @@ export default defineConfig({
         {
           label: 'Concepts',
           items: [
-            { label: 'Philosophy', slug: 'concepts/philosophy' },
+            { label: 'Design principles', slug: 'concepts/philosophy' },
             {
-              label: 'Projects, worktrees, and terminals',
+              label: 'Projects, trees, and terminals',
               slug: 'concepts/projects-worktrees-terminals'
             },
             {
@@ -66,7 +98,7 @@ export default defineConfig({
               slug: 'features/attention-and-progress'
             },
             {
-              label: 'Worktree setup',
+              label: 'Tree setup',
               slug: 'features/worktree-setup-hooks'
             }
           ]
@@ -75,15 +107,11 @@ export default defineConfig({
           label: 'Tools and workflows',
           items: [
             {
-              label: 'Worktree-friendly development',
+              label: 'Tree-friendly development',
               slug: 'workflows/worktree-friendly-development'
             },
             { label: 'Shell setup', slug: 'workflows/shell-setup' },
-            { label: 'Coding agents', slug: 'building-apps/coding-agents' },
-            {
-              label: 'Contributor development',
-              slug: 'building-apps/contributing'
-            }
+            { label: 'Coding agents', slug: 'building-apps/coding-agents' }
           ]
         },
         {

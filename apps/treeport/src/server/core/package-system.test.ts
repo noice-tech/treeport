@@ -48,8 +48,8 @@ async function rootFixture() {
     webDevelopment: false
   }
   const projects = [
-    { id: 'project-a', name: 'A', mainWorktreePath: projectA },
-    { id: 'project-b', name: 'B', mainWorktreePath: projectB }
+    { id: 'project-a', name: 'A', rootPath: projectA },
+    { id: 'project-b', name: 'B', rootPath: projectB }
   ]
   return { root, dataDir, projectA, projectB, config, projects }
 }

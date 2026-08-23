@@ -6,7 +6,7 @@ const MAX_NAME_BYTES = 512
 const MAX_PROFILE_PICTURE_BYTES = 2_048
 const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
 
-export interface RequestPrincipal {
+interface RequestPrincipal {
   source: 'local' | 'tailscale'
   login: string | null
   name: string | null
@@ -57,15 +57,18 @@ function headerValues(request: IncomingMessage, name: string): string[] {
   return Array.isArray(value) ? value : [value]
 }
 
-function singleHeader(
-  request: IncomingMessage,
-  name: string
-): { present: boolean; valid: boolean; value: string | null } {
+interface HeaderValue {
+  present: boolean
+  valid: boolean
+  value: string | null
+}
+
+function singleHeader(request: IncomingMessage, name: string): HeaderValue {
   const values = headerValues(request, name)
   return {
     present: values.length > 0,
     valid: values.length <= 1,
-    value: values.length === 1 ? values[0]! : null
+    value: values.length === 1 ? (values[0] ?? null) : null
   }
 }
 

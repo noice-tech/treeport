@@ -5,6 +5,7 @@ import fs from 'node:fs/promises'
 import http from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
+import { z } from 'zod'
 
 const [appPath, ...extra] = process.argv.slice(2)
 if (!appPath || extra.length > 0) {
@@ -41,8 +42,10 @@ try {
     server.once('error', reject)
     server.listen(0, '127.0.0.1', resolve)
   })
-  const address = server.address()
-  if (!address || typeof address === 'string') {
+  const address = z
+    .object({ port: z.number().int() })
+    .safeParse(server.address())
+  if (!address.success) {
     throw new Error('Could not allocate a desktop release smoke-test port')
   }
 
@@ -51,7 +54,7 @@ try {
       ...process.env,
       TREEPORT_DESKTOP_E2E: '1',
       TREEPORT_DESKTOP_USER_DATA: userData,
-      TREEPORT_DESKTOP_URL: `http://127.0.0.1:${address.port}`
+      TREEPORT_DESKTOP_URL: `http://127.0.0.1:${address.data.port}`
     },
     stdio: ['ignore', 'pipe', 'pipe']
   })

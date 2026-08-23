@@ -7,7 +7,7 @@ export interface OpenWorkspaceResult {
   client: 'desktop' | 'browser'
 }
 
-export interface LaunchResult {
+interface LaunchResult {
   code: number | null
   stderr: string
 }

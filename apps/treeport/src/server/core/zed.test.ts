@@ -33,9 +33,7 @@ describe('Zed worktree compatibility', () => {
     expect(normalizeWorktreeName(' Feature Cáché / API! ')).toBe(
       'feature-cache-api'
     )
-    expect(() => normalizeWorktreeName(' / ')).toThrow(
-      /Worktree name is required/
-    )
+    expect(() => normalizeWorktreeName(' / ')).toThrow(/Tree name is required/)
     expect(
       inferWorktreeName(
         '/Projects/remotion-main',
@@ -51,7 +49,7 @@ describe('Zed worktree compatibility', () => {
       )
     ).toBe('test')
     expect(inferWorktreeName('/Projects/repo', '/Projects/repo', 'main')).toBe(
-      'main worktree'
+      'main tree'
     )
   })
 
@@ -193,6 +191,7 @@ describe('Zed worktree compatibility', () => {
           name: `Run ${worktree}`,
           executable: path.join(main, 'bin', 'node'),
           args: [path.join(main, 'script.js'), 'a b', '$HOME', '雪'],
+          shellCommand: null,
           cwd: path.join(worktree, 'nested dir'),
           env: {
             CUSTOM: `${main}:${worktree}`,
@@ -205,8 +204,9 @@ describe('Zed worktree compatibility', () => {
         {
           id: 'repository:project_1:zed-task:1',
           name: 'Duplicate',
-          executable: '/bin/zsh',
-          args: ['-lc', `echo value | cat 'semi;colon' 'quote'"'"'argument'`],
+          executable: null,
+          args: [],
+          shellCommand: `echo value | cat 'semi;colon' 'quote'"'"'argument'`,
           cwd: worktree,
           env: {
             ZED_WORKTREE_ROOT: worktree,
@@ -220,6 +220,7 @@ describe('Zed worktree compatibility', () => {
           name: 'Duplicate',
           executable: 'printf',
           args: ['done'],
+          shellCommand: null,
           cwd: worktree,
           env: {
             ZED_WORKTREE_ROOT: worktree,

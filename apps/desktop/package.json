@@ -1,9 +1,9 @@
 {
   "name": "@treeport/desktop",
-  "version": "0.3.0",
+  "version": "0.5.0",
   "private": true,
   "productName": "Treeport",
-  "description": "A worktree-first desktop terminal driver for local and trusted private-network backends.",
+  "description": "A tree-first desktop terminal driver for local and trusted private-network backends.",
   "author": "noice tech",
   "repository": {
     "type": "git",

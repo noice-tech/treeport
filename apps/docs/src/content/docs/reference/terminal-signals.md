@@ -1,72 +1,110 @@
 ---
 title: Terminal signals
-description: Publish titles, attention, and progress through standard terminal protocols.
+description: Send titles, attention, and progress through standard terminal protocols.
 ---
 
-Treeport preserves and controls terminal applications without any integration. Applications can optionally publish semantic state through standard terminal signals.
+Treeport preserves and controls terminal applications without an integration.
 
-## Capability levels
+Applications can send more information through standard terminal signals.
 
-### Process lifecycle
+## Process lifecycle
 
-Every Treeport terminal provides persistent execution, running or exited status, an exit code where available, terminal rendering and input, and reconnection. No application integration is required.
+Each Treeport terminal supplies these functions:
 
-### Terminal title
+- persistent execution;
+- active or exited status;
+- an exit code, when available;
+- terminal rendering and input;
+- reconnection.
 
-Interactive zsh, Bash, and fish sessions capture the command entered at the shell execution boundary. This lets Treeport display `pnpm dev` while the foreground process visible to tmux is only `node`. The captured value can include arguments, is limited to 256 characters, and is cleared when the prompt returns.
+An application integration is not necessary.
 
-Treeport preserves the user's shell startup files while installing these hooks. Nushell retains its native title behavior. Unsupported shells, non-interactive invocations, and Bash configurations that replace Treeport's one-time prompt bootstrap fall back to the foreground executable name because the original command cannot be reconstructed reliably from a process tree.
+## Terminal title
 
-Applications can publish a more useful title with OSC `0` or `2`; a fresh application title takes priority over the shell-captured command.
+Interactive zsh, Bash, and fish sessions capture the command when the shell starts it.
+
+For example, Treeport can show `pnpm dev` when tmux sees only the foreground `node` process.
+
+The captured title can include arguments and has a maximum of 256 characters.
+
+Treeport clears the title when the shell prompt returns.
+
+Treeport keeps your shell startup files when it installs these hooks.
+
+Nushell keeps its native title behavior.
+
+A terminal started with a command uses that command as the initial title. If the terminal returns to a shell after the command exits, normal interactive-shell title tracking resumes.
+
+Other interactive shells use the foreground executable name.
+
+This fallback also applies when Bash configuration replaces the one-time Treeport prompt setup.
+
+An application can replace the initial title with a more useful OSC `0` or `2` title.
+
+A current application title has priority over a captured shell command.
 
 ```sh
 printf '\033]2;Waiting for review\007'
 ```
 
-Keep titles concise. Useful examples include `Implementing authentication`, `PR #123`, `PR MERGED`, and `Development server`.
+Use a short title. Examples are `Implementing authentication`, `PR #123`, `PR MERGED`, and `Development server`.
 
-Application titles are runtime metadata and may be reset after the daemon or observer restarts. Shell-captured commands are also stored as pane-scoped tmux metadata while they run, allowing Treeport to recover the command after an observer restart.
+Application titles are runtime information. A daemon or observer restart can clear them.
 
-### BEL attention
+Treeport also saves active shell commands as tmux pane information. This lets Treeport recover them after an observer restart.
 
-Emit a real BEL when a meaningful transition needs attention:
+## BEL attention
+
+Send an actual BEL when an important change requires attention:
 
 ```sh
 printf '\007'
 ```
 
-Suitable uses include waiting for input, completion of a long-running operation, failed checks, or required approval. Treeport synchronizes unread attention between connected clients. BEL used only as an OSC sequence terminator is not treated as attention.
+Use BEL for an input request, operation completion, failed check, or required approval.
 
-### OSC 9;4 progress
+Treeport synchronizes unread attention between clients.
+
+A BEL that only ends an OSC sequence does not request attention.
+
+## OSC 9;4 progress
 
 Treeport supports OSC `9;4` progress states:
 
 ```sh
-# Normal progress at 42%
+# Normal progress at 42%.
 printf '\033]9;4;1;42\007'
 
-# Error progress at 100%
+# Error progress at 100%.
 printf '\033]9;4;2;100\007'
 
-# Indeterminate active work
+# Active work without a percentage.
 printf '\033]9;4;3\007'
 
-# Paused at 7%
+# Paused at 7%.
 printf '\033]9;4;4;7\007'
 
-# Clear progress
+# Clear progress.
 printf '\033]9;4;0\007'
 ```
 
-Values must be integers from 0 through 100. Every valid active frame renews a five-minute inactivity lease. Refresh long-running progress more frequently and send an explicit clear when work finishes.
+A percentage must be an integer from 0 through 100.
 
-The absence of progress does not prove that a process is idle or complete; the application may not support the protocol.
+Each valid active frame renews a five-minute inactivity period.
 
-### Process exit
+For long operations, send progress more frequently. Send an explicit clear when the operation completes.
 
-When the retained foreground process exits, Treeport reports its exited state and exit code where available. An application that returns to a shell leaves the terminal running because the shell remains alive.
+No progress signal does not prove that a process is idle or complete. The application can lack protocol support.
 
-## Progressive enhancement
+## Process exit
+
+When the retained foreground process exits, Treeport reports the exited state.
+
+It also reports the exit code when that code is available.
+
+If an application returns to a shell, the terminal stays active because the shell continues to run.
+
+## Add signals in levels
 
 ```text
 No integration
@@ -75,29 +113,35 @@ No integration
 Title only
 └── Pi — PR #123
 
-Title + progress
+Title and progress
 └── Pi — PR #123 · working
 
-Title + progress + BEL
+Title, progress, and BEL
 └── Pi — PR #123 · needs attention
 ```
 
-## Application responsibilities
+## Divide responsibilities
 
-Applications and extensions should publish semantic state they understand better than Treeport does. For example, a coding-agent extension may update the title when a pull request is created or merged, emit progress while working, clear progress while waiting, and emit BEL when user action is required.
+Applications and extensions must send the information that they understand.
 
-## Treeport responsibilities
+For example, an agent extension can update a title when it creates or merges a pull request.
 
-Treeport observes supported terminal signals, presents them consistently, synchronizes attention across clients, avoids stale state where possible, and degrades gracefully when signals are absent. It does not guarantee that terminal applications publish accurate semantic state.
+It can send progress while it works, clear progress while it waits, and send BEL when user action is necessary.
 
-## Integration guidance
+Treeport observes supported terminal signals and shows them on all clients.
 
-Prefer, in order:
+It synchronizes attention and removes old state when possible.
 
-1. process lifecycle for universal status;
-2. terminal titles for short semantic context;
-3. BEL for attention;
-4. OSC progress for active and cleared transitions;
-5. the Treeport CLI or API only for structured lifecycle operations.
+Treeport cannot guarantee that an application sends correct information.
 
-Treeport does not parse arbitrary terminal output or duplicate provider-specific state. Applications should publish semantics they understand better than Treeport does.
+## Select an integration method
+
+Use these methods in this order:
+
+1. Use process lifecycle for universal status.
+2. Use terminal titles for short context.
+3. Use BEL for attention.
+4. Use OSC progress for active and cleared states.
+5. Use the Treeport CLI or API for structured lifecycle operations.
+
+Treeport does not parse arbitrary terminal output or copy provider-specific state.

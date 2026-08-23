@@ -1,47 +1,65 @@
 ---
 title: Configuration
-description: Environment variables, paths, and defaults for the Treeport daemon and CLI.
+description: Configure Treeport environment variables, paths, and defaults.
 ---
 
-`treeport start --host/--port` persists listener preferences. The host must be `127.0.0.1`, `::1`, or `localhost`. `treeport remote enable` separately persists its Tailscale HTTPS port. Environment variables override listener preferences but cannot enable a non-loopback listener.
+`treeport start --host/--port` saves listener preferences.
 
-## Daemon
+The host must be `127.0.0.1`, `::1`, or `localhost`.
 
-| Variable                 | Default                    | Purpose                                                             |
-| ------------------------ | -------------------------- | ------------------------------------------------------------------- |
-| `TREEPORT_HOST`          | `127.0.0.1`                | Loopback address on which the daemon listens. `HOST` is a fallback. |
-| `TREEPORT_PORT`          | `8733`                     | Daemon and web-app port. `PORT` is a fallback.                      |
-| `TREEPORT_DATA_DIR`      | Platform data directory    | Treeport's durable application data.                                |
-| `TREEPORT_DATABASE_PATH` | `<data-dir>/treeport.db`   | SQLite database path.                                               |
-| `TREEPORT_RUNTIME_DIR`   | Platform runtime directory | Runtime files, including Treeport-owned tmux state.                 |
-| `TREEPORT_SHELL`         | `$SHELL`, then `/bin/sh`   | Shell used for login-shell terminals.                               |
-| `TREEPORT_TMUX_PATH`     | `tmux`                     | tmux executable or path.                                            |
-| `TREEPORT_GIT_PATH`      | `git`                      | Git executable or path.                                             |
-| `TREEPORT_GH_PATH`       | `gh`                       | Optional GitHub CLI executable or path.                             |
-| `TREEPORT_API_URL`       | `http://<host>:<port>`     | URL injected into managed terminals and used for callbacks.         |
+`treeport remote enable` separately saves its Tailscale HTTPS port.
 
-`~` and `~/…` are expanded in path variables.
+Environment variables replace listener preferences. They cannot enable a non-loopback listener.
 
-### Default data directory
+## Configure the daemon
+
+| Variable                 | Default                    | Purpose                                                |
+| ------------------------ | -------------------------- | ------------------------------------------------------ |
+| `TREEPORT_HOST`          | `127.0.0.1`                | Daemon loopback address. `HOST` is a fallback.         |
+| `TREEPORT_PORT`          | `8733`                     | Daemon and web application port. `PORT` is a fallback. |
+| `TREEPORT_DATA_DIR`      | Platform data directory    | Durable Treeport application data.                     |
+| `TREEPORT_DATABASE_PATH` | `<data-dir>/treeport.db`   | SQLite database path.                                  |
+| `TREEPORT_RUNTIME_DIR`   | Platform runtime directory | Runtime files, including Treeport tmux state.          |
+| `TREEPORT_SHELL`         | `$SHELL`, then `/bin/sh`   | Shell for login-shell terminals.                       |
+| `TREEPORT_TMUX_PATH`     | `tmux`                     | tmux executable or path.                               |
+| `TREEPORT_GIT_PATH`      | `git`                      | Git executable or path.                                |
+| `TREEPORT_GH_PATH`       | `gh`                       | Optional GitHub CLI executable or path.                |
+| `TREEPORT_API_URL`       | `http://<host>:<port>`     | Daemon URL for managed terminals and callbacks.        |
+
+Treeport expands `~` and `~/…` in path variables.
+
+### Find the default data directory
 
 - macOS: `~/Library/Application Support/treeport`
-- Other Unix-like systems: `$XDG_DATA_HOME/treeport`, or `~/.local/share/treeport`
+- Other Unix systems: `$XDG_DATA_HOME/treeport`, or `~/.local/share/treeport`
 
-### Default runtime directory
+### Find the default runtime directory
 
-Treeport uses `$XDG_RUNTIME_DIR/treeport` when `XDG_RUNTIME_DIR` is set. Otherwise it uses a user-specific directory below the operating system's temporary directory.
+When `XDG_RUNTIME_DIR` is set, Treeport uses `$XDG_RUNTIME_DIR/treeport`.
 
-## Repository terminal presets
+Otherwise, it uses a user-specific directory in the operating-system temporary directory.
 
-A registered repository can commit native terminal choices in `.treeport/terminal-presets.json`. Treeport reads the file from the worktree where a panel is being opened, so each worktree follows the version on its own branch. The versioned file maps stable preset identifiers to a name, executable, literal argument array, and optional `closeOnSuccess` behavior.
+## Configure project terminal presets
 
-Treeport also reads compatible `.zed/tasks.json` tasks from the registered main worktree. Those choices apply to every existing worktree in that repository and support per-worktree path expansion, working directories, and environments.
+A project tree can contain `.treeport/terminal-presets.json`.
 
-See [Terminal presets](/features/terminal-presets/#repository-presets) for the native schema and [Zed task compatibility](/features/terminal-presets/#zed-task-compatibility) for the supported Zed subset, precedence, validation, and refresh behavior.
+Treeport reads this file from the selected tree. In a repository, each tree uses the file from its branch.
 
-## Package settings
+The file maps stable preset identifiers to a name, executable, literal argument array, and optional `closeOnSuccess` value.
 
-Global package settings live at `<data-dir>/settings.json`. A registered repository's settings live at `<main-worktree>/.treeport/settings.json`; the main worktree is authoritative for every linked worktree.
+Treeport also reads compatible `.zed/tasks.json` tasks from the main tree.
+
+These tasks apply to all trees in that repository. They support path expansion, working directories, and environments.
+
+See [Repository presets](/features/terminal-presets/#repository-presets) and [Zed task compatibility](/features/terminal-presets/#zed-task-compatibility).
+
+## Configure package settings
+
+Global package settings are at `<data-dir>/settings.json`.
+
+Project settings are at `<project-root>/.treeport/settings.json`.
+
+For a repository, the project root is the main tree, which controls all linked trees. For a folder project, the project root is the selected folder.
 
 Supported fields are:
 
@@ -52,7 +70,9 @@ Supported fields are:
 }
 ```
 
-`npmCommand` is an argv-style command used for managed npm operations. It defaults to `["npm"]` and can use a wrapper without shell parsing:
+`npmCommand` is an argument-array command for managed npm operations. The default is `["npm"]`.
+
+You can use a wrapper without shell parsing:
 
 ```json
 {
@@ -60,46 +80,75 @@ Supported fields are:
 }
 ```
 
-Global managed npm state is stored under `<data-dir>/npm`. Repository managed npm state is stored under `<main-worktree>/.treeport/npm`; Treeport creates its ignore file so generated dependencies and lock state are not accidentally committed. Lifecycle scripts are disabled for every managed package operation.
+Global managed npm files are in `<data-dir>/npm`.
 
-See [Packages](/features/packages/) for package source, filtering, and scope behavior.
+Project managed npm files are in `<project-root>/.treeport/npm`.
 
-## CLI
+Treeport creates an ignore file in this directory. This prevents accidental commits of dependencies and lock data.
 
-The CLI connects to:
+Treeport disables lifecycle scripts for all managed package operations.
+
+See [Packages](/features/packages/) for package sources, filters, and scope.
+
+## Configure the CLI
+
+The default CLI connection is:
 
 ```text
 TREEPORT_API_URL=http://127.0.0.1:8733
 ```
 
-If the variable is unset, it uses the listener saved by `treeport start`, or defaults to `http://127.0.0.1:8733`.
+If the variable is not set, Treeport uses the saved listener. If no listener is saved, it uses the default URL.
 
-Managed terminals receive these variables automatically. Treeport CLI commands in a managed terminal reconnect to the current local daemon after a restart, even when its listener URL changes.
+Treeport puts these variables in managed terminals:
 
 | Variable               | Meaning                     |
 | ---------------------- | --------------------------- |
 | `TREEPORT_API_URL`     | Daemon URL                  |
 | `TREEPORT_PROJECT_ID`  | Exact registered project ID |
-| `TREEPORT_WORKTREE_ID` | Exact current worktree ID   |
+| `TREEPORT_WORKTREE_ID` | Exact current tree ID       |
 | `TREEPORT_TERMINAL_ID` | Exact current terminal ID   |
 
-`treeport context` validates that all IDs are present and still belong together. It refuses partial or stale managed context rather than guessing from the current directory.
+After a daemon restart, CLI commands in managed terminals connect to the current local daemon.
 
-## Service environment
+This also works when the listener URL changes.
 
-`treeport service enable` saves the daemon configuration that the OS manager needs after login or shell state is gone. It includes the resolved Treeport paths, listener, selected tool paths, `PATH`, and locale. It does not save terminal context, SSH-agent state, or unrelated shell variables.
+`treeport context` makes sure that all IDs are present and still have the correct relationship.
 
-Run `treeport service enable` again after you change the Node installation, npm prefix, `PATH`, Treeport paths, listener, shell, Git path, or tmux path. `treeport service status` and `treeport doctor` report a stale service environment.
+It refuses partial or old context. It does not infer missing IDs from the current directory.
+
+## Update the service environment
+
+`treeport service enable` saves the daemon configuration that the operating-system manager requires.
+
+This configuration includes Treeport paths, listener, tool paths, `PATH`, and locale.
+
+It does not include terminal context, SSH agent state, or unrelated shell variables.
+
+In user service mode, run `treeport service enable` again after you change one of these items:
+
+- the Node.js installation;
+- the npm prefix;
+- `PATH`;
+- Treeport paths;
+- the listener;
+- the shell;
+- the Git path;
+- the tmux path.
+
+In advanced headless mode, use `treeport service enable --headless` instead.
+
+`treeport service status` and `treeport doctor` report an old service environment.
 
 ## Examples
 
-Keep Treeport local on a custom port:
+Start Treeport on a different local port:
 
 ```sh
 treeport start --port 4900
 ```
 
-Use an alternate shell and database:
+Use a different shell and database:
 
 ```sh
 TREEPORT_SHELL=/bin/bash \
@@ -107,9 +156,11 @@ TREEPORT_DATABASE_PATH=~/Backups/treeport.db \
 treeport start
 ```
 
-For private remote access, use `treeport remote enable`. It keeps the daemon on loopback and exposes it through Tailscale Serve; see [Remote access](/features/remote-access/).
+For private remote access, use `treeport remote enable`.
 
-Treeport refuses old non-loopback preferences and environment values. Repair an old preference, then enable the supported remote endpoint:
+This command keeps the daemon on loopback and adds Tailscale Serve. See [Remote access](/features/remote-access/).
+
+To repair an old non-loopback preference, run:
 
 ```sh
 treeport start --host 127.0.0.1

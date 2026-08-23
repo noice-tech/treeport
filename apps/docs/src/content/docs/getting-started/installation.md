@@ -1,68 +1,119 @@
 ---
 title: Install Treeport
-description: Install and run Treeport with curl or npm.
+description: Install the Treeport backend and macOS desktop client.
 ---
 
-The Treeport backend supports macOS and Linux. It requires Node.js 24 or newer, npm, Git, and tmux 3.2 or newer. The desktop client supports macOS 12 Monterey or newer on both Apple Silicon and Intel Macs.
+The Treeport backend supports macOS and Linux.
 
-## Install the macOS desktop app
+Install these required tools before you install Treeport:
 
-Download the DMG from the [latest GitHub Release](https://github.com/noice-tech/treeport/releases/latest), open it, and drag **Treeport** into Applications. The universal app is signed with a Developer ID certificate and notarized by Apple.
+- Node.js 24 or a newer version
+- npm
+- Git
+- tmux 3.2 or a newer version
 
-The desktop client connects to a Treeport backend; it does not contain one. Install and start the backend on this Mac using curl or npm below, or connect the app to a private HTTPS backend on another computer.
+Treeport does not install these tools.
 
-The desktop client checks for stable updates automatically. After an update downloads, Treeport asks before restarting the desktop client to install it. Desktop updates never upgrade or restart the selected local or remote backend.
+The desktop client supports macOS 12 Monterey or a newer version. It supports Apple Silicon and Intel Macs.
 
-## Install the backend with curl
+## Install the macOS desktop client
 
-The recommended installer checks your existing Node.js installation and installs the Treeport npm package into a Treeport-managed directory:
+1. Download the DMG from the [latest GitHub Release](https://github.com/noice-tech/treeport/releases/latest).
+2. Open the DMG.
+3. Drag **Treeport** to the Applications folder.
 
-```sh
-curl -fsSL https://treeport.app/install.sh | sh
-```
+The universal application has an Apple Developer ID signature and Apple notarization.
 
-The installer requires Node.js 24 or newer and npm on `PATH`; it never installs Node.js or a package manager. If tmux is unavailable, it can use a recognized package manager already on the system after asking for confirmation. Supported package managers include Homebrew and MacPorts on macOS and APT, DNF, YUM, pacman, Zypper, and apk on Linux. You can instead install tmux 3.2 or newer yourself before rerunning the installer. Install Git with your preferred package manager if it is unavailable.
+The desktop client connects to a separate Treeport backend. It does not contain the backend.
 
-Add `~/.local/bin` to `PATH` if requested, then open a Git repository:
+Install the backend on this Mac with npm. Alternatively, connect to a private HTTPS backend on another computer.
 
-```sh
-cd /path/to/repository
-treeport .
-```
+The desktop client checks for stable updates automatically. After it downloads an update, it shows **Update & restart** in the title bar.
 
-Treeport starts its backend in the background if necessary, registers the repository and its worktrees, and opens the current worktree in the macOS desktop app or default browser. Use `treeport start` when you want to start only the backend; it prints its local URL, `http://127.0.0.1:8733`.
+Select this control to restart the client and install the update.
 
-Rerun the same curl command to install a newer version. The installer preserves whether the local daemon was running. If macOS service mode needs an administrator action during an upgrade, complete the printed action and rerun the installer before you remove old package files.
+A desktop update does not upgrade or restart the selected backend.
 
-## Install the backend with npm
+## Install the backend
 
-To install directly through npm:
+Install Treeport globally:
 
 ```sh
 npm install --global @treeport/treeport
-cd /path/to/repository
+```
+
+Open a folder or Git repository:
+
+```sh
+cd /path/to/project
 treeport .
 ```
 
-For upgrades, stop Treeport while npm replaces package files:
+Treeport starts the backend when necessary.
+
+For a repository, Treeport registers the repository and finds its trees.
+
+For an ordinary folder, Treeport creates one folder tree.
+
+In a managed terminal, it opens the selected tree in the current Treeport client.
+
+From another terminal, it opens the macOS desktop client or the default browser.
+
+To start only the backend, run:
 
 ```sh
-treeport stop
-npm install --global @treeport/treeport@latest
 treeport start
 ```
 
-## Connect the desktop app
+This command prints the local URL. The default URL is `http://127.0.0.1:8733`.
 
-On first launch, the desktop app tries **This computer** at `http://127.0.0.1:8733`. If Treeport is already running, your projects open without a setup flow. Otherwise, open a repository from a terminal to start the backend and focus its worktree:
+### Update the backend
+
+Treeport checks for stable backend updates approximately every ten minutes.
+
+When an update is available, a Download control appears before the notification bell. Select the control. Then, select **Update Treeport**.
+
+Treeport verifies the release before it stops the daemon. It preserves running tmux terminals and restarts the same daemon lifecycle.
+
+The page reconnects after the restart. It then opens the same workspace with the new web assets.
+
+The macOS desktop client shows this backend control when it uses a local backend. It does not show the control for a remote backend.
+
+You can also update the backend with this command:
 
 ```sh
-treeport /path/to/repository
+treeport update
 ```
 
-You can instead choose **Connect to another computer…** and enter a private HTTPS Treeport URL. The last computer you deliberately select is restored on later launches. See [Remote access](/features/remote-access/) for the recommended Tailscale Serve setup.
+Use this command for automation or recovery. An enabled service stays enabled. An intentionally stopped daemon or service stays stopped.
+
+Your user must have write access to the global npm prefix. Treeport never uses `sudo` for an update.
+
+If the prefix is not writable, install Node and npm under your user account. Then, install Treeport globally again.
+
+Installations older than the first release that supports updates need one final manual npm update.
+
+## Connect the desktop client
+
+At first start, the desktop client tries **This computer** at `http://127.0.0.1:8733`.
+
+If Treeport is active, the desktop client opens your projects.
+
+If Treeport is not active, open a folder or repository from a terminal:
+
+```sh
+treeport /path/to/project
+```
+
+This command starts the backend and opens the selected tree.
+
+To use another computer, select **Connect to another computer…**. Enter a private HTTPS Treeport URL.
+
+The desktop client saves the last computer that you selected. See [Remote access](/features/remote-access/) for the supported Tailscale Serve configuration.
 
 ## Check the installation
+
+Run these checks:
 
 ```sh
 treeport status
@@ -70,50 +121,63 @@ treeport doctor
 treeport version
 ```
 
-`treeport stop` stops the daemon but preserves persistent tmux sessions. A later `treeport start` reconnects them.
+The command `treeport stop` stops the daemon but keeps persistent tmux sessions. A later `treeport start` connects them again.
 
-## Start Treeport after reboot
+## Start Treeport automatically
 
-Normal installation does not register an OS service. To opt in to startup after reboot and restart after an unexpected exit, run:
+A normal installation does not register an operating-system service.
+
+On macOS, enable startup after login:
 
 ```sh
 treeport service enable
 ```
 
-On macOS, Treeport prepares a LaunchDaemon and prints one administrator command. The LaunchDaemon starts before GUI login but runs the backend as your user, not as root. On Linux, Treeport installs a systemd user unit. If user lingering is off, it prints the `loginctl enable-linger` administrator command that is required for startup without login.
+This command installs a per-user LaunchAgent without `sudo` or an administrator request.
 
-Check the result with:
+Service mode also restarts Treeport after an unexpected exit.
+
+For startup before login on macOS, select advanced headless mode explicitly:
+
+```sh
+treeport service enable --headless
+```
+
+Advanced headless mode uses a system LaunchDaemon and requires administrator approval.
+
+On Linux, Treeport installs a systemd user unit.
+
+If user lingering is off, Treeport prints the necessary `loginctl enable-linger` administrator command. This setting permits startup without login.
+
+Check service mode:
 
 ```sh
 treeport service status
 treeport doctor
 ```
 
-See [Service supervision](/features/service-supervision/) for start, stop, log, recovery, upgrade, and removal behavior.
+See [Service supervision](/features/service-supervision/) for service behavior, logs, updates, recovery, and removal.
 
-## Uninstall
+## Remove Treeport
 
-A curl-managed installation can be removed while preserving application data:
-
-```sh
-curl -fsSL https://treeport.app/uninstall.sh | sh
-```
-
-To terminate every terminal and remove application data as well:
-
-```sh
-curl -fsSL https://treeport.app/uninstall.sh | TREEPORT_PURGE=1 sh
-```
-
-For npm installations, disable service supervision before npm removes the CLI:
+Disable service mode before you remove the CLI:
 
 ```sh
 treeport service disable
 npm uninstall --global @treeport/treeport
+rm -rf "$(npm prefix --global)/lib/treeport"
 ```
 
-If service mode was never enabled, `treeport service disable` is safe and reports that it is disabled. npm uninstall preserves application data by default. npm cannot run a reliable package uninstall hook, so do not omit the explicit disable step.
+The final command removes only the Treeport-owned update versions. Run it after npm removes the global command.
+
+If service mode was not enabled, `treeport service disable` is safe. It reports that the service is disabled.
+
+An npm removal keeps application data by default.
+
+npm cannot run a reliable package removal hook. Thus, always use the explicit service disable command.
 
 :::caution
-Treeport provides terminal access and does not include authentication. Keep it on loopback unless you deliberately configure a trusted private-network address. Never expose it directly to the public internet.
+Treeport gives terminal access and does not have an application login. Keep it on loopback unless you configure supported private remote access.
 :::
+
+Do not expose Treeport directly to the public internet.

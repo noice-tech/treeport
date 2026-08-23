@@ -70,11 +70,13 @@ export function TerminalView({
 }: TerminalViewProps) {
   const shellRef = useRef<HTMLElement>(null)
   const hostRef = useRef<HTMLDivElement>(null)
+  const uploadInputRef = useRef<HTMLInputElement>(null)
   const pasteTriggerRef = useRef<HTMLButtonElement>(null)
   const [session, setSession] = useState<TerminalSession | null>(null)
   const [ctrl, setCtrl] = useState(false)
   const [alt, setAlt] = useState(false)
   const [paste, setPaste] = useState({
+    // SAFETY: The component contract supplies the asserted browser value used here.
     terminalId: null as string | null,
     open: false,
     value: ''
@@ -172,13 +174,13 @@ export function TerminalView({
       data = `\u001b${data}`
     }
 
-    activeSession?.sendText(data)
+    activeSession?.sendText(data, { focus: false })
     setCtrl(false)
     setAlt(false)
   }
 
   const sendArrow = (direction: ArrowDirection) => {
-    activeSession?.sendArrow(direction, alt)
+    activeSession?.sendArrow(direction, alt, { focus: false })
     setCtrl(false)
     setAlt(false)
   }
@@ -429,7 +431,9 @@ export function TerminalView({
                 <span className="max-w-[calc(100%-1.5rem)] rounded-full bg-zinc-900/90 px-3 py-1 text-center text-xs text-amber-200 shadow ring-1 ring-amber-400/20 backdrop-blur">
                   {snapshot.error
                     ? `${snapshot.error} Retrying…`
-                    : 'Reconnecting…'}
+                    : snapshot.phase === 'connecting'
+                      ? 'Connecting…'
+                      : 'Reconnecting…'}
                 </span>
               )}
               {snapshot.fileTransfer && (
@@ -490,14 +494,12 @@ export function TerminalView({
           <div className="grid max-w-lg gap-3">
             <p className="eyebrow">No terminal open</p>
             <h1 className="text-balance text-2xl font-semibold tracking-tight text-zinc-50 sm:text-3xl">
-              {worktree
-                ? 'Start a terminal for this worktree.'
-                : 'Choose a worktree.'}
+              {worktree ? 'Start a terminal for this tree.' : 'Choose a tree.'}
             </h1>
             <p className="max-w-[52ch] text-base text-pretty text-zinc-400 sm:text-sm">
               {worktree
                 ? 'Use New panel in the sidebar to start a login shell, preset, or web panel.'
-                : 'Select a worktree from the sidebar to view its terminals.'}
+                : 'Select a tree from the sidebar to view its terminals.'}
             </p>
           </div>
         </div>
@@ -507,6 +509,7 @@ export function TerminalView({
           className="accessory-row hidden min-w-0 touch-pan-x overflow-x-auto overflow-y-hidden border-t border-white/8 bg-zinc-900 pt-1 pr-[env(safe-area-inset-right)] pb-[calc(0.25rem+env(safe-area-inset-bottom))] pl-[env(safe-area-inset-left)] max-[700px]:flex [&_button]:h-11 [&_button]:min-w-11 [&_button]:grow [&_button]:rounded-none [&_button]:border-r [&_button]:border-white/8 [&_button]:text-sm [&_button:last-child]:border-r-0"
           aria-label="Terminal accessory keys"
           onPointerDownCapture={() => activeSession?.requestControl()}
+          onMouseDownCapture={(event) => event.preventDefault()}
         >
           <Button
             variant="ghost"
@@ -520,10 +523,7 @@ export function TerminalView({
             type="button"
             className={ctrl ? 'latched bg-cyan-950 text-cyan-100' : ''}
             aria-pressed={ctrl}
-            onClick={() => {
-              setCtrl((value) => !value)
-              activeSession?.focus()
-            }}
+            onClick={() => setCtrl((value) => !value)}
           >
             Ctrl
           </Button>
@@ -532,12 +532,27 @@ export function TerminalView({
             type="button"
             className={alt ? 'latched bg-cyan-950 text-cyan-100' : ''}
             aria-pressed={alt}
-            onClick={() => {
-              setAlt((value) => !value)
-              activeSession?.focus()
-            }}
+            onClick={() => setAlt((value) => !value)}
           >
             Alt
+          </Button>
+          <input
+            ref={uploadInputRef}
+            type="file"
+            multiple
+            hidden
+            onChange={(event) => {
+              const files = Array.from(event.currentTarget.files ?? [])
+              event.currentTarget.value = ''
+              activeSession?.pasteFiles(files)
+            }}
+          />
+          <Button
+            variant="ghost"
+            type="button"
+            onClick={() => uploadInputRef.current?.click()}
+          >
+            Upload
           </Button>
           <Button
             ref={pasteTriggerRef}
@@ -555,7 +570,7 @@ export function TerminalView({
             type="button"
             onClick={() => {
               // Shift+Tab has a fixed terminal sequence and ignores modifier latches.
-              activeSession?.sendText('\u001b[Z')
+              activeSession?.sendText('\u001b[Z', { focus: false })
               setCtrl(false)
               setAlt(false)
             }}

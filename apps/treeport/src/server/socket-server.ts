@@ -1,7 +1,7 @@
 import type { Server as HttpServer } from 'node:http'
-import type { Namespace } from 'socket.io'
 import { Server } from 'socket.io'
 import type {
+  BrowserClientMessage,
   BrowserClientToServerEvents,
   BrowserServerToClientEvents,
   EventsServerToClientEvents,
@@ -30,10 +30,14 @@ import {
   type BrowserTransport
 } from './browser-sessions'
 
-type ClientToServerEvents = TerminalClientToServerEvents
+interface ClientToServerEvents
+  extends BrowserClientToServerEvents, TerminalClientToServerEvents {}
 
 interface ServerToClientEvents
-  extends EventsServerToClientEvents, TerminalServerToClientEvents {}
+  extends
+    BrowserServerToClientEvents,
+    EventsServerToClientEvents,
+    TerminalServerToClientEvents {}
 
 interface SocketData {
   terminalAuth?: TerminalAuth
@@ -43,13 +47,32 @@ interface SocketData {
 
 type InterServerEvents = Record<never, never>
 
+type TreeportSocketServer = Server<
+  ClientToServerEvents,
+  ServerToClientEvents,
+  InterServerEvents,
+  SocketData
+>
+
+export interface BrowserSessionController {
+  accept(ticket: string, transport: BrowserTransport): Promise<string>
+  message(connectionId: string, message: BrowserClientMessage): void
+  close(connectionId: string): void
+}
+
+interface SocketServerResult {
+  io: TreeportSocketServer
+  attachments: TerminalAttachmentManager
+  browserSessions: BrowserSessionController
+}
+
 interface SocketServerDependencies {
   service: TreeportService
   config: AppConfig
   tmux: TmuxAdapter
   terminalMetadata: TerminalMetadataManager
   attachmentManager?: TerminalAttachmentManager
-  browserSessions?: BrowserSessionManager
+  browserSessions?: BrowserSessionController
 }
 
 export function createSocketServer(
@@ -62,16 +85,7 @@ export function createSocketServer(
     attachmentManager,
     browserSessions
   }: SocketServerDependencies
-): {
-  io: Server<
-    ClientToServerEvents,
-    ServerToClientEvents,
-    InterServerEvents,
-    SocketData
-  >
-  attachments: TerminalAttachmentManager
-  browserSessions: BrowserSessionManager
-} {
+): SocketServerResult {
   const io = new Server<
     ClientToServerEvents,
     ServerToClientEvents,
@@ -138,12 +152,12 @@ export function createSocketServer(
             }
             snapshotted = true
           })
-          .catch((error: unknown) => {
+          .catch((error) => {
             console.error('[Treeport] Socket.IO panel snapshot failed:', error)
             socket.disconnect(true)
           })
       },
-      (error: unknown) => {
+      (error) => {
         console.error(
           '[Treeport] Socket.IO event snapshot failed:',
           error instanceof Error ? error.message : String(error)
@@ -186,10 +200,12 @@ export function createSocketServer(
           return false
         }
 
-        ;(socket.emit as (event: string, payload: unknown) => void)(
-          event,
-          payload
-        )
+        // SAFETY: TerminalTransport accepts only terminal protocol events and matching payloads.
+        const emit = socket.emit.bind(socket) as (
+          event: TerminalServerEvent,
+          payload: TerminalServerPayload
+        ) => void
+        emit(event, payload)
         return true
       },
       disconnect(retryable: boolean) {
@@ -223,12 +239,7 @@ export function createSocketServer(
     socket.once('disconnect', () => attachments.close(connectionId))
   })
 
-  const browsers = io.of('/browsers') as unknown as Namespace<
-    BrowserClientToServerEvents,
-    BrowserServerToClientEvents,
-    InterServerEvents,
-    SocketData
-  >
+  const browsers = io.of('/browsers')
   browsers.use((socket, next) => {
     const auth = parseBrowserAuth(socket.handshake.auth)
     if (!auth) {

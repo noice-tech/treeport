@@ -52,8 +52,6 @@ if (
 const packageManifestPath = 'apps/treeport/package.json'
 const desktopManifestPath = 'apps/desktop/package.json'
 const panelSdkManifestPath = 'packages/panel-sdk/package.json'
-const installerManifestPath = 'apps/docs/public/install-manifest.json'
-const installerPath = 'apps/docs/public/install.sh'
 const packageManifest = JSON.parse(readFileSync(packageManifestPath, 'utf8'))
 const panelSdkManifest = JSON.parse(readFileSync(panelSdkManifestPath, 'utf8'))
 const currentVersion = parseVersion(packageManifest.version)
@@ -133,32 +131,6 @@ if (panelSdkManifest.version !== version) {
     panelSdkManifestPath,
     `${JSON.stringify(panelSdkManifest, null, 2)}\n`
   )
-}
-
-const installerManifest = JSON.parse(
-  readFileSync(installerManifestPath, 'utf8')
-)
-if (installerManifest.treeportVersion !== version) {
-  expectedFiles.push(installerManifestPath)
-  installerManifest.treeportVersion = version
-  writeFileSync(
-    installerManifestPath,
-    `${JSON.stringify(installerManifest, null, 2)}\n`
-  )
-}
-
-const installer = readFileSync(installerPath, 'utf8')
-const installerVersionPattern =
-  /TREEPORT_VERSION="\$\{TREEPORT_VERSION:-[^}]+\}"/
-const updatedInstaller = installer.replace(
-  installerVersionPattern,
-  `TREEPORT_VERSION="\${TREEPORT_VERSION:-${version}}"`
-)
-if (!installerVersionPattern.test(installer)) {
-  fail(`Could not find TREEPORT_VERSION in ${installerPath}`)
-} else if (updatedInstaller !== installer) {
-  expectedFiles.push(installerPath)
-  writeFileSync(installerPath, updatedInstaller)
 }
 
 try {

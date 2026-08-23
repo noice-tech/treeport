@@ -1,10 +1,11 @@
 import path from 'node:path'
-import type {
-  ProductEvent,
-  TerminalProgram,
-  TerminalRecord,
-  TerminalRuntimeMetadata,
-  WorktreeRecord
+import {
+  formatCommandLine,
+  type ProductEvent,
+  type TerminalProgram,
+  type TerminalRecord,
+  type TerminalRuntimeMetadata,
+  type WorktreeRecord
 } from '@treeport/shared'
 import type {
   TreeportService,
@@ -37,23 +38,6 @@ const PROGRAM_COMMANDS = new Map<string, TerminalProgram>([
   ['codex', 'codex']
 ])
 
-const SHELL_COMMANDS = new Set([
-  'ash',
-  'bash',
-  'csh',
-  'dash',
-  'elvish',
-  'fish',
-  'ksh',
-  'mksh',
-  'nu',
-  'pwsh',
-  'sh',
-  'tcsh',
-  'xonsh',
-  'zsh'
-])
-
 type MetadataListener = (metadata: TerminalRuntimeMetadata) => void
 type HistoryListener = (viewing: boolean) => void
 
@@ -83,7 +67,8 @@ interface TerminalMetadataEntry extends TerminalRuntimeMetadata {
   paneTitle: string | null
   currentCommand: string | null
   commandLine: string | null
-  shellCommand: string | null
+  launchCommandLine: string | null
+  interactiveShellCommand: string | null
   launchProgram: TerminalProgram | null
   shellTitle: string | null
   persistedShellTitle: string | null
@@ -104,6 +89,7 @@ interface TerminalMetadataEntry extends TerminalRuntimeMetadata {
 }
 
 function tmuxEnvironment(): NodeJS.ProcessEnv {
+  // SAFETY: The surrounding boundary contract establishes this asserted value.
   return Object.fromEntries(
     Object.entries(process.env).filter(
       ([key, value]) =>
@@ -121,6 +107,7 @@ export class TerminalMetadataManager {
   private readonly bellMutations = new KeyedTaskQueue<string>()
   private readonly bellDeletionVersions = new Map<string, number>()
   private readonly persistedBells = new Map<string, TerminalBellState>()
+  private readonly observerShutdowns = new Set<Promise<void>>()
   private readonly bellStateStore: TerminalBellStateStore
   private initializePromise: Promise<void> | null = null
   private unsubscribeEvents: (() => void) | null = null
@@ -234,9 +221,25 @@ export class TerminalMetadataManager {
 
     if (!entry) {
       const launchCommand = path
-        .basename(terminal.argv?.[0] ?? '')
+        .basename(terminal.argv[0] ?? '')
         .replace(/^-/, '')
-      const launchProgram = PROGRAM_COMMANDS.get(launchCommand) ?? null
+      const launchProgram =
+        !terminal.interactiveShell && terminal.shellCommand === null
+          ? (PROGRAM_COMMANDS.get(launchCommand) ?? null)
+          : null
+      const interactiveShellCommand = terminal.interactiveShell
+        ? launchCommand
+        : null
+      const launchCommandLine = terminal.interactiveShell
+        ? null
+        : (
+            terminal.shellCommand?.replace(/\p{Cc}/gu, '') ??
+            formatCommandLine(
+              terminal.argv.map((value) => value.replace(/\p{Cc}/gu, ''))
+            )
+          )
+            .trim()
+            .slice(0, 256) || null
       this.bellDeletionVersions.set(
         terminal.id,
         (this.bellDeletionVersions.get(terminal.id) ?? 0) + 1
@@ -267,7 +270,8 @@ export class TerminalMetadataManager {
         paneTitle: null,
         currentCommand: null,
         commandLine: null,
-        shellCommand: SHELL_COMMANDS.has(launchCommand) ? launchCommand : null,
+        launchCommandLine,
+        interactiveShellCommand,
         launchProgram,
         shellTitle: null,
         persistedShellTitle: null,
@@ -388,7 +392,7 @@ export class TerminalMetadataManager {
         await this.bellStateStore.delete(terminalId)
         this.persistedBells.delete(terminalId)
       })
-      .catch((error: unknown) => {
+      .catch((error) => {
         console.error(
           `[Treeport] Failed to delete terminal bell state for ${terminalId}:`,
           error instanceof Error ? error.message : String(error)
@@ -430,8 +434,9 @@ export class TerminalMetadataManager {
     this.historyListeners.clear()
   }
 
-  drain(): Promise<void> {
-    return this.bellMutations.drain()
+  async drain(): Promise<void> {
+    await this.bellMutations.drain()
+    await Promise.allSettled([...this.observerShutdowns])
   }
 
   private handleProductEvent(event: ProductEvent): void {
@@ -461,7 +466,7 @@ export class TerminalMetadataManager {
           const worktree = await this.service.getWorktree(terminal.worktreeId)
           return this.trackTerminal(terminal, worktree)
         })
-        .catch((error: unknown) => {
+        .catch((error) => {
           if (
             error instanceof DomainError &&
             error.code === 'TERMINAL_NOT_FOUND'
@@ -708,7 +713,7 @@ export class TerminalMetadataManager {
                 entry.bell = bell
                 this.publish(entry)
               })
-              .catch((error: unknown) => {
+              .catch((error) => {
                 console.error(
                   `[Treeport] Failed to persist terminal bell for ${entry.terminalId}:`,
                   error instanceof Error ? error.message : String(error)
@@ -757,7 +762,7 @@ export class TerminalMetadataManager {
           entry.runtimeGeneration !== runtimeGeneration ||
           entry.observerVersion !== version
         ) {
-          observer.dispose()
+          this.disposeObserver(observer)
         } else {
           entry.observer = observer
         }
@@ -803,10 +808,27 @@ export class TerminalMetadataManager {
     this.update(entry, { progress: null })
   }
 
+  private disposeObserver(observer: TerminalProgressObserver): void {
+    observer.dispose()
+    if (!observer.closed) {
+      return
+    }
+
+    const shutdown = observer.closed
+    this.observerShutdowns.add(shutdown)
+    void shutdown.then(
+      () => this.observerShutdowns.delete(shutdown),
+      () => this.observerShutdowns.delete(shutdown)
+    )
+  }
+
   private releaseRuntimeResources(entry: TerminalMetadataEntry): void {
     entry.observerVersion += 1
-    entry.observer?.dispose()
-    entry.observer = null
+    if (entry.observer) {
+      this.disposeObserver(entry.observer)
+      entry.observer = null
+    }
+
     this.clearProgressRuntime(entry)
     entry.shellTitleWriting = false
   }
@@ -817,7 +839,19 @@ export class TerminalMetadataManager {
   ): void {
     const paneTitle = state.paneTitle?.trim().slice(0, 256) || null
     const currentCommand = state.currentCommand?.trim().slice(0, 256) || null
-    const commandLine = state.commandLine?.trim().slice(0, 256) || null
+    const fallbackShellCommand = path
+      .basename(state.fallbackShell ?? '')
+      .replace(/^-/, '')
+      .replace(/\p{Cc}/gu, '')
+      .trim()
+      .slice(0, 256)
+    if (fallbackShellCommand) {
+      entry.launchCommandLine = null
+      entry.interactiveShellCommand = fallbackShellCommand
+    }
+
+    const commandLine =
+      state.commandLine?.trim().slice(0, 256) || entry.launchCommandLine
     const previousCommand = entry.currentCommand
     const previousCommandLine = entry.commandLine
     const paneTitleChanged = paneTitle !== entry.paneTitle
@@ -851,15 +885,14 @@ export class TerminalMetadataManager {
       null
     this.update(entry, {
       program:
-        observedProgram ?? (!entry.shellCommand ? entry.launchProgram : null)
+        observedProgram ??
+        (!entry.interactiveShellCommand ? entry.launchProgram : null)
     })
 
-    if (!entry.shellCommand) {
-      this.update(entry, { title: paneTitle ?? commandLine ?? currentCommand })
-      return
-    }
-
-    if (currentCommand === entry.shellCommand) {
+    if (
+      entry.interactiveShellCommand &&
+      currentCommand === entry.interactiveShellCommand
+    ) {
       const applicationTitleWasActive = entry.applicationTitleActive
       const freshShellTitle =
         observedTitlePending || (previousCommand !== null && paneTitleChanged)
@@ -887,6 +920,7 @@ export class TerminalMetadataManager {
           paneTitle !== null && paneTitle !== commandLine
       } else if (commandLineChanged) {
         entry.applicationTitleActive =
+          entry.interactiveShellCommand !== null &&
           previousCommand === null &&
           paneTitle !== null &&
           paneTitle !== commandLine &&
@@ -900,6 +934,11 @@ export class TerminalMetadataManager {
           ? (paneTitle ?? entry.title ?? commandLine)
           : commandLine
       })
+      return
+    }
+
+    if (!entry.interactiveShellCommand) {
+      this.update(entry, { title: paneTitle ?? currentCommand })
       return
     }
 
@@ -951,7 +990,7 @@ export class TerminalMetadataManager {
           ? false
           : command === null
             ? null
-            : command !== entry.shellCommand
+            : command !== entry.interactiveShellCommand
     })
   }
 

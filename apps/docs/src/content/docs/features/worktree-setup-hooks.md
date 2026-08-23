@@ -1,19 +1,25 @@
 ---
-title: Worktree setup
-description: Prepare new worktrees with repository-defined setup commands.
+title: Tree setup
+description: Prepare new trees with repository setup commands.
 ---
 
-Treeport can run repository-defined setup when it creates a worktree. Use setup commands to install dependencies, copy local environment files, generate code, or prepare other local prerequisites.
+Treeport can run repository setup commands when it creates a tree.
 
-Setup runs only for worktrees Treeport creates. Registering, rediscovering, or refreshing an existing worktree does not run it.
+Use setup commands to install dependencies, copy local files, generate code, or prepare other prerequisites.
+
+Setup runs only for trees that Treeport creates.
+
+Treeport does not run setup when it registers, finds, or refreshes an existing tree.
 
 :::caution[Setup runs repository code]
-Setup commands execute automatically with your user account's permissions. Use setup only in repositories and revisions you trust. See [Security](/security/) for Treeport's broader trust model.
+Setup commands run automatically with your user permissions. Use setup only in repositories and revisions that you trust.
 :::
+
+See [Security](/security/) for the Treeport trust boundaries.
 
 ## Configure setup
 
-Create `.treeport/setup.json` in the repository's main worktree:
+Create `.treeport/setup.json` in the main tree:
 
 ```json
 {
@@ -41,43 +47,65 @@ Create `.treeport/setup.json` in the repository's main worktree:
 }
 ```
 
-Treeport always reads setup configuration from the registered repository's **main worktree**, even when you create the new worktree from another linked worktree. This also lets setup reference untracked files that exist only in the main worktree.
+Treeport always reads setup configuration from the main tree.
 
-The file accepts JSON with comments and trailing commas. Treeport validates it strictly and reports unknown or invalid fields instead of ignoring them.
+This rule applies when you create a tree from a linked tree.
 
-### Fields
+The setup can reference untracked files that are present only in the main tree.
 
-The root object requires:
+The file can contain comments and trailing commas.
 
-- `version`: currently `1`.
-- `commands`: an ordered array. An empty array explicitly disables setup.
+Treeport reports unknown or invalid fields. It does not ignore them.
 
-Each command supports:
+### Configure the root object
 
-- `name` (required): a non-empty name shown in setup progress and failures.
-- `argv` (required): a non-empty array containing the executable followed by its literal arguments.
-- `cwd` (optional): a working directory inside the new worktree. Relative paths resolve from the worktree root; the default is the root.
-- `env` (optional): string environment variable names and values for the command.
-- `timeout` (optional): a positive duration ending in `ms`, `s`, `m`, or `h`, such as `500ms`, `30s`, `10m`, or `1h`, up to `2147483647ms`. The default is 30 minutes for each command.
+The root object requires these fields:
 
-Timeouts apply independently to each command, not to the complete list.
+- `version`: The current value is `1`.
+- `commands`: An ordered array. An empty array disables setup.
 
-### Paths and environment
+Each command supports these fields:
 
-Every command receives:
+- `name`: Required name in setup progress and errors.
+- `argv`: Required array with the executable and its literal arguments.
+- `cwd`: Optional directory in the new tree. The default is the tree root.
+- `env`: Optional object with string environment names and values.
+- `timeout`: Optional positive duration with `ms`, `s`, `m`, or `h`.
 
-- `TREEPORT_WORKTREE_PATH`: the new worktree's path.
-- `TREEPORT_MAIN_WORKTREE_PATH`: the main worktree's path.
+Examples of valid timeouts are `500ms`, `30s`, `10m`, and `1h`.
 
-Treeport replaces the exact `${TREEPORT_WORKTREE_PATH}` and `${TREEPORT_MAIN_WORKTREE_PATH}` placeholders in `argv`, `cwd`, and configured `env` values. It leaves other values such as `$HOME` and `${OTHER_VARIABLE}` unchanged. The two Treeport variables are reserved and cannot be overridden in `env`.
+The maximum timeout is `2147483647ms`. The default for each command is 30 minutes.
 
-A `cwd` must resolve to the new worktree or one of its descendants. Both `"packages/api"` and `"${TREEPORT_WORKTREE_PATH}/packages/api"` are valid. A path that escapes with `..`, or the main worktree path itself, is rejected. The directory may be created by an earlier setup command; it only needs to exist when its command starts.
+A timeout applies to one command, not to the complete command list.
 
-### Exact commands, without an implicit shell
+### Use paths and environment variables
 
-Treeport starts the `argv` executable directly and preserves each argument literally. Spaces, quotes, pipes, redirects, globs, and environment syntax do not receive shell interpretation.
+Each command receives these variables:
 
-If a command intentionally needs shell syntax, invoke a shell explicitly:
+- `TREEPORT_WORKTREE_PATH`: The new tree path.
+- `TREEPORT_MAIN_WORKTREE_PATH`: The main tree path.
+
+Treeport replaces these exact placeholders in `argv`, `cwd`, and configured `env` values.
+
+It does not replace other values, such as `$HOME` and `${OTHER_VARIABLE}`.
+
+The two Treeport variables are reserved. You cannot replace them in `env`.
+
+A `cwd` must resolve to the new tree or one of its child directories.
+
+Both `"packages/api"` and `"${TREEPORT_WORKTREE_PATH}/packages/api"` are valid.
+
+Treeport rejects a path that uses `..` to leave the new tree. It also rejects the main tree path.
+
+An earlier command can create the directory. The directory must exist only when its command starts.
+
+### Start commands without an implicit shell
+
+Treeport starts the `argv` executable directly. It keeps each argument literal.
+
+It does not interpret spaces, quotation marks, pipes, redirects, globs, or environment syntax.
+
+When a command requires shell syntax, start a shell explicitly:
 
 ```json
 {
@@ -86,19 +114,33 @@ If a command intentionally needs shell syntax, invoke a shell explicitly:
 }
 ```
 
-Prefer direct argv when a shell is not required.
+Use direct arguments when you do not need a shell.
 
-## Execution and failures
+## Understand execution and failures
 
-Commands run one at a time in their listed order. A spawn error, timeout, signal, or non-zero exit stops setup immediately, so later commands do not run. Setup failure does not remove the new worktree.
+Treeport runs commands one at a time in their listed order.
 
-When creation includes an initial terminal, Treeport starts that terminal immediately and runs setup alongside it in a separate **Setup** terminal. The Setup terminal streams command output and closes automatically after every command succeeds. If preparation or a command fails, it stays available with the failure output. Because setup can still be running when creation returns, the retained Setup terminal is the source of later command failures.
+A start error, timeout, signal, or nonzero exit stops setup immediately. Treeport does not run later commands.
 
-`treeport worktree create` does not request an initial terminal. It waits for setup, reports the first failure as the setup error, and then attempts to create the default shell whether setup succeeds or fails.
+A setup failure does not remove the new tree.
+
+When creation includes an initial terminal, Treeport starts that terminal immediately.
+
+It runs setup at the same time in a separate **Setup** terminal.
+
+The Setup terminal shows command output. It closes after all commands are successful.
+
+If preparation or a command fails, the Setup terminal stays available with the error output.
+
+Setup can continue after the creation request returns. Thus, use the Setup terminal to find later command failures.
+
+`treeport worktree create` does not request an initial terminal.
+
+It waits for setup and reports the first setup error. It then tries to create the default shell after success or failure.
 
 ## Zed compatibility
 
-If `.treeport/setup.json` is absent, Treeport continues to read compatible `create_worktree` tasks from `.zed/tasks.json` in the main worktree:
+If `.treeport/setup.json` is not present, Treeport reads compatible `create_worktree` tasks from the main `.zed/tasks.json` file:
 
 ```json
 {
@@ -118,15 +160,31 @@ If `.treeport/setup.json` is absent, Treeport continues to read compatible `crea
 }
 ```
 
-Treeport supports the Zed task fields `label`, `command`, `args`, `cwd`, `env`, and `hooks` for this compatibility path. It also provides `ZED_WORKTREE_ROOT` and `ZED_MAIN_GIT_WORKTREE` in commands, arguments, `cwd`, and environment values.
+Treeport supports `label`, `command`, `args`, `cwd`, `env`, and `hooks` in this compatibility mode.
 
-Native and Zed commands are never combined during automatic setup:
+It also supplies `ZED_WORKTREE_ROOT` and `ZED_MAIN_GIT_WORKTREE`.
+
+These variables are available in commands, arguments, `cwd`, and environment values.
+
+Treeport does not combine native and Zed commands during automatic setup:
 
 - If `.treeport/setup.json` exists, Treeport uses only that file.
-- An empty native `commands` array disables setup even when Zed hooks exist.
-- An invalid native file reports a setup error instead of falling back to Zed.
-- Removing the native file restores Zed fallback.
+- An empty native `commands` array disables setup, even when Zed hooks exist.
+- An invalid native file reports an error. Treeport does not use Zed as a fallback.
+- When you remove the native file, Treeport uses Zed tasks again.
 
-This precedence applies only to automatic worktree setup. Compatible tasks in `.zed/tasks.json`, including tasks with a `create_worktree` hook, remain available for explicit launch from **New panel**. Opening the picker or starting one manually does not trigger another automatic setup run. See [Terminal presets](/features/terminal-presets/#zed-task-compatibility) for the supported manual-task fields and launch behavior.
+This order applies only to automatic tree setup.
 
-To migrate, add equivalent native commands and verify them before removing `create_worktree` from the Zed tasks. Other Zed tasks can remain in the same file. See the [Zed task documentation](https://zed.dev/docs/tasks) for Zed's format; Treeport's compatibility support is limited to the fields described above.
+Zed tasks, including tasks with `create_worktree`, stay available for manual start in **New panel**.
+
+A manual start does not start automatic setup again.
+
+See [Zed task compatibility](/features/terminal-presets/#zed-task-compatibility) for supported manual task behavior.
+
+To migrate, add equivalent native commands and test them. Then, remove `create_worktree` from the Zed tasks.
+
+Other Zed tasks can stay in the same file.
+
+See the [Zed task documentation](https://zed.dev/docs/tasks) for the full Zed format.
+
+Treeport supports only the fields in this section.

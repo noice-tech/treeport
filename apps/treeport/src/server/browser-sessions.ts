@@ -3,6 +3,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { createRequire } from 'node:module'
+import { z } from 'zod'
 import type {
   BrowserAgentCommand,
   BrowserClientMessage,
@@ -17,7 +18,8 @@ import {
 import type { AppConfig, TreeportService } from './core/index'
 import {
   PlaywrightBrowser,
-  type BrowserInstallStatus
+  type BrowserInstallStatus,
+  type PlaywrightBrowserCallbacks
 } from './playwright-browser'
 
 export interface BrowserTransport {
@@ -27,6 +29,43 @@ export interface BrowserTransport {
   sendFrame(frame: BrowserFrame): boolean
   disconnect(): void
 }
+
+export interface BrowserSessionService {
+  authorizeHostBrowserPanel: TreeportService['authorizeHostBrowserPanel']
+  events: Pick<TreeportService['events'], 'subscribe'>
+}
+
+export type BrowserSessionConfig = Pick<AppConfig, 'cacheDir' | 'runtimeDir'>
+
+export interface BrowserSessionBrowser {
+  readonly state: Omit<
+    BrowserSessionState,
+    'controlled' | 'hasController' | 'controller'
+  >
+  launch(): Promise<void>
+  command(message: BrowserClientMessage): Promise<void>
+  setScreencasting(enabled: boolean): Promise<void>
+  close(): Promise<void>
+}
+
+export type BrowserSessionBrowserFactory = (
+  cachePath: string,
+  workspacePath: string,
+  title: string,
+  panelId: string,
+  worktreeId: string,
+  callbacks: PlaywrightBrowserCallbacks
+) => BrowserSessionBrowser
+
+interface BrowserAgentTarget {
+  panelId: string
+  agentDirectory: string
+}
+
+export type BrowserAgentCliRunner = (
+  target: BrowserAgentTarget,
+  args: string[]
+) => Promise<string>
 
 interface BrowserTicket {
   panelId: string
@@ -48,8 +87,8 @@ interface BrowserSession {
   panelId: string
   agentDirectory: string
   title: string
-  browser: PlaywrightBrowser | null
-  launch: Promise<PlaywrightBrowser>
+  browser: BrowserSessionBrowser | null
+  launch: Promise<BrowserSessionBrowser> | null
   attachments: Map<string, BrowserAttachment>
   controllerId: string | null
   pendingControllerId: string | null
@@ -68,6 +107,27 @@ interface BrowserSession {
 
 const MAX_BROWSER_ATTACHMENTS = 8
 const MAX_BROWSER_TICKETS = 256
+
+const playwrightPackageSchema = z.object({
+  bin: z.object({ playwright: z.string() }).optional()
+})
+
+const defaultBrowserFactory: BrowserSessionBrowserFactory = (
+  cachePath,
+  workspacePath,
+  title,
+  panelId,
+  worktreeId,
+  callbacks
+) =>
+  new PlaywrightBrowser(
+    cachePath,
+    workspacePath,
+    title,
+    panelId,
+    worktreeId,
+    callbacks
+  )
 
 const DEFAULT_STATE: Omit<
   BrowserSessionState,
@@ -91,8 +151,10 @@ export class BrowserSessionManager {
   private installing: Promise<string> | null = null
 
   constructor(
-    private readonly service: TreeportService,
-    private readonly config: AppConfig
+    private readonly service: BrowserSessionService,
+    private readonly config: BrowserSessionConfig,
+    private readonly browserFactory: BrowserSessionBrowserFactory = defaultBrowserFactory,
+    private readonly agentCliRunner: BrowserAgentCliRunner | null = null
   ) {
     this.cachePath = path.join(config.cacheDir, 'playwright')
     this.unsubscribe = service.events.subscribe((event) => {
@@ -204,7 +266,7 @@ export class BrowserSessionManager {
       agentDirectory,
       title: `Treeport ${authorized.panel.title}`,
       browser: null,
-      launch: Promise.resolve(null as never),
+      launch: null,
       attachments: new Map(),
       controllerId: null,
       pendingControllerId: null,
@@ -218,7 +280,7 @@ export class BrowserSessionManager {
       crashMessage: null
     }
     session.launch = (async () => {
-      const browser = new PlaywrightBrowser(
+      const browser = this.browserFactory(
         this.cachePath,
         session.agentDirectory,
         session.title,
@@ -256,6 +318,14 @@ export class BrowserSessionManager {
     })()
     this.sessions.set(panelId, session)
     return session
+  }
+
+  private browserFor(session: BrowserSession): Promise<BrowserSessionBrowser> {
+    if (!session.launch) {
+      return Promise.reject(new Error('Remote Browser launch is not ready.'))
+    }
+
+    return session.launch
   }
 
   private async getSession(panelId: string): Promise<BrowserSession> {
@@ -319,7 +389,7 @@ export class BrowserSessionManager {
     session.controllerId ??= attachment.id
 
     try {
-      await session.launch
+      await this.browserFor(session)
       if (!transport.isConnected()) {
         this.close(attachment.id)
         return attachment.id
@@ -404,7 +474,7 @@ export class BrowserSessionManager {
     }
   }
 
-  message(connectionId: string, value: unknown): void {
+  message(connectionId: string, value: BrowserClientMessage): void {
     const entry = [...this.sessions.values()]
       .map((session) => ({
         session,
@@ -468,7 +538,7 @@ export class BrowserSessionManager {
         }
 
         try {
-          const browser = await session.launch
+          const browser = await this.browserFor(session)
           await browser.command({ type: 'resize', ...attachment.viewport })
         } catch (error) {
           attachment.transport.sendMessage({
@@ -516,8 +586,8 @@ export class BrowserSessionManager {
           if (message.type === 'reset') {
             await this.resetSession(session)
           } else {
-            const browser = await session.launch
-            await browser.command(message as BrowserClientMessage)
+            const browser = await this.browserFor(session)
+            await browser.command(message)
           }
         } catch (error) {
           attachment.transport.sendMessage({
@@ -546,8 +616,8 @@ export class BrowserSessionManager {
 
     session.commandTail = session.commandTail.then(async () => {
       try {
-        const browser = await session.launch
-        await browser.command(message as BrowserClientMessage)
+        const browser = await this.browserFor(session)
+        await browser.command(message)
       } catch (error) {
         attachment.transport.sendMessage({
           type: 'navigationError',
@@ -558,7 +628,7 @@ export class BrowserSessionManager {
   }
 
   private async updateScreencast(session: BrowserSession): Promise<void> {
-    const browser = await session.launch.catch(() => null)
+    const browser = await this.browserFor(session).catch(() => null)
     if (!browser) {
       return
     }
@@ -579,7 +649,7 @@ export class BrowserSessionManager {
     }
 
     session.agentAttached = false
-    await this.runAgentCli(session, [
+    await this.executeAgentCli(session, [
       `-s=treeport-${session.panelId}`,
       'detach'
     ]).catch(() => undefined)
@@ -587,7 +657,7 @@ export class BrowserSessionManager {
 
   private async resetSession(session: BrowserSession): Promise<void> {
     await this.detachAgent(session)
-    await session.launch
+    await this.browserFor(session)
       .catch(() => session.browser)
       .then((browser) => browser?.close())
     this.sessions.delete(session.panelId)
@@ -639,7 +709,7 @@ export class BrowserSessionManager {
       attachment.transport.sendMessage({ type: 'closed', reason })
       attachment.transport.disconnect()
     }
-    await session.launch
+    await this.browserFor(session)
       .catch(() => session.browser)
       .then((browser) => browser?.close())
     await fs.rm(session.agentDirectory, { recursive: true, force: true })
@@ -649,6 +719,23 @@ export class BrowserSessionManager {
     const require = createRequire(import.meta.url)
     const packageJsonPath = require.resolve('@playwright/cli/package.json')
     return path.join(path.dirname(packageJsonPath), 'playwright-cli.js')
+  }
+
+  private executeAgentCli(
+    session: BrowserSession,
+    args: string[]
+  ): Promise<string> {
+    if (this.agentCliRunner) {
+      return this.agentCliRunner(
+        {
+          panelId: session.panelId,
+          agentDirectory: session.agentDirectory
+        },
+        args
+      )
+    }
+
+    return this.runAgentCli(session, args)
   }
 
   private async runAgentCli(
@@ -666,7 +753,7 @@ export class BrowserSessionManager {
       })
       session.agentProcess = child
       let output = ''
-      const append = (data: unknown) => {
+      const append = (data: Buffer) => {
         if (output.length < 10 * 1024 * 1024) {
           output += String(data)
         }
@@ -710,7 +797,7 @@ export class BrowserSessionManager {
     })
     await previousAgent.catch(() => undefined)
     try {
-      await session.launch.catch(async (error) => {
+      await this.browserFor(session).catch(async (error) => {
         if (this.sessions.get(session.panelId) === session) {
           this.sessions.delete(session.panelId)
         }
@@ -722,7 +809,7 @@ export class BrowserSessionManager {
       await session.commandTail.catch(() => undefined)
       const name = `treeport-${panelId}`
       if (!session.agentAttached) {
-        await this.runAgentCli(session, ['attach', name, '--session', name])
+        await this.executeAgentCli(session, ['attach', name, '--session', name])
         session.agentAttached = true
       }
 
@@ -730,7 +817,7 @@ export class BrowserSessionManager {
       session.controllerId = 'agent'
       this.broadcastState(session, 'controlChanged')
       try {
-        return await this.runAgentCli(session, [
+        return await this.executeAgentCli(session, [
           `-s=${name}`,
           input.command,
           '--',
@@ -764,11 +851,9 @@ export class BrowserSessionManager {
     this.installing = (async () => {
       const require = createRequire(import.meta.url)
       const packageJsonPath = require.resolve('playwright/package.json')
-      const packageJson = JSON.parse(
-        await fs.readFile(packageJsonPath, 'utf8')
-      ) as {
-        bin?: { playwright?: string }
-      }
+      const packageJson = playwrightPackageSchema.parse(
+        JSON.parse(await fs.readFile(packageJsonPath, 'utf8'))
+      )
       const cli = path.join(
         path.dirname(packageJsonPath),
         packageJson.bin?.playwright ?? 'cli.js'

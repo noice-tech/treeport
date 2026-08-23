@@ -18,6 +18,7 @@ function processExists(pid: number): boolean {
     process.kill(pid, 0)
     return true
   } catch (error) {
+    // SAFETY: The surrounding boundary contract establishes this asserted value.
     return (error as NodeJS.ErrnoException).code === 'EPERM'
   }
 }
@@ -63,7 +64,10 @@ export async function acquireDaemonOwnership(config: AppConfig): Promise<{
 
       const existing = await fs
         .readFile(lockPath, 'utf8')
-        .then((value) => JSON.parse(value) as Partial<DaemonRecord>)
+        .then((value) => {
+          // SAFETY: The lock file is written from DaemonRecord in this module.
+          return JSON.parse(value) as Partial<DaemonRecord>
+        })
         .catch(() => null)
       if (
         existing?.pid &&
@@ -88,6 +92,7 @@ export async function acquireDaemonOwnership(config: AppConfig): Promise<{
       .readFile(filePath, 'utf8')
       .then(
         (value) =>
+          // SAFETY: The surrounding boundary contract establishes this asserted value.
           (JSON.parse(value) as Partial<DaemonRecord>).instanceId === instanceId
       )
       .catch(() => false)

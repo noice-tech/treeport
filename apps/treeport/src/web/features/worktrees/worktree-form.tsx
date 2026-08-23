@@ -9,8 +9,10 @@ import { FormField } from '../../components/ui/form-field'
 import { Input } from '../../components/ui/input'
 import { Label } from '../../components/ui/label'
 import { NativeSelect } from '../../components/ui/native-select'
-import { formatCommandLine } from '../../command-line'
-import { terminalPresetProvenance } from '../../terminal-preset-definition'
+import {
+  terminalPresetCommand,
+  terminalPresetProvenance
+} from '../../terminal-preset-definition'
 
 const INITIAL_TERMINAL_PRESET_STORAGE_KEY = 'treeport-initial-terminal-preset'
 
@@ -50,7 +52,10 @@ export function WorktreeForm({
     return stored ?? 'shell'
   })
   const initialTerminalPresets = presets.filter(
-    (preset) => !preset.closeOnSuccess
+    (preset): preset is TerminalPresetDefinition & { executable: string } =>
+      !preset.closeOnSuccess &&
+      preset.executable !== null &&
+      preset.shellCommand === null
   )
   const initialPresetAvailable = initialTerminalPresets.some(
     (preset) => preset.id === initialPresetId
@@ -103,7 +108,7 @@ export function WorktreeForm({
           value={name}
           onChange={(event) => setName(event.target.value)}
           placeholder="feature-name"
-          aria-label="Worktree name"
+          aria-label="Tree name"
           autoCapitalize="none"
           spellCheck={false}
           required
@@ -152,7 +157,7 @@ export function WorktreeForm({
           {initialTerminalPresets.map((preset) => (
             <option key={preset.id} value={preset.id}>
               {preset.name} — {terminalPresetProvenance(preset)} —{' '}
-              {formatCommandLine([preset.executable, ...preset.args])}
+              {terminalPresetCommand(preset)}
             </option>
           ))}
         </NativeSelect>
@@ -201,7 +206,7 @@ export function WorktreeForm({
           className="ml-auto"
           disabled={busy || waitingForInitialPreset || !name.trim()}
         >
-          {busy ? 'Creating…' : 'Create worktree'}
+          {busy ? 'Creating…' : 'Create tree'}
         </Button>
       </div>
     </form>

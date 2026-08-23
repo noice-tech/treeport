@@ -1,64 +1,153 @@
 ---
 title: Security
-description: Understand Treeport's local and Tailscale security boundaries.
+description: Understand the local, remote, repository, and package security boundaries.
 ---
 
-Treeport provides arbitrary terminal access. Anyone authorized to use the service can read terminal output, send terminal input, create processes, and operate on registered worktrees.
+Treeport gives full terminal access.
 
-Direct access is restricted to loopback and relies on the local OS-user boundary. Supported remote access relies on Tailscale Serve identity plus tailnet ACLs and grants. Treeport requires the proxy-provided Tailscale user identity on remote HTTP and Socket.IO requests, but it does not create a second application login or session.
+An authorized user can read terminal output, send input, create processes, and change registered trees.
 
-## Safe default
+Direct access is limited to loopback. It uses the local operating-system user as the security boundary.
 
-Start the daemon with its loopback default:
+Supported remote access uses Tailscale Serve identity with tailnet ACLs and grants.
+
+Treeport requires the Tailscale user identity on remote HTTP and Socket.IO requests. It does not create a separate login or session.
+
+## Use the safe default
+
+Start the daemon with the loopback default:
 
 ```sh
 treeport start
 ```
 
-This listens at `127.0.0.1:8733` and limits access to the local machine.
+Treeport listens at `127.0.0.1:8733`. Only clients on the local computer can connect directly.
 
-## Remote access
+## Configure remote access safely
 
-For browser, desktop, phone, or remote CLI access, use [private remote access through Tailscale Serve](/features/remote-access/). The daemon stays on loopback. Serve authenticates the Tailscale user, and Treeport rejects remote requests that do not contain that identity.
+For remote browser, desktop, phone, or CLI access, use [Tailscale Serve](/features/remote-access/).
+
+The daemon stays on loopback. Tailscale Serve authenticates the user.
+
+Treeport rejects a remote request that does not contain the Tailscale identity.
 
 :::danger
-Do not port-forward Treeport from your router, bind it to a LAN or Tailscale address, publish it through Tailscale Funnel, or use an arbitrary tunnel or reverse proxy. A private network alone does not authenticate a user. Running Treeport on a VPS is safe only when the daemon stays on loopback and Tailscale Serve is the private ingress.
+Do not configure router port forwarding, a LAN listener, Tailscale Funnel, an arbitrary tunnel, or an arbitrary reverse proxy.
 :::
 
-Opt-in [service supervision](/features/service-supervision/) does not change this network boundary. The backend still listens only on loopback. On macOS, the administrator installs a system LaunchDaemon definition, but launchd runs Treeport as the user who enabled it. On Linux, Treeport uses that user's systemd manager. Treeport never runs the backend as root.
+A private network does not authenticate a user by itself.
 
-The desktop app applies the same boundary: HTTP is accepted only for loopback computers, while remote computers require HTTPS with a certificate trusted by the operating system. It uses the Mac's existing Tailscale access rather than creating a Treeport login session. It does not offer a certificate-warning bypass and does not expose its saved computer list to remote Treeport web content.
+On a virtual private server, keep the daemon on loopback. Use Tailscale Serve as the only private connection point.
 
-Tailscale owns user login, device authentication, key expiration, revocation, and access policy. Keep policy narrow. A tagged device does not supply a user identity and cannot use Treeport remote access.
+Service mode does not change the network boundary. The backend continues to listen only on loopback.
 
-## Repository and package boundary
+On macOS, normal service mode uses a per-user LaunchAgent and does not require administrator access.
 
-Registering a repository authorizes Treeport to read package settings and compatible `.zed/tasks.json` tasks from its main worktree, plus native terminal presets from each registered worktree. Review declared packages, `.treeport/terminal-presets.json`, and `.zed/tasks.json` commands before using them.
+Advanced headless mode uses a system LaunchDaemon. An administrator must approve changes to its root-owned definition.
 
-Treeport does not execute manual repository terminal presets during registration or when a repository is opened. A native preset or compatible Zed task starts only after you select it in the panel picker. Native presets launch an ordinary terminal with a literal executable and argument array. A Zed `command` containing shell syntax intentionally runs through Treeport's configured shell, so treat it as executable repository configuration. Automatic Zed `create_worktree` hooks remain separately governed by the [worktree setup rules](/features/worktree-setup-hooks/#zed-compatibility).
+Both macOS modes run Treeport as the user who enabled the service.
 
-Treeport packages do not execute daemon modules or install server hooks. Managed npm operations always disable lifecycle scripts. Package terminal presets use the same explicit-selection and literal-argument boundary.
+On Linux, Treeport uses the systemd manager for that user. The backend never runs as the root user.
 
-Opening a web panel authorizes Treeport's fixed Vite profile to transform its HTML, TypeScript/TSX, CSS, imports, and assets. Treeport does not load package Vite configuration, executable Babel or PostCSS configuration, package plugins, build scripts, or lifecycle scripts. Npm-installed panel output is served only from Treeport's immutable build cache; source and compiled asset routes reject traversal and escaping symbolic links. Panel JavaScript still runs after you open the panel and remains inside Treeport's scoped iframe runtime.
+The desktop client permits HTTP only for loopback computers. A remote computer requires HTTPS with an operating-system-trusted certificate.
 
-These limits reduce automatic package execution, but selected terminal commands and opened hosted panels still act on a trusted registered worktree. Inspect panel source and its runtime dependencies as well as the package manifest.
+The client does not permit a certificate-warning exception. It does not give saved computer information to remote Treeport web content.
 
-A hosted panel can request the `same-origin` permission. This permission weakens the iframe boundary. Panel code can potentially read or change the Treeport page, use Treeport browser storage, call same-origin routes, make direct HTTP or HTTPS requests, and remove its sandbox attribute. Panels without this permission keep an opaque origin.
+Tailscale controls login, device authentication, key expiration, access removal, and access policy.
 
-Treeport shows a confirmation before it first opens a panel that requests a privileged permission. The grant is scoped to the exact package source, project/global scope, definition, and requested permission set. A changed permission set requires a new confirmation. Install and approve such a panel only when you trust its source and runtime dependencies.
+Keep the access policy narrow. A tagged device does not supply a user identity and cannot use Treeport remote access.
 
-The official package's client-side **Browser** panel can load an arbitrary HTTP or HTTPS site in a nested iframe. The package relays the target's client-local title message and, when the target includes the panel SDK, stores reported URL changes for navigation restoration. Browser iframe restrictions remain in effect, and Treeport does not bypass a target's framing policy.
+## Review repository configuration
 
-The package's **Remote Browser** panel requests the reserved `host-browser` permission. It starts a separate disposable Chromium process as the Treeport daemon OS user. The browser can reach localhost, local-network services, and internet sites available from the daemon host. This is intentional, but it gives browsed sites the daemon host's network position.
+When you register a project, Treeport can read these files:
 
-Each Remote Browser panel starts with an empty Treeport-owned browser context. It never attaches to a personal browser profile. Treeport keeps Playwright, browser-server, and Chromium debugging endpoints inside the daemon and local host-user boundary; web-panel code receives only a restricted navigation, input, state, and frame protocol. Resetting or closing the Remote Browser panel deletes its temporary browser state.
+- package settings from the project root;
+- native terminal presets from each registered tree;
+- compatible `.zed/tasks.json` tasks from a repository main tree.
 
-## Operational guidance
+Review packages, `.treeport/terminal-presets.json`, and `.zed/tasks.json` commands before you use them.
 
-- Register only repositories you are comfortable controlling through Treeport.
-- Treat terminal output and scrollback as sensitive; it may contain source code or command output.
+Treeport does not run manual repository presets during registration or when you open a repository.
+
+A native preset or compatible Zed task starts only after you select it.
+
+Native presets use one executable and a literal argument array.
+
+A Zed command with shell syntax runs through the configured shell. Treat this command as executable repository configuration.
+
+Automatic Zed `create_worktree` hooks use the separate [tree setup rules](/features/worktree-setup-hooks/#zed-compatibility).
+
+## Review packages and web panels
+
+Treeport packages cannot load daemon modules or install server hooks. Treeport disables lifecycle scripts for all managed npm operations.
+
+Package terminal presets use explicit selection, one executable, and literal arguments.
+
+When you open a web panel, Treeport uses a fixed Vite profile to transform its files.
+
+Treeport does not load package Vite configuration, executable Babel configuration, executable PostCSS configuration, plug-ins, or build scripts.
+
+Treeport serves installed panel output only from its fixed build cache. Source and asset routes reject path traversal and escaping symbolic links.
+
+Panel JavaScript runs after you open the panel. It stays in the Treeport iframe runtime.
+
+These limits reduce automatic package execution. However, selected commands and open panels still operate on a trusted registered tree.
+
+Review the panel source, runtime dependencies, and package manifest.
+
+### High-trust panel permission
+
+A hosted panel can request the `same-origin` permission. This permission makes the iframe boundary weaker.
+
+Panel code can potentially:
+
+- read or change the Treeport page;
+- use Treeport browser storage;
+- call same-origin routes;
+- make direct HTTP or HTTPS requests;
+- remove its sandbox attribute.
+
+Approve and open this panel only when you trust its source and runtime dependencies.
+
+A panel without this permission keeps an opaque origin.
+
+Treeport shows the panel source and permissions before the first open.
+
+A grant applies to the exact package source, scope, panel definition, and permission set.
+
+Treeport requests approval again when the permission set changes. Removing the package revokes its grants and closes active privileged sessions.
+
+### Browser package boundary
+
+The client-side Browser panel can load an HTTP or HTTPS site in a nested iframe.
+
+The package receives the client-local title from the target. If the target uses the panel SDK, the package also saves reported URL changes.
+
+The target cannot use context, diff, storage, shortcuts, or workspace navigation methods.
+
+Browser iframe restrictions continue to apply. Treeport does not bypass the framing policy of the target.
+
+The Remote Browser panel requests the reserved `host-browser` permission.
+
+Its isolated browser runs as the daemon operating-system user. It can reach local and internet sites available from the daemon computer.
+
+Each Remote Browser panel uses separate temporary browser data. Treeport does not attach to a personal browser profile.
+
+Treeport does not give panel code direct browser-control or debugging access.
+
+Resetting or closing the Remote Browser panel deletes its temporary browser data.
+
+## Follow these operating rules
+
+- Register only folders and repositories that you permit Treeport to control.
+- Treat terminal output and history as sensitive information.
 - Do not put secrets in terminal names, command arguments, or URLs.
-- Keep Git, tmux, Node.js, Treeport, and your private-network software updated.
-- Stop the daemon when remote access is no longer needed. Disable service supervision when it must not return after reboot.
+- Keep Git, tmux, Node.js, Treeport, and Tailscale updated.
+- Stop the daemon when you do not need remote access.
+- Disable service mode when Treeport must not start after a reboot.
 
-`TREEPORT_API_URL` tells launched terminals and the CLI how to reach the daemon. The URL does not add authentication or encryption. For remote use, set it only to the private HTTPS URL created by `treeport remote enable`; Tailscale Serve authenticates that request while the daemon remains loopback-only.
+`TREEPORT_API_URL` tells managed terminals and the CLI how to connect to the daemon.
+
+The URL does not add authentication or encryption.
+
+For remote use, set it only to the private HTTPS URL from `treeport remote enable`.

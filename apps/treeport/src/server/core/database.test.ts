@@ -25,6 +25,40 @@ import {
 
 const databases: TreeportDatabase[] = []
 const directories: string[] = []
+
+async function removeFolderProjectSchema(
+  database: TreeportDatabase
+): Promise<void> {
+  const [table] = await database.db.all<{ sql: string }>(sql`
+    SELECT sql FROM sqlite_master WHERE type='table' AND name='projects'
+  `)
+  const legacySql = table?.sql.replace(
+    /,\s*`project_kind` text DEFAULT 'repository' NOT NULL CONSTRAINT `projects_kind_check` CHECK\(`project_kind` IN \('repository','folder'\)\)/u,
+    ''
+  )
+  if (!table || legacySql === table.sql) {
+    throw new Error('Could not prepare the legacy project schema')
+  }
+
+  const [versionRow] = await database.db.all<{ schemaVersion: number }>(
+    sql`PRAGMA schema_version`
+  )
+  if (!versionRow) {
+    throw new Error('Could not read the legacy schema version')
+  }
+
+  const { schemaVersion } = versionRow
+  await database.db.run(sql`PRAGMA writable_schema = ON`)
+  await database.db.run(sql`
+    UPDATE sqlite_master SET sql=${legacySql}
+    WHERE type='table' AND name='projects'
+  `)
+  await database.db.run(
+    sql.raw(`PRAGMA schema_version = ${Number(schemaVersion) + 1}`)
+  )
+  await database.db.run(sql`PRAGMA writable_schema = OFF`)
+}
+
 afterEach(async () => {
   databases.splice(0).forEach((database) => database.close())
   await Promise.all(
@@ -43,6 +77,8 @@ describe('SQLite migration and catalog ordering', () => {
     const database = await openDatabase(path.join(directory, 'metadata.db'))
     databases.push(database)
 
+    expect(database.migrationState).toBe('advanced')
+    expect(database.migrationSnapshotPaths).toEqual([])
     expect(
       await database.db.get<{ journal_mode: string }>(sql`PRAGMA journal_mode`)
     ).toEqual({ journal_mode: 'wal' })
@@ -50,7 +86,7 @@ describe('SQLite migration and catalog ordering', () => {
       await database.db.get<{ count: number }>(
         sql`SELECT count(*) AS count FROM __drizzle_migrations`
       )
-    ).toEqual({ count: 9 })
+    ).toEqual({ count: 11 })
     expect(
       await database.db.get<{ count: number }>(sql`
         SELECT count(*) AS count FROM sqlite_master WHERE name='terminals'
@@ -141,6 +177,8 @@ describe('SQLite migration and catalog ordering', () => {
 
     const reopened = await openDatabase(filePath)
     databases.push(reopened)
+    expect(reopened.migrationState).toBe('unchanged')
+    expect(reopened.migrationSnapshotPaths).toEqual([])
     expect(await reopened.db.select().from(terminalBellStates)).toEqual([
       {
         terminalId: 'term_bells',
@@ -346,9 +384,16 @@ describe('SQLite migration and catalog ordering', () => {
       createdAt: '2026-01-01',
       updatedAt: '2026-01-01'
     })
+    await removeFolderProjectSchema(initial)
     await initial.db.transaction(async (tx) => {
       await tx.run(sql`DROP INDEX terminal_presets_order_idx`)
       await tx.run(sql`DROP TABLE terminal_presets`)
+      await tx.run(sql`DROP INDEX projects_recent_idx`)
+      await tx.run(sql`ALTER TABLE projects DROP COLUMN show_in_recents`)
+      await tx.run(sql`
+        CREATE INDEX projects_recent_idx
+        ON projects(is_open,last_opened_at DESC,id)
+      `)
       await tx.run(sql`DROP INDEX projects_repository_identity_idx`)
       await tx.run(sql`ALTER TABLE projects DROP COLUMN repository_identity`)
       await tx.run(sql`
@@ -407,7 +452,7 @@ describe('SQLite migration and catalog ordering', () => {
       await reopened.db.get<{ count: number }>(
         sql`SELECT count(*) AS count FROM __drizzle_migrations`
       )
-    ).toEqual({ count: 9 })
+    ).toEqual({ count: 11 })
 
     const backupDirectory = path.join(directory, 'database-backups')
     const [backupName] = await fs.readdir(backupDirectory)
@@ -437,6 +482,98 @@ describe('SQLite migration and catalog ordering', () => {
     ).toHaveLength(1)
   })
 
+  it('preserves populated web panels when adding folder projects', async () => {
+    const directory = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'treeport-folder-project-migration-')
+    )
+    directories.push(directory)
+    const oldMigrations = path.join(directory, 'old-migrations')
+    const packagedMigrations = fileURLToPath(
+      new URL('../../../drizzle', import.meta.url)
+    )
+    await fs.cp(packagedMigrations, oldMigrations, { recursive: true })
+    await Promise.all([
+      fs.rm(path.join(oldMigrations, '0009_open_folders.sql')),
+      fs.rm(path.join(oldMigrations, '0010_host_browser_permissions.sql')),
+      fs.rm(path.join(oldMigrations, 'meta', '0009_snapshot.json')),
+      fs.rm(path.join(oldMigrations, 'meta', '0010_snapshot.json'))
+    ])
+    const journalPath = path.join(oldMigrations, 'meta', '_journal.json')
+    // SAFETY: The copied migration journal has the asserted test shape.
+    const journal = JSON.parse(await fs.readFile(journalPath, 'utf8')) as {
+      entries: unknown[]
+    }
+    journal.entries.splice(9)
+    await fs.writeFile(journalPath, JSON.stringify(journal, null, 2))
+
+    const filePath = path.join(directory, 'treeport.db')
+    const oldDatabase = await openDatabase(filePath, {
+      migrationsFolder: oldMigrations
+    })
+    await oldDatabase.db.run(sql`
+      INSERT INTO projects(
+        id,name,repository_path,main_worktree_path,default_branch,
+        repository_device,repository_inode,last_opened_at,created_at,updated_at
+      ) VALUES(
+        'p_panel','Panel project','/panel','/panel','main',
+        '1','2','2026-01-01','2026-01-01','2026-01-01'
+      )
+    `)
+    await oldDatabase.db.run(sql`
+      INSERT INTO worktrees(
+        id,project_id,path,kind,tmux_socket_name,created_at,updated_at
+      ) VALUES(
+        'wt_panel','p_panel','/panel','main','panel-socket',
+        '2026-01-01','2026-01-01'
+      )
+    `)
+    await oldDatabase.db.run(sql`
+      INSERT INTO web_panels(
+        id,worktree_id,definition_id,title,created_at,updated_at,
+        input_json,launch_cwd
+      ) VALUES(
+        'panel_existing','wt_panel','browser','Existing panel',
+        '2026-01-02','2026-01-03','{"url":"http://localhost:3000"}','/panel'
+      )
+    `)
+    await oldDatabase.db.run(sql`
+      INSERT INTO web_panel_storage(panel_id,key,value_json,updated_at)
+      VALUES('panel_existing','state','{"ready":true}','2026-01-04')
+    `)
+    oldDatabase.close()
+
+    const migrated = await openDatabase(filePath)
+    databases.push(migrated)
+    expect(
+      await migrated.db
+        .select()
+        .from(webPanels)
+        .where(eq(webPanels.id, 'panel_existing'))
+        .then(([panel]) => panel)
+    ).toEqual({
+      id: 'panel_existing',
+      worktreeId: 'wt_panel',
+      definitionId: 'browser',
+      title: 'Existing panel',
+      inputJson: '{"url":"http://localhost:3000"}',
+      launchCwd: '/panel',
+      createdAt: '2026-01-02',
+      updatedAt: '2026-01-03'
+    })
+    expect(
+      await migrated.db
+        .select()
+        .from(webPanelStorage)
+        .where(eq(webPanelStorage.panelId, 'panel_existing'))
+        .then(([entry]) => entry)
+    ).toEqual({
+      panelId: 'panel_existing',
+      key: 'state',
+      valueJson: '{"ready":true}',
+      updatedAt: '2026-01-04'
+    })
+  })
+
   it('adopts version-8 preset rows that predate close-on-success', async () => {
     const directory = await fs.mkdtemp(
       path.join(os.tmpdir(), 'treeport-db-v8-')
@@ -453,6 +590,7 @@ describe('SQLite migration and catalog ordering', () => {
       createdAt: '2026-01-01',
       updatedAt: '2026-01-01'
     })
+    await removeFolderProjectSchema(initial)
     await initial.db.transaction(async (tx) => {
       await tx.run(
         sql`ALTER TABLE terminal_presets RENAME TO terminal_presets_latest`
@@ -473,6 +611,12 @@ describe('SQLite migration and catalog ordering', () => {
         FROM terminal_presets_latest
       `)
       await tx.run(sql`DROP TABLE terminal_presets_latest`)
+      await tx.run(sql`DROP INDEX projects_recent_idx`)
+      await tx.run(sql`ALTER TABLE projects DROP COLUMN show_in_recents`)
+      await tx.run(sql`
+        CREATE INDEX projects_recent_idx
+        ON projects(is_open,last_opened_at DESC,id)
+      `)
       await tx.run(sql`DROP INDEX projects_repository_identity_idx`)
       await tx.run(sql`ALTER TABLE projects DROP COLUMN repository_identity`)
       await tx.run(sql`
@@ -552,17 +696,22 @@ describe('SQLite migration and catalog ordering', () => {
       fs.rm(path.join(oldMigrations, '0005_git_authoritative_worktrees.sql')),
       fs.rm(path.join(oldMigrations, '0006_web_panel_launch_input.sql')),
       fs.rm(path.join(oldMigrations, '0007_dashing_pestilence.sql')),
-      fs.rm(path.join(oldMigrations, '0008_host_browser_permissions.sql')),
+      fs.rm(path.join(oldMigrations, '0008_recent_project_visibility.sql')),
+      fs.rm(path.join(oldMigrations, '0009_open_folders.sql')),
+      fs.rm(path.join(oldMigrations, '0010_host_browser_permissions.sql')),
       fs.rm(path.join(oldMigrations, 'meta', '0005_snapshot.json')),
       fs.rm(path.join(oldMigrations, 'meta', '0006_snapshot.json')),
       fs.rm(path.join(oldMigrations, 'meta', '0007_snapshot.json')),
-      fs.rm(path.join(oldMigrations, 'meta', '0008_snapshot.json'))
+      fs.rm(path.join(oldMigrations, 'meta', '0008_snapshot.json')),
+      fs.rm(path.join(oldMigrations, 'meta', '0009_snapshot.json')),
+      fs.rm(path.join(oldMigrations, 'meta', '0010_snapshot.json'))
     ])
     const journalPath = path.join(oldMigrations, 'meta', '_journal.json')
+    // SAFETY: The test fixture provides the asserted contract used here.
     const journal = JSON.parse(await fs.readFile(journalPath, 'utf8')) as {
       entries: unknown[]
     }
-    journal.entries.splice(-4)
+    journal.entries.splice(5)
     await fs.writeFile(journalPath, JSON.stringify(journal, null, 2))
 
     const filePath = path.join(directory, 'treeport.db')
@@ -572,10 +721,10 @@ describe('SQLite migration and catalog ordering', () => {
     await oldDatabase.db.run(sql`
       INSERT INTO projects(
         id,name,repository_path,main_worktree_path,default_branch,
-        repository_device,repository_inode,last_opened_at,created_at,updated_at
+        repository_device,repository_inode,is_open,last_opened_at,created_at,updated_at
       ) VALUES(
         'p_cutover','Cutover','/cutover','/cutover','main',
-        '1','1','2026-01-01','2026-01-01','2026-01-01'
+        '1','1',0,'2026-01-01','2026-01-01','2026-01-01'
       )
     `)
     await oldDatabase.db.run(sql`
@@ -591,6 +740,15 @@ describe('SQLite migration and catalog ordering', () => {
 
     const migrated = await openDatabase(filePath)
     databases.push(migrated)
+    expect(migrated.migrationState).toBe('advanced')
+    expect(migrated.migrationSnapshotPaths).toHaveLength(1)
+    expect(
+      await migrated.db
+        .select()
+        .from(projects)
+        .where(eq(projects.id, 'p_cutover'))
+        .then(([project]) => project)
+    ).toMatchObject({ id: 'p_cutover', showInRecents: 1 })
     expect(
       await migrated.db
         .select()
@@ -628,7 +786,14 @@ describe('SQLite migration and catalog ordering', () => {
       createdAt: '2026-01-01',
       updatedAt: '2026-01-01'
     })
+    await removeFolderProjectSchema(initial)
     await initial.db.transaction(async (tx) => {
+      await tx.run(sql`DROP INDEX projects_recent_idx`)
+      await tx.run(sql`ALTER TABLE projects DROP COLUMN show_in_recents`)
+      await tx.run(sql`
+        CREATE INDEX projects_recent_idx
+        ON projects(is_open,last_opened_at DESC,id)
+      `)
       await tx.run(sql`DROP INDEX projects_repository_identity_idx`)
       await tx.run(sql`ALTER TABLE projects DROP COLUMN repository_identity`)
       await tx.run(sql`
@@ -704,6 +869,6 @@ describe('SQLite migration and catalog ordering', () => {
       await recovered.db.get<{ count: number }>(
         sql`SELECT count(*) AS count FROM __drizzle_migrations`
       )
-    ).toEqual({ count: 9 })
+    ).toEqual({ count: 11 })
   })
 })

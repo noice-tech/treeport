@@ -2,9 +2,11 @@ import path from 'node:path'
 import react from '@vitejs/plugin-react'
 import { expect, type Locator, type Page } from '@playwright/test'
 import { build as viteBuild } from 'vite'
+import type { ApplicationUpdateStatus } from '../src/server/application-update'
 import {
+  type JsonValue,
   type OperationRecord,
-  type ProjectColor,
+  type ProjectRecord,
   type RecentProjectRecord,
   type RemovePreview,
   type TerminalPreset,
@@ -38,13 +40,15 @@ export async function openWorktreeContextMenu(
   return page.getByRole('menu')
 }
 
-const project = {
+const project: ProjectRecord = {
   id: 'proj_1',
   name: 'example',
+  kind: 'repository',
+  rootPath: '/repo',
   repositoryPath: '/repo',
   mainWorktreePath: '/repo',
   defaultBranch: 'trunk',
-  color: null as ProjectColor | null,
+  color: null,
   availability: { state: 'available' as const, message: null },
   createdAt: '2026-01-01',
   updatedAt: '2026-01-01',
@@ -52,7 +56,7 @@ const project = {
     {
       id: 'wt_main',
       projectId: 'proj_1',
-      name: 'main worktree',
+      name: 'main tree',
       path: '/repo',
       head: 'aaaaaaaa',
       branch: 'trunk',
@@ -90,6 +94,8 @@ const project = {
           name: 'Shell',
           tmuxSessionName: 'treeport-term-shell',
           argv: ['/bin/zsh', '-l'],
+          shellCommand: null,
+          interactiveShell: true,
           status: 'running',
           exitCode: null,
           createdAt: '2026-01-01',
@@ -138,6 +144,8 @@ const project = {
           name: 'Pi',
           tmuxSessionName: 'treeport-term-pi',
           argv: ['pi'],
+          shellCommand: null,
+          interactiveShell: false,
           status: 'running',
           exitCode: null,
           createdAt: '2026-01-01',
@@ -158,11 +166,13 @@ export async function mockApp(
     worktreeFree?: boolean
     includeSecondProject?: boolean
     desktopBridge?: boolean
+    desktopFilePaths?: Record<string, string>
     initialPath?: string
     delayProjects?: boolean
     transientProjectFailures?: number
     repositoryTerminalPresets?: TerminalPresetDefinition[]
     repositoryPresetDiagnostics?: TerminalPresetDefinitionDiagnostic[]
+    applicationUpdate?: ApplicationUpdateStatus
     realReviewPanel?: boolean
   } = {}
 ) {
@@ -207,15 +217,15 @@ export async function mockApp(
         })
       } else if (item.fileName.endsWith('.css')) {
         reviewPanelCss =
-          typeof item.source === 'string'
-            ? item.source
-            : new TextDecoder().decode(item.source)
+          item.source instanceof Uint8Array
+            ? new TextDecoder().decode(item.source)
+            : item.source
       } else {
         reviewPanelAssets.set(item.fileName, {
           body:
-            typeof item.source === 'string'
-              ? item.source
-              : Buffer.from(item.source),
+            item.source instanceof Uint8Array
+              ? Buffer.from(item.source)
+              : item.source,
           contentType: 'application/octet-stream'
         })
       }
@@ -232,8 +242,8 @@ export async function mockApp(
   }
 
   if (options.desktopBridge) {
-    await page.addInitScript(() => {
-      const scope = window as any
+    await page.addInitScript((filePaths) => {
+      const scope = window
       type DesktopCommand =
         | 'new-worktree'
         | 'new-terminal'
@@ -249,6 +259,9 @@ export async function mockApp(
         openFileUrl(url: string) {
           scope.__openedDesktopFileUrls.push(url)
           return Promise.resolve(true)
+        },
+        getPathForFile(file: File) {
+          return Promise.resolve(filePaths[file.name] ?? null)
         },
         onFullscreenChange(next: (fullscreen: boolean) => void) {
           fullscreenListener = next
@@ -277,7 +290,7 @@ export async function mockApp(
         terminalSelectionReleaseListeners.forEach((listener) => listener())
       scope.__dispatchDesktopFullscreen = (fullscreen: boolean) =>
         fullscreenListener?.(fullscreen)
-    })
+    }, options.desktopFilePaths ?? {})
   }
 
   await page.addInitScript((initialMetadata) => {
@@ -287,7 +300,7 @@ export async function mockApp(
       return stored ? JSON.parse(stored) : null
     }
     const notifyTerminalState = (state: any) => {
-      const scope = window as any
+      const scope = window
       for (const socket of scope.__wsInstances || []) {
         if (
           socket.namespace !== '/terminals' ||
@@ -306,7 +319,7 @@ export async function mockApp(
       )
       notifyTerminalState(state)
     }
-    const scope = window as any
+    const scope = window
     if (!scope.__terminalStateListener) {
       scope.__terminalStateListener = true
       window.addEventListener('storage', (event) => {
@@ -336,7 +349,7 @@ export async function mockApp(
       private closeHandler: (() => void) | null = null
 
       constructor(public url: string) {
-        const scope = window as any
+        const scope = window
         scope.__wsInstances = [...(scope.__wsInstances || []), this]
         scope.__lastWs = this
         setTimeout(() => {
@@ -395,7 +408,7 @@ export async function mockApp(
       }
 
       send(data: string) {
-        const scope = window as any
+        const scope = window
         if (data === '2') {
           this.deliver('3')
           return
@@ -581,7 +594,7 @@ export async function mockApp(
         queueMicrotask(() => this.messageHandler?.({ data }))
       }
 
-      private deliverSocket(type: string, payload: unknown): void {
+      private deliverSocket(type: string, payload: JsonValue): void {
         this.deliver(`42${this.namespace},${JSON.stringify([type, payload])}`)
       }
     }
@@ -618,6 +631,7 @@ export async function mockApp(
   const secondState = structuredClone(project)
   secondState.id = 'proj_2'
   secondState.name = 'another-project'
+  secondState.rootPath = '/another'
   secondState.repositoryPath = '/another'
   secondState.mainWorktreePath = '/another'
   for (const worktree of secondState.worktrees) {
@@ -630,6 +644,26 @@ export async function mockApp(
       terminal.worktreeId = worktree.id
     }
   }
+  const folderState = structuredClone(project)
+  folderState.id = 'proj_folder'
+  folderState.name = 'Projects'
+  folderState.kind = 'folder'
+  folderState.rootPath = '/home/test/Projects'
+  folderState.repositoryPath = folderState.rootPath
+  folderState.mainWorktreePath = folderState.rootPath
+  folderState.defaultBranch = ''
+  folderState.worktrees = [folderState.worktrees[0]!]
+  folderState.worktrees[0]!.id = 'wt_folder'
+  folderState.worktrees[0]!.projectId = folderState.id
+  folderState.worktrees[0]!.name = 'Projects'
+  folderState.worktrees[0]!.path = folderState.rootPath
+  folderState.worktrees[0]!.kind = 'folder'
+  folderState.worktrees[0]!.head = ''
+  folderState.worktrees[0]!.branch = null
+  folderState.worktrees[0]!.dirty = null
+  folderState.worktrees[0]!.terminals[0]!.id = 'term_folder'
+  folderState.worktrees[0]!.terminals[0]!.worktreeId = 'wt_folder'
+
   const openProjects = options.startClosed
     ? []
     : [state, ...(options.includeSecondProject ? [secondState] : [])]
@@ -638,6 +672,8 @@ export async function mockApp(
         {
           id: state.id,
           name: state.name,
+          kind: state.kind,
+          rootPath: state.rootPath,
           repositoryPath: state.repositoryPath,
           lastOpenedAt: state.updatedAt
         }
@@ -657,6 +693,7 @@ export async function mockApp(
   let releaseNextProjects: (() => void) | null = null
   let closeRequests = 0
   let failClose = false
+  let dismissRecentProjectRequests = 0
   let removePreviewRequests = 0
   let removePreviewDelayMs = 0
   let removePreviewOverride: Partial<RemovePreview> = {}
@@ -672,7 +709,7 @@ export async function mockApp(
   let failTerminalDelete = false
   let webPanelCreations = 0
   let webPanelHasStorage = false
-  const webPanelStorage = new Map<string, Map<string, unknown>>()
+  const webPanelStorage = new Map<string, Map<string, JsonValue>>()
   const webPanelDefinitions = [
     {
       id: 'package:npm:@treeport/web-panel-browser:web-panel:browser',
@@ -720,9 +757,35 @@ export async function mockApp(
   let creationSequence = 0
   const creationOperations = new Map<string, OperationRecord>()
   let removeOperation: OperationRecord | null = null
+  let applicationUpdate: ApplicationUpdateStatus =
+    options.applicationUpdate ?? {
+      currentVersion: '0.4.0',
+      latestVersion: null,
+      updateAvailable: false,
+      checkedAt: '2026-03-20T12:00:00.000Z',
+      canUpdate: false,
+      blockedReason: null,
+      phase: 'idle',
+      operationId: null,
+      targetVersion: null,
+      error: null
+    }
+  let applicationUpdateRequests = 0
   await page.route('**/api/**', async (route) => {
     const url = new URL(route.request().url())
     const pathname = url.pathname
+    if (pathname === '/api/update') {
+      if (route.request().method() === 'POST') {
+        applicationUpdateRequests += 1
+        applicationUpdate = { ...applicationUpdate, phase: 'starting' }
+        await route.fulfill({ status: 202, json: applicationUpdate })
+        return
+      }
+
+      await route.fulfill({ json: applicationUpdate })
+      return
+    }
+
     if (
       pathname === '/api/terminal-preset-definitions' &&
       route.request().method() === 'GET'
@@ -739,6 +802,7 @@ export async function mockApp(
               name: preset.name,
               executable: preset.executable,
               args: preset.args,
+              shellCommand: null,
               cwd: null,
               env: {},
               closeOnSuccess: preset.closeOnSuccess,
@@ -767,10 +831,10 @@ export async function mockApp(
       pathname === '/api/terminal-presets' &&
       route.request().method() === 'POST'
     ) {
-      const body = route.request().postDataJSON() as Pick<
+      const body: Pick<
         TerminalPreset,
         'name' | 'executable' | 'args' | 'closeOnSuccess'
-      >
+      > = route.request().postDataJSON()
       const preset: TerminalPreset = {
         id: `preset_${terminalPresets.length + 1}`,
         ...body,
@@ -787,10 +851,10 @@ export async function mockApp(
       route.request().method() === 'PATCH'
     ) {
       const presetId = pathname.split('/').at(-1)!
-      const body = route.request().postDataJSON() as Pick<
+      const body: Pick<
         TerminalPreset,
         'name' | 'executable' | 'args' | 'closeOnSuccess'
-      > & { expectedUpdatedAt: string }
+      > & { expectedUpdatedAt: string } = route.request().postDataJSON()
       const { expectedUpdatedAt, ...input } = body
       const index = terminalPresets.findIndex(
         (preset) => preset.id === presetId
@@ -836,9 +900,7 @@ export async function mockApp(
       route.request().method() === 'DELETE'
     ) {
       const presetId = pathname.split('/').at(-1)!
-      const body = route.request().postDataJSON() as {
-        expectedUpdatedAt: string
-      }
+      const body: { expectedUpdatedAt: string } = route.request().postDataJSON()
       const index = terminalPresets.findIndex(
         (preset) => preset.id === presetId
       )
@@ -901,13 +963,13 @@ export async function mockApp(
 
       const input = url.searchParams.get('input') ?? '~'
       const showHidden = url.searchParams.get('hidden') === 'true'
-      const exactPaths: Record<string, string[]> = {
-        '~': ['Projects'],
-        '/home/test': ['Projects'],
-        '/home/test/Projects': ['example'],
-        '/repo': ['src']
-      }
-      const exact = input in exactPaths
+      const exactPaths = new Map([
+        ['~', ['Projects']],
+        ['/home/test', ['Projects']],
+        ['/home/test/Projects', ['example']],
+        ['/repo', ['src']]
+      ])
+      const exact = exactPaths.has(input)
       const partialProjects = input === '/home/test/Pro'
       const directoryPath = partialProjects
         ? '/home/test'
@@ -916,7 +978,7 @@ export async function mockApp(
           : input
       const entryNames = partialProjects
         ? ['Projects']
-        : [...(exactPaths[input] ?? []), ...(showHidden ? ['.hidden'] : [])]
+        : [...(exactPaths.get(input) ?? []), ...(showHidden ? ['.hidden'] : [])]
       await route.fulfill({
         json: {
           input,
@@ -948,6 +1010,14 @@ export async function mockApp(
             })),
             truncated: false
           },
+          project: exact
+            ? input === '/repo'
+              ? { state: 'valid', kind: 'repository', path: '/repo' }
+              : { state: 'valid', kind: 'folder', path: directoryPath }
+            : {
+                state: 'incomplete',
+                message: 'Choose a matching folder to continue.'
+              },
           repository:
             input === '/repo'
               ? { state: 'valid', repositoryPath: '/repo' }
@@ -991,21 +1061,22 @@ export async function mockApp(
     }
 
     if (pathname === '/api/projects' && route.request().method() === 'POST') {
-      registeredProjectPaths.push(
-        (route.request().postDataJSON() as { path: string }).path
-      )
-      if (!openProjects.some((candidate) => candidate.id === state.id)) {
-        openProjects.push(state)
+      const body: { path: string } = route.request().postDataJSON()
+      registeredProjectPaths.push(body.path)
+      const registered =
+        body.path === folderState.rootPath ? folderState : state
+      if (!openProjects.some((candidate) => candidate.id === registered.id)) {
+        openProjects.push(registered)
       }
 
       const recentIndex = recentProjects.findIndex(
-        (candidate) => candidate.id === state.id
+        (candidate) => candidate.id === registered.id
       )
       if (recentIndex >= 0) {
         recentProjects.splice(recentIndex, 1)
       }
 
-      await route.fulfill({ status: 201, json: { project: state } })
+      await route.fulfill({ status: 201, json: { project: registered } })
       return
     }
 
@@ -1060,6 +1131,8 @@ export async function mockApp(
         recentProjects.push({
           id: state.id,
           name: state.name,
+          kind: state.kind,
+          rootPath: state.rootPath,
           repositoryPath: state.repositoryPath,
           lastOpenedAt: state.updatedAt
         })
@@ -1073,12 +1146,26 @@ export async function mockApp(
     }
 
     if (
+      pathname === '/api/projects/proj_1/recent' &&
+      route.request().method() === 'DELETE'
+    ) {
+      dismissRecentProjectRequests += 1
+      const recentIndex = recentProjects.findIndex(
+        (candidate) => candidate.id === state.id
+      )
+      if (recentIndex >= 0) {
+        recentProjects.splice(recentIndex, 1)
+      }
+
+      await route.fulfill({ json: { ok: true } })
+      return
+    }
+
+    if (
       pathname === '/api/projects/proj_1' &&
       route.request().method() === 'PATCH'
     ) {
-      const body = route.request().postDataJSON() as {
-        color: typeof state.color
-      }
+      const body: { color: typeof state.color } = route.request().postDataJSON()
       state.color = body.color
       await route.fulfill({ json: { project: state } })
       return
@@ -1150,7 +1237,7 @@ export async function mockApp(
       pathname === '/api/projects/proj_1/worktree-operations' &&
       route.request().method() === 'POST'
     ) {
-      const body = route.request().postDataJSON() as {
+      const body: {
         name: string
         base: 'default' | 'current'
         sourceWorktreeId?: string
@@ -1159,7 +1246,7 @@ export async function mockApp(
           argv?: string[]
           returnToShell?: boolean
         }
-      }
+      } = route.request().postDataJSON()
       const canonicalName = body.name
         .normalize('NFKD')
         .replace(/\p{Mark}+/gu, '')
@@ -1204,6 +1291,8 @@ export async function mockApp(
           name: body.initialTerminal?.name ?? 'Shell',
           tmuxSessionName: 'treeport-term-new',
           argv: body.initialTerminal?.argv ?? ['/bin/zsh', '-l'],
+          shellCommand: null,
+          interactiveShell: !body.initialTerminal?.argv,
           status: 'running' as const,
           exitCode: null,
           createdAt: '2026-01-01',
@@ -1292,7 +1381,10 @@ export async function mockApp(
           contentType: 'text/html',
           body: `<!doctype html><html><head><meta charset="UTF-8"><style>${reviewPanelCss}</style></head><body>
             <div id="root"></div>
-            <script type="module">${reviewPanelScript.replaceAll('</script', '<\\/script')}</script>
+            <script type="module">${reviewPanelScript.replaceAll(
+              '</script',
+              '<\\/script'
+            )}</script>
           </body></html>`
         })
         return
@@ -1468,11 +1560,11 @@ export async function mockApp(
       route.request().method() === 'POST'
     ) {
       const worktreeId = pathname.split('/')[3]!
-      const body = route.request().postDataJSON() as {
+      const body: {
         definitionId: string
         input?: { url?: string; title?: string } | null
         launchCwd?: string | null
-      }
+      } = route.request().postDataJSON()
       const worktree = state.worktrees.find(
         (candidate) => candidate.id === worktreeId
       )!
@@ -1609,10 +1701,10 @@ export async function mockApp(
       route.request().method() === 'PUT'
     ) {
       const panelId = pathname.split('/')[3]!
-      const body = route.request().postDataJSON() as {
+      const body: {
         input: { url?: string; title?: string } | null
         launchCwd: string | null
-      }
+      } = route.request().postDataJSON()
       const panel = state.worktrees
         .flatMap((worktree) => worktree.panels)
         .find((candidate) => candidate.id === panelId)!
@@ -1630,7 +1722,7 @@ export async function mockApp(
       route.request().method() === 'POST'
     ) {
       const panelId = pathname.split('/')[3]!
-      const body = route.request().postDataJSON() as { key: string }
+      const body: { key: string } = route.request().postDataJSON()
       await route.fulfill({
         json: { value: webPanelStorage.get(panelId)?.get(body.key) }
       })
@@ -1642,11 +1734,11 @@ export async function mockApp(
       route.request().method() === 'PUT'
     ) {
       const panelId = pathname.split('/')[3]!
-      const body = route.request().postDataJSON() as {
-        key: string
-        value: unknown
-      }
-      const storage = webPanelStorage.get(panelId) ?? new Map<string, unknown>()
+      const body: { key: string; value: JsonValue } = route
+        .request()
+        .postDataJSON()
+      const storage =
+        webPanelStorage.get(panelId) ?? new Map<string, JsonValue>()
       storage.set(body.key, body.value)
       webPanelStorage.set(panelId, storage)
       webPanelHasStorage = true
@@ -1680,10 +1772,9 @@ export async function mockApp(
       pathname === '/api/worktrees/wt_topic/terminals' &&
       route.request().method() === 'POST'
     ) {
-      const body = route.request().postDataJSON() as {
-        name: string
-        argv?: string[]
-      }
+      const body: { name: string; argv?: string[] } = route
+        .request()
+        .postDataJSON()
       terminalCreations += 1
       const creationNumber = terminalCreations
       if (terminalCreateGate) {
@@ -1728,7 +1819,13 @@ export async function mockApp(
         worktreeId: 'wt_topic',
         name: body.name,
         tmuxSessionName: 'treeport-term-dev',
-        argv: body.argv || ['/bin/zsh', '-l'],
+        argv:
+          body.argv ||
+          (body.shellCommand
+            ? ['/bin/zsh', '-lc', body.shellCommand]
+            : ['/bin/zsh', '-l']),
+        shellCommand: body.shellCommand ?? null,
+        interactiveShell: !body.argv && !body.shellCommand,
         status: 'running',
         exitCode: null,
         createdAt: '2026-01-01',
@@ -1860,7 +1957,10 @@ export async function mockApp(
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       }
-      await route.fulfill({ status: 202, json: { operation: removeOperation } })
+      await route.fulfill({
+        status: 202,
+        json: { operation: removeOperation }
+      })
       return
     }
 
@@ -1875,6 +1975,10 @@ export async function mockApp(
   return {
     state,
     terminalPresets,
+    applicationUpdateRequests: () => applicationUpdateRequests,
+    setApplicationUpdate: (status: ApplicationUpdateStatus) => {
+      applicationUpdate = status
+    },
     repositoryTerminalPresets,
     repositoryPresetDiagnostics,
     recentProjects,
@@ -1894,6 +1998,7 @@ export async function mockApp(
     failNextClose: () => {
       failClose = true
     },
+    dismissRecentProjectRequests: () => dismissRecentProjectRequests,
     removePreviewRequests: () => removePreviewRequests,
     fileUploadRequests: () => fileUploadRequests,
     terminalCreations: () => terminalCreations,
@@ -1924,8 +2029,9 @@ export async function mockApp(
     setWebPanelHasStorage: (value: boolean) => {
       webPanelHasStorage = value
     },
-    setWebPanelStorage: (panelId: string, key: string, value: unknown) => {
-      const storage = webPanelStorage.get(panelId) ?? new Map<string, unknown>()
+    setWebPanelStorage: (panelId: string, key: string, value: JsonValue) => {
+      const storage =
+        webPanelStorage.get(panelId) ?? new Map<string, JsonValue>()
       storage.set(key, value)
       webPanelStorage.set(panelId, storage)
       webPanelHasStorage = true
@@ -1991,7 +2097,7 @@ export async function waitForTerminalControl(page: Page) {
     .poll(() =>
       page.evaluate(() => {
         const terminalId = location.pathname.split('/').at(-1)
-        const socket = [...((window as any).__wsInstances ?? [])]
+        const socket = [...(window.__wsInstances ?? [])]
           .reverse()
           .find(
             (candidate: any) =>

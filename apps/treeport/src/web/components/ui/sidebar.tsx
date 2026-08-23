@@ -1,4 +1,5 @@
 import * as React from 'react'
+import { z } from 'zod'
 import { Slot } from '@radix-ui/react-slot'
 import { cva, type VariantProps } from 'class-variance-authority'
 import { PanelLeft } from 'lucide-react'
@@ -79,7 +80,7 @@ const SidebarProvider = React.forwardRef<
       React.Dispatch<React.SetStateAction<boolean>>
     >((value) => {
       setOpenMobileState((current) => {
-        const next = typeof value === 'function' ? value(current) : value
+        const next = value instanceof Function ? value(current) : value
         if (!current && next) {
           mobileRestoreFocusRef.current =
             document.activeElement instanceof HTMLElement
@@ -102,7 +103,7 @@ const SidebarProvider = React.forwardRef<
     const open = openProp ?? _open
     const setOpen = React.useCallback(
       (value: boolean | ((value: boolean) => boolean)) => {
-        const openState = typeof value === 'function' ? value(open) : value
+        const openState = value instanceof Function ? value(open) : value
         if (setOpenProp) {
           setOpenProp(openState)
         } else {
@@ -145,6 +146,7 @@ const SidebarProvider = React.forwardRef<
         <TooltipProvider delayDuration={0}>
           <div
             style={
+              // SAFETY: The component contract supplies the asserted browser value used here.
               {
                 '--sidebar-width': SIDEBAR_WIDTH,
                 '--sidebar-width-icon': SIDEBAR_WIDTH_ICON,
@@ -207,6 +209,7 @@ const Sidebar = React.forwardRef<
             data-mobile="true"
             className="w-(--sidebar-width-mobile) bg-zinc-900/95 p-0 text-zinc-100 backdrop-blur-xl"
             style={
+              // SAFETY: The component contract supplies the asserted browser value used here.
               {
                 '--sidebar-width-mobile': SIDEBAR_WIDTH_MOBILE
               } as React.CSSProperties
@@ -615,10 +618,13 @@ const SidebarMenuButton = React.forwardRef<
       return button
     }
 
-    if (typeof tooltip === 'string') {
-      tooltip = {
-        children: tooltip
-      }
+    const tooltipText = z.string().safeParse(tooltip)
+    let tooltipProps: React.ComponentProps<typeof TooltipContent>
+    if (tooltipText.success) {
+      tooltipProps = { children: tooltipText.data }
+    } else {
+      // SAFETY: The failed string parse narrows the documented union to tooltip properties.
+      tooltipProps = tooltip as React.ComponentProps<typeof TooltipContent>
     }
 
     return (
@@ -628,7 +634,7 @@ const SidebarMenuButton = React.forwardRef<
           side="right"
           align="center"
           hidden={state !== 'collapsed' || isMobile}
-          {...tooltip}
+          {...tooltipProps}
         />
       </Tooltip>
     )
@@ -716,6 +722,7 @@ const SidebarMenuSkeleton = React.forwardRef<
         className="h-4 max-w-[--skeleton-width] flex-1"
         data-sidebar="menu-skeleton-text"
         style={
+          // SAFETY: The component contract supplies the asserted browser value used here.
           {
             '--skeleton-width': width
           } as React.CSSProperties

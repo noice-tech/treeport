@@ -5,6 +5,7 @@ import http, {
 } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { afterEach, describe, expect, it } from 'vitest'
+import { testAccess } from './test-access'
 import { authorizeRequest, rejectHttpRequest } from './request-security'
 
 interface ResponseRecord {
@@ -112,6 +113,7 @@ async function fixture(): Promise<{
   })
   servers.push(server)
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  // SAFETY: The test fixture provides the asserted contract used here.
   const address = server.address() as AddressInfo
   return { url: `http://127.0.0.1:${address.port}`, mutations }
 }
@@ -131,7 +133,7 @@ afterEach(async () => {
 
 describe('request security over a real HTTP server', () => {
   it('never trusts identity or forwarding headers from a non-loopback peer', () => {
-    const request = {
+    const request = testAccess<IncomingMessage>({
       method: 'GET',
       headers: {
         host: 'treeport.tailnet.ts.net',
@@ -150,7 +152,7 @@ describe('request security over a real HTTP server', () => {
         'https'
       ],
       socket: { remoteAddress: '192.168.1.10' }
-    } as unknown as IncomingMessage
+    })
 
     expect(authorizeRequest(request)).toMatchObject({
       allowed: false,

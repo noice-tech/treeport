@@ -141,6 +141,7 @@ export class ExternalCommandError extends Data.TaggedError(
 
 interface ChildResource {
   readonly child: ChildProcessWithoutNullStreams
+  readonly processGroupId: number
   readonly exit: Deferred.Deferred<
     readonly [code: number | null, signal: NodeJS.Signals | null]
   >
@@ -153,15 +154,28 @@ interface ChildResource {
   terminalError: CommandExecutionError | null
 }
 
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
+function errorMessage(cause: unknown): string {
+  return cause instanceof Error ? cause.message : String(cause)
+}
+
+function signalProcessGroup(
+  processGroupId: number,
+  signal: NodeJS.Signals
+): void {
+  try {
+    process.kill(-processGroupId, signal)
+  } catch (cause) {
+    // SAFETY: Node reports process.kill failures as NodeJS.ErrnoException.
+    if ((cause as NodeJS.ErrnoException).code !== 'ESRCH') {
+      throw cause
+    }
+  }
 }
 
 /**
- * Runs a child command as an interruptible Effect. The child is acquired as a
- * resource, so interruption completes only after the finalizer has sent
- * SIGTERM, escalated to SIGKILL when needed, and observed the direct child
- * exit. Descendant process groups are intentionally outside this contract.
+ * Runs a child command as an interruptible Effect. The child is acquired in an
+ * isolated process group, so interruption completes only after the finalizer
+ * has signaled the full group and observed the direct child exit.
  */
 function runCommandEffect(
   request: CommandRequest
@@ -182,7 +196,8 @@ function runCommandEffect(
               cwd: request.cwd,
               env: request.env ?? process.env,
               stdio: ['pipe', 'pipe', 'pipe'],
-              shell: false
+              shell: false,
+              detached: true
             })
           } catch (cause) {
             resume(Effect.fail(new SpawnCommandError(request, cause)))
@@ -216,6 +231,7 @@ function runCommandEffect(
             resume(
               Effect.succeed({
                 child,
+                processGroupId: child.pid!,
                 exit,
                 onExit,
                 onProcessError,
@@ -348,18 +364,19 @@ function runCommandEffect(
         }
       )
 
-      if (request.timeoutMs === undefined || request.timeoutMs <= 0) {
+      const timeoutMs = request.timeoutMs
+      if (timeoutMs === undefined || timeoutMs <= 0) {
         return awaitResult
       }
 
       return Effect.raceFirst(
         awaitResult,
-        Effect.sleep(Duration.millis(request.timeoutMs)).pipe(
+        Effect.sleep(Duration.millis(timeoutMs)).pipe(
           Effect.flatMap(() =>
             Effect.sync(() => {
               resource.terminalError ??= new TimeoutCommandError(
                 request,
-                request.timeoutMs as number
+                timeoutMs
               )
               return resource.terminalError
             })
@@ -368,15 +385,15 @@ function runCommandEffect(
         )
       )
     },
-    (resource) =>
+    (resource, useExit) =>
       Deferred.isDone(resource.exit).pipe(
         Effect.flatMap((alreadyExited) => {
-          if (alreadyExited) {
+          if (alreadyExited && Exit.isSuccess(useExit)) {
             return Effect.void
           }
 
           return Effect.sync(() => {
-            resource.child.kill('SIGTERM')
+            signalProcessGroup(resource.processGroupId, 'SIGTERM')
           }).pipe(
             Effect.zipRight(
               Effect.raceFirst(
@@ -390,15 +407,15 @@ function runCommandEffect(
                 )
               )
             ),
-            Effect.flatMap((exited) => {
-              if (exited) {
-                return Effect.void
-              }
-
-              return Effect.sync(() => {
-                resource.child.kill('SIGKILL')
-              }).pipe(Effect.zipRight(Deferred.await(resource.exit)))
-            })
+            Effect.flatMap((exited) =>
+              Effect.sync(() => {
+                signalProcessGroup(resource.processGroupId, 'SIGKILL')
+              }).pipe(
+                Effect.zipRight(
+                  exited ? Effect.void : Deferred.await(resource.exit)
+                )
+              )
+            )
           )
         }),
         Effect.ensuring(

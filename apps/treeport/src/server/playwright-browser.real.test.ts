@@ -100,6 +100,7 @@ it('streams and shares one History API page with the pinned Agent CLI', async ()
   })
   await browser.launch()
   await browser.setScreencasting(true)
+  // SAFETY: The server is listening on an ephemeral TCP port.
   const address = server.address() as AddressInfo
   await browser.command({
     type: 'navigate',

@@ -8,6 +8,8 @@ type TreeportDesktopFileAction = 'opened' | 'rejected'
 type TreeportDesktopBridge = Readonly<{
   platform: NodeJS.Platform
   openFileUrl: (url: string) => Promise<TreeportDesktopFileAction>
+  getPathForFile?: (file: File) => Promise<string | null>
+  onLocalFilePaste?: (listener: (paths: string[]) => void) => () => void
   onFullscreenChange: (listener: (fullscreen: boolean) => void) => () => void
   onCommand: (listener: (command: TreeportDesktopCommand) => void) => () => void
   setTerminalSelectionActive: (active: boolean) => void

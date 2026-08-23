@@ -54,6 +54,7 @@ export interface DesktopShellState {
   appVersion: string
   platform: NodeJS.Platform
   fullscreen: boolean
+  updateReady: boolean
   selectedComputerId?: string
   computers: ComputerSummary[]
   connection: ConnectionState

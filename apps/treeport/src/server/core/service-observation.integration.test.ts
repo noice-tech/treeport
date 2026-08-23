@@ -281,7 +281,7 @@ describe('TreeportService with injected command adapters', () => {
       })
       .then(
         (operation) => ({ operation, error: null }),
-        (error: unknown) => ({ operation: null, error })
+        (error) => ({ operation: null, error })
       )
       .finally(() => {
         removalSettled = true
@@ -465,6 +465,11 @@ describe('TreeportService with injected command adapters', () => {
         (call) => call.args[0] === 'worktree' && call.args[1] === 'list'
       )
     ).toHaveLength(0)
+    const tmuxPolls = runner.calls.filter((call) =>
+      call.args.includes('list-panes')
+    )
+    expect(tmuxPolls).toHaveLength(2)
+    expect(tmuxPolls.every((call) => call.args.includes('-t'))).toBe(true)
 
     await service.refreshTerminalStatus(terminal.id)
     expect(
@@ -582,7 +587,12 @@ describe('TreeportService with injected command adapters', () => {
     const linked = (
       await service.createWorktree(project.id, 'restart-main-rename', 'default')
     ).worktree
-    const terminal = await service.createTerminal(linked.id, 'Preserved')
+    const terminal = await service.createTerminal(
+      linked.id,
+      'Preserved',
+      undefined,
+      { shellCommand: 'bun remotion' }
+    )
     const linkedGitKey = runner.worktrees.find(
       (worktree) => worktree.path === linked.path
     )!.gitWorktreeKey
@@ -629,7 +639,12 @@ describe('TreeportService with injected command adapters', () => {
       path: await fs.realpath(movedLinked),
       tmuxSocketName: linked.tmuxSocketName,
       terminals: expect.arrayContaining([
-        expect.objectContaining({ id: terminal.id })
+        expect.objectContaining({
+          id: terminal.id,
+          argv: ['/bin/zsh', '-lc', 'bun remotion'],
+          shellCommand: 'bun remotion',
+          interactiveShell: false
+        })
       ])
     })
   })

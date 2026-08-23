@@ -6,7 +6,7 @@ test.describe('mobile terminal UI', () => {
   test('uses the mobile drawer and terminal controls end to end', async ({
     page
   }) => {
-    await mockApp(page, [
+    const mocked = await mockApp(page, [
       {
         terminalId: 'term_pi',
         title: 'background · /repo',
@@ -32,14 +32,14 @@ test.describe('mobile terminal UI', () => {
     await page.keyboard.press('Escape')
     await expect(notifications).toBeVisible()
 
-    const trigger = page.getByLabel('Open worktree drawer')
+    const trigger = page.getByLabel('Open tree drawer')
     await trigger.click()
     await expect(page.getByLabel('Close drawer')).toBeFocused()
     await expect(
       page.getByRole('button', { name: /background · \/repo.*42% complete/ })
     ).toBeVisible()
     await page.evaluate(() =>
-      (window as any).__eventSource.emit(
+      window.__eventSource.emit(
         'terminal.metadata',
         JSON.stringify({
           data: {
@@ -71,13 +71,13 @@ test.describe('mobile terminal UI', () => {
     await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
     await expect(page.getByText('Viewing', { exact: true })).toBeVisible()
     await page.evaluate(() => {
-      ;(window as any).__wsSent = []
+      window.__wsSent = []
     })
     await page.getByRole('button', { name: 'Esc' }).click()
     await waitForTerminalControl(page)
     await page.getByRole('button', { name: 'Esc' }).click()
     await page.evaluate(() => {
-      const socket = (window as any).__lastWs
+      const socket = window.__lastWs
       socket.onmessage?.({
         data: JSON.stringify({
           version: 1,
@@ -90,13 +90,36 @@ test.describe('mobile terminal UI', () => {
     })
     await page.getByRole('button', { name: 'Arrow up' }).click()
     await expect
-      .poll(() => page.evaluate(() => (window as any).__wsSent))
+      .poll(() => page.evaluate(() => window.__wsSent))
       .toEqual(
         expect.arrayContaining([
           expect.objectContaining({ type: 'input', data: '\u001b' }),
           expect.objectContaining({ type: 'input', data: '\u001bOA' })
         ])
       )
+
+    await page.evaluate(() => {
+      window.__wsSent = []
+    })
+    const fileChooserPromise = page.waitForEvent('filechooser')
+    await page.getByRole('button', { name: 'Upload', exact: true }).click()
+    const fileChooser = await fileChooserPromise
+    await fileChooser.setFiles({
+      name: 'mobile-photo.jpg',
+      mimeType: 'image/jpeg',
+      buffer: Buffer.from('photo')
+    })
+    await expect.poll(mocked.fileUploadRequests).toBe(1)
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          window.__wsSent
+            .filter((message: any) => message.type === 'input')
+            .map((message: any) => message.data)
+            .join('')
+        )
+      )
+      .toContain('/tmp/treeport-upload-1.jpg')
 
     await page.setViewportSize({ width: 320, height: 700 })
     const ctrl = page.getByRole('button', { name: 'Ctrl', exact: true })
@@ -106,7 +129,7 @@ test.describe('mobile terminal UI', () => {
       exact: true
     })
     await page.evaluate(() => {
-      ;(window as any).__wsSent = []
+      window.__wsSent = []
     })
     await ctrl.click()
     await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
@@ -117,7 +140,7 @@ test.describe('mobile terminal UI', () => {
     await expect
       .poll(() =>
         page.evaluate(() =>
-          (window as any).__wsSent
+          window.__wsSent
             .filter((message: any) => message.type === 'input')
             .map((message: any) => message.data)
         )
@@ -127,26 +150,44 @@ test.describe('mobile terminal UI', () => {
     await alt.click()
     await ctrl.click()
     await page.evaluate(() => {
-      ;(window as any).__wsSent = []
+      window.__wsSent = []
     })
     await shiftTab.scrollIntoViewIfNeeded()
     await shiftTab.click()
     await expect
       .poll(() =>
         page.evaluate(() =>
-          (window as any).__wsSent
+          window.__wsSent
             .filter((message: any) => message.type === 'input')
             .map((message: any) => message.data)
         )
       )
       .toEqual(['\u001b[Z'])
+
+    const esc = page.getByRole('button', { name: 'Esc', exact: true })
+    await esc.focus()
+    await page.evaluate(() => {
+      window.__wsSent = []
+    })
+    await esc.click()
+    await expect(page.locator('.xterm-helper-textarea')).not.toBeFocused()
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          window.__wsSent
+            .filter((message: any) => message.type === 'input')
+            .map((message: any) => message.data)
+        )
+      )
+      .toEqual(['\u001b'])
+
     await page.setViewportSize({ width: 412, height: 915 })
     const presetRequest = page.waitForRequest(
       (request) =>
         request.method() === 'POST' &&
         new URL(request.url()).pathname === '/api/worktrees/wt_topic/terminals'
     )
-    await page.getByLabel('Open worktree drawer').click()
+    await page.getByLabel('Open tree drawer').click()
     await page.getByRole('button', { name: /^New panel/ }).click()
     await page
       .getByRole('dialog', { name: 'New panel' })
@@ -189,23 +230,23 @@ test.describe('mobile terminal UI', () => {
 
   test('keeps mobile modal and drawer flows coherent', async ({ page }) => {
     const mocked = await mockApp(page)
-    await page.getByLabel('Open worktree drawer').click()
-    const trigger = page.getByRole('button', { name: 'New worktree' })
+    await page.getByLabel('Open tree drawer').click()
+    const trigger = page.getByRole('button', { name: 'New tree' })
     await trigger.click()
     await expect(
-      page.getByRole('dialog', { name: 'Create worktree' })
+      page.getByRole('dialog', { name: 'Create tree' })
     ).toBeVisible()
     await page.keyboard.press('Escape')
     await expect(
-      page.getByRole('heading', { name: 'Create worktree' })
+      page.getByRole('heading', { name: 'Create tree' })
     ).toHaveCount(0)
     await expect(trigger).toBeFocused()
     await page.keyboard.press('Escape')
 
-    await page.getByLabel('Open worktree drawer').click()
+    await page.getByLabel('Open tree drawer').click()
     await trigger.click()
     await page.clock.install()
-    const submit = page.getByRole('button', { name: 'Create worktree' })
+    const submit = page.getByRole('button', { name: 'Create tree' })
     const submitBox = await submit.boundingBox()
     expect(submitBox).not.toBeNull()
     const requestPromise = page.waitForRequest(
@@ -214,7 +255,7 @@ test.describe('mobile terminal UI', () => {
         new URL(request.url()).pathname ===
           '/api/projects/proj_1/worktree-operations'
     )
-    await page.getByLabel('Worktree name').fill('touch submit')
+    await page.getByLabel('Tree name').fill('touch submit')
     await page.touchscreen.tap(
       submitBox!.x + submitBox!.width / 2,
       submitBox!.y + submitBox!.height / 2
@@ -223,14 +264,14 @@ test.describe('mobile terminal UI', () => {
       name: 'touch submit'
     })
     await expect(
-      page.getByRole('heading', { name: 'Create worktree' })
+      page.getByRole('heading', { name: 'Create tree' })
     ).toHaveCount(0)
 
     mocked.failNextCreate()
-    await page.getByLabel('Open worktree drawer').click()
+    await page.getByLabel('Open tree drawer').click()
     await trigger.click()
-    await page.getByLabel('Worktree name').fill('mobile failure')
-    await page.getByRole('button', { name: 'Create worktree' }).click()
+    await page.getByLabel('Tree name').fill('mobile failure')
+    await page.getByRole('button', { name: 'Create tree' }).click()
     await expect(page.getByText('create failed')).toBeVisible()
   })
 
@@ -238,7 +279,7 @@ test.describe('mobile terminal UI', () => {
     page
   }, testInfo) => {
     await mockApp(page)
-    await page.getByLabel('Open worktree drawer').click()
+    await page.getByLabel('Open tree drawer').click()
     await page.getByRole('button', { name: 'Pi, running', exact: true }).click()
     const screen = page.locator('.xterm-screen')
     const bounds = await screen.boundingBox()
@@ -293,7 +334,7 @@ test.describe('mobile terminal UI', () => {
     await page.waitForTimeout(100)
     expect(
       await page.evaluate(() => {
-        const socket = (window as any).__lastWs
+        const socket = window.__lastWs
         const state = JSON.parse(
           localStorage.getItem('__treeport_terminal_state__:term_pi') || '{}'
         )
@@ -312,7 +353,7 @@ test.describe('mobile terminal UI', () => {
     })
     await waitForTerminalControl(page)
     await page.evaluate(() => {
-      const socket = (window as any).__lastWs
+      const socket = window.__lastWs
       socket.onmessage?.({
         data: JSON.stringify({
           version: 1,
@@ -322,7 +363,7 @@ test.describe('mobile terminal UI', () => {
           data: '\u001b[?1049h\u001b[?1000h\u001b[?1006h'
         })
       })
-      ;(window as any).__wsSent = []
+      window.__wsSent = []
     })
     await client.send('Input.dispatchTouchEvent', {
       type: 'touchStart',
@@ -336,7 +377,7 @@ test.describe('mobile terminal UI', () => {
       .poll(() =>
         page.evaluate(
           () =>
-            (window as any).__wsSent.filter((message: any) =>
+            window.__wsSent.filter((message: any) =>
               String(message.data).includes('\u001b[<64;')
             ).length
         )
@@ -348,7 +389,7 @@ test.describe('mobile terminal UI', () => {
     })
 
     await page.evaluate(() => {
-      const socket = (window as any).__lastWs
+      const socket = window.__lastWs
       socket.onmessage?.({
         data: JSON.stringify({
           version: 1,
@@ -361,9 +402,8 @@ test.describe('mobile terminal UI', () => {
     })
     const inputMessagesBeforeModeChange = await page.evaluate(
       () =>
-        (window as any).__wsSent.filter(
-          (message: any) => message.type === 'input'
-        ).length
+        window.__wsSent.filter((message: any) => message.type === 'input')
+          .length
     )
 
     await client.send('Input.dispatchTouchEvent', {
@@ -383,9 +423,8 @@ test.describe('mobile terminal UI', () => {
       .poll(() =>
         page.evaluate(
           (previousCount) =>
-            (window as any).__wsSent.filter(
-              (message: any) => message.type === 'input'
-            ).length > previousCount,
+            window.__wsSent.filter((message: any) => message.type === 'input')
+              .length > previousCount,
           inputMessagesBeforeModeChange
         )
       )
@@ -393,9 +432,7 @@ test.describe('mobile terminal UI', () => {
     await expect
       .poll(() =>
         page.evaluate(() =>
-          (window as any).__wsSent.some(
-            (message: any) => message.data === '\u001b[A'
-          )
+          window.__wsSent.some((message: any) => message.data === '\u001b[A')
         )
       )
       .toBe(true)
@@ -406,7 +443,7 @@ test.describe('mobile terminal UI', () => {
       .poll(() =>
         page.evaluate(
           () =>
-            (window as any).__wsSent
+            window.__wsSent
               .filter((message: any) => message.type === 'input')
               .at(-1)?.data
         )
@@ -448,7 +485,7 @@ test.describe('mobile terminal UI', () => {
         .poll(() =>
           page.evaluate(
             () =>
-              (window as any).__wsSent
+              window.__wsSent
                 .filter((message: any) => message.type === 'input')
                 .at(-1)?.data
           )

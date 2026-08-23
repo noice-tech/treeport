@@ -2,8 +2,12 @@ import crypto from 'node:crypto'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { WEB_PANEL_INPUT_MAX_BYTES } from '@treeport/shared'
+import {
+  WEB_PANEL_INPUT_MAX_BYTES,
+  webPanelInputSchema
+} from '@treeport/shared'
 import type {
+  CreateOperationRequest,
   DirectoryBrowseResponse,
   JsonValue,
   OpenWebPanelResult,
@@ -24,7 +28,6 @@ import type {
   WebPanel,
   WebPanelContext,
   WebPanelDefinition,
-  WebPanelInput,
   WebPanelLaunch,
   WebPanelPermission,
   WorktreeListenerDiscovery,
@@ -89,6 +92,11 @@ const WEB_PANEL_STORAGE_MAX_ENTRIES = 256
 const WEB_PANEL_STORAGE_MAX_TOTAL_BYTES = 1024 * 1024
 const WEB_PANEL_STORAGE_MAX_VALUE_BYTES = 64 * 1024
 
+interface CheckoutCleanupResult {
+  removed: boolean
+  error: string | null
+}
+
 interface TerminalLaunchOptions {
   setup?: { tasks: WorktreeSetupTask[]; error: string | null }
   returnToShell?: boolean
@@ -96,6 +104,7 @@ interface TerminalLaunchOptions {
   initialSize?: TerminalSize
   cwd?: string
   env?: Record<string, string>
+  shellCommand?: string
 }
 
 function mapWebPanel(
@@ -103,8 +112,10 @@ function mapWebPanel(
   permissions: WebPanelPermission[] = [],
   permissionsGranted = permissions.length === 0
 ): WebPanel {
-  const input: unknown = JSON.parse(row.inputJson)
-  if (input !== null && (typeof input !== 'object' || Array.isArray(input))) {
+  const parsedInput = webPanelInputSchema
+    .nullable()
+    .safeParse(JSON.parse(row.inputJson))
+  if (!parsedInput.success) {
     throw new Error(`Web panel ${row.id} has invalid stored launch input`)
   }
 
@@ -115,7 +126,7 @@ function mapWebPanel(
     definitionId: row.definitionId,
     title: row.title,
     launch: {
-      input: input as WebPanelInput | null,
+      input: parsedInput.data,
       cwd: row.launchCwd
     },
     permissions,
@@ -208,6 +219,10 @@ export class TreeportService {
   private readonly closeOnSuccessTerminalIds = new Set<string>()
   private readonly terminalIdsByWorktree = new Map<string, Set<string>>()
   private readonly projectObservationTails = new Map<string, Promise<void>>()
+  private readonly observedFolderIdentities = new Map<
+    string,
+    { device: string; inode: string }
+  >()
   private projectsSnapshotInFlight: Promise<ProjectRecord[]> | null = null
   private projectsSnapshotRevision = 0
   private readonly packages: PackageSystem
@@ -345,7 +360,7 @@ export class TreeportService {
           SET status = 'failed',
               error = ${
                 operation.kind === 'create'
-                  ? 'Daemon restarted before worktree creation completed; existing Git state will be discovered without replaying the creation'
+                  ? 'Daemon restarted before tree creation completed; existing Git state will be discovered without replaying the creation'
                   : 'Daemon restarted before the operation completed; external state was preserved for retry'
               },
               updated_at = ${timestamp}
@@ -409,7 +424,8 @@ export class TreeportService {
   }
 
   private async checkoutStat(checkoutPath: string) {
-    return fs.lstat(checkoutPath, { bigint: true }).catch((error: unknown) => {
+    return fs.lstat(checkoutPath, { bigint: true }).catch((error) => {
+      // SAFETY: The surrounding boundary contract establishes this asserted value.
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
         return null
       }
@@ -458,7 +474,7 @@ export class TreeportService {
   private async removeAuthorizedCheckout(
     checkoutPath: string,
     identity: RemovalCheckoutIdentity | null
-  ): Promise<{ removed: boolean; error: string | null }> {
+  ): Promise<CheckoutCleanupResult> {
     if (
       !identity ||
       identity.path !== checkoutPath ||
@@ -499,10 +515,11 @@ export class TreeportService {
 
       const renameError = await fs.rename(checkoutPath, quarantinePath).then(
         () => null,
-        (error: unknown) => error
+        (error) => error
       )
       if (renameError) {
         if (
+          // SAFETY: The surrounding boundary contract establishes this asserted value.
           (renameError as NodeJS.ErrnoException).code === 'ENOENT' &&
           !(await this.checkoutStat(checkoutPath)) &&
           !(await this.checkoutStat(quarantinePath))
@@ -524,7 +541,7 @@ export class TreeportService {
             .rename(quarantinePath, checkoutPath)
             .then(
               () => null,
-              (error: unknown) => error
+              (error) => error
             )
           if (!restoreError) {
             return { removed: false, error: quarantineError }
@@ -542,13 +559,13 @@ export class TreeportService {
       .rm(quarantinePath, { recursive: true, force: true })
       .then(
         () => null,
-        (error: unknown) => error
+        (error) => error
       )
     if (removalError || (await this.checkoutStat(quarantinePath))) {
       if (!(await this.checkoutStat(checkoutPath))) {
         const restoreError = await fs.rename(quarantinePath, checkoutPath).then(
           () => null,
-          (error: unknown) => error
+          (error) => error
         )
         if (!restoreError) {
           return {
@@ -600,11 +617,13 @@ export class TreeportService {
       .select({
         id: projects.id,
         name: projects.name,
+        kind: projects.kind,
+        rootPath: projects.repositoryPath,
         repositoryPath: projects.repositoryPath,
         lastOpenedAt: projects.lastOpenedAt
       })
       .from(projects)
-      .where(eq(projects.isOpen, 0))
+      .where(and(eq(projects.isOpen, 0), eq(projects.showInRecents, 1)))
       .orderBy(desc(projects.lastOpenedAt), asc(projects.id))
   }
 
@@ -623,11 +642,16 @@ export class TreeportService {
       (await this.storedProjects(true)).map(async (storedProject) => {
         let project = storedProject
         try {
-          await this.importWorktrees(
-            project.id,
-            project.repositoryPath,
-            project.mainWorktreePath
-          )
+          if (project.kind === 'repository') {
+            await this.importWorktrees(
+              project.id,
+              project.repositoryPath,
+              project.mainWorktreePath
+            )
+          } else {
+            project = await this.observeAvailableProject(project)
+          }
+
           await this.ensureProjectTerminals(project.id)
           project = (await this.storedProject(project.id)) ?? project
         } catch (error) {
@@ -644,10 +668,12 @@ export class TreeportService {
         await Promise.all(
           project.worktrees.map(async (worktree) => {
             const [dirty, terminals] = await Promise.all([
-              project.availability.state === 'available' && !worktree.prunable
+              project.kind === 'repository' &&
+              project.availability.state === 'available' &&
+              !worktree.prunable
                 ? this.deps.git.dirtyState(worktree.path).catch(() => null)
                 : null,
-              this.listWorktreeTerminals(worktree).catch((error: unknown) => {
+              this.listWorktreeTerminals(worktree).catch((error) => {
                 project.availability = {
                   state: 'unavailable',
                   message:
@@ -747,6 +773,8 @@ export class TreeportService {
           name: terminal.name,
           tmuxSessionName: terminal.sessionName,
           argv: terminal.argv,
+          shellCommand: terminal.shellCommand,
+          interactiveShell: terminal.interactiveShell,
           status: terminal.status,
           exitCode: terminal.exitCode,
           createdAt: terminal.createdAt,
@@ -807,7 +835,7 @@ export class TreeportService {
       .flatMap((project) => project.worktrees)
       .find((candidate) => candidate.id === worktreeId)
     if (!worktree) {
-      throw new DomainError('WORKTREE_NOT_FOUND', 'Worktree not found', 404)
+      throw new DomainError('WORKTREE_NOT_FOUND', 'Tree not found', 404)
     }
 
     return worktree
@@ -819,7 +847,7 @@ export class TreeportService {
   ): Promise<WorktreeRecord> {
     const binding = await this.storedWorktree(worktreeId)
     if (!binding) {
-      throw new DomainError('WORKTREE_NOT_FOUND', 'Worktree not found', 404)
+      throw new DomainError('WORKTREE_NOT_FOUND', 'Tree not found', 404)
     }
 
     const project = await this.observeAvailableProject(
@@ -830,7 +858,7 @@ export class TreeportService {
       (candidate) => candidate.id === worktreeId
     )
     if (!worktree) {
-      throw new DomainError('WORKTREE_NOT_FOUND', 'Worktree not found', 404)
+      throw new DomainError('WORKTREE_NOT_FOUND', 'Tree not found', 404)
     }
 
     if (worktree.prunable && !allowPrunable) {
@@ -877,7 +905,7 @@ export class TreeportService {
       .catch(() => path.resolve(identifier))
     const match = (await this.storedProjects()).find(
       (project) =>
-        isPathWithin(canonical, project.repositoryPath) ||
+        isPathWithin(canonical, project.rootPath) ||
         project.worktrees.some((worktree) =>
           isPathWithin(canonical, worktree.path)
         )
@@ -1048,7 +1076,7 @@ export class TreeportService {
         worktree && project
           ? loadRepositoryTerminalPresets(project.id, worktree.path)
           : Promise.resolve({ definitions: [], diagnostics: [] }),
-        worktree && project
+        worktree && project?.kind === 'repository'
           ? loadZedTerminalPresetDefinitions({
               projectId: project.id,
               shell: this.deps.config.shell,
@@ -1076,6 +1104,7 @@ export class TreeportService {
           name: preset.name,
           executable: preset.executable,
           args: [...preset.args],
+          shellCommand: null,
           cwd: null,
           env: {},
           closeOnSuccess: preset.closeOnSuccess,
@@ -1221,7 +1250,8 @@ export class TreeportService {
     const webPanelsRoot = path.join(worktree.path, '.treeport', 'web-panels')
     const directories = await fs
       .readdir(webPanelsRoot, { withFileTypes: true })
-      .catch((error: unknown) => {
+      .catch((error) => {
+        // SAFETY: The surrounding boundary contract establishes this asserted value.
         if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
           return []
         }
@@ -1285,19 +1315,26 @@ export class TreeportService {
           packageRoot,
           development,
           packageLockPath
-        }) => ({
-          ...definition,
-          root,
-          entry,
-          packageRoot,
-          development,
-          ...(packageLockPath ? { packageLockPath } : {}),
-          definitionId: definition.id,
-          allowNetworkRequests: definition.sandbox.allowSameOrigin,
-          ...(definition.source.type === 'package'
-            ? { packageSource: definition.source.source }
-            : {})
-        })
+        }) => {
+          const resolved: WebPanelDefinition & ResolvedWebPanelSource = {
+            ...definition,
+            root,
+            entry,
+            packageRoot,
+            development,
+            definitionId: definition.id,
+            allowNetworkRequests: definition.sandbox.allowSameOrigin
+          }
+          if (packageLockPath) {
+            resolved.packageLockPath = packageLockPath
+          }
+
+          if (definition.source.type === 'package') {
+            resolved.packageSource = definition.source.source
+          }
+
+          return resolved
+        }
       )
     ]
   }
@@ -1557,7 +1594,7 @@ export class TreeportService {
     ) {
       throw new DomainError(
         'INVALID_WEB_PANEL_LAUNCH_CWD',
-        'Web panel launch directory must be inside the worktree',
+        'Web panel launch directory must be inside the tree',
         400
       )
     }
@@ -1769,13 +1806,16 @@ export class TreeportService {
       project: {
         id: project.id,
         name: project.name,
-        defaultBranch: project.defaultBranch
+        kind: project.kind,
+        defaultBranch:
+          project.kind === 'repository' ? project.defaultBranch : null
       },
       worktree: {
         id: worktree.id,
         name: worktree.name,
+        kind: worktree.kind,
         branch: worktree.branch,
-        head: worktree.head
+        head: worktree.kind === 'folder' ? null : worktree.head
       }
     }
   }
@@ -1819,6 +1859,17 @@ export class TreeportService {
 
   async getWebPanelDiff(panelId: string) {
     const context = await this.getWebPanelContext(panelId)
+    if (
+      context.project.kind !== 'repository' ||
+      !context.project.defaultBranch
+    ) {
+      throw new DomainError(
+        'GIT_NOT_AVAILABLE',
+        'Git diff is not available for a folder project',
+        409
+      )
+    }
+
     const worktree = await this.getWorktree(context.panel.worktreeId)
     return this.deps.git.worktreeDiff(
       worktree.path,
@@ -1863,6 +1914,7 @@ export class TreeportService {
         and(eq(webPanelStorage.panelId, panelId), eq(webPanelStorage.key, key))
       )
       .limit(1)
+    // SAFETY: The surrounding boundary contract establishes this asserted value.
     return row ? (JSON.parse(row.valueJson) as JsonValue) : undefined
   }
 
@@ -1981,10 +2033,22 @@ export class TreeportService {
   async getWorktree(worktreeId: string): Promise<WorktreeRecord> {
     const worktree = await this.storedWorktree(worktreeId)
     if (!worktree) {
-      throw new DomainError('WORKTREE_NOT_FOUND', 'Worktree not found', 404)
+      throw new DomainError('WORKTREE_NOT_FOUND', 'Tree not found', 404)
     }
 
     return worktree
+  }
+
+  async requestWorkspaceOpen(
+    worktreeId: string,
+    sourceTerminalId: string
+  ): Promise<void> {
+    const worktree = await this.getWorktree(worktreeId)
+    await this.requireOpenProject(worktree.projectId)
+    this.events.publish('workspace.open_requested', {
+      worktreeId,
+      sourceTerminalId
+    })
   }
 
   async getTerminal(terminalId: string): Promise<TerminalRecord> {
@@ -2082,7 +2146,7 @@ export class TreeportService {
     const projects = await this.storedProjects()
     const match = projects.find(
       (project) =>
-        isPathWithin(canonical, project.repositoryPath) ||
+        isPathWithin(canonical, project.rootPath) ||
         project.worktrees.some((worktree) =>
           isPathWithin(canonical, worktree.path)
         )
@@ -2117,7 +2181,7 @@ export class TreeportService {
     if (!match) {
       throw new DomainError(
         'WORKTREE_NOT_FOUND',
-        `No registered worktree contains ${identifier}`,
+        `No registered tree contains ${identifier}`,
         404
       )
     }
@@ -2151,6 +2215,7 @@ export class TreeportService {
     const directoryPath = await fs
       .realpath(requestedPath)
       .catch(async (error) => {
+        // SAFETY: The surrounding boundary contract establishes this asserted value.
         const code = (error as NodeJS.ErrnoException).code
         if (code !== 'ENOENT') {
           throw new DomainError(
@@ -2163,6 +2228,7 @@ export class TreeportService {
         exact = false
         entryQuery ||= path.basename(requestedPath)
         return fs.realpath(path.dirname(requestedPath)).catch((parentError) => {
+          // SAFETY: The surrounding boundary contract establishes this asserted value.
           const parentCode = (parentError as NodeJS.ErrnoException).code
           throw new DomainError(
             parentCode === 'ENOENT'
@@ -2176,6 +2242,7 @@ export class TreeportService {
         })
       })
     const directoryStat = await fs.stat(directoryPath).catch((error) => {
+      // SAFETY: The surrounding boundary contract establishes this asserted value.
       const code = (error as NodeJS.ErrnoException).code
       throw new DomainError(
         code === 'ENOENT' ? 'DIRECTORY_NOT_FOUND' : 'DIRECTORY_UNREADABLE',
@@ -2262,10 +2329,13 @@ export class TreeportService {
 
     const repositoryPath = exact
       ? await this.deps.git
-          .canonicalizeRepositoryPath(directoryPath)
-          .then((checkout) => this.deps.git.resolveMainCheckout(checkout))
-          .then((mainCheckout) => fs.realpath(mainCheckout))
-          .catch(() => null)
+          .findProjectRepositoryRoot(directoryPath)
+          .then((checkout) =>
+            checkout ? this.deps.git.resolveMainCheckout(checkout) : null
+          )
+          .then((mainCheckout) =>
+            mainCheckout ? fs.realpath(mainCheckout) : null
+          )
       : null
 
     return {
@@ -2281,6 +2351,14 @@ export class TreeportService {
         entries,
         truncated
       },
+      project: exact
+        ? repositoryPath
+          ? { state: 'valid', kind: 'repository', path: repositoryPath }
+          : { state: 'valid', kind: 'folder', path: directoryPath }
+        : {
+            state: 'incomplete',
+            message: 'Choose a matching folder to continue.'
+          },
       repository: repositoryPath
         ? { state: 'valid', repositoryPath }
         : exact
@@ -2299,9 +2377,38 @@ export class TreeportService {
     inputPath: string,
     requestedName?: string
   ): Promise<ProjectRecord> {
+    const canonicalPath = await fs
+      .realpath(path.resolve(inputPath))
+      .catch((error) => {
+        throw new DomainError(
+          'FOLDER_UNREADABLE',
+          error instanceof Error ? error.message : 'Folder cannot be read',
+          400
+        )
+      })
+    const folderStat = await fs.stat(canonicalPath, { bigint: true })
+    if (!folderStat.isDirectory()) {
+      throw new DomainError(
+        'FOLDER_NOT_DIRECTORY',
+        `Path is not a folder: ${canonicalPath}`,
+        400
+      )
+    }
+
+    const repositoryRoot =
+      await this.deps.git.findProjectRepositoryRoot(canonicalPath)
+    return repositoryRoot
+      ? this.registerRepositoryProject(repositoryRoot, requestedName)
+      : this.registerFolderProject(canonicalPath, requestedName)
+  }
+
+  private async registerRepositoryProject(
+    inputPath: string,
+    requestedName?: string
+  ): Promise<ProjectRecord> {
     const checkout = await this.deps.git
       .canonicalizeRepositoryPath(inputPath)
-      .catch((error: unknown) => {
+      .catch((error) => {
         throw new DomainError(
           'NOT_A_GIT_REPOSITORY',
           error instanceof Error ? error.message : 'Not a Git repository',
@@ -2485,17 +2592,18 @@ export class TreeportService {
 
       await this.deps.database.db.run(sql`
         INSERT INTO projects(
-          id,name,repository_path,main_worktree_path,default_branch,
+          id,name,project_kind,repository_path,main_worktree_path,default_branch,
           repository_identity,repository_device,repository_inode,name_is_custom,
-          is_open,last_opened_at,created_at,updated_at
+          is_open,show_in_recents,last_opened_at,created_at,updated_at
         ) VALUES(
-          ${projectId},${name},${repositoryPath},${mainPath},${defaultBranch},
+          ${projectId},${name},'repository',${repositoryPath},${mainPath},${defaultBranch},
           ${repositoryIdentity},${repositoryDevice},${repositoryInode},
-          ${nameIsCustom ? 1 : 0},1,${timestamp},
+          ${nameIsCustom ? 1 : 0},1,0,${timestamp},
           ${existing?.createdAt ?? timestamp},${timestamp}
         )
         ON CONFLICT(id) DO UPDATE SET
           name=excluded.name,
+          project_kind=excluded.project_kind,
           repository_path=excluded.repository_path,
           main_worktree_path=excluded.main_worktree_path,
           default_branch=excluded.default_branch,
@@ -2535,6 +2643,7 @@ export class TreeportService {
             .update(projects)
             .set({
               isOpen: 1,
+              showInRecents: 0,
               lastOpenedAt: timestamp,
               updatedAt: timestamp
             })
@@ -2558,18 +2667,278 @@ export class TreeportService {
     return this.getProjectSnapshot(projectId)
   }
 
+  private async registerFolderProject(
+    folderPath: string,
+    requestedName?: string
+  ): Promise<ProjectRecord> {
+    const folderStat = await fs.stat(folderPath, { bigint: true })
+    const device = folderStat.dev.toString()
+    const inode = folderStat.ino.toString()
+    const [pathMatchRow] = await this.deps.database.db
+      .select({ id: projects.id })
+      .from(projects)
+      .where(eq(projects.repositoryPath, folderPath))
+      .limit(1)
+    const identityMatchId = [...this.observedFolderIdentities].find(
+      ([, identity]) => identity.device === device && identity.inode === inode
+    )?.[0]
+    const [pathMatch, identityMatch] = await Promise.all([
+      pathMatchRow ? this.storedProject(pathMatchRow.id) : null,
+      identityMatchId ? this.storedProject(identityMatchId) : null
+    ])
+    if (pathMatch?.kind === 'repository') {
+      throw new DomainError(
+        'PROJECT_PATH_CONFLICT',
+        'The selected folder is registered as a Git repository, but Git no longer recognizes it',
+        409
+      )
+    }
+
+    const observedPathIdentity = pathMatch
+      ? this.observedFolderIdentities.get(pathMatch.id)
+      : null
+    if (
+      observedPathIdentity &&
+      (observedPathIdentity.device !== device ||
+        observedPathIdentity.inode !== inode)
+    ) {
+      throw new DomainError(
+        'PROJECT_PATH_CONFLICT',
+        'The registered folder path now refers to a different folder',
+        409
+      )
+    }
+
+    if (pathMatch && identityMatch && pathMatch.id !== identityMatch.id) {
+      throw new DomainError(
+        'PROJECT_PATH_CONFLICT',
+        'The folder identity and registered path belong to different projects',
+        409
+      )
+    }
+
+    const existing = identityMatch ?? pathMatch
+    const projectId = existing?.id ?? id('proj')
+    const updateRegistration = async (): Promise<void> => {
+      const timestamp = now()
+      const [metadata] = existing
+        ? await this.deps.database.db
+            .select({ nameIsCustom: projects.nameIsCustom })
+            .from(projects)
+            .where(eq(projects.id, existing.id))
+            .limit(1)
+        : []
+      const requested = requestedName?.trim() || null
+      const nameIsCustom = requested ? true : Boolean(metadata?.nameIsCustom)
+      const name =
+        requested ||
+        (existing &&
+        !nameIsCustom &&
+        existing.name === path.basename(existing.rootPath)
+          ? path.basename(folderPath)
+          : existing?.name) ||
+        path.basename(folderPath)
+      const [verifiedPath, verifiedStat] = await Promise.all([
+        fs.realpath(folderPath),
+        fs.stat(folderPath, { bigint: true })
+      ])
+      if (
+        verifiedPath !== folderPath ||
+        !verifiedStat.isDirectory() ||
+        verifiedStat.dev.toString() !== device ||
+        verifiedStat.ino.toString() !== inode
+      ) {
+        throw new DomainError(
+          'PROJECT_PATH_CONFLICT',
+          'The folder changed during registration',
+          409
+        )
+      }
+
+      const existingWorktreeRows = existing
+        ? await this.deps.database.db
+            .select()
+            .from(worktrees)
+            .where(eq(worktrees.projectId, projectId))
+        : []
+      if (
+        existingWorktreeRows.length > 1 ||
+        existingWorktreeRows.some((worktree) => worktree.kind !== 'folder')
+      ) {
+        throw new DomainError(
+          'PROJECT_PATH_CONFLICT',
+          'The folder registration contains incompatible Git worktrees',
+          409
+        )
+      }
+
+      const existingWorktree = existingWorktreeRows[0]
+      const worktreeId = existingWorktree?.id ?? id('wt')
+      await this.deps.database.db.transaction(async (tx) => {
+        await tx.run(sql`
+          INSERT INTO projects(
+            id,name,project_kind,repository_path,main_worktree_path,default_branch,
+            repository_identity,repository_device,repository_inode,name_is_custom,
+            is_open,show_in_recents,last_opened_at,created_at,updated_at
+          ) VALUES(
+            ${projectId},${name},'folder',${folderPath},${folderPath},'',
+            NULL,${device},${inode},${nameIsCustom ? 1 : 0},1,0,${timestamp},
+            ${existing?.createdAt ?? timestamp},${timestamp}
+          )
+          ON CONFLICT(id) DO UPDATE SET
+            name=excluded.name,
+            project_kind='folder',
+            repository_path=excluded.repository_path,
+            main_worktree_path=excluded.main_worktree_path,
+            default_branch='',
+            repository_identity=NULL,
+            repository_device=excluded.repository_device,
+            repository_inode=excluded.repository_inode,
+            name_is_custom=excluded.name_is_custom,
+            is_open=1,
+            show_in_recents=0,
+            last_opened_at=excluded.last_opened_at,
+            updated_at=excluded.updated_at
+        `)
+        if (existingWorktree) {
+          await tx.run(sql`
+            UPDATE worktrees
+            SET path=${folderPath},git_worktree_key=NULL,head='',branch=NULL,
+                detached=0,locked=0,lock_reason=NULL,prunable=0,kind='folder',
+                managed_wrapper_path=NULL,pr_state='unknown',pr_number=NULL,
+                pr_url=NULL,pr_base_branch=NULL,pr_head_branch=NULL,
+                pr_merged_at=NULL,pr_refreshed_at=NULL,updated_at=${timestamp}
+            WHERE id=${worktreeId}
+          `)
+        } else {
+          await tx.run(sql`
+            INSERT INTO worktrees(
+              id,project_id,path,git_worktree_key,head,branch,detached,locked,
+              lock_reason,prunable,kind,tmux_socket_name,created_at,updated_at
+            ) VALUES(
+              ${worktreeId},${projectId},${folderPath},NULL,'',NULL,0,0,NULL,0,
+              'folder',${generateTmuxSocketName()},${timestamp},${timestamp}
+            )
+          `)
+        }
+      })
+    }
+
+    const register = async () => {
+      if (
+        this.projectLocks.has(projectId) ||
+        this.worktreeMutations.has(projectId)
+      ) {
+        throw new DomainError(
+          'PROJECT_BUSY',
+          'Project is already being modified',
+          409
+        )
+      }
+
+      this.projectLocks.add(projectId)
+      try {
+        await updateRegistration()
+      } finally {
+        this.projectLocks.delete(projectId)
+      }
+    }
+
+    if (existing) {
+      await this.serializeProjectObservation(projectId, register)
+    } else {
+      await register()
+    }
+
+    this.observedFolderIdentities.set(projectId, { device, inode })
+
+    await this.packages.registerProject(await this.getProject(projectId))
+    await this.ensureProjectTerminals(projectId).catch(() => undefined)
+    this.invalidateProjectsSnapshot()
+    this.events.publish(existing ? 'project.updated' : 'project.created', {
+      projectId
+    })
+    return this.getProjectSnapshot(projectId)
+  }
+
   private async observeAvailableProject(
     project: ProjectRecord,
     allowClosed = false
   ): Promise<ProjectRecord> {
     try {
-      await this.importWorktrees(
-        project.id,
-        project.repositoryPath,
-        project.mainWorktreePath,
-        true,
-        allowClosed
-      )
+      if (project.kind === 'repository') {
+        await this.importWorktrees(
+          project.id,
+          project.repositoryPath,
+          project.mainWorktreePath,
+          true,
+          allowClosed
+        )
+      } else {
+        await this.serializeProjectObservation(project.id, async () => {
+          if (
+            (!allowClosed &&
+              (await this.projectOpenState(project.id)) !== true) ||
+            this.worktreeMutations.has(project.id)
+          ) {
+            return
+          }
+
+          const [metadata] = await this.deps.database.db
+            .select({
+              device: projects.repositoryDevice,
+              inode: projects.repositoryInode
+            })
+            .from(projects)
+            .where(eq(projects.id, project.id))
+            .limit(1)
+          const [canonicalPath, folderStat] = await Promise.all([
+            fs.realpath(project.rootPath),
+            fs.stat(project.rootPath, { bigint: true })
+          ])
+          if (
+            !metadata ||
+            canonicalPath !== project.rootPath ||
+            !folderStat.isDirectory()
+          ) {
+            throw new Error(
+              'The registered folder path is not an available directory'
+            )
+          }
+
+          const device = folderStat.dev.toString()
+          const inode = folderStat.ino.toString()
+          const observedIdentity = this.observedFolderIdentities.get(project.id)
+          if (
+            observedIdentity &&
+            (observedIdentity.device !== device ||
+              observedIdentity.inode !== inode)
+          ) {
+            throw new Error(
+              'The registered folder path changed during this daemon session'
+            )
+          }
+
+          const folderWorktrees = project.worktrees.filter(
+            (worktree) =>
+              worktree.kind === 'folder' && worktree.path === project.rootPath
+          )
+          if (folderWorktrees.length !== 1 || project.worktrees.length !== 1) {
+            throw new Error(
+              'The registered folder does not have one folder workspace'
+            )
+          }
+
+          if (metadata.device !== device || metadata.inode !== inode) {
+            await this.deps.database.db
+              .update(projects)
+              .set({ repositoryDevice: device, repositoryInode: inode })
+              .where(eq(projects.id, project.id))
+          }
+
+          this.observedFolderIdentities.set(project.id, { device, inode })
+        })
+      }
     } catch (error) {
       throw new DomainError(
         'PROJECT_UNAVAILABLE',
@@ -2600,14 +2969,17 @@ export class TreeportService {
         await this.getProject(projectId)
       )
       await this.ensureProjectTerminals(projectId)
-      const defaultBranch = await this.deps.git.defaultBranch(
-        project.repositoryPath
-      )
-      await this.deps.database.db.run(sql`
-        UPDATE projects
-        SET default_branch = ${defaultBranch}, updated_at = ${now()}
-        WHERE id = ${projectId}
-      `)
+      if (project.kind === 'repository') {
+        const defaultBranch = await this.deps.git.defaultBranch(
+          project.repositoryPath
+        )
+        await this.deps.database.db.run(sql`
+          UPDATE projects
+          SET default_branch = ${defaultBranch}, updated_at = ${now()}
+          WHERE id = ${projectId}
+        `)
+      }
+
       await this.reconcile()
       await this.packages.registerProject(await this.getProject(projectId))
       this.invalidateProjectsSnapshot()
@@ -2639,6 +3011,7 @@ export class TreeportService {
           .update(projects)
           .set({
             isOpen: 1,
+            showInRecents: 0,
             lastOpenedAt: timestamp,
             updatedAt: timestamp
           })
@@ -2679,7 +3052,7 @@ export class TreeportService {
       ) {
         throw new DomainError(
           'PROJECT_BUSY',
-          'A project worktree is already being modified',
+          'A project tree is already being modified',
           409
         )
       }
@@ -2723,7 +3096,7 @@ export class TreeportService {
         try {
           await this.deps.database.db
             .update(projects)
-            .set({ isOpen: 0, updatedAt: now() })
+            .set({ isOpen: 0, showInRecents: 1, updatedAt: now() })
             .where(eq(projects.id, projectId))
         } catch (error) {
           throw new DomainError(
@@ -2747,6 +3120,25 @@ export class TreeportService {
         }
         this.projectLocks.delete(projectId)
       }
+    })
+  }
+
+  async dismissRecentProject(projectId: string): Promise<void> {
+    await this.serializeProjectObservation(projectId, async () => {
+      await this.getProject(projectId)
+      if ((await this.projectOpenState(projectId)) !== false) {
+        throw new DomainError(
+          'PROJECT_NOT_RECENT',
+          'Project is open and cannot be removed from Recent projects',
+          409
+        )
+      }
+
+      await this.deps.database.db
+        .update(projects)
+        .set({ showInRecents: 0, updatedAt: now() })
+        .where(and(eq(projects.id, projectId), eq(projects.isOpen, 0)))
+      this.events.publish('project.updated', { projectId })
     })
   }
 
@@ -3105,7 +3497,9 @@ export class TreeportService {
             INSERT INTO operations(
               id,kind,project_id,worktree_id,status,request_json,result_json,error,created_at,updated_at
             ) VALUES(
-              ${id('op')},'external_remove',${projectId},${worktree.id},'completed',
+              ${id('op')},'external_remove',${projectId},${
+                worktree.id
+              },'completed',
               ${serializeOperation({ source: 'git' })},
               ${serializeOperation({
                 removed: true,
@@ -3249,7 +3643,15 @@ export class TreeportService {
     },
     sourceWorktreeId?: string
   ): Promise<OperationRecord> {
-    await this.requireOpenProject(projectId)
+    const project = await this.requireOpenProject(projectId)
+    if (project.kind === 'folder') {
+      throw new DomainError(
+        'PROJECT_HAS_NO_GIT_REPOSITORY',
+        'Linked worktrees require a Git repository project',
+        409
+      )
+    }
+
     let name: string
     try {
       name = normalizeWorktreeName(inputName)
@@ -3273,18 +3675,22 @@ export class TreeportService {
 
     const operationId = id('op')
     const timestamp = now()
+    const request: CreateOperationRequest = { name, base }
+    if (initialTerminal) {
+      request.initialTerminal = initialTerminal
+    }
+
+    if (sourceWorktreeId) {
+      request.sourceWorktreeId = sourceWorktreeId
+    }
+
     await this.deps.database.db.run(sql`
       INSERT INTO operations(
         id,kind,project_id,worktree_id,status,request_json,result_json,error,
         created_at,updated_at
       ) VALUES(
         ${operationId},'create',${projectId},NULL,'pending',
-        ${serializeOperation({
-          name,
-          base,
-          ...(initialTerminal ? { initialTerminal } : {}),
-          ...(sourceWorktreeId ? { sourceWorktreeId } : {})
-        })},NULL,NULL,${timestamp},${timestamp}
+        ${serializeOperation(request)},NULL,NULL,${timestamp},${timestamp}
       )
     `)
     const operation = await this.getOperation(operationId)
@@ -3370,7 +3776,15 @@ export class TreeportService {
     },
     sourceWorktreeId?: string
   ): Promise<CreateWorktreeResult> {
-    await this.requireOpenProject(projectId)
+    const project = await this.requireOpenProject(projectId)
+    if (project.kind === 'folder') {
+      throw new DomainError(
+        'PROJECT_HAS_NO_GIT_REPOSITORY',
+        'Linked worktrees require a Git repository project',
+        409
+      )
+    }
+
     if (
       this.projectLocks.has(projectId) &&
       !this.worktreeMutations.has(projectId)
@@ -3424,6 +3838,14 @@ export class TreeportService {
       project = await this.observeAvailableProject(
         await this.requireOpenProject(projectId)
       )
+      if (project.kind === 'folder') {
+        throw new DomainError(
+          'PROJECT_HAS_NO_GIT_REPOSITORY',
+          'Linked worktrees require a Git repository project',
+          409
+        )
+      }
+
       let name: string
       try {
         name = normalizeWorktreeName(inputName)
@@ -3444,7 +3866,7 @@ export class TreeportService {
       ) {
         throw new DomainError(
           'WORKTREE_EXISTS',
-          `A worktree named ${name} already exists`,
+          `A tree named ${name} already exists`,
           409
         )
       }
@@ -3452,7 +3874,7 @@ export class TreeportService {
       const destination = await resolveZedWorktreePath(
         project.mainWorktreePath,
         name
-      ).catch((error: unknown) => {
+      ).catch((error) => {
         throw new DomainError(
           'INVALID_WORKTREE_PATH',
           error instanceof Error ? error.message : String(error),
@@ -3478,7 +3900,7 @@ export class TreeportService {
         if (!sourceWorktreeId) {
           throw new DomainError(
             'INVALID_SOURCE_WORKTREE',
-            'A source worktree is required when starting from current',
+            'A source tree is required when starting from current',
             400
           )
         }
@@ -3487,7 +3909,7 @@ export class TreeportService {
         if (source.projectId !== projectId || source.prunable) {
           throw new DomainError(
             'INVALID_SOURCE_WORKTREE',
-            'The source worktree must be active and belong to the project',
+            'The source tree must be active and belong to the project',
             400
           )
         }
@@ -3574,16 +3996,20 @@ export class TreeportService {
       let terminalError: string | null = null
       let setupError: string | null = null
       if (initialTerminal) {
+        const launchOptions: TerminalLaunchOptions = {}
+        if (initialTerminal.returnToShell) {
+          launchOptions.returnToShell = true
+        }
+
+        if (initialTerminal.initialSize) {
+          launchOptions.initialSize = initialTerminal.initialSize
+        }
+
         const initialTerminalCreation = this.executeCreateTerminal(
           worktree.id,
           initialTerminal.name,
           initialTerminal.argv,
-          {
-            ...(initialTerminal.returnToShell ? { returnToShell: true } : {}),
-            ...(initialTerminal.initialSize
-              ? { initialSize: initialTerminal.initialSize }
-              : {})
-          }
+          launchOptions
         )
         const setupResolution = resolveWorktreeSetupTasks({
           shell: this.deps.config.shell,
@@ -3591,9 +4017,10 @@ export class TreeportService {
           worktreePath: worktree.path
         }).then(
           (tasks) => ({ tasks, error: null }),
-          (error: unknown) => ({
+          (error) => ({
+            // SAFETY: The surrounding boundary contract establishes this asserted value.
             tasks: [] as WorktreeSetupTask[],
-            error: `worktree setup: ${
+            error: `Tree setup: ${
               error instanceof Error ? error.message : String(error)
             }`.slice(0, 4_096)
           })
@@ -3617,19 +4044,25 @@ export class TreeportService {
         setupError = setup.error
         if (setup.tasks.length > 0 || setupError) {
           if (!terminal) {
-            setupError ??=
-              'worktree setup: no persistent terminal could be started'
+            setupError ??= 'Tree setup: no persistent terminal could be started'
           } else {
             try {
-              await this.executeCreateTerminal(worktree.id, 'Setup', ['true'], {
+              const setupOptions: TerminalLaunchOptions = {
                 setup: { tasks: setup.tasks, error: setupError },
-                closeOnSuccess: true,
-                ...(initialTerminal.initialSize
-                  ? { initialSize: initialTerminal.initialSize }
-                  : {})
-              })
+                closeOnSuccess: true
+              }
+              if (initialTerminal.initialSize) {
+                setupOptions.initialSize = initialTerminal.initialSize
+              }
+
+              await this.executeCreateTerminal(
+                worktree.id,
+                'Setup',
+                ['true'],
+                setupOptions
+              )
             } catch (error) {
-              const setupTerminalError = `worktree setup terminal${
+              const setupTerminalError = `Tree setup terminal${
                 error instanceof DomainError ? ` [${error.code}]` : ''
               }: ${
                 error instanceof Error ? error.message : String(error)
@@ -3649,9 +4082,9 @@ export class TreeportService {
           .then((tasks) =>
             runWorktreeSetupTasks({ runner: this.deps.runner, tasks })
           )
-          .catch((error: unknown) => [
+          .catch((error) => [
             {
-              label: 'worktree setup',
+              label: 'Tree setup',
               error: error instanceof Error ? error.message : String(error)
             }
           ])
@@ -3735,41 +4168,61 @@ export class TreeportService {
     const project = await this.requireOpenProject(worktree.projectId)
     const terminalId = id('term')
     const sessionName = generateTmuxSessionName()
-    const commandArgv = argv ? [...argv] : [this.deps.config.shell, '-l']
+    const shellCommand = options?.shellCommand ?? null
+    const interactiveShell = !argv && shellCommand === null
+    const commandArgv = argv
+      ? [...argv]
+      : shellCommand
+        ? [this.deps.config.shell, '-lc', shellCommand]
+        : [this.deps.config.shell, '-l']
     const timestamp = now()
+    const session: Parameters<TmuxAdapter['createSession']>[0] = {
+      socketName: worktree.tmuxSocketName,
+      sessionName,
+      terminalId,
+      worktreeId: worktree.id,
+      name,
+      createdAt: timestamp,
+      cwd: options?.cwd ?? worktree.path,
+      argv: commandArgv,
+      shellCommand,
+      interactiveShell,
+      env: {
+        ...(options?.env ?? {}),
+        TREEPORT_API_URL: this.deps.config.apiUrl,
+        TREEPORT_MANAGED_API_URL: this.deps.config.apiUrl,
+        TREEPORT_DAEMON_RECORD: path.join(
+          this.deps.config.runtimeDir,
+          'daemon.json'
+        ),
+        TREEPORT_DAEMON_LIFECYCLE: this.deps.config.daemonLifecycle,
+        TREEPORT_PROJECT_ID: project.id,
+        TREEPORT_WORKTREE_ID: worktree.id,
+        TREEPORT_TERMINAL_ID: terminalId
+      }
+    }
+    if (options?.returnToShell && !interactiveShell) {
+      session.fallbackArgv = [this.deps.config.shell, '-l']
+    }
+
+    if (options?.closeOnSuccess) {
+      session.closeOnSuccess = true
+    }
+
+    if (options?.initialSize) {
+      session.initialSize = options.initialSize
+    }
+
+    if (options?.setup?.tasks.length) {
+      session.setupTasks = options.setup.tasks
+    }
+
+    if (options?.setup?.error) {
+      session.setupError = options.setup.error
+    }
+
     try {
-      await this.deps.tmux.createSession({
-        socketName: worktree.tmuxSocketName,
-        sessionName,
-        terminalId,
-        worktreeId: worktree.id,
-        name,
-        createdAt: timestamp,
-        cwd: options?.cwd ?? worktree.path,
-        argv: commandArgv,
-        ...(options?.returnToShell && argv
-          ? { fallbackArgv: [this.deps.config.shell, '-l'] }
-          : {}),
-        ...(options?.closeOnSuccess ? { closeOnSuccess: true } : {}),
-        ...(options?.initialSize ? { initialSize: options.initialSize } : {}),
-        env: {
-          ...(options?.env ?? {}),
-          TREEPORT_API_URL: this.deps.config.apiUrl,
-          TREEPORT_MANAGED_API_URL: this.deps.config.apiUrl,
-          TREEPORT_DAEMON_RECORD: path.join(
-            this.deps.config.runtimeDir,
-            'daemon.json'
-          ),
-          TREEPORT_DAEMON_LIFECYCLE: this.deps.config.daemonLifecycle,
-          TREEPORT_PROJECT_ID: project.id,
-          TREEPORT_WORKTREE_ID: worktree.id,
-          TREEPORT_TERMINAL_ID: terminalId
-        },
-        ...(options?.setup?.tasks.length
-          ? { setupTasks: options.setup.tasks }
-          : {}),
-        ...(options?.setup?.error ? { setupError: options.setup.error } : {})
-      })
+      await this.deps.tmux.createSession(session)
     } catch (error) {
       throw new DomainError(
         'TERMINAL_CREATE_FAILED',
@@ -3784,6 +4237,8 @@ export class TreeportService {
       name,
       tmuxSessionName: sessionName,
       argv: commandArgv,
+      shellCommand,
+      interactiveShell,
       status: 'running',
       exitCode: null,
       createdAt: timestamp,
@@ -3828,7 +4283,7 @@ export class TreeportService {
     try {
       const worktree = await this.storedWorktree(worktreeId)
       if (!worktree) {
-        throw new DomainError('WORKTREE_NOT_FOUND', 'Worktree not found', 404)
+        throw new DomainError('WORKTREE_NOT_FOUND', 'Tree not found', 404)
       }
 
       if (
@@ -3838,7 +4293,7 @@ export class TreeportService {
       ) {
         throw new DomainError(
           'WORKTREE_BUSY',
-          'Cannot create a terminal while the worktree is being modified',
+          'Cannot create a terminal while the tree is being modified',
           409
         )
       }
@@ -3861,7 +4316,8 @@ export class TreeportService {
   ): Promise<TerminalRecord> {
     const terminal = observeGit
       ? await this.getTerminal(terminalId)
-      : await this.getTerminalFromBindings(terminalId)
+      : (this.terminalStates.get(terminalId) ??
+        (await this.getTerminalFromBindings(terminalId)))
     const worktree = await this.getWorktree(terminal.worktreeId)
     const state = await this.deps.tmux.sessionState(
       worktree.tmuxSocketName,
@@ -3987,7 +4443,7 @@ export class TreeportService {
   ): Promise<void> {
     const worktree = await this.storedWorktree(worktreeId)
     if (!worktree) {
-      throw new DomainError('WORKTREE_NOT_FOUND', 'Worktree not found', 404)
+      throw new DomainError('WORKTREE_NOT_FOUND', 'Tree not found', 404)
     }
 
     await this.requireOpenProject(worktree.projectId)
@@ -4022,7 +4478,7 @@ export class TreeportService {
       ) {
         throw new DomainError(
           'LAST_TERMINAL',
-          'Every open worktree must keep at least one terminal',
+          'Every open tree must keep at least one terminal',
           409
         )
       }
@@ -4064,13 +4520,13 @@ export class TreeportService {
     const current = await this.storedWorktree(worktreeId)
 
     if (!current) {
-      throw new DomainError('WORKTREE_NOT_FOUND', 'Worktree not found', 404)
+      throw new DomainError('WORKTREE_NOT_FOUND', 'Tree not found', 404)
     }
 
     if (this.worktreeLocks.has(worktreeId)) {
       throw new DomainError(
         'WORKTREE_UNAVAILABLE',
-        'Cannot refresh a pull request while the worktree is being removed',
+        'Cannot refresh a pull request while the tree is being removed',
         409
       )
     }
@@ -4096,6 +4552,14 @@ export class TreeportService {
     const worktree = await this.requireAvailableWorktree(worktreeId, true)
     worktree.terminals = await this.listWorktreeTerminals(worktree)
     const project = await this.getProject(worktree.projectId)
+    if (project.kind === 'folder') {
+      throw new DomainError(
+        'FOLDER_WORKSPACE_NOT_REMOVABLE',
+        'Remove the folder project instead of its folder workspace',
+        409
+      )
+    }
+
     const live = (
       await this.deps.git.listWorktrees(project.repositoryPath)
     ).find((item) => item.path === worktree.path)
@@ -4138,8 +4602,8 @@ export class TreeportService {
     if (live.locked) {
       reasons.push(
         live.lockReason
-          ? `The worktree is locked: ${live.lockReason}`
-          : 'The worktree is locked'
+          ? `The tree is locked: ${live.lockReason}`
+          : 'The tree is locked'
       )
     }
 
@@ -4221,7 +4685,7 @@ export class TreeportService {
     if (activeRemoval) {
       throw new DomainError(
         'REMOVE_IN_PROGRESS',
-        'The worktree is already being removed',
+        'The tree is already being removed',
         409
       )
     }
@@ -4250,7 +4714,7 @@ export class TreeportService {
     ) {
       throw new DomainError(
         'REMOVE_IN_PROGRESS',
-        'The worktree or project is already being modified',
+        'The tree or project is already being modified',
         409
       )
     }
@@ -4270,7 +4734,7 @@ export class TreeportService {
     ) {
       throw new DomainError(
         'REMOVE_IN_PROGRESS',
-        'The worktree or project is already being modified',
+        'The tree or project is already being modified',
         409
       )
     }
@@ -4282,7 +4746,7 @@ export class TreeportService {
       if (!preview.eligible) {
         throw new DomainError(
           'REMOVE_REFUSED',
-          'The worktree cannot be removed',
+          'The tree cannot be removed',
           409,
           preview
         )
@@ -4291,7 +4755,7 @@ export class TreeportService {
       if (request.confirmationToken !== preview.confirmationToken) {
         throw new DomainError(
           'REMOVE_PREVIEW_STALE',
-          'The worktree changed after the removal preview; review it again',
+          'The tree changed after the removal preview; review it again',
           409,
           preview
         )
@@ -4342,7 +4806,7 @@ export class TreeportService {
         if (!checkoutBinding?.git_worktree_key) {
           throw new DomainError(
             'REMOVE_PREVIEW_STALE',
-            'The prunable worktree changed after the removal preview; review it again',
+            'The prunable tree changed after the removal preview; review it again',
             409,
             preview
           )
@@ -4365,7 +4829,7 @@ export class TreeportService {
         ) {
           throw new DomainError(
             'REMOVE_PREVIEW_STALE',
-            'The worktree checkout changed after the removal preview; review it again',
+            'The tree checkout changed after the removal preview; review it again',
             409,
             preview
           )
@@ -4483,8 +4947,7 @@ export class TreeportService {
           item.path === preview.path &&
           (request.prunable
             ? item.prunable
-            : typeof acceptedKey === 'string' &&
-              item.gitWorktreeKey === acceptedKey)
+            : acceptedKey !== null && item.gitWorktreeKey === acceptedKey)
       )
       const liveRepositoryIdentity = await this.deps.git.repositoryIdentity(
         project.repositoryPath
@@ -4503,7 +4966,7 @@ export class TreeportService {
         if (request.prunable) {
           if (!liveAccepted.prunable) {
             throw new Error(
-              'Removal revalidation failed before destructive effects: the accepted worktree is no longer prunable'
+              'Removal revalidation failed before destructive effects: the accepted tree is no longer prunable'
             )
           }
         } else {
@@ -4591,7 +5054,7 @@ export class TreeportService {
           'The repository identity changed after removal was accepted; residual files were preserved'
         residualPath = preview.path
       } else if (request.checkoutIdentity) {
-        let cleanup: { removed: boolean; error: string | null } = {
+        let cleanup: CheckoutCleanupResult = {
           removed: false,
           error: null
         }
@@ -4599,7 +5062,7 @@ export class TreeportService {
           cleanup = await this.removeAuthorizedCheckout(
             preview.path,
             request.checkoutIdentity
-          ).catch((error: unknown) => ({
+          ).catch((error) => ({
             removed: false,
             error: `Automatic residual-checkout cleanup failed: ${
               error instanceof Error ? error.message : String(error)
@@ -4731,7 +5194,7 @@ export class TreeportService {
     ) {
       throw new DomainError(
         'PROJECT_BUSY',
-        'A project worktree is already being modified',
+        'A project tree is already being modified',
         409
       )
     }
@@ -4748,7 +5211,7 @@ export class TreeportService {
       ) {
         throw new DomainError(
           'PROJECT_BUSY',
-          'A project worktree is already being modified',
+          'A project tree is already being modified',
           409
         )
       }
@@ -4764,7 +5227,7 @@ export class TreeportService {
       if (linked.length) {
         throw new DomainError(
           'PROJECT_HAS_WORKTREES',
-          'Remove linked worktrees before unregistering the project',
+          'Remove linked trees before unregistering the project',
           409
         )
       }
@@ -4779,6 +5242,7 @@ export class TreeportService {
       await this.deps.database.db.run(
         sql`DELETE FROM projects WHERE id=${projectId}`
       )
+      this.observedFolderIdentities.delete(projectId)
       this.packages.forgetProject(projectId)
       for (const worktree of project.worktrees) {
         this.clearWorktreeTerminalState(
@@ -4823,14 +5287,10 @@ export class TreeportService {
     const availableProjects = new Set<string>()
     for (const project of await this.storedProjects(true)) {
       try {
-        await this.importWorktrees(
-          project.id,
-          project.repositoryPath,
-          project.mainWorktreePath
-        )
+        await this.observeAvailableProject(project)
         availableProjects.add(project.id)
       } catch {
-        // Keep metadata and tmux untouched while Git is unavailable.
+        // Keep metadata and tmux untouched while the project folder is unavailable.
       }
     }
     for (const project of await this.storedProjects(true)) {

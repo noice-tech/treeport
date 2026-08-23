@@ -117,6 +117,7 @@ export interface TmuxProgressObserverOptions {
 }
 
 export interface TerminalProgressObserver {
+  readonly closed?: Promise<void>
   dispose(): void
 }
 
@@ -184,6 +185,7 @@ async function terminateProcess(
 }
 
 export class TmuxProgressObserver implements TerminalProgressObserver {
+  readonly closed: Promise<void>
   private readonly lifecycleFiber: Fiber.RuntimeFiber<void, never>
   private process: ChildProcessWithoutNullStreams | null = null
   private metadataParser: TerminalMetadataParser | null = null
@@ -203,6 +205,9 @@ export class TmuxProgressObserver implements TerminalProgressObserver {
       Effect.scoped(this.lifecycle()).pipe(
         Effect.catchAll(() => Effect.sync(() => this.notifyExit()))
       )
+    )
+    this.closed = Effect.runPromise(Fiber.await(this.lifecycleFiber)).then(
+      () => undefined
     )
   }
 

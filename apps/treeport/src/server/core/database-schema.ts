@@ -13,6 +13,9 @@ export const projects = sqliteTable(
   {
     id: text().primaryKey(),
     name: text().notNull(),
+    kind: text('project_kind', { enum: ['repository', 'folder'] })
+      .notNull()
+      .default('repository'),
     repositoryPath: text('repository_path').notNull().unique(),
     mainWorktreePath: text('main_worktree_path').notNull(),
     defaultBranch: text('default_branch').notNull(),
@@ -22,22 +25,29 @@ export const projects = sqliteTable(
     repositoryInode: text('repository_inode').notNull(),
     nameIsCustom: integer('name_is_custom').notNull().default(0),
     isOpen: integer('is_open').notNull().default(1),
+    showInRecents: integer('show_in_recents').notNull().default(0),
     lastOpenedAt: text('last_opened_at').notNull(),
     createdAt: text('created_at').notNull(),
     updatedAt: text('updated_at').notNull()
   },
   (table) => [
+    check('projects_kind_check', sql`${table.kind} IN ('repository','folder')`),
     check(
       'projects_color_check',
       sql`${table.color} IS NULL OR ${table.color} IN ('rose','orange','amber','emerald','cyan','blue','violet','pink')`
     ),
     check('projects_name_is_custom_check', sql`${table.nameIsCustom} IN (0,1)`),
     check('projects_is_open_check', sql`${table.isOpen} IN (0,1)`),
+    check(
+      'projects_show_in_recents_check',
+      sql`${table.showInRecents} IN (0,1)`
+    ),
     uniqueIndex('projects_repository_identity_idx')
       .on(table.repositoryIdentity)
       .where(sql`${table.repositoryIdentity} IS NOT NULL`),
     index('projects_recent_idx').on(
       table.isOpen,
+      table.showInRecents,
       desc(table.lastOpenedAt),
       table.id
     )
@@ -76,7 +86,10 @@ export const worktrees = sqliteTable(
     check('worktrees_detached_check', sql`${table.detached} IN (0,1)`),
     check('worktrees_locked_check', sql`${table.locked} IN (0,1)`),
     check('worktrees_prunable_check', sql`${table.prunable} IN (0,1)`),
-    check('worktrees_kind_check', sql`${table.kind} IN ('main','linked')`),
+    check(
+      'worktrees_kind_check',
+      sql`${table.kind} IN ('main','linked','folder')`
+    ),
     index('worktrees_project_idx').on(table.projectId),
     uniqueIndex('worktrees_git_key_idx')
       .on(table.projectId, table.gitWorktreeKey)

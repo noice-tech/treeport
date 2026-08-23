@@ -108,7 +108,7 @@ export function useWorktreeWorkflows({
     }
 
     const name = operation.request.name
-    return operation.projectId && typeof name === 'string'
+    return operation.projectId
       ? [{ id: operation.id, projectId: operation.projectId, typedName: name }]
       : []
   })
@@ -135,11 +135,7 @@ export function useWorktreeWorkflows({
         return []
       }
 
-      const resultWorktreeId = operation.result?.worktreeId
-      const worktreeId =
-        typeof resultWorktreeId === 'string'
-          ? resultWorktreeId
-          : operation.worktreeId
+      const worktreeId = operation.result?.worktreeId ?? operation.worktreeId
       return worktreeId &&
         projects.some((project) =>
           project.worktrees.some((worktree) => worktree.id === worktreeId)
@@ -182,20 +178,23 @@ export function useWorktreeWorkflows({
   const removalGuardsRef = useRef(new Set<string>())
 
   const createWorktree = useMutation({
-    mutationFn: (request: WorktreeCreationRequest) =>
-      parseResponse(
+    mutationFn: (request: WorktreeCreationRequest) => {
+      const json = {
+        name: request.typedName,
+        base: request.base,
+        initialTerminal: request.initialTerminal
+      }
+      if (request.sourceWorktreeId) {
+        Object.assign(json, { sourceWorktreeId: request.sourceWorktreeId })
+      }
+
+      return parseResponse(
         rpc.api.projects[':projectId']['worktree-operations'].$post({
           param: { projectId: request.projectId },
-          json: {
-            name: request.typedName,
-            base: request.base,
-            initialTerminal: request.initialTerminal,
-            ...(request.sourceWorktreeId
-              ? { sourceWorktreeId: request.sourceWorktreeId }
-              : {})
-          }
+          json
         })
-      ).then((result) => result.operation),
+      ).then((result) => result.operation)
+    },
     onSuccess: (operation, request) => {
       const name =
         operation.kind === 'create' ? operation.request.name : request.typedName
@@ -214,7 +213,7 @@ export function useWorktreeWorkflows({
     onError: (mutationError, request) => {
       setDrawerOpen(false)
       notifyError(mutationError, {
-        operation: `create worktree “${request.typedName}”`
+        operation: `create tree “${request.typedName}”`
       })
     }
   })
@@ -254,8 +253,8 @@ export function useWorktreeWorkflows({
           queryKey: ['worktree-creations']
         })
         if (operation.status === 'failed') {
-          notifyError(operation.error ?? 'Worktree creation failed', {
-            operation: `create worktree “${owned.typedName}”`
+          notifyError(operation.error ?? 'Tree creation failed', {
+            operation: `create tree “${owned.typedName}”`
           })
         } else {
           await queryClient.invalidateQueries({ queryKey: projectsQueryKey })
@@ -263,12 +262,8 @@ export function useWorktreeWorkflows({
             .projects
           queryClient.setQueryData(projectsQueryKey, projects)
           const result = operation.result
-          const worktreeId =
-            typeof result?.worktreeId === 'string'
-              ? result.worktreeId
-              : operation.worktreeId
-          const terminalId =
-            typeof result?.terminalId === 'string' ? result.terminalId : null
+          const worktreeId = result?.worktreeId ?? operation.worktreeId
+          const terminalId = result?.terminalId ?? null
           const worktree = projects
             .find((project) => project.id === owned.projectId)
             ?.worktrees.find((item) => item.id === worktreeId)
@@ -281,13 +276,13 @@ export function useWorktreeWorkflows({
 
           setDrawerOpen(false)
 
-          if (typeof result?.setupError === 'string') {
+          if (result?.setupError) {
             notifyError(result.setupError, {
-              operation: `start setup for newly created worktree “${owned.typedName}”`
+              operation: `start setup for newly created tree “${owned.typedName}”`
             })
-          } else if (typeof result?.terminalError === 'string') {
+          } else if (result?.terminalError) {
             notifyError(result.terminalError, {
-              operation: `start a terminal for newly created worktree “${owned.typedName}”`
+              operation: `start a terminal for newly created tree “${owned.typedName}”`
             })
           }
         }
@@ -319,18 +314,31 @@ export function useWorktreeWorkflows({
     const initialSize = selectedTerminalId
       ? terminalSessions.getInitialSize(selectedTerminalId)
       : null
+    const pendingInitialTerminal: WorktreeCreationRequest['initialTerminal'] = {
+      name: initialTerminal.name
+    }
+    if (initialTerminal.argv) {
+      pendingInitialTerminal.argv = [...initialTerminal.argv]
+    }
+
+    if (initialTerminal.returnToShell) {
+      pendingInitialTerminal.returnToShell = true
+    }
+
+    if (initialSize) {
+      pendingInitialTerminal.initialSize = initialSize
+    }
+
     const pending: WorktreeCreationRequest = {
       projectId: project.id,
       typedName: name,
       base,
-      initialTerminal: {
-        name: initialTerminal.name,
-        ...(initialTerminal.argv ? { argv: [...initialTerminal.argv] } : {}),
-        ...(initialTerminal.returnToShell ? { returnToShell: true } : {}),
-        ...(initialSize ? { initialSize } : {})
-      },
-      ...(sourceWorktreeId ? { sourceWorktreeId } : {})
+      initialTerminal: pendingInitialTerminal
     }
+    if (sourceWorktreeId) {
+      pending.sourceWorktreeId = sourceWorktreeId
+    }
+
     onWorktreeSubmitted()
     createWorktree.mutate(pending)
   }
@@ -410,14 +418,14 @@ export function useWorktreeWorkflows({
         } catch (refreshError) {
           releaseRemoval(worktree.id)
           notifyError(refreshError, {
-            operation: `refresh removal details for worktree “${worktree.name}”`
+            operation: `refresh removal details for tree “${worktree.name}”`
           })
           return
         }
       }
 
       releaseRemoval(worktree.id)
-      notifyError(error, { operation: `remove worktree “${worktree.name}”` })
+      notifyError(error, { operation: `remove tree “${worktree.name}”` })
     }
   }
 
@@ -452,7 +460,7 @@ export function useWorktreeWorkflows({
     } catch (error) {
       releaseRemoval(worktree.id)
       notifyError(error, {
-        operation: `check whether worktree “${worktree.name}” can be removed`
+        operation: `check whether tree “${worktree.name}” can be removed`
       })
     }
   }

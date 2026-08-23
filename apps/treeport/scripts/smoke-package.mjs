@@ -6,6 +6,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import { fileURLToPath } from 'node:url'
+import { z } from 'zod'
 
 const execute = promisify(execFile)
 const packageDirectory = path.resolve(
@@ -35,18 +36,25 @@ await new Promise((resolve, reject) => {
   reservation.once('error', reject)
   reservation.listen(0, '127.0.0.1', resolve)
 })
-const address = reservation.address()
-if (!address || typeof address === 'string') {
+const address = z
+  .object({ port: z.number().int() })
+  .safeParse(reservation.address())
+if (!address.success) {
   throw new Error('Could not allocate a package smoke-test port')
 }
 
-const port = address.port
+const port = address.data.port
 await new Promise((resolve, reject) =>
   reservation.close((error) => (error ? reject(error) : resolve()))
 )
 
-const environment = {
-  ...process.env,
+const environment = { ...process.env }
+for (const name of Object.keys(environment)) {
+  if (name.startsWith('TREEPORT_')) {
+    delete environment[name]
+  }
+}
+Object.assign(environment, {
   TREEPORT_API_URL: '',
   TREEPORT_HOST: '127.0.0.1',
   TREEPORT_PORT: String(port),
@@ -58,15 +66,17 @@ const environment = {
   TREEPORT_TERMINAL_ID: '',
   TREEPORT_WEB_DEVELOPMENT: '',
   TREEPORT_WEB_DIST: ''
-}
+})
 
 try {
-  await execute('pnpm', ['pack', '--pack-destination', temporaryDirectory], {
-    cwd: panelSdkDirectory
-  })
-  await execute('pnpm', ['pack', '--pack-destination', temporaryDirectory], {
-    cwd: packageDirectory
-  })
+  const packArguments = [
+    '--config.ignore-scripts=true',
+    'pack',
+    '--pack-destination',
+    temporaryDirectory
+  ]
+  await execute('pnpm', packArguments, { cwd: panelSdkDirectory })
+  await execute('pnpm', packArguments, { cwd: packageDirectory })
   const panelSdkTarball = path.join(
     temporaryDirectory,
     `treeport-panel-sdk-${version}.tgz`
@@ -90,6 +100,41 @@ try {
     )
   }
 
+  const [major, minor, patch] = version.split('.').map(Number)
+  const previousVersion =
+    patch > 0
+      ? `${major}.${minor}.${patch - 1}`
+      : minor > 0
+        ? `${major}.${minor - 1}.999`
+        : `${Math.max(0, major - 1)}.999.999`
+  const previousSource = path.join(temporaryDirectory, 'previous')
+  await fs.mkdir(previousSource)
+  await execute('tar', ['-xzf', treeportTarball, '-C', previousSource])
+  const previousManifestPath = path.join(
+    previousSource,
+    'package',
+    'package.json'
+  )
+  const previousManifest = JSON.parse(
+    await fs.readFile(previousManifestPath, 'utf8')
+  )
+  previousManifest.version = previousVersion
+  await fs.writeFile(
+    previousManifestPath,
+    `${JSON.stringify(previousManifest, null, 2)}\n`
+  )
+  const previousTarball = path.join(
+    temporaryDirectory,
+    `treeport-treeport-${previousVersion}.tgz`
+  )
+  await execute('tar', [
+    '-czf',
+    previousTarball,
+    '-C',
+    previousSource,
+    'package'
+  ])
+
   await execute(
     'npm',
     [
@@ -98,9 +143,44 @@ try {
       '--prefix',
       prefix,
       panelSdkTarball,
-      treeportTarball
+      previousTarball
     ],
     { cwd: temporaryDirectory }
+  )
+
+  const realNpm = (await execute('which', ['npm'])).stdout.trim()
+  const updateBin = path.join(temporaryDirectory, 'update-bin')
+  await fs.mkdir(updateBin)
+  await fs.writeFile(
+    path.join(updateBin, 'npm'),
+    `#!/usr/bin/env node
+import { spawnSync } from 'node:child_process'
+import { copyFileSync } from 'node:fs'
+import path from 'node:path'
+const args = process.argv.slice(2)
+if (args[0] === 'prefix' && args[1] === '--global') {
+  process.stdout.write(${JSON.stringify(`${prefix}\n`)})
+  process.exit(0)
+}
+if (args[0] === 'view') {
+  process.stdout.write(JSON.stringify({ name: '@treeport/treeport', version: ${JSON.stringify(version)}, dist: { tarball: 'https://registry.example.test/treeport.tgz', integrity: 'sha512-package-smoke' } }))
+  process.exit(0)
+}
+if (args[0] === 'pack') {
+  if (process.env.TREEPORT_TEST_UPDATE_DELAY === '1') {
+    await new Promise((resolve) => setTimeout(resolve, 1000))
+  }
+  const destination = args[args.indexOf('--pack-destination') + 1]
+  const filename = path.basename(${JSON.stringify(treeportTarball)})
+  copyFileSync(${JSON.stringify(treeportTarball)}, path.join(destination, filename))
+  process.stdout.write(JSON.stringify([{ filename, integrity: 'sha512-package-smoke' }]))
+  process.exit(0)
+}
+const forwarded = args.filter((value) => !value.startsWith('@treeport/treeport@') && !value.endsWith('.tgz'))
+const result = spawnSync(${JSON.stringify(realNpm)}, [...forwarded, ${JSON.stringify(panelSdkTarball)}, ${JSON.stringify(treeportTarball)}], { stdio: 'inherit', env: process.env })
+process.exit(result.status ?? 1)
+`,
+    { mode: 0o755 }
   )
 
   const installedManifestPath = path.join(
@@ -144,8 +224,11 @@ try {
         throw new Error('Installing the npm package installed Electron')
       }
 
-      if (dependency && typeof dependency === 'object') {
-        dependencyQueue.push(dependency.dependencies ?? {})
+      const parsedDependency = z
+        .object({ dependencies: z.record(z.string(), z.unknown()).optional() })
+        .safeParse(dependency)
+      if (parsedDependency.success) {
+        dependencyQueue.push(parsedDependency.data.dependencies ?? {})
       }
     }
   }
@@ -160,7 +243,7 @@ try {
       return response.json()
     }
   )
-  if (health.ok !== true || health.version !== version) {
+  if (health.ok !== true || health.version !== previousVersion) {
     throw new Error(
       `Unexpected packaged health response: ${JSON.stringify(health)}`
     )
@@ -334,22 +417,107 @@ try {
     throw new Error('Packaged daemon did not transform the source TSX module')
   }
 
-  await execute(
-    treeport,
-    [
-      'terminal',
-      'create',
-      '--worktree',
-      worktree.id,
-      '--name',
-      'smoke',
-      '--',
-      '/bin/sh',
-      '-c',
-      'sleep 60'
-    ],
-    { env: environment }
+  const terminal = JSON.parse(
+    (
+      await execute(
+        treeport,
+        [
+          'terminal',
+          'create',
+          '--worktree',
+          worktree.id,
+          '--name',
+          'smoke',
+          '--json',
+          '--',
+          '/bin/sh',
+          '-c',
+          'sleep 60'
+        ],
+        { env: environment }
+      )
+    ).stdout
   )
+
+  const updateEnvironment = {
+    ...environment,
+    NPM_CONFIG_PREFIX: prefix,
+    PATH: `${updateBin}:${environment.PATH ?? ''}`,
+    TREEPORT_TEST_UPDATE_DELAY: '1'
+  }
+  const updating = execute(treeport, ['update', '--json'], {
+    env: updateEnvironment,
+    timeout: 120_000
+  })
+  const updateLock = path.join(dataDirectory, 'updates', 'update.lock')
+  while (
+    !(await fs
+      .access(updateLock)
+      .then(() => true)
+      .catch(() => false))
+  ) {
+    await new Promise((resolve) => setTimeout(resolve, 20))
+  }
+  const concurrentUpdate = await execute(treeport, ['update', '--json'], {
+    env: updateEnvironment,
+    timeout: 120_000
+  }).then(
+    () => null,
+    (error) => JSON.parse(error.stderr)
+  )
+  if (concurrentUpdate?.error?.code !== 'UPDATE_IN_PROGRESS') {
+    throw new Error(
+      `Concurrent self-update was not refused: ${JSON.stringify(concurrentUpdate)}`
+    )
+  }
+
+  const updated = JSON.parse((await updating).stdout)
+  const updatedHealth = await fetch(`http://127.0.0.1:${port}/api/health`).then(
+    (response) => response.json()
+  )
+  const updatedTerminals = JSON.parse(
+    (
+      await execute(treeport, ['terminal', 'list', '--json'], {
+        env: environment
+      })
+    ).stdout
+  )
+  if (
+    updated.status !== 'updated' ||
+    updated.fromVersion !== previousVersion ||
+    updated.toVersion !== version ||
+    updated.daemon?.lifecycle !== 'treeport' ||
+    updated.daemon?.restarted !== true ||
+    updated.terminals?.preserved !== true ||
+    updated.rollback?.attempted !== false ||
+    updatedHealth.version !== version ||
+    !updatedTerminals.some((candidate) => candidate.id === terminal.id)
+  ) {
+    throw new Error(
+      `Packaged self-update did not preserve version, health, and terminals: ${JSON.stringify({ updated, updatedHealth, updatedTerminals })}`
+    )
+  }
+
+  const current = JSON.parse(
+    (
+      await execute(treeport, ['update', '--json'], {
+        env: updateEnvironment,
+        timeout: 120_000
+      })
+    ).stdout
+  )
+  const currentHealth = await fetch(`http://127.0.0.1:${port}/api/health`).then(
+    (response) => response.json()
+  )
+  if (
+    current.status !== 'current' ||
+    current.daemon?.restarted !== false ||
+    currentHealth.pid !== updatedHealth.pid
+  ) {
+    throw new Error(
+      `A current self-update was not a lifecycle no-op: ${JSON.stringify({ current, updatedHealth, currentHealth })}`
+    )
+  }
 
   await execute(treeport, ['stop', '--terminate-terminals', '--force'], {
     env: environment
@@ -368,7 +536,7 @@ try {
   }
 
   await fs.access(path.join(dataDirectory, 'treeport.db'))
-  console.log('Clean npm package installation smoke test passed')
+  console.log('Clean npm installation and self-update smoke test passed')
 } finally {
   await execute(treeport, ['stop'], { env: environment }).catch(() => undefined)
   await fs.rm(temporaryDirectory, { recursive: true, force: true })

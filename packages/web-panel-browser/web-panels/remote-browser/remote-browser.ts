@@ -1,3 +1,4 @@
+import { z } from 'zod'
 import {
   treeport,
   type JsonValue,
@@ -22,39 +23,52 @@ type ClientMessage =
   | { type: 'insertText'; text: string }
   | { type: 'frameAck'; sequence: number }
 
-interface SessionState {
-  url: string
-  title: string
-  loading: boolean
-  canGoBack: boolean
-  canGoForward: boolean
-  controlled: boolean
-  hasController: boolean
-  controller: 'you' | 'agent' | 'other' | 'none'
-  viewport: { width: number; height: number }
-}
+const sessionStateSchema = z.strictObject({
+  url: z.string(),
+  title: z.string(),
+  loading: z.boolean(),
+  canGoBack: z.boolean(),
+  canGoForward: z.boolean(),
+  controlled: z.boolean(),
+  hasController: z.boolean(),
+  controller: z.enum(['you', 'agent', 'other', 'none']),
+  viewport: z.strictObject({ width: z.number(), height: z.number() })
+})
 
-type ServerMessage =
-  | { type: 'ready' | 'state' | 'controlChanged'; state: SessionState }
-  | {
-      type: 'navigationError' | 'browserCrashed' | 'closed'
-      message?: string
-      reason?: string
-    }
-  | {
-      type: 'browserUnavailable'
-      message: string
-      installCommand: string | null
-    }
-  | {
-      type: 'frame'
-      sequence: number
-      mimeType: 'image/jpeg'
-      timestamp: number
-      width: number
-      height: number
-      data: ArrayBuffer
-    }
+const serverMessageSchema = z.discriminatedUnion('type', [
+  z.strictObject({ type: z.literal('ready'), state: sessionStateSchema }),
+  z.strictObject({ type: z.literal('state'), state: sessionStateSchema }),
+  z.strictObject({
+    type: z.literal('controlChanged'),
+    state: sessionStateSchema
+  }),
+  z.strictObject({ type: z.literal('navigationError'), message: z.string() }),
+  z.strictObject({ type: z.literal('browserCrashed'), message: z.string() }),
+  z.strictObject({ type: z.literal('closed'), reason: z.string() }),
+  z.strictObject({
+    type: z.literal('browserUnavailable'),
+    message: z.string(),
+    installCommand: z.string().nullable()
+  }),
+  z.strictObject({
+    type: z.literal('frame'),
+    sequence: z.number(),
+    mimeType: z.literal('image/jpeg'),
+    timestamp: z.number(),
+    width: z.number(),
+    height: z.number(),
+    data: z.instanceof(ArrayBuffer)
+  })
+])
+
+const browserUrlValueSchema = z.string().max(4_096)
+const browserStorageSchema = z.strictObject({
+  url: z.string().optional(),
+  launchUpdatedAt: z.string().optional()
+})
+
+type SessionState = z.infer<typeof sessionStateSchema>
+type ServerMessage = z.infer<typeof serverMessageSchema>
 
 const form = document.querySelector('form')!
 const input = document.querySelector<HTMLInputElement>('input[name="url"]')!
@@ -118,16 +132,17 @@ let browserCrashed = false
 let controlled = false
 let pointerActive = false
 
-function browserUrl(value: unknown): URL | null {
-  if (
-    typeof value !== 'string' ||
-    value.length > 4_096 ||
-    !URL.canParse(value)
-  ) {
+function errorText(cause: unknown): string {
+  return cause instanceof Error ? cause.message : String(cause)
+}
+
+function browserUrl(value: JsonValue | undefined): URL | null {
+  const parsed = browserUrlValueSchema.safeParse(value)
+  if (!parsed.success || !URL.canParse(parsed.data)) {
     return null
   }
 
-  const url = new URL(value)
+  const url = new URL(parsed.data)
   return (url.protocol === 'http:' || url.protocol === 'https:') &&
     url.username === '' &&
     url.password === ''
@@ -181,9 +196,7 @@ function navigate(url: URL) {
   input.value = url.href
   send({ type: 'takeControl' })
   send({ type: 'navigate', url: url.href })
-  void storeUrl(url).catch((reason: unknown) =>
-    showError(reason instanceof Error ? reason.message : String(reason))
-  )
+  void storeUrl(url).catch((cause: unknown) => showError(errorText(cause)))
 }
 
 function showHomepage() {
@@ -222,9 +235,7 @@ function applyState(state: SessionState) {
     input.value = url.href
     copyButton.disabled = false
     if (changed) {
-      void storeUrl(url).catch((reason: unknown) =>
-        showError(reason instanceof Error ? reason.message : String(reason))
-      )
+      void storeUrl(url).catch((cause: unknown) => showError(errorText(cause)))
     }
 
     treeport.panel.setTitle(configuredTitle || state.title || url.host)
@@ -364,9 +375,9 @@ async function discoverListeners() {
     if (request === discoveryRequest) {
       renderListeners(discovery)
     }
-  } catch (reason) {
+  } catch (cause) {
     if (request === discoveryRequest) {
-      serverStatus.textContent = `Could not scan for development servers: ${reason instanceof Error ? reason.message : String(reason)}`
+      serverStatus.textContent = `Could not scan for development servers: ${errorText(cause)}`
     }
   } finally {
     if (request === discoveryRequest) {
@@ -387,7 +398,12 @@ addEventListener('message', (event) => {
 
   port?.close()
   port = event.ports[0]
-  port.onmessage = (portEvent) => receive(portEvent.data as ServerMessage)
+  port.onmessage = (portEvent) => {
+    const message = serverMessageSchema.safeParse(portEvent.data)
+    if (message.success) {
+      receive(message.data)
+    }
+  }
   port.start()
   const bounds = canvas.getBoundingClientRect()
   viewportWidth = Math.max(320, Math.min(3_840, Math.round(bounds.width)))
@@ -406,21 +422,17 @@ void Promise.all([
   ([context, storedValue]) => {
     const configuredUrl = browserUrl(context.launch.input?.url)
     panelUpdatedAt = context.panel.updatedAt
-    configuredTitle =
-      typeof context.launch.input?.title === 'string'
-        ? context.launch.input.title.trim().slice(0, 256)
-        : ''
-    const storedState =
-      storedValue !== null &&
-      typeof storedValue === 'object' &&
-      !Array.isArray(storedValue)
-        ? storedValue
-        : null
-    const storedUrl = browserUrl(storedState?.url)
-    const storedLaunchUpdatedAt =
-      typeof storedState?.launchUpdatedAt === 'string'
-        ? storedState.launchUpdatedAt
-        : null
+    const launchTitle = z.string().safeParse(context.launch.input?.title)
+    configuredTitle = launchTitle.success
+      ? launchTitle.data.trim().slice(0, 256)
+      : ''
+    const storedState = browserStorageSchema.safeParse(storedValue)
+    const storedUrl = browserUrl(
+      storedState.success ? storedState.data.url : undefined
+    )
+    const storedLaunchUpdatedAt = storedState.success
+      ? (storedState.data.launchUpdatedAt ?? null)
+      : null
     forceInitialNavigation = Boolean(
       configuredUrl && storedLaunchUpdatedAt !== panelUpdatedAt
     )
@@ -438,8 +450,7 @@ void Promise.all([
     requestConnection()
     void discoverListeners()
   },
-  (reason: unknown) =>
-    showError(reason instanceof Error ? reason.message : String(reason))
+  (cause: unknown) => showError(errorText(cause))
 )
 
 treeport.shortcuts.onFind(() => {
@@ -466,11 +477,9 @@ copyButton.addEventListener('click', () => {
   if (currentUrl) {
     void navigator.clipboard
       .writeText(currentUrl.href)
-      .catch((reason) =>
+      .catch((cause) =>
         showError(
-          reason instanceof Error
-            ? reason.message
-            : 'Could not copy the address.'
+          cause instanceof Error ? cause.message : 'Could not copy the address.'
         )
       )
   }

@@ -1,17 +1,27 @@
 import { EventEmitter } from 'node:events'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type {
+  BrowserClientMessage,
   BrowserFrame,
   BrowserServerMessage,
+  ProductEvent,
   WebPanel
 } from '@treeport/shared'
-import type { AppConfig, TreeportService } from './core/index'
-import type { BrowserTransport } from './browser-sessions'
+import type { PlaywrightBrowserCallbacks } from './playwright-browser'
+import {
+  BrowserSessionManager,
+  type BrowserAgentCliRunner,
+  type BrowserSessionBrowser,
+  type BrowserSessionBrowserFactory,
+  type BrowserSessionConfig,
+  type BrowserSessionService,
+  type BrowserTransport
+} from './browser-sessions'
 
 const browsers: FakeBrowser[] = []
 
-class FakeBrowser {
-  state = {
+class FakeBrowser implements BrowserSessionBrowser {
+  state: BrowserSessionBrowser['state'] = {
     url: 'about:blank',
     title: '',
     loading: false,
@@ -19,7 +29,7 @@ class FakeBrowser {
     canGoForward: false,
     viewport: { width: 1_280, height: 800 }
   }
-  commands: unknown[] = []
+  commands: BrowserClientMessage[] = []
   screencasting: boolean[] = []
   closes = 0
   constructor(
@@ -28,17 +38,12 @@ class FakeBrowser {
     _title: string,
     _panelId: string,
     _worktreeId: string,
-    readonly callbacks: {
-      state(value: FakeBrowser['state']): void
-      frame(value: Omit<BrowserFrame, 'sequence'>): void
-      navigationError(message: string): void
-      crashed(message: string): void
-    }
+    readonly callbacks: PlaywrightBrowserCallbacks
   ) {
     browsers.push(this)
   }
   async launch() {}
-  async command(message: unknown) {
+  async command(message: BrowserClientMessage) {
     this.commands.push(message)
   }
   async setScreencasting(value: boolean) {
@@ -47,24 +52,26 @@ class FakeBrowser {
   async close() {
     this.closes += 1
   }
-  static async status() {
-    return {
-      installed: true,
-      executablePath: '/browser',
-      playwrightVersion: 'test',
-      browserRevision: 'chromium-test',
-      channel: 'chromium' as const,
-      launchReady: true,
-      launchError: null
-    }
-  }
 }
 
-vi.doMock('./playwright-browser', () => ({ PlaywrightBrowser: FakeBrowser }))
+const browserFactory: BrowserSessionBrowserFactory = (
+  cachePath,
+  workspacePath,
+  title,
+  panelId,
+  worktreeId,
+  callbacks
+) =>
+  new FakeBrowser(
+    cachePath,
+    workspacePath,
+    title,
+    panelId,
+    worktreeId,
+    callbacks
+  )
 
-const { BrowserSessionManager } = await import('./browser-sessions')
-
-function fixture() {
+function fixture(agentCliRunner: BrowserAgentCliRunner | null = null) {
   const events = new EventEmitter()
   const panel: WebPanel = {
     id: 'panel_browser',
@@ -80,22 +87,27 @@ function fixture() {
     updatedAt: '2026-01-01T00:00:00.000Z'
   }
   const service = {
-    authorizeHostBrowserPanel: vi.fn(async () => ({
+    authorizeHostBrowserPanel: vi.fn(async (_panelId: string) => ({
       panel,
       worktreePath: '/worktree'
     })),
     events: {
-      subscribe(listener: (event: unknown) => void) {
+      subscribe(listener: (event: ProductEvent) => void) {
         events.on('event', listener)
         return () => events.off('event', listener)
       }
     }
-  } as unknown as TreeportService
+  } satisfies BrowserSessionService
   const config = {
     cacheDir: '/cache',
     runtimeDir: '/tmp/treeport-browser-session-test'
-  } as AppConfig
-  const manager = new BrowserSessionManager(service, config)
+  } satisfies BrowserSessionConfig
+  const manager = new BrowserSessionManager(
+    service,
+    config,
+    browserFactory,
+    agentCliRunner
+  )
   const transports: Array<{
     transport: BrowserTransport
     messages: BrowserServerMessage[]
@@ -103,25 +115,30 @@ function fixture() {
     disconnects: number
   }> = []
   const transport = (id: string) => {
-    const value = {
-      messages: [] as BrowserServerMessage[],
-      frames: [] as BrowserFrame[],
-      disconnects: 0,
-      transport: null as unknown as BrowserTransport
-    }
-    value.transport = {
+    const messages: BrowserServerMessage[] = []
+    const frames: BrowserFrame[] = []
+    let disconnects = 0
+    const browserTransport: BrowserTransport = {
       id,
       isConnected: () => true,
       sendMessage: (message) => {
-        value.messages.push(message)
+        messages.push(message)
         return true
       },
       sendFrame: (frame) => {
-        value.frames.push(frame)
+        frames.push(frame)
         return true
       },
       disconnect: () => {
-        value.disconnects += 1
+        disconnects += 1
+      }
+    }
+    const value = {
+      transport: browserTransport,
+      messages,
+      frames,
+      get disconnects() {
+        return disconnects
       }
     }
     transports.push(value)
@@ -295,15 +312,9 @@ describe('Remote Browser sessions', () => {
   })
 
   it('queues a user takeover until an agent command releases control', async () => {
-    const value = fixture()
-    const client = value.transport('client')
-    await value.manager.accept(
-      await value.manager.issueTicket('panel_browser', 'client'),
-      client.transport
-    )
     let finishAgent!: () => void
     const runAgentCli = vi
-      .fn()
+      .fn<BrowserAgentCliRunner>()
       .mockResolvedValue('detached')
       .mockResolvedValueOnce('attached')
       .mockImplementationOnce(
@@ -312,11 +323,12 @@ describe('Remote Browser sessions', () => {
             finishAgent = () => resolve('snapshot')
           })
       )
-    ;(
-      value.manager as unknown as {
-        runAgentCli: typeof runAgentCli
-      }
-    ).runAgentCli = runAgentCli
+    const value = fixture(runAgentCli)
+    const client = value.transport('client')
+    await value.manager.accept(
+      await value.manager.issueTicket('panel_browser', 'client'),
+      client.transport
+    )
 
     const agent = value.manager.agentCommand('panel_browser', {
       command: 'snapshot',

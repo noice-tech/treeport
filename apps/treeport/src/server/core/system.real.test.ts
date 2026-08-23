@@ -38,6 +38,7 @@ async function executable(command: string, args: string[]) {
 }
 
 function ptyEnvironment(): Record<string, string> {
+  // SAFETY: The test fixture provides the asserted contract used here.
   return Object.fromEntries(
     Object.entries(process.env).filter(
       ([key, value]) =>
@@ -653,6 +654,8 @@ describe.skipIf(!enabled)(
             '-e',
             `require('node:fs').writeFileSync(${JSON.stringify(outputPath)}, JSON.stringify({ cols: process.stdout.columns, rows: process.stdout.rows }))`
           ],
+          shellCommand: null,
+          interactiveShell: false,
           initialSize: { cols: 132, rows: 47 },
           env: {}
         })

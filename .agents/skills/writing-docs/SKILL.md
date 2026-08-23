@@ -1,106 +1,166 @@
 ---
 name: writing-docs
-description: Rules for writing and reviewing Treeport documentation. Use whenever adding, editing, or reviewing documentation, and whenever deciding whether a code change requires a documentation change.
+description: Write and review Treeport documentation. Also decide when a code change needs documentation.
 ---
 
-# Writing Treeport documentation
+# Write Treeport documentation
 
-Document Treeport's intentional user contract, not everything visible in the repository or at runtime.
+Document the supported Treeport user contract. Do not document all repository or runtime information.
 
-## Classify the information before writing
+Always write documentation in ASD-STE100 Simplified Technical English.
 
-Choose exactly one destination for each piece of information:
+## Use Simplified Technical English
 
-- Put supported workflows and interfaces for Treeport users or integrators in `apps/docs/src/content/docs`.
-- Put durable architectural decisions, contributor constraints, and repository workflows in `apps/docs/internal`.
-- Put instructions used only by coding agents in the relevant skill.
-- Put constraints local to one implementation in the code, a nearby comment, or a behavioral test.
-- Do not document temporary, obvious, or nonessential implementation knowledge.
+Apply these rules to public text, internal text, headings, examples, and link text:
 
-Do not duplicate the same explanation in public and internal documentation.
+- Use approved ASD-STE100 words when they keep the technical meaning.
+- Use one word for one meaning.
+- Use the same noun for the same item.
+- Use short, direct sentences.
+- Use a maximum of 20 words in an instruction.
+- Use a maximum of 25 words in a description.
+- Give one instruction in each sentence.
+- Give two instructions together only when the actions occur at the same time.
+- Use active voice.
+- Use passive voice only when the actor is unknown or not important.
+- Write an instruction in the imperative form.
+- Start an instruction with an action verb.
+- Put a condition before an instruction when the reader must know the condition first.
+- Use a maximum of six sentences in one paragraph.
+- Use a vertical list for complex text.
+- Use the same grammatical structure for all items in a list.
+- Use American English spelling.
+- Do not use slang, idioms, humor, or decorative language.
+- Do not remove articles or other short words to make text shorter.
+- Do not use a technical noun as a verb.
+- Do not use a technical verb as a noun.
+- Keep product names, commands, code, API names, and necessary technical terms unchanged.
+- Explain a technical term when its meaning is not clear from the context.
 
-## Apply the public-contract test
+Do not change a technical fact to simplify the language.
 
-Information belongs in public documentation only when **all three** statements are true:
+When simple text can have two meanings, keep the precise technical term. Then, explain the term.
 
-1. Treeport users or integrators are intentionally expected to use or depend on it.
-2. They need the information to install, configure, operate, integrate with, or troubleshoot Treeport.
-3. The project is prepared to treat it as a supported interface: changes will be deliberate and accompanied by updated documentation, compatibility handling, or migration guidance as appropriate.
+## Classify the information
 
-A single **no** excludes the information from public documentation. If support status is unclear, ask the user or maintainer; do not publish it by default.
+Select one location for each piece of information:
 
-A public contract can include commands, configuration, protocols, and user-visible behavior. It does not mean that the behavior can never change. It means users are invited to rely on it and changes are managed intentionally.
+- Put supported user and integration information in `apps/docs/src/content/docs`.
+- Put architecture decisions, contributor constraints, and repository workflows in `apps/docs/internal`.
+- Put coding-agent instructions in the applicable skill.
+- Put a local implementation constraint in code, a nearby comment, or a behavioral test.
+- Do not document temporary, clear, or unnecessary implementation information.
 
-Existence is not evidence of support. A name or field is not public merely because it appears in source code, command output, logs, tests, a database, a network response, or a generated type.
+Do not copy the same explanation into public and internal documentation.
 
-## Decide whether a code change needs public documentation
+## Apply the public contract test
 
-Update public documentation when a code change makes an existing public page incorrect or changes information users need for a supported action. Check specifically for changes to:
+Put information in public documentation only when all these statements are true:
 
-- installation steps, prerequisites, or supported platforms;
-- documented commands, options, defaults, exit behavior, or stable output formats;
-- documented configuration names, accepted values, defaults, or precedence;
-- supported API or terminal-protocol requests, responses, or events;
-- user workflows, safety behavior, security implications, or recovery steps;
-- the availability, limitations, or removal of a documented feature.
+1. Treeport users or integrators are expected to use or depend on it.
+2. They need it to install, configure, operate, integrate with, or correct Treeport.
+3. The project will manage changes to this information as changes to a supported interface.
 
-Do not add public documentation for a refactor, internal migration, test control, debug option, fixture, private feature flag, incidental field, log message, or development safeguard unless the change also alters a supported user contract.
+If one statement is false, do not put the information in public documentation.
 
-When reviewing a change, state one of these conclusions explicitly:
+When support status is not clear, ask a maintainer. Do not publish the information by default.
 
-- **Public docs required:** name the supported user action or interface that changed.
-- **Internal or local documentation required:** name the contributor decision or implementation constraint that must be preserved.
-- **No documentation required:** state that no supported user contract or durable contributor knowledge changed.
+A public contract can include commands, configuration, protocols, and user-visible behavior.
 
-## Keep development mechanisms out of public docs
+Users can depend on this contract. Change it deliberately, and supply compatibility or migration instructions when necessary.
 
-Do not publish mechanisms used only by Treeport's implementation, tests, CI, development scripts, or maintainers. This includes development-only:
+The presence of a name or field does not make it public.
 
-- environment variables, command flags, and feature flags;
-- fixtures, test endpoints, fault injection, and debugging controls;
-- database fields, internal API fields, and incidental command output;
-- process architecture and source-file organization;
+Do not infer support from source, output, logs, tests, databases, network responses, or generated types.
+
+## Decide when a code change needs documentation
+
+Update public documentation when a change makes a public page incorrect.
+
+Also update it when users need new information for a supported action.
+
+Review these contracts:
+
+- installation, prerequisites, and supported platforms;
+- commands, options, defaults, exit behavior, and stable output;
+- configuration names, values, defaults, and priority;
+- API and terminal protocol requests, responses, and events;
+- workflows, safety behavior, security effects, and recovery;
+- feature availability, limits, and removal.
+
+Do not publish internal changes.
+
+Examples include refactors, test controls, debug options, fixtures, private flags, incidental fields, logs, and development safeguards.
+
+Update public documentation only when an internal change also changes a supported user contract.
+
+For a review, state one of these conclusions:
+
+- **Public docs required:** Identify the changed user action or interface.
+- **Internal or local documentation required:** Identify the contributor decision or implementation constraint.
+- **No documentation required:** State that no user contract or durable contributor information changed.
+
+## Keep development mechanisms private
+
+Do not put implementation, test, CI, or maintainer mechanisms in public documentation.
+
+This rule includes these development-only items:
+
+- environment variables, command options, and feature flags;
+- fixtures, test endpoints, fault insertion, and debug controls;
+- database fields, internal API fields, and incidental output;
+- process architecture and source-file locations;
 - repository setup, release, and maintenance workflows;
-- safeguards that users are not expected to invoke or configure.
+- safeguards that users do not configure or start.
 
-Put the knowledge where its consumer will find it:
+Put information where its reader will find it:
 
-- script usage in the script's help or contributor documentation;
-- agent procedures in the relevant skill;
-- non-obvious local invariants in code comments;
-- behavior guarantees in tests;
-- cross-cutting rationale or decisions in `apps/docs/internal`.
+- Put script instructions in script help or contributor documentation.
+- Put agent procedures in the applicable skill.
+- Put local invariants in code comments.
+- Put behavior guarantees in tests.
+- Put cross-cutting decisions in `apps/docs/internal`.
 
-Do not create internal documentation merely to inventory an implementation. Add it only when future contributors need durable context that cannot be recovered reliably from the code and tests.
+Do not make an internal document only to list implementation details.
 
-## Describe outcomes, not private mechanisms
+Add one when contributors need durable context that code and tests cannot supply reliably.
 
-Do not turn an internal mechanism into a supported feature by naming it in public documentation.
+## Describe results, not private mechanisms
 
-When an internal mechanism produces supported behavior, document only the user-visible contract. For example, document that Treeport preserves terminals across daemon restarts. Do not name private environment variables or development scripts used to implement or test that behavior.
+Do not make an internal mechanism public by naming it in public documentation.
 
-Public examples must use supported commands, configuration, and values. Never instruct users to rely on an internal fallback or incidental output.
+Document only its supported result.
+
+For example, state that terminals continue after a daemon restart.
+
+Do not name private variables or development scripts that test this result.
+
+Use only supported commands, configuration, and values in public examples.
+
+Do not tell users to depend on an internal fallback or incidental output.
 
 ## Use the correct location
 
 - Public product documentation: `apps/docs/src/content/docs`
 - Internal decisions and contributor documentation: `apps/docs/internal`
-- Agent-specific operating instructions: the relevant skill
-- Local implementation details: code, comments, scripts, and tests
+- Agent instructions: The applicable skill
+- Local implementation information: Code, comments, scripts, and tests
 
-Never add internal documentation to the public Starlight content collection or sidebar.
+Do not add internal documentation to the public Starlight collection or sidebar.
 
-## Final review
+## Complete the final review
 
-For every public section, complete this sentence with a specific action:
+For each public section, complete this sentence:
 
 > A Treeport user or integrator needs this information because they are expected to _____.
 
-If the blank cannot name a supported action or dependency, remove the section from public documentation and either move it to the correct internal location or do not document it.
+The answer must identify a supported action or dependency.
 
-Before finishing, verify that:
+If it does not, remove the section. Move it to the correct internal location when necessary.
 
-- every documented command, option, field, variable, and behavior is intentionally supported;
-- required, optional, default, and platform-specific behavior is stated explicitly;
-- the text describes current behavior rather than a plan, test setup, or implementation detail;
-- internal pages were not added to the public content collection or sidebar.
+Before completion, verify these conditions:
+
+- Each documented command, option, field, variable, and behavior has support.
+- The text clearly identifies required, optional, default, and platform-specific behavior.
+- The text describes current behavior, not a plan, test configuration, or implementation detail.
+- No internal page is in the public content collection or sidebar.

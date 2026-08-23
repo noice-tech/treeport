@@ -12,13 +12,13 @@ export type WebPanelInput = Record<string, JsonValue>
 /** Launch data for a persistent web panel instance. */
 export interface WebPanelLaunch {
   input: WebPanelInput | null
-  /** Directory relative to the worktree root. */
+  /** Directory relative to the tree root. */
   cwd: string | null
 }
 
-/** A persistent web panel instance scoped to one worktree. */
 export type WebPanelPermission = 'same-origin' | 'host-browser'
 
+/** A persistent web panel instance scoped to one tree. */
 export interface WebPanel {
   id: string
   kind: 'web'
@@ -36,7 +36,7 @@ export interface WebPanel {
   updatedAt: string
 }
 
-/** Project and worktree information available to the current panel. */
+/** Project and tree information available to the current panel. */
 export interface WebPanelContext {
   apiVersion: 1
   panel: WebPanel
@@ -44,13 +44,15 @@ export interface WebPanelContext {
   project: {
     id: string
     name: string
-    defaultBranch: string
+    kind: 'repository' | 'folder'
+    defaultBranch: string | null
   }
   worktree: {
     id: string
     name: string
+    kind: 'main' | 'linked' | 'folder'
     branch: string | null
-    head: string
+    head: string | null
   }
 }
 
@@ -67,7 +69,7 @@ export interface GitDiffChangeSets {
 }
 
 /**
- * A read-only diff from the default-branch merge base through the worktree's
+ * A read-only diff from the default-branch merge base through the tree's
  * committed, tracked local, and untracked changes.
  */
 export interface GitDiff {
@@ -82,7 +84,7 @@ export interface GitDiff {
   changeSets: GitDiffChangeSets
 }
 
-/** A listening TCP socket attributed to the current worktree. */
+/** A listening TCP socket attributed to the current tree. */
 export interface WorktreeListener {
   pid: number
   command: string
@@ -91,7 +93,7 @@ export interface WorktreeListener {
   terminalId: string | null
 }
 
-/** The result of scanning for worktree-scoped listening TCP sockets. */
+/** The result of scanning for tree-scoped listening TCP sockets. */
 export interface WorktreeListenerDiscovery {
   supported: boolean
   message: string | null
@@ -122,16 +124,16 @@ export interface WebPanelShortcuts {
   onFind(handler: () => void): () => void
 }
 
-/** The worktree-scoped API available to a Treeport web panel. */
+/** The tree-scoped API available to a Treeport web panel. */
 export interface TreeportPanelSdk {
   readonly version: 1
   /** Client-local controls for the current panel. */
   readonly panel: WebPanelControls
   /** Return the identity and Git context for the current panel. */
   context(): Promise<WebPanelContext>
-  /** Return the combined worktree diff and its Git-layer file groups. */
+  /** Return the combined tree diff and its Git-layer file groups. */
   diff(): Promise<GitDiff>
-  /** Listening TCP sockets conservatively attributed to this worktree. */
+  /** Listening TCP sockets conservatively attributed to this tree. */
   readonly network: {
     listeners(): Promise<WorktreeListenerDiscovery>
   }
@@ -162,8 +164,7 @@ interface BrowserLocationSubscription {
 }
 
 interface PendingRequest {
-  resolve(value: unknown): void
-  reject(reason: Error): void
+  complete(response: HostResponse): void
 }
 
 const pending = new Map<string, PendingRequest>()
@@ -209,6 +210,7 @@ function subscribeBrowserLocation(subscription: string) {
   browserLocationWatcherStarted = true
   addEventListener('hashchange', reportBrowserLocation)
   addEventListener('popstate', reportBrowserLocation)
+  // SAFETY: The response belongs to the result type for this matching host method.
   const navigation = (globalThis as { navigation?: EventTarget }).navigation
   navigation?.addEventListener('currententrychange', reportBrowserLocation)
   setInterval(reportBrowserLocation, 250)
@@ -262,13 +264,7 @@ addEventListener(
     }
 
     if (message?.source === 'treeport-browser-v1') {
-      if (
-        message.method === 'location.subscribe' &&
-        typeof message.subscription === 'string'
-      ) {
-        subscribeBrowserLocation(message.subscription)
-      }
-
+      subscribeBrowserLocation(message.subscription)
       return
     }
 
@@ -290,11 +286,7 @@ addEventListener(
     }
 
     pending.delete(message.id)
-    if (message.ok) {
-      request.resolve(message.value)
-    } else {
-      request.reject(new Error(message.error || 'Treeport request failed'))
-    }
+    request.complete(message)
   }
 )
 
@@ -314,8 +306,14 @@ function call<Result>(
   return new Promise((resolve, reject) => {
     const id = String(++serial)
     pending.set(id, {
-      resolve: (value) => resolve(value as Result),
-      reject
+      complete: (response) => {
+        if (response.ok) {
+          // SAFETY: The caller selects Result for the matching host method.
+          resolve(response.value as Result)
+        } else {
+          reject(new Error(response.error || 'Treeport request failed'))
+        }
+      }
     })
     parent.postMessage(
       { source: 'treeport-panel-v1', id, method, ...params },
@@ -324,7 +322,7 @@ function call<Result>(
   })
 }
 
-/** The worktree-scoped API available to this web panel. */
+/** The tree-scoped API available to this web panel. */
 export const treeport: TreeportPanelSdk = Object.freeze({
   version: 1,
   panel: Object.freeze({

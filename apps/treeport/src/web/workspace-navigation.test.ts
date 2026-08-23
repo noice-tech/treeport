@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { ProjectRecord } from '@treeport/shared'
 import {
   deepestProjectTarget,
-  panelOpenRequestMatchesTerminal,
+  openRequestMatchesTerminal,
   panelTarget,
   resolveWorkspaceRoute,
   targetForProject,
@@ -13,6 +13,7 @@ import {
 } from './workspace-navigation'
 
 function projectGraph(): ProjectRecord[] {
+  // SAFETY: The test fixture provides the asserted contract used here.
   return [
     {
       id: 'project-a',
@@ -58,14 +59,10 @@ function projectGraph(): ProjectRecord[] {
 
 describe('workspace route resolution', () => {
   it('targets only clients that currently show the source terminal', () => {
-    expect(panelOpenRequestMatchesTerminal('terminal-a', 'terminal-a')).toBe(
-      true
-    )
-    expect(panelOpenRequestMatchesTerminal('terminal-a', 'terminal-b')).toBe(
-      false
-    )
-    expect(panelOpenRequestMatchesTerminal(null, 'terminal-a')).toBe(false)
-    expect(panelOpenRequestMatchesTerminal(null, null)).toBe(false)
+    expect(openRequestMatchesTerminal('terminal-a', 'terminal-a')).toBe(true)
+    expect(openRequestMatchesTerminal('terminal-a', 'terminal-b')).toBe(false)
+    expect(openRequestMatchesTerminal(null, 'terminal-a')).toBe(false)
+    expect(openRequestMatchesTerminal(null, null)).toBe(false)
   })
 
   it('keeps a valid hierarchy and resolves nonempty parent routes to their deepest child', () => {

@@ -1,11 +1,21 @@
 ---
 title: Web panels (experimental)
-description: Build worktree-scoped web tools with Treeport's hosted Vite runtime.
+description: Build tree panels with the Treeport Vite runtime.
 ---
 
-Treeport has an experimental runtime for trusted repository-provided web panels. A web panel is persistent and worktree-bound: opening or closing it is synchronized across connected Treeport clients, while the selected panel remains local to each device.
+Treeport has an experimental runtime for trusted web panels that a repository supplies.
 
-Project-local panels live under `.treeport/web-panels/<name>/`. Each folder containing `index.html` defines a panel; the folder name supplies its stable identity and humanized title. Packages can contribute the same source layout through [`treeport.webPanels`](/features/packages/).
+A web panel is persistent and belongs to one tree.
+
+Treeport synchronizes open and close operations between connected clients. The selected panel stays local to each client.
+
+## Create a panel
+
+Put a project panel in `.treeport/web-panels/<name>/`.
+
+Each folder with an `index.html` file defines one panel. The folder name gives the panel its stable identity and default title.
+
+Packages can supply the same source layout with [`treeport.webPanels`](/features/packages/).
 
 ```text
 .treeport/web-panels/review/
@@ -19,13 +29,34 @@ Project-local panels live under `.treeport/web-panels/<name>/`. Each folder cont
 <script type="module" src="./review.tsx"></script>
 ```
 
-Treeport owns the Vite server and compiler. Do not commit generated assets or add a panel build script. Local project panels and local-path packages use Vite development serving, React Fast Refresh, and same-origin HMR. Treeport compiles npm-installed package panels into immutable cached assets when first opened. Updating a package produces a new build without invalidating assets already loaded by an open frame.
+Treeport controls the Vite server and compiler.
 
-## Supported Vite profile
+Do not commit generated assets. Do not add a panel build script.
 
-Panels can use TypeScript, TSX, JSX, CSS, JSON, dynamic imports, imported static assets, and `import.meta.glob`. React panels are supported by Treeport's fixed React plugin profile. Production builds include source maps.
+Project panels and local packages use Vite development serving, React Fast Refresh, and same-origin HMR.
 
-Declare browser libraries such as React in the package's normal `dependencies`. Vite resolves bare imports from the package's installed dependency graph and bundles that graph, including the package's declared React version. The Treeport host provides `@treeport/panel-sdk`; declare it as a `devDependency` for authoring types rather than shipping a separate runtime copy.
+Treeport compiles installed npm panels into fixed cached assets when you first open them.
+
+A package update makes a new build. It does not change assets that are already open in a frame.
+
+## Use the supported source profile
+
+Panels can use these Vite functions:
+
+- TypeScript, TSX, and JSX;
+- CSS and JSON;
+- dynamic imports;
+- imported static assets;
+- `import.meta.glob`;
+- React through the fixed Treeport React profile.
+
+Production panel builds include source maps.
+
+Put browser libraries, such as React, in the package `dependencies`.
+
+Vite resolves bare imports from the installed package graph. It includes the React version that the package declares.
+
+Treeport supplies `@treeport/panel-sdk`. Put this package in `devDependencies` to get authoring types.
 
 ```json
 {
@@ -42,32 +73,66 @@ Declare browser libraries such as React in the package's normal `dependencies`. 
 }
 ```
 
-Treeport does not load package `vite.config.*`, executable Babel or PostCSS configuration, package-provided Vite plugins, build scripts, or lifecycle scripts. A package cannot customize the hosted compiler profile. Tailwind is not part of the initial hosted profile; commit ordinary CSS instead.
+Treeport does not load these package items:
 
-## Open and retain panels
+- `vite.config.*`;
+- executable Babel or PostCSS configuration;
+- package Vite plug-ins;
+- build scripts;
+- lifecycle scripts.
 
-Open **New panel** from a worktree to choose a discovered web panel. In the macOS desktop client, `Cmd+Shift+T` opens **New panel**, and numbered panel shortcuts include web panels. Browsers keep these shortcuts for tab management, so use the Treeport interface instead. See the [Shortcuts reference](/reference/shortcuts/).
+A package cannot change the compiler profile. The initial profile does not include Tailwind.
 
-After a panel is visited, Treeport keeps its frame alive while switching workspaces, preserving in-memory state such as scroll position and unfinished input. Use `treeport.storage` for state that must survive reloads or daemon restarts.
+Use standard CSS instead.
 
-Definitions are separate from persistent panel instances. Package definition identities exclude npm versions, so package updates preserve existing instances and storage. Removing a package leaves those instances unavailable but intact; reinstalling the same definition revives them.
+## Open and keep panels
 
-The CLI can open or reuse an instance and provide one inline JSON object:
+Open **New panel** in a tree. Then, select a discovered web panel.
+
+In the macOS desktop client, `Cmd+Shift+T` opens **New panel**.
+
+Numbered panel shortcuts also include web panels. Browser clients keep these shortcuts for browser tab operations.
+
+See the [Shortcuts reference](/reference/shortcuts/).
+
+After you visit a panel, Treeport keeps its frame active while you change workspaces.
+
+This keeps in-memory state, such as scroll position and unfinished input.
+
+Use `treeport.storage` for state that must continue after reloads or daemon restarts.
+
+A panel definition and a panel instance are separate items.
+
+Package definition identities do not contain npm versions. Thus, package updates keep existing panel instances and storage.
+
+If you remove a package, its panel instances stay in storage but are not available.
+
+Install the same definition again to make them available.
+
+Use the CLI to open or reuse a panel instance:
 
 ```sh
 treeport web-panel open --worktree . review \
   --input '{"path":"output/result.json"}'
 ```
 
-The command accepts an exact definition ID or an unambiguous short name. It reuses the newest instance for the definition, replaces the stored launch input, and reloads the panel frame. Durable `treeport.storage` values remain unchanged. Use `--new` when the worktree needs another instance.
+The command accepts an exact definition ID or one clear short name.
 
-## Panel SDK
+By default, it uses the newest instance for the definition. It replaces the saved start input and reloads the panel frame.
 
-Install the SDK as a development dependency for types and import it normally. Treeport's Vite profile resolves that import to the host's SDK, so no runtime dependency or import map is needed:
+It does not change durable `treeport.storage` values.
+
+Use `--new` to make another instance.
+
+## Use the panel SDK
+
+Install the SDK as a development dependency:
 
 ```sh
 pnpm add --save-dev @treeport/panel-sdk
 ```
+
+Import the SDK in the panel:
 
 ```ts
 import { treeport } from '@treeport/panel-sdk'
@@ -80,16 +145,45 @@ await treeport.storage.set('drafts', [{ file: 'src/app.ts', line: 12 }])
 const drafts = await treeport.storage.get('drafts')
 
 const stopFind = treeport.shortcuts.onFind(() => {
-  // Open the panel's own find interface.
+  // Open the panel find interface.
 })
 ```
 
-`treeport.context()` returns the panel, project, worktree, and launch data. Launch input is a JSON object or `null`. Launch `cwd` is relative to the worktree root.
+The Treeport Vite profile maps this import to the host SDK. You do not need a runtime dependency or import map.
 
-Use `treeport.panel.setTitle(title)` to set a runtime title for the current client. Use `treeport.panel.setTitle(null)` to restore the configured title. Runtime titles are not saved or sent to other clients.
+`treeport.context()` returns `panel`, `project`, `worktree`, and `launch` data.
 
-`treeport.diff()` returns merge-base metadata and a read-only unified diff for the combined final worktree state. Relative file paths are grouped into `changeSets.branch` (merge base to `HEAD`), `changeSets.staged` (`HEAD` to index), `changeSets.unstaged` (index to working tree), and `changeSets.untracked`. Sets can overlap; for example, a committed branch file edited locally appears in both branch and unstaged changes. Use `unified` to render the final diff and `changeSets` to organize its files.
+Use the project and worktree `kind` fields to identify an ordinary folder tree.
 
-`treeport.shortcuts.onFind(handler)` routes `Cmd/Ctrl+F` to the panel and returns an unsubscribe function.
+The start input is a JSON object or `null`. The start `cwd` is relative to the tree root.
 
-`treeport.storage` is durable JSON key-value storage scoped to the panel instance. It is deleted when the panel is closed, and Treeport asks for confirmation before closing a panel with stored data. Keys are limited to 128 characters, values to 64 KiB, and each panel to 256 values or 1 MiB total.
+Use `treeport.panel.setTitle(title)` to set a title on the current client.
+
+Use `treeport.panel.setTitle(null)` to restore the configured title.
+
+Treeport does not save runtime titles or send them to other clients.
+
+For a repository project, `treeport.diff()` returns merge-base information and a read-only unified diff for the final tree state.
+
+A folder project does not have a Git diff. The call returns `GIT_NOT_AVAILABLE`.
+
+It groups relative file paths into these sets:
+
+- `changeSets.branch`: Merge base to `HEAD`.
+- `changeSets.staged`: `HEAD` to the index.
+- `changeSets.unstaged`: Index to the working tree.
+- `changeSets.untracked`: Untracked files.
+
+Sets can overlap. For example, a committed file with a local edit appears in the branch and unstaged sets.
+
+Use `unified` to show the final diff. Use `changeSets` to organize the files.
+
+`treeport.shortcuts.onFind(handler)` sends `Cmd/Ctrl+F` to the panel. It returns a function that removes the handler.
+
+`treeport.storage` is durable JSON key-value storage for one panel instance.
+
+Treeport deletes this storage when you close the panel. It requests approval before closing a panel that has saved data.
+
+A key can have a maximum of 128 characters. A value can have a maximum size of 64 KiB.
+
+Each panel can have a maximum of 256 values and 1 MiB of data.
