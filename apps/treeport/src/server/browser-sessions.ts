@@ -9,10 +9,12 @@ import type {
   BrowserClientMessage,
   BrowserFrame,
   BrowserServerMessage,
-  BrowserSessionState
+  BrowserSessionState,
+  JsonValue
 } from '@treeport/shared'
 import {
   BROWSER_MAX_FRAME_BYTES,
+  browserUrlSchema,
   parseBrowserClientMessage
 } from '@treeport/shared'
 import type { AppConfig, TreeportService } from './core/index'
@@ -32,6 +34,15 @@ export interface BrowserTransport {
 
 export interface BrowserSessionService {
   authorizeHostBrowserPanel: TreeportService['authorizeHostBrowserPanel']
+  getWebPanelStorage(
+    panelId: string,
+    key: string
+  ): Promise<JsonValue | undefined>
+  setWebPanelStorage(
+    panelId: string,
+    key: string,
+    value: JsonValue
+  ): Promise<void>
   events: Pick<TreeportService['events'], 'subscribe'>
 }
 
@@ -78,9 +89,40 @@ interface BrowserAttachment {
   clientId: string
   transport: BrowserTransport
   visible: boolean
+  closing: boolean
   awaitingFrame: number | null
   pendingFrame: BrowserFrame | null
   viewport: { width: number; height: number }
+}
+
+interface BrowserScheduledCompletion {
+  resolve(): void
+  reject(error: Error): void
+}
+
+interface BrowserScheduledOperation {
+  coalesceKey: string | null
+  message: BrowserClientMessage | null
+  execute(message: BrowserClientMessage | null): Promise<void>
+  completions: BrowserScheduledCompletion[]
+  required: boolean
+}
+
+type BrowserScheduledInput = Omit<BrowserScheduledOperation, 'completions'>
+
+interface BrowserScheduler {
+  queue: BrowserScheduledOperation[]
+  coalesced: Map<string, BrowserScheduledOperation>
+  running: boolean
+  accepting: boolean
+}
+
+interface BrowserUrlStorage {
+  launchUpdatedAt: string
+  persistedUrl: string | null
+  persistedLaunchUpdatedAt: string | null
+  pendingUrl: string | null
+  write: Promise<void> | null
 }
 
 interface BrowserSession {
@@ -91,25 +133,38 @@ interface BrowserSession {
   launch: Promise<BrowserSessionBrowser> | null
   attachments: Map<string, BrowserAttachment>
   controllerId: string | null
-  pendingControllerId: string | null
   state: Omit<
     BrowserSessionState,
     'controlled' | 'hasController' | 'controller'
   >
   sequence: number
   latestFrame: BrowserFrame | null
-  commandTail: Promise<void>
-  agentTail: Promise<void>
+  scheduler: BrowserScheduler
+  urlStorage: BrowserUrlStorage
   agentAttached: boolean
   agentProcess: ChildProcess | null
   crashMessage: string | null
+  closing: boolean
+  closeOperation: Promise<void> | null
 }
 
 const MAX_BROWSER_ATTACHMENTS = 8
 const MAX_BROWSER_TICKETS = 256
+const MAX_BROWSER_SCHEDULED_OPERATIONS = 64
+const MAX_BROWSER_REGULAR_OPERATIONS = 46
+const REMOTE_BROWSER_STORAGE_KEY = 'browser-state'
 
 const playwrightPackageSchema = z.object({
   bin: z.object({ playwright: z.string() }).optional()
+})
+
+const remoteBrowserLaunchSchema = z.object({
+  url: browserUrlSchema.optional()
+})
+
+const remoteBrowserStorageSchema = z.strictObject({
+  url: browserUrlSchema.optional(),
+  launchUpdatedAt: z.string().optional()
 })
 
 const defaultBrowserFactory: BrowserSessionBrowserFactory = (
@@ -245,6 +300,232 @@ export class BrowserSessionManager {
     }
   }
 
+  private enqueueOperation(
+    session: BrowserSession,
+    operation: BrowserScheduledOperation,
+    allowWhenClosing = false
+  ): boolean {
+    const scheduler = session.scheduler
+    if (!scheduler.accepting && !allowWhenClosing) {
+      return false
+    }
+
+    if (operation.coalesceKey) {
+      const existing = scheduler.coalesced.get(operation.coalesceKey)
+      if (existing) {
+        if (
+          existing.message?.type === 'wheel' &&
+          operation.message?.type === 'wheel'
+        ) {
+          existing.message = {
+            type: 'wheel',
+            deltaX: Math.max(
+              -10_000,
+              Math.min(
+                10_000,
+                existing.message.deltaX + operation.message.deltaX
+              )
+            ),
+            deltaY: Math.max(
+              -10_000,
+              Math.min(
+                10_000,
+                existing.message.deltaY + operation.message.deltaY
+              )
+            )
+          }
+        } else {
+          existing.message = operation.message
+        }
+
+        existing.execute = operation.execute
+        existing.completions.push(...operation.completions)
+        existing.required ||= operation.required
+        return true
+      }
+    }
+
+    if (
+      scheduler.queue.length >= MAX_BROWSER_SCHEDULED_OPERATIONS ||
+      (!operation.required &&
+        scheduler.queue.length >= MAX_BROWSER_REGULAR_OPERATIONS)
+    ) {
+      return false
+    }
+
+    scheduler.queue.push(operation)
+
+    if (operation.coalesceKey) {
+      scheduler.coalesced.set(operation.coalesceKey, operation)
+    }
+
+    this.runScheduler(session)
+    return true
+  }
+
+  private scheduleOperation(
+    session: BrowserSession,
+    execute: () => Promise<void>,
+    options: {
+      coalesceKey?: string
+      required?: boolean
+      allowWhenClosing?: boolean
+    } = {}
+  ): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      const accepted = this.enqueueOperation(
+        session,
+        {
+          coalesceKey: options.coalesceKey ?? null,
+          message: null,
+          execute: () => execute(),
+          completions: [{ resolve, reject }],
+          required: options.required ?? false
+        },
+        options.allowWhenClosing
+      )
+      if (!accepted) {
+        reject(
+          new Error(
+            session.scheduler.accepting
+              ? 'The Remote Browser command queue is full.'
+              : 'The Remote Browser session is closing.'
+          )
+        )
+      }
+    })
+  }
+
+  private queueClientOperation(
+    session: BrowserSession,
+    attachment: BrowserAttachment,
+    operation: BrowserScheduledInput
+  ): void {
+    if (!this.enqueueOperation(session, { ...operation, completions: [] })) {
+      attachment.transport.sendMessage({
+        type: 'navigationError',
+        message: session.scheduler.accepting
+          ? 'The Remote Browser command queue is full. Wait and try again.'
+          : 'The Remote Browser session is closing.'
+      })
+    }
+  }
+
+  private runScheduler(session: BrowserSession): void {
+    const scheduler = session.scheduler
+    if (scheduler.running) {
+      return
+    }
+
+    scheduler.running = true
+    void (async () => {
+      while (scheduler.queue.length > 0) {
+        const operation = scheduler.queue.shift()!
+        if (operation.coalesceKey) {
+          scheduler.coalesced.delete(operation.coalesceKey)
+        }
+
+        try {
+          await operation.execute(operation.message)
+          for (const completion of operation.completions) {
+            completion.resolve()
+          }
+        } catch (cause) {
+          const error =
+            cause instanceof Error ? cause : new Error(String(cause))
+          for (const completion of operation.completions) {
+            completion.reject(error)
+          }
+        }
+      }
+      scheduler.running = false
+    })()
+  }
+
+  private stopScheduler(session: BrowserSession, reason: string): void {
+    session.scheduler.accepting = false
+    const error = new Error(reason)
+    for (const operation of session.scheduler.queue.splice(0)) {
+      for (const completion of operation.completions) {
+        completion.reject(error)
+      }
+    }
+    session.scheduler.coalesced.clear()
+  }
+
+  private queueStoredUrl(session: BrowserSession, value: string): void {
+    if (session.closing) {
+      return
+    }
+
+    const parsed = browserUrlSchema.safeParse(value)
+    if (!parsed.success) {
+      return
+    }
+
+    const url = new URL(parsed.data).href
+    const storage = session.urlStorage
+    if (
+      storage.pendingUrl === url ||
+      (storage.persistedUrl === url &&
+        storage.persistedLaunchUpdatedAt === storage.launchUpdatedAt)
+    ) {
+      return
+    }
+
+    storage.pendingUrl = url
+    if (storage.write) {
+      return
+    }
+
+    const write = (async () => {
+      while (storage.pendingUrl !== null) {
+        const pendingUrl = storage.pendingUrl
+        storage.pendingUrl = null
+        try {
+          await this.service.setWebPanelStorage(
+            session.panelId,
+            REMOTE_BROWSER_STORAGE_KEY,
+            {
+              url: pendingUrl,
+              launchUpdatedAt: storage.launchUpdatedAt
+            }
+          )
+          storage.persistedUrl = pendingUrl
+          storage.persistedLaunchUpdatedAt = storage.launchUpdatedAt
+        } catch (cause) {
+          const message = cause instanceof Error ? cause.message : String(cause)
+          for (const attachment of session.attachments.values()) {
+            attachment.transport.sendMessage({
+              type: 'navigationError',
+              message: `Could not save the Remote Browser address: ${message}`
+            })
+          }
+          return
+        }
+      }
+    })()
+    storage.write = write
+    void write.finally(() => {
+      if (storage.write !== write) {
+        return
+      }
+
+      storage.write = null
+      const pendingUrl = storage.pendingUrl
+      storage.pendingUrl = null
+      if (pendingUrl !== null && !session.closing) {
+        this.queueStoredUrl(session, pendingUrl)
+      }
+    })
+  }
+
+  private async waitForStoredUrl(session: BrowserSession): Promise<void> {
+    while (session.urlStorage.write) {
+      await session.urlStorage.write
+    }
+  }
+
   private async createSession(panelId: string): Promise<BrowserSession> {
     if (this.sessions.size >= 6) {
       throw new Error(
@@ -253,6 +534,27 @@ export class BrowserSessionManager {
     }
 
     const authorized = await this.service.authorizeHostBrowserPanel(panelId)
+    const storedValue = await this.service.getWebPanelStorage(
+      panelId,
+      REMOTE_BROWSER_STORAGE_KEY
+    )
+    const launchState = remoteBrowserLaunchSchema.safeParse(
+      authorized.panel.launch.input
+    )
+    const storedState = remoteBrowserStorageSchema.safeParse(storedValue)
+    const launchUrl = launchState.success
+      ? (launchState.data.url ?? null)
+      : null
+    const storedUrl = storedState.success
+      ? (storedState.data.url ?? null)
+      : null
+    const storedLaunchUpdatedAt = storedState.success
+      ? (storedState.data.launchUpdatedAt ?? null)
+      : null
+    const restoredUrl =
+      launchUrl && storedLaunchUpdatedAt !== authorized.panel.updatedAt
+        ? launchUrl
+        : (storedUrl ?? launchUrl)
     const agentDirectory = path.join(
       this.config.runtimeDir,
       'browsers',
@@ -269,17 +571,33 @@ export class BrowserSessionManager {
       launch: null,
       attachments: new Map(),
       controllerId: null,
-      pendingControllerId: null,
-      state: { ...DEFAULT_STATE, viewport: { ...DEFAULT_STATE.viewport } },
+      state: {
+        ...DEFAULT_STATE,
+        url: restoredUrl ?? DEFAULT_STATE.url,
+        viewport: { ...DEFAULT_STATE.viewport }
+      },
       sequence: 0,
       latestFrame: null,
-      commandTail: Promise.resolve(),
-      agentTail: Promise.resolve(),
+      scheduler: {
+        queue: [],
+        coalesced: new Map(),
+        running: false,
+        accepting: true
+      },
+      urlStorage: {
+        launchUpdatedAt: authorized.panel.updatedAt,
+        persistedUrl: storedUrl,
+        persistedLaunchUpdatedAt: storedLaunchUpdatedAt,
+        pendingUrl: null,
+        write: null
+      },
       agentAttached: false,
       agentProcess: null,
-      crashMessage: null
+      crashMessage: null,
+      closing: false,
+      closeOperation: null
     }
-    session.launch = (async () => {
+    const browserLaunch = (async () => {
       const browser = this.browserFactory(
         this.cachePath,
         session.agentDirectory,
@@ -289,6 +607,7 @@ export class BrowserSessionManager {
         {
           state: (state) => {
             session.state = state
+            this.queueStoredUrl(session, state.url)
             this.broadcastState(session)
           },
           frame: (frame) => this.publishFrame(session, frame),
@@ -316,7 +635,25 @@ export class BrowserSessionManager {
       session.state = browser.state
       return browser
     })()
+    session.launch = browserLaunch
     this.sessions.set(panelId, session)
+    if (restoredUrl) {
+      const restore = this.scheduleOperation(
+        session,
+        async () => {
+          const browser = await browserLaunch
+          await browser
+            .command({ type: 'navigate', url: restoredUrl })
+            .catch(() => undefined)
+          session.state = browser.state
+          this.queueStoredUrl(session, session.state.url)
+          await this.waitForStoredUrl(session)
+        },
+        { required: true }
+      )
+      session.launch = restore.then(() => browserLaunch)
+    }
+
     return session
   }
 
@@ -381,12 +718,12 @@ export class BrowserSessionManager {
       clientId: ticket.clientId,
       transport,
       visible: true,
+      closing: false,
       awaitingFrame: null,
       pendingFrame: null,
       viewport: { ...session.state.viewport }
     }
     session.attachments.set(attachment.id, attachment)
-    session.controllerId ??= attachment.id
 
     try {
       await this.browserFor(session)
@@ -395,6 +732,18 @@ export class BrowserSessionManager {
         return attachment.id
       }
 
+      await this.scheduleOperation(
+        session,
+        async () => {
+          if (attachment.closing) {
+            return
+          }
+
+          session.controllerId ??= attachment.id
+          await this.updateScreencast(session)
+        },
+        { required: true }
+      )
       transport.sendMessage({
         type: 'ready',
         state: this.stateFor(session, attachment)
@@ -407,13 +756,14 @@ export class BrowserSessionManager {
         })
       }
 
-      await this.updateScreencast(session)
       this.sendLatestFrame(session, attachment)
     } catch (error) {
       if (this.sessions.get(session.panelId) === session) {
         this.sessions.delete(session.panelId)
       }
 
+      session.closing = true
+      this.stopScheduler(session, 'Remote Browser launch failed.')
       const message = error instanceof Error ? error.message : String(error)
       transport.sendMessage({
         type: 'browserUnavailable',
@@ -499,6 +849,10 @@ export class BrowserSessionManager {
     }
 
     const { session, attachment } = entry
+    if (attachment.closing) {
+      return
+    }
+
     if (message.type === 'frameAck') {
       if (attachment.awaitingFrame !== message.sequence) {
         return
@@ -523,107 +877,120 @@ export class BrowserSessionManager {
         attachment.pendingFrame = null
       }
 
-      void this.updateScreencast(session)
-      return
-    }
-
-    const queueViewport = (afterAgent = false) => {
-      session.commandTail = session.commandTail.then(async () => {
-        if (afterAgent) {
-          await session.agentTail
-        }
-
-        if (session.controllerId !== attachment.id) {
-          return
-        }
-
-        try {
-          const browser = await this.browserFor(session)
-          await browser.command({ type: 'resize', ...attachment.viewport })
-        } catch (error) {
-          attachment.transport.sendMessage({
-            type: 'navigationError',
-            message: error instanceof Error ? error.message : String(error)
-          })
-        }
+      this.queueClientOperation(session, attachment, {
+        coalesceKey: `screencast:${session.panelId}`,
+        message: null,
+        execute: () => this.updateScreencast(session),
+        required: true
       })
+      return
     }
 
     if (message.type === 'resize') {
       attachment.viewport = { width: message.width, height: message.height }
-      if (session.controllerId === attachment.id) {
-        queueViewport()
-      }
+      this.queueClientOperation(session, attachment, {
+        coalesceKey: `resize:${attachment.id}`,
+        message,
+        execute: async (queuedMessage) => {
+          if (
+            queuedMessage?.type !== 'resize' ||
+            attachment.closing ||
+            session.attachments.get(attachment.id) !== attachment ||
+            session.controllerId !== attachment.id
+          ) {
+            return
+          }
 
+          try {
+            const browser = await this.browserFor(session)
+            await browser.command(queuedMessage)
+          } catch (cause) {
+            attachment.transport.sendMessage({
+              type: 'navigationError',
+              message: cause instanceof Error ? cause.message : String(cause)
+            })
+          }
+        },
+        required: false
+      })
       return
     }
 
     if (message.type === 'takeControl') {
-      if (session.controllerId === 'agent') {
-        session.pendingControllerId = attachment.id
-        queueViewport(true)
-      } else {
-        session.pendingControllerId = null
-        session.controllerId = attachment.id
-        this.broadcastState(session, 'controlChanged')
-        queueViewport()
-      }
+      this.queueClientOperation(session, attachment, {
+        coalesceKey: null,
+        message: null,
+        execute: async () => {
+          if (
+            attachment.closing ||
+            session.attachments.get(attachment.id) !== attachment
+          ) {
+            return
+          }
 
+          const changed = session.controllerId !== attachment.id
+          session.controllerId = attachment.id
+          if (changed) {
+            this.broadcastState(session, 'controlChanged')
+          }
+
+          try {
+            const browser = await this.browserFor(session)
+            await browser.command({ type: 'resize', ...attachment.viewport })
+          } catch (cause) {
+            attachment.transport.sendMessage({
+              type: 'navigationError',
+              message: cause instanceof Error ? cause.message : String(cause)
+            })
+          }
+        },
+        required: false
+      })
       return
     }
 
-    if (
-      session.controllerId === 'agent' &&
-      session.pendingControllerId === attachment.id
-    ) {
-      session.commandTail = session.commandTail.then(async () => {
-        await session.agentTail
+    const coalesceKey =
+      message.type === 'pointer' && message.phase === 'move'
+        ? `pointer-move:${attachment.id}`
+        : message.type === 'wheel'
+          ? `wheel:${attachment.id}`
+          : null
+    this.queueClientOperation(session, attachment, {
+      coalesceKey,
+      message,
+      execute: async (queuedMessage) => {
+        if (
+          !queuedMessage ||
+          attachment.closing ||
+          session.attachments.get(attachment.id) !== attachment
+        ) {
+          return
+        }
+
         if (session.controllerId !== attachment.id) {
+          attachment.transport.sendMessage({
+            type: 'navigationError',
+            message: 'Take control before you interact with this browser.'
+          })
           return
         }
 
         try {
-          if (message.type === 'reset') {
+          if (queuedMessage.type === 'reset') {
             await this.resetSession(session)
           } else {
             const browser = await this.browserFor(session)
-            await browser.command(message)
+            await browser.command(queuedMessage)
+            await this.waitForStoredUrl(session)
           }
-        } catch (error) {
+        } catch (cause) {
           attachment.transport.sendMessage({
             type: 'navigationError',
-            message: error instanceof Error ? error.message : String(error)
+            message: cause instanceof Error ? cause.message : String(cause)
           })
         }
-      })
-      return
-    }
-
-    if (session.controllerId !== attachment.id) {
-      attachment.transport.sendMessage({
-        type: 'navigationError',
-        message: 'Take control before you interact with this browser.'
-      })
-      return
-    }
-
-    if (message.type === 'reset') {
-      session.commandTail = session.commandTail.then(() =>
-        this.resetSession(session)
-      )
-      return
-    }
-
-    session.commandTail = session.commandTail.then(async () => {
-      try {
-        const browser = await this.browserFor(session)
-        await browser.command(message)
-      } catch (error) {
-        attachment.transport.sendMessage({
-          type: 'navigationError',
-          message: error instanceof Error ? error.message : String(error)
-        })
-      }
+      },
+      required: false
     })
   }
 
@@ -637,7 +1004,9 @@ export class BrowserSessionManager {
       .setScreencasting(
         [...session.attachments.values()].some(
           (attachment) =>
-            attachment.visible && attachment.transport.isConnected()
+            !attachment.closing &&
+            attachment.visible &&
+            attachment.transport.isConnected()
         )
       )
       .catch(() => undefined)
@@ -655,40 +1024,60 @@ export class BrowserSessionManager {
     ]).catch(() => undefined)
   }
 
-  private async resetSession(session: BrowserSession): Promise<void> {
+  private async destroySession(
+    session: BrowserSession,
+    reason: string
+  ): Promise<void> {
+    await this.waitForStoredUrl(session)
     await this.detachAgent(session)
     await this.browserFor(session)
       .catch(() => session.browser)
       .then((browser) => browser?.close())
-    this.sessions.delete(session.panelId)
     await fs.rm(session.agentDirectory, { recursive: true, force: true })
+    if (this.sessions.get(session.panelId) === session) {
+      this.sessions.delete(session.panelId)
+    }
+
     for (const attachment of session.attachments.values()) {
-      attachment.transport.sendMessage({
-        type: 'closed',
-        reason: 'Remote Browser reset; reconnecting to a new empty session.'
-      })
+      attachment.closing = true
+      attachment.transport.sendMessage({ type: 'closed', reason })
       attachment.transport.disconnect()
     }
+  }
+
+  private async resetSession(session: BrowserSession): Promise<void> {
+    session.closing = true
+    this.stopScheduler(session, 'Remote Browser reset.')
+    await this.destroySession(
+      session,
+      'Remote Browser reset; reconnecting to a new empty session.'
+    )
   }
 
   close(connectionId: string): void {
     for (const session of this.sessions.values()) {
       const attachment = session.attachments.get(connectionId)
-      if (!attachment) {
+      if (!attachment || attachment.closing) {
         continue
       }
 
-      session.attachments.delete(connectionId)
-      if (session.pendingControllerId === connectionId) {
-        session.pendingControllerId = null
-      }
+      attachment.closing = true
+      void this.scheduleOperation(
+        session,
+        async () => {
+          session.attachments.delete(connectionId)
+          if (session.controllerId === connectionId) {
+            session.controllerId =
+              [...session.attachments.values()].find(
+                (candidate) => !candidate.closing
+              )?.id ?? null
+            this.broadcastState(session, 'controlChanged')
+          }
 
-      if (session.controllerId === connectionId) {
-        session.controllerId = session.attachments.keys().next().value ?? null
-        this.broadcastState(session, 'controlChanged')
-      }
-
-      void this.updateScreencast(session)
+          await this.updateScreencast(session)
+        },
+        { required: true }
+      ).catch(() => undefined)
       return
     }
   }
@@ -701,18 +1090,20 @@ export class BrowserSessionManager {
       return
     }
 
-    this.sessions.delete(panelId)
-    session.agentProcess?.kill('SIGTERM')
-    await session.agentTail.catch(() => undefined)
-    await this.detachAgent(session)
-    for (const attachment of session.attachments.values()) {
-      attachment.transport.sendMessage({ type: 'closed', reason })
-      attachment.transport.disconnect()
+    if (session.closeOperation) {
+      return session.closeOperation
     }
-    await this.browserFor(session)
-      .catch(() => session.browser)
-      .then((browser) => browser?.close())
-    await fs.rm(session.agentDirectory, { recursive: true, force: true })
+
+    session.closing = true
+    this.stopScheduler(session, reason)
+    session.agentProcess?.kill('SIGTERM')
+    const closeOperation = this.scheduleOperation(
+      session,
+      () => this.destroySession(session, reason),
+      { required: true, allowWhenClosing: true }
+    )
+    session.closeOperation = closeOperation
+    return closeOperation
   }
 
   private async playwrightCliPath(): Promise<string> {
@@ -790,23 +1181,14 @@ export class BrowserSessionManager {
     input: BrowserAgentCommand
   ): Promise<string> {
     const session = await this.getSession(panelId)
-    const previousAgent = session.agentTail
-    let releaseAgent!: () => void
-    session.agentTail = new Promise<void>((resolve) => {
-      releaseAgent = resolve
-    })
-    await previousAgent.catch(() => undefined)
-    try {
-      await this.browserFor(session).catch(async (error) => {
-        if (this.sessions.get(session.panelId) === session) {
-          this.sessions.delete(session.panelId)
-        }
-
-        await session.browser?.close()
-        await fs.rm(session.agentDirectory, { recursive: true, force: true })
+    let result = ''
+    await this.scheduleOperation(session, async () => {
+      const browser = await this.browserFor(session).catch(async (error) => {
+        session.closing = true
+        this.stopScheduler(session, 'Remote Browser launch failed.')
+        await this.destroySession(session, 'Remote Browser launch failed.')
         throw error
       })
-      await session.commandTail.catch(() => undefined)
       const name = `treeport-${panelId}`
       if (!session.agentAttached) {
         await this.executeAgentCli(session, ['attach', name, '--session', name])
@@ -817,26 +1199,27 @@ export class BrowserSessionManager {
       session.controllerId = 'agent'
       this.broadcastState(session, 'controlChanged')
       try {
-        return await this.executeAgentCli(session, [
+        result = await this.executeAgentCli(session, [
           `-s=${name}`,
           input.command,
           '--',
           ...input.args
         ])
+        this.queueStoredUrl(session, browser.state.url)
+        await this.waitForStoredUrl(session)
       } finally {
-        const pendingController = session.pendingControllerId
-        session.pendingControllerId = null
         session.controllerId =
-          pendingController && session.attachments.has(pendingController)
-            ? pendingController
-            : previousController && session.attachments.has(previousController)
-              ? previousController
-              : (session.attachments.keys().next().value ?? null)
+          previousController &&
+          previousController !== 'agent' &&
+          !session.attachments.get(previousController)?.closing
+            ? previousController
+            : ([...session.attachments.values()].find(
+                (attachment) => !attachment.closing
+              )?.id ?? null)
         this.broadcastState(session, 'controlChanged')
       }
-    } finally {
-      releaseAgent()
-    }
+    })
+    return result
   }
 
   async status(): Promise<BrowserInstallStatus> {

@@ -30,12 +30,119 @@ export interface BrowserInstallStatus {
 }
 
 const DEFAULT_VIEWPORT = { width: 1_280, height: 800 }
+const DEFAULT_MAX_FRAME_RATE = 15
+
+interface BrowserScreencastFrame {
+  data: string
+  metadata: {
+    timestamp?: number
+    deviceWidth: number
+    deviceHeight: number
+  }
+  sessionId: number
+}
+
+export class LatestBrowserFrameProducer {
+  private active = false
+  private pending: BrowserScreencastFrame | null = null
+  private timer: ReturnType<typeof setTimeout> | null = null
+  private lastPublishedAt = 0
+
+  constructor(
+    private readonly publish: (frame: Omit<BrowserFrame, 'sequence'>) => void,
+    private readonly acknowledge: (sessionId: number) => void,
+    private readonly maxFrameRate = DEFAULT_MAX_FRAME_RATE
+  ) {}
+
+  start(): void {
+    this.active = true
+    this.lastPublishedAt = 0
+  }
+
+  receive(frame: BrowserScreencastFrame): void {
+    if (!this.active) {
+      this.acknowledge(frame.sessionId)
+      return
+    }
+
+    if (this.pending) {
+      this.acknowledge(this.pending.sessionId)
+    }
+
+    this.pending = frame
+
+    if (this.timer) {
+      return
+    }
+
+    const minimumInterval = 1_000 / this.maxFrameRate
+    const delay = Math.max(
+      0,
+      this.lastPublishedAt + minimumInterval - Date.now()
+    )
+    if (delay === 0) {
+      this.publishPending()
+      return
+    }
+
+    this.timer = setTimeout(() => {
+      this.timer = null
+      this.publishPending()
+    }, delay)
+    this.timer.unref?.()
+  }
+
+  stop(): void {
+    this.active = false
+    if (this.timer) {
+      clearTimeout(this.timer)
+      this.timer = null
+    }
+
+    if (this.pending) {
+      this.acknowledge(this.pending.sessionId)
+      this.pending = null
+    }
+  }
+
+  private publishPending(): void {
+    const frame = this.pending
+    this.pending = null
+    if (!frame) {
+      return
+    }
+
+    if (!this.active) {
+      this.acknowledge(frame.sessionId)
+      return
+    }
+
+    this.lastPublishedAt = Date.now()
+    try {
+      const data = Buffer.from(frame.data, 'base64')
+      if (data.byteLength <= 8 * 1024 * 1024) {
+        this.publish({
+          mimeType: 'image/jpeg',
+          timestamp: frame.metadata.timestamp
+            ? frame.metadata.timestamp * 1_000
+            : Date.now(),
+          width: frame.metadata.deviceWidth,
+          height: frame.metadata.deviceHeight,
+          data
+        })
+      }
+    } finally {
+      this.acknowledge(frame.sessionId)
+    }
+  }
+}
 
 export class PlaywrightBrowser {
   private browser: Browser | null = null
   private context: BrowserContext | null = null
   private page: Page | null = null
   private cdp: CDPSession | null = null
+  private frameProducer: LatestBrowserFrameProducer | null = null
   private screencasting = false
   private screencastTail: Promise<void> = Promise.resolve()
   private closing = false
@@ -151,7 +258,19 @@ export class PlaywrightBrowser {
 
     const page = context.pages()[0] ?? (await context.newPage())
     this.page = page
-    this.cdp = await context.newCDPSession(page)
+    const cdp = await context.newCDPSession(page)
+    this.cdp = cdp
+    this.frameProducer = new LatestBrowserFrameProducer(
+      (frame) => this.callbacks.frame(frame),
+      (sessionId) => {
+        void cdp
+          .send('Page.screencastFrameAck', { sessionId })
+          .catch(() => undefined)
+      }
+    )
+    cdp.on('Page.screencastFrame', (frame) =>
+      this.frameProducer?.receive(frame)
+    )
     context.on('page', (candidate) => {
       if (candidate !== page) {
         this.callbacks.navigationError(
@@ -298,33 +417,39 @@ export class PlaywrightBrowser {
   async setScreencasting(enabled: boolean): Promise<void> {
     const operation = this.screencastTail.then(async () => {
       const page = this.page
-      if (!page || page.isClosed() || enabled === this.screencasting) {
+      const cdp = this.cdp
+      const frameProducer = this.frameProducer
+      if (
+        !page ||
+        page.isClosed() ||
+        !cdp ||
+        !frameProducer ||
+        enabled === this.screencasting
+      ) {
         return
       }
 
       this.screencasting = enabled
       if (!enabled) {
-        await page.screencast.stop().catch(() => undefined)
+        frameProducer.stop()
+        await cdp.send('Page.stopScreencast').catch(() => undefined)
         return
       }
 
-      await page.screencast.start({
-        quality: 75,
-        size: this.stateValue.viewport,
-        onFrame: ({ data, timestamp, viewportWidth, viewportHeight }) => {
-          if (!this.screencasting || data.byteLength > 8 * 1024 * 1024) {
-            return
-          }
-
-          this.callbacks.frame({
-            mimeType: 'image/jpeg',
-            timestamp,
-            width: viewportWidth,
-            height: viewportHeight,
-            data
-          })
-        }
-      })
+      frameProducer.start()
+      await cdp
+        .send('Page.startScreencast', {
+          format: 'jpeg',
+          quality: 75,
+          maxWidth: this.stateValue.viewport.width,
+          maxHeight: this.stateValue.viewport.height,
+          everyNthFrame: 1
+        })
+        .catch((error) => {
+          this.screencasting = false
+          frameProducer.stop()
+          throw error
+        })
     })
     this.screencastTail = operation.catch(() => undefined)
     return operation
@@ -434,6 +559,7 @@ export class PlaywrightBrowser {
     }
 
     this.closing = true
+    this.frameProducer?.stop()
     await this.setScreencasting(false).catch(() => undefined)
     if (this.titleTimer) {
       clearInterval(this.titleTimer)
@@ -449,6 +575,7 @@ export class PlaywrightBrowser {
     this.page = null
     this.context = null
     this.cdp = null
+    this.frameProducer = null
     this.browser = null
   }
 }

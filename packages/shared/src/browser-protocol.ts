@@ -6,7 +6,7 @@ export const BROWSER_MAX_MESSAGE_BYTES = 128 * 1024
 
 export type BrowserMouseButton = 'left' | 'right' | 'middle'
 
-const browserUrlSchema = z
+export const browserUrlSchema: z.ZodType<string> = z
   .string()
   .min(1)
   .max(4_096)

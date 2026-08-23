@@ -62,10 +62,6 @@ const serverMessageSchema = z.discriminatedUnion('type', [
 ])
 
 const browserUrlValueSchema = z.string().max(4_096)
-const browserStorageSchema = z.strictObject({
-  url: z.string().optional(),
-  launchUpdatedAt: z.string().optional()
-})
 
 type SessionState = z.infer<typeof sessionStateSchema>
 type ServerMessage = z.infer<typeof serverMessageSchema>
@@ -119,15 +115,11 @@ const drawing = canvas.getContext('2d', { alpha: false })!
 let port: MessagePort | null = null
 let currentUrl: URL | null = null
 let configuredTitle = ''
-let panelUpdatedAt = ''
-let initialNavigationPending = true
-let forceInitialNavigation = false
 let discoveryRequest = 0
 let frameWidth = 1_280
 let frameHeight = 800
 let viewportWidth = 1_280
 let viewportHeight = 800
-let storageWrites: Promise<unknown> = Promise.resolve()
 let browserCrashed = false
 let controlled = false
 let pointerActive = false
@@ -177,26 +169,12 @@ function requestConnection() {
   )
 }
 
-function storeUrl(url: URL) {
-  const write = storageWrites.then(() =>
-    treeport.storage.set('browser-state', {
-      url: url.href,
-      launchUpdatedAt: panelUpdatedAt
-    })
-  )
-  storageWrites = write.catch(() => undefined)
-  return write
-}
-
 function navigate(url: URL) {
   homepage.hidden = true
   failure.hidden = true
   showError(null)
-  currentUrl = url
-  input.value = url.href
   send({ type: 'takeControl' })
   send({ type: 'navigate', url: url.href })
-  void storeUrl(url).catch((cause: unknown) => showError(errorText(cause)))
 }
 
 function showHomepage() {
@@ -230,23 +208,19 @@ function applyState(state: SessionState) {
 
   const url = browserUrl(state.url)
   if (url) {
-    const changed = currentUrl?.href !== url.href
+    homepage.hidden = true
     currentUrl = url
     input.value = url.href
     copyButton.disabled = false
-    if (changed) {
-      void storeUrl(url).catch((cause: unknown) => showError(errorText(cause)))
-    }
-
     treeport.panel.setTitle(configuredTitle || state.title || url.host)
-  }
-
-  if (initialNavigationPending) {
-    initialNavigationPending = false
-    if ((forceInitialNavigation || state.url === 'about:blank') && currentUrl) {
-      forceInitialNavigation = false
-      navigate(currentUrl)
+  } else {
+    currentUrl = null
+    copyButton.disabled = true
+    if (state.url === 'about:blank') {
+      showHomepage()
     }
+
+    treeport.panel.setTitle(configuredTitle || state.title || null)
   }
 }
 
@@ -415,38 +389,14 @@ addEventListener('message', (event) => {
   })
 })
 
-void Promise.all([
-  treeport.context(),
-  treeport.storage.get<JsonValue>('browser-state')
-]).then(
-  ([context, storedValue]) => {
-    const configuredUrl = browserUrl(context.launch.input?.url)
-    panelUpdatedAt = context.panel.updatedAt
+void treeport.context().then(
+  (context) => {
     const launchTitle = z.string().safeParse(context.launch.input?.title)
     configuredTitle = launchTitle.success
       ? launchTitle.data.trim().slice(0, 256)
       : ''
-    const storedState = browserStorageSchema.safeParse(storedValue)
-    const storedUrl = browserUrl(
-      storedState.success ? storedState.data.url : undefined
-    )
-    const storedLaunchUpdatedAt = storedState.success
-      ? (storedState.data.launchUpdatedAt ?? null)
-      : null
-    forceInitialNavigation = Boolean(
-      configuredUrl && storedLaunchUpdatedAt !== panelUpdatedAt
-    )
-    currentUrl = forceInitialNavigation
-      ? configuredUrl
-      : (storedUrl ?? configuredUrl)
-    if (currentUrl) {
-      input.value = currentUrl.href
-      treeport.panel.setTitle(configuredTitle || currentUrl.host)
-    } else {
-      showHomepage()
-      treeport.panel.setTitle(null)
-    }
-
+    showHomepage()
+    treeport.panel.setTitle(configuredTitle || null)
     requestConnection()
     void discoverListeners()
   },
@@ -491,7 +441,6 @@ resetButton.addEventListener('click', () => {
     )
   ) {
     browserCrashed = false
-    initialNavigationPending = true
     send({ type: 'reset' })
   }
 })

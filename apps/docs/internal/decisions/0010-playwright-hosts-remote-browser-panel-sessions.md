@@ -13,11 +13,13 @@ Treeport needs a separate Remote Browser panel to reach daemon-host development 
 
 The existing client-side Browser keeps its iframe implementation and definition identity. The Remote Browser is a second web panel in the same package. Its toolbar and streamed viewport run in the existing opaque panel iframe. A private MessagePort bridge connects that first-party package to a daemon BrowserSessionManager after server-side permission checks.
 
-Each Remote Browser panel owns one daemon-launched Playwright Browser process, one empty BrowserContext, and an active Page. The context is disposable and never uses or attaches to a personal browser profile. Browser state lives for the daemon session; only the last address uses normal panel storage.
+Each Remote Browser panel owns one daemon-launched Playwright Browser process, one empty BrowserContext, and an active Page. The context is disposable and never uses or attaches to a personal browser profile. The daemon owns the current address. It restores the address from panel launch data or panel storage before it runs a command. The daemon saves validated top-level address changes in panel storage.
 
-Treeport uses Playwright's supported navigation, input, lifecycle, screencast, and browser-binding APIs. A Chromium CDP session is allowed only for browser details that Playwright does not expose, such as exact navigation-history indexes and same-document navigation signals. Raw Playwright, browser-server, and CDP endpoints do not cross the daemon/web-client boundary.
+Treeport uses Playwright's supported navigation, input, lifecycle, and browser-binding APIs. A Chromium CDP session supplies navigation history, same-document navigation signals, and bounded screencast frames. Raw Playwright, browser-server, and CDP endpoints do not cross the daemon/web-client boundary.
 
-The restricted browser protocol carries navigation commands, input, state, and JPEG frames. Treeport permits one outstanding frame per client and replaces stale pending frames. A cooperative control lease selects one web client or agent at a time. Inactive clients remain attached but do not require screencast frames.
+One bounded scheduler runs control changes, browser commands, agent operations, viewport changes, resets, and closes. The scheduler checks control ownership when each operation runs. It combines queued pointer movement, wheel, and resize operations.
+
+The restricted browser protocol carries navigation commands, input, state, and JPEG frames. The producer limits the frame rate and keeps only its newest queued frame. CDP acknowledgements apply backpressure before Chromium produces more frames. Treeport permits one outstanding frame per client and replaces stale pending frames. A cooperative control lease selects one web client or agent at a time. Inactive clients remain attached but do not require screencast frames.
 
 The official Remote Browser panel requests the reserved `host-browser` permission. Treeport stores explicit source-scoped grants and requires a new confirmation after the source scope or requested permission set changes.
 

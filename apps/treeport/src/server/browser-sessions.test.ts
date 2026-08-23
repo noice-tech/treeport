@@ -4,6 +4,7 @@ import type {
   BrowserClientMessage,
   BrowserFrame,
   BrowserServerMessage,
+  JsonValue,
   ProductEvent,
   WebPanel
 } from '@treeport/shared'
@@ -45,6 +46,10 @@ class FakeBrowser implements BrowserSessionBrowser {
   async launch() {}
   async command(message: BrowserClientMessage) {
     this.commands.push(message)
+    if (message.type === 'navigate') {
+      this.state = { ...this.state, url: message.url }
+      this.callbacks.state(this.state)
+    }
   }
   async setScreencasting(value: boolean) {
     this.screencasting.push(value)
@@ -71,7 +76,13 @@ const browserFactory: BrowserSessionBrowserFactory = (
     callbacks
   )
 
-function fixture(agentCliRunner: BrowserAgentCliRunner | null = null) {
+function fixture(
+  agentCliRunner: BrowserAgentCliRunner | null = null,
+  options: {
+    launchInput?: WebPanel['launch']['input']
+    storedValue?: JsonValue
+  } = {}
+) {
   const events = new EventEmitter()
   const panel: WebPanel = {
     id: 'panel_browser',
@@ -80,7 +91,7 @@ function fixture(agentCliRunner: BrowserAgentCliRunner | null = null) {
     definitionId:
       'package:npm:@treeport/web-panel-browser:web-panel:remote-browser',
     title: 'Remote browser',
-    launch: { input: null, cwd: null },
+    launch: { input: options.launchInput ?? null, cwd: null },
     permissions: ['host-browser'],
     sandbox: { allowSameOrigin: false },
     createdAt: '2026-01-01T00:00:00.000Z',
@@ -91,6 +102,8 @@ function fixture(agentCliRunner: BrowserAgentCliRunner | null = null) {
       panel,
       worktreePath: '/worktree'
     })),
+    getWebPanelStorage: vi.fn(async () => options.storedValue),
+    setWebPanelStorage: vi.fn(async () => undefined),
     events: {
       subscribe(listener: (event: ProductEvent) => void) {
         events.on('event', listener)
@@ -224,9 +237,11 @@ describe('Remote Browser sessions', () => {
 
     value.manager.message('second', { type: 'back' })
     expect(browser.commands).toEqual([])
-    expect(second.messages.at(-1)).toMatchObject({
-      type: 'navigationError'
-    })
+    await vi.waitFor(() =>
+      expect(second.messages.at(-1)).toMatchObject({
+        type: 'navigationError'
+      })
+    )
     value.manager.message('second', { type: 'takeControl' })
     value.manager.message('second', { type: 'back' })
     await vi.waitFor(() =>
@@ -241,6 +256,27 @@ describe('Remote Browser sessions', () => {
       type: 'controlChanged',
       state: { controlled: false }
     })
+
+    const forwardCommands = browser.commands.filter(
+      (command) => command.type === 'forward'
+    ).length
+    value.manager.message('first', { type: 'takeControl' })
+    value.manager.message('second', { type: 'forward' })
+    await vi.waitFor(() =>
+      expect(first.messages.at(-1)).toMatchObject({
+        type: 'controlChanged',
+        state: { controlled: true }
+      })
+    )
+    await vi.waitFor(() =>
+      expect(second.messages.at(-1)).toMatchObject({
+        type: 'navigationError',
+        message: 'Take control before you interact with this browser.'
+      })
+    )
+    expect(
+      browser.commands.filter((command) => command.type === 'forward')
+    ).toHaveLength(forwardCommands)
 
     await value.manager.dispose()
     expect(browser.closes).toBe(1)
@@ -283,6 +319,73 @@ describe('Remote Browser sessions', () => {
     expect(first.messages.at(-1)).toMatchObject({ type: 'controlChanged' })
     expect(second.messages.at(-1)).toMatchObject({ type: 'controlChanged' })
     await value.manager.dispose()
+  })
+
+  it('restores daemon-owned addresses and saves agent navigation without a client', async () => {
+    const launchUrl = 'http://localhost:4173/from-launch'
+    const agentUrl = 'http://localhost:4173/from-agent'
+    const runAgentCli = vi.fn<BrowserAgentCliRunner>(async (_target, args) => {
+      const browser = browsers[0]!
+      if (args[0] === 'attach') {
+        expect(browser.state.url).toBe(launchUrl)
+        return 'attached'
+      }
+
+      if (args[1] === 'goto') {
+        browser.state = { ...browser.state, url: agentUrl }
+        browser.callbacks.state(browser.state)
+        return 'navigated'
+      }
+
+      return 'detached'
+    })
+    const launchValue = fixture(runAgentCli, {
+      launchInput: { url: launchUrl }
+    })
+
+    await expect(
+      launchValue.manager.agentCommand('panel_browser', {
+        command: 'goto',
+        args: [agentUrl]
+      })
+    ).resolves.toBe('navigated')
+    expect(browsers[0]!.commands[0]).toEqual({
+      type: 'navigate',
+      url: launchUrl
+    })
+    expect(launchValue.service.setWebPanelStorage).toHaveBeenLastCalledWith(
+      'panel_browser',
+      'browser-state',
+      {
+        url: agentUrl,
+        launchUpdatedAt: '2026-01-01T00:00:00.000Z'
+      }
+    )
+    await launchValue.manager.dispose()
+
+    const storedUrl = 'http://localhost:4173/from-storage'
+    const storedValue = fixture(null, {
+      storedValue: {
+        url: storedUrl,
+        launchUpdatedAt: '2026-01-01T00:00:00.000Z'
+      }
+    })
+    const client = storedValue.transport('stored-client')
+    await storedValue.manager.accept(
+      await storedValue.manager.issueTicket('panel_browser', 'stored-client'),
+      client.transport
+    )
+    expect(browsers[1]!.commands[0]).toEqual({
+      type: 'navigate',
+      url: storedUrl
+    })
+    expect(client.messages).toContainEqual(
+      expect.objectContaining({
+        type: 'ready',
+        state: expect.objectContaining({ url: storedUrl })
+      })
+    )
+    await storedValue.manager.dispose()
   })
 
   it('closes an active session when its permission is revoked', async () => {
@@ -341,6 +444,19 @@ describe('Remote Browser sessions', () => {
       })
     )
     value.manager.message('client', { type: 'takeControl' })
+    for (let index = 0; index < 100; index += 1) {
+      value.manager.message('client', {
+        type: 'pointer',
+        phase: 'move',
+        x: index,
+        y: index + 1
+      })
+      value.manager.message('client', {
+        type: 'wheel',
+        deltaX: 1,
+        deltaY: -2
+      })
+    }
     value.manager.message('client', {
       type: 'pointer',
       phase: 'down',
@@ -348,12 +464,23 @@ describe('Remote Browser sessions', () => {
       y: 30,
       button: 'left'
     })
+    for (let index = 0; index < 60; index += 1) {
+      value.manager.message('client', {
+        type: 'key',
+        phase: 'down',
+        key: `Key${index}`
+      })
+    }
     expect(browsers[0]!.commands).toEqual([])
+    expect(client.messages).toContainEqual({
+      type: 'navigationError',
+      message: 'The Remote Browser command queue is full. Wait and try again.'
+    })
 
     finishAgent()
     await expect(agent).resolves.toBe('snapshot')
     await vi.waitFor(() =>
-      expect(browsers[0]!.commands.at(-1)).toEqual({
+      expect(browsers[0]!.commands).toContainEqual({
         type: 'pointer',
         phase: 'down',
         x: 20,
@@ -365,6 +492,17 @@ describe('Remote Browser sessions', () => {
       type: 'resize',
       width: 1_280,
       height: 800
+    })
+    expect(browsers[0]!.commands).toContainEqual({
+      type: 'pointer',
+      phase: 'move',
+      x: 99,
+      y: 100
+    })
+    expect(browsers[0]!.commands).toContainEqual({
+      type: 'wheel',
+      deltaX: 100,
+      deltaY: -200
     })
     expect(client.messages.at(-1)).toMatchObject({
       type: 'controlChanged',
