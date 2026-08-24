@@ -66,6 +66,11 @@ export function App() {
       ),
     []
   )
+  useEffect(() => {
+    window.treeportShell.setOverlayActive(
+      dialog !== null || selectorOpen || terminalSelectionActive
+    )
+  }, [dialog, selectorOpen, terminalSelectionActive])
   const openDialog = (nextDialog: 'connect' | 'manage') => {
     setSelectorOpen(false)
     setDialog(nextDialog)

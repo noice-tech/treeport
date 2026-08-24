@@ -160,7 +160,7 @@ If Browser is not open, open it in the current tree:
 treeport browser open --worktree .
 ```
 
-After the panel exists, use its shared Playwright session:
+After Browser exists, use its daemon Playwright session:
 
 ```sh
 treeport browser snapshot
@@ -176,7 +176,9 @@ Commands resolve the only Browser session in the current worktree. Add `--panel 
 
 Use snapshot element refs instead of guessed selectors. Take a new snapshot after each important action.
 
-Leave Browser open so the user can continue the same session.
+Leave Browser open so the user can inspect the result.
+
+Web clients can share the daemon session. The desktop app shows a separate native page at the saved URL.
 
 ## Automation and integrations
 

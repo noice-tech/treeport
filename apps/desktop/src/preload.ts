@@ -6,6 +6,10 @@ import {
 } from 'electron'
 import { z } from 'zod'
 import type {
+  DesktopBrowserBounds,
+  DesktopBrowserCommand,
+  DesktopBrowserPopup,
+  DesktopBrowserState,
   DesktopCommand,
   DesktopFileActionResult
 } from './desktop-contract'
@@ -13,6 +17,20 @@ import type {
 const localSourcePathResultSchema = z.string().nullable().catch(null)
 const localSourcePathsResultSchema = z.array(z.string()).max(1).catch([])
 const localFilePasteListeners = new Set<(paths: string[]) => void>()
+const desktopBrowserStateSchema: z.ZodType<DesktopBrowserState> =
+  z.strictObject({
+    panelId: z.string(),
+    url: z.string(),
+    title: z.string(),
+    loading: z.boolean(),
+    canGoBack: z.boolean(),
+    canGoForward: z.boolean()
+  })
+const desktopBrowserPopupSchema: z.ZodType<DesktopBrowserPopup> =
+  z.strictObject({
+    panelId: z.string(),
+    url: z.string()
+  })
 
 window.addEventListener(
   'paste',
@@ -109,6 +127,56 @@ const desktopBridge = Object.freeze({
     ipcRenderer.on('terminal-selection:release', receive)
     return () =>
       ipcRenderer.removeListener('terminal-selection:release', receive)
+  },
+  openBrowser(
+    panelId: string,
+    url: string
+  ): Promise<DesktopBrowserState | null> {
+    return ipcRenderer
+      .invoke('native-browser:open', { panelId, url })
+      .then((value) => desktopBrowserStateSchema.nullable().parse(value))
+  },
+  setBrowserBounds(panelId: string, bounds: DesktopBrowserBounds) {
+    ipcRenderer.send('native-browser:set-bounds', { panelId, bounds })
+  },
+  setBrowserVisible(panelId: string, visible: boolean) {
+    ipcRenderer.send('native-browser:set-visible', { panelId, visible })
+  },
+  sendBrowserCommand(panelId: string, command: DesktopBrowserCommand) {
+    ipcRenderer.send('native-browser:command', { panelId, command })
+  },
+  resetBrowser(panelId: string): Promise<DesktopBrowserState | null> {
+    return ipcRenderer
+      .invoke('native-browser:reset', { panelId })
+      .then((value) => desktopBrowserStateSchema.nullable().parse(value))
+  },
+  requestBrowserClose(panelId: string, force: boolean): Promise<boolean> {
+    return ipcRenderer
+      .invoke('native-browser:request-close', { panelId, force })
+      .then((value) => z.boolean().parse(value))
+  },
+  disposeBrowser(panelId: string) {
+    ipcRenderer.send('native-browser:dispose', { panelId })
+  },
+  onBrowserState(listener: (state: DesktopBrowserState) => void) {
+    const receive: Parameters<typeof ipcRenderer.on>[1] = (_event, value) => {
+      const parsed = desktopBrowserStateSchema.safeParse(value)
+      if (parsed.success) {
+        listener(parsed.data)
+      }
+    }
+    ipcRenderer.on('native-browser:state', receive)
+    return () => ipcRenderer.removeListener('native-browser:state', receive)
+  },
+  onBrowserPopup(listener: (popup: DesktopBrowserPopup) => void) {
+    const receive: Parameters<typeof ipcRenderer.on>[1] = (_event, value) => {
+      const parsed = desktopBrowserPopupSchema.safeParse(value)
+      if (parsed.success) {
+        listener(parsed.data)
+      }
+    }
+    ipcRenderer.on('native-browser:popup', receive)
+    return () => ipcRenderer.removeListener('native-browser:popup', receive)
   },
   requestAttention() {
     ipcRenderer.send('bell-attention:request')

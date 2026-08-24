@@ -117,7 +117,7 @@ A grant applies to the exact package source, scope, panel definition, and permis
 
 Treeport requests approval again when the permission set changes. Removing the package revokes its grants.
 
-### Browser package boundary
+### Browser boundaries
 
 The client-side iframe Browser can load an HTTP or HTTPS site in a nested iframe.
 
@@ -129,7 +129,11 @@ Browser iframe restrictions continue to apply. Treeport does not bypass the fram
 
 Browser does not use a web-panel package permission.
 
-Its isolated browser runs as the daemon operating-system user.
+In the desktop app, Browser runs as the desktop operating-system user.
+
+It can reach local and internet sites available from the desktop computer.
+
+In a web client, the isolated browser runs as the daemon operating-system user.
 
 It can reach local and internet sites available from the daemon computer.
 
@@ -137,9 +141,9 @@ Each Browser session uses separate temporary browser data.
 
 Treeport does not use, import, or attach to a personal browser profile.
 
-Treeport authorizes each client and agent action for the owning Browser and tree.
+Treeport authorizes each daemon browser action for the owning Browser and tree.
 
-Treeport does not expose direct browser-control or debugging access.
+Treeport does not expose direct daemon browser-control or debugging access.
 
 The server accepts only absolute HTTP or HTTPS addresses without credentials.
 

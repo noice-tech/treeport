@@ -13,6 +13,34 @@ export interface DesktopNavigationState {
   canGoForward: boolean
 }
 
+export interface DesktopBrowserBounds {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+export interface DesktopBrowserState {
+  panelId: string
+  url: string
+  title: string
+  loading: boolean
+  canGoBack: boolean
+  canGoForward: boolean
+}
+
+export type DesktopBrowserCommand =
+  | { type: 'navigate'; url: string }
+  | { type: 'back' }
+  | { type: 'forward' }
+  | { type: 'reload' }
+  | { type: 'stop' }
+
+export interface DesktopBrowserPopup {
+  panelId: string
+  url: string
+}
+
 export interface SavedComputer {
   id: string
   origin: string

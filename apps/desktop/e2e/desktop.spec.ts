@@ -69,6 +69,27 @@ test('connects the desktop shell, preserves native behavior, and restores render
     }
 
     response.setHeader('content-type', 'text/html')
+    if (request.url === '/native-browser-start') {
+      response.end(`<!doctype html>
+        <title>Native Browser start</title>
+        <body>Native Browser start</body>`)
+      return
+    }
+
+    if (request.url === '/native-browser-protected') {
+      response.end(`<!doctype html>
+        <title>Native Browser protected</title>
+        <body>Native Browser protected</body>`)
+      return
+    }
+
+    if (request.url === '/native-browser-popup') {
+      response.end(`<!doctype html>
+        <title>Native Browser popup</title>
+        <body>Native Browser popup</body>`)
+      return
+    }
+
     response.end(`<!doctype html>
       <body data-command="none">
         Treeport desktop test
@@ -156,6 +177,175 @@ test('connects the desktop shell, preserves native behavior, and restores render
         )
       )
       .toBe(true)
+
+    const nativePanelId = 'panel_native_browser'
+    const nativeStartUrl = `${origin}/native-browser-start`
+    const nativeProtectedUrl = `${origin}/native-browser-protected`
+    await electronApp.evaluate(
+      async ({ webContents }, input) => {
+        const guest = webContents
+          .getAllWebContents()
+          .find((contents) => contents.getURL() === input.workspaceUrl)
+        if (!guest) {
+          throw new Error('Treeport guest was not found')
+        }
+
+        await guest.executeJavaScript(`
+          window.__nativeBrowserPopups = []
+          window.treeportDesktop.onBrowserPopup((popup) => {
+            window.__nativeBrowserPopups.push(popup)
+          })
+          window.treeportDesktop.openBrowser(
+            ${JSON.stringify(input.panelId)},
+            ${JSON.stringify(input.startUrl)}
+          ).then(() => {
+            window.treeportDesktop.setBrowserBounds(
+              ${JSON.stringify(input.panelId)},
+              { x: 280, y: 48, width: 900, height: 600 }
+            )
+            window.treeportDesktop.setBrowserVisible(
+              ${JSON.stringify(input.panelId)},
+              true
+            )
+          })
+        `)
+      },
+      {
+        workspaceUrl,
+        panelId: nativePanelId,
+        startUrl: nativeStartUrl
+      }
+    )
+    await expect
+      .poll(() =>
+        electronApp!.evaluate(({ webContents }, targetUrl) => {
+          const browser = webContents
+            .getAllWebContents()
+            .find((contents) => contents.getURL() === targetUrl)
+          return browser?.executeJavaScript('document.body.textContent')
+        }, nativeStartUrl)
+      )
+      .toContain('Native Browser start')
+
+    await electronApp.evaluate(({ webContents }, targetUrl) => {
+      const browser = webContents
+        .getAllWebContents()
+        .find((contents) => contents.getURL() === targetUrl)
+      return browser?.executeJavaScript(
+        `localStorage.setItem('treeport-native-test', 'saved')`
+      )
+    }, nativeStartUrl)
+    await electronApp.evaluate(
+      async ({ webContents }, input) => {
+        const guest = webContents
+          .getAllWebContents()
+          .find((contents) => contents.getURL() === input.workspaceUrl)
+        return guest?.executeJavaScript(`
+          window.treeportDesktop.resetBrowser(${JSON.stringify(input.panelId)})
+            .then(() => window.treeportDesktop.sendBrowserCommand(
+              ${JSON.stringify(input.panelId)},
+              { type: 'navigate', url: ${JSON.stringify(input.startUrl)} }
+            ))
+        `)
+      },
+      {
+        workspaceUrl,
+        panelId: nativePanelId,
+        startUrl: nativeStartUrl
+      }
+    )
+    await expect
+      .poll(() =>
+        electronApp!.evaluate(({ webContents }, targetUrl) => {
+          const browser = webContents
+            .getAllWebContents()
+            .find((contents) => contents.getURL() === targetUrl)
+          return browser?.executeJavaScript(
+            `localStorage.getItem('treeport-native-test')`
+          )
+        }, nativeStartUrl)
+      )
+      .toBeNull()
+
+    await electronApp.evaluate(
+      ({ webContents }, input) => {
+        const guest = webContents
+          .getAllWebContents()
+          .find((contents) => contents.getURL() === input.workspaceUrl)
+        return guest?.executeJavaScript(`
+          window.treeportDesktop.sendBrowserCommand(
+            ${JSON.stringify(input.panelId)},
+            { type: 'navigate', url: ${JSON.stringify(input.protectedUrl)} }
+          )
+        `)
+      },
+      {
+        workspaceUrl,
+        panelId: nativePanelId,
+        protectedUrl: nativeProtectedUrl
+      }
+    )
+    await expect
+      .poll(() =>
+        electronApp!.evaluate(
+          ({ webContents }, targetUrl) =>
+            webContents
+              .getAllWebContents()
+              .some((contents) => contents.getURL() === targetUrl),
+          nativeProtectedUrl
+        )
+      )
+      .toBe(true)
+    await electronApp.evaluate(({ webContents }, targetUrl) => {
+      const browser = webContents
+        .getAllWebContents()
+        .find((contents) => contents.getURL() === targetUrl)
+      return browser?.executeJavaScript(`window.open('/native-browser-popup')`)
+    }, nativeProtectedUrl)
+    await expect
+      .poll(() =>
+        electronApp!.evaluate(
+          ({ webContents }, input) => {
+            const guest = webContents
+              .getAllWebContents()
+              .find((contents) => contents.getURL() === input.workspaceUrl)
+            return guest?.executeJavaScript(
+              `window.__nativeBrowserPopups.some((popup) => popup.panelId === ${JSON.stringify(input.panelId)} && popup.url === ${JSON.stringify(input.popupUrl)})`
+            )
+          },
+          {
+            workspaceUrl,
+            panelId: nativePanelId,
+            popupUrl: `${origin}/native-browser-popup`
+          }
+        )
+      )
+      .toBe(true)
+
+    expect(
+      await electronApp.evaluate(
+        async ({ webContents }, input) => {
+          const guest = webContents
+            .getAllWebContents()
+            .find((contents) => contents.getURL() === input.workspaceUrl)
+          return guest?.executeJavaScript(
+            `window.treeportDesktop.requestBrowserClose(${JSON.stringify(input.panelId)}, false)`
+          )
+        },
+        { workspaceUrl, panelId: nativePanelId }
+      )
+    ).toBe(true)
+    await expect
+      .poll(() =>
+        electronApp!.evaluate(
+          ({ webContents }, targetUrl) =>
+            webContents
+              .getAllWebContents()
+              .some((contents) => contents.getURL() === targetUrl),
+          nativeProtectedUrl
+        )
+      )
+      .toBe(false)
 
     await new Promise<void>((resolve, reject) =>
       server.close((error) => (error ? reject(error) : resolve()))

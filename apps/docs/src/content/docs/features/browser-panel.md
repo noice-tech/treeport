@@ -1,20 +1,26 @@
 ---
 title: Browser (experimental)
-description: Open Browser on the daemon computer or use iframe Browser on the client computer.
+description: Open a top-level web page in Treeport, or use iframe Browser for an embedded client page.
 ---
 
 Treeport supplies two Browser workflows:
 
-- **Browser** runs an isolated Chromium page on the daemon computer.
-- **iframe Browser** runs an iframe on the client computer.
+- **Browser** opens a top-level page.
+- **iframe Browser** embeds a page in the Treeport web client.
 
-Use Browser for daemon-local servers, iframe-blocking sites, and shared agent control.
+The desktop app runs Browser in a native Chromium view on the desktop computer.
+
+The web client streams Browser from an isolated Chromium process on the daemon computer.
+
+Use Browser for iframe-blocking sites and agent control.
 
 Use iframe Browser when the client can reach and embed the site.
 
 ## Use Browser
 
 ### Install the managed browser
+
+The web client and agent commands use the managed browser on the daemon computer.
 
 Install the Chromium build that matches Treeport:
 
@@ -29,6 +35,8 @@ treeport browser status
 treeport browser remove
 ```
 
+The desktop app does not need this installation for its native view.
+
 On Linux, an error can identify missing operating-system libraries.
 
 Install these libraries as an administrator. Then, run the Treeport command again.
@@ -42,7 +50,11 @@ Treeport does not request administrator access.
 
 You can also enter an absolute HTTP or HTTPS URL. Press Enter to open it.
 
-Browser requests come from the daemon computer. `localhost` identifies that computer.
+In the desktop app, Browser requests come from the desktop computer.
+
+In a web client, Browser requests come from the daemon computer.
+
+`localhost` identifies the computer that runs Browser.
 
 The target runs as a top-level page. Sites that block iframe use can run in Browser.
 
@@ -50,11 +62,7 @@ Use the address bar, **Back**, **Forward**, and **Reload** to control the page.
 
 Use pointer, keyboard, and scroll input in the viewport.
 
-Browser keeps its current URL and title. Treeport restores the URL before the next client or agent command.
-
-The browser session stays active when you change workspaces or disconnect.
-
-Another connected client can observe the same session and take control.
+Browser keeps its current URL and title. Treeport restores the URL when it creates a new session.
 
 When a page opens a popup, Treeport opens another Browser in the same tree.
 
@@ -97,9 +105,11 @@ Without `--panel`, Treeport uses the only Browser session in the current tree.
 
 If multiple sessions are open, add `--panel <panel-id>`.
 
-Snapshot references, such as `e12`, identify elements in the shared page.
+Snapshot references, such as `e12`, identify elements in the daemon browser session.
 
-Agent actions and user actions use one control owner. A user can take control from the viewport.
+Web clients and agents use one control owner for the daemon browser session.
+
+The desktop app uses a separate native page. Agent commands use the saved URL in a daemon browser session.
 
 ### Reset or close Browser
 
@@ -115,11 +125,11 @@ Each Browser session uses separate temporary browser data.
 
 Treeport does not use, import, or attach to a personal browser profile.
 
-After a daemon restart, Treeport opens the saved URL in a new empty browser session.
+After an application or daemon restart, Treeport opens the saved URL in a new empty browser session.
 
-### Understand the limits
+### Understand web-client limits
 
-Browser does not support these features:
+The streamed Browser in a web client does not support these features:
 
 - streamed audio;
 - downloads;
@@ -132,7 +142,9 @@ The streamed page image does not supply semantic accessibility information.
 
 Use `treeport browser snapshot` when you need the page's semantic accessibility data.
 
-A copied address uses the daemon-visible URL. A daemon-local `localhost` URL can fail to open on another computer.
+A copied address uses the Browser-visible URL.
+
+A daemon-local `localhost` URL can fail to open on another computer.
 
 ## Use iframe Browser
 

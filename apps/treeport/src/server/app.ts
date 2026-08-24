@@ -15,6 +15,7 @@ import {
   browseDirectoryQuerySchema,
   browserAgentCommandSchema,
   browserTicketRequestSchema,
+  browserUrlSchema,
   createBrowserPanelSchema,
   createTerminalPresetSchema,
   createTerminalSchema,
@@ -85,6 +86,13 @@ const operationQuerySchema = z.object({
 const deletePanelQuerySchema = z.object({
   discardStoredData: z.string().optional(),
   force: z.string().optional()
+})
+const nativeBrowserStateSchema = z.strictObject({
+  url: z.union([z.literal('about:blank'), browserUrlSchema]),
+  title: z.string().max(256)
+})
+const nativeBrowserPopupSchema = z.strictObject({
+  url: browserUrlSchema
 })
 
 interface UploadFileInfo {
@@ -331,6 +339,31 @@ export function createApp({
         })
       }
     )
+    .put(
+      '/api/panels/:panelId/browser-state',
+      jsonInput(nativeBrowserStateSchema),
+      async (context) =>
+        context.json({
+          panel: await service.updateBrowserPanelState(
+            context.req.param('panelId'),
+            context.req.valid('json')
+          )
+        })
+    )
+
+    .post(
+      '/api/panels/:panelId/browser-popups',
+      jsonInput(nativeBrowserPopupSchema),
+      async (context) =>
+        context.json(
+          await service.openBrowserPanelFromPanel(
+            context.req.param('panelId'),
+            context.req.valid('json').url
+          ),
+          201
+        )
+    )
+
     .post(
       '/api/panels/:panelId/browser-ticket',
       jsonInput(browserTicketRequestSchema),

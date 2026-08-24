@@ -32,6 +32,10 @@ import {
   connectBrowserPanel,
   type BrowserPanelConnection
 } from '../../browser-session-client'
+import {
+  connectNativeBrowserPanel,
+  nativeBrowserAvailable
+} from '../../native-browser-session-client'
 
 const listenerDiscoverySchema: z.ZodType<WorktreeListenerDiscovery> =
   z.strictObject({
@@ -70,6 +74,7 @@ export function BrowserPanelWorkspace({
   autoFocusBlocked: boolean
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const initialPanelRef = useRef(panel)
   const inputRef = useRef<HTMLInputElement>(null)
   const connectionRef = useRef<BrowserPanelConnection | null>(null)
   const stateRef = useRef<BrowserSessionState | null>(null)
@@ -96,6 +101,7 @@ export function BrowserPanelWorkspace({
     null
   )
   const [listenersLoading, setListenersLoading] = useState(false)
+  const nativeBrowser = nativeBrowserAvailable()
 
   const send = useCallback(
     (message: Parameters<BrowserPanelConnection['send']>[0]) => {
@@ -184,10 +190,14 @@ export function BrowserPanelWorkspace({
   )
 
   useEffect(() => {
-    const connection = connectBrowserPanel(panel.id, active, {
-      message: receiveMessage,
-      frame: receiveFrame
-    })
+    const connection = nativeBrowser
+      ? connectNativeBrowserPanel(initialPanelRef.current, false, {
+          message: receiveMessage
+        })
+      : connectBrowserPanel(panel.id, false, {
+          message: receiveMessage,
+          frame: receiveFrame
+        })
     connectionRef.current = connection
     return () => {
       if (connectionRef.current === connection) {
@@ -196,11 +206,19 @@ export function BrowserPanelWorkspace({
 
       connection.dispose()
     }
-  }, [connectionRevision, panel.id, receiveFrame, receiveMessage])
+  }, [
+    connectionRevision,
+    nativeBrowser,
+    panel.id,
+    receiveFrame,
+    receiveMessage
+  ])
 
   useEffect(() => {
-    connectionRef.current?.setVisible(active)
-  }, [active])
+    connectionRef.current?.setVisible(
+      active && !autoFocusBlocked && !showHomepage
+    )
+  }, [active, autoFocusBlocked, showHomepage])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -230,6 +248,13 @@ export function BrowserPanelWorkspace({
           )
         }
         viewportRef.current = viewport
+        const bounds = canvas.getBoundingClientRect()
+        connectionRef.current?.setBounds({
+          x: bounds.left,
+          y: bounds.top,
+          width: bounds.width,
+          height: bounds.height
+        })
         send({ type: 'resize', ...viewport })
       }, 100)
     })

@@ -69,6 +69,10 @@ import {
 import { useWorkspaceNavigate } from './workspace-router-navigation'
 import { ForceSpecificCursor } from './force-specific-cursor'
 import { errorDetails } from './error-message'
+import {
+  nativeBrowserAvailable,
+  requestNativeBrowserClose
+} from './native-browser-session-client'
 
 const webPanelPermissionErrorSchema = z.object({
   error: z.object({ message: z.string() })
@@ -434,7 +438,21 @@ function WorkspaceApp() {
     trigger?: HTMLElement
   ) => {
     if (panel.kind === 'browser') {
-      closePanel.mutate(trigger ? { panel, trigger } : { panel })
+      if (nativeBrowserAvailable()) {
+        void requestNativeBrowserClose(panel.id, false).then(
+          (canClose) => {
+            if (canClose) {
+              closePanel.mutate(trigger ? { panel, trigger } : { panel })
+            } else {
+              openDialog({ type: 'close-panel', panel }, trigger)
+            }
+          },
+          (error) => notifyError(error, { operation: 'close Browser' })
+        )
+      } else {
+        closePanel.mutate(trigger ? { panel, trigger } : { panel })
+      }
+
       return
     }
 
@@ -1116,13 +1134,25 @@ function WorkspaceApp() {
         busy={closePanel.isPending}
         onOpenChange={(open) => !open && setDialog(null)}
         restoreFocusTo={dialogTriggerRef.current}
-        onConfirm={(panel) =>
+        onConfirm={(panel) => {
+          if (panel.kind === 'browser' && nativeBrowserAvailable()) {
+            void requestNativeBrowserClose(panel.id, true).then(
+              (canClose) => {
+                if (canClose) {
+                  closePanel.mutate({ panel, force: true })
+                }
+              },
+              (error) => notifyError(error, { operation: 'close Browser' })
+            )
+            return
+          }
+
           closePanel.mutate(
             panel.kind === 'browser'
               ? { panel, force: true }
               : { panel, discardStoredData: true }
           )
-        }
+        }}
       />
       <RemoveWorktreeDialog
         worktree={dialog?.type === 'remove' ? dialog.worktree : null}

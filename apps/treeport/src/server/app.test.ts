@@ -216,6 +216,27 @@ function fixture(webDist = '/missing') {
         }
       })
     ),
+    openBrowserPanelFromPanel: vi.fn(async (_panelId: string, url: string) => ({
+      panel: {
+        id: 'panel_popup',
+        kind: 'browser',
+        worktreeId: 'wt_1',
+        title: 'popup.example.com',
+        url,
+        createdAt: '2026-01-01',
+        updatedAt: '2026-01-01'
+      }
+    })),
+    updateBrowserPanelState: vi.fn(
+      async (panelId: string, state: { url: string; title: string }) => ({
+        id: panelId,
+        kind: 'browser',
+        worktreeId: 'wt_1',
+        ...state,
+        createdAt: '2026-01-01',
+        updatedAt: '2026-01-02'
+      })
+    ),
     createWebPanel: vi.fn(async (worktreeId: string) => ({
       id: 'panel_review',
       kind: 'web',
@@ -473,6 +494,40 @@ describe('HTTP API validation', () => {
     expect(service.openBrowserPanelFromTerminal).toHaveBeenCalledWith(
       'term_1',
       'http://localhost:4173/'
+    )
+
+    const nativeState = await app.request(
+      '/api/panels/panel_browser/browser-state',
+      {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          url: 'https://example.com/native',
+          title: 'Native application'
+        })
+      }
+    )
+    expect(nativeState.status).toBe(200)
+    expect(service.updateBrowserPanelState).toHaveBeenCalledWith(
+      'panel_browser',
+      {
+        url: 'https://example.com/native',
+        title: 'Native application'
+      }
+    )
+
+    const popup = await app.request(
+      '/api/panels/panel_browser/browser-popups',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ url: 'https://popup.example.com/' })
+      }
+    )
+    expect(popup.status).toBe(201)
+    expect(service.openBrowserPanelFromPanel).toHaveBeenCalledWith(
+      'panel_browser',
+      'https://popup.example.com/'
     )
 
     for (const url of [

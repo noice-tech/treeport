@@ -1,7 +1,7 @@
 import path from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { pathToFileURL } from 'node:url'
-import { DESKTOP_PROTOCOL_VERSION } from '@treeport/shared'
+import { browserUrlSchema, DESKTOP_PROTOCOL_VERSION } from '@treeport/shared'
 import {
   app,
   autoUpdater,
@@ -13,6 +13,7 @@ import {
   net,
   shell,
   webContents,
+  WebContentsView,
   type IpcMainEvent,
   type BrowserWindowConstructorOptions,
   type IpcMainInvokeEvent,
@@ -26,6 +27,9 @@ import type {
   ComputerMutationResult,
   ComputerUpdate,
   ConnectionState,
+  DesktopBrowserBounds,
+  DesktopBrowserCommand,
+  DesktopBrowserState,
   DesktopCommand,
   DesktopNavigationDirection,
   DesktopNavigationState,
@@ -72,12 +76,24 @@ let connection: ConnectionState = { status: 'empty' }
 let connectionGeneration = 0
 let connectionAbort: AbortController | null = null
 let fullscreen = false
+let shellOverlayActive = false
 let updateReady = desktopUpdateReady
 let stopAutomaticUpdates: (() => void) | null = null
 let pendingWorkspaceTarget: WorkspaceTarget | null = null
 let workspaceTargetQueue: Promise<void> = Promise.resolve()
 const shellWebContentsIds = new Set<number>()
 let terminalSelectionGuest: WebContents | null = null
+
+interface NativeBrowserEntry {
+  panelId: string
+  owner: WebContents
+  view: WebContentsView
+  bounds: DesktopBrowserBounds
+  visible: boolean
+  ready: Promise<void>
+}
+
+const nativeBrowsers = new Map<string, NativeBrowserEntry>()
 
 let dockBounceId: number | null = null
 let frameFlashing = false
@@ -235,8 +251,273 @@ function requestBellAttention(): void {
   }
 }
 
+function authorizedNativeBrowser(
+  event: IpcMainEvent | IpcMainInvokeEvent,
+  panelId: string
+): NativeBrowserEntry | null {
+  const entry = nativeBrowsers.get(panelId)
+  return isActiveGuestEvent(event) && entry?.owner === event.sender
+    ? entry
+    : null
+}
+
+function nativeBrowserState(entry: NativeBrowserEntry): DesktopBrowserState {
+  const contents = entry.view.webContents
+  const url = contents.getURL() || 'about:blank'
+  return {
+    panelId: entry.panelId,
+    url,
+    title: contents.getTitle(),
+    loading: contents.isLoading(),
+    canGoBack: contents.navigationHistory.canGoToOffset(-1),
+    canGoForward: contents.navigationHistory.canGoToOffset(1)
+  }
+}
+
+function sendNativeBrowserState(entry: NativeBrowserEntry): void {
+  if (!entry.owner.isDestroyed()) {
+    entry.owner.send('native-browser:state', nativeBrowserState(entry))
+  }
+}
+
+function nativeBrowserTitlebarOffset(): number {
+  return process.platform === 'darwin' && fullscreen ? 0 : TITLEBAR_HEIGHT
+}
+
+function applyNativeBrowserLayout(entry: NativeBrowserEntry): void {
+  const width = Math.max(0, Math.round(entry.bounds.width))
+  const height = Math.max(0, Math.round(entry.bounds.height))
+  entry.view.setBounds({
+    x: Math.round(entry.bounds.x),
+    y: Math.round(entry.bounds.y) + nativeBrowserTitlebarOffset(),
+    width,
+    height
+  })
+  entry.view.setVisible(
+    entry.visible && !shellOverlayActive && width > 0 && height > 0
+  )
+}
+
+function createNativeBrowser(
+  panelId: string,
+  url: string,
+  owner: WebContents
+): NativeBrowserEntry {
+  const selectedComputer = store?.selectedComputer
+  if (!mainWindow || !selectedComputer) {
+    throw new Error('The desktop window is unavailable.')
+  }
+
+  if (nativeBrowsers.size >= 6) {
+    throw new Error('Treeport supports at most six active Browser sessions.')
+  }
+
+  const view = new WebContentsView({
+    webPreferences: {
+      partition: `treeport-browser-${selectedComputer.id}-${panelId}`,
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true
+    }
+  })
+  const entry: NativeBrowserEntry = {
+    panelId,
+    owner,
+    view,
+    bounds: { x: 0, y: 0, width: 0, height: 0 },
+    visible: false,
+    ready: Promise.resolve()
+  }
+  nativeBrowsers.set(panelId, entry)
+  mainWindow.contentView.addChildView(view)
+  view.setBackgroundColor('#ffffff')
+  applyNativeBrowserLayout(entry)
+
+  const contents = view.webContents
+  const refreshState = () => sendNativeBrowserState(entry)
+  contents.on('did-start-loading', refreshState)
+  contents.on('did-stop-loading', refreshState)
+  contents.on('did-navigate', refreshState)
+  contents.on('did-navigate-in-page', (_event, _url, isMainFrame) => {
+    if (isMainFrame) {
+      refreshState()
+    }
+  })
+  contents.on('page-title-updated', refreshState)
+  contents.on('destroyed', () => {
+    if (nativeBrowsers.get(panelId) === entry) {
+      nativeBrowsers.delete(panelId)
+    }
+
+    mainWindow?.contentView.removeChildView(view)
+  })
+  const preventUnsupportedNavigation = (
+    event: Electron.Event,
+    targetUrl: string
+  ) => {
+    if (!nativeBrowserUrlSchema.safeParse(targetUrl).success) {
+      event.preventDefault()
+    }
+  }
+  contents.on('will-navigate', preventUnsupportedNavigation)
+  contents.on('will-redirect', preventUnsupportedNavigation)
+  contents.setWindowOpenHandler(({ url: popupUrl }) => {
+    const parsedUrl = browserUrlSchema.safeParse(popupUrl)
+    if (parsedUrl.success && !owner.isDestroyed()) {
+      owner.send('native-browser:popup', {
+        panelId,
+        url: new URL(parsedUrl.data).href
+      })
+    }
+
+    return { action: 'deny' }
+  })
+  contents.session.setPermissionRequestHandler(
+    (_contents, _permission, callback) => callback(false)
+  )
+  contents.on('before-input-event', (event, input) => {
+    const commandModifier =
+      process.platform === 'darwin' ? input.meta : input.control
+    const key = input.key.toLowerCase()
+    const command: DesktopCommand | undefined = input.shift
+      ? key === 't'
+        ? 'new-panel'
+        : undefined
+      : key === 'w'
+        ? 'close-panel'
+        : undefined
+    if (
+      input.type !== 'keyDown' ||
+      input.isAutoRepeat ||
+      input.isComposing ||
+      !commandModifier ||
+      input.alt ||
+      !command
+    ) {
+      return
+    }
+
+    event.preventDefault()
+    if (!owner.isDestroyed()) {
+      owner.send('desktop-command', command)
+    }
+  })
+  contents.on('context-menu', (_event, params) => {
+    const window = mainWindow
+    if (!window) {
+      return
+    }
+
+    Menu.buildFromTemplate([
+      { role: 'copy', enabled: params.editFlags.canCopy },
+      { role: 'paste', enabled: params.editFlags.canPaste },
+      { type: 'separator' },
+      {
+        label: 'Back',
+        enabled: contents.navigationHistory.canGoToOffset(-1),
+        click: () => contents.navigationHistory.goToOffset(-1)
+      },
+      {
+        label: 'Forward',
+        enabled: contents.navigationHistory.canGoToOffset(1),
+        click: () => contents.navigationHistory.goToOffset(1)
+      },
+      { label: 'Reload', click: () => contents.reload() },
+      { type: 'separator' },
+      {
+        label: 'Inspect Element',
+        click: () => {
+          contents.inspectElement(params.x, params.y)
+          contents.openDevTools({ mode: 'detach', activate: true })
+        }
+      }
+    ]).popup({ window })
+  })
+  entry.ready = contents.loadURL(url).then(
+    () => undefined,
+    () => refreshState()
+  )
+  return entry
+}
+
+async function disposeNativeBrowser(
+  entry: NativeBrowserEntry,
+  clearStorage: boolean
+): Promise<void> {
+  if (nativeBrowsers.get(entry.panelId) === entry) {
+    nativeBrowsers.delete(entry.panelId)
+  }
+
+  mainWindow?.contentView.removeChildView(entry.view)
+  const contents = entry.view.webContents
+  const browserSession = contents.session
+  if (!contents.isDestroyed()) {
+    contents.close({ waitForBeforeUnload: false })
+  }
+
+  if (clearStorage) {
+    await browserSession.clearStorageData().catch(() => undefined)
+  }
+}
+
+function disposeNativeBrowsers(owner: WebContents): void {
+  for (const entry of nativeBrowsers.values()) {
+    if (entry.owner === owner) {
+      void disposeNativeBrowser(entry, false)
+    }
+  }
+}
+
+async function requestNativeBrowserClose(
+  entry: NativeBrowserEntry,
+  force: boolean
+): Promise<boolean> {
+  const contents = entry.view.webContents
+  if (contents.isDestroyed()) {
+    return true
+  }
+
+  const browserSession = contents.session
+  const canClose = await new Promise<boolean>((resolve) => {
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const cleanup = () => {
+      contents.removeListener('destroyed', closed)
+      contents.removeListener('will-prevent-unload', prevented)
+      if (timer) {
+        clearTimeout(timer)
+      }
+    }
+    const finish = (result: boolean) => {
+      cleanup()
+      resolve(result)
+    }
+    const closed = () => finish(true)
+    const prevented = (event: Electron.Event) => {
+      if (force) {
+        event.preventDefault()
+      } else {
+        finish(false)
+      }
+    }
+    contents.once('destroyed', closed)
+    contents.once('will-prevent-unload', prevented)
+    timer = setTimeout(() => finish(false), 5_000)
+    timer.unref()
+    contents.close({ waitForBeforeUnload: true })
+  })
+  if (canClose) {
+    await browserSession.clearStorageData().catch(() => undefined)
+  }
+
+  return canClose
+}
+
 function disposeGuest(): void {
   const guest = activeGuest
+  if (guest) {
+    disposeNativeBrowsers(guest)
+  }
+
   activeGuest = null
   if (terminalSelectionGuest === guest) {
     setTerminalSelectionGuest(null)
@@ -394,6 +675,42 @@ const computerUpdateSchema = z.object({
   id: z.string(),
   origin: z.string(),
   nameOverride: z.string().optional()
+})
+const nativeBrowserUrlSchema = z.union([
+  z.literal('about:blank'),
+  browserUrlSchema
+])
+const nativeBrowserPanelSchema = z.strictObject({
+  panelId: z.string().min(1).max(128)
+})
+const nativeBrowserOpenSchema = nativeBrowserPanelSchema.extend({
+  url: nativeBrowserUrlSchema
+})
+const nativeBrowserBoundsSchema = nativeBrowserPanelSchema.extend({
+  bounds: z.strictObject({
+    x: z.number().finite().min(0).max(16_384),
+    y: z.number().finite().min(0).max(16_384),
+    width: z.number().finite().min(0).max(16_384),
+    height: z.number().finite().min(0).max(16_384)
+  })
+})
+const nativeBrowserVisibilitySchema = nativeBrowserPanelSchema.extend({
+  visible: z.boolean()
+})
+const nativeBrowserCommandSchema: z.ZodType<{
+  panelId: string
+  command: DesktopBrowserCommand
+}> = nativeBrowserPanelSchema.extend({
+  command: z.discriminatedUnion('type', [
+    z.strictObject({ type: z.literal('navigate'), url: browserUrlSchema }),
+    z.strictObject({ type: z.literal('back') }),
+    z.strictObject({ type: z.literal('forward') }),
+    z.strictObject({ type: z.literal('reload') }),
+    z.strictObject({ type: z.literal('stop') })
+  ])
+})
+const nativeBrowserCloseSchema = nativeBrowserPanelSchema.extend({
+  force: z.boolean()
 })
 
 type HealthResponse = z.infer<typeof healthResponseSchema>
@@ -727,6 +1044,7 @@ function createWindow(url?: string): BrowserWindow {
     disposeGuest()
     activeGuest = guest
     guest.once('destroyed', () => {
+      disposeNativeBrowsers(guest)
       if (terminalSelectionGuest === guest) {
         setTerminalSelectionGuest(null)
       }
@@ -746,11 +1064,17 @@ function createWindow(url?: string): BrowserWindow {
   window.on('enter-full-screen', () => {
     fullscreen = true
     activeGuest?.send('fullscreen-change', true)
+    for (const entry of nativeBrowsers.values()) {
+      applyNativeBrowserLayout(entry)
+    }
     broadcastState()
   })
   window.on('leave-full-screen', () => {
     fullscreen = false
     activeGuest?.send('fullscreen-change', false)
+    for (const entry of nativeBrowsers.values()) {
+      applyNativeBrowserLayout(entry)
+    }
     broadcastState()
   })
   window.on('focus', stopBellAttention)
@@ -893,6 +1217,17 @@ function registerIpc(): void {
 
     autoUpdater.quitAndInstall()
   })
+  ipcMain.on('shell:overlay-active', (event, active) => {
+    const parsed = z.boolean().safeParse(active)
+    if (!isAuthorizedShellEvent(event) || !parsed.success) {
+      return
+    }
+
+    shellOverlayActive = parsed.data
+    for (const entry of nativeBrowsers.values()) {
+      applyNativeBrowserLayout(entry)
+    }
+  })
   ipcMain.on('shell:navigate-history', (event, direction) => {
     const parsed = z.enum(['back', 'forward']).safeParse(direction)
     if (isAuthorizedShellEvent(event) && parsed.success) {
@@ -948,6 +1283,144 @@ function registerIpc(): void {
       ? resolveLocalSourcePath(selectedOrigin(), parsedPath.data)
       : null
     event.returnValue = resolvedPath ? [resolvedPath] : []
+  })
+  ipcMain.handle('native-browser:open', async (event, value) => {
+    const parsed = nativeBrowserOpenSchema.safeParse(value)
+    if (!isActiveGuestEvent(event) || !parsed.success) {
+      return null
+    }
+
+    const existing = nativeBrowsers.get(parsed.data.panelId)
+    if (existing) {
+      if (existing.owner !== event.sender) {
+        return null
+      }
+
+      await existing.ready
+      return nativeBrowserState(existing)
+    }
+
+    const entry = createNativeBrowser(
+      parsed.data.panelId,
+      parsed.data.url,
+      event.sender
+    )
+    await entry.ready
+    return nativeBrowserState(entry)
+  })
+  ipcMain.on('native-browser:set-bounds', (event, value) => {
+    const parsed = nativeBrowserBoundsSchema.safeParse(value)
+    if (!parsed.success) {
+      return
+    }
+
+    const entry = authorizedNativeBrowser(event, parsed.data.panelId)
+    if (!entry) {
+      return
+    }
+
+    entry.bounds = parsed.data.bounds
+    applyNativeBrowserLayout(entry)
+  })
+  ipcMain.on('native-browser:set-visible', (event, value) => {
+    const parsed = nativeBrowserVisibilitySchema.safeParse(value)
+    if (!parsed.success) {
+      return
+    }
+
+    const entry = authorizedNativeBrowser(event, parsed.data.panelId)
+    if (!entry) {
+      return
+    }
+
+    entry.visible = parsed.data.visible
+    applyNativeBrowserLayout(entry)
+    if (entry.visible) {
+      entry.view.webContents.focus()
+    }
+  })
+  ipcMain.on('native-browser:command', (event, value) => {
+    const parsed = nativeBrowserCommandSchema.safeParse(value)
+    if (!parsed.success) {
+      return
+    }
+
+    const entry = authorizedNativeBrowser(event, parsed.data.panelId)
+    if (!entry || entry.view.webContents.isDestroyed()) {
+      return
+    }
+
+    const contents = entry.view.webContents
+    const command = parsed.data.command
+    if (command.type === 'navigate') {
+      void contents
+        .loadURL(new URL(command.url).href)
+        .catch(() => sendNativeBrowserState(entry))
+    } else if (
+      command.type === 'back' &&
+      contents.navigationHistory.canGoToOffset(-1)
+    ) {
+      contents.navigationHistory.goToOffset(-1)
+    } else if (
+      command.type === 'forward' &&
+      contents.navigationHistory.canGoToOffset(1)
+    ) {
+      contents.navigationHistory.goToOffset(1)
+    } else if (command.type === 'reload') {
+      contents.reload()
+    } else if (command.type === 'stop') {
+      contents.stop()
+    }
+  })
+  ipcMain.handle('native-browser:reset', async (event, value) => {
+    const parsed = nativeBrowserPanelSchema.safeParse(value)
+    if (!parsed.success) {
+      return null
+    }
+
+    const entry = authorizedNativeBrowser(event, parsed.data.panelId)
+    if (!entry) {
+      return null
+    }
+
+    const owner = entry.owner
+    const bounds = entry.bounds
+    const visible = entry.visible
+    await disposeNativeBrowser(entry, true)
+    if (owner.isDestroyed() || activeGuest !== owner) {
+      return null
+    }
+
+    const replacement = createNativeBrowser(
+      parsed.data.panelId,
+      'about:blank',
+      owner
+    )
+    replacement.bounds = bounds
+    replacement.visible = visible
+    applyNativeBrowserLayout(replacement)
+    await replacement.ready
+    return nativeBrowserState(replacement)
+  })
+  ipcMain.handle('native-browser:request-close', async (event, value) => {
+    const parsed = nativeBrowserCloseSchema.safeParse(value)
+    if (!parsed.success) {
+      return false
+    }
+
+    const entry = authorizedNativeBrowser(event, parsed.data.panelId)
+    return entry ? requestNativeBrowserClose(entry, parsed.data.force) : true
+  })
+  ipcMain.on('native-browser:dispose', (event, value) => {
+    const parsed = nativeBrowserPanelSchema.safeParse(value)
+    if (!parsed.success) {
+      return
+    }
+
+    const entry = authorizedNativeBrowser(event, parsed.data.panelId)
+    if (entry) {
+      void disposeNativeBrowser(entry, true)
+    }
   })
   ipcMain.on('terminal-selection:set-active', (event, active) => {
     const parsedActive = z.boolean().safeParse(active)

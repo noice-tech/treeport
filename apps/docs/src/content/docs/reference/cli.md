@@ -286,7 +286,9 @@ Without `--panel`, Treeport uses the only Browser session in the current tree.
 
 Use `list` to find Browser IDs. Use snapshot element references with `click` and `fill`.
 
-The agent and user use the same browser session. These commands do not control iframe Browser.
+These commands control the daemon browser session. A web client can share it.
+
+The commands do not control the desktop native page or iframe Browser.
 
 See [Browser](/features/browser-panel/) for networking, saved state, and limits.
 

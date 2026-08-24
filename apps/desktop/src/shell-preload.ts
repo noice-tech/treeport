@@ -26,6 +26,9 @@ const shellBridge = Object.freeze({
   releaseTerminalSelection(): void {
     ipcRenderer.send('shell:terminal-selection-release')
   },
+  setOverlayActive(active: boolean): void {
+    ipcRenderer.send('shell:overlay-active', active)
+  },
   selectComputer(id: string): Promise<boolean> {
     return ipcRenderer.invoke('shell:select-computer', id)
   },

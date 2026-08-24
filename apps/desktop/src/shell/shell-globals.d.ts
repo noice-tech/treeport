@@ -14,6 +14,7 @@ declare global {
         listener: (active: boolean) => void
       ) => () => void
       releaseTerminalSelection: () => void
+      setOverlayActive: (active: boolean) => void
       selectComputer: (id: string) => Promise<boolean>
       addComputer: (origin: string) => Promise<ComputerMutationResult>
       updateComputer: (
