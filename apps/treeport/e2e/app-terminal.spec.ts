@@ -1464,6 +1464,49 @@ test.describe('desktop worktree and terminal workflows', () => {
     await expect(
       reviewFrame.getByRole('treeitem', { name: 'fresh.ts', exact: true })
     ).toBeVisible()
+    const outdatedComments = reviewFrame.getByRole('region', {
+      name: 'Outdated comments'
+    })
+    await expect(outdatedComments).toContainText(
+      'Keep the shared behavior explicit.'
+    )
+    await expect(outdatedComments).toContainText('Cover the branch-only path.')
+    await expect(
+      reviewFrame.getByText('0 unresolved · 2 outdated')
+    ).toBeVisible()
+    await expect(
+      reviewFrame.getByRole('button', {
+        name: 'Previous unresolved comment'
+      })
+    ).toBeDisabled()
+
+    await outdatedComments
+      .getByRole('button', {
+        name: 'Resolve outdated comment on src/shared.ts line 1'
+      })
+      .click()
+    await expect(
+      reviewFrame.getByText('0 unresolved · 1 outdated')
+    ).toBeVisible()
+    await outdatedComments
+      .getByRole('button', {
+        name: 'Delete outdated comment on src/branch.ts line 1'
+      })
+      .click()
+    await expect(outdatedComments).toHaveCount(0)
+    await expect(reviewFrame.getByText('0 unresolved')).toBeVisible()
+    await expect
+      .poll(() => mocked.getWebPanelStorage('panel_1', 'review-comments-v1'))
+      .toEqual([
+        {
+          id: 'legacy-comment',
+          file: 'src/shared.ts',
+          side: 'additions',
+          lineNumber: 1,
+          body: 'Keep the shared behavior explicit.',
+          resolved: true
+        }
+      ])
   })
 
   test('handles Electron commands through worktree, terminal, and web-panel flows', async ({

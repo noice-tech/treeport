@@ -80,7 +80,7 @@ header {
   font-size: 0.8rem;
 }
 #comment-position {
-  width: 5rem;
+  min-width: 5rem;
   text-align: center;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
@@ -313,6 +313,50 @@ main {
 }
 .file-diff.selected {
   outline-color: #71717a;
+}
+.outdated-comments {
+  display: grid;
+  gap: 0.5rem;
+  max-width: 52rem;
+  padding: 1rem;
+  border: 1px solid #52525b;
+  border-radius: 0.5rem;
+  background: #18181b;
+}
+.outdated-comments h2,
+.outdated-comments p {
+  margin: 0;
+}
+.outdated-comments h2 {
+  font-size: 1rem;
+}
+.outdated-comments > p,
+.outdated-comment-location span {
+  color: #a1a1aa;
+  font-size: 0.8rem;
+}
+.outdated-comments ul {
+  display: grid;
+  gap: 0.75rem;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+.outdated-comments li {
+  display: grid;
+  gap: 0.6rem;
+  padding: 0.75rem;
+  border: 1px solid #3f3f46;
+  border-radius: 0.4rem;
+  background: #27272a;
+}
+.outdated-comment-location {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+.outdated-comment-location strong {
+  overflow-wrap: anywhere;
 }
 .review-comment {
   display: grid;
