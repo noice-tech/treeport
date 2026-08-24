@@ -9,8 +9,7 @@ import type {
   BrowserClientMessage,
   BrowserFrame,
   BrowserServerMessage,
-  BrowserSessionState,
-  JsonValue
+  BrowserSessionState
 } from '@treeport/shared'
 import {
   BROWSER_MAX_FRAME_BYTES,
@@ -33,16 +32,9 @@ export interface BrowserTransport {
 }
 
 export interface BrowserSessionService {
-  authorizeHostBrowserPanel: TreeportService['authorizeHostBrowserPanel']
-  getWebPanelStorage(
-    panelId: string,
-    key: string
-  ): Promise<JsonValue | undefined>
-  setWebPanelStorage(
-    panelId: string,
-    key: string,
-    value: JsonValue
-  ): Promise<void>
+  authorizeBrowserPanel: TreeportService['authorizeBrowserPanel']
+  updateBrowserPanelState: TreeportService['updateBrowserPanelState']
+  openBrowserPanelFromPanel: TreeportService['openBrowserPanelFromPanel']
   events: Pick<TreeportService['events'], 'subscribe'>
 }
 
@@ -117,12 +109,12 @@ interface BrowserScheduler {
   accepting: boolean
 }
 
-interface BrowserUrlStorage {
-  launchUpdatedAt: string
-  persistedUrl: string | null
-  persistedLaunchUpdatedAt: string | null
-  pendingUrl: string | null
+interface BrowserPanelStatePersistence {
+  persistedUrl: string
+  persistedTitle: string
+  pending: { url: string; title: string } | null
   write: Promise<void> | null
+  ready: boolean
 }
 
 interface BrowserSession {
@@ -140,7 +132,7 @@ interface BrowserSession {
   sequence: number
   latestFrame: BrowserFrame | null
   scheduler: BrowserScheduler
-  urlStorage: BrowserUrlStorage
+  persistence: BrowserPanelStatePersistence
   agentAttached: boolean
   agentProcess: ChildProcess | null
   crashMessage: string | null
@@ -152,19 +144,8 @@ const MAX_BROWSER_ATTACHMENTS = 8
 const MAX_BROWSER_TICKETS = 256
 const MAX_BROWSER_SCHEDULED_OPERATIONS = 64
 const MAX_BROWSER_REGULAR_OPERATIONS = 46
-const REMOTE_BROWSER_STORAGE_KEY = 'browser-state'
-
 const playwrightPackageSchema = z.object({
   bin: z.object({ playwright: z.string() }).optional()
-})
-
-const remoteBrowserLaunchSchema = z.object({
-  url: browserUrlSchema.optional()
-})
-
-const remoteBrowserStorageSchema = z.strictObject({
-  url: browserUrlSchema.optional(),
-  launchUpdatedAt: z.string().optional()
 })
 
 const defaultBrowserFactory: BrowserSessionBrowserFactory = (
@@ -202,7 +183,6 @@ export class BrowserSessionManager {
   private readonly sessionCreations = new Map<string, Promise<BrowserSession>>()
   private readonly tickets = new Map<string, BrowserTicket>()
   private readonly unsubscribe: () => void
-  private readonly permissionTimer: NodeJS.Timeout
   private installing: Promise<string> | null = null
 
   constructor(
@@ -215,49 +195,25 @@ export class BrowserSessionManager {
     this.unsubscribe = service.events.subscribe((event) => {
       if (event.type === 'panel.removed') {
         void this.closePanel(String(event.data.panelId), 'Panel closed')
-      } else if (event.type === 'panel.updated') {
-        const panelId = String(event.data.panelId)
-        if (this.sessions.has(panelId)) {
-          void this.service
-            .authorizeHostBrowserPanel(panelId)
-            .catch(() =>
-              this.closePanel(panelId, 'Remote Browser permission revoked')
-            )
-        }
       } else if (event.type === 'worktree.removed' && event.data.worktreeId) {
         for (const session of this.sessions.values()) {
           void this.service
-            .authorizeHostBrowserPanel(session.panelId)
+            .authorizeBrowserPanel(session.panelId)
             .catch(() => this.closePanel(session.panelId, 'Worktree removed'))
         }
       }
     })
-    this.permissionTimer = setInterval(() => {
-      for (const session of this.sessions.values()) {
-        void this.service
-          .authorizeHostBrowserPanel(session.panelId)
-          .catch(() =>
-            this.closePanel(
-              session.panelId,
-              'Remote Browser permission revoked'
-            )
-          )
-      }
-    }, 2_000)
-    this.permissionTimer.unref()
   }
 
   async issueTicket(panelId: string, clientId: string): Promise<string> {
-    await this.service.authorizeHostBrowserPanel(panelId)
+    await this.service.authorizeBrowserPanel(panelId)
     for (const [value, ticket] of this.tickets) {
       if (ticket.expiresAt < Date.now()) {
         this.tickets.delete(value)
       }
     }
     if (this.tickets.size >= MAX_BROWSER_TICKETS) {
-      throw new Error(
-        'Too many Remote Browser attachment requests are pending.'
-      )
+      throw new Error('Too many Browser attachment requests are pending.')
     }
 
     const ticket = crypto.randomBytes(32).toString('base64url')
@@ -388,8 +344,8 @@ export class BrowserSessionManager {
         reject(
           new Error(
             session.scheduler.accepting
-              ? 'The Remote Browser command queue is full.'
-              : 'The Remote Browser session is closing.'
+              ? 'The Browser command queue is full.'
+              : 'The Browser session is closing.'
           )
         )
       }
@@ -405,8 +361,8 @@ export class BrowserSessionManager {
       attachment.transport.sendMessage({
         type: 'navigationError',
         message: session.scheduler.accepting
-          ? 'The Remote Browser command queue is full. Wait and try again.'
-          : 'The Remote Browser session is closing.'
+          ? 'The Browser command queue is full. Wait and try again.'
+          : 'The Browser session is closing.'
       })
     }
   }
@@ -453,108 +409,98 @@ export class BrowserSessionManager {
     session.scheduler.coalesced.clear()
   }
 
-  private queueStoredUrl(session: BrowserSession, value: string): void {
-    if (session.closing) {
+  private queuePanelState(
+    session: BrowserSession,
+    value: Pick<BrowserSessionState, 'url' | 'title'>
+  ): void {
+    if (session.closing || !session.persistence.ready) {
       return
     }
 
-    const parsed = browserUrlSchema.safeParse(value)
+    const parsed =
+      value.url === 'about:blank'
+        ? { success: true as const, data: 'about:blank' }
+        : browserUrlSchema.safeParse(value.url)
     if (!parsed.success) {
       return
     }
 
-    const url = new URL(parsed.data).href
-    const storage = session.urlStorage
+    const url =
+      parsed.data === 'about:blank' ? parsed.data : new URL(parsed.data).href
+    const requestedTitle = value.title.trim().slice(0, 256)
+    const title =
+      requestedTitle ||
+      (url === 'about:blank' ? 'Browser' : new URL(url).host || 'Browser')
+    const persistence = session.persistence
     if (
-      storage.pendingUrl === url ||
-      (storage.persistedUrl === url &&
-        storage.persistedLaunchUpdatedAt === storage.launchUpdatedAt)
+      (persistence.pending?.url === url &&
+        persistence.pending.title === title) ||
+      (persistence.persistedUrl === url && persistence.persistedTitle === title)
     ) {
       return
     }
 
-    storage.pendingUrl = url
-    if (storage.write) {
+    persistence.pending = { url, title }
+    if (persistence.write) {
       return
     }
 
     const write = (async () => {
-      while (storage.pendingUrl !== null) {
-        const pendingUrl = storage.pendingUrl
-        storage.pendingUrl = null
+      while (persistence.pending !== null) {
+        const pending = persistence.pending
+        persistence.pending = null
         try {
-          await this.service.setWebPanelStorage(
+          const panel = await this.service.updateBrowserPanelState(
             session.panelId,
-            REMOTE_BROWSER_STORAGE_KEY,
-            {
-              url: pendingUrl,
-              launchUpdatedAt: storage.launchUpdatedAt
-            }
+            pending
           )
-          storage.persistedUrl = pendingUrl
-          storage.persistedLaunchUpdatedAt = storage.launchUpdatedAt
+          persistence.persistedUrl = panel.url
+          persistence.persistedTitle = panel.title
         } catch (cause) {
           const message = cause instanceof Error ? cause.message : String(cause)
           for (const attachment of session.attachments.values()) {
             attachment.transport.sendMessage({
               type: 'navigationError',
-              message: `Could not save the Remote Browser address: ${message}`
+              message: `Could not save the Browser address and title: ${message}`
             })
           }
           return
         }
       }
     })()
-    storage.write = write
+    persistence.write = write
     void write.finally(() => {
-      if (storage.write !== write) {
+      if (persistence.write !== write) {
         return
       }
 
-      storage.write = null
-      const pendingUrl = storage.pendingUrl
-      storage.pendingUrl = null
-      if (pendingUrl !== null && !session.closing) {
-        this.queueStoredUrl(session, pendingUrl)
+      persistence.write = null
+      const pending = persistence.pending
+      persistence.pending = null
+      if (pending !== null && !session.closing) {
+        this.queuePanelState(session, pending)
       }
     })
   }
 
-  private async waitForStoredUrl(session: BrowserSession): Promise<void> {
-    while (session.urlStorage.write) {
-      await session.urlStorage.write
+  private async waitForPanelState(session: BrowserSession): Promise<void> {
+    while (session.persistence.write) {
+      await session.persistence.write
     }
   }
 
   private async createSession(panelId: string): Promise<BrowserSession> {
     if (this.sessions.size >= 6) {
       throw new Error(
-        'Treeport supports at most six active Remote Browser panels. Close one and try again.'
+        'Treeport supports at most six active Browser panels. Close one and try again.'
       )
     }
 
-    const authorized = await this.service.authorizeHostBrowserPanel(panelId)
-    const storedValue = await this.service.getWebPanelStorage(
-      panelId,
-      REMOTE_BROWSER_STORAGE_KEY
-    )
-    const launchState = remoteBrowserLaunchSchema.safeParse(
-      authorized.panel.launch.input
-    )
-    const storedState = remoteBrowserStorageSchema.safeParse(storedValue)
-    const launchUrl = launchState.success
-      ? (launchState.data.url ?? null)
-      : null
-    const storedUrl = storedState.success
-      ? (storedState.data.url ?? null)
-      : null
-    const storedLaunchUpdatedAt = storedState.success
-      ? (storedState.data.launchUpdatedAt ?? null)
-      : null
+    const authorized = await this.service.authorizeBrowserPanel(panelId)
     const restoredUrl =
-      launchUrl && storedLaunchUpdatedAt !== authorized.panel.updatedAt
-        ? launchUrl
-        : (storedUrl ?? launchUrl)
+      authorized.panel.url === 'about:blank'
+        ? null
+        : browserUrlSchema.parse(authorized.panel.url)
     const agentDirectory = path.join(
       this.config.runtimeDir,
       'browsers',
@@ -574,6 +520,8 @@ export class BrowserSessionManager {
       state: {
         ...DEFAULT_STATE,
         url: restoredUrl ?? DEFAULT_STATE.url,
+        title:
+          authorized.panel.title === 'Browser' ? '' : authorized.panel.title,
         viewport: { ...DEFAULT_STATE.viewport }
       },
       sequence: 0,
@@ -584,12 +532,12 @@ export class BrowserSessionManager {
         running: false,
         accepting: true
       },
-      urlStorage: {
-        launchUpdatedAt: authorized.panel.updatedAt,
-        persistedUrl: storedUrl,
-        persistedLaunchUpdatedAt: storedLaunchUpdatedAt,
-        pendingUrl: null,
-        write: null
+      persistence: {
+        persistedUrl: authorized.panel.url,
+        persistedTitle: authorized.panel.title,
+        pending: null,
+        write: null,
+        ready: false
       },
       agentAttached: false,
       agentProcess: null,
@@ -607,10 +555,24 @@ export class BrowserSessionManager {
         {
           state: (state) => {
             session.state = state
-            this.queueStoredUrl(session, state.url)
+            this.queuePanelState(session, state)
             this.broadcastState(session)
           },
           frame: (frame) => this.publishFrame(session, frame),
+          popup: (url) => {
+            void this.service
+              .openBrowserPanelFromPanel(session.panelId, url)
+              .catch((cause) => {
+                const message =
+                  cause instanceof Error ? cause.message : String(cause)
+                for (const attachment of session.attachments.values()) {
+                  attachment.transport.sendMessage({
+                    type: 'navigationError',
+                    message: `Could not open the popup: ${message}`
+                  })
+                }
+              })
+          },
           navigationError: (message) => {
             for (const attachment of session.attachments.values()) {
               attachment.transport.sendMessage({
@@ -633,6 +595,11 @@ export class BrowserSessionManager {
       session.browser = browser
       await browser.launch()
       session.state = browser.state
+      if (!restoredUrl) {
+        session.persistence.ready = true
+        this.queuePanelState(session, session.state)
+      }
+
       return browser
     })()
     session.launch = browserLaunch
@@ -642,12 +609,27 @@ export class BrowserSessionManager {
         session,
         async () => {
           const browser = await browserLaunch
-          await browser
+          const restored = await browser
             .command({ type: 'navigate', url: restoredUrl })
-            .catch(() => undefined)
-          session.state = browser.state
-          this.queueStoredUrl(session, session.state.url)
-          await this.waitForStoredUrl(session)
+            .then(
+              () => true,
+              () => false
+            )
+          session.state = restored
+            ? browser.state
+            : {
+                ...browser.state,
+                url: restoredUrl,
+                title:
+                  authorized.panel.title === 'Browser'
+                    ? browser.state.title
+                    : authorized.panel.title
+              }
+          session.persistence.ready = true
+          if (restored) {
+            this.queuePanelState(session, session.state)
+            await this.waitForPanelState(session)
+          }
         },
         { required: true }
       )
@@ -659,7 +641,7 @@ export class BrowserSessionManager {
 
   private browserFor(session: BrowserSession): Promise<BrowserSessionBrowser> {
     if (!session.launch) {
-      return Promise.reject(new Error('Remote Browser launch is not ready.'))
+      return Promise.reject(new Error('Browser launch is not ready.'))
     }
 
     return session.launch
@@ -668,7 +650,7 @@ export class BrowserSessionManager {
   private async getSession(panelId: string): Promise<BrowserSession> {
     const existing = this.sessions.get(panelId)
     if (existing) {
-      await this.service.authorizeHostBrowserPanel(panelId)
+      await this.service.authorizeBrowserPanel(panelId)
       return existing
     }
 
@@ -679,7 +661,7 @@ export class BrowserSessionManager {
 
     if (this.sessions.size + this.sessionCreations.size >= 6) {
       throw new Error(
-        'Treeport supports at most six active Remote Browser panels. Close one and try again.'
+        'Treeport supports at most six active Browser panels. Close one and try again.'
       )
     }
 
@@ -707,7 +689,7 @@ export class BrowserSessionManager {
       transport.sendMessage({
         type: 'browserUnavailable',
         message:
-          'This Remote Browser panel already has the maximum of eight attached clients.',
+          'This Browser panel already has the maximum of eight attached clients.',
         installCommand: null
       })
       return transport.id
@@ -763,7 +745,7 @@ export class BrowserSessionManager {
       }
 
       session.closing = true
-      this.stopScheduler(session, 'Remote Browser launch failed.')
+      this.stopScheduler(session, 'Browser launch failed.')
       const message = error instanceof Error ? error.message : String(error)
       transport.sendMessage({
         type: 'browserUnavailable',
@@ -981,7 +963,8 @@ export class BrowserSessionManager {
           } else {
             const browser = await this.browserFor(session)
             await browser.command(queuedMessage)
-            await this.waitForStoredUrl(session)
+            this.queuePanelState(session, browser.state)
+            await this.waitForPanelState(session)
           }
         } catch (cause) {
           attachment.transport.sendMessage({
@@ -1028,7 +1011,7 @@ export class BrowserSessionManager {
     session: BrowserSession,
     reason: string
   ): Promise<void> {
-    await this.waitForStoredUrl(session)
+    await this.waitForPanelState(session)
     await this.detachAgent(session)
     await this.browserFor(session)
       .catch(() => session.browser)
@@ -1047,10 +1030,18 @@ export class BrowserSessionManager {
 
   private async resetSession(session: BrowserSession): Promise<void> {
     session.closing = true
-    this.stopScheduler(session, 'Remote Browser reset.')
+    this.stopScheduler(session, 'Browser reset.')
+    await this.waitForPanelState(session)
+    await this.service.updateBrowserPanelState(session.panelId, {
+      url: 'about:blank',
+      title: 'Browser'
+    })
+    session.persistence.pending = null
+    session.persistence.persistedUrl = 'about:blank'
+    session.persistence.persistedTitle = 'Browser'
     await this.destroySession(
       session,
-      'Remote Browser reset; reconnecting to a new empty session.'
+      'Browser reset; reconnecting to a new empty session.'
     )
   }
 
@@ -1185,8 +1176,8 @@ export class BrowserSessionManager {
     await this.scheduleOperation(session, async () => {
       const browser = await this.browserFor(session).catch(async (error) => {
         session.closing = true
-        this.stopScheduler(session, 'Remote Browser launch failed.')
-        await this.destroySession(session, 'Remote Browser launch failed.')
+        this.stopScheduler(session, 'Browser launch failed.')
+        await this.destroySession(session, 'Browser launch failed.')
         throw error
       })
       const name = `treeport-${panelId}`
@@ -1205,8 +1196,8 @@ export class BrowserSessionManager {
           '--',
           ...input.args
         ])
-        this.queueStoredUrl(session, browser.state.url)
-        await this.waitForStoredUrl(session)
+        this.queuePanelState(session, browser.state)
+        await this.waitForPanelState(session)
       } finally {
         session.controllerId =
           previousController &&
@@ -1279,7 +1270,7 @@ export class BrowserSessionManager {
     }
 
     if (this.sessions.size > 0) {
-      throw new Error('Close Remote Browser panels before you remove Chromium.')
+      throw new Error('Close Browser panels before you remove Chromium.')
     }
 
     await fs.rm(this.cachePath, { recursive: true, force: true })
@@ -1287,7 +1278,6 @@ export class BrowserSessionManager {
 
   async dispose(): Promise<void> {
     this.unsubscribe()
-    clearInterval(this.permissionTimer)
     this.tickets.clear()
     await Promise.all(
       [...this.sessionCreations.values()].map((creation) =>

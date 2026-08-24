@@ -66,39 +66,57 @@ export const browserClientMessageSchema = z.discriminatedUnion('type', [
 
 export type BrowserClientMessage = z.infer<typeof browserClientMessageSchema>
 
-export interface BrowserSessionState {
-  url: string
-  title: string
-  loading: boolean
-  canGoBack: boolean
-  canGoForward: boolean
-  controlled: boolean
-  hasController: boolean
-  controller: 'you' | 'agent' | 'other' | 'none'
-  viewport: { width: number; height: number }
-}
+export const browserSessionStateSchema = z.strictObject({
+  url: z.string(),
+  title: z.string(),
+  loading: z.boolean(),
+  canGoBack: z.boolean(),
+  canGoForward: z.boolean(),
+  controlled: z.boolean(),
+  hasController: z.boolean(),
+  controller: z.enum(['you', 'agent', 'other', 'none']),
+  viewport: z.strictObject({ width: z.number(), height: z.number() })
+})
 
-export type BrowserServerMessage =
-  | { type: 'ready'; state: BrowserSessionState }
-  | { type: 'state'; state: BrowserSessionState }
-  | { type: 'controlChanged'; state: BrowserSessionState }
-  | { type: 'navigationError'; message: string }
-  | {
-      type: 'browserUnavailable'
-      message: string
-      installCommand: string | null
-    }
-  | { type: 'browserCrashed'; message: string }
-  | { type: 'closed'; reason: string }
+export type BrowserSessionState = z.infer<typeof browserSessionStateSchema>
 
-export interface BrowserFrame {
-  sequence: number
-  mimeType: 'image/jpeg'
-  timestamp: number
-  width: number
-  height: number
-  data: Uint8Array
-}
+export const browserServerMessageSchema = z.discriminatedUnion('type', [
+  z.strictObject({
+    type: z.literal('ready'),
+    state: browserSessionStateSchema
+  }),
+  z.strictObject({
+    type: z.literal('state'),
+    state: browserSessionStateSchema
+  }),
+  z.strictObject({
+    type: z.literal('controlChanged'),
+    state: browserSessionStateSchema
+  }),
+  z.strictObject({ type: z.literal('navigationError'), message: z.string() }),
+  z.strictObject({
+    type: z.literal('browserUnavailable'),
+    message: z.string(),
+    installCommand: z.string().nullable()
+  }),
+  z.strictObject({ type: z.literal('browserCrashed'), message: z.string() }),
+  z.strictObject({ type: z.literal('closed'), reason: z.string() })
+])
+
+export type BrowserServerMessage = z.infer<typeof browserServerMessageSchema>
+
+export const browserFrameSchema = z.strictObject({
+  sequence: z.number().int().positive(),
+  mimeType: z.literal('image/jpeg'),
+  timestamp: z.number(),
+  width: z.number().int().positive(),
+  height: z.number().int().positive(),
+  data: z
+    .instanceof(Uint8Array)
+    .refine((value) => value.byteLength <= BROWSER_MAX_FRAME_BYTES)
+})
+
+export type BrowserFrame = z.infer<typeof browserFrameSchema>
 
 export const browserTicketRequestSchema = z.strictObject({
   clientId: z.string().min(1).max(128)

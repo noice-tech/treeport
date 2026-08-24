@@ -276,11 +276,11 @@ function controllerSessionFixture() {
 }
 
 describe('terminal options', () => {
-  it('opens OSC 8 links only on Cmd-click on Apple platforms', () => {
-    const open = vi.fn()
+  it('opens OSC 8 links in Browser panels only on Cmd-click on Apple platforms', () => {
+    const request = vi.fn(() => Promise.resolve(new Response()))
     vi.stubGlobal('navigator', { platform: 'MacIntel' })
-    vi.stubGlobal('window', { open })
-    const handler = terminalOptions().linkHandler
+    vi.stubGlobal('fetch', request)
+    const handler = terminalOptions('term_source').linkHandler
     const url = 'https://github.com/acme/project/pull/123'
 
     handler.activate(
@@ -291,21 +291,26 @@ describe('terminal options', () => {
       testAccess<MouseEvent>({ metaKey: false, ctrlKey: true }),
       url
     )
-    expect(open).not.toHaveBeenCalled()
+    expect(request).not.toHaveBeenCalled()
 
     handler.activate(
       testAccess<MouseEvent>({ metaKey: true, ctrlKey: false }),
       url
     )
-    expect(open).toHaveBeenCalledOnce()
-    expect(open).toHaveBeenCalledWith(url, '_blank', 'noopener,noreferrer')
+    expect(request).toHaveBeenCalledWith(
+      '/api/terminals/term_source/browser-panels/open',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ url })
+      })
+    )
   })
 
-  it('opens OSC 8 links only on Ctrl-click on non-Apple platforms', () => {
-    const open = vi.fn()
+  it('opens OSC 8 links in Browser panels only on Ctrl-click on non-Apple platforms', () => {
+    const request = vi.fn(() => Promise.resolve(new Response()))
     vi.stubGlobal('navigator', { platform: 'Linux x86_64' })
-    vi.stubGlobal('window', { open })
-    const handler = terminalOptions().linkHandler
+    vi.stubGlobal('fetch', request)
+    const handler = terminalOptions('term_source').linkHandler
     const url = 'http://example.test/docs'
 
     handler.activate(
@@ -316,14 +321,19 @@ describe('terminal options', () => {
       testAccess<MouseEvent>({ metaKey: true, ctrlKey: false }),
       url
     )
-    expect(open).not.toHaveBeenCalled()
+    expect(request).not.toHaveBeenCalled()
 
     handler.activate(
       testAccess<MouseEvent>({ metaKey: false, ctrlKey: true }),
       url
     )
-    expect(open).toHaveBeenCalledOnce()
-    expect(open).toHaveBeenCalledWith(url, '_blank', 'noopener,noreferrer')
+    expect(request).toHaveBeenCalledWith(
+      '/api/terminals/term_source/browser-panels/open',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ url })
+      })
+    )
   })
 
   it('opens file OSC 8 links through the desktop bridge on modifier-click', () => {

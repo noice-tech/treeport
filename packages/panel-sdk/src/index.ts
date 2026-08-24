@@ -16,7 +16,7 @@ export interface WebPanelLaunch {
   cwd: string | null
 }
 
-export type WebPanelPermission = 'same-origin' | 'host-browser'
+export type WebPanelPermission = 'same-origin'
 
 /** A persistent web panel instance scoped to one tree. */
 export interface WebPanel {

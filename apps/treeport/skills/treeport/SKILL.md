@@ -133,11 +133,15 @@ treeport terminal wait <terminal-id> --until exit
 
 Treeport does not infer agent settlement. An orchestrator can inspect first, wait for `working` if no progress cycle has been observed, and then wait for `idle`. Progress depends on the child application emitting OSC `9;4`; for Pi, `terminal.showTerminalProgress` must be enabled. Applications should clear progress or refresh active progress more frequently than the five-minute lease. A null progress value is not proof that every application supports progress reporting.
 
-## Inspect the worktree application in its Remote Browser panel
+## Inspect the worktree application in its Browser panel
 
-Remote Browser panels run isolated Chromium sessions on the Treeport daemon host. They can reach worktree development servers on that host and remain open for user takeover. The client-side Browser panel is a separate iframe panel and cannot be controlled with these commands. Never attach Treeport to a personal browser profile.
+Browser panels run isolated Chromium sessions on the Treeport daemon host. They can reach development servers on that host.
 
-First inspect available Remote Browser panels:
+The iframe Browser web panel is separate. These commands cannot control it.
+
+Never attach Treeport to a personal browser profile.
+
+First, inspect available Browser panels:
 
 ```sh
 treeport browser list
@@ -150,7 +154,13 @@ treeport browser status
 treeport browser install
 ```
 
-Open the official Remote Browser panel through the Treeport UI when one does not exist. Its host-browser permission requires explicit user approval. After the panel exists, use its shared Playwright session:
+If no Browser panel exists, create one in the current tree:
+
+```sh
+treeport browser open --worktree .
+```
+
+After the panel exists, use its shared Playwright session:
 
 ```sh
 treeport browser snapshot
@@ -162,7 +172,11 @@ treeport browser network
 treeport browser screenshot
 ```
 
-Commands resolve the only Remote Browser panel in the current worktree. Add `--panel <panel-id>` when more than one exists or when controlling another explicit panel. Use snapshot element refs instead of guessed selectors. After each important action, take another snapshot or inspect the resulting URL, console, or network output. Leave the Remote Browser panel open so the user can inspect and continue the same session.
+Commands resolve the only Browser panel in the current worktree. Add `--panel <panel-id>` when more than one exists.
+
+Use snapshot element refs instead of guessed selectors. Take a new snapshot after each important action.
+
+Leave the Browser panel open so the user can continue the same session.
 
 ## Automation and integrations
 

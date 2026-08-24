@@ -15,6 +15,7 @@ export interface PlaywrightBrowserCallbacks {
     >
   ): void
   frame(frame: Omit<BrowserFrame, 'sequence'>): void
+  popup(url: string): void
   navigationError(message: string): void
   crashed(message: string): void
 }
@@ -272,23 +273,53 @@ export class PlaywrightBrowser {
       this.frameProducer?.receive(frame)
     )
     context.on('page', (candidate) => {
-      if (candidate !== page) {
-        this.callbacks.navigationError(
-          'Popups are not supported in the Remote Browser panel.'
-        )
-        void candidate.close()
+      if (candidate === page) {
+        return
       }
+
+      void (async () => {
+        const supportedUrl = (value: string): string | null => {
+          if (!URL.canParse(value)) {
+            return null
+          }
+
+          const url = new URL(value)
+          return url.protocol === 'http:' || url.protocol === 'https:'
+            ? url.href
+            : null
+        }
+        let popupUrl = supportedUrl(candidate.url())
+        if (!popupUrl) {
+          await candidate
+            .waitForURL((url) => supportedUrl(url.href) !== null, {
+              timeout: 5_000
+            })
+            .catch(() => undefined)
+          popupUrl = supportedUrl(candidate.url())
+        }
+
+        if (popupUrl) {
+          this.callbacks.popup(popupUrl)
+        } else {
+          this.callbacks.navigationError(
+            'The popup did not supply a supported HTTP or HTTPS URL.'
+          )
+        }
+
+        await candidate.close().catch(() => undefined)
+      })()
     })
     page.on('download', (download) => {
       this.callbacks.navigationError(
-        'Downloads are not supported in the Remote Browser panel.'
+        'Downloads are not supported in the Browser panel.'
       )
       void download.cancel()
     })
-    page.on('filechooser', () => {
+    page.on('filechooser', (chooser) => {
       this.callbacks.navigationError(
-        'File pickers are not supported in the Remote Browser panel.'
+        'File pickers are not supported in the Browser panel.'
       )
+      void chooser.setFiles([]).catch(() => undefined)
     })
     page.on('close', () => {
       if (!this.closing) {
@@ -325,21 +356,10 @@ export class PlaywrightBrowser {
       this.updateState({ loading: false })
       void this.refreshPageState()
     })
-    page.on('download', (download) => void download.cancel())
     page.on('dialog', (dialog) => void dialog.dismiss())
-    page.on(
-      'filechooser',
-      (chooser) => void chooser.setFiles([]).catch(() => undefined)
-    )
     page.once('crash', () =>
       this.callbacks.crashed('The hosted browser page crashed.')
     )
-    context.on('page', (candidate) => {
-      if (candidate !== page) {
-        void candidate.close().catch(() => undefined)
-        this.callbacks.navigationError('Pop-up windows are not supported.')
-      }
-    })
     this.cdp.on('Page.navigatedWithinDocument', () => {
       void this.refreshPageState()
     })

@@ -1,5 +1,3 @@
-import crypto from 'node:crypto'
-import fs from 'node:fs/promises'
 import { createServer } from 'node:http'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -51,30 +49,13 @@ async function main(): Promise<void> {
       launcherPath
     )
     const gh = new GhAdapter(runner, config.ghPath)
-    const trustedHostBrowserPackageIds =
-      config.installationMethod === 'development'
-        ? await Promise.all(
-            [
-              path.resolve(process.cwd(), 'packages/web-panel-browser'),
-              path.resolve(process.cwd(), '../../packages/web-panel-browser')
-            ].map(async (source) => {
-              const canonical = await fs.realpath(source).catch(() => source)
-              return `local:${crypto
-                .createHash('sha256')
-                .update(canonical)
-                .digest('hex')
-                .slice(0, 16)}`
-            })
-          )
-        : []
     const service = new TreeportService({
       config,
       database,
       runner,
       git,
       tmux,
-      gh,
-      trustedHostBrowserPackageIds
+      gh
     })
     await service.initialize()
     const terminalMetadata = new TerminalMetadataManager(

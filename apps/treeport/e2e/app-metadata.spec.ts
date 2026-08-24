@@ -2,18 +2,11 @@ import { expect, test } from '@playwright/test'
 import { mockApp, terminalTextPoint } from './app-fixture'
 
 test.describe('desktop terminal links and metadata', () => {
-  test('opens detected web URLs on platform modifier-click', async ({
+  test('opens detected web URLs in Browser panels on platform modifier-click', async ({
     page
   }) => {
     await mockApp(page, [], { keyboardPlatform: 'Linux x86_64' })
     expect(await page.evaluate(() => navigator.platform)).toBe('Linux x86_64')
-    await page.evaluate(() => {
-      window.__openedTerminalLinks = []
-      window.open = (...args) => {
-        window.__openedTerminalLinks.push(args)
-        return null
-      }
-    })
     await page.getByRole('button', { name: 'Pi, running', exact: true }).click()
     await page.evaluate(() => {
       const socket = window.__wsInstances.find((item: any) =>
@@ -42,23 +35,20 @@ test.describe('desktop terminal links and metadata', () => {
     await page.keyboard.down('Control')
     await page.mouse.click(httpPoint.x, httpPoint.y)
     await page.keyboard.up('Control')
-    await expect
-      .poll(() => page.evaluate(() => window.__openedTerminalLinks))
-      .toEqual([['http://example.test/help', '_blank', 'noopener,noreferrer']])
+    await expect(page).toHaveURL(/\/panels\/browser_panel_1$/)
+    await expect(
+      page.getByRole('textbox', { name: 'Application URL' })
+    ).toHaveValue('http://example.test/help')
+    await expect(
+      page.getByRole('button', { name: 'example.test, Browser panel' })
+    ).toBeVisible()
   })
 
-  test('opens OSC 8 links in a new tab on Apple Cmd-click', async ({
+  test('opens OSC 8 links in Browser panels on Apple Cmd-click', async ({
     page
   }) => {
     await mockApp(page, [], { keyboardPlatform: 'MacIntel' })
     expect(await page.evaluate(() => navigator.platform)).toBe('MacIntel')
-    await page.evaluate(() => {
-      window.__openedTerminalLink = null
-      window.open = (...args) => {
-        window.__openedTerminalLink = args
-        return null
-      }
-    })
     await page.getByRole('button', { name: 'Pi, running', exact: true }).click()
     await page.evaluate(() => {
       const socket = window.__wsInstances.find((item: any) =>
@@ -84,9 +74,10 @@ test.describe('desktop terminal links and metadata', () => {
     await page.keyboard.down('Meta')
     await page.mouse.click(linkedPoint.x, linkedPoint.y)
     await page.keyboard.up('Meta')
-    await expect
-      .poll(() => page.evaluate(() => window.__openedTerminalLink))
-      .toEqual(['https://example.test/pr/123', '_blank', 'noopener,noreferrer'])
+    await expect(page).toHaveURL(/\/panels\/browser_panel_1$/)
+    await expect(
+      page.getByRole('textbox', { name: 'Application URL' })
+    ).toHaveValue('https://example.test/pr/123')
   })
 
   test('reconciles terminal metadata in chronological order', async ({

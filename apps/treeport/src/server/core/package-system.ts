@@ -132,7 +132,7 @@ const webPanelManifestEntrySchema = z.union([
   z.string(),
   z.strictObject({
     source: z.string(),
-    permissions: z.array(z.enum(['same-origin', 'host-browser'])).optional()
+    permissions: z.array(z.literal('same-origin')).optional()
   })
 ])
 
@@ -947,9 +947,7 @@ export class PackageSystem {
       const parsedDefinition = z
         .strictObject({
           source: z.string(),
-          permissions: z
-            .array(z.enum(['same-origin', 'host-browser']))
-            .optional()
+          permissions: z.array(z.literal('same-origin')).optional()
         })
         .parse(parsed.data)
       const { source, permissions = [] } = parsedDefinition

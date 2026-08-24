@@ -4,6 +4,7 @@ import type {
   WebPanelInput,
   WebPanelPermission
 } from '@treeport/panel-sdk'
+import { browserUrlSchema } from './browser-protocol.js'
 import {
   terminalSizeSchema,
   type TerminalRuntimeMetadata
@@ -196,7 +197,17 @@ export interface TerminalPanel {
   updatedAt: string
 }
 
-export type Panel = TerminalPanel | WebPanel
+export interface BrowserPanel {
+  id: string
+  kind: 'browser'
+  worktreeId: string
+  title: string
+  url: string
+  createdAt: string
+  updatedAt: string
+}
+
+export type Panel = TerminalPanel | WebPanel | BrowserPanel
 
 export type WebPanelSource =
   | { type: 'project' }
@@ -224,6 +235,10 @@ export interface OpenWebPanelResult {
   panel: WebPanel
   created: boolean
   reused: boolean
+}
+
+export interface OpenBrowserPanelResult {
+  panel: BrowserPanel
 }
 
 export interface WorktreeRecord {
@@ -676,7 +691,16 @@ export const createWebPanelSchema = z.object({
 
 export const updateWebPanelPermissionGrantSchema = z.strictObject({
   granted: z.boolean(),
-  permissions: z.array(z.enum(['same-origin', 'host-browser']))
+  permissions: z.array(z.literal('same-origin'))
+})
+
+export const createBrowserPanelSchema = z.strictObject({
+  url: browserUrlSchema.optional(),
+  sourceTerminalId: z.string().min(1).max(128).nullable().optional()
+})
+
+export const openBrowserPanelFromTerminalSchema = z.strictObject({
+  url: browserUrlSchema
 })
 
 export const openWebPanelSchema = createWebPanelSchema.extend({
@@ -790,6 +814,7 @@ interface ProductEventPayloadMap {
     worktreeId: string
     panelId: string
     sourceTerminalId: string | null
+    sourcePanelId: string | null
   }
   'panel.removed': { worktreeId: string; panelId: string }
   'workspace.open_requested': {

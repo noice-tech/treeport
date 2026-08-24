@@ -50,5 +50,3 @@ const stopFind = treeport.shortcuts.onFind(() => {
 `treeport.shortcuts.onFind(handler)` delivers `Cmd/Ctrl+F` whether keyboard focus is inside the panel or elsewhere in the Treeport workspace. It returns an unsubscribe function. Panels own their find interface and behavior; Treeport only routes the generic shortcut.
 
 An HTTP application loaded in the Browser panel's nested iframe can use `treeport.panel.setTitle()`. The Browser panel relays this title message. While the target is embedded, the SDK also reports its current URL so the Browser panel can preserve client-side navigation. The target must include the SDK in its own application build. Browser targets cannot use context, diff, network discovery, storage, launch, external URL, shortcuts, or workspace navigation methods.
-
-The Remote Browser panel does not inject this SDK into pages that it opens. A Remote Browser target does not need the SDK for navigation, title, or input tracking.

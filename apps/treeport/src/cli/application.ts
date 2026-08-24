@@ -12,12 +12,14 @@ import {
   WEB_PANEL_INPUT_MAX_BYTES,
   webPanelInputSchema,
   type ApiErrorBody,
+  type BrowserPanel,
   type CreateOperationRequest,
   type EventsClientToServerEvents,
   type EventsServerToClientEvents,
   type PackageListing,
   type PackageOperationResult,
   type PackageResourceDiagnostic,
+  type OpenBrowserPanelResult,
   type OpenWebPanelResult,
   type OperationRecord,
   type ProjectRecord,
@@ -26,7 +28,6 @@ import {
   type TerminalCapture,
   type TerminalRecord,
   type TerminalRuntimeMetadata,
-  type WebPanel,
   type WebPanelDefinition,
   type WebPanelInput,
   type WorktreeRecord
@@ -566,22 +567,19 @@ async function webPanelLaunchCwd(worktree: WorktreeRecord): Promise<string> {
 
 async function resolveBrowserPanel(
   panelId?: string
-): Promise<{ panel: WebPanel; worktree: WorktreeRecord }> {
+): Promise<{ panel: BrowserPanel; worktree: WorktreeRecord }> {
   const projectList = await projects()
   const candidates = projectList.flatMap((project) =>
     project.worktrees.flatMap((worktree) =>
       worktree.panels
-        .filter(
-          (panel): panel is WebPanel =>
-            panel.kind === 'web' && panel.permissions.includes('host-browser')
-        )
+        .filter((panel): panel is BrowserPanel => panel.kind === 'browser')
         .map((panel) => ({ panel, worktree }))
     )
   )
   if (panelId) {
     const match = candidates.find((candidate) => candidate.panel.id === panelId)
     if (!match) {
-      throw new CliError(`Remote Browser panel ${panelId} was not found`, 5)
+      throw new CliError(`Browser panel ${panelId} was not found`, 5)
     }
 
     return match
@@ -597,14 +595,14 @@ async function resolveBrowserPanel(
 
   if (matches.length === 0) {
     throw new CliError(
-      `No Remote Browser panel is open in worktree ${worktree.name}`,
+      `No Browser panel is open in worktree ${worktree.name}`,
       5,
       'BROWSER_PANEL_NOT_FOUND'
     )
   }
 
   throw new CliError(
-    `More than one Remote Browser panel is open in worktree ${worktree.name}; specify --panel`,
+    `More than one Browser panel is open in worktree ${worktree.name}; specify --panel`,
     5,
     'BROWSER_PANEL_AMBIGUOUS',
     { panelIds: matches.map((candidate) => candidate.panel.id) }
@@ -627,7 +625,7 @@ async function runBrowserAgentCommand(
   return { panelId: panel.id, output: result.output }
 }
 
-function webPanelUrl(worktree: WorktreeRecord, panelId: string): string {
+function panelUrl(worktree: WorktreeRecord, panelId: string): string {
   const target = new URL(apiUrl)
   target.pathname = `/projects/${encodeURIComponent(worktree.projectId)}/worktrees/${encodeURIComponent(worktree.id)}/panels/${encodeURIComponent(panelId)}`
   target.search = ''
@@ -1585,14 +1583,44 @@ async function main(args: string[]): Promise<void> {
 
   const browserCommand = program
     .command('browser')
-    .description('Manage Remote Browser panels and their hosted Chromium')
+    .description('Manage Browser panels and their hosted Chromium')
   browserCommand.action(() => {
     writeStdout(browserCommand.helpInformation())
   })
 
+  const browserOpenCommand = browserCommand
+    .command('open')
+    .description('Create a Browser panel and request client navigation')
+    .argument('[url]', 'absolute HTTP or HTTPS URL')
+    .requiredOption('--worktree <id-or-path-or-dot>', 'owning tree')
+    .option('--json', 'emit machine-readable JSON')
+  browserOpenCommand.action(async (url?: string) => {
+    const worktree = await resolveWorktree(
+      browserOpenCommand.opts<{ worktree: string }>().worktree
+    )
+    const body = {
+      url,
+      sourceTerminalId:
+        contextWorktreeId === worktree.id ? (contextTerminalId ?? null) : null
+    }
+
+    const result = await request<OpenBrowserPanelResult>(
+      `/api/worktrees/${encodeURIComponent(worktree.id)}/browser-panels`,
+      { method: 'POST', body: JSON.stringify(body) }
+    )
+    const output = {
+      ...result,
+      url: panelUrl(worktree, result.panel.id)
+    }
+    print(
+      output,
+      () => `Opened ${result.panel.title} (${result.panel.id})\n${output.url}`
+    )
+  })
+
   const browserInstallCommand = browserCommand
     .command('install')
-    .description('Install the Chromium build used by Remote Browser panels')
+    .description('Install the Chromium build used by Browser panels')
     .option('--json', 'emit machine-readable JSON')
   browserInstallCommand.action(async () => {
     const result = await request<{ message: string }>('/api/browser/install', {
@@ -1633,16 +1661,13 @@ async function main(args: string[]): Promise<void> {
 
   const browserListCommand = browserCommand
     .command('list')
-    .description('List open Remote Browser panels')
+    .description('List open Browser panels')
     .option('--json', 'emit machine-readable JSON')
   browserListCommand.action(async () => {
     const panels = (await projects()).flatMap((project) =>
       project.worktrees.flatMap((worktree) =>
         worktree.panels
-          .filter(
-            (panel): panel is WebPanel =>
-              panel.kind === 'web' && panel.permissions.includes('host-browser')
-          )
+          .filter((panel): panel is BrowserPanel => panel.kind === 'browser')
           .map((panel) => ({
             panelId: panel.id,
             title: panel.title,
@@ -1661,7 +1686,7 @@ async function main(args: string[]): Promise<void> {
                 `${panel.panelId}\t${panel.project} / ${panel.worktree}\t${panel.title}`
             )
             .join('\n')
-        : 'No Remote Browser panels are open.'
+        : 'No Browser panels are open.'
     )
   })
 
@@ -1677,7 +1702,7 @@ async function main(args: string[]): Promise<void> {
   const browserSnapshotCommand = browserCommand
     .command('snapshot')
     .description('Capture an accessibility snapshot of the hosted page')
-    .option('--panel <panel-id>', 'Remote Browser panel ID')
+    .option('--panel <panel-id>', 'Browser panel ID')
     .option('--json', 'emit machine-readable JSON')
   browserSnapshotCommand.action(async () =>
     printAgentResult(
@@ -1691,7 +1716,7 @@ async function main(args: string[]): Promise<void> {
     .command('click')
     .description('Click an element from the latest browser snapshot')
     .argument('<target>', 'Playwright element reference or selector')
-    .option('--panel <panel-id>', 'Remote Browser panel ID')
+    .option('--panel <panel-id>', 'Browser panel ID')
     .option('--json', 'emit machine-readable JSON')
   browserClickCommand.action(async (target: string) =>
     printAgentResult(
@@ -1706,7 +1731,7 @@ async function main(args: string[]): Promise<void> {
     .description('Fill an editable element from the latest browser snapshot')
     .argument('<target>', 'Playwright element reference or selector')
     .argument('<text>', 'text to enter')
-    .option('--panel <panel-id>', 'Remote Browser panel ID')
+    .option('--panel <panel-id>', 'Browser panel ID')
     .option('--json', 'emit machine-readable JSON')
   browserFillCommand.action(async (target: string, text: string) =>
     printAgentResult(
@@ -1720,7 +1745,7 @@ async function main(args: string[]): Promise<void> {
     .command('press')
     .description('Press a key in the hosted page')
     .argument('<key>', 'Playwright key name')
-    .option('--panel <panel-id>', 'Remote Browser panel ID')
+    .option('--panel <panel-id>', 'Browser panel ID')
     .option('--json', 'emit machine-readable JSON')
   browserPressCommand.action(async (key: string) =>
     printAgentResult(
@@ -1734,7 +1759,7 @@ async function main(args: string[]): Promise<void> {
     .command('goto')
     .description('Navigate the hosted page')
     .argument('<url>', 'absolute HTTP or HTTPS URL')
-    .option('--panel <panel-id>', 'Remote Browser panel ID')
+    .option('--panel <panel-id>', 'Browser panel ID')
     .option('--json', 'emit machine-readable JSON')
   browserGotoCommand.action(async (url: string) =>
     printAgentResult(
@@ -1748,7 +1773,7 @@ async function main(args: string[]): Promise<void> {
     .command('console')
     .description('List page console messages')
     .argument('[level]', 'minimum console level')
-    .option('--panel <panel-id>', 'Remote Browser panel ID')
+    .option('--panel <panel-id>', 'Browser panel ID')
     .option('--json', 'emit machine-readable JSON')
   browserConsoleCommand.action(async (level?: string) =>
     printAgentResult(
@@ -1768,7 +1793,7 @@ async function main(args: string[]): Promise<void> {
     const command = browserCommand
       .command(name)
       .description(description)
-      .option('--panel <panel-id>', 'Remote Browser panel ID')
+      .option('--panel <panel-id>', 'Browser panel ID')
       .option('--json', 'emit machine-readable JSON')
     command.action(async () =>
       printAgentResult(agentName, [], command.opts<{ panel?: string }>().panel)
@@ -2180,7 +2205,7 @@ async function main(args: string[]): Promise<void> {
     )
     const output = {
       ...result,
-      url: webPanelUrl(worktree, result.panel.id)
+      url: panelUrl(worktree, result.panel.id)
     }
     print(
       output,

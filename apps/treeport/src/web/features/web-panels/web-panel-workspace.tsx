@@ -5,10 +5,6 @@ import { z } from 'zod'
 import { rpc } from '../../api'
 import { errorMessage } from '../../error-message'
 import { cn } from '../../lib/utils'
-import {
-  connectBrowserPanel,
-  isBrowserPanelConnectMessage
-} from '../../browser-session-client'
 
 const panelTitleMessageSchema = z.object({
   source: z.literal('treeport-panel-v1'),
@@ -54,9 +50,6 @@ export function WebPanelWorkspace({
 }) {
   const frameRef = useRef<HTMLIFrameElement>(null)
   const panelWindowRef = useRef<Window | null>(null)
-  const browserConnectionRef = useRef<ReturnType<
-    typeof connectBrowserPanel
-  > | null>(null)
   const panelRevision = `${panel.id}:${reloadRevision}`
   const [loadedPanelRevision, setLoadedPanelRevision] = useState<string | null>(
     null
@@ -74,18 +67,6 @@ export function WebPanelWorkspace({
     const frame = window.requestAnimationFrame(() => frameRef.current?.focus())
     return () => window.cancelAnimationFrame(frame)
   }, [active, autoFocusBlocked, loadedPanelRevision, panelRevision])
-
-  useEffect(() => {
-    browserConnectionRef.current?.setVisible(active)
-  }, [active])
-
-  useEffect(
-    () => () => {
-      browserConnectionRef.current?.dispose()
-      browserConnectionRef.current = null
-    },
-    [panel.id, panelRevision]
-  )
 
   useEffect(() => {
     if (!active) {
@@ -126,29 +107,6 @@ export function WebPanelWorkspace({
       const panelWindow =
         frameRef.current?.contentWindow ?? panelWindowRef.current
       if (event.source !== panelWindow) {
-        return
-      }
-
-      if (isBrowserPanelConnectMessage(event.data)) {
-        if (!panel.permissions.includes('host-browser')) {
-          return
-        }
-
-        browserConnectionRef.current?.dispose()
-        const channel = new MessageChannel()
-        browserConnectionRef.current = connectBrowserPanel(
-          panel.id,
-          channel.port1,
-          active
-        )
-        panelWindow?.postMessage(
-          {
-            source: 'treeport-host-v1',
-            method: 'browser.connected'
-          },
-          '*',
-          [channel.port2]
-        )
         return
       }
 

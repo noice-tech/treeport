@@ -3,12 +3,14 @@ import { CrownIcon, GitBranchIcon } from 'lucide-react'
 import {
   ArrowPathIcon,
   FolderIcon,
+  GlobeAltIcon,
   PlusIcon,
   TrashIcon,
   WindowIcon,
   XMarkIcon
 } from '@heroicons/react/16/solid'
 import type {
+  BrowserPanel,
   ProjectRecord,
   TerminalRecord,
   WebPanel,
@@ -117,7 +119,7 @@ export interface WorkspaceTreeProps {
   selectedWorktree: WorktreeRecord | null
   selectedTerminalId: string | null
   selectedPendingTerminalId: string | null
-  selectedWebPanelId: string | null
+  selectedPanelId: string | null
   webPanelRuntimeTitles: Record<string, string>
   pendingTerminals: Array<{
     id: string
@@ -131,8 +133,8 @@ export interface WorkspaceTreeProps {
   onSelectTerminal: (terminal: TerminalRecord) => void
   onSelectPendingTerminal: (terminalId: string) => void
   onCloseTerminal: (terminal: TerminalRecord) => void
-  onSelectWebPanel: (panel: WebPanel) => void
-  onCloseWebPanel: (panel: WebPanel, trigger?: HTMLElement) => void
+  onSelectPanel: (panel: BrowserPanel | WebPanel) => void
+  onClosePanel: (panel: BrowserPanel | WebPanel, trigger?: HTMLElement) => void
   onSelectWorktree: (worktree: WorktreeRecord) => void
   onPrepareRemoval: (
     worktree: WorktreeRecord,
@@ -155,7 +157,7 @@ export function WorkspaceTree({
   selectedWorktree,
   selectedTerminalId,
   selectedPendingTerminalId,
-  selectedWebPanelId,
+  selectedPanelId,
   webPanelRuntimeTitles,
   pendingTerminals,
   pendingWorktrees,
@@ -164,8 +166,8 @@ export function WorkspaceTree({
   onSelectTerminal: selectTerminal,
   onSelectPendingTerminal: selectPendingTerminal,
   onCloseTerminal: closeTerminal,
-  onSelectWebPanel: selectWebPanel,
-  onCloseWebPanel: closeWebPanel,
+  onSelectPanel: selectPanel,
+  onClosePanel: closePanel,
   onSelectWorktree: selectWorktree,
   onPrepareRemoval: prepareRemoval,
   onOpenPanelDialog,
@@ -476,11 +478,14 @@ export function WorkspaceTree({
                       })}
                       {worktree.panels
                         .filter(
-                          (panel): panel is WebPanel => panel.kind === 'web'
+                          (panel): panel is BrowserPanel | WebPanel =>
+                            panel.kind !== 'terminal'
                         )
                         .map((panel, panelIndex) => {
                           const title =
-                            webPanelRuntimeTitles[panel.id] ?? panel.title
+                            panel.kind === 'web'
+                              ? (webPanelRuntimeTitles[panel.id] ?? panel.title)
+                              : panel.title
                           const shortcutIndex =
                             selectedWorktree?.id === worktree.id &&
                             worktree.terminals.length + panelIndex < 9
@@ -493,18 +498,18 @@ export function WorkspaceTree({
                             >
                               <SidebarMenuSubButton
                                 asChild
-                                isActive={selectedWebPanelId === panel.id}
+                                isActive={selectedPanelId === panel.id}
                               >
                                 <Button
                                   variant="ghost"
                                   type="button"
                                   className={cn(
                                     'terminal-row grid h-auto min-h-11 w-full min-w-0 grid-cols-[1.25rem_minmax(0,1fr)_2rem] gap-1.5 rounded-md px-2 py-1.5 text-left text-base/5 font-normal min-[701px]:min-h-7 min-[701px]:grid-cols-[1rem_minmax(0,1fr)_1.75rem] min-[701px]:gap-1 min-[701px]:py-0 min-[701px]:text-xs/4',
-                                    selectedWebPanelId === panel.id
+                                    selectedPanelId === panel.id
                                       ? 'selected bg-cyan-400/8! text-cyan-50'
                                       : 'text-zinc-300 hover:bg-white/5 hover:text-zinc-100'
                                   )}
-                                  onClick={() => selectWebPanel(panel)}
+                                  onClick={() => selectPanel(panel)}
                                   onMouseDown={(event) => {
                                     if (event.button === 1) {
                                       event.preventDefault()
@@ -516,19 +521,26 @@ export function WorkspaceTree({
                                     }
 
                                     event.preventDefault()
-                                    closeWebPanel(panel, event.currentTarget)
+                                    closePanel(panel, event.currentTarget)
                                   }}
-                                  aria-label={`${title}, web panel`}
+                                  aria-label={`${title}, ${panel.kind === 'browser' ? 'Browser panel' : 'web panel'}`}
                                   aria-keyshortcuts={
                                     shortcutIndex
                                       ? `Meta+${shortcutIndex}`
                                       : undefined
                                   }
                                 >
-                                  <WindowIcon
-                                    className="size-4! shrink-0 fill-zinc-500 min-[701px]:size-3.5!"
-                                    aria-hidden="true"
-                                  />
+                                  {panel.kind === 'browser' ? (
+                                    <GlobeAltIcon
+                                      className="size-4! shrink-0 fill-zinc-500 min-[701px]:size-3.5!"
+                                      aria-hidden="true"
+                                    />
+                                  ) : (
+                                    <WindowIcon
+                                      className="size-4! shrink-0 fill-zinc-500 min-[701px]:size-3.5!"
+                                      aria-hidden="true"
+                                    />
+                                  )}
                                   <span className="truncate" aria-hidden="true">
                                     {title}
                                   </span>
@@ -547,10 +559,10 @@ export function WorkspaceTree({
                               <div className="absolute inset-y-0 right-0 z-10 flex items-center opacity-0 group-hover/terminal:opacity-100 group-focus-within/terminal:opacity-100 max-[700px]:opacity-100">
                                 <SidebarAction
                                   label={`Close ${title}`}
-                                  tooltip="Close web panel"
+                                  tooltip={`Close ${panel.kind === 'browser' ? 'Browser' : 'web'} panel`}
                                   className="text-zinc-500 hover:bg-transparent hover:text-zinc-200"
                                   onClick={(trigger) =>
-                                    closeWebPanel(panel, trigger)
+                                    closePanel(panel, trigger)
                                   }
                                 >
                                   <XMarkIcon />
@@ -562,12 +574,12 @@ export function WorkspaceTree({
                       {pendingTerminals
                         .filter((pending) => pending.worktreeId === worktree.id)
                         .map((pending, pendingIndex) => {
-                          const webPanelCount = worktree.panels.filter(
-                            (panel) => panel.kind === 'web'
+                          const persistentPanelCount = worktree.panels.filter(
+                            (panel) => panel.kind !== 'terminal'
                           ).length
                           const index =
                             worktree.terminals.length +
-                            webPanelCount +
+                            persistentPanelCount +
                             pendingIndex
                           return (
                             <SidebarMenuSubItem

@@ -134,9 +134,8 @@ export function createSocketServer(
 
         const metadataSnapshot = terminalMetadata.snapshot()
         const representedEventCount = queuedEvents.length
-        void service
-          .listWebPanels()
-          .then((webPanels) => {
+        void Promise.all([service.listWebPanels(), service.listBrowserPanels()])
+          .then(([webPanels, browserPanels]) => {
             if (!socket.connected) {
               return
             }
@@ -144,7 +143,8 @@ export function createSocketServer(
             socket.emit('snapshot', {
               at: new Date().toISOString(),
               terminalMetadata: metadataSnapshot,
-              webPanels
+              webPanels,
+              browserPanels
             })
             queuedEvents.splice(0, representedEventCount)
             while (queuedEvents.length && socket.connected) {

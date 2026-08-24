@@ -1,4 +1,3 @@
-import crypto from 'node:crypto'
 import http from 'node:http'
 import fs from 'node:fs/promises'
 import os from 'node:os'
@@ -568,9 +567,7 @@ class SystemDouble implements CommandRunner {
   }
 }
 
-export async function fixture(options?: {
-  trustedHostBrowserPackageRelativePath?: string
-}) {
+export async function fixture() {
   const root = await fs.mkdtemp(
     path.join(os.tmpdir(), 'treeport integration with spaces ')
   )
@@ -604,30 +601,13 @@ export async function fixture(options?: {
     '/launcher with spaces.js'
   )
   const gh = new GhAdapter(runner)
-  const canonicalRoot = await fs.realpath(root)
-  const trustedHostBrowserPackageIds =
-    options?.trustedHostBrowserPackageRelativePath
-      ? [
-          `local:${crypto
-            .createHash('sha256')
-            .update(
-              path.resolve(
-                canonicalRoot,
-                options.trustedHostBrowserPackageRelativePath
-              )
-            )
-            .digest('hex')
-            .slice(0, 16)}`
-        ]
-      : []
   const service = new TreeportService({
     config,
     database,
     runner,
     git,
     tmux,
-    gh,
-    trustedHostBrowserPackageIds
+    gh
   })
   service.attachHttpServer(http.createServer())
   services.push(service)

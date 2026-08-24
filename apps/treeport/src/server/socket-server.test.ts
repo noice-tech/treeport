@@ -95,6 +95,7 @@ async function fixture(
   const service = testAccess<TreeportService>({
     events,
     listWebPanels: vi.fn(async () => []),
+    listBrowserPanels: vi.fn(async () => []),
     refreshTerminalStatus: vi.fn(async () => ({
       id: 'term',
       worktreeId: 'wt',
@@ -296,7 +297,7 @@ describe('Socket.IO real network', () => {
     await closeClient(socket)
   })
 
-  it('snapshots durable web panels and broadcasts closure to every client', async () => {
+  it('snapshots durable web and Browser panels and broadcasts closure to every client', async () => {
     const value = await fixture()
     vi.mocked(value.service.listWebPanels).mockResolvedValue([
       {
@@ -308,6 +309,17 @@ describe('Socket.IO real network', () => {
         launch: { input: null, cwd: null },
         permissions: [],
         sandbox: { allowSameOrigin: false },
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z'
+      }
+    ])
+    vi.mocked(value.service.listBrowserPanels).mockResolvedValue([
+      {
+        id: 'panel_browser',
+        kind: 'browser',
+        worktreeId: 'wt',
+        title: 'Example',
+        url: 'https://example.com/',
         createdAt: '2026-01-01T00:00:00.000Z',
         updatedAt: '2026-01-01T00:00:00.000Z'
       }
@@ -332,6 +344,20 @@ describe('Socket.IO real network', () => {
       expect.objectContaining({
         id: 'panel_review',
         sandbox: { allowSameOrigin: false }
+      })
+    ])
+    expect(
+      snapshots.map(
+        (snapshot) => parseEventsSnapshot(snapshot)?.browserPanels[0]
+      )
+    ).toEqual([
+      expect.objectContaining({
+        id: 'panel_browser',
+        url: 'https://example.com/'
+      }),
+      expect.objectContaining({
+        id: 'panel_browser',
+        url: 'https://example.com/'
       })
     ])
 

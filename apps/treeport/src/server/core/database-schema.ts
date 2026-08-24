@@ -114,6 +114,27 @@ export const terminalBellStates = sqliteTable(
   ]
 )
 
+export const browserPanels = sqliteTable(
+  'browser_panels',
+  {
+    id: text().primaryKey(),
+    worktreeId: text('worktree_id')
+      .notNull()
+      .references(() => worktrees.id, { onDelete: 'cascade' }),
+    title: text().notNull(),
+    url: text().notNull(),
+    createdAt: text('created_at').notNull(),
+    updatedAt: text('updated_at').notNull()
+  },
+  (table) => [
+    index('browser_panels_worktree_order_idx').on(
+      table.worktreeId,
+      table.createdAt,
+      table.id
+    )
+  ]
+)
+
 export const webPanels = sqliteTable(
   'web_panels',
   {

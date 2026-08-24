@@ -1,4 +1,4 @@
-import type { WebPanel } from '@treeport/shared'
+import type { BrowserPanel, WebPanel } from '@treeport/shared'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -11,18 +11,20 @@ import {
 } from '../../components/ui/alert-dialog'
 import { Button } from '../../components/ui/button'
 
-export function CloseWebPanelDialog({
+type StoredPanel = BrowserPanel | WebPanel
+
+export function ClosePanelDialog({
   panel,
   busy,
   restoreFocusTo,
   onOpenChange,
   onConfirm
 }: {
-  panel: WebPanel | null
+  panel: StoredPanel | null
   busy: boolean
   restoreFocusTo: HTMLElement | null
   onOpenChange: (open: boolean) => void
-  onConfirm: (panel: WebPanel) => void
+  onConfirm: (panel: StoredPanel) => void
 }) {
   return (
     <AlertDialog open={panel !== null} onOpenChange={onOpenChange}>
@@ -31,8 +33,9 @@ export function CloseWebPanelDialog({
           <AlertDialogHeader>
             <AlertDialogTitle>Close {panel.title}?</AlertDialogTitle>
             <AlertDialogDescription>
-              This panel has saved data. Closing it permanently deletes that
-              data, including any comments or drafts.
+              {panel.kind === 'browser'
+                ? 'Closing this panel permanently deletes its disposable browser data and saved state.'
+                : 'This panel has saved data. Closing it permanently deletes that data, including any comments or drafts.'}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

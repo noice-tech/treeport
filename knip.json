@@ -22,10 +22,7 @@
       "ignoreBinaries": ["lipo", "plutil"]
     },
     "packages/web-panel-browser": {
-      "entry": [
-        "web-panels/browser/browser.ts",
-        "web-panels/remote-browser/remote-browser.ts"
-      ]
+      "entry": ["web-panels/browser/browser.ts"]
     },
     "packages/web-panel-review": {
       "entry": ["web-panels/review/review.tsx"]

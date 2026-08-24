@@ -15,11 +15,13 @@ import {
   browseDirectoryQuerySchema,
   browserAgentCommandSchema,
   browserTicketRequestSchema,
+  createBrowserPanelSchema,
   createTerminalPresetSchema,
   createTerminalSchema,
   createWebPanelSchema,
   deleteTerminalPresetSchema,
   openWebPanelSchema,
+  openBrowserPanelFromTerminalSchema,
   deleteWebPanelStorageSchema,
   DESKTOP_PROTOCOL_VERSION,
   getWebPanelStorageSchema,
@@ -263,7 +265,7 @@ export function createApp({
     .get('/api/browser/status', async (context) => {
       if (!browserSessions) {
         throw new DomainError(
-          'HOST_BROWSER_UNAVAILABLE',
+          'BROWSER_UNAVAILABLE',
           'Hosted browser service is unavailable',
           503
         )
@@ -274,7 +276,7 @@ export function createApp({
     .post('/api/browser/install', async (context) => {
       if (!browserSessions) {
         throw new DomainError(
-          'HOST_BROWSER_UNAVAILABLE',
+          'BROWSER_UNAVAILABLE',
           'Hosted browser service is unavailable',
           503
         )
@@ -285,7 +287,7 @@ export function createApp({
     .delete('/api/browser/install', async (context) => {
       if (!browserSessions) {
         throw new DomainError(
-          'HOST_BROWSER_UNAVAILABLE',
+          'BROWSER_UNAVAILABLE',
           'Hosted browser service is unavailable',
           503
         )
@@ -314,7 +316,7 @@ export function createApp({
       async (context) => {
         if (!browserSessions) {
           throw new DomainError(
-            'HOST_BROWSER_UNAVAILABLE',
+            'BROWSER_UNAVAILABLE',
             'Hosted browser service is unavailable',
             503
           )
@@ -334,7 +336,7 @@ export function createApp({
       async (context) => {
         if (!browserSessions) {
           throw new DomainError(
-            'HOST_BROWSER_UNAVAILABLE',
+            'BROWSER_UNAVAILABLE',
             'Hosted browser service is unavailable',
             503
           )
@@ -637,6 +639,36 @@ export function createApp({
       }
     )
 
+    .post(
+      '/api/worktrees/:worktreeId/browser-panels',
+      jsonInput(createBrowserPanelSchema),
+      async (context) => {
+        const body = context.req.valid('json')
+        return context.json(
+          await service.openBrowserPanel(
+            context.req.param('worktreeId'),
+            body.url,
+            body.sourceTerminalId ?? null,
+            null
+          ),
+          201
+        )
+      }
+    )
+
+    .post(
+      '/api/terminals/:terminalId/browser-panels/open',
+      jsonInput(openBrowserPanelFromTerminalSchema),
+      async (context) =>
+        context.json(
+          await service.openBrowserPanelFromTerminal(
+            context.req.param('terminalId'),
+            context.req.valid('json').url
+          ),
+          201
+        )
+    )
+
     .get('/api/worktrees/:worktreeId/web-panel-definitions', async (context) =>
       context.json({
         definitions: await service.listWebPanelDefinitions(
@@ -690,7 +722,7 @@ export function createApp({
       '/api/panels/:panelId',
       queryInput(discardStoredDataQuerySchema),
       async (context) => {
-        await service.deleteWebPanel(
+        await service.deletePanel(
           context.req.param('panelId'),
           context.req.valid('query').discardStoredData === 'true'
         )
@@ -712,9 +744,7 @@ export function createApp({
 
     .get('/api/panels/:panelId/network/listeners', async (context) =>
       context.json({
-        discovery: await service.getWebPanelListeners(
-          context.req.param('panelId')
-        )
+        discovery: await service.getPanelListeners(context.req.param('panelId'))
       })
     )
 

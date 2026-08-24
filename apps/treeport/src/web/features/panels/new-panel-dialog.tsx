@@ -3,6 +3,7 @@ import {
   BookOpenIcon,
   Cog6ToothIcon,
   CommandLineIcon,
+  GlobeAltIcon,
   MagnifyingGlassIcon,
   WindowIcon
 } from '@heroicons/react/16/solid'
@@ -48,6 +49,7 @@ export function NewPanelDialog({
   webPanelDefinitionsError,
   launchDisabled,
   onCreateTerminal,
+  onCreateBrowserPanel,
   onCreateWebPanel,
   onManagePresets
 }: {
@@ -64,6 +66,7 @@ export function NewPanelDialog({
   webPanelDefinitionsError: boolean
   launchDisabled: boolean
   onCreateTerminal: (input: CreateTerminalInput) => void
+  onCreateBrowserPanel: () => void
   onCreateWebPanel: (definition: WebPanelDefinition) => void
   onManagePresets: () => void
 }) {
@@ -77,9 +80,6 @@ export function NewPanelDialog({
       : 'this project'
     : ''
   const permissionDescription = [
-    permissionDefinition?.permissions.includes('host-browser')
-      ? 'It will start an isolated browser on the Treeport daemon host. It can reach localhost, local network services, and internet sites available from that host.'
-      : '',
     permissionDefinition?.permissions.includes('same-origin')
       ? "It will share Treeport's web origin. It can access Treeport browser storage, the Treeport page, and API routes available to this client."
       : ''
@@ -96,6 +96,7 @@ export function NewPanelDialog({
       terminalPresetCommand(preset)
     ].some((value) => value.toLocaleLowerCase().includes(normalizedQuery))
   )
+  const showBrowser = 'browser'.includes(normalizedQuery)
   const filteredWebPanelDefinitions = webPanelDefinitions.filter((definition) =>
     [definition.title, definition.id].some((value) =>
       value.toLocaleLowerCase().includes(normalizedQuery)
@@ -103,7 +104,9 @@ export function NewPanelDialog({
   )
   const terminalActionCount = filteredPresets.length + (showShell ? 1 : 0)
   const noResults =
-    terminalActionCount === 0 && filteredWebPanelDefinitions.length === 0
+    terminalActionCount === 0 &&
+    !showBrowser &&
+    filteredWebPanelDefinitions.length === 0
 
   return (
     <Dialog
@@ -125,7 +128,7 @@ export function NewPanelDialog({
       >
         <DialogTitle className="sr-only">New panel</DialogTitle>
         <DialogDescription className="sr-only">
-          Search for a terminal or web panel to start
+          Search for a terminal, Browser panel, or web panel to start
           {worktreeName ? ` in ${worktreeName}` : ''}.
         </DialogDescription>
         <div className="flex min-w-0 items-center gap-3 border-b border-white/8 px-4">
@@ -324,6 +327,41 @@ export function NewPanelDialog({
               </p>
             ))}
           </div>
+          <div role="group" aria-label="Browser panels">
+            {showBrowser ? (
+              <>
+                <p className="mt-1 px-2 py-1 text-xs font-medium text-zinc-500">
+                  Browser panels
+                </p>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="h-12 w-full justify-start gap-3 rounded-lg py-2 pr-3 pl-2 text-base font-normal text-zinc-100 hover:bg-white/8 focus-visible:bg-white/8 sm:h-9 sm:text-sm"
+                  aria-label="Browser, hosted browser panel"
+                  data-panel-launch
+                  data-selected={
+                    selectedIndex === terminalActionCount ? '' : undefined
+                  }
+                  disabled={launchDisabled}
+                  onFocus={() => setSelectedIndex(terminalActionCount)}
+                  onMouseMove={() => setSelectedIndex(terminalActionCount)}
+                  onClick={() => {
+                    setQuery('')
+                    setSelectedIndex(0)
+                    onCreateBrowserPanel()
+                  }}
+                >
+                  <GlobeAltIcon aria-hidden="true" />
+                  <span className="min-w-0 flex-1 truncate text-left">
+                    Browser
+                  </span>
+                  <span className="min-w-0 max-w-1/2 truncate text-zinc-500">
+                    Runs on the daemon computer
+                  </span>
+                </Button>
+              </>
+            ) : null}
+          </div>
           <div role="group" aria-label="Web panels">
             {filteredWebPanelDefinitions.length > 0 ||
             webPanelDefinitionsLoading ||
@@ -333,7 +371,8 @@ export function NewPanelDialog({
               </p>
             ) : null}
             {filteredWebPanelDefinitions.map((definition, index) => {
-              const actionIndex = terminalActionCount + index
+              const actionIndex =
+                terminalActionCount + (showBrowser ? 1 : 0) + index
               return (
                 <Button
                   key={definition.id}

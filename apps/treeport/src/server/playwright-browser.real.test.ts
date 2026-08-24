@@ -28,18 +28,23 @@ function runCli(cli: string, cwd: string, args: string[]): Promise<string> {
       if (code === 0) {
         resolve(output)
       } else {
-        reject(new Error(output || `Playwright Agent CLI exited with ${code}`))
+        reject(
+          new Error(
+            `${args.join(' ')}: ${output || `Playwright Agent CLI exited with ${code}`}`
+          )
+        )
       }
     })
   })
 }
 
 it('streams and shares one History API page with the pinned Agent CLI', async () => {
-  const server = http.createServer((_request, response) => {
+  const server = http.createServer((request, response) => {
     response.setHeader('content-type', 'text/html; charset=utf-8')
     response.end(`<!doctype html><title>Start</title>
       <button onclick="history.pushState({}, '', '/next'); document.title = 'Next'">Next route</button>
-      <button onclick="history.replaceState({}, '', '/replaced'); document.title = 'Replaced'">Replace route</button>`)
+      <button onclick="history.replaceState({}, '', '/replaced'); document.title = 'Replaced'">Replace route</button>
+      ${request.url === '/popup-source' ? "<script>open('/popup')</script>" : ''}`)
   })
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
   cleanup.push(
@@ -76,6 +81,7 @@ it('streams and shares one History API page with the pinned Agent CLI', async ()
   )
   const panelId = `real-${process.pid}`
   const states: Array<{ url: string; title: string }> = []
+  const popups: string[] = []
   let frames = 0
   const browser = new PlaywrightBrowser(
     cachePath,
@@ -86,6 +92,7 @@ it('streams and shares one History API page with the pinned Agent CLI', async ()
     {
       state: (state) => states.push({ url: state.url, title: state.title }),
       frame: () => frames++,
+      popup: (url) => popups.push(url),
       navigationError: (message) => {
         throw new Error(message)
       },
@@ -160,6 +167,13 @@ it('streams and shares one History API page with the pinned Agent CLI', async ()
   await expect
     .poll(() => states.at(-1)?.url)
     .toBe(`http://127.0.0.1:${address.port}/replaced`)
+  await browser.command({
+    type: 'navigate',
+    url: `http://127.0.0.1:${address.port}/popup-source`
+  })
+  await expect
+    .poll(() => popups.at(-1))
+    .toBe(`http://127.0.0.1:${address.port}/popup`)
   await expect.poll(() => frames).toBeGreaterThan(0)
   await expect(
     runCli(cli, workspace, [`-s=${name}`, 'console'])

@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import type { ProductEvent } from './index.js'
+import { browserUrlSchema } from './browser-protocol.js'
 import { terminalRuntimeMetadataSchema } from './terminal-protocol.js'
 
 const identifierSchema = z.string().min(1).max(128)
@@ -107,7 +108,8 @@ export const productEventSchema = z.discriminatedUnion('type', [
     z.strictObject({
       worktreeId: identifierSchema,
       panelId: identifierSchema,
-      sourceTerminalId: identifierSchema.nullable()
+      sourceTerminalId: identifierSchema.nullable(),
+      sourcePanelId: identifierSchema.nullable()
     })
   ),
   eventEnvelope(
@@ -142,8 +144,18 @@ const webPanelSnapshotSchema = z.strictObject({
     input: z.record(z.string(), z.json()).nullable(),
     cwd: z.string().nullable()
   }),
-  permissions: z.array(z.enum(['same-origin', 'host-browser'])),
+  permissions: z.array(z.literal('same-origin')),
   sandbox: z.strictObject({ allowSameOrigin: z.boolean() }),
+  createdAt: z.string(),
+  updatedAt: z.string()
+})
+
+const browserPanelSnapshotSchema = z.strictObject({
+  id: z.string().min(1),
+  kind: z.literal('browser'),
+  worktreeId: z.string().min(1),
+  title: z.string().min(1).max(256),
+  url: z.union([z.literal('about:blank'), browserUrlSchema]),
   createdAt: z.string(),
   updatedAt: z.string()
 })
@@ -151,7 +163,8 @@ const webPanelSnapshotSchema = z.strictObject({
 export const eventsSnapshotSchema = z.strictObject({
   at: z.string().datetime(),
   terminalMetadata: z.array(terminalRuntimeMetadataSchema),
-  webPanels: z.array(webPanelSnapshotSchema)
+  webPanels: z.array(webPanelSnapshotSchema),
+  browserPanels: z.array(browserPanelSnapshotSchema)
 })
 
 export type EventsSnapshot = z.infer<typeof eventsSnapshotSchema>

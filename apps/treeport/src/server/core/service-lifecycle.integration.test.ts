@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
+import type { ProductEvent } from '@treeport/shared'
 import { sql } from 'drizzle-orm'
 import {
   beginFromPreview,
@@ -11,6 +12,107 @@ import {
 } from './service.integration-fixture'
 
 describe('TreeportService with injected command adapters', () => {
+  it('owns Browser panels through creation, restoration state, open requests, authorization, and confirmed deletion', async () => {
+    const { main, service } = await fixture()
+    const project = await service.registerProject(main)
+    const worktree = project.worktrees[0]!
+    const terminal = await service.createTerminal(worktree.id, 'Links', ['sh'])
+    const events: ProductEvent[] = []
+    const unsubscribe = service.events.subscribe((event) => events.push(event))
+
+    const opened = await service.openBrowserPanel(
+      worktree.id,
+      'https://example.com/initial',
+      terminal.id
+    )
+    expect(opened.panel).toMatchObject({
+      kind: 'browser',
+      worktreeId: worktree.id,
+      title: 'example.com',
+      url: 'https://example.com/initial'
+    })
+    await expect(
+      service.authorizeBrowserPanel(opened.panel.id)
+    ).resolves.toMatchObject({
+      panel: { id: opened.panel.id, kind: 'browser' },
+      worktreePath: worktree.path
+    })
+
+    const updated = await service.updateBrowserPanelState(opened.panel.id, {
+      url: 'https://example.com/restored',
+      title: 'Restored application'
+    })
+    expect(updated).toMatchObject({
+      title: 'Restored application',
+      url: 'https://example.com/restored'
+    })
+    expect(
+      (await service.getWorktreeSnapshot(worktree.id)).panels.find(
+        (panel) => panel.id === opened.panel.id
+      )
+    ).toMatchObject({
+      kind: 'browser',
+      title: 'Restored application',
+      url: 'https://example.com/restored'
+    })
+
+    const terminalOpened = await service.openBrowserPanelFromTerminal(
+      terminal.id,
+      'http://localhost:4173/'
+    )
+    const popupOpened = await service.openBrowserPanelFromPanel(
+      opened.panel.id,
+      'https://example.com/popup'
+    )
+    expect(terminalOpened.panel.id).not.toBe(opened.panel.id)
+    expect(popupOpened.panel.id).not.toBe(opened.panel.id)
+    expect(
+      events.filter((event) => event.type === 'panel.open_requested')
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          data: expect.objectContaining({
+            panelId: terminalOpened.panel.id,
+            sourceTerminalId: terminal.id,
+            sourcePanelId: null
+          })
+        }),
+        expect.objectContaining({
+          data: expect.objectContaining({
+            panelId: popupOpened.panel.id,
+            sourceTerminalId: null,
+            sourcePanelId: opened.panel.id
+          })
+        })
+      ])
+    )
+
+    for (const invalidUrl of [
+      'file:///tmp/private',
+      'https://user:secret@example.com/'
+    ]) {
+      await expect(
+        service.openBrowserPanel(worktree.id, invalidUrl)
+      ).rejects.toMatchObject({ code: 'INVALID_BROWSER_URL' })
+    }
+    await expect(service.deletePanel(opened.panel.id)).rejects.toMatchObject({
+      code: 'PANEL_HAS_STORED_DATA'
+    })
+    await service.deletePanel(opened.panel.id, true)
+    await expect(
+      service.getBrowserPanel(opened.panel.id)
+    ).rejects.toMatchObject({ code: 'PANEL_NOT_FOUND' })
+    expect(events.map((event) => event.type)).toEqual(
+      expect.arrayContaining([
+        'panel.created',
+        'panel.updated',
+        'panel.open_requested',
+        'panel.removed'
+      ])
+    )
+    unsubscribe()
+  })
+
   it('creates terminals in active worktrees and queues removal while headless setup is running', async () => {
     const { main, runner, service } = await fixture()
     await fs.mkdir(path.join(main, '.treeport'), { recursive: true })

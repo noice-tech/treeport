@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
+  BROWSER_MAX_FRAME_BYTES,
   browserAgentCommandSchema,
+  browserFrameSchema,
   parseBrowserAuth,
   parseBrowserClientMessage
 } from './browser-protocol.js'
@@ -67,6 +69,26 @@ describe('hosted browser protocol', () => {
       browserAgentCommandSchema.safeParse({
         command: 'screenshot',
         args: ['--filename=/tmp/output.png']
+      }).success
+    ).toBe(false)
+  })
+
+  it('keeps streamed frames inside the protocol byte limit', () => {
+    const frame = {
+      sequence: 1,
+      mimeType: 'image/jpeg' as const,
+      timestamp: 1,
+      width: 1,
+      height: 1
+    }
+    expect(
+      browserFrameSchema.safeParse({ ...frame, data: new Uint8Array([1]) })
+        .success
+    ).toBe(true)
+    expect(
+      browserFrameSchema.safeParse({
+        ...frame,
+        data: new Uint8Array(BROWSER_MAX_FRAME_BYTES + 1)
       }).success
     ).toBe(false)
   })

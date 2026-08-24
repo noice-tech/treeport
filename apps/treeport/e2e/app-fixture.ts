@@ -429,7 +429,11 @@ export async function mockApp(
 
               const value = JSON.parse(source)
               if (name === 'connected') {
-                this.deliverSocket('snapshot', { webPanels: [], ...value })
+                this.deliverSocket('snapshot', {
+                  webPanels: [],
+                  browserPanels: [],
+                  ...value
+                })
                 return
               }
 
@@ -451,7 +455,8 @@ export async function mockApp(
           this.deliverSocket('snapshot', {
             at: new Date().toISOString(),
             terminalMetadata: initialMetadata,
-            webPanels: []
+            webPanels: [],
+            browserPanels: []
           })
           return
         }
@@ -708,6 +713,7 @@ export async function mockApp(
   let releaseTerminalDelete: (() => void) | null = null
   let failTerminalDelete = false
   let webPanelCreations = 0
+  let browserPanelCreations = 0
   let webPanelHasStorage = false
   const webPanelStorage = new Map<string, Map<string, JsonValue>>()
   const webPanelDefinitions = [
@@ -723,19 +729,6 @@ export async function mockApp(
       permissions: ['same-origin' as const],
       permissionsGranted: false,
       sandbox: { allowSameOrigin: true }
-    },
-    {
-      id: 'package:npm:@treeport/web-panel-browser:web-panel:remote-browser',
-      title: 'Remote browser',
-      source: {
-        type: 'package' as const,
-        packageId: 'npm:@treeport/web-panel-browser',
-        source: 'npm:@treeport/web-panel-browser',
-        scope: 'global' as const
-      },
-      permissions: ['host-browser' as const],
-      permissionsGranted: false,
-      sandbox: { allowSameOrigin: false }
     },
     {
       id: 'project:review',
@@ -1482,52 +1475,7 @@ export async function mockApp(
 
       await route.fulfill({
         contentType: 'text/html',
-        body: `<!doctype html><html><body>
-          <form><button type="button" aria-label="Show development servers">Home</button><input type="url" aria-label="Application URL" value="http://localhost:3000/" required></form>
-          <section aria-label="Development servers"><h1>Development servers</h1><p role="status">Scanning for development servers…</p><div data-servers></div><button type="button">Refresh servers</button></section>
-          <div role="alert" hidden><strong>Remote browser unavailable</strong><span data-error></span></div>
-          <canvas tabindex="0" aria-label="Remote browser viewport"></canvas>
-          <script>
-            const pending = new Map(); let serial = 0;
-            const call = (method, values = {}) => new Promise((resolve, reject) => {
-              const id = String(++serial); pending.set(id, { resolve, reject });
-              parent.postMessage({ source: 'treeport-panel-v1', id, method, ...values }, '*');
-            });
-            addEventListener('message', (event) => {
-              if (event.source !== parent || event.data?.source !== 'treeport-host-v1') return;
-              if (event.data.id) {
-                const request = pending.get(event.data.id); if (!request) return;
-                pending.delete(event.data.id);
-                event.data.ok ? request.resolve(event.data.value) : request.reject(new Error(event.data.error));
-                return;
-              }
-              if (event.data.method === 'browser.connected' && event.ports[0]) {
-                const port = event.ports[0];
-                port.onmessage = (message) => {
-                  if (message.data?.type === 'browserUnavailable') {
-                    const failure = document.querySelector('[role="alert"]');
-                    failure.hidden = false;
-                    document.querySelector('[data-error]').textContent = message.data.message;
-                  }
-                };
-                port.start();
-              }
-            });
-            Promise.all([call('context'), call('network.listeners')]).then(([context, discovery]) => {
-              const servers = document.querySelector('[data-servers]');
-              document.querySelector('[role="status"]').textContent = '';
-              for (const listener of discovery.listeners) {
-                const button = document.createElement('button');
-                const url = 'http://localhost:' + listener.port + '/';
-                button.type = 'button';
-                button.textContent = url + ' ' + listener.command;
-                button.setAttribute('aria-label', 'Open ' + url + ', ' + listener.command);
-                servers.append(button);
-              }
-              parent.postMessage({ source: 'treeport-browser-panel-v1', method: 'browser.connect' }, '*');
-            });
-          </script>
-        </body></html>`
+        body: '<!doctype html><html><body><h1>Web panel</h1></body></html>'
       })
       return
     }
@@ -1552,6 +1500,70 @@ export async function mockApp(
       )!
       definition.permissionsGranted = true
       await route.fulfill({ json: { definition } })
+      return
+    }
+
+    if (
+      /^\/api\/terminals\/[^/]+\/browser-panels\/open$/.test(pathname) &&
+      route.request().method() === 'POST'
+    ) {
+      const terminalId = pathname.split('/')[3]!
+      const body: { url: string } = route.request().postDataJSON()
+      const worktree = state.worktrees.find((candidate) =>
+        candidate.terminals.some((terminal) => terminal.id === terminalId)
+      )!
+      const url = new URL(body.url).href
+      const panel = {
+        id: `browser_panel_${++browserPanelCreations}`,
+        kind: 'browser' as const,
+        worktreeId: worktree.id,
+        title: new URL(url).host,
+        url,
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z'
+      }
+      worktree.panels.push(panel)
+      await route.fulfill({ status: 201, json: { panel } })
+      await page.evaluate(
+        ({ worktreeId, panelId, sourceTerminalId }) =>
+          window.__eventSource.emit(
+            'panel.open_requested',
+            JSON.stringify({
+              worktreeId,
+              panelId,
+              sourceTerminalId,
+              sourcePanelId: null
+            })
+          ),
+        {
+          worktreeId: worktree.id,
+          panelId: panel.id,
+          sourceTerminalId: terminalId
+        }
+      )
+      return
+    }
+
+    if (
+      /^\/api\/worktrees\/[^/]+\/browser-panels$/.test(pathname) &&
+      route.request().method() === 'POST'
+    ) {
+      const worktreeId = pathname.split('/')[3]!
+      const body: { url?: string } = route.request().postDataJSON()
+      const url = body.url ? new URL(body.url).href : 'about:blank'
+      const panel = {
+        id: `browser_panel_${++browserPanelCreations}`,
+        kind: 'browser' as const,
+        worktreeId,
+        title: url === 'about:blank' ? 'Browser' : new URL(url).host,
+        url,
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z'
+      }
+      state.worktrees
+        .find((candidate) => candidate.id === worktreeId)!
+        .panels.push(panel)
+      await route.fulfill({ status: 201, json: { panel } })
       return
     }
 
@@ -1599,7 +1611,7 @@ export async function mockApp(
         status: 503,
         json: {
           error: {
-            code: 'HOST_BROWSER_UNAVAILABLE',
+            code: 'BROWSER_UNAVAILABLE',
             message: 'Hosted browser fixture is unavailable'
           }
         }

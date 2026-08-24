@@ -9,14 +9,11 @@ import type {
 } from '@treeport/shared'
 import {
   BROWSER_PROTOCOL_VERSION,
+  browserFrameSchema,
+  browserServerMessageSchema,
   parseBrowserClientMessage,
   SOCKET_IO_PATH
 } from '@treeport/shared'
-
-const browserPanelConnectMessageSchema = z.strictObject({
-  source: z.literal('treeport-browser-panel-v1'),
-  method: z.literal('browser.connect')
-})
 
 const browserTicketResponseSchema = z.object({
   ticket: z.string().optional(),
@@ -25,6 +22,7 @@ const browserTicketResponseSchema = z.object({
 
 export interface BrowserPanelConnection {
   dispose(): void
+  send(message: BrowserClientMessage): void
   setVisible(visible: boolean): void
 }
 
@@ -65,16 +63,13 @@ const defaultSocketFactory: BrowserPanelSocketFactory = (
   >
 }
 
-export function isBrowserPanelConnectMessage(
-  value: z.input<typeof browserPanelConnectMessageSchema>
-): boolean {
-  return browserPanelConnectMessageSchema.safeParse(value).success
-}
-
 export function connectBrowserPanel(
   panelId: string,
-  port: MessagePort,
   initialVisible: boolean,
+  handlers: {
+    message(message: BrowserServerMessage): void
+    frame(frame: BrowserFrame): void
+  },
   socketFactory: BrowserPanelSocketFactory = defaultSocketFactory
 ): BrowserPanelConnection {
   const clientId = crypto.randomUUID()
@@ -84,6 +79,14 @@ export function connectBrowserPanel(
   let ready = false
   let socket: BrowserPanelSocket | null = null
   const pendingCommands: BrowserClientMessage[] = []
+
+  const reportError = (cause: unknown) => {
+    handlers.message({
+      type: 'browserUnavailable',
+      message: cause instanceof Error ? cause.message : String(cause),
+      installCommand: null
+    })
+  }
 
   const connect = async () => {
     const response = await fetch(
@@ -101,7 +104,6 @@ export function connectBrowserPanel(
       )
     }
 
-    const ticket = result.ticket
     if (disposed) {
       return
     }
@@ -111,10 +113,17 @@ export function connectBrowserPanel(
       transports: ['websocket'],
       forceNew: true,
       reconnection: false,
-      auth: { ticket, protocolVersion: BROWSER_PROTOCOL_VERSION }
+      auth: { ticket: result.ticket, protocolVersion: BROWSER_PROTOCOL_VERSION }
     })
-    socket.on('message', (message) => {
-      port.postMessage(message)
+    socket.on('message', (value) => {
+      const parsed = browserServerMessageSchema.safeParse(value)
+      if (!parsed.success) {
+        socket?.disconnect()
+        return
+      }
+
+      const message = parsed.data
+      handlers.message(message)
       if (message.type !== 'ready') {
         return
       }
@@ -128,12 +137,13 @@ export function connectBrowserPanel(
         socket?.emit('command', pendingCommands.shift()!)
       }
     })
-    socket.on('frame', (frame) => {
-      const bytes = new Uint8Array(frame.data)
-      const copy = bytes.slice()
-      port.postMessage({ type: 'frame', ...frame, data: copy.buffer }, [
-        copy.buffer
-      ])
+    socket.on('frame', (value) => {
+      const frame = browserFrameSchema.safeParse(value)
+      if (frame.success) {
+        handlers.frame(frame.data)
+      } else {
+        socket?.disconnect()
+      }
     })
     socket.on('disconnect', () => {
       ready = false
@@ -143,42 +153,28 @@ export function connectBrowserPanel(
 
       reconnectTimer = setTimeout(() => void connect().catch(reportError), 500)
     })
-    socket.on('connect_error', (error) => {
-      port.postMessage({
-        type: 'browserUnavailable',
-        message: error.message,
-        installCommand: null
-      } satisfies BrowserServerMessage)
-    })
+    socket.on('connect_error', reportError)
   }
 
-  const reportError = (cause: unknown) => {
-    port.postMessage({
-      type: 'browserUnavailable',
-      message: cause instanceof Error ? cause.message : String(cause),
-      installCommand: null
-    } satisfies BrowserServerMessage)
-  }
+  void connect().catch(reportError)
 
-  port.onmessage = (event) => {
-    const command = parseBrowserClientMessage(event.data)
-    if (!command) {
-      return
-    }
+  return {
+    send(value) {
+      const command = parseBrowserClientMessage(value)
+      if (!command || disposed) {
+        return
+      }
 
-    if (socket?.connected && ready) {
-      socket.emit('command', command)
-    } else {
+      if (socket?.connected && ready) {
+        socket.emit('command', command)
+        return
+      }
+
       pendingCommands.push(command)
       if (pendingCommands.length > 32) {
         pendingCommands.shift()
       }
-    }
-  }
-  port.start()
-  void connect().catch(reportError)
-
-  return {
+    },
     setVisible(nextVisible) {
       currentVisible = nextVisible
       if (ready) {
@@ -192,7 +188,6 @@ export function connectBrowserPanel(
       }
 
       socket?.disconnect()
-      port.close()
     }
   }
 }

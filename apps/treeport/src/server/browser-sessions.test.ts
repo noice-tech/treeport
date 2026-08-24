@@ -3,10 +3,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type {
   BrowserClientMessage,
   BrowserFrame,
+  BrowserPanel,
   BrowserServerMessage,
-  JsonValue,
-  ProductEvent,
-  WebPanel
+  ProductEvent
 } from '@treeport/shared'
 import type { PlaywrightBrowserCallbacks } from './playwright-browser'
 import {
@@ -79,31 +78,36 @@ const browserFactory: BrowserSessionBrowserFactory = (
 function fixture(
   agentCliRunner: BrowserAgentCliRunner | null = null,
   options: {
-    launchInput?: WebPanel['launch']['input']
-    storedValue?: JsonValue
+    panelUrl?: string
+    panelTitle?: string
   } = {}
 ) {
   const events = new EventEmitter()
-  const panel: WebPanel = {
+  const panel: BrowserPanel = {
     id: 'panel_browser',
-    kind: 'web',
+    kind: 'browser',
     worktreeId: 'worktree',
-    definitionId:
-      'package:npm:@treeport/web-panel-browser:web-panel:remote-browser',
-    title: 'Remote browser',
-    launch: { input: options.launchInput ?? null, cwd: null },
-    permissions: ['host-browser'],
-    sandbox: { allowSameOrigin: false },
+    title: options.panelTitle ?? 'Browser',
+    url: options.panelUrl ?? 'about:blank',
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z'
   }
   const service = {
-    authorizeHostBrowserPanel: vi.fn(async (_panelId: string) => ({
+    authorizeBrowserPanel: vi.fn(async (_panelId: string) => ({
       panel,
       worktreePath: '/worktree'
     })),
-    getWebPanelStorage: vi.fn(async () => options.storedValue),
-    setWebPanelStorage: vi.fn(async () => undefined),
+    updateBrowserPanelState: vi.fn(
+      async (_panelId: string, state: { url: string; title: string }) => {
+        panel.url = state.url
+        panel.title = state.title || new URL(state.url).host || 'Browser'
+        panel.updatedAt = '2026-01-01T00:00:01.000Z'
+        return { ...panel }
+      }
+    ),
+    openBrowserPanelFromPanel: vi.fn(async () => ({
+      panel: { ...panel, id: 'panel_popup' }
+    })),
     events: {
       subscribe(listener: (event: ProductEvent) => void) {
         events.on('event', listener)
@@ -162,7 +166,7 @@ function fixture(
 
 beforeEach(() => browsers.splice(0))
 
-describe('Remote Browser sessions', () => {
+describe('Browser sessions', () => {
   it('authorizes one-use attachment tickets, shares control, and drops stale frames', async () => {
     const value = fixture()
     const first = value.transport('first')
@@ -295,12 +299,12 @@ describe('Remote Browser sessions', () => {
       'client-second'
     )
     const authorized =
-      await value.service.authorizeHostBrowserPanel('panel_browser')
+      await value.service.authorizeBrowserPanel('panel_browser')
     let finishAuthorization!: () => void
     const authorization = new Promise<void>((resolve) => {
       finishAuthorization = resolve
     })
-    vi.mocked(value.service.authorizeHostBrowserPanel).mockImplementation(
+    vi.mocked(value.service.authorizeBrowserPanel).mockImplementation(
       async () => {
         await authorization
         return authorized
@@ -332,16 +336,18 @@ describe('Remote Browser sessions', () => {
       }
 
       if (args[1] === 'goto') {
-        browser.state = { ...browser.state, url: agentUrl }
+        browser.state = {
+          ...browser.state,
+          url: agentUrl,
+          title: 'Agent page'
+        }
         browser.callbacks.state(browser.state)
         return 'navigated'
       }
 
       return 'detached'
     })
-    const launchValue = fixture(runAgentCli, {
-      launchInput: { url: launchUrl }
-    })
+    const launchValue = fixture(runAgentCli, { panelUrl: launchUrl })
 
     await expect(
       launchValue.manager.agentCommand('panel_browser', {
@@ -353,23 +359,16 @@ describe('Remote Browser sessions', () => {
       type: 'navigate',
       url: launchUrl
     })
-    expect(launchValue.service.setWebPanelStorage).toHaveBeenLastCalledWith(
-      'panel_browser',
-      'browser-state',
-      {
-        url: agentUrl,
-        launchUpdatedAt: '2026-01-01T00:00:00.000Z'
-      }
-    )
+    expect(
+      launchValue.service.updateBrowserPanelState
+    ).toHaveBeenLastCalledWith('panel_browser', {
+      url: agentUrl,
+      title: 'Agent page'
+    })
     await launchValue.manager.dispose()
 
     const storedUrl = 'http://localhost:4173/from-storage'
-    const storedValue = fixture(null, {
-      storedValue: {
-        url: storedUrl,
-        launchUpdatedAt: '2026-01-01T00:00:00.000Z'
-      }
-    })
+    const storedValue = fixture(null, { panelUrl: storedUrl })
     const client = storedValue.transport('stored-client')
     await storedValue.manager.accept(
       await storedValue.manager.issueTicket('panel_browser', 'stored-client'),
@@ -388,29 +387,33 @@ describe('Remote Browser sessions', () => {
     await storedValue.manager.dispose()
   })
 
-  it('closes an active session when its permission is revoked', async () => {
-    const value = fixture()
+  it('confirms reset through the client and clears durable state before reconnecting', async () => {
+    const value = fixture(null, {
+      panelUrl: 'https://example.com/session',
+      panelTitle: 'Session'
+    })
     const client = value.transport('client')
     await value.manager.accept(
       await value.manager.issueTicket('panel_browser', 'client'),
       client.transport
     )
-    vi.mocked(value.service.authorizeHostBrowserPanel).mockRejectedValue(
-      new Error('revoked')
-    )
-    value.events.emit('event', {
-      type: 'panel.updated',
-      data: { panelId: 'panel_browser', worktreeId: 'worktree' }
-    })
-
+    value.manager.message('client', { type: 'reset' })
     await vi.waitFor(() =>
-      expect(client.messages.at(-1)).toEqual({
-        type: 'closed',
-        reason: 'Remote Browser permission revoked'
-      })
+      expect(value.service.updateBrowserPanelState).toHaveBeenCalledWith(
+        'panel_browser',
+        { url: 'about:blank', title: 'Browser' }
+      )
     )
-    expect(browsers[0]!.closes).toBe(1)
-    expect(client.disconnects).toBe(1)
+    await vi.waitFor(() => expect(client.disconnects).toBe(1))
+
+    const reconnected = value.transport('reconnected')
+    await value.manager.accept(
+      await value.manager.issueTicket('panel_browser', 'reconnected'),
+      reconnected.transport
+    )
+    expect(browsers[1]!.commands).not.toContainEqual(
+      expect.objectContaining({ type: 'navigate' })
+    )
     await value.manager.dispose()
   })
 
@@ -474,7 +477,7 @@ describe('Remote Browser sessions', () => {
     expect(browsers[0]!.commands).toEqual([])
     expect(client.messages).toContainEqual({
       type: 'navigationError',
-      message: 'The Remote Browser command queue is full. Wait and try again.'
+      message: 'The Browser command queue is full. Wait and try again.'
     })
 
     finishAgent()
@@ -507,6 +510,47 @@ describe('Remote Browser sessions', () => {
     expect(client.messages.at(-1)).toMatchObject({
       type: 'controlChanged',
       state: { controller: 'you', controlled: true }
+    })
+    await value.manager.dispose()
+  })
+
+  it('routes browser popups through durable Browser panel creation', async () => {
+    const value = fixture()
+    const client = value.transport('client')
+    await value.manager.accept(
+      await value.manager.issueTicket('panel_browser', 'client'),
+      client.transport
+    )
+
+    browsers[0]!.callbacks.popup('https://example.com/popup')
+    await vi.waitFor(() =>
+      expect(value.service.openBrowserPanelFromPanel).toHaveBeenCalledWith(
+        'panel_browser',
+        'https://example.com/popup'
+      )
+    )
+    await value.manager.dispose()
+  })
+
+  it('closes the browser when its owning worktree is removed', async () => {
+    const value = fixture()
+    const client = value.transport('client')
+    await value.manager.accept(
+      await value.manager.issueTicket('panel_browser', 'client'),
+      client.transport
+    )
+    vi.mocked(value.service.authorizeBrowserPanel).mockRejectedValue(
+      new Error('removed')
+    )
+    value.events.emit('event', {
+      type: 'worktree.removed',
+      data: { projectId: 'project', worktreeId: 'worktree' }
+    })
+
+    await vi.waitFor(() => expect(browsers[0]!.closes).toBe(1))
+    expect(client.messages.at(-1)).toEqual({
+      type: 'closed',
+      reason: 'Worktree removed'
     })
     await value.manager.dispose()
   })

@@ -115,7 +115,7 @@ Treeport shows the panel source and permissions before the first open.
 
 A grant applies to the exact package source, scope, panel definition, and permission set.
 
-Treeport requests approval again when the permission set changes. Removing the package revokes its grants and closes active privileged sessions.
+Treeport requests approval again when the permission set changes. Removing the package revokes its grants.
 
 ### Browser package boundary
 
@@ -127,15 +127,25 @@ The target cannot use context, diff, storage, shortcuts, or workspace navigation
 
 Browser iframe restrictions continue to apply. Treeport does not bypass the framing policy of the target.
 
-The Remote Browser panel requests the reserved `host-browser` permission.
+The first-class Browser panel does not use a web-panel package permission.
 
-Its isolated browser runs as the daemon operating-system user. It can reach local and internet sites available from the daemon computer.
+Its isolated browser runs as the daemon operating-system user.
 
-Each Remote Browser panel uses separate temporary browser data. Treeport does not attach to a personal browser profile.
+It can reach local and internet sites available from the daemon computer.
 
-Treeport does not give panel code direct browser-control or debugging access.
+Each Browser panel uses separate temporary browser data.
 
-Resetting or closing the Remote Browser panel deletes its temporary browser data.
+Treeport does not use, import, or attach to a personal browser profile.
+
+Treeport authorizes each client and agent action for the owning panel and tree.
+
+Treeport does not expose direct browser-control or debugging access.
+
+The server accepts only absolute HTTP or HTTPS addresses without credentials.
+
+Resetting or closing the Browser panel deletes its temporary browser data.
+
+Treeport requests confirmation before it deletes this data.
 
 ## Follow these operating rules
 

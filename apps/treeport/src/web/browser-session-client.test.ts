@@ -8,15 +8,6 @@ import {
 type SocketEvent = 'message' | 'frame' | 'disconnect' | 'connect_error'
 type SocketEventValue = BrowserFrame | BrowserServerMessage | Error | undefined
 
-interface PanelFrame {
-  type: 'frame'
-  sequence: number
-  mimeType: 'image/jpeg'
-  width: number
-  height: number
-  data: ArrayBuffer
-}
-
 class FakeSocket implements BrowserPanelSocket {
   connected = true
   readonly emit = vi.fn()
@@ -40,8 +31,10 @@ class FakeSocket implements BrowserPanelSocket {
   ): void {
     // SAFETY: emitServer supplies the value type that corresponds to event.
     const invokeListener = listener as (eventValue: SocketEventValue) => void
-    const invoke = (value: SocketEventValue) => invokeListener(value)
-    this.handlers.set(event, [...(this.handlers.get(event) ?? []), invoke])
+    this.handlers.set(event, [
+      ...(this.handlers.get(event) ?? []),
+      (value) => invokeListener(value)
+    ])
   }
 
   hasHandler(event: SocketEvent): boolean {
@@ -74,26 +67,23 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-it('forwards socket frames to the panel as typed transferable messages', async () => {
+it('connects the Browser workspace directly and preserves command and frame contracts', async () => {
   const socket = new FakeSocket()
-  const channel = new MessageChannel()
-  const receivedFrame = new Promise<PanelFrame>((resolve) => {
-    channel.port2.onmessage = (event) => {
-      if (event.data?.type === 'frame') {
-        resolve(event.data)
-      }
-    }
-  })
-  channel.port2.start()
+  const messages: BrowserServerMessage[] = []
+  const frames: BrowserFrame[] = []
   const connection = connectBrowserPanel(
     'panel-one',
-    channel.port1,
     true,
+    {
+      message: (message) => messages.push(message),
+      frame: (frame) => frames.push(frame)
+    },
     () => socket
   )
+  connection.send({ type: 'navigate', url: 'https://example.com/' })
   await vi.waitFor(() => expect(socket.hasHandler('frame')).toBe(true))
 
-  socket.emitServer('message', {
+  const ready: BrowserServerMessage = {
     type: 'ready',
     state: {
       url: 'about:blank',
@@ -106,7 +96,8 @@ it('forwards socket frames to the panel as typed transferable messages', async (
       controller: 'you',
       viewport: { width: 1_280, height: 800 }
     }
-  })
+  }
+  socket.emitServer('message', ready)
   socket.emitServer('frame', {
     sequence: 7,
     mimeType: 'image/jpeg',
@@ -116,16 +107,23 @@ it('forwards socket frames to the panel as typed transferable messages', async (
     data: Uint8Array.from([1, 2, 3])
   })
 
-  const message = await receivedFrame
-  expect(message).toMatchObject({
-    type: 'frame',
-    sequence: 7,
-    mimeType: 'image/jpeg',
-    width: 1_280,
-    height: 800
+  expect(messages).toEqual([ready])
+  expect(frames).toEqual([
+    expect.objectContaining({
+      sequence: 7,
+      mimeType: 'image/jpeg',
+      data: Uint8Array.from([1, 2, 3])
+    })
+  ])
+  expect(socket.emit).toHaveBeenNthCalledWith(1, 'command', {
+    type: 'setVisible',
+    visible: true
   })
-  expect([...new Uint8Array(message.data)]).toEqual([1, 2, 3])
+  expect(socket.emit).toHaveBeenNthCalledWith(2, 'command', {
+    type: 'navigate',
+    url: 'https://example.com/'
+  })
 
   connection.dispose()
-  channel.port2.close()
+  expect(socket.disconnect).toHaveBeenCalledOnce()
 })

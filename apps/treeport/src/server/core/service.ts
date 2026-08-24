@@ -4,12 +4,15 @@ import os from 'node:os'
 import path from 'node:path'
 import {
   WEB_PANEL_INPUT_MAX_BYTES,
+  browserUrlSchema,
   webPanelInputSchema
 } from '@treeport/shared'
 import type {
+  BrowserPanel,
   CreateOperationRequest,
   DirectoryBrowseResponse,
   JsonValue,
+  OpenBrowserPanelResult,
   OpenWebPanelResult,
   OperationRecord,
   PackageListing,
@@ -50,6 +53,7 @@ import {
   serializeOperation
 } from './database'
 import {
+  browserPanels,
   operations,
   projects,
   terminalPresets,
@@ -105,6 +109,18 @@ interface TerminalLaunchOptions {
   cwd?: string
   env?: Record<string, string>
   shellCommand?: string
+}
+
+function mapBrowserPanel(row: typeof browserPanels.$inferSelect): BrowserPanel {
+  return {
+    id: row.id,
+    kind: 'browser',
+    worktreeId: row.worktreeId,
+    title: row.title,
+    url: row.url,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt
+  }
 }
 
 function mapWebPanel(
@@ -198,7 +214,6 @@ interface ServiceDependencies {
   tmux: TmuxAdapter
   gh: GhAdapter
   events?: ProductEventBus
-  trustedHostBrowserPackageIds?: string[]
 }
 
 export interface CreateWorktreeResult {
@@ -684,11 +699,18 @@ export class TreeportService {
             ])
             worktree.dirty = dirty
             worktree.terminals = terminals
-            const storedWebPanels = await this.deps.database.db
-              .select()
-              .from(webPanels)
-              .where(eq(webPanels.worktreeId, worktree.id))
-              .orderBy(asc(webPanels.createdAt), asc(webPanels.id))
+            const [storedBrowserPanels, storedWebPanels] = await Promise.all([
+              this.deps.database.db
+                .select()
+                .from(browserPanels)
+                .where(eq(browserPanels.worktreeId, worktree.id))
+                .orderBy(asc(browserPanels.createdAt), asc(browserPanels.id)),
+              this.deps.database.db
+                .select()
+                .from(webPanels)
+                .where(eq(webPanels.worktreeId, worktree.id))
+                .orderBy(asc(webPanels.createdAt), asc(webPanels.id))
+            ])
             const definitions =
               project.availability.state === 'available' &&
               storedWebPanels.length > 0
@@ -709,6 +731,7 @@ export class TreeportService {
                 createdAt: terminal.createdAt,
                 updatedAt: terminal.updatedAt
               })),
+              ...storedBrowserPanels.map(mapBrowserPanel),
               ...storedWebPanels.map((panel) => {
                 const definition = definitionsById.get(panel.definitionId)
                 return mapWebPanel(
@@ -1366,19 +1389,6 @@ export class TreeportService {
       .digest('hex')
   }
 
-  private isOfficialHostBrowserDefinition(
-    definition: WebPanelDefinition
-  ): boolean {
-    return (
-      definition.source.type === 'package' &&
-      (definition.source.packageId === 'npm:@treeport/web-panel-browser' ||
-        (definition.source.packageId.startsWith('local:') &&
-          (this.deps.trustedHostBrowserPackageIds ?? []).includes(
-            definition.source.packageId
-          )))
-    )
-  }
-
   private async webPanelPermissionsGranted(
     worktreeId: string,
     definition: WebPanelDefinition
@@ -1468,18 +1478,6 @@ export class TreeportService {
         'Web panel permissions changed; review them and try again',
         409,
         { permissions: definition.permissions }
-      )
-    }
-
-    if (
-      granted &&
-      definition.permissions.includes('host-browser') &&
-      !this.isOfficialHostBrowserDefinition(definition)
-    ) {
-      throw new DomainError(
-        'HOST_BROWSER_PACKAGE_NOT_TRUSTED',
-        'Host browser access is reserved for the official Remote Browser panel',
-        403
       )
     }
 
@@ -1605,6 +1603,217 @@ export class TreeportService {
     }
   }
 
+  async createBrowserPanel(
+    worktreeId: string,
+    requestedUrl?: string
+  ): Promise<BrowserPanel> {
+    await this.requireAvailableWorktree(worktreeId)
+    const parsedUrl = requestedUrl
+      ? browserUrlSchema.safeParse(requestedUrl)
+      : null
+    if (parsedUrl && !parsedUrl.success) {
+      throw new DomainError(
+        'INVALID_BROWSER_URL',
+        'Enter an absolute HTTP or HTTPS URL without credentials',
+        400
+      )
+    }
+
+    const url = parsedUrl ? new URL(parsedUrl.data).href : 'about:blank'
+    const timestamp = now()
+    const panel: BrowserPanel = {
+      id: id('panel'),
+      kind: 'browser',
+      worktreeId,
+      title: url === 'about:blank' ? 'Browser' : new URL(url).host,
+      url,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    }
+    await this.deps.database.db.insert(browserPanels).values({
+      id: panel.id,
+      worktreeId: panel.worktreeId,
+      title: panel.title,
+      url: panel.url,
+      createdAt: panel.createdAt,
+      updatedAt: panel.updatedAt
+    })
+    this.invalidateProjectsSnapshot()
+    this.events.publish('panel.created', { worktreeId, panelId: panel.id })
+    return panel
+  }
+
+  async openBrowserPanel(
+    worktreeId: string,
+    requestedUrl?: string,
+    sourceTerminalId: string | null = null,
+    sourcePanelId: string | null = null
+  ): Promise<OpenBrowserPanelResult> {
+    await this.requireAvailableWorktree(worktreeId)
+    if (sourceTerminalId) {
+      const terminal = await this.getTerminal(sourceTerminalId)
+      if (terminal.worktreeId !== worktreeId) {
+        throw new DomainError(
+          'INVALID_PANEL_OPEN_SOURCE',
+          'The source terminal does not belong to the target tree',
+          400
+        )
+      }
+    }
+
+    if (sourcePanelId) {
+      const sourcePanel = await this.getBrowserPanel(sourcePanelId)
+      if (sourcePanel.worktreeId !== worktreeId) {
+        throw new DomainError(
+          'INVALID_PANEL_OPEN_SOURCE',
+          'The source Browser panel does not belong to the target tree',
+          400
+        )
+      }
+    }
+
+    const panel = await this.createBrowserPanel(worktreeId, requestedUrl)
+    this.events.publish('panel.open_requested', {
+      worktreeId,
+      panelId: panel.id,
+      sourceTerminalId,
+      sourcePanelId
+    })
+    return { panel }
+  }
+
+  async openBrowserPanelFromTerminal(
+    terminalId: string,
+    requestedUrl: string
+  ): Promise<OpenBrowserPanelResult> {
+    const terminal = await this.getTerminal(terminalId)
+    return this.openBrowserPanel(
+      terminal.worktreeId,
+      requestedUrl,
+      terminal.id,
+      null
+    )
+  }
+
+  async openBrowserPanelFromPanel(
+    panelId: string,
+    requestedUrl: string
+  ): Promise<OpenBrowserPanelResult> {
+    const sourcePanel = await this.getBrowserPanel(panelId)
+    return this.openBrowserPanel(
+      sourcePanel.worktreeId,
+      requestedUrl,
+      null,
+      sourcePanel.id
+    )
+  }
+
+  async getBrowserPanel(panelId: string): Promise<BrowserPanel> {
+    const [row] = await this.deps.database.db
+      .select()
+      .from(browserPanels)
+      .where(eq(browserPanels.id, panelId))
+      .limit(1)
+    if (!row) {
+      throw new DomainError('PANEL_NOT_FOUND', 'Browser panel not found', 404)
+    }
+
+    await this.requireAvailableWorktree(row.worktreeId)
+    return mapBrowserPanel(row)
+  }
+
+  async authorizeBrowserPanel(panelId: string): Promise<{
+    panel: BrowserPanel
+    worktreePath: string
+  }> {
+    const panel = await this.getBrowserPanel(panelId)
+    const worktree = await this.getWorktree(panel.worktreeId)
+    return { panel, worktreePath: worktree.path }
+  }
+
+  async updateBrowserPanelState(
+    panelId: string,
+    state: { url: string; title: string }
+  ): Promise<BrowserPanel> {
+    const panel = await this.getBrowserPanel(panelId)
+    const parsedUrl =
+      state.url === 'about:blank'
+        ? { success: true as const, data: 'about:blank' }
+        : browserUrlSchema.safeParse(state.url)
+    if (!parsedUrl.success) {
+      throw new DomainError(
+        'INVALID_BROWSER_URL',
+        'The hosted browser reported an unsupported URL',
+        400
+      )
+    }
+
+    const url =
+      parsedUrl.data === 'about:blank'
+        ? parsedUrl.data
+        : new URL(parsedUrl.data).href
+    const requestedTitle = state.title.trim().slice(0, 256)
+    const title =
+      requestedTitle ||
+      (url === 'about:blank' ? 'Browser' : new URL(url).host || 'Browser')
+    if (panel.url === url && panel.title === title) {
+      return panel
+    }
+
+    const observedAt = now()
+    const updatedAt =
+      observedAt > panel.updatedAt
+        ? observedAt
+        : new Date(Date.parse(panel.updatedAt) + 1).toISOString()
+    await this.deps.database.db
+      .update(browserPanels)
+      .set({ url, title, updatedAt })
+      .where(eq(browserPanels.id, panelId))
+    const updated = { ...panel, url, title, updatedAt }
+    this.invalidateProjectsSnapshot()
+    this.events.publish('panel.updated', {
+      worktreeId: panel.worktreeId,
+      panelId
+    })
+    return updated
+  }
+
+  async deleteBrowserPanel(
+    panelId: string,
+    discardStoredData = false
+  ): Promise<void> {
+    const panel = await this.getBrowserPanel(panelId)
+    if (!discardStoredData) {
+      throw new DomainError(
+        'PANEL_HAS_STORED_DATA',
+        'Closing this Browser panel requires confirmation because its browser data and saved state will be deleted',
+        409
+      )
+    }
+
+    await this.deps.database.db
+      .delete(browserPanels)
+      .where(eq(browserPanels.id, panelId))
+    this.invalidateProjectsSnapshot()
+    this.events.publish('panel.removed', {
+      worktreeId: panel.worktreeId,
+      panelId
+    })
+  }
+
+  async deletePanel(panelId: string, discardStoredData = false): Promise<void> {
+    const [browserPanel] = await this.deps.database.db
+      .select({ id: browserPanels.id })
+      .from(browserPanels)
+      .where(eq(browserPanels.id, panelId))
+      .limit(1)
+    if (browserPanel) {
+      return this.deleteBrowserPanel(panelId, discardStoredData)
+    }
+
+    return this.deleteWebPanel(panelId, discardStoredData)
+  }
+
   async createWebPanel(
     worktreeId: string,
     definitionId: string,
@@ -1676,7 +1885,8 @@ export class TreeportService {
       this.events.publish('panel.open_requested', {
         worktreeId,
         panelId: result.panel.id,
-        sourceTerminalId
+        sourceTerminalId,
+        sourcePanelId: null
       })
       return result
     }
@@ -1820,43 +2030,6 @@ export class TreeportService {
     }
   }
 
-  async authorizeHostBrowserPanel(panelId: string): Promise<{
-    panel: WebPanel
-    worktreePath: string
-  }> {
-    const context = await this.getWebPanelContext(panelId)
-    if (!context.panel.permissions.includes('host-browser')) {
-      throw new DomainError(
-        'HOST_BROWSER_PERMISSION_REQUIRED',
-        'This panel does not declare host browser access',
-        403
-      )
-    }
-
-    const definition = (
-      await this.effectiveWebPanelDefinitions(context.panel.worktreeId)
-    ).find((candidate) => candidate.id === context.panel.definitionId)
-    if (!definition) {
-      throw new DomainError(
-        'WEB_PANEL_DEFINITION_NOT_FOUND',
-        'The definition for this panel is unavailable',
-        404
-      )
-    }
-
-    await this.requireWebPanelPermissions(context.panel.worktreeId, definition)
-    if (!this.isOfficialHostBrowserDefinition(definition)) {
-      throw new DomainError(
-        'HOST_BROWSER_PACKAGE_NOT_TRUSTED',
-        'Host browser access is reserved for the official Remote Browser panel',
-        403
-      )
-    }
-
-    const worktree = await this.getWorktree(context.panel.worktreeId)
-    return { panel: context.panel, worktreePath: worktree.path }
-  }
-
   async getWebPanelDiff(panelId: string) {
     const context = await this.getWebPanelContext(panelId)
     if (
@@ -1875,6 +2048,32 @@ export class TreeportService {
       worktree.path,
       context.project.defaultBranch
     )
+  }
+
+  async getBrowserPanelListeners(
+    panelId: string
+  ): Promise<WorktreeListenerDiscovery> {
+    const panel = await this.getBrowserPanel(panelId)
+    const worktree = await this.getWorktree(panel.worktreeId)
+    const panes = await this.deps.tmux.listPaneProcesses(
+      worktree.tmuxSocketName,
+      worktree.id
+    )
+    return this.networkListeners.listeners({
+      worktreePath: worktree.path,
+      panes
+    })
+  }
+
+  async getPanelListeners(panelId: string): Promise<WorktreeListenerDiscovery> {
+    const [browserPanel] = await this.deps.database.db
+      .select({ id: browserPanels.id })
+      .from(browserPanels)
+      .where(eq(browserPanels.id, panelId))
+      .limit(1)
+    return browserPanel
+      ? this.getBrowserPanelListeners(panelId)
+      : this.getWebPanelListeners(panelId)
   }
 
   async getWebPanelListeners(
@@ -2005,6 +2204,14 @@ export class TreeportService {
       requestedPath,
       `/api/web-panels/${encodedPanelId}/assets/`
     )
+  }
+
+  async listBrowserPanels(): Promise<BrowserPanel[]> {
+    return this.deps.database.db
+      .select()
+      .from(browserPanels)
+      .orderBy(asc(browserPanels.createdAt), asc(browserPanels.id))
+      .then((rows) => rows.map(mapBrowserPanel))
   }
 
   async listWebPanels(): Promise<WebPanel[]> {

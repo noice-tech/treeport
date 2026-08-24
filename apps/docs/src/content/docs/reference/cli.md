@@ -246,12 +246,13 @@ The tree disappears when Git no longer reports its worktree.
 
 Treeport separately handles residual files that it can identify safely.
 
-## Manage Remote Browser
+## Manage Browser panels
 
 ```sh
 treeport browser install [--json]
 treeport browser status [--json]
 treeport browser remove [--json]
+treeport browser open [url] --worktree <id-or-path-or-dot> [--json]
 treeport browser list [--json]
 
 treeport browser snapshot [--panel <panel-id>] [--json]
@@ -271,17 +272,23 @@ treeport browser screenshot [--panel <panel-id>] [--json]
 
 `status` reports whether the browser is ready.
 
-Before you use `remove`, close all Remote Browser sessions.
+Before you use `remove`, close all Browser sessions.
 
-The remaining commands control an existing Remote Browser panel.
+`open` creates a Browser panel. Omit the URL to create a blank panel.
 
-Without `--panel`, Treeport uses the only Remote Browser panel in the current tree.
+The URL must use HTTP or HTTPS and must not contain credentials.
+
+In a managed terminal, `open` selects the panel in clients that show that terminal.
+
+The remaining commands control an existing Browser panel.
+
+Without `--panel`, Treeport uses the only Browser panel in the current tree.
 
 Use `list` to find panel IDs. Use snapshot element references with `click` and `fill`.
 
-The agent and panel use the same browser session. These commands do not control the client-side Browser panel.
+The agent and panel use the same browser session. These commands do not control the iframe Browser web panel.
 
-See [Browser panels](/features/browser-panel/) for permissions, networking, saved state, and limits.
+See [Browser panels](/features/browser-panel/) for networking, saved state, and limits.
 
 ## Open web panels
 
