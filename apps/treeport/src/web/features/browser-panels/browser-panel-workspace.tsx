@@ -75,7 +75,12 @@ export function BrowserPanelWorkspace({
   const stateRef = useRef<BrowserSessionState | null>(null)
   const viewportRef = useRef({ width: 1_280, height: 800 })
   const pointerActiveRef = useRef(false)
-  const homepageRequestedRef = useRef(panel.url === 'about:blank')
+  const homepageRequestedRef = useRef(false)
+  const addressDirtyRef = useRef(false)
+  const pendingNavigationRef = useRef<{
+    startUrl: string
+    targetUrl: string
+  } | null>(null)
   const [connectionRevision, setConnectionRevision] = useState(0)
   const [state, setState] = useState<BrowserSessionState | null>(null)
   const [inputValue, setInputValue] = useState(
@@ -109,21 +114,39 @@ export function BrowserPanelWorkspace({
       setState(message.state)
       setFailure(null)
       setError(null)
+
+      const pendingNavigation = pendingNavigationRef.current
+      const validUrl = browserUrlSchema.safeParse(message.state.url).success
+      // takeControl can report the old page before the queued navigation starts.
+      const navigationStarted =
+        pendingNavigation === null ||
+        (validUrl &&
+          (message.state.url === pendingNavigation.targetUrl ||
+            message.state.url !== pendingNavigation.startUrl))
+      if (!navigationStarted) {
+        return
+      }
+
+      pendingNavigationRef.current = null
       if (message.state.url === 'about:blank') {
-        homepageRequestedRef.current = true
         setShowHomepage(true)
-        setInputValue('')
-      } else if (browserUrlSchema.safeParse(message.state.url).success) {
+        if (!addressDirtyRef.current) {
+          setInputValue('')
+        }
+      } else if (validUrl) {
         if (!homepageRequestedRef.current) {
           setShowHomepage(false)
         }
 
-        setInputValue(message.state.url)
+        if (!addressDirtyRef.current) {
+          setInputValue(message.state.url)
+        }
       }
 
       return
     }
 
+    pendingNavigationRef.current = null
     if (message.type === 'browserUnavailable') {
       setFailure({
         message: message.message,
@@ -297,12 +320,19 @@ export function BrowserPanelWorkspace({
       return
     }
 
+    const targetUrl = new URL(parsed.data).href
     setError(null)
     setFailure(null)
     homepageRequestedRef.current = false
+    addressDirtyRef.current = false
+    pendingNavigationRef.current = {
+      startUrl: stateRef.current?.url ?? panel.url,
+      targetUrl
+    }
+    setInputValue(targetUrl)
     setShowHomepage(false)
     send({ type: 'takeControl' })
-    send({ type: 'navigate', url: new URL(parsed.data).href })
+    send({ type: 'navigate', url: targetUrl })
   }
 
   const point = (event: PointerEvent<HTMLCanvasElement>) => {
@@ -423,7 +453,21 @@ export function BrowserPanelWorkspace({
           placeholder="http://localhost:3000/"
           maxLength={4_096}
           value={inputValue}
-          onChange={(event) => setInputValue(event.target.value)}
+          onChange={(event) => {
+            addressDirtyRef.current = true
+            setInputValue(event.target.value)
+          }}
+          onBlur={() => {
+            addressDirtyRef.current = false
+            const pendingNavigation = pendingNavigationRef.current
+            if (pendingNavigation) {
+              setInputValue(pendingNavigation.targetUrl)
+              return
+            }
+
+            const currentUrl = stateRef.current?.url ?? panel.url
+            setInputValue(currentUrl === 'about:blank' ? '' : currentUrl)
+          }}
         />
         {state?.loading ? (
           <Button

@@ -1014,10 +1014,10 @@ test.describe('desktop worktree and terminal workflows', () => {
     ).toHaveCount(0)
   })
 
-  test('creates and closes a first-class daemon-hosted Browser panel', async ({
+  test('creates, navigates, and closes a first-class daemon-hosted Browser panel', async ({
     page
   }) => {
-    await mockApp(page)
+    await mockApp(page, [], { hostedBrowser: true })
     await page.getByRole('button', { name: /^topic(?:,|\s|$)/ }).click()
 
     await page.getByRole('button', { name: /^New panel/ }).click()
@@ -1045,12 +1045,20 @@ test.describe('desktop worktree and terminal workflows', () => {
         name: 'Open http://localhost:5173/, vite'
       })
     ).toBeVisible()
+    const address = page.getByRole('textbox', { name: 'Application URL' })
+    await expect(address).toHaveValue('')
+
+    await address.fill('http://localhost:4173/application')
+    await page.evaluate(() => window.__repeatBrowserState())
+    await expect(address).toHaveValue('http://localhost:4173/application')
+    await address.press('Enter')
+    await expect
+      .poll(() => page.evaluate(() => window.__browserNavigationCompleted))
+      .toBe('http://localhost:4173/application')
     await expect(
-      page.getByRole('textbox', { name: 'Application URL' })
-    ).toHaveValue('')
-    await expect(page.getByRole('alert')).toContainText(
-      'Hosted browser fixture is unavailable'
-    )
+      page.getByRole('heading', { name: 'Development servers' })
+    ).toHaveCount(0)
+    await expect(address).toHaveValue('http://localhost:4173/application')
 
     await page.reload()
     await expect(page).toHaveURL(/\/panels\/browser_panel_1$/)

@@ -174,6 +174,7 @@ export async function mockApp(
     repositoryPresetDiagnostics?: TerminalPresetDefinitionDiagnostic[]
     applicationUpdate?: ApplicationUpdateStatus
     realReviewPanel?: boolean
+    hostedBrowser?: boolean
   } = {}
 ) {
   let reviewPanelScript = ''
@@ -293,7 +294,11 @@ export async function mockApp(
     }, options.desktopFilePaths ?? {})
   }
 
-  await page.addInitScript((initialMetadata) => {
+  const socketFixture = {
+    initialMetadata: initialTerminalMetadata,
+    hostedBrowser: options.hostedBrowser ?? false
+  }
+  await page.addInitScript(({ initialMetadata, hostedBrowser }) => {
     const terminalStatePrefix = '__treeport_terminal_state__:'
     const readTerminalState = (terminalId: string) => {
       const stored = localStorage.getItem(`${terminalStatePrefix}${terminalId}`)
@@ -320,6 +325,7 @@ export async function mockApp(
       notifyTerminalState(state)
     }
     const scope = window
+    scope.__browserNavigationCompleted = null
     if (!scope.__terminalStateListener) {
       scope.__terminalStateListener = true
       window.addEventListener('storage', (event) => {
@@ -345,6 +351,17 @@ export async function mockApp(
       cols = 100
       rows = 30
       revision = 1
+      browserState = {
+        url: 'about:blank',
+        title: '',
+        loading: false,
+        canGoBack: false,
+        canGoForward: false,
+        viewport: { width: 1_280, height: 800 },
+        controlled: true,
+        hasController: true,
+        controller: 'you'
+      }
       private messageHandler: ((event: { data: string }) => void) | null = null
       private closeHandler: (() => void) | null = null
 
@@ -461,6 +478,23 @@ export async function mockApp(
           return
         }
 
+        if (data.startsWith('40/browsers') && hostedBrowser) {
+          this.namespace = '/browsers'
+          this.deliver(
+            `40/browsers,${JSON.stringify({ sid: crypto.randomUUID() })}`
+          )
+          scope.__repeatBrowserState = () =>
+            this.deliverSocket('message', {
+              type: 'state',
+              state: this.browserState
+            })
+          this.deliverSocket('message', {
+            type: 'ready',
+            state: this.browserState
+          })
+          return
+        }
+
         if (data.startsWith('40/terminals')) {
           this.namespace = '/terminals'
           const separator = data.indexOf(',')
@@ -517,6 +551,34 @@ export async function mockApp(
                   ? 'dev · /worktrees/topic'
                   : 'zsh · /worktrees/topic'
             })
+          }
+
+          return
+        }
+
+        if (data.startsWith('42/browsers,') && hostedBrowser) {
+          const [type, payload = {}] = JSON.parse(
+            data.slice('42/browsers,'.length)
+          )
+          if (type === 'command') {
+            if (payload.type === 'navigate') {
+              this.deliverSocket('message', {
+                type: 'controlChanged',
+                state: this.browserState
+              })
+              setTimeout(() => {
+                this.browserState = {
+                  ...this.browserState,
+                  url: payload.url,
+                  title: new URL(payload.url).host
+                }
+                scope.__browserNavigationCompleted = payload.url
+                this.deliverSocket('message', {
+                  type: 'state',
+                  state: this.browserState
+                })
+              }, 25)
+            }
           }
 
           return
@@ -604,7 +666,7 @@ export async function mockApp(
       }
     }
     Object.assign(window, { WebSocket: MockWebSocket })
-  }, initialTerminalMetadata)
+  }, socketFixture)
   const state = structuredClone(project)
   const repositoryTerminalPresets = [
     ...(options.repositoryTerminalPresets ?? [])
@@ -1607,15 +1669,19 @@ export async function mockApp(
       /^\/api\/panels\/[^/]+\/browser-ticket$/.test(pathname) &&
       route.request().method() === 'POST'
     ) {
-      await route.fulfill({
-        status: 503,
-        json: {
-          error: {
-            code: 'BROWSER_UNAVAILABLE',
-            message: 'Hosted browser fixture is unavailable'
-          }
-        }
-      })
+      await route.fulfill(
+        options.hostedBrowser
+          ? { json: { ticket: crypto.randomUUID() } }
+          : {
+              status: 503,
+              json: {
+                error: {
+                  code: 'BROWSER_UNAVAILABLE',
+                  message: 'Hosted browser fixture is unavailable'
+                }
+              }
+            }
+      )
       return
     }
 
