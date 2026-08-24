@@ -478,10 +478,39 @@ function ReviewApp() {
     () => saved.filter((comment) => !comment.resolved),
     [saved]
   )
+  const commentLocations = useMemo(
+    () =>
+      new Set(
+        loaded?.searchableLines.map(({ file, side, lineNumber }) =>
+          JSON.stringify([file, side, lineNumber])
+        ) ?? []
+      ),
+    [loaded]
+  )
+  const outdatedComments = useMemo(
+    () =>
+      loaded
+        ? unresolved.filter(
+            ({ file, side, lineNumber }) =>
+              !commentLocations.has(JSON.stringify([file, side, lineNumber]))
+          )
+        : [],
+    [commentLocations, loaded, unresolved]
+  )
+  const navigableComments = useMemo(
+    () =>
+      outdatedComments.length
+        ? unresolved.filter(
+            ({ file, side, lineNumber }) =>
+              commentLocations.has(JSON.stringify([file, side, lineNumber]))
+          )
+        : unresolved,
+    [commentLocations, outdatedComments.length, unresolved]
+  )
   const viewedCount = fileNames.filter((file) => viewedFiles.has(file)).length
   const progress =
     fileNames.length === 0 ? 0 : (viewedCount / fileNames.length) * 100
-  const activeCommentIndex = unresolved.findIndex(
+  const activeCommentIndex = navigableComments.findIndex(
     ({ id }) => id === activeCommentId
   )
   const findMatches = useMemo(() => {
@@ -877,18 +906,21 @@ function ReviewApp() {
   )
 
   const navigateComments = (direction: number) => {
-    if (unresolved.length === 0) {
+    if (navigableComments.length === 0) {
       return
     }
 
-    const current = unresolved.findIndex(({ id }) => id === activeCommentId)
+    const current = navigableComments.findIndex(
+      ({ id }) => id === activeCommentId
+    )
     const index =
       current === -1
         ? direction > 0
           ? 0
-          : unresolved.length - 1
-        : (current + direction + unresolved.length) % unresolved.length
-    navigateToComment(unresolved[index]!)
+          : navigableComments.length - 1
+        : (current + direction + navigableComments.length) %
+          navigableComments.length
+    navigateToComment(navigableComments[index]!)
   }
 
   const updateComment = (next: ReviewComment[], persist: boolean) => {
@@ -1135,16 +1167,22 @@ function ReviewApp() {
           </span>
           <div className="comment-navigation" aria-label="Comment navigation">
             <span id="comment-position">
-              {activeCommentIndex === -1
-                ? `${unresolved.length} unresolved`
-                : `${activeCommentIndex + 1} of ${unresolved.length} unresolved`}
+              {`${
+                activeCommentIndex === -1
+                  ? `${navigableComments.length} unresolved`
+                  : `${activeCommentIndex + 1} of ${navigableComments.length} unresolved`
+              }${
+                outdatedComments.length
+                  ? ` · ${outdatedComments.length} outdated`
+                  : ''
+              }`}
             </span>
             <div className="comment-navigation-buttons">
               <button
                 type="button"
                 aria-label="Previous unresolved comment"
                 title="Previous unresolved comment"
-                disabled={!unresolved.length}
+                disabled={!navigableComments.length}
                 onClick={() => navigateComments(-1)}
               >
                 <Chevron direction="up" />
@@ -1153,7 +1191,7 @@ function ReviewApp() {
                 type="button"
                 aria-label="Next unresolved comment"
                 title="Next unresolved comment"
-                disabled={!unresolved.length}
+                disabled={!navigableComments.length}
                 onClick={() => navigateComments(1)}
               >
                 <Chevron direction="down" />
@@ -1248,6 +1286,50 @@ function ReviewApp() {
           tabIndex={0}
         />
         <main id="review" aria-live="polite">
+          {!loading && !error && outdatedComments.length > 0 && (
+            <section
+              className="outdated-comments"
+              aria-labelledby="outdated-comments-heading"
+            >
+              <h2 id="outdated-comments-heading">Outdated comments</h2>
+              <p>
+                These comment locations no longer appear in the current diff.
+                Resolve or delete each comment after you review the new code.
+              </p>
+              <ul>
+                {outdatedComments.map((comment) => (
+                  <li key={comment.id}>
+                    <div className="outdated-comment-location">
+                      <strong>{comment.file}</strong>
+                      <span>
+                        Line {comment.lineNumber}
+                        {comment.side === 'deletions'
+                          ? ' (deleted line)'
+                          : ''}
+                      </span>
+                    </div>
+                    <p>{comment.body}</p>
+                    <div className="comment-actions">
+                      <button
+                        type="button"
+                        aria-label={`Resolve outdated comment on ${comment.file} line ${comment.lineNumber}`}
+                        onClick={() => setCommentResolved(comment, true)}
+                      >
+                        Resolve
+                      </button>
+                      <button
+                        type="button"
+                        aria-label={`Delete outdated comment on ${comment.file} line ${comment.lineNumber}`}
+                        onClick={() => deleteComment(comment)}
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
           {loading ? (
             <p className="empty">Reading tree changes…</p>
           ) : error ? (
