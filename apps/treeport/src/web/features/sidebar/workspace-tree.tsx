@@ -523,7 +523,13 @@ export function WorkspaceTree({
                                     event.preventDefault()
                                     closePanel(panel, event.currentTarget)
                                   }}
-                                  aria-label={`${title}, ${panel.kind === 'browser' ? 'Browser panel' : 'web panel'}`}
+                                  aria-label={
+                                    panel.kind === 'browser'
+                                      ? title === 'Browser'
+                                        ? 'Browser'
+                                        : `${title}, Browser`
+                                      : `${title}, web panel`
+                                  }
                                   aria-keyshortcuts={
                                     shortcutIndex
                                       ? `Meta+${shortcutIndex}`
@@ -559,7 +565,11 @@ export function WorkspaceTree({
                               <div className="absolute inset-y-0 right-0 z-10 flex items-center opacity-0 group-hover/terminal:opacity-100 group-focus-within/terminal:opacity-100 max-[700px]:opacity-100">
                                 <SidebarAction
                                   label={`Close ${title}`}
-                                  tooltip={`Close ${panel.kind === 'browser' ? 'Browser' : 'web'} panel`}
+                                  tooltip={
+                                    panel.kind === 'browser'
+                                      ? 'Close Browser'
+                                      : 'Close web panel'
+                                  }
                                   className="text-zinc-500 hover:bg-transparent hover:text-zinc-200"
                                   onClick={(trigger) =>
                                     closePanel(panel, trigger)

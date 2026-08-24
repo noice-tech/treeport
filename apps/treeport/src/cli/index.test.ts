@@ -542,7 +542,7 @@ describe('CLI context and machine output', () => {
         for await (const chunk of request) {
           source += chunk
         }
-        // SAFETY: The test server records the validated Browser panel request contract.
+        // SAFETY: The test server records the validated Browser request contract.
         const body = JSON.parse(source) as {
           url?: string
           sourceTerminalId?: string | null

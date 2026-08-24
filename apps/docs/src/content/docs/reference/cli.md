@@ -246,7 +246,7 @@ The tree disappears when Git no longer reports its worktree.
 
 Treeport separately handles residual files that it can identify safely.
 
-## Manage Browser panels
+## Manage Browser
 
 ```sh
 treeport browser install [--json]
@@ -274,21 +274,21 @@ treeport browser screenshot [--panel <panel-id>] [--json]
 
 Before you use `remove`, close all Browser sessions.
 
-`open` creates a Browser panel. Omit the URL to create a blank panel.
+`open` starts Browser. Omit the URL to open a blank page.
 
 The URL must use HTTP or HTTPS and must not contain credentials.
 
-In a managed terminal, `open` selects the panel in clients that show that terminal.
+In a managed terminal, `open` selects Browser in clients that show that terminal.
 
-The remaining commands control an existing Browser panel.
+The remaining commands control Browser.
 
-Without `--panel`, Treeport uses the only Browser panel in the current tree.
+Without `--panel`, Treeport uses the only Browser session in the current tree.
 
-Use `list` to find panel IDs. Use snapshot element references with `click` and `fill`.
+Use `list` to find Browser IDs. Use snapshot element references with `click` and `fill`.
 
-The agent and panel use the same browser session. These commands do not control the iframe Browser web panel.
+The agent and user use the same browser session. These commands do not control iframe Browser.
 
-See [Browser panels](/features/browser-panel/) for networking, saved state, and limits.
+See [Browser](/features/browser-panel/) for networking, saved state, and limits.
 
 ## Open web panels
 

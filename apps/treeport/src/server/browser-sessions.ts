@@ -48,6 +48,7 @@ export interface BrowserSessionBrowser {
   launch(): Promise<void>
   command(message: BrowserClientMessage): Promise<void>
   setScreencasting(enabled: boolean): Promise<void>
+  requestClose(force: boolean): Promise<boolean>
   close(): Promise<void>
 }
 
@@ -492,7 +493,7 @@ export class BrowserSessionManager {
   private async createSession(panelId: string): Promise<BrowserSession> {
     if (this.sessions.size >= 6) {
       throw new Error(
-        'Treeport supports at most six active Browser panels. Close one and try again.'
+        'Treeport supports at most six active Browser sessions. Close one and try again.'
       )
     }
 
@@ -661,7 +662,7 @@ export class BrowserSessionManager {
 
     if (this.sessions.size + this.sessionCreations.size >= 6) {
       throw new Error(
-        'Treeport supports at most six active Browser panels. Close one and try again.'
+        'Treeport supports at most six active Browser sessions. Close one and try again.'
       )
     }
 
@@ -689,7 +690,7 @@ export class BrowserSessionManager {
       transport.sendMessage({
         type: 'browserUnavailable',
         message:
-          'This Browser panel already has the maximum of eight attached clients.',
+          'This Browser already has the maximum of eight attached clients.',
         installCommand: null
       })
       return transport.id
@@ -1073,6 +1074,30 @@ export class BrowserSessionManager {
     }
   }
 
+  async requestPanelClose(panelId: string, force = false): Promise<boolean> {
+    const session =
+      this.sessions.get(panelId) ??
+      (await this.sessionCreations.get(panelId)?.catch(() => null))
+    if (!session) {
+      return true
+    }
+
+    let canClose = false
+    await this.scheduleOperation(
+      session,
+      async () => {
+        const browser = await this.browserFor(session)
+        canClose = await browser.requestClose(force)
+        if (canClose) {
+          session.closing = true
+          this.stopScheduler(session, 'Browser closed.')
+        }
+      },
+      { required: true }
+    )
+    return canClose
+  }
+
   async closePanel(panelId: string, reason: string): Promise<void> {
     const session =
       this.sessions.get(panelId) ??
@@ -1270,7 +1295,7 @@ export class BrowserSessionManager {
     }
 
     if (this.sessions.size > 0) {
-      throw new Error('Close Browser panels before you remove Chromium.')
+      throw new Error('Close Browser before you remove Chromium.')
     }
 
     await fs.rm(this.cachePath, { recursive: true, force: true })

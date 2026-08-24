@@ -66,7 +66,7 @@ function projectGraph(): ProjectRecord[] {
 }
 
 describe('workspace route resolution', () => {
-  it('targets only clients that show the source terminal or Browser panel', () => {
+  it('targets only clients that show the source terminal or Browser', () => {
     expect(openRequestMatchesTerminal('terminal-a', 'terminal-a')).toBe(true)
     expect(openRequestMatchesTerminal('terminal-a', 'terminal-b')).toBe(false)
     expect(openRequestMatchesTerminal(null, 'terminal-a')).toBe(false)
@@ -97,7 +97,7 @@ describe('workspace route resolution', () => {
     })
   })
 
-  it('selects web and Browser panels without a terminal and repairs stale panel routes', () => {
+  it('selects WebPanel and BrowserPanel routes without a terminal and repairs stale routes', () => {
     const projects = projectGraph()
     const panel = projects[0]!.worktrees[0]!.panels.find(
       (candidate) => candidate.kind === 'web'

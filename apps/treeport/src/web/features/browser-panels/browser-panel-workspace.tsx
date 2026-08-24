@@ -242,7 +242,7 @@ export function BrowserPanelWorkspace({
     }
   }, [send])
 
-  /* eslint-disable react-you-might-not-need-an-effect/no-event-handler -- Workspace route activation owns Browser panel focus. */
+  /* eslint-disable react-you-might-not-need-an-effect/no-event-handler -- Workspace route activation owns Browser focus. */
   useEffect(() => {
     if (!active || autoFocusBlocked) {
       return
@@ -305,7 +305,7 @@ export function BrowserPanelWorkspace({
     }
   }, [panel.id])
 
-  /* eslint-disable react-you-might-not-need-an-effect/no-event-handler -- A restored blank Browser panel needs discovery without a local click. */
+  /* eslint-disable react-you-might-not-need-an-effect/no-event-handler -- A restored blank Browser needs discovery without a local click. */
   useEffect(() => {
     if (showHomepage && listeners === null && !listenersLoading) {
       void discoverListeners()

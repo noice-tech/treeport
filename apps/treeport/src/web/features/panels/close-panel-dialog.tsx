@@ -31,10 +31,14 @@ export function ClosePanelDialog({
       {panel ? (
         <AlertDialogContent restoreFocusTo={restoreFocusTo}>
           <AlertDialogHeader>
-            <AlertDialogTitle>Close {panel.title}?</AlertDialogTitle>
+            <AlertDialogTitle>
+              {panel.kind === 'browser'
+                ? 'Leave site?'
+                : `Close ${panel.title}?`}
+            </AlertDialogTitle>
             <AlertDialogDescription>
               {panel.kind === 'browser'
-                ? 'Closing this panel permanently deletes its disposable browser data and saved state.'
+                ? 'Changes you made may not be saved.'
                 : 'This panel has saved data. Closing it permanently deletes that data, including any comments or drafts.'}
             </AlertDialogDescription>
           </AlertDialogHeader>
@@ -50,7 +54,11 @@ export function ClosePanelDialog({
                   onConfirm(panel)
                 }}
               >
-                {busy ? 'Closing…' : 'Close and delete data'}
+                {busy
+                  ? 'Closing…'
+                  : panel.kind === 'browser'
+                    ? 'Leave'
+                    : 'Close and delete data'}
               </Button>
             </AlertDialogAction>
           </AlertDialogFooter>

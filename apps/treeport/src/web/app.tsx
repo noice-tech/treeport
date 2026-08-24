@@ -68,6 +68,7 @@ import {
 } from './workspace-navigation'
 import { useWorkspaceNavigate } from './workspace-router-navigation'
 import { ForceSpecificCursor } from './force-specific-cursor'
+import { errorDetails } from './error-message'
 
 const webPanelPermissionErrorSchema = z.object({
   error: z.object({ message: z.string() })
@@ -84,6 +85,7 @@ type AppDialog =
 
 interface DeletePanelQuery {
   discardStoredData?: string
+  force?: string
 }
 
 export default function App() {
@@ -363,21 +365,28 @@ function WorkspaceApp() {
     },
     onError: (error, { worktree }) => {
       notifyError(error, {
-        operation: `create Browser panel in tree “${worktree.name}”`
+        operation: `create Browser in tree “${worktree.name}”`
       })
     }
   })
   const closePanel = useMutation({
     mutationFn: ({
       panel,
-      discardStoredData = false
+      discardStoredData = false,
+      force = false
     }: {
       panel: BrowserPanel | WebPanel
       discardStoredData?: boolean
+      force?: boolean
+      trigger?: HTMLElement
     }) => {
       const query: DeletePanelQuery = {}
       if (discardStoredData) {
         query.discardStoredData = 'true'
+      }
+
+      if (force) {
+        query.force = 'true'
       }
 
       return parseResponse(
@@ -408,7 +417,15 @@ function WorkspaceApp() {
         queryKey: projectsQueryOptions.queryKey
       })
     },
-    onError: (error, { panel }) => {
+    onError: (error, { panel, trigger }) => {
+      if (
+        panel.kind === 'browser' &&
+        errorDetails(error).code === 'BROWSER_BEFORE_UNLOAD'
+      ) {
+        openDialog({ type: 'close-panel', panel }, trigger)
+        return
+      }
+
       notifyError(error, { operation: `close panel “${panel.title}”` })
     }
   })
@@ -417,7 +434,7 @@ function WorkspaceApp() {
     trigger?: HTMLElement
   ) => {
     if (panel.kind === 'browser') {
-      openDialog({ type: 'close-panel', panel }, trigger)
+      closePanel.mutate(trigger ? { panel, trigger } : { panel })
       return
     }
 
@@ -1100,7 +1117,11 @@ function WorkspaceApp() {
         onOpenChange={(open) => !open && setDialog(null)}
         restoreFocusTo={dialogTriggerRef.current}
         onConfirm={(panel) =>
-          closePanel.mutate({ panel, discardStoredData: true })
+          closePanel.mutate(
+            panel.kind === 'browser'
+              ? { panel, force: true }
+              : { panel, discardStoredData: true }
+          )
         }
       />
       <RemoveWorktreeDialog

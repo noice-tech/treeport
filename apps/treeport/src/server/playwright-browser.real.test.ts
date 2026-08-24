@@ -44,6 +44,7 @@ it('streams and shares one History API page with the pinned Agent CLI', async ()
     response.end(`<!doctype html><title>Start</title>
       <button onclick="history.pushState({}, '', '/next'); document.title = 'Next'">Next route</button>
       <button onclick="history.replaceState({}, '', '/replaced'); document.title = 'Replaced'">Replace route</button>
+      <button onclick="window.onbeforeunload = (event) => { event.preventDefault(); event.returnValue = '' }">Protect close</button>
       ${request.url === '/popup-source' ? "<script>open('/popup')</script>" : ''}`)
   })
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
@@ -184,4 +185,13 @@ it('streams and shares one History API page with the pinned Agent CLI', async ()
   await expect(
     runCli(cli, workspace, [`-s=${name}`, 'screenshot'])
   ).resolves.toMatch(/\.png/u)
+
+  const closeSnapshot = await runCli(cli, workspace, [`-s=${name}`, 'snapshot'])
+  const closeReference = /button "Protect close" \[ref=([^\]]+)\]/.exec(
+    closeSnapshot
+  )?.[1]
+  expect(closeReference).toBeTruthy()
+  await runCli(cli, workspace, [`-s=${name}`, 'click', closeReference!])
+  await expect(browser.requestClose(false)).resolves.toBe(false)
+  await expect(browser.requestClose(true)).resolves.toBe(true)
 })

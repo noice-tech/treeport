@@ -128,7 +128,7 @@ export function NewPanelDialog({
       >
         <DialogTitle className="sr-only">New panel</DialogTitle>
         <DialogDescription className="sr-only">
-          Search for a terminal, Browser panel, or web panel to start
+          Search for a terminal, Browser, or web panel to start
           {worktreeName ? ` in ${worktreeName}` : ''}.
         </DialogDescription>
         <div className="flex min-w-0 items-center gap-3 border-b border-white/8 px-4">
@@ -327,17 +327,17 @@ export function NewPanelDialog({
               </p>
             ))}
           </div>
-          <div role="group" aria-label="Browser panels">
+          <div role="group" aria-label="Browser">
             {showBrowser ? (
               <>
                 <p className="mt-1 px-2 py-1 text-xs font-medium text-zinc-500">
-                  Browser panels
+                  Browser
                 </p>
                 <Button
                   type="button"
                   variant="ghost"
                   className="h-12 w-full justify-start gap-3 rounded-lg py-2 pr-3 pl-2 text-base font-normal text-zinc-100 hover:bg-white/8 focus-visible:bg-white/8 sm:h-9 sm:text-sm"
-                  aria-label="Browser, hosted browser panel"
+                  aria-label="Browser, hosted browser"
                   data-panel-launch
                   data-selected={
                     selectedIndex === terminalActionCount ? '' : undefined

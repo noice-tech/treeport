@@ -1,6 +1,12 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import type { Browser, BrowserContext, CDPSession, Page } from 'playwright'
+import type {
+  Browser,
+  BrowserContext,
+  CDPSession,
+  Dialog,
+  Page
+} from 'playwright'
 import type {
   BrowserClientMessage,
   BrowserFrame,
@@ -147,6 +153,7 @@ export class PlaywrightBrowser {
   private screencasting = false
   private screencastTail: Promise<void> = Promise.resolve()
   private closing = false
+  private dialogHandler: ((dialog: Dialog) => void) | null = null
   private historyRevision = 0
   private titleTimer: NodeJS.Timeout | null = null
   private stateValue: Omit<
@@ -310,14 +317,12 @@ export class PlaywrightBrowser {
       })()
     })
     page.on('download', (download) => {
-      this.callbacks.navigationError(
-        'Downloads are not supported in the Browser panel.'
-      )
+      this.callbacks.navigationError('Downloads are not supported in Browser.')
       void download.cancel()
     })
     page.on('filechooser', (chooser) => {
       this.callbacks.navigationError(
-        'File pickers are not supported in the Browser panel.'
+        'File pickers are not supported in Browser.'
       )
       void chooser.setFiles([]).catch(() => undefined)
     })
@@ -356,7 +361,8 @@ export class PlaywrightBrowser {
       this.updateState({ loading: false })
       void this.refreshPageState()
     })
-    page.on('dialog', (dialog) => void dialog.dismiss())
+    this.dialogHandler = (dialog) => void dialog.dismiss()
+    page.on('dialog', this.dialogHandler)
     page.once('crash', () =>
       this.callbacks.crashed('The hosted browser page crashed.')
     )
@@ -570,6 +576,66 @@ export class PlaywrightBrowser {
 
     if (message.type === 'insertText') {
       await page.keyboard.insertText(message.text)
+    }
+  }
+
+  async requestClose(force: boolean): Promise<boolean> {
+    const page = this.page
+    if (!page || page.isClosed()) {
+      return true
+    }
+
+    const previousClosing = this.closing
+    this.closing = true
+    if (this.dialogHandler) {
+      page.off('dialog', this.dialogHandler)
+    }
+
+    let timer: ReturnType<typeof setTimeout> | null = null
+    let closeHandler: (() => void) | null = null
+    let dialogHandler: ((dialog: Dialog) => void) | null = null
+    try {
+      return await new Promise<boolean>((resolve, reject) => {
+        closeHandler = () => resolve(true)
+        dialogHandler = (dialog) => {
+          if (dialog.type() !== 'beforeunload') {
+            void dialog.dismiss().catch(reject)
+            return
+          }
+
+          if (force) {
+            void dialog.accept().catch(reject)
+          } else {
+            void dialog.dismiss().then(() => resolve(false), reject)
+          }
+        }
+        page.once('close', closeHandler)
+        page.on('dialog', dialogHandler)
+        timer = setTimeout(
+          () => reject(new Error('The page did not finish closing.')),
+          5_000
+        )
+        timer.unref()
+        void page.close({ runBeforeUnload: true }).catch(reject)
+      })
+    } finally {
+      if (timer) {
+        clearTimeout(timer)
+      }
+
+      if (closeHandler) {
+        page.off('close', closeHandler)
+      }
+
+      if (dialogHandler) {
+        page.off('dialog', dialogHandler)
+      }
+
+      if (!page.isClosed() && this.dialogHandler) {
+        page.on('dialog', this.dialogHandler)
+      }
+
+      this.closing = previousClosing
     }
   }
 

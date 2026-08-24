@@ -247,7 +247,7 @@ describe('SQLite migration and catalog ordering', () => {
     ])
   })
 
-  it('persists ordered web and Browser panels with their worktree lifecycle', async () => {
+  it('persists ordered WebPanel and BrowserPanel records with their worktree lifecycle', async () => {
     const directory = await fs.mkdtemp(
       path.join(os.tmpdir(), 'treeport-panels-')
     )

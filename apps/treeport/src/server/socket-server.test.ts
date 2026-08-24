@@ -297,7 +297,7 @@ describe('Socket.IO real network', () => {
     await closeClient(socket)
   })
 
-  it('snapshots durable web and Browser panels and broadcasts closure to every client', async () => {
+  it('snapshots durable WebPanel and BrowserPanel records and broadcasts closure to every client', async () => {
     const value = await fixture()
     vi.mocked(value.service.listWebPanels).mockResolvedValue([
       {

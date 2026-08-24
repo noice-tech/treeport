@@ -1,18 +1,18 @@
 ---
-title: Browser panels (experimental)
-description: Open a daemon-hosted Browser panel or a client-side iframe Browser web panel.
+title: Browser (experimental)
+description: Open Browser on the daemon computer or use iframe Browser on the client computer.
 ---
 
-Treeport supplies two browser workflows:
+Treeport supplies two Browser workflows:
 
-- A **Browser panel** runs an isolated Chromium page on the daemon computer.
-- The **Browser web panel** runs an iframe on the client computer.
+- **Browser** runs an isolated Chromium page on the daemon computer.
+- **iframe Browser** runs an iframe on the client computer.
 
-Use a Browser panel for daemon-local servers, iframe-blocking sites, and shared agent control.
+Use Browser for daemon-local servers, iframe-blocking sites, and shared agent control.
 
-Use the Browser web panel when the client can reach and embed the site.
+Use iframe Browser when the client can reach and embed the site.
 
-## Use a Browser panel
+## Use Browser
 
 ### Install the managed browser
 
@@ -42,35 +42,35 @@ Treeport does not request administrator access.
 
 You can also enter an absolute HTTP or HTTPS URL. Press Enter to open it.
 
-Browser panel requests come from the daemon computer. `localhost` identifies that computer.
+Browser requests come from the daemon computer. `localhost` identifies that computer.
 
-The target runs as a top-level page. Sites that block iframe use can run in this panel.
+The target runs as a top-level page. Sites that block iframe use can run in Browser.
 
 Use the address bar, **Back**, **Forward**, and **Reload** to control the page.
 
 Use pointer, keyboard, and scroll input in the viewport.
 
-The panel keeps its current URL and title. Treeport restores the URL before the next client or agent command.
+Browser keeps its current URL and title. Treeport restores the URL before the next client or agent command.
 
 The browser session stays active when you change workspaces or disconnect.
 
 Another connected client can observe the same session and take control.
 
-When a page opens a popup, Treeport creates a new Browser panel in the same tree.
+When a page opens a popup, Treeport opens another Browser in the same tree.
 
-Modifier-click an HTTP or HTTPS terminal link to create a Browser panel in that terminal's tree.
+Modifier-click an HTTP or HTTPS terminal link to open Browser in that terminal's tree.
 
-Treeport selects the new panel in the current window.
+Treeport selects Browser in the current window.
 
-### Open a Browser panel from the CLI
+### Open Browser from the CLI
 
-Create a Browser panel with a blank page:
+Open Browser with a blank page:
 
 ```sh
 treeport browser open --worktree .
 ```
 
-Create a Browser panel with a URL:
+Open Browser with a URL:
 
 ```sh
 treeport browser open http://127.0.0.1:5173 --worktree .
@@ -78,9 +78,9 @@ treeport browser open http://127.0.0.1:5173 --worktree .
 
 The server rejects URLs with credentials. It also rejects protocols other than HTTP and HTTPS.
 
-### Control a Browser panel from an agent
+### Control Browser from an agent
 
-Use these commands to inspect and control an open Browser panel:
+Use these commands to inspect and control Browser:
 
 ```sh
 treeport browser list
@@ -93,23 +93,25 @@ treeport browser network
 treeport browser screenshot
 ```
 
-Without `--panel`, Treeport uses the only Browser panel in the current tree.
+Without `--panel`, Treeport uses the only Browser session in the current tree.
 
-If multiple panels are open, add `--panel <panel-id>`.
+If multiple sessions are open, add `--panel <panel-id>`.
 
 Snapshot references, such as `e12`, identify elements in the shared page.
 
 Agent actions and user actions use one control owner. A user can take control from the viewport.
 
-### Reset or close the browser
+### Reset or close Browser
 
-Select **Reset** to delete the temporary browser data and open an empty session.
+Select **Reset** to delete temporary browser data and open an empty session.
 
 Treeport asks for confirmation before the reset.
 
-Closing a Browser panel deletes its browser data and saved state. Treeport asks for confirmation first.
+Close Browser as you close a browser tab. Treeport does not show a data-deletion confirmation.
 
-Each Browser panel uses separate temporary browser data.
+Browser runs the site's page-close handlers. If the site uses `beforeunload`, Browser asks you before it closes.
+
+Each Browser session uses separate temporary browser data.
 
 Treeport does not use, import, or attach to a personal browser profile.
 
@@ -117,7 +119,7 @@ After a daemon restart, Treeport opens the saved URL in a new empty browser sess
 
 ### Understand the limits
 
-Browser panels do not support these features:
+Browser does not support these features:
 
 - streamed audio;
 - downloads;
@@ -130,11 +132,11 @@ The streamed page image does not supply semantic accessibility information.
 
 Use `treeport browser snapshot` when you need the page's semantic accessibility data.
 
-A copied address uses the daemon-visible URL. A daemon-local `localhost` URL might not open on another computer.
+A copied address uses the daemon-visible URL. A daemon-local `localhost` URL can fail to open on another computer.
 
-## Use the iframe Browser web panel
+## Use iframe Browser
 
-The `@treeport/web-panel-browser` package supplies this web panel.
+The `@treeport/web-panel-browser` package supplies iframe Browser.
 
 ### Open a detected development server
 
@@ -150,9 +152,9 @@ Select **Show development servers** to return to the server list.
 
 Treeport does not select a server automatically. A listed TCP port is not necessarily an HTTP server.
 
-### Open the web panel from the CLI
+### Open iframe Browser from the CLI
 
-Use the CLI to open or reuse the iframe Browser web panel:
+Use the CLI to open or reuse iframe Browser:
 
 ```sh
 treeport web-panel open --worktree . browser \
@@ -167,23 +169,23 @@ A browser can block HTTP content in an HTTPS Treeport page because of mixed-cont
 
 ### Save and restore the address
 
-The web panel saves its current address in panel storage.
+iframe Browser saves its current address in panel storage.
 
-If the target uses `@treeport/panel-sdk`, the web panel also saves client-side route changes.
+If the target uses `@treeport/panel-sdk`, iframe Browser also saves client-side route changes.
 
 Browser security prevents route observation for other cross-origin targets.
 
-Another client uses the saved address when it opens or reloads the web panel.
+Another client uses the saved address when it opens or reloads iframe Browser.
 
 If loading fails, start the application or correct the address. Then, select **Retry**.
 
-Use a first-class Browser panel when the target prevents iframe use.
+Use Browser when the target prevents iframe use.
 
 ### Use the panel SDK
 
-The target can call `treeport.panel.setTitle()` to set the web panel title.
+The target can call `treeport.panel.setTitle()` to set the web-panel title.
 
-The SDK lets the Browser web panel observe the target's current route.
+The SDK lets iframe Browser observe the target's current route.
 
 The target cannot use context, diff, network discovery, storage, shortcuts, or workspace navigation.
 

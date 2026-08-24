@@ -119,7 +119,7 @@ Treeport requests approval again when the permission set changes. Removing the p
 
 ### Browser package boundary
 
-The client-side Browser panel can load an HTTP or HTTPS site in a nested iframe.
+The client-side iframe Browser can load an HTTP or HTTPS site in a nested iframe.
 
 The package receives the client-local title from the target. If the target uses the panel SDK, the package also saves reported URL changes.
 
@@ -127,25 +127,25 @@ The target cannot use context, diff, storage, shortcuts, or workspace navigation
 
 Browser iframe restrictions continue to apply. Treeport does not bypass the framing policy of the target.
 
-The first-class Browser panel does not use a web-panel package permission.
+Browser does not use a web-panel package permission.
 
 Its isolated browser runs as the daemon operating-system user.
 
 It can reach local and internet sites available from the daemon computer.
 
-Each Browser panel uses separate temporary browser data.
+Each Browser session uses separate temporary browser data.
 
 Treeport does not use, import, or attach to a personal browser profile.
 
-Treeport authorizes each client and agent action for the owning panel and tree.
+Treeport authorizes each client and agent action for the owning Browser and tree.
 
 Treeport does not expose direct browser-control or debugging access.
 
 The server accepts only absolute HTTP or HTTPS addresses without credentials.
 
-Resetting or closing the Browser panel deletes its temporary browser data.
+Resetting or closing Browser deletes its temporary browser data.
 
-Treeport requests confirmation before it deletes this data.
+Reset requires confirmation. Close requires confirmation only when the site uses `beforeunload`.
 
 ## Follow these operating rules
 

@@ -133,15 +133,15 @@ treeport terminal wait <terminal-id> --until exit
 
 Treeport does not infer agent settlement. An orchestrator can inspect first, wait for `working` if no progress cycle has been observed, and then wait for `idle`. Progress depends on the child application emitting OSC `9;4`; for Pi, `terminal.showTerminalProgress` must be enabled. Applications should clear progress or refresh active progress more frequently than the five-minute lease. A null progress value is not proof that every application supports progress reporting.
 
-## Inspect the worktree application in its Browser panel
+## Inspect the worktree application in Browser
 
-Browser panels run isolated Chromium sessions on the Treeport daemon host. They can reach development servers on that host.
+Browser runs an isolated Chromium session on the Treeport daemon host. It can reach development servers on that host.
 
 The iframe Browser web panel is separate. These commands cannot control it.
 
 Never attach Treeport to a personal browser profile.
 
-First, inspect available Browser panels:
+First, inspect available Browser sessions:
 
 ```sh
 treeport browser list
@@ -154,7 +154,7 @@ treeport browser status
 treeport browser install
 ```
 
-If no Browser panel exists, create one in the current tree:
+If Browser is not open, open it in the current tree:
 
 ```sh
 treeport browser open --worktree .
@@ -172,11 +172,11 @@ treeport browser network
 treeport browser screenshot
 ```
 
-Commands resolve the only Browser panel in the current worktree. Add `--panel <panel-id>` when more than one exists.
+Commands resolve the only Browser session in the current worktree. Add `--panel <panel-id>` when more than one exists.
 
 Use snapshot element refs instead of guessed selectors. Take a new snapshot after each important action.
 
-Leave the Browser panel open so the user can continue the same session.
+Leave Browser open so the user can continue the same session.
 
 ## Automation and integrations
 

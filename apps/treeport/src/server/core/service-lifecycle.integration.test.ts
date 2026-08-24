@@ -12,7 +12,7 @@ import {
 } from './service.integration-fixture'
 
 describe('TreeportService with injected command adapters', () => {
-  it('owns Browser panels through creation, restoration state, open requests, authorization, and confirmed deletion', async () => {
+  it('owns Browser through creation, restoration state, open requests, authorization, and deletion', async () => {
     const { main, service } = await fixture()
     const project = await service.registerProject(main)
     const worktree = project.worktrees[0]!
@@ -95,10 +95,7 @@ describe('TreeportService with injected command adapters', () => {
         service.openBrowserPanel(worktree.id, invalidUrl)
       ).rejects.toMatchObject({ code: 'INVALID_BROWSER_URL' })
     }
-    await expect(service.deletePanel(opened.panel.id)).rejects.toMatchObject({
-      code: 'PANEL_HAS_STORED_DATA'
-    })
-    await service.deletePanel(opened.panel.id, true)
+    await service.deletePanel(opened.panel.id)
     await expect(
       service.getBrowserPanel(opened.panel.id)
     ).rejects.toMatchObject({ code: 'PANEL_NOT_FOUND' })

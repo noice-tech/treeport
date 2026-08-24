@@ -31,6 +31,8 @@ class FakeBrowser implements BrowserSessionBrowser {
   }
   commands: BrowserClientMessage[] = []
   screencasting: boolean[] = []
+  closeRequests: boolean[] = []
+  closeRequiresConfirmation = false
   closes = 0
   constructor(
     _cachePath: string,
@@ -52,6 +54,10 @@ class FakeBrowser implements BrowserSessionBrowser {
   }
   async setScreencasting(value: boolean) {
     this.screencasting.push(value)
+  }
+  async requestClose(force: boolean) {
+    this.closeRequests.push(force)
+    return force || !this.closeRequiresConfirmation
   }
   async close() {
     this.closes += 1
@@ -387,6 +393,31 @@ describe('Browser sessions', () => {
     await storedValue.manager.dispose()
   })
 
+  it('uses a page beforeunload request instead of a generic close confirmation', async () => {
+    const value = fixture()
+    const client = value.transport('client')
+    await value.manager.accept(
+      await value.manager.issueTicket('panel_browser', 'client'),
+      client.transport
+    )
+    const browser = browsers[0]!
+    browser.closeRequiresConfirmation = true
+
+    await expect(
+      value.manager.requestPanelClose('panel_browser')
+    ).resolves.toBe(false)
+    expect(browser.closeRequests).toEqual([false])
+    expect(browser.closes).toBe(0)
+
+    await expect(
+      value.manager.requestPanelClose('panel_browser', true)
+    ).resolves.toBe(true)
+    expect(browser.closeRequests).toEqual([false, true])
+    await value.manager.closePanel('panel_browser', 'Browser closed.')
+    expect(browser.closes).toBe(1)
+    await value.manager.dispose()
+  })
+
   it('confirms reset through the client and clears durable state before reconnecting', async () => {
     const value = fixture(null, {
       panelUrl: 'https://example.com/session',
@@ -514,7 +545,7 @@ describe('Browser sessions', () => {
     await value.manager.dispose()
   })
 
-  it('routes browser popups through durable Browser panel creation', async () => {
+  it('routes browser popups through durable BrowserPanel creation', async () => {
     const value = fixture()
     const client = value.transport('client')
     await value.manager.accept(

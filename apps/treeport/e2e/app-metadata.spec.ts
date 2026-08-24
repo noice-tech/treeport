@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test'
 import { mockApp, terminalTextPoint } from './app-fixture'
 
 test.describe('desktop terminal links and metadata', () => {
-  test('opens detected web URLs in Browser panels on platform modifier-click', async ({
+  test('opens detected web URLs in Browser on platform modifier-click', async ({
     page
   }) => {
     await mockApp(page, [], { keyboardPlatform: 'Linux x86_64' })
@@ -40,13 +40,11 @@ test.describe('desktop terminal links and metadata', () => {
       page.getByRole('textbox', { name: 'Application URL' })
     ).toHaveValue('http://example.test/help')
     await expect(
-      page.getByRole('button', { name: 'example.test, Browser panel' })
+      page.getByRole('button', { name: 'example.test, Browser' })
     ).toBeVisible()
   })
 
-  test('opens OSC 8 links in Browser panels on Apple Cmd-click', async ({
-    page
-  }) => {
+  test('opens OSC 8 links in Browser on Apple Cmd-click', async ({ page }) => {
     await mockApp(page, [], { keyboardPlatform: 'MacIntel' })
     expect(await page.evaluate(() => navigator.platform)).toBe('MacIntel')
     await page.getByRole('button', { name: 'Pi, running', exact: true }).click()

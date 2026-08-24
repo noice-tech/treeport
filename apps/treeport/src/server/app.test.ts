@@ -22,6 +22,7 @@ import type {
   ApplicationUpdateStatus
 } from './application-update'
 import type { TerminalMetadataManager } from './terminal-metadata'
+import type { BrowserSessionManager } from './browser-sessions'
 
 function fixture(webDist = '/missing') {
   const config: AppConfig = {
@@ -343,17 +344,23 @@ function fixture(webDist = '/missing') {
     start: vi.fn(async () => applicationUpdateStatus),
     dispose: vi.fn()
   })
+  const browserRequestPanelClose = vi.fn(async () => true)
+  const browserSessions = testAccess<BrowserSessionManager>({
+    requestPanelClose: browserRequestPanelClose
+  })
   const app = createApp({
     service,
     config,
     tmux: testAccess<TmuxAdapter>({ capturePane }),
     applicationUpdate,
     terminalMetadata,
+    browserSessions,
     webDist
   })
   return {
     app,
     applicationUpdate,
+    browserRequestPanelClose,
     capturePane,
     config,
     metadataAcknowledgeBell,
@@ -613,6 +620,33 @@ describe('HTTP API validation', () => {
       method: 'DELETE'
     })
     expect(service.deletePanel).toHaveBeenLastCalledWith('panel_review', true)
+  })
+
+  it('asks for confirmation only when Browser reports beforeunload', async () => {
+    const { app, browserRequestPanelClose, service } = fixture()
+    browserRequestPanelClose.mockResolvedValueOnce(false)
+
+    const blocked = await app.request('/api/panels/browser_panel', {
+      method: 'DELETE'
+    })
+    expect(blocked.status).toBe(409)
+    expect(await blocked.json()).toEqual({
+      error: {
+        code: 'BROWSER_BEFORE_UNLOAD',
+        message: 'Changes you made may not be saved.'
+      }
+    })
+    expect(service.deletePanel).not.toHaveBeenCalled()
+
+    const closed = await app.request('/api/panels/browser_panel?force=true', {
+      method: 'DELETE'
+    })
+    expect(closed.status).toBe(200)
+    expect(browserRequestPanelClose).toHaveBeenLastCalledWith(
+      'browser_panel',
+      true
+    )
+    expect(service.deletePanel).toHaveBeenCalledWith('browser_panel', false)
   })
 
   it('uses the panel SDK to broker scoped panel requests', async () => {

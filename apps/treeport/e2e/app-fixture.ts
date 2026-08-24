@@ -175,6 +175,7 @@ export async function mockApp(
     applicationUpdate?: ApplicationUpdateStatus
     realReviewPanel?: boolean
     hostedBrowser?: boolean
+    browserBeforeUnload?: boolean
   } = {}
 ) {
   let reviewPanelScript = ''
@@ -1837,6 +1838,26 @@ export async function mockApp(
       route.request().method() === 'DELETE'
     ) {
       const panelId = pathname.split('/').at(-1)
+      const panel = state.worktrees
+        .flatMap((worktree) => worktree.panels)
+        .find((candidate) => candidate.id === panelId)
+      if (
+        panel?.kind === 'browser' &&
+        options.browserBeforeUnload &&
+        url.searchParams.get('force') !== 'true'
+      ) {
+        await route.fulfill({
+          status: 409,
+          json: {
+            error: {
+              code: 'BROWSER_BEFORE_UNLOAD',
+              message: 'Changes you made may not be saved.'
+            }
+          }
+        })
+        return
+      }
+
       for (const worktree of state.worktrees) {
         worktree.panels = worktree.panels.filter(
           (panel) => panel.id !== panelId

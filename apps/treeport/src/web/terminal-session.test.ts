@@ -276,7 +276,7 @@ function controllerSessionFixture() {
 }
 
 describe('terminal options', () => {
-  it('opens OSC 8 links in Browser panels only on Cmd-click on Apple platforms', () => {
+  it('opens OSC 8 links in Browser only on Cmd-click on Apple platforms', () => {
     const request = vi.fn(() => Promise.resolve(new Response()))
     vi.stubGlobal('navigator', { platform: 'MacIntel' })
     vi.stubGlobal('fetch', request)
@@ -306,7 +306,7 @@ describe('terminal options', () => {
     )
   })
 
-  it('opens OSC 8 links in Browser panels only on Ctrl-click on non-Apple platforms', () => {
+  it('opens OSC 8 links in Browser only on Ctrl-click on non-Apple platforms', () => {
     const request = vi.fn(() => Promise.resolve(new Response()))
     vi.stubGlobal('navigator', { platform: 'Linux x86_64' })
     vi.stubGlobal('fetch', request)

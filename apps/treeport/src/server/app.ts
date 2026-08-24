@@ -82,8 +82,9 @@ const operationQuerySchema = z.object({
     .optional(),
   projectId: z.string().optional()
 })
-const discardStoredDataQuerySchema = z.object({
-  discardStoredData: z.string().optional()
+const deletePanelQuerySchema = z.object({
+  discardStoredData: z.string().optional(),
+  force: z.string().optional()
 })
 
 interface UploadFileInfo {
@@ -720,12 +721,23 @@ export function createApp({
 
     .delete(
       '/api/panels/:panelId',
-      queryInput(discardStoredDataQuerySchema),
+      queryInput(deletePanelQuerySchema),
       async (context) => {
-        await service.deletePanel(
-          context.req.param('panelId'),
-          context.req.valid('query').discardStoredData === 'true'
+        const panelId = context.req.param('panelId')
+        const query = context.req.valid('query')
+        const canClose = await browserSessions?.requestPanelClose(
+          panelId,
+          query.force === 'true'
         )
+        if (canClose === false) {
+          throw new DomainError(
+            'BROWSER_BEFORE_UNLOAD',
+            'Changes you made may not be saved.',
+            409
+          )
+        }
+
+        await service.deletePanel(panelId, query.discardStoredData === 'true')
         return context.json({ ok: true })
       }
     )

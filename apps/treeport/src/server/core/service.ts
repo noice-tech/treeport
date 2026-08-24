@@ -1666,7 +1666,7 @@ export class TreeportService {
       if (sourcePanel.worktreeId !== worktreeId) {
         throw new DomainError(
           'INVALID_PANEL_OPEN_SOURCE',
-          'The source Browser panel does not belong to the target tree',
+          'The source Browser does not belong to the target tree',
           400
         )
       }
@@ -1715,7 +1715,7 @@ export class TreeportService {
       .where(eq(browserPanels.id, panelId))
       .limit(1)
     if (!row) {
-      throw new DomainError('PANEL_NOT_FOUND', 'Browser panel not found', 404)
+      throw new DomainError('PANEL_NOT_FOUND', 'Browser not found', 404)
     }
 
     await this.requireAvailableWorktree(row.worktreeId)
@@ -1778,19 +1778,8 @@ export class TreeportService {
     return updated
   }
 
-  async deleteBrowserPanel(
-    panelId: string,
-    discardStoredData = false
-  ): Promise<void> {
+  async deleteBrowserPanel(panelId: string): Promise<void> {
     const panel = await this.getBrowserPanel(panelId)
-    if (!discardStoredData) {
-      throw new DomainError(
-        'PANEL_HAS_STORED_DATA',
-        'Closing this Browser panel requires confirmation because its browser data and saved state will be deleted',
-        409
-      )
-    }
-
     await this.deps.database.db
       .delete(browserPanels)
       .where(eq(browserPanels.id, panelId))
@@ -1808,7 +1797,7 @@ export class TreeportService {
       .where(eq(browserPanels.id, panelId))
       .limit(1)
     if (browserPanel) {
-      return this.deleteBrowserPanel(panelId, discardStoredData)
+      return this.deleteBrowserPanel(panelId)
     }
 
     return this.deleteWebPanel(panelId, discardStoredData)

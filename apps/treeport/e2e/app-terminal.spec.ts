@@ -791,7 +791,7 @@ test.describe('desktop worktree and terminal workflows', () => {
     await dialog.getByRole('button', { name: 'Close', exact: true }).click()
     await expect(page.getByRole('button', { name: /^New panel/ })).toBeFocused()
   })
-  test('opens and updates a Browser panel with a client-local runtime title', async ({
+  test('opens and updates iframe Browser with a client-local runtime title', async ({
     page
   }) => {
     await page.route('http://unreachable.test/**', (route) =>
@@ -1014,10 +1014,13 @@ test.describe('desktop worktree and terminal workflows', () => {
     ).toHaveCount(0)
   })
 
-  test('creates, navigates, and closes a first-class daemon-hosted Browser panel', async ({
+  test('opens, navigates, and closes daemon-hosted Browser', async ({
     page
   }) => {
-    await mockApp(page, [], { hostedBrowser: true })
+    await mockApp(page, [], {
+      hostedBrowser: true,
+      browserBeforeUnload: true
+    })
     await page.getByRole('button', { name: /^topic(?:,|\s|$)/ }).click()
 
     await page.getByRole('button', { name: /^New panel/ }).click()
@@ -1029,13 +1032,13 @@ test.describe('desktop worktree and terminal workflows', () => {
           '/api/worktrees/wt_topic/browser-panels'
     )
     await launcher
-      .getByRole('button', { name: 'Browser, hosted browser panel' })
+      .getByRole('button', { name: 'Browser, hosted browser' })
       .click()
     expect((await createRequest).postDataJSON()).toEqual({})
 
     await expect(page).toHaveURL(/\/panels\/browser_panel_1$/)
     await expect(
-      page.getByRole('button', { name: 'Browser, Browser panel' })
+      page.getByRole('button', { name: 'Browser', exact: true })
     ).toBeVisible()
     await expect(
       page.getByRole('heading', { name: 'Development servers' })
@@ -1063,7 +1066,7 @@ test.describe('desktop worktree and terminal workflows', () => {
     await page.reload()
     await expect(page).toHaveURL(/\/panels\/browser_panel_1$/)
     await expect(
-      page.getByRole('button', { name: 'Browser, Browser panel' })
+      page.getByRole('button', { name: 'Browser', exact: true })
     ).toBeVisible()
 
     await page.keyboard.press('Meta+1')
@@ -1071,16 +1074,38 @@ test.describe('desktop worktree and terminal workflows', () => {
     await page.keyboard.press('Meta+2')
     await expect(page).toHaveURL(/\/panels\/browser_panel_1$/)
 
-    await page.getByRole('button', { name: 'Close Browser' }).click()
-    const closeDialog = page.getByRole('alertdialog', {
-      name: 'Close Browser?'
+    const initialCloseRequest = page.waitForRequest((request) => {
+      const url = new URL(request.url())
+      return (
+        request.method() === 'DELETE' &&
+        url.pathname === '/api/panels/browser_panel_1' &&
+        !url.searchParams.has('force')
+      )
     })
-    await expect(closeDialog).toContainText('disposable browser data')
-    await closeDialog
-      .getByRole('button', { name: 'Close and delete data' })
-      .click()
+    await page.getByRole('button', { name: 'Close Browser' }).click()
+    await initialCloseRequest
+    const closeDialog = page.getByRole('alertdialog', { name: 'Leave site?' })
+    await expect(closeDialog).toContainText(
+      'Changes you made may not be saved.'
+    )
+    await closeDialog.getByRole('button', { name: 'Cancel' }).click()
     await expect(
-      page.getByRole('button', { name: 'Browser, Browser panel' })
+      page.getByRole('button', { name: 'Browser', exact: true })
+    ).toBeVisible()
+
+    await page.getByRole('button', { name: 'Close Browser' }).click()
+    const forcedCloseRequest = page.waitForRequest((request) => {
+      const url = new URL(request.url())
+      return (
+        request.method() === 'DELETE' &&
+        url.pathname === '/api/panels/browser_panel_1' &&
+        url.searchParams.get('force') === 'true'
+      )
+    })
+    await closeDialog.getByRole('button', { name: 'Leave' }).click()
+    await forcedCloseRequest
+    await expect(
+      page.getByRole('button', { name: 'Browser', exact: true })
     ).toHaveCount(0)
   })
 

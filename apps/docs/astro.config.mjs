@@ -90,7 +90,7 @@ export default defineConfig({
               slug: 'features/web-panels'
             },
             {
-              label: 'Browser panels (experimental)',
+              label: 'Browser (experimental)',
               slug: 'features/browser-panel'
             },
             {
