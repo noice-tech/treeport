@@ -37,10 +37,8 @@ import {
   connectBrowserPanel,
   type BrowserPanelConnection
 } from '../../browser-session-client'
-import {
-  connectNativeBrowserPanel,
-  nativeBrowserAvailable
-} from '../../native-browser-session-client'
+import { useDesktopRuntime } from '../../desktop-runtime'
+import { LocalBrowserWebview } from './local-browser-webview'
 
 const listenerDiscoverySchema: z.ZodType<WorktreeListenerDiscovery> =
   z.strictObject({
@@ -90,8 +88,6 @@ export function BrowserPanelWorkspace({
   onLoadingChange: (panelId: string, loading: boolean) => void
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const serversPopoverRef = useRef<HTMLDivElement>(null)
-  const initialPanelRef = useRef(panel)
   const inputRef = useRef<HTMLInputElement>(null)
   const connectionRef = useRef<BrowserPanelConnection | null>(null)
   const stateRef = useRef<BrowserSessionState | null>(null)
@@ -120,7 +116,7 @@ export function BrowserPanelWorkspace({
     null
   )
   const [listenersLoading, setListenersLoading] = useState(false)
-  const nativeBrowser = nativeBrowserAvailable()
+  const { localBrowser, computerId } = useDesktopRuntime()
 
   const send = useCallback(
     (message: Parameters<BrowserPanelConnection['send']>[0]) => {
@@ -214,14 +210,14 @@ export function BrowserPanelWorkspace({
   )
 
   useEffect(() => {
-    const connection = nativeBrowser
-      ? connectNativeBrowserPanel(initialPanelRef.current, false, {
-          message: receiveMessage
-        })
-      : connectBrowserPanel(panel.id, false, {
-          message: receiveMessage,
-          frame: receiveFrame
-        })
+    if (localBrowser) {
+      return
+    }
+
+    const connection = connectBrowserPanel(panel.id, false, {
+      message: receiveMessage,
+      frame: receiveFrame
+    })
     connectionRef.current = connection
     return () => {
       if (connectionRef.current === connection) {
@@ -230,101 +226,31 @@ export function BrowserPanelWorkspace({
 
       connection.dispose()
     }
-  }, [
-    connectionRevision,
-    nativeBrowser,
-    panel.id,
-    receiveFrame,
-    receiveMessage
-  ])
+  }, [connectionRevision, localBrowser, panel.id, receiveFrame, receiveMessage])
+
+  const setLocalConnection = useCallback(
+    (connection: BrowserPanelConnection | null) => {
+      connectionRef.current = connection
+    },
+    []
+  )
 
   useEffect(() => {
-    connectionRef.current?.setVisible(active && !autoFocusBlocked)
-  }, [active, autoFocusBlocked])
+    if (!localBrowser) {
+      connectionRef.current?.setVisible(active && !autoFocusBlocked)
+    }
+  }, [active, autoFocusBlocked, localBrowser])
 
   useEffect(() => {
     const canvas = canvasRef.current
-    if (!canvas || !active) {
+    if (localBrowser || !canvas || !active) {
       return
     }
 
     let timer: ReturnType<typeof setTimeout> | null = null
-    let animationFrame: number | null = null
-    const reportBounds = () => {
-      const bounds = canvas.getBoundingClientRect()
-      if (bounds.width <= 0 || bounds.height <= 0) {
-        return
-      }
-
-      let visibleBounds = {
-        x: bounds.left,
-        y: bounds.top,
-        width: bounds.width,
-        height: bounds.height
-      }
-      const popoverBounds = serversPopoverRef.current?.getBoundingClientRect()
-      if (nativeBrowser && serversOpen && popoverBounds) {
-        const gap = 8
-        const overlapWidth =
-          Math.min(bounds.right, popoverBounds.right) -
-          Math.max(bounds.left, popoverBounds.left)
-        const overlapHeight =
-          Math.min(bounds.bottom, popoverBounds.bottom) -
-          Math.max(bounds.top, popoverBounds.top)
-        if (overlapWidth > 0 && overlapHeight > 0) {
-          const candidates = [
-            {
-              x: bounds.left,
-              y: bounds.top,
-              width: Math.max(0, popoverBounds.left - gap - bounds.left),
-              height: bounds.height
-            },
-            {
-              x: Math.min(bounds.right, popoverBounds.right + gap),
-              y: bounds.top,
-              width: Math.max(0, bounds.right - popoverBounds.right - gap),
-              height: bounds.height
-            },
-            {
-              x: bounds.left,
-              y: bounds.top,
-              width: bounds.width,
-              height: Math.max(0, popoverBounds.top - gap - bounds.top)
-            },
-            {
-              x: bounds.left,
-              y: Math.min(bounds.bottom, popoverBounds.bottom + gap),
-              width: bounds.width,
-              height: Math.max(0, bounds.bottom - popoverBounds.bottom - gap)
-            }
-          ]
-          visibleBounds = candidates.reduce(
-            (largest, candidate) =>
-              candidate.width * candidate.height >
-              largest.width * largest.height
-                ? candidate
-                : largest,
-            { x: bounds.left, y: bounds.top, width: 0, height: 0 }
-          )
-        }
-      }
-
-      connectionRef.current?.setBounds(visibleBounds)
-    }
-    const reportWindowBounds = () => {
-      if (animationFrame !== null) {
-        cancelAnimationFrame(animationFrame)
-      }
-
-      animationFrame = requestAnimationFrame(() => {
-        animationFrame = null
-        reportBounds()
-      })
-    }
     const observer = new ResizeObserver(([entry]) => {
       if (timer) {
         clearTimeout(timer)
-        timer = null
       }
 
       if (
@@ -335,7 +261,6 @@ export function BrowserPanelWorkspace({
         return
       }
 
-      reportBounds()
       timer = setTimeout(() => {
         const viewport = {
           width: Math.max(
@@ -352,28 +277,13 @@ export function BrowserPanelWorkspace({
       }, 100)
     })
     observer.observe(canvas)
-    const popoverObserver = nativeBrowser
-      ? new ResizeObserver(reportBounds)
-      : null
-    if (serversPopoverRef.current) {
-      popoverObserver?.observe(serversPopoverRef.current)
-    }
-
-    window.addEventListener('resize', reportWindowBounds)
-    reportBounds()
     return () => {
       observer.disconnect()
-      popoverObserver?.disconnect()
-      window.removeEventListener('resize', reportWindowBounds)
       if (timer) {
         clearTimeout(timer)
       }
-
-      if (animationFrame !== null) {
-        cancelAnimationFrame(animationFrame)
-      }
     }
-  }, [active, nativeBrowser, send, serversOpen])
+  }, [active, localBrowser, send])
 
   /* eslint-disable react-you-might-not-need-an-effect/no-event-handler -- Workspace route activation owns Browser focus. */
   useEffect(() => {
@@ -570,6 +480,28 @@ export function BrowserPanelWorkspace({
         aria-label="Browser controls"
         onSubmit={submit}
       >
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          aria-label="Go back"
+          title="Go back"
+          disabled={!state?.canGoBack || !state.controlled}
+          onClick={() => send({ type: 'back' })}
+        >
+          <ArrowLeftIcon />
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          aria-label="Go forward"
+          title="Go forward"
+          disabled={!state?.canGoForward || !state.controlled}
+          onClick={() => send({ type: 'forward' })}
+        >
+          <ArrowRightIcon />
+        </Button>
         {state?.loading ? (
           <Button
             type="button"
@@ -595,28 +527,6 @@ export function BrowserPanelWorkspace({
             <ArrowPathIcon />
           </Button>
         )}
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-sm"
-          aria-label="Go back"
-          title="Go back"
-          disabled={!state?.canGoBack || !state.controlled}
-          onClick={() => send({ type: 'back' })}
-        >
-          <ArrowLeftIcon />
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-sm"
-          aria-label="Go forward"
-          title="Go forward"
-          disabled={!state?.canGoForward || !state.controlled}
-          onClick={() => send({ type: 'forward' })}
-        >
-          <ArrowRightIcon />
-        </Button>
         <Input
           ref={inputRef}
           type="text"
@@ -675,7 +585,6 @@ export function BrowserPanelWorkspace({
             </Button>
           </PopoverTrigger>
           <PopoverContent
-            ref={serversPopoverRef}
             align="end"
             className="flex max-h-[min(28rem,50dvh)] w-[min(22rem,calc(100vw-1rem))] flex-col overflow-hidden p-0"
             aria-label="Development servers"
@@ -767,69 +676,80 @@ export function BrowserPanelWorkspace({
         </p>
       ) : null}
       <div className="relative min-h-0 flex-1 overflow-hidden bg-zinc-950">
-        <canvas
-          ref={canvasRef}
-          tabIndex={0}
-          className="block size-full bg-white object-contain outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-300"
-          aria-label="Browser viewport. Streamed page content is not available to assistive technology."
-          onPointerMove={(event) => {
-            if (!stateRef.current?.controlled && !pointerActiveRef.current) {
-              return
-            }
+        {localBrowser && computerId ? (
+          <LocalBrowserWebview
+            key={connectionRevision}
+            panel={panel}
+            computerId={computerId}
+            inputBlocked={autoFocusBlocked}
+            onConnection={setLocalConnection}
+            onMessage={receiveMessage}
+          />
+        ) : (
+          <canvas
+            ref={canvasRef}
+            tabIndex={0}
+            className="block size-full bg-white object-contain outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-300"
+            aria-label="Browser viewport. Streamed page content is not available to assistive technology."
+            onPointerMove={(event) => {
+              if (!stateRef.current?.controlled && !pointerActiveRef.current) {
+                return
+              }
 
-            send({ type: 'pointer', phase: 'move', ...point(event) })
-          }}
-          onPointerDown={(event) => {
-            event.preventDefault()
-            event.currentTarget.focus()
-            event.currentTarget.setPointerCapture(event.pointerId)
-            pointerActiveRef.current = true
-            send({ type: 'takeControl' })
-            send({
-              type: 'pointer',
-              phase: 'down',
-              ...point(event),
-              button: button(event.button)
-            })
-          }}
-          onPointerUp={(event) => {
-            event.preventDefault()
-            send({
-              type: 'pointer',
-              phase: 'up',
-              ...point(event),
-              button: button(event.button)
-            })
-            pointerActiveRef.current = false
-            if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-              event.currentTarget.releasePointerCapture(event.pointerId)
-            }
-          }}
-          onPointerCancel={(event) => {
-            send({
-              type: 'pointer',
-              phase: 'up',
-              ...point(event),
-              button: button(event.button)
-            })
-            pointerActiveRef.current = false
-            if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-              event.currentTarget.releasePointerCapture(event.pointerId)
-            }
-          }}
-          onContextMenu={(event) => event.preventDefault()}
-          onWheel={wheel}
-          onKeyDown={(event) => key(event, 'down')}
-          onKeyUp={(event) => key(event, 'up')}
-          onPaste={(event) => {
-            event.preventDefault()
-            send({ type: 'takeControl' })
-            send({
-              type: 'insertText',
-              text: event.clipboardData.getData('text/plain')
-            })
-          }}
-        />
+              send({ type: 'pointer', phase: 'move', ...point(event) })
+            }}
+            onPointerDown={(event) => {
+              event.preventDefault()
+              event.currentTarget.focus()
+              event.currentTarget.setPointerCapture(event.pointerId)
+              pointerActiveRef.current = true
+              send({ type: 'takeControl' })
+              send({
+                type: 'pointer',
+                phase: 'down',
+                ...point(event),
+                button: button(event.button)
+              })
+            }}
+            onPointerUp={(event) => {
+              event.preventDefault()
+              send({
+                type: 'pointer',
+                phase: 'up',
+                ...point(event),
+                button: button(event.button)
+              })
+              pointerActiveRef.current = false
+              if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+                event.currentTarget.releasePointerCapture(event.pointerId)
+              }
+            }}
+            onPointerCancel={(event) => {
+              send({
+                type: 'pointer',
+                phase: 'up',
+                ...point(event),
+                button: button(event.button)
+              })
+              pointerActiveRef.current = false
+              if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+                event.currentTarget.releasePointerCapture(event.pointerId)
+              }
+            }}
+            onContextMenu={(event) => event.preventDefault()}
+            onWheel={wheel}
+            onKeyDown={(event) => key(event, 'down')}
+            onKeyUp={(event) => key(event, 'up')}
+            onPaste={(event) => {
+              event.preventDefault()
+              send({ type: 'takeControl' })
+              send({
+                type: 'insertText',
+                text: event.clipboardData.getData('text/plain')
+              })
+            }}
+          />
+        )}
         {failure ? (
           <div
             className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-zinc-950 p-6 text-center text-zinc-400"

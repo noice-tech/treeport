@@ -7,18 +7,35 @@ const configuredRendererPort = Number.parseInt(
   process.env.TREEPORT_DESKTOP_RENDERER_PORT ?? '',
   10
 )
+const fixedRendererPort = Number.isInteger(configuredRendererPort)
+interface RendererHmr {
+  host: string
+  port?: number
+}
+const rendererHmr: RendererHmr = { host: 'localhost' }
+if (fixedRendererPort) {
+  rendererHmr.port = configuredRendererPort
+}
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   resolve: {
-    preserveSymlinks: false
+    preserveSymlinks: false,
+    dedupe: ['react', 'react-dom'],
+    alias: {
+      '@treeport-web': path.resolve('../treeport/src/web')
+    }
   },
   root: path.resolve('src/shell'),
-  base: './',
+  base: '/',
   server: {
     host: 'localhost',
-    port: Number.isInteger(configuredRendererPort) ? configuredRendererPort : 0,
-    strictPort: Number.isInteger(configuredRendererPort)
+    port: fixedRendererPort ? configuredRendererPort : 0,
+    strictPort: fixedRendererPort,
+    hmr: rendererHmr,
+    fs: {
+      allow: [path.resolve('../..')]
+    }
   },
   build: {
     copyPublicDir: false,

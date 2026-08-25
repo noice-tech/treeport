@@ -6,26 +6,18 @@ import {
 } from 'electron'
 import { z } from 'zod'
 import type {
-  DesktopBrowserBounds,
-  DesktopBrowserCommand,
+  ComputerMutationResult,
+  ComputerUpdate,
   DesktopBrowserPopup,
-  DesktopBrowserState,
   DesktopCommand,
-  DesktopFileActionResult
+  DesktopFileActionResult,
+  DesktopNavigationDirection,
+  DesktopShellState
 } from './desktop-contract'
 
 const localSourcePathResultSchema = z.string().nullable().catch(null)
 const localSourcePathsResultSchema = z.array(z.string()).max(1).catch([])
 const localFilePasteListeners = new Set<(paths: string[]) => void>()
-const desktopBrowserStateSchema: z.ZodType<DesktopBrowserState> =
-  z.strictObject({
-    panelId: z.string(),
-    url: z.string(),
-    title: z.string(),
-    loading: z.boolean(),
-    canGoBack: z.boolean(),
-    canGoForward: z.boolean()
-  })
 const desktopBrowserPopupSchema: z.ZodType<DesktopBrowserPopup> =
   z.strictObject({
     panelId: z.string(),
@@ -128,22 +120,10 @@ const desktopBridge = Object.freeze({
     return () =>
       ipcRenderer.removeListener('terminal-selection:release', receive)
   },
-  openBrowser(
-    panelId: string,
-    url: string
-  ): Promise<DesktopBrowserState | null> {
+  registerBrowser(panelId: string, webContentsId: number): Promise<boolean> {
     return ipcRenderer
-      .invoke('native-browser:open', { panelId, url })
-      .then((value) => desktopBrowserStateSchema.nullable().parse(value))
-  },
-  setBrowserBounds(panelId: string, bounds: DesktopBrowserBounds) {
-    ipcRenderer.send('native-browser:set-bounds', { panelId, bounds })
-  },
-  setBrowserVisible(panelId: string, visible: boolean) {
-    ipcRenderer.send('native-browser:set-visible', { panelId, visible })
-  },
-  sendBrowserCommand(panelId: string, command: DesktopBrowserCommand) {
-    ipcRenderer.send('native-browser:command', { panelId, command })
+      .invoke('native-browser:register', { panelId, webContentsId })
+      .then((value) => z.boolean().parse(value))
   },
   requestBrowserClose(panelId: string, force: boolean): Promise<boolean> {
     return ipcRenderer
@@ -152,16 +132,6 @@ const desktopBridge = Object.freeze({
   },
   disposeBrowser(panelId: string) {
     ipcRenderer.send('native-browser:dispose', { panelId })
-  },
-  onBrowserState(listener: (state: DesktopBrowserState) => void) {
-    const receive: Parameters<typeof ipcRenderer.on>[1] = (_event, value) => {
-      const parsed = desktopBrowserStateSchema.safeParse(value)
-      if (parsed.success) {
-        listener(parsed.data)
-      }
-    }
-    ipcRenderer.on('native-browser:state', receive)
-    return () => ipcRenderer.removeListener('native-browser:state', receive)
   },
   onBrowserPopup(listener: (popup: DesktopBrowserPopup) => void) {
     const receive: Parameters<typeof ipcRenderer.on>[1] = (_event, value) => {
@@ -178,4 +148,54 @@ const desktopBridge = Object.freeze({
   }
 })
 
+const shellBridge = Object.freeze({
+  getState(): Promise<DesktopShellState> {
+    return ipcRenderer.invoke('shell:get-state')
+  },
+  onState(listener: (state: DesktopShellState) => void) {
+    const receive = (_event: IpcRendererEvent, state: DesktopShellState) =>
+      listener(state)
+    ipcRenderer.on('shell:state', receive)
+    return () => ipcRenderer.removeListener('shell:state', receive)
+  },
+  onTerminalSelectionActive(listener: (active: boolean) => void) {
+    const receive = (_event: IpcRendererEvent, active: boolean) =>
+      listener(active)
+    ipcRenderer.on('terminal-selection:active', receive)
+    return () =>
+      ipcRenderer.removeListener('terminal-selection:active', receive)
+  },
+  releaseTerminalSelection(): void {
+    ipcRenderer.send('shell:terminal-selection-release')
+  },
+  selectComputer(id: string): Promise<boolean> {
+    return ipcRenderer.invoke('shell:select-computer', id)
+  },
+  addComputer(origin: string): Promise<ComputerMutationResult> {
+    return ipcRenderer.invoke('shell:add-computer', origin)
+  },
+  updateComputer(update: ComputerUpdate): Promise<ComputerMutationResult> {
+    return ipcRenderer.invoke('shell:update-computer', update)
+  },
+  removeComputer(id: string): Promise<boolean> {
+    return ipcRenderer.invoke('shell:remove-computer', id)
+  },
+  retryConnection(): void {
+    ipcRenderer.send('shell:retry-connection')
+  },
+  installUpdate(): void {
+    ipcRenderer.send('shell:install-update')
+  },
+  navigateHistory(direction: DesktopNavigationDirection): void {
+    ipcRenderer.send('shell:navigate-history', direction)
+  },
+  copyStartCommand(): Promise<void> {
+    return ipcRenderer.invoke('shell:copy-start-command')
+  },
+  openInstallationDocs(): Promise<void> {
+    return ipcRenderer.invoke('shell:open-installation-docs')
+  }
+})
+
 contextBridge.exposeInMainWorld('treeportDesktop', desktopBridge)
+contextBridge.exposeInMainWorld('treeportShell', shellBridge)

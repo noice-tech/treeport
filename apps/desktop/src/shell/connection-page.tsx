@@ -166,7 +166,7 @@ export function ConnectionPage({
 
   return (
     <main
-      className="grid min-h-dvh place-items-center bg-zinc-950 px-5 pt-16 pb-8"
+      className="grid min-h-full place-items-center bg-zinc-950 px-5 pt-16 pb-8"
       aria-label={
         state.connection.status === 'connecting'
           ? 'Connecting to Treeport'

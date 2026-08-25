@@ -117,7 +117,6 @@ const requiredEntries = [
   '/package.json',
   '/.vite/build/main.js',
   '/.vite/build/preload.js',
-  '/.vite/build/shell-preload.js',
   '/.vite/renderer/main_window/index.html'
 ]
 for (const required of requiredEntries) {

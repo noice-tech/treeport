@@ -69,10 +69,7 @@ import {
 import { useWorkspaceNavigate } from './workspace-router-navigation'
 import { ForceSpecificCursor } from './force-specific-cursor'
 import { errorDetails } from './error-message'
-import {
-  nativeBrowserAvailable,
-  requestNativeBrowserClose
-} from './native-browser-session-client'
+import { useDesktopRuntime } from './desktop-runtime'
 
 const webPanelPermissionErrorSchema = z.object({
   error: z.object({ message: z.string() })
@@ -105,6 +102,7 @@ export default function App() {
 
 function WorkspaceApp() {
   const desktopBridge = window.treeportDesktop
+  const { localBrowser } = useDesktopRuntime()
   const navigateToWorkspace = useWorkspaceNavigate()
   const queryClient = useQueryClient()
   const location = useLocation()
@@ -470,8 +468,8 @@ function WorkspaceApp() {
     trigger?: HTMLElement
   ) => {
     if (panel.kind === 'browser') {
-      if (nativeBrowserAvailable()) {
-        void requestNativeBrowserClose(panel.id, false).then(
+      if (localBrowser && desktopBridge) {
+        void desktopBridge.requestBrowserClose(panel.id, false).then(
           (canClose) => {
             if (canClose) {
               closePanel.mutate(trigger ? { panel, trigger } : { panel })
@@ -1169,8 +1167,8 @@ function WorkspaceApp() {
         onOpenChange={(open) => !open && setDialog(null)}
         restoreFocusTo={dialogTriggerRef.current}
         onConfirm={(panel) => {
-          if (panel.kind === 'browser' && nativeBrowserAvailable()) {
-            void requestNativeBrowserClose(panel.id, true).then(
+          if (panel.kind === 'browser' && localBrowser && desktopBridge) {
+            void desktopBridge.requestBrowserClose(panel.id, true).then(
               (canClose) => {
                 if (canClose) {
                   closePanel.mutate({ panel, force: true })

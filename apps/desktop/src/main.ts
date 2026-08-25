@@ -1,7 +1,6 @@
 import path from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
-import { pathToFileURL } from 'node:url'
-import { browserUrlSchema, DESKTOP_PROTOCOL_VERSION } from '@treeport/shared'
+import { DESKTOP_PROTOCOL_VERSION } from '@treeport/shared'
 import {
   app,
   autoUpdater,
@@ -11,9 +10,9 @@ import {
   Menu,
   nativeTheme,
   net,
+  protocol,
+  session,
   shell,
-  webContents,
-  WebContentsView,
   type IpcMainEvent,
   type BrowserWindowConstructorOptions,
   type IpcMainInvokeEvent,
@@ -27,24 +26,40 @@ import type {
   ComputerMutationResult,
   ComputerUpdate,
   ConnectionState,
-  DesktopBrowserBounds,
-  DesktopBrowserCommand,
-  DesktopBrowserState,
   DesktopCommand,
   DesktopNavigationDirection,
   DesktopNavigationState,
   DesktopShellState
 } from './desktop-contract'
+import {
+  installBrowserWebviewPolicy,
+  type BrowserWebviewPolicy
+} from './browser-webview-policy'
 import { filePathFromUrl } from './file-url'
 import {
   localSourcePathSchema,
   resolveLocalSourcePath
 } from './local-source-path'
 import { isLoopbackUrl, parseComputerUrl } from './renderer-url'
+import { createRendererRequestHandler } from './renderer-request-handler'
 import { parseWorkspaceLink, type WorkspaceTarget } from './workspace-link'
 
 const dirname = __dirname
 const TITLEBAR_HEIGHT = 32
+const RENDERER_PARTITION = 'persist:treeport-desktop-renderer'
+const PRIVATE_RENDERER_URL = 'treeport-app://application/'
+
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: 'treeport-app',
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      corsEnabled: true
+    }
+  }
+])
 const desktopE2e = process.env.TREEPORT_DESKTOP_E2E === '1'
 const desktopUpdateReady =
   desktopE2e && process.env.TREEPORT_DESKTOP_E2E_UPDATE_READY === '1'
@@ -70,69 +85,61 @@ const seedComputerUrl =
   process.env.TREEPORT_DESKTOP_URL?.trim() || defaultComputerUrl
 
 let mainWindow: BrowserWindow | null = null
-let activeGuest: WebContents | null = null
 let store: ComputerStore | null = null
 let connection: ConnectionState = { status: 'empty' }
 let connectionGeneration = 0
 let connectionAbort: AbortController | null = null
 let fullscreen = false
-let shellOverlayActive = false
 let updateReady = desktopUpdateReady
 let stopAutomaticUpdates: (() => void) | null = null
 let pendingWorkspaceTarget: WorkspaceTarget | null = null
 let workspaceTargetQueue: Promise<void> = Promise.resolve()
-const shellWebContentsIds = new Set<number>()
-let terminalSelectionGuest: WebContents | null = null
-
-interface NativeBrowserEntry {
-  panelId: string
-  owner: WebContents
-  view: WebContentsView
-  bounds: DesktopBrowserBounds
-  visible: boolean
-  ready: Promise<void>
-}
-
-const nativeBrowsers = new Map<string, NativeBrowserEntry>()
+let terminalSelectionActive = false
+let browserWebviews: BrowserWebviewPolicy | null = null
 
 let dockBounceId: number | null = null
 let frameFlashing = false
 
-function shellUrl(): string {
-  let developmentServerUrl: string | null = null
+function rendererDevelopmentServerUrl(): string | null {
   try {
-    const parsedDevelopmentServerUrl = z
-      .string()
-      .safeParse(MAIN_WINDOW_VITE_DEV_SERVER_URL)
-    if (parsedDevelopmentServerUrl.success && parsedDevelopmentServerUrl.data) {
-      developmentServerUrl = parsedDevelopmentServerUrl.data
-    }
+    const parsed = z.string().url().safeParse(MAIN_WINDOW_VITE_DEV_SERVER_URL)
+    return parsed.success ? parsed.data : null
   } catch (error) {
-    if (!(error instanceof ReferenceError)) {
-      throw error
+    if (error instanceof ReferenceError) {
+      return null
     }
-  }
 
-  if (developmentServerUrl) {
-    return developmentServerUrl
+    throw error
   }
+}
 
-  return pathToFileURL(
-    path.join(dirname, '../renderer/main_window/index.html')
-  ).toString()
+async function installRendererRequestRouting(): Promise<void> {
+  const rendererSession = session.fromPartition(RENDERER_PARTITION)
+  const handler = await createRendererRequestHandler({
+    rendererDirectory: path.join(dirname, '../renderer/main_window'),
+    developmentServerUrl: rendererDevelopmentServerUrl(),
+    selectedBackendOrigin: selectedOrigin,
+    forward: (request) =>
+      net.fetch(request, { bypassCustomProtocolHandlers: true })
+  })
+  await Promise.all([
+    rendererSession.protocol.handle('http', handler),
+    rendererSession.protocol.handle('https', handler),
+    rendererSession.protocol.handle('treeport-app', handler)
+  ])
 }
 
 function navigationState(): DesktopNavigationState {
-  const guest = activeGuest
-  if (!guest || guest.isDestroyed() || connection.status !== 'ready') {
+  const renderer = mainWindow?.webContents
+  if (!renderer || renderer.isDestroyed() || connection.status !== 'ready') {
     return { canGoBack: false, canGoForward: false }
   }
 
   // Electron's canGoBack/canGoForward omit same-document pushState entries.
-  // Relative offsets include the TanStack Router locations in the guest.
+  // Relative offsets include the TanStack Router locations in the renderer.
   return {
-    canGoBack: guest.navigationHistory.canGoToOffset(-1),
-    canGoForward: guest.navigationHistory.canGoToOffset(1)
+    canGoBack: renderer.navigationHistory.canGoToOffset(-1),
+    canGoForward: renderer.navigationHistory.canGoToOffset(1)
   }
 }
 
@@ -166,22 +173,18 @@ function broadcastState(): void {
     forwardItem.enabled = state.navigation.canGoForward
   }
 
-  for (const id of [...shellWebContentsIds]) {
-    const contents = webContents.fromId(id)
-    if (!contents || contents.isDestroyed()) {
-      shellWebContentsIds.delete(id)
-      continue
-    }
-
-    contents.send('shell:state', state)
+  const renderer = mainWindow?.webContents
+  if (renderer && !renderer.isDestroyed()) {
+    renderer.send('shell:state', state)
   }
 }
 
-function isAuthorizedShellEvent(
+function isTrustedRendererEvent(
   event: IpcMainEvent | IpcMainInvokeEvent
 ): boolean {
-  return (
-    shellWebContentsIds.has(event.sender.id) &&
+  return Boolean(
+    mainWindow &&
+    event.sender === mainWindow.webContents &&
     event.senderFrame === event.sender.mainFrame
   )
 }
@@ -190,36 +193,19 @@ function selectedOrigin(): string | null {
   return store?.selectedComputer?.origin ?? null
 }
 
-function isActiveGuestEvent(event: IpcMainEvent | IpcMainInvokeEvent): boolean {
-  const origin = selectedOrigin()
-  return Boolean(
-    activeGuest &&
-    origin &&
-    event.sender === activeGuest &&
-    event.senderFrame === event.sender.mainFrame &&
-    URL.canParse(event.senderFrame.url) &&
-    new URL(event.senderFrame.url).origin === origin
-  )
-}
-
-function setTerminalSelectionGuest(guest: WebContents | null): void {
-  terminalSelectionGuest = guest
-  for (const id of [...shellWebContentsIds]) {
-    const contents = webContents.fromId(id)
-    if (!contents || contents.isDestroyed()) {
-      shellWebContentsIds.delete(id)
-      continue
-    }
-
-    contents.send('terminal-selection:active', guest !== null)
+function setTerminalSelectionActive(active: boolean): void {
+  terminalSelectionActive = active
+  const renderer = mainWindow?.webContents
+  if (renderer && !renderer.isDestroyed()) {
+    renderer.send('terminal-selection:active', active)
   }
 }
 
 function releaseTerminalSelection(): void {
-  const guest = terminalSelectionGuest
-  setTerminalSelectionGuest(null)
-  if (guest && !guest.isDestroyed()) {
-    guest.send('terminal-selection:release')
+  setTerminalSelectionActive(false)
+  const renderer = mainWindow?.webContents
+  if (renderer && !renderer.isDestroyed()) {
+    renderer.send('terminal-selection:release')
   }
 }
 
@@ -251,386 +237,38 @@ function requestBellAttention(): void {
   }
 }
 
-function authorizedNativeBrowser(
-  event: IpcMainEvent | IpcMainInvokeEvent,
-  panelId: string
-): NativeBrowserEntry | null {
-  const entry = nativeBrowsers.get(panelId)
-  return isActiveGuestEvent(event) && entry?.owner === event.sender
-    ? entry
-    : null
-}
-
-function nativeBrowserState(entry: NativeBrowserEntry): DesktopBrowserState {
-  const contents = entry.view.webContents
-  const url = contents.getURL() || 'about:blank'
-  return {
-    panelId: entry.panelId,
-    url,
-    title: contents.getTitle(),
-    loading: contents.isLoading(),
-    canGoBack: contents.navigationHistory.canGoToOffset(-1),
-    canGoForward: contents.navigationHistory.canGoToOffset(1)
-  }
-}
-
-function sendNativeBrowserState(entry: NativeBrowserEntry): void {
-  if (!entry.owner.isDestroyed()) {
-    entry.owner.send('native-browser:state', nativeBrowserState(entry))
-  }
-}
-
-function nativeBrowserTitlebarOffset(): number {
-  return process.platform === 'darwin' && fullscreen ? 0 : TITLEBAR_HEIGHT
-}
-
-function applyNativeBrowserLayout(entry: NativeBrowserEntry): void {
-  const width = Math.max(0, Math.round(entry.bounds.width))
-  const height = Math.max(0, Math.round(entry.bounds.height))
-  entry.view.setBounds({
-    x: Math.round(entry.bounds.x),
-    y: Math.round(entry.bounds.y) + nativeBrowserTitlebarOffset(),
-    width,
-    height
-  })
-  entry.view.setVisible(
-    entry.visible && !shellOverlayActive && width > 0 && height > 0
-  )
-}
-
-function createNativeBrowser(
-  panelId: string,
-  url: string,
-  owner: WebContents
-): NativeBrowserEntry {
-  const selectedComputer = store?.selectedComputer
-  if (!mainWindow || !selectedComputer) {
-    throw new Error('The desktop window is unavailable.')
-  }
-
-  if (nativeBrowsers.size >= 6) {
-    throw new Error('Treeport supports at most six active Browser sessions.')
-  }
-
-  const view = new WebContentsView({
-    webPreferences: {
-      partition: `treeport-browser-${selectedComputer.id}-${panelId}`,
-      nodeIntegration: false,
-      contextIsolation: true,
-      sandbox: true
-    }
-  })
-  const entry: NativeBrowserEntry = {
-    panelId,
-    owner,
-    view,
-    bounds: { x: 0, y: 0, width: 0, height: 0 },
-    visible: false,
-    ready: Promise.resolve()
-  }
-  nativeBrowsers.set(panelId, entry)
-  mainWindow.contentView.addChildView(view)
-  view.setBackgroundColor('#ffffff')
-  applyNativeBrowserLayout(entry)
-
-  const contents = view.webContents
-  const refreshState = () => sendNativeBrowserState(entry)
-  contents.on('did-start-loading', refreshState)
-  contents.on('did-stop-loading', refreshState)
-  contents.on('did-navigate', refreshState)
-  contents.on('did-navigate-in-page', (_event, _url, isMainFrame) => {
-    if (isMainFrame) {
-      refreshState()
-    }
-  })
-  contents.on(
-    'did-fail-load',
-    (_event, _errorCode, errorDescription, validatedUrl, isMainFrame) => {
-      if (!isMainFrame || errorDescription === 'ERR_ABORTED') {
-        return
-      }
-
-      const parsedUrl = browserUrlSchema.safeParse(validatedUrl)
-      if (!parsedUrl.success) {
-        return
-      }
-
-      const failedUrl = new URL(parsedUrl.data).href
-      if (contents.getURL() !== failedUrl) {
-        return
-      }
-
-      const host = new URL(failedUrl).hostname
-      const detail =
-        errorDescription === 'ERR_CONNECTION_REFUSED'
-          ? `${host} refused the connection.`
-          : 'Treeport could not load this page.'
-      const script = `(() => {
-        if (window.location.href !== 'chrome-error://chromewebdata/') {
-          return false
-        }
-
-        document.documentElement.lang = 'en'
-        document.title = ${JSON.stringify(host)}
-        const style = document.createElement('style')
-        style.textContent = ${JSON.stringify(`
-          :root { color-scheme: light dark; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-          body { min-height: 100vh; margin: 0; background: #fff; color: #202124; }
-          main { box-sizing: border-box; width: min(100%, 640px); margin: 0 auto; padding: clamp(4rem, 14vh, 8rem) 2rem 3rem; }
-          h1 { margin: 0 0 1rem; font-size: 1.75rem; font-weight: 500; line-height: 1.25; }
-          p { margin: 0 0 0.75rem; color: #5f6368; font-size: 0.95rem; line-height: 1.5; }
-          button { margin: 1rem 0 1.5rem; border: 0; border-radius: 999px; padding: 0.65rem 1.15rem; background: #1a73e8; color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
-          button:focus-visible { outline: 3px solid #8ab4f8; outline-offset: 3px; }
-          code { color: #5f6368; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.8rem; }
-          @media (prefers-color-scheme: dark) {
-            body { background: #202124; color: #e8eaed; }
-            p, code { color: #9aa0a6; }
-            button { background: #8ab4f8; color: #202124; }
-          }
-        `)}
-        const main = document.createElement('main')
-        const heading = document.createElement('h1')
-        heading.textContent = 'This site cannot be reached'
-        const detail = document.createElement('p')
-        detail.textContent = ${JSON.stringify(detail)}
-        const suggestion = document.createElement('p')
-        suggestion.textContent =
-          'Make sure that the server is running and that the address is correct.'
-        const reload = document.createElement('button')
-        reload.type = 'button'
-        reload.textContent = 'Reload'
-        reload.addEventListener('click', () => window.location.reload())
-        const code = document.createElement('code')
-        code.textContent = ${JSON.stringify(errorDescription)}
-        main.append(heading, detail, suggestion, reload, code)
-        document.head.replaceChildren(style)
-        document.body.replaceChildren(main)
-        return true
-      })()`
-      void contents.executeJavaScript(script).then(
-        (rendered) => {
-          if (rendered) {
-            refreshState()
-          }
-        },
-        () => undefined
-      )
-    }
-  )
-  contents.on('page-title-updated', refreshState)
-  contents.on('destroyed', () => {
-    if (nativeBrowsers.get(panelId) === entry) {
-      nativeBrowsers.delete(panelId)
-    }
-
-    mainWindow?.contentView.removeChildView(view)
-  })
-  const preventUnsupportedNavigation = (
-    event: Electron.Event,
-    targetUrl: string
-  ) => {
-    if (!nativeBrowserUrlSchema.safeParse(targetUrl).success) {
-      event.preventDefault()
-    }
-  }
-  contents.on('will-navigate', preventUnsupportedNavigation)
-  contents.on('will-redirect', preventUnsupportedNavigation)
-  contents.setWindowOpenHandler(({ url: popupUrl }) => {
-    const parsedUrl = browserUrlSchema.safeParse(popupUrl)
-    if (parsedUrl.success && !owner.isDestroyed()) {
-      owner.send('native-browser:popup', {
-        panelId,
-        url: new URL(parsedUrl.data).href
-      })
-    }
-
-    return { action: 'deny' }
-  })
-  contents.session.setPermissionRequestHandler(
-    (_contents, _permission, callback) => callback(false)
-  )
-  contents.on('before-input-event', (event, input) => {
-    const commandModifier =
-      process.platform === 'darwin' ? input.meta : input.control
-    const key = input.key.toLowerCase()
-    const command: DesktopCommand | undefined = input.shift
-      ? key === 't'
-        ? 'new-panel'
-        : undefined
-      : key === 'w'
-        ? 'close-panel'
-        : undefined
-    if (
-      input.type !== 'keyDown' ||
-      input.isAutoRepeat ||
-      input.isComposing ||
-      !commandModifier ||
-      input.alt ||
-      !command
-    ) {
-      return
-    }
-
-    event.preventDefault()
-    if (!owner.isDestroyed()) {
-      owner.send('desktop-command', command)
-    }
-  })
-  contents.on('context-menu', (_event, params) => {
-    const window = mainWindow
-    if (!window) {
-      return
-    }
-
-    Menu.buildFromTemplate([
-      { role: 'copy', enabled: params.editFlags.canCopy },
-      { role: 'paste', enabled: params.editFlags.canPaste },
-      { type: 'separator' },
-      {
-        label: 'Back',
-        enabled: contents.navigationHistory.canGoToOffset(-1),
-        click: () => contents.navigationHistory.goToOffset(-1)
-      },
-      {
-        label: 'Forward',
-        enabled: contents.navigationHistory.canGoToOffset(1),
-        click: () => contents.navigationHistory.goToOffset(1)
-      },
-      { label: 'Reload', click: () => contents.reload() },
-      { type: 'separator' },
-      {
-        label: 'Inspect Element',
-        click: () => {
-          contents.inspectElement(params.x, params.y)
-          contents.openDevTools({ mode: 'detach', activate: true })
-        }
-      }
-    ]).popup({ window })
-  })
-  entry.ready = contents.loadURL(url).then(
-    () => undefined,
-    () => refreshState()
-  )
-  return entry
-}
-
-async function disposeNativeBrowser(
-  entry: NativeBrowserEntry,
-  clearStorage: boolean
-): Promise<void> {
-  if (nativeBrowsers.get(entry.panelId) === entry) {
-    nativeBrowsers.delete(entry.panelId)
-  }
-
-  mainWindow?.contentView.removeChildView(entry.view)
-  const contents = entry.view.webContents
-  const browserSession = contents.session
-  if (!contents.isDestroyed()) {
-    contents.close({ waitForBeforeUnload: false })
-  }
-
-  if (clearStorage) {
-    await browserSession.clearStorageData().catch(() => undefined)
-  }
-}
-
-function disposeNativeBrowsers(owner: WebContents): void {
-  for (const entry of nativeBrowsers.values()) {
-    if (entry.owner === owner) {
-      void disposeNativeBrowser(entry, false)
-    }
-  }
-}
-
-async function requestNativeBrowserClose(
-  entry: NativeBrowserEntry,
-  force: boolean
-): Promise<boolean> {
-  const contents = entry.view.webContents
-  if (contents.isDestroyed()) {
-    return true
-  }
-
-  const browserSession = contents.session
-  const canClose = await new Promise<boolean>((resolve) => {
-    let timer: ReturnType<typeof setTimeout> | null = null
-    const cleanup = () => {
-      contents.removeListener('destroyed', closed)
-      contents.removeListener('will-prevent-unload', prevented)
-      if (timer) {
-        clearTimeout(timer)
-      }
-    }
-    const finish = (result: boolean) => {
-      cleanup()
-      resolve(result)
-    }
-    const closed = () => finish(true)
-    const prevented = (event: Electron.Event) => {
-      if (force) {
-        event.preventDefault()
-      } else {
-        finish(false)
-      }
-    }
-    contents.once('destroyed', closed)
-    contents.once('will-prevent-unload', prevented)
-    timer = setTimeout(() => finish(false), 5_000)
-    timer.unref()
-    contents.close({ waitForBeforeUnload: true })
-  })
-  if (canClose) {
-    await browserSession.clearStorageData().catch(() => undefined)
-  }
-
-  return canClose
-}
-
-function disposeGuest(): void {
-  const guest = activeGuest
-  if (guest) {
-    disposeNativeBrowsers(guest)
-  }
-
-  activeGuest = null
-  if (terminalSelectionGuest === guest) {
-    setTerminalSelectionGuest(null)
-  }
-
-  if (guest && !guest.isDestroyed()) {
-    guest.close({ waitForBeforeUnload: false })
+function disposeBrowserWebviews(clearStorage = false): void {
+  browserWebviews?.disposeAll(clearStorage)
+  if (terminalSelectionActive) {
+    setTerminalSelectionActive(false)
   }
 
   broadcastState()
 }
 
-function navigateGuestHistory(direction: DesktopNavigationDirection): void {
-  const guest = activeGuest
-  if (!guest || guest.isDestroyed() || connection.status !== 'ready') {
+function navigateRendererHistory(direction: DesktopNavigationDirection): void {
+  const renderer = mainWindow?.webContents
+  if (!renderer || renderer.isDestroyed() || connection.status !== 'ready') {
     return
   }
 
   const offset = direction === 'back' ? -1 : 1
-  if (guest.navigationHistory.canGoToOffset(offset)) {
-    guest.navigationHistory.goToOffset(offset)
+  if (renderer.navigationHistory.canGoToOffset(offset)) {
+    renderer.navigationHistory.goToOffset(offset)
   }
 }
 
 function sendDesktopCommand(command: DesktopCommand): void {
-  if (
-    !mainWindow ||
-    !activeGuest ||
-    connection.status !== 'ready' ||
-    !mainWindow.isFocused()
-  ) {
+  const window = mainWindow
+  if (!window || connection.status !== 'ready' || !window.isFocused()) {
     return
   }
 
-  activeGuest.send('desktop-command', command)
+  window.webContents.send('desktop-command', command)
 }
 
-function installGuestSecurity(guest: WebContents, origin: string): void {
-  guest.on('before-input-event', (event, input) => {
+function installRendererSecurity(renderer: WebContents): void {
+  renderer.on('before-input-event', (event, input) => {
     const key = input.key.toLowerCase()
     if (
       process.platform === 'darwin' &&
@@ -644,7 +282,7 @@ function installGuestSecurity(guest: WebContents, origin: string): void {
       (key === '[' || key === ']')
     ) {
       event.preventDefault()
-      navigateGuestHistory(key === '[' ? 'back' : 'forward')
+      navigateRendererHistory(key === '[' ? 'back' : 'forward')
       return
     }
 
@@ -673,69 +311,70 @@ function installGuestSecurity(guest: WebContents, origin: string): void {
     }
 
     event.preventDefault()
-    guest.send('desktop-command', command)
+    renderer.send('desktop-command', command)
   })
 
-  guest.on('will-navigate', (event, targetUrl) => {
-    if (URL.canParse(targetUrl) && new URL(targetUrl).origin === origin) {
+  renderer.on('will-navigate', (event, targetUrl) => {
+    const origin = selectedOrigin()
+    if (
+      targetUrl.startsWith('treeport-app://') ||
+      (origin &&
+        URL.canParse(targetUrl) &&
+        new URL(targetUrl).origin === origin)
+    ) {
       return
     }
 
     event.preventDefault()
     if (URL.canParse(targetUrl)) {
-      const protocol = new URL(targetUrl).protocol
-      if (protocol === 'http:' || protocol === 'https:') {
+      const targetProtocol = new URL(targetUrl).protocol
+      if (targetProtocol === 'http:' || targetProtocol === 'https:') {
         void shell.openExternal(targetUrl)
       }
     }
   })
-  guest.setWindowOpenHandler(({ url }) => {
+  renderer.setWindowOpenHandler(({ url }) => {
     if (URL.canParse(url)) {
-      const protocol = new URL(url).protocol
-      if (protocol === 'http:' || protocol === 'https:') {
+      const targetProtocol = new URL(url).protocol
+      if (targetProtocol === 'http:' || targetProtocol === 'https:') {
         void shell.openExternal(url)
       }
     }
 
     return { action: 'deny' }
   })
-  guest.session.setPermissionRequestHandler(
+  renderer.session.setPermissionRequestHandler(
     (_contents, _permission, callback) => callback(false)
   )
-  const refreshNavigationState = () => {
-    if (activeGuest === guest) {
-      broadcastState()
-    }
-  }
-  guest.on('did-navigate', refreshNavigationState)
-  guest.on('did-navigate-in-page', (_event, _url, isMainFrame) => {
+  const refreshNavigationState = () => broadcastState()
+  renderer.on('did-navigate', refreshNavigationState)
+  renderer.on('did-navigate-in-page', (_event, _url, isMainFrame) => {
     if (isMainFrame) {
       refreshNavigationState()
     }
   })
-  guest.on('did-finish-load', () => {
-    guest.send('fullscreen-change', fullscreen)
+  renderer.on('did-finish-load', () => {
+    renderer.send('fullscreen-change', fullscreen)
     refreshNavigationState()
-  })
-  const showGuestFailure = () => {
-    if (activeGuest !== guest || connection.status !== 'ready') {
+    const origin = selectedOrigin()
+    if (!origin || connection.status !== 'ready') {
       return
     }
 
-    void connectSelected({
-      unavailableImmediately: true,
-      unavailableMessage: `The connection to ${origin} was lost.`
-    })
-  }
-  guest.on(
-    'did-fail-load',
-    (_event, errorCode, _errorDescription, _validatedUrl, isMainFrame) => {
-      if (isMainFrame && errorCode !== -3) {
-        showGuestFailure()
+    const verification = new AbortController()
+    void checkHealth(origin, verification.signal).then((health) => {
+      if (
+        !health &&
+        connection.status === 'ready' &&
+        selectedOrigin() === origin
+      ) {
+        void connectSelected({
+          unavailableImmediately: true,
+          unavailableMessage: `The connection to ${origin} was lost.`
+        })
       }
-    }
-  )
-  guest.on('render-process-gone', showGuestFailure)
+    })
+  })
 }
 
 const healthResponseSchema = z.object({
@@ -750,38 +389,11 @@ const computerUpdateSchema = z.object({
   origin: z.string(),
   nameOverride: z.string().optional()
 })
-const nativeBrowserUrlSchema = z.union([
-  z.literal('about:blank'),
-  browserUrlSchema
-])
 const nativeBrowserPanelSchema = z.strictObject({
   panelId: z.string().min(1).max(128)
 })
-const nativeBrowserOpenSchema = nativeBrowserPanelSchema.extend({
-  url: nativeBrowserUrlSchema
-})
-const nativeBrowserBoundsSchema = nativeBrowserPanelSchema.extend({
-  bounds: z.strictObject({
-    x: z.number().finite().min(0).max(16_384),
-    y: z.number().finite().min(0).max(16_384),
-    width: z.number().finite().min(0).max(16_384),
-    height: z.number().finite().min(0).max(16_384)
-  })
-})
-const nativeBrowserVisibilitySchema = nativeBrowserPanelSchema.extend({
-  visible: z.boolean()
-})
-const nativeBrowserCommandSchema: z.ZodType<{
-  panelId: string
-  command: DesktopBrowserCommand
-}> = nativeBrowserPanelSchema.extend({
-  command: z.discriminatedUnion('type', [
-    z.strictObject({ type: z.literal('navigate'), url: browserUrlSchema }),
-    z.strictObject({ type: z.literal('back') }),
-    z.strictObject({ type: z.literal('forward') }),
-    z.strictObject({ type: z.literal('reload') }),
-    z.strictObject({ type: z.literal('stop') })
-  ])
+const nativeBrowserRegisterSchema = nativeBrowserPanelSchema.extend({
+  webContentsId: z.number().int().positive()
 })
 const nativeBrowserCloseSchema = nativeBrowserPanelSchema.extend({
   force: z.boolean()
@@ -820,20 +432,31 @@ async function connectSelected(
   connectionAbort?.abort()
   const abortController = new AbortController()
   connectionAbort = abortController
-  disposeGuest()
+  disposeBrowserWebviews(true)
 
   if (!computer) {
     connection = { status: 'empty' }
     broadcastState()
+    const renderer = mainWindow?.webContents
+    if (renderer && !renderer.getURL().startsWith('treeport-app://')) {
+      void renderer.loadURL(PRIVATE_RENDERER_URL).catch((error) => {
+        console.error('[Treeport] Could not load desktop renderer', error)
+      })
+    }
+
     return
   }
 
+  const currentRendererUrl = mainWindow?.webContents.getURL() ?? ''
   const requestedUrl =
     options.url &&
     URL.canParse(options.url) &&
     new URL(options.url).origin === computer.origin
       ? options.url
-      : computer.origin
+      : URL.canParse(currentRendererUrl) &&
+          new URL(currentRendererUrl).origin === computer.origin
+        ? currentRendererUrl
+        : computer.origin
   const unavailableMessage =
     options.unavailableMessage ??
     `The desktop app could not reach ${computer.origin}.`
@@ -846,6 +469,12 @@ async function connectSelected(
       }
     : { status: 'connecting', computerId: computer.id }
   broadcastState()
+  const renderer = mainWindow?.webContents
+  if (renderer && renderer.getURL() !== requestedUrl) {
+    void renderer.loadURL(requestedUrl).catch((error) => {
+      console.error('[Treeport] Could not load desktop renderer', error)
+    })
+  }
 
   const startedAt = Date.now()
   const retryDelays = [0, 250, 500, 1_000, 2_000]
@@ -920,28 +549,15 @@ async function connectSelected(
   }
 }
 
-function shellWindowPreferences(): Electron.WebPreferences {
+function rendererWindowPreferences(): Electron.WebPreferences {
   return {
-    preload: path.join(dirname, 'shell-preload.js'),
+    preload: path.join(dirname, 'preload.js'),
+    partition: RENDERER_PARTITION,
     nodeIntegration: false,
     contextIsolation: true,
     sandbox: true,
     webviewTag: true
   }
-}
-
-function authorizeShellContents(contents: WebContents): void {
-  shellWebContentsIds.add(contents.id)
-  contents.on('destroyed', () => {
-    shellWebContentsIds.delete(contents.id)
-  })
-  contents.on('will-navigate', (event) => event.preventDefault())
-  contents.setWindowOpenHandler(() => ({ action: 'deny' }))
-}
-
-function loadShellContents(contents: WebContents): Promise<void> {
-  authorizeShellContents(contents)
-  return contents.loadURL(shellUrl())
 }
 
 function installMenu(): void {
@@ -994,13 +610,13 @@ function installMenu(): void {
           id: 'navigate-back',
           label: 'Back',
           enabled: navigation.canGoBack,
-          click: () => navigateGuestHistory('back')
+          click: () => navigateRendererHistory('back')
         }
         const forward: MenuItemConstructorOptions = {
           id: 'navigate-forward',
           label: 'Forward',
           enabled: navigation.canGoForward,
-          click: () => navigateGuestHistory('forward')
+          click: () => navigateRendererHistory('forward')
         }
         if (process.platform === 'darwin') {
           back.accelerator = 'Command+['
@@ -1016,31 +632,32 @@ function installMenu(): void {
         {
           label: 'Reload',
           accelerator: 'CommandOrControl+R',
-          click: () => activeGuest?.reload()
+          click: () => mainWindow?.webContents.reload()
         },
         {
           label: 'Force Reload',
           accelerator: 'CommandOrControl+Shift+R',
-          click: () => activeGuest?.reloadIgnoringCache()
+          click: () => mainWindow?.webContents.reloadIgnoringCache()
         },
         {
           label: 'Toggle Developer Tools',
           accelerator:
             process.platform === 'darwin' ? 'Alt+Command+I' : 'Control+Shift+I',
-          click: () => activeGuest?.toggleDevTools()
+          click: () => mainWindow?.webContents.toggleDevTools()
         },
         { type: 'separator' },
         {
           label: 'Actual Size',
           accelerator: 'CommandOrControl+0',
-          click: () => activeGuest?.setZoomLevel(0)
+          click: () => mainWindow?.webContents.setZoomLevel(0)
         },
         {
           label: 'Zoom In',
           accelerator: 'CommandOrControl+=',
           click: () => {
-            if (activeGuest) {
-              activeGuest.setZoomLevel(activeGuest.getZoomLevel() + 0.5)
+            const renderer = mainWindow?.webContents
+            if (renderer) {
+              renderer.setZoomLevel(renderer.getZoomLevel() + 0.5)
             }
           }
         },
@@ -1048,8 +665,9 @@ function installMenu(): void {
           label: 'Zoom Out',
           accelerator: 'CommandOrControl+-',
           click: () => {
-            if (activeGuest) {
-              activeGuest.setZoomLevel(activeGuest.getZoomLevel() - 0.5)
+            const renderer = mainWindow?.webContents
+            if (renderer) {
+              renderer.setZoomLevel(renderer.getZoomLevel() - 0.5)
             }
           }
         },
@@ -1077,7 +695,7 @@ function createWindow(url?: string): BrowserWindow {
       symbolColor: '#f4f4f5',
       height: TITLEBAR_HEIGHT
     },
-    webPreferences: shellWindowPreferences()
+    webPreferences: rendererWindowPreferences()
   }
   if (process.platform === 'darwin') {
     options.trafficLightPosition = { x: 12, y: 9 }
@@ -1085,78 +703,36 @@ function createWindow(url?: string): BrowserWindow {
 
   const window = new BrowserWindow(options)
   mainWindow = window
-  window.webContents.on(
-    'will-attach-webview',
-    (event, webPreferences, params) => {
-      const origin = selectedOrigin()
-      const parsedSource = z.string().url().safeParse(params.src)
-      if (
-        connection.status !== 'ready' ||
-        !origin ||
-        !parsedSource.success ||
-        !URL.canParse(parsedSource.data) ||
-        new URL(parsedSource.data).origin !== origin
-      ) {
-        event.preventDefault()
-        return
-      }
-
-      webPreferences.preload = path.join(dirname, 'preload.js')
-      webPreferences.partition = 'persist:treeport-desktop'
-      webPreferences.nodeIntegration = false
-      webPreferences.contextIsolation = true
-      webPreferences.sandbox = true
-    }
-  )
-  window.webContents.on('did-attach-webview', (_event, guest) => {
-    const origin = selectedOrigin()
-    if (!origin || connection.status !== 'ready') {
-      guest.close({ waitForBeforeUnload: false })
-      return
-    }
-
-    disposeGuest()
-    activeGuest = guest
-    guest.once('destroyed', () => {
-      disposeNativeBrowsers(guest)
-      if (terminalSelectionGuest === guest) {
-        setTerminalSelectionGuest(null)
-      }
-
-      if (activeGuest === guest) {
-        activeGuest = null
-        broadcastState()
-      }
-    })
-    installGuestSecurity(guest, origin)
-    broadcastState()
-  })
-  void loadShellContents(window.webContents).catch((error) => {
-    console.error('[Treeport] Could not load desktop shell', error)
+  installRendererSecurity(window.webContents)
+  browserWebviews = installBrowserWebviewPolicy({
+    window,
+    trustedRenderer: window.webContents,
+    selectedComputer: () => {
+      const computer = store?.selectedComputer
+      return computer
+        ? { id: computer.id, loopback: isLoopbackUrl(new URL(computer.origin)) }
+        : null
+    },
+    isTrustedEvent: isTrustedRendererEvent
   })
 
   window.on('enter-full-screen', () => {
     fullscreen = true
-    activeGuest?.send('fullscreen-change', true)
-    for (const entry of nativeBrowsers.values()) {
-      applyNativeBrowserLayout(entry)
-    }
+    window.webContents.send('fullscreen-change', true)
     broadcastState()
   })
   window.on('leave-full-screen', () => {
     fullscreen = false
-    activeGuest?.send('fullscreen-change', false)
-    for (const entry of nativeBrowsers.values()) {
-      applyNativeBrowserLayout(entry)
-    }
+    window.webContents.send('fullscreen-change', false)
     broadcastState()
   })
   window.on('focus', stopBellAttention)
-  window.on('close', disposeGuest)
+  window.on('close', () => disposeBrowserWebviews(false))
   window.on('closed', () => {
     stopBellAttention()
     if (mainWindow === window) {
       mainWindow = null
+      browserWebviews = null
     }
   })
   window.webContents.once('did-finish-load', () => broadcastState())
@@ -1174,11 +750,11 @@ function mutationError(cause: unknown): ComputerMutationResult {
 
 function registerIpc(): void {
   ipcMain.handle('shell:get-state', (event) =>
-    isAuthorizedShellEvent(event) ? shellState() : null
+    isTrustedRendererEvent(event) ? shellState() : null
   )
   ipcMain.handle('shell:select-computer', async (event, id) => {
     const parsedId = z.string().safeParse(id)
-    if (!isAuthorizedShellEvent(event) || !parsedId.success || !store) {
+    if (!isTrustedRendererEvent(event) || !parsedId.success || !store) {
       return false
     }
 
@@ -1191,7 +767,7 @@ function registerIpc(): void {
   })
   ipcMain.handle('shell:add-computer', async (event, input) => {
     const parsedInput = z.string().safeParse(input)
-    if (!isAuthorizedShellEvent(event) || !parsedInput.success || !store) {
+    if (!isTrustedRendererEvent(event) || !parsedInput.success || !store) {
       return { ok: false, error: 'Could not save the computer.' }
     }
 
@@ -1219,7 +795,7 @@ function registerIpc(): void {
     }
   })
   ipcMain.handle('shell:update-computer', async (event, value) => {
-    if (!isAuthorizedShellEvent(event) || !store) {
+    if (!isTrustedRendererEvent(event) || !store) {
       return { ok: false, error: 'Could not save the computer.' }
     }
 
@@ -1255,7 +831,7 @@ function registerIpc(): void {
   })
   ipcMain.handle('shell:remove-computer', async (event, id) => {
     const parsedId = z.string().safeParse(id)
-    if (!isAuthorizedShellEvent(event) || !parsedId.success || !store) {
+    if (!isTrustedRendererEvent(event) || !parsedId.success || !store) {
       return false
     }
 
@@ -1274,12 +850,12 @@ function registerIpc(): void {
     return true
   })
   ipcMain.on('shell:retry-connection', (event) => {
-    if (isAuthorizedShellEvent(event)) {
+    if (isTrustedRendererEvent(event)) {
       void connectSelected()
     }
   })
   ipcMain.on('shell:install-update', (event) => {
-    if (!isAuthorizedShellEvent(event) || !updateReady) {
+    if (!isTrustedRendererEvent(event) || !updateReady) {
       return
     }
 
@@ -1291,30 +867,19 @@ function registerIpc(): void {
 
     autoUpdater.quitAndInstall()
   })
-  ipcMain.on('shell:overlay-active', (event, active) => {
-    const parsed = z.boolean().safeParse(active)
-    if (!isAuthorizedShellEvent(event) || !parsed.success) {
-      return
-    }
-
-    shellOverlayActive = parsed.data
-    for (const entry of nativeBrowsers.values()) {
-      applyNativeBrowserLayout(entry)
-    }
-  })
   ipcMain.on('shell:navigate-history', (event, direction) => {
     const parsed = z.enum(['back', 'forward']).safeParse(direction)
-    if (isAuthorizedShellEvent(event) && parsed.success) {
-      navigateGuestHistory(parsed.data)
+    if (isTrustedRendererEvent(event) && parsed.success) {
+      navigateRendererHistory(parsed.data)
     }
   })
   ipcMain.handle('shell:copy-start-command', (event) => {
-    if (isAuthorizedShellEvent(event)) {
+    if (isTrustedRendererEvent(event)) {
       clipboard.writeText('treeport start')
     }
   })
   ipcMain.handle('shell:open-installation-docs', (event) => {
-    if (isAuthorizedShellEvent(event)) {
+    if (isTrustedRendererEvent(event)) {
       return shell.openExternal(
         'https://treeport.app/getting-started/installation/'
       )
@@ -1322,7 +887,7 @@ function registerIpc(): void {
   })
 
   ipcMain.handle('open-file-url', async (event, value) => {
-    if (!isActiveGuestEvent(event)) {
+    if (!isTrustedRendererEvent(event)) {
       return 'rejected'
     }
 
@@ -1340,13 +905,13 @@ function registerIpc(): void {
   })
   ipcMain.handle('terminal-file:resolve-source-path', (event, value) => {
     const parsedPath = localSourcePathSchema.safeParse(value)
-    return isActiveGuestEvent(event) && parsedPath.success
+    return isTrustedRendererEvent(event) && parsedPath.success
       ? resolveLocalSourcePath(selectedOrigin(), parsedPath.data)
       : null
   })
   ipcMain.on('terminal-file:read-clipboard-source-paths', (event) => {
     event.returnValue = []
-    if (!isActiveGuestEvent(event) || process.platform !== 'darwin') {
+    if (!isTrustedRendererEvent(event) || process.platform !== 'darwin') {
       return
     }
 
@@ -1358,90 +923,15 @@ function registerIpc(): void {
       : null
     event.returnValue = resolvedPath ? [resolvedPath] : []
   })
-  ipcMain.handle('native-browser:open', async (event, value) => {
-    const parsed = nativeBrowserOpenSchema.safeParse(value)
-    if (!isActiveGuestEvent(event) || !parsed.success) {
-      return null
-    }
-
-    const existing = nativeBrowsers.get(parsed.data.panelId)
-    if (existing) {
-      if (existing.owner !== event.sender) {
-        return null
-      }
-
-      await existing.ready
-      return nativeBrowserState(existing)
-    }
-
-    const entry = createNativeBrowser(
-      parsed.data.panelId,
-      parsed.data.url,
-      event.sender
-    )
-    await entry.ready
-    return nativeBrowserState(entry)
-  })
-  ipcMain.on('native-browser:set-bounds', (event, value) => {
-    const parsed = nativeBrowserBoundsSchema.safeParse(value)
-    if (!parsed.success) {
-      return
-    }
-
-    const entry = authorizedNativeBrowser(event, parsed.data.panelId)
-    if (!entry) {
-      return
-    }
-
-    entry.bounds = parsed.data.bounds
-    applyNativeBrowserLayout(entry)
-  })
-  ipcMain.on('native-browser:set-visible', (event, value) => {
-    const parsed = nativeBrowserVisibilitySchema.safeParse(value)
-    if (!parsed.success) {
-      return
-    }
-
-    const entry = authorizedNativeBrowser(event, parsed.data.panelId)
-    if (!entry) {
-      return
-    }
-
-    entry.visible = parsed.data.visible
-    applyNativeBrowserLayout(entry)
-  })
-  ipcMain.on('native-browser:command', (event, value) => {
-    const parsed = nativeBrowserCommandSchema.safeParse(value)
-    if (!parsed.success) {
-      return
-    }
-
-    const entry = authorizedNativeBrowser(event, parsed.data.panelId)
-    if (!entry || entry.view.webContents.isDestroyed()) {
-      return
-    }
-
-    const contents = entry.view.webContents
-    const command = parsed.data.command
-    if (command.type === 'navigate') {
-      void contents
-        .loadURL(new URL(command.url).href)
-        .catch(() => sendNativeBrowserState(entry))
-    } else if (
-      command.type === 'back' &&
-      contents.navigationHistory.canGoToOffset(-1)
-    ) {
-      contents.navigationHistory.goToOffset(-1)
-    } else if (
-      command.type === 'forward' &&
-      contents.navigationHistory.canGoToOffset(1)
-    ) {
-      contents.navigationHistory.goToOffset(1)
-    } else if (command.type === 'reload') {
-      contents.reload()
-    } else if (command.type === 'stop') {
-      contents.stop()
-    }
+  ipcMain.handle('native-browser:register', (event, value) => {
+    const parsed = nativeBrowserRegisterSchema.safeParse(value)
+    return parsed.success
+      ? (browserWebviews?.register(
+          event,
+          parsed.data.panelId,
+          parsed.data.webContentsId
+        ) ?? false)
+      : false
   })
   ipcMain.handle('native-browser:request-close', async (event, value) => {
     const parsed = nativeBrowserCloseSchema.safeParse(value)
@@ -1449,8 +939,13 @@ function registerIpc(): void {
       return false
     }
 
-    const entry = authorizedNativeBrowser(event, parsed.data.panelId)
-    return entry ? requestNativeBrowserClose(entry, parsed.data.force) : true
+    return browserWebviews
+      ? browserWebviews.requestClose(
+          event,
+          parsed.data.panelId,
+          parsed.data.force
+        )
+      : true
   })
   ipcMain.on('native-browser:dispose', (event, value) => {
     const parsed = nativeBrowserPanelSchema.safeParse(value)
@@ -1458,30 +953,23 @@ function registerIpc(): void {
       return
     }
 
-    const entry = authorizedNativeBrowser(event, parsed.data.panelId)
-    if (entry) {
-      void disposeNativeBrowser(entry, true)
-    }
+    browserWebviews?.dispose(event, parsed.data.panelId)
   })
   ipcMain.on('terminal-selection:set-active', (event, active) => {
     const parsedActive = z.boolean().safeParse(active)
-    if (!isActiveGuestEvent(event) || !parsedActive.success) {
+    if (!isTrustedRendererEvent(event) || !parsedActive.success) {
       return
     }
 
-    if (parsedActive.data) {
-      setTerminalSelectionGuest(event.sender)
-    } else if (terminalSelectionGuest === event.sender) {
-      setTerminalSelectionGuest(null)
-    }
+    setTerminalSelectionActive(parsedActive.data)
   })
   ipcMain.on('shell:terminal-selection-release', (event) => {
-    if (shellWebContentsIds.has(event.sender.id)) {
+    if (isTrustedRendererEvent(event)) {
       releaseTerminalSelection()
     }
   })
   ipcMain.on('bell-attention:request', (event) => {
-    if (isActiveGuestEvent(event)) {
+    if (isTrustedRendererEvent(event)) {
       requestBellAttention()
     }
   })
@@ -1578,6 +1066,7 @@ if (!hasSingleInstanceLock) {
   void app
     .whenReady()
     .then(async () => {
+      await installRendererRequestRouting()
       store = await ComputerStore.load(
         path.join(app.getPath('userData'), 'computers.json'),
         seedComputerUrl,

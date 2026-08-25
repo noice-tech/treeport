@@ -170,11 +170,6 @@ const config: ForgeConfig = {
           entry: 'src/preload.ts',
           config: 'vite.preload.config.ts',
           target: 'preload'
-        },
-        {
-          entry: 'src/shell-preload.ts',
-          config: 'vite.shell-preload.config.ts',
-          target: 'preload'
         }
       ],
       renderer: [

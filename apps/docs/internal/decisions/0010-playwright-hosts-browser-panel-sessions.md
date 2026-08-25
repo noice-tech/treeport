@@ -1,4 +1,4 @@
-# Decision 0010: Browser uses native Electron and daemon Playwright sessions
+# Decision 0010: Browser uses Electron webviews and daemon Playwright sessions
 
 - Status: Accepted
 - Date: 2026-08-24
@@ -7,11 +7,11 @@
 
 Treeport must open daemon-local applications and sites that prevent iframe use.
 
-Web users and agents must share one daemon page without exposing Playwright, CDP, or a personal browser profile.
+Web users and agents must share one daemon page. Treeport must not expose Playwright, CDP, or a personal browser profile.
 
 Desktop users need native Chromium rendering for audio, graphics, and normal page behavior.
 
-A package web panel cannot own the required Treeport lifecycle and authorization directly.
+Electron does not support a webview inside another webview. Native views do not follow DOM layout or DOM stacking.
 
 ## Decision
 
@@ -19,15 +19,19 @@ Add `BrowserPanel` with kind `browser` to the `Panel` union.
 
 Store `BrowserPanel` records separately from terminal and web-panel storage. Do not add a generic panel storage layer.
 
-Browser uses the existing tree ownership, workspace route, sidebar, title, shortcut, event, open-request, and close workflows.
+Browser uses the existing tree ownership, route, sidebar, title, shortcut, event, open-request, and close workflows.
 
 Keep iframe Browser and its definition identity.
 
-Remove the daemon Browser implementation from the web-panel package. Remove its privileged permission and MessagePort bridge.
+Put the Browser toolbar, server list, viewport boundary, and accessible controls in the Treeport frontend.
 
-Put the Browser toolbar, server list, viewport boundary, and accessible controls in the Treeport web application.
+Electron packages the same Treeport frontend source that the web build uses. Electron runs this frontend as its top-level renderer.
 
-Use a native Electron `WebContentsView` for the desktop app. Use the streamed Playwright viewport for web clients.
+The renderer uses the selected backend origin. A renderer-session protocol handler supplies only packaged frontend files.
+
+The handler forwards API requests to the selected backend. Socket connections go directly to the selected backend.
+
+Use a first-level Electron `<webview>` when Electron connects to a loopback backend. Use streamed Playwright in all other clients.
 
 ### Browser ownership
 
@@ -43,29 +47,47 @@ The daemon stores the current top-level URL and title on the `BrowserPanel` reco
 
 The daemon restores the URL before it accepts the first client or agent command.
 
-A daemon restart creates a new empty browser context and restores only the saved URL.
+A daemon restart creates a new empty browser context. It restores only the saved URL.
 
 ### Desktop rendering
 
-Electron creates one `WebContentsView` for each active Browser.
+A loopback desktop Browser creates one first-level `<webview>` for each retained Browser panel.
 
-Each view uses a separate in-memory partition. It never uses a personal browser profile.
+Each webview uses a separate in-memory partition. It never uses a personal browser profile.
 
-The Treeport renderer sends validated commands, visibility, and viewport bounds through the desktop preload bridge.
+The webview stays in one DOM parent for its lifetime. CSS controls its size and retained-panel visibility.
 
-The Electron main process accepts these messages only from the active Treeport guest and its selected origin.
+DOM dialogs and popovers paint above the webview. Treeport disables webview pointer input while a blocking dialog is open.
 
-The native view allows HTTP and HTTPS navigation without credentials. It rejects unsupported navigation and permission requests.
+The main process validates each webview attachment. It rejects remote computers, invalid URLs, invalid partitions, and extra guests.
 
-Electron routes popups through durable Browser creation. It runs `beforeunload` when the user closes Browser.
+The main process removes supplied preloads. It enforces sandboxing, context isolation, web security, and disabled Node.js integration.
 
-The native page and a daemon agent session are separate runtimes. They synchronize the saved top-level URL and title.
+The main process rejects unsupported navigation and permission requests. It routes popups to durable Browser creation.
+
+The main process runs `beforeunload` when the user closes Browser. It clears the temporary partition after a confirmed close.
+
+The local page and a daemon agent session are separate runtimes. They synchronize the saved top-level URL and title.
+
+### Desktop renderer delivery
+
+The desktop renderer uses a separate Electron session partition from Browser guests.
+
+For a selected computer, the renderer URL keeps the computer origin and workspace path.
+
+The renderer-session protocol handler supplies the packaged `index.html` for Treeport route navigations.
+
+It supplies only exact packaged asset paths. It forwards `/api` and all other network requests with Electron `net.fetch`.
+
+It does not run a local HTTP reverse proxy. It does not intercept Browser guest sessions.
+
+The top-level preload exposes computer controls and desktop capabilities. The main process accepts IPC only from this renderer's main frame.
 
 ### Authorization and transport
 
-A client requests a one-use connection ticket for Browser.
+A remote client requests a one-use connection ticket for Browser.
 
-The daemon checks the `BrowserPanel` record and its owning tree before it issues or accepts the ticket.
+The daemon checks the `BrowserPanel` record and its tree before it issues or accepts the ticket.
 
 The socket protocol contains validated browser commands, state, and JPEG frames.
 
@@ -113,7 +135,7 @@ The JPEG viewport does not provide semantic accessibility information.
 
 The agent snapshot command supplies a separate semantic page view.
 
-The streamed web-client viewport does not support audio, downloads, file selection, uploads, or clipboard synchronization.
+The streamed viewport does not support audio, downloads, file selection, uploads, or clipboard synchronization.
 
 ## Consequences
 
@@ -123,6 +145,8 @@ Package permission grants no longer authorize daemon browser access.
 
 HTTP links and browser popups stay inside the Treeport workspace.
 
-Each active daemon Browser session uses a separate browser process and more memory than a shared browser context.
+Each active daemon Browser session uses a separate browser process and more memory than a shared context.
 
-Each active desktop Browser uses a separate native view and in-memory partition.
+Each retained loopback desktop Browser uses a separate Chromium guest and in-memory partition.
+
+Electron can place Treeport dialogs over Browser without view bounds, clipping, screenshots, or visibility IPC.

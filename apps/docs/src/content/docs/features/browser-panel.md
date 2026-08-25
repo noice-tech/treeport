@@ -8,9 +8,11 @@ Treeport supplies two Browser workflows:
 - **Browser** opens a top-level page.
 - **iframe Browser** embeds a page in the Treeport web client.
 
-The desktop app runs Browser in a native Chromium view on the desktop computer.
+For a local connection, the desktop app runs Browser on the desktop computer.
 
 The web client streams Browser from an isolated Chromium process on the daemon computer.
+
+The desktop app also uses this stream when it connects to a remote computer.
 
 Use Browser for iframe-blocking sites and agent control.
 
@@ -39,7 +41,9 @@ treeport browser status
 treeport browser remove
 ```
 
-The desktop app does not need this installation for its native view.
+A local desktop connection does not need this installation.
+
+A remote desktop connection uses the managed browser on the remote computer.
 
 On Linux, an error can identify missing operating-system libraries.
 
@@ -59,9 +63,9 @@ Enter an HTTP or HTTPS address with or without the protocol. Press Enter to open
 
 Treeport uses `http://` when you omit the protocol.
 
-In the desktop app, Browser requests come from the desktop computer.
+For a local desktop connection, Browser requests come from the desktop computer.
 
-In a web client, Browser requests come from the daemon computer.
+For a web client or remote desktop connection, Browser requests come from the daemon computer.
 
 `localhost` identifies the computer that runs Browser.
 
@@ -124,7 +128,7 @@ Snapshot references, such as `e12`, identify elements in the daemon browser sess
 
 Web clients and agents use one control owner for the daemon browser session.
 
-The desktop app uses a separate native page. Agent commands use the saved URL in a daemon browser session.
+A local desktop connection uses a separate native page. Agent commands use the saved URL in a daemon browser session.
 
 ### Close Browser
 
@@ -138,9 +142,9 @@ Treeport does not use, import, or attach to a personal browser profile.
 
 After an application or daemon restart, Treeport opens the saved URL in a new empty browser session.
 
-### Understand web-client limits
+### Understand streamed Browser limits
 
-The streamed Browser in a web client does not support these features:
+The streamed Browser in a web client or remote desktop connection does not support these features:
 
 - streamed audio;
 - downloads;

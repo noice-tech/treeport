@@ -20,17 +20,9 @@ const browserTicketResponseSchema = z.object({
   error: z.object({ message: z.string().optional() }).optional()
 })
 
-export interface BrowserPanelBounds {
-  x: number
-  y: number
-  width: number
-  height: number
-}
-
 export interface BrowserPanelConnection {
   dispose(): void
   send(message: BrowserClientMessage): void
-  setBounds(bounds: BrowserPanelBounds): void
   setVisible(visible: boolean): void
 }
 
@@ -183,7 +175,6 @@ export function connectBrowserPanel(
         pendingCommands.shift()
       }
     },
-    setBounds() {},
     setVisible(nextVisible) {
       currentVisible = nextVisible
       if (ready) {

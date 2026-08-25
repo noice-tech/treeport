@@ -1,6 +1,7 @@
 @import '@fontsource-variable/inter';
 @import '@xterm/xterm/css/xterm.css';
 @import 'tailwindcss';
+@source './';
 
 @theme {
   --font-sans: 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
