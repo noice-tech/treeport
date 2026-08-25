@@ -50,7 +50,6 @@ type TreeportDesktopBridge = Readonly<{
     panelId: string,
     command: TreeportDesktopBrowserCommand
   ) => void
-  resetBrowser: (panelId: string) => Promise<TreeportDesktopBrowserState | null>
   requestBrowserClose: (panelId: string, force: boolean) => Promise<boolean>
   disposeBrowser: (panelId: string) => void
   onBrowserState: (

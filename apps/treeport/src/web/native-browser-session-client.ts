@@ -152,9 +152,9 @@ export function connectNativeBrowserPanel(
       return
     }
 
-    handlers.message({ type: 'ready', state: sessionState(state) })
     bridge.setBrowserBounds(panel.id, currentBounds)
     bridge.setBrowserVisible(panel.id, currentVisible)
+    handlers.message({ type: 'ready', state: sessionState(state) })
     persist(state)
   }, reportError)
 
@@ -172,12 +172,6 @@ export function connectNativeBrowserPanel(
         message.type === 'stop'
       ) {
         bridge.sendBrowserCommand(panel.id, message)
-      } else if (message.type === 'reset') {
-        void bridge.resetBrowser(panel.id).then((state) => {
-          if (state && !disposed) {
-            receiveState(state)
-          }
-        }, reportError)
       }
     },
     setBounds(bounds) {

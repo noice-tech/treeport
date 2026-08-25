@@ -86,6 +86,12 @@ describe('hosted browser protocol', () => {
         .success
     ).toBe(true)
     expect(
+      browserFrameSchema.parse({
+        ...frame,
+        data: Uint8Array.from([1, 2, 3]).buffer
+      }).data
+    ).toEqual(Uint8Array.from([1, 2, 3]))
+    expect(
       browserFrameSchema.safeParse({
         ...frame,
         data: new Uint8Array(BROWSER_MAX_FRAME_BYTES + 1)

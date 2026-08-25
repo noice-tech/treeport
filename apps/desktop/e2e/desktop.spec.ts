@@ -48,6 +48,12 @@ test('connects the desktop shell, preserves native behavior, and restores render
   await fs.writeFile(sourceFilePath, 'local source')
   let healthAvailable = true
   let hostname = 'desktop-test'
+  const recoveryServer = http.createServer((_request, response) => {
+    response.setHeader('content-type', 'text/html')
+    response.end(`<!doctype html>
+      <title>Native Browser recovered</title>
+      <body>Native Browser recovered</body>`)
+  })
   const server = http.createServer((request, response) => {
     if (request.url === '/api/health') {
       if (!healthAvailable) {
@@ -227,46 +233,6 @@ test('connects the desktop shell, preserves native behavior, and restores render
       )
       .toContain('Native Browser start')
 
-    await electronApp.evaluate(({ webContents }, targetUrl) => {
-      const browser = webContents
-        .getAllWebContents()
-        .find((contents) => contents.getURL() === targetUrl)
-      return browser?.executeJavaScript(
-        `localStorage.setItem('treeport-native-test', 'saved')`
-      )
-    }, nativeStartUrl)
-    await electronApp.evaluate(
-      async ({ webContents }, input) => {
-        const guest = webContents
-          .getAllWebContents()
-          .find((contents) => contents.getURL() === input.workspaceUrl)
-        return guest?.executeJavaScript(`
-          window.treeportDesktop.resetBrowser(${JSON.stringify(input.panelId)})
-            .then(() => window.treeportDesktop.sendBrowserCommand(
-              ${JSON.stringify(input.panelId)},
-              { type: 'navigate', url: ${JSON.stringify(input.startUrl)} }
-            ))
-        `)
-      },
-      {
-        workspaceUrl,
-        panelId: nativePanelId,
-        startUrl: nativeStartUrl
-      }
-    )
-    await expect
-      .poll(() =>
-        electronApp!.evaluate(({ webContents }, targetUrl) => {
-          const browser = webContents
-            .getAllWebContents()
-            .find((contents) => contents.getURL() === targetUrl)
-          return browser?.executeJavaScript(
-            `localStorage.getItem('treeport-native-test')`
-          )
-        }, nativeStartUrl)
-      )
-      .toBeNull()
-
     await electronApp.evaluate(
       ({ webContents }, input) => {
         const guest = webContents
@@ -322,6 +288,71 @@ test('connects the desktop shell, preserves native behavior, and restores render
       )
       .toBe(true)
 
+    await new Promise<void>((resolve) =>
+      recoveryServer.listen(0, '127.0.0.1', resolve)
+    )
+    const recoveryPort = serverPort(recoveryServer.address())
+    const recoveryUrl = `http://127.0.0.1:${recoveryPort}/`
+    await new Promise<void>((resolve) => recoveryServer.close(() => resolve()))
+    await electronApp.evaluate(
+      ({ webContents }, input) => {
+        const guest = webContents
+          .getAllWebContents()
+          .find((contents) => contents.getURL() === input.workspaceUrl)
+        return guest?.executeJavaScript(`
+          window.treeportDesktop.sendBrowserCommand(
+            ${JSON.stringify(input.panelId)},
+            { type: 'navigate', url: ${JSON.stringify(input.recoveryUrl)} }
+          )
+        `)
+      },
+      {
+        workspaceUrl,
+        panelId: nativePanelId,
+        recoveryUrl
+      }
+    )
+    await expect
+      .poll(() =>
+        electronApp!.evaluate(({ webContents }, targetUrl) => {
+          const browser = webContents
+            .getAllWebContents()
+            .find((contents) => contents.getURL() === targetUrl)
+          return browser?.executeJavaScript(`({
+            heading: document.querySelector('h1')?.textContent,
+            code: document.querySelector('code')?.textContent,
+            reload: document.querySelector('button')?.textContent
+          })`)
+        }, recoveryUrl)
+      )
+      .toEqual({
+        heading: 'This site cannot be reached',
+        code: 'ERR_CONNECTION_REFUSED',
+        reload: 'Reload'
+      })
+
+    await new Promise<void>((resolve) =>
+      recoveryServer.listen(recoveryPort, '127.0.0.1', resolve)
+    )
+    await electronApp.evaluate(({ webContents }, targetUrl) => {
+      const browser = webContents
+        .getAllWebContents()
+        .find((contents) => contents.getURL() === targetUrl)
+      return browser?.executeJavaScript(
+        `document.querySelector('button')?.click()`
+      )
+    }, recoveryUrl)
+    await expect
+      .poll(() =>
+        electronApp!.evaluate(({ webContents }, targetUrl) => {
+          const browser = webContents
+            .getAllWebContents()
+            .find((contents) => contents.getURL() === targetUrl)
+          return browser?.executeJavaScript('document.body.textContent')
+        }, recoveryUrl)
+      )
+      .toContain('Native Browser recovered')
+
     expect(
       await electronApp.evaluate(
         async ({ webContents }, input) => {
@@ -342,7 +373,7 @@ test('connects the desktop shell, preserves native behavior, and restores render
             webContents
               .getAllWebContents()
               .some((contents) => contents.getURL() === targetUrl),
-          nativeProtectedUrl
+          recoveryUrl
         )
       )
       .toBe(false)
@@ -826,7 +857,10 @@ test('connects the desktop shell, preserves native behavior, and restores render
     await expect(unavailableHeading).toBeVisible()
   } finally {
     await electronApp?.close().catch(() => undefined)
-    await new Promise<void>((resolve) => server.close(() => resolve()))
+    await Promise.all([
+      new Promise<void>((resolve) => server.close(() => resolve())),
+      new Promise<void>((resolve) => recoveryServer.close(() => resolve()))
+    ])
     await fs.rm(userData, { recursive: true, force: true })
   }
 })

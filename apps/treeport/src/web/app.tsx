@@ -146,6 +146,28 @@ function WorkspaceApp() {
   const [webPanelRuntimeTitles, setWebPanelRuntimeTitles] = useState<
     Record<string, string>
   >({})
+  const [browserPanelLoading, setBrowserPanelLoading] = useState<
+    Record<string, boolean>
+  >({})
+  const updateBrowserPanelLoading = useCallback(
+    (panelId: string, loading: boolean) => {
+      setBrowserPanelLoading((current) => {
+        if (Boolean(current[panelId]) === loading) {
+          return current
+        }
+
+        const next = { ...current }
+        if (loading) {
+          next[panelId] = true
+        } else {
+          delete next[panelId]
+        }
+
+        return next
+      })
+    },
+    []
+  )
   const setWebPanelRuntimeTitle = useCallback(
     (panelId: string, title: string | null) => {
       setWebPanelRuntimeTitles((current) => {
@@ -167,16 +189,26 @@ function WorkspaceApp() {
     []
   )
   useEffect(() => {
-    const panelIds = new Set(
-      projects.flatMap((project) =>
-        project.worktrees.flatMap((worktree) =>
-          worktree.panels
-            .filter((panel) => panel.kind === 'web')
-            .map((panel) => panel.id)
-        )
-      )
+    const panels = projects.flatMap((project) =>
+      project.worktrees.flatMap((worktree) => worktree.panels)
+    )
+    const panelIds = new Set(panels.map((panel) => panel.id))
+    const webPanelIds = new Set(
+      panels.filter((panel) => panel.kind === 'web').map((panel) => panel.id)
     )
     setWebPanelRuntimeTitles((current) => {
+      const removedIds = Object.keys(current).filter(
+        (panelId) => !webPanelIds.has(panelId)
+      )
+      if (removedIds.length === 0) {
+        return current
+      }
+
+      const next = { ...current }
+      removedIds.forEach((panelId) => delete next[panelId])
+      return next
+    })
+    setBrowserPanelLoading((current) => {
       const removedIds = Object.keys(current).filter(
         (panelId) => !panelIds.has(panelId)
       )
@@ -977,6 +1009,7 @@ function WorkspaceApp() {
               : (selectedPanel?.id ?? null)
           }
           webPanelRuntimeTitles={webPanelRuntimeTitles}
+          browserPanelLoading={browserPanelLoading}
           selectedPendingTerminalId={
             terminalWorkflows.selectedPendingTerminal?.id ?? null
           }
@@ -1019,6 +1052,7 @@ function WorkspaceApp() {
               panel={panel}
               active={active}
               autoFocusBlocked={autoFocusBlocked}
+              onLoadingChange={updateBrowserPanelLoading}
             />
           ) : (
             <WebPanelWorkspace

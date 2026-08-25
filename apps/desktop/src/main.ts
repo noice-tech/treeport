@@ -343,6 +343,80 @@ function createNativeBrowser(
       refreshState()
     }
   })
+  contents.on(
+    'did-fail-load',
+    (_event, _errorCode, errorDescription, validatedUrl, isMainFrame) => {
+      if (!isMainFrame || errorDescription === 'ERR_ABORTED') {
+        return
+      }
+
+      const parsedUrl = browserUrlSchema.safeParse(validatedUrl)
+      if (!parsedUrl.success) {
+        return
+      }
+
+      const failedUrl = new URL(parsedUrl.data).href
+      if (contents.getURL() !== failedUrl) {
+        return
+      }
+
+      const host = new URL(failedUrl).hostname
+      const detail =
+        errorDescription === 'ERR_CONNECTION_REFUSED'
+          ? `${host} refused the connection.`
+          : 'Treeport could not load this page.'
+      const script = `(() => {
+        if (window.location.href !== 'chrome-error://chromewebdata/') {
+          return false
+        }
+
+        document.documentElement.lang = 'en'
+        document.title = ${JSON.stringify(host)}
+        const style = document.createElement('style')
+        style.textContent = ${JSON.stringify(`
+          :root { color-scheme: light dark; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+          body { min-height: 100vh; margin: 0; background: #fff; color: #202124; }
+          main { box-sizing: border-box; width: min(100%, 640px); margin: 0 auto; padding: clamp(4rem, 14vh, 8rem) 2rem 3rem; }
+          h1 { margin: 0 0 1rem; font-size: 1.75rem; font-weight: 500; line-height: 1.25; }
+          p { margin: 0 0 0.75rem; color: #5f6368; font-size: 0.95rem; line-height: 1.5; }
+          button { margin: 1rem 0 1.5rem; border: 0; border-radius: 999px; padding: 0.65rem 1.15rem; background: #1a73e8; color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
+          button:focus-visible { outline: 3px solid #8ab4f8; outline-offset: 3px; }
+          code { color: #5f6368; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.8rem; }
+          @media (prefers-color-scheme: dark) {
+            body { background: #202124; color: #e8eaed; }
+            p, code { color: #9aa0a6; }
+            button { background: #8ab4f8; color: #202124; }
+          }
+        `)}
+        const main = document.createElement('main')
+        const heading = document.createElement('h1')
+        heading.textContent = 'This site cannot be reached'
+        const detail = document.createElement('p')
+        detail.textContent = ${JSON.stringify(detail)}
+        const suggestion = document.createElement('p')
+        suggestion.textContent =
+          'Make sure that the server is running and that the address is correct.'
+        const reload = document.createElement('button')
+        reload.type = 'button'
+        reload.textContent = 'Reload'
+        reload.addEventListener('click', () => window.location.reload())
+        const code = document.createElement('code')
+        code.textContent = ${JSON.stringify(errorDescription)}
+        main.append(heading, detail, suggestion, reload, code)
+        document.head.replaceChildren(style)
+        document.body.replaceChildren(main)
+        return true
+      })()`
+      void contents.executeJavaScript(script).then(
+        (rendered) => {
+          if (rendered) {
+            refreshState()
+          }
+        },
+        () => undefined
+      )
+    }
+  )
   contents.on('page-title-updated', refreshState)
   contents.on('destroyed', () => {
     if (nativeBrowsers.get(panelId) === entry) {
@@ -1335,9 +1409,6 @@ function registerIpc(): void {
 
     entry.visible = parsed.data.visible
     applyNativeBrowserLayout(entry)
-    if (entry.visible) {
-      entry.view.webContents.focus()
-    }
   })
   ipcMain.on('native-browser:command', (event, value) => {
     const parsed = nativeBrowserCommandSchema.safeParse(value)
@@ -1371,36 +1442,6 @@ function registerIpc(): void {
     } else if (command.type === 'stop') {
       contents.stop()
     }
-  })
-  ipcMain.handle('native-browser:reset', async (event, value) => {
-    const parsed = nativeBrowserPanelSchema.safeParse(value)
-    if (!parsed.success) {
-      return null
-    }
-
-    const entry = authorizedNativeBrowser(event, parsed.data.panelId)
-    if (!entry) {
-      return null
-    }
-
-    const owner = entry.owner
-    const bounds = entry.bounds
-    const visible = entry.visible
-    await disposeNativeBrowser(entry, true)
-    if (owner.isDestroyed() || activeGuest !== owner) {
-      return null
-    }
-
-    const replacement = createNativeBrowser(
-      parsed.data.panelId,
-      'about:blank',
-      owner
-    )
-    replacement.bounds = bounds
-    replacement.visible = visible
-    applyNativeBrowserLayout(replacement)
-    await replacement.ready
-    return nativeBrowserState(replacement)
   })
   ipcMain.handle('native-browser:request-close', async (event, value) => {
     const parsed = nativeBrowserCloseSchema.safeParse(value)

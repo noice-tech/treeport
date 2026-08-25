@@ -3,6 +3,11 @@ interface TreeportTestSocketMessage {
   data?: string
 }
 
+interface TreeportTestBrowserCommand {
+  type: string
+  [key: string]: unknown
+}
+
 interface TreeportTestTerminalState {
   terminalId: string
   cols: number
@@ -31,6 +36,7 @@ type TreeportTestDesktopCommand =
 
 interface Window {
   __attentionRequests: number
+  __browserCommands: TreeportTestBrowserCommand[]
   __browserNavigationCompleted: string | null
   __delayTakeControl: boolean
   __dispatchDesktopCommand(command: TreeportTestDesktopCommand): void
@@ -47,6 +53,7 @@ interface Window {
   __pasteTerminalFile(): { files: number; prevented: boolean }
   __releaseTakeControl: (() => void) | null
   __repeatBrowserState(): void
+  __setBrowserLoading(loading: boolean): void
   __restoreStorageGetItem(): void
   __suppressInitialTitle: boolean
   __terminalStateListener: boolean

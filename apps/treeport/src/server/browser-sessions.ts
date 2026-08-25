@@ -959,14 +959,10 @@ export class BrowserSessionManager {
         }
 
         try {
-          if (queuedMessage.type === 'reset') {
-            await this.resetSession(session)
-          } else {
-            const browser = await this.browserFor(session)
-            await browser.command(queuedMessage)
-            this.queuePanelState(session, browser.state)
-            await this.waitForPanelState(session)
-          }
+          const browser = await this.browserFor(session)
+          await browser.command(queuedMessage)
+          this.queuePanelState(session, browser.state)
+          await this.waitForPanelState(session)
         } catch (cause) {
           attachment.transport.sendMessage({
             type: 'navigationError',
@@ -1027,23 +1023,6 @@ export class BrowserSessionManager {
       attachment.transport.sendMessage({ type: 'closed', reason })
       attachment.transport.disconnect()
     }
-  }
-
-  private async resetSession(session: BrowserSession): Promise<void> {
-    session.closing = true
-    this.stopScheduler(session, 'Browser reset.')
-    await this.waitForPanelState(session)
-    await this.service.updateBrowserPanelState(session.panelId, {
-      url: 'about:blank',
-      title: 'Browser'
-    })
-    session.persistence.pending = null
-    session.persistence.persistedUrl = 'about:blank'
-    session.persistence.persistedTitle = 'Browser'
-    await this.destroySession(
-      session,
-      'Browser reset; reconnecting to a new empty session.'
-    )
   }
 
   close(connectionId: string): void {

@@ -1,5 +1,5 @@
-import type { ReactNode } from 'react'
-import { CrownIcon, GitBranchIcon } from 'lucide-react'
+import { useEffect, useState, type ReactNode } from 'react'
+import { CrownIcon, GitBranchIcon, LoaderCircleIcon } from 'lucide-react'
 import {
   ArrowPathIcon,
   FolderIcon,
@@ -41,6 +41,27 @@ import type {
   RemovalStage
 } from '../worktrees/worktree-workflows'
 import { SidebarAction } from './sidebar-action'
+
+function BrowserPanelLoadingIcon() {
+  const [showSpinner, setShowSpinner] = useState(false)
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setShowSpinner(true), 200)
+    return () => window.clearTimeout(timer)
+  }, [])
+
+  return showSpinner ? (
+    <LoaderCircleIcon
+      className="size-4! shrink-0 text-zinc-500 motion-safe:animate-spin min-[701px]:size-3.5!"
+      aria-hidden="true"
+    />
+  ) : (
+    <GlobeAltIcon
+      className="size-4! shrink-0 fill-zinc-500 min-[701px]:size-3.5!"
+      aria-hidden="true"
+    />
+  )
+}
 
 function WorktreeShell({
   name,
@@ -121,6 +142,7 @@ export interface WorkspaceTreeProps {
   selectedPendingTerminalId: string | null
   selectedPanelId: string | null
   webPanelRuntimeTitles: Record<string, string>
+  browserPanelLoading: Record<string, boolean>
   pendingTerminals: Array<{
     id: string
     projectId: string
@@ -159,6 +181,7 @@ export function WorkspaceTree({
   selectedPendingTerminalId,
   selectedPanelId,
   webPanelRuntimeTitles,
+  browserPanelLoading,
   pendingTerminals,
   pendingWorktrees,
   pendingRemovals,
@@ -486,6 +509,9 @@ export function WorkspaceTree({
                             panel.kind === 'web'
                               ? (webPanelRuntimeTitles[panel.id] ?? panel.title)
                               : panel.title
+                          const loading =
+                            panel.kind === 'browser' &&
+                            Boolean(browserPanelLoading[panel.id])
                           const shortcutIndex =
                             selectedWorktree?.id === worktree.id &&
                             worktree.terminals.length + panelIndex < 9
@@ -525,9 +551,11 @@ export function WorkspaceTree({
                                   }}
                                   aria-label={
                                     panel.kind === 'browser'
-                                      ? title === 'Browser'
-                                        ? 'Browser'
-                                        : `${title}, Browser`
+                                      ? `${
+                                          title === 'Browser'
+                                            ? 'Browser'
+                                            : `${title}, Browser`
+                                        }${loading ? ', loading' : ''}`
                                       : `${title}, web panel`
                                   }
                                   aria-keyshortcuts={
@@ -537,10 +565,14 @@ export function WorkspaceTree({
                                   }
                                 >
                                   {panel.kind === 'browser' ? (
-                                    <GlobeAltIcon
-                                      className="size-4! shrink-0 fill-zinc-500 min-[701px]:size-3.5!"
-                                      aria-hidden="true"
-                                    />
+                                    loading ? (
+                                      <BrowserPanelLoadingIcon />
+                                    ) : (
+                                      <GlobeAltIcon
+                                        className="size-4! shrink-0 fill-zinc-500 min-[701px]:size-3.5!"
+                                        aria-hidden="true"
+                                      />
+                                    )
                                   ) : (
                                     <WindowIcon
                                       className="size-4! shrink-0 fill-zinc-500 min-[701px]:size-3.5!"

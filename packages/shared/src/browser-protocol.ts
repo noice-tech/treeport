@@ -60,8 +60,7 @@ export const browserClientMessageSchema = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('frameAck'),
     sequence: z.number().int().positive()
-  }),
-  z.strictObject({ type: z.literal('reset') })
+  })
 ])
 
 export type BrowserClientMessage = z.infer<typeof browserClientMessageSchema>
@@ -112,7 +111,10 @@ export const browserFrameSchema = z.strictObject({
   width: z.number().int().positive(),
   height: z.number().int().positive(),
   data: z
-    .instanceof(Uint8Array)
+    .union([z.instanceof(Uint8Array), z.instanceof(ArrayBuffer)])
+    .transform((value) =>
+      value instanceof Uint8Array ? value : new Uint8Array(value)
+    )
     .refine((value) => value.byteLength <= BROWSER_MAX_FRAME_BYTES)
 })
 

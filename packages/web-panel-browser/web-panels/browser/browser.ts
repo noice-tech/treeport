@@ -37,11 +37,19 @@ const frame = document.querySelector<HTMLIFrameElement>('iframe')!
 
 const browserUrl = z.unknown().transform((value): URL | null => {
   const parsed = z.string().max(4_096).safeParse(value)
-  if (!parsed.success || !URL.canParse(parsed.data)) {
+  if (!parsed.success) {
     return null
   }
 
-  const url = new URL(parsed.data)
+  const input = parsed.data.trim()
+  const candidate = /^[a-z][a-z\d+.-]*:\/\//i.test(input)
+    ? input
+    : `http://${input}`
+  if (!URL.canParse(candidate)) {
+    return null
+  }
+
+  const url = new URL(candidate)
   return (url.protocol === 'http:' || url.protocol === 'https:') &&
     url.username === '' &&
     url.password === ''
@@ -330,7 +338,7 @@ void Promise.all([
         input.value = parsedInput.success
           ? parsedInput.data
           : 'http://localhost:3000/'
-        showError('Enter an absolute HTTP or HTTPS URL without credentials.')
+        showError('Enter an HTTP or HTTPS address without credentials.')
       }
     }
 
@@ -340,7 +348,7 @@ void Promise.all([
       event.preventDefault()
       const url = browserUrl(input.value.trim())
       if (!url) {
-        showError('Enter an absolute HTTP or HTTPS URL without credentials.')
+        showError('Enter an HTTP or HTTPS address without credentials.')
         return
       }
 

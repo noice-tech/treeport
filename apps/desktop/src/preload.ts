@@ -145,11 +145,6 @@ const desktopBridge = Object.freeze({
   sendBrowserCommand(panelId: string, command: DesktopBrowserCommand) {
     ipcRenderer.send('native-browser:command', { panelId, command })
   },
-  resetBrowser(panelId: string): Promise<DesktopBrowserState | null> {
-    return ipcRenderer
-      .invoke('native-browser:reset', { panelId })
-      .then((value) => desktopBrowserStateSchema.nullable().parse(value))
-  },
   requestBrowserClose(panelId: string, force: boolean): Promise<boolean> {
     return ipcRenderer
       .invoke('native-browser:request-close', { panelId, force })

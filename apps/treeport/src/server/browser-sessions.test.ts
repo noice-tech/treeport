@@ -418,36 +418,6 @@ describe('Browser sessions', () => {
     await value.manager.dispose()
   })
 
-  it('confirms reset through the client and clears durable state before reconnecting', async () => {
-    const value = fixture(null, {
-      panelUrl: 'https://example.com/session',
-      panelTitle: 'Session'
-    })
-    const client = value.transport('client')
-    await value.manager.accept(
-      await value.manager.issueTicket('panel_browser', 'client'),
-      client.transport
-    )
-    value.manager.message('client', { type: 'reset' })
-    await vi.waitFor(() =>
-      expect(value.service.updateBrowserPanelState).toHaveBeenCalledWith(
-        'panel_browser',
-        { url: 'about:blank', title: 'Browser' }
-      )
-    )
-    await vi.waitFor(() => expect(client.disconnects).toBe(1))
-
-    const reconnected = value.transport('reconnected')
-    await value.manager.accept(
-      await value.manager.issueTicket('panel_browser', 'reconnected'),
-      reconnected.transport
-    )
-    expect(browsers[1]!.commands).not.toContainEqual(
-      expect.objectContaining({ type: 'navigate' })
-    )
-    await value.manager.dispose()
-  })
-
   it('queues a user takeover until an agent command releases control', async () => {
     let finishAgent!: () => void
     const runAgentCli = vi

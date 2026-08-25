@@ -105,9 +105,7 @@ File links continue to use the desktop file flow.
 
 ### Data removal and accessibility
 
-Reset requires confirmation before Treeport deletes browser data and opens an empty session.
-
-Close runs the page-close handlers without a Treeport data warning. Treeport requests confirmation only when `beforeunload` requests it.
+Close deletes temporary browser data after it runs the page-close handlers. Treeport requests confirmation only when `beforeunload` requests it.
 
 The Treeport browser controls have accessible names and keyboard operation.
 

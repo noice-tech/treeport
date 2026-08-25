@@ -147,9 +147,9 @@ Treeport does not expose direct daemon browser-control or debugging access.
 
 The server accepts only absolute HTTP or HTTPS addresses without credentials.
 
-Resetting or closing Browser deletes its temporary browser data.
+Closing Browser deletes its temporary browser data.
 
-Reset requires confirmation. Close requires confirmation only when the site uses `beforeunload`.
+Close requires confirmation only when the site uses `beforeunload`.
 
 ## Follow these operating rules
 

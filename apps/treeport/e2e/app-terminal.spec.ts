@@ -896,7 +896,7 @@ test.describe('desktop worktree and terminal workflows', () => {
 
     await packageFrame
       .getByLabel('Application URL')
-      .fill('http://browser-app.test/start')
+      .fill('browser-app.test/start')
     const firstStorageRequest = page.waitForRequest(
       (request) =>
         request.method() === 'PUT' &&
@@ -1040,28 +1040,83 @@ test.describe('desktop worktree and terminal workflows', () => {
     await expect(
       page.getByRole('button', { name: 'Browser', exact: true })
     ).toBeVisible()
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          window.__wsInstances.some(
+            (socket) => socket.namespace === '/browsers'
+          )
+        )
+      )
+      .toBe(true)
+    await page.evaluate(() => window.__setBrowserLoading(true))
     await expect(
-      page.getByRole('heading', { name: 'Development servers' })
+      page.getByRole('button', { name: 'Browser, loading', exact: true })
     ).toBeVisible()
     await expect(
-      page.getByRole('button', {
-        name: 'Open http://localhost:5173/, vite'
-      })
+      page.getByRole('button', { name: 'Stop loading' })
+    ).toBeVisible()
+    await expect(page.getByText('Loading application…')).toHaveCount(0)
+    await page.evaluate(() => window.__setBrowserLoading(false))
+    await expect(
+      page.getByRole('button', { name: 'Browser', exact: true })
     ).toBeVisible()
     const address = page.getByRole('textbox', { name: 'Application URL' })
     await expect(address).toHaveValue('')
+    await expect(address).toBeFocused()
+    await expect(
+      page.getByRole('heading', { name: 'Development servers' })
+    ).toHaveCount(0)
 
-    await address.fill('http://localhost:4173/application')
+    await page.getByRole('button', { name: 'Development servers' }).click()
+    await expect(
+      page.getByRole('heading', { name: 'Development servers' })
+    ).toBeVisible()
+    await page
+      .getByRole('button', {
+        name: 'Open http://localhost:5173/, vite'
+      })
+      .click()
+    await expect
+      .poll(() => page.evaluate(() => window.__browserNavigationCompleted))
+      .toBe('http://localhost:5173/')
+    await expect(
+      page.getByRole('heading', { name: 'Development servers' })
+    ).toHaveCount(0)
+    await expect(address).toHaveValue('http://localhost:5173/')
+    await expect(
+      page.getByRole('button', { name: 'Copy application URL' })
+    ).toHaveCount(0)
+    await expect(
+      page.getByRole('button', { name: 'Reset', exact: true })
+    ).toHaveCount(0)
+
+    await address.fill('localhost:4173/application')
     await page.evaluate(() => window.__repeatBrowserState())
-    await expect(address).toHaveValue('http://localhost:4173/application')
+    await expect(address).toHaveValue('localhost:4173/application')
     await address.press('Enter')
     await expect
       .poll(() => page.evaluate(() => window.__browserNavigationCompleted))
       .toBe('http://localhost:4173/application')
-    await expect(
-      page.getByRole('heading', { name: 'Development servers' })
-    ).toHaveCount(0)
     await expect(address).toHaveValue('http://localhost:4173/application')
+    await page.getByLabel(/^Browser viewport/).click()
+    await expect(address).not.toBeFocused()
+    await address.click()
+    await expect(address).toHaveJSProperty('selectionStart', 0)
+    await expect(address).toHaveJSProperty(
+      'selectionEnd',
+      'http://localhost:4173/application'.length
+    )
+    await address.click({ position: { x: 100, y: 10 } })
+    await expect
+      .poll(() =>
+        address.evaluate((element) => {
+          // SAFETY: The locator resolves the address-bar textbox.
+          const input = element as HTMLInputElement
+          return input.selectionStart === input.selectionEnd
+        })
+      )
+      .toBe(true)
 
     await page.reload()
     await expect(page).toHaveURL(/\/panels\/browser_panel_1$/)
@@ -1069,8 +1124,27 @@ test.describe('desktop worktree and terminal workflows', () => {
       page.getByRole('button', { name: 'Browser', exact: true })
     ).toBeVisible()
 
+    await page.evaluate(() => {
+      window.__browserCommands = []
+    })
     await page.keyboard.press('Meta+1')
     await expect(page).toHaveURL(/\/terminals\/term_pi$/)
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          window.__browserCommands.some(
+            (command) =>
+              command.type === 'setVisible' && command.visible === false
+          )
+        )
+      )
+      .toBe(true)
+    await page.waitForTimeout(150)
+    expect(
+      await page.evaluate(() =>
+        window.__browserCommands.some((command) => command.type === 'resize')
+      )
+    ).toBe(false)
     await page.keyboard.press('Meta+2')
     await expect(page).toHaveURL(/\/panels\/browser_panel_1$/)
 

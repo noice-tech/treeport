@@ -46,9 +46,14 @@ Treeport does not request administrator access.
 ### Open a development server
 
 1. Select **Browser** from **New panel**.
-2. Select a server from **Development servers**.
+2. Select **Development servers** on the right of the address bar.
+3. Select a server.
 
-You can also enter an absolute HTTP or HTTPS URL. Press Enter to open it.
+Treeport opens a blank page and puts focus in the address bar.
+
+Enter an HTTP or HTTPS address with or without the protocol. Press Enter to open it.
+
+Treeport uses `http://` when you omit the protocol.
 
 In the desktop app, Browser requests come from the desktop computer.
 
@@ -59,6 +64,12 @@ In a web client, Browser requests come from the daemon computer.
 The target runs as a top-level page. Sites that block iframe use can run in Browser.
 
 Use the address bar, **Back**, **Forward**, and **Reload** to control the page.
+
+If a page cannot load, Browser shows the network error code.
+
+Start the target or correct the address. Then, select **Reload**.
+
+Use **Development servers** to select another server from the tree.
 
 Use pointer, keyboard, and scroll input in the viewport.
 
@@ -111,11 +122,7 @@ Web clients and agents use one control owner for the daemon browser session.
 
 The desktop app uses a separate native page. Agent commands use the saved URL in a daemon browser session.
 
-### Reset or close Browser
-
-Select **Reset** to delete temporary browser data and open an empty session.
-
-Treeport asks for confirmation before the reset.
+### Close Browser
 
 Close Browser as you close a browser tab. Treeport does not show a data-deletion confirmation.
 
@@ -142,8 +149,6 @@ The streamed page image does not supply semantic accessibility information.
 
 Use `treeport browser snapshot` when you need the page's semantic accessibility data.
 
-A copied address uses the Browser-visible URL.
-
 A daemon-local `localhost` URL can fail to open on another computer.
 
 ## Use iframe Browser
@@ -158,7 +163,9 @@ The `@treeport/web-panel-browser` package supplies iframe Browser.
 
 The page lists TCP ports that Treeport can associate with the current tree.
 
-You can also enter an absolute HTTP or HTTPS URL. Press Enter to open it.
+Enter an HTTP or HTTPS address with or without the protocol. Press Enter to open it.
+
+Treeport uses `http://` when you omit the protocol.
 
 Select **Show development servers** to return to the server list.
 

@@ -326,6 +326,7 @@ export async function mockApp(
       notifyTerminalState(state)
     }
     const scope = window
+    scope.__browserCommands = []
     scope.__browserNavigationCompleted = null
     if (!scope.__terminalStateListener) {
       scope.__terminalStateListener = true
@@ -489,6 +490,10 @@ export async function mockApp(
               type: 'state',
               state: this.browserState
             })
+          scope.__setBrowserLoading = (loading) => {
+            this.browserState = { ...this.browserState, loading }
+            scope.__repeatBrowserState()
+          }
           this.deliverSocket('message', {
             type: 'ready',
             state: this.browserState
@@ -562,6 +567,10 @@ export async function mockApp(
             data.slice('42/browsers,'.length)
           )
           if (type === 'command') {
+            scope.__browserCommands = [
+              ...(scope.__browserCommands || []),
+              payload
+            ]
             if (payload.type === 'navigate') {
               this.deliverSocket('message', {
                 type: 'controlChanged',
@@ -1453,7 +1462,7 @@ export async function mockApp(
         await route.fulfill({
           contentType: 'text/html',
           body: `<!doctype html><html><body>
-            <form><button type="button" aria-label="Show development servers">Home</button><input type="url" aria-label="Application URL" value="http://localhost:3000/" required></form>
+            <form><button type="button" aria-label="Show development servers">Home</button><input type="text" inputmode="url" aria-label="Application URL" value="http://localhost:3000/" required></form>
             <section aria-label="Development servers"><h1>Development servers</h1><p role="status">Scanning for development servers…</p><div data-servers></div><button type="button">Refresh servers</button></section>
             <div role="alert" hidden><strong>Load failed</strong><span>Check that the application is running and reachable.</span></div>
             <iframe title="Browser target" src="about:blank"></iframe>
@@ -1522,7 +1531,8 @@ export async function mockApp(
                 if (currentUrl) parent.postMessage({ source: 'treeport-panel-v1', method: 'panel.title.set', title: context.launch.input?.title || new URL(currentUrl).host }, '*');
                 document.querySelector('form').addEventListener('submit', (event) => {
                   event.preventDefault();
-                  const url = new URL(input.value).href;
+                  const address = input.value.trim();
+                  const url = new URL(address.startsWith('http://') || address.startsWith('https://') ? address : 'http://' + address).href;
                   storeUrl(url).then(() => {
                     currentUrl = url;
                     navigate(url);

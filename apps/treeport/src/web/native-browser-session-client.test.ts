@@ -14,7 +14,7 @@ function testAccess<Target extends object, Fixture extends object = object>(
 }
 
 describe('native Browser client', () => {
-  it('opens, controls, persists, resets, and closes the desktop page', async () => {
+  it('opens, controls, persists, and closes the desktop page', async () => {
     const messages: BrowserServerMessage[] = []
     const commands: Array<{
       panelId: string
@@ -50,11 +50,6 @@ describe('native Browser client', () => {
         panelId: string,
         command: TreeportDesktopBrowserCommand
       ) => commands.push({ panelId, command }),
-      resetBrowser: vi.fn(async () => ({
-        ...initialState,
-        url: 'about:blank',
-        title: ''
-      })),
       requestBrowserClose: vi.fn(async () => false),
       disposeBrowser: vi.fn(),
       onBrowserState: (listener: typeof receiveState) => {
@@ -141,13 +136,6 @@ describe('native Browser client', () => {
       )
     )
 
-    connection.send({ type: 'reset' })
-    await vi.waitFor(() =>
-      expect(messages).toContainEqual({
-        type: 'state',
-        state: expect.objectContaining({ url: 'about:blank' })
-      })
-    )
     await expect(
       requestNativeBrowserClose('panel_browser', false, bridge)
     ).resolves.toBe(false)

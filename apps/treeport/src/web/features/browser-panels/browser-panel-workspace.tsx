@@ -12,9 +12,8 @@ import {
   ArrowLeftIcon,
   ArrowPathIcon,
   ArrowRightIcon,
-  ClipboardDocumentIcon,
-  HomeIcon,
-  StopIcon
+  ServerStackIcon,
+  XMarkIcon
 } from '@heroicons/react/16/solid'
 import { z } from 'zod'
 import type {
@@ -27,7 +26,13 @@ import type {
 } from '@treeport/shared'
 import { browserUrlSchema } from '@treeport/shared'
 import { Button } from '../../components/ui/button'
+import { Empty, EmptyDescription, EmptyTitle } from '../../components/ui/empty'
 import { Input } from '../../components/ui/input'
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger
+} from '../../components/ui/popover'
 import {
   connectBrowserPanel,
   type BrowserPanelConnection
@@ -52,6 +57,15 @@ const listenerDiscoverySchema: z.ZodType<WorktreeListenerDiscovery> =
     )
   })
 
+function parseBrowserAddress(value: string): URL | null {
+  const input = value.trim()
+  const candidate = /^[a-z][a-z\d+.-]*:\/\//i.test(input)
+    ? input
+    : `http://${input}`
+  const parsed = browserUrlSchema.safeParse(candidate)
+  return parsed.success ? new URL(parsed.data) : null
+}
+
 function listenerUrl(listener: WorktreeListener): URL | null {
   let host = listener.host
   if (['*', '0.0.0.0', '::', '::1', '127.0.0.1'].includes(host)) {
@@ -67,31 +81,34 @@ function listenerUrl(listener: WorktreeListener): URL | null {
 export function BrowserPanelWorkspace({
   panel,
   active,
-  autoFocusBlocked
+  autoFocusBlocked,
+  onLoadingChange
 }: {
   panel: BrowserPanel
   active: boolean
   autoFocusBlocked: boolean
+  onLoadingChange: (panelId: string, loading: boolean) => void
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const serversPopoverRef = useRef<HTMLDivElement>(null)
   const initialPanelRef = useRef(panel)
   const inputRef = useRef<HTMLInputElement>(null)
   const connectionRef = useRef<BrowserPanelConnection | null>(null)
   const stateRef = useRef<BrowserSessionState | null>(null)
   const viewportRef = useRef({ width: 1_280, height: 800 })
   const pointerActiveRef = useRef(false)
-  const homepageRequestedRef = useRef(false)
   const addressDirtyRef = useRef(false)
   const pendingNavigationRef = useRef<{
     startUrl: string
     targetUrl: string
   } | null>(null)
   const [connectionRevision, setConnectionRevision] = useState(0)
+  const [addressFocusRevision, setAddressFocusRevision] = useState(0)
   const [state, setState] = useState<BrowserSessionState | null>(null)
   const [inputValue, setInputValue] = useState(
     panel.url === 'about:blank' ? '' : panel.url
   )
-  const [showHomepage, setShowHomepage] = useState(panel.url === 'about:blank')
+  const [serversOpen, setServersOpen] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [failure, setFailure] = useState<{
     message: string
@@ -110,59 +127,62 @@ export function BrowserPanelWorkspace({
     []
   )
 
-  const receiveMessage = useCallback((message: BrowserServerMessage) => {
-    if (
-      message.type === 'ready' ||
-      message.type === 'state' ||
-      message.type === 'controlChanged'
-    ) {
-      stateRef.current = message.state
-      setState(message.state)
-      setFailure(null)
-      setError(null)
+  const receiveMessage = useCallback(
+    (message: BrowserServerMessage) => {
+      if (
+        message.type === 'ready' ||
+        message.type === 'state' ||
+        message.type === 'controlChanged'
+      ) {
+        stateRef.current = message.state
+        setState(message.state)
 
-      const pendingNavigation = pendingNavigationRef.current
-      const validUrl = browserUrlSchema.safeParse(message.state.url).success
-      // takeControl can report the old page before the queued navigation starts.
-      const navigationStarted =
-        pendingNavigation === null ||
-        (validUrl &&
-          (message.state.url === pendingNavigation.targetUrl ||
-            message.state.url !== pendingNavigation.startUrl))
-      if (!navigationStarted) {
+        if (message.type === 'ready') {
+          setAddressFocusRevision((revision) => revision + 1)
+        }
+
+        onLoadingChange(panel.id, message.state.loading)
+        setFailure(null)
+        setError(null)
+
+        const pendingNavigation = pendingNavigationRef.current
+        const validUrl = browserUrlSchema.safeParse(message.state.url).success
+        // takeControl can report the old page before the queued navigation starts.
+        const navigationStarted =
+          pendingNavigation === null ||
+          (validUrl &&
+            (message.state.url === pendingNavigation.targetUrl ||
+              message.state.url !== pendingNavigation.startUrl))
+        if (!navigationStarted) {
+          return
+        }
+
+        pendingNavigationRef.current = null
+        if (message.state.url === 'about:blank') {
+          if (!addressDirtyRef.current) {
+            setInputValue('')
+          }
+        } else if (validUrl && !addressDirtyRef.current) {
+          setInputValue(message.state.url)
+        }
+
         return
       }
 
       pendingNavigationRef.current = null
-      if (message.state.url === 'about:blank') {
-        setShowHomepage(true)
-        if (!addressDirtyRef.current) {
-          setInputValue('')
-        }
-      } else if (validUrl) {
-        if (!homepageRequestedRef.current) {
-          setShowHomepage(false)
-        }
-
-        if (!addressDirtyRef.current) {
-          setInputValue(message.state.url)
-        }
+      onLoadingChange(panel.id, false)
+      if (message.type === 'browserUnavailable') {
+        setFailure({
+          message: message.message,
+          installCommand: message.installCommand
+        })
+        return
       }
 
-      return
-    }
-
-    pendingNavigationRef.current = null
-    if (message.type === 'browserUnavailable') {
-      setFailure({
-        message: message.message,
-        installCommand: message.installCommand
-      })
-      return
-    }
-
-    setError(message.type === 'closed' ? message.reason : message.message)
-  }, [])
+      setError(message.type === 'closed' ? message.reason : message.message)
+    },
+    [onLoadingChange, panel.id]
+  )
 
   const receiveFrame = useCallback(
     (frame: BrowserFrame) => {
@@ -215,27 +235,103 @@ export function BrowserPanelWorkspace({
   ])
 
   useEffect(() => {
-    connectionRef.current?.setVisible(
-      active && !autoFocusBlocked && !showHomepage
-    )
-  }, [active, autoFocusBlocked, showHomepage])
+    connectionRef.current?.setVisible(active && !autoFocusBlocked)
+  }, [active, autoFocusBlocked])
 
   useEffect(() => {
     const canvas = canvasRef.current
-    if (!canvas) {
+    if (!canvas || !active) {
       return
     }
 
     let timer: ReturnType<typeof setTimeout> | null = null
-    const observer = new ResizeObserver(([entry]) => {
-      if (!entry) {
+    let animationFrame: number | null = null
+    const reportBounds = () => {
+      const bounds = canvas.getBoundingClientRect()
+      if (bounds.width <= 0 || bounds.height <= 0) {
         return
       }
 
-      if (timer) {
-        clearTimeout(timer)
+      let visibleBounds = {
+        x: bounds.left,
+        y: bounds.top,
+        width: bounds.width,
+        height: bounds.height
+      }
+      const popoverBounds = serversPopoverRef.current?.getBoundingClientRect()
+      if (nativeBrowser && serversOpen && popoverBounds) {
+        const gap = 8
+        const overlapWidth =
+          Math.min(bounds.right, popoverBounds.right) -
+          Math.max(bounds.left, popoverBounds.left)
+        const overlapHeight =
+          Math.min(bounds.bottom, popoverBounds.bottom) -
+          Math.max(bounds.top, popoverBounds.top)
+        if (overlapWidth > 0 && overlapHeight > 0) {
+          const candidates = [
+            {
+              x: bounds.left,
+              y: bounds.top,
+              width: Math.max(0, popoverBounds.left - gap - bounds.left),
+              height: bounds.height
+            },
+            {
+              x: Math.min(bounds.right, popoverBounds.right + gap),
+              y: bounds.top,
+              width: Math.max(0, bounds.right - popoverBounds.right - gap),
+              height: bounds.height
+            },
+            {
+              x: bounds.left,
+              y: bounds.top,
+              width: bounds.width,
+              height: Math.max(0, popoverBounds.top - gap - bounds.top)
+            },
+            {
+              x: bounds.left,
+              y: Math.min(bounds.bottom, popoverBounds.bottom + gap),
+              width: bounds.width,
+              height: Math.max(0, bounds.bottom - popoverBounds.bottom - gap)
+            }
+          ]
+          visibleBounds = candidates.reduce(
+            (largest, candidate) =>
+              candidate.width * candidate.height >
+              largest.width * largest.height
+                ? candidate
+                : largest,
+            { x: bounds.left, y: bounds.top, width: 0, height: 0 }
+          )
+        }
       }
 
+      connectionRef.current?.setBounds(visibleBounds)
+    }
+    const reportWindowBounds = () => {
+      if (animationFrame !== null) {
+        cancelAnimationFrame(animationFrame)
+      }
+
+      animationFrame = requestAnimationFrame(() => {
+        animationFrame = null
+        reportBounds()
+      })
+    }
+    const observer = new ResizeObserver(([entry]) => {
+      if (timer) {
+        clearTimeout(timer)
+        timer = null
+      }
+
+      if (
+        !entry ||
+        entry.contentRect.width <= 0 ||
+        entry.contentRect.height <= 0
+      ) {
+        return
+      }
+
+      reportBounds()
       timer = setTimeout(() => {
         const viewport = {
           width: Math.max(
@@ -248,24 +344,32 @@ export function BrowserPanelWorkspace({
           )
         }
         viewportRef.current = viewport
-        const bounds = canvas.getBoundingClientRect()
-        connectionRef.current?.setBounds({
-          x: bounds.left,
-          y: bounds.top,
-          width: bounds.width,
-          height: bounds.height
-        })
         send({ type: 'resize', ...viewport })
       }, 100)
     })
     observer.observe(canvas)
+    const popoverObserver = nativeBrowser
+      ? new ResizeObserver(reportBounds)
+      : null
+    if (serversPopoverRef.current) {
+      popoverObserver?.observe(serversPopoverRef.current)
+    }
+
+    window.addEventListener('resize', reportWindowBounds)
+    reportBounds()
     return () => {
       observer.disconnect()
+      popoverObserver?.disconnect()
+      window.removeEventListener('resize', reportWindowBounds)
       if (timer) {
         clearTimeout(timer)
       }
+
+      if (animationFrame !== null) {
+        cancelAnimationFrame(animationFrame)
+      }
     }
-  }, [send])
+  }, [active, nativeBrowser, send, serversOpen])
 
   /* eslint-disable react-you-might-not-need-an-effect/no-event-handler -- Workspace route activation owns Browser focus. */
   useEffect(() => {
@@ -273,10 +377,27 @@ export function BrowserPanelWorkspace({
       return
     }
 
-    if (showHomepage) {
-      inputRef.current?.focus()
+    let frame = 0
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const focusAddress = () => {
+      if (document.querySelector('[role="dialog"]')) {
+        frame = window.requestAnimationFrame(focusAddress)
+        return
+      }
+
+      timer = setTimeout(() => {
+        inputRef.current?.focus()
+        inputRef.current?.select()
+      }, 50)
     }
-  }, [active, autoFocusBlocked, showHomepage])
+    frame = window.requestAnimationFrame(focusAddress)
+    return () => {
+      window.cancelAnimationFrame(frame)
+      if (timer) {
+        clearTimeout(timer)
+      }
+    }
+  }, [active, addressFocusRevision, autoFocusBlocked])
   /* eslint-enable react-you-might-not-need-an-effect/no-event-handler */
 
   useEffect(() => {
@@ -330,32 +451,22 @@ export function BrowserPanelWorkspace({
     }
   }, [panel.id])
 
-  /* eslint-disable react-you-might-not-need-an-effect/no-event-handler -- A restored blank Browser needs discovery without a local click. */
-  useEffect(() => {
-    if (showHomepage && listeners === null && !listenersLoading) {
-      void discoverListeners()
-    }
-  }, [discoverListeners, listeners, listenersLoading, showHomepage])
-  /* eslint-enable react-you-might-not-need-an-effect/no-event-handler */
-
   const navigate = (value: string) => {
-    const parsed = browserUrlSchema.safeParse(value.trim())
-    if (!parsed.success) {
-      setError('Enter an absolute HTTP or HTTPS URL without credentials.')
+    const parsed = parseBrowserAddress(value)
+    if (!parsed) {
+      setError('Enter an HTTP or HTTPS address without credentials.')
       return
     }
 
-    const targetUrl = new URL(parsed.data).href
+    const targetUrl = parsed.href
     setError(null)
     setFailure(null)
-    homepageRequestedRef.current = false
     addressDirtyRef.current = false
     pendingNavigationRef.current = {
       startUrl: stateRef.current?.url ?? panel.url,
       targetUrl
     }
     setInputValue(targetUrl)
-    setShowHomepage(false)
     send({ type: 'takeControl' })
     send({ type: 'navigate', url: targetUrl })
   }
@@ -435,22 +546,34 @@ export function BrowserPanelWorkspace({
         aria-label="Browser controls"
         onSubmit={submit}
       >
+        {state?.loading ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            aria-label="Stop loading"
+            title="Stop loading"
+            disabled={!state.controlled}
+            onClick={() => send({ type: 'stop' })}
+          >
+            <XMarkIcon />
+          </Button>
+        ) : (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            aria-label="Reload application"
+            title="Reload application"
+            disabled={!state?.controlled}
+            onClick={() => send({ type: 'reload' })}
+          >
+            <ArrowPathIcon />
+          </Button>
+        )}
         <Button
           type="button"
-          variant="outline"
-          size="icon-sm"
-          aria-label="Show development servers"
-          title="Show development servers"
-          onClick={() => {
-            homepageRequestedRef.current = true
-            setShowHomepage(true)
-          }}
-        >
-          <HomeIcon />
-        </Button>
-        <Button
-          type="button"
-          variant="outline"
+          variant="ghost"
           size="icon-sm"
           aria-label="Go back"
           title="Go back"
@@ -461,7 +584,7 @@ export function BrowserPanelWorkspace({
         </Button>
         <Button
           type="button"
-          variant="outline"
+          variant="ghost"
           size="icon-sm"
           aria-label="Go forward"
           title="Go forward"
@@ -472,12 +595,25 @@ export function BrowserPanelWorkspace({
         </Button>
         <Input
           ref={inputRef}
-          type="url"
+          type="text"
+          inputMode="url"
+          autoCapitalize="none"
+          spellCheck={false}
           name="url"
           aria-label="Application URL"
-          placeholder="http://localhost:3000/"
+          className="rounded-full"
+          placeholder="localhost:3000"
           maxLength={4_096}
           value={inputValue}
+          onFocus={(event) => event.currentTarget.select()}
+          onMouseDown={(event) => {
+            if (document.activeElement === event.currentTarget) {
+              return
+            }
+
+            event.preventDefault()
+            event.currentTarget.focus()
+          }}
           onChange={(event) => {
             addressDirtyRef.current = true
             setInputValue(event.target.value)
@@ -494,71 +630,105 @@ export function BrowserPanelWorkspace({
             setInputValue(currentUrl === 'about:blank' ? '' : currentUrl)
           }}
         />
-        {state?.loading ? (
-          <Button
-            type="button"
-            variant="outline"
-            size="icon-sm"
-            aria-label="Stop loading"
-            title="Stop loading"
-            disabled={!state.controlled}
-            onClick={() => send({ type: 'stop' })}
-          >
-            <StopIcon />
-          </Button>
-        ) : (
-          <Button
-            type="button"
-            variant="outline"
-            size="icon-sm"
-            aria-label="Reload application"
-            title="Reload application"
-            disabled={!state?.controlled}
-            onClick={() => send({ type: 'reload' })}
-          >
-            <ArrowPathIcon />
-          </Button>
-        )}
-        <Button
-          type="button"
-          variant="outline"
-          size="icon-sm"
-          aria-label="Copy application URL"
-          title="Copy application URL"
-          disabled={!state || state.url === 'about:blank'}
-          onClick={() => {
-            if (state && state.url !== 'about:blank') {
-              void navigator.clipboard
-                .writeText(state.url)
-                .catch((cause) =>
-                  setError(
-                    cause instanceof Error
-                      ? cause.message
-                      : 'Could not copy the address.'
-                  )
-                )
+        <Popover
+          open={serversOpen}
+          onOpenChange={(open) => {
+            setServersOpen(open)
+            if (open && !listenersLoading) {
+              void discoverListeners()
             }
           }}
         >
-          <ClipboardDocumentIcon />
-        </Button>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          disabled={!state?.controlled}
-          onClick={() => {
-            if (
-              window.confirm(
-                'Reset this disposable browser and delete its cookies and local data?'
-              )
-            ) {
-              send({ type: 'reset' })
-            }
-          }}
-        >
-          Reset
-        </Button>
+          <PopoverTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              aria-label="Development servers"
+              title="Development servers"
+            >
+              <ServerStackIcon />
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent
+            ref={serversPopoverRef}
+            align="end"
+            className="flex max-h-[min(28rem,50dvh)] w-[min(22rem,calc(100vw-1rem))] flex-col overflow-hidden p-0"
+            aria-label="Development servers"
+          >
+            <div className="flex shrink-0 items-start justify-between gap-3 px-3 pt-3 pb-2">
+              <div className="min-w-0">
+                <h2 className="text-sm font-semibold">Development servers</h2>
+                <p className="text-xs text-zinc-400">
+                  Select a listening server from this tree.
+                </p>
+              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                aria-label="Refresh development servers"
+                title="Refresh development servers"
+                disabled={listenersLoading}
+                onClick={() => void discoverListeners()}
+              >
+                <ArrowPathIcon />
+              </Button>
+            </div>
+            <div className="min-h-0 overflow-y-auto overscroll-contain px-1.5 pb-1.5">
+              {listenersLoading ? (
+                <p className="px-2 py-4 text-sm text-zinc-400" role="status">
+                  Scanning for development servers…
+                </p>
+              ) : null}
+              {!listenersLoading && listeners && !listeners.supported ? (
+                <Empty className="min-h-28 p-4">
+                  <EmptyTitle>Server discovery unavailable</EmptyTitle>
+                  <EmptyDescription>
+                    {listeners.message ??
+                      'TCP listener discovery is unavailable.'}
+                  </EmptyDescription>
+                </Empty>
+              ) : null}
+              {!listenersLoading &&
+              listeners?.supported &&
+              discoveredServers.length === 0 ? (
+                <Empty className="min-h-28 p-4">
+                  <EmptyTitle>No development servers</EmptyTitle>
+                  <EmptyDescription>
+                    Start a server in a Treeport terminal. Then, refresh this
+                    list.
+                  </EmptyDescription>
+                </Empty>
+              ) : null}
+              {!listenersLoading && discoveredServers.length > 0 ? (
+                <ul role="list" className="flex flex-col gap-0.5">
+                  {discoveredServers.map(({ url, listener }) => (
+                    <li key={url.href} className="min-w-0">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        className="h-auto w-full justify-start px-2 py-2 text-left"
+                        aria-label={`Open ${url.href}, ${listener.command || 'unknown command'}`}
+                        onClick={() => {
+                          setServersOpen(false)
+                          navigate(url.href)
+                        }}
+                      >
+                        <span className="min-w-0">
+                          <strong className="block truncate">{url.href}</strong>
+                          <span className="mt-0.5 block truncate text-xs text-zinc-400">
+                            {listener.command || 'Unknown command'}
+                          </span>
+                        </span>
+                      </Button>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </div>
+          </PopoverContent>
+        </Popover>
       </form>
       {error ? (
         <p className="bg-red-950 px-2.5 py-1.5 text-red-200" role="alert">
@@ -636,80 +806,6 @@ export function BrowserPanelWorkspace({
             })
           }}
         />
-        {showHomepage ? (
-          <section
-            className="absolute inset-0 overflow-auto bg-zinc-950 p-5 sm:p-10"
-            aria-label="Development servers"
-          >
-            <div className="mx-auto flex max-w-3xl items-start justify-between gap-5">
-              <div>
-                <h1 className="text-xl font-semibold text-zinc-50">
-                  Development servers
-                </h1>
-                <p className="mt-1 text-zinc-400">
-                  Select a listening server from this tree.
-                </p>
-              </div>
-              <Button
-                type="button"
-                variant="outline"
-                disabled={listenersLoading}
-                onClick={() => void discoverListeners()}
-              >
-                Refresh servers
-              </Button>
-            </div>
-            <div className="mx-auto mt-6 max-w-3xl">
-              {listenersLoading ? (
-                <p role="status" className="text-zinc-400">
-                  Scanning for development servers…
-                </p>
-              ) : null}
-              {!listenersLoading && listeners && !listeners.supported ? (
-                <p role="status" className="text-zinc-400">
-                  {listeners.message ??
-                    'TCP listener discovery is unavailable.'}
-                </p>
-              ) : null}
-              {!listenersLoading &&
-              listeners?.supported &&
-              discoveredServers.length === 0 ? (
-                <p className="rounded-lg border border-dashed border-white/15 p-5 text-center text-zinc-400">
-                  No listening servers were found. Start one from a Treeport
-                  terminal, then refresh this list.
-                </p>
-              ) : null}
-              <ul className="grid gap-2">
-                {discoveredServers.map(({ url, listener }) => (
-                  <li key={url.href}>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="h-auto w-full justify-start px-3 py-2 text-left"
-                      aria-label={`Open ${url.href}, ${listener.command || 'unknown command'}`}
-                      onClick={() => navigate(url.href)}
-                    >
-                      <span className="min-w-0">
-                        <strong className="block truncate">{url.href}</strong>
-                        <span className="mt-0.5 block truncate text-xs text-zinc-400">
-                          {listener.command || 'Unknown command'}
-                        </span>
-                      </span>
-                    </Button>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </section>
-        ) : null}
-        {state?.loading && !showHomepage ? (
-          <div
-            className="pointer-events-none absolute inset-0 grid place-items-center bg-zinc-950/70 text-zinc-300"
-            role="status"
-          >
-            Loading application…
-          </div>
-        ) : null}
         {failure ? (
           <div
             className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-zinc-950 p-6 text-center text-zinc-400"
