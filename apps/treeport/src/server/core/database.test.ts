@@ -87,7 +87,7 @@ describe('SQLite migration and catalog ordering', () => {
       await database.db.get<{ count: number }>(
         sql`SELECT count(*) AS count FROM __drizzle_migrations`
       )
-    ).toEqual({ count: 12 })
+    ).toEqual({ count: 11 })
     expect(
       await database.db.get<{ count: number }>(sql`
         SELECT count(*) AS count FROM sqlite_master WHERE name='terminals'
@@ -469,7 +469,7 @@ describe('SQLite migration and catalog ordering', () => {
       await reopened.db.get<{ count: number }>(
         sql`SELECT count(*) AS count FROM __drizzle_migrations`
       )
-    ).toEqual({ count: 12 })
+    ).toEqual({ count: 11 })
 
     const backupDirectory = path.join(directory, 'database-backups')
     const [backupName] = await fs.readdir(backupDirectory)
@@ -511,7 +511,9 @@ describe('SQLite migration and catalog ordering', () => {
     await fs.cp(packagedMigrations, oldMigrations, { recursive: true })
     await Promise.all([
       fs.rm(path.join(oldMigrations, '0009_open_folders.sql')),
-      fs.rm(path.join(oldMigrations, '0010_web_panel_permission_grants.sql')),
+      fs.rm(
+        path.join(oldMigrations, '0010_browser_panels_and_permissions.sql')
+      ),
       fs.rm(path.join(oldMigrations, 'meta', '0009_snapshot.json')),
       fs.rm(path.join(oldMigrations, 'meta', '0010_snapshot.json'))
     ])
@@ -716,7 +718,9 @@ describe('SQLite migration and catalog ordering', () => {
       fs.rm(path.join(oldMigrations, '0007_dashing_pestilence.sql')),
       fs.rm(path.join(oldMigrations, '0008_recent_project_visibility.sql')),
       fs.rm(path.join(oldMigrations, '0009_open_folders.sql')),
-      fs.rm(path.join(oldMigrations, '0010_web_panel_permission_grants.sql')),
+      fs.rm(
+        path.join(oldMigrations, '0010_browser_panels_and_permissions.sql')
+      ),
       fs.rm(path.join(oldMigrations, 'meta', '0005_snapshot.json')),
       fs.rm(path.join(oldMigrations, 'meta', '0006_snapshot.json')),
       fs.rm(path.join(oldMigrations, 'meta', '0007_snapshot.json')),
@@ -888,6 +892,6 @@ describe('SQLite migration and catalog ordering', () => {
       await recovered.db.get<{ count: number }>(
         sql`SELECT count(*) AS count FROM __drizzle_migrations`
       )
-    ).toEqual({ count: 12 })
+    ).toEqual({ count: 11 })
   })
 })
