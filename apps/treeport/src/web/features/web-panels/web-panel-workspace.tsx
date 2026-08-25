@@ -110,6 +110,10 @@ export function WebPanelWorkspace({
         return
       }
 
+      if (event.data?.source !== 'treeport-panel-v1') {
+        return
+      }
+
       const titleMessage = panelTitleMessageSchema.safeParse(event.data)
       if (titleMessage.success) {
         onTitleChange(
@@ -202,7 +206,7 @@ export function WebPanelWorkspace({
     }
     window.addEventListener('message', receive)
     return () => window.removeEventListener('message', receive)
-  }, [onSelectWorkspace, onTitleChange, panel.id])
+  }, [active, onSelectWorkspace, onTitleChange, panel.id, panel.permissions])
 
   return (
     <Activity mode={active ? 'visible' : 'hidden'}>

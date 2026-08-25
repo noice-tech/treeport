@@ -9,15 +9,21 @@ import { HTTPException } from 'hono/http-exception'
 import { requestId, type RequestIdVariables } from 'hono/request-id'
 import { validator } from 'hono/validator'
 import { z } from 'zod'
+import { getConnInfo } from '@hono/node-server/conninfo'
 import { serveStatic } from '@hono/node-server/serve-static'
 import { zValidator } from '@hono/zod-validator'
 import {
   browseDirectoryQuerySchema,
+  browserAgentCommandSchema,
+  browserOwnerTicketRequestSchema,
+  browserTicketRequestSchema,
+  createBrowserPanelSchema,
   createTerminalPresetSchema,
   createTerminalSchema,
   createWebPanelSchema,
   deleteTerminalPresetSchema,
   openWebPanelSchema,
+  openBrowserPanelFromTerminalSchema,
   deleteWebPanelStorageSchema,
   DESKTOP_PROTOCOL_VERSION,
   getWebPanelStorageSchema,
@@ -36,7 +42,8 @@ import {
   terminalCaptureQuerySchema,
   updateProjectSchema,
   updateTerminalPresetSchema,
-  updateTerminalSchema
+  updateTerminalSchema,
+  updateWebPanelPermissionGrantSchema
 } from '@treeport/shared'
 import type { ApiErrorBody } from '@treeport/shared'
 import type { AppConfig, TmuxAdapter, TreeportService } from './core/index'
@@ -47,6 +54,8 @@ import {
 } from './core/web-panel-csp'
 import type { ApplicationUpdateManager } from './application-update'
 import { TerminalMetadataManager } from './terminal-metadata'
+import type { BrowserSessionManager } from './browser-sessions'
+import { isLoopbackAddress } from './request-security'
 
 const UPLOAD_MIME_EXTENSIONS = new Map([
   ['application/pdf', 'pdf'],
@@ -76,10 +85,10 @@ const operationQuerySchema = z.object({
     .optional(),
   projectId: z.string().optional()
 })
-const discardStoredDataQuerySchema = z.object({
-  discardStoredData: z.string().optional()
+const deletePanelQuerySchema = z.object({
+  discardStoredData: z.string().optional(),
+  force: z.string().optional()
 })
-
 interface UploadFileInfo {
   path: string
   size: number
@@ -143,6 +152,7 @@ interface AppDependencies {
   tmux: TmuxAdapter
   applicationUpdate: ApplicationUpdateManager
   terminalMetadata?: TerminalMetadataManager
+  browserSessions?: BrowserSessionManager
   webDist?: string
 }
 
@@ -178,6 +188,7 @@ export function createApp({
   tmux,
   applicationUpdate,
   terminalMetadata,
+  browserSessions,
   webDist
 }: AppDependencies) {
   const app = new Hono<{ Variables: RequestIdVariables }>()
@@ -252,6 +263,133 @@ export function createApp({
       500
     )
   })
+
+  const browserApi = new Hono()
+    .get('/api/browser/status', async (context) => {
+      if (!browserSessions) {
+        throw new DomainError(
+          'BROWSER_UNAVAILABLE',
+          'Hosted browser service is unavailable',
+          503
+        )
+      }
+
+      return context.json(await browserSessions.status())
+    })
+    .post('/api/browser/install', async (context) => {
+      if (!browserSessions) {
+        throw new DomainError(
+          'BROWSER_UNAVAILABLE',
+          'Hosted browser service is unavailable',
+          503
+        )
+      }
+
+      return context.json({ message: await browserSessions.install() })
+    })
+    .delete('/api/browser/install', async (context) => {
+      if (!browserSessions) {
+        throw new DomainError(
+          'BROWSER_UNAVAILABLE',
+          'Hosted browser service is unavailable',
+          503
+        )
+      }
+
+      await browserSessions.remove()
+      return context.json({ ok: true })
+    })
+    .put(
+      '/api/worktrees/:worktreeId/web-panel-definitions/:definitionId/permission-grant',
+      jsonInput(updateWebPanelPermissionGrantSchema),
+      async (context) => {
+        const body = context.req.valid('json')
+        const definition = await service.setWebPanelPermissionGrant(
+          context.req.param('worktreeId'),
+          context.req.param('definitionId'),
+          body.granted,
+          body.permissions
+        )
+        return context.json({ definition })
+      }
+    )
+    .post(
+      '/api/panels/:panelId/browser-agent',
+      jsonInput(browserAgentCommandSchema),
+      async (context) => {
+        if (!browserSessions) {
+          throw new DomainError(
+            'BROWSER_UNAVAILABLE',
+            'Hosted browser service is unavailable',
+            503
+          )
+        }
+
+        return context.json({
+          output: await browserSessions.agentCommand(
+            context.req.param('panelId'),
+            context.req.valid('json')
+          )
+        })
+      }
+    )
+    .post(
+      '/api/panels/:panelId/browser-owner-ticket',
+      jsonInput(browserOwnerTicketRequestSchema),
+      async (context) => {
+        if (!browserSessions) {
+          throw new DomainError(
+            'BROWSER_UNAVAILABLE',
+            'Browser service is unavailable',
+            503
+          )
+        }
+
+        const remoteAddress = getConnInfo(context).remote.address
+        const proxiedIdentity = [
+          'tailscale-user-login',
+          'tailscale-user-name',
+          'tailscale-user-profile-pic'
+        ].some((name) => context.req.header(name) !== undefined)
+        if (!isLoopbackAddress(remoteAddress) || proxiedIdentity) {
+          throw new DomainError(
+            'BROWSER_LOCAL_OWNER_REQUIRED',
+            'Only a local desktop app can own this Browser.',
+            403
+          )
+        }
+
+        return context.json(
+          await browserSessions.issueOwnerTicket(
+            context.req.param('panelId'),
+            context.req.valid('json').clientId
+          )
+        )
+      }
+    )
+
+    .post(
+      '/api/panels/:panelId/browser-ticket',
+      jsonInput(browserTicketRequestSchema),
+      async (context) => {
+        if (!browserSessions) {
+          throw new DomainError(
+            'BROWSER_UNAVAILABLE',
+            'Hosted browser service is unavailable',
+            503
+          )
+        }
+
+        return context.json({
+          ticket: await browserSessions.issueTicket(
+            context.req.param('panelId'),
+            context.req.valid('json').clientId
+          )
+        })
+      }
+    )
+
+  app.route('/', browserApi)
 
   const api = new Hono()
     .get('/api/health', (context) =>
@@ -539,6 +677,36 @@ export function createApp({
       }
     )
 
+    .post(
+      '/api/worktrees/:worktreeId/browser-panels',
+      jsonInput(createBrowserPanelSchema),
+      async (context) => {
+        const body = context.req.valid('json')
+        return context.json(
+          await service.openBrowserPanel(
+            context.req.param('worktreeId'),
+            body.url,
+            body.sourceTerminalId ?? null,
+            null
+          ),
+          201
+        )
+      }
+    )
+
+    .post(
+      '/api/terminals/:terminalId/browser-panels/open',
+      jsonInput(openBrowserPanelFromTerminalSchema),
+      async (context) =>
+        context.json(
+          await service.openBrowserPanelFromTerminal(
+            context.req.param('terminalId'),
+            context.req.valid('json').url
+          ),
+          201
+        )
+    )
+
     .get('/api/worktrees/:worktreeId/web-panel-definitions', async (context) =>
       context.json({
         definitions: await service.listWebPanelDefinitions(
@@ -590,12 +758,23 @@ export function createApp({
 
     .delete(
       '/api/panels/:panelId',
-      queryInput(discardStoredDataQuerySchema),
+      queryInput(deletePanelQuerySchema),
       async (context) => {
-        await service.deleteWebPanel(
-          context.req.param('panelId'),
-          context.req.valid('query').discardStoredData === 'true'
+        const panelId = context.req.param('panelId')
+        const query = context.req.valid('query')
+        const canClose = await browserSessions?.requestPanelClose(
+          panelId,
+          query.force === 'true'
         )
+        if (canClose === false) {
+          throw new DomainError(
+            'BROWSER_BEFORE_UNLOAD',
+            'Changes you made may not be saved.',
+            409
+          )
+        }
+
+        await service.deletePanel(panelId, query.discardStoredData === 'true')
         return context.json({ ok: true })
       }
     )
@@ -614,9 +793,7 @@ export function createApp({
 
     .get('/api/panels/:panelId/network/listeners', async (context) =>
       context.json({
-        discovery: await service.getWebPanelListeners(
-          context.req.param('panelId')
-        )
+        discovery: await service.getPanelListeners(context.req.param('panelId'))
       })
     )
 

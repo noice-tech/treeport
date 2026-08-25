@@ -1,5 +1,10 @@
 import { z } from 'zod'
-import type { WebPanel, WebPanelInput } from '@treeport/panel-sdk'
+import type {
+  WebPanel,
+  WebPanelInput,
+  WebPanelPermission
+} from '@treeport/panel-sdk'
+import { browserUrlSchema } from './browser-protocol.js'
 import {
   terminalSizeSchema,
   type TerminalRuntimeMetadata
@@ -13,15 +18,17 @@ export type {
   WebPanelContext,
   WebPanelInput,
   WebPanelLaunch,
+  WebPanelPermission,
   WorktreeListener,
   WorktreeListenerDiscovery
 } from '@treeport/panel-sdk'
+export * from './browser-protocol.js'
 export * from './socket-protocol.js'
 export * from './terminal-protocol.js'
 
 export const PRODUCT_NAME = 'Treeport'
 export const API_VERSION = 1
-export const DESKTOP_PROTOCOL_VERSION = 2
+export const DESKTOP_PROTOCOL_VERSION = 3
 export const TERMINAL_MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 export const TERMINAL_NAME_MAX_LENGTH = 120
 export const TERMINAL_ARGV_MAX_COUNT = 128
@@ -190,7 +197,17 @@ export interface TerminalPanel {
   updatedAt: string
 }
 
-export type Panel = TerminalPanel | WebPanel
+export interface BrowserPanel {
+  id: string
+  kind: 'browser'
+  worktreeId: string
+  title: string
+  url: string
+  createdAt: string
+  updatedAt: string
+}
+
+export type Panel = TerminalPanel | WebPanel | BrowserPanel
 
 export type WebPanelSource =
   | { type: 'project' }
@@ -209,6 +226,8 @@ export interface WebPanelDefinition {
   id: string
   title: string
   source: WebPanelSource
+  permissions: WebPanelPermission[]
+  permissionsGranted: boolean
   sandbox: WebPanelSandbox
 }
 
@@ -216,6 +235,10 @@ export interface OpenWebPanelResult {
   panel: WebPanel
   created: boolean
   reused: boolean
+}
+
+export interface OpenBrowserPanelResult {
+  panel: BrowserPanel
 }
 
 export interface WorktreeRecord {
@@ -666,6 +689,20 @@ export const createWebPanelSchema = z.object({
   launchCwd: z.string().max(4096).nullable().optional()
 })
 
+export const updateWebPanelPermissionGrantSchema = z.strictObject({
+  granted: z.boolean(),
+  permissions: z.array(z.literal('same-origin'))
+})
+
+export const createBrowserPanelSchema = z.strictObject({
+  url: browserUrlSchema.optional(),
+  sourceTerminalId: z.string().min(1).max(128).nullable().optional()
+})
+
+export const openBrowserPanelFromTerminalSchema = z.strictObject({
+  url: browserUrlSchema
+})
+
 export const openWebPanelSchema = createWebPanelSchema.extend({
   newInstance: z.boolean().optional(),
   sourceTerminalId: z.string().min(1).max(128).nullable().optional()
@@ -777,6 +814,7 @@ interface ProductEventPayloadMap {
     worktreeId: string
     panelId: string
     sourceTerminalId: string | null
+    sourcePanelId: string | null
   }
   'panel.removed': { worktreeId: string; panelId: string }
   'workspace.open_requested': {

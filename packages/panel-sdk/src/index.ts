@@ -16,6 +16,8 @@ export interface WebPanelLaunch {
   cwd: string | null
 }
 
+export type WebPanelPermission = 'same-origin'
+
 /** A persistent web panel instance scoped to one tree. */
 export interface WebPanel {
   id: string
@@ -24,6 +26,7 @@ export interface WebPanel {
   definitionId: string
   title: string
   launch: WebPanelLaunch
+  permissions: WebPanelPermission[]
   sandbox: {
     allowSameOrigin: boolean
   }
@@ -154,12 +157,6 @@ interface HostShortcut {
   shortcut: 'find'
 }
 
-interface BrowserLocationSubscription {
-  source: 'treeport-browser-v1'
-  method: 'location.subscribe'
-  subscription: string
-}
-
 interface PendingRequest {
   complete(response: HostResponse): void
 }
@@ -168,49 +165,9 @@ const pending = new Map<string, PendingRequest>()
 const shortcutEvents = new EventTarget()
 let findSubscribers = 0
 let serial = 0
-let browserLocationSubscription: string | null = null
-let lastReportedBrowserLocation: string | null = null
-let browserLocationWatcherStarted = false
 
 function triggerFindShortcut() {
   shortcutEvents.dispatchEvent(new Event('find'))
-}
-
-function reportBrowserLocation() {
-  if (
-    browserLocationSubscription === null ||
-    location.href === lastReportedBrowserLocation
-  ) {
-    return
-  }
-
-  lastReportedBrowserLocation = location.href
-  parent.postMessage(
-    {
-      source: 'treeport-panel-v1',
-      method: 'browser.location.set',
-      subscription: browserLocationSubscription,
-      url: location.href
-    },
-    '*'
-  )
-}
-
-function subscribeBrowserLocation(subscription: string) {
-  browserLocationSubscription = subscription
-  lastReportedBrowserLocation = null
-  reportBrowserLocation()
-  if (browserLocationWatcherStarted) {
-    return
-  }
-
-  browserLocationWatcherStarted = true
-  addEventListener('hashchange', reportBrowserLocation)
-  addEventListener('popstate', reportBrowserLocation)
-  // SAFETY: The response belongs to the result type for this matching host method.
-  const navigation = (globalThis as { navigation?: EventTarget }).navigation
-  navigation?.addEventListener('currententrychange', reportBrowserLocation)
-  setInterval(reportBrowserLocation, 250)
 }
 
 if (parent !== self) {
@@ -250,18 +207,9 @@ if (parent !== self) {
 
 addEventListener(
   'message',
-  (
-    event: MessageEvent<
-      HostResponse | HostShortcut | BrowserLocationSubscription
-    >
-  ) => {
+  (event: MessageEvent<HostResponse | HostShortcut>) => {
     const message = event.data
     if (event.source !== parent) {
-      return
-    }
-
-    if (message?.source === 'treeport-browser-v1') {
-      subscribeBrowserLocation(message.subscription)
       return
     }
 

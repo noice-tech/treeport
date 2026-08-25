@@ -1,4 +1,5 @@
 import type {
+  BrowserPanel,
   ProjectRecord,
   TerminalRecord,
   WebPanel,
@@ -14,6 +15,18 @@ export function openRequestMatchesTerminal(
   selectedTerminalId: string | null
 ): boolean {
   return sourceTerminalId !== null && sourceTerminalId === selectedTerminalId
+}
+
+export function openRequestMatchesWorkspace(
+  sourceTerminalId: string | null,
+  sourcePanelId: string | null,
+  selectedTerminalId: string | null,
+  selectedPanelId: string | null
+): boolean {
+  return (
+    openRequestMatchesTerminal(sourceTerminalId, selectedTerminalId) ||
+    (sourcePanelId !== null && sourcePanelId === selectedPanelId)
+  )
 }
 
 export type WorkspaceTarget =
@@ -48,7 +61,7 @@ interface WorkspaceSelection {
   project: ProjectRecord | null
   worktree: WorktreeRecord | null
   terminal: TerminalRecord | null
-  panel: WebPanel | null
+  panel: BrowserPanel | WebPanel | null
 }
 
 export interface WorkspaceResolution {
@@ -149,9 +162,9 @@ function deepestWorktreeTarget(
     : worktreeTarget(project.id, worktree.id)
 }
 
-export function targetForWebPanel(
+export function targetForPanel(
   projects: ProjectRecord[],
-  panel: WebPanel
+  panel: BrowserPanel | WebPanel
 ): WorkspaceTarget | null {
   for (const project of projects) {
     const worktree = project.worktrees.find(
@@ -159,7 +172,8 @@ export function targetForWebPanel(
     )
     if (
       worktree?.panels.some(
-        (candidate) => candidate.kind === 'web' && candidate.id === panel.id
+        (candidate) =>
+          candidate.kind !== 'terminal' && candidate.id === panel.id
       )
     ) {
       return panelTarget(project.id, worktree.id, panel.id)
@@ -234,8 +248,8 @@ function selectionForTarget(
   if (target.kind === 'panel') {
     const panel =
       worktree.panels.find(
-        (candidate): candidate is WebPanel =>
-          candidate.kind === 'web' && candidate.id === target.panelId
+        (candidate): candidate is BrowserPanel | WebPanel =>
+          candidate.kind !== 'terminal' && candidate.id === target.panelId
       ) ?? null
     return { project, worktree, terminal: null, panel }
   }
@@ -346,7 +360,7 @@ function resolveTarget(
   if (requested.kind === 'panel') {
     const panel = worktree.panels.find(
       (candidate) =>
-        candidate.kind === 'web' && candidate.id === requested.panelId
+        candidate.kind !== 'terminal' && candidate.id === requested.panelId
     )
     return panel
       ? panelTarget(project.id, worktree.id, panel.id)

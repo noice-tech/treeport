@@ -174,6 +174,9 @@ export async function mockApp(
     repositoryPresetDiagnostics?: TerminalPresetDefinitionDiagnostic[]
     applicationUpdate?: ApplicationUpdateStatus
     realReviewPanel?: boolean
+    hostedBrowser?: boolean
+    browserInstallRequired?: boolean
+    browserBeforeUnload?: boolean
   } = {}
 ) {
   let reviewPanelScript = ''
@@ -293,7 +296,13 @@ export async function mockApp(
     }, options.desktopFilePaths ?? {})
   }
 
-  await page.addInitScript((initialMetadata) => {
+  const socketFixture = {
+    initialMetadata: initialTerminalMetadata,
+    hostedBrowser: options.hostedBrowser ?? false,
+    browserInstallRequired: options.browserInstallRequired ?? false
+  }
+  await page.addInitScript((fixture) => {
+    const { initialMetadata, hostedBrowser, browserInstallRequired } = fixture
     const terminalStatePrefix = '__treeport_terminal_state__:'
     const readTerminalState = (terminalId: string) => {
       const stored = localStorage.getItem(`${terminalStatePrefix}${terminalId}`)
@@ -320,6 +329,9 @@ export async function mockApp(
       notifyTerminalState(state)
     }
     const scope = window
+    let hostedBrowserConnections = 0
+    scope.__browserCommands = []
+    scope.__browserNavigationCompleted = null
     if (!scope.__terminalStateListener) {
       scope.__terminalStateListener = true
       window.addEventListener('storage', (event) => {
@@ -345,6 +357,17 @@ export async function mockApp(
       cols = 100
       rows = 30
       revision = 1
+      browserState = {
+        url: 'about:blank',
+        title: '',
+        loading: false,
+        canGoBack: false,
+        canGoForward: false,
+        viewport: { width: 1_280, height: 800 },
+        controlled: true,
+        hasController: true,
+        controller: 'you'
+      }
       private messageHandler: ((event: { data: string }) => void) | null = null
       private closeHandler: (() => void) | null = null
 
@@ -429,7 +452,11 @@ export async function mockApp(
 
               const value = JSON.parse(source)
               if (name === 'connected') {
-                this.deliverSocket('snapshot', { webPanels: [], ...value })
+                this.deliverSocket('snapshot', {
+                  webPanels: [],
+                  browserPanels: [],
+                  ...value
+                })
                 return
               }
 
@@ -451,7 +478,48 @@ export async function mockApp(
           this.deliverSocket('snapshot', {
             at: new Date().toISOString(),
             terminalMetadata: initialMetadata,
-            webPanels: []
+            webPanels: [],
+            browserPanels: []
+          })
+          return
+        }
+
+        if (data.startsWith('40/browsers') && hostedBrowser) {
+          this.namespace = '/browsers'
+          hostedBrowserConnections += 1
+          this.deliver(
+            `40/browsers,${JSON.stringify({ sid: crypto.randomUUID() })}`
+          )
+          if (
+            browserInstallRequired &&
+            sessionStorage.getItem('__treeport_browser_installed__') !==
+              'true' &&
+            hostedBrowserConnections === 1
+          ) {
+            this.deliverSocket('message', {
+              type: 'browserUnavailable',
+              message: 'Chromium is not installed on this daemon.',
+              installCommand: 'treeport browser install'
+            })
+            return
+          }
+
+          if (browserInstallRequired) {
+            sessionStorage.setItem('__treeport_browser_installed__', 'true')
+          }
+
+          scope.__repeatBrowserState = () =>
+            this.deliverSocket('message', {
+              type: 'state',
+              state: this.browserState
+            })
+          scope.__setBrowserLoading = (loading) => {
+            this.browserState = { ...this.browserState, loading }
+            scope.__repeatBrowserState()
+          }
+          this.deliverSocket('message', {
+            type: 'ready',
+            state: this.browserState
           })
           return
         }
@@ -512,6 +580,38 @@ export async function mockApp(
                   ? 'dev · /worktrees/topic'
                   : 'zsh · /worktrees/topic'
             })
+          }
+
+          return
+        }
+
+        if (data.startsWith('42/browsers,') && hostedBrowser) {
+          const [type, payload = {}] = JSON.parse(
+            data.slice('42/browsers,'.length)
+          )
+          if (type === 'command') {
+            scope.__browserCommands = [
+              ...(scope.__browserCommands || []),
+              payload
+            ]
+            if (payload.type === 'navigate') {
+              this.deliverSocket('message', {
+                type: 'controlChanged',
+                state: this.browserState
+              })
+              setTimeout(() => {
+                this.browserState = {
+                  ...this.browserState,
+                  url: payload.url,
+                  title: new URL(payload.url).host
+                }
+                scope.__browserNavigationCompleted = payload.url
+                this.deliverSocket('message', {
+                  type: 'state',
+                  state: this.browserState
+                })
+              }, 25)
+            }
           }
 
           return
@@ -599,7 +699,7 @@ export async function mockApp(
       }
     }
     Object.assign(window, { WebSocket: MockWebSocket })
-  }, initialTerminalMetadata)
+  }, socketFixture)
   const state = structuredClone(project)
   const repositoryTerminalPresets = [
     ...(options.repositoryTerminalPresets ?? [])
@@ -708,24 +808,19 @@ export async function mockApp(
   let releaseTerminalDelete: (() => void) | null = null
   let failTerminalDelete = false
   let webPanelCreations = 0
+  let browserPanelCreations = 0
+  let browserInstallRequests = 0
+  let browserInstallGate: Promise<void> | null = null
+  let releaseBrowserInstall: (() => void) | null = null
   let webPanelHasStorage = false
   const webPanelStorage = new Map<string, Map<string, JsonValue>>()
   const webPanelDefinitions = [
     {
-      id: 'package:npm:@treeport/web-panel-browser:web-panel:browser',
-      title: 'Browser',
-      source: {
-        type: 'package' as const,
-        packageId: 'npm:@treeport/web-panel-browser',
-        source: 'npm:@treeport/web-panel-browser',
-        scope: 'global' as const
-      },
-      sandbox: { allowSameOrigin: true }
-    },
-    {
       id: 'project:review',
       title: 'Review',
       source: { type: 'project' as const },
+      permissions: [],
+      permissionsGranted: true,
       sandbox: { allowSameOrigin: false }
     }
   ]
@@ -1375,86 +1470,7 @@ export async function mockApp(
 
       await route.fulfill({
         contentType: 'text/html',
-        body: `<!doctype html><html><body>
-          <form><button type="button" aria-label="Show development servers">Home</button><input type="url" aria-label="Application URL" value="http://localhost:3000/" required></form>
-          <section aria-label="Development servers"><h1>Development servers</h1><p role="status">Scanning for development servers…</p><div data-servers></div><button type="button">Refresh servers</button></section>
-          <div role="alert" hidden><strong>Load failed</strong><span>Check that the application is running and reachable.</span></div>
-          <iframe title="Browser target" src="about:blank"></iframe>
-          <script>
-            const pending = new Map(); let serial = 0;
-            const call = (method, values = {}) => new Promise((resolve, reject) => {
-              const id = String(++serial); pending.set(id, { resolve, reject });
-              parent.postMessage({ source: 'treeport-panel-v1', id, method, ...values }, '*');
-            });
-            const frame = document.querySelector('iframe');
-            let locationSubscription = null;
-            let locationSubscriptionSerial = 0;
-            let setBrowserLocation = null;
-            addEventListener('message', (event) => {
-              if (event.source === parent && event.data?.source === 'treeport-host-v1' && event.data.id) {
-                const request = pending.get(event.data.id); if (!request) return;
-                pending.delete(event.data.id);
-                event.data.ok ? request.resolve(event.data.value) : request.reject(new Error(event.data.error));
-                return;
-              }
-              if (event.source !== frame.contentWindow || event.data?.source !== 'treeport-panel-v1') return;
-              if (event.data.method === 'panel.title.set') {
-                parent.postMessage(event.data, '*');
-                return;
-              }
-              if (event.data.method === 'browser.location.set' && event.data.subscription === locationSubscription) {
-                setBrowserLocation?.(event);
-              }
-            });
-            Promise.all([call('context'), call('storage.get', { key: 'browser-state' }), call('network.listeners')]).then(([context, stored, discovery]) => {
-              const input = document.querySelector('input');
-              const servers = document.querySelector('[data-servers]');
-              const status = document.querySelector('[role="status"]');
-              status.textContent = '';
-              for (const listener of discovery.listeners) {
-                const button = document.createElement('button');
-                const url = 'http://localhost:' + listener.port + '/';
-                button.type = 'button';
-                button.textContent = url + ' ' + listener.command;
-                button.setAttribute('aria-label', 'Open ' + url + ', ' + listener.command);
-                servers.append(button);
-              }
-              const failure = document.querySelector('[role="alert"]');
-              let currentUrl = stored?.url || context.launch.input?.url || '';
-              const storeUrl = (url) => call('storage.set', { key: 'browser-state', value: { url, launchUpdatedAt: context.panel.updatedAt } });
-              setBrowserLocation = (event) => {
-                const url = new URL(event.data.url);
-                if (url.origin !== event.origin || url.href === currentUrl) return;
-                currentUrl = url.href;
-                input.value = currentUrl;
-                storeUrl(currentUrl);
-              };
-              frame.addEventListener('load', () => {
-                locationSubscription = String(++locationSubscriptionSerial);
-                frame.contentWindow.postMessage({ source: 'treeport-browser-v1', method: 'location.subscribe', subscription: locationSubscription }, '*');
-              });
-              const navigate = (url) => {
-                failure.hidden = true;
-                fetch(url, { method: 'HEAD', mode: 'no-cors', cache: 'no-store' }).then(
-                  () => { frame.src = url; },
-                  () => { failure.hidden = false; }
-                );
-              };
-              if (currentUrl) input.value = currentUrl;
-              if (currentUrl) { document.querySelector('section').hidden = true; navigate(currentUrl); }
-              if (currentUrl) parent.postMessage({ source: 'treeport-panel-v1', method: 'panel.title.set', title: context.launch.input?.title || new URL(currentUrl).host }, '*');
-              document.querySelector('form').addEventListener('submit', (event) => {
-                event.preventDefault();
-                const url = new URL(input.value).href;
-                storeUrl(url).then(() => {
-                  currentUrl = url;
-                  navigate(url);
-                  parent.postMessage({ source: 'treeport-panel-v1', method: 'panel.title.set', title: new URL(url).host }, '*');
-                });
-              });
-            });
-          </script>
-        </body></html>`
+        body: '<!doctype html><html><body><h1>Web panel</h1></body></html>'
       })
       return
     }
@@ -1464,6 +1480,85 @@ export async function mockApp(
       route.request().method() === 'GET'
     ) {
       await route.fulfill({ json: { definitions: webPanelDefinitions } })
+      return
+    }
+
+    if (
+      /^\/api\/worktrees\/[^/]+\/web-panel-definitions\/[^/]+\/permission-grant$/.test(
+        pathname
+      ) &&
+      route.request().method() === 'PUT'
+    ) {
+      const definitionId = decodeURIComponent(pathname.split('/')[5]!)
+      const definition = webPanelDefinitions.find(
+        (candidate) => candidate.id === definitionId
+      )!
+      definition.permissionsGranted = true
+      await route.fulfill({ json: { definition } })
+      return
+    }
+
+    if (
+      /^\/api\/terminals\/[^/]+\/browser-panels\/open$/.test(pathname) &&
+      route.request().method() === 'POST'
+    ) {
+      const terminalId = pathname.split('/')[3]!
+      const body: { url: string } = route.request().postDataJSON()
+      const worktree = state.worktrees.find((candidate) =>
+        candidate.terminals.some((terminal) => terminal.id === terminalId)
+      )!
+      const url = new URL(body.url).href
+      const panel = {
+        id: `browser_panel_${++browserPanelCreations}`,
+        kind: 'browser' as const,
+        worktreeId: worktree.id,
+        title: new URL(url).host,
+        url,
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z'
+      }
+      worktree.panels.push(panel)
+      await route.fulfill({ status: 201, json: { panel } })
+      await page.evaluate(
+        ({ worktreeId, panelId, sourceTerminalId }) =>
+          window.__eventSource.emit(
+            'panel.open_requested',
+            JSON.stringify({
+              worktreeId,
+              panelId,
+              sourceTerminalId,
+              sourcePanelId: null
+            })
+          ),
+        {
+          worktreeId: worktree.id,
+          panelId: panel.id,
+          sourceTerminalId: terminalId
+        }
+      )
+      return
+    }
+
+    if (
+      /^\/api\/worktrees\/[^/]+\/browser-panels$/.test(pathname) &&
+      route.request().method() === 'POST'
+    ) {
+      const worktreeId = pathname.split('/')[3]!
+      const body: { url?: string } = route.request().postDataJSON()
+      const url = body.url ? new URL(body.url).href : 'about:blank'
+      const panel = {
+        id: `browser_panel_${++browserPanelCreations}`,
+        kind: 'browser' as const,
+        worktreeId,
+        title: url === 'about:blank' ? 'Browser' : new URL(url).host,
+        url,
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z'
+      }
+      state.worktrees
+        .find((candidate) => candidate.id === worktreeId)!
+        .panels.push(panel)
+      await route.fulfill({ status: 201, json: { panel } })
       return
     }
 
@@ -1493,12 +1588,45 @@ export async function mockApp(
           input: body.input ?? null,
           cwd: body.launchCwd ?? null
         },
+        permissions: definition.permissions,
         sandbox: definition.sandbox,
         createdAt: '2026-01-01T00:00:00.000Z',
         updatedAt: '2026-01-01T00:00:00.000Z'
       }
       worktree.panels.push(panel)
       await route.fulfill({ status: 201, json: { panel } })
+      return
+    }
+
+    if (
+      pathname === '/api/browser/install' &&
+      route.request().method() === 'POST'
+    ) {
+      browserInstallRequests += 1
+      await browserInstallGate
+      browserInstallGate = null
+      releaseBrowserInstall = null
+      await route.fulfill({ json: { message: 'Chromium installed.' } })
+      return
+    }
+
+    if (
+      /^\/api\/panels\/[^/]+\/browser-ticket$/.test(pathname) &&
+      route.request().method() === 'POST'
+    ) {
+      await route.fulfill(
+        options.hostedBrowser
+          ? { json: { ticket: crypto.randomUUID() } }
+          : {
+              status: 503,
+              json: {
+                error: {
+                  code: 'BROWSER_UNAVAILABLE',
+                  message: 'Hosted browser fixture is unavailable'
+                }
+              }
+            }
+      )
       return
     }
 
@@ -1654,6 +1782,26 @@ export async function mockApp(
       route.request().method() === 'DELETE'
     ) {
       const panelId = pathname.split('/').at(-1)
+      const panel = state.worktrees
+        .flatMap((worktree) => worktree.panels)
+        .find((candidate) => candidate.id === panelId)
+      if (
+        panel?.kind === 'browser' &&
+        options.browserBeforeUnload &&
+        url.searchParams.get('force') !== 'true'
+      ) {
+        await route.fulfill({
+          status: 409,
+          json: {
+            error: {
+              code: 'BROWSER_BEFORE_UNLOAD',
+              message: 'Changes you made may not be saved.'
+            }
+          }
+        })
+        return
+      }
+
       for (const worktree of state.worktrees) {
         worktree.panels = worktree.panels.filter(
           (panel) => panel.id !== panelId
@@ -1896,6 +2044,13 @@ export async function mockApp(
     dismissRecentProjectRequests: () => dismissRecentProjectRequests,
     removePreviewRequests: () => removePreviewRequests,
     fileUploadRequests: () => fileUploadRequests,
+    browserInstallRequests: () => browserInstallRequests,
+    delayNextBrowserInstall: () => {
+      browserInstallGate = new Promise<void>((resolve) => {
+        releaseBrowserInstall = resolve
+      })
+      return () => releaseBrowserInstall?.()
+    },
     terminalCreations: () => terminalCreations,
     delayNextTerminalCreate: () => {
       terminalCreateGate = new Promise<void>((resolve) => {

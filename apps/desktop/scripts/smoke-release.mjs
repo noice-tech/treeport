@@ -17,7 +17,7 @@ const executable = path.join(absoluteAppPath, 'Contents', 'MacOS', 'Treeport')
 const userData = await fs.mkdtemp(
   path.join(os.tmpdir(), 'treeport-desktop-release-smoke-')
 )
-let loadedWebApp = false
+let loadedBackendApi = false
 const server = http.createServer((request, response) => {
   if (request.url === '/api/health') {
     response.setHeader('content-type', 'application/json')
@@ -32,9 +32,15 @@ const server = http.createServer((request, response) => {
     return
   }
 
-  loadedWebApp = true
-  response.setHeader('content-type', 'text/html')
-  response.end('<!doctype html><title>Treeport release smoke</title>')
+  if (request.url === '/api/projects') {
+    loadedBackendApi = true
+    response.setHeader('content-type', 'application/json')
+    response.end(JSON.stringify({ projects: [] }))
+    return
+  }
+
+  response.statusCode = 404
+  response.end('Not found')
 })
 let child
 try {
@@ -63,12 +69,16 @@ try {
   child.stderr.on('data', (chunk) => output.push(chunk.toString()))
 
   const deadline = Date.now() + 15_000
-  while (!loadedWebApp && child.exitCode === null && Date.now() < deadline) {
+  while (
+    !loadedBackendApi &&
+    child.exitCode === null &&
+    Date.now() < deadline
+  ) {
     await new Promise((resolve) => setTimeout(resolve, 100))
   }
-  if (!loadedWebApp) {
+  if (!loadedBackendApi) {
     throw new Error(
-      `Packaged desktop did not load its selected backend${output.length ? `:\n${output.join('')}` : ''}`
+      `Packaged desktop did not request its selected backend API${output.length ? `:\n${output.join('')}` : ''}`
     )
   }
 

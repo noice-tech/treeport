@@ -1,11 +1,20 @@
 import type { Server as HttpServer } from 'node:http'
 import { Server } from 'socket.io'
 import type {
+  BrowserClientMessage,
+  BrowserClientToServerEvents,
+  BrowserOwnerAuth,
+  BrowserOwnerClientMessage,
+  BrowserOwnerClientToServerEvents,
+  BrowserOwnerServerToClientEvents,
+  BrowserServerToClientEvents,
   EventsServerToClientEvents,
   TerminalClientToServerEvents,
   TerminalServerToClientEvents
 } from '@treeport/shared'
 import {
+  parseBrowserAuth,
+  parseBrowserOwnerAuth,
   parseTerminalAuth,
   SOCKET_IO_PATH,
   TERMINAL_MAX_CLIENT_MESSAGE_BYTES,
@@ -21,14 +30,29 @@ import {
 } from './terminal-attachments'
 import { authorizeRequest } from './request-security'
 import type { TerminalMetadataManager } from './terminal-metadata'
+import {
+  BrowserSessionManager,
+  type BrowserOwnerTransport,
+  type BrowserTransport
+} from './browser-sessions'
 
-type ClientToServerEvents = TerminalClientToServerEvents
+interface ClientToServerEvents
+  extends
+    BrowserClientToServerEvents,
+    BrowserOwnerClientToServerEvents,
+    TerminalClientToServerEvents {}
 
 interface ServerToClientEvents
-  extends EventsServerToClientEvents, TerminalServerToClientEvents {}
+  extends
+    BrowserServerToClientEvents,
+    BrowserOwnerServerToClientEvents,
+    EventsServerToClientEvents,
+    TerminalServerToClientEvents {}
 
 interface SocketData {
   terminalAuth?: TerminalAuth
+  browserTicket?: string
+  browserOwnerAuth?: BrowserOwnerAuth
   terminalProtocolVersion?: 1 | typeof TERMINAL_PROTOCOL_VERSION
 }
 
@@ -41,9 +65,22 @@ type TreeportSocketServer = Server<
   SocketData
 >
 
+export interface BrowserSessionController {
+  accept(ticket: string, transport: BrowserTransport): Promise<string>
+  message(connectionId: string, message: BrowserClientMessage): void
+  close(connectionId: string): void
+  acceptOwner(
+    auth: BrowserOwnerAuth,
+    transport: BrowserOwnerTransport
+  ): Promise<string>
+  ownerMessage(connectionId: string, message: BrowserOwnerClientMessage): void
+  closeOwner(connectionId: string): void
+}
+
 interface SocketServerResult {
   io: TreeportSocketServer
   attachments: TerminalAttachmentManager
+  browserSessions: BrowserSessionController
 }
 
 interface SocketServerDependencies {
@@ -52,6 +89,7 @@ interface SocketServerDependencies {
   tmux: TmuxAdapter
   terminalMetadata: TerminalMetadataManager
   attachmentManager?: TerminalAttachmentManager
+  browserSessions?: BrowserSessionController
 }
 
 export function createSocketServer(
@@ -61,7 +99,8 @@ export function createSocketServer(
     config,
     tmux,
     terminalMetadata,
-    attachmentManager
+    attachmentManager,
+    browserSessions
   }: SocketServerDependencies
 ): SocketServerResult {
   const io = new Server<
@@ -87,6 +126,8 @@ export function createSocketServer(
       config.tmuxPath,
       terminalMetadata
     )
+  const hostedBrowsers =
+    browserSessions ?? new BrowserSessionManager(service, config)
 
   io.of('/events').on('connection', (socket) => {
     const queuedEvents: Parameters<
@@ -110,9 +151,8 @@ export function createSocketServer(
 
         const metadataSnapshot = terminalMetadata.snapshot()
         const representedEventCount = queuedEvents.length
-        void service
-          .listWebPanels()
-          .then((webPanels) => {
+        void Promise.all([service.listWebPanels(), service.listBrowserPanels()])
+          .then(([webPanels, browserPanels]) => {
             if (!socket.connected) {
               return
             }
@@ -120,7 +160,8 @@ export function createSocketServer(
             socket.emit('snapshot', {
               at: new Date().toISOString(),
               terminalMetadata: metadataSnapshot,
-              webPanels
+              webPanels,
+              browserPanels
             })
             queuedEvents.splice(0, representedEventCount)
             while (queuedEvents.length && socket.connected) {
@@ -215,5 +256,85 @@ export function createSocketServer(
     socket.once('disconnect', () => attachments.close(connectionId))
   })
 
-  return { io, attachments }
+  const browsers = io.of('/browsers')
+  browsers.use((socket, next) => {
+    const auth = parseBrowserAuth(socket.handshake.auth)
+    if (!auth) {
+      next(new Error('INVALID_BROWSER_AUTH'))
+      return
+    }
+
+    socket.data.browserTicket = auth.ticket
+    next()
+  })
+  browsers.on('connection', (socket) => {
+    const transport: BrowserTransport = {
+      id: socket.id,
+      isConnected: () => socket.connected,
+      sendMessage(message) {
+        if (!socket.connected) {
+          return false
+        }
+
+        socket.emit('message', message)
+        return true
+      },
+      sendFrame(frame) {
+        if (!socket.connected) {
+          return false
+        }
+
+        socket.emit('frame', frame)
+        return true
+      },
+      disconnect() {
+        socket.disconnect(true)
+      }
+    }
+    socket.on('command', (message) =>
+      hostedBrowsers.message(socket.id, message)
+    )
+    socket.once('disconnect', () => hostedBrowsers.close(socket.id))
+    void hostedBrowsers
+      .accept(socket.data.browserTicket!, transport)
+      .catch(() => socket.disconnect(true))
+  })
+
+  const browserOwners = io.of('/browser-owners')
+  browserOwners.use((socket, next) => {
+    const auth = parseBrowserOwnerAuth(socket.handshake.auth)
+    if (!auth) {
+      next(new Error('INVALID_BROWSER_OWNER_AUTH'))
+      return
+    }
+
+    socket.data.browserOwnerAuth = auth
+    next()
+  })
+  browserOwners.on('connection', (socket) => {
+    const transport: BrowserOwnerTransport = {
+      id: socket.id,
+      isConnected: () => socket.connected,
+      send(message) {
+        if (!socket.connected) {
+          return false
+        }
+
+        socket.emit('ownerMessage', message)
+        return true
+      },
+      disconnect() {
+        socket.disconnect(true)
+      }
+    }
+    socket.on('ownerMessage', (message) =>
+      hostedBrowsers.ownerMessage(socket.id, message)
+    )
+    socket.once('disconnect', () => hostedBrowsers.closeOwner(socket.id))
+    void hostedBrowsers
+      .acceptOwner(socket.data.browserOwnerAuth!, transport)
+      .catch(() => socket.disconnect(true))
+  })
+
+  return { io, attachments, browserSessions: hostedBrowsers }
 }

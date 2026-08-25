@@ -10,6 +10,14 @@ import {
   type TmuxAdapter
 } from './core/index'
 import type {
+  BrowserClientMessage,
+  BrowserClientToServerEvents,
+  BrowserOwnerClientMessage,
+  BrowserOwnerClientToServerEvents,
+  BrowserOwnerServerMessage,
+  BrowserOwnerServerToClientEvents,
+  BrowserServerMessage,
+  BrowserServerToClientEvents,
   EventsClientToServerEvents,
   EventsServerToClientEvents,
   TerminalClientToServerEvents,
@@ -18,13 +26,21 @@ import type {
   TerminalServerToClientEvents
 } from '@treeport/shared'
 import {
+  BROWSER_PROTOCOL_VERSION,
   parseEventsSnapshot,
   SOCKET_IO_PATH,
   TERMINAL_PROTOCOL_VERSION
 } from '@treeport/shared'
 import { testAccess } from './test-access'
 import { TerminalAttachmentManager } from './terminal-attachments'
-import { createSocketServer } from './socket-server'
+import {
+  createSocketServer,
+  type BrowserSessionController
+} from './socket-server'
+import type {
+  BrowserOwnerTransport,
+  BrowserTransport
+} from './browser-sessions'
 import type { TerminalMetadataManager } from './terminal-metadata'
 
 class FakePty {
@@ -78,13 +94,16 @@ interface NetworkFixture {
 
 const fixtures: NetworkFixture[] = []
 
-async function fixture(): Promise<NetworkFixture> {
+async function fixture(
+  browserSessions?: BrowserSessionController
+): Promise<NetworkFixture> {
   const events = new ProductEventBus()
   const ptys: FakePty[] = []
   // SAFETY: The test fixture provides the asserted contract used here.
   const service = testAccess<TreeportService>({
     events,
     listWebPanels: vi.fn(async () => []),
+    listBrowserPanels: vi.fn(async () => []),
     refreshTerminalStatus: vi.fn(async () => ({
       id: 'term',
       worktreeId: 'wt',
@@ -160,13 +179,19 @@ async function fixture(): Promise<NetworkFixture> {
     daemonLifecycle: 'treeport',
     webDevelopment: false
   } satisfies AppConfig
-  const { io, attachments } = createSocketServer(server, {
+  const socketServerDependencies = {
     service,
     config,
     tmux,
     terminalMetadata: metadata,
     attachmentManager
-  })
+  }
+  const { io, attachments } = browserSessions
+    ? createSocketServer(server, {
+        ...socketServerDependencies,
+        browserSessions
+      })
+    : createSocketServer(server, socketServerDependencies)
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
   // SAFETY: The test fixture provides the asserted contract used here.
   const address = server.address() as AddressInfo
@@ -280,7 +305,7 @@ describe('Socket.IO real network', () => {
     await closeClient(socket)
   })
 
-  it('snapshots durable web panels and broadcasts closure to every client', async () => {
+  it('snapshots durable WebPanel and BrowserPanel records and broadcasts closure to every client', async () => {
     const value = await fixture()
     vi.mocked(value.service.listWebPanels).mockResolvedValue([
       {
@@ -290,7 +315,19 @@ describe('Socket.IO real network', () => {
         definitionId: 'project:review',
         title: 'Review',
         launch: { input: null, cwd: null },
+        permissions: [],
         sandbox: { allowSameOrigin: false },
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z'
+      }
+    ])
+    vi.mocked(value.service.listBrowserPanels).mockResolvedValue([
+      {
+        id: 'panel_browser',
+        kind: 'browser',
+        worktreeId: 'wt',
+        title: 'Example',
+        url: 'https://example.com/',
         createdAt: '2026-01-01T00:00:00.000Z',
         updatedAt: '2026-01-01T00:00:00.000Z'
       }
@@ -315,6 +352,20 @@ describe('Socket.IO real network', () => {
       expect.objectContaining({
         id: 'panel_review',
         sandbox: { allowSameOrigin: false }
+      })
+    ])
+    expect(
+      snapshots.map(
+        (snapshot) => parseEventsSnapshot(snapshot)?.browserPanels[0]
+      )
+    ).toEqual([
+      expect.objectContaining({
+        id: 'panel_browser',
+        url: 'https://example.com/'
+      }),
+      expect.objectContaining({
+        id: 'panel_browser',
+        url: 'https://example.com/'
       })
     ])
 
@@ -384,6 +435,129 @@ describe('Socket.IO real network', () => {
     expect(secondEvents[0]?.bell).toMatchObject({ sequence: 1, unread: false })
     await closeClient(first)
     await closeClient(second)
+  })
+
+  it('uses one-use browser authorization before relaying hosted browser commands', async () => {
+    const messages: BrowserClientMessage[] = []
+    const ownerMessages: BrowserOwnerClientMessage[] = []
+    const closes: string[] = []
+    const ownerCloses: string[] = []
+    const browserSessions = {
+      accept: vi.fn(async (ticket: string, transport: BrowserTransport) => {
+        expect(ticket).toBe('b'.repeat(43))
+        transport.sendMessage({
+          type: 'ready',
+          state: {
+            url: 'about:blank',
+            title: '',
+            loading: false,
+            canGoBack: false,
+            canGoForward: false,
+            controlled: true,
+            hasController: true,
+            controller: 'you',
+            viewport: { width: 800, height: 600 }
+          }
+        })
+        return 'browser-connection'
+      }),
+      message: vi.fn(
+        (_connectionId: string, message: BrowserClientMessage) =>
+          void messages.push(message)
+      ),
+      close: vi.fn((connectionId: string) => void closes.push(connectionId)),
+      acceptOwner: vi.fn(async (auth, transport: BrowserOwnerTransport) => {
+        expect(auth.endpoint).toBe('http://127.0.0.1:43210/private-owner/')
+        transport.send({
+          type: 'claimGranted',
+          panelId: 'panel_browser',
+          generation: 4,
+          state: {
+            url: 'about:blank',
+            title: '',
+            loading: false,
+            canGoBack: false,
+            canGoForward: false,
+            viewport: { width: 800, height: 600 }
+          }
+        })
+        return 'browser-owner'
+      }),
+      ownerMessage: vi.fn(
+        (_connectionId: string, message: BrowserOwnerClientMessage) =>
+          void ownerMessages.push(message)
+      ),
+      closeOwner: vi.fn(
+        (connectionId: string) => void ownerCloses.push(connectionId)
+      )
+    } satisfies BrowserSessionController
+    const value = await fixture(browserSessions)
+    const browser: Socket<
+      BrowserServerToClientEvents,
+      BrowserClientToServerEvents
+    > = createClient(`${value.url}/browsers`, {
+      path: SOCKET_IO_PATH,
+      transports: ['websocket'],
+      forceNew: true,
+      reconnection: false,
+      auth: {
+        ticket: 'b'.repeat(43),
+        protocolVersion: BROWSER_PROTOCOL_VERSION
+      }
+    })
+    const ready = await new Promise<BrowserServerMessage>((resolve) =>
+      browser.once('message', resolve)
+    )
+    expect(ready).toMatchObject({
+      type: 'ready',
+      state: { controlled: true, viewport: { width: 800, height: 600 } }
+    })
+    browser.emit('command', { type: 'back' })
+    await vi.waitFor(() => expect(messages).toEqual([{ type: 'back' }]))
+    const socketId = browser.id!
+    await closeClient(browser)
+    await vi.waitFor(() => expect(closes).toEqual([socketId]))
+
+    const owner: Socket<
+      BrowserOwnerServerToClientEvents,
+      BrowserOwnerClientToServerEvents
+    > = createClient(`${value.url}/browser-owners`, {
+      path: SOCKET_IO_PATH,
+      transports: ['websocket'],
+      forceNew: true,
+      reconnection: false,
+      auth: {
+        ticket: 'o'.repeat(43),
+        challenge: 'c'.repeat(43),
+        endpoint: 'http://127.0.0.1:43210/private-owner/',
+        protocolVersion: BROWSER_PROTOCOL_VERSION
+      }
+    })
+    const claimed = await new Promise<BrowserOwnerServerMessage>((resolve) =>
+      owner.once('ownerMessage', resolve)
+    )
+    expect(claimed).toMatchObject({
+      type: 'claimGranted',
+      panelId: 'panel_browser',
+      generation: 4
+    })
+    owner.emit('ownerMessage', {
+      type: 'popup',
+      generation: 4,
+      url: 'https://example.com/popup'
+    })
+    await vi.waitFor(() =>
+      expect(ownerMessages).toEqual([
+        {
+          type: 'popup',
+          generation: 4,
+          url: 'https://example.com/popup'
+        }
+      ])
+    )
+    const ownerSocketId = owner.id!
+    await closeClient(owner)
+    await vi.waitFor(() => expect(ownerCloses).toEqual([ownerSocketId]))
   })
 
   it('authenticates local and Tailscale clients before accepting either socket namespace', async () => {

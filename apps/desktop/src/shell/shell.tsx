@@ -1,6 +1,7 @@
 import { createRoot } from 'react-dom/client'
 import { App } from './app'
 import { ShellStateProvider } from './shell-state'
+import '@treeport-web/styles.css'
 
 const root = document.querySelector<HTMLDivElement>('#app')
 if (!root) {

@@ -114,6 +114,27 @@ export const terminalBellStates = sqliteTable(
   ]
 )
 
+export const browserPanels = sqliteTable(
+  'browser_panels',
+  {
+    id: text().primaryKey(),
+    worktreeId: text('worktree_id')
+      .notNull()
+      .references(() => worktrees.id, { onDelete: 'cascade' }),
+    title: text().notNull(),
+    url: text().notNull(),
+    createdAt: text('created_at').notNull(),
+    updatedAt: text('updated_at').notNull()
+  },
+  (table) => [
+    index('browser_panels_worktree_order_idx').on(
+      table.worktreeId,
+      table.createdAt,
+      table.id
+    )
+  ]
+)
+
 export const webPanels = sqliteTable(
   'web_panels',
   {
@@ -134,6 +155,20 @@ export const webPanels = sqliteTable(
       table.createdAt,
       table.id
     )
+  ]
+)
+
+export const webPanelPermissionGrants = sqliteTable(
+  'web_panel_permission_grants',
+  {
+    sourceKey: text('source_key').primaryKey(),
+    definitionId: text('definition_id').notNull(),
+    permissionsJson: text('permissions_json').notNull(),
+    grantedAt: text('granted_at').notNull(),
+    updatedAt: text('updated_at').notNull()
+  },
+  (table) => [
+    index('web_panel_permission_definition_idx').on(table.definitionId)
   ]
 )
 

@@ -150,7 +150,15 @@ Use an object to request the high-trust `same-origin` permission for a web panel
 }
 ```
 
-This permission lets a panel use standard browser storage in nested applications.
+Treeport shows the panel source and permissions before the first open. Approve the permissions only when you trust the package.
+
+Treeport requests approval again if the permission set changes.
+
+A grant applies to the exact package source and its project or global scope. A project package cannot use a global package grant.
+
+Removing the package revokes its grants.
+
+The `same-origin` permission lets a panel use standard browser storage in nested applications.
 
 It also lets the panel access the same-origin Treeport page and API routes. Use this permission only for trusted code.
 

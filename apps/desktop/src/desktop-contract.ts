@@ -13,6 +13,29 @@ export interface DesktopNavigationState {
   canGoForward: boolean
 }
 
+export interface DesktopBrowserPopup {
+  panelId: string
+  url: string
+}
+
+export interface DesktopBrowserBridgeDescriptor {
+  endpoint: string
+  panelId: string
+  challenge: string
+}
+
+export type DesktopBrowserToolbarCommand =
+  | { type: 'navigate'; url: string }
+  | { type: 'back' }
+  | { type: 'forward' }
+  | { type: 'reload' }
+  | { type: 'stop' }
+
+export interface DesktopBrowserCommandResult {
+  ok: boolean
+  error: string | null
+}
+
 export interface SavedComputer {
   id: string
   origin: string

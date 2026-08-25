@@ -3,10 +3,11 @@ import type { ProjectRecord } from '@treeport/shared'
 import {
   deepestProjectTarget,
   openRequestMatchesTerminal,
+  openRequestMatchesWorkspace,
   panelTarget,
   resolveWorkspaceRoute,
+  targetForPanel,
   targetForProject,
-  targetForWebPanel,
   targetForWorktree,
   terminalTarget,
   worktreeTarget
@@ -34,6 +35,13 @@ function projectGraph(): ProjectRecord[] {
               worktreeId: 'worktree-a',
               definitionId: 'project:review',
               title: 'Review'
+            },
+            {
+              id: 'panel-browser',
+              kind: 'browser',
+              worktreeId: 'worktree-a',
+              title: 'Example',
+              url: 'https://example.com/'
             }
           ]
         }
@@ -58,11 +66,17 @@ function projectGraph(): ProjectRecord[] {
 }
 
 describe('workspace route resolution', () => {
-  it('targets only clients that currently show the source terminal', () => {
+  it('targets only clients that show the source terminal or Browser', () => {
     expect(openRequestMatchesTerminal('terminal-a', 'terminal-a')).toBe(true)
     expect(openRequestMatchesTerminal('terminal-a', 'terminal-b')).toBe(false)
     expect(openRequestMatchesTerminal(null, 'terminal-a')).toBe(false)
     expect(openRequestMatchesTerminal(null, null)).toBe(false)
+    expect(
+      openRequestMatchesWorkspace(null, 'panel-source', null, 'panel-source')
+    ).toBe(true)
+    expect(
+      openRequestMatchesWorkspace(null, 'panel-source', null, 'panel-other')
+    ).toBe(false)
   })
 
   it('keeps a valid hierarchy and resolves nonempty parent routes to their deepest child', () => {
@@ -83,7 +97,7 @@ describe('workspace route resolution', () => {
     })
   })
 
-  it('selects a web panel without also selecting a terminal and repairs stale panel routes', () => {
+  it('selects WebPanel and BrowserPanel routes without a terminal and repairs stale routes', () => {
     const projects = projectGraph()
     const panel = projects[0]!.worktrees[0]!.panels.find(
       (candidate) => candidate.kind === 'web'
@@ -95,7 +109,19 @@ describe('workspace route resolution', () => {
       target,
       selection: { terminal: null, panel: { id: 'panel-a' } }
     })
-    expect(targetForWebPanel(projects, panel)).toEqual(target)
+    expect(targetForPanel(projects, panel)).toEqual(target)
+    const browser = projects[0]!.worktrees[0]!.panels.find(
+      (candidate) => candidate.kind === 'browser'
+    )!
+    const browserTarget = panelTarget(
+      'project-a',
+      'worktree-a',
+      'panel-browser'
+    )
+    expect(targetForPanel(projects, browser)).toEqual(browserTarget)
+    expect(
+      resolveWorkspaceRoute(projects, browserTarget.pathname).selection.panel
+    ).toMatchObject({ kind: 'browser', url: 'https://example.com/' })
     expect(
       resolveWorkspaceRoute(
         projects,

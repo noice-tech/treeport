@@ -106,7 +106,7 @@ function isLoopbackHostname(hostname: string): boolean {
   return ['127.0.0.1', 'localhost', '[::1]', '::1'].includes(hostname)
 }
 
-function isLoopbackAddress(address: string | undefined): boolean {
+export function isLoopbackAddress(address: string | undefined): boolean {
   if (!address) {
     return false
   }

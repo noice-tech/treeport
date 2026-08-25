@@ -15,6 +15,7 @@ import {
 } from './core/index'
 import { createApp } from './app'
 import { createApplicationUpdateManager } from './application-update'
+import { BrowserSessionManager } from './browser-sessions'
 import { acquireDaemonOwnership } from './daemon-ownership'
 import { authorizeRequest, rejectHttpRequest } from './request-security'
 import { createSocketServer } from './socket-server'
@@ -64,13 +65,15 @@ async function main(): Promise<void> {
     )
     await terminalMetadata.initialize()
     const applicationUpdate = createApplicationUpdateManager(config)
+    const browserSessions = new BrowserSessionManager(service, config)
 
     const app = createApp({
       service,
       config,
       tmux,
       applicationUpdate,
-      terminalMetadata
+      terminalMetadata,
+      browserSessions
     })
     const honoListener = getRequestListener(app.fetch)
     let vite: ViteDevServer | null = null
@@ -129,7 +132,8 @@ async function main(): Promise<void> {
       service,
       config,
       tmux,
-      terminalMetadata
+      terminalMetadata,
+      browserSessions
     })
     await new Promise<void>((resolve, reject) => {
       server.once('error', reject)
@@ -164,6 +168,7 @@ async function main(): Promise<void> {
           terminalMetadata.drain(),
           viteClosed
         ]).then(async () => {
+          await browserSessions.dispose()
           await service.disposeWebPanelRuntime()
           database.close()
           await ownership.release()

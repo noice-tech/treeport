@@ -173,14 +173,25 @@ describe('Socket.IO contracts', () => {
             id: 'panel',
             kind: 'web',
             worktreeId: 'worktree',
-            definitionId:
-              'package:npm:@treeport/web-panel-browser:web-panel:browser',
+            definitionId: 'project:review',
             title: 'Application',
             launch: {
               input: { url: 'http://127.0.0.1:3000/' },
               cwd: '.'
             },
-            sandbox: { allowSameOrigin: true },
+            permissions: [],
+            sandbox: { allowSameOrigin: false },
+            createdAt: '2026-01-01T00:00:00.000Z',
+            updatedAt: '2026-01-01T00:00:00.000Z'
+          }
+        ],
+        browserPanels: [
+          {
+            id: 'browser',
+            kind: 'browser',
+            worktreeId: 'worktree',
+            title: 'Example',
+            url: 'https://example.com/',
             createdAt: '2026-01-01T00:00:00.000Z',
             updatedAt: '2026-01-01T00:00:00.000Z'
           }
@@ -188,7 +199,8 @@ describe('Socket.IO contracts', () => {
       })
     ).toMatchObject({
       terminalMetadata: [{ terminalId: 'term' }],
-      webPanels: [{ id: 'panel' }]
+      webPanels: [{ id: 'panel' }],
+      browserPanels: [{ id: 'browser' }]
     })
     expect(
       parseEventsSnapshot({
@@ -207,14 +219,34 @@ describe('Socket.IO contracts', () => {
             createdAt: '2026-01-01T00:00:00.000Z',
             updatedAt: '2026-01-01T00:00:00.000Z'
           }
-        ]
+        ],
+        browserPanels: []
       })
     ).toBeNull()
     expect(
       parseEventsSnapshot({
         at: 'not-a-date',
         terminalMetadata: [],
-        webPanels: []
+        webPanels: [],
+        browserPanels: []
+      })
+    ).toBeNull()
+    expect(
+      parseEventsSnapshot({
+        at: '2026-01-01T00:00:00.000Z',
+        terminalMetadata: [],
+        webPanels: [],
+        browserPanels: [
+          {
+            id: 'browser',
+            kind: 'browser',
+            worktreeId: 'worktree',
+            title: 'Unsafe',
+            url: 'file:///etc/passwd',
+            createdAt: '2026-01-01T00:00:00.000Z',
+            updatedAt: '2026-01-01T00:00:00.000Z'
+          }
+        ]
       })
     ).toBeNull()
     expect(
@@ -225,6 +257,22 @@ describe('Socket.IO contracts', () => {
         data: { terminalId: 'term', worktreeId: 'worktree' }
       })
     ).toMatchObject({ type: 'terminal.updated' })
+    expect(
+      parseProductEvent({
+        id: 'event-panel',
+        type: 'panel.open_requested',
+        at: '2026-01-01T00:00:00.000Z',
+        data: {
+          worktreeId: 'worktree',
+          panelId: 'panel-popup',
+          sourceTerminalId: null,
+          sourcePanelId: 'panel-browser'
+        }
+      })
+    ).toMatchObject({
+      type: 'panel.open_requested',
+      data: { sourcePanelId: 'panel-browser' }
+    })
     expect(
       parseProductEvent({
         id: 'event-2',

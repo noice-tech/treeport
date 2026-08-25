@@ -133,6 +133,60 @@ treeport terminal wait <terminal-id> --until exit
 
 Treeport does not infer agent settlement. An orchestrator can inspect first, wait for `working` if no progress cycle has been observed, and then wait for `idle`. Progress depends on the child application emitting OSC `9;4`; for Pi, `terminal.showTerminalProgress` must be enabled. Applications should clear progress or refresh active progress more frequently than the five-minute lease. A null progress value is not proof that every application supports progress reporting.
 
+## Inspect the worktree application in a browser panel
+
+The Browser primitive has one live runtime for each panel.
+
+Electron owns the visible `<webview>` page for a local desktop connection.
+
+Playwright controls managed Chromium for a web or remote desktop connection.
+
+Never attach Treeport to a personal browser profile.
+
+First, inspect the available browser panels:
+
+```sh
+treeport browser list
+```
+
+If no browser panel is open, open one in the current tree:
+
+```sh
+treeport browser open --worktree .
+```
+
+Use these commands on the current live page:
+
+```sh
+treeport browser snapshot
+treeport browser click e12
+treeport browser fill e14 "value"
+treeport browser press Enter
+treeport browser console
+treeport browser network
+treeport browser screenshot
+```
+
+The commands select the only browser panel in the current tree.
+
+When more than one browser panel exists, add `--panel <panel-id>`.
+
+Snapshot references belong to one runtime generation.
+
+Take a new snapshot after navigation or a runtime change.
+
+A local desktop owner does not need managed Chromium.
+
+If no local owner exists, check managed Chromium before daemon automation:
+
+```sh
+treeport browser status
+```
+
+Ask the user before you run `treeport browser install`.
+
+Leave the browser panel open so the user can inspect the result.
+
 ## Automation and integrations
 
 Extensions and scripts should add `--json` before the `--` command separator:

@@ -360,12 +360,16 @@ describe('TreeportService with injected command adapters', () => {
       {
         id: 'project:code-review',
         source: { type: 'project' },
+        permissions: [],
+        permissionsGranted: true,
         sandbox: { allowSameOrigin: false },
         title: 'Code review'
       },
       {
         id: 'project:review',
         source: { type: 'project' },
+        permissions: [],
+        permissionsGranted: true,
         sandbox: { allowSameOrigin: false },
         title: 'Review'
       }
@@ -668,6 +672,80 @@ describe('TreeportService with injected command adapters', () => {
     expect(await service.getWebPanelStorage(panel.id, 'draft')).toEqual({
       body: 'keep me'
     })
+  })
+
+  it('scopes web panel grants to the package source and permission set', async () => {
+    const { root, main, service } = await fixture()
+    const packageRoot = path.join(root, 'packages', 'privileged-panel')
+    const panelRoot = path.join(packageRoot, 'web-panels', 'dashboard')
+    await Promise.all([
+      fs.mkdir(panelRoot, { recursive: true }),
+      fs.mkdir(path.join(main, '.treeport'), { recursive: true })
+    ])
+    await Promise.all([
+      fs.writeFile(
+        path.join(packageRoot, 'package.json'),
+        JSON.stringify({
+          name: '@treeport/privileged-panel',
+          keywords: ['treeport-package'],
+          treeport: {
+            webPanels: [
+              {
+                source: './web-panels/dashboard',
+                permissions: ['same-origin']
+              }
+            ]
+          }
+        })
+      ),
+      fs.writeFile(path.join(panelRoot, 'index.html'), '<h1>Dashboard</h1>'),
+      fs.writeFile(
+        path.join(main, '.treeport', 'settings.json'),
+        JSON.stringify({ packages: [packageRoot] })
+      )
+    ])
+
+    const project = await service.registerProject(main)
+    const worktree = project.worktrees[0]!
+    const definition = (
+      await service.listWebPanelDefinitions(worktree.id)
+    ).find((candidate) => candidate.title === 'Dashboard')!
+    expect(definition).toMatchObject({
+      permissions: ['same-origin'],
+      permissionsGranted: false,
+      sandbox: { allowSameOrigin: true }
+    })
+    await expect(
+      service.createWebPanel(worktree.id, definition.id)
+    ).rejects.toMatchObject({
+      code: 'WEB_PANEL_PERMISSION_REQUIRED',
+      details: { permissions: ['same-origin'] }
+    })
+    await expect(
+      service.setWebPanelPermissionGrant(worktree.id, definition.id, true, [])
+    ).rejects.toMatchObject({ code: 'WEB_PANEL_PERMISSIONS_CHANGED' })
+
+    await service.setWebPanelPermissionGrant(
+      worktree.id,
+      definition.id,
+      true,
+      definition.permissions
+    )
+    await expect(
+      service.createWebPanel(worktree.id, definition.id)
+    ).resolves.toMatchObject({
+      kind: 'web',
+      permissions: ['same-origin'],
+      sandbox: { allowSameOrigin: true }
+    })
+
+    await service.removePackage(packageRoot, project.id)
+    await service.installPackage(packageRoot, project.id)
+    expect(
+      (await service.listWebPanelDefinitions(worktree.id)).find(
+        (candidate) => candidate.id === definition.id
+      )
+    ).toMatchObject({ permissionsGranted: false })
   })
 
   it('browses bounded server directories and resolves repository roots', async () => {

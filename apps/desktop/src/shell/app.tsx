@@ -1,10 +1,12 @@
 import { ChevronLeftIcon, ChevronRightIcon, DownloadIcon } from 'lucide-react'
 import {
+  type CSSProperties,
   type PointerEvent as ReactPointerEvent,
-  useCallback,
   useEffect,
   useState
 } from 'react'
+import { DesktopRuntimeProvider } from '@treeport-web/desktop-runtime'
+import { TreeportRoot } from '@treeport-web/treeport-root'
 import { ComputerSelector } from './computer-selector'
 import { ConnectDialog } from './connect-dialog'
 import { ConnectionPage } from './connection-page'
@@ -21,7 +23,7 @@ function Titlebar() {
   const shortcutSuffix = state.platform === 'darwin'
 
   return (
-    <header className="fixed inset-x-0 top-0 z-10 flex h-8 select-none items-center bg-zinc-950 [-webkit-app-region:drag]">
+    <header className="fixed inset-x-0 top-0 z-80 flex h-8 select-none items-center bg-zinc-950 [-webkit-app-region:drag]">
       <nav
         aria-label="Workspace history"
         className={`flex items-center gap-0.5 [-webkit-app-region:no-drag] ${state.platform === 'darwin' ? 'ml-[72px]' : 'ml-2'}`}
@@ -71,19 +73,10 @@ export function App() {
     setDialog(nextDialog)
   }
   const computer = state ? selectedComputer(state) : undefined
-  const webviewUrl =
-    state?.connection.status === 'ready' ? state.connection.url : null
-  const attachWebview = useCallback(
-    (webview: Electron.WebviewTag | null) => {
-      if (!webview || !webviewUrl) {
-        return
-      }
+  const showTitlebar =
+    state && !(state.platform === 'darwin' && state.fullscreen)
+  const connectionReady = state?.connection.status === 'ready' && computer
 
-      webview.setAttribute('allowpopups', 'true')
-      webview.src = webviewUrl
-    },
-    [webviewUrl]
-  )
   const captureTerminalSelectionPointer = (
     event: ReactPointerEvent<HTMLDivElement>
   ) => {
@@ -94,15 +87,13 @@ export function App() {
       event.currentTarget.setPointerCapture(event.pointerId)
     }
   }
-  const showTitlebar =
-    state && !(state.platform === 'darwin' && state.fullscreen)
 
   return (
     <>
       <Titlebar />
       {terminalSelectionActive && showTitlebar ? (
         <div
-          className="fixed inset-x-0 top-0 z-30 h-8 [-webkit-app-region:no-drag]"
+          className="fixed inset-x-0 top-0 z-90 h-8 [-webkit-app-region:no-drag]"
           onPointerEnter={captureTerminalSelectionPointer}
           onPointerMove={captureTerminalSelectionPointer}
           onPointerUp={() => window.treeportShell.releaseTerminalSelection()}
@@ -111,30 +102,42 @@ export function App() {
           }
         />
       ) : null}
-      {state && webviewUrl && computer ? (
-        <webview
-          key={computer.origin}
-          ref={attachWebview}
-          partition="persist:treeport-desktop"
-          className={
-            state.platform === 'darwin' && state.fullscreen
-              ? 'fixed inset-0 h-full w-full'
-              : 'fixed inset-x-0 top-8 bottom-0 h-[calc(100%-2rem)] w-full'
-          }
-        />
-      ) : (
-        <ConnectionPage
-          onConnect={() => openDialog('connect')}
-          onManage={() => openDialog('manage')}
-          onOpenMenu={() => setSelectorOpen(true)}
-        />
-      )}
+      <div
+        className={
+          showTitlebar
+            ? 'fixed inset-x-0 top-8 bottom-0 min-h-0'
+            : 'fixed inset-0 min-h-0'
+        }
+        style={
+          // SAFETY: The custom property is a valid React CSS value.
+          {
+            '--app-visual-viewport-height': showTitlebar
+              ? 'calc(100dvh - 2rem)'
+              : '100dvh'
+          } as CSSProperties
+        }
+      >
+        {connectionReady ? (
+          <DesktopRuntimeProvider
+            computerId={computer.id}
+            localBrowser={computer.loopback}
+          >
+            <TreeportRoot />
+          </DesktopRuntimeProvider>
+        ) : (
+          <ConnectionPage
+            onConnect={() => openDialog('connect')}
+            onManage={() => openDialog('manage')}
+            onOpenMenu={() => setSelectorOpen(true)}
+          />
+        )}
+      </div>
       {showTitlebar ? (
         <div
           className={
             state.platform === 'darwin'
-              ? 'pointer-events-none fixed top-0 right-2 z-20 flex h-8 items-center'
-              : 'pointer-events-none fixed inset-x-0 top-0 z-20 flex h-8 items-center justify-center'
+              ? 'pointer-events-none fixed top-0 right-2 z-80 flex h-8 items-center'
+              : 'pointer-events-none fixed inset-x-0 top-0 z-80 flex h-8 items-center justify-center'
           }
         >
           {state.updateReady ? (

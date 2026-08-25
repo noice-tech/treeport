@@ -22,6 +22,7 @@ import type {
   ApplicationUpdateStatus
 } from './application-update'
 import type { TerminalMetadataManager } from './terminal-metadata'
+import type { BrowserSessionManager } from './browser-sessions'
 
 function fixture(webDist = '/missing') {
   const config: AppConfig = {
@@ -191,6 +192,51 @@ function fixture(webDist = '/missing') {
         source: { type: 'project' }
       }
     ]),
+    openBrowserPanel: vi.fn(async (worktreeId: string, url?: string) => ({
+      panel: {
+        id: 'panel_browser',
+        kind: 'browser',
+        worktreeId,
+        title: url ? 'example.com' : 'Browser',
+        url: url ?? 'about:blank',
+        createdAt: '2026-01-01',
+        updatedAt: '2026-01-01'
+      }
+    })),
+    openBrowserPanelFromTerminal: vi.fn(
+      async (_terminalId: string, url: string) => ({
+        panel: {
+          id: 'panel_browser',
+          kind: 'browser',
+          worktreeId: 'wt_1',
+          title: 'example.com',
+          url,
+          createdAt: '2026-01-01',
+          updatedAt: '2026-01-01'
+        }
+      })
+    ),
+    openBrowserPanelFromPanel: vi.fn(async (_panelId: string, url: string) => ({
+      panel: {
+        id: 'panel_popup',
+        kind: 'browser',
+        worktreeId: 'wt_1',
+        title: 'popup.example.com',
+        url,
+        createdAt: '2026-01-01',
+        updatedAt: '2026-01-01'
+      }
+    })),
+    updateBrowserPanelState: vi.fn(
+      async (panelId: string, state: { url: string; title: string }) => ({
+        id: panelId,
+        kind: 'browser',
+        worktreeId: 'wt_1',
+        ...state,
+        createdAt: '2026-01-01',
+        updatedAt: '2026-01-02'
+      })
+    ),
     createWebPanel: vi.fn(async (worktreeId: string) => ({
       id: 'panel_review',
       kind: 'web',
@@ -218,7 +264,7 @@ function fixture(webDist = '/missing') {
       created: false,
       reused: true
     })),
-    deleteWebPanel: vi.fn(async () => undefined),
+    deletePanel: vi.fn(async () => undefined),
     getWebPanelContext: vi.fn(async () => ({
       apiVersion: 1,
       panel: { id: 'panel_review' },
@@ -237,7 +283,7 @@ function fixture(webDist = '/missing') {
         untracked: []
       }
     })),
-    getWebPanelListeners: vi.fn(async () => ({
+    getPanelListeners: vi.fn(async () => ({
       supported: true,
       message: null,
       listeners: [
@@ -319,17 +365,23 @@ function fixture(webDist = '/missing') {
     start: vi.fn(async () => applicationUpdateStatus),
     dispose: vi.fn()
   })
+  const browserRequestPanelClose = vi.fn(async () => true)
+  const browserSessions = testAccess<BrowserSessionManager>({
+    requestPanelClose: browserRequestPanelClose
+  })
   const app = createApp({
     service,
     config,
     tmux: testAccess<TmuxAdapter>({ capturePane }),
     applicationUpdate,
     terminalMetadata,
+    browserSessions,
     webDist
   })
   return {
     app,
     applicationUpdate,
+    browserRequestPanelClose,
     capturePane,
     config,
     metadataAcknowledgeBell,
@@ -409,8 +461,79 @@ describe('HTTP API validation', () => {
     })
   })
 
-  it('routes persistent web-panel lifecycle and scoped runtime reads', async () => {
+  it('routes persistent Browser and web-panel lifecycle with scoped runtime reads', async () => {
     const { app, service } = fixture()
+    const browser = await app.request('/api/worktrees/wt_1/browser-panels', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        url: 'https://example.com/application',
+        sourceTerminalId: 'term_1'
+      })
+    })
+    expect(browser.status).toBe(201)
+    expect(await browser.json()).toMatchObject({
+      panel: { kind: 'browser', worktreeId: 'wt_1' }
+    })
+    expect(service.openBrowserPanel).toHaveBeenCalledWith(
+      'wt_1',
+      'https://example.com/application',
+      'term_1',
+      null
+    )
+
+    const terminalBrowser = await app.request(
+      '/api/terminals/term_1/browser-panels/open',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ url: 'http://localhost:4173/' })
+      }
+    )
+    expect(terminalBrowser.status).toBe(201)
+    expect(service.openBrowserPanelFromTerminal).toHaveBeenCalledWith(
+      'term_1',
+      'http://localhost:4173/'
+    )
+
+    expect(
+      (
+        await app.request('/api/panels/panel_browser/browser-state', {
+          method: 'PUT',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            url: 'https://example.com/native',
+            title: 'Native application'
+          })
+        })
+      ).status
+    ).toBe(404)
+    expect(
+      (
+        await app.request('/api/panels/panel_browser/browser-popups', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ url: 'https://popup.example.com/' })
+        })
+      ).status
+    ).toBe(404)
+
+    for (const url of [
+      'file:///tmp/private',
+      'https://user:secret@example.com/'
+    ]) {
+      expect(
+        (
+          await app.request('/api/worktrees/wt_1/browser-panels', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ url })
+          })
+        ).status
+      ).toBe(400)
+    }
+    expect(service.openBrowserPanel).toHaveBeenCalledOnce()
+
     const definitions = await app.request(
       '/api/worktrees/wt_1/web-panel-definitions'
     )
@@ -488,7 +611,7 @@ describe('HTTP API validation', () => {
         ]
       }
     })
-    expect(service.getWebPanelListeners).toHaveBeenCalledWith('panel_review')
+    expect(service.getPanelListeners).toHaveBeenCalledWith('panel_review')
 
     expect(
       await (await app.request('/api/panels/panel_review/storage')).json()
@@ -534,15 +657,39 @@ describe('HTTP API validation', () => {
       method: 'DELETE'
     })
     expect(closed.status).toBe(200)
-    expect(service.deleteWebPanel).toHaveBeenCalledWith('panel_review', false)
+    expect(service.deletePanel).toHaveBeenCalledWith('panel_review', false)
 
     await app.request('/api/panels/panel_review?discardStoredData=true', {
       method: 'DELETE'
     })
-    expect(service.deleteWebPanel).toHaveBeenLastCalledWith(
-      'panel_review',
+    expect(service.deletePanel).toHaveBeenLastCalledWith('panel_review', true)
+  })
+
+  it('asks for confirmation only when Browser reports beforeunload', async () => {
+    const { app, browserRequestPanelClose, service } = fixture()
+    browserRequestPanelClose.mockResolvedValueOnce(false)
+
+    const blocked = await app.request('/api/panels/browser_panel', {
+      method: 'DELETE'
+    })
+    expect(blocked.status).toBe(409)
+    expect(await blocked.json()).toEqual({
+      error: {
+        code: 'BROWSER_BEFORE_UNLOAD',
+        message: 'Changes you made may not be saved.'
+      }
+    })
+    expect(service.deletePanel).not.toHaveBeenCalled()
+
+    const closed = await app.request('/api/panels/browser_panel?force=true', {
+      method: 'DELETE'
+    })
+    expect(closed.status).toBe(200)
+    expect(browserRequestPanelClose).toHaveBeenLastCalledWith(
+      'browser_panel',
       true
     )
+    expect(service.deletePanel).toHaveBeenCalledWith('browser_panel', false)
   })
 
   it('uses the panel SDK to broker scoped panel requests', async () => {
@@ -557,14 +704,6 @@ describe('HTTP API validation', () => {
       type: string,
       event: EventFixture
     ) => listeners.get(type)!(testAccess<Event>(event))
-    const intervalHandlers: Array<() => void> = []
-    vi.stubGlobal('setInterval', (handler: () => void) => {
-      intervalHandlers.push(handler)
-      return 1
-    })
-    const targetLocation = { href: 'http://browser-app.test/start' }
-    vi.stubGlobal('location', targetLocation)
-
     try {
       // SAFETY: The test fixture provides the asserted contract used here.
       const sdk = (await import('@treeport/panel-sdk')) as {
@@ -651,36 +790,6 @@ describe('HTTP API validation', () => {
           source: 'treeport-panel-v1',
           method: 'panel.title.set',
           title: 'Review route'
-        },
-        '*'
-      )
-
-      dispatch('message', {
-        source: panelParent,
-        data: {
-          source: 'treeport-browser-v1',
-          method: 'location.subscribe',
-          subscription: 'browser-frame-1'
-        }
-      })
-      expect(panelParent.postMessage).toHaveBeenLastCalledWith(
-        {
-          source: 'treeport-panel-v1',
-          method: 'browser.location.set',
-          subscription: 'browser-frame-1',
-          url: 'http://browser-app.test/start'
-        },
-        '*'
-      )
-
-      targetLocation.href = 'http://browser-app.test/next'
-      intervalHandlers[0]!()
-      expect(panelParent.postMessage).toHaveBeenLastCalledWith(
-        {
-          source: 'treeport-panel-v1',
-          method: 'browser.location.set',
-          subscription: 'browser-frame-1',
-          url: 'http://browser-app.test/next'
         },
         '*'
       )

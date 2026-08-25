@@ -94,7 +94,11 @@ function usesMacKeyboard(): boolean {
   return /Mac|iPhone|iPad|iPod/.test(globalThis.navigator?.platform ?? '')
 }
 
-export function activateTerminalLink(event: MouseEvent, url: string): void {
+export function activateTerminalLink(
+  event: MouseEvent,
+  url: string,
+  terminalId?: string
+): void {
   if (usesMacKeyboard() ? !event.metaKey : !event.ctrlKey) {
     return
   }
@@ -110,8 +114,18 @@ export function activateTerminalLink(event: MouseEvent, url: string): void {
     return
   }
 
-  if (parsedUrl.protocol === 'http:' || parsedUrl.protocol === 'https:') {
-    window.open(url, '_blank', 'noopener,noreferrer')
+  if (
+    terminalId &&
+    (parsedUrl.protocol === 'http:' || parsedUrl.protocol === 'https:')
+  ) {
+    void fetch(
+      `/api/terminals/${encodeURIComponent(terminalId)}/browser-panels/open`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ url })
+      }
+    ).catch(() => undefined)
   }
 }
 
@@ -708,7 +722,7 @@ export function trackTerminalScrolling(
   }
 }
 
-export function terminalOptions() {
+export function terminalOptions(terminalId?: string) {
   return {
     cursorBlink: true,
     convertEol: false,
@@ -720,7 +734,8 @@ export function terminalOptions() {
     allowProposedApi: false,
     macOptionClickForcesSelection: true,
     linkHandler: {
-      activate: activateTerminalLink,
+      activate: (event: MouseEvent, url: string) =>
+        activateTerminalLink(event, url, terminalId),
       allowNonHttpProtocols: true
     },
     theme: {

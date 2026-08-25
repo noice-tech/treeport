@@ -1,0 +1,755 @@
+import { EventEmitter } from 'node:events'
+import http from 'node:http'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { z } from 'zod'
+import { BROWSER_PROTOCOL_VERSION } from '@treeport/shared'
+import type {
+  BrowserClientMessage,
+  BrowserFrame,
+  BrowserOwnerServerMessage,
+  BrowserPanel,
+  BrowserServerMessage,
+  ProductEvent
+} from '@treeport/shared'
+import type { PlaywrightBrowserCallbacks } from './playwright-browser'
+import {
+  BrowserSessionManager,
+  type BrowserAgentCliRunner,
+  type BrowserSessionBrowser,
+  type BrowserSessionBrowserFactory,
+  type BrowserSessionConfig,
+  type BrowserOwnerTransport,
+  type BrowserSessionService,
+  type BrowserTransport
+} from './browser-sessions'
+
+const browsers: FakeBrowser[] = []
+
+class FakeBrowser implements BrowserSessionBrowser {
+  state: BrowserSessionBrowser['state'] = {
+    url: 'about:blank',
+    title: '',
+    loading: false,
+    canGoBack: false,
+    canGoForward: false,
+    viewport: { width: 1_280, height: 800 }
+  }
+  commands: BrowserClientMessage[] = []
+  screencasting: boolean[] = []
+  closeRequests: boolean[] = []
+  closeRequiresConfirmation = false
+  closes = 0
+  constructor(
+    _cachePath: string,
+    _worktreePath: string,
+    _title: string,
+    _panelId: string,
+    _worktreeId: string,
+    readonly callbacks: PlaywrightBrowserCallbacks
+  ) {
+    browsers.push(this)
+  }
+  async launch() {}
+  async command(message: BrowserClientMessage) {
+    this.commands.push(message)
+    if (message.type === 'navigate') {
+      this.state = { ...this.state, url: message.url }
+      this.callbacks.state(this.state)
+    }
+  }
+  async setScreencasting(value: boolean) {
+    this.screencasting.push(value)
+  }
+  async requestClose(force: boolean) {
+    this.closeRequests.push(force)
+    return force || !this.closeRequiresConfirmation
+  }
+  async close() {
+    this.closes += 1
+  }
+}
+
+const browserFactory: BrowserSessionBrowserFactory = (
+  cachePath,
+  workspacePath,
+  title,
+  panelId,
+  worktreeId,
+  callbacks
+) =>
+  new FakeBrowser(
+    cachePath,
+    workspacePath,
+    title,
+    panelId,
+    worktreeId,
+    callbacks
+  )
+
+function fixture(
+  agentCliRunner: BrowserAgentCliRunner | null = null,
+  options: {
+    panelUrl?: string
+    panelTitle?: string
+  } = {}
+) {
+  const events = new EventEmitter()
+  const panel: BrowserPanel = {
+    id: 'panel_browser',
+    kind: 'browser',
+    worktreeId: 'worktree',
+    title: options.panelTitle ?? 'Browser',
+    url: options.panelUrl ?? 'about:blank',
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z'
+  }
+  const service = {
+    authorizeBrowserPanel: vi.fn(async (_panelId: string) => ({
+      panel,
+      worktreePath: '/worktree'
+    })),
+    updateBrowserPanelState: vi.fn(
+      async (_panelId: string, state: { url: string; title: string }) => {
+        panel.url = state.url
+        panel.title = state.title || new URL(state.url).host || 'Browser'
+        panel.updatedAt = '2026-01-01T00:00:01.000Z'
+        return { ...panel }
+      }
+    ),
+    openBrowserPanelFromPanel: vi.fn(async () => ({
+      panel: { ...panel, id: 'panel_popup' }
+    })),
+    events: {
+      subscribe(listener: (event: ProductEvent) => void) {
+        events.on('event', listener)
+        return () => events.off('event', listener)
+      }
+    }
+  } satisfies BrowserSessionService
+  const config = {
+    cacheDir: '/cache',
+    runtimeDir: '/tmp/treeport-browser-session-test'
+  } satisfies BrowserSessionConfig
+  const manager = new BrowserSessionManager(
+    service,
+    config,
+    browserFactory,
+    agentCliRunner
+  )
+  const transports: Array<{
+    transport: BrowserTransport
+    messages: BrowserServerMessage[]
+    frames: BrowserFrame[]
+    disconnects: number
+  }> = []
+  const transport = (id: string) => {
+    const messages: BrowserServerMessage[] = []
+    const frames: BrowserFrame[] = []
+    let disconnects = 0
+    const browserTransport: BrowserTransport = {
+      id,
+      isConnected: () => true,
+      sendMessage: (message) => {
+        messages.push(message)
+        return true
+      },
+      sendFrame: (frame) => {
+        frames.push(frame)
+        return true
+      },
+      disconnect: () => {
+        disconnects += 1
+      }
+    }
+    const value = {
+      transport: browserTransport,
+      messages,
+      frames,
+      get disconnects() {
+        return disconnects
+      }
+    }
+    transports.push(value)
+    return value
+  }
+  return { manager, service, events, transport, transports }
+}
+
+beforeEach(() => browsers.splice(0))
+
+describe('Browser sessions', () => {
+  it('authorizes one-use attachment tickets, shares control, and drops stale frames', async () => {
+    const value = fixture()
+    const first = value.transport('first')
+    const firstTicket = await value.manager.issueTicket(
+      'panel_browser',
+      'client-first'
+    )
+    await value.manager.accept(firstTicket, first.transport)
+    expect(first.messages.at(-1)).toMatchObject({
+      type: 'controlChanged',
+      state: { controlled: true }
+    })
+    await expect(
+      value.manager.accept(firstTicket, value.transport('reuse').transport)
+    ).rejects.toThrow('INVALID_BROWSER_TICKET')
+
+    const second = value.transport('second')
+    await value.manager.accept(
+      await value.manager.issueTicket('panel_browser', 'client-second'),
+      second.transport
+    )
+    expect(second.messages.at(-1)).toMatchObject({
+      type: 'controlChanged',
+      state: { controlled: false, hasController: true }
+    })
+
+    const browser = browsers[0]!
+    browser.callbacks.frame({
+      mimeType: 'image/jpeg',
+      timestamp: 1,
+      width: 800,
+      height: 600,
+      data: new Uint8Array([1])
+    })
+    browser.callbacks.frame({
+      mimeType: 'image/jpeg',
+      timestamp: 2,
+      width: 800,
+      height: 600,
+      data: new Uint8Array([2])
+    })
+    browser.callbacks.frame({
+      mimeType: 'image/jpeg',
+      timestamp: 3,
+      width: 800,
+      height: 600,
+      data: new Uint8Array([3])
+    })
+    const lateObserver = value.transport('late-observer')
+    await value.manager.accept(
+      await value.manager.issueTicket('panel_browser', 'client-late'),
+      lateObserver.transport
+    )
+    expect(lateObserver.frames).toHaveLength(1)
+    expect([...lateObserver.frames[0]!.data]).toEqual([3])
+    expect(first.frames).toHaveLength(1)
+    value.manager.message('first', {
+      type: 'frameAck',
+      sequence: first.frames[0]!.sequence
+    })
+    expect(first.frames).toHaveLength(2)
+    expect([...first.frames[1]!.data]).toEqual([3])
+
+    const observerMessageCount = second.messages.length
+    value.manager.message('second', {
+      type: 'resize',
+      width: 900,
+      height: 500
+    })
+    expect(browser.commands).toEqual([])
+    expect(second.messages).toHaveLength(observerMessageCount)
+
+    value.manager.message('second', { type: 'back' })
+    expect(browser.commands).toEqual([])
+    await vi.waitFor(() =>
+      expect(second.messages.at(-1)).toMatchObject({
+        type: 'navigationError'
+      })
+    )
+    value.manager.message('second', { type: 'takeControl' })
+    value.manager.message('second', { type: 'back' })
+    await vi.waitFor(() =>
+      expect(browser.commands.at(-1)).toEqual({ type: 'back' })
+    )
+    expect(browser.commands[0]).toEqual({
+      type: 'resize',
+      width: 900,
+      height: 500
+    })
+    expect(first.messages.at(-1)).toMatchObject({
+      type: 'controlChanged',
+      state: { controlled: false }
+    })
+
+    const forwardCommands = browser.commands.filter(
+      (command) => command.type === 'forward'
+    ).length
+    value.manager.message('first', { type: 'takeControl' })
+    value.manager.message('second', { type: 'forward' })
+    await vi.waitFor(() =>
+      expect(first.messages.at(-1)).toMatchObject({
+        type: 'controlChanged',
+        state: { controlled: true }
+      })
+    )
+    await vi.waitFor(() =>
+      expect(second.messages.at(-1)).toMatchObject({
+        type: 'navigationError',
+        message: 'Take control before you interact with this browser.'
+      })
+    )
+    expect(
+      browser.commands.filter((command) => command.type === 'forward')
+    ).toHaveLength(forwardCommands)
+
+    await value.manager.dispose()
+    expect(browser.closes).toBe(1)
+    expect(first.disconnects).toBe(1)
+    expect(second.disconnects).toBe(1)
+  })
+
+  it('serializes concurrent attachments into one browser process', async () => {
+    const value = fixture()
+    const firstTicket = await value.manager.issueTicket(
+      'panel_browser',
+      'client-first'
+    )
+    const secondTicket = await value.manager.issueTicket(
+      'panel_browser',
+      'client-second'
+    )
+    const authorized =
+      await value.service.authorizeBrowserPanel('panel_browser')
+    let finishAuthorization!: () => void
+    const authorization = new Promise<void>((resolve) => {
+      finishAuthorization = resolve
+    })
+    vi.mocked(value.service.authorizeBrowserPanel).mockImplementation(
+      async () => {
+        await authorization
+        return authorized
+      }
+    )
+    const first = value.transport('first')
+    const second = value.transport('second')
+    const attachments = Promise.all([
+      value.manager.accept(firstTicket, first.transport),
+      value.manager.accept(secondTicket, second.transport)
+    ])
+    finishAuthorization()
+    await attachments
+
+    expect(browsers).toHaveLength(1)
+    expect(first.messages.at(-1)).toMatchObject({ type: 'controlChanged' })
+    expect(second.messages.at(-1)).toMatchObject({ type: 'controlChanged' })
+    await value.manager.dispose()
+  })
+
+  it('restores daemon-owned addresses and saves agent navigation without a client', async () => {
+    const launchUrl = 'http://localhost:4173/from-launch'
+    const agentUrl = 'http://localhost:4173/from-agent'
+    const runAgentCli = vi.fn<BrowserAgentCliRunner>(async (_target, args) => {
+      const browser = browsers[0]!
+      if (args[0] === 'attach') {
+        expect(browser.state.url).toBe(launchUrl)
+        return 'attached'
+      }
+
+      if (args[1] === 'goto') {
+        browser.state = {
+          ...browser.state,
+          url: agentUrl,
+          title: 'Agent page'
+        }
+        browser.callbacks.state(browser.state)
+        return 'navigated'
+      }
+
+      return 'detached'
+    })
+    const launchValue = fixture(runAgentCli, { panelUrl: launchUrl })
+
+    await expect(
+      launchValue.manager.agentCommand('panel_browser', {
+        command: 'goto',
+        args: [agentUrl]
+      })
+    ).resolves.toBe('navigated')
+    expect(browsers[0]!.commands[0]).toEqual({
+      type: 'navigate',
+      url: launchUrl
+    })
+    expect(
+      launchValue.service.updateBrowserPanelState
+    ).toHaveBeenLastCalledWith('panel_browser', {
+      url: agentUrl,
+      title: 'Agent page'
+    })
+    await launchValue.manager.dispose()
+
+    const storedUrl = 'http://localhost:4173/from-storage'
+    const storedValue = fixture(null, { panelUrl: storedUrl })
+    const client = storedValue.transport('stored-client')
+    await storedValue.manager.accept(
+      await storedValue.manager.issueTicket('panel_browser', 'stored-client'),
+      client.transport
+    )
+    expect(browsers[1]!.commands[0]).toEqual({
+      type: 'navigate',
+      url: storedUrl
+    })
+    expect(client.messages).toContainEqual(
+      expect.objectContaining({
+        type: 'ready',
+        state: expect.objectContaining({ url: storedUrl })
+      })
+    )
+    await storedValue.manager.dispose()
+  })
+
+  it('moves one panel between Playwright and a verified local owner without two live runtimes', async () => {
+    const runAgentCli = vi.fn<BrowserAgentCliRunner>(async (_target, args) =>
+      args[0] === 'attach' ? 'attached' : 'snapshot output'
+    )
+    const value = fixture(runAgentCli)
+    const remote = value.transport('remote')
+    await value.manager.accept(
+      await value.manager.issueTicket('panel_browser', 'remote-client'),
+      remote.transport
+    )
+    expect(browsers).toHaveLength(1)
+
+    const ownerTicket = await value.manager.issueOwnerTicket(
+      'panel_browser',
+      'desktop-client'
+    )
+    const ownerServer = http.createServer((request, response) => {
+      if (request.url === '/private/identity') {
+        response.setHeader('content-type', 'application/json')
+        response.end(
+          JSON.stringify({
+            panelId: 'panel_browser',
+            challenge: ownerTicket.challenge
+          })
+        )
+        return
+      }
+
+      response.statusCode = 404
+      response.end()
+    })
+    await new Promise<void>((resolve) =>
+      ownerServer.listen(0, '127.0.0.1', resolve)
+    )
+    const address = z
+      .object({ port: z.number().int().positive() })
+      .parse(ownerServer.address())
+
+    const ownerMessages: BrowserOwnerServerMessage[] = []
+    let ownerConnected = true
+    const ownerTransport: BrowserOwnerTransport = {
+      id: 'local-owner',
+      isConnected: () => ownerConnected,
+      send: (message) => {
+        ownerMessages.push(message)
+        if (message.type === 'agentControl') {
+          queueMicrotask(() =>
+            value.manager.ownerMessage('local-owner', {
+              type: 'agentControlResult',
+              generation: message.generation,
+              requestId: message.requestId,
+              accepted: true
+            })
+          )
+        } else if (message.type === 'closeRequest') {
+          queueMicrotask(() =>
+            value.manager.ownerMessage('local-owner', {
+              type: 'closeResult',
+              generation: message.generation,
+              requestId: message.requestId,
+              canClose: false
+            })
+          )
+        }
+
+        return true
+      },
+      disconnect: () => {
+        ownerConnected = false
+      }
+    }
+    await value.manager.acceptOwner(
+      {
+        ticket: ownerTicket.ticket,
+        challenge: ownerTicket.challenge,
+        endpoint: `http://127.0.0.1:${address.port}/private/`,
+        protocolVersion: BROWSER_PROTOCOL_VERSION
+      },
+      ownerTransport
+    )
+    expect(browsers[0]!.closes).toBe(1)
+    expect(ownerMessages[0]).toMatchObject({
+      type: 'claimGranted',
+      panelId: 'panel_browser'
+    })
+    expect(remote.messages).toContainEqual({
+      type: 'browserOwnedLocally',
+      message: 'This Browser is open in a local Treeport desktop app.'
+    })
+
+    const claim = ownerMessages.find(
+      (message) => message.type === 'claimGranted'
+    )
+    if (!claim || claim.type !== 'claimGranted') {
+      throw new Error('The local owner claim was not granted.')
+    }
+
+    const generation = claim.generation
+    value.manager.ownerMessage('local-owner', {
+      type: 'state',
+      generation,
+      revision: 1,
+      state: {
+        url: 'https://example.com/local',
+        title: 'Visible local page',
+        loading: false,
+        canGoBack: true,
+        canGoForward: false,
+        viewport: { width: 900, height: 600 }
+      }
+    })
+    await vi.waitFor(() =>
+      expect(value.service.updateBrowserPanelState).toHaveBeenCalledWith(
+        'panel_browser',
+        {
+          url: 'https://example.com/local',
+          title: 'Visible local page'
+        }
+      )
+    )
+    value.manager.ownerMessage('local-owner', {
+      type: 'popup',
+      generation,
+      url: 'https://example.com/popup'
+    })
+    await vi.waitFor(() =>
+      expect(value.service.openBrowserPanelFromPanel).toHaveBeenCalledWith(
+        'panel_browser',
+        'https://example.com/popup'
+      )
+    )
+
+    const observer = value.transport('observer')
+    await value.manager.accept(
+      await value.manager.issueTicket('panel_browser', 'observer-client'),
+      observer.transport
+    )
+    expect(observer.messages).toContainEqual({
+      type: 'browserOwnedLocally',
+      message: 'This Browser is open in a local Treeport desktop app.'
+    })
+    expect(browsers).toHaveLength(1)
+    await expect(
+      value.manager.requestPanelClose('panel_browser')
+    ).resolves.toBe(false)
+
+    await expect(
+      value.manager.agentCommand('panel_browser', {
+        command: 'snapshot',
+        args: []
+      })
+    ).rejects.toThrow()
+    expect(browsers).toHaveLength(1)
+    expect(runAgentCli).not.toHaveBeenCalled()
+
+    value.manager.closeOwner('local-owner')
+    await expect(
+      value.manager.agentCommand('panel_browser', {
+        command: 'snapshot',
+        args: []
+      })
+    ).resolves.toBe('snapshot output')
+    expect(browsers).toHaveLength(2)
+    expect(runAgentCli).toHaveBeenCalledWith(
+      expect.objectContaining({ panelId: 'panel_browser' }),
+      expect.arrayContaining(['attach', 'treeport-panel_browser'])
+    )
+
+    await value.manager.dispose()
+    await new Promise<void>((resolve) => ownerServer.close(() => resolve()))
+  })
+
+  it('uses a page beforeunload request instead of a generic close confirmation', async () => {
+    const value = fixture()
+    const client = value.transport('client')
+    await value.manager.accept(
+      await value.manager.issueTicket('panel_browser', 'client'),
+      client.transport
+    )
+    const browser = browsers[0]!
+    browser.closeRequiresConfirmation = true
+
+    await expect(
+      value.manager.requestPanelClose('panel_browser')
+    ).resolves.toBe(false)
+    expect(browser.closeRequests).toEqual([false])
+    expect(browser.closes).toBe(0)
+
+    await expect(
+      value.manager.requestPanelClose('panel_browser', true)
+    ).resolves.toBe(true)
+    expect(browser.closeRequests).toEqual([false, true])
+    await value.manager.closePanel('panel_browser', 'Browser closed.')
+    expect(browser.closes).toBe(1)
+    await value.manager.dispose()
+  })
+
+  it('queues a user takeover until an agent command releases control', async () => {
+    let finishAgent!: () => void
+    const runAgentCli = vi
+      .fn<BrowserAgentCliRunner>()
+      .mockResolvedValue('detached')
+      .mockResolvedValueOnce('attached')
+      .mockImplementationOnce(
+        () =>
+          new Promise<string>((resolve) => {
+            finishAgent = () => resolve('snapshot')
+          })
+      )
+    const value = fixture(runAgentCli)
+    const client = value.transport('client')
+    await value.manager.accept(
+      await value.manager.issueTicket('panel_browser', 'client'),
+      client.transport
+    )
+
+    const agent = value.manager.agentCommand('panel_browser', {
+      command: 'snapshot',
+      args: []
+    })
+    await vi.waitFor(() =>
+      expect(client.messages.at(-1)).toMatchObject({
+        type: 'controlChanged',
+        state: { controller: 'agent', controlled: false }
+      })
+    )
+    value.manager.message('client', { type: 'takeControl' })
+    for (let index = 0; index < 100; index += 1) {
+      value.manager.message('client', {
+        type: 'pointer',
+        phase: 'move',
+        x: index,
+        y: index + 1
+      })
+      value.manager.message('client', {
+        type: 'wheel',
+        deltaX: 1,
+        deltaY: -2
+      })
+    }
+    value.manager.message('client', {
+      type: 'pointer',
+      phase: 'down',
+      x: 20,
+      y: 30,
+      button: 'left'
+    })
+    for (let index = 0; index < 60; index += 1) {
+      value.manager.message('client', {
+        type: 'key',
+        phase: 'down',
+        key: `Key${index}`
+      })
+    }
+    expect(browsers[0]!.commands).toEqual([])
+    expect(client.messages).toContainEqual({
+      type: 'navigationError',
+      message: 'The Browser command queue is full. Wait and try again.'
+    })
+
+    finishAgent()
+    await expect(agent).resolves.toBe('snapshot')
+    await vi.waitFor(() =>
+      expect(browsers[0]!.commands).toContainEqual({
+        type: 'pointer',
+        phase: 'down',
+        x: 20,
+        y: 30,
+        button: 'left'
+      })
+    )
+    expect(browsers[0]!.commands[0]).toEqual({
+      type: 'resize',
+      width: 1_280,
+      height: 800
+    })
+    expect(browsers[0]!.commands).toContainEqual({
+      type: 'pointer',
+      phase: 'move',
+      x: 99,
+      y: 100
+    })
+    expect(browsers[0]!.commands).toContainEqual({
+      type: 'wheel',
+      deltaX: 100,
+      deltaY: -200
+    })
+    expect(client.messages.at(-1)).toMatchObject({
+      type: 'controlChanged',
+      state: { controller: 'you', controlled: true }
+    })
+    await value.manager.dispose()
+  })
+
+  it('routes browser popups through durable BrowserPanel creation', async () => {
+    const value = fixture()
+    const client = value.transport('client')
+    await value.manager.accept(
+      await value.manager.issueTicket('panel_browser', 'client'),
+      client.transport
+    )
+
+    browsers[0]!.callbacks.popup('https://example.com/popup')
+    await vi.waitFor(() =>
+      expect(value.service.openBrowserPanelFromPanel).toHaveBeenCalledWith(
+        'panel_browser',
+        'https://example.com/popup'
+      )
+    )
+    await value.manager.dispose()
+  })
+
+  it('closes the browser when its owning worktree is removed', async () => {
+    const value = fixture()
+    const client = value.transport('client')
+    await value.manager.accept(
+      await value.manager.issueTicket('panel_browser', 'client'),
+      client.transport
+    )
+    vi.mocked(value.service.authorizeBrowserPanel).mockRejectedValue(
+      new Error('removed')
+    )
+    value.events.emit('event', {
+      type: 'worktree.removed',
+      data: { projectId: 'project', worktreeId: 'worktree' }
+    })
+
+    await vi.waitFor(() => expect(browsers[0]!.closes).toBe(1))
+    expect(client.messages.at(-1)).toEqual({
+      type: 'closed',
+      reason: 'Worktree removed'
+    })
+    await value.manager.dispose()
+  })
+
+  it('closes the browser when the durable panel is removed', async () => {
+    const value = fixture()
+    const client = value.transport('client')
+    await value.manager.accept(
+      await value.manager.issueTicket('panel_browser', 'client'),
+      client.transport
+    )
+    value.events.emit('event', {
+      type: 'panel.removed',
+      data: { panelId: 'panel_browser', worktreeId: 'worktree' }
+    })
+    await vi.waitFor(() => expect(browsers[0]!.closes).toBe(1))
+    expect(client.messages.at(-1)).toEqual({
+      type: 'closed',
+      reason: 'Panel closed'
+    })
+    expect(client.disconnects).toBe(1)
+    await value.manager.dispose()
+  })
+})

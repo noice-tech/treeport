@@ -618,10 +618,14 @@ export class TerminalSession {
       return
     }
 
-    const terminal = new Terminal(terminalOptions())
+    const terminal = new Terminal(terminalOptions(this.terminalId))
     const fitAddon = new FitAddon()
     terminal.loadAddon(fitAddon)
-    terminal.loadAddon(new WebLinksAddon(activateTerminalLink))
+    terminal.loadAddon(
+      new WebLinksAddon((event, url) =>
+        activateTerminalLink(event, url, this.terminalId)
+      )
+    )
     terminal.open(this.wrapper)
     terminal.onSelectionChange(() => this.updateSelectionState())
     terminal.onRender(() => {

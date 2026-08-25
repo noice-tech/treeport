@@ -14,6 +14,7 @@ import {
   type TreeportDatabase
 } from './database'
 import {
+  browserPanels,
   operations,
   projects,
   terminalBellStates,
@@ -86,7 +87,7 @@ describe('SQLite migration and catalog ordering', () => {
       await database.db.get<{ count: number }>(
         sql`SELECT count(*) AS count FROM __drizzle_migrations`
       )
-    ).toEqual({ count: 10 })
+    ).toEqual({ count: 11 })
     expect(
       await database.db.get<{ count: number }>(sql`
         SELECT count(*) AS count FROM sqlite_master WHERE name='terminals'
@@ -246,7 +247,7 @@ describe('SQLite migration and catalog ordering', () => {
     ])
   })
 
-  it('persists ordered web panels with their worktree lifecycle', async () => {
+  it('persists ordered WebPanel and BrowserPanel records with their worktree lifecycle', async () => {
     const directory = await fs.mkdtemp(
       path.join(os.tmpdir(), 'treeport-panels-')
     )
@@ -287,6 +288,20 @@ describe('SQLite migration and catalog ordering', () => {
         updatedAt: createdAt
       })
     }
+    await database.db.insert(browserPanels).values({
+      id: 'browser',
+      worktreeId: 'wt',
+      title: 'Example',
+      url: 'https://example.com/',
+      createdAt: '2026-02-03',
+      updatedAt: '2026-02-04'
+    })
+    expect(
+      await database.db
+        .select({ title: browserPanels.title, url: browserPanels.url })
+        .from(browserPanels)
+        .where(eq(browserPanels.worktreeId, 'wt'))
+    ).toEqual([{ title: 'Example', url: 'https://example.com/' }])
     expect(
       (
         await database.db
@@ -343,6 +358,7 @@ describe('SQLite migration and catalog ordering', () => {
 
     await database.db.delete(worktrees).where(eq(worktrees.id, 'wt'))
     expect(await database.db.select().from(webPanels)).toEqual([])
+    expect(await database.db.select().from(browserPanels)).toEqual([])
     expect(await database.db.select().from(webPanelStorage)).toEqual([])
   })
 
@@ -403,6 +419,7 @@ describe('SQLite migration and catalog ordering', () => {
       await tx.run(sql`ALTER TABLE web_panels DROP COLUMN input_json`)
       await tx.run(sql`ALTER TABLE web_panels DROP COLUMN launch_cwd`)
       await tx.run(sql`DROP TABLE terminal_bell_states`)
+      await tx.run(sql`DROP TABLE browser_panels`)
       await tx.run(sql`DROP TABLE __drizzle_migrations`)
       await tx.run(sql`
         CREATE TABLE schema_migrations (
@@ -452,7 +469,7 @@ describe('SQLite migration and catalog ordering', () => {
       await reopened.db.get<{ count: number }>(
         sql`SELECT count(*) AS count FROM __drizzle_migrations`
       )
-    ).toEqual({ count: 10 })
+    ).toEqual({ count: 11 })
 
     const backupDirectory = path.join(directory, 'database-backups')
     const [backupName] = await fs.readdir(backupDirectory)
@@ -494,7 +511,11 @@ describe('SQLite migration and catalog ordering', () => {
     await fs.cp(packagedMigrations, oldMigrations, { recursive: true })
     await Promise.all([
       fs.rm(path.join(oldMigrations, '0009_open_folders.sql')),
-      fs.rm(path.join(oldMigrations, 'meta', '0009_snapshot.json'))
+      fs.rm(
+        path.join(oldMigrations, '0010_browser_panels_and_permissions.sql')
+      ),
+      fs.rm(path.join(oldMigrations, 'meta', '0009_snapshot.json')),
+      fs.rm(path.join(oldMigrations, 'meta', '0010_snapshot.json'))
     ])
     const journalPath = path.join(oldMigrations, 'meta', '_journal.json')
     // SAFETY: The copied migration journal has the asserted test shape.
@@ -624,6 +645,7 @@ describe('SQLite migration and catalog ordering', () => {
       await tx.run(sql`ALTER TABLE web_panels DROP COLUMN input_json`)
       await tx.run(sql`ALTER TABLE web_panels DROP COLUMN launch_cwd`)
       await tx.run(sql`DROP TABLE terminal_bell_states`)
+      await tx.run(sql`DROP TABLE browser_panels`)
       await tx.run(sql`DROP TABLE __drizzle_migrations`)
       await tx.run(sql`
         CREATE TABLE schema_migrations (
@@ -696,11 +718,15 @@ describe('SQLite migration and catalog ordering', () => {
       fs.rm(path.join(oldMigrations, '0007_dashing_pestilence.sql')),
       fs.rm(path.join(oldMigrations, '0008_recent_project_visibility.sql')),
       fs.rm(path.join(oldMigrations, '0009_open_folders.sql')),
+      fs.rm(
+        path.join(oldMigrations, '0010_browser_panels_and_permissions.sql')
+      ),
       fs.rm(path.join(oldMigrations, 'meta', '0005_snapshot.json')),
       fs.rm(path.join(oldMigrations, 'meta', '0006_snapshot.json')),
       fs.rm(path.join(oldMigrations, 'meta', '0007_snapshot.json')),
       fs.rm(path.join(oldMigrations, 'meta', '0008_snapshot.json')),
-      fs.rm(path.join(oldMigrations, 'meta', '0009_snapshot.json'))
+      fs.rm(path.join(oldMigrations, 'meta', '0009_snapshot.json')),
+      fs.rm(path.join(oldMigrations, 'meta', '0010_snapshot.json'))
     ])
     const journalPath = path.join(oldMigrations, 'meta', '_journal.json')
     // SAFETY: The test fixture provides the asserted contract used here.
@@ -799,6 +825,7 @@ describe('SQLite migration and catalog ordering', () => {
       await tx.run(sql`ALTER TABLE web_panels DROP COLUMN input_json`)
       await tx.run(sql`ALTER TABLE web_panels DROP COLUMN launch_cwd`)
       await tx.run(sql`DROP TABLE terminal_bell_states`)
+      await tx.run(sql`DROP TABLE browser_panels`)
       await tx.run(sql`DROP TABLE __drizzle_migrations`)
       await tx.run(sql`
         CREATE TABLE schema_migrations (
@@ -865,6 +892,6 @@ describe('SQLite migration and catalog ordering', () => {
       await recovered.db.get<{ count: number }>(
         sql`SELECT count(*) AS count FROM __drizzle_migrations`
       )
-    ).toEqual({ count: 10 })
+    ).toEqual({ count: 11 })
   })
 })

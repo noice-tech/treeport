@@ -4,12 +4,15 @@ import os from 'node:os'
 import path from 'node:path'
 import {
   WEB_PANEL_INPUT_MAX_BYTES,
+  browserUrlSchema,
   webPanelInputSchema
 } from '@treeport/shared'
 import type {
+  BrowserPanel,
   CreateOperationRequest,
   DirectoryBrowseResponse,
   JsonValue,
+  OpenBrowserPanelResult,
   OpenWebPanelResult,
   OperationRecord,
   PackageListing,
@@ -29,6 +32,7 @@ import type {
   WebPanelContext,
   WebPanelDefinition,
   WebPanelLaunch,
+  WebPanelPermission,
   WorktreeListenerDiscovery,
   WorktreeRecord
 } from '@treeport/shared'
@@ -49,10 +53,12 @@ import {
   serializeOperation
 } from './database'
 import {
+  browserPanels,
   operations,
   projects,
   terminalPresets,
   webPanels,
+  webPanelPermissionGrants,
   webPanelStorage,
   worktrees
 } from './database-schema'
@@ -105,9 +111,22 @@ interface TerminalLaunchOptions {
   shellCommand?: string
 }
 
+function mapBrowserPanel(row: typeof browserPanels.$inferSelect): BrowserPanel {
+  return {
+    id: row.id,
+    kind: 'browser',
+    worktreeId: row.worktreeId,
+    title: row.title,
+    url: row.url,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt
+  }
+}
+
 function mapWebPanel(
   row: typeof webPanels.$inferSelect,
-  allowSameOrigin = false
+  permissions: WebPanelPermission[] = [],
+  permissionsGranted = permissions.length === 0
 ): WebPanel {
   const parsedInput = webPanelInputSchema
     .nullable()
@@ -126,7 +145,10 @@ function mapWebPanel(
       input: parsedInput.data,
       cwd: row.launchCwd
     },
-    sandbox: { allowSameOrigin },
+    permissions,
+    sandbox: {
+      allowSameOrigin: permissionsGranted && permissions.includes('same-origin')
+    },
     createdAt: row.createdAt,
     updatedAt: row.updatedAt
   }
@@ -677,15 +699,22 @@ export class TreeportService {
             ])
             worktree.dirty = dirty
             worktree.terminals = terminals
-            const storedWebPanels = await this.deps.database.db
-              .select()
-              .from(webPanels)
-              .where(eq(webPanels.worktreeId, worktree.id))
-              .orderBy(asc(webPanels.createdAt), asc(webPanels.id))
+            const [storedBrowserPanels, storedWebPanels] = await Promise.all([
+              this.deps.database.db
+                .select()
+                .from(browserPanels)
+                .where(eq(browserPanels.worktreeId, worktree.id))
+                .orderBy(asc(browserPanels.createdAt), asc(browserPanels.id)),
+              this.deps.database.db
+                .select()
+                .from(webPanels)
+                .where(eq(webPanels.worktreeId, worktree.id))
+                .orderBy(asc(webPanels.createdAt), asc(webPanels.id))
+            ])
             const definitions =
               project.availability.state === 'available' &&
               storedWebPanels.length > 0
-                ? await this.effectiveWebPanelDefinitions(worktree.id).catch(
+                ? await this.listWebPanelDefinitions(worktree.id).catch(
                     () => []
                   )
                 : []
@@ -702,13 +731,15 @@ export class TreeportService {
                 createdAt: terminal.createdAt,
                 updatedAt: terminal.updatedAt
               })),
-              ...storedWebPanels.map((panel) =>
-                mapWebPanel(
+              ...storedBrowserPanels.map(mapBrowserPanel),
+              ...storedWebPanels.map((panel) => {
+                const definition = definitionsById.get(panel.definitionId)
+                return mapWebPanel(
                   panel,
-                  definitionsById.get(panel.definitionId)?.sandbox
-                    .allowSameOrigin ?? false
+                  definition?.permissions ?? [],
+                  definition?.permissionsGranted ?? false
                 )
-              )
+              })
             ].sort(
               (left, right) =>
                 left.createdAt.localeCompare(right.createdAt) ||
@@ -953,7 +984,40 @@ export class TreeportService {
       this.packages.syncProjects([await this.getProject(projectId)])
     }
 
+    const registeredProjects = projectId
+      ? [await this.getProject(projectId)]
+      : await this.storedProjects()
+    const collectPermissionSourceKeys = async () => {
+      const keys = new Set<string>()
+      for (const project of registeredProjects) {
+        const worktree = project.worktrees[0]
+        if (!worktree) {
+          continue
+        }
+
+        const definitions = await this.effectiveWebPanelDefinitions(
+          worktree.id
+        ).catch(() => [])
+        for (const definition of definitions) {
+          if (definition.permissions.length > 0) {
+            keys.add(
+              await this.webPanelPermissionSourceKey(worktree.id, definition)
+            )
+          }
+        }
+      }
+      return keys
+    }
+    const before = await collectPermissionSourceKeys()
     const result = await this.packages.remove(source, projectId)
+    const after = await collectPermissionSourceKeys()
+    for (const sourceKey of before) {
+      if (!after.has(sourceKey)) {
+        await this.deps.database.db
+          .delete(webPanelPermissionGrants)
+          .where(eq(webPanelPermissionGrants.sourceKey, sourceKey))
+      }
+    }
     await this.webPanelRuntime.disposeDevelopmentServers()
     await this.packageResourcesChanged(projectId)
     return result
@@ -1245,6 +1309,8 @@ export class TreeportService {
           ? `${words[0]!.toLocaleUpperCase()}${words.slice(1)}`
           : directory.name,
         source: { type: 'project' },
+        permissions: [],
+        permissionsGranted: true,
         sandbox: { allowSameOrigin: false },
         root,
         entry,
@@ -1296,21 +1362,196 @@ export class TreeportService {
     ]
   }
 
+  private async webPanelPermissionSourceKey(
+    worktreeId: string,
+    definition: WebPanelDefinition
+  ): Promise<string> {
+    const worktree = await this.getWorktree(worktreeId)
+    const source =
+      definition.source.type === 'project'
+        ? {
+            type: 'project',
+            projectId: worktree.projectId,
+            definitionId: definition.id
+          }
+        : {
+            type: 'package',
+            scope: definition.source.scope,
+            projectId:
+              definition.source.scope === 'project' ? worktree.projectId : null,
+            packageId: definition.source.packageId,
+            source: definition.source.source,
+            definitionId: definition.id
+          }
+    return crypto
+      .createHash('sha256')
+      .update(JSON.stringify(source))
+      .digest('hex')
+  }
+
+  private async webPanelPermissionsGranted(
+    worktreeId: string,
+    definition: WebPanelDefinition
+  ): Promise<boolean> {
+    const sourceKey = await this.webPanelPermissionSourceKey(
+      worktreeId,
+      definition
+    )
+    const [grant] = await this.deps.database.db
+      .select({ permissionsJson: webPanelPermissionGrants.permissionsJson })
+      .from(webPanelPermissionGrants)
+      .where(eq(webPanelPermissionGrants.sourceKey, sourceKey))
+      .limit(1)
+    if (definition.permissions.length === 0) {
+      if (grant) {
+        await this.deps.database.db
+          .delete(webPanelPermissionGrants)
+          .where(eq(webPanelPermissionGrants.sourceKey, sourceKey))
+      }
+
+      return true
+    }
+
+    const matches =
+      grant?.permissionsJson ===
+      JSON.stringify([...definition.permissions].sort())
+    if (grant && !matches) {
+      await this.deps.database.db
+        .delete(webPanelPermissionGrants)
+        .where(eq(webPanelPermissionGrants.sourceKey, sourceKey))
+    }
+
+    return matches
+  }
+
   async listWebPanelDefinitions(
     worktreeId: string
   ): Promise<WebPanelDefinition[]> {
-    return (await this.effectiveWebPanelDefinitions(worktreeId)).map(
-      ({
-        root: _root,
-        entry: _entry,
-        packageRoot: _packageRoot,
-        development: _development,
-        packageLockPath: _packageLockPath,
-        definitionId: _definitionId,
-        packageSource: _packageSource,
-        allowNetworkRequests: _allowNetworkRequests,
-        ...definition
-      }) => definition
+    const definitions = await this.effectiveWebPanelDefinitions(worktreeId)
+    return Promise.all(
+      definitions.map(
+        async ({
+          root: _root,
+          entry: _entry,
+          packageRoot: _packageRoot,
+          development: _development,
+          packageLockPath: _packageLockPath,
+          definitionId: _definitionId,
+          packageSource: _packageSource,
+          allowNetworkRequests: _allowNetworkRequests,
+          ...definition
+        }) => ({
+          ...definition,
+          permissionsGranted: await this.webPanelPermissionsGranted(
+            worktreeId,
+            definition
+          )
+        })
+      )
+    )
+  }
+
+  async setWebPanelPermissionGrant(
+    worktreeId: string,
+    definitionId: string,
+    granted: boolean,
+    expectedPermissions: WebPanelPermission[]
+  ): Promise<WebPanelDefinition> {
+    await this.requireAvailableWorktree(worktreeId)
+    const definition = (
+      await this.effectiveWebPanelDefinitions(worktreeId)
+    ).find((candidate) => candidate.id === definitionId)
+    if (!definition) {
+      throw new DomainError(
+        'WEB_PANEL_DEFINITION_NOT_FOUND',
+        'Web panel definition not found',
+        404
+      )
+    }
+
+    if (
+      JSON.stringify([...definition.permissions].sort()) !==
+      JSON.stringify([...expectedPermissions].sort())
+    ) {
+      throw new DomainError(
+        'WEB_PANEL_PERMISSIONS_CHANGED',
+        'Web panel permissions changed; review them and try again',
+        409,
+        { permissions: definition.permissions }
+      )
+    }
+
+    const sourceKey = await this.webPanelPermissionSourceKey(
+      worktreeId,
+      definition
+    )
+    if (granted && definition.permissions.length > 0) {
+      const timestamp = now()
+      await this.deps.database.db
+        .insert(webPanelPermissionGrants)
+        .values({
+          sourceKey,
+          definitionId,
+          permissionsJson: JSON.stringify([...definition.permissions].sort()),
+          grantedAt: timestamp,
+          updatedAt: timestamp
+        })
+        .onConflictDoUpdate({
+          target: webPanelPermissionGrants.sourceKey,
+          set: {
+            permissionsJson: JSON.stringify([...definition.permissions].sort()),
+            updatedAt: timestamp
+          }
+        })
+    } else {
+      await this.deps.database.db
+        .delete(webPanelPermissionGrants)
+        .where(eq(webPanelPermissionGrants.sourceKey, sourceKey))
+    }
+
+    const affectedPanels = await this.deps.database.db
+      .select({ id: webPanels.id })
+      .from(webPanels)
+      .where(
+        and(
+          eq(webPanels.worktreeId, worktreeId),
+          eq(webPanels.definitionId, definitionId)
+        )
+      )
+    this.invalidateProjectsSnapshot()
+    for (const panel of affectedPanels) {
+      this.events.publish('panel.updated', {
+        worktreeId,
+        panelId: panel.id
+      })
+    }
+
+    return {
+      id: definition.id,
+      title: definition.title,
+      source: definition.source,
+      permissions: definition.permissions,
+      permissionsGranted: definition.permissions.length === 0 ? true : granted,
+      sandbox: definition.sandbox
+    }
+  }
+
+  private async requireWebPanelPermissions(
+    worktreeId: string,
+    definition: WebPanelDefinition
+  ): Promise<void> {
+    if (await this.webPanelPermissionsGranted(worktreeId, definition)) {
+      return
+    }
+
+    throw new DomainError(
+      'WEB_PANEL_PERMISSION_REQUIRED',
+      `Permission is required before ${definition.title} can open`,
+      403,
+      {
+        definitionId: definition.id,
+        permissions: definition.permissions
+      }
     )
   }
 
@@ -1362,6 +1603,206 @@ export class TreeportService {
     }
   }
 
+  async createBrowserPanel(
+    worktreeId: string,
+    requestedUrl?: string
+  ): Promise<BrowserPanel> {
+    await this.requireAvailableWorktree(worktreeId)
+    const parsedUrl = requestedUrl
+      ? browserUrlSchema.safeParse(requestedUrl)
+      : null
+    if (parsedUrl && !parsedUrl.success) {
+      throw new DomainError(
+        'INVALID_BROWSER_URL',
+        'Enter an absolute HTTP or HTTPS URL without credentials',
+        400
+      )
+    }
+
+    const url = parsedUrl ? new URL(parsedUrl.data).href : 'about:blank'
+    const timestamp = now()
+    const panel: BrowserPanel = {
+      id: id('panel'),
+      kind: 'browser',
+      worktreeId,
+      title: url === 'about:blank' ? 'Browser' : new URL(url).host,
+      url,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    }
+    await this.deps.database.db.insert(browserPanels).values({
+      id: panel.id,
+      worktreeId: panel.worktreeId,
+      title: panel.title,
+      url: panel.url,
+      createdAt: panel.createdAt,
+      updatedAt: panel.updatedAt
+    })
+    this.invalidateProjectsSnapshot()
+    this.events.publish('panel.created', { worktreeId, panelId: panel.id })
+    return panel
+  }
+
+  async openBrowserPanel(
+    worktreeId: string,
+    requestedUrl?: string,
+    sourceTerminalId: string | null = null,
+    sourcePanelId: string | null = null
+  ): Promise<OpenBrowserPanelResult> {
+    await this.requireAvailableWorktree(worktreeId)
+    if (sourceTerminalId) {
+      const terminal = await this.getTerminal(sourceTerminalId)
+      if (terminal.worktreeId !== worktreeId) {
+        throw new DomainError(
+          'INVALID_PANEL_OPEN_SOURCE',
+          'The source terminal does not belong to the target tree',
+          400
+        )
+      }
+    }
+
+    if (sourcePanelId) {
+      const sourcePanel = await this.getBrowserPanel(sourcePanelId)
+      if (sourcePanel.worktreeId !== worktreeId) {
+        throw new DomainError(
+          'INVALID_PANEL_OPEN_SOURCE',
+          'The source Browser does not belong to the target tree',
+          400
+        )
+      }
+    }
+
+    const panel = await this.createBrowserPanel(worktreeId, requestedUrl)
+    this.events.publish('panel.open_requested', {
+      worktreeId,
+      panelId: panel.id,
+      sourceTerminalId,
+      sourcePanelId
+    })
+    return { panel }
+  }
+
+  async openBrowserPanelFromTerminal(
+    terminalId: string,
+    requestedUrl: string
+  ): Promise<OpenBrowserPanelResult> {
+    const terminal = await this.getTerminal(terminalId)
+    return this.openBrowserPanel(
+      terminal.worktreeId,
+      requestedUrl,
+      terminal.id,
+      null
+    )
+  }
+
+  async openBrowserPanelFromPanel(
+    panelId: string,
+    requestedUrl: string
+  ): Promise<OpenBrowserPanelResult> {
+    const sourcePanel = await this.getBrowserPanel(panelId)
+    return this.openBrowserPanel(
+      sourcePanel.worktreeId,
+      requestedUrl,
+      null,
+      sourcePanel.id
+    )
+  }
+
+  async getBrowserPanel(panelId: string): Promise<BrowserPanel> {
+    const [row] = await this.deps.database.db
+      .select()
+      .from(browserPanels)
+      .where(eq(browserPanels.id, panelId))
+      .limit(1)
+    if (!row) {
+      throw new DomainError('PANEL_NOT_FOUND', 'Browser not found', 404)
+    }
+
+    await this.requireAvailableWorktree(row.worktreeId)
+    return mapBrowserPanel(row)
+  }
+
+  async authorizeBrowserPanel(panelId: string): Promise<{
+    panel: BrowserPanel
+    worktreePath: string
+  }> {
+    const panel = await this.getBrowserPanel(panelId)
+    const worktree = await this.getWorktree(panel.worktreeId)
+    return { panel, worktreePath: worktree.path }
+  }
+
+  async updateBrowserPanelState(
+    panelId: string,
+    state: { url: string; title: string }
+  ): Promise<BrowserPanel> {
+    const panel = await this.getBrowserPanel(panelId)
+    const parsedUrl =
+      state.url === 'about:blank'
+        ? { success: true as const, data: 'about:blank' }
+        : browserUrlSchema.safeParse(state.url)
+    if (!parsedUrl.success) {
+      throw new DomainError(
+        'INVALID_BROWSER_URL',
+        'The hosted browser reported an unsupported URL',
+        400
+      )
+    }
+
+    const url =
+      parsedUrl.data === 'about:blank'
+        ? parsedUrl.data
+        : new URL(parsedUrl.data).href
+    const requestedTitle = state.title.trim().slice(0, 256)
+    const title =
+      requestedTitle ||
+      (url === 'about:blank' ? 'Browser' : new URL(url).host || 'Browser')
+    if (panel.url === url && panel.title === title) {
+      return panel
+    }
+
+    const observedAt = now()
+    const updatedAt =
+      observedAt > panel.updatedAt
+        ? observedAt
+        : new Date(Date.parse(panel.updatedAt) + 1).toISOString()
+    await this.deps.database.db
+      .update(browserPanels)
+      .set({ url, title, updatedAt })
+      .where(eq(browserPanels.id, panelId))
+    const updated = { ...panel, url, title, updatedAt }
+    this.invalidateProjectsSnapshot()
+    this.events.publish('panel.updated', {
+      worktreeId: panel.worktreeId,
+      panelId
+    })
+    return updated
+  }
+
+  async deleteBrowserPanel(panelId: string): Promise<void> {
+    const panel = await this.getBrowserPanel(panelId)
+    await this.deps.database.db
+      .delete(browserPanels)
+      .where(eq(browserPanels.id, panelId))
+    this.invalidateProjectsSnapshot()
+    this.events.publish('panel.removed', {
+      worktreeId: panel.worktreeId,
+      panelId
+    })
+  }
+
+  async deletePanel(panelId: string, discardStoredData = false): Promise<void> {
+    const [browserPanel] = await this.deps.database.db
+      .select({ id: browserPanels.id })
+      .from(browserPanels)
+      .where(eq(browserPanels.id, panelId))
+      .limit(1)
+    if (browserPanel) {
+      return this.deleteBrowserPanel(panelId)
+    }
+
+    return this.deleteWebPanel(panelId, discardStoredData)
+  }
+
   async createWebPanel(
     worktreeId: string,
     definitionId: string,
@@ -1379,6 +1820,7 @@ export class TreeportService {
       )
     }
 
+    await this.requireWebPanelPermissions(worktreeId, definition)
     const normalized = await this.normalizeWebPanelLaunch(worktree, launch)
     const timestamp = now()
     const panel: WebPanel = {
@@ -1388,6 +1830,7 @@ export class TreeportService {
       definitionId,
       title: definition.title,
       launch: normalized.launch,
+      permissions: definition.permissions,
       sandbox: definition.sandbox,
       createdAt: timestamp,
       updatedAt: timestamp
@@ -1426,11 +1869,13 @@ export class TreeportService {
       )
     }
 
+    await this.requireWebPanelPermissions(worktreeId, definition)
     const finish = (result: OpenWebPanelResult): OpenWebPanelResult => {
       this.events.publish('panel.open_requested', {
         worktreeId,
         panelId: result.panel.id,
-        sourceTerminalId
+        sourceTerminalId,
+        sourcePanelId: null
       })
       return result
     }
@@ -1485,7 +1930,8 @@ export class TreeportService {
         launchCwd: normalized.launch.cwd,
         updatedAt
       },
-      definition.sandbox.allowSameOrigin
+      definition.permissions,
+      true
     )
     this.invalidateProjectsSnapshot()
     this.events.publish('panel.updated', { worktreeId, panelId: panel.id })
@@ -1542,9 +1988,13 @@ export class TreeportService {
     const definition = (
       await this.effectiveWebPanelDefinitions(panelRow.worktreeId)
     ).find((candidate) => candidate.id === panelRow.definitionId)
+    const permissionsGranted = definition
+      ? await this.webPanelPermissionsGranted(panelRow.worktreeId, definition)
+      : false
     const panel = mapWebPanel(
       panelRow,
-      definition?.sandbox.allowSameOrigin ?? false
+      definition?.permissions ?? [],
+      permissionsGranted
     )
     const worktree = await this.getWorktree(panel.worktreeId)
     const project = await this.getProject(worktree.projectId)
@@ -1587,6 +2037,32 @@ export class TreeportService {
       worktree.path,
       context.project.defaultBranch
     )
+  }
+
+  async getBrowserPanelListeners(
+    panelId: string
+  ): Promise<WorktreeListenerDiscovery> {
+    const panel = await this.getBrowserPanel(panelId)
+    const worktree = await this.getWorktree(panel.worktreeId)
+    const panes = await this.deps.tmux.listPaneProcesses(
+      worktree.tmuxSocketName,
+      worktree.id
+    )
+    return this.networkListeners.listeners({
+      worktreePath: worktree.path,
+      panes
+    })
+  }
+
+  async getPanelListeners(panelId: string): Promise<WorktreeListenerDiscovery> {
+    const [browserPanel] = await this.deps.database.db
+      .select({ id: browserPanels.id })
+      .from(browserPanels)
+      .where(eq(browserPanels.id, panelId))
+      .limit(1)
+    return browserPanel
+      ? this.getBrowserPanelListeners(panelId)
+      : this.getWebPanelListeners(panelId)
   }
 
   async getWebPanelListeners(
@@ -1710,6 +2186,7 @@ export class TreeportService {
       )
     }
 
+    await this.requireWebPanelPermissions(panel.worktreeId, definition)
     const encodedPanelId = encodeURIComponent(panelId)
     return this.webPanelRuntime.resolve(
       definition,
@@ -1718,12 +2195,35 @@ export class TreeportService {
     )
   }
 
+  async listBrowserPanels(): Promise<BrowserPanel[]> {
+    return this.deps.database.db
+      .select()
+      .from(browserPanels)
+      .orderBy(asc(browserPanels.createdAt), asc(browserPanels.id))
+      .then((rows) => rows.map(mapBrowserPanel))
+  }
+
   async listWebPanels(): Promise<WebPanel[]> {
     const rows = await this.deps.database.db
       .select()
       .from(webPanels)
       .orderBy(asc(webPanels.createdAt), asc(webPanels.id))
-    return rows.map((row) => mapWebPanel(row))
+    return Promise.all(
+      rows.map(async (row) => {
+        const definition = (
+          await this.effectiveWebPanelDefinitions(row.worktreeId).catch(
+            () => []
+          )
+        ).find((candidate) => candidate.id === row.definitionId)
+        return mapWebPanel(
+          row,
+          definition?.permissions ?? [],
+          definition
+            ? await this.webPanelPermissionsGranted(row.worktreeId, definition)
+            : false
+        )
+      })
+    )
   }
 
   async getWorktree(worktreeId: string): Promise<WorktreeRecord> {

@@ -12,12 +12,14 @@ import {
   WEB_PANEL_INPUT_MAX_BYTES,
   webPanelInputSchema,
   type ApiErrorBody,
+  type BrowserPanel,
   type CreateOperationRequest,
   type EventsClientToServerEvents,
   type EventsServerToClientEvents,
   type PackageListing,
   type PackageOperationResult,
   type PackageResourceDiagnostic,
+  type OpenBrowserPanelResult,
   type OpenWebPanelResult,
   type OperationRecord,
   type ProjectRecord,
@@ -563,7 +565,67 @@ async function webPanelLaunchCwd(worktree: WorktreeRecord): Promise<string> {
   return path.relative(worktreeRoot, cwd) || '.'
 }
 
-function webPanelUrl(worktree: WorktreeRecord, panelId: string): string {
+async function resolveBrowserPanel(
+  panelId?: string
+): Promise<{ panel: BrowserPanel; worktree: WorktreeRecord }> {
+  const projectList = await projects()
+  const candidates = projectList.flatMap((project) =>
+    project.worktrees.flatMap((worktree) =>
+      worktree.panels
+        .filter((panel): panel is BrowserPanel => panel.kind === 'browser')
+        .map((panel) => ({ panel, worktree }))
+    )
+  )
+  if (panelId) {
+    const match = candidates.find((candidate) => candidate.panel.id === panelId)
+    if (!match) {
+      throw new CliError(`Browser ${panelId} was not found`, 5)
+    }
+
+    return match
+  }
+
+  const worktree = await resolveWorktree('.')
+  const matches = candidates.filter(
+    (candidate) => candidate.worktree.id === worktree.id
+  )
+  if (matches.length === 1) {
+    return matches[0]!
+  }
+
+  if (matches.length === 0) {
+    throw new CliError(
+      `No Browser is open in worktree ${worktree.name}`,
+      5,
+      'BROWSER_PANEL_NOT_FOUND'
+    )
+  }
+
+  throw new CliError(
+    `More than one Browser is open in worktree ${worktree.name}; specify --panel`,
+    5,
+    'BROWSER_PANEL_AMBIGUOUS',
+    { panelIds: matches.map((candidate) => candidate.panel.id) }
+  )
+}
+
+async function runBrowserAgentCommand(
+  command: string,
+  args: string[],
+  panelId?: string
+): Promise<{ panelId: string; output: string }> {
+  const { panel } = await resolveBrowserPanel(panelId)
+  const result = await request<{ output: string }>(
+    `/api/panels/${encodeURIComponent(panel.id)}/browser-agent`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ command, args })
+    }
+  )
+  return { panelId: panel.id, output: result.output }
+}
+
+function panelUrl(worktree: WorktreeRecord, panelId: string): string {
   const target = new URL(apiUrl)
   target.pathname = `/projects/${encodeURIComponent(worktree.projectId)}/worktrees/${encodeURIComponent(worktree.id)}/panels/${encodeURIComponent(panelId)}`
   target.search = ''
@@ -1519,6 +1581,225 @@ async function main(args: string[]): Promise<void> {
     )
   })
 
+  const browserCommand = program
+    .command('browser')
+    .description('Manage Browser and its hosted Chromium')
+  browserCommand.action(() => {
+    writeStdout(browserCommand.helpInformation())
+  })
+
+  const browserOpenCommand = browserCommand
+    .command('open')
+    .description('Open Browser and request client navigation')
+    .argument('[url]', 'absolute HTTP or HTTPS URL')
+    .requiredOption('--worktree <id-or-path-or-dot>', 'owning tree')
+    .option('--json', 'emit machine-readable JSON')
+  browserOpenCommand.action(async (url?: string) => {
+    const worktree = await resolveWorktree(
+      browserOpenCommand.opts<{ worktree: string }>().worktree
+    )
+    const body = {
+      url,
+      sourceTerminalId:
+        contextWorktreeId === worktree.id ? (contextTerminalId ?? null) : null
+    }
+
+    const result = await request<OpenBrowserPanelResult>(
+      `/api/worktrees/${encodeURIComponent(worktree.id)}/browser-panels`,
+      { method: 'POST', body: JSON.stringify(body) }
+    )
+    const output = {
+      ...result,
+      url: panelUrl(worktree, result.panel.id)
+    }
+    print(
+      output,
+      () => `Opened ${result.panel.title} (${result.panel.id})\n${output.url}`
+    )
+  })
+
+  const browserInstallCommand = browserCommand
+    .command('install')
+    .description('Install the Chromium build used by Browser')
+    .option('--json', 'emit machine-readable JSON')
+  browserInstallCommand.action(async () => {
+    const result = await request<{ message: string }>('/api/browser/install', {
+      method: 'POST'
+    })
+    print(result, () => result.message)
+  })
+
+  const browserStatusCommand = browserCommand
+    .command('status')
+    .description('Show hosted browser installation status')
+    .option('--json', 'emit machine-readable JSON')
+  browserStatusCommand.action(async () => {
+    const result = await request<{
+      installed: boolean
+      executablePath: string
+      playwrightVersion: string
+      browserRevision: string
+      channel: 'chromium'
+      launchReady: boolean
+      launchError: string | null
+    }>('/api/browser/status')
+    print(
+      result,
+      () =>
+        `${result.installed ? 'Chromium is installed' : 'Chromium is not installed'}\nLaunch ready: ${result.launchReady ? 'yes' : 'no'}\nPlaywright: ${result.playwrightVersion}\nBrowser: ${result.channel} ${result.browserRevision}\nExecutable: ${result.executablePath}${result.launchError ? `\nLaunch error: ${result.launchError}` : ''}`
+    )
+  })
+
+  const browserRemoveCommand = browserCommand
+    .command('remove')
+    .description("Remove Treeport's hosted Chromium build")
+    .option('--json', 'emit machine-readable JSON')
+  browserRemoveCommand.action(async () => {
+    await request('/api/browser/install', { method: 'DELETE' })
+    print({ removed: true }, () => 'Removed Treeport hosted Chromium')
+  })
+
+  const browserListCommand = browserCommand
+    .command('list')
+    .description('List open Browser sessions')
+    .option('--json', 'emit machine-readable JSON')
+  browserListCommand.action(async () => {
+    const panels = (await projects()).flatMap((project) =>
+      project.worktrees.flatMap((worktree) =>
+        worktree.panels
+          .filter((panel): panel is BrowserPanel => panel.kind === 'browser')
+          .map((panel) => ({
+            panelId: panel.id,
+            title: panel.title,
+            worktreeId: worktree.id,
+            worktree: worktree.name,
+            projectId: project.id,
+            project: project.name
+          }))
+      )
+    )
+    print(panels, () =>
+      panels.length
+        ? panels
+            .map(
+              (panel) =>
+                `${panel.panelId}\t${panel.project} / ${panel.worktree}\t${panel.title}`
+            )
+            .join('\n')
+        : 'Browser is not open.'
+    )
+  })
+
+  const printAgentResult = async (
+    command: string,
+    args: string[],
+    panelId?: string
+  ) => {
+    const result = await runBrowserAgentCommand(command, args, panelId)
+    print(result, () => result.output)
+  }
+
+  const browserSnapshotCommand = browserCommand
+    .command('snapshot')
+    .description('Capture an accessibility snapshot of the hosted page')
+    .option('--panel <panel-id>', 'Browser ID')
+    .option('--json', 'emit machine-readable JSON')
+  browserSnapshotCommand.action(async () =>
+    printAgentResult(
+      'snapshot',
+      [],
+      browserSnapshotCommand.opts<{ panel?: string }>().panel
+    )
+  )
+
+  const browserClickCommand = browserCommand
+    .command('click')
+    .description('Click an element from the latest browser snapshot')
+    .argument('<target>', 'Playwright element reference or selector')
+    .option('--panel <panel-id>', 'Browser ID')
+    .option('--json', 'emit machine-readable JSON')
+  browserClickCommand.action(async (target: string) =>
+    printAgentResult(
+      'click',
+      [target],
+      browserClickCommand.opts<{ panel?: string }>().panel
+    )
+  )
+
+  const browserFillCommand = browserCommand
+    .command('fill')
+    .description('Fill an editable element from the latest browser snapshot')
+    .argument('<target>', 'Playwright element reference or selector')
+    .argument('<text>', 'text to enter')
+    .option('--panel <panel-id>', 'Browser ID')
+    .option('--json', 'emit machine-readable JSON')
+  browserFillCommand.action(async (target: string, text: string) =>
+    printAgentResult(
+      'fill',
+      [target, text],
+      browserFillCommand.opts<{ panel?: string }>().panel
+    )
+  )
+
+  const browserPressCommand = browserCommand
+    .command('press')
+    .description('Press a key in the hosted page')
+    .argument('<key>', 'Playwright key name')
+    .option('--panel <panel-id>', 'Browser ID')
+    .option('--json', 'emit machine-readable JSON')
+  browserPressCommand.action(async (key: string) =>
+    printAgentResult(
+      'press',
+      [key],
+      browserPressCommand.opts<{ panel?: string }>().panel
+    )
+  )
+
+  const browserGotoCommand = browserCommand
+    .command('goto')
+    .description('Navigate the hosted page')
+    .argument('<url>', 'absolute HTTP or HTTPS URL')
+    .option('--panel <panel-id>', 'Browser ID')
+    .option('--json', 'emit machine-readable JSON')
+  browserGotoCommand.action(async (url: string) =>
+    printAgentResult(
+      'goto',
+      [url],
+      browserGotoCommand.opts<{ panel?: string }>().panel
+    )
+  )
+
+  const browserConsoleCommand = browserCommand
+    .command('console')
+    .description('List page console messages')
+    .argument('[level]', 'minimum console level')
+    .option('--panel <panel-id>', 'Browser ID')
+    .option('--json', 'emit machine-readable JSON')
+  browserConsoleCommand.action(async (level?: string) =>
+    printAgentResult(
+      'console',
+      level ? [level] : [],
+      browserConsoleCommand.opts<{ panel?: string }>().panel
+    )
+  )
+
+  for (const [name, description, agentName] of [
+    ['back', 'Go back in the hosted page', 'go-back'],
+    ['forward', 'Go forward in the hosted page', 'go-forward'],
+    ['reload', 'Reload the hosted page', 'reload'],
+    ['network', 'List page network requests', 'requests'],
+    ['screenshot', 'Capture a screenshot of the hosted page', 'screenshot']
+  ] as const) {
+    const command = browserCommand
+      .command(name)
+      .description(description)
+      .option('--panel <panel-id>', 'Browser ID')
+      .option('--json', 'emit machine-readable JSON')
+    command.action(async () =>
+      printAgentResult(agentName, [], command.opts<{ panel?: string }>().panel)
+    )
+  }
+
   const installCommand = program
     .command('install')
     .description('Install and configure a Treeport package')
@@ -1924,7 +2205,7 @@ async function main(args: string[]): Promise<void> {
     )
     const output = {
       ...result,
-      url: webPanelUrl(worktree, result.panel.id)
+      url: panelUrl(worktree, result.panel.id)
     }
     print(
       output,

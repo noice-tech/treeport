@@ -107,23 +107,43 @@ Panel code can potentially:
 - make direct HTTP or HTTPS requests;
 - remove its sandbox attribute.
 
-Install and open this panel only when you trust its source and runtime dependencies.
+Approve and open this panel only when you trust its source and runtime dependencies.
 
 A panel without this permission keeps an opaque origin.
 
-:::caution[Permission confirmation is not available]
-Treeport does not yet request approval before it loads a panel with permissions. This limitation is tracked in [issue #259](https://github.com/noice-tech/treeport/issues/259).
-:::
+Treeport shows the panel source and permissions before the first open.
 
-### Browser package boundary
+A grant applies to the exact package source, scope, panel definition, and permission set.
 
-The Browser package can load an HTTP or HTTPS site in a nested iframe.
+Treeport requests approval again when the permission set changes. Removing the package revokes its grants.
 
-The package receives the client-local title from the target. If the target uses the panel SDK, the package also saves reported URL changes.
+### Browser primitive boundaries
 
-The target cannot use context, diff, storage, shortcuts, or workspace navigation methods.
+The Browser primitive does not use a web-panel package permission.
 
-Browser iframe restrictions continue to apply. Treeport does not bypass the framing policy of the target.
+For a local desktop connection, Electron runs the page in a `<webview>`.
+
+The page can reach sites that are available from the desktop computer.
+
+For other connections, Playwright controls isolated Chromium on the daemon computer.
+
+That page can reach sites that are available from the daemon computer.
+
+Each browser panel uses separate temporary browser data.
+
+Treeport does not use, import, or attach to a personal browser profile.
+
+Treeport authorizes each action for one browser panel and tree.
+
+For a local desktop connection, Treeport validates the exact `<webview>` before it accepts agent control.
+
+Treeport does not give browser-control access to page content or remote clients.
+
+The server accepts only absolute HTTP or HTTPS addresses without credentials.
+
+Closing a browser panel deletes its temporary browser data.
+
+Treeport requests confirmation only when the site uses `beforeunload`.
 
 ## Follow these operating rules
 
