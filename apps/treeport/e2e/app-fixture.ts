@@ -175,6 +175,7 @@ export async function mockApp(
     applicationUpdate?: ApplicationUpdateStatus
     realReviewPanel?: boolean
     hostedBrowser?: boolean
+    browserInstallRequired?: boolean
     browserBeforeUnload?: boolean
   } = {}
 ) {
@@ -297,9 +298,11 @@ export async function mockApp(
 
   const socketFixture = {
     initialMetadata: initialTerminalMetadata,
-    hostedBrowser: options.hostedBrowser ?? false
+    hostedBrowser: options.hostedBrowser ?? false,
+    browserInstallRequired: options.browserInstallRequired ?? false
   }
-  await page.addInitScript(({ initialMetadata, hostedBrowser }) => {
+  await page.addInitScript((fixture) => {
+    const { initialMetadata, hostedBrowser, browserInstallRequired } = fixture
     const terminalStatePrefix = '__treeport_terminal_state__:'
     const readTerminalState = (terminalId: string) => {
       const stored = localStorage.getItem(`${terminalStatePrefix}${terminalId}`)
@@ -326,6 +329,7 @@ export async function mockApp(
       notifyTerminalState(state)
     }
     const scope = window
+    let hostedBrowserConnections = 0
     scope.__browserCommands = []
     scope.__browserNavigationCompleted = null
     if (!scope.__terminalStateListener) {
@@ -482,9 +486,28 @@ export async function mockApp(
 
         if (data.startsWith('40/browsers') && hostedBrowser) {
           this.namespace = '/browsers'
+          hostedBrowserConnections += 1
           this.deliver(
             `40/browsers,${JSON.stringify({ sid: crypto.randomUUID() })}`
           )
+          if (
+            browserInstallRequired &&
+            sessionStorage.getItem('__treeport_browser_installed__') !==
+              'true' &&
+            hostedBrowserConnections === 1
+          ) {
+            this.deliverSocket('message', {
+              type: 'browserUnavailable',
+              message: 'Chromium is not installed on this daemon.',
+              installCommand: 'treeport browser install'
+            })
+            return
+          }
+
+          if (browserInstallRequired) {
+            sessionStorage.setItem('__treeport_browser_installed__', 'true')
+          }
+
           scope.__repeatBrowserState = () =>
             this.deliverSocket('message', {
               type: 'state',
@@ -786,6 +809,9 @@ export async function mockApp(
   let failTerminalDelete = false
   let webPanelCreations = 0
   let browserPanelCreations = 0
+  let browserInstallRequests = 0
+  let browserInstallGate: Promise<void> | null = null
+  let releaseBrowserInstall: (() => void) | null = null
   let webPanelHasStorage = false
   const webPanelStorage = new Map<string, Map<string, JsonValue>>()
   const webPanelDefinitions = [
@@ -1677,6 +1703,18 @@ export async function mockApp(
     }
 
     if (
+      pathname === '/api/browser/install' &&
+      route.request().method() === 'POST'
+    ) {
+      browserInstallRequests += 1
+      await browserInstallGate
+      browserInstallGate = null
+      releaseBrowserInstall = null
+      await route.fulfill({ json: { message: 'Chromium installed.' } })
+      return
+    }
+
+    if (
       /^\/api\/panels\/[^/]+\/browser-ticket$/.test(pathname) &&
       route.request().method() === 'POST'
     ) {
@@ -2110,6 +2148,13 @@ export async function mockApp(
     dismissRecentProjectRequests: () => dismissRecentProjectRequests,
     removePreviewRequests: () => removePreviewRequests,
     fileUploadRequests: () => fileUploadRequests,
+    browserInstallRequests: () => browserInstallRequests,
+    delayNextBrowserInstall: () => {
+      browserInstallGate = new Promise<void>((resolve) => {
+        releaseBrowserInstall = resolve
+      })
+      return () => releaseBrowserInstall?.()
+    },
     terminalCreations: () => terminalCreations,
     delayNextTerminalCreate: () => {
       terminalCreateGate = new Promise<void>((resolve) => {

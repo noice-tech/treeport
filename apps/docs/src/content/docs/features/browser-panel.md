@@ -22,7 +22,11 @@ Use iframe Browser when the client can reach and embed the site.
 
 The web client and agent commands use the managed browser on the daemon computer.
 
-Install the Chromium build that matches Treeport:
+If Browser needs Chromium, select **Install Chromium** on the **Browser unavailable** page.
+
+Treeport downloads the matching Chromium build. Browser opens again when the installation is complete.
+
+To install Chromium before you open Browser, use this command:
 
 ```sh
 treeport browser install

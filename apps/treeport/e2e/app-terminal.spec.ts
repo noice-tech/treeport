@@ -1014,11 +1014,12 @@ test.describe('desktop worktree and terminal workflows', () => {
     ).toHaveCount(0)
   })
 
-  test('opens, navigates, and closes daemon-hosted Browser', async ({
+  test('installs, opens, navigates, and closes daemon-hosted Browser', async ({
     page
   }) => {
-    await mockApp(page, [], {
+    const mocked = await mockApp(page, [], {
       hostedBrowser: true,
+      browserInstallRequired: true,
       browserBeforeUnload: true
     })
     await page.getByRole('button', { name: /^topic(?:,|\s|$)/ }).click()
@@ -1040,15 +1041,38 @@ test.describe('desktop worktree and terminal workflows', () => {
     await expect(
       page.getByRole('button', { name: 'Browser', exact: true })
     ).toBeVisible()
+    const browserUnavailable = page.getByRole('alert')
+    await expect(browserUnavailable).toContainText(
+      'Chromium is not installed on this daemon.'
+    )
+    const releaseBrowserInstall = mocked.delayNextBrowserInstall()
+    const installRequest = page.waitForRequest(
+      (request) =>
+        request.method() === 'POST' &&
+        new URL(request.url()).pathname === '/api/browser/install'
+    )
+    await browserUnavailable
+      .getByRole('button', { name: 'Install Chromium' })
+      .click()
+    await installRequest
+    await expect(
+      browserUnavailable.getByRole('button', {
+        name: 'Installing Chromium…'
+      })
+    ).toBeDisabled()
+    expect(mocked.browserInstallRequests()).toBe(1)
+    releaseBrowserInstall()
+    await expect(browserUnavailable).toHaveCount(0)
     await expect
       .poll(() =>
-        page.evaluate(() =>
-          window.__wsInstances.some(
-            (socket) => socket.namespace === '/browsers'
-          )
+        page.evaluate(
+          () =>
+            window.__wsInstances.filter(
+              (socket) => socket.namespace === '/browsers'
+            ).length
         )
       )
-      .toBe(true)
+      .toBeGreaterThan(1)
     await page.evaluate(() => window.__setBrowserLoading(true))
     await expect(
       page.getByRole('button', { name: 'Browser, loading', exact: true })
@@ -1118,12 +1142,6 @@ test.describe('desktop worktree and terminal workflows', () => {
       )
       .toBe(true)
 
-    await page.reload()
-    await expect(page).toHaveURL(/\/panels\/browser_panel_1$/)
-    await expect(
-      page.getByRole('button', { name: 'Browser', exact: true })
-    ).toBeVisible()
-
     await page.evaluate(() => {
       window.__browserCommands = []
     })
@@ -1147,6 +1165,13 @@ test.describe('desktop worktree and terminal workflows', () => {
     ).toBe(false)
     await page.keyboard.press('Meta+2')
     await expect(page).toHaveURL(/\/panels\/browser_panel_1$/)
+    await expect(address).not.toBeFocused()
+
+    await page.reload()
+    await expect(page).toHaveURL(/\/panels\/browser_panel_1$/)
+    await expect(
+      page.getByRole('button', { name: 'Browser', exact: true })
+    ).toBeVisible()
 
     const initialCloseRequest = page.waitForRequest((request) => {
       const url = new URL(request.url())

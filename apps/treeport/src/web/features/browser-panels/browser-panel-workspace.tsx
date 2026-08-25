@@ -98,6 +98,7 @@ export function BrowserPanelWorkspace({
   const viewportRef = useRef({ width: 1_280, height: 800 })
   const pointerActiveRef = useRef(false)
   const addressDirtyRef = useRef(false)
+  const autoFocusAddressRef = useRef(panel.url === 'about:blank')
   const pendingNavigationRef = useRef<{
     startUrl: string
     targetUrl: string
@@ -114,6 +115,7 @@ export function BrowserPanelWorkspace({
     message: string
     installCommand: string | null
   } | null>(null)
+  const [installingBrowser, setInstallingBrowser] = useState(false)
   const [listeners, setListeners] = useState<WorktreeListenerDiscovery | null>(
     null
   )
@@ -143,6 +145,7 @@ export function BrowserPanelWorkspace({
 
         onLoadingChange(panel.id, message.state.loading)
         setFailure(null)
+        setInstallingBrowser(false)
         setError(null)
 
         const pendingNavigation = pendingNavigationRef.current
@@ -171,6 +174,7 @@ export function BrowserPanelWorkspace({
 
       pendingNavigationRef.current = null
       onLoadingChange(panel.id, false)
+      setInstallingBrowser(false)
       if (message.type === 'browserUnavailable') {
         setFailure({
           message: message.message,
@@ -373,7 +377,17 @@ export function BrowserPanelWorkspace({
 
   /* eslint-disable react-you-might-not-need-an-effect/no-event-handler -- Workspace route activation owns Browser focus. */
   useEffect(() => {
-    if (!active || autoFocusBlocked) {
+    if (
+      !active ||
+      autoFocusBlocked ||
+      !autoFocusAddressRef.current ||
+      stateRef.current === null
+    ) {
+      return
+    }
+
+    if (stateRef.current.url !== 'about:blank') {
+      autoFocusAddressRef.current = false
       return
     }
 
@@ -386,8 +400,18 @@ export function BrowserPanelWorkspace({
       }
 
       timer = setTimeout(() => {
-        inputRef.current?.focus()
-        inputRef.current?.select()
+        const input = inputRef.current
+        if (
+          !input ||
+          input.value !== '' ||
+          stateRef.current?.url !== 'about:blank'
+        ) {
+          return
+        }
+
+        input.focus()
+        input.select()
+        autoFocusAddressRef.current = false
       }, 50)
     }
     frame = window.requestAnimationFrame(focusAddress)
@@ -813,19 +837,62 @@ export function BrowserPanelWorkspace({
           >
             <strong className="text-zinc-50">Browser unavailable</strong>
             <span>{failure.message}</span>
-            {failure.installCommand ? (
-              <code>{failure.installCommand}</code>
-            ) : null}
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => {
-                setFailure(null)
-                setConnectionRevision((value) => value + 1)
-              }}
-            >
-              Retry
-            </Button>
+            <div className="flex items-center gap-2">
+              {failure.installCommand ? (
+                <Button
+                  type="button"
+                  disabled={installingBrowser}
+                  onClick={() => {
+                    setInstallingBrowser(true)
+                    void fetch('/api/browser/install', { method: 'POST' })
+                      .then((response) => {
+                        if (!response.ok) {
+                          throw new Error('Could not install Chromium.')
+                        }
+
+                        setConnectionRevision((value) => value + 1)
+                      })
+                      .catch((cause) => {
+                        setInstallingBrowser(false)
+                        setFailure((current) =>
+                          current
+                            ? {
+                                ...current,
+                                message:
+                                  cause instanceof Error
+                                    ? cause.message
+                                    : 'Could not install Chromium.'
+                              }
+                            : null
+                        )
+                      })
+                  }}
+                >
+                  {installingBrowser ? (
+                    <>
+                      <ArrowPathIcon
+                        className="animate-spin"
+                        data-icon="inline-start"
+                      />
+                      Installing Chromium…
+                    </>
+                  ) : (
+                    'Install Chromium'
+                  )}
+                </Button>
+              ) : null}
+              <Button
+                type="button"
+                variant="outline"
+                disabled={installingBrowser}
+                onClick={() => {
+                  setFailure(null)
+                  setConnectionRevision((value) => value + 1)
+                }}
+              >
+                Retry
+              </Button>
+            </div>
           </div>
         ) : null}
       </div>
