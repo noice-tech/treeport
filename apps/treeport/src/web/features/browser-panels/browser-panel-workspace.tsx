@@ -171,10 +171,16 @@ export function BrowserPanelWorkspace({
       pendingNavigationRef.current = null
       onLoadingChange(panel.id, false)
       setInstallingBrowser(false)
-      if (message.type === 'browserUnavailable') {
+      if (
+        message.type === 'browserUnavailable' ||
+        message.type === 'browserOwnedLocally'
+      ) {
         setFailure({
           message: message.message,
-          installCommand: message.installCommand
+          installCommand:
+            message.type === 'browserUnavailable'
+              ? message.installCommand
+              : null
         })
         return
       }

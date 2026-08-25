@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-export const BROWSER_PROTOCOL_VERSION = 1
+export const BROWSER_PROTOCOL_VERSION = 2
 export const BROWSER_MAX_FRAME_BYTES = 8 * 1024 * 1024
 export const BROWSER_MAX_MESSAGE_BYTES = 128 * 1024
 
@@ -65,16 +65,24 @@ export const browserClientMessageSchema = z.discriminatedUnion('type', [
 
 export type BrowserClientMessage = z.infer<typeof browserClientMessageSchema>
 
-export const browserSessionStateSchema = z.strictObject({
-  url: z.string(),
-  title: z.string(),
+export const browserRuntimeStateSchema = z.strictObject({
+  url: z.union([z.literal('about:blank'), browserUrlSchema]),
+  title: z.string().max(256),
   loading: z.boolean(),
   canGoBack: z.boolean(),
   canGoForward: z.boolean(),
+  viewport: z.strictObject({
+    width: z.number().finite().min(0).max(3_840),
+    height: z.number().finite().min(0).max(2_160)
+  })
+})
+
+export type BrowserRuntimeState = z.infer<typeof browserRuntimeStateSchema>
+
+export const browserSessionStateSchema = browserRuntimeStateSchema.extend({
   controlled: z.boolean(),
   hasController: z.boolean(),
-  controller: z.enum(['you', 'agent', 'other', 'none']),
-  viewport: z.strictObject({ width: z.number(), height: z.number() })
+  controller: z.enum(['you', 'agent', 'other', 'none'])
 })
 
 export type BrowserSessionState = z.infer<typeof browserSessionStateSchema>
@@ -97,6 +105,10 @@ export const browserServerMessageSchema = z.discriminatedUnion('type', [
     type: z.literal('browserUnavailable'),
     message: z.string(),
     installCommand: z.string().nullable()
+  }),
+  z.strictObject({
+    type: z.literal('browserOwnedLocally'),
+    message: z.string()
   }),
   z.strictObject({ type: z.literal('browserCrashed'), message: z.string() }),
   z.strictObject({ type: z.literal('closed'), reason: z.string() })
@@ -123,6 +135,33 @@ export type BrowserFrame = z.infer<typeof browserFrameSchema>
 export const browserTicketRequestSchema = z.strictObject({
   clientId: z.string().min(1).max(128)
 })
+
+export const browserOwnerTicketRequestSchema = z.strictObject({
+  clientId: z.string().min(1).max(128)
+})
+
+const opaqueTokenSchema = z.string().min(32).max(256)
+const browserPanelIdSchema = z.string().min(1).max(128)
+const browserRequestIdSchema = z.string().min(1).max(128)
+const browserGenerationSchema = z.number().int().positive()
+const browserRevisionSchema = z.number().int().nonnegative()
+
+export const browserOwnerEndpointSchema = z
+  .string()
+  .url()
+  .max(1_024)
+  .refine((value) => {
+    const url = new URL(value)
+    return (
+      url.protocol === 'http:' &&
+      url.hostname === '127.0.0.1' &&
+      url.username === '' &&
+      url.password === '' &&
+      url.search === '' &&
+      url.hash === '' &&
+      url.pathname !== '/'
+    )
+  }, 'Expected a private loopback Browser endpoint')
 
 const browserAgentArgumentSchema = z.string().max(4_096)
 
@@ -158,16 +197,97 @@ export const browserAgentCommandSchema = z.discriminatedUnion('command', [
 export type BrowserAgentCommand = z.infer<typeof browserAgentCommandSchema>
 
 export const browserAuthSchema = z.strictObject({
-  ticket: z.string().min(32).max(256),
+  ticket: opaqueTokenSchema,
   protocolVersion: z.literal(BROWSER_PROTOCOL_VERSION)
 })
 
 export type BrowserAuth = z.infer<typeof browserAuthSchema>
 
+export const browserOwnerAuthSchema = z.strictObject({
+  ticket: opaqueTokenSchema,
+  protocolVersion: z.literal(BROWSER_PROTOCOL_VERSION),
+  endpoint: browserOwnerEndpointSchema,
+  challenge: opaqueTokenSchema
+})
+
+export type BrowserOwnerAuth = z.infer<typeof browserOwnerAuthSchema>
+
+export const browserOwnerClientMessageSchema = z.discriminatedUnion('type', [
+  z.strictObject({
+    type: z.literal('state'),
+    generation: browserGenerationSchema,
+    revision: browserRevisionSchema,
+    state: browserRuntimeStateSchema
+  }),
+  z.strictObject({
+    type: z.literal('popup'),
+    generation: browserGenerationSchema,
+    url: browserUrlSchema
+  }),
+  z.strictObject({
+    type: z.literal('crashed'),
+    generation: browserGenerationSchema,
+    message: z.string().min(1).max(1_024)
+  }),
+  z.strictObject({
+    type: z.literal('agentControlResult'),
+    generation: browserGenerationSchema,
+    requestId: browserRequestIdSchema,
+    accepted: z.boolean()
+  }),
+  z.strictObject({
+    type: z.literal('closeResult'),
+    generation: browserGenerationSchema,
+    requestId: browserRequestIdSchema,
+    canClose: z.boolean()
+  })
+])
+
+export type BrowserOwnerClientMessage = z.infer<
+  typeof browserOwnerClientMessageSchema
+>
+
+export const browserOwnerServerMessageSchema = z.discriminatedUnion('type', [
+  z.strictObject({
+    type: z.literal('claimGranted'),
+    panelId: browserPanelIdSchema,
+    generation: browserGenerationSchema,
+    state: browserRuntimeStateSchema
+  }),
+  z.strictObject({
+    type: z.literal('claimRejected'),
+    message: z.string().min(1).max(1_024)
+  }),
+  z.strictObject({
+    type: z.literal('agentControl'),
+    generation: browserGenerationSchema,
+    requestId: browserRequestIdSchema,
+    locked: z.boolean()
+  }),
+  z.strictObject({
+    type: z.literal('closeRequest'),
+    generation: browserGenerationSchema,
+    requestId: browserRequestIdSchema,
+    force: z.boolean()
+  }),
+  z.strictObject({ type: z.literal('closed'), reason: z.string().max(1_024) })
+])
+
+export type BrowserOwnerServerMessage = z.infer<
+  typeof browserOwnerServerMessageSchema
+>
+
 export interface BrowserAuthInput {
   ticket?: string
   protocolVersion?: number
   panelId?: string
+}
+
+export interface BrowserOwnerAuthInput {
+  ticket?: string
+  protocolVersion?: number
+  endpoint?: string
+  challenge?: string
 }
 
 export interface BrowserClientToServerEvents {
@@ -179,8 +299,23 @@ export interface BrowserServerToClientEvents {
   frame: (frame: BrowserFrame) => void
 }
 
+export interface BrowserOwnerClientToServerEvents {
+  ownerMessage: (message: BrowserOwnerClientMessage) => void
+}
+
+export interface BrowserOwnerServerToClientEvents {
+  ownerMessage: (message: BrowserOwnerServerMessage) => void
+}
+
 export function parseBrowserAuth(value: BrowserAuthInput): BrowserAuth | null {
   const result = browserAuthSchema.safeParse(value)
+  return result.success ? result.data : null
+}
+
+export function parseBrowserOwnerAuth(
+  value: BrowserOwnerAuthInput
+): BrowserOwnerAuth | null {
+  const result = browserOwnerAuthSchema.safeParse(value)
   return result.success ? result.data : null
 }
 
@@ -188,5 +323,12 @@ export function parseBrowserClientMessage(
   value: BrowserClientMessage
 ): BrowserClientMessage | null {
   const result = browserClientMessageSchema.safeParse(value)
+  return result.success ? result.data : null
+}
+
+export function parseBrowserOwnerClientMessage(
+  value: BrowserOwnerClientMessage
+): BrowserOwnerClientMessage | null {
+  const result = browserOwnerClientMessageSchema.safeParse(value)
   return result.success ? result.data : null
 }

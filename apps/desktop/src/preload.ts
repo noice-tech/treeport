@@ -8,7 +8,10 @@ import { z } from 'zod'
 import type {
   ComputerMutationResult,
   ComputerUpdate,
+  DesktopBrowserBridgeDescriptor,
+  DesktopBrowserCommandResult,
   DesktopBrowserPopup,
+  DesktopBrowserToolbarCommand,
   DesktopCommand,
   DesktopFileActionResult,
   DesktopNavigationDirection,
@@ -23,6 +26,14 @@ const desktopBrowserPopupSchema: z.ZodType<DesktopBrowserPopup> =
     panelId: z.string(),
     url: z.string()
   })
+const desktopBrowserBridgeDescriptorSchema: z.ZodType<DesktopBrowserBridgeDescriptor> =
+  z.strictObject({
+    endpoint: z.string().url(),
+    panelId: z.string(),
+    challenge: z.string()
+  })
+const desktopBrowserCommandResultSchema: z.ZodType<DesktopBrowserCommandResult> =
+  z.strictObject({ ok: z.boolean(), error: z.string().nullable() })
 
 window.addEventListener(
   'paste',
@@ -120,9 +131,32 @@ const desktopBridge = Object.freeze({
     return () =>
       ipcRenderer.removeListener('terminal-selection:release', receive)
   },
-  registerBrowser(panelId: string, webContentsId: number): Promise<boolean> {
+  registerBrowser(
+    panelId: string,
+    webContentsId: number,
+    challenge: string
+  ): Promise<DesktopBrowserBridgeDescriptor | null> {
     return ipcRenderer
-      .invoke('native-browser:register', { panelId, webContentsId })
+      .invoke('native-browser:register', {
+        panelId,
+        webContentsId,
+        challenge
+      })
+      .then((value) =>
+        desktopBrowserBridgeDescriptorSchema.nullable().parse(value)
+      )
+  },
+  browserCommand(
+    panelId: string,
+    command: DesktopBrowserToolbarCommand
+  ): Promise<DesktopBrowserCommandResult> {
+    return ipcRenderer
+      .invoke('native-browser:command', { panelId, command })
+      .then((value) => desktopBrowserCommandResultSchema.parse(value))
+  },
+  setBrowserAgentControl(panelId: string, locked: boolean): Promise<boolean> {
+    return ipcRenderer
+      .invoke('native-browser:set-agent-control', { panelId, locked })
       .then((value) => z.boolean().parse(value))
   },
   requestBrowserClose(panelId: string, force: boolean): Promise<boolean> {

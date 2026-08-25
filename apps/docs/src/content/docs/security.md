@@ -133,9 +133,11 @@ Each Browser session uses separate temporary browser data.
 
 Treeport does not use, import, or attach to a personal browser profile.
 
-Treeport authorizes each daemon browser action for the owning Browser and tree.
+Treeport authorizes each Browser action for the owning Browser and tree.
 
-Treeport does not expose direct daemon browser-control or debugging access.
+For local desktop Browser, Treeport validates the exact desktop page before it accepts agent control.
+
+Treeport does not expose browser-control access to page content or remote clients.
 
 The server accepts only absolute HTTP or HTTPS addresses without credentials.
 

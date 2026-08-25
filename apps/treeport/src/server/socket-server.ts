@@ -3,6 +3,10 @@ import { Server } from 'socket.io'
 import type {
   BrowserClientMessage,
   BrowserClientToServerEvents,
+  BrowserOwnerAuth,
+  BrowserOwnerClientMessage,
+  BrowserOwnerClientToServerEvents,
+  BrowserOwnerServerToClientEvents,
   BrowserServerToClientEvents,
   EventsServerToClientEvents,
   TerminalClientToServerEvents,
@@ -10,6 +14,7 @@ import type {
 } from '@treeport/shared'
 import {
   parseBrowserAuth,
+  parseBrowserOwnerAuth,
   parseTerminalAuth,
   SOCKET_IO_PATH,
   TERMINAL_MAX_CLIENT_MESSAGE_BYTES,
@@ -27,21 +32,27 @@ import { authorizeRequest } from './request-security'
 import type { TerminalMetadataManager } from './terminal-metadata'
 import {
   BrowserSessionManager,
+  type BrowserOwnerTransport,
   type BrowserTransport
 } from './browser-sessions'
 
 interface ClientToServerEvents
-  extends BrowserClientToServerEvents, TerminalClientToServerEvents {}
+  extends
+    BrowserClientToServerEvents,
+    BrowserOwnerClientToServerEvents,
+    TerminalClientToServerEvents {}
 
 interface ServerToClientEvents
   extends
     BrowserServerToClientEvents,
+    BrowserOwnerServerToClientEvents,
     EventsServerToClientEvents,
     TerminalServerToClientEvents {}
 
 interface SocketData {
   terminalAuth?: TerminalAuth
   browserTicket?: string
+  browserOwnerAuth?: BrowserOwnerAuth
   terminalProtocolVersion?: 1 | typeof TERMINAL_PROTOCOL_VERSION
 }
 
@@ -58,6 +69,12 @@ export interface BrowserSessionController {
   accept(ticket: string, transport: BrowserTransport): Promise<string>
   message(connectionId: string, message: BrowserClientMessage): void
   close(connectionId: string): void
+  acceptOwner(
+    auth: BrowserOwnerAuth,
+    transport: BrowserOwnerTransport
+  ): Promise<string>
+  ownerMessage(connectionId: string, message: BrowserOwnerClientMessage): void
+  closeOwner(connectionId: string): void
 }
 
 interface SocketServerResult {
@@ -280,6 +297,42 @@ export function createSocketServer(
     socket.once('disconnect', () => hostedBrowsers.close(socket.id))
     void hostedBrowsers
       .accept(socket.data.browserTicket!, transport)
+      .catch(() => socket.disconnect(true))
+  })
+
+  const browserOwners = io.of('/browser-owners')
+  browserOwners.use((socket, next) => {
+    const auth = parseBrowserOwnerAuth(socket.handshake.auth)
+    if (!auth) {
+      next(new Error('INVALID_BROWSER_OWNER_AUTH'))
+      return
+    }
+
+    socket.data.browserOwnerAuth = auth
+    next()
+  })
+  browserOwners.on('connection', (socket) => {
+    const transport: BrowserOwnerTransport = {
+      id: socket.id,
+      isConnected: () => socket.connected,
+      send(message) {
+        if (!socket.connected) {
+          return false
+        }
+
+        socket.emit('ownerMessage', message)
+        return true
+      },
+      disconnect() {
+        socket.disconnect(true)
+      }
+    }
+    socket.on('ownerMessage', (message) =>
+      hostedBrowsers.ownerMessage(socket.id, message)
+    )
+    socket.once('disconnect', () => hostedBrowsers.closeOwner(socket.id))
+    void hostedBrowsers
+      .acceptOwner(socket.data.browserOwnerAuth!, transport)
       .catch(() => socket.disconnect(true))
   })
 

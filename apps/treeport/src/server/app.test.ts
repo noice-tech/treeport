@@ -496,39 +496,27 @@ describe('HTTP API validation', () => {
       'http://localhost:4173/'
     )
 
-    const nativeState = await app.request(
-      '/api/panels/panel_browser/browser-state',
-      {
-        method: 'PUT',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          url: 'https://example.com/native',
-          title: 'Native application'
+    expect(
+      (
+        await app.request('/api/panels/panel_browser/browser-state', {
+          method: 'PUT',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            url: 'https://example.com/native',
+            title: 'Native application'
+          })
         })
-      }
-    )
-    expect(nativeState.status).toBe(200)
-    expect(service.updateBrowserPanelState).toHaveBeenCalledWith(
-      'panel_browser',
-      {
-        url: 'https://example.com/native',
-        title: 'Native application'
-      }
-    )
-
-    const popup = await app.request(
-      '/api/panels/panel_browser/browser-popups',
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ url: 'https://popup.example.com/' })
-      }
-    )
-    expect(popup.status).toBe(201)
-    expect(service.openBrowserPanelFromPanel).toHaveBeenCalledWith(
-      'panel_browser',
-      'https://popup.example.com/'
-    )
+      ).status
+    ).toBe(404)
+    expect(
+      (
+        await app.request('/api/panels/panel_browser/browser-popups', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ url: 'https://popup.example.com/' })
+        })
+      ).status
+    ).toBe(404)
 
     for (const url of [
       'file:///tmp/private',

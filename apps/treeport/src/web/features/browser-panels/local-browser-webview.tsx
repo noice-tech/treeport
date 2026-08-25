@@ -1,26 +1,36 @@
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { browserUrlSchema } from '@treeport/shared'
 import type {
   BrowserClientMessage,
   BrowserPanel,
+  BrowserRuntimeState,
   BrowserServerMessage,
   BrowserSessionState
 } from '@treeport/shared'
 import type { BrowserPanelConnection } from '../../browser-session-client'
+import {
+  connectLocalBrowserOwner,
+  requestLocalBrowserOwnerTicket,
+  type LocalBrowserOwnerConnection
+} from '../../local-browser-owner-client'
 
 function browserState(
   webview: TreeportBrowserWebview,
+  fallbackUrl: string,
   loading = webview.isLoading()
-): BrowserSessionState {
+): BrowserRuntimeState {
+  const currentUrl = webview.getURL() || fallbackUrl
+  const url =
+    currentUrl === 'about:blank' ||
+    browserUrlSchema.safeParse(currentUrl).success
+      ? currentUrl
+      : fallbackUrl
   return {
-    url: webview.getURL() || 'about:blank',
+    url,
     title: webview.getTitle(),
     loading,
     canGoBack: webview.canGoBack(),
     canGoForward: webview.canGoForward(),
-    controlled: true,
-    hasController: true,
-    controller: 'you',
     viewport: { width: 0, height: 0 }
   }
 }
@@ -40,6 +50,9 @@ export function LocalBrowserWebview({
 }) {
   const webviewRef = useRef<TreeportBrowserWebview>(null)
   const initialPanelRef = useRef(panel)
+  const ownerClientIdRef = useRef(crypto.randomUUID())
+  const [agentLocked, setAgentLocked] = useState(false)
+  const agentLockedRef = useRef(false)
   const bindWebview = useCallback(
     (webview: TreeportBrowserWebview | null) => {
       webviewRef.current = webview
@@ -49,7 +62,7 @@ export function LocalBrowserWebview({
           `treeport-browser-${computerId}-${panel.id}`
         )
         webview.setAttribute('allowpopups', 'true')
-        webview.src = initialPanelRef.current.url
+        webview.src = 'about:blank'
       }
     },
     [computerId, panel.id]
@@ -63,112 +76,206 @@ export function LocalBrowserWebview({
     }
 
     let disposed = false
+    let registering = false
     let ready = false
     let loading = false
-    let persisted = `${initialPanelRef.current.url}\u0000${initialPanelRef.current.title}`
-    let pendingPersistence: BrowserSessionState | null = null
-    let persistence: Promise<void> | null = null
+    let fallbackUrl = initialPanelRef.current.url
+    let owner: LocalBrowserOwnerConnection | null = null
+    let ownerTicket: Awaited<
+      ReturnType<typeof requestLocalBrowserOwnerTicket>
+    > | null = null
 
     const reportError = (cause: unknown) => {
+      if (disposed) {
+        return
+      }
+
       onMessage({
         type: 'browserUnavailable',
         message: cause instanceof Error ? cause.message : String(cause),
         installCommand: null
       })
     }
-    const persist = (state: BrowserSessionState) => {
-      if (
-        state.url !== 'about:blank' &&
-        !browserUrlSchema.safeParse(state.url).success
-      ) {
+    const sessionState = (state: BrowserRuntimeState): BrowserSessionState => ({
+      ...state,
+      controlled: !agentLockedRef.current,
+      hasController: true,
+      controller: agentLockedRef.current ? 'agent' : 'you'
+    })
+    const emitState = (
+      type: 'ready' | 'state' | 'controlChanged' = 'state'
+    ) => {
+      if (disposed || !ready) {
         return
       }
 
-      const key = `${state.url}\u0000${state.title}`
-      if (key === persisted) {
-        return
-      }
-
-      pendingPersistence = state
-      persistence ??= (async () => {
-        while (pendingPersistence && !disposed) {
-          const next = pendingPersistence
-          pendingPersistence = null
-          const response = await fetch(
-            `/api/panels/${encodeURIComponent(panel.id)}/browser-state`,
-            {
-              method: 'PUT',
-              headers: { 'content-type': 'application/json' },
-              body: JSON.stringify({ url: next.url, title: next.title })
-            }
-          )
-          if (!response.ok) {
-            throw new Error('Could not save the local Browser state.')
-          }
-
-          persisted = `${next.url}\u0000${next.title}`
-        }
-      })().then(
-        () => {
-          persistence = null
-          if (pendingPersistence && !disposed) {
-            persist(pendingPersistence)
-          }
-        },
-        (cause) => {
-          persistence = null
-          reportError(cause)
-        }
-      )
-    }
-    const emitState = (type: 'ready' | 'state' = 'state') => {
-      if (disposed) {
-        return
-      }
-
-      const state = browserState(webview, loading)
-      onMessage({ type, state })
-      persist(state)
+      const state = browserState(webview, fallbackUrl, loading)
+      fallbackUrl = state.url
+      onMessage({ type, state: sessionState(state) })
+      owner?.sendState(state)
     }
     const startLoading = () => {
       loading = true
-      if (ready) {
-        emitState()
-      }
+      emitState()
     }
     const stopLoading = () => {
       loading = false
-      if (ready) {
-        emitState()
+      emitState()
+    }
+    const refresh = () => emitState()
+    const crashed = () => {
+      const message = 'The local Browser page stopped.'
+      owner?.sendCrash(message)
+      onMessage({ type: 'browserCrashed', message })
+    }
+
+    const connection: BrowserPanelConnection = {
+      send(message: BrowserClientMessage) {
+        if (disposed || !ready || agentLockedRef.current) {
+          return
+        }
+
+        if (
+          message.type !== 'navigate' &&
+          message.type !== 'back' &&
+          message.type !== 'forward' &&
+          message.type !== 'reload' &&
+          message.type !== 'stop'
+        ) {
+          return
+        }
+
+        if (message.type === 'navigate') {
+          fallbackUrl = message.url
+          startLoading()
+        } else if (
+          message.type === 'back' ||
+          message.type === 'forward' ||
+          message.type === 'reload'
+        ) {
+          startLoading()
+        } else {
+          stopLoading()
+        }
+
+        void bridge.browserCommand(panel.id, message).then((result) => {
+          if (!result.ok && result.error) {
+            onMessage({ type: 'navigationError', message: result.error })
+          }
+        })
+      },
+      setVisible() {},
+      dispose() {
+        if (disposed) {
+          return
+        }
+
+        disposed = true
+        owner?.dispose()
+        bridge.disposeBrowser(panel.id)
       }
     }
+    onConnection(connection)
+
     const register = () => {
-      if (ready || disposed) {
+      if (disposed || registering || owner || !ownerTicket) {
         return
       }
 
+      registering = true
       void bridge
-        .registerBrowser(panel.id, webview.getWebContentsId())
-        .then((registered) => {
-          if (disposed) {
-            return
-          }
-
-          if (!registered) {
+        .registerBrowser(
+          panel.id,
+          webview.getWebContentsId(),
+          ownerTicket.challenge
+        )
+        .then((descriptor) => {
+          if (!descriptor || descriptor.panelId !== panel.id) {
             throw new Error('The desktop app rejected this Browser.')
           }
 
-          loading = webview.isLoading()
-          ready = true
-          emitState('ready')
+          return connectLocalBrowserOwner(
+            panel.id,
+            ownerTicket!,
+            descriptor.endpoint,
+            {
+              async setAgentControl(locked) {
+                const accepted = await bridge.setBrowserAgentControl(
+                  panel.id,
+                  locked
+                )
+                if (!accepted || disposed) {
+                  return false
+                }
+
+                agentLockedRef.current = locked
+                setAgentLocked(locked)
+                if (locked) {
+                  await new Promise<void>((resolve) =>
+                    requestAnimationFrame(() => resolve())
+                  )
+                }
+
+                const state = browserState(webview, fallbackUrl, loading)
+                onMessage({
+                  type: 'controlChanged',
+                  state: {
+                    ...state,
+                    controlled: !locked,
+                    hasController: true,
+                    controller: locked ? 'agent' : 'you'
+                  }
+                })
+                return true
+              },
+              requestClose: (force) =>
+                bridge.requestBrowserClose(panel.id, force),
+              closed(reason) {
+                if (!disposed) {
+                  onMessage({ type: 'closed', reason })
+                  bridge.disposeBrowser(panel.id)
+                }
+              },
+              disconnected() {
+                reportError('The local Browser owner disconnected.')
+                bridge.disposeBrowser(panel.id)
+              }
+            }
+          )
         })
-        .catch(reportError)
+        .then((connectionOwner) => {
+          if (!connectionOwner || disposed) {
+            connectionOwner?.dispose()
+            return
+          }
+
+          owner = connectionOwner
+          fallbackUrl = connectionOwner.initialState.url
+          loading = false
+          ready = true
+          onMessage({
+            type: 'ready',
+            state: sessionState(connectionOwner.initialState)
+          })
+          if (fallbackUrl !== 'about:blank') {
+            startLoading()
+            void bridge.browserCommand(panel.id, {
+              type: 'navigate',
+              url: fallbackUrl
+            })
+          } else {
+            emitState()
+          }
+        })
+        .catch((cause) => {
+          bridge.disposeBrowser(panel.id)
+          reportError(cause)
+        })
+        .finally(() => {
+          registering = false
+        })
     }
-    const refresh = () => {
-      if (ready) {
-        emitState()
-      }
-    }
+
     const refreshEventNames = [
       'did-navigate',
       'did-navigate-in-page',
@@ -176,67 +283,35 @@ export function LocalBrowserWebview({
     ]
     webview.addEventListener('did-start-loading', startLoading)
     webview.addEventListener('did-stop-loading', stopLoading)
+    webview.addEventListener('render-process-gone', crashed)
     for (const eventName of refreshEventNames) {
       webview.addEventListener(eventName, refresh)
     }
     webview.addEventListener('dom-ready', register)
 
     const stopPopup = bridge.onBrowserPopup((popup) => {
-      if (disposed || popup.panelId !== panel.id) {
-        return
+      if (!disposed && popup.panelId === panel.id) {
+        owner?.sendPopup(popup.url)
       }
-
-      void fetch(`/api/panels/${encodeURIComponent(panel.id)}/browser-popups`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ url: popup.url })
-      })
-        .then((response) => {
-          if (!response.ok) {
-            throw new Error('Could not open the Browser popup.')
-          }
-        })
-        .catch(reportError)
     })
-    const connection: BrowserPanelConnection = {
-      send(message: BrowserClientMessage) {
-        if (disposed) {
-          return
-        }
+    void requestLocalBrowserOwnerTicket(
+      panel.id,
+      ownerClientIdRef.current
+    ).then((ticket) => {
+      ownerTicket = ticket
+      register()
+    }, reportError)
 
-        if (message.type === 'navigate') {
-          startLoading()
-          void webview.loadURL(message.url).catch(reportError)
-        } else if (message.type === 'back' && webview.canGoBack()) {
-          startLoading()
-          webview.goBack()
-        } else if (message.type === 'forward' && webview.canGoForward()) {
-          startLoading()
-          webview.goForward()
-        } else if (message.type === 'reload') {
-          startLoading()
-          webview.reload()
-        } else if (message.type === 'stop') {
-          stopLoading()
-          webview.stop()
-        }
-      },
-      setVisible() {},
-      dispose() {
-        disposed = true
-        stopPopup()
-        webview.removeEventListener('did-start-loading', startLoading)
-        webview.removeEventListener('did-stop-loading', stopLoading)
-        for (const eventName of refreshEventNames) {
-          webview.removeEventListener(eventName, refresh)
-        }
-        webview.removeEventListener('dom-ready', register)
-        bridge.disposeBrowser(panel.id)
-      }
-    }
-    onConnection(connection)
     return () => {
       onConnection(null)
+      stopPopup()
+      webview.removeEventListener('did-start-loading', startLoading)
+      webview.removeEventListener('did-stop-loading', stopLoading)
+      webview.removeEventListener('render-process-gone', crashed)
+      for (const eventName of refreshEventNames) {
+        webview.removeEventListener(eventName, refresh)
+      }
+      webview.removeEventListener('dom-ready', register)
       connection.dispose()
     }
   }, [onConnection, onMessage, panel.id])
@@ -245,7 +320,7 @@ export function LocalBrowserWebview({
     <webview
       ref={bindWebview}
       aria-label="Browser page"
-      className={`flex size-full bg-white ${inputBlocked ? 'pointer-events-none' : ''}`}
+      className={`flex size-full bg-white ${inputBlocked || agentLocked ? 'pointer-events-none' : ''}`}
     />
   )
 }

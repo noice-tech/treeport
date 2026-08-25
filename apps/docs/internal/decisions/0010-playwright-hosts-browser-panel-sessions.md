@@ -1,152 +1,201 @@
-# Decision 0010: Browser uses Electron webviews and daemon Playwright sessions
+# Decision 0010: Browser has one authoritative runtime
 
 - Status: Accepted
-- Date: 2026-08-24
+- Date: 2026-08-25
 
 ## Context
 
-Treeport must open daemon-local applications and sites that prevent iframe use.
+Treeport must open sites that prevent iframe use.
 
-Web users and agents must share one daemon page. Treeport must not expose Playwright, CDP, or a personal browser profile.
+A Browser panel previously had two live runtimes for a local desktop connection:
 
-Desktop users need native Chromium rendering for audio, graphics, and normal page behavior.
+- Electron showed a native `<webview>`.
+- Browser CLI commands controlled a daemon Playwright page.
 
-Electron does not support a webview inside another webview. Native views do not follow DOM layout or DOM stacking.
+The runtimes shared only the saved URL and title.
+
+Clicks, cookies, history, storage, and page state did not move between them.
+
+Remote clients did not have this problem. Their UI stream and CLI commands used the same daemon page.
 
 ## Decision
 
-Add `BrowserPanel` with kind `browser` to the `Panel` union.
+Give each `BrowserPanel` one authoritative live runtime.
 
-Store `BrowserPanel` records separately from terminal and web-panel storage. Do not add a generic panel storage layer.
+`BrowserSessionManager` remains the panel coordinator.
 
-Browser uses the existing tree ownership, route, sidebar, title, shortcut, event, open-request, and close workflows.
+A coordinator can own one of these runtimes:
 
-Replace the former web-panel implementation with the durable Browser resource.
+- one verified Electron guest;
+- one daemon Playwright browser;
+- no live runtime.
 
-Put the Browser toolbar, server list, viewport boundary, and accessible controls in the Treeport frontend.
+It must never own both runtimes.
 
-Electron packages the same Treeport frontend source that the web build uses. Electron runs this frontend as its top-level renderer.
+Do not add a general browser-backend framework.
 
-The renderer uses the selected backend origin. A renderer-session protocol handler supplies only packaged frontend files.
+### Local desktop ownership
 
-The handler forwards API requests to the selected backend. Socket connections go directly to the selected backend.
+Use a first-level Electron `<webview>` when Electron connects to a loopback backend.
 
-Use a first-level Electron `<webview>` when Electron connects to a loopback backend. Use streamed Playwright in all other clients.
+Create the guest at `about:blank`.
 
-### Browser ownership
+The renderer requests a single-use owner ticket from the daemon.
 
-Each web-client or agent session owns one daemon Playwright process, one persistent context, and one page.
+Electron main validates the exact guest, panel partition, host renderer, and ticket challenge.
 
-The context uses a Treeport runtime directory. Treeport deletes this directory when the session closes or resets.
+Electron then creates a private CDP bridge for that guest.
 
-Treeport never imports, copies, or opens a personal browser profile.
+The bridge:
 
-The target runs as a top-level Chromium page. Treeport does not add a reverse proxy.
+- binds only to `127.0.0.1`;
+- uses an unguessable path;
+- exposes one synthetic page target;
+- accepts one automation client;
+- rejects target replacement and browser close operations;
+- stops when the guest or owner stops.
 
-The daemon stores the current top-level URL and title on the `BrowserPanel` record.
+The daemon verifies the bridge identity before it grants ownership.
 
-The daemon restores the URL before it accepts the first client or agent command.
+The first verified local owner wins.
 
-A daemon restart creates a new empty browser context. It restores only the saved URL.
+A later local candidate stays blank and is removed.
 
-### Desktop rendering
+After a grant, the guest loads the saved URL.
 
-A loopback desktop Browser creates one first-level `<webview>` for each retained Browser panel.
+### Local agent control
 
-Each webview uses a separate in-memory partition. It never uses a personal browser profile.
+The daemon connects Playwright to the private bridge.
 
-The webview stays in one DOM parent for its lifetime. CSS controls its size and retained-panel visibility.
+It keeps one Playwright connection for the owner generation.
 
-DOM dialogs and popovers paint above the webview. Treeport disables webview pointer input while a blocking dialog is open.
+Snapshot uses Playwright accessibility references.
 
-The main process validates each webview attachment. It rejects remote computers, invalid URLs, invalid partitions, and extra guests.
+Click and fill use these Playwright references on the visible page.
 
-The main process removes supplied preloads. It enforces sandboxing, context isolation, web security, and disabled Node.js integration.
+Navigation, history, reload, and screenshot commands use the same guest through the bridge.
 
-The main process rejects unsupported navigation and permission requests. It routes popups to durable Browser creation.
+A local Browser does not start managed Chromium.
 
-The main process runs `beforeunload` when the user closes Browser. It clears the temporary partition after a confirmed close.
+Before an agent command, the daemon requests an input barrier from Electron.
 
-The local page and a daemon agent session are separate runtimes. They synchronize the saved top-level URL and title.
+Electron waits for earlier toolbar work. It then blocks toolbar and pointer input.
 
-### Desktop renderer delivery
+The daemon releases this barrier after the command.
 
-The desktop renderer uses a separate Electron session partition from Browser guests.
+An owner disconnect fails the active command. It does not start another runtime for that command.
 
-For a selected computer, the renderer URL keeps the computer origin and workspace path.
+### Daemon ownership
 
-The renderer-session protocol handler supplies the packaged `index.html` for Treeport route navigations.
+Use the existing daemon Playwright runtime for:
 
-It supplies only exact packaged asset paths. It forwards `/api` and all other network requests with Electron `net.fetch`.
+- web clients;
+- remote desktop clients;
+- CLI commands when no local owner exists.
 
-It does not run a local HTTP reverse proxy. It does not intercept Browser guest sessions.
+The streamed UI and CLI commands use the same Playwright page.
 
-The top-level preload exposes computer controls and desktop capabilities. The main process accepts IPC only from this renderer's main frame.
+Managed Chromium is required only for this runtime.
 
-### Authorization and transport
+### Ownership changes
 
-A remote client requests a one-use connection ticket for Browser.
+A verified local claim has priority over daemon Playwright.
 
-The daemon checks the `BrowserPanel` record and its tree before it issues or accepts the ticket.
+Before the daemon grants the claim, it:
 
-The socket protocol contains validated browser commands, state, and JPEG frames.
+1. completes earlier scheduled work;
+2. saves the latest URL and title;
+3. disconnects agent automation;
+4. closes the Playwright browser;
+5. removes temporary daemon browser data;
+6. increments the runtime generation;
+7. grants the local owner.
 
-Treeport does not expose raw Playwright, CDP, or debugging endpoints.
+When a local owner disconnects, the coordinator becomes idle.
 
-The frame limit is 8 MiB. CDP production is limited to 15 frames each second.
+A later remote client or CLI command can start daemon Playwright.
 
-Each client acknowledges one frame before the daemon sends another frame.
+A runtime change keeps only the saved URL and title.
 
-The daemon retains only the newest pending frame for each client.
+It intentionally loses:
 
-### Control and queues
+- history;
+- cookies;
+- local and session storage;
+- DOM and JavaScript state;
+- form input;
+- login state;
+- snapshot references.
 
-One bounded scheduler serializes user input, navigation, resize, reset, close, and agent operations.
+Never silently route an active command to a new runtime.
 
-The scheduler accepts at most 64 operations. It reserves capacity for required lifecycle operations.
+### Other clients
 
-Pointer moves, wheel input, viewport resize, and screencast state use coalescing keys.
+A web client cannot receive pixels from a local Electron guest.
 
-Queued input checks control ownership again when it runs.
+While a local owner is active, another client shows an explicit local-owner message.
 
-An agent temporarily owns control while its command runs. The scheduler restores a connected user owner afterward.
+It does not start daemon Playwright.
 
-### Links and popups
+Local guest streaming is outside this decision.
 
-Modifier-click on an HTTP or HTTPS terminal link opens Browser in the terminal's tree.
+### State, popups, and close
 
-The server validates the URL. It rejects credentials and unsupported protocols.
+The active runtime reports URL, title, loading state, and history state.
 
-The open request selects the new panel only in a window that shows the source terminal.
+The daemon is the only component that saves URL and title.
 
-A browser popup opens another Browser in the same tree.
+Local owner messages include a runtime generation and increasing state revision.
 
-The popup open request selects the new Browser in a window that shows the source Browser.
+The daemon rejects stale generations and old revisions.
 
-File links continue to use the desktop file flow.
+Electron applies popup policy to the exact guest.
 
-### Data removal and accessibility
+The current owner reports an accepted popup to the daemon.
 
-Close deletes temporary browser data after it runs the page-close handlers. Treeport requests confirmation only when `beforeunload` requests it.
+The daemon creates the new durable `BrowserPanel`.
 
-The Treeport browser controls have accessible names and keyboard operation.
+All Browser deletion requests go through `BrowserSessionManager`.
 
-The JPEG viewport does not provide semantic accessibility information.
+For a local owner, the daemon requests `beforeunload` from Electron.
 
-The agent snapshot command supplies a separate semantic page view.
+The daemon deletes the panel only after Electron permits the close.
 
-The streamed viewport does not support audio, downloads, file selection, uploads, or clipboard synchronization.
+### Browser data
+
+Each local Browser uses a separate in-memory Electron partition.
+
+Each daemon Browser uses a separate runtime-directory profile.
+
+Treeport removes temporary data after close or runtime replacement.
+
+Treeport never imports or opens a personal browser profile.
+
+### Existing panel behavior
+
+Keep the existing:
+
+- durable `BrowserPanel` resource;
+- toolbar and address bar;
+- development-server list;
+- error page;
+- popup behavior;
+- close confirmation;
+- remote JPEG stream;
+- bounded daemon scheduler.
 
 ## Consequences
 
-Browser is a durable Treeport resource instead of a package web-panel instance.
+The visible local page and Browser CLI commands now share cookies, history, DOM state, and input state.
 
-Package permission grants no longer authorize daemon browser access.
+Local Browser automation does not require `treeport browser install`.
 
-HTTP links and browser popups stay inside the Treeport workspace.
+Remote Browser behavior continues to use managed Chromium and JPEG streaming.
 
-Each active daemon Browser session uses a separate browser process and more memory than a shared context.
+The desktop app adds one private target bridge and one owner socket.
 
-Each retained loopback desktop Browser uses a separate Chromium guest and in-memory partition.
+Electron keeps native layout, stacking, audio, and page behavior.
 
-Electron can place Treeport dialogs over Browser without view bounds, clipping, screenshots, or visibility IPC.
+A client cannot observe a local-owned page from another computer.
+
+Runtime replacement loses all state except URL and title.

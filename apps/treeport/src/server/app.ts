@@ -9,13 +9,14 @@ import { HTTPException } from 'hono/http-exception'
 import { requestId, type RequestIdVariables } from 'hono/request-id'
 import { validator } from 'hono/validator'
 import { z } from 'zod'
+import { getConnInfo } from '@hono/node-server/conninfo'
 import { serveStatic } from '@hono/node-server/serve-static'
 import { zValidator } from '@hono/zod-validator'
 import {
   browseDirectoryQuerySchema,
   browserAgentCommandSchema,
+  browserOwnerTicketRequestSchema,
   browserTicketRequestSchema,
-  browserUrlSchema,
   createBrowserPanelSchema,
   createTerminalPresetSchema,
   createTerminalSchema,
@@ -54,6 +55,7 @@ import {
 import type { ApplicationUpdateManager } from './application-update'
 import { TerminalMetadataManager } from './terminal-metadata'
 import type { BrowserSessionManager } from './browser-sessions'
+import { isLoopbackAddress } from './request-security'
 
 const UPLOAD_MIME_EXTENSIONS = new Map([
   ['application/pdf', 'pdf'],
@@ -87,14 +89,6 @@ const deletePanelQuerySchema = z.object({
   discardStoredData: z.string().optional(),
   force: z.string().optional()
 })
-const nativeBrowserStateSchema = z.strictObject({
-  url: z.union([z.literal('about:blank'), browserUrlSchema]),
-  title: z.string().max(256)
-})
-const nativeBrowserPopupSchema = z.strictObject({
-  url: browserUrlSchema
-})
-
 interface UploadFileInfo {
   path: string
   size: number
@@ -339,29 +333,39 @@ export function createApp({
         })
       }
     )
-    .put(
-      '/api/panels/:panelId/browser-state',
-      jsonInput(nativeBrowserStateSchema),
-      async (context) =>
-        context.json({
-          panel: await service.updateBrowserPanelState(
-            context.req.param('panelId'),
-            context.req.valid('json')
-          )
-        })
-    )
-
     .post(
-      '/api/panels/:panelId/browser-popups',
-      jsonInput(nativeBrowserPopupSchema),
-      async (context) =>
-        context.json(
-          await service.openBrowserPanelFromPanel(
+      '/api/panels/:panelId/browser-owner-ticket',
+      jsonInput(browserOwnerTicketRequestSchema),
+      async (context) => {
+        if (!browserSessions) {
+          throw new DomainError(
+            'BROWSER_UNAVAILABLE',
+            'Browser service is unavailable',
+            503
+          )
+        }
+
+        const remoteAddress = getConnInfo(context).remote.address
+        const proxiedIdentity = [
+          'tailscale-user-login',
+          'tailscale-user-name',
+          'tailscale-user-profile-pic'
+        ].some((name) => context.req.header(name) !== undefined)
+        if (!isLoopbackAddress(remoteAddress) || proxiedIdentity) {
+          throw new DomainError(
+            'BROWSER_LOCAL_OWNER_REQUIRED',
+            'Only a local desktop app can own this Browser.',
+            403
+          )
+        }
+
+        return context.json(
+          await browserSessions.issueOwnerTicket(
             context.req.param('panelId'),
-            context.req.valid('json').url
-          ),
-          201
+            context.req.valid('json').clientId
+          )
         )
+      }
     )
 
     .post(

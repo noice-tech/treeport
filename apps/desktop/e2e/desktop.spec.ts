@@ -1,8 +1,14 @@
+import crypto from 'node:crypto'
 import fs from 'node:fs/promises'
 import http from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
-import { _electron as electron, expect, test } from '@playwright/test'
+import { _electron as electron, chromium, expect, test } from '@playwright/test'
+import { Server as SocketServer } from 'socket.io'
+import {
+  BROWSER_PROTOCOL_VERSION,
+  DESKTOP_PROTOCOL_VERSION
+} from '@treeport/shared'
 import { z } from 'zod'
 
 function serverPort<Address>(address: Address): number {
@@ -20,6 +26,10 @@ function workspaceLink(url: string): string {
   return link.href
 }
 
+interface PlaywrightAiPage {
+  ariaSnapshot(options: { mode: 'ai' }): Promise<string>
+}
+
 interface BrowserPanelFixture {
   id: string
   kind: 'browser'
@@ -29,8 +39,6 @@ interface BrowserPanelFixture {
   createdAt: string
   updatedAt: string
 }
-
-const browserStateSchema = z.object({ url: z.string(), title: z.string() })
 
 function projectFixture() {
   const panels: BrowserPanelFixture[] = []
@@ -101,7 +109,7 @@ function projectFixture() {
   }
 }
 
-test('loads the packaged app and keeps a local Browser under desktop dialogs', async () => {
+test('controls the visible local Browser through its exact bridge and keeps it under desktop dialogs', async () => {
   const userData = await fs.mkdtemp(
     path.join(os.tmpdir(), 'treeport-electron-browser-')
   )
@@ -111,6 +119,8 @@ test('loads the packaged app and keeps a local Browser under desktop dialogs', a
   let websocketRequests = 0
   let browserIndex = 0
   let slowBrowserResponse = false
+  const ownerTickets = new Map<string, { panelId: string; challenge: string }>()
+  const ownerEndpoints = new Map<string, string>()
   const server = http.createServer(async (request, response) => {
     const url = new URL(request.url ?? '/', 'http://127.0.0.1')
     if (url.pathname === '/api/health') {
@@ -119,7 +129,7 @@ test('loads the packaged app and keeps a local Browser under desktop dialogs', a
         JSON.stringify({
           ok: true,
           version: '0.1.0',
-          protocolVersion: 2,
+          protocolVersion: DESKTOP_PROTOCOL_VERSION,
           hostname: 'desktop-test'
         })
       )
@@ -173,34 +183,18 @@ test('loads the packaged app and keeps a local Browser under desktop dialogs', a
       return
     }
 
-    const stateMatch = url.pathname.match(
-      /^\/api\/panels\/([^/]+)\/browser-state$/
+    const ownerTicketMatch = url.pathname.match(
+      /^\/api\/panels\/([^/]+)\/browser-owner-ticket$/
     )
-    if (stateMatch && request.method === 'PUT') {
-      const chunks: Buffer[] = []
-      for await (const chunk of request) {
-        chunks.push(Buffer.from(chunk))
-      }
-      const state = browserStateSchema.parse(
-        JSON.parse(Buffer.concat(chunks).toString())
-      )
-      const panel = project.worktrees[0]!.panels.find(
-        (candidate) => candidate.id === stateMatch[1]
-      )!
-      Object.assign(panel, state, { updatedAt: '2026-01-02' })
+    if (ownerTicketMatch && request.method === 'POST') {
+      const ticket = crypto.randomBytes(32).toString('base64url')
+      const challenge = crypto.randomBytes(32).toString('base64url')
+      ownerTickets.set(ticket, {
+        panelId: ownerTicketMatch[1]!,
+        challenge
+      })
       response.setHeader('content-type', 'application/json')
-      response.end(JSON.stringify({ panel }))
-      return
-    }
-
-    if (
-      /^\/api\/panels\/[^/]+\/browser-popups$/.test(url.pathname) &&
-      request.method === 'POST'
-    ) {
-      popupRequests += 1
-      response.statusCode = 201
-      response.setHeader('content-type', 'application/json')
-      response.end(JSON.stringify({ panel: project.worktrees[0]!.panels[0] }))
+      response.end(JSON.stringify({ ticket, challenge }))
       return
     }
 
@@ -211,6 +205,24 @@ test('loads the packaged app and keeps a local Browser under desktop dialogs', a
       )
       response.setHeader('content-type', 'application/json')
       response.end(JSON.stringify({ ok: true }))
+      return
+    }
+
+    if (url.pathname === '/site/next') {
+      response.setHeader('content-type', 'text/html')
+      response.end(`<!doctype html>
+        <title>Browser next</title>
+        <form>
+          <label>Name <input aria-label="Name"></label>
+          <button type="submit">Submit</button>
+        </form>
+        <output></output>
+        <script>
+          document.querySelector('form').addEventListener('submit', (event) => {
+            event.preventDefault()
+            document.querySelector('output').textContent = document.querySelector('input').value
+          })
+        </script>`)
       return
     }
 
@@ -247,9 +259,72 @@ test('loads the packaged app and keeps a local Browser under desktop dialogs', a
     response.statusCode = 404
     response.end('Not found')
   })
-  server.on('upgrade', (_request, socket) => {
+  server.on('upgrade', () => {
     websocketRequests += 1
-    socket.destroy()
+  })
+  const sockets = new SocketServer(server, {
+    path: '/api/socket.io/',
+    transports: ['websocket'],
+    serveClient: false
+  })
+  sockets.of('/browser-owners').on('connection', (socket) => {
+    const auth = z
+      .strictObject({
+        ticket: z.string(),
+        protocolVersion: z.literal(BROWSER_PROTOCOL_VERSION),
+        endpoint: z.string().url(),
+        challenge: z.string()
+      })
+      .safeParse(socket.handshake.auth)
+    const ticket = auth.success ? ownerTickets.get(auth.data.ticket) : null
+    if (!auth.success || !ticket || ticket.challenge !== auth.data.challenge) {
+      socket.disconnect(true)
+      return
+    }
+
+    ownerTickets.delete(auth.data.ticket)
+    ownerEndpoints.set(ticket.panelId, auth.data.endpoint)
+    const panel = project.worktrees[0]!.panels.find(
+      (candidate) => candidate.id === ticket.panelId
+    )!
+    let revision = -1
+    socket.emit('ownerMessage', {
+      type: 'claimGranted',
+      panelId: panel.id,
+      generation: 1,
+      state: {
+        url: panel.url,
+        title: panel.title === 'Browser' ? '' : panel.title,
+        loading: false,
+        canGoBack: false,
+        canGoForward: false,
+        viewport: { width: 0, height: 0 }
+      }
+    })
+    socket.on('ownerMessage', (message) => {
+      const value = z
+        .object({ type: z.string(), generation: z.number() })
+        .passthrough()
+        .safeParse(message)
+      if (!value.success || value.data.generation !== 1) {
+        return
+      }
+
+      if (value.data.type === 'state') {
+        const state = z
+          .object({
+            revision: z.number().int(),
+            state: z.object({ url: z.string(), title: z.string() })
+          })
+          .parse(value.data)
+        if (state.revision > revision) {
+          revision = state.revision
+          Object.assign(panel, state.state, { updatedAt: '2026-01-02' })
+        }
+      } else if (value.data.type === 'popup') {
+        popupRequests += 1
+      }
+    })
   })
   let electronApp: Awaited<ReturnType<typeof electron.launch>> | null = null
 
@@ -342,6 +417,85 @@ test('loads the packaged app and keeps a local Browser under desktop dialogs', a
       webSecurity: true
     })
 
+    const browserPanelId = project.worktrees[0]!.panels[0]!.id
+    const endpoint = await expect
+      .poll(() => ownerEndpoints.get(browserPanelId))
+      .not.toBeUndefined()
+      .then(() => ownerEndpoints.get(browserPanelId)!)
+    const connectedBrowser = await chromium.connectOverCDP(endpoint)
+    try {
+      const visiblePage = connectedBrowser.contexts()[0]!.pages()[0]!
+      // SAFETY: Playwright 1.61 implements its CLI reference snapshot through this internal mode.
+      const snapshotPage = visiblePage as PlaywrightAiPage
+      const snapshot = await snapshotPage.ariaSnapshot({ mode: 'ai' })
+      const targetRef = snapshot.match(
+        /button "Browser target" \[ref=([^\]]+)\]/
+      )?.[1]
+      if (!targetRef) {
+        throw new Error(`Browser target ref was missing:\n${snapshot}`)
+      }
+
+      await visiblePage.locator(`aria-ref=${targetRef}`).click()
+      await expect
+        .poll(() =>
+          electronApp!.evaluate(({ webContents }, targetUrl) => {
+            const browser = webContents
+              .getAllWebContents()
+              .find(
+                (contents) =>
+                  contents.getType() === 'webview' &&
+                  contents.getURL() === targetUrl
+              )
+            return browser?.executeJavaScript('sessionStorage.hits')
+          }, `${origin}/site/start`)
+        )
+        .toBe('1')
+
+      await visiblePage.goto(`${origin}/site/next`)
+      await expect
+        .poll(() =>
+          electronApp!.evaluate(({ webContents }) =>
+            webContents
+              .getAllWebContents()
+              .find((contents) => contents.getType() === 'webview')
+              ?.getURL()
+          )
+        )
+        .toBe(`${origin}/site/next`)
+      const nextSnapshot = await snapshotPage.ariaSnapshot({ mode: 'ai' })
+      const inputRef = nextSnapshot.match(
+        /textbox "Name" \[ref=([^\]]+)\]/
+      )?.[1]
+      if (!inputRef) {
+        throw new Error(`Name ref was missing:\n${nextSnapshot}`)
+      }
+
+      await visiblePage.locator(`aria-ref=${inputRef}`).fill('Treeport')
+      await visiblePage.keyboard.press('Enter')
+      await expect
+        .poll(() =>
+          electronApp!.evaluate(({ webContents }) => {
+            const browser = webContents
+              .getAllWebContents()
+              .find((contents) => contents.getType() === 'webview')
+            return browser?.executeJavaScript(
+              `document.querySelector('output')?.textContent`
+            )
+          })
+        )
+        .toBe('Treeport')
+      expect((await visiblePage.screenshot()).byteLength).toBeGreaterThan(0)
+      await visiblePage.goBack()
+      await expect.poll(() => visiblePage.url()).toBe(`${origin}/site/start`)
+      await visiblePage.goForward()
+      await expect.poll(() => visiblePage.url()).toBe(`${origin}/site/next`)
+      await visiblePage.reload()
+      await expect.poll(() => visiblePage.title()).toBe('Browser next')
+      await visiblePage.goto(`${origin}/site/start`)
+    } finally {
+      await connectedBrowser.close()
+    }
+
     slowBrowserResponse = true
     await window.getByRole('button', { name: 'Reload application' }).click()
     await expect(
@@ -405,7 +559,7 @@ test('loads the packaged app and keeps a local Browser under desktop dialogs', a
           `({ hits: sessionStorage.hits, loads: sessionStorage.loads })`
         )
       }, `${origin}/site/start`)
-    ).toEqual({ hits: '0', loads: '2' })
+    ).toEqual({ hits: '1', loads: '4' })
     await window.keyboard.press('Escape')
     await expect(newPanel).not.toBeVisible()
     await window.mouse.click(
@@ -425,7 +579,7 @@ test('loads the packaged app and keeps a local Browser under desktop dialogs', a
           return browser?.executeJavaScript('sessionStorage.hits')
         }, `${origin}/site/start`)
       )
-      .toBe('1')
+      .toBe('2')
 
     await electronApp.evaluate(({ BrowserWindow }) => {
       BrowserWindow.getAllWindows()[0]?.setSize(1100, 720)
@@ -460,7 +614,7 @@ test('loads the packaged app and keeps a local Browser under desktop dialogs', a
           )
         return browser?.executeJavaScript('sessionStorage.loads')
       }, `${origin}/site/start`)
-    ).toBe('2')
+    ).toBe('4')
 
     await electronApp.evaluate(({ BrowserWindow }) => {
       BrowserWindow.getAllWindows()[0]?.webContents.send(
@@ -485,6 +639,7 @@ test('loads the packaged app and keeps a local Browser under desktop dialogs', a
       .toBe(false)
   } finally {
     await electronApp?.close().catch(() => undefined)
+    sockets.close()
     await new Promise<void>((resolve) => server.close(() => resolve()))
     await fs.rm(userData, { recursive: true, force: true })
   }

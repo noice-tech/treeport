@@ -1,6 +1,6 @@
 import path from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
-import { DESKTOP_PROTOCOL_VERSION } from '@treeport/shared'
+import { browserUrlSchema, DESKTOP_PROTOCOL_VERSION } from '@treeport/shared'
 import {
   app,
   autoUpdater,
@@ -26,6 +26,7 @@ import type {
   ComputerMutationResult,
   ComputerUpdate,
   ConnectionState,
+  DesktopBrowserToolbarCommand,
   DesktopCommand,
   DesktopNavigationDirection,
   DesktopNavigationState,
@@ -393,10 +394,21 @@ const nativeBrowserPanelSchema = z.strictObject({
   panelId: z.string().min(1).max(128)
 })
 const nativeBrowserRegisterSchema = nativeBrowserPanelSchema.extend({
-  webContentsId: z.number().int().positive()
+  webContentsId: z.number().int().positive(),
+  challenge: z.string().min(32).max(256)
 })
 const nativeBrowserCloseSchema = nativeBrowserPanelSchema.extend({
   force: z.boolean()
+})
+const nativeBrowserCommandSchema = z.discriminatedUnion('type', [
+  z.strictObject({ type: z.literal('navigate'), url: browserUrlSchema }),
+  z.strictObject({ type: z.literal('back') }),
+  z.strictObject({ type: z.literal('forward') }),
+  z.strictObject({ type: z.literal('reload') }),
+  z.strictObject({ type: z.literal('stop') })
+]) satisfies z.ZodType<DesktopBrowserToolbarCommand>
+const nativeBrowserAgentControlSchema = nativeBrowserPanelSchema.extend({
+  locked: z.boolean()
 })
 
 type HealthResponse = z.infer<typeof healthResponseSchema>
@@ -925,12 +937,34 @@ function registerIpc(): void {
   })
   ipcMain.handle('native-browser:register', (event, value) => {
     const parsed = nativeBrowserRegisterSchema.safeParse(value)
-    return parsed.success
-      ? (browserWebviews?.register(
+    return parsed.success && browserWebviews
+      ? browserWebviews.register(
           event,
           parsed.data.panelId,
-          parsed.data.webContentsId
-        ) ?? false)
+          parsed.data.webContentsId,
+          parsed.data.challenge
+        )
+      : null
+  })
+  ipcMain.handle('native-browser:command', (event, value) => {
+    const parsed = z
+      .strictObject({
+        panelId: z.string().min(1).max(128),
+        command: nativeBrowserCommandSchema
+      })
+      .safeParse(value)
+    return parsed.success && browserWebviews
+      ? browserWebviews.command(event, parsed.data.panelId, parsed.data.command)
+      : { ok: false, error: 'The Browser command was rejected.' }
+  })
+  ipcMain.handle('native-browser:set-agent-control', (event, value) => {
+    const parsed = nativeBrowserAgentControlSchema.safeParse(value)
+    return parsed.success && browserWebviews
+      ? browserWebviews.setAgentControl(
+          event,
+          parsed.data.panelId,
+          parsed.data.locked
+        )
       : false
   })
   ipcMain.handle('native-browser:request-close', async (event, value) => {

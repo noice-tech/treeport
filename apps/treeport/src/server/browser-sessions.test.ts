@@ -1,8 +1,12 @@
 import { EventEmitter } from 'node:events'
+import http from 'node:http'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { z } from 'zod'
+import { BROWSER_PROTOCOL_VERSION } from '@treeport/shared'
 import type {
   BrowserClientMessage,
   BrowserFrame,
+  BrowserOwnerServerMessage,
   BrowserPanel,
   BrowserServerMessage,
   ProductEvent
@@ -14,6 +18,7 @@ import {
   type BrowserSessionBrowser,
   type BrowserSessionBrowserFactory,
   type BrowserSessionConfig,
+  type BrowserOwnerTransport,
   type BrowserSessionService,
   type BrowserTransport
 } from './browser-sessions'
@@ -391,6 +396,178 @@ describe('Browser sessions', () => {
       })
     )
     await storedValue.manager.dispose()
+  })
+
+  it('moves one panel between Playwright and a verified local owner without two live runtimes', async () => {
+    const runAgentCli = vi.fn<BrowserAgentCliRunner>(async (_target, args) =>
+      args[0] === 'attach' ? 'attached' : 'snapshot output'
+    )
+    const value = fixture(runAgentCli)
+    const remote = value.transport('remote')
+    await value.manager.accept(
+      await value.manager.issueTicket('panel_browser', 'remote-client'),
+      remote.transport
+    )
+    expect(browsers).toHaveLength(1)
+
+    const ownerTicket = await value.manager.issueOwnerTicket(
+      'panel_browser',
+      'desktop-client'
+    )
+    const ownerServer = http.createServer((request, response) => {
+      if (request.url === '/private/identity') {
+        response.setHeader('content-type', 'application/json')
+        response.end(
+          JSON.stringify({
+            panelId: 'panel_browser',
+            challenge: ownerTicket.challenge
+          })
+        )
+        return
+      }
+
+      response.statusCode = 404
+      response.end()
+    })
+    await new Promise<void>((resolve) =>
+      ownerServer.listen(0, '127.0.0.1', resolve)
+    )
+    const address = z
+      .object({ port: z.number().int().positive() })
+      .parse(ownerServer.address())
+
+    const ownerMessages: BrowserOwnerServerMessage[] = []
+    let ownerConnected = true
+    const ownerTransport: BrowserOwnerTransport = {
+      id: 'local-owner',
+      isConnected: () => ownerConnected,
+      send: (message) => {
+        ownerMessages.push(message)
+        if (message.type === 'agentControl') {
+          queueMicrotask(() =>
+            value.manager.ownerMessage('local-owner', {
+              type: 'agentControlResult',
+              generation: message.generation,
+              requestId: message.requestId,
+              accepted: true
+            })
+          )
+        } else if (message.type === 'closeRequest') {
+          queueMicrotask(() =>
+            value.manager.ownerMessage('local-owner', {
+              type: 'closeResult',
+              generation: message.generation,
+              requestId: message.requestId,
+              canClose: false
+            })
+          )
+        }
+
+        return true
+      },
+      disconnect: () => {
+        ownerConnected = false
+      }
+    }
+    await value.manager.acceptOwner(
+      {
+        ticket: ownerTicket.ticket,
+        challenge: ownerTicket.challenge,
+        endpoint: `http://127.0.0.1:${address.port}/private/`,
+        protocolVersion: BROWSER_PROTOCOL_VERSION
+      },
+      ownerTransport
+    )
+    expect(browsers[0]!.closes).toBe(1)
+    expect(ownerMessages[0]).toMatchObject({
+      type: 'claimGranted',
+      panelId: 'panel_browser'
+    })
+    expect(remote.messages).toContainEqual({
+      type: 'browserOwnedLocally',
+      message: 'This Browser is open in a local Treeport desktop app.'
+    })
+
+    const claim = ownerMessages.find(
+      (message) => message.type === 'claimGranted'
+    )
+    if (!claim || claim.type !== 'claimGranted') {
+      throw new Error('The local owner claim was not granted.')
+    }
+
+    const generation = claim.generation
+    value.manager.ownerMessage('local-owner', {
+      type: 'state',
+      generation,
+      revision: 1,
+      state: {
+        url: 'https://example.com/local',
+        title: 'Visible local page',
+        loading: false,
+        canGoBack: true,
+        canGoForward: false,
+        viewport: { width: 900, height: 600 }
+      }
+    })
+    await vi.waitFor(() =>
+      expect(value.service.updateBrowserPanelState).toHaveBeenCalledWith(
+        'panel_browser',
+        {
+          url: 'https://example.com/local',
+          title: 'Visible local page'
+        }
+      )
+    )
+    value.manager.ownerMessage('local-owner', {
+      type: 'popup',
+      generation,
+      url: 'https://example.com/popup'
+    })
+    await vi.waitFor(() =>
+      expect(value.service.openBrowserPanelFromPanel).toHaveBeenCalledWith(
+        'panel_browser',
+        'https://example.com/popup'
+      )
+    )
+
+    const observer = value.transport('observer')
+    await value.manager.accept(
+      await value.manager.issueTicket('panel_browser', 'observer-client'),
+      observer.transport
+    )
+    expect(observer.messages).toContainEqual({
+      type: 'browserOwnedLocally',
+      message: 'This Browser is open in a local Treeport desktop app.'
+    })
+    expect(browsers).toHaveLength(1)
+    await expect(
+      value.manager.requestPanelClose('panel_browser')
+    ).resolves.toBe(false)
+
+    await expect(
+      value.manager.agentCommand('panel_browser', {
+        command: 'snapshot',
+        args: []
+      })
+    ).rejects.toThrow()
+    expect(browsers).toHaveLength(1)
+    expect(runAgentCli).not.toHaveBeenCalled()
+
+    value.manager.closeOwner('local-owner')
+    await expect(
+      value.manager.agentCommand('panel_browser', {
+        command: 'snapshot',
+        args: []
+      })
+    ).resolves.toBe('snapshot output')
+    expect(browsers).toHaveLength(2)
+    expect(runAgentCli).toHaveBeenCalledWith(
+      expect.objectContaining({ panelId: 'panel_browser' }),
+      expect.arrayContaining(['attach', 'treeport-panel_browser'])
+    )
+
+    await value.manager.dispose()
+    await new Promise<void>((resolve) => ownerServer.close(() => resolve()))
   })
 
   it('uses a page beforeunload request instead of a generic close confirmation', async () => {

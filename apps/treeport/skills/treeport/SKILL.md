@@ -135,7 +135,11 @@ Treeport does not infer agent settlement. An orchestrator can inspect first, wai
 
 ## Inspect the worktree application in Browser
 
-Browser runs an isolated Chromium session on the Treeport daemon host. It can reach development servers on that host.
+Browser has one live runtime for each panel.
+
+A local desktop app owns its visible page.
+
+Web clients and remote desktop clients use managed Chromium on the daemon computer.
 
 Never attach Treeport to a personal browser profile.
 
@@ -145,20 +149,13 @@ First, inspect available Browser sessions:
 treeport browser list
 ```
 
-If Chromium is not ready, ask the user before installing the managed browser, then run:
-
-```sh
-treeport browser status
-treeport browser install
-```
-
 If Browser is not open, open it in the current tree:
 
 ```sh
 treeport browser open --worktree .
 ```
 
-After Browser exists, use its daemon Playwright session:
+Use Browser commands on the current live page:
 
 ```sh
 treeport browser snapshot
@@ -170,13 +167,25 @@ treeport browser network
 treeport browser screenshot
 ```
 
-Commands resolve the only Browser session in the current worktree. Add `--panel <panel-id>` when more than one exists.
+Commands resolve the only Browser in the current tree.
 
-Use snapshot element refs instead of guessed selectors. Take a new snapshot after each important action.
+When more than one Browser exists, add `--panel <panel-id>`.
+
+Snapshot references belong to one runtime generation.
+
+Take a new snapshot after navigation or after Browser ownership changes.
+
+A local desktop owner does not need managed Chromium.
+
+If no local owner exists, check managed Chromium before daemon automation:
+
+```sh
+treeport browser status
+```
+
+Ask the user before you run `treeport browser install`.
 
 Leave Browser open so the user can inspect the result.
-
-Web clients can share the daemon session. The desktop app shows a separate native page at the saved URL.
 
 ## Automation and integrations
 

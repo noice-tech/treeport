@@ -8,7 +8,16 @@ import {
   type WebContents
 } from 'electron'
 import { z } from 'zod'
-import type { DesktopCommand } from './desktop-contract'
+import {
+  createBrowserCdpBridge,
+  type BrowserCdpBridge
+} from './browser-cdp-bridge'
+import type {
+  DesktopBrowserBridgeDescriptor,
+  DesktopBrowserCommandResult,
+  DesktopBrowserToolbarCommand,
+  DesktopCommand
+} from './desktop-contract'
 
 const browserPanelIdSchema = z.string().min(1).max(128)
 const browserUrlWithBlankSchema = z.union([
@@ -19,14 +28,28 @@ const browserUrlWithBlankSchema = z.union([
 interface BrowserEntry {
   panelId: string
   guest: WebContents
+  bridge: BrowserCdpBridge | null
+  commandQueue: Promise<void>
+  agentLocked: boolean
 }
 
 export interface BrowserWebviewPolicy {
   register(
     event: IpcMainInvokeEvent,
     panelId: string,
-    webContentsId: number
-  ): boolean
+    webContentsId: number,
+    challenge: string
+  ): Promise<DesktopBrowserBridgeDescriptor | null>
+  command(
+    event: IpcMainInvokeEvent,
+    panelId: string,
+    command: DesktopBrowserToolbarCommand
+  ): Promise<DesktopBrowserCommandResult>
+  setAgentControl(
+    event: IpcMainInvokeEvent,
+    panelId: string,
+    locked: boolean
+  ): Promise<boolean>
   requestClose(
     event: IpcMainInvokeEvent,
     panelId: string,
@@ -51,6 +74,8 @@ export function installBrowserWebviewPolicy(options: {
     }
 
     const browserSession = entry.guest.session
+    await entry.bridge?.stop()
+    entry.bridge = null
     if (!entry.guest.isDestroyed()) {
       entry.guest.close({ waitForBeforeUnload: false })
     }
@@ -115,7 +140,13 @@ export function installBrowserWebviewPolicy(options: {
       return
     }
 
-    const entry: BrowserEntry = { panelId, guest }
+    const entry: BrowserEntry = {
+      panelId,
+      guest,
+      bridge: null,
+      commandQueue: Promise.resolve(),
+      agentLocked: false
+    }
     entries.set(panelId, entry)
     const refreshErrorPage = (
       errorDescription: string,
@@ -272,15 +303,101 @@ export function installBrowserWebviewPolicy(options: {
   })
 
   return {
-    register(event, panelId, webContentsId) {
+    async register(event, panelId, webContentsId, challenge) {
       const entry = entries.get(panelId)
-      return Boolean(
-        options.isTrustedEvent(event) &&
-        entry &&
-        entry.guest.id === webContentsId &&
-        entry.guest.hostWebContents === options.trustedRenderer &&
-        !entry.guest.isDestroyed()
-      )
+      if (
+        !options.isTrustedEvent(event) ||
+        !entry ||
+        entry.guest.id !== webContentsId ||
+        entry.guest.hostWebContents !== options.trustedRenderer ||
+        entry.guest.isDestroyed() ||
+        entry.bridge
+      ) {
+        return null
+      }
+
+      const bridge = await createBrowserCdpBridge(entry.guest, {
+        panelId,
+        challenge
+      })
+      if (entries.get(panelId) !== entry || entry.guest.isDestroyed()) {
+        await bridge.stop()
+        return null
+      }
+
+      entry.bridge = bridge
+      return bridge.descriptor
+    },
+    async command(event, panelId, command) {
+      const entry = entries.get(panelId)
+      if (
+        !options.isTrustedEvent(event) ||
+        !entry ||
+        entry.guest.isDestroyed()
+      ) {
+        return { ok: false, error: 'The Browser page is not available.' }
+      }
+
+      if (entry.agentLocked) {
+        return {
+          ok: false,
+          error: 'A coding agent controls this Browser.'
+        }
+      }
+
+      let operationError: string | null = null
+      const operation = entry.commandQueue.then(() => {
+        if (entry.guest.isDestroyed()) {
+          throw new Error('The Browser page is not available.')
+        }
+
+        if (command.type === 'navigate') {
+          void entry.guest.loadURL(command.url).catch(() => undefined)
+        } else if (
+          command.type === 'back' &&
+          entry.guest.navigationHistory.canGoBack()
+        ) {
+          entry.guest.navigationHistory.goBack()
+        } else if (
+          command.type === 'forward' &&
+          entry.guest.navigationHistory.canGoForward()
+        ) {
+          entry.guest.navigationHistory.goForward()
+        } else if (command.type === 'reload') {
+          entry.guest.reload()
+        } else if (command.type === 'stop') {
+          entry.guest.stop()
+        }
+      })
+      entry.commandQueue = operation.catch((cause) => {
+        operationError = cause instanceof Error ? cause.message : String(cause)
+      })
+      await entry.commandQueue
+      return operationError
+        ? { ok: false, error: operationError }
+        : { ok: true, error: null }
+    },
+    async setAgentControl(event, panelId, locked) {
+      const entry = entries.get(panelId)
+      if (
+        !options.isTrustedEvent(event) ||
+        !entry ||
+        entry.guest.isDestroyed()
+      ) {
+        return false
+      }
+
+      if (locked) {
+        entry.agentLocked = true
+        await entry.commandQueue
+        if (!options.trustedRenderer.isDestroyed()) {
+          options.trustedRenderer.focus()
+        }
+      } else {
+        entry.agentLocked = false
+      }
+
+      return entries.get(panelId) === entry && !entry.guest.isDestroyed()
     },
     async requestClose(event, panelId, force) {
       if (!options.isTrustedEvent(event)) {
@@ -321,6 +438,8 @@ export function installBrowserWebviewPolicy(options: {
         entry.guest.close({ waitForBeforeUnload: true })
       })
       if (canClose) {
+        await entry.bridge?.stop()
+        entry.bridge = null
         await browserSession.clearStorageData().catch(() => undefined)
       }
 

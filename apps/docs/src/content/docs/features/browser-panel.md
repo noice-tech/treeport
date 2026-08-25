@@ -13,7 +13,11 @@ The desktop app also uses this stream when it connects to a remote computer.
 
 ## Install the managed browser
 
-The web client and agent commands use the managed browser on the daemon computer.
+The web client and remote desktop client use the managed browser on the daemon computer.
+
+Agent commands use the current Browser runtime.
+
+A local desktop runtime does not use managed Chromium.
 
 If Browser needs Chromium, select **Install Chromium** on the **Browser unavailable** page.
 
@@ -115,11 +119,15 @@ Without `--panel`, Treeport uses the only Browser session in the current tree.
 
 If multiple sessions are open, add `--panel <panel-id>`.
 
-Snapshot references, such as `e12`, identify elements in the daemon browser session.
+Snapshot references, such as `e12`, identify elements in the current Browser runtime.
 
-Web clients and agents use one control owner for the daemon browser session.
+Agent commands control the page that the user sees.
 
-A local desktop connection uses a separate native page. Agent commands use the saved URL in a daemon browser session.
+For a local desktop connection, commands control the visible desktop page.
+
+For other clients, commands control the streamed daemon page.
+
+Take a new snapshot after navigation or after Browser ownership changes.
 
 ## Close Browser
 
@@ -131,7 +139,15 @@ Each Browser session uses separate temporary browser data.
 
 Treeport does not use, import, or attach to a personal browser profile.
 
+Each Browser has one live runtime.
+
+Browser can move between a local desktop runtime and a daemon runtime.
+
+A move keeps the saved URL and title. It does not keep cookies, history, storage, form input, or login state.
+
 After an application or daemon restart, Treeport opens the saved URL in a new empty browser session.
+
+A web client cannot stream a Browser that a local desktop app owns.
 
 ## Understand streamed Browser limits
 

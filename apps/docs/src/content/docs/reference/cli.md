@@ -272,7 +272,7 @@ treeport browser screenshot [--panel <panel-id>] [--json]
 
 `status` reports whether the browser is ready.
 
-Before you use `remove`, close all Browser sessions.
+Before you use `remove`, close all daemon-owned Browser sessions.
 
 `open` starts Browser. Omit the URL to open a blank page.
 
@@ -286,9 +286,13 @@ Without `--panel`, Treeport uses the only Browser session in the current tree.
 
 Use `list` to find Browser IDs. Use snapshot element references with `click` and `fill`.
 
-These commands control the daemon browser session. A web client can share it.
+These commands control the current live Browser page.
 
-The commands do not control the desktop native page.
+A local desktop connection controls its visible page.
+
+A web client or remote desktop connection controls the streamed daemon page.
+
+If no local desktop owns Browser, a command can start the daemon browser.
 
 See [Browser](/features/browser-panel/) for networking, saved state, and limits.
 

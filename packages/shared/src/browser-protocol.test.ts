@@ -3,6 +3,9 @@ import {
   BROWSER_MAX_FRAME_BYTES,
   browserAgentCommandSchema,
   browserFrameSchema,
+  browserOwnerAuthSchema,
+  browserOwnerClientMessageSchema,
+  BROWSER_PROTOCOL_VERSION,
   parseBrowserAuth,
   parseBrowserClientMessage
 } from './browser-protocol.js'
@@ -101,14 +104,52 @@ describe('hosted browser protocol', () => {
 
   it('requires a bounded opaque ticket', () => {
     const ticket = 'a'.repeat(43)
-    expect(parseBrowserAuth({ ticket, protocolVersion: 1 })).toEqual({
+    expect(
+      parseBrowserAuth({ ticket, protocolVersion: BROWSER_PROTOCOL_VERSION })
+    ).toEqual({
       ticket,
-      protocolVersion: 1
+      protocolVersion: BROWSER_PROTOCOL_VERSION
     })
     expect(parseBrowserAuth({ ticket: 'short', protocolVersion: 1 })).toBeNull()
-    expect(parseBrowserAuth({ ticket, protocolVersion: 2 })).toBeNull()
+    expect(parseBrowserAuth({ ticket, protocolVersion: 1 })).toBeNull()
     expect(
-      parseBrowserAuth({ ticket, protocolVersion: 1, panelId: 'another-panel' })
+      parseBrowserAuth({
+        ticket,
+        protocolVersion: BROWSER_PROTOCOL_VERSION,
+        panelId: 'another-panel'
+      })
     ).toBeNull()
+
+    expect(
+      browserOwnerAuthSchema.safeParse({
+        ticket,
+        challenge: 'c'.repeat(43),
+        protocolVersion: BROWSER_PROTOCOL_VERSION,
+        endpoint: 'http://127.0.0.1:43210/private/'
+      }).success
+    ).toBe(true)
+    expect(
+      browserOwnerAuthSchema.safeParse({
+        ticket,
+        challenge: 'c'.repeat(43),
+        protocolVersion: BROWSER_PROTOCOL_VERSION,
+        endpoint: 'http://localhost:43210/private/'
+      }).success
+    ).toBe(false)
+    expect(
+      browserOwnerClientMessageSchema.safeParse({
+        type: 'state',
+        generation: 0,
+        revision: 1,
+        state: {
+          url: 'about:blank',
+          title: '',
+          loading: false,
+          canGoBack: false,
+          canGoForward: false,
+          viewport: { width: 800, height: 600 }
+        }
+      }).success
+    ).toBe(false)
   })
 })

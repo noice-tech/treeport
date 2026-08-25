@@ -29,7 +29,25 @@ type TreeportDesktopBridge = Readonly<{
   onCommand: (listener: (command: TreeportDesktopCommand) => void) => () => void
   setTerminalSelectionActive: (active: boolean) => void
   onTerminalSelectionRelease: (listener: () => void) => () => void
-  registerBrowser: (panelId: string, webContentsId: number) => Promise<boolean>
+  registerBrowser: (
+    panelId: string,
+    webContentsId: number,
+    challenge: string
+  ) => Promise<{
+    endpoint: string
+    panelId: string
+    challenge: string
+  } | null>
+  browserCommand: (
+    panelId: string,
+    command:
+      | { type: 'navigate'; url: string }
+      | { type: 'back' }
+      | { type: 'forward' }
+      | { type: 'reload' }
+      | { type: 'stop' }
+  ) => Promise<{ ok: boolean; error: string | null }>
+  setBrowserAgentControl: (panelId: string, locked: boolean) => Promise<boolean>
   requestBrowserClose: (panelId: string, force: boolean) => Promise<boolean>
   disposeBrowser: (panelId: string) => void
   onBrowserPopup: (
