@@ -119,14 +119,6 @@ Treeport requests approval again when the permission set changes. Removing the p
 
 ### Browser boundaries
 
-The client-side iframe Browser can load an HTTP or HTTPS site in a nested iframe.
-
-The package receives the client-local title from the target. If the target uses the panel SDK, the package also saves reported URL changes.
-
-The target cannot use context, diff, storage, shortcuts, or workspace navigation methods.
-
-Browser iframe restrictions continue to apply. Treeport does not bypass the framing policy of the target.
-
 Browser does not use a web-panel package permission.
 
 In the desktop app, Browser runs as the desktop operating-system user.

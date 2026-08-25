@@ -676,29 +676,29 @@ describe('TreeportService with injected command adapters', () => {
 
   it('scopes web panel grants to the package source and permission set', async () => {
     const { root, main, service } = await fixture()
-    const packageRoot = path.join(root, 'packages', 'web-panel-browser')
-    const browserRoot = path.join(packageRoot, 'web-panels', 'browser')
+    const packageRoot = path.join(root, 'packages', 'privileged-panel')
+    const panelRoot = path.join(packageRoot, 'web-panels', 'dashboard')
     await Promise.all([
-      fs.mkdir(browserRoot, { recursive: true }),
+      fs.mkdir(panelRoot, { recursive: true }),
       fs.mkdir(path.join(main, '.treeport'), { recursive: true })
     ])
     await Promise.all([
       fs.writeFile(
         path.join(packageRoot, 'package.json'),
         JSON.stringify({
-          name: '@treeport/web-panel-browser',
+          name: '@treeport/privileged-panel',
           keywords: ['treeport-package'],
           treeport: {
             webPanels: [
               {
-                source: './web-panels/browser',
+                source: './web-panels/dashboard',
                 permissions: ['same-origin']
               }
             ]
           }
         })
       ),
-      fs.writeFile(path.join(browserRoot, 'index.html'), '<h1>Browser</h1>'),
+      fs.writeFile(path.join(panelRoot, 'index.html'), '<h1>Dashboard</h1>'),
       fs.writeFile(
         path.join(main, '.treeport', 'settings.json'),
         JSON.stringify({ packages: [packageRoot] })
@@ -709,7 +709,7 @@ describe('TreeportService with injected command adapters', () => {
     const worktree = project.worktrees[0]!
     const definition = (
       await service.listWebPanelDefinitions(worktree.id)
-    ).find((candidate) => candidate.title === 'Browser')!
+    ).find((candidate) => candidate.title === 'Dashboard')!
     expect(definition).toMatchObject({
       permissions: ['same-origin'],
       permissionsGranted: false,

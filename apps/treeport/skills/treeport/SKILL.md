@@ -137,8 +137,6 @@ Treeport does not infer agent settlement. An orchestrator can inspect first, wai
 
 Browser runs an isolated Chromium session on the Treeport daemon host. It can reach development servers on that host.
 
-The iframe Browser web panel is separate. These commands cannot control it.
-
 Never attach Treeport to a personal browser profile.
 
 First, inspect available Browser sessions:

@@ -288,7 +288,7 @@ Use `list` to find Browser IDs. Use snapshot element references with `click` and
 
 These commands control the daemon browser session. A web client can share it.
 
-The commands do not control the desktop native page or iframe Browser.
+The commands do not control the desktop native page.
 
 See [Browser](/features/browser-panel/) for networking, saved state, and limits.
 

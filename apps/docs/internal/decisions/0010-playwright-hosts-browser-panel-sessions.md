@@ -21,7 +21,7 @@ Store `BrowserPanel` records separately from terminal and web-panel storage. Do 
 
 Browser uses the existing tree ownership, route, sidebar, title, shortcut, event, open-request, and close workflows.
 
-Keep iframe Browser and its definition identity.
+Replace the former web-panel implementation with the durable Browser resource.
 
 Put the Browser toolbar, server list, viewport boundary, and accessible controls in the Treeport frontend.
 
