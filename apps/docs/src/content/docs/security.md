@@ -117,33 +117,33 @@ A grant applies to the exact package source, scope, panel definition, and permis
 
 Treeport requests approval again when the permission set changes. Removing the package revokes its grants.
 
-### Browser boundaries
+### Browser primitive boundaries
 
-Browser does not use a web-panel package permission.
+The Browser primitive does not use a web-panel package permission.
 
-In the desktop app, Browser runs as the desktop operating-system user.
+For a local desktop connection, Electron runs the page in a `<webview>`.
 
-It can reach local and internet sites available from the desktop computer.
+The page can reach sites that are available from the desktop computer.
 
-In a web client, the isolated browser runs as the daemon operating-system user.
+For other connections, Playwright controls isolated Chromium on the daemon computer.
 
-It can reach local and internet sites available from the daemon computer.
+That page can reach sites that are available from the daemon computer.
 
-Each Browser session uses separate temporary browser data.
+Each browser panel uses separate temporary browser data.
 
 Treeport does not use, import, or attach to a personal browser profile.
 
-Treeport authorizes each Browser action for the owning Browser and tree.
+Treeport authorizes each action for one browser panel and tree.
 
-For local desktop Browser, Treeport validates the exact desktop page before it accepts agent control.
+For a local desktop connection, Treeport validates the exact `<webview>` before it accepts agent control.
 
-Treeport does not expose browser-control access to page content or remote clients.
+Treeport does not give browser-control access to page content or remote clients.
 
 The server accepts only absolute HTTP or HTTPS addresses without credentials.
 
-Closing Browser deletes its temporary browser data.
+Closing a browser panel deletes its temporary browser data.
 
-Close requires confirmation only when the site uses `beforeunload`.
+Treeport requests confirmation only when the site uses `beforeunload`.
 
 ## Follow these operating rules
 

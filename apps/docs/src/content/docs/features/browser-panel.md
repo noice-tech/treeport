@@ -1,29 +1,40 @@
 ---
-title: Browser (experimental)
-description: Open a top-level web page in Treeport.
+title: Browser primitive (experimental)
+description: Open and control a web page in a built-in Treeport panel.
 ---
 
-Browser opens a top-level page in a Treeport panel.
+The Browser primitive is a built-in panel type. It opens one top-level web page for a tree.
 
-For a local connection, the desktop app runs Browser on the desktop computer.
+Each browser panel has one address bar, one page, and one live browser runtime.
 
-The web client streams Browser from an isolated Chromium process on the daemon computer.
+## Understand the browser runtime
 
-The desktop app also uses this stream when it connects to a remote computer.
+Treeport selects the runtime from your connection:
 
-## Install the managed browser
+- For a local desktop connection, Electron renders the page in a `<webview>`.
+- For a web or remote desktop connection, Playwright controls Chromium on the daemon computer.
 
-The web client and remote desktop client use the managed browser on the daemon computer.
+Treeport streams the Playwright page to the web or remote desktop client.
 
-Agent commands use the current Browser runtime.
+The toolbar and `treeport browser` commands control the same live page. Treeport does not synchronize two browser pages.
 
-A local desktop runtime does not use managed Chromium.
+For a local desktop connection, page requests come from the desktop computer.
 
-If Browser needs Chromium, select **Install Chromium** on the **Browser unavailable** page.
+For other connections, page requests come from the daemon computer.
 
-Treeport downloads the matching Chromium build. Browser opens again when the installation is complete.
+Thus, `localhost` identifies the computer that runs the browser runtime.
 
-To install Chromium before you open Browser, use this command:
+## Install Chromium for remote use
+
+A web client or remote desktop client requires managed Chromium on the daemon computer.
+
+The local Electron `<webview>` does not require managed Chromium.
+
+If Chromium is not available, select **Install Chromium** on the **Browser unavailable** page.
+
+Treeport downloads the compatible Chromium build. The browser panel opens again when the installation is complete.
+
+To install Chromium before you open a browser panel, use this command:
 
 ```sh
 treeport browser install
@@ -36,73 +47,55 @@ treeport browser status
 treeport browser remove
 ```
 
-A local desktop connection does not need this installation.
-
-A remote desktop connection uses the managed browser on the remote computer.
-
-On Linux, an error can identify missing operating-system libraries.
+On Linux, an installation error can identify missing operating-system libraries.
 
 Install these libraries as an administrator. Then, run the Treeport command again.
 
 Treeport does not request administrator access.
 
-## Open a development server
+## Open a page
 
 1. Select **Browser** from **New panel**.
-2. Select **Development servers** on the right of the address bar.
-3. Select a server.
+2. Enter an HTTP or HTTPS address in the address bar.
+3. Press Enter.
 
-Treeport opens a blank page and puts focus in the address bar.
+You can omit the protocol. Treeport adds `http://` when necessary.
 
-Enter an HTTP or HTTPS address with or without the protocol. Press Enter to open it.
+To open a detected development server, select **Development servers** on the right of the address bar.
 
-Treeport uses `http://` when you omit the protocol.
+The page is not in an iframe. Sites that block iframe use can open in the browser panel.
 
-For a local desktop connection, Browser requests come from the desktop computer.
+Use **Back**, **Forward**, **Reload**, and the address bar to control the page.
 
-For a web client or remote desktop connection, Browser requests come from the daemon computer.
+If the page cannot load, Treeport shows the network error code.
 
-`localhost` identifies the computer that runs Browser.
+Correct the address or start the target. Then, select **Reload**.
 
-The target runs as a top-level page. Sites that block iframe use can run in Browser.
+Use pointer, keyboard, and scroll input in the page.
 
-Use the address bar, **Back**, **Forward**, and **Reload** to control the page.
+When a page opens a popup, Treeport opens a new browser panel in the same tree.
 
-If a page cannot load, Browser shows the network error code.
+Modifier-click an HTTP or HTTPS terminal link to open it in that terminal's tree.
 
-Start the target or correct the address. Then, select **Reload**.
+## Open a browser panel from the CLI
 
-Use **Development servers** to select another server from the tree.
-
-Use pointer, keyboard, and scroll input in the viewport.
-
-Browser keeps its current URL and title. Treeport restores the URL when it creates a new session.
-
-When a page opens a popup, Treeport opens another Browser in the same tree.
-
-Modifier-click an HTTP or HTTPS terminal link to open Browser in that terminal's tree.
-
-Treeport selects Browser in the current window.
-
-## Open Browser from the CLI
-
-Open Browser with a blank page:
+Open a blank browser panel:
 
 ```sh
 treeport browser open --worktree .
 ```
 
-Open Browser with a URL:
+Open a browser panel with a URL:
 
 ```sh
 treeport browser open http://127.0.0.1:5173 --worktree .
 ```
 
-The server rejects URLs with credentials. It also rejects protocols other than HTTP and HTTPS.
+The server accepts only HTTP and HTTPS URLs without credentials.
 
-## Control Browser from an agent
+## Control a browser panel from an agent
 
-Use these commands to inspect and control Browser:
+Use these commands to inspect and control the current page:
 
 ```sh
 treeport browser list
@@ -115,53 +108,53 @@ treeport browser network
 treeport browser screenshot
 ```
 
-Without `--panel`, Treeport uses the only Browser session in the current tree.
+Without `--panel`, Treeport selects the only browser panel in the current tree.
 
-If multiple sessions are open, add `--panel <panel-id>`.
+If multiple browser panels are open, add `--panel <panel-id>`.
 
-Snapshot references, such as `e12`, identify elements in the current Browser runtime.
+A snapshot reference, such as `e12`, identifies an element in the current live runtime.
 
-Agent commands control the page that the user sees.
+Take a new snapshot after navigation or a runtime change.
 
-For a local desktop connection, commands control the visible desktop page.
+For a local desktop connection, commands control the visible Electron `<webview>` page.
 
-For other clients, commands control the streamed daemon page.
+For other connections, commands control the streamed Playwright page.
 
-Take a new snapshot after navigation or after Browser ownership changes.
+## Close a browser panel
 
-## Close Browser
+Close a browser panel as you close a browser tab.
 
-Close Browser as you close a browser tab. Treeport does not show a data-deletion confirmation.
+Treeport runs the site's page-close handlers. If the site uses `beforeunload`, Treeport asks you before it closes.
 
-Browser runs the site's page-close handlers. If the site uses `beforeunload`, Browser asks you before it closes.
-
-Each Browser session uses separate temporary browser data.
+Each browser panel uses separate temporary browser data.
 
 Treeport does not use, import, or attach to a personal browser profile.
 
-Each Browser has one live runtime.
+Treeport saves the current URL and title. It restores the URL when it creates a new runtime.
 
-Browser can move between a local desktop runtime and a daemon runtime.
+A runtime change does not keep this state:
 
-A move keeps the saved URL and title. It does not keep cookies, history, storage, form input, or login state.
+- browsing history;
+- cookies;
+- local or session storage;
+- form input;
+- login state.
 
-After an application or daemon restart, Treeport opens the saved URL in a new empty browser session.
+After a restart, Treeport opens the saved URL in a new temporary browser session.
 
-A web client cannot stream a Browser that a local desktop app owns.
+A web client cannot stream a page that a local Electron `<webview>` owns.
 
-## Understand streamed Browser limits
+## Understand remote limits
 
-The streamed Browser in a web client or remote desktop connection does not support these features:
+A browser panel in a web or remote desktop client does not support these features:
 
 - streamed audio;
 - downloads;
 - file selection or upload;
-- automatic clipboard synchronization between the client and daemon.
+- automatic clipboard synchronization with the daemon computer.
 
 The Treeport controls have accessible names and keyboard operation.
 
-The streamed page image does not supply semantic accessibility information.
+The streamed page image does not include semantic accessibility information.
 
-Use `treeport browser snapshot` when you need the page's semantic accessibility data.
-
-A daemon-local `localhost` URL can fail to open on another computer.
+Use `treeport browser snapshot` to read the page's semantic accessibility data.

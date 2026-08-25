@@ -133,29 +133,29 @@ treeport terminal wait <terminal-id> --until exit
 
 Treeport does not infer agent settlement. An orchestrator can inspect first, wait for `working` if no progress cycle has been observed, and then wait for `idle`. Progress depends on the child application emitting OSC `9;4`; for Pi, `terminal.showTerminalProgress` must be enabled. Applications should clear progress or refresh active progress more frequently than the five-minute lease. A null progress value is not proof that every application supports progress reporting.
 
-## Inspect the worktree application in Browser
+## Inspect the worktree application in a browser panel
 
-Browser has one live runtime for each panel.
+The Browser primitive has one live runtime for each panel.
 
-A local desktop app owns its visible page.
+Electron owns the visible `<webview>` page for a local desktop connection.
 
-Web clients and remote desktop clients use managed Chromium on the daemon computer.
+Playwright controls managed Chromium for a web or remote desktop connection.
 
 Never attach Treeport to a personal browser profile.
 
-First, inspect available Browser sessions:
+First, inspect the available browser panels:
 
 ```sh
 treeport browser list
 ```
 
-If Browser is not open, open it in the current tree:
+If no browser panel is open, open one in the current tree:
 
 ```sh
 treeport browser open --worktree .
 ```
 
-Use Browser commands on the current live page:
+Use these commands on the current live page:
 
 ```sh
 treeport browser snapshot
@@ -167,13 +167,13 @@ treeport browser network
 treeport browser screenshot
 ```
 
-Commands resolve the only Browser in the current tree.
+The commands select the only browser panel in the current tree.
 
-When more than one Browser exists, add `--panel <panel-id>`.
+When more than one browser panel exists, add `--panel <panel-id>`.
 
 Snapshot references belong to one runtime generation.
 
-Take a new snapshot after navigation or after Browser ownership changes.
+Take a new snapshot after navigation or a runtime change.
 
 A local desktop owner does not need managed Chromium.
 
@@ -185,7 +185,7 @@ treeport browser status
 
 Ask the user before you run `treeport browser install`.
 
-Leave Browser open so the user can inspect the result.
+Leave the browser panel open so the user can inspect the result.
 
 ## Automation and integrations
 

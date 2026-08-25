@@ -1,4 +1,4 @@
-# Decision 0010: Browser has one authoritative runtime
+# Decision 0010: The Browser primitive has one authoritative runtime
 
 - Status: Accepted
 - Date: 2026-08-25
@@ -7,10 +7,10 @@
 
 Treeport must open sites that prevent iframe use.
 
-A Browser panel previously had two live runtimes for a local desktop connection:
+A browser panel previously had two live runtimes for a local desktop connection:
 
 - Electron showed a native `<webview>`.
-- Browser CLI commands controlled a daemon Playwright page.
+- `treeport browser` commands controlled a daemon Playwright page.
 
 The runtimes shared only the saved URL and title.
 
@@ -20,7 +20,7 @@ Remote clients did not have this problem. Their UI stream and CLI commands used 
 
 ## Decision
 
-Give each `BrowserPanel` one authoritative live runtime.
+Give each browser panel one authoritative live runtime.
 
 `BrowserSessionManager` remains the panel coordinator.
 
@@ -75,7 +75,7 @@ Click and fill use these Playwright references on the visible page.
 
 Navigation, history, reload, and screenshot commands use the same guest through the bridge.
 
-A local Browser does not start managed Chromium.
+A local browser panel does not start managed Chromium.
 
 Before an agent command, the daemon requests an input barrier from Electron.
 
@@ -153,9 +153,9 @@ Electron applies popup policy to the exact guest.
 
 The current owner reports an accepted popup to the daemon.
 
-The daemon creates the new durable `BrowserPanel`.
+The daemon creates the new durable browser panel.
 
-All Browser deletion requests go through `BrowserSessionManager`.
+All browser panel deletion requests go through `BrowserSessionManager`.
 
 For a local owner, the daemon requests `beforeunload` from Electron.
 
@@ -163,9 +163,9 @@ The daemon deletes the panel only after Electron permits the close.
 
 ### Browser data
 
-Each local Browser uses a separate in-memory Electron partition.
+Each local browser panel uses a separate in-memory Electron partition.
 
-Each daemon Browser uses a separate runtime-directory profile.
+Each daemon browser panel uses a separate runtime-directory profile.
 
 Treeport removes temporary data after close or runtime replacement.
 
@@ -186,11 +186,11 @@ Keep the existing:
 
 ## Consequences
 
-The visible local page and Browser CLI commands now share cookies, history, DOM state, and input state.
+The visible local page and `treeport browser` commands now share cookies, history, DOM state, and input state.
 
-Local Browser automation does not require `treeport browser install`.
+Local browser automation does not require `treeport browser install`.
 
-Remote Browser behavior continues to use managed Chromium and JPEG streaming.
+Remote browser automation continues to use managed Chromium and JPEG streaming.
 
 The desktop app adds one private target bridge and one owner socket.
 

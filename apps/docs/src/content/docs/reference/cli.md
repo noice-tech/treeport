@@ -246,7 +246,7 @@ The tree disappears when Git no longer reports its worktree.
 
 Treeport separately handles residual files that it can identify safely.
 
-## Manage Browser
+## Manage browser panels
 
 ```sh
 treeport browser install [--json]
@@ -270,31 +270,29 @@ treeport browser screenshot [--panel <panel-id>] [--json]
 
 `install` downloads the compatible Chromium build to the Treeport cache.
 
-`status` reports whether the browser is ready.
+`status` reports whether managed Chromium is ready.
 
-Before you use `remove`, close all daemon-owned Browser sessions.
+Before you use `remove`, close all browser panels that use managed Chromium.
 
-`open` starts Browser. Omit the URL to open a blank page.
+`open` creates a browser panel. Omit the URL to open a blank page.
 
 The URL must use HTTP or HTTPS and must not contain credentials.
 
-In a managed terminal, `open` selects Browser in clients that show that terminal.
+In a managed terminal, `open` selects the new panel in clients that show that terminal.
 
-The remaining commands control Browser.
+The remaining commands control one live browser page.
 
-Without `--panel`, Treeport uses the only Browser session in the current tree.
+Without `--panel`, Treeport selects the only browser panel in the current tree.
 
-Use `list` to find Browser IDs. Use snapshot element references with `click` and `fill`.
+Use `list` to find panel IDs. Use snapshot element references with `click` and `fill`.
 
-These commands control the current live Browser page.
+A local desktop connection controls the visible Electron `<webview>` page.
 
-A local desktop connection controls its visible page.
+A web or remote desktop connection controls the Playwright page on the daemon computer.
 
-A web client or remote desktop connection controls the streamed daemon page.
+If no local desktop owns the panel, a command can start the Playwright runtime.
 
-If no local desktop owns Browser, a command can start the daemon browser.
-
-See [Browser](/features/browser-panel/) for networking, saved state, and limits.
+See [Browser primitive](/features/browser-panel/) for networking, saved state, and limits.
 
 ## Open web panels
 
