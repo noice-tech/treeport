@@ -435,6 +435,23 @@ function WorkspaceApp() {
           ? null
           : current
       )
+      queryClient.setQueryData<ProjectRecord[]>(
+        projectsQueryOptions.queryKey,
+        (current) =>
+          current?.map((project) => ({
+            ...project,
+            worktrees: project.worktrees.map((worktree) =>
+              worktree.id === panel.worktreeId
+                ? {
+                    ...worktree,
+                    panels: worktree.panels.filter(
+                      (candidate) => candidate.id !== panel.id
+                    )
+                  }
+                : worktree
+            )
+          }))
+      )
       if (selectedPanel?.id === panel.id) {
         const worktree = projects
           .flatMap((project) => project.worktrees)
@@ -445,7 +462,7 @@ function WorkspaceApp() {
         }
       }
 
-      await queryClient.invalidateQueries({
+      void queryClient.invalidateQueries({
         queryKey: projectsQueryOptions.queryKey
       })
     },
@@ -506,31 +523,51 @@ function WorkspaceApp() {
         return
       }
 
-      void queryClient
-        .invalidateQueries({
-          queryKey: projectsQueryOptions.queryKey
-        })
-        .then(async () => {
-          const freshProjects =
-            queryClient.getQueryData<ProjectRecord[]>(
-              projectsQueryOptions.queryKey
-            ) ?? []
-          const panel = freshProjects
-            .flatMap((project) => project.worktrees)
-            .find((worktree) => worktree.id === request.worktreeId)
-            ?.panels.find(
-              (candidate): candidate is BrowserPanel | WebPanel =>
-                candidate.kind !== 'terminal' &&
-                candidate.id === request.panelId
+      queryClient.setQueryData<ProjectRecord[]>(
+        projectsQueryOptions.queryKey,
+        (current) =>
+          current?.map((project) => ({
+            ...project,
+            worktrees: project.worktrees.map((worktree) =>
+              worktree.id !== request.worktreeId
+                ? worktree
+                : {
+                    ...worktree,
+                    panels: worktree.panels.some(
+                      (panel) => panel.id === request.panelId
+                    )
+                      ? worktree.panels.map((panel) =>
+                          panel.id === request.panelId ? request.panel : panel
+                        )
+                      : [...worktree.panels, request.panel]
+                  }
             )
-          const target = panel ? targetForPanel(freshProjects, panel) : null
-          if (target) {
-            await navigateToWorkspace(target)
-          }
-        })
-        .catch((error) => {
-          notifyError(error, { operation: 'open panel' })
-        })
+          }))
+      )
+      const currentProjects =
+        queryClient.getQueryData<ProjectRecord[]>(
+          projectsQueryOptions.queryKey
+        ) ?? []
+      const target = targetForPanel(currentProjects, request.panel)
+      const navigation = target
+        ? navigateToWorkspace(target)
+        : queryClient
+            .invalidateQueries({
+              queryKey: projectsQueryOptions.queryKey
+            })
+            .then(async () => {
+              const freshProjects =
+                queryClient.getQueryData<ProjectRecord[]>(
+                  projectsQueryOptions.queryKey
+                ) ?? []
+              const freshTarget = targetForPanel(freshProjects, request.panel)
+              if (freshTarget) {
+                await navigateToWorkspace(freshTarget)
+              }
+            })
+      void navigation.catch((error) => {
+        notifyError(error, { operation: 'open panel' })
+      })
     },
     [navigateToWorkspace, queryClient, selectedPanelId, selectedTerminalId]
   )

@@ -438,9 +438,9 @@ export function installBrowserWebviewPolicy(options: {
         entry.guest.close({ waitForBeforeUnload: true })
       })
       if (canClose) {
-        await entry.bridge?.stop()
+        void entry.bridge?.stop()
         entry.bridge = null
-        await browserSession.clearStorageData().catch(() => undefined)
+        void browserSession.clearStorageData().catch(() => undefined)
       }
 
       return canClose

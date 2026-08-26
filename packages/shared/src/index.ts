@@ -813,6 +813,7 @@ interface ProductEventPayloadMap {
   'panel.open_requested': {
     worktreeId: string
     panelId: string
+    panel: BrowserPanel | WebPanel
     sourceTerminalId: string | null
     sourcePanelId: string | null
   }

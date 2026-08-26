@@ -265,6 +265,15 @@ describe('Socket.IO contracts', () => {
         data: {
           worktreeId: 'worktree',
           panelId: 'panel-popup',
+          panel: {
+            id: 'panel-popup',
+            kind: 'browser',
+            worktreeId: 'worktree',
+            title: 'Popup',
+            url: 'https://example.com/popup',
+            createdAt: '2026-01-01T00:00:00.000Z',
+            updatedAt: '2026-01-01T00:00:00.000Z'
+          },
           sourceTerminalId: null,
           sourcePanelId: 'panel-browser'
         }

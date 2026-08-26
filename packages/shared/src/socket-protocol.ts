@@ -29,6 +29,34 @@ const operationEventDataSchema = z.strictObject({
   operationId: identifierSchema,
   worktreeId: identifierSchema
 })
+const webPanelSnapshotSchema = z.strictObject({
+  id: z.string().min(1),
+  kind: z.literal('web'),
+  worktreeId: z.string().min(1),
+  definitionId: z.string().min(1),
+  title: z.string().min(1),
+  launch: z.strictObject({
+    input: z.record(z.string(), z.json()).nullable(),
+    cwd: z.string().nullable()
+  }),
+  permissions: z.array(z.literal('same-origin')),
+  sandbox: z.strictObject({ allowSameOrigin: z.boolean() }),
+  createdAt: z.string(),
+  updatedAt: z.string()
+})
+const browserPanelSnapshotSchema = z.strictObject({
+  id: z.string().min(1),
+  kind: z.literal('browser'),
+  worktreeId: z.string().min(1),
+  title: z.string().min(1).max(256),
+  url: z.union([z.literal('about:blank'), browserUrlSchema]),
+  createdAt: z.string(),
+  updatedAt: z.string()
+})
+const openPanelSnapshotSchema = z.discriminatedUnion('kind', [
+  webPanelSnapshotSchema,
+  browserPanelSnapshotSchema
+])
 
 export const productEventSchema = z.discriminatedUnion('type', [
   eventEnvelope('project.created', projectEventDataSchema),
@@ -108,6 +136,7 @@ export const productEventSchema = z.discriminatedUnion('type', [
     z.strictObject({
       worktreeId: identifierSchema,
       panelId: identifierSchema,
+      panel: openPanelSnapshotSchema,
       sourceTerminalId: identifierSchema.nullable(),
       sourcePanelId: identifierSchema.nullable()
     })
@@ -133,32 +162,6 @@ export const productEventSchema = z.discriminatedUnion('type', [
     operationEventDataSchema.extend({ error: z.string() })
   )
 ])
-
-const webPanelSnapshotSchema = z.strictObject({
-  id: z.string().min(1),
-  kind: z.literal('web'),
-  worktreeId: z.string().min(1),
-  definitionId: z.string().min(1),
-  title: z.string().min(1),
-  launch: z.strictObject({
-    input: z.record(z.string(), z.json()).nullable(),
-    cwd: z.string().nullable()
-  }),
-  permissions: z.array(z.literal('same-origin')),
-  sandbox: z.strictObject({ allowSameOrigin: z.boolean() }),
-  createdAt: z.string(),
-  updatedAt: z.string()
-})
-
-const browserPanelSnapshotSchema = z.strictObject({
-  id: z.string().min(1),
-  kind: z.literal('browser'),
-  worktreeId: z.string().min(1),
-  title: z.string().min(1).max(256),
-  url: z.union([z.literal('about:blank'), browserUrlSchema]),
-  createdAt: z.string(),
-  updatedAt: z.string()
-})
 
 export const eventsSnapshotSchema = z.strictObject({
   at: z.string().datetime(),
