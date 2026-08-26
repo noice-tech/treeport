@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import { BROWSER_PROTOCOL_VERSION } from '@treeport/shared'
 import type {
+  BrowserAgentCommand,
   BrowserClientMessage,
   BrowserFrame,
   BrowserOwnerServerMessage,
@@ -57,6 +58,9 @@ class FakeBrowser implements BrowserSessionBrowser {
       this.callbacks.state(this.state)
     }
   }
+  async agentCommand(input: BrowserAgentCommand) {
+    return input.command
+  }
   async setScreencasting(value: boolean) {
     this.screencasting.push(value)
   }
@@ -70,7 +74,7 @@ class FakeBrowser implements BrowserSessionBrowser {
 }
 
 const browserFactory: BrowserSessionBrowserFactory = (
-  cachePath,
+  _host,
   workspacePath,
   title,
   panelId,
@@ -78,7 +82,7 @@ const browserFactory: BrowserSessionBrowserFactory = (
   callbacks
 ) =>
   new FakeBrowser(
-    cachePath,
+    '/cache',
     workspacePath,
     title,
     panelId,
@@ -128,6 +132,7 @@ function fixture(
   } satisfies BrowserSessionService
   const config = {
     cacheDir: '/cache',
+    dataDir: '/data',
     runtimeDir: '/tmp/treeport-browser-session-test'
   } satisfies BrowserSessionConfig
   const manager = new BrowserSessionManager(

@@ -126,21 +126,21 @@ Close a browser panel as you close a browser tab.
 
 Treeport runs the site's page-close handlers. If the site uses `beforeunload`, Treeport asks you before it closes.
 
-Each browser panel uses separate temporary browser data.
+Browser panels use shared browser data like tabs in one browser.
+
+Cookies, local storage, and login state are available to other browser panels on the same browser host.
+
+Treeport keeps this data when you close a panel or restart Treeport.
+
+Treeport also keeps this data when it replaces the managed browser runtime.
 
 Treeport does not use, import, or attach to a personal browser profile.
 
-Treeport saves the current URL and title. It restores the URL when it creates a new runtime.
+Treeport saves each panel's current URL and title. It restores the URL when it creates a new runtime.
 
-A runtime change does not keep this state:
+A closed panel does not keep tab-specific state such as history, session storage, form input, or snapshot references.
 
-- browsing history;
-- cookies;
-- local or session storage;
-- form input;
-- login state.
-
-After a restart, Treeport opens the saved URL in a new temporary browser session.
+The desktop runtime and the daemon runtime keep separate app-owned profiles. They do not copy browser data between computers.
 
 A web client cannot stream a page that a local Electron `<webview>` owns.
 

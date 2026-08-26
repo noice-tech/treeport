@@ -227,6 +227,15 @@ test('controls the visible local Browser through its exact bridge and keeps it u
       return
     }
 
+    if (url.pathname === '/site/profile') {
+      response.setHeader('content-type', 'text/html')
+      response.end(`<!doctype html>
+        <title>Shared profile</title>
+        <main>Login: <output></output></main>
+        <script>document.querySelector('output').textContent = localStorage.login || 'signed-out'</script>`)
+      return
+    }
+
     if (url.pathname === '/site/start') {
       if (slowBrowserResponse) {
         await new Promise((resolve) => setTimeout(resolve, 500))
@@ -606,6 +615,38 @@ test('controls the visible local Browser through its exact bridge and keeps it u
       }, `${origin}/site/start`)
     ).toBe('4')
 
+    await window.getByRole('button', { name: 'New panel in main tree' }).click()
+    await window
+      .getByRole('dialog', { name: 'New panel' })
+      .getByRole('button', { name: 'Browser, hosted browser' })
+      .click()
+    await expect(window).toHaveURL(/\/panels\/panel_browser_2$/)
+    await expect(address).toHaveValue('')
+    await expect
+      .poll(() => ownerReadyUrls.get('panel_browser_2'))
+      .toBe('about:blank')
+    await address.fill(`${origin}/site/profile`)
+    await address.press('Enter')
+    await expect
+      .poll(() =>
+        electronApp!.evaluate(({ webContents }, targetUrl) => {
+          const browser = webContents
+            .getAllWebContents()
+            .find(
+              (contents) =>
+                contents.getType() === 'webview' &&
+                contents.getURL() === targetUrl
+            )
+          return browser?.executeJavaScript(`(() => {
+            localStorage.login = 'panel-two'
+            document.cookie = 'login=panel-two; Max-Age=3600; SameSite=Lax'
+            document.querySelector('output').textContent = localStorage.login
+            return { login: localStorage.login, cookie: document.cookie }
+          })()`)
+        }, `${origin}/site/profile`)
+      )
+      .toEqual({ login: 'panel-two', cookie: 'login=panel-two' })
+
     await electronApp.evaluate(({ BrowserWindow }) => {
       BrowserWindow.getAllWindows()[0]?.webContents.send(
         'desktop-command',
@@ -623,10 +664,68 @@ test('controls the visible local Browser through its exact bridge and keeps it u
                   contents.getType() === 'webview' &&
                   contents.getURL() === targetUrl
               ),
-          `${origin}/site/start`
+          `${origin}/site/profile`
         )
       )
       .toBe(false)
+
+    await window.getByRole('button', { name: /, Browser$/ }).click()
+    await address.fill(`${origin}/site/profile`)
+    await address.press('Enter')
+    await expect
+      .poll(() =>
+        electronApp!.evaluate(({ webContents }, targetUrl) => {
+          const browser = webContents
+            .getAllWebContents()
+            .find(
+              (contents) =>
+                contents.getType() === 'webview' &&
+                contents.getURL() === targetUrl
+            )
+          return browser?.executeJavaScript(
+            `({ login: localStorage.login, cookie: document.cookie })`
+          )
+        }, `${origin}/site/profile`)
+      )
+      .toEqual({ login: 'panel-two', cookie: 'login=panel-two' })
+
+    await expect
+      .poll(
+        () =>
+          project.worktrees[0]!.panels.find(
+            (panel) => panel.id === browserPanelId
+          )?.url
+      )
+      .toBe(`${origin}/site/profile`)
+    await electronApp.close()
+    electronApp = await electron.launch({
+      args: [`--user-data-dir=${userData}`, '.', workspaceLink(workspaceUrl)],
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        TREEPORT_DESKTOP_E2E: '1',
+        TREEPORT_DESKTOP_USER_DATA: '',
+        TREEPORT_DESKTOP_URL: origin
+      }
+    })
+    const restartedWindow = await electronApp.firstWindow()
+    await restartedWindow.getByRole('button', { name: /, Browser$/ }).click()
+    await expect
+      .poll(() =>
+        electronApp!.evaluate(({ webContents }, targetUrl) => {
+          const browser = webContents
+            .getAllWebContents()
+            .find(
+              (contents) =>
+                contents.getType() === 'webview' &&
+                contents.getURL() === targetUrl
+            )
+          return browser?.executeJavaScript(
+            `({ login: localStorage.login, cookie: document.cookie })`
+          )
+        }, `${origin}/site/profile`)
+      )
+      .toEqual({ login: 'panel-two', cookie: 'login=panel-two' })
   } finally {
     await electronApp?.close().catch(() => undefined)
     sockets.close()

@@ -107,7 +107,7 @@ Before the daemon grants the claim, it:
 2. saves the latest URL and title;
 3. disconnects agent automation;
 4. closes the Playwright browser;
-5. removes temporary daemon browser data;
+5. keeps the shared daemon browser data;
 6. increments the runtime generation;
 7. grants the local owner.
 
@@ -115,16 +115,14 @@ When a local owner disconnects, the coordinator becomes idle.
 
 A later remote client or CLI command can start daemon Playwright.
 
-A runtime change keeps only the saved URL and title.
+A runtime change keeps the saved URL, title, cookies, local storage, and login state in that runtime profile.
 
-It intentionally loses:
+It intentionally loses tab-specific state:
 
 - history;
-- cookies;
-- local and session storage;
+- session storage;
 - DOM and JavaScript state;
 - form input;
-- login state;
 - snapshot references.
 
 Never silently route an active command to a new runtime.
@@ -163,11 +161,21 @@ The daemon deletes the panel only after Electron permits the close.
 
 ### Browser data
 
-Each local browser panel uses a separate in-memory Electron partition.
+Browser panels are tabs, not browser-data security boundaries.
 
-Each daemon browser panel uses a separate runtime-directory profile.
+All local browser panels use one persistent Electron partition that Treeport owns.
 
-Treeport removes temporary data after close or runtime replacement.
+All daemon browser panels use one persistent Chromium profile in the Treeport data directory.
+
+The daemon owns one shared browser and context. Each active panel owns one page in that context.
+
+The daemon starts only one persistent context against the shared profile directory.
+
+It closes the context after it closes the last managed page. It does not remove the profile.
+
+Closing a panel or replacing a runtime does not clear shared browser data.
+
+The desktop and daemon profiles are separate. Treeport does not copy their data between computers or runtimes.
 
 Treeport never imports or opens a personal browser profile.
 
@@ -198,4 +206,4 @@ Electron keeps native layout, stacking, audio, and page behavior.
 
 A client cannot observe a local-owned page from another computer.
 
-Runtime replacement loses all state except URL and title.
+Runtime replacement keeps shared profile data. It loses only tab-specific state and snapshot references.

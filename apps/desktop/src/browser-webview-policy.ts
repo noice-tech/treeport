@@ -19,14 +19,25 @@ import type {
   DesktopCommand
 } from './desktop-contract'
 
+const BROWSER_PARTITION = 'persist:treeport-browser'
 const browserPanelIdSchema = z.string().min(1).max(128)
 const browserUrlWithBlankSchema = z.union([
   z.literal('about:blank'),
   browserUrlSchema
 ])
 
+function browserBootstrapPanelId(value: string): string | null {
+  if (!value.startsWith('about:blank#')) {
+    return null
+  }
+
+  return new URLSearchParams(value.slice('about:blank#'.length)).get(
+    'treeport-panel'
+  )
+}
+
 interface BrowserEntry {
-  panelId: string
+  panelId: string | null
   guest: WebContents
   bridge: BrowserCdpBridge | null
   commandQueue: Promise<void>
@@ -56,32 +67,30 @@ export interface BrowserWebviewPolicy {
     force: boolean
   ): Promise<boolean>
   dispose(event: IpcMainEvent, panelId: string): void
-  disposeAll(clearStorage: boolean): void
+  disposeAll(): void
 }
 
 export function installBrowserWebviewPolicy(options: {
   window: BrowserWindow
   trustedRenderer: WebContents
-  selectedComputer(): { id: string; loopback: boolean } | null
+  selectedComputer(): { loopback: boolean } | null
   isTrustedEvent(event: IpcMainEvent | IpcMainInvokeEvent): boolean
 }): BrowserWebviewPolicy {
   const entries = new Map<string, BrowserEntry>()
-  const pendingPartitions = new Set<string>()
+  const pendingPanels = new Set<string>()
+  const pendingGuests = new Map<number, BrowserEntry>()
 
-  const disposeEntry = async (entry: BrowserEntry, clearStorage: boolean) => {
-    if (entries.get(entry.panelId) === entry) {
+  const disposeEntry = async (entry: BrowserEntry) => {
+    if (entry.panelId && entries.get(entry.panelId) === entry) {
       entries.delete(entry.panelId)
     }
 
-    const browserSession = entry.guest.session
+    pendingGuests.delete(entry.guest.id)
+
     await entry.bridge?.stop()
     entry.bridge = null
     if (!entry.guest.isDestroyed()) {
       entry.guest.close({ waitForBeforeUnload: false })
-    }
-
-    if (clearStorage) {
-      await browserSession.clearStorageData().catch(() => undefined)
     }
   }
 
@@ -89,24 +98,21 @@ export function installBrowserWebviewPolicy(options: {
     'will-attach-webview',
     (event, webPreferences, params) => {
       const computer = options.selectedComputer()
-      const parsedUrl = browserUrlWithBlankSchema.safeParse(params.src)
       const partition = params.partition ?? webPreferences.partition ?? ''
-      const prefix = computer ? `treeport-browser-${computer.id}-` : ''
-      const panelId = prefix ? partition.slice(prefix.length) : ''
+      const panelId = browserBootstrapPanelId(params.src ?? '') ?? ''
       if (
         !computer?.loopback ||
-        !parsedUrl.success ||
-        !partition.startsWith(prefix) ||
+        partition !== BROWSER_PARTITION ||
         !browserPanelIdSchema.safeParse(panelId).success ||
         entries.has(panelId) ||
-        pendingPartitions.has(partition) ||
-        entries.size + pendingPartitions.size >= 6
+        pendingPanels.has(panelId) ||
+        entries.size + pendingPanels.size >= 6
       ) {
         event.preventDefault()
         return
       }
 
-      pendingPartitions.add(partition)
+      pendingPanels.add(panelId)
       delete webPreferences.preload
       webPreferences.partition = partition
       webPreferences.nodeIntegration = false
@@ -122,32 +128,24 @@ export function installBrowserWebviewPolicy(options: {
 
   options.trustedRenderer.on('did-attach-webview', (_event, guest) => {
     const computer = options.selectedComputer()
-    const prefix = computer ? `treeport-browser-${computer.id}-` : ''
-    const partition =
-      [...pendingPartitions].find(
-        (candidate) => session.fromPartition(candidate) === guest.session
-      ) ?? ''
-    const panelId = prefix ? partition.slice(prefix.length) : ''
-    pendingPartitions.delete(partition)
     if (
       !computer?.loopback ||
       guest.hostWebContents !== options.trustedRenderer ||
-      !partition.startsWith(prefix) ||
-      !browserPanelIdSchema.safeParse(panelId).success ||
-      entries.has(panelId)
+      guest.session !== session.fromPartition(BROWSER_PARTITION) ||
+      pendingGuests.size >= pendingPanels.size
     ) {
       guest.close({ waitForBeforeUnload: false })
       return
     }
 
     const entry: BrowserEntry = {
-      panelId,
+      panelId: null,
       guest,
       bridge: null,
       commandQueue: Promise.resolve(),
       agentLocked: false
     }
-    entries.set(panelId, entry)
+    pendingGuests.set(guest.id, entry)
     const refreshErrorPage = (
       errorDescription: string,
       validatedUrl: string
@@ -224,8 +222,10 @@ export function installBrowserWebviewPolicy(options: {
     guest.on('will-redirect', preventUnsupportedNavigation)
     guest.setWindowOpenHandler(({ url }) => {
       const popup = URL.canParse(url) ? new URL(url) : null
+      const panelId = entry.panelId
       if (
         popup &&
+        panelId &&
         (popup.protocol === 'http:' || popup.protocol === 'https:') &&
         !popup.username &&
         !popup.password &&
@@ -296,7 +296,9 @@ export function installBrowserWebviewPolicy(options: {
       ]).popup({ window: options.window })
     })
     guest.once('destroyed', () => {
-      if (entries.get(panelId) === entry) {
+      pendingGuests.delete(guest.id)
+      const panelId = entry.panelId
+      if (panelId && entries.get(panelId) === entry) {
         entries.delete(panelId)
       }
     })
@@ -304,9 +306,27 @@ export function installBrowserWebviewPolicy(options: {
 
   return {
     async register(event, panelId, webContentsId, challenge) {
-      const entry = entries.get(panelId)
+      if (!options.isTrustedEvent(event)) {
+        return null
+      }
+
+      let entry = entries.get(panelId)
+      if (!entry) {
+        const pending = pendingGuests.get(webContentsId)
+        if (
+          pending &&
+          pendingPanels.has(panelId) &&
+          browserPanelIdSchema.safeParse(panelId).success
+        ) {
+          pendingPanels.delete(panelId)
+          pendingGuests.delete(webContentsId)
+          pending.panelId = panelId
+          entries.set(panelId, pending)
+          entry = pending
+        }
+      }
+
       if (
-        !options.isTrustedEvent(event) ||
         !entry ||
         entry.guest.id !== webContentsId ||
         entry.guest.hostWebContents !== options.trustedRenderer ||
@@ -409,7 +429,6 @@ export function installBrowserWebviewPolicy(options: {
         return true
       }
 
-      const browserSession = entry.guest.session
       const canClose = await new Promise<boolean>((resolve) => {
         let timer: ReturnType<typeof setTimeout> | null = null
         const cleanup = () => {
@@ -440,7 +459,6 @@ export function installBrowserWebviewPolicy(options: {
       if (canClose) {
         void entry.bridge?.stop()
         entry.bridge = null
-        void browserSession.clearStorageData().catch(() => undefined)
       }
 
       return canClose
@@ -452,14 +470,15 @@ export function installBrowserWebviewPolicy(options: {
 
       const entry = entries.get(panelId)
       if (entry) {
-        void disposeEntry(entry, true)
+        void disposeEntry(entry)
       }
     },
-    disposeAll(clearStorage) {
-      pendingPartitions.clear()
-      for (const entry of [...entries.values()]) {
-        void disposeEntry(entry, clearStorage)
+    disposeAll() {
+      pendingPanels.clear()
+      for (const entry of [...entries.values(), ...pendingGuests.values()]) {
+        void disposeEntry(entry)
       }
+      pendingGuests.clear()
     }
   }
 }

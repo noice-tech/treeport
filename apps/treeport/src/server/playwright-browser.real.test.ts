@@ -1,50 +1,32 @@
-import { spawn } from 'node:child_process'
 import fs from 'node:fs/promises'
 import http from 'node:http'
-import { createRequire } from 'node:module'
 import type { AddressInfo } from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, expect, it } from 'vitest'
 import { chromium } from 'playwright'
-import { PlaywrightBrowser } from './playwright-browser'
+import { PlaywrightBrowser, PlaywrightBrowserHost } from './playwright-browser'
 
 const cleanup: Array<() => Promise<void>> = []
 afterEach(async () => {
   await Promise.all(cleanup.splice(0).map((dispose) => dispose()))
 })
 
-function runCli(cli: string, cwd: string, args: string[]): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [cli, ...args], {
-      cwd,
-      stdio: ['ignore', 'pipe', 'pipe']
-    })
-    let output = ''
-    child.stdout.on('data', (data) => (output += String(data)))
-    child.stderr.on('data', (data) => (output += String(data)))
-    child.once('error', reject)
-    child.once('exit', (code) => {
-      if (code === 0) {
-        resolve(output)
-      } else {
-        reject(
-          new Error(
-            `${args.join(' ')}: ${output || `Playwright Agent CLI exited with ${code}`}`
-          )
-        )
-      }
-    })
-  })
-}
-
-it('streams and shares one History API page with the pinned Agent CLI', async () => {
+it('shares durable browser data across panels and browser runtime replacement', async () => {
   const server = http.createServer((request, response) => {
     response.setHeader('content-type', 'text/html; charset=utf-8')
     response.end(`<!doctype html><title>Start</title>
       <button onclick="history.pushState({}, '', '/next'); document.title = 'Next'">Next route</button>
       <button onclick="history.replaceState({}, '', '/replaced'); document.title = 'Replaced'">Replace route</button>
       <button onclick="window.onbeforeunload = (event) => { event.preventDefault(); event.returnValue = '' }">Protect close</button>
+      <button onclick="localStorage.login = 'signed-in'; document.cookie = 'login=signed-in; Max-Age=3600; SameSite=Lax'; showLogin()">Save login</button>
+      <output aria-label="Login state"></output>
+      <script>
+        function showLogin() {
+          document.querySelector('output').textContent = (localStorage.login || 'signed-out') + ' ' + document.cookie
+        }
+        showLogin()
+      </script>
       ${request.url === '/popup-source' ? "<script>open('/popup')</script>" : ''}`)
   })
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
@@ -77,23 +59,38 @@ it('streams and shares one History API page with the pinned Agent CLI', async ()
       entry.startsWith('.launch-status-')
     )
   ).toEqual([])
-  const workspace = await fs.mkdtemp(
+
+  const root = await fs.mkdtemp(
     path.join(os.tmpdir(), 'treeport-playwright-browser-')
   )
-  const panelId = `real-${process.pid}`
+  const profilePath = path.join(root, 'browser-profile')
+  await Promise.all(
+    ['panel-one', 'panel-two', 'replacement-panel'].map((directory) =>
+      fs.mkdir(path.join(root, directory))
+    )
+  )
+  const host = new PlaywrightBrowserHost(cachePath, profilePath)
   const states: Array<{ url: string; title: string }> = []
   const popups: string[] = []
   let frames = 0
-  const browser = new PlaywrightBrowser(
-    cachePath,
-    workspace,
-    'Real browser test',
-    panelId,
-    'worktree-real',
+  const browser = new PlaywrightBrowser(host, path.join(root, 'panel-one'), {
+    state: (state) => states.push({ url: state.url, title: state.title }),
+    frame: () => frames++,
+    popup: (url) => popups.push(url),
+    navigationError: (message) => {
+      throw new Error(message)
+    },
+    crashed: (message) => {
+      throw new Error(message)
+    }
+  })
+  const secondBrowser = new PlaywrightBrowser(
+    host,
+    path.join(root, 'panel-two'),
     {
-      state: (state) => states.push({ url: state.url, title: state.title }),
-      frame: () => frames++,
-      popup: (url) => popups.push(url),
+      state: () => undefined,
+      frame: () => undefined,
+      popup: () => undefined,
       navigationError: (message) => {
         throw new Error(message)
       },
@@ -104,94 +101,113 @@ it('streams and shares one History API page with the pinned Agent CLI', async ()
   )
   cleanup.push(async () => {
     await browser.close()
-    await fs.rm(workspace, { recursive: true, force: true })
+    await secondBrowser.close()
+    await host.close()
+    await fs.rm(root, { recursive: true, force: true })
   })
-  await browser.launch()
+  await Promise.all([browser.launch(), secondBrowser.launch()])
   await browser.setScreencasting(true)
   // SAFETY: The server is listening on an ephemeral TCP port.
   const address = server.address() as AddressInfo
-  await browser.command({
-    type: 'navigate',
-    url: `http://127.0.0.1:${address.port}/`
-  })
+  const origin = `http://127.0.0.1:${address.port}`
+  await browser.command({ type: 'navigate', url: `${origin}/` })
 
-  const require = createRequire(import.meta.url)
-  const cli = path.join(
-    path.dirname(require.resolve('@playwright/cli/package.json')),
-    'playwright-cli.js'
-  )
-  const name = `treeport-${panelId}`
-  await runCli(cli, workspace, ['attach', name, '--session', name])
-  cleanup.push(async () => {
-    await runCli(cli, workspace, [`-s=${name}`, 'detach']).catch(
-      () => undefined
-    )
-  })
-  const snapshot = await runCli(cli, workspace, [`-s=${name}`, 'snapshot'])
+  const snapshot = await browser.agentCommand({ command: 'snapshot', args: [] })
   expect(snapshot).toContain('button "Next route"')
   const reference = /button "Next route" \[ref=([^\]]+)\]/.exec(snapshot)?.[1]
   expect(reference).toBeTruthy()
-  await runCli(cli, workspace, [`-s=${name}`, 'click', reference!])
-
+  await browser.agentCommand({ command: 'click', args: [reference!] })
   await expect
     .poll(() => states.at(-1))
     .toMatchObject({
-      url: `http://127.0.0.1:${address.port}/next`,
+      url: `${origin}/next`,
       title: 'Next'
     })
 
-  const replacedSnapshot = await runCli(cli, workspace, [
-    `-s=${name}`,
-    'snapshot'
-  ])
+  const replacedSnapshot = await browser.agentCommand({
+    command: 'snapshot',
+    args: []
+  })
   const replaceReference = /button "Replace route" \[ref=([^\]]+)\]/.exec(
     replacedSnapshot
   )?.[1]
   expect(replaceReference).toBeTruthy()
-  await runCli(cli, workspace, [`-s=${name}`, 'click', replaceReference!])
+  await browser.agentCommand({ command: 'click', args: [replaceReference!] })
   await expect
     .poll(() => states.at(-1))
     .toMatchObject({
-      url: `http://127.0.0.1:${address.port}/replaced`,
+      url: `${origin}/replaced`,
       title: 'Replaced'
     })
 
   await browser.command({ type: 'back' })
-  await expect
-    .poll(() => states.at(-1)?.url)
-    .toBe(`http://127.0.0.1:${address.port}/`)
+  await expect.poll(() => states.at(-1)?.url).toBe(`${origin}/`)
   await browser.command({ type: 'forward' })
-  await expect
-    .poll(() => states.at(-1)?.url)
-    .toBe(`http://127.0.0.1:${address.port}/replaced`)
+  await expect.poll(() => states.at(-1)?.url).toBe(`${origin}/replaced`)
   await browser.command({ type: 'reload' })
-  await expect
-    .poll(() => states.at(-1)?.url)
-    .toBe(`http://127.0.0.1:${address.port}/replaced`)
-  await browser.command({
-    type: 'navigate',
-    url: `http://127.0.0.1:${address.port}/popup-source`
-  })
-  await expect
-    .poll(() => popups.at(-1))
-    .toBe(`http://127.0.0.1:${address.port}/popup`)
+  await expect.poll(() => states.at(-1)?.url).toBe(`${origin}/replaced`)
+  await browser.command({ type: 'navigate', url: `${origin}/popup-source` })
+  await expect.poll(() => popups.at(-1)).toBe(`${origin}/popup`)
   await expect.poll(() => frames).toBeGreaterThan(0)
   await expect(
-    runCli(cli, workspace, [`-s=${name}`, 'console'])
-  ).resolves.toContain('Total messages:')
+    browser.agentCommand({ command: 'requests', args: [] })
+  ).resolves.toContain(`GET ${origin}/popup-source`)
   await expect(
-    runCli(cli, workspace, [`-s=${name}`, 'requests'])
-  ).resolves.toContain('static requests')
-  await expect(
-    runCli(cli, workspace, [`-s=${name}`, 'screenshot'])
+    browser.agentCommand({ command: 'screenshot', args: [] })
   ).resolves.toMatch(/\.png/u)
 
-  const closeSnapshot = await runCli(cli, workspace, [`-s=${name}`, 'snapshot'])
+  await browser.command({ type: 'navigate', url: `${origin}/` })
+  const loginSnapshot = await browser.agentCommand({
+    command: 'snapshot',
+    args: []
+  })
+  const loginReference = /button "Save login" \[ref=([^\]]+)\]/.exec(
+    loginSnapshot
+  )?.[1]
+  expect(loginReference).toBeTruthy()
+  await browser.agentCommand({ command: 'click', args: [loginReference!] })
+
+  await secondBrowser.command({ type: 'navigate', url: `${origin}/` })
+  await expect(
+    secondBrowser.agentCommand({ command: 'snapshot', args: [] })
+  ).resolves.toContain('signed-in login=signed-in')
+
+  const closeSnapshot = await browser.agentCommand({
+    command: 'snapshot',
+    args: []
+  })
   const closeReference = /button "Protect close" \[ref=([^\]]+)\]/.exec(
     closeSnapshot
   )?.[1]
   expect(closeReference).toBeTruthy()
-  await runCli(cli, workspace, [`-s=${name}`, 'click', closeReference!])
+  await browser.agentCommand({ command: 'click', args: [closeReference!] })
   await expect(browser.requestClose(false)).resolves.toBe(false)
   await expect(browser.requestClose(true)).resolves.toBe(true)
+  await browser.close()
+  await secondBrowser.close()
+  expect(host.started).toBe(false)
+
+  const replacementHost = new PlaywrightBrowserHost(cachePath, profilePath)
+  const replacementBrowser = new PlaywrightBrowser(
+    replacementHost,
+    path.join(root, 'replacement-panel'),
+    {
+      state: () => undefined,
+      frame: () => undefined,
+      popup: () => undefined,
+      navigationError: (message) => {
+        throw new Error(message)
+      },
+      crashed: (message) => {
+        throw new Error(message)
+      }
+    }
+  )
+  await replacementBrowser.launch()
+  await replacementBrowser.command({ type: 'navigate', url: `${origin}/` })
+  await expect(
+    replacementBrowser.agentCommand({ command: 'snapshot', args: [] })
+  ).resolves.toContain('signed-in login=signed-in')
+  await replacementBrowser.close()
+  await replacementHost.close()
 })

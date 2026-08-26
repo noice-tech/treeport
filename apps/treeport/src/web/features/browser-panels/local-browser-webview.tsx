@@ -41,13 +41,11 @@ function browserState(
 
 export function LocalBrowserWebview({
   panel,
-  computerId,
   inputBlocked,
   onConnection,
   onMessage
 }: {
   panel: BrowserPanel
-  computerId: string
   inputBlocked: boolean
   onConnection: (connection: BrowserPanelConnection | null) => void
   onMessage: (message: BrowserServerMessage) => void
@@ -61,15 +59,12 @@ export function LocalBrowserWebview({
     (webview: TreeportBrowserWebview | null) => {
       webviewRef.current = webview
       if (webview) {
-        webview.setAttribute(
-          'partition',
-          `treeport-browser-${computerId}-${panel.id}`
-        )
+        webview.setAttribute('partition', 'persist:treeport-browser')
         webview.setAttribute('allowpopups', 'true')
-        webview.src = 'about:blank'
+        webview.src = `about:blank#treeport-panel=${encodeURIComponent(panel.id)}`
       }
     },
-    [computerId, panel.id]
+    [panel.id]
   )
 
   useEffect(() => {
