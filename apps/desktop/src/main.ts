@@ -238,8 +238,8 @@ function requestBellAttention(): void {
   }
 }
 
-function disposeBrowserWebviews(clearStorage = false): void {
-  browserWebviews?.disposeAll(clearStorage)
+function disposeBrowserWebviews(): void {
+  browserWebviews?.disposeAll()
   if (terminalSelectionActive) {
     setTerminalSelectionActive(false)
   }
@@ -444,7 +444,7 @@ async function connectSelected(
   connectionAbort?.abort()
   const abortController = new AbortController()
   connectionAbort = abortController
-  disposeBrowserWebviews(true)
+  disposeBrowserWebviews()
 
   if (!computer) {
     connection = { status: 'empty' }
@@ -739,7 +739,7 @@ function createWindow(url?: string): BrowserWindow {
     broadcastState()
   })
   window.on('focus', stopBellAttention)
-  window.on('close', () => disposeBrowserWebviews(false))
+  window.on('close', disposeBrowserWebviews)
   window.on('closed', () => {
     stopBellAttention()
     if (mainWindow === window) {

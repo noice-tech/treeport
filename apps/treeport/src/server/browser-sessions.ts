@@ -25,6 +25,7 @@ import {
 import type { AppConfig, TreeportService } from './core/index'
 import {
   PlaywrightBrowser,
+  PlaywrightBrowserHost,
   type BrowserInstallStatus,
   type PlaywrightBrowserCallbacks
 } from './playwright-browser'
@@ -51,7 +52,10 @@ export interface BrowserSessionService {
   events: Pick<TreeportService['events'], 'subscribe'>
 }
 
-export type BrowserSessionConfig = Pick<AppConfig, 'cacheDir' | 'runtimeDir'>
+export type BrowserSessionConfig = Pick<
+  AppConfig,
+  'cacheDir' | 'dataDir' | 'runtimeDir'
+>
 
 export interface BrowserSessionBrowser {
   readonly state: Omit<
@@ -60,13 +64,14 @@ export interface BrowserSessionBrowser {
   >
   launch(): Promise<void>
   command(message: BrowserClientMessage): Promise<void>
+  agentCommand(input: BrowserAgentCommand): Promise<string>
   setScreencasting(enabled: boolean): Promise<void>
   requestClose(force: boolean): Promise<boolean>
   close(): Promise<void>
 }
 
 export type BrowserSessionBrowserFactory = (
-  cachePath: string,
+  host: PlaywrightBrowserHost,
   workspacePath: string,
   title: string,
   panelId: string,
@@ -198,21 +203,13 @@ const playwrightPackageSchema = z.object({
 })
 
 const defaultBrowserFactory: BrowserSessionBrowserFactory = (
-  cachePath,
+  host,
   workspacePath,
-  title,
-  panelId,
-  worktreeId,
+  _title,
+  _panelId,
+  _worktreeId,
   callbacks
-) =>
-  new PlaywrightBrowser(
-    cachePath,
-    workspacePath,
-    title,
-    panelId,
-    worktreeId,
-    callbacks
-  )
+) => new PlaywrightBrowser(host, workspacePath, callbacks)
 
 const DEFAULT_STATE: Omit<
   BrowserSessionState,
@@ -228,6 +225,7 @@ const DEFAULT_STATE: Omit<
 
 export class BrowserSessionManager {
   private readonly cachePath: string
+  private readonly browserHost: PlaywrightBrowserHost
   private readonly sessions = new Map<string, BrowserSession>()
   private readonly sessionCreations = new Map<string, Promise<BrowserSession>>()
   private readonly tickets = new Map<string, BrowserTicket>()
@@ -242,6 +240,10 @@ export class BrowserSessionManager {
     private readonly agentCliRunner: BrowserAgentCliRunner | null = null
   ) {
     this.cachePath = path.join(config.cacheDir, 'playwright')
+    this.browserHost = new PlaywrightBrowserHost(
+      this.cachePath,
+      path.join(config.dataDir, 'browser-profile')
+    )
     this.unsubscribe = service.events.subscribe((event) => {
       if (event.type === 'panel.removed') {
         void this.closePanel(String(event.data.panelId), 'Panel closed')
@@ -676,7 +678,7 @@ export class BrowserSessionManager {
       await fs.chmod(session.agentDirectory, 0o700)
       let runtimeReady = false
       const browser = this.browserFactory(
-        this.cachePath,
+        this.browserHost,
         session.agentDirectory,
         session.title,
         session.panelId,
@@ -1848,7 +1850,7 @@ export class BrowserSessionManager {
             localOwner,
             input
           )
-        } else {
+        } else if (this.agentCliRunner) {
           const name =
             session.agentSessionName ??
             `treeport-${panelId}-${session.generation}-${crypto
@@ -1871,6 +1873,9 @@ export class BrowserSessionManager {
             '--',
             ...input.args
           ])
+          this.queuePanelState(session, browser!.state)
+        } else {
+          result = await browser!.agentCommand(input)
           this.queuePanelState(session, browser!.state)
         }
 
@@ -1963,6 +1968,7 @@ export class BrowserSessionManager {
     }
 
     if (
+      this.browserHost.started ||
       [...this.sessions.values()].some(
         (session) => session.browser !== null || session.launch !== null
       )
@@ -1987,5 +1993,6 @@ export class BrowserSessionManager {
         this.closePanel(panelId, 'Treeport is shutting down.')
       )
     )
+    await this.browserHost.close()
   }
 }

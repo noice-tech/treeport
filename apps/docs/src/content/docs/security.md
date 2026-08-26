@@ -125,11 +125,17 @@ For a local desktop connection, Electron runs the page in a `<webview>`.
 
 The page can reach sites that are available from the desktop computer.
 
-For other connections, Playwright controls isolated Chromium on the daemon computer.
+For other connections, Playwright controls Chromium on the daemon computer.
 
 That page can reach sites that are available from the daemon computer.
 
-Each browser panel uses separate temporary browser data.
+Browser panels are tabs, not browser-data security boundaries.
+
+Panels on the same browser host share cookies, local storage, and login state.
+
+Treeport keeps this app-owned data after panel closure, Treeport restarts, and managed browser runtime replacement.
+
+The desktop runtime and daemon runtime use separate profiles. They do not copy browser data between computers.
 
 Treeport does not use, import, or attach to a personal browser profile.
 
@@ -141,7 +147,7 @@ Treeport does not give browser-control access to page content or remote clients.
 
 The server accepts only absolute HTTP or HTTPS addresses without credentials.
 
-Closing a browser panel deletes its temporary browser data.
+Closing a browser panel does not clear shared browser data.
 
 Treeport requests confirmation only when the site uses `beforeunload`.
 

@@ -8,6 +8,7 @@ import type {
   Page
 } from 'playwright'
 import type {
+  BrowserAgentCommand,
   BrowserClientMessage,
   BrowserFrame,
   BrowserSessionState
@@ -38,6 +39,107 @@ export interface BrowserInstallStatus {
 
 const DEFAULT_VIEWPORT = { width: 1_280, height: 800 }
 const DEFAULT_MAX_FRAME_RATE = 15
+
+interface PlaywrightBrowserLease {
+  browser: Browser
+  context: BrowserContext
+  page: Page
+}
+
+export class PlaywrightBrowserHost {
+  private browser: Browser | null = null
+  private context: BrowserContext | null = null
+  private readonly pages = new Set<Page>()
+  private operation: Promise<void> = Promise.resolve()
+
+  constructor(
+    private readonly cachePath: string,
+    readonly profilePath: string
+  ) {}
+
+  get started(): boolean {
+    return this.context !== null
+  }
+
+  private schedule<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.operation.then(operation)
+    this.operation = result.then(
+      () => undefined,
+      () => undefined
+    )
+    return result
+  }
+
+  openPage(): Promise<PlaywrightBrowserLease> {
+    return this.schedule(async () => {
+      let context = this.context
+      let browser = this.browser
+      let initialPage: Page | null = null
+      if (!context || !browser?.isConnected()) {
+        await fs.mkdir(this.profilePath, { recursive: true, mode: 0o700 })
+        await fs.chmod(this.profilePath, 0o700)
+        process.env.PLAYWRIGHT_BROWSERS_PATH = this.cachePath
+        const { chromium } = await import('playwright')
+        context = await chromium.launchPersistentContext(this.profilePath, {
+          channel: 'chromium',
+          headless: true,
+          acceptDownloads: false,
+          viewport: DEFAULT_VIEWPORT
+        })
+        browser = context.browser()
+        if (!browser) {
+          await context.close()
+          throw new Error(
+            'Playwright did not expose the hosted browser process.'
+          )
+        }
+
+        this.context = context
+        this.browser = browser
+        initialPage = context.pages()[0] ?? null
+        browser.once('disconnected', () => {
+          if (this.browser === browser) {
+            this.browser = null
+            this.context = null
+            this.pages.clear()
+          }
+        })
+      }
+
+      const page =
+        initialPage && !initialPage.isClosed()
+          ? initialPage
+          : await context.newPage()
+      this.pages.add(page)
+      return { browser, context, page }
+    })
+  }
+
+  closePage(page: Page): Promise<void> {
+    return this.schedule(async () => {
+      this.pages.delete(page)
+      await page.close().catch(() => undefined)
+      if (this.pages.size > 0 || !this.context) {
+        return
+      }
+
+      const context = this.context
+      this.context = null
+      this.browser = null
+      await context.close().catch(() => undefined)
+    })
+  }
+
+  close(): Promise<void> {
+    return this.schedule(async () => {
+      const context = this.context
+      this.context = null
+      this.browser = null
+      this.pages.clear()
+      await context?.close().catch(() => undefined)
+    })
+  }
+}
 
 interface BrowserScreencastFrame {
   data: string
@@ -154,6 +256,8 @@ export class PlaywrightBrowser {
   private screencastTail: Promise<void> = Promise.resolve()
   private closing = false
   private dialogHandler: ((dialog: Dialog) => void) | null = null
+  private readonly consoleMessages: string[] = []
+  private readonly requests: string[] = []
   private historyRevision = 0
   private titleTimer: NodeJS.Timeout | null = null
   private stateValue: Omit<
@@ -169,11 +273,8 @@ export class PlaywrightBrowser {
   }
 
   constructor(
-    private readonly cachePath: string,
+    private readonly host: PlaywrightBrowserHost,
     private readonly workspacePath: string,
-    private readonly title: string,
-    private readonly panelId: string,
-    private readonly worktreeId: string,
     private readonly callbacks: PlaywrightBrowserCallbacks
   ) {}
 
@@ -239,24 +340,8 @@ export class PlaywrightBrowser {
       return
     }
 
-    process.env.PLAYWRIGHT_BROWSERS_PATH = this.cachePath
-    const { chromium } = await import('playwright')
-    const context = await chromium.launchPersistentContext(
-      path.join(this.workspacePath, 'profile'),
-      {
-        channel: 'chromium',
-        headless: true,
-        acceptDownloads: false,
-        viewport: this.stateValue.viewport
-      }
-    )
+    const { browser, context, page } = await this.host.openPage()
     this.context = context
-    const browser = context.browser()
-    if (!browser) {
-      await context.close()
-      throw new Error('Playwright did not expose the hosted browser process.')
-    }
-
     this.browser = browser
     browser.once('disconnected', () => {
       if (!this.closing) {
@@ -264,8 +349,8 @@ export class PlaywrightBrowser {
       }
     })
 
-    const page = context.pages()[0] ?? (await context.newPage())
     this.page = page
+    await page.setViewportSize(this.stateValue.viewport)
     const cdp = await context.newCDPSession(page)
     this.cdp = cdp
     this.frameProducer = new LatestBrowserFrameProducer(
@@ -279,11 +364,7 @@ export class PlaywrightBrowser {
     cdp.on('Page.screencastFrame', (frame) =>
       this.frameProducer?.receive(frame)
     )
-    context.on('page', (candidate) => {
-      if (candidate === page) {
-        return
-      }
-
+    page.on('popup', (candidate) => {
       void (async () => {
         const supportedUrl = (value: string): string | null => {
           if (!URL.canParse(value)) {
@@ -332,7 +413,24 @@ export class PlaywrightBrowser {
       }
     })
 
+    page.on('console', (message) => {
+      this.consoleMessages.push(`${message.type()}: ${message.text()}`)
+      if (this.consoleMessages.length > 1_000) {
+        this.consoleMessages.shift()
+      }
+    })
+    page.on('pageerror', (error) => {
+      this.consoleMessages.push(`error: ${error.message}`)
+      if (this.consoleMessages.length > 1_000) {
+        this.consoleMessages.shift()
+      }
+    })
     page.on('request', (request) => {
+      this.requests.push(`${request.method()} ${request.url()}`)
+      if (this.requests.length > 2_000) {
+        this.requests.shift()
+      }
+
       if (
         request.isNavigationRequest() &&
         request.frame() === page.mainFrame()
@@ -381,14 +479,6 @@ export class PlaywrightBrowser {
         .catch(() => undefined)
     }, 500)
     this.titleTimer.unref()
-    await browser.bind(`treeport-${this.panelId}`, {
-      workspaceDir: this.workspacePath,
-      metadata: {
-        treeportPanelId: this.panelId,
-        treeportWorktreeId: this.worktreeId,
-        title: this.title
-      }
-    })
     await this.refreshPageState()
   }
 
@@ -579,6 +669,84 @@ export class PlaywrightBrowser {
     }
   }
 
+  async agentCommand(input: BrowserAgentCommand): Promise<string> {
+    const page = this.page
+    if (!page || page.isClosed()) {
+      throw new Error('The hosted browser page is unavailable.')
+    }
+
+    const target = (value: string) => page.locator(`aria-ref=${value}`)
+    if (input.command === 'snapshot') {
+      // eslint-disable-next-line anti-slop/no-reflect-apply -- Playwright exposes CLI element references through this internal snapshot option.
+      return Reflect.apply(page.ariaSnapshot, page, [{ mode: 'ai' }])
+    }
+
+    if (input.command === 'click') {
+      await target(input.args[0]).click()
+      return `Clicked ${input.args[0]}`
+    }
+
+    if (input.command === 'fill') {
+      await target(input.args[0]).fill(input.args[1])
+      return `Filled ${input.args[0]}`
+    }
+
+    if (input.command === 'press') {
+      await page.keyboard.press(input.args[0])
+      return `Pressed ${input.args[0]}`
+    }
+
+    if (input.command === 'console') {
+      const minimum = input.args[0] ?? 'info'
+      const levels = ['debug', 'info', 'warning', 'error']
+      const minimumIndex = Math.max(0, levels.indexOf(minimum))
+      return (
+        this.consoleMessages
+          .filter((line) => {
+            const level = line.slice(0, line.indexOf(':'))
+            const index = levels.indexOf(level)
+            return index < 0 || index >= minimumIndex
+          })
+          .join('\n') || 'No console messages.'
+      )
+    }
+
+    if (input.command === 'requests') {
+      return this.requests.join('\n') || 'No network requests.'
+    }
+
+    if (input.command === 'screenshot') {
+      const screenshotPath = path.join(
+        this.workspacePath,
+        `screenshot-${Date.now()}.png`
+      )
+      await page.screenshot({ path: screenshotPath })
+      return `Screenshot saved to ${screenshotPath}`
+    }
+
+    if (input.command === 'goto') {
+      await page.goto(input.args[0])
+      await this.refreshPageState()
+      return `Navigated to ${page.url()}`
+    }
+
+    if (input.command === 'go-back') {
+      await page.goBack()
+      await this.refreshPageState()
+      return `Navigated to ${page.url()}`
+    }
+
+    if (input.command === 'go-forward') {
+      await page.goForward()
+      await this.refreshPageState()
+      return `Navigated to ${page.url()}`
+    }
+
+    await page.reload()
+    await this.refreshPageState()
+    return `Reloaded ${page.url()}`
+  }
+
   async requestClose(force: boolean): Promise<boolean> {
     const page = this.page
     if (!page || page.isClosed()) {
@@ -653,11 +821,12 @@ export class PlaywrightBrowser {
     }
 
     await this.screencastTail
-    await this.browser?.unbind().catch(() => undefined)
-    await this.context?.close().catch(() => undefined)
-    await this.browser
-      ?.close({ reason: 'Treeport browser session closed' })
-      .catch(() => undefined)
+    const page = this.page
+
+    if (page) {
+      await this.host.closePage(page)
+    }
+
     this.page = null
     this.context = null
     this.cdp = null
