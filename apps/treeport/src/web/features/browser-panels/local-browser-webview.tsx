@@ -333,7 +333,7 @@ export function LocalBrowserWebview({
     <webview
       ref={bindWebview}
       aria-label="Browser page"
-      className={`flex size-full bg-white ${inputBlocked || agentLocked ? 'pointer-events-none' : ''}`}
+      className={`flex size-full bg-zinc-950 ${inputBlocked || agentLocked ? 'pointer-events-none' : ''}`}
     />
   )
 }
