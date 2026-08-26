@@ -414,6 +414,7 @@ describe('Browser sessions', () => {
       'panel_browser',
       'desktop-client'
     )
+    let automationRequests = 0
     const ownerServer = http.createServer((request, response) => {
       if (request.url === '/private/identity') {
         response.setHeader('content-type', 'application/json')
@@ -426,6 +427,7 @@ describe('Browser sessions', () => {
         return
       }
 
+      automationRequests += 1
       response.statusCode = 404
       response.end()
     })
@@ -496,8 +498,27 @@ describe('Browser sessions', () => {
     }
 
     const generation = claim.generation
+    let agentSettled = false
+    const beforeReadyAgent = value.manager.agentCommand('panel_browser', {
+      command: 'snapshot',
+      args: []
+    })
+    void beforeReadyAgent
+      .finally(() => {
+        agentSettled = true
+      })
+      .catch(() => undefined)
+    await vi.waitFor(() =>
+      expect(ownerMessages).toContainEqual(
+        expect.objectContaining({ type: 'agentControl', locked: true })
+      )
+    )
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(agentSettled).toBe(false)
+    expect(automationRequests).toBe(0)
+
     value.manager.ownerMessage('local-owner', {
-      type: 'state',
+      type: 'ready',
       generation,
       revision: 1,
       state: {
@@ -544,12 +565,8 @@ describe('Browser sessions', () => {
       value.manager.requestPanelClose('panel_browser')
     ).resolves.toBe(false)
 
-    await expect(
-      value.manager.agentCommand('panel_browser', {
-        command: 'snapshot',
-        args: []
-      })
-    ).rejects.toThrow()
+    await expect(beforeReadyAgent).rejects.toThrow()
+    expect(automationRequests).toBeGreaterThan(0)
     expect(browsers).toHaveLength(1)
     expect(runAgentCli).not.toHaveBeenCalled()
 

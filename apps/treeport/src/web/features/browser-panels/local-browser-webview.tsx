@@ -19,7 +19,11 @@ function browserState(
   fallbackUrl: string,
   loading = webview.isLoading()
 ): BrowserRuntimeState {
-  const currentUrl = webview.getURL() || fallbackUrl
+  const observedUrl = webview.getURL()
+  const currentUrl =
+    loading && observedUrl === 'about:blank' && fallbackUrl !== 'about:blank'
+      ? fallbackUrl
+      : observedUrl || fallbackUrl
   const url =
     currentUrl === 'about:blank' ||
     browserUrlSchema.safeParse(currentUrl).success
@@ -77,6 +81,7 @@ export function LocalBrowserWebview({
 
     let disposed = false
     let registering = false
+    let reporting = false
     let ready = false
     let loading = false
     let fallbackUrl = initialPanelRef.current.url
@@ -105,14 +110,18 @@ export function LocalBrowserWebview({
     const emitState = (
       type: 'ready' | 'state' | 'controlChanged' = 'state'
     ) => {
-      if (disposed || !ready) {
+      if (disposed || !reporting) {
         return
       }
 
       const state = browserState(webview, fallbackUrl, loading)
       fallbackUrl = state.url
       onMessage({ type, state: sessionState(state) })
-      owner?.sendState(state)
+      if (type === 'ready') {
+        owner?.sendReady(state)
+      } else {
+        owner?.sendState(state)
+      }
     }
     const startLoading = () => {
       loading = true
@@ -243,28 +252,37 @@ export function LocalBrowserWebview({
             }
           )
         })
-        .then((connectionOwner) => {
+        .then(async (connectionOwner) => {
           if (!connectionOwner || disposed) {
             connectionOwner?.dispose()
             return
           }
 
           owner = connectionOwner
-          fallbackUrl = connectionOwner.initialState.url
+          const initialUrl = connectionOwner.initialState.url
+          fallbackUrl = initialUrl
+          loading = initialUrl !== 'about:blank'
+          reporting = true
+          if (initialUrl === 'about:blank') {
+            ready = true
+            emitState('ready')
+            return
+          }
+
+          emitState()
+          const result = await bridge.browserCommand(panel.id, {
+            type: 'navigate',
+            url: initialUrl
+          })
+          if (disposed) {
+            return
+          }
+
           loading = false
           ready = true
-          onMessage({
-            type: 'ready',
-            state: sessionState(connectionOwner.initialState)
-          })
-          if (fallbackUrl !== 'about:blank') {
-            startLoading()
-            void bridge.browserCommand(panel.id, {
-              type: 'navigate',
-              url: fallbackUrl
-            })
-          } else {
-            emitState()
+          emitState('ready')
+          if (!result.ok && result.error) {
+            onMessage({ type: 'navigationError', message: result.error })
           }
         })
         .catch((cause) => {

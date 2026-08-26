@@ -214,6 +214,12 @@ export type BrowserOwnerAuth = z.infer<typeof browserOwnerAuthSchema>
 
 export const browserOwnerClientMessageSchema = z.discriminatedUnion('type', [
   z.strictObject({
+    type: z.literal('ready'),
+    generation: browserGenerationSchema,
+    revision: browserRevisionSchema,
+    state: browserRuntimeStateSchema
+  }),
+  z.strictObject({
     type: z.literal('state'),
     generation: browserGenerationSchema,
     revision: browserRevisionSchema,

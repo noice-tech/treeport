@@ -26,6 +26,7 @@ export interface LocalBrowserOwnerTicket {
 export interface LocalBrowserOwnerConnection {
   generation: number
   initialState: BrowserRuntimeState
+  sendReady(state: BrowserRuntimeState): void
   sendState(state: BrowserRuntimeState): void
   sendPopup(url: string): void
   sendCrash(message: string): void
@@ -139,6 +140,14 @@ export function connectLocalBrowserOwner(
         resolve({
           generation,
           initialState: message.state,
+          sendReady(state) {
+            send({
+              type: 'ready',
+              generation,
+              revision: ++revision,
+              state
+            })
+          },
           sendState(state) {
             send({
               type: 'state',
