@@ -114,6 +114,9 @@ interface BrowserLocalOwner {
   challenge: string
   generation: number
   revision: number
+  ready: boolean
+  readyPromise: Promise<void>
+  resolveReady: (() => void) | null
   requests: Map<string, BrowserOwnerRequest>
 }
 
@@ -970,6 +973,10 @@ export class BrowserSessionManager {
         }
 
         await this.closePlaywrightRuntime(session)
+        let resolveReady: (() => void) | null = null
+        const readyPromise = new Promise<void>((resolve) => {
+          resolveReady = resolve
+        })
         const owner: BrowserLocalOwner = {
           transport,
           clientId: ticket.clientId,
@@ -977,6 +984,9 @@ export class BrowserSessionManager {
           challenge: auth.challenge,
           generation: ++session.generation,
           revision: -1,
+          ready: false,
+          readyPromise,
+          resolveReady,
           requests: new Map()
         }
         if (!transport.isConnected()) {
@@ -1021,7 +1031,7 @@ export class BrowserSessionManager {
       return
     }
 
-    if (message.type === 'state') {
+    if (message.type === 'ready' || message.type === 'state') {
       if (message.revision <= owner.revision) {
         return
       }
@@ -1030,6 +1040,13 @@ export class BrowserSessionManager {
       session.state = message.state
       this.queuePanelState(session, message.state)
       this.broadcastState(session)
+
+      if (message.type === 'ready' && !owner.ready) {
+        owner.ready = true
+        owner.resolveReady?.()
+        owner.resolveReady = null
+      }
+
       return
     }
 
@@ -1073,6 +1090,8 @@ export class BrowserSessionManager {
     }
 
     session.localOwner = null
+    owner.resolveReady?.()
+    owner.resolveReady = null
     void this.closeLocalAutomation(session)
     session.generation += 1
     session.controllerId = null
@@ -1419,6 +1438,8 @@ export class BrowserSessionManager {
     if (session.localOwner) {
       const owner = session.localOwner
       session.localOwner = null
+      owner.resolveReady?.()
+      owner.resolveReady = null
       await this.closeLocalAutomation(session)
       for (const request of owner.requests.values()) {
         clearTimeout(request.timer)
@@ -1618,6 +1639,37 @@ export class BrowserSessionManager {
     }
 
     const launch = (async () => {
+      if (!owner.ready) {
+        let readinessTimer: ReturnType<typeof setTimeout> | null = null
+        await Promise.race([
+          owner.readyPromise,
+          new Promise<void>((_resolve, reject) => {
+            readinessTimer = setTimeout(
+              () =>
+                reject(
+                  new Error(
+                    'The visible local Browser did not become ready within 15 seconds.'
+                  )
+                ),
+              15_000
+            )
+            readinessTimer.unref()
+          })
+        ]).finally(() => {
+          if (readinessTimer) {
+            clearTimeout(readinessTimer)
+          }
+        })
+      }
+
+      if (
+        !owner.ready ||
+        session.localOwner !== owner ||
+        session.generation !== owner.generation
+      ) {
+        throw new Error('The local Browser owner changed before it was ready.')
+      }
+
       const { chromium } = await import('playwright')
       const browser = await chromium.connectOverCDP(owner.endpoint, {
         timeout: 10_000

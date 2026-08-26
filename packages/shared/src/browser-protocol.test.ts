@@ -136,19 +136,28 @@ describe('hosted browser protocol', () => {
         endpoint: 'http://localhost:43210/private/'
       }).success
     ).toBe(false)
+    const readyState = {
+      url: 'https://example.com/ready',
+      title: 'Ready page',
+      loading: false,
+      canGoBack: false,
+      canGoForward: false,
+      viewport: { width: 800, height: 600 }
+    }
+    expect(
+      browserOwnerClientMessageSchema.safeParse({
+        type: 'ready',
+        generation: 1,
+        revision: 1,
+        state: readyState
+      }).success
+    ).toBe(true)
     expect(
       browserOwnerClientMessageSchema.safeParse({
         type: 'state',
         generation: 0,
         revision: 1,
-        state: {
-          url: 'about:blank',
-          title: '',
-          loading: false,
-          canGoBack: false,
-          canGoForward: false,
-          viewport: { width: 800, height: 600 }
-        }
+        state: readyState
       }).success
     ).toBe(false)
   })

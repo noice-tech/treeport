@@ -121,6 +121,7 @@ test('controls the visible local Browser through its exact bridge and keeps it u
   let slowBrowserResponse = false
   const ownerTickets = new Map<string, { panelId: string; challenge: string }>()
   const ownerEndpoints = new Map<string, string>()
+  const ownerReadyUrls = new Map<string, string>()
   const server = http.createServer(async (request, response) => {
     const url = new URL(request.url ?? '/', 'http://127.0.0.1')
     if (url.pathname === '/api/health') {
@@ -236,6 +237,7 @@ test('controls the visible local Browser through its exact bridge and keeps it u
         <title>Browser start</title>
         <button id="hit" style="position:fixed;inset:0;width:100%;height:100%">Browser target</button>
         <a id="popup" href="/site/popup" target="_blank" style="position:fixed;z-index:2;top:0;left:0;width:100px;height:100px">Open popup</a>
+        <a id="next" href="/site/next" style="position:fixed;z-index:2;top:110px;left:0;width:100px;height:100px">Next page</a>
         <output id="size" style="position:fixed;z-index:3;right:0;top:0"></output>
         <script>
           sessionStorage.loads = String(Number(sessionStorage.loads || 0) + 1)
@@ -310,7 +312,7 @@ test('controls the visible local Browser through its exact bridge and keeps it u
         return
       }
 
-      if (value.data.type === 'state') {
+      if (value.data.type === 'ready' || value.data.type === 'state') {
         const state = z
           .object({
             revision: z.number().int(),
@@ -320,6 +322,9 @@ test('controls the visible local Browser through its exact bridge and keeps it u
         if (state.revision > revision) {
           revision = state.revision
           Object.assign(panel, state.state, { updatedAt: '2026-01-02' })
+          if (value.data.type === 'ready') {
+            ownerReadyUrls.set(panel.id, state.state.url)
+          }
         }
       } else if (value.data.type === 'popup') {
         popupRequests += 1
@@ -332,6 +337,17 @@ test('controls the visible local Browser through its exact bridge and keeps it u
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
     const port = serverPort(server.address())
     const origin = `http://127.0.0.1:${port}`
+    const browserPanelId = 'panel_browser_1'
+    project.worktrees[0]!.panels.push({
+      id: browserPanelId,
+      kind: 'browser',
+      worktreeId: 'wt_main',
+      title: '127.0.0.1',
+      url: `${origin}/site/start`,
+      createdAt: '2026-01-01',
+      updatedAt: '2026-01-01'
+    })
+    browserIndex = 1
     const workspaceUrl = `${origin}/projects/proj_1/worktrees/wt_main`
     await new Promise<void>((resolve, reject) =>
       server.close((error) => (error ? reject(error) : resolve()))
@@ -365,39 +381,13 @@ test('controls the visible local Browser through its exact bridge and keeps it u
     ).toBeVisible()
     expect(applicationDocumentRequests).toBe(0)
     await expect.poll(() => websocketRequests).toBeGreaterThan(0)
+    await window.getByRole('button', { name: '127.0.0.1, Browser' }).click()
 
-    await electronApp.evaluate(({ BrowserWindow }) => {
-      BrowserWindow.getAllWindows()[0]?.webContents.send(
-        'desktop-command',
-        'new-panel'
-      )
-    })
-    const newPanel = window.getByRole('dialog', { name: 'New panel' })
-    await expect(newPanel).toBeVisible()
-    await newPanel
-      .getByRole('button', { name: 'Browser, hosted browser' })
-      .click()
     const address = window.getByRole('textbox', { name: 'Application URL' })
-    await expect(address).toBeFocused()
-    await address.fill(`${origin}/site/start`)
-    await address.press('Enter')
-
+    await expect(address).toHaveValue(`${origin}/site/start`)
     await expect
-      .poll(() =>
-        electronApp!.evaluate(
-          ({ webContents }, targetUrl) =>
-            webContents
-              .getAllWebContents()
-              .find(
-                (contents) =>
-                  contents.getType() === 'webview' &&
-                  contents.getURL() === targetUrl
-              )
-              ?.executeJavaScript('document.body.textContent'),
-          `${origin}/site/start`
-        )
-      )
-      .toContain('Browser target')
+      .poll(() => ownerReadyUrls.get(browserPanelId))
+      .toBe(`${origin}/site/start`)
     expect(
       await electronApp.evaluate(({ webContents }, targetUrl) => {
         const browser = webContents
@@ -417,7 +407,6 @@ test('controls the visible local Browser through its exact bridge and keeps it u
       webSecurity: true
     })
 
-    const browserPanelId = project.worktrees[0]!.panels[0]!.id
     const endpoint = await expect
       .poll(() => ownerEndpoints.get(browserPanelId))
       .not.toBeUndefined()
@@ -431,8 +420,9 @@ test('controls the visible local Browser through its exact bridge and keeps it u
       const targetRef = snapshot.match(
         /button "Browser target" \[ref=([^\]]+)\]/
       )?.[1]
-      if (!targetRef) {
-        throw new Error(`Browser target ref was missing:\n${snapshot}`)
+      const nextRef = snapshot.match(/link "Next page" \[ref=([^\]]+)\]/)?.[1]
+      if (!targetRef || !nextRef) {
+        throw new Error(`Browser target refs were missing:\n${snapshot}`)
       }
 
       await visiblePage.locator(`aria-ref=${targetRef}`).click()
@@ -451,7 +441,7 @@ test('controls the visible local Browser through its exact bridge and keeps it u
         )
         .toBe('1')
 
-      await visiblePage.goto(`${origin}/site/next`)
+      await visiblePage.locator(`aria-ref=${nextRef}`).click()
       await expect
         .poll(() =>
           electronApp!.evaluate(({ webContents }) =>
@@ -462,6 +452,7 @@ test('controls the visible local Browser through its exact bridge and keeps it u
           )
         )
         .toBe(`${origin}/site/next`)
+      await expect(address).toHaveValue(`${origin}/site/next`)
       const nextSnapshot = await snapshotPage.ariaSnapshot({ mode: 'ai' })
       const inputRef = nextSnapshot.match(
         /textbox "Name" \[ref=([^\]]+)\]/
@@ -487,11 +478,14 @@ test('controls the visible local Browser through its exact bridge and keeps it u
       expect((await visiblePage.screenshot()).byteLength).toBeGreaterThan(0)
       await visiblePage.goBack()
       await expect.poll(() => visiblePage.url()).toBe(`${origin}/site/start`)
+      await expect(address).toHaveValue(`${origin}/site/start`)
       await visiblePage.goForward()
       await expect.poll(() => visiblePage.url()).toBe(`${origin}/site/next`)
+      await expect(address).toHaveValue(`${origin}/site/next`)
       await visiblePage.reload()
       await expect.poll(() => visiblePage.title()).toBe('Browser next')
       await visiblePage.goto(`${origin}/site/start`)
+      await expect(address).toHaveValue(`${origin}/site/start`)
     } finally {
       await connectedBrowser.close()
     }
@@ -535,12 +529,8 @@ test('controls the visible local Browser through its exact bridge and keeps it u
       .toBe(1)
     await expect.poll(() => popupRequests).toBe(1)
 
-    await electronApp.evaluate(({ BrowserWindow }) => {
-      BrowserWindow.getAllWindows()[0]?.webContents.send(
-        'desktop-command',
-        'new-panel'
-      )
-    })
+    await window.getByRole('button', { name: 'New panel in main tree' }).click()
+    const newPanel = window.getByRole('dialog', { name: 'New panel' })
     await expect(newPanel).toBeVisible()
     await window.mouse.click(
       webviewBounds.x + webviewBounds.width - 16,
@@ -602,7 +592,7 @@ test('controls the visible local Browser through its exact bridge and keeps it u
       .toBe('Compact page')
 
     await window.getByRole('button', { name: /^Shell/ }).click()
-    await window.getByRole('button', { name: /^Browser(?:,|$)/ }).click()
+    await window.getByRole('button', { name: '127.0.0.1, Browser' }).click()
     expect(
       await electronApp.evaluate(({ webContents }, targetUrl) => {
         const browser = webContents

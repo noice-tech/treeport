@@ -346,13 +346,13 @@ export function installBrowserWebviewPolicy(options: {
       }
 
       let operationError: string | null = null
-      const operation = entry.commandQueue.then(() => {
+      const operation = entry.commandQueue.then(async () => {
         if (entry.guest.isDestroyed()) {
           throw new Error('The Browser page is not available.')
         }
 
         if (command.type === 'navigate') {
-          void entry.guest.loadURL(command.url).catch(() => undefined)
+          await entry.guest.loadURL(command.url)
         } else if (
           command.type === 'back' &&
           entry.guest.navigationHistory.canGoBack()
