@@ -1644,38 +1644,50 @@ export class TreeportService {
   }
 
   async openBrowserPanel(
-    worktreeId: string,
+    worktreeId: string | null,
     requestedUrl?: string,
     sourceTerminalId: string | null = null,
     sourcePanelId: string | null = null
   ): Promise<OpenBrowserPanelResult> {
-    await this.requireAvailableWorktree(worktreeId)
     if (sourceTerminalId) {
-      const terminal = await this.getTerminal(sourceTerminalId)
-      if (terminal.worktreeId !== worktreeId) {
+      const terminal = await this.getTerminalFromBindings(sourceTerminalId)
+      if (worktreeId && terminal.worktreeId !== worktreeId) {
         throw new DomainError(
           'INVALID_PANEL_OPEN_SOURCE',
           'The source terminal does not belong to the target tree',
           400
         )
       }
+
+      worktreeId ??= terminal.worktreeId
     }
 
     if (sourcePanelId) {
       const sourcePanel = await this.getBrowserPanel(sourcePanelId)
-      if (sourcePanel.worktreeId !== worktreeId) {
+      if (worktreeId && sourcePanel.worktreeId !== worktreeId) {
         throw new DomainError(
           'INVALID_PANEL_OPEN_SOURCE',
           'The source Browser does not belong to the target tree',
           400
         )
       }
+
+      worktreeId ??= sourcePanel.worktreeId
+    }
+
+    if (!worktreeId) {
+      throw new DomainError(
+        'INVALID_PANEL_OPEN_SOURCE',
+        'A target tree or panel source is required',
+        400
+      )
     }
 
     const panel = await this.createBrowserPanel(worktreeId, requestedUrl)
     this.events.publish('panel.open_requested', {
       worktreeId,
       panelId: panel.id,
+      panel,
       sourceTerminalId,
       sourcePanelId
     })
@@ -1686,26 +1698,14 @@ export class TreeportService {
     terminalId: string,
     requestedUrl: string
   ): Promise<OpenBrowserPanelResult> {
-    const terminal = await this.getTerminal(terminalId)
-    return this.openBrowserPanel(
-      terminal.worktreeId,
-      requestedUrl,
-      terminal.id,
-      null
-    )
+    return this.openBrowserPanel(null, requestedUrl, terminalId, null)
   }
 
   async openBrowserPanelFromPanel(
     panelId: string,
     requestedUrl: string
   ): Promise<OpenBrowserPanelResult> {
-    const sourcePanel = await this.getBrowserPanel(panelId)
-    return this.openBrowserPanel(
-      sourcePanel.worktreeId,
-      requestedUrl,
-      null,
-      sourcePanel.id
-    )
+    return this.openBrowserPanel(null, requestedUrl, null, panelId)
   }
 
   async getBrowserPanel(panelId: string): Promise<BrowserPanel> {
@@ -1779,13 +1779,21 @@ export class TreeportService {
   }
 
   async deleteBrowserPanel(panelId: string): Promise<void> {
-    const panel = await this.getBrowserPanel(panelId)
+    const [row] = await this.deps.database.db
+      .select()
+      .from(browserPanels)
+      .where(eq(browserPanels.id, panelId))
+      .limit(1)
+    if (!row) {
+      throw new DomainError('PANEL_NOT_FOUND', 'Browser not found', 404)
+    }
+
     await this.deps.database.db
       .delete(browserPanels)
       .where(eq(browserPanels.id, panelId))
     this.invalidateProjectsSnapshot()
     this.events.publish('panel.removed', {
-      worktreeId: panel.worktreeId,
+      worktreeId: row.worktreeId,
       panelId
     })
   }
@@ -1874,6 +1882,7 @@ export class TreeportService {
       this.events.publish('panel.open_requested', {
         worktreeId,
         panelId: result.panel.id,
+        panel: result.panel,
         sourceTerminalId,
         sourcePanelId: null
       })

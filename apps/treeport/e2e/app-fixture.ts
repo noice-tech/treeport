@@ -1520,19 +1520,20 @@ export async function mockApp(
       worktree.panels.push(panel)
       await route.fulfill({ status: 201, json: { panel } })
       await page.evaluate(
-        ({ worktreeId, panelId, sourceTerminalId }) =>
+        ({ worktreeId, panel, sourceTerminalId }) =>
           window.__eventSource.emit(
             'panel.open_requested',
             JSON.stringify({
               worktreeId,
-              panelId,
+              panelId: panel.id,
+              panel,
               sourceTerminalId,
               sourcePanelId: null
             })
           ),
         {
           worktreeId: worktree.id,
-          panelId: panel.id,
+          panel,
           sourceTerminalId: terminalId
         }
       )
