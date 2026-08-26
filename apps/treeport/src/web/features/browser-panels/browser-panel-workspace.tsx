@@ -694,7 +694,7 @@ export function BrowserPanelWorkspace({
           <canvas
             ref={canvasRef}
             tabIndex={0}
-            className="block size-full bg-white object-contain outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-300"
+            className="block size-full bg-zinc-950 object-contain outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-300"
             aria-label="Browser viewport. Streamed page content is not available to assistive technology."
             onPointerMove={(event) => {
               if (!stateRef.current?.controlled && !pointerActiveRef.current) {
@@ -755,6 +755,12 @@ export function BrowserPanelWorkspace({
             }}
           />
         )}
+        {state === null || state.url === 'about:blank' ? (
+          <div
+            className="pointer-events-none absolute inset-0 bg-zinc-950"
+            aria-hidden="true"
+          />
+        ) : null}
         {failure ? (
           <div
             className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-zinc-950 p-6 text-center text-zinc-400"
