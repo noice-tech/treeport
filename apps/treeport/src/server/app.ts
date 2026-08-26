@@ -325,11 +325,36 @@ export function createApp({
           )
         }
 
+        const panelId = context.req.param('panelId')
+        const input = context.req.valid('json')
         return context.json({
-          output: await browserSessions.agentCommand(
-            context.req.param('panelId'),
-            context.req.valid('json')
-          )
+          output: await browserSessions
+            .agentCommand(panelId, input)
+            .catch((cause) => {
+              if (cause instanceof DomainError) {
+                throw cause
+              }
+
+              throw new DomainError<{
+                command: string
+                recovery: string
+              }>(
+                'BROWSER_COMMAND_FAILED',
+                cause instanceof Error
+                  ? cause.message
+                  : 'The Browser command failed.',
+                409,
+                {
+                  command: input.command,
+                  recovery:
+                    input.command === 'snapshot'
+                      ? `Retry \`treeport browser snapshot --panel ${panelId}\`.`
+                      : input.command === 'screenshot'
+                        ? `Open Browser ${panelId} in Treeport, then retry the screenshot.`
+                        : `Run \`treeport browser snapshot --panel ${panelId}\`, then retry this Browser command.`
+                }
+              )
+            })
         })
       }
     )
