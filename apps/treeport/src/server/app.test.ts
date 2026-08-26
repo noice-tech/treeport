@@ -365,8 +365,10 @@ function fixture(webDist = '/missing') {
     start: vi.fn(async () => applicationUpdateStatus),
     dispose: vi.fn()
   })
+  const browserAgentCommand = vi.fn(async () => 'browser output')
   const browserRequestPanelClose = vi.fn(async () => true)
   const browserSessions = testAccess<BrowserSessionManager>({
+    agentCommand: browserAgentCommand,
     requestPanelClose: browserRequestPanelClose
   })
   const app = createApp({
@@ -381,6 +383,7 @@ function fixture(webDist = '/missing') {
   return {
     app,
     applicationUpdate,
+    browserAgentCommand,
     browserRequestPanelClose,
     capturePane,
     config,
@@ -462,7 +465,7 @@ describe('HTTP API validation', () => {
   })
 
   it('routes persistent Browser and web-panel lifecycle with scoped runtime reads', async () => {
-    const { app, service } = fixture()
+    const { app, browserAgentCommand, service } = fixture()
     const browser = await app.request('/api/worktrees/wt_1/browser-panels', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -533,6 +536,45 @@ describe('HTTP API validation', () => {
       ).toBe(400)
     }
     expect(service.openBrowserPanel).toHaveBeenCalledOnce()
+
+    const snapshot = await app.request(
+      '/api/panels/panel_browser/browser-agent',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ command: 'snapshot', args: [] })
+      }
+    )
+    expect(snapshot.status).toBe(200)
+    expect(await snapshot.json()).toEqual({ output: 'browser output' })
+    expect(browserAgentCommand).toHaveBeenCalledWith('panel_browser', {
+      command: 'snapshot',
+      args: []
+    })
+
+    browserAgentCommand.mockRejectedValueOnce(
+      new Error('The Browser panel is not visible.')
+    )
+    const failedScreenshot = await app.request(
+      '/api/panels/panel_browser/browser-agent',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ command: 'screenshot', args: [] })
+      }
+    )
+    expect(failedScreenshot.status).toBe(409)
+    expect(await failedScreenshot.json()).toEqual({
+      error: {
+        code: 'BROWSER_COMMAND_FAILED',
+        message: 'The Browser panel is not visible.',
+        details: {
+          command: 'screenshot',
+          recovery:
+            'Open Browser panel_browser in Treeport, then retry the screenshot.'
+        }
+      }
+    })
 
     const definitions = await app.request(
       '/api/worktrees/wt_1/web-panel-definitions'

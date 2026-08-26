@@ -508,6 +508,19 @@ export async function createBrowserCdpBridge(
         }
 
         if (request.method === 'Page.captureScreenshot') {
+          const visible =
+            (await guest.hostWebContents?.executeJavaScript(
+              `[...document.querySelectorAll('webview')].some((element) => element.getWebContentsId() === ${guest.id} && element.checkVisibility())`
+            )) ?? false
+          if (!visible) {
+            sendError(
+              socket,
+              request,
+              'The Browser panel is not visible. Open it in the Treeport desktop app, then retry the screenshot.'
+            )
+            return
+          }
+
           const clip = request.params.clip as
             | { x?: unknown; y?: unknown; width?: unknown; height?: unknown }
             | undefined

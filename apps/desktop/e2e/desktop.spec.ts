@@ -515,6 +515,12 @@ test('controls the visible local Browser through its exact bridge and keeps it u
         )
         .toBe('Treeport')
       expect((await visiblePage.screenshot()).byteLength).toBeGreaterThan(0)
+      await window.getByRole('button', { name: /^Shell/ }).click()
+      await expect(visiblePage.screenshot({ timeout: 5_000 })).rejects.toThrow(
+        'The Browser panel is not visible. Open it in the Treeport desktop app, then retry the screenshot.'
+      )
+      await window.getByRole('button', { name: '127.0.0.1, Browser' }).click()
+      expect((await visiblePage.screenshot()).byteLength).toBeGreaterThan(0)
       await visiblePage.goBack()
       await expect.poll(() => visiblePage.url()).toBe(`${origin}/site/start`)
       await expect(address).toHaveValue(`${origin}/site/start`)
