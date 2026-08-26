@@ -113,7 +113,13 @@ const desktopBridge = Object.freeze({
       value
     ) => {
       const parsed = z
-        .enum(['new-worktree', 'new-terminal', 'new-panel', 'close-panel'])
+        .enum([
+          'new-worktree',
+          'new-terminal',
+          'new-panel',
+          'close-panel',
+          'focus-location'
+        ])
         .safeParse(value)
       if (parsed.success) {
         listener(parsed.data)

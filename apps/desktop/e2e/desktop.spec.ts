@@ -218,10 +218,14 @@ test('controls the visible local Browser through its exact bridge and keeps it u
           <button type="submit">Submit</button>
         </form>
         <output></output>
+        <output id="key"></output>
         <script>
           document.querySelector('form').addEventListener('submit', (event) => {
             event.preventDefault()
             document.querySelector('output').textContent = document.querySelector('input').value
+          })
+          addEventListener('keydown', (event) => {
+            document.querySelector('#key').textContent = event.key
           })
         </script>`)
       return
@@ -423,6 +427,32 @@ test('controls the visible local Browser through its exact bridge and keeps it u
     const connectedBrowser = await chromium.connectOverCDP(endpoint)
     try {
       const visiblePage = connectedBrowser.contexts()[0]!.pages()[0]!
+      await visiblePage.locator('#hit').focus()
+      await visiblePage.keyboard.press(
+        process.platform === 'darwin' ? 'Meta+L' : 'Control+L'
+      )
+      await expect(address).toBeFocused()
+      await expect(address).toHaveJSProperty('selectionStart', 0)
+      await expect(address).toHaveJSProperty(
+        'selectionEnd',
+        `${origin}/site/start`.length
+      )
+
+      await address.fill(`${origin}/site/next`)
+      await address.press('Enter')
+      await expect(address).not.toBeFocused()
+      await expect.poll(() => visiblePage.url()).toBe(`${origin}/site/next`)
+      await expect
+        .poll(() => visiblePage.evaluate(() => document.hasFocus()))
+        .toBe(true)
+      await window.keyboard.press('x')
+      await expect
+        .poll(() => visiblePage.locator('#key').textContent())
+        .toBe('x')
+      await visiblePage.goBack()
+      await expect.poll(() => visiblePage.url()).toBe(`${origin}/site/start`)
+      await expect(address).toHaveValue(`${origin}/site/start`)
+
       // SAFETY: Playwright 1.61 implements its CLI reference snapshot through this internal mode.
       const snapshotPage = visiblePage as PlaywrightAiPage
       const snapshot = await snapshotPage.ariaSnapshot({ mode: 'ai' })
@@ -558,7 +588,7 @@ test('controls the visible local Browser through its exact bridge and keeps it u
           `({ hits: sessionStorage.hits, loads: sessionStorage.loads })`
         )
       }, `${origin}/site/start`)
-    ).toEqual({ hits: '1', loads: '4' })
+    ).toEqual({ hits: '1', loads: '5' })
     await window.keyboard.press('Escape')
     await expect(newPanel).not.toBeVisible()
     await window.mouse.click(
@@ -613,7 +643,7 @@ test('controls the visible local Browser through its exact bridge and keeps it u
           )
         return browser?.executeJavaScript('sessionStorage.loads')
       }, `${origin}/site/start`)
-    ).toBe('4')
+    ).toBe('5')
 
     await window.getByRole('button', { name: 'New panel in main tree' }).click()
     await window

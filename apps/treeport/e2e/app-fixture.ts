@@ -252,6 +252,7 @@ export async function mockApp(
         | 'new-terminal'
         | 'new-panel'
         | 'close-panel'
+        | 'focus-location'
       const listeners = new Set<(command: DesktopCommand) => void>()
       const terminalSelectionReleaseListeners = new Set<() => void>()
       let fullscreenListener: ((fullscreen: boolean) => void) | null = null
@@ -515,6 +516,10 @@ export async function mockApp(
             })
           scope.__setBrowserLoading = (loading) => {
             this.browserState = { ...this.browserState, loading }
+            scope.__repeatBrowserState()
+          }
+          scope.__setBrowserUrl = (url) => {
+            this.browserState = { ...this.browserState, url }
             scope.__repeatBrowserState()
           }
           this.deliverSocket('message', {

@@ -3,6 +3,7 @@ export type DesktopCommand =
   | 'new-terminal'
   | 'new-panel'
   | 'close-panel'
+  | 'focus-location'
 
 export type DesktopFileActionResult = 'opened' | 'rejected'
 

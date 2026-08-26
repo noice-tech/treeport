@@ -3,6 +3,7 @@ type TreeportDesktopCommand =
   | 'new-terminal'
   | 'new-panel'
   | 'close-panel'
+  | 'focus-location'
 type TreeportDesktopFileAction = 'opened' | 'rejected'
 
 interface TreeportBrowserWebview extends HTMLElement {
