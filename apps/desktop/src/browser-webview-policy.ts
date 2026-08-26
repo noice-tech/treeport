@@ -252,7 +252,9 @@ export function installBrowserWebviewPolicy(options: {
           : undefined
         : key === 'w'
           ? 'close-panel'
-          : undefined
+          : key === 'l'
+            ? 'focus-location'
+            : undefined
       if (
         input.type !== 'keyDown' ||
         input.isAutoRepeat ||

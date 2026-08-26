@@ -33,6 +33,7 @@ type TreeportTestDesktopCommand =
   | 'new-terminal'
   | 'new-panel'
   | 'close-panel'
+  | 'focus-location'
 
 interface Window {
   __attentionRequests: number
@@ -54,6 +55,7 @@ interface Window {
   __releaseTakeControl: (() => void) | null
   __repeatBrowserState(): void
   __setBrowserLoading(loading: boolean): void
+  __setBrowserUrl(url: string): void
   __restoreStorageGetItem(): void
   __suppressInitialTitle: boolean
   __terminalStateListener: boolean

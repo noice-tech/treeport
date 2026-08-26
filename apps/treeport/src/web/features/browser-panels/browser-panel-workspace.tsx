@@ -87,12 +87,14 @@ export function BrowserPanelWorkspace({
   autoFocusBlocked: boolean
   onLoadingChange: (panelId: string, loading: boolean) => void
 }) {
+  const sectionRef = useRef<HTMLElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const connectionRef = useRef<BrowserPanelConnection | null>(null)
   const stateRef = useRef<BrowserSessionState | null>(null)
   const viewportRef = useRef({ width: 1_280, height: 800 })
   const pointerActiveRef = useRef(false)
+  const addressPointerSelectAllRef = useRef(false)
   const addressDirtyRef = useRef(false)
   const autoFocusAddressRef = useRef(panel.url === 'about:blank')
   const pendingNavigationRef = useRef<{
@@ -125,6 +127,18 @@ export function BrowserPanelWorkspace({
     []
   )
 
+  const focusPage = useCallback(() => {
+    const page =
+      canvasRef.current ??
+      sectionRef.current?.querySelector<TreeportBrowserWebview>('webview')
+    page?.focus({ preventScroll: true })
+  }, [])
+
+  const focusAddress = useCallback(() => {
+    inputRef.current?.focus({ preventScroll: true })
+    inputRef.current?.select()
+  }, [])
+
   const receiveMessage = useCallback(
     (message: BrowserServerMessage) => {
       if (
@@ -132,6 +146,7 @@ export function BrowserPanelWorkspace({
         message.type === 'state' ||
         message.type === 'controlChanged'
       ) {
+        const previousUrl = stateRef.current?.url ?? panel.url
         stateRef.current = message.state
         setState(message.state)
 
@@ -142,7 +157,9 @@ export function BrowserPanelWorkspace({
         onLoadingChange(panel.id, message.state.loading)
         setFailure(null)
         setInstallingBrowser(false)
-        setError(null)
+        if (!addressDirtyRef.current) {
+          setError(null)
+        }
 
         const pendingNavigation = pendingNavigationRef.current
         const validUrl = browserUrlSchema.safeParse(message.state.url).success
@@ -157,14 +174,29 @@ export function BrowserPanelWorkspace({
         }
 
         pendingNavigationRef.current = null
-        if (message.state.url === 'about:blank') {
-          if (!addressDirtyRef.current) {
-            setInputValue('')
-          }
-        } else if (validUrl && !addressDirtyRef.current) {
-          setInputValue(message.state.url)
+        const receivedAddress =
+          message.state.url === 'about:blank'
+            ? ''
+            : validUrl
+              ? message.state.url
+              : null
+        if (receivedAddress === null) {
+          return
         }
 
+        if (addressDirtyRef.current) {
+          if (
+            document.activeElement === inputRef.current ||
+            message.state.url === previousUrl
+          ) {
+            return
+          }
+
+          addressDirtyRef.current = false
+          setError(null)
+        }
+
+        setInputValue(receivedAddress)
         return
       }
 
@@ -309,9 +341,9 @@ export function BrowserPanelWorkspace({
 
     let frame = 0
     let timer: ReturnType<typeof setTimeout> | null = null
-    const focusAddress = () => {
-      if (document.querySelector('[role="dialog"]')) {
-        frame = window.requestAnimationFrame(focusAddress)
+    const autoFocusAddress = () => {
+      if (document.querySelector('[role="dialog"], [role="alertdialog"]')) {
+        frame = window.requestAnimationFrame(autoFocusAddress)
         return
       }
 
@@ -325,19 +357,18 @@ export function BrowserPanelWorkspace({
           return
         }
 
-        input.focus()
-        input.select()
+        focusAddress()
         autoFocusAddressRef.current = false
       }, 50)
     }
-    frame = window.requestAnimationFrame(focusAddress)
+    frame = window.requestAnimationFrame(autoFocusAddress)
     return () => {
       window.cancelAnimationFrame(frame)
       if (timer) {
         clearTimeout(timer)
       }
     }
-  }, [active, addressFocusRevision, autoFocusBlocked])
+  }, [active, addressFocusRevision, autoFocusBlocked, focusAddress])
   /* eslint-enable react-you-might-not-need-an-effect/no-event-handler */
 
   useEffect(() => {
@@ -345,26 +376,48 @@ export function BrowserPanelWorkspace({
       return
     }
 
-    const find = (event: globalThis.KeyboardEvent) => {
-      const modifier = /Mac|iPhone|iPad|iPod/.test(navigator.platform)
-        ? event.metaKey
-        : event.ctrlKey
+    const focusLocation = (event: globalThis.KeyboardEvent) => {
+      const applePlatform = /Mac|iPhone|iPad|iPod/.test(navigator.platform)
+      const modifier = applePlatform
+        ? event.metaKey && !event.ctrlKey
+        : event.ctrlKey && !event.metaKey
       if (
         !modifier ||
         event.altKey ||
         event.shiftKey ||
-        event.key.toLowerCase() !== 'f'
+        event.key.toLowerCase() !== 'l' ||
+        autoFocusBlocked ||
+        document.querySelector('[role="dialog"], [role="alertdialog"]')
       ) {
         return
       }
 
       event.preventDefault()
-      inputRef.current?.focus()
-      inputRef.current?.select()
+      event.stopPropagation()
+      focusAddress()
     }
-    document.addEventListener('keydown', find, true)
-    return () => document.removeEventListener('keydown', find, true)
-  }, [active])
+    document.addEventListener('keydown', focusLocation, true)
+    return () => document.removeEventListener('keydown', focusLocation, true)
+  }, [active, autoFocusBlocked, focusAddress])
+
+  useEffect(() => {
+    const desktopBridge = window.treeportDesktop
+    if (!active || !desktopBridge) {
+      return
+    }
+
+    return desktopBridge.onCommand((command) => {
+      if (
+        command !== 'focus-location' ||
+        autoFocusBlocked ||
+        document.querySelector('[role="dialog"], [role="alertdialog"]')
+      ) {
+        return
+      }
+
+      focusAddress()
+    })
+  }, [active, autoFocusBlocked, focusAddress])
 
   const discoverListeners = useCallback(async () => {
     setListenersLoading(true)
@@ -394,7 +447,9 @@ export function BrowserPanelWorkspace({
   const navigate = (value: string) => {
     const parsed = parseBrowserAddress(value)
     if (!parsed) {
+      addressDirtyRef.current = true
       setError('Enter an HTTP or HTTPS address without credentials.')
+      inputRef.current?.focus({ preventScroll: true })
       return
     }
 
@@ -409,6 +464,7 @@ export function BrowserPanelWorkspace({
     setInputValue(targetUrl)
     send({ type: 'takeControl' })
     send({ type: 'navigate', url: targetUrl })
+    focusPage()
   }
 
   const point = (event: PointerEvent<HTMLCanvasElement>) => {
@@ -478,6 +534,7 @@ export function BrowserPanelWorkspace({
 
   return (
     <section
+      ref={sectionRef}
       className={active ? 'flex h-full min-h-0 flex-col' : 'hidden'}
       aria-label={panel.title}
     >
@@ -541,33 +598,60 @@ export function BrowserPanelWorkspace({
           spellCheck={false}
           name="url"
           aria-label="Application URL"
-          className="rounded-full"
+          className="rounded-full focus:ring-2 focus:ring-cyan-400"
           placeholder="localhost:3000"
           maxLength={4_096}
           value={inputValue}
-          onFocus={(event) => event.currentTarget.select()}
-          onMouseDown={(event) => {
-            if (document.activeElement === event.currentTarget) {
-              return
+          onPointerDown={(event) => {
+            addressPointerSelectAllRef.current =
+              event.button === 0 &&
+              document.activeElement !== event.currentTarget
+          }}
+          onPointerUp={(event) => {
+            const selectAll = addressPointerSelectAllRef.current
+            addressPointerSelectAllRef.current = false
+            if (
+              selectAll &&
+              event.currentTarget.selectionStart ===
+                event.currentTarget.selectionEnd
+            ) {
+              event.currentTarget.select()
             }
-
-            event.preventDefault()
-            event.currentTarget.focus()
+          }}
+          onPointerCancel={() => {
+            addressPointerSelectAllRef.current = false
           }}
           onChange={(event) => {
             addressDirtyRef.current = true
             setInputValue(event.target.value)
           }}
-          onBlur={() => {
-            addressDirtyRef.current = false
-            const pendingNavigation = pendingNavigationRef.current
-            if (pendingNavigation) {
-              setInputValue(pendingNavigation.targetUrl)
+          onKeyDown={(event) => {
+            if (
+              event.key !== 'Escape' ||
+              event.shiftKey ||
+              event.altKey ||
+              event.metaKey ||
+              event.ctrlKey
+            ) {
               return
             }
 
-            const currentUrl = stateRef.current?.url ?? panel.url
-            setInputValue(currentUrl === 'about:blank' ? '' : currentUrl)
+            event.preventDefault()
+            if (!addressDirtyRef.current) {
+              focusPage()
+              return
+            }
+
+            const acceptedAddress =
+              pendingNavigationRef.current?.targetUrl ??
+              stateRef.current?.url ??
+              panel.url
+            addressDirtyRef.current = false
+            setError(null)
+            setInputValue(
+              acceptedAddress === 'about:blank' ? '' : acceptedAddress
+            )
+            window.requestAnimationFrame(() => inputRef.current?.select())
           }}
         />
         <Popover

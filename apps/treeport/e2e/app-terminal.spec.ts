@@ -863,6 +863,7 @@ test.describe('desktop worktree and terminal workflows', () => {
       page.getByRole('button', { name: 'Browser', exact: true })
     ).toBeVisible()
     const address = page.getByRole('textbox', { name: 'Application URL' })
+    const viewport = page.getByLabel(/^Browser viewport/)
     await expect(address).toHaveValue('')
     await expect(address).toBeFocused()
     await expect(
@@ -885,6 +886,7 @@ test.describe('desktop worktree and terminal workflows', () => {
       page.getByRole('heading', { name: 'Development servers' })
     ).toHaveCount(0)
     await expect(address).toHaveValue('http://localhost:5173/')
+    await expect(viewport).toBeFocused()
     await expect(
       page.getByRole('button', { name: 'Copy application URL' })
     ).toHaveCount(0)
@@ -892,16 +894,26 @@ test.describe('desktop worktree and terminal workflows', () => {
       page.getByRole('button', { name: 'Reset', exact: true })
     ).toHaveCount(0)
 
+    const invalidAddress = 'http://user:secret@localhost:4173/application'
+    await address.fill(invalidAddress)
+    await address.press('Enter')
+    await expect(page.getByRole('alert')).toHaveText(
+      'Enter an HTTP or HTTPS address without credentials.'
+    )
+    await expect(address).toHaveValue(invalidAddress)
+    await expect(address).toBeFocused()
+
     await address.fill('localhost:4173/application')
     await page.evaluate(() => window.__repeatBrowserState())
     await expect(address).toHaveValue('localhost:4173/application')
     await address.press('Enter')
+    await expect(address).not.toBeFocused()
+    await expect(viewport).toBeFocused()
     await expect
       .poll(() => page.evaluate(() => window.__browserNavigationCompleted))
       .toBe('http://localhost:4173/application')
     await expect(address).toHaveValue('http://localhost:4173/application')
-    await page.getByLabel(/^Browser viewport/).click()
-    await expect(address).not.toBeFocused()
+
     await address.click()
     await expect(address).toHaveJSProperty('selectionStart', 0)
     await expect(address).toHaveJSProperty(
@@ -918,6 +930,41 @@ test.describe('desktop worktree and terminal workflows', () => {
         })
       )
       .toBe(true)
+
+    const unsentDraft = 'localhost:4173/unsent'
+    await address.fill(unsentDraft)
+    await viewport.click()
+    await page.evaluate(() => window.__repeatBrowserState())
+    await expect(address).toHaveValue(unsentDraft)
+    await page.evaluate(() =>
+      window.__setBrowserUrl('http://localhost:4173/external')
+    )
+    await expect(address).toHaveValue('http://localhost:4173/external')
+
+    const locationShortcut = await page.evaluate(() =>
+      /Mac|iPhone|iPad|iPod/.test(navigator.platform) ? 'Meta+L' : 'Control+L'
+    )
+    await page.keyboard.press(locationShortcut)
+    await expect(address).toBeFocused()
+    await expect(address).toHaveJSProperty('selectionStart', 0)
+    await expect(address).toHaveJSProperty(
+      'selectionEnd',
+      'http://localhost:4173/external'.length
+    )
+
+    await address.fill('localhost:4173/changed-draft')
+    await address.press('Escape')
+    await expect(address).toHaveValue('http://localhost:4173/external')
+    await expect(address).toBeFocused()
+    await expect(address).toHaveJSProperty('selectionStart', 0)
+    await expect(address).toHaveJSProperty(
+      'selectionEnd',
+      'http://localhost:4173/external'.length
+    )
+    await address.press('Escape')
+    await expect(viewport).toBeFocused()
+    await page.keyboard.press(locationShortcut.replace('+L', '+F'))
+    await expect(address).not.toBeFocused()
 
     await page.evaluate(() => {
       window.__browserCommands = []
