@@ -46,6 +46,9 @@ test.describe('desktop worktree and terminal workflows', () => {
     }
     {
       const releaseCreate = mocked.delayNextCreate()
+      const selectedTerminal = page.getByRole('main', { name: /terminal$/ })
+      const selectedWorkspaceUrl = page.url()
+      await expect(selectedTerminal).toBeVisible()
       await page.getByRole('button', { name: 'New tree' }).click()
       await page.getByLabel('Tree name').fill('New Tópic / Preview!')
       const requestPromise = page.waitForRequest(
@@ -98,22 +101,8 @@ test.describe('desktop worktree and terminal workflows', () => {
           name: /^(main tree|topic|new-topic-preview)$/
         })
       ).toHaveText(['main tree', 'topic', 'new-topic-preview'])
-      await expect
-        .poll(() =>
-          page.evaluate(() =>
-            (window.__wsInstances || []).some((socket: { url: string }) =>
-              socket.url.includes('term_new')
-            )
-          )
-        )
-        .toBe(true)
-      const terminalOutput = page.locator('.xterm-rows')
-      await expect(terminalOutput).toContainText('SETUP_OUTPUT')
-      await expect(terminalOutput).toContainText('SHELL_READY')
-      const text = await terminalOutput.textContent()
-      expect(text?.indexOf('SETUP_OUTPUT')).toBeLessThan(
-        text?.indexOf('SHELL_READY') ?? -1
-      )
+      await expect(page).toHaveURL(selectedWorkspaceUrl)
+      await expect(selectedTerminal).toBeVisible()
     }
     {
       await page.getByRole('button', { name: 'New tree' }).click()
