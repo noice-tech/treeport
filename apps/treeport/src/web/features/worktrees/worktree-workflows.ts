@@ -5,7 +5,6 @@ import {
   useQuery,
   useQueryClient
 } from '@tanstack/react-query'
-import { useLocation } from '@tanstack/react-router'
 import type {
   ProjectRecord,
   RemovePreview,
@@ -17,12 +16,6 @@ import { rpc } from '../../api'
 import { errorDetails } from '../../error-message'
 import { projectsQueryKey } from '../../project-metadata'
 import { terminalSessions } from '../../terminal-session'
-import {
-  projectTarget,
-  terminalTarget,
-  worktreeTarget
-} from '../../workspace-navigation'
-import { useWorkspaceNavigate } from '../../workspace-router-navigation'
 import { notifyError } from '../notifications/error-notifications'
 
 export type RemovalStage = 'checking' | 'removing'
@@ -50,7 +43,6 @@ interface OwnedCreation {
   id: string
   projectId: string
   typedName: string
-  replacesEmptyProject: boolean
 }
 
 export function useWorktreeWorkflows({
@@ -73,8 +65,6 @@ export function useWorktreeWorkflows({
   selectedTerminalId: string | null
 }) {
   const queryClient = useQueryClient()
-  const location = useLocation()
-  const navigateToWorkspace = useWorkspaceNavigate()
   const creationsQuery = useQuery({
     queryKey: ['worktree-creations'],
     queryFn: async () =>
@@ -203,9 +193,7 @@ export function useWorktreeWorkflows({
         {
           id: operation.id,
           projectId: request.projectId,
-          typedName: name,
-          replacesEmptyProject:
-            location.pathname === projectTarget(request.projectId).pathname
+          typedName: name
         }
       ])
       void queryClient.invalidateQueries({ queryKey: ['worktree-creations'] })
@@ -262,18 +250,6 @@ export function useWorktreeWorkflows({
             .projects
           queryClient.setQueryData(projectsQueryKey, projects)
           const result = operation.result
-          const worktreeId = result?.worktreeId ?? operation.worktreeId
-          const terminalId = result?.terminalId ?? null
-          const worktree = projects
-            .find((project) => project.id === owned.projectId)
-            ?.worktrees.find((item) => item.id === worktreeId)
-          if (worktree) {
-            const target = terminalId
-              ? terminalTarget(owned.projectId, worktree.id, terminalId)
-              : worktreeTarget(owned.projectId, worktree.id)
-            await navigateToWorkspace(target, owned.replacesEmptyProject)
-          }
-
           setDrawerOpen(false)
 
           if (result?.setupError) {
@@ -292,13 +268,7 @@ export function useWorktreeWorkflows({
         )
       })()
     })
-  }, [
-    navigateToWorkspace,
-    ownedCreationQueries,
-    ownedCreations,
-    queryClient,
-    setDrawerOpen
-  ])
+  }, [ownedCreationQueries, ownedCreations, queryClient, setDrawerOpen])
 
   const submitWorktreeCreation = (
     project: ProjectRecord,
