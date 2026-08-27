@@ -103,6 +103,7 @@ export function BrowserPanelWorkspace({
   } | null>(null)
   const [connectionRevision, setConnectionRevision] = useState(0)
   const [addressFocusRevision, setAddressFocusRevision] = useState(0)
+  const [agentPaintRetained, setAgentPaintRetained] = useState(false)
   const [state, setState] = useState<BrowserSessionState | null>(null)
   const [inputValue, setInputValue] = useState(
     panel.url === 'about:blank' ? '' : panel.url
@@ -269,6 +270,52 @@ export function BrowserPanelWorkspace({
   const setLocalConnection = useCallback(
     (connection: BrowserPanelConnection | null) => {
       connectionRef.current = connection
+    },
+    []
+  )
+
+  const setLocalBrowserPaintRetention = useCallback(
+    async (retained: boolean) => {
+      setAgentPaintRetained(retained)
+      if (!retained) {
+        return true
+      }
+
+      let timer: number | null = null
+      const layoutReady = await Promise.race([
+        new Promise<true>((resolve) =>
+          window.requestAnimationFrame(() =>
+            window.requestAnimationFrame(() => resolve(true))
+          )
+        ),
+        new Promise<false>((resolve) => {
+          timer = window.setTimeout(() => resolve(false), 2_000)
+        })
+      ])
+      if (timer) {
+        window.clearTimeout(timer)
+      }
+
+      const section = sectionRef.current
+      const webview = section?.querySelector<TreeportBrowserWebview>('webview')
+      if (
+        !layoutReady ||
+        !section?.isConnected ||
+        !webview?.isConnected ||
+        !section.checkVisibility() ||
+        !webview.checkVisibility()
+      ) {
+        return false
+      }
+
+      const sectionBounds = section.getBoundingClientRect()
+      const webviewBounds = webview.getBoundingClientRect()
+      return (
+        sectionBounds.width > 0 &&
+        sectionBounds.height > 0 &&
+        webviewBounds.width > 0 &&
+        webviewBounds.height > 0
+      )
     },
     []
   )
@@ -535,8 +582,16 @@ export function BrowserPanelWorkspace({
   return (
     <section
       ref={sectionRef}
-      className={active ? 'flex h-full min-h-0 flex-col' : 'hidden'}
+      className={
+        active
+          ? 'relative z-10 flex h-full min-h-0 flex-col'
+          : agentPaintRetained
+            ? 'pointer-events-none absolute inset-0 z-0 flex h-full min-h-0 flex-col opacity-0'
+            : 'hidden'
+      }
       aria-label={panel.title}
+      aria-hidden={active ? undefined : true}
+      inert={active ? undefined : true}
     >
       <form
         className="flex min-w-0 items-center gap-1.5 border-b border-white/8 bg-zinc-900 px-2 py-1.5"
@@ -773,6 +828,7 @@ export function BrowserPanelWorkspace({
             inputBlocked={autoFocusBlocked}
             onConnection={setLocalConnection}
             onMessage={receiveMessage}
+            onPaintRetentionChange={setLocalBrowserPaintRetention}
           />
         ) : (
           <canvas

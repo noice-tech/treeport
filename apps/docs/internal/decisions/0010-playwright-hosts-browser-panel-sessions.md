@@ -71,7 +71,7 @@ It keeps one Playwright connection for the owner generation.
 
 Snapshot uses Playwright accessibility references.
 
-Click and fill use these Playwright references on the visible page.
+Click and fill use these Playwright references on the live page.
 
 Navigation, history, reload, and screenshot commands use the same guest through the bridge.
 
@@ -81,7 +81,17 @@ Before an agent command, the daemon requests an input barrier from Electron.
 
 Electron waits for earlier toolbar work. It then blocks toolbar and pointer input.
 
-The daemon releases this barrier after the command.
+For an inactive panel, the input barrier also prepares the guest for painting.
+
+Treeport waits for paint readiness before it accepts agent control.
+
+Background control does not select the Browser workspace.
+
+Treeport restores the parked state after each command.
+
+The guest stays in one DOM parent for its lifetime.
+
+The daemon releases the input barrier after the command.
 
 An owner disconnect fails the active command. It does not start another runtime for that command.
 
@@ -194,7 +204,7 @@ Keep the existing:
 
 ## Consequences
 
-The visible local page and `treeport browser` commands now share cookies, history, DOM state, and input state.
+The live local page and `treeport browser` commands now share cookies, history, DOM state, and input state.
 
 Local browser automation does not require `treeport browser install`.
 

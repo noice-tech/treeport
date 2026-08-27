@@ -120,7 +120,7 @@ export function WorkspaceMain({ children }: { children: ReactNode }) {
   return (
     <SidebarInset asChild>
       <div
-        className="grid min-h-0 min-w-0 grid-rows-[minmax(0,1fr)] overflow-hidden bg-zinc-950"
+        className="relative grid min-h-0 min-w-0 grid-rows-[minmax(0,1fr)] overflow-hidden bg-zinc-950"
         inert={isMobile && openMobile ? true : undefined}
         aria-hidden={isMobile && openMobile ? true : undefined}
         onPointerDownCapture={() => {

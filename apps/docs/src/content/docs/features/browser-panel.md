@@ -116,7 +116,9 @@ A snapshot reference, such as `e12`, identifies an element in the current live r
 
 Take a new snapshot after navigation or a runtime change.
 
-For a local desktop connection, commands control the visible Electron `<webview>` page.
+For a local desktop connection, commands control the live Electron `<webview>` page.
+
+Commands continue while you select another Treeport workspace. Treeport does not select the Browser panel during background control.
 
 For other connections, commands control the streamed Playwright page.
 
