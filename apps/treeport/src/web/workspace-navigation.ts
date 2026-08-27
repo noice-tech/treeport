@@ -74,7 +74,7 @@ function segment(value: string): string {
   return encodeURIComponent(value)
 }
 
-export function projectTarget(projectId: string): WorkspaceTarget {
+function projectTarget(projectId: string): WorkspaceTarget {
   return {
     kind: 'project',
     pathname: `/projects/${segment(projectId)}`,
