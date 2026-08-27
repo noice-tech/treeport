@@ -286,7 +286,9 @@ Without `--panel`, Treeport selects the only browser panel in the current tree.
 
 Use `list` to find panel IDs. Use snapshot element references with `click` and `fill`.
 
-A local desktop connection controls the visible Electron `<webview>` page.
+A local desktop connection controls the live Electron `<webview>` page.
+
+Commands continue while another Treeport workspace is selected. Treeport does not select the Browser panel for background control.
 
 A web or remote desktop connection controls the Playwright page on the daemon computer.
 

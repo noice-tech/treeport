@@ -40,6 +40,11 @@ interface BrowserPanelFixture {
   updatedAt: string
 }
 
+interface BrowserOwnerControl {
+  generation: number
+  request(locked: boolean): Promise<boolean>
+}
+
 function projectFixture() {
   const panels: BrowserPanelFixture[] = []
   return {
@@ -109,7 +114,7 @@ function projectFixture() {
   }
 }
 
-test('controls the visible local Browser through its exact bridge and keeps it under desktop dialogs', async () => {
+test('controls the local Browser through its exact bridge while another workspace is selected', async () => {
   const userData = await fs.mkdtemp(
     path.join(os.tmpdir(), 'treeport-electron-browser-')
   )
@@ -122,6 +127,7 @@ test('controls the visible local Browser through its exact bridge and keeps it u
   const ownerTickets = new Map<string, { panelId: string; challenge: string }>()
   const ownerEndpoints = new Map<string, string>()
   const ownerReadyUrls = new Map<string, string>()
+  const ownerControls = new Map<string, BrowserOwnerControl>()
   const server = http.createServer(async (request, response) => {
     const url = new URL(request.url ?? '/', 'http://127.0.0.1')
     if (url.pathname === '/api/health') {
@@ -220,6 +226,7 @@ test('controls the visible local Browser through its exact bridge and keeps it u
         <output></output>
         <output id="key"></output>
         <script>
+          sessionStorage.nextLoads = String(Number(sessionStorage.nextLoads || 0) + 1)
           document.querySelector('form').addEventListener('submit', (event) => {
             event.preventDefault()
             document.querySelector('output').textContent = document.querySelector('input').value
@@ -303,10 +310,41 @@ test('controls the visible local Browser through its exact bridge and keeps it u
       (candidate) => candidate.id === ticket.panelId
     )!
     let revision = -1
+    const generation = 1
+    const pendingControlRequests = new Map<
+      string,
+      (accepted: boolean) => void
+    >()
+    const ownerControl: BrowserOwnerControl = {
+      generation,
+      request(locked) {
+        const requestId = crypto.randomUUID()
+        return new Promise<boolean>((resolve) => {
+          pendingControlRequests.set(requestId, resolve)
+          socket.emit('ownerMessage', {
+            type: 'agentControl',
+            generation,
+            requestId,
+            locked
+          })
+        })
+      }
+    }
+    ownerControls.set(panel.id, ownerControl)
+    socket.on('disconnect', () => {
+      if (ownerControls.get(panel.id) === ownerControl) {
+        ownerControls.delete(panel.id)
+      }
+
+      for (const resolve of pendingControlRequests.values()) {
+        resolve(false)
+      }
+      pendingControlRequests.clear()
+    })
     socket.emit('ownerMessage', {
       type: 'claimGranted',
       panelId: panel.id,
-      generation: 1,
+      generation,
       state: {
         url: panel.url,
         title: panel.title === 'Browser' ? '' : panel.title,
@@ -321,11 +359,17 @@ test('controls the visible local Browser through its exact bridge and keeps it u
         .object({ type: z.string(), generation: z.number() })
         .passthrough()
         .safeParse(message)
-      if (!value.success || value.data.generation !== 1) {
+      if (!value.success || value.data.generation !== generation) {
         return
       }
 
-      if (value.data.type === 'ready' || value.data.type === 'state') {
+      if (value.data.type === 'agentControlResult') {
+        const result = z
+          .object({ requestId: z.string(), accepted: z.boolean() })
+          .parse(value.data)
+        pendingControlRequests.get(result.requestId)?.(result.accepted)
+        pendingControlRequests.delete(result.requestId)
+      } else if (value.data.type === 'ready' || value.data.type === 'state') {
         const state = z
           .object({
             revision: z.number().int(),
@@ -515,12 +559,60 @@ test('controls the visible local Browser through its exact bridge and keeps it u
         )
         .toBe('Treeport')
       expect((await visiblePage.screenshot()).byteLength).toBeGreaterThan(0)
-      await window.getByRole('button', { name: /^Shell/ }).click()
-      await expect(visiblePage.screenshot({ timeout: 5_000 })).rejects.toThrow(
-        'The Browser panel is not visible. Open it in the Treeport desktop app, then retry the screenshot.'
+      const nextPageLoads = await visiblePage.evaluate(
+        () => sessionStorage.nextLoads
       )
+      await window.getByRole('button', { name: /^Shell/ }).click()
+      await expect(window).toHaveURL(/\/terminals\/term_shell$/)
+      const ownerControl = ownerControls.get(browserPanelId)
+      if (!ownerControl) {
+        throw new Error('The local Browser owner control was not ready.')
+      }
+
+      expect(ownerControl.generation).toBe(1)
+      expect(await ownerControl.request(true)).toBe(true)
+      let controlReleased = false
+      try {
+        const backgroundSnapshot = await snapshotPage.ariaSnapshot({
+          mode: 'ai'
+        })
+        const backgroundInputRef = backgroundSnapshot.match(
+          /textbox "Name".*\[ref=([^\]]+)\]/
+        )?.[1]
+        const backgroundSubmitRef = backgroundSnapshot.match(
+          /button "Submit".*\[ref=([^\]]+)\]/
+        )?.[1]
+        if (!backgroundInputRef || !backgroundSubmitRef) {
+          throw new Error(
+            `Background form refs were missing:\n${backgroundSnapshot}`
+          )
+        }
+
+        await visiblePage
+          .locator(`aria-ref=${backgroundInputRef}`)
+          .fill('Background')
+        await visiblePage.locator(`aria-ref=${backgroundSubmitRef}`).click()
+        await expect
+          .poll(() => visiblePage.locator('output').first().textContent())
+          .toBe('Background')
+        await visiblePage.keyboard.press('Escape')
+        await expect
+          .poll(() => visiblePage.locator('#key').textContent())
+          .toBe('Escape')
+        expect((await visiblePage.screenshot()).byteLength).toBeGreaterThan(0)
+        await expect(window).toHaveURL(/\/terminals\/term_shell$/)
+      } finally {
+        controlReleased = await ownerControl.request(false)
+      }
+      expect(controlReleased).toBe(true)
+
       await window.getByRole('button', { name: '127.0.0.1, Browser' }).click()
-      expect((await visiblePage.screenshot()).byteLength).toBeGreaterThan(0)
+      await expect
+        .poll(() => visiblePage.locator('output').first().textContent())
+        .toBe('Background')
+      expect(await visiblePage.evaluate(() => sessionStorage.nextLoads)).toBe(
+        nextPageLoads
+      )
       await visiblePage.goBack()
       await expect.poll(() => visiblePage.url()).toBe(`${origin}/site/start`)
       await expect(address).toHaveValue(`${origin}/site/start`)
@@ -597,6 +689,10 @@ test('controls the visible local Browser through its exact bridge and keeps it u
     ).toEqual({ hits: '1', loads: '5' })
     await window.keyboard.press('Escape')
     await expect(newPanel).not.toBeVisible()
+    await window.evaluate(
+      () =>
+        new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+    )
     await window.mouse.click(
       webviewBounds.x + webviewBounds.width - 16,
       webviewBounds.y + webviewBounds.height - 16
