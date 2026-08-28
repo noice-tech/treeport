@@ -1044,7 +1044,7 @@ function ReviewApp() {
       handle.setAttribute('aria-valuenow', String(width))
       handle.setAttribute('aria-valuemax', String(maximum))
     }
-    let workspaceLeft = 0
+    let workspaceRight = 0
     let maximum = 160
     let pending: number | null = null
     let frame: number | null = null
@@ -1067,7 +1067,7 @@ function ReviewApp() {
       }
 
       const bounds = workspace.getBoundingClientRect()
-      workspaceLeft = bounds.left
+      workspaceRight = bounds.right
       maximum = Math.max(160, bounds.width - 320)
       handle.setPointerCapture(event.pointerId)
       handle.classList.add('resizing')
@@ -1078,13 +1078,13 @@ function ReviewApp() {
         return
       }
 
-      pending = event.clientX - workspaceLeft
+      pending = workspaceRight - event.clientX
       if (frame === null) {
         frame = requestAnimationFrame(apply)
       }
     }
     const pointerUp = (event: PointerEvent) => {
-      pending = event.clientX - workspaceLeft
+      pending = workspaceRight - event.clientX
       apply()
       handle.releasePointerCapture(event.pointerId)
     }
@@ -1095,9 +1095,9 @@ function ReviewApp() {
     const keyDown = (event: KeyboardEvent) => {
       const current = sidebar.getBoundingClientRect().width
       if (event.key === 'ArrowLeft') {
-        setWidth(current - 16)
-      } else if (event.key === 'ArrowRight') {
         setWidth(current + 16)
+      } else if (event.key === 'ArrowRight') {
+        setWidth(current - 16)
       } else if (event.key === 'Home') {
         setWidth(160)
       } else if (event.key === 'End') {
@@ -1264,27 +1264,6 @@ function ReviewApp() {
         </div>
       </header>
       <div className="workspace" ref={workspaceRef}>
-        <aside aria-label="Changed files" ref={sidebarRef}>
-          <div id="file-tree">
-            {files.length > 0 && (
-              <ChangedFileTree
-                key={loaded?.generatedAt}
-                files={files}
-                changeSets={loaded!.changeSets}
-                onSelect={selectFile}
-              />
-            )}
-          </div>
-        </aside>
-        <div
-          id="resize-handle"
-          ref={resizeHandleRef}
-          role="separator"
-          aria-label="Resize changed files"
-          aria-orientation="vertical"
-          aria-valuemin={160}
-          tabIndex={0}
-        />
         <main id="review" aria-live="polite">
           {!loading && !error && outdatedComments.length > 0 && (
             <section
@@ -1472,6 +1451,27 @@ function ReviewApp() {
             })
           )}
         </main>
+        <div
+          id="resize-handle"
+          ref={resizeHandleRef}
+          role="separator"
+          aria-label="Resize changed files"
+          aria-orientation="vertical"
+          aria-valuemin={160}
+          tabIndex={0}
+        />
+        <aside aria-label="Changed files" ref={sidebarRef}>
+          <div id="file-tree">
+            {files.length > 0 && (
+              <ChangedFileTree
+                key={loaded?.generatedAt}
+                files={files}
+                changeSets={loaded!.changeSets}
+                onSelect={selectFile}
+              />
+            )}
+          </div>
+        </aside>
       </div>
     </>
   )

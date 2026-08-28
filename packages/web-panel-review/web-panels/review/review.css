@@ -246,7 +246,7 @@ button:disabled {
 .workspace {
   --sidebar-width: clamp(12rem, 22vw, 24rem);
   display: grid;
-  grid-template-columns: var(--sidebar-width) 5px minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) 5px var(--sidebar-width);
   min-height: 0;
 }
 aside {
@@ -255,7 +255,7 @@ aside {
   min-width: 0;
   overflow: hidden;
   background: #18181b;
-  border-right: 1px solid #3f3f46;
+  border-left: 1px solid #3f3f46;
 }
 #file-tree {
   min-height: 0;
