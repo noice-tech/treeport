@@ -13,6 +13,7 @@ import {
   type TerminalPresetDefinitionDiagnostic,
   type TerminalPresetDefinition,
   type TerminalRuntimeMetadata,
+  type TreeContextFieldDefinition,
   type WebPanelDefinition
 } from '@treeport/shared'
 
@@ -173,6 +174,7 @@ export async function mockApp(
     transientProjectFailures?: number
     repositoryTerminalPresets?: TerminalPresetDefinition[]
     repositoryPresetDiagnostics?: TerminalPresetDefinitionDiagnostic[]
+    treeContextFields?: TreeContextFieldDefinition[]
     applicationUpdate?: ApplicationUpdateStatus
     realReviewPanel?: boolean
     realFilesPanel?: boolean
@@ -922,6 +924,16 @@ export async function mockApp(
     }
 
     if (
+      pathname === '/api/tree-context-fields' &&
+      route.request().method() === 'GET'
+    ) {
+      await route.fulfill({
+        json: { fields: options.treeContextFields ?? [], diagnostics: [] }
+      })
+      return
+    }
+
+    if (
       pathname === '/api/terminal-preset-definitions' &&
       route.request().method() === 'GET'
     ) {
@@ -1376,6 +1388,7 @@ export async function mockApp(
         name: string
         base: 'default' | 'current'
         sourceWorktreeId?: string
+        context?: Record<string, string>
         initialTerminal?: {
           name: string
           initialTitle?: string

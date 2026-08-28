@@ -81,6 +81,10 @@ function fixture(webDist = '/missing') {
       id,
       color
     })),
+    listTreeContextFields: vi.fn(() => ({
+      fields: [{ id: 'issue', label: 'Issue', input: 'text' as const }],
+      diagnostics: []
+    })),
     listTerminalPresets: vi.fn(() => [
       {
         id: 'preset_existing',
@@ -184,6 +188,7 @@ function fixture(webDist = '/missing') {
       id: 'wt_1',
       tmuxSocketName: 'treeport-wt-1'
     })),
+    getWorktreeContext: vi.fn(() => ({ issue: 'TREE-123' })),
     requestWorkspaceOpen: vi.fn(async () => undefined),
     listWebPanelDefinitions: vi.fn(async () => [
       {
@@ -1420,6 +1425,23 @@ describe('HTTP API validation', () => {
 
   it('routes source-aware package definitions and package management operations', async () => {
     const { app, service } = fixture()
+    const contextFields = await app.request(
+      '/api/tree-context-fields?projectId=project_1'
+    )
+    expect(contextFields.status).toBe(200)
+    expect(await contextFields.json()).toEqual({
+      fields: [{ id: 'issue', label: 'Issue', input: 'text' }],
+      diagnostics: []
+    })
+    expect(service.listTreeContextFields).toHaveBeenCalledWith('project_1')
+
+    const treeContext = await app.request('/api/worktrees/wt_1/context')
+    expect(treeContext.status).toBe(200)
+    expect(await treeContext.json()).toEqual({
+      context: { issue: 'TREE-123' }
+    })
+    expect(service.getWorktreeContext).toHaveBeenCalledWith('wt_1')
+
     const definitions = await app.request(
       '/api/terminal-preset-definitions?worktreeId=wt_1'
     )
@@ -1542,6 +1564,10 @@ describe('HTTP API validation', () => {
         name: 'topic',
         base: 'current',
         sourceWorktreeId: 'wt_main',
+        context: {
+          issue: 'TREE-123',
+          brief: 'Review the cache behavior.'
+        },
         initialTerminal: {
           name: 'Terminal',
           initialTitle: 'Review changes',
@@ -1566,7 +1592,11 @@ describe('HTTP API validation', () => {
         returnToShell: true,
         initialSize: { cols: 144, rows: 48 }
       },
-      'wt_main'
+      'wt_main',
+      {
+        issue: 'TREE-123',
+        brief: 'Review the cache behavior.'
+      }
     )
     const active = await app.request('/api/operations?projectId=p&kind=create')
     expect(await active.json()).toMatchObject({

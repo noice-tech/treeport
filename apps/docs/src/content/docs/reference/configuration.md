@@ -39,6 +39,63 @@ When `XDG_RUNTIME_DIR` is set, Treeport uses `$XDG_RUNTIME_DIR/treeport`.
 
 Otherwise, it uses a user-specific directory in the operating-system temporary directory.
 
+## Configure settings
+
+Global settings are at `<data-dir>/settings.json`.
+
+Project settings are at `<project-root>/.treeport/settings.json`.
+
+For a repository, the main tree is the project root. Its settings apply to all linked trees.
+
+For a folder project, the selected folder is the project root.
+
+## Configure tree context fields
+
+Tree context fields collect optional information when you use the **Create tree** form.
+
+Add field definitions to global or project settings:
+
+```json
+{
+  "treeContext": {
+    "fields": [
+      {
+        "id": "issue",
+        "label": "Issue",
+        "input": "text"
+      },
+      {
+        "id": "brief",
+        "label": "Task description",
+        "input": "textarea"
+      }
+    ]
+  }
+}
+```
+
+Each field supports these properties:
+
+- `id`: A stable lowercase identifier.
+- `label`: The label in the form.
+- `input`: Either `text` or `textarea`.
+
+An identifier can contain letters, numbers, dots, underscores, and hyphens. It can contain a maximum of 120 characters.
+
+Treeport shows global fields first. It adds new project fields after them.
+
+A project field with the same identifier replaces the global field. The field keeps its global position.
+
+Treeport supports 64 effective fields. Each saved value can contain a maximum of 16,384 characters.
+
+The identifiers and values can contain a combined maximum of 65,536 characters.
+
+All fields are optional. Treeport does not save an empty value.
+
+Treeport saves submitted values with the tree. It removes the values when it removes the tree.
+
+Do not use tree context for secrets. Managed terminals can read these values with `treeport context`.
+
 ## Configure project terminal presets
 
 A project tree can contain `.treeport/terminal-presets.json`.
@@ -54,12 +111,6 @@ These tasks apply to all trees in that repository. They support path expansion, 
 See [Repository presets](/features/terminal-presets/#repository-presets) and [Zed task compatibility](/features/terminal-presets/#zed-task-compatibility).
 
 ## Configure package settings
-
-Global package settings are at `<data-dir>/settings.json`.
-
-Project settings are at `<project-root>/.treeport/settings.json`.
-
-For a repository, the project root is the main tree, which controls all linked trees. For a folder project, the project root is the selected folder.
 
 Supported fields are:
 

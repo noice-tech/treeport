@@ -11,6 +11,8 @@ import {
   TERMINAL_EXECUTABLE_MAX_LENGTH,
   TERMINAL_NAME_MAX_LENGTH,
   TERMINAL_PRESET_ARGUMENT_MAX_COUNT,
+  treeContextFieldDefinitionSchema,
+  treeContextValuesSchema,
   updateProjectSchema,
   updateTerminalPresetSchema
 } from './index.js'
@@ -114,13 +116,33 @@ describe('API input validation', () => {
     expect(
       createWorktreeSchema.parse({
         name: 'topic',
+        context: {
+          issue: '  TREE-123  ',
+          brief: ' Review the cache behavior. '
+        },
         initialTerminal: {
           name: 'Hunk',
           initialTitle: '  Hunk review  ',
           argv
         }
-      }).initialTerminal
-    ).toEqual({ name: 'Hunk', initialTitle: 'Hunk review', argv })
+      })
+    ).toMatchObject({
+      context: {
+        issue: 'TREE-123',
+        brief: 'Review the cache behavior.'
+      },
+      initialTerminal: { name: 'Hunk', initialTitle: 'Hunk review', argv }
+    })
+    expect(
+      treeContextFieldDefinitionSchema.parse({
+        id: 'github.issue',
+        label: ' GitHub issue ',
+        input: 'text'
+      })
+    ).toEqual({ id: 'github.issue', label: 'GitHub issue', input: 'text' })
+    expect(
+      treeContextValuesSchema.safeParse({ 'Invalid field': 'value' }).success
+    ).toBe(false)
   })
 
   it('rejects empty argv, command strings, and invalid initial sizes', () => {

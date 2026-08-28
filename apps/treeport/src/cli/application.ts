@@ -1542,6 +1542,11 @@ async function main(args: string[]): Promise<void> {
       )
     }
 
+    const treeContext = (
+      await request<{ context: Record<string, string> }>(
+        `/api/worktrees/${encodeURIComponent(worktree.id)}/context`
+      )
+    ).context
     const context: TreeportContext = {
       managed: true,
       apiUrl,
@@ -1564,7 +1569,8 @@ async function main(args: string[]): Promise<void> {
         head: worktree.head,
         branch: worktree.branch,
         detached: worktree.detached,
-        kind: worktree.kind
+        kind: worktree.kind,
+        context: treeContext
       },
       terminal: {
         id: terminal.id,
@@ -1574,11 +1580,28 @@ async function main(args: string[]): Promise<void> {
         exitCode: terminal.exitCode
       }
     }
-    print(
-      context,
-      () =>
-        `Treeport context\n\nProject:  ${context.project.name} (${context.project.id})\nTree:     ${context.worktree.name} (${context.worktree.id})\nPath:     ${context.worktree.path}\nTerminal: ${context.terminal.name} (${context.terminal.id}) — ${context.terminal.status}\nAPI:      ${context.apiUrl}\nLifecycle: ${context.daemonLifecycle === 'external' ? 'externally managed' : context.daemonLifecycle === 'service' ? 'managed by the OS service' : 'managed by Treeport'}`
-    )
+    print(context, () => {
+      const entries = Object.entries(context.worktree.context)
+      const treeContextText =
+        entries.length === 0
+          ? '—'
+          : entries
+              .map(([key, value]) => {
+                const safeValue = [...value]
+                  .map((character) => {
+                    const code = character.charCodeAt(0)
+                    return code !== 10 &&
+                      (code <= 31 || (code >= 127 && code <= 159))
+                      ? `\\u${code.toString(16).padStart(4, '0')}`
+                      : character
+                  })
+                  .join('')
+                const [first = '', ...rest] = safeValue.split('\n')
+                return `  ${key}: ${first}${rest.length > 0 ? `\n${rest.map((line) => `    ${line}`).join('\n')}` : ''}`
+              })
+              .join('\n')
+      return `Treeport context\n\nProject:  ${context.project.name} (${context.project.id})\nTree:     ${context.worktree.name} (${context.worktree.id})\nPath:     ${context.worktree.path}\nContext:\n${treeContextText}\nTerminal: ${context.terminal.name} (${context.terminal.id}) — ${context.terminal.status}\nAPI:      ${context.apiUrl}\nLifecycle: ${context.daemonLifecycle === 'external' ? 'externally managed' : context.daemonLifecycle === 'service' ? 'managed by the OS service' : 'managed by Treeport'}`
+    })
   })
 
   const browserCommand = program

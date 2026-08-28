@@ -414,6 +414,22 @@ describe('CLI context and machine output', () => {
 
       if (
         request.method === 'GET' &&
+        request.url === '/api/worktrees/wt_context/context'
+      ) {
+        response.end(
+          JSON.stringify({
+            context: {
+              issue: 'TREE-123',
+              brief: 'Review the cache behavior.\nKeep the terminal workflow.',
+              control: '\u001b]2;changed\u0007'
+            }
+          })
+        )
+        return
+      }
+
+      if (
+        request.method === 'GET' &&
         request.url === '/api/projects/proj_domain'
       ) {
         response.statusCode = 409
@@ -942,6 +958,12 @@ describe('CLI context and machine output', () => {
     expect(result.stdout).toContain('Treeport context')
     expect(result.stdout).toContain('Project:  treeport (proj_context)')
     expect(result.stdout).toContain('Tree:     agent-tools (wt_context)')
+    expect(result.stdout).toContain('  issue: TREE-123')
+    expect(result.stdout).toContain(
+      '  brief: Review the cache behavior.\n    Keep the terminal workflow.'
+    )
+    expect(result.stdout).toContain('  control: \\u001b]2;changed\\u0007')
+    expect(result.stdout).not.toContain('\u001b')
     expect(result.stdout).toContain('Terminal: Pi (term_context) — running')
     expect(result.stdout).toContain('Lifecycle: managed by Treeport')
     expect(result.stdout.trimStart().startsWith('{')).toBe(false)
@@ -960,7 +982,15 @@ describe('CLI context and machine output', () => {
       apiUrl,
       daemonLifecycle: 'treeport',
       project: { id: project.id, name: 'treeport' },
-      worktree: { id: worktree.id, name: 'agent-tools' },
+      worktree: {
+        id: worktree.id,
+        name: 'agent-tools',
+        context: {
+          issue: 'TREE-123',
+          brief: 'Review the cache behavior.\nKeep the terminal workflow.',
+          control: '\u001b]2;changed\u0007'
+        }
+      },
       terminal: { id: terminal.id, name: 'Pi', status: 'running' }
     })
 
