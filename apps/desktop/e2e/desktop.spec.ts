@@ -289,6 +289,7 @@ test('controls the local Browser through its exact bridge while another workspac
     transports: ['websocket'],
     serveClient: false
   })
+  const events = sockets.of('/events')
   sockets.of('/browser-owners').on('connection', (socket) => {
     const auth = z
       .strictObject({
@@ -444,15 +445,19 @@ test('controls the local Browser through its exact bridge while another workspac
 
     const address = window.getByRole('textbox', { name: 'Application URL' })
     await expect(address).toHaveValue(`${origin}/site/start`)
-    const sidePanelShortcut =
-      process.platform === 'darwin' ? 'Meta+Alt+B' : 'Control+Alt+B'
-    await window.keyboard.press(sidePanelShortcut)
-    await expect(browserTab).not.toBeVisible()
-    await window.keyboard.press(sidePanelShortcut)
-    await expect(browserTab).toBeVisible()
     await expect
       .poll(() => ownerReadyUrls.get(browserPanelId))
       .toBe(`${origin}/site/start`)
+    await expect(
+      window.getByRole('tab', { name: 'Browser start, Browser' })
+    ).toBeVisible()
+    const sidePanelToggle = window.getByRole('button', {
+      name: 'Toggle side panel'
+    })
+    await sidePanelToggle.click()
+    await expect(browserTab).not.toBeVisible()
+    await sidePanelToggle.click()
+    await expect(browserTab).toBeVisible()
     expect(
       await electronApp.evaluate(({ webContents }, targetUrl) => {
         const browser = webContents
@@ -614,7 +619,7 @@ test('controls the local Browser through its exact bridge while another workspac
       }
       expect(controlReleased).toBe(true)
 
-      await window.getByRole('tab', { name: '127.0.0.1, Browser' }).click()
+      await browserTab.click()
       await expect
         .poll(() => visiblePage.locator('output').first().textContent())
         .toBe('Background')
@@ -668,6 +673,22 @@ test('controls the local Browser through its exact bridge while another workspac
     }
 
     await window.getByRole('button', { name: /^Shell/ }).click()
+    await expect(window.locator('.xterm-helper-textarea')).toBeFocused()
+    events.emit('product_event', {
+      id: crypto.randomUUID(),
+      type: 'panel.open_requested',
+      at: new Date().toISOString(),
+      data: {
+        worktreeId: 'wt_main',
+        panelId: browserPanelId,
+        panel: project.worktrees[0]!.panels.find(
+          (candidate) => candidate.id === browserPanelId
+        )!,
+        sourceTerminalId: 'term_shell',
+        sourcePanelId: null
+      }
+    })
+    await expect(window).toHaveURL(/\/panels\/panel_browser_1$/)
     await expect(window.locator('.xterm-helper-textarea')).toBeFocused()
     await window.mouse.click(webviewBounds.x + 20, webviewBounds.y + 20)
     await expect
@@ -768,7 +789,7 @@ test('controls the local Browser through its exact bridge while another workspac
       .toBe('Compact page')
 
     await window.getByRole('button', { name: /^Shell/ }).click()
-    await window.getByRole('tab', { name: '127.0.0.1, Browser' }).click()
+    await browserTab.click()
     expect(
       await electronApp.evaluate(({ webContents }, targetUrl) => {
         const browser = webContents

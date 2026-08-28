@@ -357,7 +357,8 @@ export function WorktreeToolPane({
   onSelectPanel,
   onClosePanel,
   onCreateBrowserPanel,
-  onOpenWebPanel
+  onOpenWebPanel,
+  onFocusSurface
 }: {
   worktreeName: string
   visible: boolean
@@ -374,14 +375,14 @@ export function WorktreeToolPane({
   onClosePanel: (panel: BrowserPanel | WebPanel, trigger?: HTMLElement) => void
   onCreateBrowserPanel: () => void
   onOpenWebPanel: (definition: WebPanelDefinition) => void
+  onFocusSurface: () => void
 }) {
   const {
     open: pickerOpen,
     setOpen: setPickerOpen,
     dismiss: dismissPicker
   } = useToolPicker()
-  const { focusedSurface, emptyToolFocusRevision, focusSurface } =
-    useWorkspaceSurfaceFocus()
+  const { focusedSurface, emptyToolFocusRevision } = useWorkspaceSurfaceFocus()
   const focused = focusedSurface === 'tool'
   const toolPickerCommandRef = useRef<HTMLDivElement>(null)
   const paneRef = useRef<HTMLElement>(null)
@@ -486,8 +487,8 @@ export function WorktreeToolPane({
       aria-label={`${worktreeName} tool tab group`}
       aria-hidden={visible ? undefined : true}
       inert={visible ? undefined : true}
-      onPointerDownCapture={() => focusSurface('tool')}
-      onFocusCapture={() => focusSurface('tool')}
+      onPointerDownCapture={onFocusSurface}
+      onFocusCapture={onFocusSurface}
     >
       <SidePanelResizeRail
         width={sidePanelWidth}

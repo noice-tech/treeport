@@ -80,12 +80,14 @@ export function BrowserPanelWorkspace({
   panel,
   active,
   autoFocusBlocked,
+  inputBlocked,
   onLoadingChange,
   onFocusSurface
 }: {
   panel: BrowserPanel
   active: boolean
   autoFocusBlocked: boolean
+  inputBlocked: boolean
   onLoadingChange: (panelId: string, loading: boolean) => void
   onFocusSurface: () => void
 }) {
@@ -324,9 +326,9 @@ export function BrowserPanelWorkspace({
 
   useEffect(() => {
     if (!localBrowser) {
-      connectionRef.current?.setVisible(active && !autoFocusBlocked)
+      connectionRef.current?.setVisible(active && !inputBlocked)
     }
-  }, [active, autoFocusBlocked, localBrowser])
+  }, [active, inputBlocked, localBrowser])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -829,7 +831,7 @@ export function BrowserPanelWorkspace({
           <LocalBrowserWebview
             key={connectionRevision}
             panel={panel}
-            inputBlocked={autoFocusBlocked}
+            inputBlocked={inputBlocked}
             onConnection={setLocalConnection}
             onMessage={receiveMessage}
             onPaintRetentionChange={setLocalBrowserPaintRetention}

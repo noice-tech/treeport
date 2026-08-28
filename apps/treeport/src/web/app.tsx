@@ -1350,6 +1350,7 @@ function WorkspaceApp() {
                     input: null
                   })
                 }
+                onFocusSurface={focusToolSurface}
               >
                 {retainedPanels.map((panel) => {
                   const active = panel.id === activePanelId && toolPaneOpen
@@ -1362,6 +1363,7 @@ function WorkspaceApp() {
                       panel={panel}
                       active={active}
                       autoFocusBlocked={autoFocusBlocked}
+                      inputBlocked={workspaceActionsBlocked}
                       onLoadingChange={updateBrowserPanelLoading}
                       onFocusSurface={focusToolSurface}
                     />
