@@ -127,9 +127,8 @@ function WorkspaceApp() {
     : null
   const selectedProject = workspaceResolution?.selection.project ?? null
   const selectedWorktree = workspaceResolution?.selection.worktree ?? null
-  const routeSelectedTerminal = workspaceResolution?.selection.terminal ?? null
   const selectedTerminal =
-    routeSelectedTerminal ??
+    workspaceResolution?.selection.terminal ??
     selectedWorktree?.terminals.find(
       (terminal) =>
         terminal.id ===
@@ -154,6 +153,8 @@ function WorkspaceApp() {
   const [desktopNotificationsOpen, setDesktopNotificationsOpen] =
     useState(false)
   const [mobileNotificationsOpen, setMobileNotificationsOpen] = useState(false)
+  const workspaceActionsBlocked =
+    dialog !== null || projectSwitcherOpen || (isMobile && drawerOpen)
   const [retainedPanelIds, setRetainedPanelIds] = useState<Set<string>>(
     () => new Set()
   )
@@ -955,12 +956,7 @@ function WorkspaceApp() {
   )
   const selectWorkspaceByIndex = useCallback(
     (index: number) => {
-      if (
-        dialog ||
-        projectSwitcherOpen ||
-        (isMobile && drawerOpen) ||
-        !selectedWorktree
-      ) {
+      if (workspaceActionsBlocked || !selectedWorktree) {
         return false
       }
 
@@ -982,26 +978,18 @@ function WorkspaceApp() {
       return true
     },
     [
-      dialog,
-      drawerOpen,
       focusSurface,
-      isMobile,
-      projectSwitcherOpen,
       selectedWorktree,
       selectTerminal,
       terminalWorkflows.pendingTerminals,
-      terminalWorkflows.selectPendingTerminal
+      terminalWorkflows.selectPendingTerminal,
+      workspaceActionsBlocked
     ]
   )
 
   const selectFocusedSurfaceByIndex = useCallback(
     (index: number) => {
-      if (
-        dialog ||
-        projectSwitcherOpen ||
-        (isMobile && drawerOpen) ||
-        !selectedWorktree
-      ) {
+      if (workspaceActionsBlocked || !selectedWorktree) {
         return false
       }
 
@@ -1022,16 +1010,13 @@ function WorkspaceApp() {
       return selectWorkspaceByIndex(index)
     },
     [
-      dialog,
-      drawerOpen,
-      isMobile,
-      projectSwitcherOpen,
       selectedWorktree,
       selectPanel,
       selectedWorktreeTools,
       selectWorkspaceByIndex,
       terminalWorkflows.selectedPendingTerminal,
-      toolPaneOpen
+      toolPaneOpen,
+      workspaceActionsBlocked
     ]
   )
 
@@ -1097,7 +1082,6 @@ function WorkspaceApp() {
     focusSurface('tool')
     setPreserveTerminalFocusPanelId(null)
   }, [focusSurface])
-  const toolSurfaceVisible = toolPaneOpen
 
   useEffect(() => {
     if (desktopBridge) {
@@ -1115,9 +1099,7 @@ function WorkspaceApp() {
         !event.altKey ||
         event.shiftKey ||
         !modifierPressed ||
-        dialog ||
-        projectSwitcherOpen ||
-        (isMobile && drawerOpen) ||
+        workspaceActionsBlocked ||
         !selectedWorktree
       ) {
         return
@@ -1129,15 +1111,7 @@ function WorkspaceApp() {
     }
     document.addEventListener('keydown', keydown, true)
     return () => document.removeEventListener('keydown', keydown, true)
-  }, [
-    desktopBridge,
-    dialog,
-    drawerOpen,
-    isMobile,
-    projectSwitcherOpen,
-    selectedWorktree,
-    toggleToolPane
-  ])
+  }, [desktopBridge, selectedWorktree, toggleToolPane, workspaceActionsBlocked])
 
   useEffect(() => {
     if (!desktopBridge) {
@@ -1145,7 +1119,7 @@ function WorkspaceApp() {
     }
 
     return desktopBridge.onCommand((command) => {
-      if (dialog || projectSwitcherOpen || (isMobile && drawerOpen)) {
+      if (workspaceActionsBlocked) {
         return
       }
 
@@ -1165,7 +1139,7 @@ function WorkspaceApp() {
       }
 
       const toolSurfaceHasFocus =
-        toolSurfaceVisible && focusedSurfaceRef.current === 'tool'
+        toolPaneOpen && focusedSurfaceRef.current === 'tool'
       const selectedTabIndex = command.startsWith('select-tab-')
         ? Number(command.at(-1)) - 1
         : null
@@ -1204,10 +1178,6 @@ function WorkspaceApp() {
     })
   }, [
     activeProject,
-    dialog,
-    drawerOpen,
-    isMobile,
-    projectSwitcherOpen,
     activePanel,
     selectedProject,
     selectedTerminal,
@@ -1217,7 +1187,8 @@ function WorkspaceApp() {
     setToolPickerOpen,
     terminalWorkflows.selectedPendingTerminal,
     toggleToolPane,
-    toolSurfaceVisible
+    toolPaneOpen,
+    workspaceActionsBlocked
   ])
 
   return (
@@ -1319,13 +1290,13 @@ function WorkspaceApp() {
           <div
             className={cn(
               'relative grid min-h-0 min-w-0 grid-cols-1',
-              toolSurfaceVisible && 'min-[701px]:grid-cols-[minmax(0,1fr)_auto]'
+              toolPaneOpen && 'min-[701px]:grid-cols-[minmax(0,1fr)_auto]'
             )}
           >
             <div
               className={cn(
                 'relative grid min-h-0 min-w-0 grid-rows-[minmax(0,1fr)]',
-                toolSurfaceVisible && 'max-[700px]:hidden'
+                toolPaneOpen && 'max-[700px]:hidden'
               )}
               role="group"
               aria-label="Terminal tab group"
@@ -1352,7 +1323,7 @@ function WorkspaceApp() {
             {selectedWorktree ? (
               <WorktreeToolPane
                 worktreeName={selectedWorktree.name}
-                visible={toolSurfaceVisible}
+                visible={toolPaneOpen}
                 tools={selectedWorktreeTools}
                 activePanelId={activePanelId}
                 webPanelRuntimeTitles={webPanelRuntimeTitles}
@@ -1381,12 +1352,9 @@ function WorkspaceApp() {
                 }
               >
                 {retainedPanels.map((panel) => {
-                  const active =
-                    panel.id === activePanelId && toolSurfaceVisible
+                  const active = panel.id === activePanelId && toolPaneOpen
                   const autoFocusBlocked =
-                    dialog !== null ||
-                    projectSwitcherOpen ||
-                    (isMobile && drawerOpen) ||
+                    workspaceActionsBlocked ||
                     preserveTerminalFocusPanelId === panel.id
                   return panel.kind === 'browser' ? (
                     <BrowserPanelWorkspace
