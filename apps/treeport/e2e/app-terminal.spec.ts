@@ -1683,20 +1683,24 @@ test.describe('desktop worktree and terminal workflows', () => {
 
     await page.evaluate(() => window.__dispatchDesktopCommand('new-panel'))
     await page.getByLabel('Search panels').fill('Review')
-    const panelCreateRequest = page.waitForRequest(
+    const panelOpenRequest = page.waitForRequest(
       (request) =>
         request.method() === 'POST' &&
-        new URL(request.url()).pathname === '/api/worktrees/wt_topic/panels'
+        new URL(request.url()).pathname ===
+          '/api/worktrees/wt_topic/panels/open'
     )
     await page.keyboard.press('Enter')
-    expect((await panelCreateRequest).postDataJSON()).toEqual({
+    expect((await panelOpenRequest).postDataJSON()).toEqual({
       definitionId: 'project:review',
       input: null,
       launchCwd: null
     })
-    await expect(
-      page.getByRole('button', { name: 'Review, web panel' })
-    ).toBeVisible()
+    const reviewNavigationItem = page.getByRole('button', {
+      name: 'Review, web panel'
+    })
+    await expect(reviewNavigationItem).toHaveCount(1)
+    await expect(page).toHaveURL(/\/panels\/panel_1$/)
+    const reviewPanelUrl = page.url()
     await expect(page.locator('iframe[title="Review"]')).not.toHaveAttribute(
       'sandbox',
       /allow-same-origin/
@@ -1708,6 +1712,31 @@ test.describe('desktop worktree and terminal workflows', () => {
           .some((frame) => frame.url().includes('/api/web-panels/panel_1/'))
       )
       .toBe(true)
+    const launchedPanelFrame = page
+      .frames()
+      .find((frame) => frame.url().includes('/api/web-panels/panel_1/'))!
+    await launchedPanelFrame.evaluate(() => {
+      document.body.textContent = 'Preserved Review state'
+    })
+    await expect(page.locator('iframe[title="Review"]')).toBeFocused()
+
+    await createdTerminal.click()
+    await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
+    await page.evaluate(() => window.__dispatchDesktopCommand('new-panel'))
+    await page.getByLabel('Search panels').fill('Review')
+    const panelReuseRequest = page.waitForRequest(
+      (request) =>
+        request.method() === 'POST' &&
+        new URL(request.url()).pathname ===
+          '/api/worktrees/wt_topic/panels/open'
+    )
+    await page.keyboard.press('Enter')
+    await panelReuseRequest
+    await expect(reviewNavigationItem).toHaveCount(1)
+    await expect(page).toHaveURL(reviewPanelUrl)
+    await expect(
+      launchedPanelFrame.getByText('Preserved Review state')
+    ).toBeVisible()
     await expect(page.locator('iframe[title="Review"]')).toBeFocused()
     await page.reload()
 
