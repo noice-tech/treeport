@@ -58,6 +58,7 @@ describe('release preparation', () => {
       mkdirSync(path.join(repository, 'packages/panel-sdk'), {
         recursive: true
       })
+      mkdirSync(path.join(repository, 'packages/pi'), { recursive: true })
       cpSync(
         path.resolve('scripts/prepare-release.mjs'),
         path.join(repository, 'scripts/prepare-release.mjs')
@@ -77,6 +78,10 @@ describe('release preparation', () => {
       writeFileSync(
         path.join(repository, 'packages/panel-sdk/package.json'),
         '{\n  "name": "@treeport/panel-sdk",\n  "version": "0.1.0"\n}\n'
+      )
+      writeFileSync(
+        path.join(repository, 'packages/pi/package.json'),
+        '{\n  "name": "@treeport/pi",\n  "version": "0.1.0"\n}\n'
       )
       const fakePnpm = path.join(bin, 'pnpm')
       writeFileSync(fakePnpm, '#!/bin/sh\nexit 0\n')
@@ -151,6 +156,14 @@ describe('release preparation', () => {
         JSON.parse(
           readFileSync(
             path.join(repository, 'packages/panel-sdk/package.json'),
+            'utf8'
+          )
+        ).version
+      ).toBe('0.2.0')
+      expect(
+        JSON.parse(
+          readFileSync(
+            path.join(repository, 'packages/pi/package.json'),
             'utf8'
           )
         ).version

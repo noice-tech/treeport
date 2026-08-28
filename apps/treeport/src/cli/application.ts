@@ -958,10 +958,6 @@ function print<Value>(value: Value, human?: () => string): void {
   )
 }
 
-const agentGuidance = `AI agents:
-  If you're an AI agent, use \`treeport skills\` to see the usage guide.
-`
-
 async function main(args: string[]): Promise<void> {
   const argv =
     args[0] === 'spawn' || (args[0] === 'terminal' && args[1] === 'create')
@@ -974,7 +970,6 @@ async function main(args: string[]): Promise<void> {
     .description('Manage Treeport projects, trees, and terminals.')
     .argument('[folder]', 'folder or folder inside a Git repository to open')
     .option('--json', 'emit machine-readable JSON')
-    .addHelpText('beforeAll', agentGuidance)
     .configureOutput({
       writeOut: writeStdout,
       writeErr: (value) => {

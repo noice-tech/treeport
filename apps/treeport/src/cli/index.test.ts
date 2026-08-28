@@ -216,6 +216,43 @@ async function requestPackagedDaemon(options: {
   })
 }
 
+describe('CLI executable', () => {
+  it('uses the development CLI that belongs to the managed daemon', async () => {
+    const developmentRoot = await mkdtemp(
+      path.join(os.tmpdir(), 'treeport-cli-development-')
+    )
+    const daemonRecord = path.join(
+      developmentRoot,
+      '.treeport-dev/runtime/daemon.json'
+    )
+    const developmentCli = path.join(
+      developmentRoot,
+      '.treeport-dev-dist/node/cli/index.js'
+    )
+    await mkdir(path.dirname(developmentCli), { recursive: true })
+    await writeFile(
+      developmentCli,
+      "#!/usr/bin/env node\nprocess.stdout.write('development cli\\n')\n",
+      { mode: 0o700 }
+    )
+
+    const result = await execute(
+      process.execPath,
+      [path.join(repositoryRoot, 'apps/treeport/bin/treeport.mjs')],
+      {
+        env: cliEnvironment({
+          TREEPORT_CLI_ENTRYPOINT: '',
+          TREEPORT_DAEMON_RECORD: daemonRecord
+        })
+      }
+    )
+    expect(result.stdout).toBe('development cli\n')
+    expect(result.stderr).toBe('')
+
+    await rm(developmentRoot, { recursive: true, force: true })
+  })
+})
+
 describe('CLI context and machine output', () => {
   let server: Server
   let socketServer: SocketIOServer
@@ -1612,24 +1649,22 @@ describe('CLI context and machine output', () => {
     })
   })
 
-  it('advertises and prints the agent usage guide', async () => {
+  it('prints concise command help and the detailed agent usage guide', async () => {
     const help = await runCli(['--help'])
 
     expect(help.code).toBe(0)
     expect(help.stderr).toBe('')
-    expect(help.stdout).toContain(
-      "If you're an AI agent, use `treeport skills` to see the usage guide."
-    )
     expect(help.stdout).toContain(
       'Usage: treeport [options] [folder] [command]'
     )
     expect(help.stdout).toContain(
       'Manage Treeport projects, trees, and terminals.'
     )
-    expect(help.stdout).not.toContain('\n  open')
-    expect(help.stdout.indexOf('AI agents:')).toBeLessThan(
-      help.stdout.indexOf('Usage:')
+    expect(help.stdout).toContain(
+      'skills                               Print the Treeport usage guide for AI'
     )
+    expect(help.stdout).not.toContain('\n  open')
+    expect(help.stdout).not.toContain("If you're an AI agent")
 
     const commandPaths = [
       ['start'],

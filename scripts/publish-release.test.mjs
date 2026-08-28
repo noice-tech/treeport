@@ -24,6 +24,7 @@ describe('release publication', () => {
     mkdirSync(path.join(repository, 'apps/treeport'), { recursive: true })
     mkdirSync(path.join(repository, 'apps/desktop'), { recursive: true })
     mkdirSync(path.join(repository, 'packages/panel-sdk'), { recursive: true })
+    mkdirSync(path.join(repository, 'packages/pi'), { recursive: true })
     mkdirSync(bin)
 
     const executable = (name, source) => {
@@ -52,6 +53,10 @@ describe('release publication', () => {
       writeFileSync(
         path.join(repository, 'packages/panel-sdk/package.json'),
         '{\n  "name": "@treeport/panel-sdk",\n  "version": "0.4.0"\n}\n'
+      )
+      writeFileSync(
+        path.join(repository, 'packages/pi/package.json'),
+        '{\n  "name": "@treeport/pi",\n  "version": "0.4.0"\n}\n'
       )
 
       executable(
@@ -135,6 +140,7 @@ if (args[0] !== '--filter' || args[2] !== 'publish') process.exit(1)
       expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0)
       expect(readFileSync(callsPath, 'utf8').trim().split('\n')).toEqual([
         '--filter @treeport/panel-sdk publish --access public --tag latest --publish-branch main',
+        '--filter @treeport/pi publish --access public --tag latest --publish-branch main',
         '--filter @treeport/treeport publish --access public --tag latest --publish-branch main'
       ])
       expect(result.stdout).toContain(

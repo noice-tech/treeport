@@ -52,8 +52,10 @@ if (
 const packageManifestPath = 'apps/treeport/package.json'
 const desktopManifestPath = 'apps/desktop/package.json'
 const panelSdkManifestPath = 'packages/panel-sdk/package.json'
+const piManifestPath = 'packages/pi/package.json'
 const packageManifest = JSON.parse(readFileSync(packageManifestPath, 'utf8'))
 const panelSdkManifest = JSON.parse(readFileSync(panelSdkManifestPath, 'utf8'))
+const piManifest = JSON.parse(readFileSync(piManifestPath, 'utf8'))
 const currentVersion = parseVersion(packageManifest.version)
 if (!currentVersion) {
   fail(
@@ -61,10 +63,12 @@ if (!currentVersion) {
   )
 }
 
-if (panelSdkManifest.version !== packageManifest.version) {
-  fail(
-    `${panelSdkManifest.name} (${panelSdkManifest.version}) and ${packageManifest.name} (${packageManifest.version}) must have the same version`
-  )
+for (const manifest of [panelSdkManifest, piManifest]) {
+  if (manifest.version !== packageManifest.version) {
+    fail(
+      `${manifest.name} (${manifest.version}) and ${packageManifest.name} (${packageManifest.version}) must have the same version`
+    )
+  }
 }
 
 if (compareVersions(requestedVersion, currentVersion) < 0) {
@@ -131,6 +135,12 @@ if (panelSdkManifest.version !== version) {
     panelSdkManifestPath,
     `${JSON.stringify(panelSdkManifest, null, 2)}\n`
   )
+}
+
+if (piManifest.version !== version) {
+  expectedFiles.push(piManifestPath)
+  piManifest.version = version
+  writeFileSync(piManifestPath, `${JSON.stringify(piManifest, null, 2)}\n`)
 }
 
 try {
