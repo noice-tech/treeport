@@ -201,6 +201,7 @@ describe('TreeportService with injected command adapters', () => {
       resolvedZed.name,
       [resolvedZed.executable, ...resolvedZed.args],
       {
+        initialTitle: resolvedZed.name,
         cwd: resolvedZed.cwd,
         env: resolvedZed.env,
         returnToShell: true
@@ -214,11 +215,13 @@ describe('TreeportService with injected command adapters', () => {
       )
     ) as {
       argv: string[]
+      initialTitle: string
       fallbackArgv: string[]
       cwd: string
       env: Record<string, string>
     }
     expect(launchSpec).toMatchObject({
+      initialTitle: resolvedZed.name,
       argv: [
         'node',
         path.join(canonicalMain, 'script.js'),

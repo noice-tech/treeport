@@ -100,7 +100,7 @@ describe('terminal launcher setup pipeline', () => {
       argv: string[]
       env: NodeJS.ProcessEnv
     }> = []
-    const results = [23, 0, 0]
+    const results = [0, 23, 0, 0]
     const spawnProcess = vi.fn(
       (
         executable: string,
@@ -117,6 +117,7 @@ describe('terminal launcher setup pipeline', () => {
     await expect(
       runLaunchSpec(
         spec({
+          initialTitle: '  --Review;\u001bTitle  ',
           fallbackArgv: ['/bin/zsh', '-l'],
           env: { HOME: '/home/user', ZDOTDIR: '/home/user/.config/zsh' },
           shellIntegrationDir: '/treeport/integration',
@@ -130,9 +131,26 @@ describe('terminal launcher setup pipeline', () => {
       )
     ).resolves.toBe(0)
     expect(calls.map((call) => call.argv)).toEqual([
+      [
+        '/opt/treeport/tmux',
+        'set-option',
+        '-p',
+        '-t',
+        '%7',
+        '--',
+        '@treeport-command',
+        '--Review; Title'
+      ],
       ['final', 'hostile;argument'],
       [
         '/opt/treeport/tmux',
+        'set-option',
+        '-p',
+        '-u',
+        '-t',
+        '%7',
+        '@treeport-command',
+        ';',
         'set-option',
         '-p',
         '-t',
@@ -143,8 +161,8 @@ describe('terminal launcher setup pipeline', () => {
       ],
       ['/bin/zsh', '-l']
     ])
-    expect(calls[0]?.env).not.toHaveProperty('TREEPORT_USER_ZDOTDIR')
-    expect(calls[2]?.env).toMatchObject({
+    expect(calls[1]?.env).not.toHaveProperty('TREEPORT_USER_ZDOTDIR')
+    expect(calls[3]?.env).toMatchObject({
       TREEPORT_USER_ZDOTDIR: '/home/user/.config/zsh',
       TREEPORT_TMUX_EXECUTABLE: '/opt/treeport/tmux',
       ZDOTDIR: '/treeport/integration/zsh'

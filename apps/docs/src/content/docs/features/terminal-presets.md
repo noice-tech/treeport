@@ -142,6 +142,8 @@ Zed tasks require an existing tree. They do not appear in **Initial terminal** d
 
 A preset starts a standard terminal and keeps its terminal interface.
 
+The preset name is the initial terminal title.
+
 Treeport native, user, and package presets start one executable with literal arguments. Compatible Zed commands use the shell rules in the prior section.
 
 Removing a preset does not affect a terminal that is already active.

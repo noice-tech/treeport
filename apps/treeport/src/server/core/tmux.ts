@@ -23,6 +23,7 @@ export const generateTmuxSessionName = (): string =>
 
 export interface LaunchSpec {
   argv: string[]
+  initialTitle?: string | undefined
   fallbackArgv?: string[] | undefined
   cwd: string
   env: Record<string, string>
@@ -262,6 +263,7 @@ export class TmuxAdapter {
     createdAt: string
     cwd: string
     argv: string[]
+    initialTitle?: string
     shellCommand: string | null
     interactiveShell: boolean
     fallbackArgv?: string[]
@@ -354,6 +356,10 @@ export class TmuxAdapter {
           cwd: input.cwd,
           env: environment
         }
+        if (input.initialTitle) {
+          spec.initialTitle = input.initialTitle
+        }
+
         if (input.fallbackArgv) {
           spec.fallbackArgv = [...input.fallbackArgv]
         }

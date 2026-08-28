@@ -33,7 +33,11 @@ Treeport keeps your shell startup files when it installs these hooks.
 
 Nushell keeps its native title behavior.
 
-A terminal started with a command uses that command as the initial title. If the terminal returns to a shell after the command exits, normal interactive-shell title tracking resumes.
+A preset terminal uses the preset name as its initial title.
+
+Other terminals started with commands use the command as the initial title.
+
+If a terminal returns to a shell, normal interactive-shell title tracking resumes after the command exits.
 
 Other interactive shells use the foreground executable name.
 

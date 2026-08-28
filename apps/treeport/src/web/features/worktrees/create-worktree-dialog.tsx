@@ -38,6 +38,7 @@ export function CreateWorktreeDialog({
     base: 'default' | 'current',
     initialTerminal: {
       name: string
+      initialTitle?: string
       argv?: string[]
       returnToShell?: boolean
     },

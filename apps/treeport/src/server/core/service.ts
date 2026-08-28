@@ -103,6 +103,7 @@ interface CheckoutCleanupResult {
 
 interface TerminalLaunchOptions {
   setup?: { tasks: WorktreeSetupTask[]; error: string | null }
+  initialTitle?: string
   returnToShell?: boolean
   closeOnSuccess?: boolean
   initialSize?: TerminalSize
@@ -3842,6 +3843,7 @@ export class TreeportService {
     base: 'default' | 'current',
     initialTerminal?: {
       name: string
+      initialTitle?: string
       argv?: string[]
       returnToShell?: boolean
       initialSize?: TerminalSize
@@ -3923,6 +3925,7 @@ export class TreeportService {
     base: 'default' | 'current',
     initialTerminal?: {
       name: string
+      initialTitle?: string
       argv?: string[]
       returnToShell?: boolean
       initialSize?: TerminalSize
@@ -3975,6 +3978,7 @@ export class TreeportService {
     base: 'default' | 'current',
     initialTerminal?: {
       name: string
+      initialTitle?: string
       argv?: string[]
       returnToShell?: boolean
       initialSize?: TerminalSize
@@ -4018,6 +4022,7 @@ export class TreeportService {
     base: 'default' | 'current',
     initialTerminal?: {
       name: string
+      initialTitle?: string
       argv?: string[]
       returnToShell?: boolean
       initialSize?: TerminalSize
@@ -4202,6 +4207,10 @@ export class TreeportService {
       let setupError: string | null = null
       if (initialTerminal) {
         const launchOptions: TerminalLaunchOptions = {}
+        if (initialTerminal.initialTitle) {
+          launchOptions.initialTitle = initialTerminal.initialTitle
+        }
+
         if (initialTerminal.returnToShell) {
           launchOptions.returnToShell = true
         }
@@ -4406,6 +4415,10 @@ export class TreeportService {
         TREEPORT_TERMINAL_ID: terminalId
       }
     }
+    if (options?.initialTitle) {
+      session.initialTitle = options.initialTitle
+    }
+
     if (options?.returnToShell && !interactiveShell) {
       session.fallbackArgv = [this.deps.config.shell, '-l']
     }

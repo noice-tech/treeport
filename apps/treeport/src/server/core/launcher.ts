@@ -4,6 +4,7 @@ import path from 'node:path'
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { z } from 'zod'
+import { TERMINAL_NAME_MAX_LENGTH } from '@treeport/shared'
 import { integrateShellLaunch } from './shell-integration'
 import type { LaunchSpec } from './tmux'
 
@@ -12,6 +13,12 @@ const FORWARDED_SIGNALS = ['SIGTERM', 'SIGINT', 'SIGHUP'] as const
 const launchSpecSchema = z
   .object({
     argv: z.array(z.string()),
+    initialTitle: z
+      .string()
+      .trim()
+      .min(1)
+      .max(TERMINAL_NAME_MAX_LENGTH)
+      .optional(),
     fallbackArgv: z.array(z.string()).optional(),
     cwd: z.string(),
     env: z.record(z.string(), z.string()),
@@ -269,6 +276,33 @@ export async function runLaunchSpec(
     spec.shellIntegrationDir,
     spec.tmuxExecutable
   )
+  const initialTitle = spec.initialTitle
+    ? safeDiagnostic(spec.initialTitle)
+    : ''
+  if (initialTitle && spec.tmuxExecutable && tmuxPane) {
+    const titleResult = await runChild(
+      [
+        spec.tmuxExecutable,
+        'set-option',
+        '-p',
+        '-t',
+        tmuxPane,
+        '--',
+        '@treeport-command',
+        initialTitle
+      ],
+      {
+        cwd: spec.cwd,
+        env: process.env,
+        spawnProcess,
+        signalSource
+      }
+    )
+    if (titleResult.forwardedSignal) {
+      return 1
+    }
+  }
+
   const result = await runChild(command.argv, {
     cwd: spec.cwd,
     env: command.env,
@@ -290,9 +324,16 @@ export async function runLaunchSpec(
 
   if (spec.fallbackArgv) {
     if (spec.tmuxExecutable && tmuxPane && spec.fallbackArgv[0]) {
-      await runChild(
+      const metadataResult = await runChild(
         [
           spec.tmuxExecutable,
+          'set-option',
+          '-p',
+          '-u',
+          '-t',
+          tmuxPane,
+          '@treeport-command',
+          ';',
           'set-option',
           '-p',
           '-t',
@@ -310,6 +351,9 @@ export async function runLaunchSpec(
           signalSource
         }
       )
+      if (metadataResult.forwardedSignal) {
+        return 1
+      }
     }
 
     const fallback = integrateShellLaunch(
