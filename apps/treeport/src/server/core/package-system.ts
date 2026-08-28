@@ -13,7 +13,8 @@ import {
   type ProjectRecord,
   type TerminalPresetDefinition,
   type WebPanelDefinition,
-  type WebPanelPermission
+  type WebPanelPermission,
+  webPanelPermissionSchema
 } from '@treeport/shared'
 import type { AppConfig } from './config'
 import { runChecked, type CommandRunner } from './command'
@@ -132,7 +133,7 @@ const webPanelManifestEntrySchema = z.union([
   z.string(),
   z.strictObject({
     source: z.string(),
-    permissions: z.array(z.literal('same-origin')).optional()
+    permissions: z.array(webPanelPermissionSchema).optional()
   })
 ])
 
@@ -947,7 +948,7 @@ export class PackageSystem {
       const parsedDefinition = z
         .strictObject({
           source: z.string(),
-          permissions: z.array(z.literal('same-origin')).optional()
+          permissions: z.array(webPanelPermissionSchema).optional()
         })
         .parse(parsed.data)
       const { source, permissions = [] } = parsedDefinition

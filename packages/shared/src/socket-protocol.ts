@@ -2,6 +2,7 @@ import { z } from 'zod'
 import type { ProductEvent } from './index.js'
 import { browserUrlSchema } from './browser-protocol.js'
 import { terminalRuntimeMetadataSchema } from './terminal-protocol.js'
+import { webPanelPermissionSchema } from './web-panel-protocol.js'
 
 const identifierSchema = z.string().min(1).max(128)
 const eventEnvelope = <Type extends string, DataSchema extends z.ZodType>(
@@ -39,7 +40,7 @@ const webPanelSnapshotSchema = z.strictObject({
     input: z.record(z.string(), z.json()).nullable(),
     cwd: z.string().nullable()
   }),
-  permissions: z.array(z.literal('same-origin')),
+  permissions: z.array(webPanelPermissionSchema),
   sandbox: z.strictObject({ allowSameOrigin: z.boolean() }),
   createdAt: z.string(),
   updatedAt: z.string()

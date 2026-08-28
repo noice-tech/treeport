@@ -95,6 +95,18 @@ These limits reduce automatic package execution. However, selected commands and 
 
 Review the panel source, runtime dependencies, and package manifest.
 
+### Tree-file panel permission
+
+A hosted panel can request the `tree-files` permission.
+
+After approval, the panel can read and change existing regular files in its current tree.
+
+Treeport rejects paths outside that tree. It also rejects symbolic links, unsupported files, and files larger than 2 MiB.
+
+Each read returns a revision. Treeport rejects a write if the file changed after that read.
+
+This permission does not create, rename, or delete files. It also does not give the panel a same-origin iframe.
+
 ### High-trust panel permission
 
 A hosted panel can request the `same-origin` permission. This permission makes the iframe boundary weaker.

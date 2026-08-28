@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { TREE_FILE_MAX_BYTES } from '@treeport/shared'
 import { openDatabase } from './database'
 import { GhAdapter } from './gh'
 import { GitAdapter } from './git'
@@ -749,6 +750,176 @@ describe('TreeportService with injected command adapters', () => {
         (candidate) => candidate.id === definition.id
       )
     ).toMatchObject({ permissionsGranted: false })
+  })
+
+  it('edits existing tree files only with an exact granted permission', async () => {
+    const { root, main, runner, service } = await fixture()
+    runner.headExists = false
+    const folder = path.join(main, 'editable folder')
+    const packageRoot = path.join(root, 'packages', 'files-panel')
+    const panelRoot = path.join(packageRoot, 'web-panels', 'files')
+    await Promise.all([
+      fs.mkdir(path.join(folder, '.treeport'), { recursive: true }),
+      fs.mkdir(path.join(folder, 'src'), { recursive: true }),
+      fs.mkdir(path.join(folder, '.git'), { recursive: true }),
+      fs.mkdir(panelRoot, { recursive: true })
+    ])
+    await Promise.all([
+      fs.writeFile(
+        path.join(folder, 'src', 'app.ts'),
+        'export const value = 1\n'
+      ),
+      fs.writeFile(path.join(folder, 'src', 'untracked.txt'), 'untracked\n'),
+      fs.writeFile(path.join(folder, 'binary.bin'), Buffer.from([0xff, 0x00])),
+      fs.writeFile(
+        path.join(folder, 'oversized.txt'),
+        Buffer.alloc(TREE_FILE_MAX_BYTES + 1, 97)
+      ),
+      fs.writeFile(path.join(folder, '.git', 'config'), 'hidden\n'),
+      fs.writeFile(path.join(panelRoot, 'index.html'), '<h1>Files</h1>'),
+      fs.writeFile(
+        path.join(packageRoot, 'package.json'),
+        JSON.stringify({
+          name: '@treeport/files-panel',
+          keywords: ['treeport-package'],
+          treeport: {
+            webPanels: [
+              {
+                source: './web-panels/files',
+                permissions: ['tree-files']
+              }
+            ]
+          }
+        })
+      ),
+      fs.writeFile(
+        path.join(folder, '.treeport', 'settings.json'),
+        JSON.stringify({ packages: [packageRoot] })
+      )
+    ])
+    await fs.chmod(path.join(folder, 'src', 'app.ts'), 0o755)
+    const outside = path.join(root, 'outside.txt')
+    await fs.writeFile(outside, 'outside\n')
+    await fs.symlink(outside, path.join(folder, 'escape.txt'))
+
+    const project = await service.registerProject(folder)
+    const worktree = project.worktrees[0]!
+    const definition = (
+      await service.listWebPanelDefinitions(worktree.id)
+    ).find((candidate) => candidate.title === 'Files')!
+    expect(definition).toMatchObject({
+      permissions: ['tree-files'],
+      permissionsGranted: false,
+      sandbox: { allowSameOrigin: false }
+    })
+    await service.setWebPanelPermissionGrant(
+      worktree.id,
+      definition.id,
+      true,
+      definition.permissions
+    )
+    const panel = await service.createWebPanel(worktree.id, definition.id)
+    await service.setWebPanelPermissionGrant(
+      worktree.id,
+      definition.id,
+      false,
+      definition.permissions
+    )
+    await expect(service.listTreeFiles(panel.id)).rejects.toMatchObject({
+      code: 'WEB_PANEL_PERMISSION_REQUIRED'
+    })
+
+    await service.setWebPanelPermissionGrant(
+      worktree.id,
+      definition.id,
+      true,
+      definition.permissions
+    )
+    await expect(service.listTreeFiles(panel.id)).resolves.toEqual({
+      paths: [
+        '.treeport/settings.json',
+        'binary.bin',
+        'oversized.txt',
+        'src/app.ts',
+        'src/untracked.txt'
+      ],
+      truncated: false
+    })
+
+    const opened = await service.readTreeFile(panel.id, 'src/app.ts')
+    expect(opened).toMatchObject({
+      path: 'src/app.ts',
+      content: 'export const value = 1\n'
+    })
+    const saved = await service.writeTreeFile(panel.id, {
+      path: opened.path,
+      content: 'export const value = 2\n',
+      expectedRevision: opened.revision
+    })
+    expect(await fs.readFile(path.join(folder, 'src', 'app.ts'), 'utf8')).toBe(
+      'export const value = 2\n'
+    )
+    expect(
+      (await fs.stat(path.join(folder, 'src', 'app.ts'))).mode & 0o777
+    ).toBe(0o755)
+    await expect(
+      service.writeTreeFile(panel.id, {
+        path: opened.path,
+        content: 'stale\n',
+        expectedRevision: opened.revision
+      })
+    ).rejects.toMatchObject({ code: 'TREE_FILE_CHANGED', status: 409 })
+    expect(await fs.readFile(path.join(folder, 'src', 'app.ts'), 'utf8')).toBe(
+      'export const value = 2\n'
+    )
+
+    const concurrent = await Promise.allSettled([
+      service.writeTreeFile(panel.id, {
+        path: opened.path,
+        content: 'first\n',
+        expectedRevision: saved.revision
+      }),
+      service.writeTreeFile(panel.id, {
+        path: opened.path,
+        content: 'second\n',
+        expectedRevision: saved.revision
+      })
+    ])
+    expect(
+      concurrent.filter((result) => result.status === 'fulfilled')
+    ).toHaveLength(1)
+    expect(
+      concurrent.filter((result) => result.status === 'rejected')
+    ).toHaveLength(1)
+
+    await expect(
+      service.readTreeFile(panel.id, '../outside.txt')
+    ).rejects.toMatchObject({ code: 'INVALID_TREE_FILE_PATH' })
+    await expect(
+      service.readTreeFile(panel.id, 'escape.txt')
+    ).rejects.toMatchObject({ code: 'INVALID_TREE_FILE_PATH' })
+    await expect(
+      service.readTreeFile(panel.id, 'binary.bin')
+    ).rejects.toMatchObject({ code: 'TREE_FILE_UNSUPPORTED' })
+    await expect(
+      service.readTreeFile(panel.id, 'oversized.txt')
+    ).rejects.toMatchObject({ code: 'TREE_FILE_TOO_LARGE' })
+    await expect(
+      service.readTreeFile(panel.id, 'missing.txt')
+    ).rejects.toMatchObject({ code: 'TREE_FILE_NOT_FOUND' })
+
+    await fs.writeFile(
+      path.join(packageRoot, 'package.json'),
+      JSON.stringify({
+        name: '@treeport/files-panel',
+        keywords: ['treeport-package'],
+        treeport: { webPanels: ['./web-panels/files'] }
+      })
+    )
+    await service.reloadPackages(project.id)
+    await expect(
+      service.readTreeFile(panel.id, 'src/app.ts')
+    ).rejects.toMatchObject({ code: 'WEB_PANEL_TREE_FILES_REQUIRED' })
   })
 
   it('browses bounded server directories and resolves repository roots', async () => {

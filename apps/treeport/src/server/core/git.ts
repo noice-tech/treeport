@@ -636,6 +636,17 @@ export class GitAdapter {
     return (await this.dirtyStatus(cwd)).dirty
   }
 
+  async worktreeFiles(cwd: string): Promise<string[]> {
+    const result = await this.checked(cwd, [
+      'ls-files',
+      '--cached',
+      '--others',
+      '--exclude-standard',
+      '-z'
+    ])
+    return [...new Set(result.stdout.split('\0').filter(Boolean))].sort()
+  }
+
   async worktreeDiff(cwd: string, defaultBranch: string): Promise<GitDiff> {
     const candidates = [`origin/${defaultBranch}`, defaultBranch]
     let baseRef = ''

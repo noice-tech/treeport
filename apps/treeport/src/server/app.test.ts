@@ -270,6 +270,19 @@ function fixture(webDist = '/missing') {
       panel: { id: 'panel_review' },
       launch: { input: null, cwd: null }
     })),
+    listTreeFiles: vi.fn(async () => ({
+      paths: ['src/app.ts'],
+      truncated: false
+    })),
+    readTreeFile: vi.fn(async (_panelId: string, filePath: string) => ({
+      path: filePath,
+      content: 'export const value = 1\n',
+      revision: 'revision-1'
+    })),
+    writeTreeFile: vi.fn(async (_panelId: string, input: { path: string }) => ({
+      path: input.path,
+      revision: 'revision-2'
+    })),
     getWebPanelDiff: vi.fn(async () => ({
       baseRef: 'origin/trunk',
       baseCommit: 'base',
@@ -633,6 +646,54 @@ describe('HTTP API validation', () => {
       200
     )
     expect(service.getWebPanelDiff).toHaveBeenCalledWith('panel_review')
+
+    expect(
+      await (await app.request('/api/panels/panel_review/files')).json()
+    ).toEqual({ paths: ['src/app.ts'], truncated: false })
+    expect(service.listTreeFiles).toHaveBeenCalledWith('panel_review')
+
+    const readFile = await app.request('/api/panels/panel_review/files/read', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ path: 'src/app.ts' })
+    })
+    expect(await readFile.json()).toEqual({
+      path: 'src/app.ts',
+      content: 'export const value = 1\n',
+      revision: 'revision-1'
+    })
+    expect(service.readTreeFile).toHaveBeenCalledWith(
+      'panel_review',
+      'src/app.ts'
+    )
+
+    const writeFile = await app.request('/api/panels/panel_review/files', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        path: 'src/app.ts',
+        content: 'export const value = 2\n',
+        expectedRevision: 'revision-1'
+      })
+    })
+    expect(await writeFile.json()).toEqual({
+      path: 'src/app.ts',
+      revision: 'revision-2'
+    })
+    expect(service.writeTreeFile).toHaveBeenCalledWith('panel_review', {
+      path: 'src/app.ts',
+      content: 'export const value = 2\n',
+      expectedRevision: 'revision-1'
+    })
+    expect(
+      (
+        await app.request('/api/panels/panel_review/files/read', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ path: '../outside' })
+        })
+      ).status
+    ).toBe(400)
 
     expect(
       await (

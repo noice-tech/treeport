@@ -14,6 +14,7 @@ Treeport compiles panel source with its built-in Vite toolchain and resolves `@t
 import { treeport } from '@treeport/panel-sdk'
 
 treeport.panel.setTitle('Review route')
+treeport.panel.setDirty(true)
 
 const context = await treeport.context()
 const diff = await treeport.diff()
@@ -34,12 +35,32 @@ console.log(diff.changeSets.untracked)
 await treeport.storage.set('drafts', [{ file: 'src/app.ts', line: 12 }])
 const drafts = await treeport.storage.get('drafts')
 
+const files = await treeport.files.list()
+const file = await treeport.files.read(files.paths[0])
+await treeport.files.write({
+  path: file.path,
+  content: file.content.replace('before', 'after'),
+  expectedRevision: file.revision
+})
+
 const stopFind = treeport.shortcuts.onFind(() => {
   // Open the panel's own find interface.
 })
 ```
 
 `treeport.panel.setTitle(title)` sets a runtime title in the current Treeport client. Pass `null` to restore the configured title. Treeport does not persist or synchronize runtime titles.
+
+`treeport.panel.setDirty(dirty)` reports local unsaved changes. Treeport warns before local panel closure while this value is `true`.
+
+`treeport.files` requires the `tree-files` package permission. It can list, read, and change existing regular files in the current tree.
+
+Paths are tree-relative. The API does not create, rename, or delete files. It supports UTF-8 files with a maximum size of 2 MiB.
+
+`treeport.files.list()` returns a maximum of 50,000 paths. Its `truncated` value reports if more paths exist.
+
+A read returns an opaque revision. Supply that revision as `expectedRevision` when you write the file.
+
+Treeport rejects the write if the file changed after the read. Read the file again before you retry the write.
 
 `treeport.context()` includes the stored JSON launch input and tree-relative launch directory.
 

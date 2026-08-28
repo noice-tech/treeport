@@ -82,13 +82,22 @@ const webPanelPermissionErrorSchema = z.object({
 })
 const TOOL_PANE_OPEN_STORAGE_PREFIX = 'treeport-tool-pane-open:'
 
+type ClosePanelReason =
+  | 'browser-before-unload'
+  | 'stored-data'
+  | 'unsaved-changes'
+
 type AppDialog =
   | { type: 'project' }
   | { type: 'worktree'; project: ProjectRecord }
   | { type: 'panel'; projectId: string; worktreeId: string | null }
   | { type: 'presets' }
   | { type: 'remove'; worktree: WorktreeRecord; preview: RemovePreview }
-  | { type: 'close-panel'; panel: BrowserPanel | WebPanel }
+  | {
+      type: 'close-panel'
+      panel: BrowserPanel | WebPanel
+      reason: ClosePanelReason
+    }
   | null
 
 interface DeletePanelQuery {
@@ -229,6 +238,25 @@ function WorkspaceApp() {
   const [webPanelRuntimeTitles, setWebPanelRuntimeTitles] = useState<
     Record<string, string>
   >({})
+  const [dirtyWebPanelIds, setDirtyWebPanelIds] = useState<Set<string>>(
+    () => new Set()
+  )
+  const setWebPanelDirty = useCallback((panelId: string, dirty: boolean) => {
+    setDirtyWebPanelIds((current) => {
+      if (current.has(panelId) === dirty) {
+        return current
+      }
+
+      const next = new Set(current)
+      if (dirty) {
+        next.add(panelId)
+      } else {
+        next.delete(panelId)
+      }
+
+      return next
+    })
+  }, [])
   const [browserPanelLoading, setBrowserPanelLoading] = useState<
     Record<string, boolean>
   >({})
@@ -302,6 +330,12 @@ function WorkspaceApp() {
       const next = { ...current }
       removedIds.forEach((panelId) => delete next[panelId])
       return next
+    })
+    setDirtyWebPanelIds((current) => {
+      const next = new Set(
+        [...current].filter((panelId) => webPanelIds.has(panelId))
+      )
+      return next.size === current.size ? current : next
     })
   }, [projects])
   const panelDialogProject =
@@ -525,6 +559,7 @@ function WorkspaceApp() {
     },
     onSuccess: async (_, { panel }) => {
       setWebPanelRuntimeTitle(panel.id, null)
+      setWebPanelDirty(panel.id, false)
       setPreserveTerminalFocusPanelId((current) =>
         current === panel.id ? null : current
       )
@@ -602,7 +637,10 @@ function WorkspaceApp() {
         panel.kind === 'browser' &&
         errorDetails(error).code === 'BROWSER_BEFORE_UNLOAD'
       ) {
-        openDialog({ type: 'close-panel', panel }, trigger)
+        openDialog(
+          { type: 'close-panel', panel, reason: 'browser-before-unload' },
+          trigger
+        )
         return
       }
 
@@ -618,6 +656,14 @@ function WorkspaceApp() {
       return
     }
 
+    if (dirtyWebPanelIds.has(panel.id)) {
+      openDialog(
+        { type: 'close-panel', panel, reason: 'unsaved-changes' },
+        trigger
+      )
+      return
+    }
+
     void parseResponse(
       rpc.api.panels[':panelId'].storage.$get({
         param: { panelId: panel.id }
@@ -625,7 +671,10 @@ function WorkspaceApp() {
     ).then(
       ({ hasData }) => {
         if (hasData) {
-          openDialog({ type: 'close-panel', panel }, trigger)
+          openDialog(
+            { type: 'close-panel', panel, reason: 'stored-data' },
+            trigger
+          )
         } else {
           closePanel.mutate({ panel })
         }
@@ -1407,6 +1456,7 @@ function WorkspaceApp() {
                       reloadRevision={webPanelReloadRevisions[panel.id] ?? 0}
                       autoFocusBlocked={autoFocusBlocked}
                       onTitleChange={setWebPanelRuntimeTitle}
+                      onDirtyChange={setWebPanelDirty}
                       onSelectWorkspace={selectWorkspaceByIndex}
                       onFocusSurface={focusToolSurface}
                     />
@@ -1504,6 +1554,7 @@ function WorkspaceApp() {
       />
       <ClosePanelDialog
         panel={dialog?.type === 'close-panel' ? dialog.panel : null}
+        reason={dialog?.type === 'close-panel' ? dialog.reason : null}
         busy={closePanel.isPending}
         onOpenChange={(open) => !open && setDialog(null)}
         restoreFocusTo={dialogTriggerRef.current}

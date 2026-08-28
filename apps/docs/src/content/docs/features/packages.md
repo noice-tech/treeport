@@ -135,7 +135,7 @@ Declare package resources in `package.json`:
 
 Manifest paths and globs are relative to the package root. They can include `!` exclusions.
 
-Use an object to request the high-trust `same-origin` permission for a web panel:
+Use an object to request permissions for a web panel:
 
 ```json
 {
@@ -143,7 +143,7 @@ Use an object to request the high-trust `same-origin` permission for a web panel
     "webPanels": [
       {
         "source": "./web-panels/browser",
-        "permissions": ["same-origin"]
+        "permissions": ["same-origin", "tree-files"]
       }
     ]
   }
@@ -161,6 +161,10 @@ Removing the package revokes its grants.
 The `same-origin` permission lets a panel use standard browser storage in nested applications.
 
 It also lets the panel access the same-origin Treeport page and API routes. Use this permission only for trusted code.
+
+The `tree-files` permission lets a panel read and change existing files in its current tree.
+
+It does not give the panel a same-origin iframe. It does not permit file creation, rename, or deletion.
 
 An explicit, valid `treeport` manifest controls package discovery.
 

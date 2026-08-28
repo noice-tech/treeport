@@ -1662,6 +1662,119 @@ test.describe('desktop worktree and terminal workflows', () => {
       ])
   })
 
+  test('edits, saves, undoes, redoes, and protects files from stale writes', async ({
+    page
+  }) => {
+    const mocked = await mockApp(page, [], { realFilesPanel: true })
+    await page.getByRole('button', { name: /^topic(?:,|\s|$)/ }).click()
+    await page.getByRole('button', { name: 'New panel in topic' }).click()
+    const launcher = page.getByRole('dialog', { name: 'New panel' })
+    await launcher.getByRole('button', { name: 'Files, web panel' }).click()
+
+    const permissionDialog = page.getByRole('alertdialog', {
+      name: 'Allow privileged panel access?'
+    })
+    await expect(permissionDialog).toContainText(
+      'It can read and change existing files in this tree.'
+    )
+    const permissionRequest = page.waitForRequest(
+      (request) =>
+        request.method() === 'PUT' &&
+        new URL(request.url()).pathname.endsWith('/permission-grant')
+    )
+    await permissionDialog
+      .getByRole('button', { name: 'Allow and open' })
+      .click()
+    expect((await permissionRequest).postDataJSON()).toEqual({
+      granted: true,
+      permissions: ['tree-files']
+    })
+    await expect(page.locator('iframe[title="Files"]')).not.toHaveAttribute(
+      'sandbox',
+      /allow-same-origin/
+    )
+    await expect
+      .poll(() =>
+        page
+          .frames()
+          .some((frame) =>
+            frame.url().includes('/api/web-panels/panel_1/assets/')
+          )
+      )
+      .toBe(true)
+    const filesFrame = page
+      .frames()
+      .find((frame) => frame.url().includes('/api/web-panels/panel_1/assets/'))!
+
+    await filesFrame
+      .getByRole('treeitem', { name: 'app.ts', exact: true })
+      .click()
+    const editor = filesFrame.getByRole('textbox', { name: 'src/app.ts' })
+    await expect(editor).toContainText('export const value = 1')
+    await editor.click()
+    await editor.press('Control+A')
+    await page.keyboard.insertText('export const value = 2')
+    await expect(editor).toContainText('export const value = 2')
+
+    await editor.press('Control+z')
+    await expect(editor).toContainText('export const value = 1')
+    await editor.press('Control+y')
+    await expect(editor).toContainText('export const value = 2')
+
+    const saveRequest = page.waitForRequest((request) => {
+      const url = new URL(request.url())
+      return (
+        request.method() === 'PUT' &&
+        url.pathname === '/api/panels/panel_1/files'
+      )
+    })
+    await editor.press('Control+s')
+    expect((await saveRequest).postDataJSON()).toEqual({
+      path: 'src/app.ts',
+      content: 'export const value = 1\nexport const value = 2',
+      expectedRevision: 'revision-1'
+    })
+    await expect
+      .poll(() => mocked.getTreeFile('src/app.ts')?.content)
+      .toBe('export const value = 1\nexport const value = 2')
+    await expect(filesFrame.getByLabel('Unsaved changes')).toBeHidden()
+    await editor.press('Control+z')
+    await expect(editor).toContainText('export const value = 1')
+    await expect(filesFrame.getByLabel('Unsaved changes')).toBeVisible()
+    await page.getByRole('button', { name: 'Close Files' }).click()
+    const closeDialog = page.getByRole('alertdialog', { name: 'Close Files?' })
+    await expect(closeDialog).toContainText(
+      'Changes in this panel have not been saved.'
+    )
+    await expect(
+      closeDialog.getByRole('button', { name: 'Close without saving' })
+    ).toBeVisible()
+    await closeDialog.getByRole('button', { name: 'Cancel' }).click()
+
+    mocked.setTreeFile('src/app.ts', 'export const external = true\n')
+    await editor.click()
+    const staleRequest = page.waitForRequest((request) => {
+      const url = new URL(request.url())
+      return (
+        request.method() === 'PUT' &&
+        url.pathname === '/api/panels/panel_1/files'
+      )
+    })
+    await editor.press('Control+s')
+    await staleRequest
+    await expect(filesFrame.getByRole('alert')).toContainText(
+      'The file changed after it was opened.'
+    )
+    expect(mocked.getTreeFile('src/app.ts')?.content).toBe(
+      'export const external = true\n'
+    )
+    expect(mocked.treeFileWrites().at(-1)).toEqual({
+      path: 'src/app.ts',
+      content: 'export const value = 1\n',
+      expectedRevision: 'revision-2'
+    })
+  })
+
   test('handles Electron commands through worktree, terminal, and web-panel flows', async ({
     page
   }) => {

@@ -15,12 +15,14 @@ type StoredPanel = BrowserPanel | WebPanel
 
 export function ClosePanelDialog({
   panel,
+  reason,
   busy,
   restoreFocusTo,
   onOpenChange,
   onConfirm
 }: {
   panel: StoredPanel | null
+  reason: 'browser-before-unload' | 'stored-data' | 'unsaved-changes' | null
   busy: boolean
   restoreFocusTo: HTMLElement | null
   onOpenChange: (open: boolean) => void
@@ -32,14 +34,16 @@ export function ClosePanelDialog({
         <AlertDialogContent restoreFocusTo={restoreFocusTo}>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              {panel.kind === 'browser'
+              {reason === 'browser-before-unload'
                 ? 'Leave site?'
                 : `Close ${panel.title}?`}
             </AlertDialogTitle>
             <AlertDialogDescription>
-              {panel.kind === 'browser'
+              {reason === 'browser-before-unload'
                 ? 'Changes you made may not be saved.'
-                : 'This panel has saved data. Closing it permanently deletes that data, including any comments or drafts.'}
+                : reason === 'unsaved-changes'
+                  ? 'Changes in this panel have not been saved.'
+                  : 'This panel has saved data. Closing it permanently deletes that data, including any comments or drafts.'}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -56,9 +60,11 @@ export function ClosePanelDialog({
               >
                 {busy
                   ? 'Closing…'
-                  : panel.kind === 'browser'
+                  : reason === 'browser-before-unload'
                     ? 'Leave'
-                    : 'Close and delete data'}
+                    : reason === 'unsaved-changes'
+                      ? 'Close without saving'
+                      : 'Close and delete data'}
               </Button>
             </AlertDialogAction>
           </AlertDialogFooter>
