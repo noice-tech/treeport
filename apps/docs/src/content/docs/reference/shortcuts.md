@@ -13,23 +13,32 @@ This page includes only Treeport-specific operations.
 
 ## Use application shortcuts
 
-| Action                                   | Browser                                                    | macOS desktop           |
-| ---------------------------------------- | ---------------------------------------------------------- | ----------------------- |
-| Switch project                           | `Cmd+Shift+P` on Apple keyboards; `Ctrl+Shift+P` elsewhere | `Cmd+Shift+P`           |
-| Select panel 1 through 9                 | Use the sidebar                                            | `Cmd+1` through `Cmd+9` |
-| Create a tree in a repository            | Use **New tree**                                           | `Cmd+N`                 |
-| Create a shell terminal                  | Use **New panel**                                          | `Cmd+T`                 |
-| Select a new panel                       | Use **New panel**                                          | `Cmd+Shift+T`           |
-| Close the selected terminal or web panel | Use its close operation                                    | `Cmd+W`                 |
-| Go back or forward                       | Use browser history                                        | `Cmd+[` or `Cmd+]`      |
+| Action                           | Browser                                                    | macOS desktop           |
+| -------------------------------- | ---------------------------------------------------------- | ----------------------- |
+| Switch project                   | `Cmd+Shift+P` on Apple keyboards; `Ctrl+Shift+P` elsewhere | `Cmd+Shift+P`           |
+| Select a tab in the active group | Use the sidebar                                            | `Cmd+1` through `Cmd+9` |
+| Create a tree in a repository    | Use **New tree**                                           | `Cmd+N`                 |
+| Open a tab in the active group   | Use **New panel**                                          | `Cmd+T`                 |
+| Open the global panel picker     | Use **New panel**                                          | `Cmd+Shift+T`           |
+| Toggle the side panel            | `Option+Cmd+B` on Apple keyboards; `Ctrl+Alt+B` elsewhere  | `Option+Cmd+B`          |
+| Close a tab in the active group  | Use its close operation                                    | `Cmd+W`                 |
+| Go back or forward               | Use browser history                                        | `Cmd+[` or `Cmd+]`      |
 
-Numbered selection follows the panel order in the selected tree. Only the first nine panels have numbered shortcuts.
+Treeport has a terminal tab group and a tool tab group. The focused group is the active tab group.
 
-`Cmd+T` creates a shell immediately.
+A focus outline shows the active tab group. Numbered selection operates only in that group.
 
-`Cmd+Shift+T` opens **New panel**. You can select Shell, a preset, or a web panel.
+Only the first nine tabs in each group have numbered shortcuts.
 
-`Cmd+W` uses the standard close safeguards.
+In the terminal tab group, `Cmd+T` creates a shell immediately.
+
+In the tool tab group, `Cmd+T` opens the tool picker.
+
+`Cmd+Shift+T` always opens the global **New panel** picker. You can select Shell, a preset, Browser, or a web panel.
+
+Select the side panel button to open or hide the side panel with a mouse.
+
+`Cmd+W` closes the selected tab in the active tab group. It uses the standard close safeguards.
 
 Treeport can request approval before it stops a foreground process or deletes panel data. A tree always keeps at least one terminal.
 

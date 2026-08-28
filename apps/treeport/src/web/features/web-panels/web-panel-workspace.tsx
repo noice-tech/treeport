@@ -38,7 +38,8 @@ export function WebPanelWorkspace({
   reloadRevision,
   autoFocusBlocked,
   onTitleChange,
-  onSelectWorkspace
+  onSelectWorkspace,
+  onFocusSurface
 }: {
   panel: WebPanel
   active: boolean
@@ -47,6 +48,7 @@ export function WebPanelWorkspace({
   autoFocusBlocked: boolean
   onTitleChange: (panelId: string, title: string | null) => void
   onSelectWorkspace: (index: number) => void
+  onFocusSurface: () => void
 }) {
   const frameRef = useRef<HTMLIFrameElement>(null)
   const panelWindowRef = useRef<Window | null>(null)
@@ -67,6 +69,22 @@ export function WebPanelWorkspace({
     const frame = window.requestAnimationFrame(() => frameRef.current?.focus())
     return () => window.cancelAnimationFrame(frame)
   }, [active, autoFocusBlocked, loadedPanelRevision, panelRevision])
+
+  useEffect(() => {
+    if (!active) {
+      return
+    }
+
+    const detectFrameFocus = () => {
+      window.requestAnimationFrame(() => {
+        if (document.activeElement === frameRef.current) {
+          onFocusSurface()
+        }
+      })
+    }
+    window.addEventListener('blur', detectFrameFocus)
+    return () => window.removeEventListener('blur', detectFrameFocus)
+  }, [active, onFocusSurface])
 
   useEffect(() => {
     if (!active) {
@@ -221,6 +239,7 @@ export function WebPanelWorkspace({
           src={`/api/web-panels/${encodeURIComponent(panel.id)}/assets/`}
           sandbox={`allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads${panel.sandbox.allowSameOrigin ? ' allow-same-origin' : ''}`}
           allow="clipboard-read; clipboard-write; fullscreen"
+          onFocus={onFocusSurface}
           className={cn(
             'h-full w-full border-0 bg-zinc-950',
             loadedPanelRevision === panelRevision ? 'opacity-100' : 'opacity-0'

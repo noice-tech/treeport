@@ -348,7 +348,7 @@ export function TerminalView({
           ) : null}
           {snapshot.phase === 'ready' && !snapshot.controller ? (
             <span
-              className="absolute top-3 right-3 z-10 inline-flex shrink-0 items-center gap-1.5 rounded-full bg-zinc-900/90 px-2 py-1 text-[0.6875rem] font-medium text-zinc-400 shadow ring-1 ring-white/8 backdrop-blur"
+              className="absolute top-3 right-14 z-10 inline-flex shrink-0 items-center gap-1.5 rounded-full bg-zinc-900/90 px-2 py-1 text-[0.6875rem] font-medium text-zinc-400 shadow ring-1 ring-white/8 backdrop-blur"
               title="Interact with the terminal to control it"
             >
               <span

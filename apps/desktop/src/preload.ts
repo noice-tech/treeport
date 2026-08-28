@@ -118,7 +118,17 @@ const desktopBridge = Object.freeze({
           'new-terminal',
           'new-panel',
           'close-panel',
-          'focus-location'
+          'toggle-side-panel',
+          'focus-location',
+          'select-tab-1',
+          'select-tab-2',
+          'select-tab-3',
+          'select-tab-4',
+          'select-tab-5',
+          'select-tab-6',
+          'select-tab-7',
+          'select-tab-8',
+          'select-tab-9'
         ])
         .safeParse(value)
       if (parsed.success) {
@@ -172,6 +182,16 @@ const desktopBridge = Object.freeze({
   },
   disposeBrowser(panelId: string) {
     ipcRenderer.send('native-browser:dispose', { panelId })
+  },
+  onBrowserFocus(listener: (panelId: string) => void) {
+    const receive: Parameters<typeof ipcRenderer.on>[1] = (_event, value) => {
+      const parsed = z.string().safeParse(value)
+      if (parsed.success) {
+        listener(parsed.data)
+      }
+    }
+    ipcRenderer.on('native-browser:focus', receive)
+    return () => ipcRenderer.removeListener('native-browser:focus', receive)
   },
   onBrowserPopup(listener: (popup: DesktopBrowserPopup) => void) {
     const receive: Parameters<typeof ipcRenderer.on>[1] = (_event, value) => {

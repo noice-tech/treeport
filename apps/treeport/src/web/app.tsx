@@ -39,6 +39,12 @@ import {
 import { TerminalPresetsDialog } from './features/terminal-presets/terminal-presets-dialog'
 import { UpdateControl } from './features/updates/update-control'
 import { NewPanelDialog } from './features/panels/new-panel-dialog'
+import { useToolPicker } from './features/panels/tool-picker-context'
+import { useWorkspaceSurfaceFocus } from './features/panels/workspace-surface-focus-context'
+import {
+  SidePanelToggle,
+  WorktreeToolPane
+} from './features/panels/worktree-tool-pane'
 import {
   TerminalWorkspace,
   useTerminalWorkflows
@@ -69,6 +75,7 @@ import {
 import { useWorkspaceNavigate } from './workspace-router-navigation'
 import { ForceSpecificCursor } from './force-specific-cursor'
 import { errorDetails } from './error-message'
+import { cn } from './lib/utils'
 
 const webPanelPermissionErrorSchema = z.object({
   error: z.object({ message: z.string() })
@@ -100,6 +107,10 @@ export default function App() {
 }
 
 function WorkspaceApp() {
+  const { dismiss: dismissToolPicker, setOpen: setToolPickerOpen } =
+    useToolPicker()
+  const { focusedSurfaceRef, focusSurface, restoreEmptyToolFocus } =
+    useWorkspaceSurfaceFocus()
   const desktopBridge = window.treeportDesktop
   const navigateToWorkspace = useWorkspaceNavigate()
   const queryClient = useQueryClient()
@@ -116,10 +127,19 @@ function WorkspaceApp() {
     : null
   const selectedProject = workspaceResolution?.selection.project ?? null
   const selectedWorktree = workspaceResolution?.selection.worktree ?? null
-  const selectedTerminal = workspaceResolution?.selection.terminal ?? null
+  const selectedTerminal =
+    workspaceResolution?.selection.terminal ??
+    selectedWorktree?.terminals.find(
+      (terminal) =>
+        terminal.id ===
+        localStorage.getItem(
+          `${LAST_PROJECT_TERMINAL_STORAGE_PREFIX}${selectedProject?.id}`
+        )
+    ) ??
+    selectedWorktree?.terminals[0] ??
+    null
   const selectedTerminalId = selectedTerminal?.id ?? null
   const selectedPanel = workspaceResolution?.selection.panel ?? null
-  const selectedPanelId = selectedPanel?.id ?? null
   const activeProject = selectedProject
   const {
     isMobile,
@@ -133,8 +153,55 @@ function WorkspaceApp() {
   const [desktopNotificationsOpen, setDesktopNotificationsOpen] =
     useState(false)
   const [mobileNotificationsOpen, setMobileNotificationsOpen] = useState(false)
+  const workspaceActionsBlocked =
+    dialog !== null || projectSwitcherOpen || (isMobile && drawerOpen)
   const [retainedPanelIds, setRetainedPanelIds] = useState<Set<string>>(
     () => new Set()
+  )
+  const [toolPaneOpen, setToolPaneOpen] = useState(false)
+  const [activePanelByWorktree, setActivePanelByWorktree] = useState<
+    Record<string, string | null>
+  >({})
+  const [preserveTerminalFocusPanelId, setPreserveTerminalFocusPanelId] =
+    useState<string | null>(null)
+  const selectedWorktreeTools = useMemo(
+    () =>
+      selectedWorktree?.panels.filter(
+        (panel): panel is BrowserPanel | WebPanel => panel.kind !== 'terminal'
+      ) ?? [],
+    [selectedWorktree]
+  )
+  const rememberedActivePanel = selectedWorktreeTools.find(
+    (panel) => panel.id === activePanelByWorktree[selectedWorktree?.id ?? '']
+  )
+  const activePanel =
+    selectedPanel ??
+    rememberedActivePanel ??
+    (toolPaneOpen ? selectedWorktreeTools.at(-1) : null) ??
+    null
+  const activePanelId = activePanel?.id ?? null
+  const retainPanel = useCallback((panelId: string) => {
+    setRetainedPanelIds((current) => {
+      if (current.has(panelId)) {
+        return current
+      }
+
+      const next = new Set(current)
+      next.add(panelId)
+      return next
+    })
+  }, [])
+  const revealTool = useCallback(
+    (panel: BrowserPanel | WebPanel, preserveTerminalFocus: boolean) => {
+      retainPanel(panel.id)
+      setActivePanelByWorktree((current) => ({
+        ...current,
+        [panel.worktreeId]: panel.id
+      }))
+      setToolPaneOpen(true)
+      setPreserveTerminalFocusPanelId(preserveTerminalFocus ? panel.id : null)
+    },
+    [retainPanel]
   )
   const [webPanelReloadRevisions, setWebPanelReloadRevisions] = useState<
     Record<string, number>
@@ -227,6 +294,8 @@ function WorkspaceApp() {
           (worktree) => worktree.id === dialog.worktreeId
         ) ?? null)
       : null
+  const webPanelDefinitionsWorktree =
+    panelDialogWorktree ?? (toolPaneOpen ? selectedWorktree : null)
   const presetDefinitionsContext =
     dialog?.type === 'worktree'
       ? { projectId: dialog.project.id }
@@ -243,16 +312,16 @@ function WorkspaceApp() {
   const availablePresets = presetDefinitionsQuery.data?.definitions ?? []
   const presetDiagnostics = presetDefinitionsQuery.data?.diagnostics ?? []
   const webPanelDefinitionsQuery = useQuery({
-    queryKey: ['web-panel-definitions', panelDialogWorktree?.id],
+    queryKey: ['web-panel-definitions', webPanelDefinitionsWorktree?.id],
     queryFn: async () =>
       (
         await parseResponse(
           rpc.api.worktrees[':worktreeId']['web-panel-definitions'].$get({
-            param: { worktreeId: panelDialogWorktree!.id }
+            param: { worktreeId: webPanelDefinitionsWorktree!.id }
           })
         )
       ).definitions,
-    enabled: Boolean(panelDialogWorktree)
+    enabled: Boolean(webPanelDefinitionsWorktree)
   })
   const createWebPanel = useMutation({
     mutationFn: ({
@@ -270,7 +339,11 @@ function WorkspaceApp() {
           !definition.permissionsGranted
         ) {
           const response = await fetch(
-            `/api/worktrees/${encodeURIComponent(worktree.id)}/web-panel-definitions/${encodeURIComponent(definition.id)}/permission-grant`,
+            `/api/worktrees/${encodeURIComponent(
+              worktree.id
+            )}/web-panel-definitions/${encodeURIComponent(
+              definition.id
+            )}/permission-grant`,
             {
               method: 'PUT',
               headers: { 'content-type': 'application/json' },
@@ -307,6 +380,7 @@ function WorkspaceApp() {
       })(),
     onSuccess: async (panel, { worktree }) => {
       setDialog(null)
+      revealTool(panel, false)
       queryClient.setQueryData<ProjectRecord[]>(
         projectsQueryOptions.queryKey,
         (current) =>
@@ -359,6 +433,7 @@ function WorkspaceApp() {
       ),
     onSuccess: async ({ panel }, { worktree }) => {
       setDialog(null)
+      revealTool(panel, false)
       queryClient.setQueryData<ProjectRecord[]>(
         projectsQueryOptions.queryKey,
         (current) =>
@@ -430,9 +505,42 @@ function WorkspaceApp() {
     },
     onSuccess: async (_, { panel }) => {
       setWebPanelRuntimeTitle(panel.id, null)
+      setPreserveTerminalFocusPanelId((current) =>
+        current === panel.id ? null : current
+      )
+      setRetainedPanelIds((current) => {
+        if (!current.has(panel.id)) {
+          return current
+        }
+
+        const next = new Set(current)
+        next.delete(panel.id)
+        return next
+      })
       setDialog((current) =>
         current?.type === 'close-panel' && current.panel.id === panel.id
           ? null
+          : current
+      )
+      const worktree = projects
+        .flatMap((project) => project.worktrees)
+        .find((candidate) => candidate.id === panel.worktreeId)
+      const tools =
+        worktree?.panels.filter(
+          (candidate): candidate is BrowserPanel | WebPanel =>
+            candidate.kind !== 'terminal'
+        ) ?? []
+      const closedIndex = tools.findIndex(
+        (candidate) => candidate.id === panel.id
+      )
+      const remainingTools = tools.filter(
+        (candidate) => candidate.id !== panel.id
+      )
+      const nextTool =
+        remainingTools[closedIndex] ?? remainingTools[closedIndex - 1] ?? null
+      setActivePanelByWorktree((current) =>
+        current[panel.worktreeId] === panel.id
+          ? { ...current, [panel.worktreeId]: nextTool?.id ?? null }
           : current
       )
       queryClient.setQueryData<ProjectRecord[]>(
@@ -453,13 +561,16 @@ function WorkspaceApp() {
           }))
       )
       if (selectedPanel?.id === panel.id) {
-        const worktree = projects
-          .flatMap((project) => project.worktrees)
-          .find((candidate) => candidate.id === panel.worktreeId)
-        const target = worktree ? targetForWorktree(projects, worktree) : null
+        const target = worktree
+          ? targetForWorktree(projects, worktree, selectedTerminalId)
+          : null
         if (target) {
           await navigateToWorkspace(target, true)
         }
+      }
+
+      if (!nextTool) {
+        restoreEmptyToolFocus()
       }
 
       void queryClient.invalidateQueries({
@@ -513,12 +624,17 @@ function WorkspaceApp() {
           request.sourceTerminalId,
           request.sourcePanelId,
           selectedTerminalId,
-          selectedPanelId
+          activePanelId
         )
       ) {
         return
       }
 
+      revealTool(
+        request.panel,
+        request.sourceTerminalId !== null &&
+          request.sourceTerminalId === selectedTerminalId
+      )
       setWebPanelReloadRevisions((current) => ({
         ...current,
         [request.panelId]: (current[request.panelId] ?? 0) + 1
@@ -569,7 +685,13 @@ function WorkspaceApp() {
         notifyError(error, { operation: 'open panel' })
       })
     },
-    [navigateToWorkspace, queryClient, selectedPanelId, selectedTerminalId]
+    [
+      activePanelId,
+      navigateToWorkspace,
+      queryClient,
+      revealTool,
+      selectedTerminalId
+    ]
   )
   const navigateWorkspaceOpenRequest = useCallback(
     (request: ProductEventDataMap['workspace.open_requested']) => {
@@ -625,20 +747,18 @@ function WorkspaceApp() {
   }
 
   useEffect(() => {
-    if (!selectedPanelId) {
+    if (!workspaceResolution?.canonical || !selectedPanel) {
       return
     }
 
-    setRetainedPanelIds((current) => {
-      if (current.has(selectedPanelId)) {
-        return current
-      }
-
-      const next = new Set(current)
-      next.add(selectedPanelId)
-      return next
-    })
-  }, [selectedPanelId])
+    retainPanel(selectedPanel.id)
+    setActivePanelByWorktree((current) =>
+      current[selectedPanel.worktreeId] === selectedPanel.id
+        ? current
+        : { ...current, [selectedPanel.worktreeId]: selectedPanel.id }
+    )
+    setToolPaneOpen(true)
+  }, [retainPanel, selectedPanel, workspaceResolution?.canonical])
 
   useEffect(() => {
     if (!workspaceResolution || workspaceResolution.canonical) {
@@ -703,9 +823,9 @@ function WorkspaceApp() {
         .filter(
           (panel): panel is BrowserPanel | WebPanel =>
             panel.kind !== 'terminal' &&
-            (retainedPanelIds.has(panel.id) || panel.id === selectedPanelId)
+            (retainedPanelIds.has(panel.id) || panel.id === activePanelId)
         ),
-    [projects, retainedPanelIds, selectedPanelId]
+    [activePanelId, projects, retainedPanelIds]
   )
   const navigateToTerminal = useCallback(
     (terminal: TerminalRecord) => {
@@ -720,6 +840,7 @@ function WorkspaceApp() {
   )
 
   const selectWorktree = (worktree: WorktreeRecord) => {
+    focusSurface('terminal')
     const target = targetForWorktree(projects, worktree, selectedTerminalId)
     if (target) {
       void navigateToWorkspace(target)
@@ -737,6 +858,7 @@ function WorkspaceApp() {
     )
 
   const selectProject = (project: ProjectRecord) => {
+    focusSurface('terminal')
     const target = rememberedTargetForProject(project)
     projectSwitcher.dismissedIntoTerminalRef.current =
       !isMobile && target.kind === 'terminal'
@@ -759,6 +881,7 @@ function WorkspaceApp() {
       }
     })
   const projectOpenedFromSwitcher = (project: ProjectRecord) => {
+    focusSurface('terminal')
     const target = rememberedTargetForProject(project)
     projectSwitcher.dismissedIntoTerminalRef.current =
       !isMobile && target.kind === 'terminal'
@@ -797,16 +920,23 @@ function WorkspaceApp() {
   })
   const selectTerminal = useCallback(
     (terminal: TerminalRecord) => {
+      focusSurface('terminal')
       setDesktopNotificationsOpen(false)
       setMobileNotificationsOpen(false)
       terminalWorkflows.clearPendingTerminalSelection()
       navigateToTerminal(terminal)
     },
-    [navigateToTerminal, terminalWorkflows.clearPendingTerminalSelection]
+    [
+      focusSurface,
+      navigateToTerminal,
+      terminalWorkflows.clearPendingTerminalSelection
+    ]
   )
   const selectPanel = useCallback(
     (panel: BrowserPanel | WebPanel) => {
       terminalWorkflows.clearPendingTerminalSelection()
+      focusSurface('tool')
+      revealTool(panel, false)
 
       const target = targetForPanel(projects, panel)
       if (target) {
@@ -817,19 +947,16 @@ function WorkspaceApp() {
     },
     [
       closeDrawerAfterNavigation,
+      focusSurface,
       navigateToWorkspace,
       projects,
+      revealTool,
       terminalWorkflows.clearPendingTerminalSelection
     ]
   )
   const selectWorkspaceByIndex = useCallback(
     (index: number) => {
-      if (
-        dialog ||
-        projectSwitcherOpen ||
-        (isMobile && drawerOpen) ||
-        !selectedWorktree
-      ) {
+      if (workspaceActionsBlocked || !selectedWorktree) {
         return false
       }
 
@@ -839,35 +966,57 @@ function WorkspaceApp() {
         return true
       }
 
-      const panels = selectedWorktree.panels.filter(
-        (panel): panel is BrowserPanel | WebPanel => panel.kind !== 'terminal'
-      )
-      const panel = panels[index - selectedWorktree.terminals.length]
-      if (panel) {
-        selectPanel(panel)
-        return true
-      }
-
       const pendingTerminal = terminalWorkflows.pendingTerminals.filter(
         (candidate) => candidate.worktreeId === selectedWorktree.id
-      )[index - selectedWorktree.terminals.length - panels.length]
+      )[index - selectedWorktree.terminals.length]
       if (!pendingTerminal) {
         return false
       }
 
+      focusSurface('terminal')
       terminalWorkflows.selectPendingTerminal(pendingTerminal.id)
       return true
     },
     [
-      dialog,
-      drawerOpen,
-      isMobile,
-      projectSwitcherOpen,
+      focusSurface,
       selectedWorktree,
       selectTerminal,
-      selectPanel,
       terminalWorkflows.pendingTerminals,
-      terminalWorkflows.selectPendingTerminal
+      terminalWorkflows.selectPendingTerminal,
+      workspaceActionsBlocked
+    ]
+  )
+
+  const selectFocusedSurfaceByIndex = useCallback(
+    (index: number) => {
+      if (workspaceActionsBlocked || !selectedWorktree) {
+        return false
+      }
+
+      if (
+        toolPaneOpen &&
+        !terminalWorkflows.selectedPendingTerminal &&
+        focusedSurfaceRef.current === 'tool'
+      ) {
+        const panel = selectedWorktreeTools[index]
+        if (!panel) {
+          return false
+        }
+
+        selectPanel(panel)
+        return true
+      }
+
+      return selectWorkspaceByIndex(index)
+    },
+    [
+      selectedWorktree,
+      selectPanel,
+      selectedWorktreeTools,
+      selectWorkspaceByIndex,
+      terminalWorkflows.selectedPendingTerminal,
+      toolPaneOpen,
+      workspaceActionsBlocked
     ]
   )
 
@@ -882,7 +1031,7 @@ function WorkspaceApp() {
         return
       }
 
-      if (!selectWorkspaceByIndex(index)) {
+      if (!selectFocusedSurfaceByIndex(index)) {
         return
       }
 
@@ -891,7 +1040,7 @@ function WorkspaceApp() {
     }
     document.addEventListener('keydown', keydown, true)
     return () => document.removeEventListener('keydown', keydown, true)
-  }, [selectWorkspaceByIndex])
+  }, [selectFocusedSurfaceByIndex])
 
   const panelLaunchDisabled =
     !panelDialogProject ||
@@ -899,6 +1048,70 @@ function WorkspaceApp() {
     panelDialogProject.availability.state === 'unavailable' ||
     Boolean(panelDialogWorktree.prunable) ||
     Boolean(pendingRemovals[panelDialogWorktree.id])
+  const toolLaunchDisabled =
+    !selectedProject ||
+    !selectedWorktree ||
+    selectedProject.availability.state === 'unavailable' ||
+    Boolean(selectedWorktree.prunable) ||
+    Boolean(pendingRemovals[selectedWorktree.id])
+  const toggleToolPane = useCallback(() => {
+    if (toolPaneOpen) {
+      setToolPaneOpen(false)
+      focusSurface('terminal')
+      return
+    }
+
+    const panel = activePanel ?? selectedWorktreeTools.at(-1) ?? null
+    if (panel) {
+      retainPanel(panel.id)
+      setActivePanelByWorktree((current) => ({
+        ...current,
+        [panel.worktreeId]: panel.id
+      }))
+    }
+
+    setToolPaneOpen(true)
+  }, [
+    activePanel,
+    focusSurface,
+    retainPanel,
+    selectedWorktreeTools,
+    toolPaneOpen
+  ])
+  const focusToolSurface = useCallback(() => {
+    focusSurface('tool')
+    setPreserveTerminalFocusPanelId(null)
+  }, [focusSurface])
+
+  useEffect(() => {
+    if (desktopBridge) {
+      return
+    }
+
+    const usesMacKeyboard = /Mac|iPhone|iPad|iPod/.test(navigator.platform)
+    const keydown = (event: KeyboardEvent) => {
+      const modifierPressed = usesMacKeyboard
+        ? event.metaKey && !event.ctrlKey
+        : event.ctrlKey && !event.metaKey
+      if (
+        event.isComposing ||
+        event.key.toLocaleLowerCase() !== 'b' ||
+        !event.altKey ||
+        event.shiftKey ||
+        !modifierPressed ||
+        workspaceActionsBlocked ||
+        !selectedWorktree
+      ) {
+        return
+      }
+
+      event.preventDefault()
+      event.stopPropagation()
+      toggleToolPane()
+    }
+    document.addEventListener('keydown', keydown, true)
+    return () => document.removeEventListener('keydown', keydown, true)
+  }, [desktopBridge, selectedWorktree, toggleToolPane, workspaceActionsBlocked])
 
   useEffect(() => {
     if (!desktopBridge) {
@@ -906,7 +1119,7 @@ function WorkspaceApp() {
     }
 
     return desktopBridge.onCommand((command) => {
-      if (dialog || projectSwitcherOpen || (isMobile && drawerOpen)) {
+      if (workspaceActionsBlocked) {
         return
       }
 
@@ -925,12 +1138,27 @@ function WorkspaceApp() {
         return
       }
 
-      if (command === 'new-terminal') {
-        terminalWorkflows.createTerminalInWorktree(
-          selectedProject,
-          selectedWorktree,
-          { name: 'Shell' }
-        )
+      const toolSurfaceHasFocus =
+        toolPaneOpen && focusedSurfaceRef.current === 'tool'
+      const selectedTabIndex = command.startsWith('select-tab-')
+        ? Number(command.at(-1)) - 1
+        : null
+      if (selectedTabIndex !== null) {
+        selectFocusedSurfaceByIndex(selectedTabIndex)
+      } else if (command === 'toggle-side-panel') {
+        toggleToolPane()
+      } else if (command === 'new-terminal') {
+        if (toolSurfaceHasFocus) {
+          if (selectedWorktreeTools.length > 0) {
+            setToolPickerOpen(true)
+          }
+        } else {
+          terminalWorkflows.createTerminalInWorktree(
+            selectedProject,
+            selectedWorktree,
+            { name: 'Shell' }
+          )
+        }
       } else if (command === 'new-panel') {
         openDialog({
           type: 'panel',
@@ -938,8 +1166,8 @@ function WorkspaceApp() {
           worktreeId: selectedWorktree.id
         })
       } else if (command === 'close-panel') {
-        if (selectedPanel) {
-          requestClosePanel(selectedPanel)
+        if (toolSurfaceHasFocus && activePanel) {
+          requestClosePanel(activePanel)
         } else if (
           !terminalWorkflows.selectedPendingTerminal &&
           selectedTerminal
@@ -950,15 +1178,17 @@ function WorkspaceApp() {
     })
   }, [
     activeProject,
-    dialog,
-    drawerOpen,
-    isMobile,
-    projectSwitcherOpen,
+    activePanel,
     selectedProject,
     selectedTerminal,
-    selectedPanel,
     selectedWorktree,
-    terminalWorkflows.selectedPendingTerminal
+    selectedWorktreeTools.length,
+    selectFocusedSurfaceByIndex,
+    setToolPickerOpen,
+    terminalWorkflows.selectedPendingTerminal,
+    toggleToolPane,
+    toolPaneOpen,
+    workspaceActionsBlocked
   ])
 
   return (
@@ -970,9 +1200,7 @@ function WorkspaceApp() {
       <ProjectSwitcherShortcut blocked={dialog !== null} />
       <WorkspaceMobileHeader
         selectedTerminalId={
-          terminalWorkflows.selectedPendingTerminal || selectedPanel
-            ? null
-            : selectedTerminalId
+          terminalWorkflows.selectedPendingTerminal ? null : selectedTerminalId
         }
         terminals={activeProjectTerminals}
         onSelectTerminal={selectTerminal}
@@ -1018,17 +1246,10 @@ function WorkspaceApp() {
           activeProject={activeProject}
           selectedWorktree={selectedWorktree}
           selectedTerminalId={
-            terminalWorkflows.selectedPendingTerminal || selectedPanel
+            terminalWorkflows.selectedPendingTerminal
               ? null
               : selectedTerminalId
           }
-          selectedPanelId={
-            terminalWorkflows.selectedPendingTerminal
-              ? null
-              : (selectedPanel?.id ?? null)
-          }
-          webPanelRuntimeTitles={webPanelRuntimeTitles}
-          browserPanelLoading={browserPanelLoading}
           selectedPendingTerminalId={
             terminalWorkflows.selectedPendingTerminal?.id ?? null
           }
@@ -1037,10 +1258,11 @@ function WorkspaceApp() {
           pendingRemovals={pendingRemovals}
           onRetryProjects={() => void projectsQuery.refetch()}
           onSelectTerminal={selectTerminal}
-          onSelectPendingTerminal={terminalWorkflows.selectPendingTerminal}
+          onSelectPendingTerminal={(pendingTerminalId) => {
+            focusSurface('terminal')
+            terminalWorkflows.selectPendingTerminal(pendingTerminalId)
+          }}
           onCloseTerminal={terminalWorkflows.requestCloseTerminal}
-          onSelectPanel={selectPanel}
-          onClosePanel={requestClosePanel}
           onSelectWorktree={selectWorktree}
           onPrepareRemoval={prepareRemoval}
           onOpenPanelDialog={(project, worktree, trigger) =>
@@ -1059,43 +1281,110 @@ function WorkspaceApp() {
         />
       </WorkspaceSidebar>
       <WorkspaceMain>
-        {retainedPanels.map((panel) => {
-          const active =
-            panel.id === selectedPanelId &&
-            !terminalWorkflows.selectedPendingTerminal
-          const autoFocusBlocked =
-            dialog !== null || projectSwitcherOpen || (isMobile && drawerOpen)
-          return panel.kind === 'browser' ? (
-            <BrowserPanelWorkspace
-              key={panel.id}
-              panel={panel}
-              active={active}
-              autoFocusBlocked={autoFocusBlocked}
-              onLoadingChange={updateBrowserPanelLoading}
-            />
-          ) : (
-            <WebPanelWorkspace
-              key={panel.id}
-              panel={panel}
-              active={active}
-              title={webPanelRuntimeTitles[panel.id] ?? panel.title}
-              reloadRevision={webPanelReloadRevisions[panel.id] ?? 0}
-              autoFocusBlocked={autoFocusBlocked}
-              onTitleChange={setWebPanelRuntimeTitle}
-              onSelectWorkspace={selectWorkspaceByIndex}
-            />
-          )
-        })}
-        {(!selectedPanel || terminalWorkflows.selectedPendingTerminal) && (
-          <TerminalWorkspace
-            selectedWorktree={selectedWorktree}
-            selectedTerminal={selectedTerminal}
-            selectedPendingTerminal={terminalWorkflows.selectedPendingTerminal}
-            pendingTerminals={terminalWorkflows.pendingTerminals}
-            loading={projectsQuery.isPending}
-            dialogOpen={dialog !== null}
+        <div className="relative grid min-h-0 min-w-0 grid-rows-[minmax(0,1fr)]">
+          <SidePanelToggle
+            open={toolPaneOpen}
+            disabled={!selectedProject || !selectedWorktree}
+            onToggle={toggleToolPane}
           />
-        )}
+          <div
+            className={cn(
+              'relative grid min-h-0 min-w-0 grid-cols-1',
+              toolPaneOpen && 'min-[701px]:grid-cols-[minmax(0,1fr)_auto]'
+            )}
+          >
+            <div
+              className={cn(
+                'relative grid min-h-0 min-w-0 grid-rows-[minmax(0,1fr)]',
+                toolPaneOpen && 'max-[700px]:hidden'
+              )}
+              role="group"
+              aria-label="Terminal tab group"
+              onPointerDownCapture={() => {
+                dismissToolPicker()
+                focusSurface('terminal')
+              }}
+              onFocusCapture={() => {
+                dismissToolPicker()
+                focusSurface('terminal')
+              }}
+            >
+              <TerminalWorkspace
+                selectedWorktree={selectedWorktree}
+                selectedTerminal={selectedTerminal}
+                selectedPendingTerminal={
+                  terminalWorkflows.selectedPendingTerminal
+                }
+                pendingTerminals={terminalWorkflows.pendingTerminals}
+                loading={projectsQuery.isPending}
+                dialogOpen={dialog !== null}
+              />
+            </div>
+            {selectedWorktree ? (
+              <WorktreeToolPane
+                worktreeName={selectedWorktree.name}
+                visible={toolPaneOpen}
+                tools={selectedWorktreeTools}
+                activePanelId={activePanelId}
+                webPanelRuntimeTitles={webPanelRuntimeTitles}
+                browserPanelLoading={browserPanelLoading}
+                definitions={webPanelDefinitionsQuery.data ?? []}
+                definitionsLoading={
+                  toolPaneOpen && webPanelDefinitionsQuery.isPending
+                }
+                definitionsError={webPanelDefinitionsQuery.isError}
+                launchDisabled={
+                  toolLaunchDisabled ||
+                  createWebPanel.isPending ||
+                  createBrowserPanel.isPending
+                }
+                onSelectPanel={selectPanel}
+                onClosePanel={requestClosePanel}
+                onCreateBrowserPanel={() =>
+                  createBrowserPanel.mutate({ worktree: selectedWorktree })
+                }
+                onOpenWebPanel={(definition) =>
+                  createWebPanel.mutate({
+                    worktree: selectedWorktree,
+                    definition,
+                    input: null
+                  })
+                }
+                onFocusSurface={focusToolSurface}
+              >
+                {retainedPanels.map((panel) => {
+                  const active = panel.id === activePanelId && toolPaneOpen
+                  const autoFocusBlocked =
+                    workspaceActionsBlocked ||
+                    preserveTerminalFocusPanelId === panel.id
+                  return panel.kind === 'browser' ? (
+                    <BrowserPanelWorkspace
+                      key={panel.id}
+                      panel={panel}
+                      active={active}
+                      autoFocusBlocked={autoFocusBlocked}
+                      inputBlocked={workspaceActionsBlocked}
+                      onLoadingChange={updateBrowserPanelLoading}
+                      onFocusSurface={focusToolSurface}
+                    />
+                  ) : (
+                    <WebPanelWorkspace
+                      key={panel.id}
+                      panel={panel}
+                      active={active}
+                      title={webPanelRuntimeTitles[panel.id] ?? panel.title}
+                      reloadRevision={webPanelReloadRevisions[panel.id] ?? 0}
+                      autoFocusBlocked={autoFocusBlocked}
+                      onTitleChange={setWebPanelRuntimeTitle}
+                      onSelectWorkspace={selectWorkspaceByIndex}
+                      onFocusSurface={focusToolSurface}
+                    />
+                  )
+                })}
+              </WorktreeToolPane>
+            ) : null}
+          </div>
+        </div>
       </WorkspaceMain>
       {showSyncDegraded ? (
         <div

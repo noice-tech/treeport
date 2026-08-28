@@ -3,7 +3,9 @@ type TreeportDesktopCommand =
   | 'new-terminal'
   | 'new-panel'
   | 'close-panel'
+  | 'toggle-side-panel'
   | 'focus-location'
+  | `select-tab-${1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9}`
 type TreeportDesktopFileAction = 'opened' | 'rejected'
 
 interface TreeportBrowserWebview extends HTMLElement {
@@ -51,6 +53,7 @@ type TreeportDesktopBridge = Readonly<{
   setBrowserAgentControl: (panelId: string, locked: boolean) => Promise<boolean>
   requestBrowserClose: (panelId: string, force: boolean) => Promise<boolean>
   disposeBrowser: (panelId: string) => void
+  onBrowserFocus: (listener: (panelId: string) => void) => () => void
   onBrowserPopup: (
     listener: (popup: { panelId: string; url: string }) => void
   ) => () => void

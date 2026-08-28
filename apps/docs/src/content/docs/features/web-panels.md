@@ -7,7 +7,7 @@ Treeport has an experimental runtime for trusted web panels that a repository su
 
 A web panel is persistent and belongs to one tree.
 
-Treeport synchronizes open and close operations between connected clients. The selected panel stays local to each client.
+Treeport synchronizes open and close operations between connected clients. The selected tool stays local to each client.
 
 ## Create a panel
 
@@ -87,15 +87,21 @@ Use standard CSS instead.
 
 ## Open and keep panels
 
-Open **New panel** in a tree. Then, select a discovered web panel.
+Select the side panel button. Then, select a discovered web panel.
+
+If panels are open, use the `+` menu to open another tool.
+
+You can also open a web panel from **New panel**.
 
 In the macOS desktop client, `Cmd+Shift+T` opens **New panel**.
 
-Numbered panel shortcuts also include web panels. Browser clients keep these shortcuts for browser tab operations.
+`Cmd+1` through `Cmd+9` select terminals only. Browser clients keep these shortcuts for browser tab operations.
 
 See the [Shortcuts reference](/reference/shortcuts/).
 
-After you visit a panel, Treeport keeps its frame active while you change workspaces.
+On desktop, the terminal stays visible beside the side panel.
+
+After you visit a panel, Treeport keeps its frame active while you change terminals or hide the side panel.
 
 This keeps in-memory state, such as scroll position and unfinished input.
 
@@ -117,6 +123,8 @@ treeport web-panel open --worktree . review \
 ```
 
 The command accepts an exact definition ID or one clear short name.
+
+From a visible managed terminal, the command reveals the panel in the side panel. The terminal keeps keyboard focus.
 
 By default, it uses the newest instance for the definition. It replaces the saved start input and reloads the panel frame.
 

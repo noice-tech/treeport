@@ -175,7 +175,7 @@ Treeport does not combine native and Zed commands during automatic setup:
 
 This order applies only to automatic tree setup.
 
-Zed tasks, including tasks with `create_worktree`, stay available for manual start in **New panel**.
+Zed tasks, including tasks with `create_worktree`, stay available from **New panel** in the tree sidebar.
 
 A manual start does not start automatic setup again.
 

@@ -80,12 +80,16 @@ export function BrowserPanelWorkspace({
   panel,
   active,
   autoFocusBlocked,
-  onLoadingChange
+  inputBlocked,
+  onLoadingChange,
+  onFocusSurface
 }: {
   panel: BrowserPanel
   active: boolean
   autoFocusBlocked: boolean
+  inputBlocked: boolean
   onLoadingChange: (panelId: string, loading: boolean) => void
+  onFocusSurface: () => void
 }) {
   const sectionRef = useRef<HTMLElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -322,9 +326,9 @@ export function BrowserPanelWorkspace({
 
   useEffect(() => {
     if (!localBrowser) {
-      connectionRef.current?.setVisible(active && !autoFocusBlocked)
+      connectionRef.current?.setVisible(active && !inputBlocked)
     }
-  }, [active, autoFocusBlocked, localBrowser])
+  }, [active, inputBlocked, localBrowser])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -787,7 +791,9 @@ export function BrowserPanelWorkspace({
                         type="button"
                         variant="ghost"
                         className="h-auto w-full justify-start px-2 py-2 text-left"
-                        aria-label={`Open ${url.href}, ${listener.command || 'unknown command'}`}
+                        aria-label={`Open ${url.href}, ${
+                          listener.command || 'unknown command'
+                        }`}
                         onClick={() => {
                           setServersOpen(false)
                           navigate(url.href)
@@ -825,10 +831,11 @@ export function BrowserPanelWorkspace({
           <LocalBrowserWebview
             key={connectionRevision}
             panel={panel}
-            inputBlocked={autoFocusBlocked}
+            inputBlocked={inputBlocked}
             onConnection={setLocalConnection}
             onMessage={receiveMessage}
             onPaintRetentionChange={setLocalBrowserPaintRetention}
+            onFocusSurface={onFocusSurface}
           />
         ) : (
           <canvas
@@ -836,6 +843,7 @@ export function BrowserPanelWorkspace({
             tabIndex={0}
             className="block size-full bg-zinc-950 object-contain outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-300"
             aria-label="Browser viewport. Streamed page content is not available to assistive technology."
+            onFocus={onFocusSurface}
             onPointerMove={(event) => {
               if (!stateRef.current?.controlled && !pointerActiveRef.current) {
                 return
@@ -845,6 +853,7 @@ export function BrowserPanelWorkspace({
             }}
             onPointerDown={(event) => {
               event.preventDefault()
+              onFocusSurface()
               event.currentTarget.focus()
               event.currentTarget.setPointerCapture(event.pointerId)
               pointerActiveRef.current = true

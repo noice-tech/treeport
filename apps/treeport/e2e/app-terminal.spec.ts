@@ -487,9 +487,16 @@ test.describe('desktop worktree and terminal workflows', () => {
     const terminalScreen = page.locator('.xterm-screen')
     const terminalBounds = await terminalScreen.boundingBox()
     expect(terminalBounds).not.toBeNull()
-    await page.mouse.move(terminalBounds!.x + 12, terminalBounds!.y + 12)
+    const terminalPointerY = terminalBounds!.y + terminalBounds!.height / 2
+    await page.mouse.move(
+      terminalBounds!.x + terminalBounds!.width / 2 - 64,
+      terminalPointerY
+    )
     await page.mouse.down()
-    await page.mouse.move(terminalBounds!.x + 140, terminalBounds!.y + 12)
+    await page.mouse.move(
+      terminalBounds!.x + terminalBounds!.width / 2 + 64,
+      terminalPointerY
+    )
     await page.mouse.up()
     await expect(notificationCenter).toHaveCount(0)
     expect(
@@ -707,7 +714,9 @@ test.describe('desktop worktree and terminal workflows', () => {
     page
   }) => {
     await mockApp(page, [], { worktreeFree: true })
-    const trigger = page.getByRole('button', { name: /^New panel/ })
+    const trigger = page
+      .getByRole('navigation', { name: 'Projects and trees' })
+      .getByRole('button', { name: 'New panel', exact: true })
     await expect(trigger).toBeEnabled()
     await trigger.click()
     const launcher = page.getByRole('dialog', { name: 'New panel' })
@@ -779,7 +788,7 @@ test.describe('desktop worktree and terminal workflows', () => {
       dialog.getByRole('button', { name: /^Review updated/ })
     ).toHaveCount(0)
     await dialog.getByRole('button', { name: 'Close', exact: true }).click()
-    await expect(page.getByRole('button', { name: /^New panel/ })).toBeFocused()
+    await expect(trigger).toBeFocused()
   })
   test('installs, opens, navigates, and closes daemon-hosted Browser', async ({
     page
@@ -791,23 +800,61 @@ test.describe('desktop worktree and terminal workflows', () => {
     })
     await page.getByRole('button', { name: /^topic(?:,|\s|$)/ }).click()
 
-    await page.getByRole('button', { name: /^New panel/ }).click()
-    const launcher = page.getByRole('dialog', { name: 'New panel' })
+    const terminal = page.getByRole('main', { name: /terminal$/ })
+    await expect(terminal).toBeVisible()
+    await page.getByRole('button', { name: 'Toggle side panel' }).click()
+    const tools = page.getByRole('region', {
+      name: 'topic tool tab group'
+    })
+    await expect(tools.getByText('Open a tool', { exact: true })).toBeVisible()
+    await expect(
+      tools.getByRole('button', { name: 'Browser, new tab' })
+    ).toBeVisible()
+    await expect(
+      tools.getByRole('button', { name: 'Review, web panel, Project' })
+    ).toBeVisible()
     const createRequest = page.waitForRequest(
       (request) =>
         request.method() === 'POST' &&
         new URL(request.url()).pathname ===
           '/api/worktrees/wt_topic/browser-panels'
     )
-    await launcher
-      .getByRole('button', { name: 'Browser, hosted browser' })
-      .click()
+    await tools.getByRole('button', { name: 'Browser, new tab' }).click()
     expect((await createRequest).postDataJSON()).toEqual({})
 
     await expect(page).toHaveURL(/\/panels\/browser_panel_1$/)
     await expect(
-      page.getByRole('button', { name: 'Browser', exact: true })
+      tools.getByRole('tab', { name: 'Browser', exact: true })
     ).toBeVisible()
+    await expect(terminal).toBeVisible()
+    const topicTerminalList = page.getByRole('list', {
+      name: 'topic terminal tabs'
+    })
+    await expect(
+      topicTerminalList.getByText('Browser', { exact: true })
+    ).toHaveCount(0)
+
+    await tools.getByRole('button', { name: 'Open another tool' }).click()
+    const toolPicker = page.getByLabel('Open a tool')
+    await expect(toolPicker.getByLabel('Available tools')).toBeFocused()
+    const openWebPanelRequest = page.waitForRequest(
+      (request) =>
+        request.method() === 'POST' &&
+        new URL(request.url()).pathname ===
+          '/api/worktrees/wt_topic/panels/open'
+    )
+    await page.keyboard.press('ArrowDown')
+    await page.keyboard.press('Enter')
+    await openWebPanelRequest
+    await expect(
+      tools.getByRole('tab', { name: 'Review, web panel' })
+    ).toBeVisible()
+    await expect(terminal).toBeVisible()
+    await expect(
+      topicTerminalList.getByText('Review', { exact: true })
+    ).toHaveCount(0)
+    await tools.getByRole('tab', { name: 'Browser', exact: true }).click()
+
     const browserUnavailable = page.getByRole('alert')
     await expect(browserUnavailable).toContainText(
       'Chromium is not installed on this daemon.'
@@ -842,7 +889,7 @@ test.describe('desktop worktree and terminal workflows', () => {
       .toBeGreaterThan(1)
     await page.evaluate(() => window.__setBrowserLoading(true))
     await expect(
-      page.getByRole('button', { name: 'Browser, loading', exact: true })
+      tools.getByRole('tab', { name: 'Browser, loading', exact: true })
     ).toBeVisible()
     await expect(
       page.getByRole('button', { name: 'Stop loading' })
@@ -850,12 +897,63 @@ test.describe('desktop worktree and terminal workflows', () => {
     await expect(page.getByText('Loading application…')).toHaveCount(0)
     await page.evaluate(() => window.__setBrowserLoading(false))
     await expect(
-      page.getByRole('button', { name: 'Browser', exact: true })
+      tools.getByRole('tab', { name: 'Browser', exact: true })
     ).toBeVisible()
     const address = page.getByRole('textbox', { name: 'Application URL' })
     const viewport = page.getByLabel(/^Browser viewport/)
     await expect(address).toHaveValue('')
     await expect(address).toBeFocused()
+
+    await tools.getByRole('button', { name: 'Open another tool' }).click()
+    await expect(toolPicker).toBeVisible()
+    const viewportBounds = await viewport.boundingBox()
+
+    if (!viewportBounds) {
+      throw new Error('The Browser viewport is not visible.')
+    }
+
+    await page.mouse.click(
+      viewportBounds.x + viewportBounds.width / 2,
+      viewportBounds.y + viewportBounds.height - 8
+    )
+    await expect(toolPicker).toHaveCount(0)
+
+    await tools.getByRole('button', { name: 'Open another tool' }).click()
+    await expect(toolPicker).toBeVisible()
+    await page.locator('.xterm-screen').click({ position: { x: 8, y: 8 } })
+    await expect(toolPicker).toHaveCount(0)
+
+    const resizeRail = tools.getByRole('separator', {
+      name: 'Resize side panel'
+    })
+    const resizeRailBounds = await resizeRail.boundingBox()
+    if (!resizeRailBounds) {
+      throw new Error('The side panel resize control is not visible.')
+    }
+
+    const browserWidthBeforeResize = await page.evaluate(
+      () =>
+        window.__browserCommands
+          .filter((message) => message.type === 'resize')
+          .at(-1)?.width
+    )
+    await page.mouse.move(
+      resizeRailBounds.x + resizeRailBounds.width / 2,
+      resizeRailBounds.y + resizeRailBounds.height / 2
+    )
+    await page.mouse.down()
+    await page.mouse.move(resizeRailBounds.x - 48, resizeRailBounds.y + 20)
+    await page.mouse.up()
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            window.__browserCommands
+              .filter((message) => message.type === 'resize')
+              .at(-1)?.width
+        )
+      )
+      .not.toBe(browserWidthBeforeResize)
     await expect(
       page.getByRole('heading', { name: 'Development servers' })
     ).toHaveCount(0)
@@ -956,36 +1054,37 @@ test.describe('desktop worktree and terminal workflows', () => {
     await page.keyboard.press(locationShortcut.replace('+L', '+F'))
     await expect(address).not.toBeFocused()
 
-    await page.evaluate(() => {
-      window.__browserCommands = []
-    })
     await page.keyboard.press('Meta+1')
-    await expect(page).toHaveURL(/\/terminals\/term_pi$/)
-    await expect
-      .poll(() =>
-        page.evaluate(() =>
-          window.__browserCommands.some(
-            (command) =>
-              command.type === 'setVisible' && command.visible === false
-          )
-        )
-      )
-      .toBe(true)
-    await page.waitForTimeout(150)
-    expect(
-      await page.evaluate(() =>
-        window.__browserCommands.some((command) => command.type === 'resize')
-      )
-    ).toBe(false)
-    await page.keyboard.press('Meta+2')
     await expect(page).toHaveURL(/\/panels\/browser_panel_1$/)
+    await page.keyboard.press('Meta+2')
+    await expect(page).toHaveURL(/\/panels\/panel_1$/)
+
+    await topicTerminalList
+      .getByRole('button', { name: /^zsh · \/worktrees\/topic,/ })
+      .click()
+    await page.keyboard.press('Meta+2')
+    await expect(page).toHaveURL(/\/terminals\/term_pi$/)
+    await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
+    await tools.getByRole('tab', { name: 'Browser', exact: true }).click()
+    await expect(page).toHaveURL(/\/panels\/browser_panel_1$/)
+    await expect(address).toBeVisible()
     await expect(address).not.toBeFocused()
 
     await page.reload()
     await expect(page).toHaveURL(/\/panels\/browser_panel_1$/)
     await expect(
-      page.getByRole('button', { name: 'Browser', exact: true })
+      page.getByRole('tab', { name: 'Browser', exact: true })
     ).toBeVisible()
+    const sidePanelShortcut = await page.evaluate(() =>
+      /Mac|iPhone|iPad|iPod/.test(navigator.platform)
+        ? 'Meta+Alt+B'
+        : 'Control+Alt+B'
+    )
+    await page.keyboard.press(sidePanelShortcut)
+    await expect(tools).not.toBeVisible()
+    await expect(terminal).toBeVisible()
+    await page.keyboard.press(sidePanelShortcut)
+    await expect(tools).toBeVisible()
 
     const initialCloseRequest = page.waitForRequest((request) => {
       const url = new URL(request.url())
@@ -1003,7 +1102,7 @@ test.describe('desktop worktree and terminal workflows', () => {
     )
     await closeDialog.getByRole('button', { name: 'Cancel' }).click()
     await expect(
-      page.getByRole('button', { name: 'Browser', exact: true })
+      page.getByRole('tab', { name: 'Browser', exact: true })
     ).toBeVisible()
 
     await page.getByRole('button', { name: 'Close Browser' }).click()
@@ -1018,8 +1117,23 @@ test.describe('desktop worktree and terminal workflows', () => {
     await closeDialog.getByRole('button', { name: 'Leave' }).click()
     await forcedCloseRequest
     await expect(
-      page.getByRole('button', { name: 'Browser', exact: true })
+      page.getByRole('tab', { name: 'Browser', exact: true })
     ).toHaveCount(0)
+    await expect(
+      page.getByRole('tab', { name: 'Review, web panel' })
+    ).toBeVisible()
+    const reviewCloseRequest = page.waitForRequest(
+      (request) =>
+        request.method() === 'DELETE' &&
+        new URL(request.url()).pathname === '/api/panels/panel_1'
+    )
+    await page.getByRole('button', { name: 'Close Review' }).click()
+    await reviewCloseRequest
+    await expect(
+      page
+        .getByRole('region', { name: 'topic tool tab group' })
+        .getByText('Open a tool')
+    ).toBeVisible()
   })
 
   test('launches repository presets and keeps global choices available while repository configuration refreshes', async ({
@@ -1061,7 +1175,7 @@ test.describe('desktop worktree and terminal workflows', () => {
         request.method() === 'POST' &&
         new URL(request.url()).pathname === '/api/worktrees/wt_topic/terminals'
     )
-    await page.getByRole('button', { name: /^New panel/ }).click()
+    await page.getByRole('button', { name: 'New panel in topic' }).click()
     const launcher = page.getByRole('dialog', { name: 'New panel' })
     await launcher
       .getByRole('button', {
@@ -1093,7 +1207,7 @@ test.describe('desktop worktree and terminal workflows', () => {
       itemId: null,
       message: 'Could not load Zed tasks: invalid JSONC'
     })
-    await page.getByRole('button', { name: /^New panel/ }).click()
+    await page.getByRole('button', { name: 'New panel in topic' }).click()
     await expect(
       launcher.getByText('Could not load Zed tasks: invalid JSONC')
     ).toBeVisible({ timeout: 7_000 })
@@ -1131,7 +1245,7 @@ test.describe('desktop worktree and terminal workflows', () => {
         request.method() === 'POST' &&
         new URL(request.url()).pathname === '/api/worktrees/wt_topic/terminals'
     )
-    await page.getByRole('button', { name: /^New panel/ }).click()
+    await page.getByRole('button', { name: 'New panel in topic' }).click()
     await page
       .getByRole('dialog', { name: 'New panel' })
       .getByRole('button', { name: 'Shell' })
@@ -1147,7 +1261,7 @@ test.describe('desktop worktree and terminal workflows', () => {
     await expect(page.getByRole('dialog')).toHaveCount(0)
 
     const topicTerminals = page.getByRole('list', {
-      name: 'topic terminals'
+      name: 'topic terminal tabs'
     })
     await expect(
       topicTerminals.getByRole('button', {
@@ -1200,7 +1314,7 @@ test.describe('desktop worktree and terminal workflows', () => {
         request.method() === 'POST' &&
         new URL(request.url()).pathname === '/api/worktrees/wt_topic/terminals'
     )
-    await page.getByRole('button', { name: /^New panel/ }).click()
+    await page.getByRole('button', { name: 'New panel in topic' }).click()
     const presetItem = page
       .getByRole('dialog', { name: 'New panel' })
       .getByRole('button', { name: /^Hunk, Global, npx/ })
@@ -1243,7 +1357,7 @@ test.describe('desktop worktree and terminal workflows', () => {
         request.method() === 'POST' &&
         new URL(request.url()).pathname === '/api/worktrees/wt_topic/terminals'
     )
-    await page.getByRole('button', { name: /^New panel/ }).click()
+    await page.getByRole('button', { name: 'New panel in topic' }).click()
     await page
       .getByRole('dialog', { name: 'New panel' })
       .getByRole('button', { name: 'Open editor' })
@@ -1275,13 +1389,13 @@ test.describe('desktop worktree and terminal workflows', () => {
       }
     ])
     await page.getByRole('button', { name: /^topic(?:,|\s|$)/ }).click()
-    await page.getByRole('button', { name: /^New panel/ }).click()
+    await page.getByRole('button', { name: 'New panel in topic' }).click()
     await page
       .getByRole('dialog', { name: 'New panel' })
       .getByRole('button', { name: 'Shell' })
       .click()
     const topicTerminals = page.getByRole('list', {
-      name: 'topic terminals'
+      name: 'topic terminal tabs'
     })
     await topicTerminals
       .getByRole('button', { name: /^zsh · \/worktrees\/topic,/ })
@@ -1338,7 +1452,7 @@ test.describe('desktop worktree and terminal workflows', () => {
     ])
 
     await page.getByRole('button', { name: /^topic(?:,|\s|$)/ }).click()
-    await page.getByRole('button', { name: /^New panel/ }).click()
+    await page.getByRole('button', { name: 'New panel in topic' }).click()
     const launcher = page.getByRole('dialog', { name: 'New panel' })
     await launcher.getByRole('button', { name: 'Review, web panel' }).click()
     await expect
@@ -1546,7 +1660,7 @@ test.describe('desktop worktree and terminal workflows', () => {
     await page.getByRole('button', { name: /^topic(?:,|\s|$)/ }).click()
 
     const topicTerminals = page
-      .getByRole('list', { name: 'topic terminals' })
+      .getByRole('list', { name: 'topic terminal tabs' })
       .getByRole('listitem')
     const releaseCreate = mocked.delayNextTerminalCreate()
     const createRequest = page.waitForRequest(
@@ -1561,7 +1675,8 @@ test.describe('desktop worktree and terminal workflows', () => {
     await expect(
       page.getByRole('button', { name: 'Shell, starting' })
     ).toBeVisible()
-    await expect(page.getByRole('status')).toHaveText('Starting Shell…')
+    await expect(page.getByText('Starting Shell…')).toHaveCount(0)
+    await expect(page.getByRole('main', { name: /terminal$/ })).toBeVisible()
     await page.evaluate(() => window.__dispatchDesktopCommand('new-terminal'))
     await expect.poll(() => mocked.terminalCreations()).toBe(2)
     await expect(
@@ -1679,7 +1794,9 @@ test.describe('desktop worktree and terminal workflows', () => {
         new URL(request.url()).pathname === '/api/worktrees/wt_topic/terminals'
     )
     await page.keyboard.press('Enter')
-    expect((await presetRequest).postDataJSON()).toMatchObject({ name: 'Hunk' })
+    expect((await presetRequest).postDataJSON()).toMatchObject({
+      name: 'Hunk'
+    })
 
     await page.evaluate(() => window.__dispatchDesktopCommand('new-panel'))
     await page.getByLabel('Search panels').fill('Review')
@@ -1695,10 +1812,11 @@ test.describe('desktop worktree and terminal workflows', () => {
       input: null,
       launchCwd: null
     })
-    const reviewNavigationItem = page.getByRole('button', {
+    const reviewNavigationItem = page.getByRole('tab', {
       name: 'Review, web panel'
     })
     await expect(reviewNavigationItem).toHaveCount(1)
+    await expect(topicTerminals).toHaveCount(3)
     await expect(page).toHaveURL(/\/panels\/panel_1$/)
     const reviewPanelUrl = page.url()
     await expect(page.locator('iframe[title="Review"]')).not.toHaveAttribute(
@@ -1722,6 +1840,9 @@ test.describe('desktop worktree and terminal workflows', () => {
 
     await createdTerminal.click()
     await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
+    await expect(
+      launchedPanelFrame.getByText('Preserved Review state')
+    ).toBeVisible()
     await page.evaluate(() => window.__dispatchDesktopCommand('new-panel'))
     await page.getByLabel('Search panels').fill('Review')
     const panelReuseRequest = page.waitForRequest(
@@ -1768,7 +1889,9 @@ test.describe('desktop worktree and terminal workflows', () => {
           document.body.append(status)
         }
 
-        status.textContent = `Keyboard input received ${keyboardInputs} time${keyboardInputs === 1 ? '' : 's'}`
+        status.textContent = `Keyboard input received ${keyboardInputs} time${
+          keyboardInputs === 1 ? '' : 's'
+        }`
       })
 
       let findRequests = 0
@@ -1790,12 +1913,14 @@ test.describe('desktop worktree and terminal workflows', () => {
           document.body.append(status)
         }
 
-        status.textContent = `Find requested ${findRequests} time${findRequests === 1 ? '' : 's'}`
+        status.textContent = `Find requested ${findRequests} time${
+          findRequests === 1 ? '' : 's'
+        }`
       })
     })
     await expect(panelFrame.getByText('Unsaved panel draft')).toBeVisible()
 
-    await page.getByRole('button', { name: 'Review, web panel' }).focus()
+    await reviewNavigationItem.focus()
     await page.keyboard.press('Meta+f')
     await expect(panelFrame.getByRole('status')).toHaveText(
       'Find requested 1 time'
@@ -1813,22 +1938,36 @@ test.describe('desktop worktree and terminal workflows', () => {
     )
     await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
     await page.keyboard.press('Meta+4')
-    await expect(page.locator('iframe[title="Review"]')).toBeFocused()
+    await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
+    await panelFrame.locator('body').click()
     await page.keyboard.press('x')
     await expect(panelFrame.getByLabel('Keyboard input status')).toHaveText(
       'Keyboard input received 1 time'
     )
 
-    const terminalFromPanelRequest = page.waitForRequest(
+    await page.evaluate(() => window.__dispatchDesktopCommand('new-terminal'))
+    const openToolPicker = page.getByLabel('Open a tool', { exact: true })
+    await expect(openToolPicker).toBeVisible()
+    await expect(openToolPicker.getByLabel('Available tools')).toBeFocused()
+    await page.keyboard.press('Escape')
+    await page.evaluate(() => window.__dispatchDesktopCommand('select-tab-1'))
+    await expect(page).toHaveURL(reviewPanelUrl)
+    await page.evaluate(() => window.__dispatchDesktopCommand('select-tab-2'))
+    await expect(page).toHaveURL(reviewPanelUrl)
+
+    await page.getByRole('button', { name: /^topic(?:,|\s|$)/ }).click()
+    await page.evaluate(() => window.__dispatchDesktopCommand('select-tab-1'))
+    await expect(page).toHaveURL(/\/terminals\/term_pi$/)
+    const terminalFromTerminalRequest = page.waitForRequest(
       (request) =>
         request.method() === 'POST' &&
         new URL(request.url()).pathname === '/api/worktrees/wt_topic/terminals'
     )
     await page.evaluate(() => window.__dispatchDesktopCommand('new-terminal'))
-    await terminalFromPanelRequest
+    await terminalFromTerminalRequest
     await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
 
-    await page.getByRole('button', { name: 'Review, web panel' }).click()
+    await reviewNavigationItem.click()
     await expect(panelFrame.getByText('Unsaved panel draft')).toBeVisible()
     mocked.setWebPanelHasStorage(true)
     await page.evaluate(() => window.__dispatchDesktopCommand('close-panel'))
@@ -1839,9 +1978,7 @@ test.describe('desktop worktree and terminal workflows', () => {
       'Closing it permanently deletes that data'
     )
     await closePanelDialog.getByRole('button', { name: 'Cancel' }).click()
-    await expect(
-      page.getByRole('button', { name: 'Review, web panel' })
-    ).toBeVisible()
+    await expect(reviewNavigationItem).toBeVisible()
 
     const panelDeleteRequest = page.waitForRequest((request) => {
       const url = new URL(request.url())
@@ -1851,18 +1988,36 @@ test.describe('desktop worktree and terminal workflows', () => {
         url.searchParams.get('discardStoredData') === 'true'
       )
     })
-    await page
-      .getByRole('button', { name: 'Review, web panel' })
-      .click({ button: 'middle' })
+    await reviewNavigationItem.click({ button: 'middle' })
     await expect(closePanelDialog).toBeVisible()
     await closePanelDialog
       .getByRole('button', { name: 'Close and delete data' })
       .click()
     await panelDeleteRequest
+    await expect(reviewNavigationItem).toHaveCount(0)
+    await expect(page).toHaveURL(/\/terminals\/[^/]+$/)
     await expect(
-      page.getByRole('button', { name: 'Review, web panel' })
-    ).toHaveCount(0)
-    await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
+      page
+        .getByRole('region', { name: 'topic tool tab group' })
+        .getByText('Open a tool')
+    ).toBeVisible()
+    await expect(
+      page.getByRole('button', { name: 'Browser, new tab' })
+    ).toBeFocused()
+
+    const browserFromToolSurfaceRequest = page.waitForRequest(
+      (request) =>
+        request.method() === 'POST' &&
+        new URL(request.url()).pathname ===
+          '/api/worktrees/wt_topic/browser-panels'
+    )
+    await page.evaluate(() => window.__dispatchDesktopCommand('new-terminal'))
+    await expect(
+      page.getByRole('button', { name: 'Browser, new tab' })
+    ).toBeFocused()
+    await page.keyboard.press('Enter')
+    await browserFromToolSurfaceRequest
+    await expect(page).toHaveURL(/\/panels\/browser_panel_\d+$/)
 
     await page.evaluate(() => window.__dispatchDesktopCommand('new-worktree'))
     await expect(

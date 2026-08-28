@@ -16,6 +16,7 @@ import { TerminalView } from '../../terminal-view'
 import { terminalTarget, worktreeTarget } from '../../workspace-navigation'
 import { useWorkspaceNavigate } from '../../workspace-router-navigation'
 import { notifyError } from '../notifications/error-notifications'
+import { useWorkspaceSurfaceFocus } from '../panels/workspace-surface-focus-context'
 import { useProjectSwitcher } from '../sidebar/workspace-shell'
 
 export interface PendingTerminalCreation {
@@ -437,20 +438,26 @@ export function TerminalWorkspace({
   dialogOpen: boolean
 }) {
   const queryClient = useQueryClient()
+  const { focusedSurface } = useWorkspaceSurfaceFocus()
   const { isMobile, openMobile: drawerOpen } = useSidebar()
   const { open: projectSwitcherOpen } = useProjectSwitcher()
 
   return (
     <TerminalView
       worktree={selectedWorktree}
-      terminal={selectedPendingTerminal ? null : selectedTerminal}
+      terminal={selectedTerminal}
       pendingTerminals={pendingTerminals.filter(
         (terminal) => terminal.worktreeId === selectedWorktree?.id
       )}
-      selectedPendingTerminalId={selectedPendingTerminal?.id ?? null}
+      selectedPendingTerminalId={
+        selectedTerminal ? null : (selectedPendingTerminal?.id ?? null)
+      }
       loading={loading}
       autoFocusBlocked={
-        dialogOpen || projectSwitcherOpen || (isMobile && drawerOpen)
+        focusedSurface === 'tool' ||
+        dialogOpen ||
+        projectSwitcherOpen ||
+        (isMobile && drawerOpen)
       }
       onStatusChange={() =>
         void queryClient.invalidateQueries({ queryKey: projectsQueryKey })

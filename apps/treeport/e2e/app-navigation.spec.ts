@@ -72,7 +72,7 @@ test.describe('desktop worktree terminal UI', () => {
     ).toBeVisible()
     await expect(
       page
-        .getByRole('list', { name: 'topic terminals' })
+        .getByRole('list', { name: 'topic terminal tabs' })
         .getByRole('button', { name: /^zsh · \/worktrees\/topic,/ })
     ).toBeVisible()
     await expect(page.locator('.xterm-rows')).toContainText(
@@ -99,7 +99,9 @@ test.describe('desktop worktree terminal UI', () => {
       initialPath: '/projects/proj_1/worktrees/wt_topic'
     })
     await expect(page.getByText('topic', { exact: true })).toBeVisible()
-    await expect(page.getByRole('button', { name: /^New panel/ })).toBeEnabled()
+    await expect(
+      page.getByRole('button', { name: 'New panel in topic' })
+    ).toBeEnabled()
   })
 
   test('shows a valid terminal when the saved selection no longer exists', async ({

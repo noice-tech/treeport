@@ -3,7 +3,7 @@ title: Terminal presets
 description: Save terminal commands for repeated use in trees.
 ---
 
-A terminal preset is a named command in the **New panel** picker. Use presets for commands that you start frequently.
+A terminal preset is a named command in the top-bar **New panel** picker. Use presets for commands that you start frequently.
 
 | Preset             | Command             | Result                                           |
 | ------------------ | ------------------- | ------------------------------------------------ |
@@ -151,6 +151,8 @@ Removing a preset does not affect a terminal that is already active.
 Treeport does not run manual presets during repository registration or open.
 
 A preset starts only after you select it in **New panel**.
+
+The side panel does not list terminal presets. It lists Browser and discovered web panels.
 
 ## Close after completion
 

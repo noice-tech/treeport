@@ -1,19 +1,15 @@
-import { useEffect, useState, type ReactNode } from 'react'
-import { CrownIcon, GitBranchIcon, LoaderCircleIcon } from 'lucide-react'
+import type { ReactNode } from 'react'
+import { CrownIcon, GitBranchIcon } from 'lucide-react'
 import {
   ArrowPathIcon,
   FolderIcon,
-  GlobeAltIcon,
   PlusIcon,
   TrashIcon,
-  WindowIcon,
   XMarkIcon
 } from '@heroicons/react/16/solid'
 import type {
-  BrowserPanel,
   ProjectRecord,
   TerminalRecord,
-  WebPanel,
   WorktreeRecord
 } from '@treeport/shared'
 import { Button } from '../../components/ui/button'
@@ -36,32 +32,12 @@ import { TerminalStatusIcon } from '../../components/terminal-status-icon'
 import { cn } from '../../lib/utils'
 import { terminalProgressLabel } from '../../terminal-session'
 import { useTerminalNavigationMetadata } from '../../terminal-runtime-metadata-react'
+import { useWorkspaceSurfaceFocus } from '../panels/workspace-surface-focus-context'
 import type {
   PendingWorktreeCreation,
   RemovalStage
 } from '../worktrees/worktree-workflows'
 import { SidebarAction } from './sidebar-action'
-
-function BrowserPanelLoadingIcon() {
-  const [showSpinner, setShowSpinner] = useState(false)
-
-  useEffect(() => {
-    const timer = window.setTimeout(() => setShowSpinner(true), 200)
-    return () => window.clearTimeout(timer)
-  }, [])
-
-  return showSpinner ? (
-    <LoaderCircleIcon
-      className="size-4! shrink-0 text-zinc-500 motion-safe:animate-spin min-[701px]:size-3.5!"
-      aria-hidden="true"
-    />
-  ) : (
-    <GlobeAltIcon
-      className="size-4! shrink-0 fill-zinc-500 min-[701px]:size-3.5!"
-      aria-hidden="true"
-    />
-  )
-}
 
 function WorktreeShell({
   name,
@@ -140,9 +116,6 @@ export interface WorkspaceTreeProps {
   selectedWorktree: WorktreeRecord | null
   selectedTerminalId: string | null
   selectedPendingTerminalId: string | null
-  selectedPanelId: string | null
-  webPanelRuntimeTitles: Record<string, string>
-  browserPanelLoading: Record<string, boolean>
   pendingTerminals: Array<{
     id: string
     projectId: string
@@ -155,8 +128,6 @@ export interface WorkspaceTreeProps {
   onSelectTerminal: (terminal: TerminalRecord) => void
   onSelectPendingTerminal: (terminalId: string) => void
   onCloseTerminal: (terminal: TerminalRecord) => void
-  onSelectPanel: (panel: BrowserPanel | WebPanel) => void
-  onClosePanel: (panel: BrowserPanel | WebPanel, trigger?: HTMLElement) => void
   onSelectWorktree: (worktree: WorktreeRecord) => void
   onPrepareRemoval: (
     worktree: WorktreeRecord,
@@ -179,9 +150,6 @@ export function WorkspaceTree({
   selectedWorktree,
   selectedTerminalId,
   selectedPendingTerminalId,
-  selectedPanelId,
-  webPanelRuntimeTitles,
-  browserPanelLoading,
   pendingTerminals,
   pendingWorktrees,
   pendingRemovals,
@@ -189,13 +157,12 @@ export function WorkspaceTree({
   onSelectTerminal: selectTerminal,
   onSelectPendingTerminal: selectPendingTerminal,
   onCloseTerminal: closeTerminal,
-  onSelectPanel: selectPanel,
-  onClosePanel: closePanel,
   onSelectWorktree: selectWorktree,
   onPrepareRemoval: prepareRemoval,
   onOpenPanelDialog,
   onOpenWorktreeDialog
 }: WorkspaceTreeProps) {
+  const { focusedSurface } = useWorkspaceSurfaceFocus()
   const {
     attention: bellAttention,
     titles: runtimeTitles,
@@ -387,7 +354,7 @@ export function WorkspaceTree({
                     </ContextMenu>
                     <SidebarMenuSub
                       className="terminal-list mr-0 ml-4 gap-px border-white/6 pr-0 pl-2 min-[701px]:ml-2.5 min-[701px]:pl-1.5"
-                      aria-label={`${worktree.name} terminals`}
+                      aria-label={`${worktree.name} terminal tabs`}
                     >
                       {worktree.terminals.map((terminal, index) => {
                         const title =
@@ -445,7 +412,7 @@ export function WorkspaceTree({
                                 }}
                                 aria-label={`${title}, ${status}`}
                                 aria-keyshortcuts={
-                                  shortcutIndex
+                                  focusedSurface === 'terminal' && shortcutIndex
                                     ? `Meta+${shortcutIndex}`
                                     : undefined
                                 }
@@ -469,7 +436,8 @@ export function WorkspaceTree({
                                 >
                                   {title}
                                 </span>
-                                {shortcutIndex ? (
+                                {focusedSurface === 'terminal' &&
+                                shortcutIndex ? (
                                   <kbd
                                     className="justify-self-end font-sans text-[0.6875rem] font-normal text-zinc-500 tabular-nums group-hover/terminal:opacity-0 group-focus-within/terminal:opacity-0 max-[700px]:opacity-0"
                                     aria-hidden="true"
@@ -499,130 +467,10 @@ export function WorkspaceTree({
                           </SidebarMenuSubItem>
                         )
                       })}
-                      {worktree.panels
-                        .filter(
-                          (panel): panel is BrowserPanel | WebPanel =>
-                            panel.kind !== 'terminal'
-                        )
-                        .map((panel, panelIndex) => {
-                          const title =
-                            panel.kind === 'web'
-                              ? (webPanelRuntimeTitles[panel.id] ?? panel.title)
-                              : panel.title
-                          const loading =
-                            panel.kind === 'browser' &&
-                            Boolean(browserPanelLoading[panel.id])
-                          const shortcutIndex =
-                            selectedWorktree?.id === worktree.id &&
-                            worktree.terminals.length + panelIndex < 9
-                              ? worktree.terminals.length + panelIndex + 1
-                              : null
-                          return (
-                            <SidebarMenuSubItem
-                              key={panel.id}
-                              className="group/terminal relative min-w-0"
-                            >
-                              <SidebarMenuSubButton
-                                asChild
-                                isActive={selectedPanelId === panel.id}
-                              >
-                                <Button
-                                  variant="ghost"
-                                  type="button"
-                                  className={cn(
-                                    'terminal-row grid h-auto min-h-11 w-full min-w-0 grid-cols-[1.25rem_minmax(0,1fr)_2rem] gap-1.5 rounded-md px-2 py-1.5 text-left text-base/5 font-normal min-[701px]:min-h-7 min-[701px]:grid-cols-[1rem_minmax(0,1fr)_1.75rem] min-[701px]:gap-1 min-[701px]:py-0 min-[701px]:text-xs/4',
-                                    selectedPanelId === panel.id
-                                      ? 'selected bg-cyan-400/8! text-cyan-50'
-                                      : 'text-zinc-300 hover:bg-white/5 hover:text-zinc-100'
-                                  )}
-                                  onClick={() => selectPanel(panel)}
-                                  onMouseDown={(event) => {
-                                    if (event.button === 1) {
-                                      event.preventDefault()
-                                    }
-                                  }}
-                                  onAuxClick={(event) => {
-                                    if (event.button !== 1) {
-                                      return
-                                    }
-
-                                    event.preventDefault()
-                                    closePanel(panel, event.currentTarget)
-                                  }}
-                                  aria-label={
-                                    panel.kind === 'browser'
-                                      ? `${
-                                          title === 'Browser'
-                                            ? 'Browser'
-                                            : `${title}, Browser`
-                                        }${loading ? ', loading' : ''}`
-                                      : `${title}, web panel`
-                                  }
-                                  aria-keyshortcuts={
-                                    shortcutIndex
-                                      ? `Meta+${shortcutIndex}`
-                                      : undefined
-                                  }
-                                >
-                                  {panel.kind === 'browser' ? (
-                                    loading ? (
-                                      <BrowserPanelLoadingIcon />
-                                    ) : (
-                                      <GlobeAltIcon
-                                        className="size-4! shrink-0 fill-zinc-500 min-[701px]:size-3.5!"
-                                        aria-hidden="true"
-                                      />
-                                    )
-                                  ) : (
-                                    <WindowIcon
-                                      className="size-4! shrink-0 fill-zinc-500 min-[701px]:size-3.5!"
-                                      aria-hidden="true"
-                                    />
-                                  )}
-                                  <span className="truncate" aria-hidden="true">
-                                    {title}
-                                  </span>
-                                  {shortcutIndex ? (
-                                    <kbd
-                                      className="justify-self-end font-sans text-[0.6875rem] font-normal text-zinc-500 tabular-nums group-hover/terminal:opacity-0 group-focus-within/terminal:opacity-0 max-[700px]:opacity-0"
-                                      aria-hidden="true"
-                                    >
-                                      ⌘{shortcutIndex}
-                                    </kbd>
-                                  ) : (
-                                    <span aria-hidden="true" />
-                                  )}
-                                </Button>
-                              </SidebarMenuSubButton>
-                              <div className="absolute inset-y-0 right-0 z-10 flex items-center opacity-0 group-hover/terminal:opacity-100 group-focus-within/terminal:opacity-100 max-[700px]:opacity-100">
-                                <SidebarAction
-                                  label={`Close ${title}`}
-                                  tooltip={
-                                    panel.kind === 'browser'
-                                      ? 'Close Browser'
-                                      : 'Close web panel'
-                                  }
-                                  className="text-zinc-500 hover:bg-transparent hover:text-zinc-200"
-                                  onClick={(trigger) =>
-                                    closePanel(panel, trigger)
-                                  }
-                                >
-                                  <XMarkIcon />
-                                </SidebarAction>
-                              </div>
-                            </SidebarMenuSubItem>
-                          )
-                        })}
                       {pendingTerminals
                         .filter((pending) => pending.worktreeId === worktree.id)
                         .map((pending, pendingIndex) => {
-                          const persistentPanelCount = worktree.panels.filter(
-                            (panel) => panel.kind !== 'terminal'
-                          ).length
-                          const index =
-                            worktree.terminals.length +
-                            persistentPanelCount +
-                            pendingIndex
+                          const index = worktree.terminals.length + pendingIndex
                           return (
                             <SidebarMenuSubItem
                               key={pending.id}
