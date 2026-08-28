@@ -74,6 +74,9 @@ const terminalPresetDefinitionsQuerySchema = z.object({
   projectId: z.string().optional(),
   worktreeId: z.string().optional()
 })
+const treeContextFieldsQuerySchema = z.object({
+  projectId: z.string().min(1)
+})
 const operationQuerySchema = z.object({
   kind: z
     .enum([
@@ -480,6 +483,17 @@ export function createApp({
     )
 
     .get(
+      '/api/tree-context-fields',
+      queryInput(treeContextFieldsQuerySchema),
+      async (context) =>
+        context.json(
+          await service.listTreeContextFields(
+            context.req.valid('query').projectId
+          )
+        )
+    )
+
+    .get(
       '/api/terminal-preset-definitions',
       queryInput(terminalPresetDefinitionsQuerySchema),
       async (context) =>
@@ -712,7 +726,8 @@ export function createApp({
               body.name,
               body.base,
               initialTerminal,
-              body.sourceWorktreeId
+              body.sourceWorktreeId,
+              body.context
             )
           },
           202
@@ -727,6 +742,14 @@ export function createApp({
         worktree: await service.getWorktreeSnapshot(worktreeId)
       })
     })
+
+    .get('/api/worktrees/:worktreeId/context', async (context) =>
+      context.json({
+        context: await service.getWorktreeContext(
+          context.req.param('worktreeId')
+        )
+      })
+    )
 
     .post(
       '/api/worktrees/:worktreeId/open',

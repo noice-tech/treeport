@@ -44,6 +44,9 @@ export const TERMINAL_PRESET_ARGUMENT_MAX_COUNT = TERMINAL_ARGV_MAX_COUNT - 1
 export const TERMINAL_CAPTURE_DEFAULT_LINES = 200
 export const TERMINAL_CAPTURE_MAX_LINES = 5_000
 export const WEB_PANEL_INPUT_MAX_BYTES = 64 * 1024
+export const TREE_CONTEXT_FIELD_MAX_COUNT = 64
+export const TREE_CONTEXT_VALUE_MAX_LENGTH = 16 * 1024
+export const TREE_CONTEXT_VALUES_MAX_LENGTH = 64 * 1024
 export const TREE_FILE_MAX_BYTES = 2 * 1024 * 1024
 export const TREE_FILE_LIST_MAX_ENTRIES = 50_000
 
@@ -249,6 +252,27 @@ export interface OpenBrowserPanelResult {
   panel: BrowserPanel
 }
 
+export type TreeContextFieldInput = 'text' | 'textarea'
+
+export interface TreeContextFieldDefinition {
+  id: string
+  label: string
+  input: TreeContextFieldInput
+}
+
+export interface TreeContextFieldDiagnostic {
+  scope: 'global' | 'project'
+  path: string
+  message: string
+}
+
+export interface TreeContextFieldListing {
+  fields: TreeContextFieldDefinition[]
+  diagnostics: TreeContextFieldDiagnostic[]
+}
+
+export type TreeContextValues = Record<string, string>
+
 export interface WorktreeRecord {
   id: string
   projectId: string
@@ -351,7 +375,7 @@ export type TreeportContext =
         | 'branch'
         | 'detached'
         | 'kind'
-      >
+      > & { context: TreeContextValues }
       terminal: Pick<
         TerminalRecord,
         'id' | 'worktreeId' | 'name' | 'status' | 'exitCode'
@@ -400,6 +424,7 @@ export interface RemovalCheckoutIdentity {
 export interface CreateOperationRequest {
   name: string
   base: 'default' | 'current'
+  context?: TreeContextValues | undefined
   initialTerminal?:
     | {
         name: string
@@ -606,6 +631,59 @@ export const repositoryTerminalPresetsFileSchema = z.strictObject({
 })
 const terminalPresetRevisionSchema = z.string().min(1).max(64)
 
+const treeContextFieldIdSchema = z
+  .string()
+  .trim()
+  .regex(/^[a-z0-9][a-z0-9._-]{0,119}$/, {
+    message:
+      'Field IDs must contain only lowercase letters, numbers, dots, underscores, and hyphens'
+  })
+export const treeContextFieldDefinitionSchema = z.strictObject({
+  id: treeContextFieldIdSchema,
+  label: z
+    .string()
+    .trim()
+    .min(1)
+    .max(120)
+    .refine((value) => !value.includes('\0'), {
+      message: 'Field labels cannot contain NUL'
+    }),
+  input: z.enum(['text', 'textarea'])
+})
+
+export const treeContextValuesSchema = z
+  .record(
+    treeContextFieldIdSchema,
+    z
+      .string()
+      .trim()
+      .min(1)
+      .max(TREE_CONTEXT_VALUE_MAX_LENGTH)
+      .refine((value) => !value.includes('\0'), {
+        message: 'Tree context values cannot contain NUL'
+      })
+  )
+  .superRefine((values, context) => {
+    const entries = Object.entries(values)
+    if (entries.length > TREE_CONTEXT_FIELD_MAX_COUNT) {
+      context.addIssue({
+        code: 'custom',
+        message: `Tree context cannot contain more than ${TREE_CONTEXT_FIELD_MAX_COUNT} values`
+      })
+    }
+
+    const totalLength = entries.reduce(
+      (length, [key, value]) => length + key.length + value.length,
+      0
+    )
+    if (totalLength > TREE_CONTEXT_VALUES_MAX_LENGTH) {
+      context.addIssue({
+        code: 'custom',
+        message: `Tree context cannot contain more than ${TREE_CONTEXT_VALUES_MAX_LENGTH} characters`
+      })
+    }
+  })
+
 const initialTerminalSchema = z.object({
   name: terminalNameSchema,
   initialTitle: terminalNameSchema.optional(),
@@ -618,6 +696,7 @@ export const createWorktreeSchema = z
   .object({
     name: z.string().trim().min(1).max(120),
     base: z.enum(['default', 'current']).default('default'),
+    context: treeContextValuesSchema.optional(),
     sourceWorktreeId: z.string().min(1).optional(),
     initialTerminal: initialTerminalSchema.optional()
   })

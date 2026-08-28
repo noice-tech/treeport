@@ -87,7 +87,7 @@ describe('SQLite migration and catalog ordering', () => {
       await database.db.get<{ count: number }>(
         sql`SELECT count(*) AS count FROM __drizzle_migrations`
       )
-    ).toEqual({ count: 11 })
+    ).toEqual({ count: 12 })
     expect(
       await database.db.get<{ count: number }>(sql`
         SELECT count(*) AS count FROM sqlite_master WHERE name='terminals'
@@ -469,7 +469,7 @@ describe('SQLite migration and catalog ordering', () => {
       await reopened.db.get<{ count: number }>(
         sql`SELECT count(*) AS count FROM __drizzle_migrations`
       )
-    ).toEqual({ count: 11 })
+    ).toEqual({ count: 12 })
 
     const backupDirectory = path.join(directory, 'database-backups')
     const [backupName] = await fs.readdir(backupDirectory)
@@ -514,8 +514,10 @@ describe('SQLite migration and catalog ordering', () => {
       fs.rm(
         path.join(oldMigrations, '0010_browser_panels_and_permissions.sql')
       ),
+      fs.rm(path.join(oldMigrations, '0011_free_magdalene.sql')),
       fs.rm(path.join(oldMigrations, 'meta', '0009_snapshot.json')),
-      fs.rm(path.join(oldMigrations, 'meta', '0010_snapshot.json'))
+      fs.rm(path.join(oldMigrations, 'meta', '0010_snapshot.json')),
+      fs.rm(path.join(oldMigrations, 'meta', '0011_snapshot.json'))
     ])
     const journalPath = path.join(oldMigrations, 'meta', '_journal.json')
     // SAFETY: The copied migration journal has the asserted test shape.
@@ -721,12 +723,14 @@ describe('SQLite migration and catalog ordering', () => {
       fs.rm(
         path.join(oldMigrations, '0010_browser_panels_and_permissions.sql')
       ),
+      fs.rm(path.join(oldMigrations, '0011_free_magdalene.sql')),
       fs.rm(path.join(oldMigrations, 'meta', '0005_snapshot.json')),
       fs.rm(path.join(oldMigrations, 'meta', '0006_snapshot.json')),
       fs.rm(path.join(oldMigrations, 'meta', '0007_snapshot.json')),
       fs.rm(path.join(oldMigrations, 'meta', '0008_snapshot.json')),
       fs.rm(path.join(oldMigrations, 'meta', '0009_snapshot.json')),
-      fs.rm(path.join(oldMigrations, 'meta', '0010_snapshot.json'))
+      fs.rm(path.join(oldMigrations, 'meta', '0010_snapshot.json')),
+      fs.rm(path.join(oldMigrations, 'meta', '0011_snapshot.json'))
     ])
     const journalPath = path.join(oldMigrations, 'meta', '_journal.json')
     // SAFETY: The test fixture provides the asserted contract used here.
@@ -892,6 +896,6 @@ describe('SQLite migration and catalog ordering', () => {
       await recovered.db.get<{ count: number }>(
         sql`SELECT count(*) AS count FROM __drizzle_migrations`
       )
-    ).toEqual({ count: 11 })
+    ).toEqual({ count: 12 })
   })
 })

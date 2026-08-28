@@ -1,14 +1,19 @@
 import { useState } from 'react'
-import type {
-  ProjectRecord,
-  TerminalPresetDefinition,
-  TerminalPresetDefinitionDiagnostic
+import {
+  TREE_CONTEXT_VALUE_MAX_LENGTH,
+  type ProjectRecord,
+  type TerminalPresetDefinition,
+  type TerminalPresetDefinitionDiagnostic,
+  type TreeContextFieldDefinition,
+  type TreeContextFieldDiagnostic,
+  type TreeContextValues
 } from '@treeport/shared'
 import { Button } from '../../components/ui/button'
 import { FormField } from '../../components/ui/form-field'
 import { Input } from '../../components/ui/input'
 import { Label } from '../../components/ui/label'
 import { NativeSelect } from '../../components/ui/native-select'
+import { Textarea } from '../../components/ui/textarea'
 import {
   terminalPresetCommand,
   terminalPresetProvenance
@@ -23,6 +28,11 @@ export function WorktreeForm({
   presetsLoading,
   presetsError,
   onRetryPresets,
+  contextFields,
+  contextFieldDiagnostics,
+  contextFieldsLoading,
+  contextFieldsError,
+  onRetryContextFields,
   busy,
   onSubmit
 }: {
@@ -32,6 +42,11 @@ export function WorktreeForm({
   presetsLoading: boolean
   presetsError: boolean
   onRetryPresets: () => void
+  contextFields: TreeContextFieldDefinition[]
+  contextFieldDiagnostics: TreeContextFieldDiagnostic[]
+  contextFieldsLoading: boolean
+  contextFieldsError: boolean
+  onRetryContextFields: () => void
   busy: boolean
   onSubmit: (
     name: string,
@@ -42,11 +57,13 @@ export function WorktreeForm({
       argv?: string[]
       returnToShell?: boolean
     },
-    sourceWorktreeId?: string
+    sourceWorktreeId?: string,
+    treeContext?: TreeContextValues
   ) => void
 }) {
   const [name, setName] = useState('')
   const [baseValue, setBaseValue] = useState('default')
+  const [treeContext, setTreeContext] = useState<TreeContextValues>({})
   const [initialPresetId, setInitialPresetId] = useState(() => {
     const stored = localStorage.getItem(INITIAL_TERMINAL_PRESET_STORAGE_KEY)
 
@@ -87,6 +104,12 @@ export function WorktreeForm({
           localStorage.setItem(INITIAL_TERMINAL_PRESET_STORAGE_KEY, 'shell')
         }
 
+        const submittedContext = Object.fromEntries(
+          contextFields.flatMap((field) => {
+            const value = treeContext[field.id]?.trim()
+            return value ? [[field.id, value]] : []
+          })
+        )
         onSubmit(
           submittedName,
           base,
@@ -98,7 +121,8 @@ export function WorktreeForm({
                 returnToShell: true
               }
             : { name: 'Shell' },
-          base === 'current' ? baseValue : undefined
+          base === 'current' ? baseValue : undefined,
+          submittedContext
         )
       }}
     >
@@ -137,6 +161,71 @@ export function WorktreeForm({
           ))}
         </NativeSelect>
       </FormField>
+      {contextFields.map((field) => (
+        <FormField key={field.id}>
+          <Label htmlFor={`tree-context-${field.id}`}>{field.label}</Label>
+          {field.input === 'textarea' ? (
+            <Textarea
+              id={`tree-context-${field.id}`}
+              name={`tree-context-${field.id}`}
+              value={treeContext[field.id] ?? ''}
+              onChange={(event) =>
+                setTreeContext((current) => ({
+                  ...current,
+                  [field.id]: event.target.value
+                }))
+              }
+              maxLength={TREE_CONTEXT_VALUE_MAX_LENGTH}
+              disabled={busy}
+              rows={4}
+            />
+          ) : (
+            <Input
+              id={`tree-context-${field.id}`}
+              name={`tree-context-${field.id}`}
+              value={treeContext[field.id] ?? ''}
+              onChange={(event) =>
+                setTreeContext((current) => ({
+                  ...current,
+                  [field.id]: event.target.value
+                }))
+              }
+              maxLength={TREE_CONTEXT_VALUE_MAX_LENGTH}
+              disabled={busy}
+            />
+          )}
+        </FormField>
+      ))}
+      {contextFieldsLoading && (
+        <p className="form-note" role="status">
+          Loading tree context fields…
+        </p>
+      )}
+      {contextFieldsError && (
+        <div className="flex items-center justify-between gap-3">
+          <p className="form-note">
+            Tree context fields could not be loaded. You can still create the
+            tree.
+          </p>
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            onClick={onRetryContextFields}
+          >
+            Retry
+          </Button>
+        </div>
+      )}
+      {contextFieldDiagnostics.map((diagnostic) => (
+        <p
+          key={`${diagnostic.scope}:${diagnostic.path}:${diagnostic.message}`}
+          className="form-note"
+          role="status"
+        >
+          {diagnostic.message}
+        </p>
+      ))}
       <FormField>
         <Label htmlFor="initial-terminal-preset">Initial terminal</Label>
         <NativeSelect
@@ -202,7 +291,12 @@ export function WorktreeForm({
       <div className="flex items-center justify-end pt-1">
         <Button
           type="submit"
-          disabled={busy || waitingForInitialPreset || !name.trim()}
+          disabled={
+            busy ||
+            contextFieldsLoading ||
+            waitingForInitialPreset ||
+            !name.trim()
+          }
         >
           {busy ? 'Creating…' : 'Create tree'}
         </Button>

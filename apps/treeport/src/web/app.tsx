@@ -59,7 +59,8 @@ import { useProjectEventsBridge } from './project-events-bridge'
 import {
   projectsQueryOptions,
   terminalPresetDefinitionsQueryOptions,
-  terminalPresetsQueryOptions
+  terminalPresetsQueryOptions,
+  treeContextFieldsQueryOptions
 } from './project-metadata'
 import {
   LAST_PROJECT_TERMINAL_STORAGE_PREFIX,
@@ -362,6 +363,11 @@ function WorkspaceApp() {
             : undefined
   const presetDefinitionsQuery = useQuery(
     terminalPresetDefinitionsQueryOptions(presetDefinitionsContext)
+  )
+  const treeContextFieldsQuery = useQuery(
+    treeContextFieldsQueryOptions(
+      dialog?.type === 'worktree' ? dialog.project.id : null
+    )
   )
   const availablePresets = presetDefinitionsQuery.data?.definitions ?? []
   const presetDiagnostics = presetDefinitionsQuery.data?.diagnostics ?? []
@@ -1492,6 +1498,11 @@ function WorkspaceApp() {
         presetsLoading={presetDefinitionsQuery.isPending}
         presetsError={presetDefinitionsQuery.isError}
         onRetryPresets={() => void presetDefinitionsQuery.refetch()}
+        contextFields={treeContextFieldsQuery.data?.fields ?? []}
+        contextFieldDiagnostics={treeContextFieldsQuery.data?.diagnostics ?? []}
+        contextFieldsLoading={treeContextFieldsQuery.isPending}
+        contextFieldsError={treeContextFieldsQuery.isError}
+        onRetryContextFields={() => void treeContextFieldsQuery.refetch()}
         onSubmit={submitWorktreeCreation}
       />
       <NewPanelDialog

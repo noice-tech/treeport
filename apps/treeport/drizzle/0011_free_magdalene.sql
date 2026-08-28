@@ -1,0 +1,1 @@
+ALTER TABLE `worktrees` ADD `tree_context_json` text DEFAULT '{}' NOT NULL;

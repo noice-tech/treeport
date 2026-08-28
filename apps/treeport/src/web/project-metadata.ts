@@ -32,6 +32,22 @@ export const terminalPresetsQueryOptions = queryOptions({
   refetchOnWindowFocus: true
 })
 
+export const treeContextFieldsQueryOptions = (projectId: string | null) =>
+  queryOptions({
+    queryKey: ['tree-context-fields', projectId ?? 'none'] as const,
+    queryFn: async () =>
+      await parseResponse(
+        rpc.api['tree-context-fields'].$get({
+          query: { projectId: projectId! }
+        })
+      ),
+    enabled: projectId !== null,
+    staleTime: 0,
+    refetchInterval: 5_000,
+    refetchOnReconnect: true,
+    refetchOnWindowFocus: true
+  })
+
 interface TerminalPresetDefinitionsQuery {
   projectId?: string
   worktreeId?: string

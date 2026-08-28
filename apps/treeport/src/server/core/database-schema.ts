@@ -72,6 +72,7 @@ export const worktrees = sqliteTable(
     kind: text().notNull(),
     tmuxSocketName: text('tmux_socket_name').notNull().unique(),
     managedWrapperPath: text('managed_wrapper_path'),
+    treeContextJson: text('tree_context_json').notNull().default('{}'),
     prState: text('pr_state').notNull().default('unknown'),
     prNumber: integer('pr_number'),
     prUrl: text('pr_url'),

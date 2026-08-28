@@ -2,7 +2,10 @@ import { useRef } from 'react'
 import type {
   ProjectRecord,
   TerminalPresetDefinition,
-  TerminalPresetDefinitionDiagnostic
+  TerminalPresetDefinitionDiagnostic,
+  TreeContextFieldDefinition,
+  TreeContextFieldDiagnostic,
+  TreeContextValues
 } from '@treeport/shared'
 import {
   Dialog,
@@ -22,6 +25,11 @@ export function CreateWorktreeDialog({
   presetsLoading,
   presetsError,
   onRetryPresets,
+  contextFields,
+  contextFieldDiagnostics,
+  contextFieldsLoading,
+  contextFieldsError,
+  onRetryContextFields,
   onSubmit
 }: {
   project: ProjectRecord | null
@@ -32,6 +40,11 @@ export function CreateWorktreeDialog({
   presetsLoading: boolean
   presetsError: boolean
   onRetryPresets: () => void
+  contextFields: TreeContextFieldDefinition[]
+  contextFieldDiagnostics: TreeContextFieldDiagnostic[]
+  contextFieldsLoading: boolean
+  contextFieldsError: boolean
+  onRetryContextFields: () => void
   onSubmit: (
     project: ProjectRecord,
     name: string,
@@ -42,7 +55,8 @@ export function CreateWorktreeDialog({
       argv?: string[]
       returnToShell?: boolean
     },
-    sourceWorktreeId?: string
+    sourceWorktreeId?: string,
+    treeContext?: TreeContextValues
   ) => void
 }) {
   const submittedRef = useRef(false)
@@ -75,10 +89,28 @@ export function CreateWorktreeDialog({
             presetsLoading={presetsLoading}
             presetsError={presetsError}
             onRetryPresets={onRetryPresets}
+            contextFields={contextFields}
+            contextFieldDiagnostics={contextFieldDiagnostics}
+            contextFieldsLoading={contextFieldsLoading}
+            contextFieldsError={contextFieldsError}
+            onRetryContextFields={onRetryContextFields}
             busy={false}
-            onSubmit={(name, base, initialTerminal, sourceWorktreeId) => {
+            onSubmit={(
+              name,
+              base,
+              initialTerminal,
+              sourceWorktreeId,
+              treeContext
+            ) => {
               submittedRef.current = true
-              onSubmit(project, name, base, initialTerminal, sourceWorktreeId)
+              onSubmit(
+                project,
+                name,
+                base,
+                initialTerminal,
+                sourceWorktreeId,
+                treeContext
+              )
             }}
           />
         </DialogContent>

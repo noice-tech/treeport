@@ -147,7 +147,12 @@ describe('TreeportService with injected command adapters', () => {
       project.id,
       ' Owned Fírst / Preview! ',
       'default',
-      { name: 'Agent', argv: ['pi'] }
+      { name: 'Agent', argv: ['pi'] },
+      undefined,
+      {
+        issue: 'TREE-123',
+        brief: 'Review the cache behavior.'
+      }
     )
     const second = await service.beginCreateWorktree(
       project.id,
@@ -161,6 +166,10 @@ describe('TreeportService with injected command adapters', () => {
       request: {
         name: firstDestination.name,
         base: 'default',
+        context: {
+          issue: 'TREE-123',
+          brief: 'Review the cache behavior.'
+        },
         initialTerminal: { name: 'Agent', argv: ['pi'] }
       }
     })
@@ -196,6 +205,12 @@ describe('TreeportService with injected command adapters', () => {
       }
     })
     expect(secondCompleted.status).toBe('completed')
+    expect(
+      await service.getWorktreeContext(firstCompleted.worktreeId!)
+    ).toEqual({
+      issue: 'TREE-123',
+      brief: 'Review the cache behavior.'
+    })
     expect(
       await service.listActiveOperations({
         projectId: project.id,

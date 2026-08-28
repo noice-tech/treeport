@@ -8,6 +8,7 @@ import {
   TREE_FILE_MAX_BYTES,
   WEB_PANEL_INPUT_MAX_BYTES,
   browserUrlSchema,
+  treeContextValuesSchema,
   treeFilePathSchema,
   webPanelInputSchema
 } from '@treeport/shared'
@@ -32,6 +33,8 @@ import type {
   TerminalPresetDefinitionListing,
   TerminalRecord,
   TerminalSize,
+  TreeContextFieldListing,
+  TreeContextValues,
   TreeFile,
   TreeFileListing,
   TreeFileWrite,
@@ -77,6 +80,7 @@ import type { GitAdapter } from './git'
 import { NetworkListenerAdapter } from './network-listeners'
 import { PackageSystem } from './package-system'
 import { loadRepositoryTerminalPresets } from './repository-terminal-presets'
+import { loadTreeContextFields } from './tree-context'
 import {
   resolveWorktreeSetupTasks,
   runWorktreeSetupTasks,
@@ -1079,6 +1083,16 @@ export class TreeportService {
     this.invalidateProjectsSnapshot()
     this.events.publish('project.updated', { projectId })
     return await this.getProject(projectId)
+  }
+
+  async listTreeContextFields(
+    projectId: string
+  ): Promise<TreeContextFieldListing> {
+    const project = await this.getProject(projectId)
+    return loadTreeContextFields({
+      dataDir: this.deps.config.dataDir,
+      projectRoot: project.rootPath
+    })
   }
 
   async listTerminalPresets(): Promise<TerminalPreset[]> {
@@ -2586,6 +2600,19 @@ export class TreeportService {
     }
 
     return worktree
+  }
+
+  async getWorktreeContext(worktreeId: string): Promise<TreeContextValues> {
+    const [row] = await this.deps.database.db
+      .select({ treeContextJson: worktrees.treeContextJson })
+      .from(worktrees)
+      .where(eq(worktrees.id, worktreeId))
+      .limit(1)
+    if (!row) {
+      throw new DomainError('WORKTREE_NOT_FOUND', 'Tree not found', 404)
+    }
+
+    return treeContextValuesSchema.parse(JSON.parse(row.treeContextJson))
   }
 
   async requestWorkspaceOpen(
@@ -4191,7 +4218,8 @@ export class TreeportService {
       returnToShell?: boolean
       initialSize?: TerminalSize
     },
-    sourceWorktreeId?: string
+    sourceWorktreeId?: string,
+    treeContext?: TreeContextValues
   ): Promise<OperationRecord> {
     const project = await this.requireOpenProject(projectId)
     if (project.kind === 'folder') {
@@ -4234,6 +4262,10 @@ export class TreeportService {
       request.sourceWorktreeId = sourceWorktreeId
     }
 
+    if (treeContext && Object.keys(treeContext).length > 0) {
+      request.context = treeContext
+    }
+
     await this.deps.database.db.run(sql`
       INSERT INTO operations(
         id,kind,project_id,worktree_id,status,request_json,result_json,error,
@@ -4254,7 +4286,8 @@ export class TreeportService {
           name,
           base,
           initialTerminal,
-          sourceWorktreeId
+          sourceWorktreeId,
+          treeContext
         )
       )
       .catch(() => undefined)
@@ -4273,7 +4306,8 @@ export class TreeportService {
       returnToShell?: boolean
       initialSize?: TerminalSize
     },
-    sourceWorktreeId?: string
+    sourceWorktreeId?: string,
+    treeContext?: TreeContextValues
   ): Promise<void> {
     await this.deps.database.db.run(sql`
       UPDATE operations SET status='running',updated_at=${now()}
@@ -4285,7 +4319,8 @@ export class TreeportService {
         inputName,
         base,
         initialTerminal,
-        sourceWorktreeId
+        sourceWorktreeId,
+        treeContext
       )
       const timestamp = now()
       await this.deps.database.db.run(sql`
@@ -4326,7 +4361,8 @@ export class TreeportService {
       returnToShell?: boolean
       initialSize?: TerminalSize
     },
-    sourceWorktreeId?: string
+    sourceWorktreeId?: string,
+    treeContext?: TreeContextValues
   ): Promise<CreateWorktreeResult> {
     const project = await this.requireOpenProject(projectId)
     if (project.kind === 'folder') {
@@ -4354,7 +4390,8 @@ export class TreeportService {
         inputName,
         base,
         initialTerminal,
-        sourceWorktreeId
+        sourceWorktreeId,
+        treeContext
       )
     )
   }
@@ -4370,8 +4407,10 @@ export class TreeportService {
       returnToShell?: boolean
       initialSize?: TerminalSize
     },
-    sourceWorktreeId?: string
+    sourceWorktreeId?: string,
+    treeContext?: TreeContextValues
   ): Promise<CreateWorktreeResult> {
+    const contextValues = treeContextValuesSchema.parse(treeContext ?? {})
     await this.requireOpenProject(projectId)
     if (this.projectLocks.has(projectId)) {
       throw new DomainError(
@@ -4514,7 +4553,8 @@ export class TreeportService {
       )
       await this.deps.database.db.run(sql`
         UPDATE worktrees
-        SET managed_wrapper_path=${wrapperCreated ? wrapperPath : null}
+        SET managed_wrapper_path=${wrapperCreated ? wrapperPath : null},
+            tree_context_json=${JSON.stringify(contextValues)}
         WHERE path=${worktreePath}
       `)
       const [worktreeRow] = await this.deps.database.db

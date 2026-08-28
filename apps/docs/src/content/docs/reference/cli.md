@@ -160,6 +160,10 @@ treeport context [--json]
 
 This command reports the exact managed project, tree, and terminal context.
 
+It also reports the custom context values that the user supplied when the tree was created.
+
+In JSON output, these values are in `worktree.context`. The property is an empty object when the tree has no values.
+
 Outside a managed terminal, it exits successfully and reports that no managed context is present.
 
 ## Manage packages

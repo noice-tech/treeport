@@ -9,7 +9,12 @@ test.describe('desktop worktree and terminal workflows', () => {
   test('creates worktrees with focus, rollback, retry, and preset snapshots', async ({
     page
   }) => {
-    const mocked = await mockApp(page)
+    const mocked = await mockApp(page, [], {
+      treeContextFields: [
+        { id: 'issue', label: 'Issue', input: 'text' },
+        { id: 'brief', label: 'Task description', input: 'textarea' }
+      ]
+    })
     {
       const trigger = page.getByRole('button', { name: 'New tree' })
       await trigger.click()
@@ -51,6 +56,10 @@ test.describe('desktop worktree and terminal workflows', () => {
       await expect(selectedTerminal).toBeVisible()
       await page.getByRole('button', { name: 'New tree' }).click()
       await page.getByLabel('Tree name').fill('New Tópic / Preview!')
+      await page.getByLabel('Issue').fill('TREE-123')
+      await page
+        .getByLabel('Task description')
+        .fill('Review the cache behavior.\nKeep the terminal workflow.')
       const requestPromise = page.waitForRequest(
         (request) =>
           request.method() === 'POST' &&
@@ -62,6 +71,10 @@ test.describe('desktop worktree and terminal workflows', () => {
       expect(request.postDataJSON()).toEqual({
         name: 'New Tópic / Preview!',
         base: 'default',
+        context: {
+          issue: 'TREE-123',
+          brief: 'Review the cache behavior.\nKeep the terminal workflow.'
+        },
         initialTerminal: {
           name: 'Shell',
           initialSize: {

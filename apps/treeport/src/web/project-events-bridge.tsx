@@ -65,6 +65,10 @@ export function useProjectEventsBridge(
           { cancelRefetch: false }
         ),
         queryClient.invalidateQueries(
+          { queryKey: ['tree-context-fields'] },
+          { cancelRefetch: false }
+        ),
+        queryClient.invalidateQueries(
           { queryKey: ['web-panel-definitions'] },
           { cancelRefetch: false }
         )

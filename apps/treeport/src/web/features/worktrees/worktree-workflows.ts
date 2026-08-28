@@ -9,6 +9,7 @@ import type {
   ProjectRecord,
   RemovePreview,
   TerminalSize,
+  TreeContextValues,
   WorktreeRecord
 } from '@treeport/shared'
 import { parseResponse } from 'hono/client'
@@ -38,6 +39,7 @@ interface WorktreeCreationRequest {
     initialSize?: TerminalSize
   }
   sourceWorktreeId?: string
+  treeContext?: TreeContextValues
 }
 
 interface OwnedCreation {
@@ -179,6 +181,10 @@ export function useWorktreeWorkflows({
         Object.assign(json, { sourceWorktreeId: request.sourceWorktreeId })
       }
 
+      if (request.treeContext && Object.keys(request.treeContext).length > 0) {
+        Object.assign(json, { context: request.treeContext })
+      }
+
       return parseResponse(
         rpc.api.projects[':projectId']['worktree-operations'].$post({
           param: { projectId: request.projectId },
@@ -281,7 +287,8 @@ export function useWorktreeWorkflows({
       argv?: string[]
       returnToShell?: boolean
     },
-    sourceWorktreeId?: string
+    sourceWorktreeId?: string,
+    treeContext?: TreeContextValues
   ) => {
     const initialSize = selectedTerminalId
       ? terminalSessions.getInitialSize(selectedTerminalId)
@@ -313,6 +320,10 @@ export function useWorktreeWorkflows({
     }
     if (sourceWorktreeId) {
       pending.sourceWorktreeId = sourceWorktreeId
+    }
+
+    if (treeContext && Object.keys(treeContext).length > 0) {
+      pending.treeContext = treeContext
     }
 
     onWorktreeSubmitted()
