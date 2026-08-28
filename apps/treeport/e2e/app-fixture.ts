@@ -1608,6 +1608,7 @@ export async function mockApp(
       if (!existingPanel) {
         worktree.panels.push(panel)
       }
+
       await route.fulfill({
         json: {
           panel,
