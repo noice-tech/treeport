@@ -106,7 +106,9 @@ If the browser cannot read the clipboard, paste into the editable field. Then, s
 
 ### Open links
 
-On an Apple keyboard, press `Cmd` and select a link in terminal output.
+On a touch screen, tap a link in terminal output.
+
+On an Apple keyboard, press `Cmd` and select a link.
 
 On other keyboards, press `Ctrl` and select the link.
 

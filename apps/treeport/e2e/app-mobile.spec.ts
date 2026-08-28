@@ -1,6 +1,10 @@
 import { expect, test } from '@playwright/test'
 import { TERMINAL_SCROLL_EXIT_SEQUENCE } from '@treeport/shared'
-import { mockApp, waitForTerminalControl } from './app-fixture'
+import {
+  mockApp,
+  terminalTextPoint,
+  waitForTerminalControl
+} from './app-fixture'
 
 test.describe('mobile terminal UI', () => {
   test('uses the mobile drawer and terminal controls end to end', async ({
@@ -209,6 +213,36 @@ test.describe('mobile terminal UI', () => {
     await expect(
       page.getByRole('button', { name: 'Open project' })
     ).toBeVisible()
+  })
+
+  test('opens a terminal link with a tap', async ({ page }) => {
+    await mockApp(page)
+    await page.getByLabel('Open tree drawer').click()
+    await page.getByRole('button', { name: 'Pi, running', exact: true }).click()
+    await page.evaluate(() => {
+      const socket = window.__lastWs
+      socket.onmessage?.({
+        data: JSON.stringify({
+          version: 1,
+          type: 'output',
+          streamId: socket.streamId,
+          sequence: 2,
+          data: '\u001b[2J\u001b[H\u001b]8;;https://example.test/mobile\u001b\\Open docs\u001b]8;;\u001b\\\r\n'
+        })
+      })
+    })
+
+    const link = page
+      .locator('.xterm-rows span')
+      .filter({ hasText: 'Open docs' })
+      .last()
+    await expect(link).toBeVisible()
+    const point = await terminalTextPoint(link, { x: 8, y: 8 })
+    await page.touchscreen.tap(point.x, point.y)
+    await expect(page).toHaveURL(/\/panels\/browser_panel_1$/)
+    await expect(
+      page.getByRole('textbox', { name: 'Application URL' })
+    ).toHaveValue('https://example.test/mobile')
   })
 
   test('switches projects without opening the mobile keyboard', async ({

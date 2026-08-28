@@ -276,7 +276,7 @@ function controllerSessionFixture() {
 }
 
 describe('terminal options', () => {
-  it('opens OSC 8 links in Browser only on Cmd-click on Apple platforms', () => {
+  it('opens OSC 8 links in Browser on Apple Cmd-click or touch', () => {
     const request = vi.fn(() => Promise.resolve(new Response()))
     vi.stubGlobal('navigator', { platform: 'MacIntel' })
     vi.stubGlobal('fetch', request)
@@ -304,6 +304,16 @@ describe('terminal options', () => {
         body: JSON.stringify({ url })
       })
     )
+
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn(() => testAccess<MediaQueryList>({ matches: true }))
+    )
+    handler.activate(
+      testAccess<MouseEvent>({ metaKey: false, ctrlKey: false }),
+      url
+    )
+    expect(request).toHaveBeenCalledTimes(2)
   })
 
   it('opens OSC 8 links in Browser only on Ctrl-click on non-Apple platforms', () => {

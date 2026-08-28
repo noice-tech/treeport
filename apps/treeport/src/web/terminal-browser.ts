@@ -99,7 +99,10 @@ export function activateTerminalLink(
   url: string,
   terminalId?: string
 ): void {
-  if (usesMacKeyboard() ? !event.metaKey : !event.ctrlKey) {
+  if (
+    !globalThis.matchMedia?.('(pointer: coarse)').matches &&
+    (usesMacKeyboard() ? !event.metaKey : !event.ctrlKey)
+  ) {
     return
   }
 
@@ -697,6 +700,23 @@ export function trackTerminalScrolling(
   const resetTouchScroll = (event: TouchEvent) => {
     if (touchSelectionAnchor) {
       event.preventDefault()
+    } else if (event.type === 'touchend' && touchStart) {
+      event.preventDefault()
+      const screen =
+        terminal.element?.querySelector<HTMLElement>('.xterm-screen')
+      if (screen) {
+        for (const type of ['mousemove', 'mousedown', 'mouseup'] as const) {
+          screen.dispatchEvent(
+            new MouseEvent(type, {
+              bubbles: true,
+              cancelable: true,
+              clientX: touchStart.x,
+              clientY: touchStart.y,
+              buttons: type === 'mousedown' ? 1 : 0
+            })
+          )
+        }
+      }
     }
 
     clearTouchSelectionTimer()
