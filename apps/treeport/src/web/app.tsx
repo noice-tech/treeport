@@ -80,6 +80,7 @@ import { cn } from './lib/utils'
 const webPanelPermissionErrorSchema = z.object({
   error: z.object({ message: z.string() })
 })
+const TOOL_PANE_OPEN_STORAGE_PREFIX = 'treeport-tool-pane-open:'
 
 type AppDialog =
   | { type: 'project' }
@@ -158,7 +159,26 @@ function WorkspaceApp() {
   const [retainedPanelIds, setRetainedPanelIds] = useState<Set<string>>(
     () => new Set()
   )
-  const [toolPaneOpen, setToolPaneOpen] = useState(false)
+  const [toolPaneOpenByWorktree, setToolPaneOpenByWorktree] = useState<
+    Record<string, boolean>
+  >({})
+  const setToolPaneOpen = useCallback((worktreeId: string, open: boolean) => {
+    setToolPaneOpenByWorktree((current) =>
+      current[worktreeId] === open
+        ? current
+        : { ...current, [worktreeId]: open }
+    )
+    localStorage.setItem(
+      `${TOOL_PANE_OPEN_STORAGE_PREFIX}${worktreeId}`,
+      String(open)
+    )
+  }, [])
+  const toolPaneOpen = selectedWorktree
+    ? (toolPaneOpenByWorktree[selectedWorktree.id] ??
+      localStorage.getItem(
+        `${TOOL_PANE_OPEN_STORAGE_PREFIX}${selectedWorktree.id}`
+      ) === 'true')
+    : false
   const [activePanelByWorktree, setActivePanelByWorktree] = useState<
     Record<string, string | null>
   >({})
@@ -198,10 +218,10 @@ function WorkspaceApp() {
         ...current,
         [panel.worktreeId]: panel.id
       }))
-      setToolPaneOpen(true)
+      setToolPaneOpen(panel.worktreeId, true)
       setPreserveTerminalFocusPanelId(preserveTerminalFocus ? panel.id : null)
     },
-    [retainPanel]
+    [retainPanel, setToolPaneOpen]
   )
   const [webPanelReloadRevisions, setWebPanelReloadRevisions] = useState<
     Record<string, number>
@@ -757,8 +777,13 @@ function WorkspaceApp() {
         ? current
         : { ...current, [selectedPanel.worktreeId]: selectedPanel.id }
     )
-    setToolPaneOpen(true)
-  }, [retainPanel, selectedPanel, workspaceResolution?.canonical])
+    setToolPaneOpen(selectedPanel.worktreeId, true)
+  }, [
+    retainPanel,
+    selectedPanel,
+    setToolPaneOpen,
+    workspaceResolution?.canonical
+  ])
 
   useEffect(() => {
     if (!workspaceResolution || workspaceResolution.canonical) {
@@ -1055,8 +1080,12 @@ function WorkspaceApp() {
     Boolean(selectedWorktree.prunable) ||
     Boolean(pendingRemovals[selectedWorktree.id])
   const toggleToolPane = useCallback(() => {
+    if (!selectedWorktree) {
+      return
+    }
+
     if (toolPaneOpen) {
-      setToolPaneOpen(false)
+      setToolPaneOpen(selectedWorktree.id, false)
       focusSurface('terminal')
       return
     }
@@ -1070,12 +1099,14 @@ function WorkspaceApp() {
       }))
     }
 
-    setToolPaneOpen(true)
+    setToolPaneOpen(selectedWorktree.id, true)
   }, [
     activePanel,
     focusSurface,
     retainPanel,
+    selectedWorktree,
     selectedWorktreeTools,
+    setToolPaneOpen,
     toolPaneOpen
   ])
   const focusToolSurface = useCallback(() => {

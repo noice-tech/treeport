@@ -897,9 +897,6 @@ test('controls the local Browser through its exact bridge while another workspac
       }
     })
     const restartedWindow = await electronApp.firstWindow()
-    await restartedWindow
-      .getByRole('button', { name: 'Toggle side panel' })
-      .click()
     await restartedWindow.getByRole('tab', { name: /, Browser$/ }).click()
     await expect
       .poll(() =>
