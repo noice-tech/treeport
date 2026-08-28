@@ -294,7 +294,7 @@ function WorkspaceApp() {
 
         return (
           await parseResponse(
-            rpc.api.worktrees[':worktreeId'].panels.$post({
+            rpc.api.worktrees[':worktreeId'].panels.open.$post({
               param: { worktreeId: worktree.id },
               json: {
                 definitionId: definition.id,
@@ -508,10 +508,6 @@ function WorkspaceApp() {
   }
   const navigatePanelOpenRequest = useCallback(
     (request: ProductEventDataMap['panel.open_requested']) => {
-      setWebPanelReloadRevisions((current) => ({
-        ...current,
-        [request.panelId]: (current[request.panelId] ?? 0) + 1
-      }))
       if (
         !openRequestMatchesWorkspace(
           request.sourceTerminalId,
@@ -523,6 +519,10 @@ function WorkspaceApp() {
         return
       }
 
+      setWebPanelReloadRevisions((current) => ({
+        ...current,
+        [request.panelId]: (current[request.panelId] ?? 0) + 1
+      }))
       queryClient.setQueryData<ProjectRecord[]>(
         projectsQueryOptions.queryKey,
         (current) =>

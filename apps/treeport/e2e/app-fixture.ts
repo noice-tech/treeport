@@ -1570,7 +1570,7 @@ export async function mockApp(
     }
 
     if (
-      /^\/api\/worktrees\/[^/]+\/panels$/.test(pathname) &&
+      /^\/api\/worktrees\/[^/]+\/panels\/open$/.test(pathname) &&
       route.request().method() === 'POST'
     ) {
       const worktreeId = pathname.split('/')[3]!
@@ -1582,10 +1582,15 @@ export async function mockApp(
       const worktree = state.worktrees.find(
         (candidate) => candidate.id === worktreeId
       )!
+      const existingPanel = worktree.panels.findLast(
+        (candidate) =>
+          candidate.kind === 'web' &&
+          candidate.definitionId === body.definitionId
+      )
       const definition = webPanelDefinitions.find(
         (candidate) => candidate.id === body.definitionId
       )!
-      const panel = {
+      const panel = existingPanel ?? {
         id: `panel_${++webPanelCreations}`,
         kind: 'web' as const,
         worktreeId,
@@ -1600,8 +1605,17 @@ export async function mockApp(
         createdAt: '2026-01-01T00:00:00.000Z',
         updatedAt: '2026-01-01T00:00:00.000Z'
       }
-      worktree.panels.push(panel)
-      await route.fulfill({ status: 201, json: { panel } })
+      if (!existingPanel) {
+        worktree.panels.push(panel)
+      }
+
+      await route.fulfill({
+        json: {
+          panel,
+          created: !existingPanel,
+          reused: Boolean(existingPanel)
+        }
+      })
       return
     }
 
