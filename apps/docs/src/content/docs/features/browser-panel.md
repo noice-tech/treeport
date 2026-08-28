@@ -75,7 +75,9 @@ Use pointer, keyboard, and scroll input in the page.
 
 When a page opens a popup, Treeport opens a new browser panel in the same tree.
 
-Modifier-click an HTTP or HTTPS terminal link to open it in that terminal's tree.
+On a touch screen, tap an HTTP or HTTPS terminal link to open it in that terminal's tree.
+
+With a mouse, modifier-click the link.
 
 ## Open a browser panel from the CLI
 
