@@ -22,6 +22,9 @@
     },
     "packages/web-panel-review": {
       "entry": ["web-panels/review/review.tsx"]
+    },
+    "packages/web-panel-files": {
+      "entry": ["web-panels/files/files.tsx"]
     }
   }
 }

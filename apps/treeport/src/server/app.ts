@@ -33,6 +33,7 @@ import {
   packageReloadSchema,
   packageRemoveSchema,
   packageUpdateSchema,
+  readTreeFileSchema,
   registerProjectSchema,
   requestWorkspaceOpenSchema,
   TERMINAL_MAX_UPLOAD_BYTES,
@@ -43,7 +44,8 @@ import {
   updateProjectSchema,
   updateTerminalPresetSchema,
   updateTerminalSchema,
-  updateWebPanelPermissionGrantSchema
+  updateWebPanelPermissionGrantSchema,
+  writeTreeFileSchema
 } from '@treeport/shared'
 import type { ApiErrorBody } from '@treeport/shared'
 import type { AppConfig, TmuxAdapter, TreeportService } from './core/index'
@@ -181,6 +183,36 @@ function queryInput<T extends z.ZodType>(schema: T) {
     }
   })
 }
+
+function createTreeFilesApi(service: TreeportService) {
+  return new Hono()
+    .get('/api/panels/:panelId/files', async (context) =>
+      context.json(await service.listTreeFiles(context.req.param('panelId')))
+    )
+    .post(
+      '/api/panels/:panelId/files/read',
+      jsonInput(readTreeFileSchema),
+      async (context) => {
+        const body = context.req.valid('json')
+        return context.json(
+          await service.readTreeFile(context.req.param('panelId'), body.path)
+        )
+      }
+    )
+    .put(
+      '/api/panels/:panelId/files',
+      jsonInput(writeTreeFileSchema),
+      async (context) =>
+        context.json(
+          await service.writeTreeFile(
+            context.req.param('panelId'),
+            context.req.valid('json')
+          )
+        )
+    )
+}
+
+export type TreeFilesApiType = ReturnType<typeof createTreeFilesApi>
 
 export function createApp({
   service,
@@ -415,6 +447,8 @@ export function createApp({
     )
 
   app.route('/', browserApi)
+
+  app.route('/', createTreeFilesApi(service))
 
   const api = new Hono()
     .get('/api/health', (context) =>

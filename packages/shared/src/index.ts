@@ -5,6 +5,7 @@ import type {
   WebPanelPermission
 } from '@treeport/panel-sdk'
 import { browserUrlSchema } from './browser-protocol.js'
+import { webPanelPermissionSchema } from './web-panel-protocol.js'
 import {
   terminalSizeSchema,
   type TerminalRuntimeMetadata
@@ -14,6 +15,10 @@ export type {
   GitDiff,
   GitDiffChangeSets,
   JsonValue,
+  TreeFile,
+  TreeFileListing,
+  TreeFileWrite,
+  TreeFileWriteResult,
   WebPanel,
   WebPanelContext,
   WebPanelInput,
@@ -25,6 +30,7 @@ export type {
 export * from './browser-protocol.js'
 export * from './socket-protocol.js'
 export * from './terminal-protocol.js'
+export * from './web-panel-protocol.js'
 
 export const PRODUCT_NAME = 'Treeport'
 export const API_VERSION = 1
@@ -38,6 +44,8 @@ export const TERMINAL_PRESET_ARGUMENT_MAX_COUNT = TERMINAL_ARGV_MAX_COUNT - 1
 export const TERMINAL_CAPTURE_DEFAULT_LINES = 200
 export const TERMINAL_CAPTURE_MAX_LINES = 5_000
 export const WEB_PANEL_INPUT_MAX_BYTES = 64 * 1024
+export const TREE_FILE_MAX_BYTES = 2 * 1024 * 1024
+export const TREE_FILE_LIST_MAX_ENTRIES = 50_000
 
 export function formatCommandLine(argv: readonly string[]): string {
   return argv
@@ -694,7 +702,7 @@ export const createWebPanelSchema = z.object({
 
 export const updateWebPanelPermissionGrantSchema = z.strictObject({
   granted: z.boolean(),
-  permissions: z.array(z.literal('same-origin'))
+  permissions: z.array(webPanelPermissionSchema)
 })
 
 export const createBrowserPanelSchema = z.strictObject({
@@ -728,6 +736,28 @@ export const setWebPanelStorageSchema = z.object({
 
 export const deleteWebPanelStorageSchema = z.object({
   key: webPanelStorageKeySchema
+})
+
+export const treeFilePathSchema = z
+  .string()
+  .min(1)
+  .max(4_096)
+  .refine(
+    (value) =>
+      !value.includes('\0') &&
+      !value.startsWith('/') &&
+      value.split('/').every((segment) => segment !== '' && segment !== '..'),
+    { message: 'File path must be a relative path inside the tree' }
+  )
+
+export const readTreeFileSchema = z.strictObject({
+  path: treeFilePathSchema
+})
+
+export const writeTreeFileSchema = z.strictObject({
+  path: treeFilePathSchema,
+  content: z.string(),
+  expectedRevision: z.string().min(1).max(128)
 })
 
 export const createTerminalPresetSchema = z.object(terminalPresetFields)

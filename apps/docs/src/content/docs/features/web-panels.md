@@ -149,6 +149,14 @@ const context = await treeport.context()
 const diff = await treeport.diff()
 const input = context.launch.input
 
+const listing = await treeport.files.list()
+const file = await treeport.files.read(listing.paths[0])
+await treeport.files.write({
+  path: file.path,
+  content: file.content.replace('before', 'after'),
+  expectedRevision: file.revision
+})
+
 await treeport.storage.set('drafts', [{ file: 'src/app.ts', line: 12 }])
 const drafts = await treeport.storage.get('drafts')
 
@@ -170,6 +178,22 @@ Use `treeport.panel.setTitle(title)` to set a title on the current client.
 Use `treeport.panel.setTitle(null)` to restore the configured title.
 
 Treeport does not save runtime titles or send them to other clients.
+
+Use `treeport.panel.setDirty(true)` when the panel has local unsaved changes.
+
+Treeport then requests approval before local panel closure. Set the value to `false` after you save all changes.
+
+`treeport.files` requires the `tree-files` package permission.
+
+It lists, reads, and changes existing regular files in the current tree. All paths are relative to the tree root.
+
+The API supports UTF-8 files with a maximum size of 2 MiB. It does not create, rename, or delete files.
+
+A file listing contains a maximum of 50,000 paths. The `truncated` value reports if the tree contains more supported files.
+
+A read returns an opaque revision. Supply it as `expectedRevision` when you write the file.
+
+Treeport rejects the write if the file changed after the read. Read the file again before you retry.
 
 For a repository project, `treeport.diff()` returns merge-base information and a read-only unified diff for the final tree state.
 

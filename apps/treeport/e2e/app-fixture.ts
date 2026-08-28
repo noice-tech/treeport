@@ -12,7 +12,8 @@ import {
   type TerminalPreset,
   type TerminalPresetDefinitionDiagnostic,
   type TerminalPresetDefinition,
-  type TerminalRuntimeMetadata
+  type TerminalRuntimeMetadata,
+  type WebPanelDefinition
 } from '@treeport/shared'
 
 export async function terminalTextPoint(
@@ -174,24 +175,21 @@ export async function mockApp(
     repositoryPresetDiagnostics?: TerminalPresetDefinitionDiagnostic[]
     applicationUpdate?: ApplicationUpdateStatus
     realReviewPanel?: boolean
+    realFilesPanel?: boolean
     hostedBrowser?: boolean
     browserInstallRequired?: boolean
     browserBeforeUnload?: boolean
   } = {}
 ) {
-  let reviewPanelScript = ''
-  let reviewPanelCss = ''
-  const reviewPanelAssets = new Map<
-    string,
-    { body: string | Buffer; contentType: string }
-  >()
-  if (options.realReviewPanel) {
-    const reviewRoot = path.resolve(
-      process.cwd(),
-      'packages/web-panel-review/web-panels/review'
-    )
+  const buildPanel = async (root: string, entry: string) => {
+    let script = ''
+    let css = ''
+    const assets = new Map<
+      string,
+      { body: string | Buffer; contentType: string }
+    >()
     const build = await viteBuild({
-      root: reviewRoot,
+      root,
       configFile: false,
       logLevel: 'silent',
       plugins: [react()],
@@ -200,7 +198,7 @@ export async function mockApp(
         write: false,
         cssCodeSplit: false,
         rollupOptions: {
-          input: path.join(reviewRoot, 'review.tsx'),
+          input: path.join(root, entry),
           output: { codeSplitting: false }
         }
       }
@@ -211,20 +209,20 @@ export async function mockApp(
     for (const item of output) {
       if (item.type === 'chunk') {
         if (item.isEntry) {
-          reviewPanelScript = item.code
+          script = item.code
         }
 
-        reviewPanelAssets.set(item.fileName, {
+        assets.set(item.fileName, {
           body: item.code,
           contentType: 'text/javascript'
         })
       } else if (item.fileName.endsWith('.css')) {
-        reviewPanelCss =
+        css =
           item.source instanceof Uint8Array
             ? new TextDecoder().decode(item.source)
             : item.source
       } else {
-        reviewPanelAssets.set(item.fileName, {
+        assets.set(item.fileName, {
           body:
             item.source instanceof Uint8Array
               ? Buffer.from(item.source)
@@ -233,7 +231,26 @@ export async function mockApp(
         })
       }
     }
+    return { script, css, assets }
   }
+  const reviewPanelBuild = options.realReviewPanel
+    ? await buildPanel(
+        path.resolve(
+          process.cwd(),
+          'packages/web-panel-review/web-panels/review'
+        ),
+        'review.tsx'
+      )
+    : null
+  const filesPanelBuild = options.realFilesPanel
+    ? await buildPanel(
+        path.resolve(
+          process.cwd(),
+          'packages/web-panel-files/web-panels/files'
+        ),
+        'files.tsx'
+      )
+    : null
 
   if (options.keyboardPlatform) {
     await page.addInitScript((platform) => {
@@ -821,7 +838,23 @@ export async function mockApp(
   let releaseBrowserInstall: (() => void) | null = null
   let webPanelHasStorage = false
   const webPanelStorage = new Map<string, Map<string, JsonValue>>()
-  const webPanelDefinitions = [
+  let treeFileRevision = 1
+  const treeFiles = new Map([
+    [
+      'src/app.ts',
+      {
+        content: 'export const value = 1\n',
+        revision: `revision-${treeFileRevision}`
+      }
+    ],
+    ['README.md', { content: '# Example\n', revision: 'revision-readme' }]
+  ])
+  const treeFileWrites: Array<{
+    path: string
+    content: string
+    expectedRevision: string
+  }> = []
+  const webPanelDefinitions: WebPanelDefinition[] = [
     {
       id: 'project:review',
       title: 'Review',
@@ -829,7 +862,24 @@ export async function mockApp(
       permissions: [],
       permissionsGranted: true,
       sandbox: { allowSameOrigin: false }
-    }
+    },
+    ...(options.realFilesPanel
+      ? [
+          {
+            id: 'package:files:web-panel:files',
+            title: 'Files',
+            source: {
+              type: 'package' as const,
+              packageId: 'local:files',
+              source: 'packages/web-panel-files',
+              scope: 'global' as const
+            },
+            permissions: ['tree-files' as const],
+            permissionsGranted: false,
+            sandbox: { allowSameOrigin: false }
+          }
+        ]
+      : [])
   ]
   let staleRemovePreview: Partial<RemovePreview> | null = null
   let removeRequests = 0
@@ -1413,21 +1463,98 @@ export async function mockApp(
       return
     }
 
-    const reviewAssetMatch = /^\/api\/web-panels\/[^/]+\/assets\/(.+)$/.exec(
+    const panelAssetMatch = /^\/api\/web-panels\/([^/]+)\/assets\/(.+)$/.exec(
       pathname
     )
-    if (
-      reviewAssetMatch &&
-      route.request().method() === 'GET' &&
-      options.realReviewPanel
-    ) {
+    if (panelAssetMatch && route.request().method() === 'GET') {
+      const panel = state.worktrees
+        .flatMap((worktree) => worktree.panels)
+        .find((candidate) => candidate.id === panelAssetMatch[1])
+      const build =
+        panel?.kind === 'web' && panel.definitionId === 'project:review'
+          ? reviewPanelBuild
+          : panel?.kind === 'web' &&
+              panel.definitionId === 'package:files:web-panel:files'
+            ? filesPanelBuild
+            : null
       const asset =
-        reviewPanelAssets.get(reviewAssetMatch[1]!) ??
-        reviewPanelAssets.get(`assets/${reviewAssetMatch[1]!}`)
+        build?.assets.get(panelAssetMatch[2]!) ??
+        build?.assets.get(`assets/${panelAssetMatch[2]!}`)
       if (asset) {
         await route.fulfill(asset)
         return
       }
+    }
+
+    if (
+      /^\/api\/panels\/[^/]+\/files$/.test(pathname) &&
+      route.request().method() === 'GET'
+    ) {
+      await route.fulfill({
+        json: { paths: [...treeFiles.keys()].sort(), truncated: false }
+      })
+      return
+    }
+
+    if (
+      /^\/api\/panels\/[^/]+\/files\/read$/.test(pathname) &&
+      route.request().method() === 'POST'
+    ) {
+      const body: { path: string } = route.request().postDataJSON()
+      const file = treeFiles.get(body.path)
+      if (!file) {
+        await route.fulfill({
+          status: 404,
+          json: {
+            error: {
+              code: 'TREE_FILE_NOT_FOUND',
+              message: 'The selected file does not exist'
+            }
+          }
+        })
+        return
+      }
+
+      await route.fulfill({
+        json: {
+          path: body.path,
+          content: file.content,
+          revision: file.revision
+        }
+      })
+      return
+    }
+
+    if (
+      /^\/api\/panels\/[^/]+\/files$/.test(pathname) &&
+      route.request().method() === 'PUT'
+    ) {
+      const body: {
+        path: string
+        content: string
+        expectedRevision: string
+      } = route.request().postDataJSON()
+      treeFileWrites.push(body)
+      const file = treeFiles.get(body.path)
+      if (!file || file.revision !== body.expectedRevision) {
+        await route.fulfill({
+          status: 409,
+          json: {
+            error: {
+              code: 'TREE_FILE_CHANGED',
+              message:
+                'The file changed after it was opened. Reload it before saving.'
+            }
+          }
+        })
+        return
+      }
+
+      treeFileRevision += 1
+      const revision = `revision-${treeFileRevision}`
+      treeFiles.set(body.path, { content: body.content, revision })
+      await route.fulfill({ json: { path: body.path, revision } })
+      return
     }
 
     if (
@@ -1462,12 +1589,19 @@ export async function mockApp(
       const panel = state.worktrees
         .flatMap((worktree) => worktree.panels)
         .find((candidate) => candidate.id === panelId)
-      if (options.realReviewPanel && panel?.definitionId === 'project:review') {
+      const build =
+        panel?.kind === 'web' && panel.definitionId === 'project:review'
+          ? reviewPanelBuild
+          : panel?.kind === 'web' &&
+              panel.definitionId === 'package:files:web-panel:files'
+            ? filesPanelBuild
+            : null
+      if (build) {
         await route.fulfill({
           contentType: 'text/html',
-          body: `<!doctype html><html><head><meta charset="UTF-8"><style>${reviewPanelCss}</style></head><body>
+          body: `<!doctype html><html><head><meta charset="UTF-8"><style>${build.css}</style></head><body>
             <div id="root"></div>
-            <script type="module">${reviewPanelScript.replaceAll(
+            <script type="module">${build.script.replaceAll(
               '</script',
               '<\\/script'
             )}</script>
@@ -2111,6 +2245,15 @@ export async function mockApp(
     },
     getWebPanelStorage: (panelId: string, key: string) =>
       webPanelStorage.get(panelId)?.get(key),
+    getTreeFile: (filePath: string) => treeFiles.get(filePath),
+    setTreeFile: (filePath: string, content: string) => {
+      treeFileRevision += 1
+      treeFiles.set(filePath, {
+        content,
+        revision: `revision-${treeFileRevision}`
+      })
+    },
+    treeFileWrites: () => [...treeFileWrites],
     setRemovePreview: (value: Partial<RemovePreview>) => {
       removePreviewOverride = value
     },

@@ -16,7 +16,7 @@ export interface WebPanelLaunch {
   cwd: string | null
 }
 
-export type WebPanelPermission = 'same-origin'
+export type WebPanelPermission = 'same-origin' | 'tree-files'
 
 /** A persistent web panel instance scoped to one tree. */
 export interface WebPanel {
@@ -100,6 +100,32 @@ export interface WorktreeListenerDiscovery {
   listeners: WorktreeListener[]
 }
 
+/** Existing editable files in the current tree. */
+export interface TreeFileListing {
+  paths: string[]
+  truncated: boolean
+}
+
+/** UTF-8 contents and revision for one existing tree file. */
+export interface TreeFile {
+  path: string
+  content: string
+  revision: string
+}
+
+/** A revision-checked update to one existing tree file. */
+export interface TreeFileWrite {
+  path: string
+  content: string
+  expectedRevision: string
+}
+
+/** The revision created by a successful tree-file update. */
+export interface TreeFileWriteResult {
+  path: string
+  revision: string
+}
+
 /** Durable key-value storage scoped to one panel instance. */
 export interface WebPanelStorage {
   /** Return a stored JSON value, or undefined when the key does not exist. */
@@ -116,6 +142,8 @@ export interface WebPanelStorage {
 export interface WebPanelControls {
   /** Set a runtime title. Pass null to restore the configured title. */
   setTitle(title: string | null): void
+  /** Report local unsaved changes so Treeport can warn before panel closure. */
+  setDirty(dirty: boolean): void
 }
 
 /** Keyboard shortcuts Treeport can route to an active web panel. */
@@ -137,6 +165,12 @@ export interface TreeportPanelSdk {
   readonly network: {
     listeners(): Promise<WorktreeListenerDiscovery>
   }
+  /** Permission-gated access to existing UTF-8 files in this tree. */
+  readonly files: {
+    list(): Promise<TreeFileListing>
+    read(path: string): Promise<TreeFile>
+    write(input: TreeFileWrite): Promise<TreeFileWriteResult>
+  }
   /** Durable storage deleted when this panel instance is closed. */
   readonly storage: WebPanelStorage
   /** Shortcuts delivered whether focus is in the panel or Treeport host. */
@@ -149,6 +183,7 @@ interface HostResponse {
   ok: boolean
   value?: unknown
   error?: string
+  errorCode?: string
 }
 
 interface HostShortcut {
@@ -240,12 +275,18 @@ function call<Result>(
     | 'context'
     | 'diff'
     | 'network.listeners'
+    | 'files.list'
+    | 'files.read'
+    | 'files.write'
     | 'storage.get'
     | 'storage.set'
     | 'storage.delete',
   params?: {
     key?: string
     value?: JsonValue
+    path?: string
+    content?: string
+    expectedRevision?: string
   }
 ): Promise<Result> {
   return new Promise((resolve, reject) => {
@@ -256,7 +297,12 @@ function call<Result>(
           // SAFETY: The caller selects Result for the matching host method.
           resolve(response.value as Result)
         } else {
-          reject(new Error(response.error || 'Treeport request failed'))
+          const error = new Error(response.error || 'Treeport request failed')
+          if (response.errorCode) {
+            Object.assign(error, { code: response.errorCode })
+          }
+
+          reject(error)
         }
       }
     })
@@ -280,12 +326,28 @@ export const treeport: TreeportPanelSdk = Object.freeze({
         { source: 'treeport-panel-v1', method: 'panel.title.set', title },
         '*'
       )
+    },
+    setDirty: (dirty: boolean) => {
+      if (parent === self) {
+        return
+      }
+
+      parent.postMessage(
+        { source: 'treeport-panel-v1', method: 'panel.dirty.set', dirty },
+        '*'
+      )
     }
   }),
   context: () => call<WebPanelContext>('context'),
   diff: () => call<GitDiff>('diff'),
   network: Object.freeze({
     listeners: () => call<WorktreeListenerDiscovery>('network.listeners')
+  }),
+  files: Object.freeze({
+    list: () => call<TreeFileListing>('files.list'),
+    read: (path: string) => call<TreeFile>('files.read', { path }),
+    write: (input: TreeFileWrite) =>
+      call<TreeFileWriteResult>('files.write', input)
   }),
   storage: Object.freeze({
     get: <Value extends JsonValue = JsonValue>(key: string) =>

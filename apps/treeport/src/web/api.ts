@@ -1,5 +1,5 @@
 import { hc } from 'hono/client'
-import type { AppType } from '../server/app'
+import type { AppType, TreeFilesApiType } from '../server/app'
 
 export class RpcNetworkError extends Error {
   constructor(
@@ -33,3 +33,4 @@ const rpcFetch: typeof fetch = async (input, init) => {
 }
 
 export const rpc = hc<AppType>('/', { fetch: rpcFetch })
+export const treeFilesRpc = hc<TreeFilesApiType>('/', { fetch: rpcFetch })

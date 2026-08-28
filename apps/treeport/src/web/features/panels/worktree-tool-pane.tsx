@@ -49,6 +49,7 @@ import {
   TooltipTrigger
 } from '../../components/ui/tooltip'
 import { cn } from '../../lib/utils'
+import { describeWebPanelPermissions } from '../web-panels/web-panel-permissions'
 import { useToolPicker } from './tool-picker-context'
 import { useWorkspaceSurfaceFocus } from './workspace-surface-focus-context'
 
@@ -410,11 +411,9 @@ export function WorktreeToolPane({
       ? `${permissionDefinition.source.scope} package ${permissionDefinition.source.source}`
       : 'this project'
     : ''
-  const permissionDescription = permissionDefinition?.permissions.includes(
-    'same-origin'
+  const permissionDescription = describeWebPanelPermissions(
+    permissionDefinition?.permissions ?? []
   )
-    ? "It will share Treeport's web origin. It can access Treeport browser storage, the Treeport page, and API routes available to this client."
-    : ''
   const createBrowserPanel = () => {
     dismissPicker()
     onCreateBrowserPanel()

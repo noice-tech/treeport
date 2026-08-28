@@ -73,7 +73,7 @@ async function writeLocalPackage(packageRoot: string) {
           webPanels: [
             {
               source: './web-panels/review',
-              permissions: ['same-origin']
+              permissions: ['same-origin', 'tree-files']
             },
             '!./web-panels/legacy'
           ],
@@ -255,6 +255,7 @@ describe('PackageSystem', () => {
       ),
       title: 'Review',
       source: { type: 'package', scope: 'global' },
+      permissions: ['same-origin', 'tree-files'],
       sandbox: { allowSameOrigin: true }
     })
     expect(
@@ -345,6 +346,28 @@ describe('PackageSystem', () => {
       expect.arrayContaining([
         expect.objectContaining({
           message: expect.stringContaining('invalid web panel permission')
+        })
+      ])
+    )
+
+    await fs.writeFile(
+      path.join(packageRoot, 'package.json'),
+      JSON.stringify({
+        name: '@acme/treeport-tools',
+        treeport: {
+          webPanels: [
+            {
+              source: './web-panels/review',
+              permissions: ['unknown']
+            }
+          ]
+        }
+      })
+    )
+    expect((await packages.reload()).diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          message: expect.stringContaining('invalid web panel definition')
         })
       ])
     )

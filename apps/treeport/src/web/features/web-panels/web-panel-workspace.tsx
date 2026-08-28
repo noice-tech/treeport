@@ -2,8 +2,8 @@ import { Activity, useEffect, useRef, useState } from 'react'
 import type { WebPanel } from '@treeport/shared'
 import { parseResponse } from 'hono/client'
 import { z } from 'zod'
-import { rpc } from '../../api'
-import { errorMessage } from '../../error-message'
+import { rpc, treeFilesRpc } from '../../api'
+import { errorDetails, errorMessage } from '../../error-message'
 import { cn } from '../../lib/utils'
 
 const panelTitleMessageSchema = z.object({
@@ -16,20 +16,52 @@ const workspaceSelectionMessageSchema = z.object({
   method: z.literal('workspace.select'),
   index: z.number().int().min(0).max(8)
 })
-const panelRequestMessageSchema = z.object({
+const panelDirtyMessageSchema = z.strictObject({
   source: z.literal('treeport-panel-v1'),
-  id: z.string(),
-  method: z.enum([
-    'context',
-    'diff',
-    'network.listeners',
-    'storage.get',
-    'storage.set',
-    'storage.delete'
-  ]),
-  key: z.string().optional(),
-  value: z.json().optional()
+  method: z.literal('panel.dirty.set'),
+  dirty: z.boolean()
 })
+const panelRequestFields = {
+  source: z.literal('treeport-panel-v1'),
+  id: z.string()
+}
+const panelRequestMessageSchema = z.discriminatedUnion('method', [
+  z.strictObject({ ...panelRequestFields, method: z.literal('context') }),
+  z.strictObject({ ...panelRequestFields, method: z.literal('diff') }),
+  z.strictObject({
+    ...panelRequestFields,
+    method: z.literal('network.listeners')
+  }),
+  z.strictObject({ ...panelRequestFields, method: z.literal('files.list') }),
+  z.strictObject({
+    ...panelRequestFields,
+    method: z.literal('files.read'),
+    path: z.string()
+  }),
+  z.strictObject({
+    ...panelRequestFields,
+    method: z.literal('files.write'),
+    path: z.string(),
+    content: z.string(),
+    expectedRevision: z.string()
+  }),
+  z.strictObject({
+    ...panelRequestFields,
+    method: z.literal('storage.get'),
+    key: z.string()
+  }),
+  z.strictObject({
+    ...panelRequestFields,
+    method: z.literal('storage.set'),
+    key: z.string(),
+    value: z.json()
+  }),
+  z.strictObject({
+    ...panelRequestFields,
+    method: z.literal('storage.delete'),
+    key: z.string()
+  })
+])
 
 export function WebPanelWorkspace({
   panel,
@@ -38,6 +70,7 @@ export function WebPanelWorkspace({
   reloadRevision,
   autoFocusBlocked,
   onTitleChange,
+  onDirtyChange,
   onSelectWorkspace,
   onFocusSurface
 }: {
@@ -47,6 +80,7 @@ export function WebPanelWorkspace({
   reloadRevision: number
   autoFocusBlocked: boolean
   onTitleChange: (panelId: string, title: string | null) => void
+  onDirtyChange: (panelId: string, dirty: boolean) => void
   onSelectWorkspace: (index: number) => void
   onFocusSurface: () => void
 }) {
@@ -59,7 +93,8 @@ export function WebPanelWorkspace({
 
   useEffect(() => {
     onTitleChange(panel.id, null)
-  }, [onTitleChange, panel.id, panelRevision])
+    onDirtyChange(panel.id, false)
+  }, [onDirtyChange, onTitleChange, panel.id, panelRevision])
 
   useEffect(() => {
     if (!active || autoFocusBlocked || loadedPanelRevision !== panelRevision) {
@@ -141,6 +176,12 @@ export function WebPanelWorkspace({
         return
       }
 
+      const dirtyMessage = panelDirtyMessageSchema.safeParse(event.data)
+      if (dirtyMessage.success) {
+        onDirtyChange(panel.id, dirtyMessage.data.dirty)
+        return
+      }
+
       const selectionMessage = workspaceSelectionMessageSchema.safeParse(
         event.data
       )
@@ -175,25 +216,45 @@ export function WebPanelWorkspace({
             param: { panelId: panel.id }
           })
         ).then((result) => result.discovery)
-      } else if (method === 'storage.get' && message.key) {
+      } else if (method === 'files.list') {
+        request = parseResponse(
+          treeFilesRpc.api.panels[':panelId'].files.$get({
+            param: { panelId: panel.id }
+          })
+        )
+      } else if (method === 'files.read') {
+        request = parseResponse(
+          treeFilesRpc.api.panels[':panelId'].files.read.$post({
+            param: { panelId: panel.id },
+            json: { path: message.path }
+          })
+        )
+      } else if (method === 'files.write') {
+        request = parseResponse(
+          treeFilesRpc.api.panels[':panelId'].files.$put({
+            param: { panelId: panel.id },
+            json: {
+              path: message.path,
+              content: message.content,
+              expectedRevision: message.expectedRevision
+            }
+          })
+        )
+      } else if (method === 'storage.get') {
         request = parseResponse(
           rpc.api.panels[':panelId'].storage.get.$post({
             param: { panelId: panel.id },
             json: { key: message.key }
           })
         ).then((result) => result.value)
-      } else if (
-        method === 'storage.set' &&
-        message.key &&
-        message.value !== undefined
-      ) {
+      } else if (method === 'storage.set') {
         request = parseResponse(
           rpc.api.panels[':panelId'].storage.$put({
             param: { panelId: panel.id },
             json: { key: message.key, value: message.value }
           })
         ).then(() => undefined)
-      } else if (method === 'storage.delete' && message.key) {
+      } else if (method === 'storage.delete') {
         request = parseResponse(
           rpc.api.panels[':panelId'].storage.$delete({
             param: { panelId: panel.id },
@@ -216,7 +277,8 @@ export function WebPanelWorkspace({
               source: 'treeport-host-v1',
               id: message.id,
               ok: false,
-              error: errorMessage(error)
+              error: errorMessage(error),
+              errorCode: errorDetails(error).code
             },
             '*'
           )
@@ -224,7 +286,14 @@ export function WebPanelWorkspace({
     }
     window.addEventListener('message', receive)
     return () => window.removeEventListener('message', receive)
-  }, [active, onSelectWorkspace, onTitleChange, panel.id, panel.permissions])
+  }, [
+    active,
+    onDirtyChange,
+    onSelectWorkspace,
+    onTitleChange,
+    panel.id,
+    panel.permissions
+  ])
 
   return (
     <Activity mode={active ? 'visible' : 'hidden'}>

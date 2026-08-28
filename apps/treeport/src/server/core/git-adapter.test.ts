@@ -113,6 +113,25 @@ describe('GitAdapter', () => {
     ])
   })
 
+  it('lists tracked and non-ignored untracked files without path delimiters', async () => {
+    const runner = new FakeRunner(() => ({
+      stdout: 'src/space file.ts\0src/世界.ts\0README.md\0',
+      stderr: '',
+      exitCode: 0
+    }))
+
+    await expect(
+      new GitAdapter(runner).worktreeFiles('/repo')
+    ).resolves.toEqual(['README.md', 'src/space file.ts', 'src/世界.ts'])
+    expect(runner.calls[0]?.args).toEqual([
+      'ls-files',
+      '--cached',
+      '--others',
+      '--exclude-standard',
+      '-z'
+    ])
+  })
+
   it('returns committed, tracked local, and untracked changes from the default merge base', async () => {
     const runner = new FakeRunner((request) => {
       const [command, ...args] = request.args

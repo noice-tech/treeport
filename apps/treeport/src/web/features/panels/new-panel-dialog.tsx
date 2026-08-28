@@ -34,6 +34,7 @@ import {
   terminalPresetProvenance
 } from '../../terminal-preset-definition'
 import type { CreateTerminalInput } from '../terminals/terminal-workspace'
+import { describeWebPanelPermissions } from '../web-panels/web-panel-permissions'
 
 export function NewPanelDialog({
   open,
@@ -79,13 +80,9 @@ export function NewPanelDialog({
       ? `${permissionDefinition.source.scope} package ${permissionDefinition.source.source}`
       : 'this project'
     : ''
-  const permissionDescription = [
-    permissionDefinition?.permissions.includes('same-origin')
-      ? "It will share Treeport's web origin. It can access Treeport browser storage, the Treeport page, and API routes available to this client."
-      : ''
-  ]
-    .filter(Boolean)
-    .join(' ')
+  const permissionDescription = describeWebPanelPermissions(
+    permissionDefinition?.permissions ?? []
+  )
   const normalizedQuery = query.trim().toLocaleLowerCase()
   const showShell = 'shell'.includes(normalizedQuery)
   const filteredPresets = presets.filter((preset) =>
