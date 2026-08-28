@@ -813,6 +813,16 @@ test.describe('desktop worktree and terminal workflows', () => {
     await expect(
       tools.getByRole('button', { name: 'Review, web panel, Project' })
     ).toBeVisible()
+
+    await page.getByRole('button', { name: 'main tree', exact: true }).click()
+    await expect(
+      page.getByRole('region', { name: 'main tree tool tab group' })
+    ).not.toBeVisible()
+    await page.getByRole('button', { name: /^topic(?:,|\s|$)/ }).click()
+    await expect(tools).toBeVisible()
+    await page.reload()
+    await expect(tools).toBeVisible()
+
     const createRequest = page.waitForRequest(
       (request) =>
         request.method() === 'POST' &&
