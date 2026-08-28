@@ -28,6 +28,7 @@ export interface PendingTerminalCreation {
 
 export interface CreateTerminalInput {
   name: string
+  initialTitle?: string
   argv?: string[]
   shellCommand?: string
   cwd?: string
@@ -77,6 +78,7 @@ export function useTerminalWorkflows({
     mutationFn: async ({
       worktreeId,
       name,
+      initialTitle,
       argv,
       shellCommand,
       cwd,
@@ -88,6 +90,10 @@ export function useTerminalWorkflows({
       const json: CreateTerminalInput & { initialSize?: TerminalSize } = {
         name
       }
+      if (initialTitle) {
+        json.initialTitle = initialTitle
+      }
+
       if (argv) {
         json.argv = argv
       }
@@ -274,6 +280,10 @@ export function useTerminalWorkflows({
       name: input.name,
       pendingTerminal
     }
+    if (input.initialTitle) {
+      mutation.initialTitle = input.initialTitle
+    }
+
     if (input.argv) {
       mutation.argv = [...input.argv]
     }

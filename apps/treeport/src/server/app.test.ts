@@ -1049,6 +1049,7 @@ describe('HTTP API validation', () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         name: 'Diff',
+        initialTitle: 'Review changes',
         argv: ['diff', 'main', '--mode', 'split'],
         cwd: '/repo/worktrees/topic',
         env: { CUSTOM: 'argument with spaces;$HOME' },
@@ -1062,6 +1063,7 @@ describe('HTTP API validation', () => {
       'Diff',
       ['diff', 'main', '--mode', 'split'],
       {
+        initialTitle: 'Review changes',
         returnToShell: true,
         initialSize: { cols: 132, rows: 47 },
         cwd: '/repo/worktrees/topic',
@@ -1481,6 +1483,7 @@ describe('HTTP API validation', () => {
         sourceWorktreeId: 'wt_main',
         initialTerminal: {
           name: 'Terminal',
+          initialTitle: 'Review changes',
           argv: ['tool', 'semi;colon', '$HOME'],
           returnToShell: true,
           initialSize: { cols: 144, rows: 48 }
@@ -1497,6 +1500,7 @@ describe('HTTP API validation', () => {
       'current',
       {
         name: 'Terminal',
+        initialTitle: 'Review changes',
         argv: ['tool', 'semi;colon', '$HOME'],
         returnToShell: true,
         initialSize: { cols: 144, rows: 48 }

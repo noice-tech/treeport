@@ -395,6 +395,7 @@ export interface CreateOperationRequest {
   initialTerminal?:
     | {
         name: string
+        initialTitle?: string | undefined
         argv?: string[] | undefined
         returnToShell?: boolean | undefined
         initialSize?: { cols: number; rows: number } | undefined
@@ -599,6 +600,7 @@ const terminalPresetRevisionSchema = z.string().min(1).max(64)
 
 const initialTerminalSchema = z.object({
   name: terminalNameSchema,
+  initialTitle: terminalNameSchema.optional(),
   argv: terminalArgvSchema.optional(),
   returnToShell: z.boolean().optional(),
   initialSize: terminalSizeSchema.optional()
@@ -659,6 +661,7 @@ const terminalEnvironmentSchema = z
 export const createTerminalSchema = z
   .object({
     name: terminalNameSchema,
+    initialTitle: terminalNameSchema.optional(),
     argv: terminalArgvSchema.optional(),
     shellCommand: terminalShellCommandSchema.optional(),
     cwd: terminalCwdSchema.optional(),

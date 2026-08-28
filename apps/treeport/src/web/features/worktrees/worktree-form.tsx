@@ -38,6 +38,7 @@ export function WorktreeForm({
     base: 'default' | 'current',
     initialTerminal: {
       name: string
+      initialTitle?: string
       argv?: string[]
       returnToShell?: boolean
     },
@@ -92,6 +93,7 @@ export function WorktreeForm({
           selectedPreset
             ? {
                 name: selectedPreset.name,
+                initialTitle: selectedPreset.name,
                 argv: [selectedPreset.executable, ...selectedPreset.args],
                 returnToShell: true
               }

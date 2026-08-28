@@ -261,7 +261,8 @@ export function NewPanelDialog({
                     setQuery('')
                     setSelectedIndex(0)
                     const input: CreateTerminalInput = {
-                      name: preset.name
+                      name: preset.name,
+                      initialTitle: preset.name
                     }
                     if (preset.shellCommand !== null) {
                       input.shellCommand = preset.shellCommand

@@ -430,7 +430,7 @@ describe('TerminalMetadataManager', () => {
     expect(manager.get(shellWrapped.id).title).toBe('Remotion Studio')
   })
 
-  it('switches a command terminal to shell title tracking after fallback starts', async () => {
+  it('switches a preset terminal to shell title tracking after fallback starts', async () => {
     vi.useFakeTimers()
     const item = {
       ...terminal('one'),
@@ -442,12 +442,21 @@ describe('TerminalMetadataManager', () => {
     sessionTitleState.mockResolvedValue({
       paneTitle: 'Treeport launcher',
       currentCommand: 'bun',
-      commandLine: null,
+      commandLine: 'Review changes',
       fallbackShell: null
     })
 
     await manager.initialize()
-    expect(manager.get(item.id).title).toBe('bun remotion')
+    expect(manager.get(item.id).title).toBe('Review changes')
+
+    sessionTitleState.mockResolvedValue({
+      paneTitle: 'Remotion Studio',
+      currentCommand: 'bun',
+      commandLine: 'Review changes',
+      fallbackShell: null
+    })
+    await vi.advanceTimersByTimeAsync(TERMINAL_METADATA_POLL_MS)
+    expect(manager.get(item.id).title).toBe('Remotion Studio')
 
     sessionTitleState.mockResolvedValue({
       paneTitle: 'fish · /repo',

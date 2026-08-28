@@ -133,6 +133,7 @@ test.describe('desktop worktree and terminal workflows', () => {
         base: 'default',
         initialTerminal: expect.objectContaining({
           name: 'Hunk',
+          initialTitle: 'Hunk',
           returnToShell: true,
           initialSize: {
             cols: expect.any(Number),
@@ -1207,6 +1208,7 @@ test.describe('desktop worktree and terminal workflows', () => {
     const presetRequest = await presetRequestPromise
     expect(presetRequest.postDataJSON()).toEqual({
       name: 'Hunk',
+      initialTitle: 'Hunk',
       argv: ['npx', '--yes', 'hunkdiff@0.17.3', 'diff', 'HEAD', '--watch'],
       returnToShell: true,
       initialSize: {
@@ -1248,6 +1250,7 @@ test.describe('desktop worktree and terminal workflows', () => {
       .click()
     expect((await oneOffRequestPromise).postDataJSON()).toEqual({
       name: 'Open editor',
+      initialTitle: 'Open editor',
       argv: ['code', '.'],
       closeOnSuccess: true,
       initialSize: {

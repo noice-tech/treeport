@@ -1326,6 +1326,7 @@ export async function mockApp(
         sourceWorktreeId?: string
         initialTerminal?: {
           name: string
+          initialTitle?: string
           argv?: string[]
           returnToShell?: boolean
         }

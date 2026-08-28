@@ -40,6 +40,7 @@ const createOperationRequestSchema: z.ZodType<CreateOperationRequest> =
     initialTerminal: z
       .strictObject({
         name: z.string(),
+        initialTitle: z.string().optional(),
         argv: z.array(z.string()).optional(),
         returnToShell: z.boolean().optional(),
         initialSize: z
