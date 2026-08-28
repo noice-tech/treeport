@@ -199,13 +199,9 @@ export function WorktreeForm({
           </p>
         ))}
       </FormField>
-      <div className="flex items-center justify-between gap-4 pt-1">
-        <p className="hidden text-xs text-zinc-600 sm:block">
-          Press Enter to create
-        </p>
+      <div className="flex items-center justify-end pt-1">
         <Button
           type="submit"
-          className="ml-auto"
           disabled={busy || waitingForInitialPreset || !name.trim()}
         >
           {busy ? 'Creating…' : 'Create tree'}

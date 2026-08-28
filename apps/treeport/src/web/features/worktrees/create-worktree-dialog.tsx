@@ -62,7 +62,6 @@ export function CreateWorktreeDialog({
           }}
         >
           <DialogHeader>
-            <p className="eyebrow">{project.name}</p>
             <DialogTitle>Create tree</DialogTitle>
             <DialogDescription className="sr-only">
               Create a linked tree and choose its starting point and initial
