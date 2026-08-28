@@ -243,6 +243,14 @@ test.describe('mobile terminal UI', () => {
     await expect(
       page.getByRole('textbox', { name: 'Application URL' })
     ).toHaveValue('https://example.test/mobile')
+    await expect(
+      page.getByRole('region', { name: 'topic tool tab group' })
+    ).toBeVisible()
+    const terminal = page.getByRole('main', { name: /terminal$/ })
+    await expect(terminal).not.toBeVisible()
+    await page.getByRole('button', { name: 'Toggle side panel' }).click()
+    await expect(terminal).toBeVisible()
+    await expect(page.getByLabel('Terminal selector')).toHaveValue('term_pi')
   })
 
   test('switches projects without opening the mobile keyboard', async ({

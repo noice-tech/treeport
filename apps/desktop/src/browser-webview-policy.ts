@@ -242,25 +242,49 @@ export function installBrowserWebviewPolicy(options: {
     guest.session.setPermissionRequestHandler(
       (_contents, _permission, callback) => callback(false)
     )
+    const reportBrowserFocus = () => {
+      if (
+        entry.panelId &&
+        !entry.agentLocked &&
+        !options.trustedRenderer.isDestroyed()
+      ) {
+        options.trustedRenderer.send('native-browser:focus', entry.panelId)
+      }
+    }
+    guest.on('focus', reportBrowserFocus)
+    guest.on('before-mouse-event', (_event, mouse) => {
+      if (mouse.type === 'mouseDown') {
+        reportBrowserFocus()
+      }
+    })
     guest.on('before-input-event', (event, input) => {
       const commandModifier =
         process.platform === 'darwin' ? input.meta : input.control
       const key = input.key.toLowerCase()
-      const command: DesktopCommand | undefined = input.shift
-        ? key === 't'
-          ? 'new-panel'
+      const code = input.code.toLowerCase()
+      // SAFETY: The digit expression restricts the interpolated command to the DesktopCommand tab range.
+      const command: DesktopCommand | undefined = input.alt
+        ? !input.shift && code === 'keyb'
+          ? 'toggle-side-panel'
           : undefined
-        : key === 'w'
-          ? 'close-panel'
-          : key === 'l'
-            ? 'focus-location'
+        : input.shift
+          ? key === 't'
+            ? 'new-panel'
             : undefined
+          : key === 't'
+            ? 'new-terminal'
+            : key === 'w'
+              ? 'close-panel'
+              : key === 'l'
+                ? 'focus-location'
+                : /^[1-9]$/.test(key)
+                  ? (`select-tab-${key}` as DesktopCommand)
+                  : undefined
       if (
         input.type !== 'keyDown' ||
         input.isAutoRepeat ||
         input.isComposing ||
         !commandModifier ||
-        input.alt ||
         !command
       ) {
         return

@@ -40,8 +40,9 @@ test.describe('desktop terminal links and metadata', () => {
       page.getByRole('textbox', { name: 'Application URL' })
     ).toHaveValue('http://example.test/help')
     await expect(
-      page.getByRole('button', { name: 'example.test, Browser' })
+      page.getByRole('tab', { name: 'example.test, Browser' })
     ).toBeVisible()
+    await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
   })
 
   test('opens OSC 8 links in Browser on Apple Cmd-click', async ({ page }) => {

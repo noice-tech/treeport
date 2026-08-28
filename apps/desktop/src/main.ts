@@ -271,6 +271,7 @@ function sendDesktopCommand(command: DesktopCommand): void {
 function installRendererSecurity(renderer: WebContents): void {
   renderer.on('before-input-event', (event, input) => {
     const key = input.key.toLowerCase()
+    const code = input.code.toLowerCase()
     if (
       process.platform === 'darwin' &&
       input.type === 'keyDown' &&
@@ -289,23 +290,29 @@ function installRendererSecurity(renderer: WebContents): void {
 
     const commandModifier =
       process.platform === 'darwin' ? input.meta : input.control
-    const command: DesktopCommand | undefined = input.shift
-      ? key === 't'
-        ? 'new-panel'
+    // SAFETY: The digit expression restricts the interpolated command to the DesktopCommand tab range.
+    const command: DesktopCommand | undefined = input.alt
+      ? !input.shift && code === 'keyb'
+        ? 'toggle-side-panel'
         : undefined
-      : key === 'n'
-        ? 'new-worktree'
-        : key === 't'
-          ? 'new-terminal'
-          : key === 'w'
-            ? 'close-panel'
-            : undefined
+      : input.shift
+        ? key === 't'
+          ? 'new-panel'
+          : undefined
+        : key === 'n'
+          ? 'new-worktree'
+          : key === 't'
+            ? 'new-terminal'
+            : key === 'w'
+              ? 'close-panel'
+              : /^[1-9]$/.test(key)
+                ? (`select-tab-${key}` as DesktopCommand)
+                : undefined
     if (
       input.type !== 'keyDown' ||
       input.isAutoRepeat ||
       input.isComposing ||
       !commandModifier ||
-      input.alt ||
       !command
     ) {
       return
@@ -589,7 +596,7 @@ function installMenu(): void {
         },
         {
           id: 'new-terminal',
-          label: 'New Terminal',
+          label: 'New Tab',
           accelerator: 'CommandOrControl+T',
           click: () => sendDesktopCommand('new-terminal')
         },

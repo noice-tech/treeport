@@ -15,7 +15,7 @@ test.describe('desktop terminal input and removal', () => {
   test('reconciles remote preset edits and deletion', async ({ page }) => {
     await page.clock.install()
     const mocked = await mockApp(page)
-    await page.getByRole('button', { name: /^New panel/ }).click()
+    await page.getByRole('button', { name: 'New panel in main tree' }).click()
     await page
       .getByRole('dialog', { name: 'New panel' })
       .getByRole('button', { name: 'Manage global presets' })

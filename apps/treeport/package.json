@@ -59,6 +59,7 @@
     "@treeport/panel-sdk": "workspace:*",
     "@vitejs/plugin-react": "5.2.0",
     "@xterm/headless": "^6.0.0",
+    "cmdk": "^1.1.1",
     "commander": "14.0.3",
     "drizzle-orm": "^0.45.2",
     "effect": "^3.22.0",

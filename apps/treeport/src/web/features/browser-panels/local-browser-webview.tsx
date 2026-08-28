@@ -13,6 +13,7 @@ import {
   requestLocalBrowserOwnerTicket,
   type LocalBrowserOwnerConnection
 } from '../../local-browser-owner-client'
+import { useToolPicker } from '../panels/tool-picker-context'
 
 function browserState(
   webview: TreeportBrowserWebview,
@@ -44,15 +45,20 @@ export function LocalBrowserWebview({
   inputBlocked,
   onConnection,
   onMessage,
-  onPaintRetentionChange
+  onPaintRetentionChange,
+  onFocusSurface
 }: {
   panel: BrowserPanel
   inputBlocked: boolean
   onConnection: (connection: BrowserPanelConnection | null) => void
   onMessage: (message: BrowserServerMessage) => void
   onPaintRetentionChange: (retained: boolean) => Promise<boolean>
+  onFocusSurface: () => void
 }) {
+  const { dismiss: dismissToolPicker } = useToolPicker()
   const webviewRef = useRef<TreeportBrowserWebview>(null)
+  const inputBlockedRef = useRef(inputBlocked)
+  inputBlockedRef.current = inputBlocked
   const initialPanelRef = useRef(panel)
   const ownerClientIdRef = useRef(crypto.randomUUID())
   const [agentLocked, setAgentLocked] = useState(false)
@@ -63,7 +69,9 @@ export function LocalBrowserWebview({
       if (webview) {
         webview.setAttribute('partition', 'persist:treeport-browser')
         webview.setAttribute('allowpopups', 'true')
-        webview.src = `about:blank#treeport-panel=${encodeURIComponent(panel.id)}`
+        webview.src = `about:blank#treeport-panel=${encodeURIComponent(
+          panel.id
+        )}`
       }
     },
     [panel.id]
@@ -350,11 +358,25 @@ export function LocalBrowserWebview({
         })
     }
 
+    const focusBrowser = () => {
+      if (inputBlockedRef.current || agentLockedRef.current) {
+        return
+      }
+
+      dismissToolPicker()
+      onFocusSurface()
+    }
+    const stopBrowserFocus = bridge.onBrowserFocus((panelId) => {
+      if (panelId === panel.id) {
+        focusBrowser()
+      }
+    })
     const refreshEventNames = [
       'did-navigate',
       'did-navigate-in-page',
       'page-title-updated'
     ]
+    webview.addEventListener('focus', focusBrowser)
     webview.addEventListener('did-start-loading', startLoading)
     webview.addEventListener('did-stop-loading', stopLoading)
     webview.addEventListener('render-process-gone', crashed)
@@ -378,7 +400,9 @@ export function LocalBrowserWebview({
 
     return () => {
       onConnection(null)
+      stopBrowserFocus()
       stopPopup()
+      webview.removeEventListener('focus', focusBrowser)
       webview.removeEventListener('did-start-loading', startLoading)
       webview.removeEventListener('did-stop-loading', stopLoading)
       webview.removeEventListener('render-process-gone', crashed)
@@ -388,13 +412,22 @@ export function LocalBrowserWebview({
       webview.removeEventListener('dom-ready', register)
       connection.dispose()
     }
-  }, [onConnection, onMessage, onPaintRetentionChange, panel.id])
+  }, [
+    onConnection,
+    onMessage,
+    onPaintRetentionChange,
+    onFocusSurface,
+    dismissToolPicker,
+    panel.id
+  ])
 
   return (
     <webview
       ref={bindWebview}
       aria-label="Browser page"
-      className={`flex size-full bg-zinc-950 ${inputBlocked || agentLocked ? 'pointer-events-none' : ''}`}
+      className={`flex size-full bg-zinc-950 ${
+        inputBlocked || agentLocked ? 'pointer-events-none' : ''
+      }`}
     />
   )
 }

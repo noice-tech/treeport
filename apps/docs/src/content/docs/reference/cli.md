@@ -278,7 +278,9 @@ Before you use `remove`, close all browser panels that use managed Chromium.
 
 The URL must use HTTP or HTTPS and must not contain credentials.
 
-In a managed terminal, `open` selects the new panel in clients that show that terminal.
+In a managed terminal, `open` reveals the new Browser in the side panel of clients that show that terminal.
+
+The terminal keeps keyboard focus.
 
 The remaining commands control one live browser page.
 
@@ -308,9 +310,9 @@ By default, `open` uses the newest instance of the same definition.
 
 Use `--new` to create a separate instance.
 
-In a managed terminal, the command selects the panel on clients that show that terminal.
+In a managed terminal, the command reveals the panel in the side panel of clients that show that terminal.
 
-Other clients keep their current selection.
+The terminal keeps keyboard focus. Other clients keep their current selection.
 
 `--input` accepts one inline JSON object. Treeport saves this input with the panel.
 

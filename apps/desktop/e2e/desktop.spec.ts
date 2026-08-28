@@ -438,10 +438,18 @@ test('controls the local Browser through its exact bridge while another workspac
     ).toBeVisible()
     expect(applicationDocumentRequests).toBe(0)
     await expect.poll(() => websocketRequests).toBeGreaterThan(0)
-    await window.getByRole('button', { name: '127.0.0.1, Browser' }).click()
+    await window.getByRole('button', { name: 'Toggle side panel' }).click()
+    const browserTab = window.getByRole('tab', { name: /, Browser$/ })
+    await browserTab.click()
 
     const address = window.getByRole('textbox', { name: 'Application URL' })
     await expect(address).toHaveValue(`${origin}/site/start`)
+    const sidePanelShortcut =
+      process.platform === 'darwin' ? 'Meta+Alt+B' : 'Control+Alt+B'
+    await window.keyboard.press(sidePanelShortcut)
+    await expect(browserTab).not.toBeVisible()
+    await window.keyboard.press(sidePanelShortcut)
+    await expect(browserTab).toBeVisible()
     await expect
       .poll(() => ownerReadyUrls.get(browserPanelId))
       .toBe(`${origin}/site/start`)
@@ -606,7 +614,7 @@ test('controls the local Browser through its exact bridge while another workspac
       }
       expect(controlReleased).toBe(true)
 
-      await window.getByRole('button', { name: '127.0.0.1, Browser' }).click()
+      await window.getByRole('tab', { name: '127.0.0.1, Browser' }).click()
       await expect
         .poll(() => visiblePage.locator('output').first().textContent())
         .toBe('Background')
@@ -639,8 +647,15 @@ test('controls the local Browser through its exact bridge while another workspac
 
     await window.evaluate(() => {
       // SAFETY: The test installs this cross-process probe on its own window.
-      const scope = window as typeof window & { __browserPopups?: unknown[] }
+      const scope = window as typeof window & {
+        __browserFocuses?: string[]
+        __browserPopups?: unknown[]
+      }
+      scope.__browserFocuses = []
       scope.__browserPopups = []
+      window.treeportDesktop?.onBrowserFocus((panelId) => {
+        scope.__browserFocuses?.push(panelId)
+      })
       window.treeportDesktop?.onBrowserPopup((popup) => {
         scope.__browserPopups?.push(popup)
       })
@@ -652,7 +667,20 @@ test('controls the local Browser through its exact bridge while another workspac
       throw new Error('Browser page did not expose bounds')
     }
 
+    await window.getByRole('button', { name: /^Shell/ }).click()
+    await expect(window.locator('.xterm-helper-textarea')).toBeFocused()
     await window.mouse.click(webviewBounds.x + 20, webviewBounds.y + 20)
+    await expect
+      .poll(() =>
+        window.evaluate(() => {
+          // SAFETY: The test installed this cross-process probe above.
+          const scope = window as typeof window & {
+            __browserFocuses?: string[]
+          }
+          return scope.__browserFocuses ?? []
+        })
+      )
+      .toContain('panel_browser_1')
     await expect
       .poll(() =>
         window.evaluate(() => {
@@ -665,6 +693,13 @@ test('controls the local Browser through its exact bridge while another workspac
       )
       .toBe(1)
     await expect.poll(() => popupRequests).toBe(1)
+    await electronApp.evaluate(({ BrowserWindow }) => {
+      BrowserWindow.getAllWindows()[0]?.webContents.send(
+        'desktop-command',
+        'select-tab-1'
+      )
+    })
+    await expect(window).toHaveURL(/\/panels\/panel_browser_1$/)
 
     await window.getByRole('button', { name: 'New panel in main tree' }).click()
     const newPanel = window.getByRole('dialog', { name: 'New panel' })
@@ -733,7 +768,7 @@ test('controls the local Browser through its exact bridge while another workspac
       .toBe('Compact page')
 
     await window.getByRole('button', { name: /^Shell/ }).click()
-    await window.getByRole('button', { name: '127.0.0.1, Browser' }).click()
+    await window.getByRole('tab', { name: '127.0.0.1, Browser' }).click()
     expect(
       await electronApp.evaluate(({ webContents }, targetUrl) => {
         const browser = webContents
@@ -801,7 +836,7 @@ test('controls the local Browser through its exact bridge while another workspac
       )
       .toBe(false)
 
-    await window.getByRole('button', { name: /, Browser$/ }).click()
+    await window.getByRole('tab', { name: /, Browser$/ }).click()
     await address.fill(`${origin}/site/profile`)
     await address.press('Enter')
     await expect
@@ -841,7 +876,10 @@ test('controls the local Browser through its exact bridge while another workspac
       }
     })
     const restartedWindow = await electronApp.firstWindow()
-    await restartedWindow.getByRole('button', { name: /, Browser$/ }).click()
+    await restartedWindow
+      .getByRole('button', { name: 'Toggle side panel' })
+      .click()
+    await restartedWindow.getByRole('tab', { name: /, Browser$/ }).click()
     await expect
       .poll(() =>
         electronApp!.evaluate(({ webContents }, targetUrl) => {

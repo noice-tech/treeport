@@ -3,9 +3,11 @@ title: Browser primitive (experimental)
 description: Open and control a web page in a built-in Treeport panel.
 ---
 
-The Browser primitive is a built-in panel type. It opens one top-level web page for a tree.
+The Browser primitive is a built-in tool. It opens one top-level web page for a tree.
 
 Each browser panel has one address bar, one page, and one live browser runtime.
+
+Treeport shows Browser panels in the tree's side panel. On desktop, the terminal stays visible beside this panel.
 
 ## Understand the browser runtime
 
@@ -55,9 +57,12 @@ Treeport does not request administrator access.
 
 ## Open a page
 
-1. Select **Browser** from **New panel**.
-2. Enter an HTTP or HTTPS address in the address bar.
-3. Press Enter.
+1. Select the side panel button.
+2. Select **Browser** in the empty panel or the `+` menu.
+3. Enter an HTTP or HTTPS address in the address bar.
+4. Press Enter.
+
+You can also select **Browser** from **New panel**.
 
 You can omit the protocol. Treeport adds `http://` when necessary.
 
@@ -95,6 +100,8 @@ treeport browser open http://127.0.0.1:5173 --worktree .
 
 The server accepts only HTTP and HTTPS URLs without credentials.
 
+From a visible managed terminal, this command reveals the new Browser in the side panel. The terminal keeps keyboard focus.
+
 ## Control a browser panel from an agent
 
 Use these commands to inspect and control the current page:
@@ -126,7 +133,7 @@ For other connections, commands control the streamed Playwright page.
 
 ## Close a browser panel
 
-Close a browser panel as you close a browser tab.
+Close a Browser tab in the side panel. Hiding the side panel does not close its Browser tabs.
 
 Treeport runs the site's page-close handlers. If the site uses `beforeunload`, Treeport asks you before it closes.
 

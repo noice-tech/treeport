@@ -33,7 +33,9 @@ type TreeportTestDesktopCommand =
   | 'new-terminal'
   | 'new-panel'
   | 'close-panel'
+  | 'toggle-side-panel'
   | 'focus-location'
+  | `select-tab-${1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9}`
 
 interface Window {
   __attentionRequests: number
