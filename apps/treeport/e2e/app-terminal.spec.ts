@@ -1676,9 +1676,7 @@ test.describe('desktop worktree and terminal workflows', () => {
       page.getByRole('button', { name: 'Shell, starting' })
     ).toBeVisible()
     await expect(page.getByText('Starting Shell…')).toHaveCount(0)
-    await expect(
-      page.getByRole('main', { name: /terminal$/ })
-    ).toBeVisible()
+    await expect(page.getByRole('main', { name: /terminal$/ })).toBeVisible()
     await page.evaluate(() => window.__dispatchDesktopCommand('new-terminal'))
     await expect.poll(() => mocked.terminalCreations()).toBe(2)
     await expect(
