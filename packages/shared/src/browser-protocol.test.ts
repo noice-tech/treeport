@@ -5,6 +5,7 @@ import {
   browserFrameSchema,
   browserOwnerAuthSchema,
   browserOwnerClientMessageSchema,
+  browserOwnerServerMessageSchema,
   BROWSER_PROTOCOL_VERSION,
   parseBrowserAuth,
   parseBrowserClientMessage
@@ -160,5 +161,35 @@ describe('hosted browser protocol', () => {
         state: readyState
       }).success
     ).toBe(false)
+    expect(
+      browserOwnerServerMessageSchema.safeParse({
+        type: 'claimGranted',
+        panelId: 'panel-browser',
+        generation: 1,
+        resumed: true,
+        state: readyState
+      }).success
+    ).toBe(true)
+    expect(
+      browserOwnerClientMessageSchema.safeParse({
+        type: 'takeControl',
+        generation: 1
+      }).success
+    ).toBe(true)
+    expect(
+      browserOwnerClientMessageSchema.safeParse({
+        type: 'released',
+        generation: 1
+      }).success
+    ).toBe(true)
+    expect(
+      browserOwnerServerMessageSchema.safeParse({
+        type: 'runtimeControl',
+        generation: 1,
+        requestId: 'remote-control',
+        controller: 'other',
+        retainPaint: true
+      }).success
+    ).toBe(true)
   })
 })

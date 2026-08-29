@@ -77,6 +77,8 @@ export function connectBrowserPanel(
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null
   let currentVisible = initialVisible
   let ready = false
+  let connectedOnce = false
+  let connecting = false
   let socket: BrowserPanelSocket | null = null
   const pendingCommands: BrowserClientMessage[] = []
 
@@ -88,13 +90,33 @@ export function connectBrowserPanel(
     })
   }
 
+  const scheduleReconnect = () => {
+    if (disposed || reconnectTimer) {
+      return
+    }
+
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null
+      void connect().catch((cause) => {
+        connecting = false
+        reportError(cause)
+        scheduleReconnect()
+      })
+    }, 500)
+  }
+
   const connect = async () => {
+    if (disposed || connecting) {
+      return
+    }
+
+    connecting = true
     const response = await fetch(
       `/api/panels/${encodeURIComponent(panelId)}/browser-ticket`,
       {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ clientId })
+        body: JSON.stringify({ clientId, visible: currentVisible })
       }
     )
     const result = browserTicketResponseSchema.parse(await response.json())
@@ -105,20 +127,27 @@ export function connectBrowserPanel(
     }
 
     if (disposed) {
+      connecting = false
       return
     }
 
-    socket = socketFactory('/browsers', {
+    const connectedSocket = socketFactory('/browsers', {
       path: SOCKET_IO_PATH,
       transports: ['websocket'],
       forceNew: true,
       reconnection: false,
       auth: { ticket: result.ticket, protocolVersion: BROWSER_PROTOCOL_VERSION }
     })
-    socket.on('message', (value) => {
+    socket = connectedSocket
+    connecting = false
+    connectedSocket.on('message', (value) => {
+      if (socket !== connectedSocket) {
+        return
+      }
+
       const parsed = browserServerMessageSchema.safeParse(value)
       if (!parsed.success) {
-        socket?.disconnect()
+        connectedSocket.disconnect()
         return
       }
 
@@ -129,34 +158,55 @@ export function connectBrowserPanel(
       }
 
       ready = true
-      socket?.emit('command', {
+      connectedOnce = true
+      connectedSocket.emit('command', {
         type: 'setVisible',
         visible: currentVisible
       })
       while (pendingCommands.length) {
-        socket?.emit('command', pendingCommands.shift()!)
+        connectedSocket.emit('command', pendingCommands.shift()!)
       }
     })
-    socket.on('frame', (value) => {
+    connectedSocket.on('frame', (value) => {
+      if (socket !== connectedSocket) {
+        return
+      }
+
       const frame = browserFrameSchema.safeParse(value)
       if (frame.success) {
         handlers.frame(frame.data)
       } else {
-        socket?.disconnect()
+        connectedSocket.disconnect()
       }
     })
-    socket.on('disconnect', () => {
-      ready = false
-      if (disposed) {
+    connectedSocket.on('disconnect', () => {
+      if (socket !== connectedSocket) {
         return
       }
 
-      reconnectTimer = setTimeout(() => void connect().catch(reportError), 500)
+      socket = null
+      ready = false
+      pendingCommands.length = 0
+      scheduleReconnect()
     })
-    socket.on('connect_error', reportError)
+    connectedSocket.on('connect_error', (error) => {
+      if (socket !== connectedSocket) {
+        return
+      }
+
+      reportError(error)
+      connectedSocket.disconnect()
+      socket = null
+      ready = false
+      scheduleReconnect()
+    })
   }
 
-  void connect().catch(reportError)
+  void connect().catch((cause) => {
+    connecting = false
+    reportError(cause)
+    scheduleReconnect()
+  })
 
   return {
     send(value) {
@@ -170,9 +220,11 @@ export function connectBrowserPanel(
         return
       }
 
-      pendingCommands.push(command)
-      if (pendingCommands.length > 32) {
-        pendingCommands.shift()
+      if (!connectedOnce) {
+        pendingCommands.push(command)
+        if (pendingCommands.length > 32) {
+          pendingCommands.shift()
+        }
       }
     },
     setVisible(nextVisible) {
@@ -182,7 +234,12 @@ export function connectBrowserPanel(
       }
     },
     dispose() {
+      if (ready) {
+        socket?.emit('command', { type: 'setVisible', visible: false })
+      }
+
       disposed = true
+      pendingCommands.length = 0
       if (reconnectTimer) {
         clearTimeout(reconnectTimer)
       }

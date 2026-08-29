@@ -30,13 +30,17 @@ function browserState(
     browserUrlSchema.safeParse(currentUrl).success
       ? currentUrl
       : fallbackUrl
+  const bounds = webview.getBoundingClientRect()
   return {
     url,
     title: webview.getTitle(),
     loading,
     canGoBack: webview.canGoBack(),
     canGoForward: webview.canGoForward(),
-    viewport: { width: 0, height: 0 }
+    viewport: {
+      width: Math.max(0, Math.min(3_840, Math.round(bounds.width))),
+      height: Math.max(0, Math.min(2_160, Math.round(bounds.height)))
+    }
   }
 }
 
@@ -61,8 +65,12 @@ export function LocalBrowserWebview({
   inputBlockedRef.current = inputBlocked
   const initialPanelRef = useRef(panel)
   const ownerClientIdRef = useRef(crypto.randomUUID())
-  const [agentLocked, setAgentLocked] = useState(false)
-  const agentLockedRef = useRef(false)
+  const [externalController, setExternalController] = useState<
+    'agent' | 'other' | null
+  >(null)
+  const externalControllerRef = useRef<'agent' | 'other' | null>(null)
+  const retainPaintRef = useRef(false)
+  const takeControlRef = useRef<() => void>(() => undefined)
   const bindWebview = useCallback(
     (webview: TreeportBrowserWebview | null) => {
       webviewRef.current = webview
@@ -90,11 +98,13 @@ export function LocalBrowserWebview({
     let ready = false
     let loading = false
     let fallbackUrl = initialPanelRef.current.url
-    let previousAgentFocus: HTMLElement | null = null
+    let previousExternalFocus: HTMLElement | null = null
     let owner: LocalBrowserOwnerConnection | null = null
-    let ownerTicket: Awaited<
-      ReturnType<typeof requestLocalBrowserOwnerTicket>
-    > | null = null
+    let descriptor: Awaited<ReturnType<typeof bridge.registerBrowser>> = null
+    let descriptorChallenge: string | null = null
+    let reconnectTimer: number | null = null
+    let domReady = false
+    let hasOwnedRuntime = false
 
     const reportError = (cause: unknown) => {
       if (disposed) {
@@ -109,12 +119,13 @@ export function LocalBrowserWebview({
     }
     const sessionState = (state: BrowserRuntimeState): BrowserSessionState => ({
       ...state,
-      controlled: !agentLockedRef.current,
+      controlled: externalControllerRef.current === null,
       hasController: true,
-      controller: agentLockedRef.current ? 'agent' : 'you'
+      controller: externalControllerRef.current ?? 'you'
     })
     const emitState = (
-      type: 'ready' | 'state' | 'controlChanged' = 'state'
+      type: 'ready' | 'state' | 'controlChanged' = 'state',
+      reportToOwner = true
     ) => {
       if (disposed || !reporting) {
         return
@@ -123,6 +134,10 @@ export function LocalBrowserWebview({
       const state = browserState(webview, fallbackUrl, loading)
       fallbackUrl = state.url
       onMessage({ type, state: sessionState(state) })
+      if (!reportToOwner) {
+        return
+      }
+
       if (type === 'ready') {
         owner?.sendReady(state)
       } else {
@@ -138,48 +153,119 @@ export function LocalBrowserWebview({
       emitState()
     }
     const refresh = () => emitState()
-    const clearLocalAgentControl = () => {
-      agentLockedRef.current = false
+    const clearRuntimeControl = () => {
+      externalControllerRef.current = null
+      retainPaintRef.current = false
       if (!disposed) {
-        setAgentLocked(false)
+        setExternalController(null)
       }
 
+      void bridge.setBrowserInputControl(panel.id, false).catch(() => false)
       void onPaintRetentionChange(false)
-      if (
-        previousAgentFocus?.isConnected &&
-        (document.activeElement === webview ||
-          document.activeElement === document.body) &&
-        !previousAgentFocus.closest('[inert]')
-      ) {
-        previousAgentFocus.focus({ preventScroll: true })
-      }
-
-      previousAgentFocus = null
+      previousExternalFocus = null
     }
-    const releaseAgentControl = async (reportControlChange: boolean) => {
-      const accepted = await bridge
-        .setBrowserAgentControl(panel.id, false)
+    const setRuntimeControl = async (
+      controller: 'agent' | 'other' | 'none',
+      retainPaint: boolean
+    ) => {
+      const previousController = externalControllerRef.current
+      const previousRetainPaint = retainPaintRef.current
+      const locked = controller !== 'none'
+      const prepareWithInputLocked = locked || retainPaint
+      const prepared = await bridge
+        .setBrowserInputControl(panel.id, prepareWithInputLocked)
         .then(
           (result) => result,
           () => false
         )
-      clearLocalAgentControl()
-      if (reportControlChange) {
-        emitState('controlChanged')
+      if (!prepared || disposed) {
+        return false
       }
 
-      return accepted
+      const paintable = await onPaintRetentionChange(retainPaint).then(
+        (result) => result,
+        () => false
+      )
+      if (!paintable || disposed) {
+        await bridge
+          .setBrowserInputControl(panel.id, previousController !== null)
+          .catch(() => false)
+        await onPaintRetentionChange(previousRetainPaint).catch(() => false)
+        return false
+      }
+
+      if (locked && previousController === null) {
+        previousExternalFocus =
+          document.activeElement instanceof HTMLElement &&
+          document.activeElement !== webview
+            ? document.activeElement
+            : null
+      }
+
+      if (retainPaint) {
+        // Electron must focus the guest once after display:none.
+        // The input barrier stays active during this brief preparation.
+        const workspace = webview.closest('section')
+        const workspaceWasInert = workspace?.inert === true
+        if (workspaceWasInert) {
+          workspace.inert = false
+        }
+
+        webview.focus({ preventScroll: true })
+        if (workspaceWasInert) {
+          workspace.inert = true
+        }
+      }
+
+      if (!locked && prepareWithInputLocked) {
+        const unlocked = await bridge
+          .setBrowserInputControl(panel.id, false)
+          .then(
+            (result) => result,
+            () => false
+          )
+        if (!unlocked || disposed) {
+          await bridge
+            .setBrowserInputControl(panel.id, previousController !== null)
+            .catch(() => false)
+          await onPaintRetentionChange(previousRetainPaint).catch(() => false)
+          return false
+        }
+      }
+
+      externalControllerRef.current = locked ? controller : null
+      retainPaintRef.current = retainPaint
+      setExternalController(locked ? controller : null)
+      if (!locked) {
+        if (
+          previousController === 'other' &&
+          webview.checkVisibility() &&
+          !webview.closest('[inert]')
+        ) {
+          webview.focus({ preventScroll: true })
+        } else if (
+          previousExternalFocus?.isConnected &&
+          !previousExternalFocus.closest('[inert]')
+        ) {
+          previousExternalFocus.focus({ preventScroll: true })
+        }
+
+        previousExternalFocus = null
+      }
+
+      emitState('controlChanged', false)
+      return true
     }
     const crashed = () => {
       const message = 'The local Browser page stopped.'
       owner?.sendCrash(message)
-      void releaseAgentControl(false)
+      clearRuntimeControl()
       onMessage({ type: 'browserCrashed', message })
     }
 
     const connection: BrowserPanelConnection = {
       send(message: BrowserClientMessage) {
-        if (disposed || !ready || agentLockedRef.current) {
+        if (disposed || !ready || externalControllerRef.current !== null) {
           return
         }
 
@@ -219,139 +305,121 @@ export function LocalBrowserWebview({
         }
 
         disposed = true
-        clearLocalAgentControl()
+        clearRuntimeControl()
         owner?.dispose()
         bridge.disposeBrowser(panel.id)
       }
     }
     onConnection(connection)
 
-    const register = () => {
-      if (disposed || registering || owner || !ownerTicket) {
+    const queueReconnect = (cause: unknown) => {
+      if (disposed) {
+        return
+      }
+
+      owner = null
+      takeControlRef.current = () => undefined
+      reportError(cause)
+      if (reconnectTimer === null) {
+        reconnectTimer = window.setTimeout(() => {
+          reconnectTimer = null
+          connectOwner()
+        }, 500)
+      }
+    }
+    const connectOwner = () => {
+      if (disposed || registering || owner || !domReady) {
         return
       }
 
       registering = true
-      void bridge
-        .registerBrowser(
+      void (async () => {
+        const ownerTicket = await requestLocalBrowserOwnerTicket(
           panel.id,
-          webview.getWebContentsId(),
-          ownerTicket.challenge
+          ownerClientIdRef.current
         )
-        .then((descriptor) => {
-          if (!descriptor || descriptor.panelId !== panel.id) {
-            throw new Error('The desktop app rejected this Browser.')
-          }
-
-          return connectLocalBrowserOwner(
+        if (!descriptor || descriptorChallenge !== ownerTicket.challenge) {
+          descriptor = await bridge.registerBrowser(
             panel.id,
-            ownerTicket!,
-            descriptor.endpoint,
-            {
-              async setAgentControl(locked) {
-                if (!locked) {
-                  return releaseAgentControl(true)
-                }
+            webview.getWebContentsId(),
+            ownerTicket.challenge
+          )
+          descriptorChallenge = ownerTicket.challenge
+        }
 
-                const accepted = await bridge
-                  .setBrowserAgentControl(panel.id, true)
-                  .then(
-                    (result) => result,
-                    () => false
-                  )
-                if (!accepted || disposed) {
-                  if (accepted) {
-                    await releaseAgentControl(false)
-                  }
+        if (!descriptor || descriptor.panelId !== panel.id) {
+          throw new Error('The desktop app rejected this Browser.')
+        }
 
-                  return false
-                }
-
-                agentLockedRef.current = true
-                setAgentLocked(true)
-                const paintable = await onPaintRetentionChange(true).then(
-                  (result) => result,
-                  () => false
-                )
-                if (!paintable || disposed) {
-                  await releaseAgentControl(false)
-                  return false
-                }
-
-                previousAgentFocus =
-                  document.activeElement instanceof HTMLElement &&
-                  document.activeElement !== webview
-                    ? document.activeElement
-                    : null
-                // Electron must focus the guest once after display:none.
-                // The input barriers stay active during this brief preparation.
-                const workspace = webview.closest('section')
-                const workspaceWasInert = workspace?.inert === true
-                if (workspaceWasInert) {
-                  workspace.inert = false
-                }
-
-                webview.focus({ preventScroll: true })
-                if (workspaceWasInert) {
-                  workspace.inert = true
-                }
-
-                emitState('controlChanged')
-                return true
-              },
-              requestClose: (force) =>
-                bridge.requestBrowserClose(panel.id, force),
-              closed(reason) {
-                if (!disposed) {
-                  clearLocalAgentControl()
-                  onMessage({ type: 'closed', reason })
-                  bridge.disposeBrowser(panel.id)
-                }
-              },
-              disconnected() {
-                clearLocalAgentControl()
-                reportError('The local Browser owner disconnected.')
+        let connectionOwner: LocalBrowserOwnerConnection | null = null
+        connectionOwner = await connectLocalBrowserOwner(
+          panel.id,
+          ownerTicket,
+          descriptor.endpoint,
+          {
+            setRuntimeControl,
+            requestClose: (force) =>
+              bridge.requestBrowserClose(panel.id, force),
+            closed(reason) {
+              if (!disposed) {
+                clearRuntimeControl()
+                onMessage({ type: 'closed', reason })
                 bridge.disposeBrowser(panel.id)
               }
+            },
+            disconnected() {
+              if (!owner || owner === connectionOwner) {
+                queueReconnect('The local Browser owner disconnected.')
+              }
             }
-          )
-        })
-        .then(async (connectionOwner) => {
-          if (!connectionOwner || disposed) {
-            connectionOwner?.dispose()
-            return
           }
+        )
+        if (disposed) {
+          connectionOwner.dispose()
+          return
+        }
 
-          owner = connectionOwner
-          const initialUrl = connectionOwner.initialState.url
-          fallbackUrl = initialUrl
-          loading = initialUrl !== 'about:blank'
+        owner = connectionOwner
+        takeControlRef.current = () => owner?.takeControl()
+        if (hasOwnedRuntime || connectionOwner.resumed) {
+          loading = webview.isLoading()
+          ready = true
           reporting = true
-          if (initialUrl === 'about:blank') {
-            ready = true
-            emitState('ready')
-            return
-          }
+          emitState('ready')
+          return
+        }
 
-          emitState()
-          const result = await bridge.browserCommand(panel.id, {
-            type: 'navigate',
-            url: initialUrl
-          })
-          if (disposed) {
-            return
-          }
-
-          loading = false
+        hasOwnedRuntime = true
+        const initialUrl = connectionOwner.initialState.url
+        fallbackUrl = initialUrl
+        loading = initialUrl !== 'about:blank'
+        reporting = true
+        if (initialUrl === 'about:blank') {
           ready = true
           emitState('ready')
-          if (!result.ok && result.error) {
-            onMessage({ type: 'navigationError', message: result.error })
-          }
+          return
+        }
+
+        emitState()
+        const result = await bridge.browserCommand(panel.id, {
+          type: 'navigate',
+          url: initialUrl
         })
+        if (disposed) {
+          return
+        }
+
+        loading = false
+        ready = true
+        emitState('ready')
+        if (!result.ok && result.error) {
+          onMessage({ type: 'navigationError', message: result.error })
+        }
+      })()
         .catch((cause) => {
-          bridge.disposeBrowser(panel.id)
-          reportError(cause)
+          descriptor = null
+          descriptorChallenge = null
+          queueReconnect(cause)
         })
         .finally(() => {
           registering = false
@@ -359,7 +427,7 @@ export function LocalBrowserWebview({
     }
 
     const focusBrowser = () => {
-      if (inputBlockedRef.current || agentLockedRef.current) {
+      if (inputBlockedRef.current || externalControllerRef.current !== null) {
         return
       }
 
@@ -383,23 +451,28 @@ export function LocalBrowserWebview({
     for (const eventName of refreshEventNames) {
       webview.addEventListener(eventName, refresh)
     }
-    webview.addEventListener('dom-ready', register)
+    const browserReady = () => {
+      domReady = true
+      connectOwner()
+    }
+    webview.addEventListener('dom-ready', browserReady)
+    const resizeObserver = new ResizeObserver(() => emitState())
+    resizeObserver.observe(webview)
 
     const stopPopup = bridge.onBrowserPopup((popup) => {
       if (!disposed && popup.panelId === panel.id) {
         owner?.sendPopup(popup.url)
       }
     })
-    void requestLocalBrowserOwnerTicket(
-      panel.id,
-      ownerClientIdRef.current
-    ).then((ticket) => {
-      ownerTicket = ticket
-      register()
-    }, reportError)
 
     return () => {
       onConnection(null)
+      takeControlRef.current = () => undefined
+      if (reconnectTimer !== null) {
+        window.clearTimeout(reconnectTimer)
+      }
+
+      resizeObserver.disconnect()
       stopBrowserFocus()
       stopPopup()
       webview.removeEventListener('focus', focusBrowser)
@@ -409,7 +482,7 @@ export function LocalBrowserWebview({
       for (const eventName of refreshEventNames) {
         webview.removeEventListener(eventName, refresh)
       }
-      webview.removeEventListener('dom-ready', register)
+      webview.removeEventListener('dom-ready', browserReady)
       connection.dispose()
     }
   }, [
@@ -422,12 +495,23 @@ export function LocalBrowserWebview({
   ])
 
   return (
-    <webview
-      ref={bindWebview}
-      aria-label="Browser page"
-      className={`flex size-full bg-zinc-950 ${
-        inputBlocked || agentLocked ? 'pointer-events-none' : ''
-      }`}
-    />
+    <div className="relative size-full">
+      <webview
+        ref={bindWebview}
+        aria-label="Browser page"
+        className={`flex size-full bg-zinc-950 ${
+          inputBlocked || externalController ? 'pointer-events-none' : ''
+        }`}
+      />
+      {externalController ? (
+        <button
+          type="button"
+          className="absolute inset-0 cursor-pointer bg-transparent"
+          aria-label="Take control of Browser"
+          title="Take control of Browser"
+          onClick={() => takeControlRef.current()}
+        />
+      ) : null}
+    </div>
   )
 }

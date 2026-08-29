@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-export const BROWSER_PROTOCOL_VERSION = 2
+export const BROWSER_PROTOCOL_VERSION = 3
 export const BROWSER_MAX_FRAME_BYTES = 8 * 1024 * 1024
 export const BROWSER_MAX_MESSAGE_BYTES = 128 * 1024
 
@@ -106,10 +106,6 @@ export const browserServerMessageSchema = z.discriminatedUnion('type', [
     message: z.string(),
     installCommand: z.string().nullable()
   }),
-  z.strictObject({
-    type: z.literal('browserOwnedLocally'),
-    message: z.string()
-  }),
   z.strictObject({ type: z.literal('browserCrashed'), message: z.string() }),
   z.strictObject({ type: z.literal('closed'), reason: z.string() })
 ])
@@ -133,7 +129,8 @@ export const browserFrameSchema = z.strictObject({
 export type BrowserFrame = z.infer<typeof browserFrameSchema>
 
 export const browserTicketRequestSchema = z.strictObject({
-  clientId: z.string().min(1).max(128)
+  clientId: z.string().min(1).max(128),
+  visible: z.boolean()
 })
 
 export const browserOwnerTicketRequestSchema = z.strictObject({
@@ -236,10 +233,18 @@ export const browserOwnerClientMessageSchema = z.discriminatedUnion('type', [
     message: z.string().min(1).max(1_024)
   }),
   z.strictObject({
-    type: z.literal('agentControlResult'),
+    type: z.literal('runtimeControlResult'),
     generation: browserGenerationSchema,
     requestId: browserRequestIdSchema,
     accepted: z.boolean()
+  }),
+  z.strictObject({
+    type: z.literal('takeControl'),
+    generation: browserGenerationSchema
+  }),
+  z.strictObject({
+    type: z.literal('released'),
+    generation: browserGenerationSchema
   }),
   z.strictObject({
     type: z.literal('closeResult'),
@@ -258,6 +263,7 @@ export const browserOwnerServerMessageSchema = z.discriminatedUnion('type', [
     type: z.literal('claimGranted'),
     panelId: browserPanelIdSchema,
     generation: browserGenerationSchema,
+    resumed: z.boolean(),
     state: browserRuntimeStateSchema
   }),
   z.strictObject({
@@ -265,10 +271,11 @@ export const browserOwnerServerMessageSchema = z.discriminatedUnion('type', [
     message: z.string().min(1).max(1_024)
   }),
   z.strictObject({
-    type: z.literal('agentControl'),
+    type: z.literal('runtimeControl'),
     generation: browserGenerationSchema,
     requestId: browserRequestIdSchema,
-    locked: z.boolean()
+    controller: z.enum(['agent', 'other', 'none']),
+    retainPaint: z.boolean()
   }),
   z.strictObject({
     type: z.literal('closeRequest'),

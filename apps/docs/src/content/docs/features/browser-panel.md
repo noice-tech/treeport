@@ -11,26 +11,29 @@ Treeport shows Browser panels in the tree's side panel. On desktop, the terminal
 
 ## Understand the browser runtime
 
-Treeport selects the runtime from your connection:
+Each browser panel has one authoritative runtime.
 
-- For a local desktop connection, Electron renders the page in a `<webview>`.
-- For a web or remote desktop connection, Playwright controls Chromium on the daemon computer.
+A local desktop connection can open the page in an Electron `<webview>`.
 
-Treeport streams the Playwright page to the web or remote desktop client.
+Web and remote desktop clients stream this Electron page while its desktop connection stays open.
 
-The toolbar and `treeport browser` commands control the same live page. Treeport does not synchronize two browser pages.
+If no local desktop owns the page, Playwright controls Chromium on the daemon computer.
 
-For a local desktop connection, page requests come from the desktop computer.
+The toolbar and `treeport browser` commands control the same live page.
 
-For other connections, page requests come from the daemon computer.
+Treeport does not synchronize two browser pages.
 
-Thus, `localhost` identifies the computer that runs the browser runtime.
+For an Electron runtime, page requests come from the desktop computer.
+
+For a Playwright runtime, page requests come from the daemon computer.
+
+Thus, `localhost` identifies the computer that runs the authoritative runtime.
 
 ## Install Chromium for remote use
 
-A web client or remote desktop client requires managed Chromium on the daemon computer.
+A web or remote desktop client requires managed Chromium when no local Electron runtime is active.
 
-The local Electron `<webview>` does not require managed Chromium.
+An active local Electron runtime does not require managed Chromium.
 
 If Chromium is not available, select **Install Chromium** on the **Browser unavailable** page.
 
@@ -153,7 +156,13 @@ A closed panel does not keep tab-specific state such as history, session storage
 
 The desktop runtime and the daemon runtime keep separate app-owned profiles. They do not copy browser data between computers.
 
-A web client cannot stream a page that a local Electron `<webview>` owns.
+A remote client keeps the Electron page history, session storage, form input, and live page state.
+
+This continuity requires the local desktop connection to stay open.
+
+If that connection closes, Treeport can start a daemon runtime from the saved URL.
+
+This runtime change does not keep tab-specific state.
 
 ## Understand remote limits
 

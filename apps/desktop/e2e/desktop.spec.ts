@@ -4,7 +4,7 @@ import http from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
 import { _electron as electron, chromium, expect, test } from '@playwright/test'
-import { Server as SocketServer } from 'socket.io'
+import { Server as SocketServer, type Socket } from 'socket.io'
 import {
   BROWSER_PROTOCOL_VERSION,
   DESKTOP_PROTOCOL_VERSION
@@ -42,7 +42,10 @@ interface BrowserPanelFixture {
 
 interface BrowserOwnerControl {
   generation: number
-  request(locked: boolean): Promise<boolean>
+  request(
+    controller: 'agent' | 'other' | 'none',
+    retainPaint: boolean
+  ): Promise<boolean>
 }
 
 function projectFixture() {
@@ -121,6 +124,7 @@ test('controls the local Browser through its exact bridge while another workspac
   const project = projectFixture()
   let applicationDocumentRequests = 0
   let popupRequests = 0
+  let ownerTakeControlRequests = 0
   let websocketRequests = 0
   let browserIndex = 0
   let slowBrowserResponse = false
@@ -128,6 +132,8 @@ test('controls the local Browser through its exact bridge while another workspac
   const ownerEndpoints = new Map<string, string>()
   const ownerReadyUrls = new Map<string, string>()
   const ownerControls = new Map<string, BrowserOwnerControl>()
+  const ownerSockets = new Map<string, Socket>()
+  const ownerConnectionCounts = new Map<string, number>()
   const server = http.createServer(async (request, response) => {
     const url = new URL(request.url ?? '/', 'http://127.0.0.1')
     if (url.pathname === '/api/health') {
@@ -318,23 +324,33 @@ test('controls the local Browser through its exact bridge while another workspac
     >()
     const ownerControl: BrowserOwnerControl = {
       generation,
-      request(locked) {
+      request(controller, retainPaint) {
         const requestId = crypto.randomUUID()
         return new Promise<boolean>((resolve) => {
           pendingControlRequests.set(requestId, resolve)
           socket.emit('ownerMessage', {
-            type: 'agentControl',
+            type: 'runtimeControl',
             generation,
             requestId,
-            locked
+            controller,
+            retainPaint
           })
         })
       }
     }
     ownerControls.set(panel.id, ownerControl)
+    ownerSockets.set(panel.id, socket)
+    ownerConnectionCounts.set(
+      panel.id,
+      (ownerConnectionCounts.get(panel.id) ?? 0) + 1
+    )
     socket.on('disconnect', () => {
       if (ownerControls.get(panel.id) === ownerControl) {
         ownerControls.delete(panel.id)
+      }
+
+      if (ownerSockets.get(panel.id) === socket) {
+        ownerSockets.delete(panel.id)
       }
 
       for (const resolve of pendingControlRequests.values()) {
@@ -346,6 +362,7 @@ test('controls the local Browser through its exact bridge while another workspac
       type: 'claimGranted',
       panelId: panel.id,
       generation,
+      resumed: false,
       state: {
         url: panel.url,
         title: panel.title === 'Browser' ? '' : panel.title,
@@ -364,7 +381,7 @@ test('controls the local Browser through its exact bridge while another workspac
         return
       }
 
-      if (value.data.type === 'agentControlResult') {
+      if (value.data.type === 'runtimeControlResult') {
         const result = z
           .object({ requestId: z.string(), accepted: z.boolean() })
           .parse(value.data)
@@ -386,6 +403,8 @@ test('controls the local Browser through its exact bridge while another workspac
         }
       } else if (value.data.type === 'popup') {
         popupRequests += 1
+      } else if (value.data.type === 'takeControl') {
+        ownerTakeControlRequests += 1
       }
     })
   })
@@ -583,7 +602,30 @@ test('controls the local Browser through its exact bridge while another workspac
       }
 
       expect(ownerControl.generation).toBe(1)
-      expect(await ownerControl.request(true)).toBe(true)
+      expect(await ownerControl.request('agent', true)).toBe(true)
+      const screencast = await connectedBrowser
+        .contexts()[0]!
+        .newCDPSession(visiblePage)
+      const framePromise = new Promise<{
+        data: string
+        sessionId: number
+        metadata: { deviceWidth: number; deviceHeight: number }
+      }>((resolve) => screencast.once('Page.screencastFrame', resolve))
+      await screencast.send('Page.startScreencast', {
+        format: 'jpeg',
+        quality: 75,
+        everyNthFrame: 1
+      })
+      const frame = await framePromise
+      expect(Buffer.from(frame.data, 'base64').byteLength).toBeGreaterThan(0)
+      expect(frame.metadata.deviceWidth).toBeGreaterThan(0)
+      expect(frame.metadata.deviceHeight).toBeGreaterThan(0)
+      await screencast.send('Page.screencastFrameAck', {
+        sessionId: frame.sessionId
+      })
+      await screencast.send('Page.stopScreencast')
+      await screencast.detach()
+
       let controlReleased = false
       try {
         const backgroundSnapshot = await snapshotPage.ariaSnapshot({
@@ -615,7 +657,7 @@ test('controls the local Browser through its exact bridge while another workspac
         expect((await visiblePage.screenshot()).byteLength).toBeGreaterThan(0)
         await expect(window).toHaveURL(/\/terminals\/term_shell$/)
       } finally {
-        controlReleased = await ownerControl.request(false)
+        controlReleased = await ownerControl.request('none', false)
       }
       expect(controlReleased).toBe(true)
 
@@ -623,6 +665,15 @@ test('controls the local Browser through its exact bridge while another workspac
       await expect
         .poll(() => visiblePage.locator('output').first().textContent())
         .toBe('Background')
+      expect(await ownerControl.request('other', true)).toBe(true)
+      await window
+        .getByRole('button', { name: 'Take control of Browser' })
+        .click()
+      await expect.poll(() => ownerTakeControlRequests).toBe(1)
+      expect(await ownerControl.request('none', false)).toBe(true)
+      await expect(
+        window.getByRole('button', { name: 'Take control of Browser' })
+      ).not.toBeVisible()
       expect(await visiblePage.evaluate(() => sessionStorage.nextLoads)).toBe(
         nextPageLoads
       )
@@ -635,6 +686,26 @@ test('controls the local Browser through its exact bridge while another workspac
       await visiblePage.reload()
       await expect.poll(() => visiblePage.title()).toBe('Browser next')
       await visiblePage.goto(`${origin}/site/start`)
+      await expect(address).toHaveValue(`${origin}/site/start`)
+      const runtimeBeforeReconnect = await visiblePage.evaluate(() => ({
+        loads: sessionStorage.loads,
+        href: location.href
+      }))
+      ownerSockets.get(browserPanelId)?.disconnect(true)
+      await expect.poll(() => ownerConnectionCounts.get(browserPanelId)).toBe(2)
+      await expect
+        .poll(() =>
+          electronApp!.evaluate(({ webContents }) => {
+            const browser = webContents
+              .getAllWebContents()
+              .find((contents) => contents.getType() === 'webview')
+            return browser?.executeJavaScript(`({
+              loads: sessionStorage.loads,
+              href: location.href
+            })`)
+          })
+        )
+        .toEqual(runtimeBeforeReconnect)
       await expect(address).toHaveValue(`${origin}/site/start`)
     } finally {
       await connectedBrowser.close()

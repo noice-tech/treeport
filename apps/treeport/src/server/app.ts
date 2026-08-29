@@ -440,10 +440,12 @@ export function createApp({
           )
         }
 
+        const body = context.req.valid('json')
         return context.json({
           ticket: await browserSessions.issueTicket(
             context.req.param('panelId'),
-            context.req.valid('json').clientId
+            body.clientId,
+            body.visible
           )
         })
       }

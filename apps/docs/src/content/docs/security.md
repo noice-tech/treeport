@@ -133,11 +133,13 @@ Treeport requests approval again when the permission set changes. Removing the p
 
 The Browser primitive does not use a web-panel package permission.
 
-For a local desktop connection, Electron runs the page in a `<webview>`.
+For a local desktop connection, Electron can run the page in a `<webview>`.
+
+Authorized web and remote desktop clients can stream and control this page.
 
 The page can reach sites that are available from the desktop computer.
 
-For other connections, Playwright controls Chromium on the daemon computer.
+When no local desktop owns the page, Playwright controls Chromium on the daemon computer.
 
 That page can reach sites that are available from the daemon computer.
 
@@ -155,7 +157,7 @@ Treeport authorizes each action for one browser panel and tree.
 
 For a local desktop connection, Treeport validates the exact `<webview>` before it accepts agent control.
 
-Treeport does not give browser-control access to page content or remote clients.
+Treeport gives browser control only to authorized clients and agent commands for that panel.
 
 The server accepts only absolute HTTP or HTTPS addresses without credentials.
 
