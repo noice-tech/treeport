@@ -107,7 +107,8 @@ export function BrowserPanelWorkspace({
   } | null>(null)
   const [connectionRevision, setConnectionRevision] = useState(0)
   const [addressFocusRevision, setAddressFocusRevision] = useState(0)
-  const [agentPaintRetained, setAgentPaintRetained] = useState(false)
+  const [localBrowserPaintRetained, setLocalBrowserPaintRetained] =
+    useState(false)
   const [state, setState] = useState<BrowserSessionState | null>(null)
   const [inputValue, setInputValue] = useState(
     panel.url === 'about:blank' ? '' : panel.url
@@ -208,16 +209,10 @@ export function BrowserPanelWorkspace({
       pendingNavigationRef.current = null
       onLoadingChange(panel.id, false)
       setInstallingBrowser(false)
-      if (
-        message.type === 'browserUnavailable' ||
-        message.type === 'browserOwnedLocally'
-      ) {
+      if (message.type === 'browserUnavailable') {
         setFailure({
           message: message.message,
-          installCommand:
-            message.type === 'browserUnavailable'
-              ? message.installCommand
-              : null
+          installCommand: message.installCommand
         })
         return
       }
@@ -229,6 +224,7 @@ export function BrowserPanelWorkspace({
 
   const receiveFrame = useCallback(
     (frame: BrowserFrame) => {
+      viewportRef.current = { width: frame.width, height: frame.height }
       const canvas = canvasRef.current
       const drawing = canvas?.getContext('2d', { alpha: false })
       if (!canvas || !drawing) {
@@ -280,7 +276,7 @@ export function BrowserPanelWorkspace({
 
   const setLocalBrowserPaintRetention = useCallback(
     async (retained: boolean) => {
-      setAgentPaintRetained(retained)
+      setLocalBrowserPaintRetained(retained)
       if (!retained) {
         return true
       }
@@ -521,21 +517,17 @@ export function BrowserPanelWorkspace({
   const point = (event: PointerEvent<HTMLCanvasElement>) => {
     const bounds = event.currentTarget.getBoundingClientRect()
     const viewport = viewportRef.current
+    const scale = Math.min(
+      bounds.width / viewport.width,
+      bounds.height / viewport.height
+    )
+    const width = viewport.width * scale
+    const height = viewport.height * scale
+    const left = bounds.left + (bounds.width - width) / 2
+    const top = bounds.top + (bounds.height - height) / 2
     return {
-      x: Math.max(
-        0,
-        Math.min(
-          viewport.width,
-          ((event.clientX - bounds.left) / bounds.width) * viewport.width
-        )
-      ),
-      y: Math.max(
-        0,
-        Math.min(
-          viewport.height,
-          ((event.clientY - bounds.top) / bounds.height) * viewport.height
-        )
-      )
+      x: Math.max(0, Math.min(viewport.width, (event.clientX - left) / scale)),
+      y: Math.max(0, Math.min(viewport.height, (event.clientY - top) / scale))
     }
   }
 
@@ -589,7 +581,7 @@ export function BrowserPanelWorkspace({
       className={
         active
           ? 'relative z-10 flex h-full min-h-0 flex-col'
-          : agentPaintRetained
+          : localBrowserPaintRetained
             ? 'pointer-events-none absolute inset-0 z-0 flex h-full min-h-0 flex-col opacity-0'
             : 'hidden'
       }

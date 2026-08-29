@@ -170,9 +170,9 @@ const desktopBridge = Object.freeze({
       .invoke('native-browser:command', { panelId, command })
       .then((value) => desktopBrowserCommandResultSchema.parse(value))
   },
-  setBrowserAgentControl(panelId: string, locked: boolean): Promise<boolean> {
+  setBrowserInputControl(panelId: string, locked: boolean): Promise<boolean> {
     return ipcRenderer
-      .invoke('native-browser:set-agent-control', { panelId, locked })
+      .invoke('native-browser:set-input-control', { panelId, locked })
       .then((value) => z.boolean().parse(value))
   },
   requestBrowserClose(panelId: string, force: boolean): Promise<boolean> {

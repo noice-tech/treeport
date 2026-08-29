@@ -472,6 +472,7 @@ describe('Socket.IO real network', () => {
           type: 'claimGranted',
           panelId: 'panel_browser',
           generation: 4,
+          resumed: false,
           state: {
             url: 'about:blank',
             title: '',

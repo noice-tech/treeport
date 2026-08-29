@@ -16,6 +16,7 @@ import type { PlaywrightBrowserCallbacks } from './playwright-browser'
 import {
   BrowserSessionManager,
   type BrowserAgentCliRunner,
+  type BrowserLocalAutomationConnector,
   type BrowserSessionBrowser,
   type BrowserSessionBrowserFactory,
   type BrowserSessionConfig,
@@ -73,6 +74,75 @@ class FakeBrowser implements BrowserSessionBrowser {
   }
 }
 
+function fakeLocalBrowser() {
+  interface CdpCommandParameters {
+    sessionId?: number
+    format?: string
+    quality?: number
+    maxWidth?: number
+    maxHeight?: number
+    everyNthFrame?: number
+  }
+  interface CdpCommand {
+    method: string
+    params: CdpCommandParameters | null
+  }
+  const commands: CdpCommand[] = []
+  const cdp = Object.assign(new EventEmitter(), {
+    commands,
+    async send(method: string, params?: CdpCommandParameters) {
+      commands.push({ method, params: params ?? null })
+      return {}
+    },
+    async detach() {}
+  })
+  let currentUrl = 'https://example.com/local'
+  const mouse = {
+    move: vi.fn(async () => undefined),
+    down: vi.fn(async () => undefined),
+    up: vi.fn(async () => undefined),
+    wheel: vi.fn(async () => undefined)
+  }
+  const keyboard = {
+    down: vi.fn(async () => undefined),
+    up: vi.fn(async () => undefined),
+    insertText: vi.fn(async () => undefined),
+    press: vi.fn(async () => undefined)
+  }
+  const page = Object.assign(new EventEmitter(), {
+    mouse,
+    keyboard,
+    url: () => currentUrl,
+    goto: vi.fn(async (url: string) => {
+      currentUrl = url
+      return null
+    }),
+    goBack: vi.fn(async () => null),
+    goForward: vi.fn(async () => null),
+    reload: vi.fn(async () => null),
+    screenshot: vi.fn(async () => Buffer.from([1])),
+    ariaSnapshot: vi.fn(async () => '- button "Local target" [ref=e1]'),
+    locator: vi.fn(() => ({
+      click: vi.fn(async () => undefined),
+      fill: vi.fn(async () => undefined)
+    }))
+  })
+  const context = {
+    pages: () => [page],
+    newCDPSession: vi.fn(async () => cdp)
+  }
+  let connected = true
+  const browser = Object.assign(new EventEmitter(), {
+    contexts: () => [context],
+    isConnected: () => connected,
+    close: vi.fn(async () => {
+      connected = false
+      browser.emit('disconnected')
+    })
+  })
+  return { browser, cdp, page, mouse, keyboard }
+}
+
 const browserFactory: BrowserSessionBrowserFactory = (
   _host,
   workspacePath,
@@ -95,6 +165,7 @@ function fixture(
   options: {
     panelUrl?: string
     panelTitle?: string
+    connectLocalAutomation?: BrowserLocalAutomationConnector
   } = {}
 ) {
   const events = new EventEmitter()
@@ -139,7 +210,8 @@ function fixture(
     service,
     config,
     browserFactory,
-    agentCliRunner
+    agentCliRunner,
+    options.connectLocalAutomation
   )
   const transports: Array<{
     transport: BrowserTransport
@@ -403,11 +475,15 @@ describe('Browser sessions', () => {
     await storedValue.manager.dispose()
   })
 
-  it('moves one panel between Playwright and a verified local owner without two live runtimes', async () => {
+  it('streams and controls a verified local owner without a second browser runtime', async () => {
     const runAgentCli = vi.fn<BrowserAgentCliRunner>(async (_target, args) =>
       args[0] === 'attach' ? 'attached' : 'snapshot output'
     )
-    const value = fixture(runAgentCli)
+    const localBrowser = fakeLocalBrowser()
+    // SAFETY: This faithful fake supplies every Playwright Browser method used by BrowserSessionManager.
+    const connectLocalAutomation: BrowserLocalAutomationConnector = async () =>
+      localBrowser.browser as never
+    const value = fixture(runAgentCli, { connectLocalAutomation })
     const remote = value.transport('remote')
     await value.manager.accept(
       await value.manager.issueTicket('panel_browser', 'remote-client'),
@@ -445,18 +521,19 @@ describe('Browser sessions', () => {
 
     const ownerMessages: BrowserOwnerServerMessage[] = []
     let ownerConnected = true
+    let acceptRuntimeControl = true
     const ownerTransport: BrowserOwnerTransport = {
       id: 'local-owner',
       isConnected: () => ownerConnected,
       send: (message) => {
         ownerMessages.push(message)
-        if (message.type === 'agentControl') {
+        if (message.type === 'runtimeControl') {
           queueMicrotask(() =>
             value.manager.ownerMessage('local-owner', {
-              type: 'agentControlResult',
+              type: 'runtimeControlResult',
               generation: message.generation,
               requestId: message.requestId,
-              accepted: true
+              accepted: acceptRuntimeControl
             })
           )
         } else if (message.type === 'closeRequest') {
@@ -490,11 +567,6 @@ describe('Browser sessions', () => {
       type: 'claimGranted',
       panelId: 'panel_browser'
     })
-    expect(remote.messages).toContainEqual({
-      type: 'browserOwnedLocally',
-      message: 'This Browser is open in a local Treeport desktop app.'
-    })
-
     const claim = ownerMessages.find(
       (message) => message.type === 'claimGranted'
     )
@@ -515,7 +587,11 @@ describe('Browser sessions', () => {
       .catch(() => undefined)
     await vi.waitFor(() =>
       expect(ownerMessages).toContainEqual(
-        expect.objectContaining({ type: 'agentControl', locked: true })
+        expect.objectContaining({
+          type: 'runtimeControl',
+          controller: 'agent',
+          retainPaint: true
+        })
       )
     )
     await new Promise((resolve) => setTimeout(resolve, 50))
@@ -558,35 +634,209 @@ describe('Browser sessions', () => {
 
     const observer = value.transport('observer')
     await value.manager.accept(
-      await value.manager.issueTicket('panel_browser', 'observer-client'),
+      await value.manager.issueTicket(
+        'panel_browser',
+        'observer-client',
+        false
+      ),
       observer.transport
     )
-    expect(observer.messages).toContainEqual({
-      type: 'browserOwnedLocally',
-      message: 'This Browser is open in a local Treeport desktop app.'
+    expect(observer.messages.at(-1)).toMatchObject({
+      type: 'controlChanged',
+      state: { controlled: false }
+    })
+    value.manager.message('observer', { type: 'setVisible', visible: true })
+    await vi.waitFor(() =>
+      expect(ownerMessages.at(-1)).toMatchObject({
+        type: 'runtimeControl',
+        controller: 'none',
+        retainPaint: true
+      })
+    )
+    expect(observer.messages.at(-1)).toMatchObject({
+      type: 'controlChanged',
+      state: { controlled: false, controller: 'other' }
     })
     expect(browsers).toHaveLength(1)
     await expect(
       value.manager.requestPanelClose('panel_browser')
     ).resolves.toBe(false)
 
-    await expect(beforeReadyAgent).rejects.toThrow()
-    expect(automationRequests).toBeGreaterThan(0)
+    await expect(beforeReadyAgent).resolves.toBe(
+      '- button "Local target" [ref=e1]'
+    )
+    expect(automationRequests).toBe(0)
+    await vi.waitFor(() =>
+      expect(localBrowser.cdp.commands).toContainEqual(
+        expect.objectContaining({ method: 'Page.startScreencast' })
+      )
+    )
+    localBrowser.cdp.emit('Page.screencastFrame', {
+      data: Buffer.from([7]).toString('base64'),
+      metadata: { timestamp: 1, deviceWidth: 900, deviceHeight: 600 },
+      sessionId: 1
+    })
+    await vi.waitFor(() => expect(remote.frames).toHaveLength(1))
+    expect([...remote.frames[0]!.data]).toEqual([7])
+    expect(observer.frames).toHaveLength(1)
+
+    value.manager.message('remote', { type: 'takeControl' })
+    await vi.waitFor(() =>
+      expect(remote.messages.at(-1)).toMatchObject({
+        type: 'controlChanged',
+        state: { controlled: true, controller: 'you' }
+      })
+    )
+    value.manager.message('remote', {
+      type: 'pointer',
+      phase: 'down',
+      x: 40,
+      y: 50,
+      button: 'left'
+    })
+    await vi.waitFor(() =>
+      expect(localBrowser.mouse.down).toHaveBeenCalledWith({ button: 'left' })
+    )
+
+    value.manager.close('remote')
+    const reconnectedRemote = value.transport('remote-reconnected')
+    await value.manager.accept(
+      await value.manager.issueTicket('panel_browser', 'remote-client', true),
+      reconnectedRemote.transport
+    )
+    expect(reconnectedRemote.messages.at(-1)).toMatchObject({
+      type: 'controlChanged',
+      state: { controlled: true, controller: 'you' }
+    })
+    const resumedFrame = reconnectedRemote.frames.at(-1)
+    if (resumedFrame) {
+      value.manager.message('remote-reconnected', {
+        type: 'frameAck',
+        sequence: resumedFrame.sequence
+      })
+    }
+
+    value.manager.ownerMessage('local-owner', {
+      type: 'takeControl',
+      generation
+    })
+    await vi.waitFor(() =>
+      expect(ownerMessages.at(-1)).toMatchObject({
+        type: 'runtimeControl',
+        controller: 'none',
+        retainPaint: true
+      })
+    )
+    await vi.waitFor(() =>
+      expect(reconnectedRemote.messages.at(-1)).toMatchObject({
+        type: 'controlChanged',
+        state: { controlled: false, controller: 'other' }
+      })
+    )
     expect(browsers).toHaveLength(1)
     expect(runAgentCli).not.toHaveBeenCalled()
 
+    acceptRuntimeControl = false
+    value.manager.message('observer', { type: 'takeControl' })
+    await vi.waitFor(() =>
+      expect(observer.messages.at(-1)).toEqual({
+        type: 'navigationError',
+        message: 'The local Browser owner did not accept control.'
+      })
+    )
+    expect(
+      [...observer.messages]
+        .reverse()
+        .find(
+          (message) =>
+            message.type === 'ready' ||
+            message.type === 'state' ||
+            message.type === 'controlChanged'
+        )
+    ).toMatchObject({ state: { controlled: false, controller: 'other' } })
+    acceptRuntimeControl = true
+
+    ownerConnected = false
     value.manager.closeOwner('local-owner')
+    localBrowser.cdp.emit('Page.screencastFrame', {
+      data: Buffer.from([8]).toString('base64'),
+      metadata: { timestamp: 2, deviceWidth: 900, deviceHeight: 600 },
+      sessionId: 2
+    })
+    await vi.waitFor(() => expect(reconnectedRemote.frames).toHaveLength(2))
+    expect([...reconnectedRemote.frames[1]!.data]).toEqual([8])
+
+    const resumedTicket = await value.manager.issueOwnerTicket(
+      'panel_browser',
+      'desktop-client'
+    )
+    expect(resumedTicket.challenge).toBe(ownerTicket.challenge)
+    const resumedMessages: BrowserOwnerServerMessage[] = []
+    let resumedConnected = true
+    const resumedTransport: BrowserOwnerTransport = {
+      id: 'local-owner-resumed',
+      isConnected: () => resumedConnected,
+      send: (message) => {
+        resumedMessages.push(message)
+        if (message.type === 'runtimeControl') {
+          queueMicrotask(() =>
+            value.manager.ownerMessage('local-owner-resumed', {
+              type: 'runtimeControlResult',
+              generation: message.generation,
+              requestId: message.requestId,
+              accepted: true
+            })
+          )
+        }
+
+        return true
+      },
+      disconnect: () => {
+        resumedConnected = false
+      }
+    }
+    await value.manager.acceptOwner(
+      {
+        ticket: resumedTicket.ticket,
+        challenge: resumedTicket.challenge,
+        endpoint: `http://127.0.0.1:${address.port}/private/`,
+        protocolVersion: BROWSER_PROTOCOL_VERSION
+      },
+      resumedTransport
+    )
+    expect(resumedMessages[0]).toMatchObject({
+      type: 'claimGranted',
+      generation,
+      resumed: true
+    })
+    value.manager.ownerMessage('local-owner-resumed', {
+      type: 'ready',
+      generation,
+      revision: 1,
+      state: {
+        url: 'https://example.com/local',
+        title: 'Visible local page',
+        loading: false,
+        canGoBack: true,
+        canGoForward: false,
+        viewport: { width: 900, height: 600 }
+      }
+    })
     await expect(
       value.manager.agentCommand('panel_browser', {
         command: 'snapshot',
         args: []
       })
-    ).resolves.toBe('snapshot output')
-    expect(browsers).toHaveLength(2)
-    expect(runAgentCli).toHaveBeenCalledWith(
-      expect.objectContaining({ panelId: 'panel_browser' }),
-      expect.arrayContaining(['attach', 'treeport-panel_browser'])
-    )
+    ).resolves.toBe('- button "Local target" [ref=e1]')
+    expect(browsers).toHaveLength(1)
+    expect(runAgentCli).not.toHaveBeenCalled()
+
+    value.manager.ownerMessage('local-owner-resumed', {
+      type: 'released',
+      generation
+    })
+    await vi.waitFor(() => expect(browsers).toHaveLength(2))
+    expect(localBrowser.browser.close).toHaveBeenCalledOnce()
 
     await value.manager.dispose()
     await new Promise<void>((resolve) => ownerServer.close(() => resolve()))

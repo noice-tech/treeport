@@ -414,7 +414,7 @@ const nativeBrowserCommandSchema = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('reload') }),
   z.strictObject({ type: z.literal('stop') })
 ]) satisfies z.ZodType<DesktopBrowserToolbarCommand>
-const nativeBrowserAgentControlSchema = nativeBrowserPanelSchema.extend({
+const nativeBrowserInputControlSchema = nativeBrowserPanelSchema.extend({
   locked: z.boolean()
 })
 
@@ -964,10 +964,10 @@ function registerIpc(): void {
       ? browserWebviews.command(event, parsed.data.panelId, parsed.data.command)
       : { ok: false, error: 'The Browser command was rejected.' }
   })
-  ipcMain.handle('native-browser:set-agent-control', (event, value) => {
-    const parsed = nativeBrowserAgentControlSchema.safeParse(value)
+  ipcMain.handle('native-browser:set-input-control', (event, value) => {
+    const parsed = nativeBrowserInputControlSchema.safeParse(value)
     return parsed.success && browserWebviews
-      ? browserWebviews.setAgentControl(
+      ? browserWebviews.setInputControl(
           event,
           parsed.data.panelId,
           parsed.data.locked

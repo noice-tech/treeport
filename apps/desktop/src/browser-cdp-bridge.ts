@@ -130,15 +130,24 @@ export async function createBrowserCdpBridge(
       return
     }
 
-    socket.send(
-      JSON.stringify({
-        method,
-        params,
-        ...(sessionId || primaryPageSession
-          ? { sessionId: sessionId || primaryPageSession }
-          : {})
-      })
-    )
+    const recipients =
+      sessionId &&
+      (pageSessions.has(sessionId) || browserSessions.has(sessionId))
+        ? [sessionId]
+        : pageSessions.size > 0
+          ? [...pageSessions]
+          : primaryPageSession
+            ? [primaryPageSession]
+            : [null]
+    for (const recipient of recipients) {
+      socket.send(
+        JSON.stringify({
+          method,
+          params,
+          ...(recipient ? { sessionId: recipient } : {})
+        })
+      )
+    }
   }
   const stop = async () => {
     if (stopping) {

@@ -73,12 +73,15 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  vi.useRealTimers()
   vi.clearAllMocks()
   vi.unstubAllGlobals()
 })
 
 it('connects the Browser workspace directly and preserves command and frame contracts', async () => {
   const socket = new FakeSocket()
+  const reconnectedSocket = new FakeSocket()
+  let socketCount = 0
   const messages: BrowserServerMessage[] = []
   const frames: BrowserFrame[] = []
   const connection = connectBrowserPanel(
@@ -88,10 +91,17 @@ it('connects the Browser workspace directly and preserves command and frame cont
       message: (message) => messages.push(message),
       frame: (frame) => frames.push(frame)
     },
-    () => socket
+    () => (socketCount++ === 0 ? socket : reconnectedSocket)
   )
   connection.send({ type: 'navigate', url: 'https://example.com/' })
   await vi.waitFor(() => expect(socket.hasHandler('frame')).toBe(true))
+  expect(fetch).toHaveBeenCalledWith(
+    '/api/panels/panel-one/browser-ticket',
+    expect.objectContaining({ method: 'POST' })
+  )
+  expect(
+    JSON.parse(String(vi.mocked(fetch).mock.calls[0]![1]?.body))
+  ).toMatchObject({ clientId: expect.any(String), visible: true })
 
   const ready: BrowserServerMessage = {
     type: 'ready',
@@ -134,6 +144,25 @@ it('connects the Browser workspace directly and preserves command and frame cont
     url: 'https://example.com/'
   })
 
+  vi.useFakeTimers()
+  socket.emitServer('disconnect')
+  connection.send({ type: 'takeControl' })
+  connection.send({ type: 'frameAck', sequence: 7 })
+  await vi.advanceTimersByTimeAsync(500)
+  await vi.waitFor(() =>
+    expect(reconnectedSocket.hasHandler('message')).toBe(true)
+  )
+  expect(fetch).toHaveBeenCalledTimes(2)
+  reconnectedSocket.emitServer('message', ready)
+  expect(reconnectedSocket.emit).toHaveBeenCalledExactlyOnceWith('command', {
+    type: 'setVisible',
+    visible: true
+  })
+
   connection.dispose()
-  expect(socket.disconnect).toHaveBeenCalledOnce()
+  expect(reconnectedSocket.emit).toHaveBeenLastCalledWith('command', {
+    type: 'setVisible',
+    visible: false
+  })
+  expect(reconnectedSocket.disconnect).toHaveBeenCalledOnce()
 })

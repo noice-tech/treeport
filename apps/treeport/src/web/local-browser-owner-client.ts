@@ -25,11 +25,13 @@ export interface LocalBrowserOwnerTicket {
 
 export interface LocalBrowserOwnerConnection {
   generation: number
+  resumed: boolean
   initialState: BrowserRuntimeState
   sendReady(state: BrowserRuntimeState): void
   sendState(state: BrowserRuntimeState): void
   sendPopup(url: string): void
   sendCrash(message: string): void
+  takeControl(): void
   dispose(): void
 }
 
@@ -64,7 +66,10 @@ export function connectLocalBrowserOwner(
   ownerTicket: LocalBrowserOwnerTicket,
   endpoint: string,
   handlers: {
-    setAgentControl(locked: boolean): Promise<boolean>
+    setRuntimeControl(
+      controller: 'agent' | 'other' | 'none',
+      retainPaint: boolean
+    ): Promise<boolean>
     requestClose(force: boolean): Promise<boolean>
     closed(reason: string): void
     disconnected(): void
@@ -139,6 +144,7 @@ export function connectLocalBrowserOwner(
         }
         resolve({
           generation,
+          resumed: message.resumed,
           initialState: message.state,
           sendReady(state) {
             send({
@@ -162,7 +168,11 @@ export function connectLocalBrowserOwner(
           sendCrash(message) {
             send({ type: 'crashed', generation, message })
           },
+          takeControl() {
+            send({ type: 'takeControl', generation })
+          },
           dispose() {
+            send({ type: 'released', generation })
             disposed = true
             socket.disconnect()
           }
@@ -171,29 +181,32 @@ export function connectLocalBrowserOwner(
       }
 
       if (
-        (message.type === 'agentControl' || message.type === 'closeRequest') &&
+        (message.type === 'runtimeControl' ||
+          message.type === 'closeRequest') &&
         message.generation !== activeGeneration
       ) {
         return
       }
 
-      if (message.type === 'agentControl') {
-        void handlers.setAgentControl(message.locked).then(
-          (accepted) =>
-            sendOwnerResult(socket, {
-              type: 'agentControlResult',
-              generation: message.generation,
-              requestId: message.requestId,
-              accepted
-            }),
-          () =>
-            sendOwnerResult(socket, {
-              type: 'agentControlResult',
-              generation: message.generation,
-              requestId: message.requestId,
-              accepted: false
-            })
-        )
+      if (message.type === 'runtimeControl') {
+        void handlers
+          .setRuntimeControl(message.controller, message.retainPaint)
+          .then(
+            (accepted) =>
+              sendOwnerResult(socket, {
+                type: 'runtimeControlResult',
+                generation: message.generation,
+                requestId: message.requestId,
+                accepted
+              }),
+            () =>
+              sendOwnerResult(socket, {
+                type: 'runtimeControlResult',
+                generation: message.generation,
+                requestId: message.requestId,
+                accepted: false
+              })
+          )
         return
       }
 

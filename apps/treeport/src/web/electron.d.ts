@@ -50,7 +50,7 @@ type TreeportDesktopBridge = Readonly<{
       | { type: 'reload' }
       | { type: 'stop' }
   ) => Promise<{ ok: boolean; error: string | null }>
-  setBrowserAgentControl: (panelId: string, locked: boolean) => Promise<boolean>
+  setBrowserInputControl: (panelId: string, locked: boolean) => Promise<boolean>
   requestBrowserClose: (panelId: string, force: boolean) => Promise<boolean>
   disposeBrowser: (panelId: string) => void
   onBrowserFocus: (listener: (panelId: string) => void) => () => void

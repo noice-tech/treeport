@@ -4,7 +4,11 @@ import path from 'node:path'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { createRequire } from 'node:module'
 import { z } from 'zod'
-import type { Browser as PlaywrightConnection, Page } from 'playwright'
+import type {
+  Browser as PlaywrightConnection,
+  CDPSession,
+  Page
+} from 'playwright'
 import type {
   BrowserAgentCommand,
   BrowserClientMessage,
@@ -24,6 +28,7 @@ import {
 } from '@treeport/shared'
 import type { AppConfig, TreeportService } from './core/index'
 import {
+  LatestBrowserFrameProducer,
   PlaywrightBrowser,
   PlaywrightBrowserHost,
   type BrowserInstallStatus,
@@ -89,14 +94,22 @@ export type BrowserAgentCliRunner = (
   args: string[]
 ) => Promise<string>
 
+export type BrowserLocalAutomationConnector = (
+  endpoint: string
+) => Promise<PlaywrightConnection>
+
 interface BrowserTicket {
   panelId: string
   clientId: string
+  visible: boolean
   expiresAt: number
 }
 
-interface BrowserOwnerTicket extends BrowserTicket {
+interface BrowserOwnerTicket {
+  panelId: string
+  clientId: string
   challenge: string
+  expiresAt: number
 }
 
 interface BrowserOwnerRequest {
@@ -107,9 +120,13 @@ interface BrowserOwnerRequest {
 interface BrowserLocalAutomation {
   browser: PlaywrightConnection
   page: Page
+  cdp: CDPSession
+  frameProducer: LatestBrowserFrameProducer
   generation: number
   console: string[]
   requests: string[]
+  screencasting: boolean
+  screencastTail: Promise<void>
 }
 
 interface BrowserLocalOwner {
@@ -120,6 +137,8 @@ interface BrowserLocalOwner {
   generation: number
   revision: number
   ready: boolean
+  controller: 'agent' | 'other' | 'none'
+  retainPaint: boolean
   readyPromise: Promise<void>
   resolveReady: (() => void) | null
   requests: Map<string, BrowserOwnerRequest>
@@ -196,6 +215,8 @@ interface BrowserSession {
 
 const MAX_BROWSER_ATTACHMENTS = 8
 const MAX_BROWSER_TICKETS = 256
+const LOCAL_BROWSER_OWNER_CONTROLLER = 'local-owner'
+const attachmentController = (clientId: string) => `attachment:${clientId}`
 const MAX_BROWSER_SCHEDULED_OPERATIONS = 64
 const MAX_BROWSER_REGULAR_OPERATIONS = 46
 const playwrightPackageSchema = z.object({
@@ -237,7 +258,13 @@ export class BrowserSessionManager {
     private readonly service: BrowserSessionService,
     private readonly config: BrowserSessionConfig,
     private readonly browserFactory: BrowserSessionBrowserFactory = defaultBrowserFactory,
-    private readonly agentCliRunner: BrowserAgentCliRunner | null = null
+    private readonly agentCliRunner: BrowserAgentCliRunner | null = null,
+    private readonly connectLocalAutomation: BrowserLocalAutomationConnector = async (
+      endpoint
+    ) => {
+      const { chromium } = await import('playwright')
+      return chromium.connectOverCDP(endpoint, { timeout: 10_000 })
+    }
   ) {
     this.cachePath = path.join(config.cacheDir, 'playwright')
     this.browserHost = new PlaywrightBrowserHost(
@@ -257,7 +284,11 @@ export class BrowserSessionManager {
     })
   }
 
-  async issueTicket(panelId: string, clientId: string): Promise<string> {
+  async issueTicket(
+    panelId: string,
+    clientId: string,
+    visible = true
+  ): Promise<string> {
     await this.service.authorizeBrowserPanel(panelId)
     for (const [value, ticket] of this.tickets) {
       if (ticket.expiresAt < Date.now()) {
@@ -272,6 +303,7 @@ export class BrowserSessionManager {
     this.tickets.set(ticket, {
       panelId,
       clientId,
+      visible,
       expiresAt: Date.now() + 30_000
     })
     return ticket
@@ -292,7 +324,11 @@ export class BrowserSessionManager {
     }
 
     const ticket = crypto.randomBytes(32).toString('base64url')
-    const challenge = crypto.randomBytes(32).toString('base64url')
+    const currentOwner = this.sessions.get(panelId)?.localOwner
+    const challenge =
+      currentOwner?.clientId === clientId
+        ? currentOwner.challenge
+        : crypto.randomBytes(32).toString('base64url')
     this.ownerTickets.set(ticket, {
       panelId,
       clientId,
@@ -306,20 +342,18 @@ export class BrowserSessionManager {
     session: BrowserSession,
     attachment: BrowserAttachment
   ): BrowserSessionState {
-    const localOwner = session.localOwner !== null
     return {
       ...session.state,
-      controlled: !localOwner && session.controllerId === attachment.id,
-      hasController: localOwner || session.controllerId !== null,
-      controller: localOwner
-        ? session.controllerId === 'agent'
-          ? 'agent'
-          : 'other'
-        : session.controllerId === attachment.id
+      controlled:
+        session.controllerId === attachmentController(attachment.clientId),
+      hasController:
+        session.localOwner !== null || session.controllerId !== null,
+      controller:
+        session.controllerId === attachmentController(attachment.clientId)
           ? 'you'
           : session.controllerId === 'agent'
             ? 'agent'
-            : session.controllerId
+            : session.localOwner || session.controllerId
               ? 'other'
               : 'none'
     }
@@ -823,7 +857,13 @@ export class BrowserSessionManager {
     }
 
     const session = await this.getSession(ticket.panelId)
-    if (session.attachments.size >= MAX_BROWSER_ATTACHMENTS) {
+    const supersededAttachments = [...session.attachments.values()].filter(
+      (candidate) => candidate.clientId === ticket.clientId
+    )
+    if (
+      session.attachments.size - supersededAttachments.length >=
+      MAX_BROWSER_ATTACHMENTS
+    ) {
       transport.sendMessage({
         type: 'browserUnavailable',
         message:
@@ -837,7 +877,7 @@ export class BrowserSessionManager {
       id: transport.id,
       clientId: ticket.clientId,
       transport,
-      visible: true,
+      visible: ticket.visible,
       closing: false,
       awaitingFrame: null,
       pendingFrame: null,
@@ -845,20 +885,11 @@ export class BrowserSessionManager {
     }
     session.attachments.set(attachment.id, attachment)
 
-    if (session.localOwner) {
-      transport.sendMessage({
-        type: 'ready',
-        state: this.stateFor(session, attachment)
-      })
-      transport.sendMessage({
-        type: 'browserOwnedLocally',
-        message: 'This Browser is open in a local Treeport desktop app.'
-      })
-      return attachment.id
-    }
-
     try {
-      await this.browserFor(session)
+      if (!session.localOwner) {
+        await this.browserFor(session)
+      }
+
       if (!transport.isConnected()) {
         this.close(attachment.id)
         return attachment.id
@@ -871,7 +902,20 @@ export class BrowserSessionManager {
             return
           }
 
-          session.controllerId ??= attachment.id
+          for (const superseded of supersededAttachments) {
+            if (session.attachments.get(superseded.id) !== superseded) {
+              continue
+            }
+
+            superseded.closing = true
+            session.attachments.delete(superseded.id)
+            superseded.transport.disconnect()
+          }
+
+          if (attachment.visible && session.controllerId === null) {
+            session.controllerId = attachmentController(attachment.clientId)
+          }
+
           await this.updateScreencast(session)
         },
         { required: true }
@@ -892,21 +936,23 @@ export class BrowserSessionManager {
     } catch (error) {
       attachment.closing = true
       session.attachments.delete(attachment.id)
-      if (session.controllerId === attachment.id) {
-        session.controllerId = null
+      if (
+        session.controllerId === attachmentController(attachment.clientId) &&
+        ![...session.attachments.values()].some(
+          (candidate) => candidate.clientId === attachment.clientId
+        )
+      ) {
+        session.controllerId = session.localOwner
+          ? LOCAL_BROWSER_OWNER_CONTROLLER
+          : null
       }
 
-      if (session.localOwner) {
-        transport.sendMessage({
-          type: 'browserOwnedLocally',
-          message: 'This Browser is open in a local Treeport desktop app.'
-        })
-      } else {
-        transport.sendMessage({
-          type: 'browserUnavailable',
-          message: error instanceof Error ? error.message : String(error),
-          installCommand: 'treeport browser install'
-        })
+      transport.sendMessage({
+        type: 'browserUnavailable',
+        message: error instanceof Error ? error.message : String(error),
+        installCommand: session.localOwner ? null : 'treeport browser install'
+      })
+      if (!session.localOwner) {
         await this.closePlaywrightRuntime(session).catch(() => undefined)
       }
     }
@@ -950,7 +996,8 @@ export class BrowserSessionManager {
     await this.scheduleOperation(
       session,
       async () => {
-        if (session.localOwner) {
+        const previousOwner = session.localOwner
+        if (previousOwner?.transport.isConnected()) {
           transport.send({
             type: 'claimRejected',
             message: 'This Browser is open in another local desktop app.'
@@ -974,43 +1021,76 @@ export class BrowserSessionManager {
           return
         }
 
-        await this.closePlaywrightRuntime(session)
         let resolveReady: (() => void) | null = null
         const readyPromise = new Promise<void>((resolve) => {
           resolveReady = resolve
         })
-        const owner: BrowserLocalOwner = {
-          transport,
-          clientId: ticket.clientId,
-          endpoint: auth.endpoint,
-          challenge: auth.challenge,
-          generation: ++session.generation,
-          revision: -1,
-          ready: false,
-          readyPromise,
-          resolveReady,
-          requests: new Map()
+        const resumed = previousOwner?.clientId === ticket.clientId
+        let owner: BrowserLocalOwner
+        if (previousOwner) {
+          previousOwner.resolveReady?.()
+          for (const request of previousOwner.requests.values()) {
+            clearTimeout(request.timer)
+            request.resolve(false)
+          }
+          previousOwner.requests.clear()
+
+          if (previousOwner.endpoint !== auth.endpoint) {
+            await this.closeLocalAutomation(session)
+            session.latestFrame = null
+            session.sequence = 0
+          }
+
+          previousOwner.transport = transport
+          previousOwner.clientId = ticket.clientId
+          previousOwner.endpoint = auth.endpoint
+          previousOwner.challenge = auth.challenge
+          previousOwner.generation = resumed
+            ? previousOwner.generation
+            : ++session.generation
+          previousOwner.revision = -1
+          previousOwner.ready = false
+          previousOwner.controller = 'none'
+          previousOwner.retainPaint = false
+          previousOwner.readyPromise = readyPromise
+          previousOwner.resolveReady = resolveReady
+          owner = previousOwner
+        } else {
+          await this.closePlaywrightRuntime(session)
+          owner = {
+            transport,
+            clientId: ticket.clientId,
+            endpoint: auth.endpoint,
+            challenge: auth.challenge,
+            generation: ++session.generation,
+            revision: -1,
+            ready: false,
+            controller: 'none',
+            retainPaint: false,
+            readyPromise,
+            resolveReady,
+            requests: new Map()
+          }
+          session.localOwner = owner
+          session.controllerId = LOCAL_BROWSER_OWNER_CONTROLLER
+          session.latestFrame = null
+          session.sequence = 0
         }
+
         if (!transport.isConnected()) {
           return
         }
 
-        session.localOwner = owner
-        session.controllerId = null
-        session.latestFrame = null
-        session.sequence = 0
+        session.controllerId ??= LOCAL_BROWSER_OWNER_CONTROLLER
         transport.send({
           type: 'claimGranted',
           panelId: session.panelId,
           generation: owner.generation,
+          resumed,
           state: session.state
         })
-        this.broadcastState(session, 'controlChanged')
-        for (const attachment of session.attachments.values()) {
-          attachment.transport.sendMessage({
-            type: 'browserOwnedLocally',
-            message: 'This Browser is open in a local Treeport desktop app.'
-          })
+        if (!previousOwner) {
+          this.broadcastState(session, 'controlChanged')
         }
       },
       { required: true }
@@ -1047,8 +1127,53 @@ export class BrowserSessionManager {
         owner.ready = true
         owner.resolveReady?.()
         owner.resolveReady = null
+        void this.scheduleOperation(
+          session,
+          () => this.updateScreencast(session),
+          { required: true }
+        ).catch((cause) =>
+          this.broadcastNavigationError(
+            session,
+            cause instanceof Error ? cause.message : String(cause)
+          )
+        )
       }
 
+      return
+    }
+
+    if (message.type === 'takeControl') {
+      void this.scheduleOperation(
+        session,
+        async () => {
+          if (session.localOwner !== owner) {
+            return
+          }
+
+          await this.updateScreencast(session, LOCAL_BROWSER_OWNER_CONTROLLER)
+          if (session.localOwner !== owner) {
+            throw new Error('The local Browser owner changed.')
+          }
+
+          session.controllerId = LOCAL_BROWSER_OWNER_CONTROLLER
+          this.broadcastState(session, 'controlChanged')
+        },
+        { required: true }
+      ).catch(() => undefined)
+      return
+    }
+
+    if (message.type === 'released') {
+      void this.scheduleOperation(
+        session,
+        () => this.releaseLocalOwner(session, owner),
+        { required: true }
+      ).catch((cause) =>
+        this.broadcastNavigationError(
+          session,
+          cause instanceof Error ? cause.message : String(cause)
+        )
+      )
       return
     }
 
@@ -1076,7 +1201,7 @@ export class BrowserSessionManager {
     owner.requests.delete(message.requestId)
     clearTimeout(request.timer)
     request.resolve(
-      message.type === 'agentControlResult'
+      message.type === 'runtimeControlResult'
         ? message.accepted
         : message.canClose
     )
@@ -1091,43 +1216,96 @@ export class BrowserSessionManager {
       return
     }
 
-    session.localOwner = null
+    owner.ready = false
     owner.resolveReady?.()
     owner.resolveReady = null
-    void this.closeLocalAutomation(session)
-    session.generation += 1
-    session.controllerId = null
-    session.agentProcess?.kill('SIGTERM')
-    session.agentProcess = null
-    const agentSessionName = session.agentSessionName
-    session.agentAttached = false
-    session.agentSessionName = null
     for (const request of owner.requests.values()) {
       clearTimeout(request.timer)
       request.resolve(false)
     }
     owner.requests.clear()
-    if (agentSessionName) {
-      void this.executeAgentCli(session, [
-        `-s=${agentSessionName}`,
-        'detach'
-      ]).catch(() => undefined)
+  }
+
+  private async releaseLocalOwner(
+    session: BrowserSession,
+    owner: BrowserLocalOwner
+  ): Promise<void> {
+    if (session.localOwner !== owner) {
+      return
     }
 
+    session.localOwner = null
+    owner.ready = false
+    owner.resolveReady?.()
+    owner.resolveReady = null
+    for (const request of owner.requests.values()) {
+      clearTimeout(request.timer)
+      request.resolve(false)
+    }
+    owner.requests.clear()
+    await this.closeLocalAutomation(session)
+    session.generation += 1
+    session.latestFrame = null
+    session.sequence = 0
+    if (
+      session.controllerId === LOCAL_BROWSER_OWNER_CONTROLLER ||
+      session.controllerId === 'agent'
+    ) {
+      const attachment = [...session.attachments.values()].find(
+        (candidate) =>
+          !candidate.closing &&
+          candidate.visible &&
+          candidate.transport.isConnected()
+      )
+      session.controllerId = attachment
+        ? attachmentController(attachment.clientId)
+        : null
+    }
+
+    session.agentProcess?.kill('SIGTERM')
+    session.agentProcess = null
+    await this.detachAgent(session)
     this.broadcastState(session, 'controlChanged')
-    for (const attachment of session.attachments.values()) {
-      attachment.transport.sendMessage({
-        type: 'closed',
-        reason: 'The local Browser owner disconnected.'
-      })
-      attachment.transport.disconnect()
+    if (
+      ![...session.attachments.values()].some(
+        (attachment) =>
+          !attachment.closing &&
+          attachment.visible &&
+          attachment.transport.isConnected()
+      )
+    ) {
+      return
+    }
+
+    const runtimeError = await this.browserFor(session)
+      .then(() => this.updateScreencast(session))
+      .then(
+        () => null,
+        (cause: unknown) => cause
+      )
+    if (runtimeError !== null) {
+      for (const attachment of session.attachments.values()) {
+        attachment.transport.sendMessage({
+          type: 'browserUnavailable',
+          message:
+            runtimeError instanceof Error
+              ? runtimeError.message
+              : String(runtimeError),
+          installCommand: 'treeport browser install'
+        })
+      }
+      await this.closePlaywrightRuntime(session).catch(() => undefined)
     }
   }
 
   private requestLocalOwner(
     owner: BrowserLocalOwner,
     message:
-      | { type: 'agentControl'; locked: boolean }
+      | {
+          type: 'runtimeControl'
+          controller: 'agent' | 'other' | 'none'
+          retainPaint: boolean
+        }
       | { type: 'closeRequest'; force: boolean }
   ): Promise<boolean> {
     if (!owner.transport.isConnected()) {
@@ -1154,6 +1332,33 @@ export class BrowserSessionManager {
         resolve(false)
       }
     })
+  }
+
+  private async setLocalOwnerRuntimeControl(
+    session: BrowserSession,
+    owner: BrowserLocalOwner,
+    controller: 'agent' | 'other' | 'none',
+    retainPaint: boolean
+  ): Promise<void> {
+    if (owner.controller === controller && owner.retainPaint === retainPaint) {
+      return
+    }
+
+    const accepted = await this.requestLocalOwner(owner, {
+      type: 'runtimeControl',
+      controller,
+      retainPaint
+    })
+    if (
+      !accepted ||
+      session.localOwner !== owner ||
+      session.generation !== owner.generation
+    ) {
+      throw new Error('The local Browser owner did not accept control.')
+    }
+
+    owner.controller = controller
+    owner.retainPaint = retainPaint
   }
 
   private sendLatestFrame(
@@ -1260,22 +1465,45 @@ export class BrowserSessionManager {
       this.queueClientOperation(session, attachment, {
         coalesceKey: `screencast:${session.panelId}`,
         message: null,
-        execute: () => this.updateScreencast(session),
-        required: true
-      })
-      return
-    }
+        execute: async () => {
+          const previousController = session.controllerId
+          let nextController = previousController
+          if (attachment.visible && previousController === null) {
+            nextController = attachmentController(attachment.clientId)
+          } else if (
+            !attachment.visible &&
+            previousController === attachmentController(attachment.clientId)
+          ) {
+            const nextAttachment = [...session.attachments.values()].find(
+              (candidate) =>
+                candidate.id !== attachment.id &&
+                !candidate.closing &&
+                candidate.visible
+            )
+            nextController = nextAttachment
+              ? attachmentController(nextAttachment.clientId)
+              : session.localOwner
+                ? LOCAL_BROWSER_OWNER_CONTROLLER
+                : null
+          }
 
-    if (session.localOwner) {
-      attachment.transport.sendMessage({
-        type: 'browserOwnedLocally',
-        message: 'This Browser is open in a local Treeport desktop app.'
+          await this.updateScreencast(session, nextController)
+          session.controllerId = nextController
+          if (nextController !== previousController) {
+            this.broadcastState(session, 'controlChanged')
+          }
+        },
+        required: true
       })
       return
     }
 
     if (message.type === 'resize') {
       attachment.viewport = { width: message.width, height: message.height }
+      if (session.localOwner) {
+        return
+      }
+
       this.queueClientOperation(session, attachment, {
         coalesceKey: `resize:${attachment.id}`,
         message,
@@ -1284,7 +1512,7 @@ export class BrowserSessionManager {
             queuedMessage?.type !== 'resize' ||
             attachment.closing ||
             session.attachments.get(attachment.id) !== attachment ||
-            session.controllerId !== attachment.id
+            session.controllerId !== attachmentController(attachment.clientId)
           ) {
             return
           }
@@ -1316,15 +1544,20 @@ export class BrowserSessionManager {
             return
           }
 
-          const changed = session.controllerId !== attachment.id
-          session.controllerId = attachment.id
-          if (changed) {
-            this.broadcastState(session, 'controlChanged')
-          }
-
+          const previousController = session.controllerId
+          const nextController = attachmentController(attachment.clientId)
           try {
-            const browser = await this.browserFor(session)
-            await browser.command({ type: 'resize', ...attachment.viewport })
+            if (session.localOwner) {
+              await this.updateScreencast(session, nextController)
+            } else {
+              const browser = await this.browserFor(session)
+              await browser.command({ type: 'resize', ...attachment.viewport })
+            }
+
+            session.controllerId = nextController
+            if (previousController !== nextController) {
+              this.broadcastState(session, 'controlChanged')
+            }
           } catch (cause) {
             attachment.transport.sendMessage({
               type: 'navigationError',
@@ -1355,7 +1588,9 @@ export class BrowserSessionManager {
           return
         }
 
-        if (session.controllerId !== attachment.id) {
+        if (
+          session.controllerId !== attachmentController(attachment.clientId)
+        ) {
           attachment.transport.sendMessage({
             type: 'navigationError',
             message: 'Take control before you interact with this browser.'
@@ -1364,10 +1599,19 @@ export class BrowserSessionManager {
         }
 
         try {
-          const browser = await this.browserFor(session)
-          await browser.command(queuedMessage)
-          this.queuePanelState(session, browser.state)
-          await this.waitForPanelState(session)
+          const localOwner = session.localOwner
+          if (localOwner) {
+            await this.executeLocalClientCommand(
+              session,
+              localOwner,
+              queuedMessage
+            )
+          } else {
+            const browser = await this.browserFor(session)
+            await browser.command(queuedMessage)
+            this.queuePanelState(session, browser.state)
+            await this.waitForPanelState(session)
+          }
         } catch (cause) {
           attachment.transport.sendMessage({
             type: 'navigationError',
@@ -1379,26 +1623,52 @@ export class BrowserSessionManager {
     })
   }
 
-  private async updateScreencast(session: BrowserSession): Promise<void> {
-    if (session.localOwner || !session.launch) {
+  private async updateScreencast(
+    session: BrowserSession,
+    controllerId = session.controllerId
+  ): Promise<void> {
+    const visible = [...session.attachments.values()].some(
+      (attachment) =>
+        !attachment.closing &&
+        attachment.visible &&
+        attachment.transport.isConnected()
+    )
+    const localOwner = session.localOwner
+    if (localOwner) {
+      const controller =
+        controllerId === 'agent'
+          ? 'agent'
+          : controllerId && controllerId !== LOCAL_BROWSER_OWNER_CONTROLLER
+            ? 'other'
+            : 'none'
+      const retainPaint = visible || controller === 'agent'
+      if (visible) {
+        await this.setLocalOwnerRuntimeControl(
+          session,
+          localOwner,
+          controller,
+          retainPaint
+        )
+        await this.setLocalScreencasting(session, localOwner, true)
+      } else {
+        await this.setLocalScreencasting(session, localOwner, false)
+        await this.setLocalOwnerRuntimeControl(
+          session,
+          localOwner,
+          controller,
+          retainPaint
+        )
+      }
+
+      return
+    }
+
+    if (!session.launch) {
       return
     }
 
     const browser = await session.launch.catch(() => null)
-    if (!browser) {
-      return
-    }
-
-    await browser
-      .setScreencasting(
-        [...session.attachments.values()].some(
-          (attachment) =>
-            !attachment.closing &&
-            attachment.visible &&
-            attachment.transport.isConnected()
-        )
-      )
-      .catch(() => undefined)
+    await browser?.setScreencasting(visible).catch(() => undefined)
   }
 
   private async detachAgent(session: BrowserSession): Promise<void> {
@@ -1482,14 +1752,6 @@ export class BrowserSessionManager {
         session,
         async () => {
           session.attachments.delete(connectionId)
-          if (session.controllerId === connectionId) {
-            session.controllerId =
-              [...session.attachments.values()].find(
-                (candidate) => !candidate.closing
-              )?.id ?? null
-            this.broadcastState(session, 'controlChanged')
-          }
-
           await this.updateScreencast(session)
         },
         { required: true }
@@ -1632,7 +1894,10 @@ export class BrowserSessionManager {
     owner: BrowserLocalOwner
   ): Promise<BrowserLocalAutomation> {
     const current = session.localAutomation
-    if (current?.generation === owner.generation) {
+    if (
+      current?.generation === owner.generation &&
+      current.browser.isConnected()
+    ) {
       return Promise.resolve(current)
     }
 
@@ -1640,7 +1905,18 @@ export class BrowserSessionManager {
       return session.localAutomationLaunch
     }
 
+    if (current) {
+      session.localAutomation = null
+      current.frameProducer.stop()
+    }
+
     const launch = (async () => {
+      if (current) {
+        await current.cdp.send('Page.stopScreencast').catch(() => undefined)
+        await current.cdp.detach().catch(() => undefined)
+        await current.browser.close().catch(() => undefined)
+      }
+
       if (!owner.ready) {
         let readinessTimer: ReturnType<typeof setTimeout> | null = null
         await Promise.race([
@@ -1672,12 +1948,10 @@ export class BrowserSessionManager {
         throw new Error('The local Browser owner changed before it was ready.')
       }
 
-      const { chromium } = await import('playwright')
-      const browser = await chromium.connectOverCDP(owner.endpoint, {
-        timeout: 10_000
-      })
-      const page = browser.contexts()[0]?.pages()[0]
-      if (!page) {
+      const browser = await this.connectLocalAutomation(owner.endpoint)
+      const context = browser.contexts()[0]
+      const page = context?.pages()[0]
+      if (!context || !page) {
         await browser.close().catch(() => undefined)
         throw new Error('The local Browser page is not available.')
       }
@@ -1690,13 +1964,54 @@ export class BrowserSessionManager {
         throw new Error('The local Browser owner changed.')
       }
 
+      const cdp = await context.newCDPSession(page)
+      const frameProducer = new LatestBrowserFrameProducer(
+        (frame) => {
+          if (
+            session.localOwner === owner &&
+            session.localAutomation?.generation === owner.generation
+          ) {
+            this.publishFrame(session, frame)
+          }
+        },
+        (sessionId) => {
+          void cdp
+            .send('Page.screencastFrameAck', { sessionId })
+            .catch(() => undefined)
+        }
+      )
       const automation: BrowserLocalAutomation = {
         browser,
         page,
+        cdp,
+        frameProducer,
         generation: owner.generation,
         console: [],
-        requests: []
+        requests: [],
+        screencasting: false,
+        screencastTail: Promise.resolve()
       }
+      cdp.on('Page.screencastFrame', (frame) => frameProducer.receive(frame))
+      browser.once('disconnected', () => {
+        if (session.localAutomation !== automation) {
+          return
+        }
+
+        automation.frameProducer.stop()
+        automation.screencasting = false
+        session.localAutomation = null
+        void this.scheduleOperation(
+          session,
+          () => this.updateScreencast(session),
+          { required: true }
+        ).catch((cause) =>
+          this.broadcastNavigationError(
+            session,
+            cause instanceof Error ? cause.message : String(cause)
+          )
+        )
+      })
+      await cdp.send('Page.enable')
       page.on('console', (message) => {
         automation.console.push(`${message.type()}: ${message.text()}`)
         if (automation.console.length > 1_000) {
@@ -1734,7 +2049,98 @@ export class BrowserSessionManager {
       session.localAutomation ?? (await launch?.catch(() => null))
     session.localAutomation = null
     session.localAutomationLaunch = null
-    await automation?.browser.close().catch(() => undefined)
+    if (automation) {
+      automation.frameProducer.stop()
+      await automation.cdp.send('Page.stopScreencast').catch(() => undefined)
+      await automation.cdp.detach().catch(() => undefined)
+      await automation.browser.close().catch(() => undefined)
+    }
+  }
+
+  private async setLocalScreencasting(
+    session: BrowserSession,
+    owner: BrowserLocalOwner,
+    enabled: boolean
+  ): Promise<void> {
+    const automation = enabled
+      ? await this.ensureLocalAutomation(session, owner)
+      : session.localAutomation
+    if (!automation || automation.generation !== owner.generation) {
+      return
+    }
+
+    const operation = automation.screencastTail.then(async () => {
+      if (
+        session.localOwner !== owner ||
+        session.localAutomation !== automation ||
+        automation.screencasting === enabled
+      ) {
+        return
+      }
+
+      automation.screencasting = enabled
+      if (!enabled) {
+        automation.frameProducer.stop()
+        await automation.cdp.send('Page.stopScreencast').catch(() => undefined)
+        return
+      }
+
+      automation.frameProducer.start()
+      const width = Math.max(320, session.state.viewport.width || 1_280)
+      const height = Math.max(200, session.state.viewport.height || 800)
+      await automation.cdp
+        .send('Page.startScreencast', {
+          format: 'jpeg',
+          quality: 75,
+          maxWidth: width,
+          maxHeight: height,
+          everyNthFrame: 1
+        })
+        .catch((cause) => {
+          automation.screencasting = false
+          automation.frameProducer.stop()
+          throw cause
+        })
+    })
+    automation.screencastTail = operation.catch(() => undefined)
+    await operation
+  }
+
+  private async executeLocalClientCommand(
+    session: BrowserSession,
+    owner: BrowserLocalOwner,
+    message: BrowserClientMessage
+  ): Promise<void> {
+    const automation = await this.ensureLocalAutomation(session, owner)
+    const page = automation.page
+    if (message.type === 'navigate') {
+      await page.goto(message.url, { waitUntil: 'commit' })
+    } else if (message.type === 'back') {
+      await page.goBack({ waitUntil: 'commit' })
+    } else if (message.type === 'forward') {
+      await page.goForward({ waitUntil: 'commit' })
+    } else if (message.type === 'reload') {
+      await page.reload({ waitUntil: 'commit' })
+    } else if (message.type === 'stop') {
+      await automation.cdp.send('Page.stopLoading')
+    } else if (message.type === 'pointer') {
+      await page.mouse.move(message.x, message.y)
+      if (message.phase === 'down') {
+        await page.mouse.down({ button: message.button ?? 'left' })
+      } else if (message.phase === 'up') {
+        await page.mouse.up({ button: message.button ?? 'left' })
+      }
+    } else if (message.type === 'wheel') {
+      await page.mouse.wheel(message.deltaX, message.deltaY)
+    } else if (message.type === 'key') {
+      if (message.phase === 'down') {
+        await page.keyboard.down(message.key)
+      } else {
+        await page.keyboard.up(message.key)
+      }
+    } else if (message.type === 'insertText') {
+      await page.keyboard.insertText(message.text)
+    }
   }
 
   private async executeLocalAgentCommand(
@@ -1826,24 +2232,22 @@ export class BrowserSessionManager {
             await this.closePlaywrightRuntime(session).catch(() => undefined)
             throw error
           })
-      if (localOwner) {
-        const locked = await this.requestLocalOwner(localOwner, {
-          type: 'agentControl',
-          locked: true
-        })
-        if (
-          !locked ||
-          session.localOwner !== localOwner ||
-          localOwner.generation !== session.generation
-        ) {
-          throw new Error('The local Browser owner did not accept control.')
-        }
-      }
-
       const previousController = session.controllerId
-      session.controllerId = 'agent'
-      this.broadcastState(session, 'controlChanged')
+      let agentControlled = false
       try {
+        if (localOwner) {
+          await this.updateScreencast(session, 'agent')
+          if (
+            session.localOwner !== localOwner ||
+            localOwner.generation !== session.generation
+          ) {
+            throw new Error('The local Browser owner changed.')
+          }
+        }
+
+        session.controllerId = 'agent'
+        agentControlled = true
+        this.broadcastState(session, 'controlChanged')
         if (localOwner) {
           result = await this.executeLocalAgentCommand(
             session,
@@ -1887,25 +2291,36 @@ export class BrowserSessionManager {
 
         throw cause
       } finally {
-        if (localOwner && session.localOwner === localOwner) {
-          await this.requestLocalOwner(localOwner, {
-            type: 'agentControl',
-            locked: false
-          })
-        }
+        if (agentControlled) {
+          if (localOwner && session.localOwner === localOwner) {
+            const nextController =
+              previousController && previousController !== 'agent'
+                ? previousController
+                : LOCAL_BROWSER_OWNER_CONTROLLER
+            const released = await this.updateScreencast(
+              session,
+              nextController
+            ).then(
+              () => true,
+              () => false
+            )
+            if (released) {
+              session.controllerId = nextController
+            }
+          } else {
+            const nextAttachment = [...session.attachments.values()].find(
+              (attachment) => !attachment.closing && attachment.visible
+            )
+            session.controllerId =
+              previousController && previousController !== 'agent'
+                ? previousController
+                : nextAttachment
+                  ? attachmentController(nextAttachment.clientId)
+                  : null
+          }
 
-        session.controllerId =
-          !localOwner &&
-          previousController &&
-          previousController !== 'agent' &&
-          !session.attachments.get(previousController)?.closing
-            ? previousController
-            : !localOwner
-              ? ([...session.attachments.values()].find(
-                  (attachment) => !attachment.closing
-                )?.id ?? null)
-              : null
-        this.broadcastState(session, 'controlChanged')
+          this.broadcastState(session, 'controlChanged')
+        }
       }
     })
     return result

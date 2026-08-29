@@ -41,7 +41,7 @@ interface BrowserEntry {
   guest: WebContents
   bridge: BrowserCdpBridge | null
   commandQueue: Promise<void>
-  agentLocked: boolean
+  inputLocked: boolean
 }
 
 export interface BrowserWebviewPolicy {
@@ -56,7 +56,7 @@ export interface BrowserWebviewPolicy {
     panelId: string,
     command: DesktopBrowserToolbarCommand
   ): Promise<DesktopBrowserCommandResult>
-  setAgentControl(
+  setInputControl(
     event: IpcMainInvokeEvent,
     panelId: string,
     locked: boolean
@@ -143,7 +143,7 @@ export function installBrowserWebviewPolicy(options: {
       guest,
       bridge: null,
       commandQueue: Promise.resolve(),
-      agentLocked: false
+      inputLocked: false
     }
     pendingGuests.set(guest.id, entry)
     const refreshErrorPage = (
@@ -245,7 +245,7 @@ export function installBrowserWebviewPolicy(options: {
     const reportBrowserFocus = () => {
       if (
         entry.panelId &&
-        !entry.agentLocked &&
+        !entry.inputLocked &&
         !options.trustedRenderer.isDestroyed()
       ) {
         options.trustedRenderer.send('native-browser:focus', entry.panelId)
@@ -295,7 +295,12 @@ export function installBrowserWebviewPolicy(options: {
         options.trustedRenderer.send('desktop-command', command)
       }
     })
-    guest.on('context-menu', (_event, params) => {
+    guest.on('context-menu', (event, params) => {
+      if (entry.inputLocked) {
+        event.preventDefault()
+        return
+      }
+
       Menu.buildFromTemplate([
         { role: 'copy', enabled: params.editFlags.canCopy },
         { role: 'paste', enabled: params.editFlags.canPaste },
@@ -356,12 +361,14 @@ export function installBrowserWebviewPolicy(options: {
         !entry ||
         entry.guest.id !== webContentsId ||
         entry.guest.hostWebContents !== options.trustedRenderer ||
-        entry.guest.isDestroyed() ||
-        entry.bridge
+        entry.guest.isDestroyed()
       ) {
         return null
       }
 
+      const previousBridge = entry.bridge
+      entry.bridge = null
+      await previousBridge?.stop()
       const bridge = await createBrowserCdpBridge(entry.guest, {
         panelId,
         challenge
@@ -384,10 +391,10 @@ export function installBrowserWebviewPolicy(options: {
         return { ok: false, error: 'The Browser page is not available.' }
       }
 
-      if (entry.agentLocked) {
+      if (entry.inputLocked) {
         return {
           ok: false,
-          error: 'A coding agent controls this Browser.'
+          error: 'Another Treeport client controls this Browser.'
         }
       }
 
@@ -423,7 +430,7 @@ export function installBrowserWebviewPolicy(options: {
         ? { ok: false, error: operationError }
         : { ok: true, error: null }
     },
-    async setAgentControl(event, panelId, locked) {
+    async setInputControl(event, panelId, locked) {
       const entry = entries.get(panelId)
       if (
         !options.isTrustedEvent(event) ||
@@ -434,13 +441,13 @@ export function installBrowserWebviewPolicy(options: {
       }
 
       if (locked) {
-        entry.agentLocked = true
+        entry.inputLocked = true
         await entry.commandQueue
         if (!options.trustedRenderer.isDestroyed()) {
           options.trustedRenderer.focus()
         }
       } else {
-        entry.agentLocked = false
+        entry.inputLocked = false
       }
 
       return entries.get(panelId) === entry && !entry.guest.isDestroyed()
