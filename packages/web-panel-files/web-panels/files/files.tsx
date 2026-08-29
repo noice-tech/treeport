@@ -18,6 +18,9 @@ interface DocumentState {
   error: string | null
 }
 
+// ponytail: Unfocused panels stay stale, and focused panels can lag two seconds.
+// Add a host file-change event when either limit matters.
+const AUTO_REFRESH_INTERVAL_MS = 2_000
 const EDITOR_CSS = `
   :host {
     min-height: 100%;
@@ -40,6 +43,8 @@ function FilesExplorer({
   onSelect(path: string): void
 }) {
   const pathSet = useMemo(() => new Set(paths), [paths])
+  const pathSetRef = useRef(pathSet)
+  pathSetRef.current = pathSet
   const { model } = useFileTree({
     paths,
     initialExpansion: 'closed',
@@ -48,7 +53,9 @@ function FilesExplorer({
     search: true,
     fileTreeSearchMode: 'hide-non-matches',
     onSelectionChange: (selectedPaths) => {
-      const selected = selectedPaths.find((path) => pathSet.has(path))
+      const selected = selectedPaths.find((path) =>
+        pathSetRef.current.has(path)
+      )
       if (selected) {
         requestAnimationFrame(() => onSelect(selected))
       }
@@ -56,16 +63,28 @@ function FilesExplorer({
   })
 
   useEffect(() => {
+    const expandedPaths = model
+      .getVisibleRows(0, model.getVisibleCount())
+      .flatMap((row) =>
+        row.kind === 'directory' && row.isExpanded ? [row.path] : []
+      )
+    model.resetPaths(paths, { initialExpandedPaths: expandedPaths })
+  }, [model, paths])
+
+  useEffect(() => {
     model.setGitStatus(
       [...dirtyPaths].map((path) => ({ path, status: 'modified' as const }))
     )
-  }, [dirtyPaths, model])
+  }, [dirtyPaths, model, paths])
 
   return <FileTree model={model} />
 }
 
 function FilesApp() {
   const [paths, setPaths] = useState<string[] | null>(null)
+  const pathsRef = useRef(paths)
+  pathsRef.current = paths
+  const listPending = useRef(false)
   const [truncated, setTruncated] = useState(false)
   const [listError, setListError] = useState<string | null>(null)
   const [listLoading, setListLoading] = useState(true)
@@ -78,6 +97,7 @@ function FilesApp() {
   const documentsRef = useRef(documents)
   documentsRef.current = documents
   const savingPaths = useRef(new Set<string>())
+  const selectedRefreshPending = useRef(false)
   const editorRef = useRef<Editor<undefined> | null>(null)
   const editorBodyRef = useRef<HTMLElement>(null)
   const workbenchRef = useRef<HTMLDivElement>(null)
@@ -105,22 +125,40 @@ function FilesApp() {
   )
 
   const loadFiles = useCallback(() => {
-    setListLoading(true)
-    setListError(null)
-    void treeport.files.list().then(
-      (listing) => {
-        setPaths(listing.paths)
-        setTruncated(listing.truncated)
-        setListLoading(false)
-      },
-      (reason) => {
-        setListError(reason instanceof Error ? reason.message : String(reason))
-        setListLoading(false)
-      }
-    )
-  }, [])
+    if (listPending.current) {
+      return
+    }
 
-  useEffect(loadFiles, [loadFiles])
+    listPending.current = true
+    if (pathsRef.current === null) {
+      setListLoading(true)
+    }
+
+    setListError(null)
+    void treeport.files
+      .list()
+      .then(
+        (listing) => {
+          setPaths((current) =>
+            current !== null &&
+            current.length === listing.paths.length &&
+            current.every((path, index) => path === listing.paths[index])
+              ? current
+              : listing.paths
+          )
+          setTruncated(listing.truncated)
+        },
+        (reason) => {
+          setListError(
+            reason instanceof Error ? reason.message : String(reason)
+          )
+        }
+      )
+      .finally(() => {
+        listPending.current = false
+        setListLoading(false)
+      })
+  }, [])
 
   const openFile = useCallback(
     (path: string) => {
@@ -321,6 +359,86 @@ function FilesApp() {
     },
     [setDocument]
   )
+
+  const refreshSelectedFile = useCallback(() => {
+    if (selectedRefreshPending.current) {
+      return
+    }
+
+    const path = selectedPathRef.current
+    const document = path ? documentsRef.current.get(path) : undefined
+    if (
+      !path ||
+      !document?.revision ||
+      document.loading ||
+      document.saving ||
+      document.currentContent !== document.savedContent
+    ) {
+      return
+    }
+
+    selectedRefreshPending.current = true
+    void treeport.files
+      .read(path)
+      .then(
+        (file) => {
+          setDocument(path, (current) => {
+            if (current !== document) {
+              return
+            }
+
+            if (current.revision === file.revision) {
+              return current.error || current.conflict
+                ? { ...current, conflict: false, error: null }
+                : undefined
+            }
+
+            return {
+              ...current,
+              savedContent: file.content,
+              currentContent: file.content,
+              revision: file.revision,
+              generation: current.generation + 1,
+              conflict: false,
+              error: null
+            }
+          })
+        },
+        (reason) => {
+          setDocument(path, (current) =>
+            current === document
+              ? {
+                  ...current,
+                  conflict: false,
+                  error:
+                    reason instanceof Error ? reason.message : String(reason)
+                }
+              : undefined
+          )
+        }
+      )
+      .finally(() => {
+        selectedRefreshPending.current = false
+      })
+  }, [setDocument])
+
+  useEffect(() => {
+    const refresh = () => {
+      loadFiles()
+      refreshSelectedFile()
+    }
+    refresh()
+    addEventListener('focus', refresh)
+    const interval = setInterval(() => {
+      if (document.hasFocus()) {
+        refresh()
+      }
+    }, AUTO_REFRESH_INTERVAL_MS)
+    return () => {
+      removeEventListener('focus', refresh)
+      clearInterval(interval)
+    }
+  }, [loadFiles, refreshSelectedFile])
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
