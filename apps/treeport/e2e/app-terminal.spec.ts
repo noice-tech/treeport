@@ -1675,7 +1675,7 @@ test.describe('desktop worktree and terminal workflows', () => {
       ])
   })
 
-  test('edits, saves, undoes, redoes, and protects files from stale writes', async ({
+  test('edits, saves, refreshes, and protects files from stale writes', async ({
     page
   }) => {
     const mocked = await mockApp(page, [], { realFilesPanel: true })
@@ -1719,6 +1719,7 @@ test.describe('desktop worktree and terminal workflows', () => {
       .frames()
       .find((frame) => frame.url().includes('/api/web-panels/panel_1/assets/'))!
 
+    await filesFrame.getByRole('treeitem', { name: 'src', exact: true }).click()
     await filesFrame
       .getByRole('treeitem', { name: 'app.ts', exact: true })
       .click()
@@ -1765,7 +1766,21 @@ test.describe('desktop worktree and terminal workflows', () => {
     await closeDialog.getByRole('button', { name: 'Cancel' }).click()
 
     mocked.setTreeFile('src/app.ts', 'export const external = true\n')
+    mocked.setTreeFile('CHANGELOG.md', '# Changes\n')
     await editor.click()
+    const changelog = filesFrame.getByRole('treeitem', {
+      name: 'CHANGELOG.md',
+      exact: true
+    })
+    await expect(changelog).toBeVisible()
+    await changelog.click()
+    await expect(
+      filesFrame.getByRole('textbox', { name: 'CHANGELOG.md' })
+    ).toContainText('# Changes')
+    await filesFrame
+      .getByRole('treeitem', { name: 'app.ts', exact: true })
+      .click()
+    await expect(editor).toContainText('export const value = 1')
     const staleRequest = page.waitForRequest((request) => {
       const url = new URL(request.url())
       return (
@@ -1786,6 +1801,15 @@ test.describe('desktop worktree and terminal workflows', () => {
       content: 'export const value = 1\n',
       expectedRevision: 'revision-2'
     })
+
+    await filesFrame
+      .getByRole('treeitem', { name: 'README.md', exact: true })
+      .click()
+    const readmeEditor = filesFrame.getByRole('textbox', { name: 'README.md' })
+    await expect(readmeEditor).toContainText('# Example')
+
+    mocked.setTreeFile('README.md', '# Refreshed\n')
+    await expect(readmeEditor).toContainText('# Refreshed')
   })
 
   test('handles Electron commands through worktree, terminal, and web-panel flows', async ({
