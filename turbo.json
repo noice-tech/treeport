@@ -38,6 +38,9 @@
       "dependsOn": ["build"],
       "cache": false
     },
+    "@treeport/pi#test:package": {
+      "cache": false
+    },
     "//#fmt:check": {
       "cache": false
     },

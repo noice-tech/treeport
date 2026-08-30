@@ -73,3 +73,5 @@ These signals are not necessary for persistence or control. See the [terminal si
 Treeport uses tmux only as a persistent terminal runtime. It shows repositories, trees, and terminal tabs in the Treeport interface.
 
 Your personal tmux server and configuration stay separate.
+
+The [Pi integration](/building-apps/coding-agents/#use-pi) can create persistent terminals for long-running agent tasks.

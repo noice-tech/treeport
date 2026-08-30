@@ -37,6 +37,18 @@ const required = [
   'README.md'
 ]
 await Promise.all(required.map((file) => fs.access(path.join(directory, file))))
+const packagedSkill = await fs.readFile(
+  path.join(directory, 'skills/treeport/SKILL.md'),
+  'utf8'
+)
+const canonicalSkill = await fs.readFile(
+  path.join(directory, '../../skills/treeport/SKILL.md'),
+  'utf8'
+)
+if (packagedSkill !== canonicalSkill) {
+  throw new Error('The packaged CLI skill must match the Treeport skill')
+}
+
 const binSource = await fs.readFile(
   path.join(directory, 'bin/treeport.mjs'),
   'utf8'

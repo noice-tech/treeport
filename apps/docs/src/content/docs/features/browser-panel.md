@@ -178,3 +178,5 @@ The Treeport controls have accessible names and keyboard operation.
 The streamed page image does not include semantic accessibility information.
 
 Use `treeport browser snapshot` to read the page's semantic accessibility data.
+
+The [Pi integration](/building-apps/coding-agents/#use-pi) lets Pi control the current tree's visible browser tab.
