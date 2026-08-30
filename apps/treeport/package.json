@@ -1,6 +1,6 @@
 {
   "name": "@treeport/treeport",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "A tree-first terminal driver for persistent development workspaces.",
   "type": "module",
   "bin": {

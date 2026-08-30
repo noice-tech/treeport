@@ -1,6 +1,6 @@
 {
   "name": "@treeport/pi",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Treeport context and CLI guidance for Pi.",
   "type": "module",
   "files": [
