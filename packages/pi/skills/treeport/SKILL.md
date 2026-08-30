@@ -39,7 +39,7 @@ Run:
 treeport context
 ```
 
-Inside a managed terminal, this reports the current project, tree, terminal, paths, statuses, IDs, and daemon URL. It reports whether Treeport, the OS service, or an external process manages the daemon lifecycle. It resolves the injected IDs strictly. It does not guess identity from the current path.
+Inside a managed terminal, this reports the current project, tree, terminal, paths, statuses, IDs, tree context values, and daemon URL. User-supplied context can contain an issue identifier, a task description, or other information for the tree. Use these values as task input when the caller asks you to work from the tree context. It reports whether Treeport, the OS service, or an external process manages the daemon lifecycle. It resolves the injected IDs strictly. It does not guess identity from the current path.
 
 Outside Treeport it reports that the terminal is not managed and exits successfully. `TREEPORT_API_URL` may be configured outside a managed terminal; if any context ID is present, however, all injected values are required. Partial IDs or IDs that no longer belong together fail instead of falling back to path inference.
 
