@@ -10,6 +10,7 @@ import {
   DESKTOP_PROTOCOL_VERSION
 } from '@treeport/shared'
 import { z } from 'zod'
+import { MINIMUM_SUPPORTED_BACKEND_VERSION } from '../src/desktop-contract'
 
 function serverPort<Address>(address: Address): number {
   const parsed = z.object({ port: z.number().int() }).safeParse(address)
@@ -38,6 +39,10 @@ interface BrowserPanelFixture {
   url: string
   createdAt: string
   updatedAt: string
+}
+
+interface CompatibilityHealthFixture {
+  version: string | null
 }
 
 interface BrowserOwnerControl {
@@ -993,10 +998,11 @@ test('controls the local Browser through its exact bridge while another workspac
   }
 })
 
-test('shows an incompatible computer without requesting backend application HTML', async () => {
+test('guides version updates and reconnects to a supported backend', async () => {
   const userData = await fs.mkdtemp(
     path.join(os.tmpdir(), 'treeport-electron-incompatible-')
   )
+  const health: CompatibilityHealthFixture = { version: '0.4.0' }
   let applicationRequests = 0
   const server = http.createServer((request, response) => {
     if (request.url === '/api/health') {
@@ -1004,8 +1010,7 @@ test('shows an incompatible computer without requesting backend application HTML
       response.end(
         JSON.stringify({
           ok: true,
-          version: '0.0.1',
-          protocolVersion: 1,
+          version: health.version,
           hostname: 'old-treeport'
         })
       )
@@ -1013,7 +1018,19 @@ test('shows an incompatible computer without requesting backend application HTML
     }
 
     applicationRequests += 1
-    response.end('<body>Old Treeport</body>')
+    response.setHeader('content-type', 'application/json')
+    if (request.url === '/api/projects') {
+      response.end(JSON.stringify({ projects: [] }))
+    } else if (request.url === '/api/projects/recent') {
+      response.end(JSON.stringify({ projects: [] }))
+    } else if (request.url === '/api/terminal-presets') {
+      response.end(JSON.stringify({ presets: [] }))
+    } else if (request.url?.startsWith('/api/terminal-preset-definitions')) {
+      response.end(JSON.stringify({ definitions: [], diagnostics: [] }))
+    } else {
+      response.statusCode = 404
+      response.end(JSON.stringify({ error: { message: 'Not found' } }))
+    }
   })
   let electronApp: Awaited<ReturnType<typeof electron.launch>> | null = null
 
@@ -1026,6 +1043,7 @@ test('shows an incompatible computer without requesting backend application HTML
       env: {
         ...process.env,
         TREEPORT_DESKTOP_E2E: '1',
+        TREEPORT_DESKTOP_E2E_RELEASE_VERSION: '0.6.0',
         TREEPORT_DESKTOP_USER_DATA: '',
         TREEPORT_DESKTOP_URL: `http://127.0.0.1:${port}`
       }
@@ -1033,11 +1051,43 @@ test('shows an incompatible computer without requesting backend application HTML
     const window = await electronApp.firstWindow()
 
     await expect(
-      window.getByRole('heading', {
-        name: 'This Treeport version is incompatible'
-      })
+      window.getByRole('heading', { name: 'This computer needs an update' })
+    ).toBeVisible()
+    await expect(
+      window.getByText('treeport update', { exact: true })
     ).toBeVisible()
     expect(applicationRequests).toBe(0)
+
+    await window.getByRole('button', { name: 'Copy command' }).click()
+    await expect(window.getByRole('button', { name: 'Copied' })).toBeVisible()
+    expect(
+      await electronApp.evaluate(({ clipboard }) => clipboard.readText())
+    ).toBe('treeport update')
+
+    health.version = '0.7.0'
+    await window.getByRole('button', { name: 'Retry' }).click()
+    await expect(
+      window.getByRole('heading', { name: 'The desktop app needs an update' })
+    ).toBeVisible()
+    await expect(
+      window.getByRole('button', { name: 'Installation instructions' })
+    ).toBeVisible()
+    expect(applicationRequests).toBe(0)
+
+    health.version = null
+    await window.evaluate(() => window.treeportShell.retryConnection())
+    await expect(
+      window.getByRole('heading', {
+        name: 'This Treeport version is not supported'
+      })
+    ).toBeVisible()
+
+    health.version = MINIMUM_SUPPORTED_BACKEND_VERSION
+    await window.getByRole('button', { name: 'Retry' }).click()
+    await expect(
+      window.getByText('Open project', { exact: true })
+    ).toBeVisible()
+    expect(applicationRequests).toBeGreaterThan(0)
   } finally {
     await electronApp?.close().catch(() => undefined)
     await new Promise<void>((resolve) => server.close(() => resolve()))

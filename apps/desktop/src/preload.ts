@@ -252,6 +252,9 @@ const shellBridge = Object.freeze({
   copyStartCommand(): Promise<void> {
     return ipcRenderer.invoke('shell:copy-start-command')
   },
+  copyUpdateCommand(): Promise<void> {
+    return ipcRenderer.invoke('shell:copy-update-command')
+  },
   openInstallationDocs(): Promise<void> {
     return ipcRenderer.invoke('shell:open-installation-docs')
   }

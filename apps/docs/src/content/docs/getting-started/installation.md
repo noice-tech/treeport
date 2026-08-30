@@ -34,6 +34,12 @@ Select this control to restart the client and install the update.
 
 A desktop update does not upgrade or restart the selected backend.
 
+The desktop client checks the selected backend version before it loads Treeport.
+
+If the backend needs an update, run `treeport update` on that computer. Then, select **Retry**.
+
+If the desktop client needs an update, install the update and restart the client.
+
 ## Install the backend
 
 Install Treeport globally:

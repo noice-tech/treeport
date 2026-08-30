@@ -1,6 +1,6 @@
 import path from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
-import { browserUrlSchema, DESKTOP_PROTOCOL_VERSION } from '@treeport/shared'
+import { browserUrlSchema } from '@treeport/shared'
 import {
   app,
   autoUpdater,
@@ -22,6 +22,7 @@ import {
 import { updateElectronApp, UpdateSourceType } from 'update-electron-app'
 import { z } from 'zod'
 import { ComputerStore } from './computer-store'
+import { MINIMUM_SUPPORTED_BACKEND_VERSION } from './desktop-contract'
 import type {
   ComputerMutationResult,
   ComputerUpdate,
@@ -50,6 +51,30 @@ const TITLEBAR_HEIGHT = 32
 const RENDERER_PARTITION = 'persist:treeport-desktop-renderer'
 const PRIVATE_RENDERER_URL = 'treeport-app://application/'
 
+type ReleaseVersion = readonly [number, number, number]
+
+function parseReleaseVersion(value: string): ReleaseVersion | null {
+  const match = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.exec(value)
+  return match ? [Number(match[1]), Number(match[2]), Number(match[3])] : null
+}
+
+function compareReleaseVersions(
+  left: ReleaseVersion,
+  right: ReleaseVersion
+): number {
+  return left[0] - right[0] || left[1] - right[1] || left[2] - right[2]
+}
+
+const parsedMinimumSupportedBackendRelease = parseReleaseVersion(
+  MINIMUM_SUPPORTED_BACKEND_VERSION
+)
+if (!parsedMinimumSupportedBackendRelease) {
+  throw new Error('The minimum supported backend version is invalid')
+}
+
+const minimumSupportedBackendRelease: ReleaseVersion =
+  parsedMinimumSupportedBackendRelease
+
 protocol.registerSchemesAsPrivileged([
   {
     scheme: 'treeport-app',
@@ -62,6 +87,11 @@ protocol.registerSchemesAsPrivileged([
   }
 ])
 const desktopE2e = process.env.TREEPORT_DESKTOP_E2E === '1'
+const desktopReleaseVersion = app.isPackaged
+  ? app.getVersion()
+  : desktopE2e
+    ? process.env.TREEPORT_DESKTOP_E2E_RELEASE_VERSION?.trim() || null
+    : null
 const desktopUpdateReady =
   desktopE2e && process.env.TREEPORT_DESKTOP_E2E_UPDATE_READY === '1'
 const developmentUserData = process.env.TREEPORT_DESKTOP_USER_DATA?.trim()
@@ -146,7 +176,7 @@ function navigationState(): DesktopNavigationState {
 
 function shellState(): DesktopShellState {
   const state: DesktopShellState = {
-    appVersion: app.getVersion(),
+    appVersion: desktopReleaseVersion ?? app.getVersion(),
     platform: process.platform,
     fullscreen,
     updateReady,
@@ -387,8 +417,13 @@ function installRendererSecurity(renderer: WebContents): void {
 
 const healthResponseSchema = z.object({
   ok: z.literal(true),
-  version: z.string(),
-  protocolVersion: z.number(),
+  version: z
+    .string()
+    .trim()
+    .min(1)
+    .nullish()
+    .catch(null)
+    .transform((version) => version ?? null),
   hostname: z.string().optional()
 })
 
@@ -533,18 +568,6 @@ async function connectSelected(
       continue
     }
 
-    if (health.protocolVersion !== DESKTOP_PROTOCOL_VERSION) {
-      connection = {
-        status: 'incompatible',
-        computerId: computer.id,
-        serverVersion: health.version,
-        receivedProtocolVersion: health.protocolVersion,
-        expectedProtocolVersion: DESKTOP_PROTOCOL_VERSION
-      }
-      broadcastState()
-      return
-    }
-
     if (health.hostname && store) {
       await store.rememberHostname(computer.id, health.hostname)
       if (
@@ -553,14 +576,41 @@ async function connectSelected(
       ) {
         return
       }
+    }
 
-      broadcastState()
+    const serverVersion = health.version
+    if (desktopReleaseVersion) {
+      const desktopRelease = parseReleaseVersion(desktopReleaseVersion)
+      const serverRelease = serverVersion
+        ? parseReleaseVersion(serverVersion)
+        : null
+      const reason =
+        !desktopRelease || !serverRelease
+          ? 'unknown-version'
+          : compareReleaseVersions(
+                serverRelease,
+                minimumSupportedBackendRelease
+              ) < 0
+            ? 'backend-outdated'
+            : compareReleaseVersions(serverRelease, desktopRelease) > 0
+              ? 'desktop-outdated'
+              : null
+      if (reason) {
+        connection = {
+          status: 'incompatible',
+          computerId: computer.id,
+          serverVersion,
+          reason
+        }
+        broadcastState()
+        return
+      }
     }
 
     connection = {
       status: 'ready',
       computerId: computer.id,
-      serverVersion: health.version,
+      serverVersion: serverVersion ?? 'unknown',
       url: requestedUrl
     }
     broadcastState()
@@ -895,6 +945,11 @@ function registerIpc(): void {
   ipcMain.handle('shell:copy-start-command', (event) => {
     if (isTrustedRendererEvent(event)) {
       clipboard.writeText('treeport start')
+    }
+  })
+  ipcMain.handle('shell:copy-update-command', (event) => {
+    if (isTrustedRendererEvent(event)) {
+      clipboard.writeText('treeport update')
     }
   })
   ipcMain.handle('shell:open-installation-docs', (event) => {

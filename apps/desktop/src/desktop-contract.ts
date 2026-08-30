@@ -54,6 +54,13 @@ export interface ComputerSummary extends SavedComputer {
   loopback: boolean
 }
 
+export const MINIMUM_SUPPORTED_BACKEND_VERSION = '0.5.0'
+
+type IncompatibleConnectionReason =
+  | 'backend-outdated'
+  | 'desktop-outdated'
+  | 'unknown-version'
+
 export type ConnectionState =
   | { status: 'empty' }
   | { status: 'connecting'; computerId: string }
@@ -71,9 +78,8 @@ export type ConnectionState =
   | {
       status: 'incompatible'
       computerId: string
-      serverVersion: string
-      receivedProtocolVersion: number
-      expectedProtocolVersion: number
+      serverVersion: string | null
+      reason: IncompatibleConnectionReason
     }
 
 export interface DesktopShellState {
