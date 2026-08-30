@@ -460,6 +460,7 @@ export function createApp({
       context.json({
         ok: true,
         version: config.appVersion ?? 'development',
+        // The 0.5 desktop requires this field. New clients use release versions.
         protocolVersion: DESKTOP_PROTOCOL_VERSION,
         hostname: os.hostname(),
         pid: process.pid,

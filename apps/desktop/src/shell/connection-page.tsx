@@ -139,29 +139,84 @@ export function ConnectionPage({
         </>
       )
       break
-    case 'incompatible':
+    case 'incompatible': {
+      const backendNeedsUpdate = state.connection.reason === 'backend-outdated'
+      const desktopNeedsUpdate = state.connection.reason === 'desktop-outdated'
       content = (
         <>
           <ConnectionHeading
-            description={`${computer?.name ?? 'The selected computer'} uses desktop protocol ${state.connection.receivedProtocolVersion}; this desktop expects protocol ${state.connection.expectedProtocolVersion}.`}
+            description={
+              backendNeedsUpdate
+                ? `Run treeport update on ${computer?.name ?? 'that computer'}, then retry.`
+                : desktopNeedsUpdate
+                  ? 'Install the latest desktop update, then retry.'
+                  : `${computer?.name ?? 'The selected computer'} did not report a supported release version.`
+            }
           >
-            This Treeport version is incompatible
+            {backendNeedsUpdate
+              ? `${computer?.name ?? 'Treeport'} needs an update`
+              : desktopNeedsUpdate
+                ? 'The desktop app needs an update'
+                : 'This Treeport version is not supported'}
           </ConnectionHeading>
+          {backendNeedsUpdate ? (
+            <div className="flex w-full items-center justify-between gap-3 rounded-lg bg-zinc-900 py-1 pr-1 pl-3 ring-1 ring-white/10">
+              <code className="min-w-0 truncate font-mono text-sm text-cyan-200">
+                treeport update
+              </code>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={(event) => {
+                  void window.treeportShell.copyUpdateCommand()
+                  event.currentTarget.textContent = 'Copied'
+                }}
+              >
+                Copy command
+              </Button>
+            </div>
+          ) : null}
           <p className="text-sm text-pretty text-zinc-400 tabular-nums">
             Desktop {state.appVersion} · Treeport{' '}
-            {state.connection.serverVersion}
+            {state.connection.serverVersion ?? 'unknown'}
           </p>
           <Origin>{computer?.origin ?? ''}</Origin>
           <div className="flex flex-wrap gap-2">
-            <Button variant="default" onClick={onOpenMenu}>
-              Switch computer
-            </Button>
+            {desktopNeedsUpdate ? (
+              state.updateReady ? (
+                <Button
+                  variant="default"
+                  onClick={() => window.treeportShell.installUpdate()}
+                >
+                  Update & restart
+                </Button>
+              ) : (
+                <Button
+                  variant="default"
+                  onClick={() =>
+                    void window.treeportShell.openInstallationDocs()
+                  }
+                >
+                  Installation instructions
+                </Button>
+              )
+            ) : (
+              <Button
+                variant="default"
+                onClick={() => window.treeportShell.retryConnection()}
+              >
+                Retry
+              </Button>
+            )}
+            <Button onClick={onOpenMenu}>Switch computer</Button>
             <Button variant="outline" onClick={onManage}>
               Edit computer
             </Button>
           </div>
         </>
       )
+      break
+    }
   }
 
   return (

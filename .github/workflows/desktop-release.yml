@@ -153,7 +153,7 @@ jobs:
           xcrun stapler validate "$APP_PATH"
           codesign --verify --verbose=2 "$DMG_PATH"
           xcrun stapler validate "$DMG_PATH"
-          pnpm smoke:release "$APP_PATH"
+          pnpm smoke:release "$APP_PATH" "$RELEASE_VERSION"
 
       - name: Upload artifacts to the single draft release
         working-directory: apps/desktop

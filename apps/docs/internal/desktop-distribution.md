@@ -22,6 +22,24 @@ The npm and desktop packages use the same `X.Y.Z`, Git tag, and stable release i
 
 Private workspace packages are not separate release products.
 
+## Desktop and backend compatibility
+
+A stable desktop release uses Treeport release versions to check backend compatibility.
+
+The desktop accepts backend versions from the configured minimum through its own version.
+
+This range permits the desktop and backends to update at different times.
+
+Increase the minimum only when the desktop can no longer use an older backend safely.
+
+Before you increase the minimum, verify that the compatibility break is necessary.
+
+Development desktop builds do not enforce the stable release range.
+
+If the versions are incompatible, the desktop identifies the component that needs an update.
+
+The desktop does not update or restart a remote backend.
+
 ## One release and two artifacts
 
 Each `vX.Y.Z` tag has exactly one GitHub Release:

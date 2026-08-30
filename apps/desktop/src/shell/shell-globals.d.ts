@@ -24,6 +24,7 @@ declare global {
       installUpdate: () => void
       navigateHistory: (direction: DesktopNavigationDirection) => void
       copyStartCommand: () => Promise<void>
+      copyUpdateCommand: () => Promise<void>
       openInstallationDocs: () => Promise<void>
     }>
   }

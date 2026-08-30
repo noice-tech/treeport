@@ -7,9 +7,16 @@ import os from 'node:os'
 import path from 'node:path'
 import { z } from 'zod'
 
-const [appPath, ...extra] = process.argv.slice(2)
-if (!appPath || extra.length > 0) {
-  throw new Error('Usage: node scripts/smoke-release.mjs <Treeport.app>')
+const [appPath, releaseVersion, ...extra] = process.argv.slice(2)
+if (
+  !appPath ||
+  !releaseVersion ||
+  extra.length > 0 ||
+  !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(releaseVersion)
+) {
+  throw new Error(
+    'Usage: node scripts/smoke-release.mjs <Treeport.app> <X.Y.Z>'
+  )
 }
 
 const absoluteAppPath = path.resolve(appPath)
@@ -17,15 +24,19 @@ const executable = path.join(absoluteAppPath, 'Contents', 'MacOS', 'Treeport')
 const userData = await fs.mkdtemp(
   path.join(os.tmpdir(), 'treeport-desktop-release-smoke-')
 )
+const baseEnvironment = Object.fromEntries(
+  Object.entries(process.env).filter(([name]) => !name.startsWith('TREEPORT_'))
+)
 let loadedBackendApi = false
+const requests = []
 const server = http.createServer((request, response) => {
+  requests.push(request.url ?? '/')
+  response.setHeader('content-type', 'application/json')
   if (request.url === '/api/health') {
-    response.setHeader('content-type', 'application/json')
     response.end(
       JSON.stringify({
         ok: true,
-        version: 'release-smoke',
-        protocolVersion: 2,
+        version: releaseVersion,
         hostname: 'release-smoke'
       })
     )
@@ -34,13 +45,12 @@ const server = http.createServer((request, response) => {
 
   if (request.url === '/api/projects') {
     loadedBackendApi = true
-    response.setHeader('content-type', 'application/json')
     response.end(JSON.stringify({ projects: [] }))
     return
   }
 
   response.statusCode = 404
-  response.end('Not found')
+  response.end(JSON.stringify({ error: { message: 'Not found' } }))
 })
 let child
 try {
@@ -49,7 +59,7 @@ try {
     server.listen(0, '127.0.0.1', resolve)
   })
   const address = z
-    .object({ port: z.number().int() })
+    .object({ port: z.number().int().positive() })
     .safeParse(server.address())
   if (!address.success) {
     throw new Error('Could not allocate a desktop release smoke-test port')
@@ -57,7 +67,7 @@ try {
 
   child = spawn(executable, [], {
     env: {
-      ...process.env,
+      ...baseEnvironment,
       TREEPORT_DESKTOP_E2E: '1',
       TREEPORT_DESKTOP_USER_DATA: userData,
       TREEPORT_DESKTOP_URL: `http://127.0.0.1:${address.data.port}`
@@ -78,11 +88,11 @@ try {
   }
   if (!loadedBackendApi) {
     throw new Error(
-      `Packaged desktop did not request its selected backend API${output.length ? `:\n${output.join('')}` : ''}`
+      `Packaged desktop ${releaseVersion} did not load its matching backend. Requests: ${requests.join(', ') || 'none'}${output.length ? `\n${output.join('')}` : ''}`
     )
   }
 
-  console.log('Packaged desktop connected to a backend successfully')
+  console.log(`Packaged desktop ${releaseVersion} connected successfully`)
 } finally {
   if (child && child.exitCode === null) {
     const exited = new Promise((resolve) => child.once('exit', resolve))
