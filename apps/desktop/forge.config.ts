@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process'
-import { rename, rm } from 'node:fs/promises'
+import { cp, rename, rm } from 'node:fs/promises'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import { FusesPlugin } from '@electron-forge/plugin-fuses'
 import { VitePlugin } from '@electron-forge/plugin-vite'
@@ -98,6 +99,13 @@ const config: ForgeConfig = {
       ]
     : [],
   hooks: {
+    packageAfterCopy: async (_config, buildPath) => {
+      await cp(
+        path.dirname(fileURLToPath(import.meta.resolve('ws/package.json'))),
+        path.join(buildPath, 'node_modules/ws'),
+        { recursive: true }
+      )
+    },
     postPackage: async (_config, packageResult) => {
       if (!releaseBuild && packageResult.platform === 'darwin') {
         for (const outputPath of packageResult.outputPaths) {

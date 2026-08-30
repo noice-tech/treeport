@@ -9,7 +9,6 @@ import {
   ipcMain,
   Menu,
   nativeTheme,
-  net,
   protocol,
   session,
   shell,
@@ -150,8 +149,7 @@ async function installRendererRequestRouting(): Promise<void> {
     rendererDirectory: path.join(dirname, '../renderer/main_window'),
     developmentServerUrl: rendererDevelopmentServerUrl(),
     selectedBackendOrigin: selectedOrigin,
-    forward: (request) =>
-      net.fetch(request, { bypassCustomProtocolHandlers: true })
+    forward: (request) => fetch(request)
   })
   await Promise.all([
     rendererSession.protocol.handle('http', handler),
@@ -459,12 +457,10 @@ async function checkHealth(
   origin: string,
   signal: AbortSignal
 ): Promise<HealthResponse | null> {
-  const response = await net
-    .fetch(new URL('/api/health', origin).toString(), {
-      redirect: 'error',
-      signal: AbortSignal.any([signal, AbortSignal.timeout(1_500)])
-    })
-    .catch(() => null)
+  const response = await fetch(new URL('/api/health', origin).toString(), {
+    redirect: 'error',
+    signal: AbortSignal.any([signal, AbortSignal.timeout(1_500)])
+  }).catch(() => null)
   if (!response?.ok) {
     return null
   }
