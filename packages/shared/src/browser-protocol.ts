@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-export const BROWSER_PROTOCOL_VERSION = 3
+export const BROWSER_PROTOCOL_VERSION = 4
 export const BROWSER_MAX_FRAME_BYTES = 8 * 1024 * 1024
 export const BROWSER_MAX_MESSAGE_BYTES = 128 * 1024
 
@@ -55,6 +55,13 @@ export const browserClientMessageSchema = z.discriminatedUnion('type', [
     type: z.literal('insertText'),
     text: z.string().max(64 * 1024)
   }),
+  z.strictObject({
+    type: z.literal('find'),
+    text: z.string().min(1).max(4_096),
+    forward: z.boolean(),
+    findNext: z.boolean()
+  }),
+  z.strictObject({ type: z.literal('stopFind') }),
   z.strictObject({ type: z.literal('takeControl') }),
   z.strictObject({ type: z.literal('setVisible'), visible: z.boolean() }),
   z.strictObject({

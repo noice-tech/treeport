@@ -273,6 +273,7 @@ export async function mockApp(
         | 'close-panel'
         | 'toggle-side-panel'
         | 'focus-location'
+        | 'find-in-page'
         | `select-tab-${1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9}`
       const listeners = new Set<(command: DesktopCommand) => void>()
       const terminalSelectionReleaseListeners = new Set<() => void>()

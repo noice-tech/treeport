@@ -1,10 +1,13 @@
 import { browserUrlSchema } from '@treeport/shared'
 import {
+  clipboard,
   Menu,
   session,
   type BrowserWindow,
   type IpcMainEvent,
   type IpcMainInvokeEvent,
+  type MenuItemConstructorOptions,
+  type PopupOptions,
   type WebContents
 } from 'electron'
 import { z } from 'zod'
@@ -220,23 +223,20 @@ export function installBrowserWebviewPolicy(options: {
     }
     guest.on('will-navigate', preventUnsupportedNavigation)
     guest.on('will-redirect', preventUnsupportedNavigation)
-    guest.setWindowOpenHandler(({ url }) => {
-      const popup = URL.canParse(url) ? new URL(url) : null
+    const openInNewPanel = (url: string) => {
+      const popup = browserUrlSchema.safeParse(url)
       const panelId = entry.panelId
-      if (
-        popup &&
-        panelId &&
-        (popup.protocol === 'http:' || popup.protocol === 'https:') &&
-        !popup.username &&
-        !popup.password &&
-        !options.trustedRenderer.isDestroyed()
-      ) {
-        options.trustedRenderer.send('native-browser:popup', {
-          panelId,
-          url: popup.href
-        })
+      if (!popup.success || !panelId || options.trustedRenderer.isDestroyed()) {
+        return
       }
 
+      options.trustedRenderer.send('native-browser:popup', {
+        panelId,
+        url: new URL(popup.data).href
+      })
+    }
+    guest.setWindowOpenHandler(({ url }) => {
+      openInNewPanel(url)
       return { action: 'deny' }
     })
     guest.session.setPermissionRequestHandler(
@@ -277,9 +277,11 @@ export function installBrowserWebviewPolicy(options: {
               ? 'close-panel'
               : key === 'l'
                 ? 'focus-location'
-                : /^[1-9]$/.test(key)
-                  ? (`select-tab-${key}` as DesktopCommand)
-                  : undefined
+                : key === 'f'
+                  ? 'find-in-page'
+                  : /^[1-9]$/.test(key)
+                    ? (`select-tab-${key}` as DesktopCommand)
+                    : undefined
       if (
         input.type !== 'keyDown' ||
         input.isAutoRepeat ||
@@ -301,10 +303,42 @@ export function installBrowserWebviewPolicy(options: {
         return
       }
 
-      Menu.buildFromTemplate([
-        { role: 'copy', enabled: params.editFlags.canCopy },
-        { role: 'paste', enabled: params.editFlags.canPaste },
-        { type: 'separator' },
+      const template: MenuItemConstructorOptions[] = []
+      const link = browserUrlSchema.safeParse(params.linkURL)
+      if (params.linkURL) {
+        if (link.success) {
+          template.push({
+            label: 'Open Link in New Tab',
+            click: () => openInNewPanel(link.data)
+          })
+        }
+
+        template.push({
+          label: 'Copy Link Address',
+          click: () => clipboard.writeText(params.linkURL)
+        })
+        template.push({ type: 'separator' })
+      }
+
+      if (params.isEditable) {
+        template.push(
+          { role: 'undo', enabled: params.editFlags.canUndo },
+          { role: 'redo', enabled: params.editFlags.canRedo },
+          { type: 'separator' },
+          { role: 'cut', enabled: params.editFlags.canCut },
+          { role: 'copy', enabled: params.editFlags.canCopy },
+          { role: 'paste', enabled: params.editFlags.canPaste },
+          { role: 'selectAll', enabled: params.editFlags.canSelectAll },
+          { type: 'separator' }
+        )
+      } else if (params.selectionText) {
+        template.push(
+          { role: 'copy', enabled: params.editFlags.canCopy },
+          { type: 'separator' }
+        )
+      }
+
+      template.push(
         {
           label: 'Back',
           enabled: guest.navigationHistory.canGoToOffset(-1),
@@ -324,7 +358,16 @@ export function installBrowserWebviewPolicy(options: {
             guest.openDevTools({ mode: 'detach', activate: true })
           }
         }
-      ]).popup({ window: options.window })
+      )
+      const popupOptions: PopupOptions = {
+        window: options.window,
+        sourceType: params.menuSourceType
+      }
+      if (params.frame) {
+        popupOptions.frame = params.frame
+      }
+
+      Menu.buildFromTemplate(template).popup(popupOptions)
     })
     guest.once('destroyed', () => {
       pendingGuests.delete(guest.id)

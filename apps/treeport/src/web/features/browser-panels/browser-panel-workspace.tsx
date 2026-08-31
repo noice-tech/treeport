@@ -12,6 +12,8 @@ import {
   ArrowLeftIcon,
   ArrowPathIcon,
   ArrowRightIcon,
+  ChevronDownIcon,
+  ChevronUpIcon,
   ServerStackIcon,
   XMarkIcon
 } from '@heroicons/react/16/solid'
@@ -57,11 +59,34 @@ const listenerDiscoverySchema: z.ZodType<WorktreeListenerDiscovery> =
 
 function parseBrowserAddress(value: string): URL | null {
   const input = value.trim()
-  const candidate = /^[a-z][a-z\d+.-]*:\/\//i.test(input)
-    ? input
-    : `http://${input}`
+  if (!input) {
+    return null
+  }
+
+  const hasProtocol = /^[a-z][a-z\d+.-]*:\/\//i.test(input)
+  const candidate = hasProtocol ? input : `http://${input}`
   const parsed = browserUrlSchema.safeParse(candidate)
-  return parsed.success ? new URL(parsed.data) : null
+  if (parsed.success) {
+    const url = new URL(parsed.data)
+    if (
+      hasProtocol ||
+      url.hostname === 'localhost' ||
+      url.hostname.includes('.') ||
+      url.hostname.includes(':') ||
+      url.port
+    ) {
+      return url
+    }
+  }
+
+  const candidateUrl = URL.canParse(candidate) ? new URL(candidate) : null
+  if (hasProtocol || candidateUrl?.username || candidateUrl?.password) {
+    return null
+  }
+
+  const search = new URL('https://www.google.com/search')
+  search.searchParams.set('q', input)
+  return browserUrlSchema.safeParse(search.href).success ? search : null
 }
 
 function listenerUrl(listener: WorktreeListener): URL | null {
@@ -94,6 +119,7 @@ export function BrowserPanelWorkspace({
   const sectionRef = useRef<HTMLElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+  const findInputRef = useRef<HTMLInputElement>(null)
   const connectionRef = useRef<BrowserPanelConnection | null>(null)
   const stateRef = useRef<BrowserSessionState | null>(null)
   const viewportRef = useRef({ width: 1_280, height: 800 })
@@ -114,6 +140,8 @@ export function BrowserPanelWorkspace({
     panel.url === 'about:blank' ? '' : panel.url
   )
   const [serversOpen, setServersOpen] = useState(false)
+  const [findOpen, setFindOpen] = useState(false)
+  const [findValue, setFindValue] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [failure, setFailure] = useState<{
     message: string
@@ -144,6 +172,52 @@ export function BrowserPanelWorkspace({
     inputRef.current?.focus({ preventScroll: true })
     inputRef.current?.select()
   }, [])
+
+  const focusFind = useCallback(() => {
+    if (!stateRef.current?.controlled) {
+      return
+    }
+
+    setFindOpen(true)
+    window.requestAnimationFrame(() => {
+      findInputRef.current?.focus({ preventScroll: true })
+      findInputRef.current?.select()
+    })
+  }, [])
+
+  const findInPage = useCallback(
+    (text: string, forward: boolean, findNext: boolean) => {
+      const webview =
+        sectionRef.current?.querySelector<TreeportBrowserWebview>('webview')
+      if (webview) {
+        if (text) {
+          webview.findInPage(
+            text,
+            findNext ? { forward, findNext: true } : undefined
+          )
+        } else {
+          webview.stopFindInPage('clearSelection')
+        }
+
+        return
+      }
+
+      if (!text) {
+        send({ type: 'stopFind' })
+        return
+      }
+
+      send({ type: 'takeControl' })
+      send({ type: 'find', text, forward, findNext })
+    },
+    [send]
+  )
+
+  const closeFind = useCallback(() => {
+    setFindOpen(false)
+    findInPage('', true, false)
+    window.requestAnimationFrame(focusPage)
+  }, [findInPage, focusPage])
 
   const receiveMessage = useCallback(
     (message: BrowserServerMessage) => {
@@ -423,16 +497,17 @@ export function BrowserPanelWorkspace({
       return
     }
 
-    const focusLocation = (event: globalThis.KeyboardEvent) => {
+    const focusBrowserControl = (event: globalThis.KeyboardEvent) => {
       const applePlatform = /Mac|iPhone|iPad|iPod/.test(navigator.platform)
       const modifier = applePlatform
         ? event.metaKey && !event.ctrlKey
         : event.ctrlKey && !event.metaKey
+      const key = event.key.toLowerCase()
       if (
         !modifier ||
         event.altKey ||
         event.shiftKey ||
-        event.key.toLowerCase() !== 'l' ||
+        (key !== 'f' && key !== 'l') ||
         autoFocusBlocked ||
         document.querySelector('[role="dialog"], [role="alertdialog"]')
       ) {
@@ -441,11 +516,16 @@ export function BrowserPanelWorkspace({
 
       event.preventDefault()
       event.stopPropagation()
-      focusAddress()
+      if (key === 'f') {
+        focusFind()
+      } else {
+        focusAddress()
+      }
     }
-    document.addEventListener('keydown', focusLocation, true)
-    return () => document.removeEventListener('keydown', focusLocation, true)
-  }, [active, autoFocusBlocked, focusAddress])
+    document.addEventListener('keydown', focusBrowserControl, true)
+    return () =>
+      document.removeEventListener('keydown', focusBrowserControl, true)
+  }, [active, autoFocusBlocked, focusAddress, focusFind])
 
   useEffect(() => {
     const desktopBridge = window.treeportDesktop
@@ -455,16 +535,20 @@ export function BrowserPanelWorkspace({
 
     return desktopBridge.onCommand((command) => {
       if (
-        command !== 'focus-location' ||
+        (command !== 'find-in-page' && command !== 'focus-location') ||
         autoFocusBlocked ||
         document.querySelector('[role="dialog"], [role="alertdialog"]')
       ) {
         return
       }
 
-      focusAddress()
+      if (command === 'find-in-page') {
+        focusFind()
+      } else {
+        focusAddress()
+      }
     })
-  }, [active, autoFocusBlocked, focusAddress])
+  }, [active, autoFocusBlocked, focusAddress, focusFind])
 
   const discoverListeners = useCallback(async () => {
     setListenersLoading(true)
@@ -495,7 +579,9 @@ export function BrowserPanelWorkspace({
     const parsed = parseBrowserAddress(value)
     if (!parsed) {
       addressDirtyRef.current = true
-      setError('Enter an HTTP or HTTPS address without credentials.')
+      setError(
+        'Enter search terms or an HTTP or HTTPS address without credentials.'
+      )
       inputRef.current?.focus({ preventScroll: true })
       return
     }
@@ -650,7 +736,7 @@ export function BrowserPanelWorkspace({
           name="url"
           aria-label="Application URL"
           className="rounded-full focus:ring-2 focus:ring-cyan-400"
-          placeholder="localhost:3000"
+          placeholder="Search Google or type a URL"
           maxLength={4_096}
           value={inputValue}
           onPointerDown={(event) => {
@@ -819,6 +905,81 @@ export function BrowserPanelWorkspace({
         </p>
       ) : null}
       <div className="relative min-h-0 flex-1 overflow-hidden bg-zinc-950">
+        {findOpen ? (
+          <div
+            className="absolute top-2 right-2 z-20 flex w-[min(20rem,calc(100%-1rem))] items-center gap-1 rounded-md border border-white/10 bg-zinc-900 p-1 shadow-lg"
+            role="search"
+            aria-label="Find in page"
+          >
+            <Input
+              ref={findInputRef}
+              type="text"
+              name="find"
+              aria-label="Find in page"
+              className="h-8 min-w-0 flex-1"
+              placeholder="Find in page"
+              maxLength={4_096}
+              value={findValue}
+              onChange={(event) => {
+                const value = event.target.value
+                setFindValue(value)
+                findInPage(value, true, false)
+              }}
+              onKeyDown={(event) => {
+                if (
+                  event.key === 'Escape' &&
+                  !event.shiftKey &&
+                  !event.altKey &&
+                  !event.metaKey &&
+                  !event.ctrlKey
+                ) {
+                  event.preventDefault()
+                  closeFind()
+                } else if (
+                  event.key === 'Enter' &&
+                  !event.altKey &&
+                  !event.metaKey &&
+                  !event.ctrlKey
+                ) {
+                  event.preventDefault()
+                  findInPage(findValue, !event.shiftKey, true)
+                }
+              }}
+            />
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              aria-label="Find previous"
+              title="Find previous"
+              disabled={!findValue}
+              onClick={() => findInPage(findValue, false, true)}
+            >
+              <ChevronUpIcon />
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              aria-label="Find next"
+              title="Find next"
+              disabled={!findValue}
+              onClick={() => findInPage(findValue, true, true)}
+            >
+              <ChevronDownIcon />
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              aria-label="Close find"
+              title="Close find"
+              onClick={closeFind}
+            >
+              <XMarkIcon />
+            </Button>
+          </div>
+        ) : null}
         {localBrowser && computerId ? (
           <LocalBrowserWebview
             key={connectionRevision}

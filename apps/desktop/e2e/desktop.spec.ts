@@ -534,6 +534,62 @@ test('controls the local Browser through its exact bridge while another workspac
       await expect.poll(() => visiblePage.url()).toBe(`${origin}/site/start`)
       await expect(address).toHaveValue(`${origin}/site/start`)
 
+      expect(
+        await electronApp.evaluate(({ webContents }, targetUrl) => {
+          const browser = webContents
+            .getAllWebContents()
+            .find(
+              (contents) =>
+                contents.getType() === 'webview' &&
+                contents.getURL() === targetUrl
+            )
+          browser?.sendInputEvent({
+            type: 'keyDown',
+            keyCode: 'f',
+            modifiers: [process.platform === 'darwin' ? 'meta' : 'control']
+          })
+          return browser !== undefined
+        }, `${origin}/site/start`)
+      ).toBe(true)
+      const findInput = window.getByRole('textbox', { name: 'Find in page' })
+      await expect(findInput).toBeVisible()
+      await findInput.focus()
+      expect(
+        await electronApp.evaluate(({ webContents }, targetUrl) => {
+          const browser = webContents
+            .getAllWebContents()
+            .find(
+              (contents) =>
+                contents.getType() === 'webview' &&
+                contents.getURL() === targetUrl
+            )
+          if (!browser) {
+            return false
+          }
+
+          process.env.TREEPORT_DESKTOP_E2E_FIND_MATCHES = ''
+          browser.on('found-in-page', (_event, result) => {
+            process.env.TREEPORT_DESKTOP_E2E_FIND_MATCHES = String(
+              result.matches
+            )
+          })
+          return true
+        }, `${origin}/site/start`)
+      ).toBe(true)
+      await findInput.fill('Browser target')
+      await expect
+        .poll(() =>
+          electronApp!.evaluate(
+            () => process.env.TREEPORT_DESKTOP_E2E_FIND_MATCHES
+          )
+        )
+        .toBe('1')
+      await findInput.press('Escape')
+      await expect(findInput).toHaveCount(0)
+      await expect
+        .poll(() => visiblePage.evaluate(() => document.hasFocus()))
+        .toBe(true)
+
       // SAFETY: Playwright 1.61 implements its CLI reference snapshot through this internal mode.
       const snapshotPage = visiblePage as PlaywrightAiPage
       const snapshot = await snapshotPage.ariaSnapshot({ mode: 'ai' })
