@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   connectOrStartTerminalHost,
-  type TerminalHostClient
+  TerminalHostClient
 } from './terminal-host-client'
 import {
   encodeTerminalHostFrame,
@@ -120,6 +120,16 @@ child.once('exit', (code) => process.exit(code ?? 1))
     const firstDaemon = await connectOrStartTerminalHost(options)
     clients.add(firstDaemon)
     hostPids.add(firstDaemon.record.pid)
+    await expect(
+      TerminalHostClient.connect(
+        firstDaemon.record.socketPath,
+        'not-the-local-host-token',
+        firstDaemon.record.hostKey,
+        firstDaemon.record.hostId
+      )
+    ).rejects.toMatchObject({ code: 'AUTH_FAILED' })
+    expect(processExists(firstDaemon.record.pid)).toBe(true)
+
     await firstDaemon.createTerminal({
       terminalId: 'terminal-host',
       worktreeId: 'worktree-host',
@@ -230,7 +240,7 @@ child.once('exit', (code) => process.exit(code ?? 1))
               protocolVersion: TERMINAL_HOST_PROTOCOL_VERSION - 1,
               type: 'response',
               id: frame.id,
-              result: null,
+              // Historical hosts omitted result on failed responses.
               error: {
                 code: 'INCOMPATIBLE_PROTOCOL',
                 message: 'The live host uses an older protocol',

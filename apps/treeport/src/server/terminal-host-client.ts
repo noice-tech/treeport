@@ -37,7 +37,7 @@ interface PendingRequest {
   timeout: NodeJS.Timeout
 }
 
-export class TerminalHostRequestError extends Error {
+class TerminalHostRequestError extends Error {
   constructor(
     readonly code: string,
     message: string,
@@ -507,6 +507,12 @@ export class TerminalHostClient {
           frame.error.liveSessionCount
         )
       )
+      return
+    }
+
+    if (frame.result === undefined) {
+      pending.reject(new Error('Terminal host response omitted its result'))
+      this.socket.destroy()
       return
     }
 

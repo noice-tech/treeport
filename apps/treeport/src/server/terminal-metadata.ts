@@ -18,8 +18,6 @@ import {
 import type { TerminalTitleState } from './core/terminal'
 import type { TerminalAttachmentBackend } from './terminal-host-sessions'
 
-export const TERMINAL_METADATA_POLL_MS = 2_000
-
 const PROGRAM_COMMANDS = new Map<string, TerminalProgram>([
   ['pi', 'pi'],
   ['claude', 'claude'],

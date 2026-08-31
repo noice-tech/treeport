@@ -1,6 +1,4 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
-import fs from 'node:fs'
-import path from 'node:path'
 import * as Cause from 'effect/Cause'
 import * as Data from 'effect/Data'
 import * as Deferred from 'effect/Deferred'
@@ -492,26 +490,4 @@ export async function runChecked(
   }
 
   return result
-}
-
-export function resolveExecutablePath(
-  executable: string,
-  env: NodeJS.ProcessEnv = process.env
-): string {
-  if (path.isAbsolute(executable) || executable.includes(path.sep)) {
-    return executable
-  }
-
-  for (const directory of (env.PATH ?? '')
-    .split(path.delimiter)
-    .filter(Boolean)) {
-    const candidate = path.join(directory, executable)
-    try {
-      fs.accessSync(candidate, fs.constants.X_OK)
-      return candidate
-    } catch {
-      // Continue through PATH without invoking a shell.
-    }
-  }
-  return executable
 }

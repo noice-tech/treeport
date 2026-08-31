@@ -9,7 +9,7 @@ import type {
 import type { TerminalHostRuntimeEvent } from './terminal-host-sessions'
 
 export const TERMINAL_HOST_PROTOCOL_VERSION = 2
-export const TERMINAL_HOST_MAX_FRAME_BYTES = 64 * 1024 * 1024
+const TERMINAL_HOST_MAX_FRAME_BYTES = 64 * 1024 * 1024
 
 export interface TerminalHostRecord {
   protocolVersion: number
@@ -171,7 +171,7 @@ const TERMINAL_HOST_REQUEST_METHODS = [
   'shutdown'
 ] as const satisfies readonly (keyof typeof terminalHostInputSchemas)[]
 
-export type TerminalHostRequestMethod = keyof typeof terminalHostInputSchemas
+type TerminalHostRequestMethod = keyof typeof terminalHostInputSchemas
 export type TerminalHostRequestInput = z.infer<
   (typeof terminalHostInputSchemas)[TerminalHostRequestMethod]
 >
@@ -188,7 +188,12 @@ export interface TerminalHostResponseFrame {
   protocolVersion: number
   type: 'response'
   id: string
-  result: TerminalHostResult
+  /**
+   * Current hosts always send result. It is optional only so a new daemon can
+   * read an old host's structured INCOMPATIBLE_PROTOCOL response and refuse
+   * replacement safely.
+   */
+  result?: TerminalHostResult
   error: {
     code: string
     message: string
@@ -292,7 +297,7 @@ const terminalHostFrameSchema: z.ZodType<TerminalHostFrame> = z.union([
       protocolVersion: z.number().int(),
       type: z.literal('response'),
       id: z.string(),
-      result: z.any(),
+      result: z.any().optional(),
       error: z
         .object({
           code: z.string(),
