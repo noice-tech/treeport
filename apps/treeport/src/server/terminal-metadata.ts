@@ -29,7 +29,7 @@ type MetadataListener = (metadata: TerminalRuntimeMetadata) => void
 interface TerminalMetadataEntry extends TerminalRuntimeMetadata {
   worktreeId: string
   status: TerminalRecord['status']
-  paneTitle: string | null
+  terminalTitle: string | null
   currentCommand: string | null
   commandLine: string | null
   launchCommandLine: string | null
@@ -174,7 +174,7 @@ export class TerminalMetadataManager {
         progressStartedAt: null,
         progressClearedAt: null,
         bell,
-        paneTitle: null,
+        terminalTitle: null,
         currentCommand: null,
         commandLine: null,
         launchCommandLine,
@@ -358,7 +358,7 @@ export class TerminalMetadataManager {
         if (event.titleState) {
           this.reconcileTitleState(entry, event.titleState)
         } else if (event.title !== undefined) {
-          entry.paneTitle = event.title
+          entry.terminalTitle = event.title
           this.update(entry, { title: event.title })
         }
 
@@ -463,7 +463,7 @@ export class TerminalMetadataManager {
     entry: TerminalMetadataEntry,
     state: TerminalTitleState
   ): void {
-    entry.paneTitle = state.paneTitle?.trim().slice(0, 256) || null
+    entry.terminalTitle = state.terminalTitle?.trim().slice(0, 256) || null
     entry.currentCommand = state.currentCommand?.trim().slice(0, 256) || null
     entry.commandLine =
       state.commandLine?.trim().slice(0, 256) || entry.launchCommandLine
@@ -483,8 +483,8 @@ export class TerminalMetadataManager {
         entry.commandLine === entry.interactiveShellCommand)
     this.update(entry, {
       title: shellIdle
-        ? (entry.paneTitle ?? entry.interactiveShellCommand)
-        : (entry.paneTitle ?? entry.commandLine ?? entry.currentCommand),
+        ? (entry.terminalTitle ?? entry.interactiveShellCommand)
+        : (entry.terminalTitle ?? entry.commandLine ?? entry.currentCommand),
       program:
         observedProgram ??
         (entry.interactiveShellCommand === null ? entry.launchProgram : null),

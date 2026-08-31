@@ -66,7 +66,7 @@ The host process uses `detached: true` and does not keep a parent IPC channel. T
 
 The IPC protocol uses length-prefixed JSON frames over a local stream socket. Each frame has a bounded byte length.
 
-The cutover protocol version is `2`. Each frame contains a version and one of these message shapes:
+The current protocol version is `3`. Each frame contains a version and one of these message shapes:
 
 - a request identifier, method, and input;
 - a request identifier and result;

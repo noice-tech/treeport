@@ -1723,7 +1723,7 @@ describe('HTTP API validation', () => {
     expect(await unavailable.json()).toEqual({
       error: {
         code: 'TERMINAL_CAPTURE_UNAVAILABLE',
-        message: 'Terminal pane is unavailable',
+        message: 'Terminal is unavailable',
         details: { terminalId: 'term' }
       }
     })

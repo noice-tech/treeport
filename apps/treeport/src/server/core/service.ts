@@ -2404,10 +2404,12 @@ export class TreeportService {
   ): Promise<WorktreeListenerDiscovery> {
     const panel = await this.getBrowserPanel(panelId)
     const worktree = await this.getWorktree(panel.worktreeId)
-    const panes = await this.deps.terminalHost.listProcesses(worktree.id)
+    const terminalProcesses = await this.deps.terminalHost.listProcesses(
+      worktree.id
+    )
     return this.networkListeners.listeners({
       worktreePath: worktree.path,
-      panes
+      terminalProcesses
     })
   }
 
@@ -2427,10 +2429,12 @@ export class TreeportService {
   ): Promise<WorktreeListenerDiscovery> {
     const context = await this.getWebPanelContext(panelId)
     const worktree = await this.getWorktree(context.panel.worktreeId)
-    const panes = await this.deps.terminalHost.listProcesses(worktree.id)
+    const terminalProcesses = await this.deps.terminalHost.listProcesses(
+      worktree.id
+    )
     return this.networkListeners.listeners({
       worktreePath: worktree.path,
-      panes
+      terminalProcesses
     })
   }
 

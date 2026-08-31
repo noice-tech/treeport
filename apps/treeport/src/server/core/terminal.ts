@@ -20,11 +20,9 @@ export interface TerminalSessionState {
 }
 
 export interface TerminalTitleState {
-  paneTitle: string | null
+  terminalTitle: string | null
   currentCommand: string | null
   commandLine?: string | null
-  shellTitle?: string | null
-  fallbackShell?: string | null
 }
 
 export interface HostedTerminal {

@@ -8,7 +8,7 @@ import type {
 } from './core/terminal'
 import type { TerminalHostRuntimeEvent } from './terminal-host-sessions'
 
-export const TERMINAL_HOST_PROTOCOL_VERSION = 2
+export const TERMINAL_HOST_PROTOCOL_VERSION = 3
 const TERMINAL_HOST_MAX_FRAME_BYTES = 64 * 1024 * 1024
 
 export interface TerminalHostRecord {
@@ -272,11 +272,9 @@ const runtimeEventSchema = z
     exitCode: z.number().int().nullable().optional(),
     titleState: z
       .object({
-        paneTitle: z.string().nullable(),
+        terminalTitle: z.string().nullable(),
         currentCommand: z.string().nullable(),
-        commandLine: z.string().nullable(),
-        shellTitle: z.string().nullable(),
-        fallbackShell: z.string().nullable()
+        commandLine: z.string().nullable()
       })
       .strict()
       .optional()

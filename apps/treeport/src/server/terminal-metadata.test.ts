@@ -23,11 +23,9 @@ class HostDouble implements TerminalAttachmentBackend {
     Set<(event: TerminalHostRuntimeEvent) => void>
   >()
   titleState = {
-    paneTitle: null,
+    terminalTitle: null,
     currentCommand: 'zsh',
-    commandLine: 'zsh',
-    shellTitle: null,
-    fallbackShell: null
+    commandLine: 'zsh'
   }
   state: HostRuntimeState = {
     title: null,
@@ -151,11 +149,9 @@ describe('TerminalMetadataManager', () => {
 
     host.emit('terminal', {
       titleState: {
-        paneTitle: null,
+        terminalTitle: null,
         currentCommand: 'pi',
-        commandLine: 'pi --mode rpc',
-        shellTitle: null,
-        fallbackShell: null
+        commandLine: 'pi --mode rpc'
       }
     })
     host.emit('terminal', {

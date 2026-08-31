@@ -1103,7 +1103,7 @@ export function createApp({
         if (content === null) {
           throw new DomainError(
             'TERMINAL_CAPTURE_UNAVAILABLE',
-            'Terminal pane is unavailable',
+            'Terminal is unavailable',
             409,
             { terminalId: terminal.id }
           )

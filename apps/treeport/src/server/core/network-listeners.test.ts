@@ -67,7 +67,7 @@ describe('NetworkListenerAdapter', () => {
       procRoot
     ).listeners({
       worktreePath: worktree,
-      panes: [{ pid: 100, terminalId: 'term_dev' }]
+      terminalProcesses: [{ pid: 100, terminalId: 'term_dev' }]
     })
 
     expect(result).toEqual({
@@ -126,7 +126,7 @@ describe('NetworkListenerAdapter', () => {
     await expect(
       new NetworkListenerAdapter(new Runner(), 'darwin').listeners({
         worktreePath: worktree,
-        panes: [{ pid: 100, terminalId: 'term_dev' }]
+        terminalProcesses: [{ pid: 100, terminalId: 'term_dev' }]
       })
     ).resolves.toEqual({
       supported: true,
@@ -159,7 +159,7 @@ describe('NetworkListenerAdapter', () => {
     await expect(
       new NetworkListenerAdapter(runner, 'win32').listeners({
         worktreePath: '/repo',
-        panes: []
+        terminalProcesses: []
       })
     ).resolves.toEqual({
       supported: false,

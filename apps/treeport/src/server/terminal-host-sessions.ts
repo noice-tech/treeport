@@ -343,11 +343,9 @@ export class TerminalHostSessionManager {
         listener({
           title,
           titleState: {
-            paneTitle: title,
+            terminalTitle: title,
             currentCommand: session.pty.process || null,
-            commandLine: session.commandLine,
-            shellTitle: null,
-            fallbackShell: null
+            commandLine: session.commandLine
           }
         })
       }
@@ -373,11 +371,9 @@ export class TerminalHostSessionManager {
           .trim()
           .slice(0, 256) || null
       const titleState = {
-        paneTitle: session.title,
+        terminalTitle: session.title,
         currentCommand: session.pty.process || null,
-        commandLine: session.commandLine,
-        shellTitle: null,
-        fallbackShell: null
+        commandLine: session.commandLine
       }
       for (const listener of runtimeListeners) {
         listener({ titleState })
@@ -770,11 +766,9 @@ export class TerminalHostSessionManager {
     }
 
     return {
-      paneTitle: session.title,
+      terminalTitle: session.title,
       currentCommand: session.pty.process || null,
-      commandLine: session.commandLine,
-      shellTitle: null,
-      fallbackShell: null
+      commandLine: session.commandLine
     }
   }
 
