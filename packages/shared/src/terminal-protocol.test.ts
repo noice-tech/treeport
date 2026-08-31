@@ -85,7 +85,9 @@ describe('Socket.IO contracts', () => {
         reset: 'full',
         cols: 120,
         rows: 40,
-        revision: 1
+        revision: 1,
+        backend: 'direct-pty',
+        snapshot: '\u001b[Hready'
       })
     ).toMatchObject({
       streamId: 'stream',
@@ -93,7 +95,9 @@ describe('Socket.IO contracts', () => {
       reset: 'full',
       cols: 120,
       rows: 40,
-      revision: 1
+      revision: 1,
+      backend: 'direct-pty',
+      snapshot: '\u001b[Hready'
     })
     expect(
       parseTerminalServerEvent('ready', {

@@ -92,7 +92,7 @@ import {
   type WebPanelAssetResolution
 } from './web-panel-vite-runtime'
 import { KeyedTaskQueue } from './task-queue'
-import type { TmuxAdapter } from './tmux'
+import type { TerminalSessionBackend } from './tmux'
 import { generateTmuxSessionName, generateTmuxSocketName } from './tmux'
 import {
   loadZedTerminalPresetDefinitions,
@@ -224,7 +224,7 @@ interface ServiceDependencies {
   database: TreeportDatabase
   runner: CommandRunner
   git: GitAdapter
-  tmux: TmuxAdapter
+  tmux: TerminalSessionBackend
   gh: GhAdapter
   events?: ProductEventBus
 }
@@ -4730,7 +4730,7 @@ export class TreeportService {
         ? [this.deps.config.shell, '-lc', shellCommand]
         : [this.deps.config.shell, '-l']
     const timestamp = now()
-    const session: Parameters<TmuxAdapter['createSession']>[0] = {
+    const session: Parameters<TerminalSessionBackend['createSession']>[0] = {
       socketName: worktree.tmuxSocketName,
       sessionName,
       terminalId,

@@ -1,9 +1,13 @@
+import fs from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { IPty } from 'node-pty'
 import type { TmuxAdapter, TreeportService } from './core/index'
 import {
   TERMINAL_OUTPUT_HIGH_WATERMARK,
   TERMINAL_OUTPUT_STALL_TIMEOUT_MS,
+  TERMINAL_PROTOCOL_VERSION,
   type TerminalServerEvent,
   type TerminalServerEventPayloads,
   type TerminalServerPayload
@@ -19,6 +23,7 @@ import type {
   TmuxProgressObserverOptions
 } from './tmux-progress'
 import type { TerminalBellStateStore } from './core/terminal-bell-state-store'
+import { DirectPtySessionManager } from './direct-pty-sessions'
 
 class FakePty {
   readonly pid = 1
@@ -249,7 +254,9 @@ function attach(
   manager: TerminalAttachmentManager,
   transport: FakeTransport,
   clientId: string,
-  protocolVersion: 1 | 2 = 2
+  protocolVersion:
+    | 1
+    | typeof TERMINAL_PROTOCOL_VERSION = TERMINAL_PROTOCOL_VERSION
 ): string {
   return manager.accept(
     { terminalId: 'term', clientId, cols: 100, rows: 30 },
@@ -1074,5 +1081,121 @@ describe('TerminalAttachmentManager', () => {
     expect(first.disconnects).toEqual([false])
     expect(second.disconnects).toEqual([false])
     expect(ptys.map((pty) => pty.kills)).toEqual([1, 1])
+  })
+
+  it('shares one direct PTY across viewers and disconnects only the slow viewer', async () => {
+    const base = fixture()
+    const runtimeDir = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'treeport-direct-attachments-')
+    )
+    const child = new FakePty()
+    const spawn = vi.fn(() => testAccess<IPty>(child))
+    const directSessions = new DirectPtySessionManager(
+      runtimeDir,
+      '/treeport/launcher.js',
+      // SAFETY: The fake implements the IPty methods used by this boundary.
+      spawn as never
+    )
+    await directSessions.createSession({
+      socketName: 'socket',
+      sessionName: 'session',
+      terminalId: 'term',
+      worktreeId: 'wt',
+      name: 'Terminal',
+      createdAt: '2026-01-01',
+      cwd: runtimeDir,
+      argv: ['/bin/zsh', '-l'],
+      shellCommand: null,
+      interactiveShell: true,
+      initialSize: { cols: 100, rows: 30 },
+      env: {}
+    })
+    const metadata = new TerminalMetadataManager(
+      base.service,
+      base.tmux,
+      process.execPath,
+      undefined,
+      undefined,
+      directSessions
+    )
+    metadataManagers.push(metadata)
+    const manager = new TerminalAttachmentManager(
+      base.service,
+      base.tmux,
+      process.execPath,
+      metadata,
+      undefined,
+      directSessions
+    )
+
+    try {
+      child.emit('history before viewers\r\n')
+      const slow = new FakeTransport()
+      const fast = new FakeTransport()
+      attach(manager, slow, 'tab-slow')
+      const slowReady = await ready(slow)
+      attach(manager, fast, 'tab-fast')
+      const fastReady = await ready(fast)
+
+      expect(spawn).toHaveBeenCalledOnce()
+      expect(slowReady).toMatchObject({
+        backend: 'direct-pty',
+        snapshot: expect.stringContaining('history before viewers')
+      })
+      expect(fastReady).toMatchObject({ backend: 'direct-pty' })
+
+      const fastId = fast.id
+      for (let index = 0; index < 4; index += 1) {
+        child.emit('x'.repeat(64 * 1024))
+        await vi.waitFor(() =>
+          expect(
+            fast.sent.filter((message) => message.type === 'output')
+          ).toHaveLength(index + 1)
+        )
+        const output = fast.sent
+          .filter((message) => message.type === 'output')
+          .at(-1)!
+        manager.message(fastId, 'output_ack', {
+          streamId: output.streamId,
+          sequence: output.sequence
+        })
+      }
+
+      expect(slow.disconnects).toEqual([true])
+      expect(fast.connected).toBe(true)
+      expect(child.kills).toBe(0)
+
+      manager.message(fastId, 'take_control', {
+        generation: fastReady.generation,
+        cols: 100,
+        rows: 30
+      })
+      await vi.waitFor(() =>
+        expect(fast.sent.at(-1)).toMatchObject({
+          type: 'control',
+          controller: true
+        })
+      )
+      const control = fast.sent.at(-1)!
+      if (control.type !== 'control') {
+        throw new Error('Expected direct viewer control')
+      }
+
+      manager.message(fastId, 'input', {
+        generation: control.generation,
+        data: 'input'
+      })
+      await vi.waitFor(() => expect(child.writes).toEqual(['input']))
+      manager.message(fastId, 'resize', {
+        generation: control.generation,
+        cols: 120,
+        rows: 40
+      })
+      await vi.waitFor(() => expect(child.resizes).toEqual([[120, 40]]))
+    } finally {
+      manager.dispose()
+      directSessions.dispose()
+      await fs.rm(runtimeDir, { recursive: true, force: true })
+    }
   })
 })

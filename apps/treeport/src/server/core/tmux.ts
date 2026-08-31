@@ -1006,3 +1006,17 @@ export class TmuxAdapter {
     return terminalIds
   }
 }
+
+export type TerminalSessionBackend = Pick<
+  TmuxAdapter,
+  | 'initialize'
+  | 'configureServer'
+  | 'createSession'
+  | 'renameTerminal'
+  | 'listSessions'
+  | 'listPaneProcesses'
+  | 'sessionState'
+  | 'capturePane'
+  | 'killSession'
+  | 'killServer'
+>

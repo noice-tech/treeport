@@ -706,6 +706,11 @@ export function createServiceEnvironment(input: {
     TREEPORT_INSTALLATION_METHOD: input.installationMethod,
     TREEPORT_SERVICE_RECORD: input.recordPath
   }
+  if (env.TREEPORT_EXPERIMENTAL_TERMINAL_BACKEND?.trim()) {
+    result.TREEPORT_EXPERIMENTAL_TERMINAL_BACKEND =
+      env.TREEPORT_EXPERIMENTAL_TERMINAL_BACKEND.trim()
+  }
+
   for (const [name, value] of Object.entries(env)) {
     if (
       value !== undefined &&

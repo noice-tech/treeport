@@ -23,6 +23,7 @@ import * as Effect from 'effect/Effect'
 import * as Fiber from 'effect/Fiber'
 import type * as Scope from 'effect/Scope'
 import { progressControlAttachArgs } from './tmux-control'
+import type { DirectPtySessionManager } from './direct-pty-sessions'
 import {
   createTmuxProgressObserver,
   type TerminalProgressObserver,
@@ -83,6 +84,7 @@ interface TerminalMetadataEntry extends TerminalRuntimeMetadata {
   runtimeFiber: Fiber.RuntimeFiber<void, never> | null
   runtimeGeneration: number
   runtimeReady: Promise<void> | null
+  directRuntimeUnsubscribe: (() => void) | null
   progressLease: NodeJS.Timeout | null
   progressActivityGeneration: number
   viewingHistory: boolean
@@ -118,7 +120,8 @@ export class TerminalMetadataManager {
     private readonly tmux: TmuxAdapter,
     tmuxExecutable: string,
     private readonly createObserver: TerminalProgressObserverFactory = createTmuxProgressObserver,
-    bellStateStore?: TerminalBellStateStore
+    bellStateStore?: TerminalBellStateStore,
+    private readonly directSessions?: DirectPtySessionManager
   ) {
     this.tmuxExecutable = resolveExecutablePath(tmuxExecutable)
     this.bellStateStore =
@@ -290,6 +293,7 @@ export class TerminalMetadataManager {
         runtimeFiber: null,
         runtimeGeneration: 0,
         runtimeReady: null,
+        directRuntimeUnsubscribe: null,
         progressLease: null,
         progressActivityGeneration: 0,
         viewingHistory: false
@@ -478,6 +482,49 @@ export class TerminalMetadataManager {
   }
 
   private startRuntime(entry: TerminalMetadataEntry): Promise<void> {
+    if (this.directSessions) {
+      if (!entry.directRuntimeUnsubscribe) {
+        entry.directRuntimeUnsubscribe = this.directSessions.subscribeRuntime(
+          entry.terminalId,
+          (event) => {
+            if (event.title !== undefined) {
+              this.update(entry, { title: event.title })
+            }
+
+            if (event.progress !== undefined) {
+              this.update(entry, { progress: event.progress })
+            }
+
+            if (event.bell) {
+              void this.recordDirectBell(entry).catch((error) => {
+                console.error(
+                  `[Treeport] Failed to persist terminal bell for ${entry.terminalId}:`,
+                  error instanceof Error ? error.message : String(error)
+                )
+              })
+            }
+
+            if ('exitCode' in event) {
+              entry.status = 'exited'
+              this.update(entry, {
+                progress: null,
+                hasForegroundProcess: false
+              })
+            }
+          }
+        )
+        const state = this.directSessions.runtimeState(entry.terminalId)
+        if (state) {
+          this.update(entry, {
+            title: state.title ?? entry.title,
+            hasForegroundProcess: state.status === 'running' ? null : false
+          })
+        }
+      }
+
+      return Promise.resolve()
+    }
+
     if (entry.runtimeFiber) {
       return entry.runtimeReady ?? Promise.resolve()
     }
@@ -783,6 +830,8 @@ export class TerminalMetadataManager {
   }
 
   private stopRuntime(entry: TerminalMetadataEntry): void {
+    entry.directRuntimeUnsubscribe?.()
+    entry.directRuntimeUnsubscribe = null
     entry.runtimeGeneration += 1
     const runtimeFiber = entry.runtimeFiber
     entry.runtimeFiber = null
@@ -795,6 +844,37 @@ export class TerminalMetadataManager {
     this.update(entry, {
       progress: null,
       hasForegroundProcess: entry.status === 'running' ? null : false
+    })
+  }
+
+  private async recordDirectBell(entry: TerminalMetadataEntry): Promise<void> {
+    await this.bellMutations.enqueue(entry.terminalId, async () => {
+      if (this.entries.get(entry.terminalId) !== entry) {
+        return
+      }
+
+      this.bellDeletionVersions.set(
+        entry.terminalId,
+        (this.bellDeletionVersions.get(entry.terminalId) ?? 0) + 1
+      )
+      const bell = {
+        sequence: (entry.bell?.sequence ?? 0) + 1,
+        at: new Date().toISOString(),
+        unread: true
+      }
+      const state = {
+        terminalId: entry.terminalId,
+        worktreeId: entry.worktreeId,
+        sequence: bell.sequence,
+        occurredAt: bell.at,
+        unread: true
+      }
+      await this.bellStateStore.upsert(state)
+      this.persistedBells.set(entry.terminalId, state)
+      if (this.entries.get(entry.terminalId) === entry) {
+        entry.bell = bell
+        this.publish(entry)
+      }
     })
   }
 

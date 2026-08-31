@@ -30,6 +30,7 @@ import {
 } from './terminal-attachments'
 import { authorizeRequest } from './request-security'
 import type { TerminalMetadataManager } from './terminal-metadata'
+import type { DirectPtySessionManager } from './direct-pty-sessions'
 import {
   BrowserSessionManager,
   type BrowserOwnerTransport,
@@ -89,6 +90,7 @@ interface SocketServerDependencies {
   tmux: TmuxAdapter
   terminalMetadata: TerminalMetadataManager
   attachmentManager?: TerminalAttachmentManager
+  directSessions?: DirectPtySessionManager
   browserSessions?: BrowserSessionController
 }
 
@@ -100,6 +102,7 @@ export function createSocketServer(
     tmux,
     terminalMetadata,
     attachmentManager,
+    directSessions,
     browserSessions
   }: SocketServerDependencies
 ): SocketServerResult {
@@ -124,7 +127,9 @@ export function createSocketServer(
       service,
       tmux,
       config.tmuxPath,
-      terminalMetadata
+      terminalMetadata,
+      undefined,
+      directSessions
     )
   const hostedBrowsers =
     browserSessions ?? new BrowserSessionManager(service, config)

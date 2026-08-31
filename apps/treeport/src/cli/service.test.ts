@@ -294,6 +294,7 @@ describe('OS service definitions', () => {
         PATH: '/opt/node/bin:/usr/bin',
         LANG: 'en_US.UTF-8',
         TREEPORT_TMUX_PATH: '/opt/tmux',
+        TREEPORT_EXPERIMENTAL_TERMINAL_BACKEND: 'direct-pty',
         TREEPORT_PROJECT_ID: 'project-secret-context',
         TREEPORT_API_URL: 'https://remote.example.test',
         SSH_AUTH_SOCK: '/tmp/agent.sock',
@@ -308,6 +309,7 @@ describe('OS service definitions', () => {
       PATH: '/opt/node/bin:/usr/bin',
       LANG: 'en_US.UTF-8',
       TREEPORT_TMUX_PATH: '/opt/tmux',
+      TREEPORT_EXPERIMENTAL_TERMINAL_BACKEND: 'direct-pty',
       TREEPORT_API_URL: 'http://127.0.0.1:8733',
       TREEPORT_DAEMON_LIFECYCLE: 'service'
     })

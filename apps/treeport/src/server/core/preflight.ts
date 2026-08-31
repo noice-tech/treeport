@@ -6,7 +6,7 @@ const execute = promisify(execFile)
 
 export interface RuntimePrerequisites {
   gitVersion: string
-  tmuxVersion: string
+  tmuxVersion: string | null
 }
 
 function parseTmuxVersion(output: string): [number, number] | null {
@@ -15,7 +15,10 @@ function parseTmuxVersion(output: string): [number, number] | null {
 }
 
 export async function checkRuntimePrerequisites(
-  config: Pick<AppConfig, 'gitPath' | 'tmuxPath'>
+  config: Pick<
+    AppConfig,
+    'gitPath' | 'tmuxPath' | 'experimentalTerminalBackend'
+  >
 ): Promise<RuntimePrerequisites> {
   let gitVersion: string
   try {
@@ -27,6 +30,10 @@ export async function checkRuntimePrerequisites(
     throw new Error(
       `Git is required but ${config.gitPath} could not be executed: ${error instanceof Error ? error.message : String(error)}`
     )
+  }
+
+  if (config.experimentalTerminalBackend === 'direct-pty') {
+    return { gitVersion, tmuxVersion: null }
   }
 
   let tmuxVersion: string

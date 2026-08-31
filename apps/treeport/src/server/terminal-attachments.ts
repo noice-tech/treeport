@@ -29,6 +29,7 @@ import {
 import type { TreeportService, TmuxAdapter } from './core/index'
 import { resolveExecutablePath } from './core/index'
 import type { TerminalMetadataManager } from './terminal-metadata'
+import type { DirectPtySessionManager } from './direct-pty-sessions'
 
 type PtySpawner = typeof pty.spawn
 type ConnectionState = 'initializing' | 'ready' | 'closed'
@@ -86,6 +87,10 @@ interface ClientConnection {
   announcedReady: boolean
   metadataUnsubscribe: (() => void) | null
   historyUnsubscribe: (() => void) | null
+  directOutputUnsubscribe: (() => void) | null
+  directRuntimeUnsubscribe: (() => void) | null
+  pendingDirectOutput: Array<{ data: string; ownerSequence: number }>
+  pendingDirectOutputBytes: number
   protocolVersion: TerminalProtocolVersion
   queuedInputBytes: number
   queuedInputMessages: number
@@ -138,7 +143,8 @@ export class TerminalAttachmentManager {
     private readonly tmux: TmuxAdapter,
     tmuxExecutable: string,
     private readonly metadata: TerminalMetadataManager,
-    private readonly spawnPty: PtySpawner = pty.spawn
+    private readonly spawnPty: PtySpawner = pty.spawn,
+    private readonly directSessions?: DirectPtySessionManager
   ) {
     this.tmuxExecutable = resolveExecutablePath(tmuxExecutable)
   }
@@ -167,12 +173,35 @@ export class TerminalAttachmentManager {
       announcedReady: false,
       metadataUnsubscribe: null,
       historyUnsubscribe: null,
+      directOutputUnsubscribe: null,
+      directRuntimeUnsubscribe: null,
+      pendingDirectOutput: [],
+      pendingDirectOutputBytes: 0,
       protocolVersion,
       queuedInputBytes: 0,
       queuedInputMessages: 0,
       lifecycleFiber: null
     }
     this.clients.set(connection.id, connection)
+    if (this.directSessions) {
+      void this.initializeDirect(connection, auth.cols, auth.rows).catch(
+        (cause) => {
+          if (connection.state === 'closed') {
+            return
+          }
+
+          this.send(connection, 'terminal_error', {
+            code: 'ATTACH_FAILED',
+            message: errorMessage(cause),
+            retryable: false
+          })
+          connection.transport.disconnect(false)
+          this.close(connection.id)
+        }
+      )
+      return connection.id
+    }
+
     connection.lifecycleFiber = Effect.runFork(
       Effect.yieldNow().pipe(
         Effect.zipRight(
@@ -370,6 +399,12 @@ export class TerminalAttachmentManager {
     this.releaseExitSubscription(connection)
     this.releaseDataSubscription(connection)
     this.releaseMetadataSubscription(connection)
+    connection.directOutputUnsubscribe?.()
+    connection.directRuntimeUnsubscribe?.()
+    connection.directOutputUnsubscribe = null
+    connection.directRuntimeUnsubscribe = null
+    connection.pendingDirectOutput = []
+    connection.pendingDirectOutputBytes = 0
     this.releasePty(connection)
     if (connection.lifecycleFiber) {
       Effect.runFork(Fiber.interrupt(connection.lifecycleFiber))
@@ -416,6 +451,135 @@ export class TerminalAttachmentManager {
     }
     this.controllers.clear()
     this.dimensions.clear()
+  }
+
+  private async initializeDirect(
+    connection: ClientConnection,
+    cols: number,
+    rows: number
+  ): Promise<void> {
+    const active = () =>
+      this.clients.get(connection.id) === connection &&
+      connection.state !== 'closed' &&
+      connection.transport.isConnected()
+    const terminal = await this.service.refreshTerminalStatus(
+      connection.terminalId,
+      false
+    )
+    if (!active()) {
+      return
+    }
+
+    const worktree = await this.service.getWorktree(terminal.worktreeId)
+    await this.metadata.trackTerminal(terminal, worktree)
+    if (!active()) {
+      return
+    }
+
+    const sessionSize = this.directSessions!.size(connection.terminalId)
+    if (!sessionSize) {
+      throw new Error('The direct PTY session is unavailable')
+    }
+
+    const size = terminalSizeSchema.parse({
+      cols: sessionSize.cols || cols,
+      rows: sessionSize.rows || rows
+    })
+    const current = this.dimensions.get(connection.terminalId)
+    const dimensions = current ?? {
+      ...size,
+      revision: 1,
+      socketName: worktree.tmuxSocketName,
+      sessionName: terminal.tmuxSessionName
+    }
+    this.dimensions.set(connection.terminalId, dimensions)
+    connection.streamId = crypto.randomUUID()
+    connection.metadataUnsubscribe = this.metadata.subscribe(
+      connection.terminalId,
+      (value) => {
+        if (connection.announcedReady && this.isActive(connection)) {
+          this.sendRuntimeMetadata(connection, value)
+        }
+      }
+    )
+    connection.directOutputUnsubscribe = this.directSessions!.subscribeOutput(
+      connection.terminalId,
+      (data, ownerSequence) => {
+        if (connection.state === 'initializing') {
+          connection.pendingDirectOutputBytes += Buffer.byteLength(data)
+          if (
+            connection.pendingDirectOutputBytes > TERMINAL_OUTPUT_HIGH_WATERMARK
+          ) {
+            connection.transport.disconnect(true)
+            this.close(connection.id)
+            return
+          }
+
+          connection.pendingDirectOutput.push({ data, ownerSequence })
+        } else {
+          this.sendOutput(connection, data)
+        }
+      }
+    )
+    connection.directRuntimeUnsubscribe = this.directSessions!.subscribeRuntime(
+      connection.terminalId,
+      (event) => {
+        if ('exitCode' in event && connection.announcedReady) {
+          this.send(connection, 'exit', { exitCode: event.exitCode ?? null })
+        }
+      }
+    )
+    const initial = await this.directSessions!.snapshot(connection.terminalId)
+    if (!active() || initial === null) {
+      return
+    }
+
+    await this.enqueueTerminal(connection.terminalId, () => {
+      if (!active()) {
+        return
+      }
+
+      this.claimController(connection)
+      connection.state = 'ready'
+      const lease = this.controllers.get(connection.terminalId)
+      if (
+        !this.send(connection, 'ready', {
+          connectionId: connection.id,
+          streamId: connection.streamId!,
+          generation: lease?.generation ?? 0,
+          controller: this.isController(connection),
+          reset: 'full',
+          cols: dimensions.cols,
+          rows: dimensions.rows,
+          revision: dimensions.revision,
+          backend: 'direct-pty',
+          snapshot: initial.data
+        })
+      ) {
+        return
+      }
+
+      connection.announcedReady = true
+      if (this.isController(connection)) {
+        this.publishControllerChanged(
+          connection.terminalId,
+          connection.clientId
+        )
+      }
+
+      this.sendRuntimeMetadata(
+        connection,
+        this.metadata.get(connection.terminalId)
+      )
+      this.send(connection, 'history', { viewing: false })
+      for (const output of connection.pendingDirectOutput.splice(0)) {
+        if (output.ownerSequence > initial.fence) {
+          this.sendOutput(connection, output.data)
+        }
+      }
+      connection.pendingDirectOutputBytes = 0
+      this.broadcastControl(connection.terminalId)
+    })
   }
 
   private initialize(
@@ -690,7 +854,9 @@ export class TerminalAttachmentManager {
                       ...ready,
                       cols: dimensions.cols,
                       rows: dimensions.rows,
-                      revision: dimensions.revision
+                      revision: dimensions.revision,
+                      backend: 'tmux' as const,
+                      snapshot: null
                     }
                   : ready
               )
@@ -819,8 +985,18 @@ export class TerminalAttachmentManager {
       connection.unacknowledgedBytes >= TERMINAL_OUTPUT_HIGH_WATERMARK
     ) {
       connection.paused = true
-      connection.pty?.pause()
-      this.restartStallTimeout(connection)
+      if (this.directSessions) {
+        this.send(connection, 'terminal_error', {
+          code: 'OUTPUT_STALLED',
+          message: 'Terminal viewer could not keep up with output',
+          retryable: true
+        })
+        connection.transport.disconnect(true)
+        this.close(connection.id)
+      } else {
+        connection.pty?.pause()
+        this.restartStallTimeout(connection)
+      }
     }
   }
 
@@ -949,7 +1125,11 @@ export class TerminalAttachmentManager {
         this.isActive(connection) &&
         this.canControl(connection, generation)
       ) {
-        connection.pty?.write(data)
+        if (this.directSessions) {
+          this.directSessions.write(connection.terminalId, data)
+        } else {
+          connection.pty?.write(data)
+        }
       }
     }).catch((error) => this.failInputWrite(connection, error))
   }
@@ -1022,6 +1202,11 @@ export class TerminalAttachmentManager {
         })
       }
     }
+    if (this.directSessions) {
+      await this.directSessions.resize(terminalId, next.cols, next.rows)
+      return
+    }
+
     for (const client of active) {
       if (this.isActive(client)) {
         client.pty?.resize(next.cols, next.rows)

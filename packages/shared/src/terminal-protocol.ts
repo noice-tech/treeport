@@ -1,7 +1,7 @@
 import { z } from 'zod'
 
 export const SOCKET_IO_PATH = '/api/socket.io/'
-export const TERMINAL_PROTOCOL_VERSION = 2
+export const TERMINAL_PROTOCOL_VERSION = 3
 export const TERMINAL_CONTROLLER_GRACE_MS = 10_000
 export const TERMINAL_OUTPUT_HIGH_WATERMARK = 256 * 1024
 export const TERMINAL_OUTPUT_LOW_WATERMARK = 64 * 1024
@@ -149,14 +149,16 @@ const terminalReadyBase = {
 }
 
 export const terminalLegacyReadySchema = z.strictObject(terminalReadyBase)
-export const terminalReadyV2Schema = z.strictObject({
+export const terminalReadyV3Schema = z.strictObject({
   ...terminalReadyBase,
   ...dimensions,
-  revision: z.number().int().positive()
+  revision: z.number().int().positive(),
+  backend: z.enum(['tmux', 'direct-pty']).default('tmux'),
+  snapshot: z.string().nullable().default(null)
 })
 export const terminalReadySchema = z.union([
   terminalLegacyReadySchema,
-  terminalReadyV2Schema
+  terminalReadyV3Schema
 ])
 export const terminalDimensionsSchema = z.strictObject({
   ...dimensions,
@@ -202,8 +204,8 @@ export type TerminalTakeControlPayload =
   | TerminalLegacyTakeControl
 export type TerminalOutputAck = z.infer<typeof terminalOutputAckSchema>
 export type TerminalLegacyReady = z.infer<typeof terminalLegacyReadySchema>
-export type TerminalReadyV2 = z.infer<typeof terminalReadyV2Schema>
-export type TerminalReady = TerminalLegacyReady | TerminalReadyV2
+export type TerminalReadyV3 = z.infer<typeof terminalReadyV3Schema>
+export type TerminalReady = TerminalLegacyReady | TerminalReadyV3
 export type TerminalDimensions = z.infer<typeof terminalDimensionsSchema>
 export type TerminalOutput = z.infer<typeof terminalOutputSchema>
 export type TerminalTitle = z.infer<typeof terminalTitleSchema>

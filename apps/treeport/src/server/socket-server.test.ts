@@ -672,7 +672,7 @@ describe('Socket.IO real network', () => {
     expect(legacyReady).not.toHaveProperty('cols')
     expect(legacyReady).not.toHaveProperty('revision')
 
-    const unsupported = terminalClient(value.url, 'tab-unsupported', '3')
+    const unsupported = terminalClient(value.url, 'tab-unsupported', '2')
     unsupported.io.reconnection(false)
     const error = await new Promise<Error>((resolve) =>
       unsupported.once('connect_error', resolve)

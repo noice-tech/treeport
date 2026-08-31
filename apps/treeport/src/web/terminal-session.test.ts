@@ -523,7 +523,7 @@ describe('TerminalSession', () => {
         reconnectionDelayMax: 1_000,
         randomizationFactor: 0.2,
         retries: 0,
-        query: { terminalProtocol: '2' }
+        query: { terminalProtocol: '3' }
       })
     )
     const options = testAccess<{

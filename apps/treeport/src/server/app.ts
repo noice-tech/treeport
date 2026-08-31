@@ -48,7 +48,12 @@ import {
   writeTreeFileSchema
 } from '@treeport/shared'
 import type { ApiErrorBody } from '@treeport/shared'
-import type { AppConfig, TmuxAdapter, TreeportService } from './core/index'
+import type {
+  AppConfig,
+  TerminalSessionBackend,
+  TreeportService,
+  TmuxAdapter
+} from './core/index'
 import { DomainError } from './core/index'
 import {
   webPanelBrowserOrigin,
@@ -154,7 +159,7 @@ async function pruneTerminalUploads(
 interface AppDependencies {
   service: TreeportService
   config: AppConfig
-  tmux: TmuxAdapter
+  tmux: TerminalSessionBackend
   applicationUpdate: ApplicationUpdateManager
   terminalMetadata?: TerminalMetadataManager
   browserSessions?: BrowserSessionManager
@@ -234,9 +239,10 @@ export function createApp({
       generator: () => crypto.randomUUID()
     })
   )
+  // SAFETY: Callers that omit a metadata manager use the production tmux backend.
   const metadata =
     terminalMetadata ??
-    new TerminalMetadataManager(service, tmux, config.tmuxPath)
+    new TerminalMetadataManager(service, tmux as TmuxAdapter, config.tmuxPath)
   const metadataReady = metadata.initialize().catch((error) => {
     console.error(
       '[Treeport] Terminal metadata initialization failed:',

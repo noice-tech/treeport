@@ -194,6 +194,7 @@ export class TerminalSession {
   private resizePending = false
   private serverProtocolVersion: 1 | typeof TERMINAL_PROTOCOL_VERSION =
     TERMINAL_PROTOCOL_VERSION
+  private terminalBackend: 'tmux' | 'direct-pty' = 'tmux'
   private resizeIntentDirty = false
   private resizeQuietElapsed = false
   private resizeIntentGeneration = 0
@@ -543,7 +544,12 @@ export class TerminalSession {
     this.historyExitRequested = true
     this.selectionClearRequested = true
     this.requestControl()
-    if (this.canInput()) {
+    if (this.terminalBackend === 'direct-pty') {
+      this.terminal?.scrollToBottom()
+      this.historyExitRequested = false
+      this.selectionClearRequested = false
+      this.setViewingHistory(false)
+    } else if (this.canInput()) {
       this.send('input', {
         generation: this.controllerGeneration,
         data: `${TERMINAL_SCROLL_EXIT_SEQUENCE}${TERMINAL_SELECTION_CLEAR_SEQUENCE}`
@@ -644,7 +650,7 @@ export class TerminalSession {
       this.wrapper,
       terminal,
       {
-        canInput: () => this.canInput(),
+        canInput: () => this.terminalBackend === 'tmux' && this.canInput(),
         sendInput: (data) => {
           this.send('input', {
             generation: this.controllerGeneration,
@@ -899,6 +905,13 @@ export class TerminalSession {
     terminal.onTitleChange((title) =>
       this.update({ title: title.trim().slice(0, 256) })
     )
+    terminal.onScroll(() => {
+      if (this.terminalBackend === 'direct-pty') {
+        this.setViewingHistory(
+          terminal.buffer.active.viewportY < terminal.buffer.active.baseY
+        )
+      }
+    })
     terminal.onBell(() => this.handleBell())
   }
 
@@ -1083,13 +1096,19 @@ export class TerminalSession {
   }
 
   private prepareScrollExit(): void {
+    if (this.terminalBackend === 'direct-pty') {
+      this.terminal?.scrollToBottom()
+      this.setViewingHistory(false)
+      return
+    }
+
     if (this.scrollExitPending || this.snapshotValue.viewingHistory) {
       this.resumeOnNextInput = true
     }
   }
 
   private withScrollExit(data: string): string {
-    if (!this.resumeOnNextInput) {
+    if (this.terminalBackend === 'direct-pty' || !this.resumeOnNextInput) {
       return data
     }
 
@@ -1098,6 +1117,12 @@ export class TerminalSession {
   }
 
   private sendHistoryExit(): void {
+    if (this.terminalBackend === 'direct-pty') {
+      this.terminal?.scrollToBottom()
+      this.setViewingHistory(false)
+      return
+    }
+
     if (!this.canInput()) {
       return
     }
@@ -1111,6 +1136,11 @@ export class TerminalSession {
   }
 
   private sendSelectionClear(): void {
+    if (this.terminalBackend === 'direct-pty') {
+      this.selectionClearRequested = false
+      return
+    }
+
     if (!this.canInput()) {
       return
     }
@@ -1362,9 +1392,12 @@ export class TerminalSession {
 
       this.cancelControllerResizeIntent()
       this.controlRequestGeneration = null
-      const v2 = 'revision' in message
-      this.serverProtocolVersion = v2 ? TERMINAL_PROTOCOL_VERSION : 1
-      const dimensions = v2
+      const currentProtocol = 'revision' in message
+      this.serverProtocolVersion = currentProtocol
+        ? TERMINAL_PROTOCOL_VERSION
+        : 1
+      this.terminalBackend = currentProtocol ? message.backend : 'tmux'
+      const dimensions = currentProtocol
         ? { cols: message.cols, rows: message.rows }
         : normalizeTerminalDimensions(
             this.proposedDimensions ?? {
@@ -1372,13 +1405,13 @@ export class TerminalSession {
               rows: this.terminal?.rows ?? 30
             }
           )
-      const revision = v2 ? message.revision : 1
+      const revision = currentProtocol ? message.revision : 1
       this.streamId = message.streamId
       this.controllerGeneration = message.generation
       this.canonicalCols = dimensions.cols
       this.canonicalRows = dimensions.rows
       this.canonicalRevision = revision
-      this.appliedRevision = v2 ? 0 : revision
+      this.appliedRevision = currentProtocol ? 0 : revision
       this.expectedSequence = 1
       this.lastParsedSequence = 0
       this.parsedSequences.clear()
@@ -1389,6 +1422,10 @@ export class TerminalSession {
       this.ready = true
       this.renderEpoch += 1
       const epoch = this.renderEpoch
+      if (currentProtocol && message.backend === 'direct-pty' && this.wrapper) {
+        this.wrapper.style.visibility = 'hidden'
+      }
+
       this.enqueueRender(epoch, async () => {
         await this.drainTerminalWrites()
         if (this.disposed || epoch !== this.renderEpoch) {
@@ -1396,7 +1433,11 @@ export class TerminalSession {
         }
 
         this.terminal?.reset()
-        if (v2) {
+        if (currentProtocol) {
+          if (message.backend === 'direct-pty' && this.terminal) {
+            this.terminal.options.scrollback = 50_000
+          }
+
           this.applyCanonicalDimensions(
             dimensions.cols,
             dimensions.rows,
@@ -1405,6 +1446,16 @@ export class TerminalSession {
           )
         } else {
           this.fit(true)
+        }
+
+        if (currentProtocol && message.snapshot && this.terminal) {
+          await new Promise<void>((resolve) =>
+            this.terminal!.write(message.snapshot!, resolve)
+          )
+        }
+
+        if (this.wrapper && epoch === this.renderEpoch) {
+          this.wrapper.style.visibility = ''
         }
       })
       this.clearDegraded()

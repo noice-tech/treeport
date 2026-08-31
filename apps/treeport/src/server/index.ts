@@ -21,6 +21,7 @@ import { authorizeRequest, rejectHttpRequest } from './request-security'
 import { createSocketServer } from './socket-server'
 import { TerminalMetadataManager } from './terminal-metadata'
 import { createUpdateStartupReporter } from './update-startup'
+import { DirectPtySessionManager } from './direct-pty-sessions'
 
 async function main(): Promise<void> {
   const config = loadConfig()
@@ -49,19 +50,27 @@ async function main(): Promise<void> {
       launcherPath
     )
     const gh = new GhAdapter(runner, config.ghPath)
+    const directSessions =
+      config.experimentalTerminalBackend === 'direct-pty'
+        ? new DirectPtySessionManager(config.runtimeDir, launcherPath)
+        : undefined
+    const terminalBackend = directSessions ?? tmux
     const service = new TreeportService({
       config,
       database,
       runner,
       git,
-      tmux,
+      tmux: terminalBackend,
       gh
     })
     await service.initialize()
     const terminalMetadata = new TerminalMetadataManager(
       service,
       tmux,
-      config.tmuxPath
+      config.tmuxPath,
+      undefined,
+      undefined,
+      directSessions
     )
     await terminalMetadata.initialize()
     const applicationUpdate = createApplicationUpdateManager(config)
@@ -70,7 +79,7 @@ async function main(): Promise<void> {
     const app = createApp({
       service,
       config,
-      tmux,
+      tmux: terminalBackend,
       applicationUpdate,
       terminalMetadata,
       browserSessions
@@ -128,13 +137,18 @@ async function main(): Promise<void> {
     }
 
     service.attachHttpServer(server)
-    const { io, attachments } = createSocketServer(server, {
+    const socketDependencies: Parameters<typeof createSocketServer>[1] = {
       service,
       config,
       tmux,
       terminalMetadata,
       browserSessions
-    })
+    }
+    if (directSessions) {
+      socketDependencies.directSessions = directSessions
+    }
+
+    const { io, attachments } = createSocketServer(server, socketDependencies)
     await new Promise<void>((resolve, reject) => {
       server.once('error', reject)
       server.listen(config.port, config.host, () => {
@@ -149,7 +163,13 @@ async function main(): Promise<void> {
     console.log(`Treeport ${config.appVersion} listening on ${config.apiUrl}`)
     console.log(`database: ${config.databasePath}`)
     console.log(`git: ${prerequisites.gitVersion}`)
-    console.log(`tmux: ${prerequisites.tmuxVersion}`)
+    if (prerequisites.tmuxVersion) {
+      console.log(`tmux: ${prerequisites.tmuxVersion}`)
+    }
+
+    console.log(
+      `terminal backend: ${config.experimentalTerminalBackend ?? 'tmux'}`
+    )
 
     let shuttingDown = false
     function shutdown(): void {
@@ -161,6 +181,7 @@ async function main(): Promise<void> {
       applicationUpdate.dispose()
       attachments.dispose()
       terminalMetadata.dispose()
+      directSessions?.dispose()
       const viteClosed = vite?.close()
       io.close(() => {
         void Promise.all([

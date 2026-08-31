@@ -12,6 +12,7 @@ export interface AppConfig {
   runtimeDir: string
   shell: string
   tmuxPath: string
+  experimentalTerminalBackend?: 'tmux' | 'direct-pty'
   gitPath: string
   ghPath: string
   apiUrl: string
@@ -97,6 +98,17 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     )
   }
 
+  const experimentalTerminalBackend =
+    env.TREEPORT_EXPERIMENTAL_TERMINAL_BACKEND?.trim() || 'tmux'
+  if (
+    experimentalTerminalBackend !== 'tmux' &&
+    experimentalTerminalBackend !== 'direct-pty'
+  ) {
+    throw new Error(
+      'TREEPORT_EXPERIMENTAL_TERMINAL_BACKEND must be tmux or direct-pty'
+    )
+  }
+
   const config: AppConfig = {
     host,
     port: portValue,
@@ -114,6 +126,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       expandHome(env.TREEPORT_SHELL?.trim() || env.SHELL || '/bin/sh')
     ),
     tmuxPath: env.TREEPORT_TMUX_PATH?.trim() || 'tmux',
+    experimentalTerminalBackend,
     gitPath: env.TREEPORT_GIT_PATH?.trim() || 'git',
     ghPath: env.TREEPORT_GH_PATH?.trim() || 'gh',
     apiUrl: env.TREEPORT_API_URL?.trim() || `http://${urlHost}:${portValue}`,
