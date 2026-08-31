@@ -694,15 +694,6 @@ export class BrowserSessionManager {
       return session.launch
     }
 
-    const liveRuntimeCount = [...this.sessions.values()].filter(
-      (candidate) => candidate.localOwner || candidate.launch
-    ).length
-    if (liveRuntimeCount >= 6) {
-      throw new Error(
-        'Treeport supports at most six active Browser sessions. Close one and try again.'
-      )
-    }
-
     const runtimeGeneration = ++session.generation
     const restoredUrl = session.state.url
     const restoredTitle = session.state.title
@@ -1001,21 +992,6 @@ export class BrowserSessionManager {
           transport.send({
             type: 'claimRejected',
             message: 'This Browser is open in another local desktop app.'
-          })
-          transport.disconnect()
-          return
-        }
-
-        const otherLiveRuntimeCount = [...this.sessions.values()].filter(
-          (candidate) =>
-            candidate !== session &&
-            (candidate.localOwner !== null || candidate.launch !== null)
-        ).length
-        if (otherLiveRuntimeCount >= 6) {
-          transport.send({
-            type: 'claimRejected',
-            message:
-              'Treeport supports at most six active Browser sessions. Close one and try again.'
           })
           transport.disconnect()
           return
