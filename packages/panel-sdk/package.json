@@ -1,6 +1,6 @@
 {
   "name": "@treeport/panel-sdk",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Browser SDK for Treeport web panels.",
   "type": "module",
   "main": "dist/index.js",
