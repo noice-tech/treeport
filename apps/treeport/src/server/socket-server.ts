@@ -30,7 +30,7 @@ import {
 } from './terminal-attachments'
 import { authorizeRequest } from './request-security'
 import type { TerminalMetadataManager } from './terminal-metadata'
-import type { DirectPtySessionManager } from './direct-pty-sessions'
+import type { DirectTerminalSessionBackend } from './direct-pty-sessions'
 import {
   BrowserSessionManager,
   type BrowserOwnerTransport,
@@ -90,7 +90,7 @@ interface SocketServerDependencies {
   tmux: TmuxAdapter
   terminalMetadata: TerminalMetadataManager
   attachmentManager?: TerminalAttachmentManager
-  directSessions?: DirectPtySessionManager
+  directSessions?: DirectTerminalSessionBackend
   browserSessions?: BrowserSessionController
 }
 

@@ -20,10 +20,39 @@ const DIRECT_SCROLLBACK_LINES = 50_000
 type HeadlessTerminal = InstanceType<typeof Terminal>
 
 export interface DirectPtyRuntimeEvent {
-  title?: string
-  progress?: TerminalProgress | null
-  bell?: true
-  exitCode?: number | null
+  title?: string | undefined
+  progress?: TerminalProgress | null | undefined
+  bell?: true | undefined
+  exitCode?: number | null | undefined
+}
+
+export interface DirectTerminalSessionBackend {
+  sessionSize(
+    socketName: string,
+    sessionName: string
+  ): Promise<{ cols: number; rows: number } | null>
+  snapshot(terminalId: string): Promise<{ data: string; fence: number } | null>
+  subscribeOutput(
+    terminalId: string,
+    listener: (data: string, sequence: number) => void
+  ): (() => void) | Promise<() => void>
+  subscribeRuntime(
+    terminalId: string,
+    listener: (event: DirectPtyRuntimeEvent) => void
+  ): (() => void) | Promise<() => void>
+  runtimeState(terminalId: string):
+    | {
+        title: string | null
+        status: TmuxTerminalSession['status']
+      }
+    | null
+    | Promise<{
+        title: string | null
+        status: TmuxTerminalSession['status']
+      } | null>
+  write(terminalId: string, data: string | Buffer): void
+  resize(terminalId: string, cols: number, rows: number): Promise<void>
+  dispose(): void
 }
 
 interface DirectPtySession extends TmuxTerminalSession {
@@ -92,15 +121,15 @@ export class DirectPtySessionManager {
     createdAt: string
     cwd: string
     argv: string[]
-    initialTitle?: string
+    initialTitle?: string | undefined
     shellCommand: string | null
     interactiveShell: boolean
-    fallbackArgv?: string[]
-    closeOnSuccess?: boolean
-    initialSize?: { cols: number; rows: number }
+    fallbackArgv?: string[] | undefined
+    closeOnSuccess?: boolean | undefined
+    initialSize?: { cols: number; rows: number } | undefined
     env: Record<string, string>
-    setupTasks?: LaunchSpec['setupTasks']
-    setupError?: string
+    setupTasks?: LaunchSpec['setupTasks'] | undefined
+    setupError?: string | undefined
   }): Promise<void> {
     await this.initialize()
     if (this.sessions.has(input.terminalId)) {
@@ -241,6 +270,10 @@ export class DirectPtySessionManager {
       void fs.rm(specPath, { force: true })
     })
     this.sessions.set(input.terminalId, session)
+  }
+
+  get sessionCount(): number {
+    return this.sessions.size
   }
 
   size(terminalId: string): { cols: number; rows: number } | null {

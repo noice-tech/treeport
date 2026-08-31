@@ -29,7 +29,7 @@ import {
 import type { TreeportService, TmuxAdapter } from './core/index'
 import { resolveExecutablePath } from './core/index'
 import type { TerminalMetadataManager } from './terminal-metadata'
-import type { DirectPtySessionManager } from './direct-pty-sessions'
+import type { DirectTerminalSessionBackend } from './direct-pty-sessions'
 
 type PtySpawner = typeof pty.spawn
 type ConnectionState = 'initializing' | 'ready' | 'closed'
@@ -144,7 +144,7 @@ export class TerminalAttachmentManager {
     tmuxExecutable: string,
     private readonly metadata: TerminalMetadataManager,
     private readonly spawnPty: PtySpawner = pty.spawn,
-    private readonly directSessions?: DirectPtySessionManager
+    private readonly directSessions?: DirectTerminalSessionBackend
   ) {
     this.tmuxExecutable = resolveExecutablePath(tmuxExecutable)
   }
@@ -476,7 +476,10 @@ export class TerminalAttachmentManager {
       return
     }
 
-    const sessionSize = this.directSessions!.size(connection.terminalId)
+    const sessionSize = await this.directSessions!.sessionSize(
+      worktree.tmuxSocketName,
+      terminal.tmuxSessionName
+    )
     if (!sessionSize) {
       throw new Error('The direct PTY session is unavailable')
     }
@@ -502,33 +505,36 @@ export class TerminalAttachmentManager {
         }
       }
     )
-    connection.directOutputUnsubscribe = this.directSessions!.subscribeOutput(
-      connection.terminalId,
-      (data, ownerSequence) => {
-        if (connection.state === 'initializing') {
-          connection.pendingDirectOutputBytes += Buffer.byteLength(data)
-          if (
-            connection.pendingDirectOutputBytes > TERMINAL_OUTPUT_HIGH_WATERMARK
-          ) {
-            connection.transport.disconnect(true)
-            this.close(connection.id)
-            return
-          }
+    connection.directOutputUnsubscribe =
+      await this.directSessions!.subscribeOutput(
+        connection.terminalId,
+        (data, ownerSequence) => {
+          if (connection.state === 'initializing') {
+            connection.pendingDirectOutputBytes += Buffer.byteLength(data)
+            if (
+              connection.pendingDirectOutputBytes >
+              TERMINAL_OUTPUT_HIGH_WATERMARK
+            ) {
+              connection.transport.disconnect(true)
+              this.close(connection.id)
+              return
+            }
 
-          connection.pendingDirectOutput.push({ data, ownerSequence })
-        } else {
-          this.sendOutput(connection, data)
+            connection.pendingDirectOutput.push({ data, ownerSequence })
+          } else {
+            this.sendOutput(connection, data)
+          }
         }
-      }
-    )
-    connection.directRuntimeUnsubscribe = this.directSessions!.subscribeRuntime(
-      connection.terminalId,
-      (event) => {
-        if ('exitCode' in event && connection.announcedReady) {
-          this.send(connection, 'exit', { exitCode: event.exitCode ?? null })
+      )
+    connection.directRuntimeUnsubscribe =
+      await this.directSessions!.subscribeRuntime(
+        connection.terminalId,
+        (event) => {
+          if ('exitCode' in event && connection.announcedReady) {
+            this.send(connection, 'exit', { exitCode: event.exitCode ?? null })
+          }
         }
-      }
-    )
+      )
     const initial = await this.directSessions!.snapshot(connection.terminalId)
     if (!active() || initial === null) {
       return

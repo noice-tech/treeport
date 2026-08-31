@@ -23,7 +23,7 @@ import * as Effect from 'effect/Effect'
 import * as Fiber from 'effect/Fiber'
 import type * as Scope from 'effect/Scope'
 import { progressControlAttachArgs } from './tmux-control'
-import type { DirectPtySessionManager } from './direct-pty-sessions'
+import type { DirectTerminalSessionBackend } from './direct-pty-sessions'
 import {
   createTmuxProgressObserver,
   type TerminalProgressObserver,
@@ -121,7 +121,7 @@ export class TerminalMetadataManager {
     tmuxExecutable: string,
     private readonly createObserver: TerminalProgressObserverFactory = createTmuxProgressObserver,
     bellStateStore?: TerminalBellStateStore,
-    private readonly directSessions?: DirectPtySessionManager
+    private readonly directSessions?: DirectTerminalSessionBackend
   ) {
     this.tmuxExecutable = resolveExecutablePath(tmuxExecutable)
     this.bellStateStore =
@@ -481,39 +481,40 @@ export class TerminalMetadataManager {
     }
   }
 
-  private startRuntime(entry: TerminalMetadataEntry): Promise<void> {
+  private async startRuntime(entry: TerminalMetadataEntry): Promise<void> {
     if (this.directSessions) {
       if (!entry.directRuntimeUnsubscribe) {
-        entry.directRuntimeUnsubscribe = this.directSessions.subscribeRuntime(
-          entry.terminalId,
-          (event) => {
-            if (event.title !== undefined) {
-              this.update(entry, { title: event.title })
-            }
+        entry.directRuntimeUnsubscribe =
+          await this.directSessions.subscribeRuntime(
+            entry.terminalId,
+            (event) => {
+              if (event.title !== undefined) {
+                this.update(entry, { title: event.title })
+              }
 
-            if (event.progress !== undefined) {
-              this.update(entry, { progress: event.progress })
-            }
+              if (event.progress !== undefined) {
+                this.update(entry, { progress: event.progress })
+              }
 
-            if (event.bell) {
-              void this.recordDirectBell(entry).catch((error) => {
-                console.error(
-                  `[Treeport] Failed to persist terminal bell for ${entry.terminalId}:`,
-                  error instanceof Error ? error.message : String(error)
-                )
-              })
-            }
+              if (event.bell) {
+                void this.recordDirectBell(entry).catch((error) => {
+                  console.error(
+                    `[Treeport] Failed to persist terminal bell for ${entry.terminalId}:`,
+                    error instanceof Error ? error.message : String(error)
+                  )
+                })
+              }
 
-            if ('exitCode' in event) {
-              entry.status = 'exited'
-              this.update(entry, {
-                progress: null,
-                hasForegroundProcess: false
-              })
+              if ('exitCode' in event) {
+                entry.status = 'exited'
+                this.update(entry, {
+                  progress: null,
+                  hasForegroundProcess: false
+                })
+              }
             }
-          }
-        )
-        const state = this.directSessions.runtimeState(entry.terminalId)
+          )
+        const state = await this.directSessions.runtimeState(entry.terminalId)
         if (state) {
           this.update(entry, {
             title: state.title ?? entry.title,
@@ -522,7 +523,7 @@ export class TerminalMetadataManager {
         }
       }
 
-      return Promise.resolve()
+      return
     }
 
     if (entry.runtimeFiber) {

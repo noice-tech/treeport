@@ -21,7 +21,7 @@ import { authorizeRequest, rejectHttpRequest } from './request-security'
 import { createSocketServer } from './socket-server'
 import { TerminalMetadataManager } from './terminal-metadata'
 import { createUpdateStartupReporter } from './update-startup'
-import { DirectPtySessionManager } from './direct-pty-sessions'
+import { connectOrStartTerminalHost } from './terminal-host-client'
 
 async function main(): Promise<void> {
   const config = loadConfig()
@@ -52,7 +52,14 @@ async function main(): Promise<void> {
     const gh = new GhAdapter(runner, config.ghPath)
     const directSessions =
       config.experimentalTerminalBackend === 'direct-pty'
-        ? new DirectPtySessionManager(config.runtimeDir, launcherPath)
+        ? await connectOrStartTerminalHost({
+            dataDir: config.dataDir,
+            runtimeDir: config.runtimeDir,
+            launcherPath,
+            hostEntryPath: fileURLToPath(
+              new URL('./terminal-host-entry.js', import.meta.url)
+            )
+          })
         : undefined
     const terminalBackend = directSessions ?? tmux
     const service = new TreeportService({
