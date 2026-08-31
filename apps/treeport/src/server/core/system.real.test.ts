@@ -596,7 +596,7 @@ describe.skipIf(!enabled)(
             closingTerminal.tmuxSessionName
           )
         ).status
-      ).toBe('missing')
+      ).toBe('running')
       expect(await fixture.service.listProjects()).toEqual([])
       expect(await fixture.service.listRecentProjects()).toEqual([
         expect.objectContaining({ id: project.id })
@@ -613,14 +613,18 @@ describe.skipIf(!enabled)(
       const reopenedTerminals = reopened.worktrees.flatMap(
         (worktree) => worktree.terminals
       )
-      expect(reopenedTerminals).toEqual([
-        expect.objectContaining({
-          name: 'Shell',
-          worktreeId: mainWorktree.id
-        })
-      ])
-      expect(reopenedTerminals.map((terminal) => terminal.id)).not.toContain(
-        closingTerminal.id
+      expect(reopenedTerminals).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            name: 'Shell',
+            worktreeId: mainWorktree.id
+          }),
+          expect.objectContaining({
+            id: closingTerminal.id,
+            name: 'Closing terminal',
+            worktreeId: mainWorktree.id
+          })
+        ])
       )
       fixture.database.close()
     })

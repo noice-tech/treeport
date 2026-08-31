@@ -4,7 +4,6 @@ import { useLocation } from '@tanstack/react-router'
 import type { ProjectRecord, RecentProjectRecord } from '@treeport/shared'
 import { parseResponse } from 'hono/client'
 import { rpc } from '../../api'
-import { errorDetails } from '../../error-message'
 import {
   projectsQueryKey,
   recentProjectsQueryKey
@@ -90,34 +89,11 @@ export function useProjectWorkflows({
       notifyError(mutationError, {
         operation: `close project “${project.name}”`
       })
-      if (errorDetails(mutationError).code === 'PROJECT_CLOSE_FAILED') {
-        void queryClient.invalidateQueries({ queryKey: projectsQueryKey })
-      }
     }
   })
 
-  const requestProjectClose = (project: ProjectRecord) => {
-    const terminalCount = project.worktrees.reduce(
-      (count, worktree) => count + worktree.terminals.length,
-      0
-    )
-    if (
-      terminalCount > 0 &&
-      !window.confirm(
-        `Close “${
-          project.name
-        }”? This will terminate ${terminalCount} Treeport terminal ${
-          terminalCount === 1
-            ? 'session and its process'
-            : 'sessions and their processes'
-        }. Folders, Git worktrees, and files will remain on disk. You can reopen the project from Recent projects.`
-      )
-    ) {
-      return
-    }
-
+  const requestProjectClose = (project: ProjectRecord) =>
     closeProject.mutate(project)
-  }
 
   const projectOpened = async (
     project: ProjectRecord,

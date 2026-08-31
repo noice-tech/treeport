@@ -368,30 +368,25 @@ test.describe('desktop worktree terminal UI', () => {
       await projectOption.hover()
       await page.getByRole('button', { name: 'Close project example' }).click()
     }
-    page.once('dialog', async (dialog) => {
-      expect(dialog.message()).toContain('2 Treeport terminal sessions')
-      expect(dialog.message()).toContain('Recent projects')
-      await dialog.dismiss()
+    let confirmationShown = false
+    page.on('dialog', async (confirmation) => {
+      confirmationShown = true
+      await confirmation.dismiss()
     })
-    await closeProject()
-    expect(mocked.closeRequests()).toBe(0)
-
     mocked.failNextClose()
-    page.once('dialog', (dialog) => dialog.accept())
     await closeProject()
     await expect(
       page.getByText('Couldn’t close project “example”', { exact: true })
     ).toBeVisible()
-    await expect(
-      page.getByText(/Some terminal sessions could not be stopped/)
-    ).toBeVisible()
+    await expect(page.getByText(/Unexpected server error/)).toBeVisible()
     await expect(
       page.getByRole('button', {
         name: 'Switch project, current project example'
       })
     ).toBeVisible()
+    expect(mocked.closeRequests()).toBe(1)
+    expect(confirmationShown).toBe(false)
 
-    page.once('dialog', (dialog) => dialog.accept())
     await closeProject()
     await expect(
       page.getByRole('button', { name: 'Open project' })
@@ -484,11 +479,6 @@ test.describe('desktop worktree terminal UI', () => {
       })
     ).toBeVisible()
 
-    let confirmationShown = false
-    page.on('dialog', async (confirmation) => {
-      confirmationShown = true
-      await confirmation.dismiss()
-    })
     await closeProject()
     await expect(
       page.getByRole('button', { name: 'Open project' })

@@ -284,23 +284,28 @@ describe('TreeportService with injected command adapters', () => {
     await expect(service.deleteProject(project.id)).resolves.toBeUndefined()
   })
 
-  it('closes every project worktree and provisions terminals when reopening', async () => {
+  it('preserves project terminals while closed and reconnects when reopening', async () => {
     const { main, runner, service } = await fixture()
     const project = await service.registerProject(main)
     const mainWorktree = project.worktrees[0]!
     await service.createTerminal(mainWorktree.id, 'Main terminal', ['pi'])
-    const linkedResult = await service.createWorktree(
-      project.id,
-      'close-all',
-      'default',
-      { name: 'Linked terminal', argv: ['pi'] }
+    const linked = (
+      await service.createWorktree(project.id, 'close-all', 'default', {
+        name: 'Linked terminal',
+        argv: ['pi']
+      })
+    ).worktree
+    const terminalIds = (
+      await service.getProjectSnapshot(project.id)
+    ).worktrees.flatMap((worktree) =>
+      worktree.terminals.map((terminal) => terminal.id)
     )
-    const linked = linkedResult.worktree
-    expect(runner.sessions.size).toBe(3)
+    expect(terminalIds).toHaveLength(3)
     await expect(
       service.dismissRecentProject(project.id)
     ).rejects.toMatchObject({ code: 'PROJECT_NOT_RECENT' })
 
+    runner.tmuxKillFails = true
     await service.closeProject(project.id)
 
     expect(await service.listProjects()).toEqual([])
@@ -310,7 +315,7 @@ describe('TreeportService with injected command adapters', () => {
         repositoryPath: project.repositoryPath
       })
     ])
-    expect(runner.sessions.size).toBe(0)
+    expect(runner.sessions.size).toBe(3)
     expect(
       (await persistedProject(service.database, project.id))?.worktrees.map(
         ({ id }) => id
@@ -319,27 +324,18 @@ describe('TreeportService with injected command adapters', () => {
 
     await service.dismissRecentProject(project.id)
     expect(await service.listRecentProjects()).toEqual([])
-    expect(
-      (await persistedProject(service.database, project.id))?.worktrees.map(
-        ({ id }) => id
-      )
-    ).toEqual(expect.arrayContaining([mainWorktree.id, linked.id]))
+    expect(runner.sessions.size).toBe(3)
 
     const reopened = await service.openProject(project.id)
     expect(reopened.id).toBe(project.id)
     expect(reopened.worktrees.map(({ id }) => id)).toEqual(
       expect.arrayContaining([mainWorktree.id, linked.id])
     )
-    expect(
-      reopened.worktrees.flatMap(({ terminals }) => terminals)
-    ).toHaveLength(2)
-    expect(
-      reopened.worktrees.every(
-        (worktree) =>
-          worktree.terminals.length === 1 &&
-          worktree.terminals[0]?.name === 'Shell'
-      )
-    ).toBe(true)
+    const reopenedTerminalIds = reopened.worktrees.flatMap((worktree) =>
+      worktree.terminals.map((terminal) => terminal.id)
+    )
+    expect(reopenedTerminalIds).toHaveLength(terminalIds.length)
+    expect(reopenedTerminalIds).toEqual(expect.arrayContaining(terminalIds))
     expect(await service.listRecentProjects()).toEqual([])
 
     await service.closeProject(project.id)
@@ -351,65 +347,14 @@ describe('TreeportService with injected command adapters', () => {
     await expect(
       persistedProjectOpen(service.database, project.id)
     ).resolves.toBe(true)
+    runner.tmuxKillFails = false
   })
 
-  it('keeps a project open after partial terminal shutdown and retries the close', async () => {
-    const { main, runner, service } = await fixture()
+  it('leaves terminals running when project closure cannot be persisted', async () => {
+    const { main, service, database } = await fixture()
     const project = await service.registerProject(main)
-    const mainWorktree = project.worktrees[0]!
-    const mainTerminal = await service.createTerminal(
-      mainWorktree.id,
-      'Main terminal',
-      ['pi']
-    )
-    const linkedResult = await service.createWorktree(
-      project.id,
-      'partial-close',
-      'default',
-      { name: 'Linked terminal', argv: ['pi'] }
-    )
-    const linked = linkedResult.worktree
-    runner.tmuxKillFailureSockets.add(linked.tmuxSocketName)
-    const removed: string[] = []
-    const unsubscribe = service.events.subscribe((event) => {
-      if (event.type === 'terminal.removed') {
-        removed.push(String(event.data.terminalId))
-      }
-    })
-
-    await expect(service.closeProject(project.id)).rejects.toMatchObject({
-      code: 'PROJECT_CLOSE_FAILED',
-      details: {
-        failedWorktreeIds: [linked.id],
-        terminalsMayHaveStopped: true
-      }
-    })
-    await expect(
-      persistedProjectOpen(service.database, project.id)
-    ).resolves.toBe(true)
-    expect(removed).toContain(mainTerminal.id)
-    expect(runner.sessions.size).toBe(1)
-    expect(
-      (await service.listProjects())[0]!.worktrees.flatMap(
-        ({ terminals }) => terminals
-      )
-    ).toHaveLength(2)
-
-    runner.tmuxKillFailureSockets.clear()
-    await expect(service.closeProject(project.id)).resolves.toBeUndefined()
-    unsubscribe()
-    await expect(
-      persistedProjectOpen(service.database, project.id)
-    ).resolves.toBe(false)
-    expect(runner.sessions.size).toBe(0)
-  })
-
-  it('reports a final persistence failure after clearing stopped terminals', async () => {
-    const { main, runner, service, database } = await fixture()
-    const project = await service.registerProject(main)
-    const mainWorktree = project.worktrees[0]!
     const terminal = await service.createTerminal(
-      mainWorktree.id,
+      project.worktrees[0]!.id,
       'Persistence failure',
       ['pi']
     )
@@ -421,27 +366,20 @@ describe('TreeportService with injected command adapters', () => {
         SELECT RAISE(FAIL, 'database write failed');
       END
     `)
-    const events: string[] = []
+    const removed: string[] = []
     const unsubscribe = service.events.subscribe((event) => {
-      events.push(
-        `${event.type}:${'terminalId' in event.data ? event.data.terminalId : ''}`
-      )
-    })
-
-    await expect(service.closeProject(project.id)).rejects.toMatchObject({
-      code: 'PROJECT_CLOSE_FAILED',
-      details: {
-        failedWorktreeIds: [],
-        terminalsMayHaveStopped: true
+      if (event.type === 'terminal.removed') {
+        removed.push(String(event.data.terminalId))
       }
     })
+
+    await expect(service.closeProject(project.id)).rejects.toThrow()
     unsubscribe()
     await expect(persistedProjectOpen(database, project.id)).resolves.toBe(true)
-    expect(runner.sessions.size).toBe(0)
-    expect(events).toContain(`terminal.removed:${terminal.id}`)
-    expect(events.some((event) => event.startsWith('project.updated'))).toBe(
-      false
-    )
+    await expect(
+      service.refreshTerminalStatus(terminal.id, false)
+    ).resolves.toMatchObject({ id: terminal.id, status: 'running' })
+    expect(removed).toEqual([])
   })
 
   it('waits for in-flight observation before closing a project', async () => {
@@ -474,7 +412,7 @@ describe('TreeportService with injected command adapters', () => {
     expect(await service.listProjects()).toEqual([])
   })
 
-  it('does not let an in-flight terminal poll repopulate state after close', async () => {
+  it('rejects an in-flight terminal poll without removing the closed terminal', async () => {
     const { main, runner, service } = await fixture()
     const project = await service.registerProject(main)
     const terminal = await service.createTerminal(
@@ -505,15 +443,16 @@ describe('TreeportService with injected command adapters', () => {
 
     await service.closeProject(project.id)
     releasePoll()
-    await expect(polling).rejects.toMatchObject({
-      code: expect.stringMatching(/PROJECT_CLOSED|TERMINAL_NOT_FOUND/)
-    })
+    await expect(polling).rejects.toMatchObject({ code: 'PROJECT_CLOSED' })
     runner.tmuxStateGate = null
     unsubscribe()
-    expect(removed.filter((terminalId) => terminalId === terminal.id)).toEqual([
-      terminal.id
-    ])
+    expect(removed).toEqual([])
     expect(await service.listProjects()).toEqual([])
+    expect(
+      (await service.openProject(project.id)).worktrees.flatMap((worktree) =>
+        worktree.terminals.map((candidate) => candidate.id)
+      )
+    ).toContain(terminal.id)
   })
 
   it('keeps a closed registration closed when path-based reopen fails', async () => {

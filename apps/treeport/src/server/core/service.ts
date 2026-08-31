@@ -3640,53 +3640,10 @@ export class TreeportService {
       }
 
       try {
-        const failedWorktrees: Array<{ id: string; message: string }> = []
-        for (const worktree of project.worktrees) {
-          try {
-            const terminalIds = await this.deps.tmux.killServer(
-              worktree.tmuxSocketName
-            )
-            this.clearWorktreeTerminalState(worktree.id, terminalIds)
-          } catch (error) {
-            failedWorktrees.push({
-              id: worktree.id,
-              message: error instanceof Error ? error.message : String(error)
-            })
-          }
-        }
-
-        this.invalidateProjectsSnapshot()
-        if (failedWorktrees.length > 0) {
-          throw new DomainError(
-            'PROJECT_CLOSE_FAILED',
-            'Some terminal sessions could not be stopped; the project remains open',
-            500,
-            {
-              failedWorktreeIds: failedWorktrees.map((worktree) => worktree.id),
-              failures: failedWorktrees,
-              terminalsMayHaveStopped: true
-            }
-          )
-        }
-
-        try {
-          await this.deps.database.db
-            .update(projects)
-            .set({ isOpen: 0, showInRecents: 1, updatedAt: now() })
-            .where(eq(projects.id, projectId))
-        } catch (error) {
-          throw new DomainError(
-            'PROJECT_CLOSE_FAILED',
-            'Terminal sessions stopped, but the project could not be marked closed',
-            500,
-            {
-              failedWorktreeIds: [],
-              persistenceError:
-                error instanceof Error ? error.message : String(error),
-              terminalsMayHaveStopped: true
-            }
-          )
-        }
+        await this.deps.database.db
+          .update(projects)
+          .set({ isOpen: 0, showInRecents: 1, updatedAt: now() })
+          .where(eq(projects.id, projectId))
 
         this.invalidateProjectsSnapshot()
         this.events.publish('project.updated', { projectId })
