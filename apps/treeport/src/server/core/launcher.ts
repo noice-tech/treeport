@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url'
 import { z } from 'zod'
 import { TERMINAL_NAME_MAX_LENGTH } from '@treeport/shared'
 import { integrateShellLaunch } from './shell-integration'
-import type { LaunchSpec } from './tmux'
+import type { TerminalLaunchSpec } from './terminal'
 
 const FORWARDED_SIGNALS = ['SIGTERM', 'SIGINT', 'SIGHUP'] as const
 
@@ -23,7 +23,6 @@ const launchSpecSchema = z
     cwd: z.string(),
     env: z.record(z.string(), z.string()),
     shellIntegrationDir: z.string().optional(),
-    tmuxExecutable: z.string().optional(),
     setupTasks: z
       .array(
         z
@@ -39,7 +38,7 @@ const launchSpecSchema = z
       .optional(),
     setupError: z.string().optional()
   })
-  .strict() satisfies z.ZodType<LaunchSpec>
+  .strict() satisfies z.ZodType<TerminalLaunchSpec>
 
 interface SignalSource {
   on(signal: NodeJS.Signals, listener: () => void): void
@@ -72,7 +71,6 @@ export interface LauncherDependencies {
   stdout?: Writable
   stderr?: Writable
   signalSource?: SignalSource
-  tmuxPane?: string | null
 }
 
 interface ChildResult {
@@ -203,18 +201,13 @@ function runChild(
 }
 
 export async function runLaunchSpec(
-  spec: LaunchSpec,
+  spec: TerminalLaunchSpec,
   dependencies: LauncherDependencies = {}
 ): Promise<number> {
   const spawnProcess = dependencies.spawnProcess ?? spawn
   const stdout = dependencies.stdout ?? process.stdout
   const stderr = dependencies.stderr ?? process.stderr
   const signalSource = dependencies.signalSource ?? process
-  const tmuxPane =
-    dependencies.tmuxPane === undefined
-      ? process.env.TMUX_PANE
-      : (dependencies.tmuxPane ?? undefined)
-
   if (spec.setupError) {
     stderr.write(
       `[Treeport setup] ${safeDiagnostic(spec.setupError) || 'setup preparation failed'}\n`
@@ -274,33 +267,13 @@ export async function runLaunchSpec(
     spec.argv,
     commandEnvironment,
     spec.shellIntegrationDir,
-    spec.tmuxExecutable
+    Boolean(spec.shellIntegrationDir)
   )
   const initialTitle = spec.initialTitle
     ? safeDiagnostic(spec.initialTitle)
     : ''
-  if (initialTitle && spec.tmuxExecutable && tmuxPane) {
-    const titleResult = await runChild(
-      [
-        spec.tmuxExecutable,
-        'set-option',
-        '-p',
-        '-t',
-        tmuxPane,
-        '--',
-        '@treeport-command',
-        initialTitle
-      ],
-      {
-        cwd: spec.cwd,
-        env: process.env,
-        spawnProcess,
-        signalSource
-      }
-    )
-    if (titleResult.forwardedSignal) {
-      return 1
-    }
+  if (initialTitle && spec.shellIntegrationDir) {
+    stdout.write(`\u001b]777;command;${initialTitle}\u001b\\`)
   }
 
   const result = await runChild(command.argv, {
@@ -323,44 +296,15 @@ export async function runLaunchSpec(
   }
 
   if (spec.fallbackArgv) {
-    if (spec.tmuxExecutable && tmuxPane && spec.fallbackArgv[0]) {
-      const metadataResult = await runChild(
-        [
-          spec.tmuxExecutable,
-          'set-option',
-          '-p',
-          '-u',
-          '-t',
-          tmuxPane,
-          '@treeport-command',
-          ';',
-          'set-option',
-          '-p',
-          '-t',
-          tmuxPane,
-          '--',
-          '@treeport-fallback-shell',
-          Buffer.from(JSON.stringify(spec.fallbackArgv[0]), 'utf8').toString(
-            'base64url'
-          )
-        ],
-        {
-          cwd: spec.cwd,
-          env: process.env,
-          spawnProcess,
-          signalSource
-        }
-      )
-      if (metadataResult.forwardedSignal) {
-        return 1
-      }
+    if (spec.shellIntegrationDir) {
+      stdout.write('\u001b]777;command;\u001b\\')
     }
 
     const fallback = integrateShellLaunch(
       spec.fallbackArgv,
       commandEnvironment,
       spec.shellIntegrationDir,
-      spec.tmuxExecutable
+      Boolean(spec.shellIntegrationDir)
     )
     const fallbackResult = await runChild(fallback.argv, {
       cwd: spec.cwd,
@@ -400,7 +344,7 @@ async function main(): Promise<void> {
     process.exit(127)
   }
 
-  let spec: LaunchSpec
+  let spec: TerminalLaunchSpec
   try {
     spec = launchSpecSchema.parse(
       JSON.parse(await fs.readFile(specPath, 'utf8'))

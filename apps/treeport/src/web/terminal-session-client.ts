@@ -12,7 +12,7 @@ import {
   terminalKeyboardInput,
   terminalOptions,
   trackTerminalScrolling,
-  trackTerminalSelectionAutoscroll
+  trackTerminalSelection
 } from './terminal-browser'
 import {
   parseTerminalServerEvent,
@@ -20,11 +20,6 @@ import {
   TERMINAL_MAX_INPUT_BYTES,
   TERMINAL_MAX_UPLOAD_BYTES,
   TERMINAL_PROTOCOL_VERSION,
-  TERMINAL_SCROLL_EXIT_SEQUENCE,
-  TERMINAL_SELECTION_CLEAR_SEQUENCE,
-  TERMINAL_SELECTION_RESTORE_SEQUENCE,
-  TERMINAL_SELECTION_START_SEQUENCE,
-  TERMINAL_SELECTION_STOP_SEQUENCE,
   type TerminalClientToServerEvents,
   type TerminalServerEvent,
   type TerminalProtocolInput,
@@ -52,7 +47,6 @@ const BROWSER_LOCAL_FILE_PATH_SCHEMA = z
     })
   )
 const LOOPBACK_BROWSER_HOSTNAMES = new Set(['127.0.0.1', 'localhost', '[::1]'])
-const TERMINAL_MAX_SELECTION_ENCODED_LENGTH = 8 * 1024 * 1024
 const TERMINAL_MIN_VIEWER_FONT_SIZE = 4
 const TERMINAL_MIN_COLS = 2
 const TERMINAL_MAX_COLS = 1_000
@@ -192,9 +186,7 @@ export class TerminalSession {
   private appliedRevision = 0
   private proposedDimensions: { cols: number; rows: number } | null = null
   private resizePending = false
-  private serverProtocolVersion: 1 | typeof TERMINAL_PROTOCOL_VERSION =
-    TERMINAL_PROTOCOL_VERSION
-  private terminalBackend: 'tmux' | 'direct-pty' = 'tmux'
+  private queryAuthorityActive = false
   private resizeIntentDirty = false
   private resizeQuietElapsed = false
   private resizeIntentGeneration = 0
@@ -205,13 +197,7 @@ export class TerminalSession {
   private expectedSequence = 1
   private lastParsedSequence = 0
   private readonly parsedSequences = new Set<number>()
-  private scrollExitPending = false
-  private resumeOnNextInput = false
-  private historyExitRequested = false
-  private selectionClearRequested = false
   private selectionDragCancel: (() => void) | null = null
-  private tmuxSelectionPending = false
-  private tmuxSelectionText: string | null = null
   private pendingPaste = ''
   private inputModifiers: {
     ctrl: boolean
@@ -404,12 +390,10 @@ export class TerminalSession {
     )
     this.controlRequestGeneration = this.controllerGeneration
     this.update({ controlPending: true })
-    this.send(
-      'take_control',
-      this.serverProtocolVersion === TERMINAL_PROTOCOL_VERSION
-        ? { generation: this.controllerGeneration, ...dimensions }
-        : { generation: this.controllerGeneration }
-    )
+    this.send('take_control', {
+      generation: this.controllerGeneration,
+      ...dimensions
+    })
   }
 
   retry(): void {
@@ -440,12 +424,11 @@ export class TerminalSession {
   sendText(data: string, options: { focus?: boolean } = {}): void {
     this.requestControl()
     this.clearSelection()
-    this.prepareScrollExit()
 
     if (this.canInput()) {
       this.send('input', {
         generation: this.controllerGeneration,
-        data: this.withScrollExit(data)
+        data
       })
     }
 
@@ -461,7 +444,6 @@ export class TerminalSession {
 
     this.requestControl()
     this.clearSelection()
-    this.prepareScrollExit()
     if (this.canInput()) {
       this.terminal?.paste(data)
     } else {
@@ -497,18 +479,13 @@ export class TerminalSession {
       return
     }
 
-    this.historyExitRequested = true
-    this.requestControl()
-    if (this.canInput()) {
-      this.sendHistoryExit()
-    }
-
+    this.terminal?.scrollToBottom()
+    this.setViewingHistory(false)
     this.focus()
   }
 
   copySelection(): void {
-    const selection =
-      this.tmuxSelectionText ?? this.terminal?.getSelection() ?? ''
+    const selection = this.terminal?.getSelection() ?? ''
     if (!selection) {
       return
     }
@@ -541,47 +518,20 @@ export class TerminalSession {
       return
     }
 
-    this.historyExitRequested = true
-    this.selectionClearRequested = true
-    this.requestControl()
-    if (this.terminalBackend === 'direct-pty') {
-      this.terminal?.scrollToBottom()
-      this.historyExitRequested = false
-      this.selectionClearRequested = false
-      this.setViewingHistory(false)
-    } else if (this.canInput()) {
-      this.send('input', {
-        generation: this.controllerGeneration,
-        data: `${TERMINAL_SCROLL_EXIT_SEQUENCE}${TERMINAL_SELECTION_CLEAR_SEQUENCE}`
-      })
-      this.historyExitRequested = false
-      this.selectionClearRequested = false
-      this.setViewingHistory(false)
-    }
-
-    this.tmuxSelectionPending = false
-    this.tmuxSelectionText = null
     this.terminal?.clearSelection()
+    this.terminal?.scrollToBottom()
+    this.setViewingHistory(false)
     this.update({ selecting: false, hasSelection: false })
     this.focus()
   }
 
   clearSelection(): void {
-    const hadTmuxSelection =
-      this.tmuxSelectionPending || this.tmuxSelectionText !== null
-    if (!hadTmuxSelection && !this.terminal?.hasSelection?.()) {
+    if (!this.terminal?.hasSelection?.()) {
       return
     }
 
-    if (hadTmuxSelection) {
-      this.selectionClearRequested = true
-      this.sendSelectionClear()
-    }
-
-    this.tmuxSelectionPending = false
-    this.tmuxSelectionText = null
+    this.terminal.clearSelection()
     this.update({ selecting: false })
-    this.terminal?.clearSelection()
     this.updateSelectionState()
   }
 
@@ -646,49 +596,10 @@ export class TerminalSession {
         this.scheduleTerminalCursorRestore()
       }
     })
-    this.selectionDragCancel = trackTerminalSelectionAutoscroll(
-      this.wrapper,
-      terminal,
-      {
-        canInput: () => this.terminalBackend === 'tmux' && this.canInput(),
-        sendInput: (data) => {
-          this.send('input', {
-            generation: this.controllerGeneration,
-            data
-          })
-        },
-        requestControl: () => this.requestControl(),
-        onSelectionStart: () => this.clearSelection(),
-        onTmuxSelectionStart: () => {
-          this.scrollExitPending = true
-          this.update({ selecting: true })
-          this.setTerminalScrolling(true)
-        },
-        onTmuxSelectionFinish: () => {
-          this.tmuxSelectionPending = true
-          this.update({ selecting: false, hasSelection: true })
-        },
-        onTmuxSelectionCancel: () => {
-          this.update({ selecting: false })
-          this.sendHistoryExit()
-        },
-        selectionStartSequence: TERMINAL_SELECTION_START_SEQUENCE,
-        selectionStopSequence: TERMINAL_SELECTION_STOP_SEQUENCE
-      }
-    )
-    this.wrapper.addEventListener(
-      'copy',
-      (event) => {
-        if (this.tmuxSelectionText === null || !event.clipboardData) {
-          return
-        }
-
-        event.preventDefault()
-        event.stopImmediatePropagation()
-        event.clipboardData.setData('text/plain', this.tmuxSelectionText)
-      },
-      true
-    )
+    this.selectionDragCancel = trackTerminalSelection(this.wrapper, terminal, {
+      requestControl: () => this.requestControl(),
+      onSelectionStart: () => this.update({ selecting: true })
+    })
     this.wrapper.addEventListener('click', () => this.requestControl(), true)
     this.wrapper.addEventListener(
       'keydown',
@@ -722,25 +633,10 @@ export class TerminalSession {
     const expandWheelInput = trackTerminalScrolling(
       this.wrapper,
       terminal,
-      (event) => {
-        if (event.deltaY < 0 && this.canInput()) {
-          if (
-            !this.snapshotValue.viewingHistory &&
-            this.tmuxSelectionText !== null
-          ) {
-            this.send('input', {
-              generation: this.controllerGeneration,
-              data: TERMINAL_SELECTION_RESTORE_SEQUENCE
-            })
-          }
-
-          this.scrollExitPending = true
-        }
-      },
+      () => undefined,
       () => {
         this.requestControl()
         this.clearSelection()
-        this.prepareScrollExit()
       },
       () => {
         this.requestControl()
@@ -821,39 +717,6 @@ export class TerminalSession {
     this.terminal = terminal
     this.fitAddon = fitAddon
     this.opened = true
-    terminal.parser.registerOscHandler(52, (payload) => {
-      if (!this.tmuxSelectionPending) {
-        return false
-      }
-
-      this.tmuxSelectionPending = false
-      const separator = payload.indexOf(';')
-      const encoded = separator === -1 ? '' : payload.slice(separator + 1)
-      const unpadded = encoded.replace(/=+$/, '')
-      if (
-        !encoded ||
-        encoded === '?' ||
-        encoded.length > TERMINAL_MAX_SELECTION_ENCODED_LENGTH ||
-        payload.indexOf(';', separator + 1) !== -1 ||
-        !/^[A-Za-z0-9+/]*={0,2}$/.test(encoded) ||
-        unpadded.length % 4 === 1
-      ) {
-        this.updateSelectionState()
-        return true
-      }
-
-      const normalized = unpadded.padEnd(
-        Math.ceil(unpadded.length / 4) * 4,
-        '='
-      )
-      const binary = atob(normalized)
-      this.tmuxSelectionText = new TextDecoder().decode(
-        Uint8Array.from(binary, (character) => character.charCodeAt(0))
-      )
-      this.update({ selecting: false })
-      this.updateSelectionState()
-      return true
-    })
     terminal.attachCustomKeyEventHandler((event) => {
       const input = terminalKeyboardInput(
         event,
@@ -865,11 +728,9 @@ export class TerminalSession {
 
       event.preventDefault()
       event.stopPropagation()
-      this.prepareScrollExit()
       terminal.input(input, true)
       return false
     })
-    terminal.onKey(() => this.prepareScrollExit())
     terminal.onData((data) => {
       if (this.canInput()) {
         data = expandWheelInput(data)
@@ -890,7 +751,7 @@ export class TerminalSession {
 
         this.send('input', {
           generation: this.controllerGeneration,
-          data: this.withScrollExit(data)
+          data
         })
       }
     })
@@ -898,20 +759,18 @@ export class TerminalSession {
       if (this.canInput()) {
         this.send('binary', {
           generation: this.controllerGeneration,
-          data: this.withScrollExit(data)
+          data
         })
       }
     })
     terminal.onTitleChange((title) =>
       this.update({ title: title.trim().slice(0, 256) })
     )
-    terminal.onScroll(() => {
-      if (this.terminalBackend === 'direct-pty') {
-        this.setViewingHistory(
-          terminal.buffer.active.viewportY < terminal.buffer.active.baseY
-        )
-      }
-    })
+    terminal.onScroll(() =>
+      this.setViewingHistory(
+        terminal.buffer.active.viewportY < terminal.buffer.active.baseY
+      )
+    )
     terminal.onBell(() => this.handleBell())
   }
 
@@ -1072,7 +931,6 @@ export class TerminalSession {
     }
 
     this.clearSelection()
-    this.prepareScrollExit()
     this.terminal?.paste(input)
     this.focus()
     this.update({ fileTransfer: null })
@@ -1095,63 +953,6 @@ export class TerminalSession {
     }, 6_000)
   }
 
-  private prepareScrollExit(): void {
-    if (this.terminalBackend === 'direct-pty') {
-      this.terminal?.scrollToBottom()
-      this.setViewingHistory(false)
-      return
-    }
-
-    if (this.scrollExitPending || this.snapshotValue.viewingHistory) {
-      this.resumeOnNextInput = true
-    }
-  }
-
-  private withScrollExit(data: string): string {
-    if (this.terminalBackend === 'direct-pty' || !this.resumeOnNextInput) {
-      return data
-    }
-
-    this.setViewingHistory(false)
-    return `${TERMINAL_SCROLL_EXIT_SEQUENCE}${data}`
-  }
-
-  private sendHistoryExit(): void {
-    if (this.terminalBackend === 'direct-pty') {
-      this.terminal?.scrollToBottom()
-      this.setViewingHistory(false)
-      return
-    }
-
-    if (!this.canInput()) {
-      return
-    }
-
-    this.send('input', {
-      generation: this.controllerGeneration,
-      data: TERMINAL_SCROLL_EXIT_SEQUENCE
-    })
-    this.historyExitRequested = false
-    this.setViewingHistory(false)
-  }
-
-  private sendSelectionClear(): void {
-    if (this.terminalBackend === 'direct-pty') {
-      this.selectionClearRequested = false
-      return
-    }
-
-    if (!this.canInput()) {
-      return
-    }
-
-    this.send('input', {
-      generation: this.controllerGeneration,
-      data: TERMINAL_SELECTION_CLEAR_SEQUENCE
-    })
-    this.selectionClearRequested = false
-  }
-
   private hideTerminalCursor(): void {
     this.terminal?.element
       ?.querySelector('.xterm-cursor')
@@ -1159,9 +960,7 @@ export class TerminalSession {
   }
 
   private scheduleTerminalCursorRestore(): void {
-    // tmux emits intermediate copy-cursor frames while it returns to the live
-    // pane. Wait for terminal writes to settle, but do not hide a cursor
-    // indefinitely when an application produces continuous output.
+    // Wait for terminal writes to settle before restoring the live cursor.
     if (this.cursorRestoreTimer !== null) {
       window.clearTimeout(this.cursorRestoreTimer)
     }
@@ -1176,11 +975,7 @@ export class TerminalSession {
       () => {
         this.cursorRestoreTimer = null
         this.cursorRestoreStartedAt = null
-        if (
-          !this.wrapper ||
-          this.scrollExitPending ||
-          this.snapshotValue.viewingHistory
-        ) {
+        if (!this.wrapper || this.snapshotValue.viewingHistory) {
           return
         }
 
@@ -1215,14 +1010,6 @@ export class TerminalSession {
   }
 
   private setViewingHistory(viewing: boolean): void {
-    if (viewing) {
-      this.scrollExitPending = true
-    } else {
-      this.scrollExitPending = false
-      this.resumeOnNextInput = false
-      this.historyExitRequested = false
-    }
-
     this.setTerminalScrolling(viewing)
 
     if (viewing !== this.snapshotValue.viewingHistory) {
@@ -1312,8 +1099,10 @@ export class TerminalSession {
     socket.on('output', (value) => this.handleServerEvent('output', value))
     socket.on('title', (value) => this.handleServerEvent('title', value))
     socket.on('progress', (value) => this.handleServerEvent('progress', value))
-    socket.on('history', (value) => this.handleServerEvent('history', value))
     socket.on('control', (value) => this.handleServerEvent('control', value))
+    socket.on('query_authority', (value) =>
+      this.handleServerEvent('query_authority', value)
+    )
     socket.on('exit', (value) => this.handleServerEvent('exit', value))
     socket.on('terminal_error', (value) =>
       this.handleServerEvent('terminal_error', value)
@@ -1340,11 +1129,14 @@ export class TerminalSession {
       this.ready = false
       this.streamId = null
       this.selectionDragCancel?.()
-      this.tmuxSelectionPending = false
-      this.tmuxSelectionText = null
       this.setViewingHistory(false)
       this.controllerGeneration = 0
       this.controlRequestGeneration = null
+      this.queryAuthorityActive = false
+      if (this.terminal) {
+        this.terminal.options.disableStdin = true
+      }
+
       this.cancelControllerResizeIntent()
       if (!this.reconnectAllowed) {
         this.clearDegraded()
@@ -1392,37 +1184,28 @@ export class TerminalSession {
 
       this.cancelControllerResizeIntent()
       this.controlRequestGeneration = null
-      const currentProtocol = 'revision' in message
-      this.serverProtocolVersion = currentProtocol
-        ? TERMINAL_PROTOCOL_VERSION
-        : 1
-      this.terminalBackend = currentProtocol ? message.backend : 'tmux'
-      const dimensions = currentProtocol
-        ? { cols: message.cols, rows: message.rows }
-        : normalizeTerminalDimensions(
-            this.proposedDimensions ?? {
-              cols: this.terminal?.cols ?? 100,
-              rows: this.terminal?.rows ?? 30
-            }
-          )
-      const revision = currentProtocol ? message.revision : 1
+      const dimensions = { cols: message.cols, rows: message.rows }
+      const revision = message.revision
       this.streamId = message.streamId
       this.controllerGeneration = message.generation
       this.canonicalCols = dimensions.cols
       this.canonicalRows = dimensions.rows
       this.canonicalRevision = revision
-      this.appliedRevision = currentProtocol ? 0 : revision
+      this.appliedRevision = 0
       this.expectedSequence = 1
       this.lastParsedSequence = 0
       this.parsedSequences.clear()
       this.selectionDragCancel?.()
-      this.tmuxSelectionPending = false
-      this.tmuxSelectionText = null
       this.setViewingHistory(false)
       this.ready = true
       this.renderEpoch += 1
       const epoch = this.renderEpoch
-      if (currentProtocol && message.backend === 'direct-pty' && this.wrapper) {
+      this.queryAuthorityActive = false
+      if (this.terminal) {
+        this.terminal.options.disableStdin = true
+      }
+
+      if (this.wrapper) {
         this.wrapper.style.visibility = 'hidden'
       }
 
@@ -1433,29 +1216,31 @@ export class TerminalSession {
         }
 
         this.terminal?.reset()
-        if (currentProtocol) {
-          if (message.backend === 'direct-pty' && this.terminal) {
-            this.terminal.options.scrollback = 50_000
-          }
-
-          this.applyCanonicalDimensions(
-            dimensions.cols,
-            dimensions.rows,
-            revision,
-            true
-          )
-        } else {
-          this.fit(true)
-        }
-
-        if (currentProtocol && message.snapshot && this.terminal) {
+        this.applyCanonicalDimensions(
+          dimensions.cols,
+          dimensions.rows,
+          revision,
+          true
+        )
+        if (this.terminal) {
           await new Promise<void>((resolve) =>
-            this.terminal!.write(message.snapshot!, resolve)
+            this.terminal!.write(message.snapshot, resolve)
           )
         }
 
         if (this.wrapper && epoch === this.renderEpoch) {
           this.wrapper.style.visibility = ''
+        }
+
+        if (
+          message.controller &&
+          this.snapshotValue.controller &&
+          this.controllerGeneration === message.generation
+        ) {
+          this.send('query_authority', {
+            generation: message.generation,
+            transitionId: null
+          })
         }
       })
       this.clearDegraded()
@@ -1472,11 +1257,6 @@ export class TerminalSession {
     }
 
     if (event === 'dimensions') {
-      if (this.serverProtocolVersion !== TERMINAL_PROTOCOL_VERSION) {
-        this.failProtocol('The legacy terminal server sent dimensions')
-        return
-      }
-
       const message = parseTerminalServerEvent('dimensions', value)
       if (!message) {
         this.failProtocol('The terminal server sent invalid dimensions')
@@ -1539,17 +1319,6 @@ export class TerminalSession {
       return
     }
 
-    if (event === 'history') {
-      const message = parseTerminalServerEvent('history', value)
-      if (!message) {
-        this.failProtocol('The terminal server sent invalid history state')
-        return
-      }
-
-      this.setViewingHistory(message.viewing)
-      return
-    }
-
     if (event === 'control') {
       const message = parseTerminalServerEvent('control', value)
       if (!message) {
@@ -1573,15 +1342,31 @@ export class TerminalSession {
 
       if (controllerChanged && !message.controller) {
         this.selectionDragCancel?.()
-        this.tmuxSelectionPending = false
       }
 
-      if (message.controller && this.selectionClearRequested) {
-        this.sendSelectionClear()
-      }
+      if (controllerChanged) {
+        this.queryAuthorityActive = false
+        if (this.terminal) {
+          this.terminal.options.disableStdin = true
+        }
 
-      if (message.controller && this.historyExitRequested) {
-        this.sendHistoryExit()
+        if (message.controller) {
+          const epoch = this.renderEpoch
+          this.enqueueRender(epoch, async () => {
+            await this.drainTerminalWrites()
+            if (
+              !this.disposed &&
+              epoch === this.renderEpoch &&
+              this.snapshotValue.controller &&
+              this.controllerGeneration === message.generation
+            ) {
+              this.send('query_authority', {
+                generation: message.generation,
+                transitionId: null
+              })
+            }
+          })
+        }
       }
 
       if (message.controller && this.pendingPaste) {
@@ -1592,6 +1377,49 @@ export class TerminalSession {
 
       if (controllerChanged) {
         this.scheduleFit()
+      }
+
+      return
+    }
+
+    if (event === 'query_authority') {
+      const message = parseTerminalServerEvent('query_authority', value)
+      if (!message) {
+        this.failProtocol(
+          'The terminal server sent invalid query authority state'
+        )
+        return
+      }
+
+      if (
+        !this.snapshotValue.controller ||
+        message.generation !== this.controllerGeneration
+      ) {
+        return
+      }
+
+      this.queryAuthorityActive = message.active
+      if (this.terminal) {
+        this.terminal.options.disableStdin = !message.active
+      }
+
+      if (message.transitionId) {
+        const transitionId = message.transitionId
+        const epoch = this.renderEpoch
+        this.enqueueRender(epoch, async () => {
+          await this.drainTerminalWrites()
+          if (
+            !this.disposed &&
+            epoch === this.renderEpoch &&
+            this.snapshotValue.controller &&
+            this.controllerGeneration === message.generation
+          ) {
+            this.send('query_authority', {
+              generation: message.generation,
+              transitionId
+            })
+          }
+        })
       }
 
       return
@@ -1718,6 +1546,7 @@ export class TerminalSession {
     return (
       this.ready &&
       this.snapshotValue.controller &&
+      this.queryAuthorityActive &&
       !this.resizePending &&
       this.appliedRevision === this.canonicalRevision
     )
@@ -1734,7 +1563,8 @@ export class TerminalSession {
     if (
       event === 'output_ack' ||
       event === 'resize' ||
-      event === 'take_control'
+      event === 'take_control' ||
+      event === 'query_authority'
     ) {
       // SAFETY: The generic event selects its matching protocol payload.
       const emit = this.socket.emit.bind(this.socket) as (
@@ -1807,13 +1637,7 @@ export class TerminalSession {
 
     this.resizeIntentDirty = false
     this.resizeQuietElapsed = false
-    if (this.serverProtocolVersion === TERMINAL_PROTOCOL_VERSION) {
-      this.resizePending = true
-    } else {
-      this.canonicalCols = proposed.cols
-      this.canonicalRows = proposed.rows
-      this.appliedRevision = this.canonicalRevision
-    }
+    this.resizePending = true
 
     this.send('resize', {
       generation: this.controllerGeneration,
@@ -1855,29 +1679,6 @@ export class TerminalSession {
             cols: this.terminal.cols,
             rows: this.terminal.rows
           })
-        }
-
-        return
-      }
-
-      if (this.serverProtocolVersion === 1) {
-        this.terminal.options.fontSize = TERMINAL_FONT_SIZE
-        this.fitAddon.fit()
-        if (
-          this.terminal.cols < TERMINAL_MIN_COLS ||
-          this.terminal.rows < TERMINAL_MIN_ROWS
-        ) {
-          this.cancelControllerResizeIntent(false)
-          return
-        }
-
-        const proposed = normalizeTerminalDimensions({
-          cols: this.terminal.cols,
-          rows: this.terminal.rows
-        })
-        this.proposedDimensions = proposed
-        if (this.snapshotValue.controller && queueControllerResize) {
-          this.queueControllerResizeIntent()
         }
 
         return
@@ -2033,10 +1834,8 @@ export class TerminalSession {
 
   private updateSelectionState(): void {
     this.update({
-      hasSelection:
-        this.tmuxSelectionPending ||
-        this.tmuxSelectionText !== null ||
-        Boolean(this.terminal?.hasSelection())
+      selecting: false,
+      hasSelection: Boolean(this.terminal?.hasSelection())
     })
   }
 

@@ -85,6 +85,13 @@
       "when": 1787939530241,
       "tag": "0011_free_magdalene",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1788000000000,
+      "tag": "0012_terminal_host_cutover",
+      "breakpoints": true
     }
   ]
 }

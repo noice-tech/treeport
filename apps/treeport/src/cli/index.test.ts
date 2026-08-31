@@ -48,7 +48,6 @@ const terminal: TerminalRecord = {
   id: 'term_context',
   worktreeId: 'wt_context',
   name: 'Pi',
-  tmuxSessionName: 'treeport-term-context',
   argv: ['pi'],
   shellCommand: null,
   interactiveShell: false,
@@ -70,7 +69,6 @@ const worktree: WorktreeRecord = {
   lockReason: null,
   prunable: false,
   kind: 'linked',
-  tmuxSocketName: 'treeport-wt-context',
   managedWrapperPath: null,
   pr: {
     state: 'no_pr',
@@ -852,7 +850,7 @@ describe('CLI context and machine output', () => {
           result: {
             worktreeId: worktree.id,
             terminalId: partial ? null : terminal.id,
-            terminalError: partial ? 'tmux failed' : null,
+            terminalError: partial ? 'terminal host failed' : null,
             setupError: partial ? 'setup could not be prepared' : null
           },
           error: null,
@@ -1300,7 +1298,7 @@ describe('CLI context and machine output', () => {
     expect(JSON.parse(result.stdout)).toMatchObject({
       worktree: { id: worktree.id, name: 'partial' },
       terminal: null,
-      terminalError: 'tmux failed',
+      terminalError: 'terminal host failed',
       setupError: 'setup could not be prepared'
     })
     expect(creationBodies.at(-1)).toMatchObject({
@@ -1915,7 +1913,6 @@ describe('CLI daemon lifecycle', () => {
     )
     const dataDirectory = path.join(temporaryDirectory, 'data')
     const runtimeDirectory = path.join(temporaryDirectory, 'runtime')
-    const tmuxPath = path.join(temporaryDirectory, 'tmux')
     const tailscalePath = path.join(temporaryDirectory, 'tailscale')
     const openerCallsPath = path.join(temporaryDirectory, 'opener-calls')
     const openPath = path.join(temporaryDirectory, 'open')
@@ -1924,12 +1921,8 @@ describe('CLI daemon lifecycle', () => {
     const tailscaleCallsPath = path.join(temporaryDirectory, 'tailscale-calls')
     const nodeOnlyPath = path.join(temporaryDirectory, 'node-only-bin')
     let identityProxy: Server | null = null
-    const tmuxExecutable = (await execute('which', ['tmux'])).stdout.trim()
+    const gitExecutable = (await execute('which', ['git'])).stdout.trim()
     await Promise.all([
-      writeFile(
-        tmuxPath,
-        `#!/bin/sh\nexec ${JSON.stringify(tmuxExecutable)} "$@"\n`
-      ),
       writeFile(
         openPath,
         '#!/bin/sh\nprintf \'%s\\n\' "$*" >> "$TREEPORT_OPEN_CALLS"\nexit 0\n'
@@ -1974,10 +1967,10 @@ exit 1
       )
     ])
     await Promise.all([
-      chmod(tmuxPath, 0o755),
       chmod(tailscalePath, 0o755),
       chmod(openPath, 0o755),
       chmod(xdgOpenPath, 0o755),
+      symlink(process.execPath, path.join(temporaryDirectory, 'node')),
       symlink(process.execPath, path.join(nodeOnlyPath, 'node'))
     ])
 
@@ -2026,12 +2019,13 @@ exit 1
       TREEPORT_PORT: String(port),
       TREEPORT_DATA_DIR: dataDirectory,
       TREEPORT_RUNTIME_DIR: runtimeDirectory,
-      TREEPORT_TMUX_PATH: tmuxPath,
-      TREEPORT_GIT_PATH: 'git',
+      TREEPORT_GIT_PATH: gitExecutable,
       TREEPORT_TAILSCALE_STATE: tailscaleStatePath,
       TREEPORT_OPEN_CALLS: openerCallsPath,
       TREEPORT_TAILSCALE_CALLS: tailscaleCallsPath,
-      PATH: `${temporaryDirectory}:${process.env.PATH ?? ''}`
+      // Deliberately excludes package-manager bins: the daemon must operate
+      // with only Treeport's own terminal host and standard OS tools.
+      PATH: `${temporaryDirectory}:/usr/bin:/bin`
     }
 
     try {
@@ -2406,17 +2400,13 @@ exit 1
         environment
       )
 
-      await writeFile(
-        tmuxPath,
-        '#!/bin/sh\n[ "$1" = "-V" ] && echo "tmux 3.1"\nexit 0\n',
-        { mode: 0o755 }
-      )
       const doctor = await runPackagedCli(['doctor'], environment)
-      expect(doctor.code).toBe(1)
-      expect(doctor.stdout).toContain('Treeport requires tmux 3.2 or newer')
-      const refused = await runPackagedCli(['start'], environment)
-      expect(refused.code).toBe(1)
-      expect(refused.stderr).toContain('Treeport requires tmux 3.2 or newer')
+      expect(doctor.code).toBe(0)
+      const restartedWithoutExternalTerminalMultiplexer = await runPackagedCli(
+        ['start'],
+        environment
+      )
+      expect(restartedWithoutExternalTerminalMultiplexer.code).toBe(0)
     } finally {
       if (identityProxy) {
         await new Promise<void>((resolve) =>

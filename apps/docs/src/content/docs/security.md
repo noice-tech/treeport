@@ -170,7 +170,7 @@ Treeport requests confirmation only when the site uses `beforeunload`.
 - Register only folders and repositories that you permit Treeport to control.
 - Treat terminal output and history as sensitive information.
 - Do not put secrets in terminal names, command arguments, or URLs.
-- Keep Git, tmux, Node.js, Treeport, and Tailscale updated.
+- Keep Git, Node.js, Treeport, and Tailscale updated.
 - Stop the daemon when you do not need remote access.
 - Disable service mode when Treeport must not start after a reboot.
 

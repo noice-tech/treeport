@@ -52,7 +52,7 @@ New registration creates the marker, verifies the main worktree, and saves the U
 
 Registration can connect a moved, marked repository to its existing project.
 
-This keeps project, worktree, terminal, tmux, and presentation identities.
+This keeps project, worktree, terminal, and presentation identities.
 
 Old rows register markers under the project observation lock.
 

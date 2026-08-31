@@ -1,12 +1,18 @@
 import fs from 'node:fs/promises'
+import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   connectOrStartTerminalHost,
   type TerminalHostClient
 } from './terminal-host-client'
+import {
+  encodeTerminalHostFrame,
+  TERMINAL_HOST_PROTOCOL_VERSION,
+  TerminalHostFrameDecoder
+} from './terminal-host-protocol'
 
 async function waitFor(
   predicate: () => boolean | Promise<boolean>,
@@ -114,9 +120,7 @@ child.once('exit', (code) => process.exit(code ?? 1))
     const firstDaemon = await connectOrStartTerminalHost(options)
     clients.add(firstDaemon)
     hostPids.add(firstDaemon.record.pid)
-    await firstDaemon.createSession({
-      socketName: 'worktree-host',
-      sessionName: 'terminal-host',
+    await firstDaemon.createTerminal({
       terminalId: 'terminal-host',
       worktreeId: 'worktree-host',
       name: 'Persistent terminal',
@@ -135,9 +139,9 @@ child.once('exit', (code) => process.exit(code ?? 1))
     })
     await waitFor(
       async () =>
-        (
-          await firstDaemon.capturePane('worktree-host', 'terminal-host', 20)
-        )?.includes('HOST_BOOT') ?? false,
+        (await firstDaemon.captureTerminal('terminal-host', 20))?.includes(
+          'HOST_BOOT'
+        ) ?? false,
       'The first daemon did not observe terminal output'
     )
     const hostPid = firstDaemon.record.pid
@@ -148,35 +152,43 @@ child.once('exit', (code) => process.exit(code ?? 1))
     const restartedDaemon = await connectOrStartTerminalHost(options)
     clients.add(restartedDaemon)
     expect(restartedDaemon.record.pid).toBe(hostPid)
-    expect(await restartedDaemon.listSessions('worktree-host')).toEqual([
+    expect(await restartedDaemon.listTerminals('worktree-host')).toEqual([
       expect.objectContaining({
         id: 'terminal-host',
         status: 'running'
       })
     ])
     expect(
-      await restartedDaemon.capturePane('worktree-host', 'terminal-host', 20)
+      await restartedDaemon.captureTerminal('terminal-host', 20)
     ).toContain('HOST_BOOT')
 
     let liveOutput = ''
-    const unsubscribe = await restartedDaemon.subscribeOutput(
+    const attachment = await restartedDaemon.attach(
       'terminal-host',
       (output) => {
         liveOutput += output
       }
     )
-    restartedDaemon.write('terminal-host', 'AFTER_RESTART\n')
+    expect(attachment?.data).toContain('HOST_BOOT')
+    const transition =
+      await restartedDaemon.prepareQueryAuthority('terminal-host')
+    await restartedDaemon.activateQueryAuthority(
+      'terminal-host',
+      transition.transitionId,
+      'test-viewer',
+      1
+    )
+    restartedDaemon.write('terminal-host', 'AFTER_RESTART\n', {
+      attachmentId: 'test-viewer',
+      generation: 1
+    })
     await waitFor(
       () => liveOutput.includes('ECHO:AFTER_RESTART'),
       'The adopted PTY did not accept input'
     )
-    unsubscribe()
+    attachment?.unsubscribe()
 
-    await restartedDaemon.killSession(
-      'worktree-host',
-      'terminal-host',
-      'terminal-host'
-    )
+    await restartedDaemon.killTerminal('terminal-host')
     await restartedDaemon.shutdownIfEmpty()
     restartedDaemon.dispose()
     clients.delete(restartedDaemon)
@@ -186,6 +198,173 @@ child.once('exit', (code) => process.exit(code ?? 1))
     )
     hostPids.delete(hostPid)
   }, 20_000)
+
+  it('refuses an incompatible live host without replacing or signaling it', async () => {
+    const root = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'treeport-terminal-host-incompatible-')
+    )
+    roots.push(root)
+    const dataDir = path.join(root, 'data')
+    const runtimeDir = path.join(root, 'runtime')
+    const socketPath = path.join(root, 'host.sock')
+    await Promise.all([
+      fs.mkdir(dataDir, { recursive: true }),
+      fs.mkdir(runtimeDir, { recursive: true })
+    ])
+    const hostKey = (await import('node:crypto'))
+      .createHash('sha256')
+      .update(path.resolve(dataDir))
+      .digest('hex')
+      .slice(0, 20)
+    const server = net.createServer((socket) => {
+      const decoder = new TerminalHostFrameDecoder()
+      socket.on('data', (chunk) => {
+        for (const frame of decoder.push(chunk)) {
+          if (frame.type !== 'request') {
+            socket.destroy()
+            return
+          }
+
+          socket.write(
+            encodeTerminalHostFrame({
+              protocolVersion: TERMINAL_HOST_PROTOCOL_VERSION - 1,
+              type: 'response',
+              id: frame.id,
+              result: null,
+              error: {
+                code: 'INCOMPATIBLE_PROTOCOL',
+                message: 'The live host uses an older protocol',
+                hostProtocolVersion: TERMINAL_HOST_PROTOCOL_VERSION - 1,
+                liveSessionCount: 1
+              }
+            })
+          )
+        }
+      })
+    })
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', reject)
+      server.listen(socketPath, resolve)
+    })
+    await fs.writeFile(
+      path.join(runtimeDir, `terminal-host-${hostKey}.json`),
+      JSON.stringify({
+        protocolVersion: TERMINAL_HOST_PROTOCOL_VERSION - 1,
+        hostId: 'incompatible-live-host',
+        hostKey,
+        pid: process.pid,
+        socketPath,
+        startedAt: new Date().toISOString()
+      })
+    )
+    const spawnHost = vi.fn()
+
+    try {
+      // SAFETY: This test spy replaces spawn, which this path must not invoke.
+      await expect(
+        connectOrStartTerminalHost({
+          dataDir,
+          runtimeDir,
+          launcherPath: path.join(root, 'launcher.mjs'),
+          hostEntryPath: path.join(
+            repositoryRoot,
+            'apps/treeport/src/server/terminal-host-entry.ts'
+          ),
+          spawnHost: spawnHost as never
+        })
+      ).rejects.toMatchObject({
+        code: 'INCOMPATIBLE_PROTOCOL',
+        hostProtocolVersion: TERMINAL_HOST_PROTOCOL_VERSION - 1,
+        liveSessionCount: 1
+      })
+      expect(spawnHost).not.toHaveBeenCalled()
+      expect(processExists(process.pid)).toBe(true)
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()))
+    }
+  })
+
+  it('does not unlink an unidentified socket that answers with another protocol', async () => {
+    const root = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'treeport-terminal-host-unidentified-')
+    )
+    roots.push(root)
+    const dataDir = path.join(root, 'data')
+    const runtimeDir = path.join(root, 'runtime')
+    await Promise.all([
+      fs.mkdir(dataDir, { recursive: true }),
+      fs.mkdir(runtimeDir, { recursive: true })
+    ])
+    const hostKey = (await import('node:crypto'))
+      .createHash('sha256')
+      .update(path.resolve(dataDir))
+      .digest('hex')
+      .slice(0, 20)
+    const socketPath = path.join(
+      os.tmpdir(),
+      `treeport-${process.getuid?.() ?? 'user'}`,
+      `terminal-${hostKey}.sock`
+    )
+    await fs.mkdir(path.dirname(socketPath), { recursive: true })
+    const server = net.createServer((socket) => {
+      const decoder = new TerminalHostFrameDecoder()
+      socket.on('data', (chunk) => {
+        for (const frame of decoder.push(chunk)) {
+          if (frame.type !== 'request') {
+            socket.destroy()
+            return
+          }
+
+          socket.write(
+            encodeTerminalHostFrame({
+              protocolVersion: TERMINAL_HOST_PROTOCOL_VERSION - 1,
+              type: 'response',
+              id: frame.id,
+              result: {
+                protocolVersion: TERMINAL_HOST_PROTOCOL_VERSION - 1,
+                hostId: 'unidentified-host',
+                hostKey,
+                pid: process.pid,
+                socketPath,
+                startedAt: new Date().toISOString(),
+                liveSessionCount: 1
+              },
+              error: null
+            })
+          )
+        }
+      })
+    })
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', reject)
+      server.listen(socketPath, resolve)
+    })
+    const spawnHost = vi.fn()
+
+    try {
+      // SAFETY: This test spy replaces spawn, which this path must not invoke.
+      await expect(
+        connectOrStartTerminalHost({
+          dataDir,
+          runtimeDir,
+          launcherPath: path.join(root, 'launcher.mjs'),
+          hostEntryPath: path.join(
+            repositoryRoot,
+            'apps/treeport/src/server/terminal-host-entry.ts'
+          ),
+          spawnHost: spawnHost as never
+        })
+      ).rejects.toMatchObject({
+        code: 'INCOMPATIBLE_PROTOCOL',
+        hostProtocolVersion: TERMINAL_HOST_PROTOCOL_VERSION - 1
+      })
+      expect(spawnHost).not.toHaveBeenCalled()
+      await expect(fs.stat(socketPath)).resolves.toBeDefined()
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()))
+      await fs.rm(socketPath, { force: true })
+    }
+  })
 
   it('does not replace a recorded live process when its socket is unavailable', async () => {
     const root = await fs.mkdtemp(

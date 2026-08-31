@@ -27,6 +27,22 @@ import {
 const databases: TreeportDatabase[] = []
 const directories: string[] = []
 
+async function restoreVersion7WorktreeSchema(
+  database: TreeportDatabase
+): Promise<void> {
+  await database.db.run(sql`
+    ALTER TABLE worktrees
+    ADD COLUMN tmux_socket_name TEXT NOT NULL DEFAULT ''
+  `)
+  await database.db.run(sql`
+    UPDATE worktrees SET tmux_socket_name='legacy-' || id
+  `)
+  await database.db.run(sql`
+    CREATE UNIQUE INDEX worktrees_tmux_socket_name_unique
+    ON worktrees(tmux_socket_name)
+  `)
+}
+
 async function removeFolderProjectSchema(
   database: TreeportDatabase
 ): Promise<void> {
@@ -87,7 +103,7 @@ describe('SQLite migration and catalog ordering', () => {
       await database.db.get<{ count: number }>(
         sql`SELECT count(*) AS count FROM __drizzle_migrations`
       )
-    ).toEqual({ count: 12 })
+    ).toEqual({ count: 13 })
     expect(
       await database.db.get<{ count: number }>(sql`
         SELECT count(*) AS count FROM sqlite_master WHERE name='terminals'
@@ -163,7 +179,6 @@ describe('SQLite migration and catalog ordering', () => {
       projectId: 'p_bells',
       path: '/bells',
       kind: 'main',
-      tmuxSocketName: 'bells-socket',
       createdAt: '2026-01-01',
       updatedAt: '2026-01-01'
     })
@@ -223,7 +238,6 @@ describe('SQLite migration and catalog ordering', () => {
         projectId: 'p_order',
         path: worktreePath!,
         kind: kind!,
-        tmuxSocketName: `socket-${id}`,
         createdAt: createdAt!,
         updatedAt: createdAt!
       }))
@@ -271,7 +285,6 @@ describe('SQLite migration and catalog ordering', () => {
       projectId: 'p',
       path: '/panels',
       kind: 'main',
-      tmuxSocketName: 'panel-socket',
       createdAt: '2026-01-01',
       updatedAt: '2026-01-01'
     })
@@ -386,7 +399,6 @@ describe('SQLite migration and catalog ordering', () => {
       projectId: 'p_existing',
       path: '/existing-linked',
       kind: 'linked',
-      tmuxSocketName: 'treeport-existing',
       createdAt: '2026-01-01',
       updatedAt: '2026-01-01'
     })
@@ -401,6 +413,7 @@ describe('SQLite migration and catalog ordering', () => {
       updatedAt: '2026-01-01'
     })
     await removeFolderProjectSchema(initial)
+    await restoreVersion7WorktreeSchema(initial)
     await initial.db.transaction(async (tx) => {
       await tx.run(sql`DROP INDEX terminal_presets_order_idx`)
       await tx.run(sql`DROP TABLE terminal_presets`)
@@ -469,7 +482,7 @@ describe('SQLite migration and catalog ordering', () => {
       await reopened.db.get<{ count: number }>(
         sql`SELECT count(*) AS count FROM __drizzle_migrations`
       )
-    ).toEqual({ count: 12 })
+    ).toEqual({ count: 13 })
 
     const backupDirectory = path.join(directory, 'database-backups')
     const [backupName] = await fs.readdir(backupDirectory)
@@ -612,6 +625,7 @@ describe('SQLite migration and catalog ordering', () => {
       updatedAt: '2026-01-01'
     })
     await removeFolderProjectSchema(initial)
+    await restoreVersion7WorktreeSchema(initial)
     await initial.db.transaction(async (tx) => {
       await tx.run(
         sql`ALTER TABLE terminal_presets RENAME TO terminal_presets_latest`
@@ -675,6 +689,113 @@ describe('SQLite migration and catalog ordering', () => {
         updatedAt: '2026-01-01'
       }
     ])
+  })
+
+  it('removes the legacy terminal-runtime column without losing durable catalog data', async () => {
+    const directory = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'treeport-terminal-host-migration-')
+    )
+    directories.push(directory)
+    const oldMigrations = path.join(directory, 'old-migrations')
+    const packagedMigrations = fileURLToPath(
+      new URL('../../../drizzle', import.meta.url)
+    )
+    await fs.cp(packagedMigrations, oldMigrations, { recursive: true })
+    await Promise.all([
+      fs.rm(path.join(oldMigrations, '0012_terminal_host_cutover.sql')),
+      fs.rm(path.join(oldMigrations, 'meta', '0012_snapshot.json'))
+    ])
+    const journalPath = path.join(oldMigrations, 'meta', '_journal.json')
+    // SAFETY: The copied migration journal has the asserted test shape.
+    const journal = JSON.parse(await fs.readFile(journalPath, 'utf8')) as {
+      entries: unknown[]
+    }
+    journal.entries.splice(12)
+    await fs.writeFile(journalPath, JSON.stringify(journal, null, 2))
+
+    const filePath = path.join(directory, 'treeport.db')
+    const oldDatabase = await openDatabase(filePath, {
+      migrationsFolder: oldMigrations
+    })
+    await oldDatabase.db.run(sql`
+      INSERT INTO projects(
+        id,name,repository_path,main_worktree_path,default_branch,
+        repository_device,repository_inode,last_opened_at,created_at,updated_at
+      ) VALUES(
+        'project_cutover','Cutover','/cutover','/cutover','main',
+        '1','7','2026-01-01','2026-01-01','2026-01-01'
+      )
+    `)
+    await oldDatabase.db.run(sql`
+      INSERT INTO worktrees(
+        id,project_id,path,kind,tmux_socket_name,created_at,updated_at
+      ) VALUES(
+        'worktree_cutover','project_cutover','/cutover','main',
+        'historical-runtime-id','2026-01-01','2026-01-01'
+      )
+    `)
+    await oldDatabase.db.run(sql`
+      INSERT INTO terminal_presets(
+        id,name,executable,args_json,close_on_success,created_at,updated_at
+      ) VALUES(
+        'preset_cutover','Agent','pi','["--continue"]',1,
+        '2026-01-01','2026-01-01'
+      )
+    `)
+    await oldDatabase.db.run(sql`
+      INSERT INTO web_panels(
+        id,worktree_id,definition_id,title,input_json,launch_cwd,
+        created_at,updated_at
+      ) VALUES(
+        'web_cutover','worktree_cutover','project:review','Review','{}','.',
+        '2026-01-01','2026-01-01'
+      )
+    `)
+    await oldDatabase.db.run(sql`
+      INSERT INTO browser_panels(
+        id,worktree_id,title,url,created_at,updated_at
+      ) VALUES(
+        'browser_cutover','worktree_cutover','Preview','https://example.test/',
+        '2026-01-01','2026-01-01'
+      )
+    `)
+    await oldDatabase.db.run(sql`
+      INSERT INTO terminal_bell_states(
+        terminal_id,worktree_id,sequence,occurred_at,unread
+      ) VALUES(
+        'terminal_cutover','worktree_cutover',2,
+        '2026-01-01T00:00:00.000Z',1
+      )
+    `)
+    await oldDatabase.db.run(sql`
+      INSERT INTO operations(
+        id,kind,project_id,worktree_id,status,request_json,created_at,updated_at
+      ) VALUES(
+        'operation_cutover','remove','project_cutover','worktree_cutover',
+        'pending','{}','2026-01-01','2026-01-01'
+      )
+    `)
+    oldDatabase.close()
+
+    const migrated = await openDatabase(filePath)
+    databases.push(migrated)
+    expect(
+      await migrated.db
+        .select({ id: worktrees.id, path: worktrees.path })
+        .from(worktrees)
+    ).toEqual([{ id: 'worktree_cutover', path: '/cutover' }])
+    expect(await migrated.db.select().from(terminalPresets)).toHaveLength(1)
+    expect(await migrated.db.select().from(webPanels)).toHaveLength(1)
+    expect(await migrated.db.select().from(browserPanels)).toHaveLength(1)
+    expect(await migrated.db.select().from(terminalBellStates)).toHaveLength(1)
+    expect(await migrated.db.select().from(operations)).toHaveLength(1)
+    expect(
+      (
+        await migrated.db.all<{ name: string }>(
+          sql`PRAGMA table_info(worktrees)`
+        )
+      ).map((column) => column.name)
+    ).not.toContain('tmux_socket_name')
   })
 
   it('refuses a newer migration history without modifying the database', async () => {
@@ -813,6 +934,7 @@ describe('SQLite migration and catalog ordering', () => {
       updatedAt: '2026-01-01'
     })
     await removeFolderProjectSchema(initial)
+    await restoreVersion7WorktreeSchema(initial)
     await initial.db.transaction(async (tx) => {
       await tx.run(sql`DROP INDEX projects_recent_idx`)
       await tx.run(sql`ALTER TABLE projects DROP COLUMN show_in_recents`)
@@ -896,6 +1018,6 @@ describe('SQLite migration and catalog ordering', () => {
       await recovered.db.get<{ count: number }>(
         sql`SELECT count(*) AS count FROM __drizzle_migrations`
       )
-    ).toEqual({ count: 12 })
+    ).toEqual({ count: 13 })
   })
 })

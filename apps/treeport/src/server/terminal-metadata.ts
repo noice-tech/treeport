@@ -7,31 +7,18 @@ import {
   type TerminalRuntimeMetadata,
   type WorktreeRecord
 } from '@treeport/shared'
-import type {
-  TreeportService,
-  TmuxAdapter,
-  TmuxSessionTitleState
-} from './core/index'
-import { DomainError, resolveExecutablePath } from './core/index'
+import type { TreeportService } from './core/index'
+import { DomainError } from './core/index'
 import { KeyedTaskQueue } from './core/task-queue'
 import {
   DatabaseTerminalBellStateStore,
   type TerminalBellState,
   type TerminalBellStateStore
 } from './core/terminal-bell-state-store'
-import * as Effect from 'effect/Effect'
-import * as Fiber from 'effect/Fiber'
-import type * as Scope from 'effect/Scope'
-import { progressControlAttachArgs } from './tmux-control'
-import type { DirectTerminalSessionBackend } from './direct-pty-sessions'
-import {
-  createTmuxProgressObserver,
-  type TerminalProgressObserver,
-  type TerminalProgressObserverFactory
-} from './tmux-progress'
+import type { TerminalTitleState } from './core/terminal'
+import type { TerminalAttachmentBackend } from './terminal-host-sessions'
 
 export const TERMINAL_METADATA_POLL_MS = 2_000
-export const TERMINAL_PROGRESS_STALE_MS = 5 * 60_000
 
 const PROGRAM_COMMANDS = new Map<string, TerminalProgram>([
   ['pi', 'pi'],
@@ -40,30 +27,9 @@ const PROGRAM_COMMANDS = new Map<string, TerminalProgram>([
 ])
 
 type MetadataListener = (metadata: TerminalRuntimeMetadata) => void
-type HistoryListener = (viewing: boolean) => void
-
-type TerminalMetadataPhase =
-  | 'create_observer'
-  | 'initial_title_state'
-  | 'refresh_status'
-  | 'poll_title_state'
-  | 'persist_shell_title'
-
-class TerminalMetadataRuntimeError {
-  readonly _tag = 'TerminalMetadataRuntimeError'
-
-  constructor(
-    readonly phase: TerminalMetadataPhase,
-    readonly terminalId: string,
-    readonly cause: unknown
-  ) {}
-}
 
 interface TerminalMetadataEntry extends TerminalRuntimeMetadata {
   worktreeId: string
-  socketName: string
-  sessionName: string
-  cwd: string
   status: TerminalRecord['status']
   paneTitle: string | null
   currentCommand: string | null
@@ -71,45 +37,21 @@ interface TerminalMetadataEntry extends TerminalRuntimeMetadata {
   launchCommandLine: string | null
   interactiveShellCommand: string | null
   launchProgram: TerminalProgram | null
-  shellTitle: string | null
-  persistedShellTitle: string | null
-  awaitingShellTitle: boolean
-  shellTitleWriting: boolean
-  applicationTitleActive: boolean
-  observedTitlePending: boolean
-  titleRevision: number
+  runtimeUnsubscribe: (() => void) | null
   acknowledgedBellSequence: number
-  observer: TerminalProgressObserver | null
-  observerVersion: number
-  runtimeFiber: Fiber.RuntimeFiber<void, never> | null
-  runtimeGeneration: number
-  runtimeReady: Promise<void> | null
-  directRuntimeUnsubscribe: (() => void) | null
-  progressLease: NodeJS.Timeout | null
-  progressActivityGeneration: number
-  viewingHistory: boolean
 }
 
-function tmuxEnvironment(): NodeJS.ProcessEnv {
-  // SAFETY: The surrounding boundary contract establishes this asserted value.
-  return Object.fromEntries(
-    Object.entries(process.env).filter(
-      ([key, value]) =>
-        value !== undefined && key !== 'TMUX' && key !== 'TMUX_PANE'
-    )
-  ) as NodeJS.ProcessEnv
-}
-
-/** Owns daemon-lifetime title/progress observers independently of browser terminal attachments. */
+/**
+ * Projects terminal-host runtime events into the product metadata contract.
+ * The terminal host remains the only parser and process owner; this manager
+ * only persists BEL state and publishes title/progress changes.
+ */
 export class TerminalMetadataManager {
   private readonly entries = new Map<string, TerminalMetadataEntry>()
   private readonly listeners = new Map<string, Set<MetadataListener>>()
-  private readonly historyListeners = new Map<string, Set<HistoryListener>>()
-  private readonly tmuxExecutable: string
   private readonly bellMutations = new KeyedTaskQueue<string>()
   private readonly bellDeletionVersions = new Map<string, number>()
   private readonly persistedBells = new Map<string, TerminalBellState>()
-  private readonly observerShutdowns = new Set<Promise<void>>()
   private readonly bellStateStore: TerminalBellStateStore
   private initializePromise: Promise<void> | null = null
   private unsubscribeEvents: (() => void) | null = null
@@ -117,13 +59,9 @@ export class TerminalMetadataManager {
 
   constructor(
     private readonly service: TreeportService,
-    private readonly tmux: TmuxAdapter,
-    tmuxExecutable: string,
-    private readonly createObserver: TerminalProgressObserverFactory = createTmuxProgressObserver,
-    bellStateStore?: TerminalBellStateStore,
-    private readonly directSessions?: DirectTerminalSessionBackend
+    private readonly terminalHost: TerminalAttachmentBackend,
+    bellStateStore?: TerminalBellStateStore
   ) {
-    this.tmuxExecutable = resolveExecutablePath(tmuxExecutable)
     this.bellStateStore =
       bellStateStore ?? new DatabaseTerminalBellStateStore(service.database)
   }
@@ -187,41 +125,15 @@ export class TerminalMetadataManager {
     }
   }
 
-  viewingHistory(terminalId: string): boolean {
-    return this.entries.get(terminalId)?.viewingHistory ?? false
-  }
-
-  subscribeHistory(terminalId: string, listener: HistoryListener): () => void {
-    const listeners =
-      this.historyListeners.get(terminalId) ?? new Set<HistoryListener>()
-    listeners.add(listener)
-    this.historyListeners.set(terminalId, listeners)
-    return () => {
-      listeners.delete(listener)
-      if (!listeners.size) {
-        this.historyListeners.delete(terminalId)
-      }
-    }
-  }
-
   async trackTerminal(
     terminal: TerminalRecord,
-    worktree: WorktreeRecord
+    _worktree: WorktreeRecord
   ): Promise<void> {
     if (this.disposed) {
       return
     }
 
     let entry = this.entries.get(terminal.id)
-    if (
-      entry &&
-      (entry.socketName !== worktree.tmuxSocketName ||
-        entry.sessionName !== terminal.tmuxSessionName)
-    ) {
-      this.removeTerminal(terminal.id)
-      entry = undefined
-    }
-
     if (!entry) {
       const launchCommand = path
         .basename(terminal.argv[0] ?? '')
@@ -230,9 +142,6 @@ export class TerminalMetadataManager {
         !terminal.interactiveShell && terminal.shellCommand === null
           ? (PROGRAM_COMMANDS.get(launchCommand) ?? null)
           : null
-      const interactiveShellCommand = terminal.interactiveShell
-        ? launchCommand
-        : null
       const launchCommandLine = terminal.interactiveShell
         ? null
         : (
@@ -243,10 +152,6 @@ export class TerminalMetadataManager {
           )
             .trim()
             .slice(0, 256) || null
-      this.bellDeletionVersions.set(
-        terminal.id,
-        (this.bellDeletionVersions.get(terminal.id) ?? 0) + 1
-      )
       const persistedBell = this.persistedBells.get(terminal.id)
       const bell =
         persistedBell?.worktreeId === terminal.worktreeId
@@ -256,14 +161,15 @@ export class TerminalMetadataManager {
               unread: persistedBell.unread
             }
           : null
+      this.bellDeletionVersions.set(
+        terminal.id,
+        (this.bellDeletionVersions.get(terminal.id) ?? 0) + 1
+      )
       entry = {
         terminalId: terminal.id,
         worktreeId: terminal.worktreeId,
-        socketName: worktree.tmuxSocketName,
-        sessionName: terminal.tmuxSessionName,
-        cwd: worktree.path,
         status: terminal.status,
-        title: null,
+        title: launchCommandLine,
         program: launchProgram,
         hasForegroundProcess: terminal.status === 'running' ? null : false,
         progress: null,
@@ -274,42 +180,21 @@ export class TerminalMetadataManager {
         currentCommand: null,
         commandLine: null,
         launchCommandLine,
-        interactiveShellCommand,
+        interactiveShellCommand: terminal.interactiveShell
+          ? launchCommand
+          : null,
         launchProgram,
-        shellTitle: null,
-        persistedShellTitle: null,
-        awaitingShellTitle: false,
-        shellTitleWriting: false,
-        applicationTitleActive: false,
-        observedTitlePending: false,
-        titleRevision: 0,
+        runtimeUnsubscribe: null,
         acknowledgedBellSequence: bell
           ? bell.unread
             ? bell.sequence - 1
             : bell.sequence
-          : 0,
-        observer: null,
-        observerVersion: 0,
-        runtimeFiber: null,
-        runtimeGeneration: 0,
-        runtimeReady: null,
-        directRuntimeUnsubscribe: null,
-        progressLease: null,
-        progressActivityGeneration: 0,
-        viewingHistory: false
+          : 0
       }
       this.entries.set(terminal.id, entry)
     } else {
       entry.worktreeId = terminal.worktreeId
-      entry.cwd = worktree.path
       entry.status = terminal.status
-      if (terminal.status !== 'running') {
-        this.update(entry, { hasForegroundProcess: false })
-      }
-    }
-
-    if (this.entries.get(terminal.id) !== entry) {
-      return
     }
 
     if (entry.status === 'running') {
@@ -350,23 +235,12 @@ export class TerminalMetadataManager {
           this.persistedBells.set(terminalId, { ...persisted, unread: false })
         }
 
-        const currentEntry = this.entries.get(terminalId)
-        if (currentEntry !== entry) {
-          if (
-            currentEntry?.bell?.sequence === sequence &&
-            currentEntry.bell.unread
-          ) {
-            currentEntry.acknowledgedBellSequence = sequence
-            currentEntry.bell = { ...currentEntry.bell, unread: false }
-            this.publish(currentEntry)
-          }
-
-          return
+        if (this.entries.get(terminalId) === entry) {
+          entry.bell = { ...entry.bell, unread: false }
+          entry.acknowledgedBellSequence = sequence
+          this.publish(entry)
         }
 
-        entry.acknowledgedBellSequence = sequence
-        entry.bell = { ...entry.bell, unread: false }
-        this.publish(entry)
         return
       }
 
@@ -403,23 +277,18 @@ export class TerminalMetadataManager {
         )
       })
 
-    if (!entry) {
-      return
+    if (entry) {
+      const cleared = {
+        terminalId,
+        title: null,
+        program: null,
+        progress: null,
+        progressStartedAt: null,
+        progressClearedAt: null,
+        bell: null
+      } satisfies TerminalRuntimeMetadata
+      this.listeners.get(terminalId)?.forEach((listener) => listener(cleared))
     }
-
-    const cleared = {
-      terminalId,
-      title: null,
-      program: null,
-      progress: null,
-      progressStartedAt: null,
-      progressClearedAt: null,
-      bell: null
-    } satisfies TerminalRuntimeMetadata
-    this.listeners.get(terminalId)?.forEach((listener) => listener(cleared))
-    this.historyListeners
-      .get(terminalId)
-      ?.forEach((listener) => listener(false))
   }
 
   dispose(): void {
@@ -435,12 +304,10 @@ export class TerminalMetadataManager {
     }
     this.entries.clear()
     this.listeners.clear()
-    this.historyListeners.clear()
   }
 
   async drain(): Promise<void> {
     await this.bellMutations.drain()
-    await Promise.allSettled([...this.observerShutdowns])
   }
 
   private handleProductEvent(event: ProductEvent): void {
@@ -450,407 +317,122 @@ export class TerminalMetadataManager {
     }
 
     if (event.type === 'worktree.removed') {
-      for (const entry of this.entries.values()) {
+      for (const entry of [...this.entries.values()]) {
         if (entry.worktreeId === event.data.worktreeId) {
           this.removeTerminal(entry.terminalId)
         }
       }
-
       return
     }
 
     if (
-      event.type === 'terminal.created' ||
-      event.type === 'terminal.updated'
+      event.type !== 'terminal.created' &&
+      event.type !== 'terminal.updated'
     ) {
-      const { terminalId } = event.data
-      void this.service
-        .getTerminal(terminalId)
-        .then(async (terminal) => {
-          const worktree = await this.service.getWorktree(terminal.worktreeId)
-          return this.trackTerminal(terminal, worktree)
-        })
-        .catch((error) => {
-          if (
-            error instanceof DomainError &&
-            error.code === 'TERMINAL_NOT_FOUND'
-          ) {
-            this.removeTerminal(terminalId)
-          }
-        })
-    }
-  }
-
-  private async startRuntime(entry: TerminalMetadataEntry): Promise<void> {
-    if (this.directSessions) {
-      if (!entry.directRuntimeUnsubscribe) {
-        entry.directRuntimeUnsubscribe =
-          await this.directSessions.subscribeRuntime(
-            entry.terminalId,
-            (event) => {
-              if (event.title !== undefined) {
-                this.update(entry, { title: event.title })
-              }
-
-              if (event.progress !== undefined) {
-                this.update(entry, { progress: event.progress })
-              }
-
-              if (event.bell) {
-                void this.recordDirectBell(entry).catch((error) => {
-                  console.error(
-                    `[Treeport] Failed to persist terminal bell for ${entry.terminalId}:`,
-                    error instanceof Error ? error.message : String(error)
-                  )
-                })
-              }
-
-              if ('exitCode' in event) {
-                entry.status = 'exited'
-                this.update(entry, {
-                  progress: null,
-                  hasForegroundProcess: false
-                })
-              }
-            }
-          )
-        const state = await this.directSessions.runtimeState(entry.terminalId)
-        if (state) {
-          this.update(entry, {
-            title: state.title ?? entry.title,
-            hasForegroundProcess: state.status === 'running' ? null : false
-          })
-        }
-      }
-
       return
     }
 
-    if (entry.runtimeFiber) {
-      return entry.runtimeReady ?? Promise.resolve()
-    }
-
-    const runtimeGeneration = ++entry.runtimeGeneration
-    let markReady!: () => void
-    const ready = new Promise<void>((resolve) => {
-      markReady = resolve
-    })
-    entry.runtimeReady = ready
-    const isCurrent = () =>
-      this.entries.get(entry.terminalId) === entry &&
-      entry.runtimeGeneration === runtimeGeneration &&
-      entry.status === 'running'
-
-    const lifecycle = Effect.scoped(
-      Effect.gen(this, function* () {
-        yield* Effect.addFinalizer(() =>
-          Effect.sync(() => this.releaseRuntimeResources(entry))
-        )
-        yield* this.ensureObserver(entry, runtimeGeneration)
-
-        const titleRevision = entry.titleRevision
-        const titleState = yield* Effect.tryPromise({
-          try: () =>
-            this.tmux.sessionTitleState(entry.socketName, entry.sessionName),
-          catch: (cause) =>
-            new TerminalMetadataRuntimeError(
-              'initial_title_state',
-              entry.terminalId,
-              cause
-            )
-        }).pipe(Effect.catchAll(() => Effect.succeed(null)))
-        if (isCurrent() && titleState) {
-          this.updateForegroundProcess(entry, titleState.currentCommand)
-          if (entry.titleRevision === titleRevision) {
-            this.reconcileTitleState(entry, titleState)
-            yield* this.persistShellTitle(entry, runtimeGeneration)
-          }
-        }
-
-        markReady()
-
-        while (isCurrent()) {
-          yield* Effect.sleep(TERMINAL_METADATA_POLL_MS)
-          if (!isCurrent()) {
-            return
-          }
-
-          const polledTitleRevision = entry.titleRevision
-          const [terminal, polledTitleState] = yield* Effect.all(
-            [
-              Effect.tryPromise({
-                try: () =>
-                  this.service.refreshTerminalStatus(entry.terminalId, false),
-                catch: (cause) =>
-                  new TerminalMetadataRuntimeError(
-                    'refresh_status',
-                    entry.terminalId,
-                    cause
-                  )
-              }).pipe(Effect.catchAll(() => Effect.succeed(null))),
-              Effect.tryPromise({
-                try: () =>
-                  this.tmux.sessionTitleState(
-                    entry.socketName,
-                    entry.sessionName
-                  ),
-                catch: (cause) =>
-                  new TerminalMetadataRuntimeError(
-                    'poll_title_state',
-                    entry.terminalId,
-                    cause
-                  )
-              }).pipe(Effect.catchAll(() => Effect.succeed(null)))
-            ],
-            { concurrency: 'unbounded' }
-          )
-          if (!isCurrent()) {
-            return
-          }
-
-          if (terminal) {
-            entry.status = terminal.status
-          }
-
-          if (polledTitleState) {
-            this.updateForegroundProcess(entry, polledTitleState.currentCommand)
-            if (entry.titleRevision === polledTitleRevision) {
-              this.reconcileTitleState(entry, polledTitleState)
-              yield* this.persistShellTitle(entry, runtimeGeneration)
-            }
-          }
-
-          if (terminal?.status !== undefined && terminal.status !== 'running') {
-            this.update(entry, { hasForegroundProcess: false })
-            return
-          }
-
-          yield* this.ensureObserver(entry, runtimeGeneration)
+    const { terminalId } = event.data
+    void this.service
+      .getTerminal(terminalId)
+      .then(async (terminal) => {
+        const worktree = await this.service.getWorktree(terminal.worktreeId)
+        return this.trackTerminal(terminal, worktree)
+      })
+      .catch((error) => {
+        if (
+          error instanceof DomainError &&
+          error.code === 'TERMINAL_NOT_FOUND'
+        ) {
+          this.removeTerminal(terminalId)
         }
       })
-    ).pipe(
-      Effect.ensuring(
-        Effect.sync(() => {
-          markReady()
-          if (entry.runtimeGeneration === runtimeGeneration) {
-            entry.runtimeFiber = null
-            entry.runtimeReady = null
-          }
-        })
-      ),
-      Effect.catchAll(() => Effect.void)
-    )
-
-    entry.runtimeFiber = Effect.runFork(lifecycle)
-    return ready
   }
 
-  private ensureObserver(
-    entry: TerminalMetadataEntry,
-    runtimeGeneration: number
-  ): Effect.Effect<void> {
-    if (entry.observer) {
-      return Effect.void
+  private async startRuntime(entry: TerminalMetadataEntry): Promise<void> {
+    if (entry.runtimeUnsubscribe) {
+      return
     }
 
-    return Effect.try({
-      try: () => {
-        const version = ++entry.observerVersion
-        let exited = false
-        const observer = this.createObserver({
-          executable: this.tmuxExecutable,
-          args: progressControlAttachArgs(
-            entry.socketName,
-            this.tmux.configPath,
-            entry.sessionName
-          ),
-          cwd: entry.cwd,
-          env: tmuxEnvironment(),
-          onTitle: (title) => {
-            if (
-              this.entries.get(entry.terminalId) === entry &&
-              entry.runtimeGeneration === runtimeGeneration &&
-              entry.observerVersion === version
-            ) {
-              entry.paneTitle = title.trim().slice(0, 256) || null
-              entry.observedTitlePending = true
-              this.update(entry, { title: entry.paneTitle })
-            }
-          },
-          onProgress: (progress) => {
-            if (
-              this.entries.get(entry.terminalId) !== entry ||
-              entry.runtimeGeneration !== runtimeGeneration ||
-              entry.observerVersion !== version
-            ) {
-              return
-            }
-
-            const activityGeneration = ++entry.progressActivityGeneration
-            if (entry.progressLease) {
-              clearTimeout(entry.progressLease)
-              entry.progressLease = null
-            }
-
-            if (progress !== null) {
-              entry.progressLease = setTimeout(() => {
-                if (
-                  this.entries.get(entry.terminalId) !== entry ||
-                  entry.runtimeGeneration !== runtimeGeneration ||
-                  entry.observerVersion !== version ||
-                  entry.progressActivityGeneration !== activityGeneration
-                ) {
-                  return
-                }
-
-                entry.progressLease = null
-                entry.progressActivityGeneration += 1
-                this.update(entry, { progress: null })
-              }, TERMINAL_PROGRESS_STALE_MS)
-              entry.progressLease.unref()
-            }
-
-            this.update(entry, { progress })
-          },
-          onBell: () => {
-            void this.bellMutations
-              .enqueue(entry.terminalId, async () => {
-                if (
-                  this.entries.get(entry.terminalId) !== entry ||
-                  entry.runtimeGeneration !== runtimeGeneration ||
-                  entry.observerVersion !== version
-                ) {
-                  return
-                }
-
-                this.bellDeletionVersions.set(
-                  entry.terminalId,
-                  (this.bellDeletionVersions.get(entry.terminalId) ?? 0) + 1
-                )
-                const bell = {
-                  sequence: (entry.bell?.sequence ?? 0) + 1,
-                  at: new Date().toISOString(),
-                  unread: true
-                }
-                const state = {
-                  terminalId: entry.terminalId,
-                  worktreeId: entry.worktreeId,
-                  sequence: bell.sequence,
-                  occurredAt: bell.at,
-                  unread: true
-                }
-                await this.bellStateStore.upsert(state)
-                this.persistedBells.set(entry.terminalId, state)
-                if (
-                  this.entries.get(entry.terminalId) !== entry ||
-                  entry.runtimeGeneration !== runtimeGeneration ||
-                  entry.observerVersion !== version
-                ) {
-                  const currentEntry = this.entries.get(entry.terminalId)
-                  if (
-                    currentEntry?.worktreeId === state.worktreeId &&
-                    (currentEntry.bell?.sequence ?? 0) < state.sequence
-                  ) {
-                    currentEntry.bell = bell
-                    this.publish(currentEntry)
-                  }
-
-                  return
-                }
-
-                entry.bell = bell
-                this.publish(entry)
-              })
-              .catch((error) => {
-                console.error(
-                  `[Treeport] Failed to persist terminal bell for ${entry.terminalId}:`,
-                  error instanceof Error ? error.message : String(error)
-                )
-              })
-          },
-          onHistoryChange: (viewing) => {
-            if (
-              this.entries.get(entry.terminalId) !== entry ||
-              entry.runtimeGeneration !== runtimeGeneration ||
-              entry.observerVersion !== version ||
-              entry.viewingHistory === viewing
-            ) {
-              return
-            }
-
-            entry.viewingHistory = viewing
-            this.historyListeners
-              .get(entry.terminalId)
-              ?.forEach((listener) => listener(viewing))
-          },
-          onExit: () => {
-            exited = true
-            if (
-              this.entries.get(entry.terminalId) !== entry ||
-              entry.runtimeGeneration !== runtimeGeneration ||
-              entry.observerVersion !== version
-            ) {
-              return
-            }
-
-            entry.observerVersion += 1
-            entry.observer = null
-            entry.progressActivityGeneration += 1
-            if (entry.progressLease) {
-              clearTimeout(entry.progressLease)
-              entry.progressLease = null
-            }
-
-            this.update(entry, { progress: null })
-          }
-        })
-        if (
-          exited ||
-          this.entries.get(entry.terminalId) !== entry ||
-          entry.runtimeGeneration !== runtimeGeneration ||
-          entry.observerVersion !== version
-        ) {
-          this.disposeObserver(observer)
-        } else {
-          entry.observer = observer
+    entry.runtimeUnsubscribe = await this.terminalHost.subscribeRuntime(
+      entry.terminalId,
+      (event) => {
+        if (event.titleState) {
+          this.reconcileTitleState(entry, event.titleState)
+        } else if (event.title !== undefined) {
+          entry.paneTitle = event.title
+          this.update(entry, { title: event.title })
         }
-      },
-      catch: (cause) =>
-        new TerminalMetadataRuntimeError(
-          'create_observer',
-          entry.terminalId,
-          cause
-        )
-    }).pipe(
-      Effect.asVoid,
-      Effect.catchAll(() => {
-        this.clearProgressRuntime(entry)
-        return Effect.void
-      })
+
+        if (event.progress !== undefined) {
+          this.setProgress(entry, event.progress)
+        }
+
+        if (event.bell) {
+          void this.recordBell(entry, event.bell).catch((error) => {
+            console.error(
+              `[Treeport] Failed to persist terminal bell for ${entry.terminalId}:`,
+              error instanceof Error ? error.message : String(error)
+            )
+          })
+        }
+
+        if ('exitCode' in event) {
+          entry.status = 'exited'
+          this.stopRuntime(entry)
+        }
+      }
     )
+    const [state, titleState] = await Promise.all([
+      this.terminalHost.runtimeState(entry.terminalId),
+      this.terminalHost.terminalTitleState(entry.terminalId)
+    ])
+    if (this.entries.get(entry.terminalId) !== entry) {
+      return
+    }
+
+    if (state) {
+      this.setProgress(entry, state.progress)
+      if (state.bell) {
+        await this.recordBell(entry, state.bell)
+      }
+    }
+
+    if (titleState) {
+      this.reconcileTitleState(entry, titleState)
+    } else if (state) {
+      this.update(entry, {
+        title: state.title ?? entry.title,
+        hasForegroundProcess: state.status === 'running' ? null : false
+      })
+    }
   }
 
   private stopRuntime(entry: TerminalMetadataEntry): void {
-    entry.directRuntimeUnsubscribe?.()
-    entry.directRuntimeUnsubscribe = null
-    entry.runtimeGeneration += 1
-    const runtimeFiber = entry.runtimeFiber
-    entry.runtimeFiber = null
-    entry.runtimeReady = null
-    if (runtimeFiber) {
-      Effect.runFork(Fiber.interrupt(runtimeFiber))
-    }
-
-    this.releaseRuntimeResources(entry)
+    entry.runtimeUnsubscribe?.()
+    entry.runtimeUnsubscribe = null
     this.update(entry, {
       progress: null,
       hasForegroundProcess: entry.status === 'running' ? null : false
     })
   }
 
-  private async recordDirectBell(entry: TerminalMetadataEntry): Promise<void> {
+  private setProgress(
+    entry: TerminalMetadataEntry,
+    progress: TerminalRuntimeMetadata['progress']
+  ): void {
+    this.update(entry, { progress })
+  }
+
+  private async recordBell(
+    entry: TerminalMetadataEntry,
+    observed: { sequence: number; at: string }
+  ): Promise<void> {
     await this.bellMutations.enqueue(entry.terminalId, async () => {
-      if (this.entries.get(entry.terminalId) !== entry) {
+      if (
+        this.entries.get(entry.terminalId) !== entry ||
+        observed.sequence <= (entry.bell?.sequence ?? 0)
+      ) {
         return
       }
 
@@ -859,8 +441,8 @@ export class TerminalMetadataManager {
         (this.bellDeletionVersions.get(entry.terminalId) ?? 0) + 1
       )
       const bell = {
-        sequence: (entry.bell?.sequence ?? 0) + 1,
-        at: new Date().toISOString(),
+        sequence: observed.sequence,
+        at: observed.at,
         unread: true
       }
       const state = {
@@ -879,263 +461,43 @@ export class TerminalMetadataManager {
     })
   }
 
-  private clearProgressRuntime(entry: TerminalMetadataEntry): void {
-    entry.progressActivityGeneration += 1
-    if (entry.progressLease) {
-      clearTimeout(entry.progressLease)
-      entry.progressLease = null
-    }
-
-    this.update(entry, { progress: null })
-  }
-
-  private disposeObserver(observer: TerminalProgressObserver): void {
-    observer.dispose()
-    if (!observer.closed) {
-      return
-    }
-
-    const shutdown = observer.closed
-    this.observerShutdowns.add(shutdown)
-    void shutdown.then(
-      () => this.observerShutdowns.delete(shutdown),
-      () => this.observerShutdowns.delete(shutdown)
-    )
-  }
-
-  private releaseRuntimeResources(entry: TerminalMetadataEntry): void {
-    entry.observerVersion += 1
-    if (entry.observer) {
-      this.disposeObserver(entry.observer)
-      entry.observer = null
-    }
-
-    this.clearProgressRuntime(entry)
-    entry.shellTitleWriting = false
-  }
-
   private reconcileTitleState(
     entry: TerminalMetadataEntry,
-    state: TmuxSessionTitleState
+    state: TerminalTitleState
   ): void {
-    const paneTitle = state.paneTitle?.trim().slice(0, 256) || null
-    const currentCommand = state.currentCommand?.trim().slice(0, 256) || null
-    const fallbackShellCommand = path
-      .basename(state.fallbackShell ?? '')
-      .replace(/^-/, '')
-      .replace(/\p{Cc}/gu, '')
-      .trim()
-      .slice(0, 256)
-    if (fallbackShellCommand) {
-      entry.launchCommandLine = null
-      entry.interactiveShellCommand = fallbackShellCommand
-    }
-
-    const commandLine =
+    entry.paneTitle = state.paneTitle?.trim().slice(0, 256) || null
+    entry.currentCommand = state.currentCommand?.trim().slice(0, 256) || null
+    entry.commandLine =
       state.commandLine?.trim().slice(0, 256) || entry.launchCommandLine
-    const previousCommand = entry.currentCommand
-    const previousCommandLine = entry.commandLine
-    const paneTitleChanged = paneTitle !== entry.paneTitle
-    const commandChanged = currentCommand !== previousCommand
-    const commandLineChanged = commandLine !== previousCommandLine
-    const observedTitlePending = entry.observedTitlePending
-    if (previousCommand === null && entry.shellTitle === null) {
-      const shellTitle = state.shellTitle?.trim().slice(0, 256) || null
-      entry.shellTitle = shellTitle
-      entry.persistedShellTitle = shellTitle
-    }
 
-    entry.paneTitle = paneTitle
-    entry.currentCommand = currentCommand
-    entry.commandLine = commandLine
-    entry.observedTitlePending = false
-    this.updateForegroundProcess(entry, currentCommand)
-    const commandToken = commandLine?.match(
+    const token = entry.commandLine?.match(
       /^(?:exec\s+|command\s+)?(?:"([^"]+)"|'([^']+)'|(\S+))/
     )
-    const commandExecutable = commandToken
-      ? commandToken[1] || commandToken[2] || commandToken[3] || null
-      : null
+    const executable = token
+      ? token[1] || token[2] || token[3] || null
+      : entry.currentCommand
     const observedProgram =
-      PROGRAM_COMMANDS.get(
-        path.basename(commandExecutable ?? '').replace(/^-/, '')
-      ) ??
-      PROGRAM_COMMANDS.get(
-        path.basename(currentCommand ?? '').replace(/^-/, '')
-      ) ??
+      PROGRAM_COMMANDS.get(path.basename(executable ?? '').replace(/^-/, '')) ??
       null
+    const shellIdle =
+      entry.interactiveShellCommand !== null &&
+      (entry.commandLine === null ||
+        entry.commandLine === entry.interactiveShellCommand)
     this.update(entry, {
+      title: shellIdle
+        ? (entry.paneTitle ?? entry.interactiveShellCommand)
+        : (entry.paneTitle ?? entry.commandLine ?? entry.currentCommand),
       program:
         observedProgram ??
-        (!entry.interactiveShellCommand ? entry.launchProgram : null)
-    })
-
-    if (
-      entry.interactiveShellCommand &&
-      currentCommand === entry.interactiveShellCommand
-    ) {
-      const applicationTitleWasActive = entry.applicationTitleActive
-      const freshShellTitle =
-        observedTitlePending || (previousCommand !== null && paneTitleChanged)
-      entry.applicationTitleActive = false
-      if (freshShellTitle) {
-        entry.shellTitle = paneTitle
-        entry.awaitingShellTitle = false
-      } else if (entry.shellTitle === null) {
-        if (applicationTitleWasActive || entry.awaitingShellTitle) {
-          entry.awaitingShellTitle = true
-        } else {
-          entry.shellTitle = paneTitle
-        }
-      }
-
-      this.update(entry, {
-        title: entry.shellTitle ?? currentCommand
-      })
-      return
-    }
-
-    if (commandLine) {
-      if (observedTitlePending) {
-        entry.applicationTitleActive =
-          paneTitle !== null && paneTitle !== commandLine
-      } else if (commandLineChanged) {
-        entry.applicationTitleActive =
-          entry.interactiveShellCommand !== null &&
-          previousCommand === null &&
-          paneTitle !== null &&
-          paneTitle !== commandLine &&
-          paneTitle !== entry.shellTitle
-      } else if (paneTitleChanged && paneTitle !== commandLine) {
-        entry.applicationTitleActive = true
-      }
-
-      this.update(entry, {
-        title: entry.applicationTitleActive
-          ? (paneTitle ?? entry.title ?? commandLine)
-          : commandLine
-      })
-      return
-    }
-
-    if (!entry.interactiveShellCommand) {
-      this.update(entry, { title: paneTitle ?? currentCommand })
-      return
-    }
-
-    if (observedTitlePending) {
-      entry.applicationTitleActive = true
-      this.update(entry, { title: entry.title ?? paneTitle ?? currentCommand })
-      return
-    }
-
-    if (!commandChanged) {
-      if (paneTitleChanged) {
-        entry.applicationTitleActive = true
-        this.update(entry, { title: paneTitle ?? currentCommand })
-      }
-
-      return
-    }
-
-    if (previousCommand === null) {
-      if (
-        paneTitle &&
-        (entry.shellTitle === null || paneTitle !== entry.shellTitle)
-      ) {
-        // Without a remembered shell title, an existing OSC title and a stale
-        // shell title are indistinguishable. Preserve the reported title.
-        entry.applicationTitleActive = true
-        this.update(entry, { title: paneTitle })
-        return
-      }
-    } else if (entry.applicationTitleActive) {
-      return
-    } else if (paneTitleChanged) {
-      entry.applicationTitleActive = true
-      this.update(entry, { title: paneTitle ?? currentCommand })
-      return
-    }
-
-    this.update(entry, { title: currentCommand ?? paneTitle })
-  }
-
-  private updateForegroundProcess(
-    entry: TerminalMetadataEntry,
-    currentCommand: string | null
-  ): void {
-    const command = currentCommand?.trim().slice(0, 256) || null
-    this.update(entry, {
+        (entry.interactiveShellCommand === null ? entry.launchProgram : null),
       hasForegroundProcess:
         entry.status !== 'running'
           ? false
-          : command === null
-            ? null
-            : command !== entry.interactiveShellCommand
-    })
-  }
-
-  private persistShellTitle(
-    entry: TerminalMetadataEntry,
-    runtimeGeneration: number
-  ): Effect.Effect<void, never, Scope.Scope> {
-    return Effect.gen(this, function* () {
-      if (
-        entry.shellTitleWriting ||
-        entry.shellTitle === entry.persistedShellTitle ||
-        this.entries.get(entry.terminalId) !== entry ||
-        entry.runtimeGeneration !== runtimeGeneration
-      ) {
-        return
-      }
-
-      entry.shellTitleWriting = true
-      yield* Effect.forkScoped(
-        Effect.gen(this, function* () {
-          while (
-            this.entries.get(entry.terminalId) === entry &&
-            entry.runtimeGeneration === runtimeGeneration &&
-            entry.shellTitle !== entry.persistedShellTitle
-          ) {
-            const shellTitle = entry.shellTitle
-            const written = yield* Effect.tryPromise({
-              try: () =>
-                this.tmux.setSessionShellTitle(
-                  entry.socketName,
-                  entry.sessionName,
-                  shellTitle
-                ),
-              catch: (cause) =>
-                new TerminalMetadataRuntimeError(
-                  'persist_shell_title',
-                  entry.terminalId,
-                  cause
-                )
-            }).pipe(
-              Effect.as(true),
-              Effect.catchAll(() => Effect.succeed(false))
-            )
-            if (!written) {
-              return
-            }
-
-            if (
-              this.entries.get(entry.terminalId) === entry &&
-              entry.runtimeGeneration === runtimeGeneration
-            ) {
-              entry.persistedShellTitle = shellTitle
-            }
-          }
-        }).pipe(
-          Effect.ensuring(
-            Effect.sync(() => {
-              if (entry.runtimeGeneration === runtimeGeneration) {
-                entry.shellTitleWriting = false
-              }
-            })
-          )
-        )
-      )
+          : shellIdle
+            ? false
+            : entry.commandLine === null && entry.currentCommand === null
+              ? null
+              : true
     })
   }
 
@@ -1159,26 +521,20 @@ export class TerminalMetadataManager {
     const program = patch.program === undefined ? entry.program : patch.program
     const progress =
       patch.progress === undefined ? entry.progress : patch.progress
-    const progressChanged =
-      progress?.state !== entry.progress?.state ||
-      progress?.value !== entry.progress?.value
     const hasForegroundProcess =
       patch.hasForegroundProcess === undefined
         ? entry.hasForegroundProcess
         : patch.hasForegroundProcess
-    const foregroundProcessChanged =
-      hasForegroundProcess !== entry.hasForegroundProcess
+    const progressChanged =
+      progress?.state !== entry.progress?.state ||
+      progress?.value !== entry.progress?.value
     if (
       title === entry.title &&
       program === entry.program &&
       !progressChanged &&
-      !foregroundProcessChanged
+      hasForegroundProcess === entry.hasForegroundProcess
     ) {
       return
-    }
-
-    if (title !== entry.title) {
-      entry.titleRevision += 1
     }
 
     if (progressChanged) {
@@ -1192,8 +548,8 @@ export class TerminalMetadataManager {
 
     entry.title = title
     entry.program = program
-    entry.hasForegroundProcess = hasForegroundProcess
     entry.progress = progress
+    entry.hasForegroundProcess = hasForegroundProcess
     this.publish(entry)
   }
 

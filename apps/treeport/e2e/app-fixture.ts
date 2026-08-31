@@ -67,7 +67,6 @@ const project: ProjectRecord = {
       lockReason: null,
       prunable: false,
       kind: 'main',
-      tmuxSocketName: 'treeport-wt-main',
       managedWrapperPath: null,
       pr: {
         state: 'no_pr',
@@ -94,7 +93,6 @@ const project: ProjectRecord = {
           id: 'term_shell',
           worktreeId: 'wt_main',
           name: 'Shell',
-          tmuxSessionName: 'treeport-term-shell',
           argv: ['/bin/zsh', '-l'],
           shellCommand: null,
           interactiveShell: true,
@@ -117,7 +115,6 @@ const project: ProjectRecord = {
       lockReason: null,
       prunable: false,
       kind: 'linked',
-      tmuxSocketName: 'treeport-wt-topic',
       managedWrapperPath: null,
       pr: {
         state: 'merged',
@@ -144,7 +141,6 @@ const project: ProjectRecord = {
           id: 'term_pi',
           worktreeId: 'wt_topic',
           name: 'Pi',
-          tmuxSessionName: 'treeport-term-pi',
           argv: ['pi'],
           shellCommand: null,
           interactiveShell: false,
@@ -590,7 +586,8 @@ export async function mockApp(
             reset: 'full',
             cols: this.cols,
             rows: this.rows,
-            revision: this.revision
+            revision: this.revision,
+            snapshot: ''
           })
           this.deliverSocket('output', {
             streamId: this.streamId,
@@ -653,6 +650,15 @@ export async function mockApp(
         )
         const message = { type, ...payload }
         scope.__wsSent = [...(scope.__wsSent || []), message]
+        if (type === 'query_authority') {
+          this.deliverSocket('query_authority', {
+            generation: this.generation,
+            transitionId: null,
+            active: true
+          })
+          return
+        }
+
         if (type === 'resize' || type === 'take_control') {
           const applyTerminalUpdate = () => {
             const terminalState = readTerminalState(this.terminalId)
@@ -1437,7 +1443,6 @@ export async function mockApp(
           id: 'term_new',
           worktreeId: 'wt_new',
           name: body.initialTerminal?.name ?? 'Shell',
-          tmuxSessionName: 'treeport-term-new',
           argv: body.initialTerminal?.argv ?? ['/bin/zsh', '-l'],
           shellCommand: null,
           interactiveShell: !body.initialTerminal?.argv,
@@ -2030,7 +2035,6 @@ export async function mockApp(
         id: creationNumber === 1 ? 'term_dev' : `term_dev_${creationNumber}`,
         worktreeId: 'wt_topic',
         name: body.name,
-        tmuxSessionName: 'treeport-term-dev',
         argv:
           body.argv ||
           (body.shellCommand
@@ -2161,7 +2165,6 @@ export async function mockApp(
           gitWorktreeKey: 'worktrees/feature',
           repositoryIdentity: 'repository',
           phase: 'accepted',
-          tmuxSocketName: worktree.tmuxSocketName,
           managedWrapperPath: worktree.managedWrapperPath
         },
         result: null,

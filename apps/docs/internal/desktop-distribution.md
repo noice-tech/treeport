@@ -10,7 +10,7 @@ The Electron application is a client for a separately installed Treeport backend
 
 It contains the native shell, saved computer data, preload bridges, and local connection interface.
 
-It does not contain the daemon, tmux launcher, database migrations, or npm distribution.
+It does not contain the API daemon, terminal host or launcher, database migrations, or npm distribution.
 
 The desktop target is a universal macOS application for `arm64` and `x86_64`.
 

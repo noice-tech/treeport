@@ -68,7 +68,7 @@ treeport remote disable
 
 You can run the command again safely. It reports the active healthy daemon instead of starting another daemon.
 
-`treeport stop` stops only a verified Treeport daemon. It keeps Treeport tmux sessions for the next start.
+`treeport stop` stops only a verified Treeport API daemon. It keeps hosted terminal sessions for the next start.
 
 Use `treeport stop --terminate-terminals --force` only when you intend to terminate all terminal sessions.
 
@@ -122,7 +122,7 @@ Run lifecycle commands on the computer that runs Treeport.
 
 These commands include `start`, `stop`, `update`, `service`, `status`, `logs`, `doctor`, and `remote`.
 
-Bare `treeport update` resolves and verifies the latest stable npm release before it stops the local daemon. It preserves tmux terminals and an enabled service. It restarts the same lifecycle only when the daemon was running before the update. The command does not use `sudo` and refuses remote, external, development, and non-writable installations.
+Bare `treeport update` resolves and verifies the latest stable npm release before it stops the local daemon. It preserves hosted terminals and an enabled service. It restarts the same lifecycle only when the daemon was running before the update. The command does not use `sudo` and refuses remote, external, development, and non-writable installations.
 
 With `--json`, update success has stable `schemaVersion`, `operationId`, `status`, `phase`, `fromVersion`, `toVersion`, `installation`, `daemon`, `terminals`, and `rollback` fields. `status` is `current` or `updated`. Update errors identify the failed phase, rollback safety, and the next safe action.
 

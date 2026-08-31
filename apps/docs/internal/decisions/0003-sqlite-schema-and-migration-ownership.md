@@ -8,7 +8,7 @@
 
 Treeport needs a small durable catalog that is easy to reconstruct.
 
-Git owns repositories, worktrees, branches, commits, and files. The Treeport tmux server owns active terminal processes.
+Git owns repositories, worktrees, branches, commits, and files. Treeport's detached terminal host owns active terminal processes and canonical terminal state.
 
 Copying this state to SQLite would make recovery less reliable because it creates different sources of truth.
 
@@ -29,7 +29,7 @@ This durable state needs an explicit update path before public releases.
 
 SQLite is a small Treeport catalog in the configured data directory.
 
-It is not a manifest for Git work or tmux processes.
+It is not a manifest for Git work or live terminal-host processes.
 
 Loss of the database can remove Treeport information. It must not remove or damage a repository or worktree.
 

@@ -23,14 +23,14 @@ import {
   type TerminalServerEvent,
   type TerminalServerPayload
 } from '@treeport/shared'
-import type { AppConfig, TreeportService, TmuxAdapter } from './core/index'
+import type { AppConfig, TreeportService } from './core/index'
 import {
   TerminalAttachmentManager,
   type TerminalTransport
 } from './terminal-attachments'
 import { authorizeRequest } from './request-security'
 import type { TerminalMetadataManager } from './terminal-metadata'
-import type { DirectTerminalSessionBackend } from './direct-pty-sessions'
+import type { TerminalAttachmentBackend } from './terminal-host-sessions'
 import {
   BrowserSessionManager,
   type BrowserOwnerTransport,
@@ -54,7 +54,7 @@ interface SocketData {
   terminalAuth?: TerminalAuth
   browserTicket?: string
   browserOwnerAuth?: BrowserOwnerAuth
-  terminalProtocolVersion?: 1 | typeof TERMINAL_PROTOCOL_VERSION
+  terminalProtocolVersion?: typeof TERMINAL_PROTOCOL_VERSION
 }
 
 type InterServerEvents = Record<never, never>
@@ -87,10 +87,9 @@ interface SocketServerResult {
 interface SocketServerDependencies {
   service: TreeportService
   config: AppConfig
-  tmux: TmuxAdapter
   terminalMetadata: TerminalMetadataManager
+  terminalHost: TerminalAttachmentBackend
   attachmentManager?: TerminalAttachmentManager
-  directSessions?: DirectTerminalSessionBackend
   browserSessions?: BrowserSessionController
 }
 
@@ -99,10 +98,9 @@ export function createSocketServer(
   {
     service,
     config,
-    tmux,
     terminalMetadata,
+    terminalHost,
     attachmentManager,
-    directSessions,
     browserSessions
   }: SocketServerDependencies
 ): SocketServerResult {
@@ -123,14 +121,7 @@ export function createSocketServer(
   const metadataReady = terminalMetadata.initialize()
   const attachments =
     attachmentManager ??
-    new TerminalAttachmentManager(
-      service,
-      tmux,
-      config.tmuxPath,
-      terminalMetadata,
-      undefined,
-      directSessions
-    )
+    new TerminalAttachmentManager(service, terminalMetadata, terminalHost)
   const hostedBrowsers =
     browserSessions ?? new BrowserSessionManager(service, config)
 
@@ -198,18 +189,13 @@ export function createSocketServer(
     }
 
     const requestedVersion = socket.handshake.query.terminalProtocol
-    if (
-      requestedVersion !== undefined &&
-      requestedVersion !== String(TERMINAL_PROTOCOL_VERSION)
-    ) {
+    if (requestedVersion !== String(TERMINAL_PROTOCOL_VERSION)) {
       next(new Error('UNSUPPORTED_TERMINAL_PROTOCOL'))
       return
     }
 
     socket.data.terminalAuth = auth
-    socket.data.terminalProtocolVersion = requestedVersion
-      ? TERMINAL_PROTOCOL_VERSION
-      : 1
+    socket.data.terminalProtocolVersion = TERMINAL_PROTOCOL_VERSION
     next()
   })
   terminals.on('connection', (socket) => {
@@ -257,6 +243,9 @@ export function createSocketServer(
     )
     socket.on('output_ack', (payload) =>
       attachments.message(connectionId, 'output_ack', payload)
+    )
+    socket.on('query_authority', (payload) =>
+      attachments.message(connectionId, 'query_authority', payload)
     )
     socket.once('disconnect', () => attachments.close(connectionId))
   })

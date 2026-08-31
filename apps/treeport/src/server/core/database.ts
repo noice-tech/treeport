@@ -124,7 +124,6 @@ const removeOperationRequestSchema: z.ZodType<RemoveOperationRequest> = z.union(
             'cleanup_pending'
           ])
           .default('accepted'),
-        tmuxSocketName: z.string().nullable().default(null),
         managedWrapperPath: z.string().nullable().default(null)
       })
       .transform((request) => request satisfies RemoveOperationRequest),
@@ -139,7 +138,6 @@ const removeOperationRequestSchema: z.ZodType<RemoveOperationRequest> = z.union(
         gitWorktreeKey: null,
         repositoryIdentity: null,
         phase: null,
-        tmuxSocketName: null,
         managedWrapperPath: null
       })
     )
@@ -377,7 +375,15 @@ export async function openDatabase(
 
     await fs.promises.chmod(absoluteFilePath, 0o600)
     await db.run(sql`PRAGMA journal_mode = WAL`)
-    await db.run(sql`PRAGMA foreign_keys = ON`)
+    // SQLite cannot rebuild a referenced table while foreign-key actions are
+    // active. Generated migrations use table replacement for column removal,
+    // so disable enforcement outside the migration transaction and validate
+    // every reference before enabling it again.
+    await db.run(
+      migrationsPending
+        ? sql`PRAGMA foreign_keys = OFF`
+        : sql`PRAGMA foreign_keys = ON`
+    )
 
     if (hasLegacyMigrations) {
       const [presetTable] = await db.all<{ found: number }>(sql`
@@ -401,6 +407,21 @@ export async function openDatabase(
     }
 
     await migrate(db, { migrationsFolder })
+    if (migrationsPending) {
+      const foreignKeyViolations = await db.all<{
+        table: string
+        rowid: number
+        parent: string
+        fkid: number
+      }>(sql`PRAGMA foreign_key_check`)
+      if (foreignKeyViolations.length > 0) {
+        throw new Error(
+          `Treeport database migration introduced ${foreignKeyViolations.length} foreign-key violation(s)`
+        )
+      }
+
+      await db.run(sql`PRAGMA foreign_keys = ON`)
+    }
 
     if (hasLegacyMigrations) {
       await db.transaction(async (tx) => {
@@ -467,7 +488,6 @@ export function mapWorktree(
     prunable: Boolean(row.prunable),
     // SAFETY: The query selects the columns required by this database row contract.
     kind: row.kind as WorktreeRecord['kind'],
-    tmuxSocketName: row.tmuxSocketName,
     managedWrapperPath: row.managedWrapperPath,
     pr: {
       // SAFETY: The query selects the columns required by this database row contract.

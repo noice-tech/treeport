@@ -120,7 +120,7 @@ The stop command prevents an immediate automatic restart. It keeps automatic sta
 
 The start command starts the service again.
 
-A normal stop or service removal keeps Treeport tmux sessions.
+A normal stop or service removal keeps sessions in Treeport's detached terminal host.
 
 To terminate all sessions, use the explicit destructive command:
 
@@ -175,7 +175,7 @@ launchd and systemd restart Treeport after an unexpected daemon exit.
 
 The Treeport ownership lock continues to permit only one daemon for each data directory.
 
-The service manager stops only the daemon process. Treeport tmux servers continue to run.
+The service manager stops only the API daemon process. Treeport's detached terminal host and terminal children continue to run.
 
 Terminals connect again when the replacement daemon is healthy.
 
@@ -195,7 +195,7 @@ To update Treeport, run:
 treeport update
 ```
 
-A running service stops and starts through its existing operating-system manager. The service stays enabled, keeps its selected mode and definition, and reconnects to the preserved tmux terminals. An intentionally stopped service stays stopped.
+A running service stops and starts through its existing operating-system manager. The service stays enabled, keeps its selected mode and definition, and adopts the preserved hosted terminals. An intentionally stopped service stays stopped.
 
 Normal macOS user service updates do not need administrator access. Stop an advanced headless service with the administrator action before you update it.
 

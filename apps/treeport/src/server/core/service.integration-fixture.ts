@@ -16,8 +16,13 @@ import { projects, webPanels, worktrees } from './database-schema'
 import { GhAdapter } from './gh'
 import { GitAdapter } from './git'
 import { TreeportService } from './service'
-import { TmuxAdapter } from './tmux'
 import type { AppConfig } from './config'
+import type {
+  HostedTerminal,
+  TerminalCreateInput,
+  TerminalSessionBackend,
+  TerminalSessionState
+} from './terminal'
 
 const directories: string[] = []
 export const databases: TreeportDatabase[] = []
@@ -149,31 +154,30 @@ class SystemDouble implements CommandRunner {
   readonly worktrees: FakeWorktree[]
   readonly sessions = new Map<
     string,
-    {
-      alive: boolean
-      exitCode: number | null
-      created: number
-      options: Record<string, string>
-    }
+    HostedTerminal & { alive: boolean; created: number }
   >()
+  readonly terminalCreateInputs = new Map<string, TerminalCreateInput>()
   dirtyPaths = new Set<string>()
   dirtyStatuses = new Map<string, string>()
   reachable = true
   removeFails = false
   listWorktreesFails = false
   worktreeRepairFails = false
-  tmuxKillFails = false
-  tmuxKillSessionFails = false
-  readonly tmuxKillFailureSockets = new Set<string>()
+  terminalKillWorktreeFails = false
+  terminalKillFails = false
+  readonly terminalKillFailureWorktrees = new Set<string>()
   statusGate: Promise<void> | null = null
   worktreeListGate: Promise<void> | null = null
   worktreeAddGate: Promise<void> | null = null
   readonly worktreeAddGates = new Map<string, Promise<void>>()
-  tmuxCreateFails = false
-  tmuxCreateGate: Promise<void> | null = null
-  tmuxInventoryFails = false
-  tmuxInventoryGate: Promise<void> | null = null
-  tmuxStateGate: Promise<void> | null = null
+  terminalCreateFails = false
+  terminalCreateGate: Promise<void> | null = null
+  terminalCreateAttempts = 0
+  terminalInventoryFails = false
+  terminalInventoryGate: Promise<void> | null = null
+  terminalInventoryAttempts = 0
+  terminalStateGate: Promise<void> | null = null
+  terminalStateAttempts = 0
   setupGate: Promise<void> | null = null
   readonly removeAfterDeregisterGates = new Map<string, Promise<void>>()
   worktreeDeregistered: ((worktreePath: string) => void) | null = null
@@ -438,132 +442,137 @@ class SystemDouble implements CommandRunner {
       return fail('not authenticated')
     }
 
-    if (args.includes('new-session')) {
-      if (this.tmuxCreateGate) {
-        await this.tmuxCreateGate
-      }
-
-      if (this.tmuxCreateFails) {
-        return fail('tmux create failed')
-      }
-
-      const session = args[args.indexOf('-s') + 1]!
-      const socket = args[args.indexOf('-L') + 1]!
-      this.sessions.set(`${socket}/${session}`, {
-        alive: true,
-        exitCode: null,
-        created: Math.floor(Date.now() / 1_000),
-        options: {}
-      })
-      return ok()
-    }
-
-    if (args.includes('set-option')) {
-      const socket = args[args.indexOf('-L') + 1]!
-      for (let index = 0; index < args.length; index += 1) {
-        if (args[index] !== 'set-option') {
-          continue
-        }
-
-        const targetIndex = args.indexOf('-t', index)
-        const session = args[targetIndex + 1]!
-        const state = this.sessions.get(`${socket}/${session}`)
-        if (!state) {
-          return fail('missing')
-        }
-
-        const key = args[targetIndex + 2]!
-        const value = args[targetIndex + 3]!
-        state.options[key] = value
-      }
-      return ok()
-    }
-
-    if (args.includes('start-server') || args.includes('source-file')) {
-      return ok()
-    }
-
-    if (args.includes('list-panes') && args.includes('-a')) {
-      if (this.tmuxInventoryFails) {
-        return fail('tmux inventory failed')
-      }
-
-      if (this.tmuxInventoryGate) {
-        await this.tmuxInventoryGate
-      }
-
-      const socket = args[args.indexOf('-L') + 1]!
-      const lines = [...this.sessions.entries()]
-        .filter(([key]) => key.startsWith(`${socket}/`))
-        .map(([key, state]) => {
-          const session = key.slice(socket.length + 1)
-          return [
-            session,
-            state.options['@treeport-terminal-id'] ?? '',
-            state.options['@treeport-worktree-id'] ?? '',
-            state.options['@treeport-name'] ?? '',
-            state.options['@treeport-argv'] ?? '',
-            state.options['@treeport-shell-command'] ?? '',
-            state.options['@treeport-interactive-shell'] ?? '',
-            state.options['@treeport-close-on-success'] ?? '',
-            state.options['@treeport-created-at'] ?? '',
-            state.options['@treeport-updated-at'] ?? '',
-            String(state.created),
-            state.alive ? '0' : '1',
-            state.exitCode === null ? '' : String(state.exitCode)
-          ].join('\t')
-        })
-      return lines.length ? ok(`${lines.join('\n')}\n`) : fail('no sessions')
-    }
-
-    if (args.includes('list-panes')) {
-      if (this.tmuxStateGate) {
-        await this.tmuxStateGate
-      }
-
-      const session = args[args.indexOf('-t') + 1]!
-      const socket = args[args.indexOf('-L') + 1]!
-      const state = this.sessions.get(`${socket}/${session}`)
-      return state
-        ? ok(state.alive ? '0\t\n' : `1\t${state.exitCode ?? 0}\n`)
-        : fail('missing')
-    }
-
-    if (args.includes('kill-session')) {
-      if (this.tmuxKillSessionFails) {
-        return fail('tmux session cleanup failed')
-      }
-
-      const session = args[args.indexOf('-t') + 1]!
-      const socket = args[args.indexOf('-L') + 1]!
-      this.sessions.delete(`${socket}/${session}`)
-      return ok()
-    }
-
-    if (args.includes('list-sessions')) {
-      const socket = args[args.indexOf('-L') + 1]!
-      return [...this.sessions.keys()].some((key) =>
-        key.startsWith(`${socket}/`)
-      )
-        ? ok('session\n')
-        : fail('no sessions')
-    }
-
-    if (args.includes('kill-server')) {
-      const socket = args[args.indexOf('-L') + 1]!
-      if (this.tmuxKillFails || this.tmuxKillFailureSockets.has(socket)) {
-        return fail('tmux shutdown failed')
-      }
-
-      for (const key of [...this.sessions.keys()]) {
-        if (key.startsWith(`${socket}/`)) {
-          this.sessions.delete(key)
-        }
-      }
-      return ok()
-    }
-
     return fail(`Unexpected command: ${request.executable} ${args.join(' ')}`)
+  }
+}
+
+export class TerminalHostDouble implements TerminalSessionBackend {
+  constructor(private readonly system: SystemDouble) {}
+
+  initialize(): Promise<boolean> {
+    return Promise.resolve(true)
+  }
+
+  async createTerminal(input: TerminalCreateInput): Promise<void> {
+    this.system.terminalCreateAttempts += 1
+    if (this.system.terminalCreateGate) {
+      await this.system.terminalCreateGate
+    }
+
+    if (this.system.terminalCreateFails) {
+      throw new Error('terminal create failed')
+    }
+
+    this.system.terminalCreateInputs.set(
+      input.terminalId,
+      structuredClone(input)
+    )
+    this.system.sessions.set(`${input.worktreeId}/${input.terminalId}`, {
+      id: input.terminalId,
+      worktreeId: input.worktreeId,
+      name: input.name,
+      argv: [...input.argv],
+      shellCommand: input.shellCommand,
+      interactiveShell: input.interactiveShell,
+      closeOnSuccess: input.closeOnSuccess ?? false,
+      status: 'running',
+      exitCode: null,
+      createdAt: input.createdAt,
+      updatedAt: input.createdAt,
+      alive: true,
+      created: Math.floor(Date.now() / 1_000)
+    })
+  }
+
+  async listTerminals(worktreeId: string): Promise<HostedTerminal[]> {
+    this.system.terminalInventoryAttempts += 1
+    if (this.system.terminalInventoryGate) {
+      await this.system.terminalInventoryGate
+    }
+
+    if (this.system.terminalInventoryFails) {
+      throw new Error('terminal inventory failed')
+    }
+
+    return [...this.system.sessions.values()]
+      .filter((terminal) => terminal.worktreeId === worktreeId)
+      .map(({ alive, created: _created, ...terminal }) => ({
+        ...terminal,
+        status: alive ? 'running' : 'exited'
+      }))
+  }
+
+  async terminalState(terminalId: string): Promise<TerminalSessionState> {
+    this.system.terminalStateAttempts += 1
+    if (this.system.terminalStateGate) {
+      await this.system.terminalStateGate
+    }
+
+    const terminal = [...this.system.sessions.values()].find(
+      (candidate) => candidate.id === terminalId
+    )
+    return terminal
+      ? {
+          status: terminal.alive ? 'running' : 'exited',
+          exitCode: terminal.exitCode
+        }
+      : { status: 'missing', exitCode: null }
+  }
+
+  async renameTerminal(
+    terminalId: string,
+    name: string,
+    updatedAt: string
+  ): Promise<void> {
+    const terminal = [...this.system.sessions.values()].find(
+      (candidate) => candidate.id === terminalId
+    )
+    if (terminal) {
+      terminal.name = name
+      terminal.updatedAt = updatedAt
+    }
+  }
+
+  listProcesses(): Promise<[]> {
+    return Promise.resolve([])
+  }
+
+  captureTerminal(): Promise<null> {
+    return Promise.resolve(null)
+  }
+
+  async killTerminal(terminalId: string): Promise<void> {
+    if (this.system.terminalKillFails) {
+      throw new Error('terminal cleanup failed')
+    }
+
+    for (const [key, terminal] of this.system.sessions) {
+      if (terminal.id === terminalId) {
+        this.system.sessions.delete(key)
+      }
+    }
+  }
+
+  shutdownIfEmpty(): Promise<void> {
+    return Promise.resolve()
+  }
+
+  async killWorktree(worktreeId: string): Promise<string[]> {
+    if (
+      this.system.terminalKillWorktreeFails ||
+      this.system.terminalKillFailureWorktrees.has(worktreeId)
+    ) {
+      throw new Error('terminal host cleanup failed')
+    }
+
+    const removed: string[] = []
+    for (const [key, terminal] of this.system.sessions) {
+      if (terminal.worktreeId === worktreeId) {
+        removed.push(terminal.id)
+        this.system.sessions.delete(key)
+      }
+    }
+    return removed
   }
 }
 
@@ -586,7 +595,6 @@ export async function fixture() {
     cacheDir: path.join(root, 'cache'),
     runtimeDir: runtime,
     shell: '/bin/zsh',
-    tmuxPath: 'tmux',
     gitPath: 'git',
     ghPath: 'gh',
     apiUrl: 'http://127.0.0.1:8733',
@@ -594,19 +602,14 @@ export async function fixture() {
     webDevelopment: false
   }
   const git = new GitAdapter(runner)
-  const tmux = new TmuxAdapter(
-    runner,
-    runtime,
-    'tmux',
-    '/launcher with spaces.js'
-  )
+  const terminalHost = new TerminalHostDouble(runner)
   const gh = new GhAdapter(runner)
   const service = new TreeportService({
     config,
     database,
     runner,
     git,
-    tmux,
+    terminalHost,
     gh
   })
   service.attachHttpServer(http.createServer())

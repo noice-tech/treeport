@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { GhAdapter } from './gh'
 import { GitAdapter } from './git'
 import { TreeportService } from './service'
-import { TmuxAdapter } from './tmux'
+import { TerminalHostDouble } from './service.integration-fixture'
 import { resolveZedWorktreePath } from './zed'
 import {
   beginFromPreview,
@@ -222,7 +222,7 @@ describe('TreeportService with injected command adapters', () => {
   it('records creation failures and partial terminal results without leaving active rows', async () => {
     const { main, runner, service } = await fixture()
     const project = await service.registerProject(main)
-    runner.tmuxCreateFails = true
+    runner.terminalCreateFails = true
     const partial = await service.beginCreateWorktree(
       project.id,
       'partial-create',
@@ -235,11 +235,11 @@ describe('TreeportService with injected command adapters', () => {
       worktreeId: expect.any(String),
       result: {
         terminalId: null,
-        terminalError: expect.stringContaining('tmux create failed')
+        terminalError: expect.stringContaining('terminal create failed')
       }
     })
 
-    runner.tmuxCreateFails = false
+    runner.terminalCreateFails = false
     runner.listWorktreesFails = true
     const failed = await service.beginCreateWorktree(
       project.id,
@@ -278,12 +278,7 @@ describe('TreeportService with injected command adapters', () => {
       database,
       runner,
       git: new GitAdapter(runner),
-      tmux: new TmuxAdapter(
-        runner,
-        config.runtimeDir,
-        'tmux',
-        '/launcher with spaces.js'
-      ),
+      terminalHost: new TerminalHostDouble(runner),
       gh: new GhAdapter(runner)
     })
     restarted.attachHttpServer(http.createServer())
@@ -491,42 +486,23 @@ describe('TreeportService with injected command adapters', () => {
       ])
     )
     expect(runner.sessions.size).toBe(3)
-    const terminalCreates = runner.calls.filter((call) =>
-      call.args.includes('new-session')
-    )
-    expect(
-      terminalCreates
-        .slice(-2)
-        .map((call) => call.args[call.args.indexOf('-s') + 1])
-    ).toEqual([result.terminal!.tmuxSessionName, setupTerminal.tmuxSessionName])
-    expect(terminalCreates.at(-2)!.args).toEqual(
-      expect.arrayContaining(['-x', '132', '-y', '47'])
-    )
-    expect(terminalCreates.at(-1)!.args).toEqual(
-      expect.arrayContaining(['-x', '132', '-y', '47'])
-    )
+    expect(runner.terminalCreateInputs.get(result.terminal!.id)).toMatchObject({
+      terminalId: result.terminal!.id,
+      initialSize: { cols: 132, rows: 47 }
+    })
+    expect(runner.terminalCreateInputs.get(setupTerminal.id)).toMatchObject({
+      terminalId: setupTerminal.id,
+      initialSize: { cols: 132, rows: 47 }
+    })
     expect(events).toEqual([
       'worktree.created',
       'terminal.created',
       'terminal.created'
     ])
 
-    // SAFETY: The test fixture provides the asserted contract used here.
-    const initialLaunchSpec = JSON.parse(
-      await fs.readFile(
-        path.join(
-          config.runtimeDir,
-          'launch-specs',
-          `${result.terminal!.id}.json`
-        ),
-        'utf8'
-      )
-    ) as {
-      argv: string[]
-      fallbackArgv: string[]
-      setupTasks?: Array<{ label: string; argv: string[] }>
-      env: Record<string, string>
-    }
+    const initialLaunchSpec = runner.terminalCreateInputs.get(
+      result.terminal!.id
+    )!
     expect(initialLaunchSpec.argv).toEqual(['pi'])
     expect(initialLaunchSpec.fallbackArgv).toEqual(['/bin/zsh', '-l'])
     expect(initialLaunchSpec.setupTasks).toBeUndefined()
@@ -540,27 +516,7 @@ describe('TreeportService with injected command adapters', () => {
       TREEPORT_TERMINAL_ID: result.terminal!.id
     })
 
-    // SAFETY: The test fixture provides the asserted contract used here.
-    const setupLaunchSpec = JSON.parse(
-      await fs.readFile(
-        path.join(
-          config.runtimeDir,
-          'launch-specs',
-          `${setupTerminal.id}.json`
-        ),
-        'utf8'
-      )
-    ) as {
-      argv: string[]
-      setupTasks: Array<{
-        label: string
-        argv: string[]
-        cwd: string
-        env: Record<string, string>
-        timeoutMs: number
-      }>
-      env: Record<string, string>
-    }
+    const setupLaunchSpec = runner.terminalCreateInputs.get(setupTerminal.id)!
     expect(setupLaunchSpec.argv).toEqual(['true'])
     expect(setupLaunchSpec.setupTasks).toEqual([
       {
@@ -580,9 +536,9 @@ describe('TreeportService with injected command adapters', () => {
       }
     ])
     expect(setupLaunchSpec.env.TREEPORT_TERMINAL_ID).toBe(setupTerminal.id)
-    const setupSessionKey = `${result.worktree.tmuxSocketName}/${setupTerminal.tmuxSessionName}`
+    const setupSessionKey = `${result.worktree.id}/${setupTerminal.id}`
     const setupSession = runner.sessions.get(setupSessionKey)!
-    expect(setupSession.options['@treeport-close-on-success']).toBe('1')
+    expect(setupSession.closeOnSuccess).toBe(true)
     expect(runner.calls.some((call) => call.executable === 'fail-setup')).toBe(
       false
     )
@@ -601,18 +557,12 @@ describe('TreeportService with injected command adapters', () => {
       'Direct argv',
       ['pi']
     )
-    // SAFETY: The test fixture provides the asserted contract used here.
-    const directLaunchSpec = JSON.parse(
-      await fs.readFile(
-        path.join(config.runtimeDir, 'launch-specs', `${direct.id}.json`),
-        'utf8'
-      )
-    ) as { fallbackArgv?: string[] }
+    const directLaunchSpec = runner.terminalCreateInputs.get(direct.id)!
     expect(directLaunchSpec.fallbackArgv).toBeUndefined()
   })
 
   it('retains task preparation and setup-terminal creation errors', async () => {
-    const { main, runner, service, config } = await fixture()
+    const { main, runner, service } = await fixture()
     await fs.mkdir(path.join(main, '.treeport'), { recursive: true })
     await fs.writeFile(
       path.join(main, '.treeport', 'setup.json'),
@@ -633,25 +583,15 @@ describe('TreeportService with injected command adapters', () => {
     const setupTerminal = (
       await service.getWorktreeSnapshot(result.worktree.id)
     ).terminals.find((terminal) => terminal.name === 'Setup')!
-    // SAFETY: The test fixture provides the asserted contract used here.
-    const launchSpec = JSON.parse(
-      await fs.readFile(
-        path.join(
-          config.runtimeDir,
-          'launch-specs',
-          `${setupTerminal.id}.json`
-        ),
-        'utf8'
-      )
-    ) as { setupError: string; argv: string[] }
-    expect(launchSpec.setupError).toBe(result.setupError)
-    expect(launchSpec.argv).toEqual(['true'])
+    const launchSpec = runner.terminalCreateInputs.get(setupTerminal.id)
+    expect(launchSpec?.setupError).toBe(result.setupError)
+    expect(launchSpec?.argv).toEqual(['true'])
 
     let terminalCreates = 0
     const unsubscribe = service.events.subscribe((event) => {
       if (event.type === 'terminal.created') {
         terminalCreates += 1
-        runner.tmuxCreateFails = true
+        runner.terminalCreateFails = true
       }
     })
     const terminalFailure = await service.createWorktree(
@@ -661,7 +601,7 @@ describe('TreeportService with injected command adapters', () => {
       { name: 'Terminal' }
     )
     unsubscribe()
-    runner.tmuxCreateFails = false
+    runner.terminalCreateFails = false
 
     expect(terminalCreates).toBe(1)
     expect(terminalFailure.setupError).toContain('Tree setup:')
@@ -1119,9 +1059,7 @@ describe('TreeportService with injected command adapters', () => {
       )
     ).toBe(false)
     expect(
-      [...runner.sessions.keys()].some((key) =>
-        key.endsWith(`/${terminal.tmuxSessionName}`)
-      )
+      [...runner.sessions.keys()].some((key) => key.endsWith(`/${terminal.id}`))
     ).toBe(true)
   })
 
@@ -1294,12 +1232,7 @@ describe('TreeportService with injected command adapters', () => {
       database,
       runner,
       git: new GitAdapter(runner),
-      tmux: new TmuxAdapter(
-        runner,
-        config.runtimeDir,
-        'tmux',
-        '/launcher with spaces.js'
-      ),
+      terminalHost: new TerminalHostDouble(runner),
       gh: new GhAdapter(runner)
     })
     const events: Array<{ type: string; worktreeId: string }> = []
@@ -1478,7 +1411,6 @@ describe('TreeportService with injected command adapters', () => {
               gitWorktreeKey: binding!.git_worktree_key,
               repositoryIdentity,
               phase: 'accepted',
-              tmuxSocketName: worktree.tmuxSocketName,
               managedWrapperPath: worktree.managedWrapperPath
             })},NULL,NULL,${timestamp},${timestamp}
           )
@@ -1506,12 +1438,7 @@ describe('TreeportService with injected command adapters', () => {
       database,
       runner,
       git: new GitAdapter(runner),
-      tmux: new TmuxAdapter(
-        runner,
-        config.runtimeDir,
-        'tmux',
-        '/launcher with spaces.js'
-      ),
+      terminalHost: new TerminalHostDouble(runner),
       gh: new GhAdapter(runner)
     })
     await restarted.initialize()

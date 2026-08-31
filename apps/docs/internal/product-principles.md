@@ -79,7 +79,7 @@ Use concrete actions and observations for completion:
 Treeport must be useful with these minimum tools:
 
 ```text
-Git + tmux + shell
+Git + shell
 ```
 
 Optional tools can add functions without becoming requirements:
@@ -90,8 +90,7 @@ Optional tools can add functions without becoming requirements:
 - pull requests;
 - diff viewers;
 - Tailscale;
-- desktop distribution;
-- other terminal runtimes.
+- desktop distribution.
 
 A missing optional integration must not damage or confuse the baseline workflow.
 

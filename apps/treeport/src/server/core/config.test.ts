@@ -41,7 +41,6 @@ describe('configuration', () => {
       TREEPORT_API_URL: 'http://example.test:5000',
       TREEPORT_DAEMON_LIFECYCLE: 'external',
       TREEPORT_WEB_DEVELOPMENT: '1',
-      TREEPORT_EXPERIMENTAL_TERMINAL_BACKEND: 'direct-pty',
       TREEPORT_SHELL: '/bin/bash'
     })
 
@@ -57,7 +56,6 @@ describe('configuration', () => {
       loadConfig({ TREEPORT_DAEMON_LIFECYCLE: 'service' }).daemonLifecycle
     ).toBe('service')
     expect(config.webDevelopment).toBe(true)
-    expect(config.experimentalTerminalBackend).toBe('direct-pty')
   })
 
   it('rejects unsafe listeners and invalid configuration', () => {
@@ -82,11 +80,6 @@ describe('configuration', () => {
       loadConfig({ TREEPORT_DAEMON_LIFECYCLE: 'development' })
     ).toThrow(
       'TREEPORT_DAEMON_LIFECYCLE must be treeport, service, or external'
-    )
-    expect(() =>
-      loadConfig({ TREEPORT_EXPERIMENTAL_TERMINAL_BACKEND: 'screen' })
-    ).toThrow(
-      'TREEPORT_EXPERIMENTAL_TERMINAL_BACKEND must be tmux or direct-pty'
     )
   })
 })

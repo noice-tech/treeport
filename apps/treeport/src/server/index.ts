@@ -9,7 +9,6 @@ import {
   GitAdapter,
   loadConfig,
   SpawnCommandRunner,
-  TmuxAdapter,
   openDatabase,
   TreeportService
 } from './core/index'
@@ -43,42 +42,25 @@ async function main(): Promise<void> {
     const launcherPath = fileURLToPath(
       new URL('./core/launcher.js', import.meta.url)
     )
-    const tmux = new TmuxAdapter(
-      runner,
-      config.runtimeDir,
-      config.tmuxPath,
-      launcherPath
-    )
     const gh = new GhAdapter(runner, config.ghPath)
-    const directSessions =
-      config.experimentalTerminalBackend === 'direct-pty'
-        ? await connectOrStartTerminalHost({
-            dataDir: config.dataDir,
-            runtimeDir: config.runtimeDir,
-            launcherPath,
-            hostEntryPath: fileURLToPath(
-              new URL('./terminal-host-entry.js', import.meta.url)
-            )
-          })
-        : undefined
-    const terminalBackend = directSessions ?? tmux
+    const terminalHost = await connectOrStartTerminalHost({
+      dataDir: config.dataDir,
+      runtimeDir: config.runtimeDir,
+      launcherPath,
+      hostEntryPath: fileURLToPath(
+        new URL('./terminal-host-entry.js', import.meta.url)
+      )
+    })
     const service = new TreeportService({
       config,
       database,
       runner,
       git,
-      tmux: terminalBackend,
+      terminalHost,
       gh
     })
     await service.initialize()
-    const terminalMetadata = new TerminalMetadataManager(
-      service,
-      tmux,
-      config.tmuxPath,
-      undefined,
-      undefined,
-      directSessions
-    )
+    const terminalMetadata = new TerminalMetadataManager(service, terminalHost)
     await terminalMetadata.initialize()
     const applicationUpdate = createApplicationUpdateManager(config)
     const browserSessions = new BrowserSessionManager(service, config)
@@ -86,7 +68,7 @@ async function main(): Promise<void> {
     const app = createApp({
       service,
       config,
-      tmux: terminalBackend,
+      terminalHost,
       applicationUpdate,
       terminalMetadata,
       browserSessions
@@ -147,12 +129,9 @@ async function main(): Promise<void> {
     const socketDependencies: Parameters<typeof createSocketServer>[1] = {
       service,
       config,
-      tmux,
       terminalMetadata,
+      terminalHost,
       browserSessions
-    }
-    if (directSessions) {
-      socketDependencies.directSessions = directSessions
     }
 
     const { io, attachments } = createSocketServer(server, socketDependencies)
@@ -170,13 +149,7 @@ async function main(): Promise<void> {
     console.log(`Treeport ${config.appVersion} listening on ${config.apiUrl}`)
     console.log(`database: ${config.databasePath}`)
     console.log(`git: ${prerequisites.gitVersion}`)
-    if (prerequisites.tmuxVersion) {
-      console.log(`tmux: ${prerequisites.tmuxVersion}`)
-    }
-
-    console.log(
-      `terminal backend: ${config.experimentalTerminalBackend ?? 'tmux'}`
-    )
+    console.log(`terminal host: ${terminalHost.record.pid}`)
 
     let shuttingDown = false
     function shutdown(): void {
@@ -188,7 +161,7 @@ async function main(): Promise<void> {
       applicationUpdate.dispose()
       attachments.dispose()
       terminalMetadata.dispose()
-      directSessions?.dispose()
+      terminalHost.dispose()
       const viteClosed = vite?.close()
       io.close(() => {
         void Promise.all([

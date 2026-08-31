@@ -8,7 +8,7 @@ compatibility: Requires the treeport CLI on PATH and a reachable Treeport daemon
 
 In a managed Pi session, use the injected CLI guidance for routine terminal and browser operations. Load this skill only when you need more detail.
 
-Treeport is a generic terminal and tree layer. Its terminals are persistent tmux sessions that appear in the Treeport UI. A user can open a created terminal, take control of the normal application TUI, and continue working in the same session.
+Treeport is a generic terminal and tree layer. Its persistent terminals are owned by Treeport's detached terminal host and appear in the Treeport UI. A user can open a created terminal, take control of the normal application TUI, and continue working in the same session.
 
 Treeport does not define task sources, planning or approval states, agent tool policies, or provider-specific workflows. The caller owns names, commands, prompts, and higher-level orchestration.
 
@@ -23,7 +23,7 @@ Treeport does not define task sources, planning or approval states, agent tool p
 - When the lifecycle is `external`, never run `treeport start`, `treeport stop`, or `treeport remote enable`.
 - In the external lifecycle, the parent process owns startup, shutdown, and remote exposure.
 - When the lifecycle is `service`, normal `start` and `stop` delegate to the OS manager.
-- Use bare `treeport update` to update a supported local npm installation. It preserves tmux terminals and an enabled service, and restarts only a daemon that was running.
+- Use bare `treeport update` to update a supported local npm installation. It preserves hosted terminals and an enabled service, and restarts only a daemon that was running.
 - Never run bare `treeport update` for an external or selected remote daemon.
 - Never invoke `sudo` for a normal service or update operation.
 - Normal macOS service mode is a user/login LaunchAgent and does not need an administrator.
@@ -61,7 +61,7 @@ Launch a program directly:
 treeport terminal create --worktree <tree-id> --name <terminal-name> -- <program> <arg> ...
 ```
 
-The command returns after Treeport creates the tmux session. The program continues independently of the browser and of the caller that created it.
+The command returns after the detached terminal host creates the session. The program continues independently of the browser, API daemon, and caller that created it.
 
 ## Create a child tree and terminal
 
@@ -82,7 +82,7 @@ Treeport serializes tree mutations per project. If a caller needs several child 
 
 ## Interpret creation results
 
-A successful `terminal create` means the tmux session was created. The requested program can still exit later.
+A successful `terminal create` means the hosted terminal was created. The requested program can still exit later.
 
 `spawn` is intentionally non-atomic after Git creates the worktree:
 

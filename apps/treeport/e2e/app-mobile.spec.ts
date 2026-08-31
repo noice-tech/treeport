@@ -1,5 +1,4 @@
 import { expect, test } from '@playwright/test'
-import { TERMINAL_SCROLL_EXIT_SEQUENCE } from '@treeport/shared'
 import {
   mockApp,
   terminalTextPoint,
@@ -317,13 +316,30 @@ test.describe('mobile terminal UI', () => {
     await expect(page.getByText('create failed')).toBeVisible()
   })
 
-  test('scrolls tmux history with a one-finger swipe across mouse modes', async ({
+  test('keeps one-finger history scrolling local across mouse modes', async ({
     page
   }, testInfo) => {
     await mockApp(page)
     await page.getByLabel('Open tree drawer').click()
     await page.getByRole('button', { name: 'Pi, running', exact: true }).click()
+    await page.evaluate(() => {
+      const socket = window.__lastWs
+      socket.onmessage?.({
+        data: JSON.stringify({
+          version: 1,
+          type: 'output',
+          streamId: socket.streamId,
+          sequence: 2,
+          data: Array.from(
+            { length: 120 },
+            (_, index) => `mobile-history-${index}\r\n`
+          ).join('')
+        })
+      })
+      window.__wsSent = []
+    })
     const screen = page.locator('.xterm-screen')
+    await expect(screen).toContainText('mobile-history-119')
     const bounds = await screen.boundingBox()
     const row = await page.locator('.xterm-rows > div').first().boundingBox()
     expect(bounds).not.toBeNull()
@@ -359,6 +375,8 @@ test.describe('mobile terminal UI', () => {
       await expect
         .poll(() => page.evaluate(() => navigator.clipboard.readText()))
         .not.toBe('')
+      await selectionActions.getByRole('button', { name: 'Clear' }).click()
+      await expect(selectionActions).toHaveCount(0)
     }
 
     await client.send('Input.dispatchTouchEvent', {
@@ -384,6 +402,11 @@ test.describe('mobile terminal UI', () => {
       })
     ).toBe(false)
     await expect(page.getByText('Viewing', { exact: true })).toBeVisible()
+    expect(
+      await page.evaluate(() =>
+        window.__wsSent.filter((message: any) => message.type === 'input')
+      )
+    ).toEqual([])
 
     await client.send('Input.dispatchTouchEvent', {
       type: 'touchStart',
@@ -401,7 +424,7 @@ test.describe('mobile terminal UI', () => {
           version: 1,
           type: 'output',
           streamId: socket.streamId,
-          sequence: 2,
+          sequence: 3,
           data: '\u001b[?1049h\u001b[?1000h\u001b[?1006h'
         })
       })
@@ -437,8 +460,8 @@ test.describe('mobile terminal UI', () => {
           version: 1,
           type: 'output',
           streamId: socket.streamId,
-          sequence: 3,
-          data: '\u001b[?1000l'
+          sequence: 4,
+          data: '\u001b[?1000l\u001b[?1049l'
         })
       })
     })
@@ -461,23 +484,13 @@ test.describe('mobile terminal UI', () => {
       touchPoints: []
     })
 
-    await expect
-      .poll(() =>
-        page.evaluate(
-          (previousCount) =>
-            window.__wsSent.filter((message: any) => message.type === 'input')
-              .length > previousCount,
-          inputMessagesBeforeModeChange
-        )
+    expect(
+      await page.evaluate(
+        () =>
+          window.__wsSent.filter((message: any) => message.type === 'input')
+            .length
       )
-      .toBe(true)
-    await expect
-      .poll(() =>
-        page.evaluate(() =>
-          window.__wsSent.some((message: any) => message.data === '\u001b[A')
-        )
-      )
-      .toBe(true)
+    ).toBe(inputMessagesBeforeModeChange)
 
     await page.locator('.xterm-helper-textarea').focus()
     await page.keyboard.press('q')
@@ -490,7 +503,7 @@ test.describe('mobile terminal UI', () => {
               .at(-1)?.data
         )
       )
-      .toBe(`${TERMINAL_SCROLL_EXIT_SEQUENCE}q`)
+      .toBe('q')
 
     if (testInfo.project.name === 'mobile-chromium') {
       const selectionX = bounds!.x + bounds!.width / 100

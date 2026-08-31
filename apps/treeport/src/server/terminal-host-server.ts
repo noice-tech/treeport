@@ -2,7 +2,7 @@ import crypto from 'node:crypto'
 import fs from 'node:fs/promises'
 import net from 'node:net'
 import type { Socket } from 'node:net'
-import type { DirectPtySessionManager } from './direct-pty-sessions'
+import type { TerminalHostSessionManager } from './terminal-host-sessions'
 import {
   encodeTerminalHostFrame,
   TERMINAL_HOST_PROTOCOL_VERSION,
@@ -16,7 +16,7 @@ import {
   type TerminalHostResults
 } from './terminal-host-protocol'
 
-const TERMINAL_HOST_CONNECTION_HIGH_WATERMARK = 64 * 1024 * 1024
+const TERMINAL_HOST_CONNECTION_HIGH_WATERMARK = 4 * 1024 * 1024
 
 interface TerminalHostServerOptions {
   hostId: string
@@ -24,7 +24,7 @@ interface TerminalHostServerOptions {
   token: string
   socketPath: string
   recordPath: string
-  sessions: DirectPtySessionManager
+  sessions: TerminalHostSessionManager
   pid?: number
   startedAt?: string
   onShutdown?: () => void
@@ -117,6 +117,20 @@ export async function startTerminalHostServer(
     connection: HostConnection,
     frame: TerminalHostRequestFrame
   ): Promise<void> => {
+    if (frame.protocolVersion !== TERMINAL_HOST_PROTOCOL_VERSION) {
+      fail(
+        connection,
+        frame.id,
+        'INCOMPATIBLE_PROTOCOL',
+        `Terminal host protocol ${TERMINAL_HOST_PROTOCOL_VERSION} is not compatible with daemon protocol ${frame.protocolVersion}`,
+        {
+          hostProtocolVersion: TERMINAL_HOST_PROTOCOL_VERSION,
+          liveSessionCount: options.sessions.sessionCount
+        }
+      )
+      return
+    }
+
     if (!connection.authenticated) {
       if (frame.method !== 'handshake') {
         fail(connection, frame.id, 'AUTH_REQUIRED', 'Handshake is required')
@@ -169,17 +183,17 @@ export async function startTerminalHostServer(
         )
         return
       case 'create':
-        await options.sessions.createSession(
+        await options.sessions.createTerminal(
           terminalHostInputSchemas.create.parse(frame.input)
         )
         respond<'create'>(connection, frame.id, null)
         return
-      case 'list': {
-        const input = terminalHostInputSchemas.list.parse(frame.input)
-        respond<'list'>(
+      case 'inventory': {
+        const input = terminalHostInputSchemas.inventory.parse(frame.input)
+        respond<'inventory'>(
           connection,
           frame.id,
-          await options.sessions.listSessions(input.socketName)
+          await options.sessions.listTerminals(input.worktreeId)
         )
         return
       }
@@ -188,54 +202,32 @@ export async function startTerminalHostServer(
         respond<'state'>(
           connection,
           frame.id,
-          await options.sessions.sessionState(
-            input.socketName,
-            input.sessionName
-          )
+          await options.sessions.terminalState(input.terminalId)
         )
         return
       }
-      case 'size': {
-        const input = terminalHostInputSchemas.size.parse(frame.input)
-        respond<'size'>(
-          connection,
-          frame.id,
-          await options.sessions.sessionSize(
-            input.socketName,
-            input.sessionName
-          )
-        )
-        return
-      }
-      case 'snapshot': {
-        const input = terminalHostInputSchemas.snapshot.parse(frame.input)
-        respond<'snapshot'>(
-          connection,
-          frame.id,
-          await options.sessions.snapshot(input.terminalId)
-        )
-        return
-      }
-      case 'subscribeOutput': {
-        const input = terminalHostInputSchemas.subscribeOutput.parse(
-          frame.input
-        )
+      case 'attach': {
+        const input = terminalHostInputSchemas.attach.parse(frame.input)
         connection.outputUnsubscribes.get(input.terminalId)?.()
-        connection.outputUnsubscribes.set(
+        const unsubscribe = options.sessions.subscribeOutput(
           input.terminalId,
-          options.sessions.subscribeOutput(
-            input.terminalId,
-            (output, sequence) => {
-              send(connection, {
-                protocolVersion: TERMINAL_HOST_PROTOCOL_VERSION,
-                type: 'event',
-                event: 'output',
-                data: { terminalId: input.terminalId, output, sequence }
-              })
-            }
-          )
+          (output, sequence) => {
+            send(connection, {
+              protocolVersion: TERMINAL_HOST_PROTOCOL_VERSION,
+              type: 'event',
+              event: 'output',
+              data: { terminalId: input.terminalId, output, sequence }
+            })
+          }
         )
-        respond<'subscribeOutput'>(connection, frame.id, null)
+        connection.outputUnsubscribes.set(input.terminalId, unsubscribe)
+        const snapshot = await options.sessions.snapshot(input.terminalId)
+        if (snapshot === null) {
+          unsubscribe()
+          connection.outputUnsubscribes.delete(input.terminalId)
+        }
+
+        respond<'attach'>(connection, frame.id, snapshot)
         return
       }
       case 'unsubscribeOutput': {
@@ -290,9 +282,42 @@ export async function startTerminalHostServer(
           input.terminalId,
           input.encoding === 'base64'
             ? Buffer.from(input.data, 'base64')
-            : input.data
+            : input.data,
+          input.authority
         )
         respond<'write'>(connection, frame.id, null)
+        return
+      }
+      case 'prepareQueryAuthority': {
+        const input = terminalHostInputSchemas.prepareQueryAuthority.parse(
+          frame.input
+        )
+        respond<'prepareQueryAuthority'>(
+          connection,
+          frame.id,
+          await options.sessions.prepareQueryAuthority(input.terminalId)
+        )
+        return
+      }
+      case 'activateQueryAuthority': {
+        const input = terminalHostInputSchemas.activateQueryAuthority.parse(
+          frame.input
+        )
+        await options.sessions.activateQueryAuthority(
+          input.terminalId,
+          input.transitionId,
+          input.attachmentId,
+          input.generation
+        )
+        respond<'activateQueryAuthority'>(connection, frame.id, null)
+        return
+      }
+      case 'hostQueryAuthority': {
+        const input = terminalHostInputSchemas.hostQueryAuthority.parse(
+          frame.input
+        )
+        await options.sessions.useHostQueryAuthority(input.terminalId)
+        respond<'hostQueryAuthority'>(connection, frame.id, null)
         return
       }
       case 'resize': {
@@ -306,19 +331,14 @@ export async function startTerminalHostServer(
         respond<'capture'>(
           connection,
           frame.id,
-          await options.sessions.capturePane(
-            input.socketName,
-            input.sessionName,
-            input.lines
-          )
+          await options.sessions.captureTerminal(input.terminalId, input.lines)
         )
         return
       }
       case 'rename': {
         const input = terminalHostInputSchemas.rename.parse(frame.input)
         await options.sessions.renameTerminal(
-          input.socketName,
-          input.sessionName,
+          input.terminalId,
           input.name,
           input.updatedAt
         )
@@ -330,10 +350,7 @@ export async function startTerminalHostServer(
         respond<'processes'>(
           connection,
           frame.id,
-          await options.sessions.listPaneProcesses(
-            input.socketName,
-            input.worktreeId
-          )
+          await options.sessions.listProcesses(input.worktreeId)
         )
         return
       }
@@ -342,35 +359,28 @@ export async function startTerminalHostServer(
         respond<'titleState'>(
           connection,
           frame.id,
-          await options.sessions.sessionTitleState(
-            input.socketName,
-            input.sessionName
-          )
+          await options.sessions.terminalTitleState(input.terminalId)
         )
         return
       }
-      case 'setShellTitle': {
-        terminalHostInputSchemas.setShellTitle.parse(frame.input)
-        await options.sessions.setSessionShellTitle()
-        respond<'setShellTitle'>(connection, frame.id, null)
+      case 'signal': {
+        const input = terminalHostInputSchemas.signal.parse(frame.input)
+        await options.sessions.signalTerminal(input.terminalId, input.signal)
+        respond<'signal'>(connection, frame.id, null)
         return
       }
       case 'kill': {
         const input = terminalHostInputSchemas.kill.parse(frame.input)
-        await options.sessions.killSession(
-          input.socketName,
-          input.sessionName,
-          input.terminalId
-        )
+        await options.sessions.killTerminal(input.terminalId)
         respond<'kill'>(connection, frame.id, null)
         return
       }
-      case 'killServer': {
-        const input = terminalHostInputSchemas.killServer.parse(frame.input)
-        respond<'killServer'>(
+      case 'killWorktree': {
+        const input = terminalHostInputSchemas.killWorktree.parse(frame.input)
+        respond<'killWorktree'>(
           connection,
           frame.id,
-          await options.sessions.killServer(input.socketName)
+          await options.sessions.killWorktree(input.worktreeId)
         )
         return
       }
@@ -415,6 +425,9 @@ export async function startTerminalHostServer(
       }
       connection.outputUnsubscribes.clear()
       connection.runtimeUnsubscribes.clear()
+      if (connection.authenticated) {
+        void options.sessions.restoreHostQueryAuthority()
+      }
     }
     socket.once('close', release)
     socket.on('error', () => undefined)

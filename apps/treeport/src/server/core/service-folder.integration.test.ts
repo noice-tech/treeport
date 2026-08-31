@@ -15,7 +15,7 @@ import {
   persistedProjectOpen,
   services
 } from './service.integration-fixture'
-import { TmuxAdapter } from './tmux'
+import { TerminalHostDouble } from './service.integration-fixture'
 
 describe('ordinary folder projects', () => {
   it('registers, uses, reopens, moves, and removes a folder without Git operations', async () => {
@@ -54,14 +54,6 @@ describe('ordinary folder projects', () => {
         }
       ]
     })
-    expect(
-      runner.calls.some(
-        (call) =>
-          call.executable === 'tmux' &&
-          call.args.includes('new-session') &&
-          call.args.includes(canonicalFolder)
-      )
-    ).toBe(true)
     expect(
       runner.calls.filter(
         (call) =>
@@ -108,12 +100,7 @@ describe('ordinary folder projects', () => {
       database: reopenedDatabase,
       runner,
       git: new GitAdapter(runner),
-      tmux: new TmuxAdapter(
-        runner,
-        config.runtimeDir,
-        'tmux',
-        '/launcher with spaces.js'
-      ),
+      terminalHost: new TerminalHostDouble(runner),
       gh: new GhAdapter(runner)
     })
     services.push(restartedService)

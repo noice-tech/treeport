@@ -10,6 +10,6 @@ treeport .
 
 Treeport starts its backend if needed, registers the repository and its trees, and opens the current tree in the desktop app or browser. Run `treeport start` to start only the backend. Use `treeport service enable` when a host must start Treeport after reboot.
 
-Treeport supports macOS and Linux. It requires Node.js 24 or newer, npm, Git, and tmux 3.2 or newer.
+Treeport supports macOS and Linux. It requires Node.js 24 or newer, npm, and Git.
 
 Documentation: <https://treeport.app>

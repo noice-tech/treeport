@@ -2,7 +2,7 @@
 
 ## Decision status
 
-This document replaces the experimental daemon-owned design from commit `9745947`.
+Accepted and implemented. This document replaces the experimental daemon-owned design from commit `9745947`.
 
 The experimental design proved these parts:
 
@@ -11,9 +11,9 @@ The experimental design proved these parts:
 - An output sequence can separate snapshot data from live data.
 - A slow browser can disconnect without pausing the PTY.
 
-The design did not survive an API daemon restart. It also kept tmux names, paths, browser behavior, and service abstractions.
+That design did not survive an API daemon restart and retained concepts from the previous runtime.
 
-Treeport will use one detached terminal host for each Treeport data directory. The terminal host is the only terminal process owner.
+Treeport uses one detached terminal host for each Treeport data directory. The terminal host is the only terminal process and canonical-state owner.
 
 ## Process boundary
 
@@ -66,30 +66,16 @@ The host process uses `detached: true` and does not keep a parent IPC channel. T
 
 The IPC protocol uses length-prefixed JSON frames over a local stream socket. Each frame has a bounded byte length.
 
-The first protocol version is `1`. Each frame contains a version and one of these message shapes:
+The cutover protocol version is `2`. Each frame contains a version and one of these message shapes:
 
 - a request identifier, method, and input;
 - a request identifier and result;
 - a request identifier and structured error;
 - an event name and event data.
 
-The protocol supports these requests:
+The protocol supports handshake, create, inventory, atomic attach, output detach, runtime subscription, state, resize, capture, rename, process inspection, input, query-authority transitions, signal, terminal/worktree kill, and empty-host shutdown.
 
-- `handshake`;
-- `create`;
-- `inventory`;
-- `attach` and `detach`;
-- `input`;
-- `resize`;
-- `capture`;
-- `metadata`;
-- `processes`;
-- `signal` and `kill`;
-- `killWorktree`;
-- `queryAuthority`;
-- `shutdown`.
-
-The host emits ordered output, metadata, query-authority, and exit events. The daemon can reconnect and create new attachments after adoption.
+The host emits ordered output and runtime events. Runtime events carry title, command, progress, BEL, and exit changes. The daemon can reconnect and create new attachments after adoption.
 
 The host keeps terminal metadata in memory. Therefore, terminal inventory and canonical history survive API daemon replacement.
 
@@ -97,7 +83,7 @@ The host does not survive its own crash or a computer restart. Treeport can crea
 
 ## Atomic attachment
 
-Each host attachment has an identifier and a bounded output queue. The host completes these actions as one ordered operation:
+The daemon's atomic `attach` request installs its output subscription before taking a snapshot. The host completes these actions as one ordered operation:
 
 1. Subscribe the attachment to terminal output.
 2. Record the current output sequence as the fence.
@@ -106,9 +92,9 @@ Each host attachment has an identifier and a bounded output queue. The host comp
 5. Send the snapshot result.
 6. Send only output with a sequence greater than the fence.
 
-The host queues output for the attachment while it creates the snapshot. It sends the snapshot result before queued live output.
+The daemon buffers output events that arrive before the attach response, with a strict byte limit. It sends the snapshot to the browser before only the buffered events whose owner sequence is greater than the fence.
 
-The daemon preserves the host sequence when it fans output to browser clients. A reconnect starts a new host attachment and a new fence.
+Each browser stream gets its own sequence and acknowledgement window. A reconnect performs a new atomic attach and establishes a new fence.
 
 The browser resets its local model and parses the snapshot while its terminal is hidden. It shows the terminal after the snapshot write callback.
 
@@ -126,7 +112,7 @@ The host drains its parser before it disables headless responses. It then record
 
 Only input from the current authority generation can carry a browser terminal response. Other browser responses are rejected.
 
-Before a normal handoff, the old authority acknowledges output through the transition fence. The host then enables the new authority.
+Before a normal handoff, the host pauses at a drained parser fence. The new browser enables responses and acknowledges that transition before the host disables headless responses and resumes output.
 
 When the last controller disconnects, the host pauses the PTY and drains its parser. The headless model becomes the authority before the PTY resumes.
 
@@ -142,7 +128,7 @@ Each terminal has a parser high watermark and a parser low watermark. The host p
 
 The host resumes the PTY after the canonical parser reaches the low watermark. Browser speed never controls this pause.
 
-Each host attachment and each browser connection has a separate byte limit. Treeport disconnects a slow viewer when either limit is reached.
+Each host IPC connection and each browser connection has a separate byte limit. Treeport disconnects a slow connection when its limit is reached.
 
 A disconnected viewer can recover from a new snapshot. Other viewers and the child process continue.
 
@@ -156,28 +142,20 @@ The terminal host parses that event and removes control characters from its valu
 
 Applications can continue to use OSC 0 or OSC 2 for terminal titles. They can continue to use OSC 9;4 for progress.
 
-The terminal host observes BEL directly. It also inspects the foreground process tree through the PTY PID.
+The terminal host observes BEL directly. Process and listener discovery starts from the hosted PTY PID and follows the operating-system process tree.
 
 ## Data migration and cutover
 
 Active records use `terminalId` and `worktreeId`. A terminal does not need a second session name or a worktree socket name.
 
-A database migration removes the active `tmux_socket_name` worktree column. Historical migration files can keep the historical name.
+A database migration removes the active historical `tmux_socket_name` worktree column. Historical migration files and this migration note retain that name only to describe the cutover.
 
-Shared and API records remove `tmuxSocketName` and `tmuxSessionName`. Resumable cleanup uses the existing worktree identifier.
+Shared and API records remove the historical `tmuxSocketName` and `tmuxSessionName` fields. Resumable cleanup uses the existing worktree identifier.
 
-The cutover preserves projects, worktrees, panels, presets, operations, and settings. It does not adopt live terminals from older tmux servers.
+The cutover preserves projects, worktrees, panels, presets, operations, and settings. It deliberately does not adopt live terminals from the pre-cutover runtime; those processes remain outside Treeport after upgrade and can be stopped separately.
 
-After the detached host passes lifecycle tests, remove the experimental switch and all tmux runtime code.
+There is no runtime switch or dual backend. Treeport starts and operates without an external terminal multiplexer.
 
-## Implementation order
+## Verification boundaries
 
-Use these review boundaries:
-
-1. Add the host process, IPC client, discovery, adoption, and restart tests.
-2. Move attachment, metadata, process, and query authority behavior across IPC.
-3. Replace shell metadata and browser copy behavior.
-4. Migrate active names and remove tmux runtime code.
-5. Run the complete validation and source audit.
-
-After each boundary, run the affected lifecycle tests. Inspect the diff for remaining tmux assumptions before the next boundary.
+Behavior coverage includes real API daemon crash and normal restart adoption, atomic snapshot/live fencing, normal and alternate screens, Unicode, resize/reflow, large history, detached/attached/handoff query authority, bounded parser and viewer queues, local browser scrolling and selection, shell startup metadata, and descendant process termination.

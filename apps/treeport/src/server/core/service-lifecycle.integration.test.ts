@@ -262,25 +262,24 @@ describe('TreeportService with injected command adapters', () => {
     const mainWorktree = (await service.getProject(project.id)).worktrees[0]!
     runner.calls.length = 0
     let releaseTerminal!: () => void
-    runner.tmuxCreateGate = new Promise<void>((resolve) => {
+    runner.terminalCreateGate = new Promise<void>((resolve) => {
       releaseTerminal = resolve
     })
+    const createAttempts = runner.terminalCreateAttempts
     const creatingTerminal = service.createTerminal(
       mainWorktree.id,
       'Concurrent',
       ['pi']
     )
     await vi.waitFor(() =>
-      expect(
-        runner.calls.some((call) => call.args.includes('new-session'))
-      ).toBe(true)
+      expect(runner.terminalCreateAttempts).toBe(createAttempts + 1)
     )
     await expect(service.deleteProject(project.id)).rejects.toMatchObject({
       code: 'PROJECT_BUSY'
     })
     releaseTerminal()
     await creatingTerminal
-    runner.tmuxCreateGate = null
+    runner.terminalCreateGate = null
     await expect(service.deleteProject(project.id)).resolves.toBeUndefined()
   })
 
@@ -305,7 +304,7 @@ describe('TreeportService with injected command adapters', () => {
       service.dismissRecentProject(project.id)
     ).rejects.toMatchObject({ code: 'PROJECT_NOT_RECENT' })
 
-    runner.tmuxKillFails = true
+    runner.terminalKillWorktreeFails = true
     await service.closeProject(project.id)
 
     expect(await service.listProjects()).toEqual([])
@@ -347,7 +346,7 @@ describe('TreeportService with injected command adapters', () => {
     await expect(
       persistedProjectOpen(service.database, project.id)
     ).resolves.toBe(true)
-    runner.tmuxKillFails = false
+    runner.terminalKillWorktreeFails = false
   })
 
   it('leaves terminals running when project closure cannot be persisted', async () => {
@@ -422,7 +421,7 @@ describe('TreeportService with injected command adapters', () => {
     )
     let releasePoll!: () => void
     runner.calls.length = 0
-    runner.tmuxStateGate = new Promise<void>((resolve) => {
+    runner.terminalStateGate = new Promise<void>((resolve) => {
       releasePoll = resolve
     })
     const removed: string[] = []
@@ -431,20 +430,16 @@ describe('TreeportService with injected command adapters', () => {
         removed.push(String(event.data.terminalId))
       }
     })
+    const stateAttempts = runner.terminalStateAttempts
     const polling = service.refreshTerminalStatus(terminal.id, false)
     await vi.waitFor(() =>
-      expect(
-        runner.calls.some(
-          (call) =>
-            call.args.includes('list-panes') && !call.args.includes('-a')
-        )
-      ).toBe(true)
+      expect(runner.terminalStateAttempts).toBe(stateAttempts + 1)
     )
 
     await service.closeProject(project.id)
     releasePoll()
     await expect(polling).rejects.toMatchObject({ code: 'PROJECT_CLOSED' })
-    runner.tmuxStateGate = null
+    runner.terminalStateGate = null
     unsubscribe()
     expect(removed).toEqual([])
     expect(await service.listProjects()).toEqual([])

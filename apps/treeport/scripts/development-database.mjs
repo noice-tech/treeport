@@ -15,7 +15,6 @@ export async function cloneDevelopmentDatabase(
   const sourcePath = path.resolve(source)
   const destinationPath = path.resolve(destination)
   const force = options.force === true
-  const preserveTmuxSockets = options.preserveTmuxSockets === true
 
   if (sourcePath === destinationPath) {
     throw new Error('Source and destination databases must be different')
@@ -63,19 +62,7 @@ export async function cloneDevelopmentDatabase(
     })
     const destinationDatabase = drizzle(destinationClient)
     try {
-      const worktrees = preserveTmuxSockets
-        ? []
-        : await destinationDatabase.all(sql`SELECT id FROM worktrees`)
-      await destinationDatabase.transaction(async (tx) => {
-        await tx.run(sql`DELETE FROM operations`)
-        for (const worktree of worktrees) {
-          await tx.run(sql`
-            UPDATE worktrees
-            SET tmux_socket_name = ${`treeport-wt-${crypto.randomBytes(8).toString('hex')}`}
-            WHERE id = ${String(worktree.id)}
-          `)
-        }
-      })
+      await destinationDatabase.run(sql`DELETE FROM operations`)
       await destinationDatabase.run(sql`PRAGMA wal_checkpoint(TRUNCATE)`)
     } finally {
       destinationClient.close()
@@ -122,13 +109,12 @@ async function main() {
     destinationIndex >= 0 ? args[destinationIndex + 1] : undefined
   if (!source || !destination) {
     throw new Error(
-      'Usage: development-database.mjs --from <database> --to <database> [--force] [--preserve-tmux-sockets]'
+      'Usage: development-database.mjs --from <database> --to <database> [--force]'
     )
   }
 
   const result = await cloneDevelopmentDatabase(source, destination, {
-    force: args.includes('--force'),
-    preserveTmuxSockets: args.includes('--preserve-tmux-sockets')
+    force: args.includes('--force')
   })
   if (result.copied) {
     console.log(`Cloned Treeport development database to ${destination}`)

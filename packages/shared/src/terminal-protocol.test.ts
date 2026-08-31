@@ -70,9 +70,9 @@ describe('Socket.IO contracts', () => {
         extra: true
       })
     ).toBeNull()
-    expect(parseTerminalClientEvent('take_control', { generation: 2 })).toEqual(
-      { generation: 2 }
-    )
+    expect(
+      parseTerminalClientEvent('take_control', { generation: 2 })
+    ).toBeNull()
   })
 
   it('validates fresh stream ready, output, consumption, and control payloads', () => {
@@ -86,7 +86,6 @@ describe('Socket.IO contracts', () => {
         cols: 120,
         rows: 40,
         revision: 1,
-        backend: 'direct-pty',
         snapshot: '\u001b[Hready'
       })
     ).toMatchObject({
@@ -96,18 +95,17 @@ describe('Socket.IO contracts', () => {
       cols: 120,
       rows: 40,
       revision: 1,
-      backend: 'direct-pty',
       snapshot: '\u001b[Hready'
     })
     expect(
       parseTerminalServerEvent('ready', {
-        connectionId: 'legacy-connection',
-        streamId: 'legacy-stream',
+        connectionId: 'incomplete-connection',
+        streamId: 'incomplete-stream',
         generation: 2,
         controller: false,
         reset: 'full'
       })
-    ).toMatchObject({ streamId: 'legacy-stream', reset: 'full' })
+    ).toBeNull()
     expect(
       parseTerminalServerEvent('ready', {
         connectionId: 'hybrid',
@@ -155,10 +153,6 @@ describe('Socket.IO contracts', () => {
         sequence: 4
       })
     ).toEqual({ streamId: 'stream', sequence: 4 })
-    expect(parseTerminalServerEvent('history', { viewing: true })).toEqual({
-      viewing: true
-    })
-    expect(parseTerminalServerEvent('history', { viewing: 'yes' })).toBeNull()
     expect(
       parseTerminalServerEvent('control', {
         generation: Number.NaN,

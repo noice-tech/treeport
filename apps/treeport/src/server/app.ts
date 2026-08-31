@@ -51,8 +51,7 @@ import type { ApiErrorBody } from '@treeport/shared'
 import type {
   AppConfig,
   TerminalSessionBackend,
-  TreeportService,
-  TmuxAdapter
+  TreeportService
 } from './core/index'
 import { DomainError } from './core/index'
 import {
@@ -60,7 +59,7 @@ import {
   webPanelContentSecurityPolicy
 } from './core/web-panel-csp'
 import type { ApplicationUpdateManager } from './application-update'
-import { TerminalMetadataManager } from './terminal-metadata'
+import type { TerminalMetadataManager } from './terminal-metadata'
 import type { BrowserSessionManager } from './browser-sessions'
 import { isLoopbackAddress } from './request-security'
 
@@ -159,9 +158,9 @@ async function pruneTerminalUploads(
 interface AppDependencies {
   service: TreeportService
   config: AppConfig
-  tmux: TerminalSessionBackend
+  terminalHost: TerminalSessionBackend
   applicationUpdate: ApplicationUpdateManager
-  terminalMetadata?: TerminalMetadataManager
+  terminalMetadata: TerminalMetadataManager
   browserSessions?: BrowserSessionManager
   webDist?: string
 }
@@ -225,7 +224,7 @@ export type TreeFilesApiType = ReturnType<typeof createTreeFilesApi>
 export function createApp({
   service,
   config,
-  tmux,
+  terminalHost,
   applicationUpdate,
   terminalMetadata,
   browserSessions,
@@ -239,10 +238,7 @@ export function createApp({
       generator: () => crypto.randomUUID()
     })
   )
-  // SAFETY: Callers that omit a metadata manager use the production tmux backend.
-  const metadata =
-    terminalMetadata ??
-    new TerminalMetadataManager(service, tmux as TmuxAdapter, config.tmuxPath)
+  const metadata = terminalMetadata
   const metadataReady = metadata.initialize().catch((error) => {
     console.error(
       '[Treeport] Terminal metadata initialization failed:',
@@ -1100,10 +1096,8 @@ export function createApp({
         const terminal = await service.getTerminal(
           context.req.param('terminalId')
         )
-        const worktree = await service.getWorktree(terminal.worktreeId)
-        const content = await tmux.capturePane(
-          worktree.tmuxSocketName,
-          terminal.tmuxSessionName,
+        const content = await terminalHost.captureTerminal(
+          terminal.id,
           query.lines
         )
         if (content === null) {
@@ -1298,9 +1292,11 @@ export function createApp({
       })
     )
 
-    .post('/api/admin/terminate-terminals', async (context) =>
-      context.json({ terminated: await service.terminateAllTerminals() })
-    )
+    .post('/api/admin/terminate-terminals', async (context) => {
+      const terminated = await service.terminateAllTerminals()
+      await terminalHost.shutdownIfEmpty()
+      return context.json({ terminated })
+    })
 
     .all('/api/*', (context) =>
       context.json(

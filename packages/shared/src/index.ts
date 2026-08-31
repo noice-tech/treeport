@@ -93,7 +93,6 @@ export interface TerminalRecord {
   id: string
   worktreeId: string
   name: string
-  tmuxSessionName: string
   argv: string[]
   shellCommand: string | null
   interactiveShell: boolean
@@ -285,7 +284,6 @@ export interface WorktreeRecord {
   lockReason: string | null
   prunable: boolean
   kind: WorktreeKind
-  tmuxSocketName: string
   managedWrapperPath: string | null
   pr: PrInfo
   dirty: DirtyState | null
@@ -460,7 +458,6 @@ export interface RemoveOperationRequest {
   gitWorktreeKey: string | null
   repositoryIdentity: string | null
   phase: RemoveOperationPhase | null
-  tmuxSocketName: string | null
   managedWrapperPath: string | null
 }
 

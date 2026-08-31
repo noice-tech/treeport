@@ -1,1201 +1,384 @@
-import fs from 'node:fs/promises'
-import os from 'node:os'
-import path from 'node:path'
-import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { IPty } from 'node-pty'
-import type { TmuxAdapter, TreeportService } from './core/index'
+import { describe, expect, it, vi } from 'vitest'
 import {
+  parseTerminalServerEvent,
   TERMINAL_OUTPUT_HIGH_WATERMARK,
-  TERMINAL_OUTPUT_STALL_TIMEOUT_MS,
-  TERMINAL_PROTOCOL_VERSION,
   type TerminalServerEvent,
   type TerminalServerEventPayloads,
   type TerminalServerPayload
 } from '@treeport/shared'
-import {
-  TerminalAttachmentManager,
-  type TerminalTransport
-} from './terminal-attachments'
+import type { TreeportService } from './core/index'
+import { TerminalAttachmentManager } from './terminal-attachments'
+import type { TerminalAttachmentBackend } from './terminal-host-sessions'
+import type { TerminalMetadataManager } from './terminal-metadata'
 import { testAccess } from './test-access'
-import { TerminalMetadataManager } from './terminal-metadata'
-import type {
-  TerminalProgressObserver,
-  TmuxProgressObserverOptions
-} from './tmux-progress'
-import type { TerminalBellStateStore } from './core/terminal-bell-state-store'
-import { DirectPtySessionManager } from './direct-pty-sessions'
 
-class FakePty {
-  readonly pid = 1
-  readonly cols = 100
-  readonly rows = 30
-  readonly process = 'tmux'
-  handleFlowControl = false
-  pauses = 0
-  resumes = 0
-  kills = 0
-  dataDisposals = 0
-  exitDisposals = 0
-  writes: Array<string | Buffer> = []
-  resizes: Array<[number, number]> = []
-  writeError: Error | null = null
-  onDataError: Error | null = null
-  onExitError: Error | null = null
-  private dataListener: ((data: string) => void) | null = null
-  private exitListener:
-    | ((event: { exitCode: number; signal?: number }) => void)
-    | null = null
-  onData = (listener: (data: string) => void) => {
-    if (this.onDataError) {
-      throw this.onDataError
-    }
+class HostDouble implements TerminalAttachmentBackend {
+  readonly outputListeners = new Set<(data: string, sequence: number) => void>()
+  readonly runtimeListeners = new Set<(event: never) => void>()
+  readonly writes: Array<{
+    data: string | Buffer
+    authority: { attachmentId: string; generation: number }
+  }> = []
+  readonly activations: Array<{
+    transitionId: string
+    attachmentId: string
+    generation: number
+  }> = []
+  hostAuthorityCount = 0
+  transitionSerial = 0
+  snapshotFence = 0
+  snapshotData = 'canonical snapshot'
+  snapshotGate: Promise<void> | null = null
 
-    this.dataListener = listener
+  async attach(
+    _terminalId: string,
+    listener: (data: string, sequence: number) => void
+  ) {
+    this.outputListeners.add(listener)
+    await this.snapshotGate
     return {
-      dispose: () => {
-        this.dataDisposals += 1
-        this.dataListener = null
-      }
+      data: this.snapshotData,
+      fence: this.snapshotFence,
+      cols: 100,
+      rows: 30,
+      unsubscribe: () => this.outputListeners.delete(listener)
     }
   }
-  onExit = (
-    listener: (event: { exitCode: number; signal?: number }) => void
-  ) => {
-    if (this.onExitError) {
-      throw this.onExitError
+
+  subscribeRuntime() {
+    return () => undefined
+  }
+
+  terminalTitleState() {
+    return Promise.resolve(null)
+  }
+
+  runtimeState() {
+    return Promise.resolve({
+      title: null,
+      status: 'running' as const,
+      progress: null,
+      bell: null
+    })
+  }
+
+  write(
+    _terminalId: string,
+    data: string | Buffer,
+    authority: { attachmentId: string; generation: number }
+  ) {
+    this.writes.push({ data, authority })
+  }
+
+  prepareQueryAuthority() {
+    this.transitionSerial += 1
+    return Promise.resolve({
+      transitionId: `transition-${this.transitionSerial}`,
+      fence: this.snapshotFence
+    })
+  }
+
+  activateQueryAuthority(
+    _terminalId: string,
+    transitionId: string,
+    attachmentId: string,
+    generation: number
+  ) {
+    this.activations.push({ transitionId, attachmentId, generation })
+    return Promise.resolve()
+  }
+
+  useHostQueryAuthority() {
+    this.hostAuthorityCount += 1
+    return Promise.resolve()
+  }
+
+  resize() {
+    return Promise.resolve()
+  }
+
+  dispose() {}
+
+  emit(data: string, sequence: number): void {
+    for (const listener of [...this.outputListeners]) {
+      listener(data, sequence)
     }
-
-    this.exitListener = listener
-    return {
-      dispose: () => {
-        this.exitDisposals += 1
-        this.exitListener = null
-      }
-    }
-  }
-  emit(data: string) {
-    this.dataListener?.(data)
-  }
-  exit(exitCode: number) {
-    this.exitListener?.({ exitCode })
-  }
-  pause() {
-    this.pauses += 1
-  }
-  resume() {
-    this.resumes += 1
-  }
-  kill() {
-    this.kills += 1
-  }
-  write(data: string | Buffer) {
-    if (this.writeError) {
-      throw this.writeError
-    }
-
-    this.writes.push(data)
-  }
-  resize(cols: number, rows: number) {
-    this.resizes.push([cols, rows])
-  }
-  clear() {}
-}
-
-class FakeProgressObserver implements TerminalProgressObserver {
-  disposed = false
-
-  constructor(readonly options: TmuxProgressObserverOptions) {}
-
-  emit(progress: Parameters<TmuxProgressObserverOptions['onProgress']>[0]) {
-    this.options.onProgress(progress)
-  }
-
-  emitHistory(viewing: boolean) {
-    this.options.onHistoryChange?.(viewing)
-  }
-
-  dispose() {
-    this.disposed = true
   }
 }
 
-type SentTerminalMessage = {
-  [Event in TerminalServerEvent]: {
-    type: Event
-  } & TerminalServerEventPayloads[Event]
-}[TerminalServerEvent]
-
-class FakeTransport implements TerminalTransport {
-  private static serial = 0
-  readonly id = `socket-${++FakeTransport.serial}`
+class TransportDouble {
   connected = true
-  sent: SentTerminalMessage[] = []
-  disconnects: boolean[] = []
-  failAfter: number | null = null
+  readonly sent: Array<{
+    event: TerminalServerEvent
+    payload: TerminalServerPayload
+  }> = []
+  readonly disconnects: boolean[] = []
+  onSend:
+    | ((event: TerminalServerEvent, payload: TerminalServerPayload) => void)
+    | null = null
 
-  isConnected(): boolean {
-    return this.connected
-  }
+  constructor(readonly id: string) {}
 
-  send(event: TerminalServerEvent, payload: TerminalServerPayload): boolean {
-    if (
-      !this.connected ||
-      (this.failAfter !== null && this.sent.length >= this.failAfter)
-    ) {
+  isConnected = () => this.connected
+
+  send = (event: TerminalServerEvent, payload: TerminalServerPayload) => {
+    if (!this.connected) {
       return false
     }
 
-    // SAFETY: The test fixture provides the asserted contract used here.
-    this.sent.push({ type: event, ...payload } as SentTerminalMessage)
+    this.sent.push({ event, payload })
+    this.onSend?.(event, payload)
     return true
   }
 
-  disconnect(retryable: boolean): void {
+  disconnect = (retryable: boolean) => {
     this.disconnects.push(retryable)
     this.connected = false
   }
 }
 
-const metadataManagers: TerminalMetadataManager[] = []
-
 function fixture() {
-  const ptys: FakePty[] = []
-  const progressObservers: FakeProgressObserver[] = []
-  const publish = vi.fn()
-  // SAFETY: The test fixture provides the asserted contract used here.
+  const host = new HostDouble()
+  // SAFETY: This fixture supplies the service methods exercised by attachments.
   const service = testAccess<TreeportService>({
     refreshTerminalStatus: vi.fn(async () => ({
-      id: 'term',
-      worktreeId: 'wt',
-      name: 'Terminal',
-      tmuxSessionName: 'session',
-      argv: ['/bin/zsh', '-l'],
-      status: 'running',
-      exitCode: null,
-      createdAt: '2026-01-01',
-      updatedAt: '2026-01-01'
-    })),
-    getWorktree: vi.fn(async () => ({
-      id: 'wt',
-      path: '/tmp',
-      tmuxSocketName: 'socket'
-    })),
-    events: { publish }
-  })
-  // SAFETY: The test fixture provides the asserted contract used here.
-  const tmux = testAccess<TmuxAdapter>({
-    configPath: '/runtime/tmux.conf',
-    configureServer: vi.fn(async () => undefined),
-    useManualWindowSize: vi.fn(async () => undefined),
-    resizeWindow: vi.fn(async () => undefined),
-    sessionSize: vi.fn(async () => ({ cols: 100, rows: 30 })),
-    sessionTitleState: vi.fn(async () => ({
-      paneTitle: 'shell',
-      currentCommand: 'zsh'
-    })),
-    attachArgs: vi.fn(() => ['attach-session', '-t', 'session'])
-  })
-  const spawn = vi.fn(() => {
-    const value = new FakePty()
-    ptys.push(value)
-    // SAFETY: The test fixture provides the asserted contract used here.
-    return testAccess<IPty>(value)
-  })
-  const createProgressObserver = vi.fn(
-    (options: TmuxProgressObserverOptions) => {
-      const observer = new FakeProgressObserver(options)
-      progressObservers.push(observer)
-      return observer
-    }
-  )
-  const bellStateStore: TerminalBellStateStore = {
-    load: vi.fn(async () => []),
-    upsert: vi.fn(async () => undefined),
-    markRead: vi.fn(async () => undefined),
-    delete: vi.fn(async () => undefined)
-  }
-  const metadata = new TerminalMetadataManager(
-    service,
-    tmux,
-    process.execPath,
-    createProgressObserver,
-    bellStateStore
-  )
-  metadataManagers.push(metadata)
-  const manager = new TerminalAttachmentManager(
-    service,
-    tmux,
-    process.execPath,
-    metadata,
-    // SAFETY: The test fixture provides the asserted contract used here.
-    spawn as never
-  )
-  return {
-    manager,
-    metadata,
-    progressObservers,
-    ptys,
-    publish,
-    service,
-    spawn,
-    tmux
-  }
-}
-
-function deferred<Value>() {
-  let resolve!: (value: Value | PromiseLike<Value>) => void
-  const promise = new Promise<Value>((resolvePromise) => {
-    resolve = resolvePromise
-  })
-  return { promise, resolve }
-}
-
-function attach(
-  manager: TerminalAttachmentManager,
-  transport: FakeTransport,
-  clientId: string,
-  protocolVersion:
-    | 1
-    | typeof TERMINAL_PROTOCOL_VERSION = TERMINAL_PROTOCOL_VERSION
-): string {
-  return manager.accept(
-    { terminalId: 'term', clientId, cols: 100, rows: 30 },
-    transport,
-    protocolVersion
-  )
-}
-
-async function ready(transport: FakeTransport) {
-  await vi.waitFor(() =>
-    expect(transport.sent.some((message) => message.type === 'ready')).toBe(
-      true
-    )
-  )
-  return transport.sent.find((message) => message.type === 'ready')!
-}
-
-afterEach(() => {
-  for (const metadata of metadataManagers.splice(0)) {
-    metadata.dispose()
-  }
-  vi.useRealTimers()
-})
-
-describe('TerminalAttachmentManager', () => {
-  it('configures tmux, announces a fresh stream before output, and ACKs consumption', async () => {
-    const { manager, ptys, service, tmux } = fixture()
-    const transport = new FakeTransport()
-    const id = attach(manager, transport, 'tab-a')
-    const readyMessage = await ready(transport)
-
-    expect(tmux.configureServer).toHaveBeenCalledWith('socket')
-    expect(service.refreshTerminalStatus).toHaveBeenCalledWith('term', false)
-    expect(
-      vi.mocked(tmux.configureServer).mock.invocationCallOrder[0]
-    ).toBeLessThan(vi.mocked(tmux.sessionSize).mock.invocationCallOrder[0]!)
-    expect(readyMessage).toMatchObject({
-      type: 'ready',
-      reset: 'full',
-      controller: true,
-      generation: 1,
-      cols: 100,
-      rows: 30,
-      revision: 1
-    })
-
-    const pty = ptys[0]!
-    pty.emit('x'.repeat(TERMINAL_OUTPUT_HIGH_WATERMARK))
-    const output = transport.sent.find((message) => message.type === 'output')!
-    expect(transport.sent[0]?.type).toBe('ready')
-    expect(pty.pauses).toBeGreaterThanOrEqual(2)
-    manager.message(id, 'output_ack', {
-      streamId: output.streamId,
-      sequence: output.sequence
-    })
-    expect(pty.resumes).toBeGreaterThanOrEqual(2)
-  })
-
-  it('serves exact legacy ready and takeover contracts without dimensions events', async () => {
-    const { manager, tmux } = fixture()
-    const controller = new FakeTransport()
-    attach(manager, controller, 'tab-a')
-    await ready(controller)
-    const legacy = new FakeTransport()
-    const legacyId = attach(manager, legacy, 'tab-b', 1)
-    const legacyReady = await ready(legacy)
-
-    expect(legacyReady).toMatchObject({ type: 'ready', reset: 'full' })
-    expect(legacyReady).not.toHaveProperty('cols')
-    expect(legacyReady).not.toHaveProperty('rows')
-    expect(legacyReady).not.toHaveProperty('revision')
-
-    manager.message(legacyId, 'take_control', { generation: 1 })
-    await vi.waitFor(() =>
-      expect(legacy.sent.at(-1)).toMatchObject({
-        type: 'control',
-        controller: true,
-        generation: 2
-      })
-    )
-    manager.message(legacyId, 'resize', {
-      generation: 2,
-      cols: 120,
-      rows: 40
-    })
-    await vi.waitFor(() =>
-      expect(tmux.resizeWindow).toHaveBeenCalledWith(
-        'socket',
-        'session',
-        120,
-        40
-      )
-    )
-    expect(legacy.sent.some((message) => message.type === 'dimensions')).toBe(
-      false
-    )
-  })
-
-  it('rejects dimensionless takeover from a negotiated v2 client', async () => {
-    const { manager } = fixture()
-    const transport = new FakeTransport()
-    const id = attach(manager, transport, 'tab-a')
-    await ready(transport)
-
-    manager.message(id, 'take_control', { generation: 1 })
-
-    expect(transport.sent.at(-1)).toMatchObject({
-      type: 'terminal_error',
-      code: 'INVALID_MESSAGE'
-    })
-    expect(transport.disconnects).toEqual([false])
-  })
-
-  it('validates tmux dimensions and applies fallback dimensions before ready', async () => {
-    const invalid = fixture()
-    vi.mocked(invalid.tmux.sessionSize).mockResolvedValueOnce({
-      cols: 1_001,
-      rows: 30
-    })
-    const invalidTransport = new FakeTransport()
-    attach(invalid.manager, invalidTransport, 'tab-invalid')
-    await vi.waitFor(() =>
-      expect(invalidTransport.sent.at(-1)).toMatchObject({
-        type: 'terminal_error',
-        code: 'ATTACH_FAILED',
-        retryable: false
-      })
-    )
-    expect(invalid.ptys).toHaveLength(0)
-
-    const fallback = fixture()
-    vi.mocked(fallback.tmux.sessionSize).mockResolvedValueOnce(null)
-    const fallbackTransport = new FakeTransport()
-    attach(fallback.manager, fallbackTransport, 'tab-fallback')
-    await ready(fallbackTransport)
-    expect(fallback.tmux.resizeWindow).toHaveBeenCalledWith(
-      'socket',
-      'session',
-      100,
-      30
-    )
-    expect(
-      vi.mocked(fallback.tmux.resizeWindow).mock.invocationCallOrder[0]
-    ).toBeLessThan(fallback.spawn.mock.invocationCallOrder[0]!)
-  })
-
-  it('does not cache or spawn after fallback resize failure and allows retry', async () => {
-    const { manager, ptys, tmux } = fixture()
-    vi.mocked(tmux.sessionSize).mockResolvedValue(null)
-    vi.mocked(tmux.resizeWindow)
-      .mockRejectedValueOnce(new Error('resize unavailable'))
-      .mockResolvedValueOnce(undefined)
-    const failed = new FakeTransport()
-    attach(manager, failed, 'tab-failed')
-    await vi.waitFor(() =>
-      expect(failed.sent.at(-1)).toMatchObject({
-        type: 'terminal_error',
-        code: 'ATTACH_FAILED'
-      })
-    )
-    expect(ptys).toHaveLength(0)
-
-    const retry = new FakeTransport()
-    attach(manager, retry, 'tab-retry')
-    await ready(retry)
-    expect(tmux.resizeWindow).toHaveBeenCalledTimes(2)
-    expect(ptys).toHaveLength(1)
-  })
-
-  it('fans daemon metadata to every viewer without making it terminal output authority', async () => {
-    const { manager, progressObservers, tmux } = fixture()
-    vi.mocked(tmux.sessionTitleState).mockResolvedValueOnce(null)
-    const first = new FakeTransport()
-    const second = new FakeTransport()
-    attach(manager, first, 'tab-a')
-    await ready(first)
-    attach(manager, second, 'tab-b')
-    await ready(second)
-
-    expect(first.sent).toContainEqual({ type: 'title', title: '' })
-    expect(progressObservers).toHaveLength(1)
-    progressObservers[0]!.emit({ state: 'indeterminate', value: null })
-    expect(first.sent.at(-1)).toMatchObject({
-      type: 'progress',
-      progress: { state: 'indeterminate', value: null }
-    })
-    expect(second.sent.at(-1)).toMatchObject({
-      type: 'progress',
-      progress: { state: 'indeterminate', value: null }
-    })
-
-    progressObservers[0]!.emitHistory(true)
-    expect(first.sent.at(-1)).toEqual({ type: 'history', viewing: true })
-    expect(second.sent.at(-1)).toEqual({ type: 'history', viewing: true })
-    progressObservers[0]!.emitHistory(false)
-    expect(first.sent.at(-1)).toEqual({ type: 'history', viewing: false })
-    expect(second.sent.at(-1)).toEqual({ type: 'history', viewing: false })
-  })
-
-  it('isolates a slow viewer and keeps another viewer consuming output', async () => {
-    const { manager, ptys } = fixture()
-    const slow = new FakeTransport()
-    const fast = new FakeTransport()
-    attach(manager, slow, 'tab-a')
-    await ready(slow)
-    const fastId = attach(manager, fast, 'tab-b')
-    await ready(fast)
-    vi.useFakeTimers()
-
-    ptys[0]!.emit('s'.repeat(TERMINAL_OUTPUT_HIGH_WATERMARK))
-    ptys[1]!.emit('fast')
-    const fastOutput = fast.sent.find((message) => message.type === 'output')!
-    manager.message(fastId, 'output_ack', {
-      streamId: fastOutput.streamId,
-      sequence: fastOutput.sequence
-    })
-
-    expect(ptys[0]!.pauses).toBeGreaterThan(ptys[1]!.pauses)
-    await vi.advanceTimersByTimeAsync(TERMINAL_OUTPUT_STALL_TIMEOUT_MS)
-    expect(slow.disconnects).toEqual([true])
-    expect(ptys[0]!.kills).toBe(1)
-    expect(fast.connected).toBe(true)
-    expect(ptys[1]!.kills).toBe(0)
-  })
-
-  it('broadcasts canonical dimensions before resizing every active attachment and tmux', async () => {
-    const { manager, ptys, tmux } = fixture()
-    const controller = new FakeTransport()
-    const viewer = new FakeTransport()
-    const controllerId = attach(manager, controller, 'tab-a')
-    await ready(controller)
-    attach(manager, viewer, 'tab-b')
-    await ready(viewer)
-
-    manager.message(controllerId, 'resize', {
-      generation: 1,
-      cols: 132,
-      rows: 47
-    })
-
-    await vi.waitFor(() =>
-      expect(tmux.resizeWindow).toHaveBeenCalledWith(
-        'socket',
-        'session',
-        132,
-        47
-      )
-    )
-    expect(ptys.map((pty) => pty.resizes)).toEqual([[[132, 47]], [[132, 47]]])
-    expect(controller.sent).toContainEqual({
-      type: 'dimensions',
-      cols: 132,
-      rows: 47,
-      revision: 2
-    })
-    expect(viewer.sent).toContainEqual({
-      type: 'dimensions',
-      cols: 132,
-      rows: 47,
-      revision: 2
-    })
-  })
-
-  it('queues input behind an in-flight canonical resize', async () => {
-    const { manager, ptys, tmux } = fixture()
-    let finishResize!: () => void
-    vi.mocked(tmux.resizeWindow).mockImplementationOnce(
-      () =>
-        new Promise<void>((resolve) => {
-          finishResize = resolve
-        })
-    )
-    const controller = new FakeTransport()
-    const controllerId = attach(manager, controller, 'tab-a')
-    await ready(controller)
-
-    manager.message(controllerId, 'resize', {
-      generation: 1,
-      cols: 120,
-      rows: 40
-    })
-    await vi.waitFor(() => expect(tmux.resizeWindow).toHaveBeenCalledOnce())
-    manager.message(controllerId, 'input', {
-      generation: 1,
-      data: 'after resize'
-    })
-
-    await Promise.resolve()
-    expect(ptys[0]!.writes).toEqual([])
-    finishResize()
-    await vi.waitFor(() => expect(ptys[0]!.writes).toEqual(['after resize']))
-  })
-
-  it('bounds queued input by message count and bytes during a stalled resize', async () => {
-    const countFixture = fixture()
-    let finishCountResize!: () => void
-    vi.mocked(countFixture.tmux.resizeWindow).mockImplementationOnce(
-      () =>
-        new Promise<void>((resolve) => {
-          finishCountResize = resolve
-        })
-    )
-    const countTransport = new FakeTransport()
-    const countId = attach(countFixture.manager, countTransport, 'tab-count')
-    await ready(countTransport)
-    countFixture.manager.message(countId, 'resize', {
-      generation: 1,
-      cols: 120,
-      rows: 40
-    })
-    await vi.waitFor(() =>
-      expect(countFixture.tmux.resizeWindow).toHaveBeenCalledOnce()
-    )
-    for (let index = 0; index < 257; index += 1) {
-      countFixture.manager.message(countId, 'input', {
-        generation: 1,
-        data: ''
-      })
-    }
-    expect(countTransport.sent.at(-1)).toMatchObject({
-      type: 'terminal_error',
-      code: 'INPUT_QUEUE_FULL',
-      retryable: false
-    })
-    expect(countTransport.disconnects).toEqual([false])
-    finishCountResize()
-
-    const byteFixture = fixture()
-    let finishByteResize!: () => void
-    vi.mocked(byteFixture.tmux.resizeWindow).mockImplementationOnce(
-      () =>
-        new Promise<void>((resolve) => {
-          finishByteResize = resolve
-        })
-    )
-    const byteTransport = new FakeTransport()
-    const byteId = attach(byteFixture.manager, byteTransport, 'tab-bytes')
-    await ready(byteTransport)
-    byteFixture.manager.message(byteId, 'resize', {
-      generation: 1,
-      cols: 120,
-      rows: 40
-    })
-    await vi.waitFor(() =>
-      expect(byteFixture.tmux.resizeWindow).toHaveBeenCalledOnce()
-    )
-    for (let index = 0; index < 17; index += 1) {
-      byteFixture.manager.message(byteId, 'input', {
-        generation: 1,
-        data: 'x'.repeat(64 * 1024)
-      })
-    }
-    expect(byteTransport.sent.at(-1)).toMatchObject({
-      type: 'terminal_error',
-      code: 'INPUT_QUEUE_FULL'
-    })
-    finishByteResize()
-  })
-
-  it('translates an unexpected PTY input failure into a retryable boundary', async () => {
-    const { manager, ptys } = fixture()
-    const transport = new FakeTransport()
-    const id = attach(manager, transport, 'tab-a')
-    await ready(transport)
-    ptys[0]!.writeError = new Error('pty write failed')
-
-    manager.message(id, 'input', { generation: 1, data: 'x' })
-
-    await vi.waitFor(() =>
-      expect(transport.sent.at(-1)).toMatchObject({
-        type: 'terminal_error',
-        code: 'INPUT_FAILED',
-        retryable: true
-      })
-    )
-    expect(transport.disconnects).toEqual([true])
-  })
-
-  it('reconnects a paused viewer before a canonical grid boundary', async () => {
-    const { manager, ptys, tmux } = fixture()
-    const controller = new FakeTransport()
-    const viewer = new FakeTransport()
-    const controllerId = attach(manager, controller, 'tab-a')
-    await ready(controller)
-    attach(manager, viewer, 'tab-b')
-    await ready(viewer)
-    ptys[1]!.emit('x'.repeat(TERMINAL_OUTPUT_HIGH_WATERMARK))
-
-    manager.message(controllerId, 'resize', {
-      generation: 1,
-      cols: 120,
-      rows: 40
-    })
-
-    await vi.waitFor(() => expect(tmux.resizeWindow).toHaveBeenCalled())
-    expect(viewer.disconnects).toEqual([true])
-    expect(ptys[1]!.kills).toBe(1)
-    expect(ptys[1]!.resizes).toEqual([])
-    expect(ptys[0]!.resizes).toEqual([[120, 40]])
-  })
-
-  it('extends a stalled viewer deadline only when ACK progress is made', async () => {
-    const { manager, ptys } = fixture()
-    const transport = new FakeTransport()
-    const id = attach(manager, transport, 'tab-a')
-    await ready(transport)
-    vi.useFakeTimers()
-    ptys[0]!.emit('a'.repeat(200 * 1024))
-    ptys[0]!.emit('b'.repeat(200 * 1024))
-    const outputs = transport.sent.filter(
-      (message) => message.type === 'output'
-    )
-
-    await vi.advanceTimersByTimeAsync(20_000)
-    manager.message(id, 'output_ack', {
-      streamId: outputs[0]!.streamId,
-      sequence: outputs[0]!.sequence
-    })
-    await vi.advanceTimersByTimeAsync(20_000)
-    expect(transport.disconnects).toHaveLength(0)
-    await vi.advanceTimersByTimeAsync(10_001)
-    expect(transport.disconnects).toEqual([true])
-  })
-
-  it('enforces packet and UTF-8 input byte limits before writing to tmux', async () => {
-    const { manager, ptys } = fixture()
-    const oversizedPacket = new FakeTransport()
-    const firstId = attach(manager, oversizedPacket, 'tab-a')
-    await ready(oversizedPacket)
-    manager.message(firstId, 'input', {
-      generation: 1,
-      data: 'x'.repeat(128 * 1024 + 1)
-    })
-    expect(oversizedPacket.sent.at(-1)).toMatchObject({
-      type: 'terminal_error',
-      code: 'MESSAGE_TOO_LARGE'
-    })
-
-    const multibyte = new FakeTransport()
-    const secondId = attach(manager, multibyte, 'tab-b')
-    await ready(multibyte)
-    manager.message(secondId, 'take_control', {
-      generation: 1,
-      cols: 100,
-      rows: 30
-    })
-    const control = multibyte.sent.at(-1)!
-    if (control.type !== 'control') {
-      throw new Error('Expected the latest message to grant control')
-    }
-
-    manager.message(secondId, 'input', {
-      generation: control.generation,
-      data: '💥'.repeat(20_000)
-    })
-    expect(multibyte.sent.at(-1)).toMatchObject({
-      type: 'terminal_error',
-      code: 'INVALID_MESSAGE'
-    })
-    expect(ptys[1]!.writes).toHaveLength(0)
-  })
-
-  it('preserves binary bytes and rejects stale controller generations', async () => {
-    const { manager, ptys, publish } = fixture()
-    const first = new FakeTransport()
-    const viewer = new FakeTransport()
-    const firstId = attach(manager, first, 'tab-secret-a')
-    const firstReady = await ready(first)
-    const viewerId = attach(manager, viewer, 'tab-secret-b')
-    await ready(viewer)
-
-    manager.message(viewerId, 'take_control', {
-      generation: 0,
-      cols: 100,
-      rows: 30
-    })
-    expect(viewer.sent.at(-1)).toMatchObject({
-      type: 'control',
-      controller: false,
-      generation: firstReady.generation
-    })
-    manager.message(viewerId, 'take_control', {
-      generation: firstReady.generation,
-      cols: 120,
-      rows: 40
-    })
-    await vi.waitFor(() =>
-      expect(viewer.sent.at(-1)).toMatchObject({
-        type: 'control',
-        controller: true,
-        generation: 2
-      })
-    )
-    const viewerControl = viewer.sent.at(-1)!
-    if (viewerControl.type !== 'control') {
-      throw new Error('Expected the viewer to receive control')
-    }
-
-    manager.message(firstId, 'input', { generation: 1, data: 'stale' })
-    manager.message(viewerId, 'binary', {
-      generation: viewerControl.generation,
-      data: '\0ÿ'
-    })
-    await vi.waitFor(() => expect(ptys[1]!.writes).toHaveLength(1))
-    expect(ptys[0]!.writes).toHaveLength(0)
-    expect(Buffer.isBuffer(ptys[1]!.writes[0])).toBe(true)
-    // SAFETY: The test fixture provides the asserted contract used here.
-    expect((ptys[1]!.writes[0] as Buffer).equals(Buffer.from([0, 255]))).toBe(
-      true
-    )
-    const eventData = publish.mock.calls.at(-1)?.[1]
-    expect(eventData).toEqual({ terminalId: 'term', controlled: true })
-    expect(JSON.stringify(eventData)).not.toContain('tab-secret')
-  })
-
-  it('does not publish stale control after a takeover disconnects during resize', async () => {
-    const { manager, publish, tmux } = fixture()
-    const controller = new FakeTransport()
-    const viewer = new FakeTransport()
-    attach(manager, controller, 'tab-a')
-    await ready(controller)
-    const viewerId = attach(manager, viewer, 'tab-b')
-    await ready(viewer)
-    publish.mockClear()
-    let finishResize!: () => void
-    vi.mocked(tmux.resizeWindow).mockImplementationOnce(
-      () =>
-        new Promise<void>((resolve) => {
-          finishResize = resolve
-        })
-    )
-
-    manager.message(viewerId, 'take_control', {
-      generation: 1,
-      cols: 120,
-      rows: 40
-    })
-    await vi.waitFor(() => expect(tmux.resizeWindow).toHaveBeenCalledOnce())
-    manager.close(viewerId)
-    finishResize()
-    await vi.waitFor(() =>
-      expect(publish).toHaveBeenCalledWith('terminal.controller_changed', {
-        terminalId: 'term',
-        controlled: false
-      })
-    )
-    expect(
-      publish.mock.calls.some(([, data]) => data.controlled === true)
-    ).toBe(false)
-  })
-
-  it('reclaims control with a fresh PTY and stream during same-tab reconnect grace', async () => {
-    const { manager, ptys } = fixture()
-    const first = new FakeTransport()
-    const firstId = attach(manager, first, 'tab-a')
-    const initialReady = await ready(first)
-    manager.close(firstId)
-
-    const reconnect = new FakeTransport()
-    const reconnectId = attach(manager, reconnect, 'tab-a')
-    const reconnectReady = await ready(reconnect)
-    expect(reconnectReady).toMatchObject({
-      type: 'ready',
-      controller: true,
-      generation: initialReady.generation
-    })
-    expect(reconnectReady.streamId).not.toBe(initialReady.streamId)
-    expect(ptys).toHaveLength(2)
-    expect(ptys[0]!.kills).toBe(1)
-
-    ptys[0]!.emit('old output')
-    expect(
-      reconnect.sent.some(
-        (message) => message.type === 'output' && message.data === 'old output'
-      )
-    ).toBe(false)
-    manager.close(reconnectId)
-  })
-
-  it('abandons every pending initialization phase after close, including late promise completion', async () => {
-    const phases = [
-      'refresh',
-      'configure',
-      'metadata',
-      'manual-size',
-      'session-size',
-      'fallback-resize'
-    ] as const
-
-    for (const phase of phases) {
-      const value = fixture()
-      const pending = deferred<unknown>()
-      if (phase === 'refresh') {
-        vi.mocked(value.service.refreshTerminalStatus).mockReturnValueOnce(
-          // SAFETY: The test fixture provides the asserted contract used here.
-          pending.promise as never
-        )
-      } else if (phase === 'configure') {
-        vi.mocked(value.tmux.configureServer).mockReturnValueOnce(
-          // SAFETY: The test fixture provides the asserted contract used here.
-          pending.promise as Promise<void>
-        )
-      } else if (phase === 'metadata') {
-        vi.spyOn(value.metadata, 'trackTerminal').mockReturnValueOnce(
-          // SAFETY: The test fixture provides the asserted contract used here.
-          pending.promise as Promise<void>
-        )
-      } else if (phase === 'manual-size') {
-        vi.mocked(value.tmux.useManualWindowSize).mockReturnValueOnce(
-          // SAFETY: The test fixture provides the asserted contract used here.
-          pending.promise as Promise<void>
-        )
-      } else if (phase === 'session-size') {
-        vi.mocked(value.tmux.sessionSize).mockReturnValueOnce(
-          // SAFETY: The test fixture provides the asserted contract used here.
-          pending.promise as never
-        )
-      } else {
-        vi.mocked(value.tmux.sessionSize).mockResolvedValueOnce(null)
-        vi.mocked(value.tmux.resizeWindow).mockReturnValueOnce(
-          // SAFETY: The test fixture provides the asserted contract used here.
-          pending.promise as Promise<void>
-        )
-      }
-
-      const transport = new FakeTransport()
-      const id = attach(value.manager, transport, `tab-${phase}`)
-      await vi.waitFor(() => {
-        const started =
-          phase === 'refresh'
-            ? value.service.refreshTerminalStatus
-            : phase === 'configure'
-              ? value.tmux.configureServer
-              : phase === 'metadata'
-                ? value.metadata.trackTerminal
-                : phase === 'manual-size'
-                  ? value.tmux.useManualWindowSize
-                  : phase === 'session-size'
-                    ? value.tmux.sessionSize
-                    : value.tmux.resizeWindow
-        expect(started).toHaveBeenCalled()
-      })
-
-      value.manager.close(id)
-      pending.resolve(
-        phase === 'refresh'
-          ? {
-              id: 'term',
-              worktreeId: 'wt',
-              tmuxSessionName: 'session',
-              status: 'running',
-              exitCode: null
-            }
-          : phase === 'session-size'
-            ? { cols: 100, rows: 30 }
-            : undefined
-      )
-      await new Promise((resolve) => setTimeout(resolve, 0))
-
-      expect(value.spawn, phase).not.toHaveBeenCalled()
-      expect(
-        transport.sent.some((message) => message.type === 'ready'),
-        phase
-      ).toBe(false)
-      expect(
-        transport.sent.some((message) => message.type === 'terminal_error'),
-        phase
-      ).toBe(false)
-    }
-  })
-
-  it('releases partial acquisitions exactly once when subscription setup fails', async () => {
-    const value = fixture()
-    const unsubscribe = vi.fn()
-    vi.spyOn(value.metadata, 'subscribe').mockReturnValue(unsubscribe)
-    value.spawn.mockImplementationOnce(() => {
-      const pty = new FakePty()
-      pty.onExitError = new Error('exit subscription failed')
-      value.ptys.push(pty)
-      // SAFETY: The test fixture provides the asserted contract used here.
-      return testAccess<IPty>(pty)
-    })
-    const transport = new FakeTransport()
-
-    attach(value.manager, transport, 'tab-partial')
-    await vi.waitFor(() =>
-      expect(transport.sent.at(-1)).toMatchObject({
-        type: 'terminal_error',
-        code: 'ATTACH_FAILED'
-      })
-    )
-
-    expect(value.ptys[0]!.kills).toBe(1)
-    expect(value.ptys[0]!.dataDisposals).toBe(1)
-    expect(value.ptys[0]!.exitDisposals).toBe(0)
-    expect(unsubscribe).toHaveBeenCalledOnce()
-    value.manager.dispose()
-    expect(value.ptys[0]!.kills).toBe(1)
-    expect(value.ptys[0]!.dataDisposals).toBe(1)
-    expect(unsubscribe).toHaveBeenCalledOnce()
-  })
-
-  it('revalidates canonical dimensions before ready when resize queues behind initialization', async () => {
-    const value = fixture()
-    const controller = new FakeTransport()
-    const controllerId = attach(value.manager, controller, 'tab-controller')
-    await ready(controller)
-
-    const finishConfigure = deferred<void>()
-    vi.mocked(value.tmux.configureServer).mockReturnValueOnce(
-      finishConfigure.promise
-    )
-    const joining = new FakeTransport()
-    attach(value.manager, joining, 'tab-joining')
-    await vi.waitFor(() =>
-      expect(value.tmux.configureServer).toHaveBeenCalledTimes(2)
-    )
-
-    value.manager.message(controllerId, 'resize', {
-      generation: 1,
-      cols: 120,
-      rows: 40
-    })
-    await vi.waitFor(() =>
-      expect(value.tmux.resizeWindow).toHaveBeenCalledWith(
-        'socket',
-        'session',
-        120,
-        40
-      )
-    )
-    finishConfigure.resolve()
-    const joiningReady = await ready(joining)
-
-    expect(joiningReady).toMatchObject({
-      cols: 120,
-      rows: 40,
-      revision: 2
-    })
-    expect(value.tmux.resizeWindow).toHaveBeenCalledWith(
-      'socket',
-      'session',
-      120,
-      40
-    )
-  })
-
-  it('closes queued initialization without occupying or poisoning the terminal queue', async () => {
-    const value = fixture()
-    const pending = deferred<{ cols: number; rows: number } | null>()
-    vi.mocked(value.tmux.sessionSize).mockReturnValueOnce(pending.promise)
-    const first = new FakeTransport()
-    attach(value.manager, first, 'tab-first')
-    await vi.waitFor(() =>
-      expect(value.tmux.sessionSize).toHaveBeenCalledOnce()
-    )
-
-    const queued = new FakeTransport()
-    const queuedId = attach(value.manager, queued, 'tab-queued')
-    await vi.waitFor(() =>
-      expect(value.tmux.configureServer).toHaveBeenCalledTimes(2)
-    )
-    await new Promise((resolve) => setTimeout(resolve, 0))
-    value.manager.close(queuedId)
-    pending.resolve({ cols: 100, rows: 30 })
-    await ready(first)
-
-    const later = new FakeTransport()
-    attach(value.manager, later, 'tab-later')
-    await ready(later)
-    expect(value.ptys).toHaveLength(2)
-    expect(queued.sent).toEqual([])
-  })
-
-  it('releases scoped resources when transport send self-closes initialization', async () => {
-    const value = fixture()
-    const unsubscribe = vi.fn()
-    vi.spyOn(value.metadata, 'subscribe').mockReturnValue(unsubscribe)
-    const transport = new FakeTransport()
-    transport.failAfter = 1
-
-    attach(value.manager, transport, 'tab-send-close')
-    await vi.waitFor(() => expect(value.ptys).toHaveLength(1))
-    await vi.waitFor(() => expect(value.ptys[0]!.kills).toBe(1))
-
-    expect(transport.sent.map((message) => message.type)).toEqual(['ready'])
-    expect(value.ptys[0]!.dataDisposals).toBe(1)
-    expect(value.ptys[0]!.exitDisposals).toBe(1)
-    expect(unsubscribe).toHaveBeenCalledOnce()
-  })
-
-  it('keeps close and dispose synchronous and idempotent after ready', async () => {
-    const value = fixture()
-    const unsubscribe = vi.fn()
-    vi.spyOn(value.metadata, 'subscribe').mockReturnValue(unsubscribe)
-    const transport = new FakeTransport()
-    const id = attach(value.manager, transport, 'tab-a')
-    await ready(transport)
-
-    value.manager.close(id)
-    value.manager.close(id)
-    value.manager.dispose()
-    value.manager.dispose()
-    await new Promise((resolve) => setTimeout(resolve, 0))
-
-    expect(value.ptys[0]!.kills).toBe(1)
-    expect(value.ptys[0]!.dataDisposals).toBe(1)
-    expect(value.ptys[0]!.exitDisposals).toBe(1)
-    expect(unsubscribe).toHaveBeenCalledOnce()
-  })
-
-  it('cleans up all per-view resources during daemon shutdown', async () => {
-    const { manager, ptys } = fixture()
-    const first = new FakeTransport()
-    const second = new FakeTransport()
-    attach(manager, first, 'tab-a')
-    await ready(first)
-    attach(manager, second, 'tab-b')
-    await ready(second)
-
-    manager.dispose()
-    expect(first.disconnects).toEqual([false])
-    expect(second.disconnects).toEqual([false])
-    expect(ptys.map((pty) => pty.kills)).toEqual([1, 1])
-  })
-
-  it('shares one direct PTY across viewers and disconnects only the slow viewer', async () => {
-    const base = fixture()
-    const runtimeDir = await fs.mkdtemp(
-      path.join(os.tmpdir(), 'treeport-direct-attachments-')
-    )
-    const child = new FakePty()
-    const spawn = vi.fn(() => testAccess<IPty>(child))
-    const directSessions = new DirectPtySessionManager(
-      runtimeDir,
-      '/treeport/launcher.js',
-      // SAFETY: The fake implements the IPty methods used by this boundary.
-      spawn as never
-    )
-    await directSessions.createSession({
-      socketName: 'socket',
-      sessionName: 'session',
-      terminalId: 'term',
-      worktreeId: 'wt',
-      name: 'Terminal',
-      createdAt: '2026-01-01',
-      cwd: runtimeDir,
-      argv: ['/bin/zsh', '-l'],
+      id: 'terminal',
+      worktreeId: 'worktree',
+      name: 'Shell',
+      argv: ['/bin/sh'],
       shellCommand: null,
       interactiveShell: true,
-      initialSize: { cols: 100, rows: 30 },
-      env: {}
+      status: 'running',
+      exitCode: null,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z'
+    })),
+    getWorktree: vi.fn(async () => ({
+      id: 'worktree',
+      path: '/tmp'
+    })),
+    events: { publish: vi.fn() }
+  })
+  const metadataValue = {
+    terminalId: 'terminal',
+    title: null,
+    program: null,
+    progress: null,
+    progressStartedAt: null,
+    progressClearedAt: null,
+    bell: null
+  }
+  // SAFETY: This fixture supplies the metadata methods exercised by attachments.
+  const metadata = testAccess<TerminalMetadataManager>({
+    trackTerminal: vi.fn(async () => undefined),
+    subscribe: vi.fn(() => () => undefined),
+    get: vi.fn(() => metadataValue)
+  })
+  return {
+    host,
+    manager: new TerminalAttachmentManager(service, metadata, host)
+  }
+}
+
+async function waitForEvent(
+  transport: TransportDouble,
+  event: TerminalServerEvent,
+  count = 1
+): Promise<void> {
+  await vi.waitFor(() =>
+    expect(transport.sent.filter((item) => item.event === event)).toHaveLength(
+      count
+    )
+  )
+}
+
+function eventPayloads<Event extends TerminalServerEvent>(
+  transport: TransportDouble,
+  event: Event
+): TerminalServerEventPayloads[Event][] {
+  return transport.sent
+    .filter((item) => item.event === event)
+    .map((item) => {
+      const payload = parseTerminalServerEvent(event, item.payload)
+      if (!payload) {
+        throw new Error(`Invalid ${event} payload in test transport`)
+      }
+
+      return payload
     })
-    const metadata = new TerminalMetadataManager(
-      base.service,
-      base.tmux,
-      process.execPath,
-      undefined,
-      undefined,
-      directSessions
+}
+
+function readyPayload(transport: TransportDouble) {
+  const ready = eventPayloads(transport, 'ready')[0]
+  if (!ready) {
+    throw new Error('Ready event was not sent')
+  }
+
+  return ready
+}
+
+async function activateAuthority(
+  manager: TerminalAttachmentManager,
+  connectionId: string,
+  transport: TransportDouble,
+  generation: number
+): Promise<void> {
+  manager.message(connectionId, 'query_authority', {
+    generation,
+    transitionId: null
+  })
+  await waitForEvent(transport, 'query_authority', 1)
+  const transition = eventPayloads(transport, 'query_authority').find(
+    (item) => item.transitionId !== null
+  )
+  if (!transition?.transitionId) {
+    throw new Error('Query authority transition was not sent')
+  }
+
+  manager.message(connectionId, 'query_authority', {
+    generation,
+    transitionId: transition.transitionId
+  })
+  await waitForEvent(transport, 'query_authority', 2)
+  manager.message(connectionId, 'query_authority', {
+    generation,
+    transitionId: transition.transitionId
+  })
+  await waitForEvent(transport, 'query_authority', 3)
+}
+
+describe('TerminalAttachmentManager', () => {
+  it('fences a canonical snapshot before exactly the concurrent live suffix', async () => {
+    const { host, manager } = fixture()
+    let releaseSnapshot!: () => void
+    host.snapshotGate = new Promise<void>((resolve) => {
+      releaseSnapshot = resolve
+    })
+    host.snapshotFence = 4
+    const transport = new TransportDouble('viewer')
+    manager.accept(
+      { terminalId: 'terminal', clientId: 'client', cols: 100, rows: 30 },
+      transport
     )
-    metadataManagers.push(metadata)
-    const manager = new TerminalAttachmentManager(
-      base.service,
-      base.tmux,
-      process.execPath,
-      metadata,
-      undefined,
-      directSessions
+    await vi.waitFor(() => expect(host.outputListeners.size).toBe(1))
+
+    host.emit('already represented', 4)
+    releaseSnapshot()
+    host.emit('concurrent suffix', 5)
+    await waitForEvent(transport, 'ready')
+    await waitForEvent(transport, 'output')
+
+    expect(readyPayload(transport).snapshot).toBe('canonical snapshot')
+    expect(eventPayloads(transport, 'output').map((item) => item.data)).toEqual(
+      ['concurrent suffix']
     )
+    manager.dispose()
+  })
 
-    try {
-      child.emit('history before viewers\r\n')
-      const slow = new FakeTransport()
-      const fast = new FakeTransport()
-      attach(manager, slow, 'tab-slow')
-      const slowReady = await ready(slow)
-      attach(manager, fast, 'tab-fast')
-      const fastReady = await ready(fast)
+  it('disconnects a slow viewer without pausing output to another viewer', async () => {
+    const { host, manager } = fixture()
+    const slow = new TransportDouble('slow')
+    const fast = new TransportDouble('fast')
+    const slowId = manager.accept(
+      { terminalId: 'terminal', clientId: 'slow-client', cols: 100, rows: 30 },
+      slow
+    )
+    const fastId = manager.accept(
+      { terminalId: 'terminal', clientId: 'fast-client', cols: 100, rows: 30 },
+      fast
+    )
+    await Promise.all([
+      waitForEvent(slow, 'ready'),
+      waitForEvent(fast, 'ready')
+    ])
+    fast.onSend = (event, payload) => {
+      if (event === 'output') {
+        const output = parseTerminalServerEvent('output', payload)
+        if (!output) {
+          throw new Error('Invalid output payload in test transport')
+        }
 
-      expect(spawn).toHaveBeenCalledOnce()
-      expect(slowReady).toMatchObject({
-        backend: 'direct-pty',
-        snapshot: expect.stringContaining('history before viewers')
-      })
-      expect(fastReady).toMatchObject({ backend: 'direct-pty' })
-
-      const fastId = fast.id
-      for (let index = 0; index < 4; index += 1) {
-        child.emit('x'.repeat(64 * 1024))
-        await vi.waitFor(() =>
-          expect(
-            fast.sent.filter((message) => message.type === 'output')
-          ).toHaveLength(index + 1)
-        )
-        const output = fast.sent
-          .filter((message) => message.type === 'output')
-          .at(-1)!
         manager.message(fastId, 'output_ack', {
           streamId: output.streamId,
           sequence: output.sequence
         })
       }
-
-      expect(slow.disconnects).toEqual([true])
-      expect(fast.connected).toBe(true)
-      expect(child.kills).toBe(0)
-
-      manager.message(fastId, 'take_control', {
-        generation: fastReady.generation,
-        cols: 100,
-        rows: 30
-      })
-      await vi.waitFor(() =>
-        expect(fast.sent.at(-1)).toMatchObject({
-          type: 'control',
-          controller: true
-        })
-      )
-      const control = fast.sent.at(-1)!
-      if (control.type !== 'control') {
-        throw new Error('Expected direct viewer control')
-      }
-
-      manager.message(fastId, 'input', {
-        generation: control.generation,
-        data: 'input'
-      })
-      await vi.waitFor(() => expect(child.writes).toEqual(['input']))
-      manager.message(fastId, 'resize', {
-        generation: control.generation,
-        cols: 120,
-        rows: 40
-      })
-      await vi.waitFor(() => expect(child.resizes).toEqual([[120, 40]]))
-    } finally {
-      manager.dispose()
-      directSessions.dispose()
-      await fs.rm(runtimeDir, { recursive: true, force: true })
     }
+
+    const chunk = 'x'.repeat(TERMINAL_OUTPUT_HIGH_WATERMARK / 2)
+    host.emit(chunk, 1)
+    host.emit(chunk, 2)
+    await vi.waitFor(() => expect(slow.disconnects).toEqual([true]))
+    expect(fast.connected).toBe(true)
+
+    host.emit('still live', 3)
+    await vi.waitFor(() =>
+      expect(
+        eventPayloads(fast, 'output').some((item) => item.data === 'still live')
+      ).toBe(true)
+    )
+    expect(host.outputListeners.size).toBe(1)
+    manager.close(slowId)
+    manager.dispose()
+  })
+
+  it('hands query authority between controllers behind parser fences', async () => {
+    const { host, manager } = fixture()
+    const first = new TransportDouble('first')
+    const firstId = manager.accept(
+      { terminalId: 'terminal', clientId: 'client-a', cols: 100, rows: 30 },
+      first
+    )
+    await waitForEvent(first, 'ready')
+    const firstGeneration = readyPayload(first).generation
+
+    manager.message(firstId, 'input', {
+      generation: firstGeneration,
+      data: 'blocked-before-authority'
+    })
+    expect(host.writes).toEqual([])
+    await activateAuthority(manager, firstId, first, firstGeneration)
+    manager.message(firstId, 'input', {
+      generation: firstGeneration,
+      data: 'first input'
+    })
+    await vi.waitFor(() => expect(host.writes).toHaveLength(1))
+
+    const second = new TransportDouble('second')
+    const secondId = manager.accept(
+      { terminalId: 'terminal', clientId: 'client-b', cols: 100, rows: 30 },
+      second
+    )
+    await waitForEvent(second, 'ready')
+    manager.message(secondId, 'take_control', {
+      generation: firstGeneration,
+      cols: 100,
+      rows: 30
+    })
+    await vi.waitFor(() =>
+      expect(
+        second.sent.filter((item) => item.event === 'control').at(-1)?.payload
+      ).toMatchObject({ controller: true })
+    )
+    const secondControl = eventPayloads(second, 'control').at(-1)
+    if (!secondControl) {
+      throw new Error('Second controller state was not sent')
+    }
+
+    const secondGeneration = secondControl.generation
+    await activateAuthority(manager, secondId, second, secondGeneration)
+    manager.message(secondId, 'input', {
+      generation: secondGeneration,
+      data: 'second input'
+    })
+    await vi.waitFor(() => expect(host.writes).toHaveLength(2))
+
+    expect(host.writes.map((item) => item.data)).toEqual([
+      'first input',
+      'second input'
+    ])
+    expect(host.activations).toHaveLength(2)
+    expect(host.hostAuthorityCount).toBeGreaterThanOrEqual(1)
+    manager.dispose()
   })
 })

@@ -27,7 +27,7 @@ afterEach(async () => {
 })
 
 describe('development database snapshots', () => {
-  it('copies live project data, isolates tmux sockets, and refreshes only when forced', async () => {
+  it('copies live project data, drops transient operations, and refreshes only when forced', async () => {
     const directory = await fs.mkdtemp(
       path.join(os.tmpdir(), 'treeport-development-database-#?%-')
     )
@@ -53,7 +53,6 @@ describe('development database snapshots', () => {
       projectId: 'project',
       path: '/repo',
       kind: 'main',
-      tmuxSocketName: 'real-tmux-socket',
       createdAt: '2026-01-01',
       updatedAt: '2026-01-01'
     })
@@ -83,43 +82,18 @@ describe('development database snapshots', () => {
       .select()
       .from(worktrees)
       .where(eq(worktrees.projectId, 'project'))
-    expect(snapshotWorktree).toMatchObject({
-      path: '/repo',
-      tmuxSocketName: expect.stringMatching(/^treeport-wt-[0-9a-f]{16}$/)
-    })
-    expect(snapshotWorktree!.tmuxSocketName).not.toBe('real-tmux-socket')
+    expect(snapshotWorktree).toMatchObject({ path: '/repo' })
     expect(
       await snapshot.db.get<{ count: number }>(
         sql`SELECT COUNT(*) AS count FROM operations`
       )
     ).toEqual({ count: 0 })
     expect(
-      await source.db
-        .select()
-        .from(worktrees)
-        .where(eq(worktrees.projectId, 'project'))
-        .then(([worktree]) => worktree)
-    ).toMatchObject({ tmuxSocketName: 'real-tmux-socket' })
-    expect(
       await source.db.get<{ count: number }>(
         sql`SELECT COUNT(*) AS count FROM operations`
       )
     ).toEqual({ count: 1 })
     snapshot.close()
-
-    const adoptedPath = path.join(directory, 'adopted', 'treeport.db')
-    await cloneDevelopmentDatabase(sourcePath, adoptedPath, {
-      preserveTmuxSockets: true
-    })
-    const adopted = await openDatabase(adoptedPath)
-    expect(
-      await adopted.db
-        .select({ tmuxSocketName: worktrees.tmuxSocketName })
-        .from(worktrees)
-        .where(eq(worktrees.projectId, 'project'))
-        .then(([worktree]) => worktree?.tmuxSocketName)
-    ).toBe('real-tmux-socket')
-    adopted.close()
 
     await source.db
       .update(projects)

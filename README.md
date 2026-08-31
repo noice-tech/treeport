@@ -20,7 +20,7 @@ Give each task an isolated Git worktree. Keep its agents, terminals, servers, an
 
 ## Quick start
 
-Treeport supports macOS and Linux. It requires Node.js 24+, npm, Git, and tmux 3.2+.
+Treeport supports macOS and Linux. It requires Node.js 24+, npm, and Git.
 
 ```sh
 npm install --global @treeport/treeport
@@ -56,7 +56,7 @@ See the [installation guide](https://treeport.app/getting-started/installation/)
 
 ## Development
 
-Contributor requirements are Node.js 24+, pnpm 11, Git, and tmux 3.2+.
+Contributor requirements are Node.js 24+, pnpm 11, and Git.
 
 ```sh
 pnpm install

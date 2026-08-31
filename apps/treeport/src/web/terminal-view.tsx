@@ -321,7 +321,7 @@ export function TerminalView({
                 <strong className="block font-medium text-zinc-100">
                   {snapshot.hasSelection || snapshot.selecting
                     ? 'Selection is active'
-                    : 'Scrolled back in tmux'}
+                    : 'Scrolled back'}
                 </strong>
                 <span className="block text-[0.6875rem] text-zinc-400">
                   New output is continuing off-screen

@@ -78,18 +78,18 @@ Drag across terminal output to select text.
 
 Selection also works when a terminal application has mouse reporting enabled.
 
-Drag above or below the terminal to extend the selection through tmux history.
+Drag above or below the terminal to extend the selection through browser-owned history.
 
-Scroll up to enter tmux history.
+Scroll up to read the browser terminal's local scrollback.
 
-Treeport shows **Scrolled back in tmux** while new output continues outside the visible area.
+Treeport shows **Scrolled back** while new output continues outside the visible area.
 
 If text is selected, Treeport keeps the selection while new output continues.
 
 - Select **Follow latest** to show current output when no selection is active.
 - Select **Clear** to remove the selection and show current output.
 - Reach the end of history to show current output when no selection is active.
-- Send input, paste, click, or start a new selection to clear the retained selection.
+- Start a new selection or use **Clear** to replace the retained selection.
 
 Use the shown **Copy** and **Clear** controls or the standard client clipboard commands.
 

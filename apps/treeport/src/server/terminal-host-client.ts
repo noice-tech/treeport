@@ -6,12 +6,12 @@ import os from 'node:os'
 import path from 'node:path'
 import type { Socket } from 'node:net'
 import type {
-  TmuxPaneProcess,
-  TmuxSessionState,
-  TmuxSessionTitleState,
-  TmuxTerminalSession
-} from './core/tmux'
-import type { DirectPtyRuntimeEvent } from './direct-pty-sessions'
+  HostedTerminal,
+  TerminalProcess,
+  TerminalSessionState,
+  TerminalTitleState
+} from './core/terminal'
+import type { TerminalHostRuntimeEvent } from './terminal-host-sessions'
 import {
   encodeTerminalHostFrame,
   TERMINAL_HOST_PROTOCOL_VERSION,
@@ -134,7 +134,6 @@ async function openSocket(socketPath: string): Promise<Socket> {
 }
 
 export class TerminalHostClient {
-  readonly kind = 'direct-pty' as const
   private readonly pending = new Map<string, PendingRequest>()
   private readonly outputListeners = new Map<
     string,
@@ -142,7 +141,7 @@ export class TerminalHostClient {
   >()
   private readonly runtimeListeners = new Map<
     string,
-    Set<(event: DirectPtyRuntimeEvent) => void>
+    Set<(event: TerminalHostRuntimeEvent) => void>
   >()
   private readonly decoder = new TerminalHostFrameDecoder()
   private closed = false
@@ -199,63 +198,56 @@ export class TerminalHostClient {
     return Promise.resolve(true)
   }
 
-  configureServer(): Promise<void> {
-    return Promise.resolve()
-  }
-
-  createSession(input: TerminalHostCreateInput): Promise<void> {
+  createTerminal(input: TerminalHostCreateInput): Promise<void> {
     return this.request('create', input).then(() => undefined)
   }
 
-  listSessions(socketName: string): Promise<TmuxTerminalSession[]> {
-    return this.request('list', { socketName })
+  listTerminals(worktreeId: string): Promise<HostedTerminal[]> {
+    return this.request('inventory', { worktreeId })
   }
 
-  sessionState(
-    socketName: string,
-    sessionName: string
-  ): Promise<TmuxSessionState> {
-    return this.request('state', { socketName, sessionName })
+  terminalState(terminalId: string): Promise<TerminalSessionState> {
+    return this.request('state', { terminalId })
   }
 
-  sessionSize(
-    socketName: string,
-    sessionName: string
-  ): Promise<{ cols: number; rows: number } | null> {
-    return this.request('size', { socketName, sessionName })
-  }
-
-  snapshot(
-    terminalId: string
-  ): Promise<{ data: string; fence: number } | null> {
-    return this.request('snapshot', { terminalId })
-  }
-
-  async subscribeOutput(
+  async attach(
     terminalId: string,
     listener: (data: string, sequence: number) => void
-  ): Promise<() => void> {
+  ): Promise<{
+    data: string
+    fence: number
+    cols: number
+    rows: number
+    unsubscribe: () => void
+  } | null> {
     const listeners =
       this.outputListeners.get(terminalId) ??
       new Set<(data: string, sequence: number) => void>()
-    const first = listeners.size === 0
     listeners.add(listener)
     this.outputListeners.set(terminalId, listeners)
-    if (first) {
-      try {
-        await this.request('subscribeOutput', { terminalId })
-      } catch (error) {
-        listeners.delete(listener)
-        if (!listeners.size) {
-          this.outputListeners.delete(terminalId)
-        }
-
-        throw error
+    let snapshot: TerminalHostResults['attach']
+    try {
+      snapshot = await this.request('attach', { terminalId })
+    } catch (error) {
+      listeners.delete(listener)
+      if (!listeners.size) {
+        this.outputListeners.delete(terminalId)
       }
+
+      throw error
+    }
+
+    if (snapshot === null) {
+      listeners.delete(listener)
+      if (!listeners.size) {
+        this.outputListeners.delete(terminalId)
+      }
+
+      return null
     }
 
     let active = true
-    return () => {
+    const unsubscribe = () => {
       if (!active) {
         return
       }
@@ -269,15 +261,16 @@ export class TerminalHostClient {
         )
       }
     }
+    return { ...snapshot, unsubscribe }
   }
 
   async subscribeRuntime(
     terminalId: string,
-    listener: (event: DirectPtyRuntimeEvent) => void
+    listener: (event: TerminalHostRuntimeEvent) => void
   ): Promise<() => void> {
     const listeners =
       this.runtimeListeners.get(terminalId) ??
-      new Set<(event: DirectPtyRuntimeEvent) => void>()
+      new Set<(event: TerminalHostRuntimeEvent) => void>()
     const first = listeners.size === 0
     listeners.add(listener)
     this.runtimeListeners.set(terminalId, listeners)
@@ -315,12 +308,43 @@ export class TerminalHostClient {
     return this.request('runtimeState', { terminalId })
   }
 
-  write(terminalId: string, data: string | Buffer): void {
+  write(
+    terminalId: string,
+    data: string | Buffer,
+    authority: { attachmentId: string; generation: number }
+  ): void {
     void this.request('write', {
       terminalId,
       data: Buffer.isBuffer(data) ? data.toString('base64') : data,
-      encoding: Buffer.isBuffer(data) ? 'base64' : 'utf8'
+      encoding: Buffer.isBuffer(data) ? 'base64' : 'utf8',
+      authority
     }).catch(() => undefined)
+  }
+
+  prepareQueryAuthority(
+    terminalId: string
+  ): Promise<{ transitionId: string; fence: number }> {
+    return this.request('prepareQueryAuthority', { terminalId })
+  }
+
+  activateQueryAuthority(
+    terminalId: string,
+    transitionId: string,
+    attachmentId: string,
+    generation: number
+  ): Promise<void> {
+    return this.request('activateQueryAuthority', {
+      terminalId,
+      transitionId,
+      attachmentId,
+      generation
+    }).then(() => undefined)
+  }
+
+  useHostQueryAuthority(terminalId: string): Promise<void> {
+    return this.request('hostQueryAuthority', { terminalId }).then(
+      () => undefined
+    )
   }
 
   resize(terminalId: string, cols: number, rows: number): Promise<void> {
@@ -329,68 +353,41 @@ export class TerminalHostClient {
     )
   }
 
-  capturePane(
-    socketName: string,
-    sessionName: string,
-    lines: number
-  ): Promise<string | null> {
-    return this.request('capture', { socketName, sessionName, lines })
+  captureTerminal(terminalId: string, lines: number): Promise<string | null> {
+    return this.request('capture', { terminalId, lines })
   }
 
   renameTerminal(
-    socketName: string,
-    sessionName: string,
+    terminalId: string,
     name: string,
     updatedAt: string
   ): Promise<void> {
-    return this.request('rename', {
-      socketName,
-      sessionName,
-      name,
-      updatedAt
-    }).then(() => undefined)
+    return this.request('rename', { terminalId, name, updatedAt }).then(
+      () => undefined
+    )
   }
 
-  listPaneProcesses(
-    socketName: string,
-    worktreeId: string
-  ): Promise<TmuxPaneProcess[]> {
-    return this.request('processes', { socketName, worktreeId })
+  listProcesses(worktreeId: string): Promise<TerminalProcess[]> {
+    return this.request('processes', { worktreeId })
   }
 
-  sessionTitleState(
-    socketName: string,
-    sessionName: string
-  ): Promise<TmuxSessionTitleState | null> {
-    return this.request('titleState', { socketName, sessionName })
+  terminalTitleState(terminalId: string): Promise<TerminalTitleState | null> {
+    return this.request('titleState', { terminalId })
   }
 
-  setSessionShellTitle(
-    socketName: string,
-    sessionName: string,
-    title: string | null
+  signalTerminal(
+    terminalId: string,
+    signal: 'SIGINT' | 'SIGTERM' | 'SIGKILL' | 'SIGHUP'
   ): Promise<void> {
-    return this.request('setShellTitle', {
-      socketName,
-      sessionName,
-      title
-    }).then(() => undefined)
+    return this.request('signal', { terminalId, signal }).then(() => undefined)
   }
 
-  killSession(
-    socketName: string,
-    sessionName: string,
-    terminalId?: string
-  ): Promise<void> {
-    const input = terminalId
-      ? { socketName, sessionName, terminalId }
-      : { socketName, sessionName }
-
-    return this.request('kill', input).then(() => undefined)
+  killTerminal(terminalId: string): Promise<void> {
+    return this.request('kill', { terminalId }).then(() => undefined)
   }
 
-  killServer(socketName: string): Promise<string[]> {
-    return this.request('killServer', { socketName })
+  killWorktree(worktreeId: string): Promise<string[]> {
+    return this.request('killWorktree', { worktreeId })
   }
 
   shutdownIfEmpty(): Promise<void> {
@@ -457,6 +454,32 @@ export class TerminalHostClient {
     }
 
     for (const frame of frames) {
+      const explicitProtocolFailure =
+        frame.type === 'response' &&
+        frame.error?.code === 'INCOMPATIBLE_PROTOCOL'
+      if (
+        frame.protocolVersion !== TERMINAL_HOST_PROTOCOL_VERSION &&
+        !explicitProtocolFailure
+      ) {
+        if (frame.type === 'response') {
+          const pending = this.pending.get(frame.id)
+          if (pending) {
+            this.pending.delete(frame.id)
+            clearTimeout(pending.timeout)
+            pending.reject(
+              new TerminalHostRequestError(
+                'INCOMPATIBLE_PROTOCOL',
+                `Terminal host sent protocol ${frame.protocolVersion}; daemon expects ${TERMINAL_HOST_PROTOCOL_VERSION}`,
+                frame.protocolVersion
+              )
+            )
+          }
+        }
+
+        this.socket.destroy()
+        return
+      }
+
       if (frame.type === 'response') {
         this.receiveResponse(frame)
       } else if (frame.type === 'event') {
@@ -538,6 +561,12 @@ function isDefinitiveConnectionFailure(error: Error): boolean {
   )
 }
 
+function isStaleSocketFailure(error: Error): boolean {
+  // SAFETY: Node connection failures expose their stable errno through code.
+  const code = (error as NodeJS.ErrnoException).code
+  return code === 'ENOENT' || code === 'ECONNREFUSED'
+}
+
 export async function connectOrStartTerminalHost(
   options: TerminalHostClientOptions
 ): Promise<TerminalHostClient> {
@@ -573,14 +602,22 @@ export async function connectOrStartTerminalHost(
 
       if (
         record.hostKey === paths.hostKey &&
-        record.socketPath === paths.socketPath
+        record.socketPath === paths.socketPath &&
+        isStaleSocketFailure(failure)
       ) {
         await Promise.all([
           fs.rm(paths.recordPath, { force: true }),
           fs.rm(paths.socketPath, { force: true })
         ])
-      } else {
+      } else if (
+        record.hostKey !== paths.hostKey ||
+        record.socketPath !== paths.socketPath
+      ) {
         throw new Error('The terminal host discovery record is invalid')
+      } else {
+        throw new Error(
+          'The terminal host socket answered unexpectedly. Treeport will not replace it.'
+        )
       }
     }
   } else {
@@ -594,6 +631,12 @@ export async function connectOrStartTerminalHost(
       const failure = error instanceof Error ? error : new Error(String(error))
       if (isDefinitiveConnectionFailure(failure)) {
         throw failure
+      }
+
+      if (!isStaleSocketFailure(failure)) {
+        throw new Error(
+          'An unidentified terminal host socket answered unexpectedly. Treeport will not replace it.'
+        )
       }
 
       await fs.rm(paths.socketPath, { force: true })

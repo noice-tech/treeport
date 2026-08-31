@@ -1,14 +1,14 @@
 import { z } from 'zod'
 import { terminalProgressSchema } from '@treeport/shared'
 import type {
-  LaunchSpec,
-  TmuxSessionState,
-  TmuxSessionTitleState,
-  TmuxTerminalSession
-} from './core/tmux'
-import type { DirectPtyRuntimeEvent } from './direct-pty-sessions'
+  HostedTerminal,
+  TerminalLaunchSpec,
+  TerminalSessionState,
+  TerminalTitleState
+} from './core/terminal'
+import type { TerminalHostRuntimeEvent } from './terminal-host-sessions'
 
-export const TERMINAL_HOST_PROTOCOL_VERSION = 1
+export const TERMINAL_HOST_PROTOCOL_VERSION = 2
 export const TERMINAL_HOST_MAX_FRAME_BYTES = 64 * 1024 * 1024
 
 export interface TerminalHostRecord {
@@ -32,8 +32,6 @@ export const terminalHostRecordSchema: z.ZodType<TerminalHostRecord> = z
   .strict()
 
 export interface TerminalHostCreateInput {
-  socketName: string
-  sessionName: string
   terminalId: string
   worktreeId: string
   name: string
@@ -47,7 +45,7 @@ export interface TerminalHostCreateInput {
   closeOnSuccess?: boolean | undefined
   initialSize?: { cols: number; rows: number } | undefined
   env: Record<string, string>
-  setupTasks?: LaunchSpec['setupTasks'] | undefined
+  setupTasks?: TerminalLaunchSpec['setupTasks'] | undefined
   setupError?: string | undefined
 }
 
@@ -57,10 +55,8 @@ const terminalSizeSchema = z
     rows: z.number().int().positive()
   })
   .strict()
-const terminalIdentitySchema = z
-  .object({ socketName: z.string(), sessionName: z.string() })
-  .strict()
-const terminalIdSchema = z.object({ terminalId: z.string() }).strict()
+const terminalIdSchema = z.object({ terminalId: z.string().min(1) }).strict()
+const worktreeIdSchema = z.object({ worktreeId: z.string().min(1) }).strict()
 const setupTaskSchema = z
   .object({
     label: z.string(),
@@ -72,10 +68,8 @@ const setupTaskSchema = z
   .strict()
 const createSchema: z.ZodType<TerminalHostCreateInput> = z
   .object({
-    socketName: z.string(),
-    sessionName: z.string(),
-    terminalId: z.string(),
-    worktreeId: z.string(),
+    terminalId: z.string().min(1),
+    worktreeId: z.string().min(1),
     name: z.string(),
     createdAt: z.string(),
     cwd: z.string(),
@@ -101,11 +95,9 @@ export const terminalHostInputSchemas = {
     })
     .strict(),
   create: createSchema,
-  list: z.object({ socketName: z.string() }).strict(),
-  state: terminalIdentitySchema,
-  size: terminalIdentitySchema,
-  snapshot: terminalIdSchema,
-  subscribeOutput: terminalIdSchema,
+  inventory: worktreeIdSchema,
+  state: terminalIdSchema,
+  attach: terminalIdSchema,
   unsubscribeOutput: terminalIdSchema,
   subscribeRuntime: terminalIdSchema,
   unsubscribeRuntime: terminalIdSchema,
@@ -114,57 +106,68 @@ export const terminalHostInputSchemas = {
     .object({
       terminalId: z.string(),
       data: z.string(),
-      encoding: z.enum(['utf8', 'base64'])
+      encoding: z.enum(['utf8', 'base64']),
+      authority: z
+        .object({
+          attachmentId: z.string(),
+          generation: z.number().int().positive()
+        })
+        .strict()
     })
     .strict(),
-  resize: z
-    .object({
-      terminalId: z.string(),
+  prepareQueryAuthority: terminalIdSchema,
+  activateQueryAuthority: terminalIdSchema
+    .extend({
+      transitionId: z.string(),
+      attachmentId: z.string(),
+      generation: z.number().int().positive()
+    })
+    .strict(),
+  hostQueryAuthority: terminalIdSchema,
+  resize: terminalIdSchema
+    .extend({
       cols: z.number().int().positive(),
       rows: z.number().int().positive()
     })
     .strict(),
-  capture: terminalIdentitySchema
+  capture: terminalIdSchema
     .extend({ lines: z.number().int().positive() })
     .strict(),
-  rename: terminalIdentitySchema
+  rename: terminalIdSchema
     .extend({ name: z.string(), updatedAt: z.string() })
     .strict(),
-  processes: z
-    .object({ socketName: z.string(), worktreeId: z.string() })
+  processes: worktreeIdSchema,
+  titleState: terminalIdSchema,
+  signal: terminalIdSchema
+    .extend({ signal: z.enum(['SIGINT', 'SIGTERM', 'SIGKILL', 'SIGHUP']) })
     .strict(),
-  titleState: terminalIdentitySchema,
-  setShellTitle: terminalIdentitySchema
-    .extend({ title: z.string().nullable() })
-    .strict(),
-  kill: terminalIdentitySchema
-    .extend({ terminalId: z.string().optional() })
-    .strict(),
-  killServer: z.object({ socketName: z.string() }).strict(),
+  kill: terminalIdSchema,
+  killWorktree: worktreeIdSchema,
   shutdown: z.object({ ifEmpty: z.literal(true) }).strict()
 }
 
 const TERMINAL_HOST_REQUEST_METHODS = [
   'handshake',
   'create',
-  'list',
+  'inventory',
   'state',
-  'size',
-  'snapshot',
-  'subscribeOutput',
+  'attach',
   'unsubscribeOutput',
   'subscribeRuntime',
   'unsubscribeRuntime',
   'runtimeState',
   'write',
+  'prepareQueryAuthority',
+  'activateQueryAuthority',
+  'hostQueryAuthority',
   'resize',
   'capture',
   'rename',
   'processes',
   'titleState',
-  'setShellTitle',
+  'signal',
   'kill',
-  'killServer',
+  'killWorktree',
   'shutdown'
 ] as const satisfies readonly (keyof typeof terminalHostInputSchemas)[]
 
@@ -205,7 +208,7 @@ export type TerminalHostEventFrame =
       protocolVersion: number
       type: 'event'
       event: 'runtime'
-      data: { terminalId: string; value: DirectPtyRuntimeEvent }
+      data: { terminalId: string; value: TerminalHostRuntimeEvent }
     }
 
 export type TerminalHostFrame =
@@ -216,27 +219,35 @@ export type TerminalHostFrame =
 export interface TerminalHostResults {
   handshake: TerminalHostRecord & { liveSessionCount: number }
   create: null
-  list: TmuxTerminalSession[]
-  state: TmuxSessionState
-  size: { cols: number; rows: number } | null
-  snapshot: { data: string; fence: number } | null
-  subscribeOutput: null
+  inventory: HostedTerminal[]
+  state: TerminalSessionState
+  attach: {
+    data: string
+    fence: number
+    cols: number
+    rows: number
+  } | null
   unsubscribeOutput: null
   subscribeRuntime: null
   unsubscribeRuntime: null
   runtimeState: {
     title: string | null
-    status: TmuxTerminalSession['status']
+    status: HostedTerminal['status']
+    progress: z.infer<typeof terminalProgressSchema> | null
+    bell: { sequence: number; at: string } | null
   } | null
   write: null
+  prepareQueryAuthority: { transitionId: string; fence: number }
+  activateQueryAuthority: null
+  hostQueryAuthority: null
   resize: null
   capture: string | null
   rename: null
   processes: Array<{ pid: number; terminalId: string }>
-  titleState: TmuxSessionTitleState | null
-  setShellTitle: null
+  titleState: TerminalTitleState | null
+  signal: null
   kill: null
-  killServer: string[]
+  killWorktree: string[]
   shutdown: null
 }
 
@@ -246,8 +257,24 @@ const runtimeEventSchema = z
   .object({
     title: z.string().optional(),
     progress: terminalProgressSchema.nullable().optional(),
-    bell: z.literal(true).optional(),
-    exitCode: z.number().int().nullable().optional()
+    bell: z
+      .object({
+        sequence: z.number().int().positive(),
+        at: z.string().datetime()
+      })
+      .strict()
+      .optional(),
+    exitCode: z.number().int().nullable().optional(),
+    titleState: z
+      .object({
+        paneTitle: z.string().nullable(),
+        currentCommand: z.string().nullable(),
+        commandLine: z.string().nullable(),
+        shellTitle: z.string().nullable(),
+        fallbackShell: z.string().nullable()
+      })
+      .strict()
+      .optional()
   })
   .strict()
 const terminalHostFrameSchema: z.ZodType<TerminalHostFrame> = z.union([

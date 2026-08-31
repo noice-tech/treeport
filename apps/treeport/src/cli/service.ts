@@ -699,18 +699,12 @@ export function createServiceEnvironment(input: {
       path.join(input.paths.dataDir, 'treeport.db'),
     TREEPORT_SHELL:
       env.TREEPORT_SHELL?.trim() || env.SHELL?.trim() || '/bin/sh',
-    TREEPORT_TMUX_PATH: env.TREEPORT_TMUX_PATH?.trim() || 'tmux',
     TREEPORT_GIT_PATH: env.TREEPORT_GIT_PATH?.trim() || 'git',
     TREEPORT_GH_PATH: env.TREEPORT_GH_PATH?.trim() || 'gh',
     TREEPORT_DAEMON_LIFECYCLE: 'service',
     TREEPORT_INSTALLATION_METHOD: input.installationMethod,
     TREEPORT_SERVICE_RECORD: input.recordPath
   }
-  if (env.TREEPORT_EXPERIMENTAL_TERMINAL_BACKEND?.trim()) {
-    result.TREEPORT_EXPERIMENTAL_TERMINAL_BACKEND =
-      env.TREEPORT_EXPERIMENTAL_TERMINAL_BACKEND.trim()
-  }
-
   for (const [name, value] of Object.entries(env)) {
     if (
       value !== undefined &&

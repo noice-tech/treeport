@@ -23,7 +23,7 @@ An application integration is not necessary.
 
 Interactive zsh, Bash, and fish sessions capture the command when the shell starts it.
 
-For example, Treeport can show `pnpm dev` when tmux sees only the foreground `node` process.
+For example, Treeport can show the complete `pnpm dev` command instead of only a foreground `node` executable.
 
 The captured title can include arguments and has a maximum of 256 characters.
 
@@ -41,7 +41,7 @@ If a terminal returns to a shell, normal interactive-shell title tracking resume
 
 Other interactive shells use the foreground executable name.
 
-This fallback also applies when Bash configuration replaces the one-time Treeport prompt setup.
+This fallback also applies when a shell does not load Treeport's integration.
 
 An application can replace the initial title with a more useful OSC `0` or `2` title.
 
@@ -53,9 +53,7 @@ printf '\033]2;Waiting for review\007'
 
 Use a short title. Examples are `Implementing authentication`, `PR #123`, `PR MERGED`, and `Development server`.
 
-Application titles are runtime information. A daemon or observer restart can clear them.
-
-Treeport also saves active shell commands as tmux pane information. This lets Treeport recover them after an observer restart.
+Application titles and active shell commands live in the detached terminal host. They survive API daemon replacement, but not a terminal-host or computer restart.
 
 ## BEL attention
 

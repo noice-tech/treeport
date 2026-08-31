@@ -1,4 +1,4 @@
-import { DirectPtySessionManager } from './direct-pty-sessions'
+import { TerminalHostSessionManager } from './terminal-host-sessions'
 import { startTerminalHostServer } from './terminal-host-server'
 
 function requiredEnvironment(name: string): string {
@@ -13,7 +13,7 @@ function requiredEnvironment(name: string): string {
 async function main(): Promise<void> {
   const runtimeDir = requiredEnvironment('TREEPORT_TERMINAL_HOST_RUNTIME_DIR')
   const launcherPath = requiredEnvironment('TREEPORT_TERMINAL_HOST_LAUNCHER')
-  const sessions = new DirectPtySessionManager(runtimeDir, launcherPath)
+  const sessions = new TerminalHostSessionManager(runtimeDir, launcherPath)
   const host = await startTerminalHostServer({
     hostId: requiredEnvironment('TREEPORT_TERMINAL_HOST_ID'),
     hostKey: requiredEnvironment('TREEPORT_TERMINAL_HOST_KEY'),
@@ -21,8 +21,8 @@ async function main(): Promise<void> {
     socketPath: requiredEnvironment('TREEPORT_TERMINAL_HOST_SOCKET'),
     recordPath: requiredEnvironment('TREEPORT_TERMINAL_HOST_RECORD'),
     sessions,
-    onShutdown: () => {
-      sessions.dispose()
+    onShutdown: async () => {
+      await sessions.shutdown()
       process.exit(0)
     }
   })
@@ -34,8 +34,8 @@ async function main(): Promise<void> {
     }
 
     stopping = true
-    void host.close().finally(() => {
-      sessions.dispose()
+    void host.close().finally(async () => {
+      await sessions.shutdown()
       process.exit(0)
     })
   }

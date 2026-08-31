@@ -36,8 +36,6 @@ Production code, configuration, metadata, APIs, storage, and new runtime identif
 
 Existing development data needs a one-time migration before the renamed server starts.
 
-The migration moves the database and data directories. It also changes saved tmux metadata.
-
-Saved tmux socket and session names do not change because they are opaque identifiers.
+The migration moves the database and data directories. At the time of this historical rename, it retained the then-current terminal-runtime metadata as opaque identifiers. The later terminal-host cutover removes those active fields and deliberately does not adopt live terminals from the earlier runtime.
 
 Treeport does not have a permanent fallback, dual read, or dual write.

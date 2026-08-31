@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events'
 import { describe, expect, it, vi } from 'vitest'
 import { runLaunchSpec, type LauncherDependencies } from './launcher'
-import type { LaunchSpec } from './tmux'
+import type { TerminalLaunchSpec } from './terminal'
 
 class FakeChild extends EventEmitter {
   readonly kill = vi.fn((signal: NodeJS.Signals) => {
@@ -24,7 +24,7 @@ function writable() {
   }
 }
 
-function spec(overrides: Partial<LaunchSpec> = {}): LaunchSpec {
+function spec(overrides: Partial<TerminalLaunchSpec> = {}): TerminalLaunchSpec {
   return {
     argv: ['final', 'hostile;argument'],
     cwd: '/worktree',
@@ -100,7 +100,7 @@ describe('terminal launcher setup pipeline', () => {
       argv: string[]
       env: NodeJS.ProcessEnv
     }> = []
-    const results = [0, 23, 0, 0]
+    const results = [23, 0]
     const spawnProcess = vi.fn(
       (
         executable: string,
@@ -114,57 +114,34 @@ describe('terminal launcher setup pipeline', () => {
       }
     )
 
+    const output = writable()
     await expect(
       runLaunchSpec(
         spec({
           initialTitle: '  --Review;\u001bTitle  ',
           fallbackArgv: ['/bin/zsh', '-l'],
           env: { HOME: '/home/user', ZDOTDIR: '/home/user/.config/zsh' },
-          shellIntegrationDir: '/treeport/integration',
-          tmuxExecutable: '/opt/treeport/tmux'
+          shellIntegrationDir: '/treeport/integration'
         }),
         {
           spawnProcess,
-          signalSource: new EventEmitter(),
-          tmuxPane: '%7'
+          stdout: output.stream,
+          signalSource: new EventEmitter()
         }
       )
     ).resolves.toBe(0)
     expect(calls.map((call) => call.argv)).toEqual([
-      [
-        '/opt/treeport/tmux',
-        'set-option',
-        '-p',
-        '-t',
-        '%7',
-        '--',
-        '@treeport-command',
-        '--Review; Title'
-      ],
       ['final', 'hostile;argument'],
-      [
-        '/opt/treeport/tmux',
-        'set-option',
-        '-p',
-        '-u',
-        '-t',
-        '%7',
-        '@treeport-command',
-        ';',
-        'set-option',
-        '-p',
-        '-t',
-        '%7',
-        '--',
-        '@treeport-fallback-shell',
-        Buffer.from(JSON.stringify('/bin/zsh'), 'utf8').toString('base64url')
-      ],
       ['/bin/zsh', '-l']
     ])
-    expect(calls[1]?.env).not.toHaveProperty('TREEPORT_USER_ZDOTDIR')
-    expect(calls[3]?.env).toMatchObject({
+    expect(output.value()).toContain(
+      '\u001b]777;command;--Review; Title\u001b\\'
+    )
+    expect(output.value()).toContain('\u001b]777;command;\u001b\\')
+    expect(calls[0]?.env).not.toHaveProperty('TREEPORT_USER_ZDOTDIR')
+    expect(calls[1]?.env).toMatchObject({
+      TREEPORT_SHELL_INTEGRATION: '1',
       TREEPORT_USER_ZDOTDIR: '/home/user/.config/zsh',
-      TREEPORT_TMUX_EXECUTABLE: '/opt/treeport/tmux',
       ZDOTDIR: '/treeport/integration/zsh'
     })
   })
@@ -188,8 +165,7 @@ describe('terminal launcher setup pipeline', () => {
       signalSource: new EventEmitter()
     }
     const integration = {
-      shellIntegrationDir: '/treeport/integration',
-      tmuxExecutable: '/opt/treeport/tmux'
+      shellIntegrationDir: '/treeport/integration'
     }
 
     await runLaunchSpec(
@@ -220,26 +196,24 @@ describe('terminal launcher setup pipeline', () => {
     expect(calls[0]).toMatchObject({
       argv: ['/bin/bash', '-l'],
       env: {
-        PROMPT_COMMAND: 'source "${TREEPORT_BASH_INTEGRATION_FILE}"',
-        TREEPORT_BASH_INTEGRATION_FILE:
-          '/treeport/integration/bash/treeport.bash',
-        TREEPORT_BASH_PROMPT_COMMAND: 'user_prompt',
-        TREEPORT_BASH_PROMPT_COMMAND_SET: '1',
-        TREEPORT_TMUX_EXECUTABLE: '/opt/treeport/tmux'
+        HOME: '/treeport/integration/bash/home',
+        PROMPT_COMMAND: 'user_prompt',
+        TREEPORT_SHELL_INTEGRATION: '1',
+        TREEPORT_USER_HOME: process.env.HOME
       }
     })
     expect(calls[1]).toMatchObject({
       argv: ['/opt/homebrew/bin/fish', '-l'],
       env: {
         TREEPORT_FISH_XDG_DATA_DIR: '/treeport/integration/fish',
-        TREEPORT_TMUX_EXECUTABLE: '/opt/treeport/tmux',
+        TREEPORT_SHELL_INTEGRATION: '1',
         XDG_DATA_DIRS: '/treeport/integration/fish:/usr/local/share:/usr/share'
       }
     })
     expect(calls[2]?.argv).toEqual(['/bin/bash', '-c', 'echo okay'])
-    expect(calls[2]?.env).not.toHaveProperty('TREEPORT_TMUX_EXECUTABLE')
+    expect(calls[2]?.env).not.toHaveProperty('TREEPORT_SHELL_INTEGRATION')
     expect(calls[3]?.argv).toEqual(['/bin/nu', '-l'])
-    expect(calls[3]?.env).not.toHaveProperty('TREEPORT_TMUX_EXECUTABLE')
+    expect(calls[3]?.env).not.toHaveProperty('TREEPORT_SHELL_INTEGRATION')
   })
 
   it('starts a fallback shell after the final command cannot be spawned', async () => {

@@ -92,8 +92,7 @@ import {
   type WebPanelAssetResolution
 } from './web-panel-vite-runtime'
 import { KeyedTaskQueue } from './task-queue'
-import type { TerminalSessionBackend } from './tmux'
-import { generateTmuxSessionName, generateTmuxSocketName } from './tmux'
+import type { TerminalSessionBackend } from './terminal'
 import {
   loadZedTerminalPresetDefinitions,
   normalizeWorktreeName,
@@ -224,7 +223,7 @@ interface ServiceDependencies {
   database: TreeportDatabase
   runner: CommandRunner
   git: GitAdapter
-  tmux: TerminalSessionBackend
+  terminalHost: TerminalSessionBackend
   gh: GhAdapter
   events?: ProductEventBus
 }
@@ -368,7 +367,7 @@ export class TreeportService {
   }
 
   async initialize(): Promise<void> {
-    await this.deps.tmux.initialize()
+    await this.deps.terminalHost.initialize()
     const interrupted = await this.deps.database.db.all<{
       id: string
       kind: OperationRecord['kind']
@@ -773,7 +772,7 @@ export class TreeportService {
     worktree: WorktreeRecord
   ): Promise<TerminalRecord[]> {
     let sessions = (
-      await this.deps.tmux.listSessions(worktree.tmuxSocketName)
+      await this.deps.terminalHost.listTerminals(worktree.id)
     ).filter((terminal) => terminal.worktreeId === worktree.id)
     if (!this.worktreeLocks.has(worktree.id)) {
       for (const terminal of sessions) {
@@ -786,12 +785,7 @@ export class TreeportService {
           continue
         }
 
-        await this.deps.tmux.killSession(
-          worktree.tmuxSocketName,
-          terminal.sessionName,
-          terminal.id,
-          { preserveServer: true }
-        )
+        await this.deps.terminalHost.killTerminal(terminal.id)
         sessions = sessions.filter((candidate) => candidate.id !== terminal.id)
       }
     }
@@ -808,7 +802,6 @@ export class TreeportService {
           id: terminal.id,
           worktreeId: terminal.worktreeId,
           name: terminal.name,
-          tmuxSessionName: terminal.sessionName,
           argv: terminal.argv,
           shellCommand: terminal.shellCommand,
           interactiveShell: terminal.interactiveShell,
@@ -2411,10 +2404,7 @@ export class TreeportService {
   ): Promise<WorktreeListenerDiscovery> {
     const panel = await this.getBrowserPanel(panelId)
     const worktree = await this.getWorktree(panel.worktreeId)
-    const panes = await this.deps.tmux.listPaneProcesses(
-      worktree.tmuxSocketName,
-      worktree.id
-    )
+    const panes = await this.deps.terminalHost.listProcesses(worktree.id)
     return this.networkListeners.listeners({
       worktreePath: worktree.path,
       panes
@@ -2437,10 +2427,7 @@ export class TreeportService {
   ): Promise<WorktreeListenerDiscovery> {
     const context = await this.getWebPanelContext(panelId)
     const worktree = await this.getWorktree(context.panel.worktreeId)
-    const panes = await this.deps.tmux.listPaneProcesses(
-      worktree.tmuxSocketName,
-      worktree.id
-    )
+    const panes = await this.deps.terminalHost.listProcesses(worktree.id)
     return this.networkListeners.listeners({
       worktreePath: worktree.path,
       panes
@@ -2636,7 +2623,7 @@ export class TreeportService {
     if (matches.length > 1) {
       throw new DomainError(
         'TERMINAL_ID_CONFLICT',
-        'Terminal ID is present in more than one tmux server',
+        'Terminal ID is present in more than one terminal host',
         500
       )
     }
@@ -2681,7 +2668,7 @@ export class TreeportService {
     if (matches.length > 1) {
       throw new DomainError(
         'TERMINAL_ID_CONFLICT',
-        'Terminal ID is present in more than one tmux server',
+        'Terminal ID is present in more than one terminal host',
         500
       )
     }
@@ -3390,10 +3377,10 @@ export class TreeportService {
           await tx.run(sql`
             INSERT INTO worktrees(
               id,project_id,path,git_worktree_key,head,branch,detached,locked,
-              lock_reason,prunable,kind,tmux_socket_name,created_at,updated_at
+              lock_reason,prunable,kind,created_at,updated_at
             ) VALUES(
               ${worktreeId},${projectId},${folderPath},NULL,'',NULL,0,0,NULL,0,
-              'folder',${generateTmuxSocketName()},${timestamp},${timestamp}
+              'folder',${timestamp},${timestamp}
             )
           `)
         }
@@ -3937,7 +3924,6 @@ export class TreeportService {
       path: string
       git_worktree_key: string | null
       kind: 'main' | 'linked'
-      tmux_socket_name: string
       managed_wrapper_path: string | null
       created_at: string
       head: string
@@ -3947,7 +3933,7 @@ export class TreeportService {
       lock_reason: string | null
       prunable: number
     }>(sql`
-      SELECT id,path,git_worktree_key,kind,tmux_socket_name,
+      SELECT id,path,git_worktree_key,kind,
              managed_wrapper_path,created_at,head,branch,detached,locked,lock_reason,prunable
       FROM worktrees WHERE project_id=${projectId}
     `)
@@ -4005,15 +3991,13 @@ export class TreeportService {
       const terminalIds = new Set(
         this.terminalIdsByWorktree.get(worktree.id) ?? []
       )
-      const sessions = await this.deps.tmux.listSessions(
-        worktree.tmux_socket_name
-      )
+      const sessions = await this.deps.terminalHost.listTerminals(worktree.id)
       for (const terminal of sessions) {
         if (terminal.worktreeId === worktree.id) {
           terminalIds.add(terminal.id)
         }
       }
-      await this.deps.tmux.killServer(worktree.tmux_socket_name)
+      await this.deps.terminalHost.killWorktree(worktree.id)
 
       const [acceptedRemoval] = await this.deps.database.db.all<{
         id: string
@@ -4109,12 +4093,12 @@ export class TreeportService {
         await tx.run(sql`
           INSERT INTO worktrees(
             id,project_id,path,git_worktree_key,head,branch,detached,locked,lock_reason,
-            prunable,kind,tmux_socket_name,created_at,updated_at
+            prunable,kind,created_at,updated_at
           ) VALUES(
             ${id('wt')},${projectId},${item.path},${item.gitWorktreeKey},
             ${item.head ?? ''},${item.branch},${item.detached ? 1 : 0},
             ${item.locked ? 1 : 0},${item.lockReason},${item.prunable ? 1 : 0},
-            ${kind},${generateTmuxSocketName()},${timestamp},${timestamp}
+            ${kind},${timestamp},${timestamp}
           )
         `)
       }
@@ -4721,7 +4705,6 @@ export class TreeportService {
   ): Promise<TerminalRecord> {
     const project = await this.requireOpenProject(worktree.projectId)
     const terminalId = id('term')
-    const sessionName = generateTmuxSessionName()
     const shellCommand = options?.shellCommand ?? null
     const interactiveShell = !argv && shellCommand === null
     const commandArgv = argv
@@ -4730,9 +4713,7 @@ export class TreeportService {
         ? [this.deps.config.shell, '-lc', shellCommand]
         : [this.deps.config.shell, '-l']
     const timestamp = now()
-    const session: Parameters<TerminalSessionBackend['createSession']>[0] = {
-      socketName: worktree.tmuxSocketName,
-      sessionName,
+    const session: Parameters<TerminalSessionBackend['createTerminal']>[0] = {
       terminalId,
       worktreeId: worktree.id,
       name,
@@ -4780,7 +4761,7 @@ export class TreeportService {
     }
 
     try {
-      await this.deps.tmux.createSession(session)
+      await this.deps.terminalHost.createTerminal(session)
     } catch (error) {
       throw new DomainError(
         'TERMINAL_CREATE_FAILED',
@@ -4793,7 +4774,6 @@ export class TreeportService {
       id: terminalId,
       worktreeId: worktree.id,
       name,
-      tmuxSessionName: sessionName,
       argv: commandArgv,
       shellCommand,
       interactiveShell,
@@ -4877,10 +4857,7 @@ export class TreeportService {
       : (this.terminalStates.get(terminalId) ??
         (await this.getTerminalFromBindings(terminalId)))
     const worktree = await this.getWorktree(terminal.worktreeId)
-    const state = await this.deps.tmux.sessionState(
-      worktree.tmuxSocketName,
-      terminal.tmuxSessionName
-    )
+    const state = await this.deps.terminalHost.terminalState(terminal.id)
     await this.requireOpenProject(worktree.projectId)
     if (!this.terminalStates.has(terminalId)) {
       throw new DomainError('TERMINAL_NOT_FOUND', 'Terminal not found', 404)
@@ -4967,12 +4944,7 @@ export class TreeportService {
 
     this.worktreeLocks.add(worktree.id)
     try {
-      await this.deps.tmux.renameTerminal(
-        worktree.tmuxSocketName,
-        terminal.tmuxSessionName,
-        name,
-        now()
-      )
+      await this.deps.terminalHost.renameTerminal(terminal.id, name, now())
       const renamed = await this.getTerminal(terminalId)
       this.invalidateProjectsSnapshot()
       this.events.publish('terminal.updated', {
@@ -5041,12 +5013,7 @@ export class TreeportService {
         )
       }
 
-      await this.deps.tmux.killSession(
-        worktree.tmuxSocketName,
-        terminal.tmuxSessionName,
-        terminal.id,
-        { preserveServer: true }
-      )
+      await this.deps.terminalHost.killTerminal(terminal.id)
     } finally {
       this.worktreeLocks.delete(worktree.id)
     }
@@ -5425,7 +5392,6 @@ export class TreeportService {
               gitWorktreeKey: checkoutBinding.git_worktree_key,
               repositoryIdentity,
               phase: 'accepted',
-              tmuxSocketName: worktree.tmuxSocketName,
               managedWrapperPath: checkoutBinding.managed_wrapper_path
             })},
             NULL,NULL,${timestamp},${timestamp}
@@ -5539,9 +5505,7 @@ export class TreeportService {
           }
         }
 
-        if (request.tmuxSocketName) {
-          await this.deps.tmux.killServer(request.tmuxSocketName)
-        }
+        await this.deps.terminalHost.killWorktree(lockedWorktreeId)
 
         await persistPhase('terminals_stopped')
 
@@ -5794,7 +5758,7 @@ export class TreeportService {
       for (const worktree of project.worktrees) {
         terminalIdsByWorktree.set(
           worktree.id,
-          await this.deps.tmux.killServer(worktree.tmuxSocketName)
+          await this.deps.terminalHost.killWorktree(worktree.id)
         )
       }
       await this.deps.database.db.run(
@@ -5823,8 +5787,8 @@ export class TreeportService {
     let terminated = 0
     for (const project of await this.listProjects()) {
       for (const worktree of project.worktrees) {
-        const terminalIds = await this.deps.tmux.killServer(
-          worktree.tmuxSocketName
+        const terminalIds = await this.deps.terminalHost.killWorktree(
+          worktree.id
         )
         terminated += terminalIds.length
         this.clearWorktreeTerminalState(worktree.id, terminalIds)
@@ -5849,7 +5813,7 @@ export class TreeportService {
         await this.observeAvailableProject(project)
         availableProjects.add(project.id)
       } catch {
-        // Keep metadata and tmux untouched while the project folder is unavailable.
+        // Keep metadata and terminal host untouched while the project folder is unavailable.
       }
     }
     for (const project of await this.storedProjects(true)) {
@@ -5857,11 +5821,6 @@ export class TreeportService {
         continue
       }
 
-      for (const worktree of project.worktrees) {
-        await this.deps.tmux
-          .configureServer(worktree.tmuxSocketName)
-          .catch(() => undefined)
-      }
       await this.ensureProjectTerminals(project.id).catch(() => undefined)
     }
   }

@@ -23,7 +23,6 @@ function config(dataDir: string): AppConfig {
     cacheDir: path.join(dataDir, 'cache'),
     runtimeDir: path.join(dataDir, 'runtime'),
     shell: '/bin/zsh',
-    tmuxPath: 'tmux',
     gitPath: 'git',
     ghPath: 'gh',
     apiUrl: 'http://127.0.0.1:8733',

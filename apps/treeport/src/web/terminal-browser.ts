@@ -1,14 +1,8 @@
 import type { Terminal } from '@xterm/xterm'
 import type { TerminalProgress } from '@treeport/shared'
-import {
-  forceSpecificCursor,
-  stopForcingSpecificCursor
-} from './force-specific-cursor'
 
 export const TERMINAL_FONT_SIZE = 14
 
-// tmux copy mode advances one row for each wheel report. Match one row of
-// finger travel to one history row.
 const TERMINAL_TOUCH_ROWS_PER_WHEEL = 1
 const TERMINAL_TOUCH_SELECTION_DELAY_MS = 450
 const TERMINAL_TOUCH_PASTE_DELAY_MS = 550
@@ -153,269 +147,25 @@ function forcePlainSelectionWhileMouseReporting(
   })
 }
 
-const TERMINAL_SELECTION_SCROLL_INTERVAL_MS = 50
-const TERMINAL_SELECTION_DRAG_THRESHOLD_PX = 3
-
-export function trackTerminalSelectionAutoscroll(
+export function trackTerminalSelection(
   wrapper: HTMLElement,
   terminal: Terminal,
   options: {
-    canInput: () => boolean
-    sendInput: (data: string) => void
     requestControl: () => void
     onSelectionStart: () => void
-    onTmuxSelectionStart: () => void
-    onTmuxSelectionFinish: () => void
-    onTmuxSelectionCancel: () => void
-    selectionStartSequence: string
-    selectionStopSequence: string
   }
 ): () => void {
-  let activePointerId: number | null = null
-  let drag: {
-    startColumn: number
-    startRow: number
-    startClientX: number
-    startClientY: number
-    clientX: number
-    clientY: number
-    tmux: boolean
-  } | null = null
-  let scrollTimer: number | null = null
-  let stopDesktopSelectionRelease: (() => void) | undefined
-
-  const terminalCellAt = (clientX: number, clientY: number) => {
-    const screen = terminal.element?.querySelector<HTMLElement>('.xterm-screen')
-    const bounds = screen?.getBoundingClientRect()
-    if (!bounds?.width || !bounds.height) {
-      return null
-    }
-
-    // Match xterm's text-boundary behavior: the left half of a cell is the
-    // boundary before its glyph and the right half is the boundary after it.
-    const selectionColumn = Math.ceil(
-      ((clientX - bounds.left) / bounds.width) * terminal.cols + 0.5
-    )
-    return {
-      column: Math.max(1, Math.min(terminal.cols, selectionColumn)),
-      endOfLine: selectionColumn > terminal.cols,
-      row: Math.max(
-        1,
-        Math.min(
-          terminal.rows,
-          Math.floor(((clientY - bounds.top) / bounds.height) * terminal.rows) +
-            1
-        )
-      ),
-      bounds
-    }
-  }
-
-  const stopScrolling = () => {
-    if (scrollTimer !== null) {
-      window.clearInterval(scrollTimer)
-      scrollTimer = null
-    }
-  }
-
-  function sendDrag() {
-    if (!drag) {
-      return
-    }
-
-    const cell = terminalCellAt(drag.clientX, drag.clientY)
-    if (!cell) {
-      return
-    }
-
-    const verticallyOutside =
-      drag.clientY < cell.bounds.top || drag.clientY > cell.bounds.bottom
-    const horizontallyOutside =
-      drag.clientX < cell.bounds.left || drag.clientX > cell.bounds.right
-    const shouldScroll = verticallyOutside && !horizontallyOutside
-    if (!shouldScroll) {
-      stopScrolling()
-    }
-
-    // SGR mouse reports stop at the final cell. End moves tmux's exclusive
-    // selection boundary past that cell.
-    const endOfLineInput = cell.endOfLine ? '\u001b[F' : ''
-    if (!drag.tmux) {
-      const distance = Math.hypot(
-        drag.clientX - drag.startClientX,
-        drag.clientY - drag.startClientY
-      )
-      if (
-        distance < TERMINAL_SELECTION_DRAG_THRESHOLD_PX ||
-        !options.canInput()
-      ) {
-        return
-      }
-
-      options.sendInput(
-        `${options.selectionStartSequence}\u001b[<0;${drag.startColumn};${drag.startRow}M\u001b[<32;${drag.startColumn};${drag.startRow}M\u001b[<32;${cell.column};${cell.row}M${endOfLineInput}`
-      )
-      terminal.clearSelection()
-
-      if (activePointerId !== null) {
-        wrapper.setPointerCapture(activePointerId)
-      }
-
-      drag.tmux = true
-      stopDesktopSelectionRelease ??=
-        window.treeportDesktop?.onTerminalSelectionRelease(finishDrag)
-      window.treeportDesktop?.setTerminalSelectionActive(true)
-      options.onTmuxSelectionStart()
-    } else if (options.canInput()) {
-      options.sendInput(
-        `\u001b[<32;${cell.column};${cell.row}M${endOfLineInput}`
-      )
-    }
-
-    if (shouldScroll && scrollTimer === null) {
-      scrollTimer = window.setInterval(
-        sendDrag,
-        TERMINAL_SELECTION_SCROLL_INTERVAL_MS
-      )
-    }
-  }
-
-  const releasePointerCapture = () => {
-    const pointerId = activePointerId
-    activePointerId = null
-    if (pointerId !== null && wrapper.hasPointerCapture(pointerId)) {
-      wrapper.releasePointerCapture(pointerId)
-    }
-  }
-
-  const finishDrag = () => {
-    if (!drag) {
-      releasePointerCapture()
-      return
-    }
-
-    const hadTmuxDrag = drag.tmux
-    if (hadTmuxDrag && options.canInput()) {
-      const cell = terminalCellAt(drag.clientX, drag.clientY)
-      if (cell) {
-        const releaseRow =
-          cell.row === 1
-            ? Math.min(2, terminal.rows)
-            : cell.row === terminal.rows
-              ? Math.max(1, terminal.rows - 1)
-              : cell.row
-        options.onTmuxSelectionFinish()
-        options.sendInput(
-          `${options.selectionStopSequence}\u001b[<32;${cell.column};${releaseRow}M\u001b[<0;${cell.column};${releaseRow}m`
-        )
-      }
-    }
-
-    stopScrolling()
-    drag = null
-    stopForcingSpecificCursor()
-    if (hadTmuxDrag) {
-      window.treeportDesktop?.setTerminalSelectionActive(false)
-    }
-
-    releasePointerCapture()
-    document.removeEventListener('mousemove', handleMouseMove, true)
-    document.removeEventListener('mouseup', handleMouseUp, true)
-    window.removeEventListener('blur', handleWindowBlur)
-  }
-
-  const handleMouseMove = (event: MouseEvent) => {
-    if (!drag) {
-      return
-    }
-
-    if (!(event.buttons & 1)) {
-      finishDrag()
-      return
-    }
-
-    drag.clientX = event.clientX
-    drag.clientY = event.clientY
-    sendDrag()
-  }
-
-  const handleMouseUp = () => finishDrag()
-  const handlePointerDown = (event: PointerEvent) => {
-    if (event.isPrimary && event.button === 0) {
-      finishDrag()
-      activePointerId = event.pointerId
-    }
-  }
-  const handlePointerUp = () => finishDrag()
-  const handleLostPointerCapture = () => finishDrag()
-  const handleWindowBlur = () => finishDrag()
   const handleMouseDown = (event: MouseEvent) => {
     options.requestControl()
-    forcePlainSelectionWhileMouseReporting(event, terminal)
-    const cell = terminalCellAt(event.clientX, event.clientY)
-    if (
-      event.button !== 0 ||
-      event.ctrlKey ||
-      event.metaKey ||
-      !cell ||
-      event.clientX < cell.bounds.left ||
-      event.clientX > cell.bounds.right ||
-      event.clientY < cell.bounds.top ||
-      event.clientY > cell.bounds.bottom
-    ) {
-      return
-    }
-
     options.onSelectionStart()
-    forceSpecificCursor('text')
-    drag = {
-      startColumn: cell.column,
-      startRow: cell.row,
-      startClientX: event.clientX,
-      startClientY: event.clientY,
-      clientX: event.clientX,
-      clientY: event.clientY,
-      tmux: false
-    }
-    document.addEventListener('mousemove', handleMouseMove, true)
-    document.addEventListener('mouseup', handleMouseUp, true)
-    window.addEventListener('blur', handleWindowBlur)
+    // Selection stays inside this browser even when a full-screen application
+    // has enabled mouse reporting. xterm interprets the platform modifier as
+    // a request for local selection and never sends it to the child PTY.
+    forcePlainSelectionWhileMouseReporting(event, terminal)
   }
 
-  wrapper.addEventListener('pointerdown', handlePointerDown, true)
-  wrapper.addEventListener('pointerup', handlePointerUp, true)
-  wrapper.addEventListener('pointercancel', handlePointerUp, true)
-  wrapper.addEventListener('lostpointercapture', handleLostPointerCapture, true)
   wrapper.addEventListener('mousedown', handleMouseDown, true)
-  return () => {
-    if (drag?.tmux && options.canInput()) {
-      options.onTmuxSelectionCancel()
-    }
-
-    if (drag?.tmux) {
-      window.treeportDesktop?.setTerminalSelectionActive(false)
-    }
-
-    stopDesktopSelectionRelease?.()
-    stopScrolling()
-    if (drag) {
-      stopForcingSpecificCursor()
-      drag = null
-    }
-
-    releasePointerCapture()
-    wrapper.removeEventListener('pointerdown', handlePointerDown, true)
-    wrapper.removeEventListener('pointerup', handlePointerUp, true)
-    wrapper.removeEventListener('pointercancel', handlePointerUp, true)
-    wrapper.removeEventListener(
-      'lostpointercapture',
-      handleLostPointerCapture,
-      true
-    )
-    document.removeEventListener('mousemove', handleMouseMove, true)
-    document.removeEventListener('mouseup', handleMouseUp, true)
-    window.removeEventListener('blur', handleWindowBlur)
-  }
+  return () => wrapper.removeEventListener('mousedown', handleMouseDown, true)
 }
 
 export function trackTerminalScrolling(
@@ -750,7 +500,7 @@ export function terminalOptions(terminalId?: string) {
       '"SFMono-Regular", "Cascadia Code", "Liberation Mono", monospace',
     fontSize: TERMINAL_FONT_SIZE,
     lineHeight: 1.15,
-    scrollback: 0,
+    scrollback: 50_000,
     allowProposedApi: false,
     macOptionClickForcesSelection: true,
     linkHandler: {
