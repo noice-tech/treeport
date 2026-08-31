@@ -33,13 +33,13 @@ Treeport uses the canonical path as the persistent identity of a folder project.
 
 If a folder moves while Treeport is not running, open its new path. Treeport can register it as a new project because it cannot reliably recognize that move without adding a marker to the folder.
 
-When you close a project, Treeport stops all terminals in that project. It does not remove folders, Git worktrees, or files.
+When you close a project, Treeport disconnects its terminal clients. The terminals and their processes continue to run.
 
-You can open the project again later.
+Treeport does not remove folders, Git worktrees, or files. Open the project again to connect to the same terminals.
 
 You can remove a closed project from the Recent projects list.
 
-This action does not remove the repository, Git worktrees, or files.
+This action does not stop terminals or remove the repository, Git worktrees, or files.
 
 Use Open project with the repository path to show the project again.
 

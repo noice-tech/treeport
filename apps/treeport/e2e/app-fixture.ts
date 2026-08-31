@@ -1257,10 +1257,8 @@ export async function mockApp(
           status: 500,
           json: {
             error: {
-              code: 'PROJECT_CLOSE_FAILED',
-              message:
-                'Some terminal sessions could not be stopped; the project remains open',
-              details: { terminalsMayHaveStopped: true }
+              code: 'INTERNAL_ERROR',
+              message: 'Unexpected server error'
             }
           }
         })

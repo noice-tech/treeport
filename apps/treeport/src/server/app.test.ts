@@ -1255,33 +1255,6 @@ describe('HTTP API validation', () => {
     expect(service.closeProject).toHaveBeenCalledTimes(1)
   })
 
-  it('preserves close failure details in the standard error envelope', async () => {
-    const { app, service } = fixture()
-    vi.mocked(service.closeProject).mockRejectedValueOnce(
-      new DomainError(
-        'PROJECT_CLOSE_FAILED',
-        'Some terminals may have stopped',
-        500,
-        { failedWorktreeIds: ['wt_1'], terminalsMayHaveStopped: true }
-      )
-    )
-
-    const response = await app.request('/api/projects/p/close', {
-      method: 'POST'
-    })
-    expect(response.status).toBe(500)
-    expect(await response.json()).toEqual({
-      error: {
-        code: 'PROJECT_CLOSE_FAILED',
-        message: 'Some terminals may have stopped',
-        details: {
-          failedWorktreeIds: ['wt_1'],
-          terminalsMayHaveStopped: true
-        }
-      }
-    })
-  })
-
   it('sanitizes and correlates unexpected API errors', async () => {
     const { app, service } = fixture()
     vi.mocked(service.listProjects).mockRejectedValueOnce(
