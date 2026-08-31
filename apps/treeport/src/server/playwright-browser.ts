@@ -666,6 +666,23 @@ export class PlaywrightBrowser {
 
     if (message.type === 'insertText') {
       await page.keyboard.insertText(message.text)
+      return
+    }
+
+    if (message.type === 'find') {
+      await page.evaluate(({ text, forward, findNext }) => {
+        if (!findNext) {
+          window.getSelection()?.removeAllRanges()
+        }
+
+        // @ts-expect-error -- Chromium supplies the nonstandard window.find API.
+        window.find(text, false, !forward, true, false, true, false)
+      }, message)
+      return
+    }
+
+    if (message.type === 'stopFind') {
+      await page.evaluate(() => window.getSelection()?.removeAllRanges())
     }
   }
 

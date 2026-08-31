@@ -120,6 +120,7 @@ const desktopBridge = Object.freeze({
           'close-panel',
           'toggle-side-panel',
           'focus-location',
+          'find-in-page',
           'select-tab-1',
           'select-tab-2',
           'select-tab-3',

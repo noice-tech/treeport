@@ -39,6 +39,20 @@ describe('hosted browser protocol', () => {
     })
 
     expect(
+      parseBrowserClientMessage({
+        type: 'find',
+        text: 'Browser target',
+        forward: true,
+        findNext: false
+      })
+    ).toEqual({
+      type: 'find',
+      text: 'Browser target',
+      forward: true,
+      findNext: false
+    })
+
+    expect(
       parseBrowserClientMessage({ type: 'navigate', url: 'file:///etc/passwd' })
     ).toBeNull()
     expect(

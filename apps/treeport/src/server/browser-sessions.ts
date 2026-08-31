@@ -1547,11 +1547,13 @@ export class BrowserSessionManager {
     }
 
     const coalesceKey =
-      message.type === 'pointer' && message.phase === 'move'
-        ? `pointer-move:${attachment.id}`
-        : message.type === 'wheel'
-          ? `wheel:${attachment.id}`
-          : null
+      message.type === 'find' && !message.findNext
+        ? `find:${attachment.id}`
+        : message.type === 'pointer' && message.phase === 'move'
+          ? `pointer-move:${attachment.id}`
+          : message.type === 'wheel'
+            ? `wheel:${attachment.id}`
+            : null
     this.queueClientOperation(session, attachment, {
       coalesceKey,
       message,
@@ -2116,6 +2118,17 @@ export class BrowserSessionManager {
       }
     } else if (message.type === 'insertText') {
       await page.keyboard.insertText(message.text)
+    } else if (message.type === 'find') {
+      await page.evaluate(({ text, forward, findNext }) => {
+        if (!findNext) {
+          window.getSelection()?.removeAllRanges()
+        }
+
+        // @ts-expect-error -- Chromium supplies the nonstandard window.find API.
+        window.find(text, false, !forward, true, false, true, false)
+      }, message)
+    } else if (message.type === 'stopFind') {
+      await page.evaluate(() => window.getSelection()?.removeAllRanges())
     }
   }
 

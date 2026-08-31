@@ -62,10 +62,12 @@ Treeport does not request administrator access.
 
 1. Select the side panel button.
 2. Select **Browser** in the empty panel or the `+` menu.
-3. Enter an HTTP or HTTPS address in the address bar.
+3. Enter search terms or an HTTP or HTTPS address in the address bar.
 4. Press Enter.
 
 You can also select **Browser** from **New panel**.
+
+Treeport sends search terms to Google Search.
 
 You can omit the protocol. Treeport adds `http://` when necessary.
 
@@ -80,6 +82,12 @@ If the page cannot load, Treeport shows the network error code.
 Correct the address or start the target. Then, select **Reload**.
 
 Use pointer, keyboard, and scroll input in the page.
+
+Press `Command+F` on macOS or `Ctrl+F` on Linux to find text in the page.
+
+On a local desktop, right-click the page to open the browser context menu.
+
+Use this menu to open links in new Browser tabs, copy link addresses, and edit text.
 
 When a page opens a popup, Treeport opens a new browser panel in the same tree.
 

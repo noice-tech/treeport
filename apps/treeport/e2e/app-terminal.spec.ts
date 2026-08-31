@@ -1009,10 +1009,16 @@ test.describe('desktop worktree and terminal workflows', () => {
     await address.fill(invalidAddress)
     await address.press('Enter')
     await expect(page.getByRole('alert')).toHaveText(
-      'Enter an HTTP or HTTPS address without credentials.'
+      'Enter search terms or an HTTP or HTTPS address without credentials.'
     )
     await expect(address).toHaveValue(invalidAddress)
     await expect(address).toBeFocused()
+
+    await address.fill('treeport browser')
+    await address.press('Enter')
+    await expect
+      .poll(() => page.evaluate(() => window.__browserNavigationCompleted))
+      .toBe('https://www.google.com/search?q=treeport+browser')
 
     await address.fill('localhost:4173/application')
     await page.evaluate(() => window.__repeatBrowserState())
@@ -1075,7 +1081,41 @@ test.describe('desktop worktree and terminal workflows', () => {
     await address.press('Escape')
     await expect(viewport).toBeFocused()
     await page.keyboard.press(locationShortcut.replace('+L', '+F'))
-    await expect(address).not.toBeFocused()
+    const findInput = page.getByRole('textbox', { name: 'Find in page' })
+    await expect(findInput).toBeFocused()
+    await findInput.fill('external')
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          window.__browserCommands
+            .filter((message) => message.type === 'find')
+            .at(-1)
+        )
+      )
+      .toEqual({
+        type: 'find',
+        text: 'external',
+        forward: true,
+        findNext: false
+      })
+    await findInput.press('Enter')
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          window.__browserCommands
+            .filter((message) => message.type === 'find')
+            .at(-1)
+        )
+      )
+      .toEqual({
+        type: 'find',
+        text: 'external',
+        forward: true,
+        findNext: true
+      })
+    await findInput.press('Escape')
+    await expect(findInput).toHaveCount(0)
+    await expect(viewport).toBeFocused()
 
     await page.keyboard.press('Meta+1')
     await expect(page).toHaveURL(/\/panels\/browser_panel_1$/)

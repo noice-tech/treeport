@@ -5,6 +5,7 @@ type TreeportDesktopCommand =
   | 'close-panel'
   | 'toggle-side-panel'
   | 'focus-location'
+  | 'find-in-page'
   | `select-tab-${1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9}`
 type TreeportDesktopFileAction = 'opened' | 'rejected'
 
@@ -21,6 +22,11 @@ interface TreeportBrowserWebview extends HTMLElement {
   goForward(): void
   reload(): void
   stop(): void
+  findInPage(
+    text: string,
+    options?: { forward?: boolean; findNext?: boolean }
+  ): number
+  stopFindInPage(action: 'clearSelection' | 'keepSelection'): void
 }
 
 type TreeportDesktopBridge = Readonly<{
