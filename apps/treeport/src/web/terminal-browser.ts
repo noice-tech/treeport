@@ -423,6 +423,16 @@ export function trackTerminalScrolling(
       }
 
       touchScrollRemainder -= steps * touchStep
+      if (!element.classList.contains('enable-mouse-events')) {
+        terminal.scrollLines(steps)
+        return
+      }
+
+      const wheelTarget = element.querySelector<HTMLElement>('.xterm-screen')
+      if (!wheelTarget) {
+        return
+      }
+
       const clientX = Math.min(
         Math.max(touch.clientX, bounds.left),
         bounds.right - 1
@@ -432,7 +442,7 @@ export function trackTerminalScrolling(
         bounds.bottom - 1
       )
       for (let index = 0; index < Math.abs(steps); index += 1) {
-        element.dispatchEvent(
+        wheelTarget.dispatchEvent(
           new WheelEvent('wheel', {
             bubbles: true,
             cancelable: true,
