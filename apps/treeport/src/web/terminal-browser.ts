@@ -509,6 +509,10 @@ export function terminalOptions(terminalId?: string) {
     fontSize: TERMINAL_FONT_SIZE,
     lineHeight: 1.15,
     scrollback: 50_000,
+    // FitAddon reserves the configured scrollbar width from the terminal grid.
+    // Keep that reservation negligible and expand the absolute scrollbar with
+    // CSS so it overlays the terminal instead.
+    overviewRuler: { width: 1 },
     allowProposedApi: false,
     macOptionClickForcesSelection: true,
     linkHandler: {
@@ -525,6 +529,7 @@ export function terminalOptions(terminalId?: string) {
       scrollbarSliderBackground: '#3f3f46',
       scrollbarSliderHoverBackground: '#52525b',
       scrollbarSliderActiveBackground: '#71717a',
+      overviewRulerBorder: '#00000000',
       black: '#18181b',
       red: '#fb7185',
       green: '#86efac',

@@ -122,6 +122,11 @@ code {
   background-color: var(--color-zinc-950);
 }
 
+.xterm-host .xterm-scrollable-element > .scrollbar.vertical,
+.xterm-host .xterm-scrollable-element > .scrollbar.vertical > .slider {
+  width: 10px !important;
+}
+
 .terminal-session-host {
   position: relative;
 }
