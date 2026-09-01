@@ -3,7 +3,7 @@ title: Persistent terminals
 description: Run terminal programs and connect again without a restart.
 ---
 
-Treeport runs each terminal in a dedicated tmux server that Treeport owns. The process belongs to the tree, not to a client.
+Treeport runs each terminal in its detached terminal host. The host owns one PTY and one canonical terminal model for the session. The process belongs to the tree, not to a client or API daemon.
 
 ## Disconnect without a stop
 
@@ -23,7 +23,7 @@ You can also connect from a phone through the supported Tailscale Serve endpoint
 
 ## Read earlier output
 
-Treeport uses tmux history. Earlier output or a selection can stay visible while new output continues.
+Each browser keeps its own useful terminal scrollback. Earlier output or a selection can stay visible in one browser while new output continues and other viewers remain at their own positions.
 
 See [Shortcuts](/reference/shortcuts/#selection-scrolling-and-clipboard) for scroll, selection, copy, and paste operations.
 
@@ -68,10 +68,10 @@ Applications can add information with standard signals:
 
 These signals are not necessary for persistence or control. See the [terminal signals reference](/reference/terminal-signals/).
 
-## Keep tmux separate
+## Keep the terminal host focused
 
-Treeport uses tmux only as a persistent terminal runtime. It shows repositories, trees, and terminal tabs in the Treeport interface.
+The Treeport-owned terminal host provides persistence, canonical history, reconnect snapshots, and byte-stream fanout. It does not implement windows, panes, layouts, prefix keys, or server-side copy mode.
 
-Your personal tmux server and configuration stay separate.
+Browser clients own scrolling, selection, and clipboard behavior.
 
 The [Pi integration](/building-apps/coding-agents/#use-pi) can create persistent terminals for long-running agent tasks.

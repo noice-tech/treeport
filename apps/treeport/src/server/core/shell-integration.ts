@@ -14,19 +14,18 @@ fi
 `
 
 const ZSH_INTEGRATION = `${ZSH_DELEGATE('.zshrc')}
-if [[ -n "$TMUX_PANE" && -n "$TREEPORT_TMUX_EXECUTABLE" ]]; then
-  _treeport_tmux_executable=$TREEPORT_TMUX_EXECUTABLE
-  unset TREEPORT_TMUX_EXECUTABLE
+if [[ -n "$TREEPORT_SHELL_INTEGRATION" ]]; then
+  unset TREEPORT_SHELL_INTEGRATION
   autoload -Uz add-zsh-hook 2>/dev/null
   _treeport_command_title_preexec() {
     emulate -L zsh
     local title=\${1//[[:cntrl:]]/}
     title=\${title[1,256]}
-    "$_treeport_tmux_executable" set-option -p -t "$TMUX_PANE" -- @treeport-command "$title" >/dev/null 2>&1
+    printf '\\033]777;command;%s\\033\\\\' "$title"
   }
   _treeport_command_title_precmd() {
     emulate -L zsh
-    "$_treeport_tmux_executable" set-option -p -u -t "$TMUX_PANE" @treeport-command >/dev/null 2>&1
+    printf '\\033]777;command;\\033\\\\'
   }
   add-zsh-hook -d preexec _treeport_command_title_preexec 2>/dev/null
   add-zsh-hook -d precmd _treeport_command_title_precmd 2>/dev/null
@@ -40,21 +39,8 @@ unset TREEPORT_USER_ZDOTDIR
 
 const BASH_INTEGRATION = `[[ $- == *i* ]] || return
 
-_treeport_bash_injected_prompt='source "\${TREEPORT_BASH_INTEGRATION_FILE}"'
-_treeport_bash_remaining_prompt=\${PROMPT_COMMAND//"$_treeport_bash_injected_prompt"/}
-_treeport_bash_remaining_prompt=\${_treeport_bash_remaining_prompt#;}
-_treeport_bash_remaining_prompt=\${_treeport_bash_remaining_prompt%;}
-if [[ -n "\${TREEPORT_BASH_PROMPT_COMMAND_SET-}" ]]; then
-  PROMPT_COMMAND=$TREEPORT_BASH_PROMPT_COMMAND
-  [[ -n "$_treeport_bash_remaining_prompt" ]] && PROMPT_COMMAND="\${PROMPT_COMMAND:+$PROMPT_COMMAND;}$_treeport_bash_remaining_prompt"
-else
-  PROMPT_COMMAND=$_treeport_bash_remaining_prompt
-fi
-unset TREEPORT_BASH_INTEGRATION_FILE TREEPORT_BASH_PROMPT_COMMAND TREEPORT_BASH_PROMPT_COMMAND_SET
-unset _treeport_bash_injected_prompt _treeport_bash_remaining_prompt
+unset TREEPORT_SHELL_INTEGRATION
 
-_treeport_tmux_executable=$TREEPORT_TMUX_EXECUTABLE
-unset TREEPORT_TMUX_EXECUTABLE
 _treeport_command_title_preexec() {
   local fallback=\${1-} line title
   line=$(HISTTIMEFORMAT= builtin history 1)
@@ -64,13 +50,10 @@ _treeport_command_title_preexec() {
   [[ -n "$title" ]] || title=$fallback
   title=$(LC_ALL=C printf '%s' "$title" | tr -d '\\000-\\037\\177')
   title="\${title:0:256}"
-  [[ -n "$TMUX_PANE" && -n "$_treeport_tmux_executable" ]] || return
-  "$_treeport_tmux_executable" set-option -p -t "$TMUX_PANE" -- @treeport-command "$title" >/dev/null 2>&1
+  printf '\\033]777;command;%s\\033\\\\' "$title"
 }
 _treeport_command_title_prompt() {
-  if [[ -n "$TMUX_PANE" && -n "$_treeport_tmux_executable" ]]; then
-    "$_treeport_tmux_executable" set-option -p -u -t "$TMUX_PANE" @treeport-command >/dev/null 2>&1
-  fi
+  printf '\\033]777;command;\\033\\\\'
   [[ -n "\${_treeport_uses_debug_trap-}" ]] && _treeport_command_ready=1
 }
 
@@ -99,6 +82,28 @@ if [[ -n "\${_treeport_uses_debug_trap-}" ]]; then
 fi
 `
 
+const BASH_PROFILE_DELEGATE = `_treeport_integration_home=$HOME
+HOME=$TREEPORT_USER_HOME
+unset TREEPORT_USER_HOME
+if [[ -r "$HOME/.bash_profile" ]]; then
+  source "$HOME/.bash_profile"
+elif [[ -r "$HOME/.bash_login" ]]; then
+  source "$HOME/.bash_login"
+elif [[ -r "$HOME/.profile" ]]; then
+  source "$HOME/.profile"
+fi
+source "$_treeport_integration_home/../treeport.bash"
+unset _treeport_integration_home
+`
+
+const BASH_RC_DELEGATE = `_treeport_integration_home=$HOME
+HOME=$TREEPORT_USER_HOME
+unset TREEPORT_USER_HOME
+[[ -r "$HOME/.bashrc" ]] && source "$HOME/.bashrc"
+source "$_treeport_integration_home/../treeport.bash"
+unset _treeport_integration_home
+`
+
 const FISH_INTEGRATION = `if set -q TREEPORT_FISH_XDG_DATA_DIR
   if set -q TREEPORT_FISH_XDG_DATA_DIRS_SET
     set -l treeport_xdg_dirs
@@ -113,30 +118,26 @@ const FISH_INTEGRATION = `if set -q TREEPORT_FISH_XDG_DATA_DIR
   end
   set -e TREEPORT_FISH_XDG_DATA_DIR TREEPORT_FISH_XDG_DATA_DIRS_SET
 end
-set -g _treeport_tmux_executable "$TREEPORT_TMUX_EXECUTABLE"
-set -e TREEPORT_TMUX_EXECUTABLE
+set -e TREEPORT_SHELL_INTEGRATION
 
 function _treeport_command_title_preexec --on-event fish_preexec
   set -l title (string replace -ar '[[:cntrl:]]' '' -- "$argv[1]" | string sub -l 256)
-  if test -n "$TMUX_PANE"; and test -n "$_treeport_tmux_executable"
-    command "$_treeport_tmux_executable" set-option -p -t "$TMUX_PANE" -- @treeport-command "$title" >/dev/null 2>&1
-  end
+  printf '\\e]777;command;%s\\e\\\\' "$title"
 end
 
 function _treeport_command_title_prompt --on-event fish_prompt
-  if test -n "$TMUX_PANE"; and test -n "$_treeport_tmux_executable"
-    command "$_treeport_tmux_executable" set-option -p -u -t "$TMUX_PANE" @treeport-command >/dev/null 2>&1
-  end
+  printf '\\e]777;command;\\e\\\\'
 end
 `
 
 export async function prepareShellIntegration(root: string): Promise<void> {
   const zshDir = path.join(root, 'zsh')
   const bashDir = path.join(root, 'bash')
+  const bashHome = path.join(bashDir, 'home')
   const fishDir = path.join(root, 'fish', 'fish', 'vendor_conf.d')
   await Promise.all([
     fs.mkdir(zshDir, { recursive: true, mode: 0o700 }),
-    fs.mkdir(bashDir, { recursive: true, mode: 0o700 }),
+    fs.mkdir(bashHome, { recursive: true, mode: 0o700 }),
     fs.mkdir(fishDir, { recursive: true, mode: 0o700 })
   ])
   await Promise.all([
@@ -149,6 +150,12 @@ export async function prepareShellIntegration(root: string): Promise<void> {
       mode: 0o600
     }),
     fs.writeFile(path.join(bashDir, 'treeport.bash'), BASH_INTEGRATION, {
+      mode: 0o600
+    }),
+    fs.writeFile(path.join(bashHome, '.bash_profile'), BASH_PROFILE_DELEGATE, {
+      mode: 0o600
+    }),
+    fs.writeFile(path.join(bashHome, '.bashrc'), BASH_RC_DELEGATE, {
       mode: 0o600
     }),
     fs.writeFile(path.join(fishDir, 'treeport.fish'), FISH_INTEGRATION, {
@@ -166,10 +173,10 @@ export function integrateShellLaunch(
   argv: string[],
   env: NodeJS.ProcessEnv,
   root: string | undefined,
-  tmuxExecutable: string | undefined
+  enabled: boolean
 ): ShellLaunch {
   const shell = path.basename(argv[0] ?? '').replace(/^-/, '')
-  if (!root || !tmuxExecutable || !['zsh', 'bash', 'fish'].includes(shell)) {
+  if (!root || !enabled || !['zsh', 'bash', 'fish'].includes(shell)) {
     return { argv, env }
   }
 
@@ -205,7 +212,7 @@ export function integrateShellLaunch(
 
   const integratedEnv = {
     ...env,
-    TREEPORT_TMUX_EXECUTABLE: tmuxExecutable
+    TREEPORT_SHELL_INTEGRATION: '1'
   }
   if (shell === 'zsh') {
     const integrationZdotDir = path.join(root, 'zsh')
@@ -271,16 +278,17 @@ export function integrateShellLaunch(
     }
   }
 
-  const integrationFile = path.join(root, 'bash', 'treeport.bash')
-  const bashEnvironment: NodeJS.ProcessEnv = {
-    ...integratedEnv,
-    TREEPORT_BASH_INTEGRATION_FILE: integrationFile,
-    PROMPT_COMMAND: 'source "${TREEPORT_BASH_INTEGRATION_FILE}"'
-  }
-  if (env.PROMPT_COMMAND !== undefined) {
-    bashEnvironment.TREEPORT_BASH_PROMPT_COMMAND_SET = '1'
-    bashEnvironment.TREEPORT_BASH_PROMPT_COMMAND = env.PROMPT_COMMAND
+  const userHome = env.HOME?.trim()
+  if (!userHome) {
+    return { argv, env }
   }
 
-  return { argv, env: bashEnvironment }
+  return {
+    argv,
+    env: {
+      ...integratedEnv,
+      HOME: path.join(root, 'bash', 'home'),
+      TREEPORT_USER_HOME: userHome
+    }
+  }
 }

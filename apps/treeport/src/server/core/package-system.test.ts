@@ -40,7 +40,6 @@ async function rootFixture() {
     cacheDir: path.join(root, 'cache'),
     runtimeDir: path.join(root, 'runtime'),
     shell: '/bin/sh',
-    tmuxPath: 'tmux',
     gitPath: 'git',
     ghPath: 'gh',
     apiUrl: 'http://127.0.0.1:8733',

@@ -1166,7 +1166,7 @@ async function main(args: string[]): Promise<void> {
     .description('Stop the local daemon and preserve terminal sessions')
     .option(
       '--terminate-terminals',
-      'terminate every Treeport-owned tmux server'
+      'terminate every Treeport-owned terminal process'
     )
     .option('--force', 'confirm termination of all terminals')
     .option('--json', 'emit machine-readable JSON')

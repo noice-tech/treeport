@@ -522,17 +522,15 @@ process.exit(result.status ?? 1)
   await execute(treeport, ['stop', '--terminate-terminals', '--force'], {
     env: environment
   })
-  const tmuxEnvironment = { ...process.env, TMUX: '' }
-  const serverTerminated = await execute(
-    'tmux',
-    ['-L', worktree.tmuxSocketName, 'has-session'],
-    { env: tmuxEnvironment }
-  ).then(
-    () => false,
-    () => true
+  const stopped = JSON.parse(
+    (
+      await execute(treeport, ['status', '--json'], {
+        env: environment
+      })
+    ).stdout
   )
-  if (!serverTerminated) {
-    throw new Error('Destructive shutdown left a Treeport tmux server running')
+  if (stopped.running) {
+    throw new Error('Destructive shutdown left the Treeport daemon running')
   }
 
   await fs.access(path.join(dataDirectory, 'treeport.db'))

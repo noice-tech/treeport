@@ -10,7 +10,6 @@ Install these required tools before you install Treeport:
 - Node.js 24 or a newer version
 - npm
 - Git
-- tmux 3.2 or a newer version
 
 Treeport does not install these tools.
 
@@ -79,7 +78,7 @@ Treeport checks for stable backend updates approximately every ten minutes.
 
 When an update is available, a Download control appears before the notification bell. Select the control. Then, select **Update Treeport**.
 
-Treeport verifies the release before it stops the daemon. It preserves running tmux terminals and restarts the same daemon lifecycle.
+Treeport verifies the release before it stops the daemon. The detached terminal host preserves running terminals while Treeport restarts the same daemon lifecycle.
 
 The page reconnects after the restart. It then opens the same workspace with the new web assets.
 
@@ -127,7 +126,7 @@ treeport doctor
 treeport version
 ```
 
-The command `treeport stop` stops the daemon but keeps persistent tmux sessions. A later `treeport start` connects them again.
+The command `treeport stop` stops the API daemon but keeps hosted terminal sessions. A later `treeport start` adopts the same terminal host and connects them again.
 
 ## Start Treeport automatically
 

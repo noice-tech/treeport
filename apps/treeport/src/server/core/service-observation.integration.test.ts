@@ -7,7 +7,7 @@ import { openDatabase } from './database'
 import { GhAdapter } from './gh'
 import { GitAdapter } from './git'
 import { TreeportService } from './service'
-import { TmuxAdapter } from './tmux'
+import { TerminalHostDouble } from './service.integration-fixture'
 import {
   databases,
   fixture,
@@ -131,18 +131,18 @@ describe('TreeportService with injected command adapters', () => {
 
   it('reports a project unavailable until terminal provisioning recovers', async () => {
     const { main, runner, service } = await fixture()
-    runner.tmuxCreateFails = true
+    runner.terminalCreateFails = true
     const unavailable = await service.registerProject(main)
     expect(unavailable.availability).toMatchObject({
       state: 'unavailable',
-      message: expect.stringContaining('tmux create failed')
+      message: expect.stringContaining('terminal create failed')
     })
     expect(unavailable.worktrees[0]?.terminals).toEqual([])
     await expect(
       persistedProjectOpen(service.database, unavailable.id)
     ).resolves.toBe(true)
 
-    runner.tmuxCreateFails = false
+    runner.terminalCreateFails = false
     const recovered = await service.getProjectSnapshot(unavailable.id)
     expect(recovered.availability.state).toBe('available')
     expect(recovered.worktrees[0]?.terminals).toHaveLength(1)
@@ -151,16 +151,16 @@ describe('TreeportService with injected command adapters', () => {
   it('returns unavailable projects when terminal inventory fails', async () => {
     const { main, runner, service } = await fixture()
     const project = await service.registerProject(main)
-    runner.tmuxInventoryFails = true
+    runner.terminalInventoryFails = true
 
     const unavailable = await service.getProjectSnapshot(project.id)
     expect(unavailable.availability).toMatchObject({
       state: 'unavailable',
-      message: 'tmux inventory failed'
+      message: 'terminal inventory failed'
     })
     expect(unavailable.worktrees[0]?.terminals).toEqual([])
 
-    runner.tmuxInventoryFails = false
+    runner.terminalInventoryFails = false
     const recovered = await service.getProjectSnapshot(project.id)
     expect(recovered.availability.state).toBe('available')
     expect(recovered.worktrees[0]?.terminals).toHaveLength(1)
@@ -172,17 +172,16 @@ describe('TreeportService with injected command adapters', () => {
     runner.sessions.clear()
     runner.calls.length = 0
     let releaseInventory!: () => void
-    runner.tmuxInventoryGate = new Promise<void>((resolve) => {
+    runner.terminalInventoryGate = new Promise<void>((resolve) => {
       releaseInventory = resolve
     })
 
+    const inventoryAttempts = runner.terminalInventoryAttempts
     const refreshing = service.listProjects()
     await vi.waitFor(() =>
-      expect(
-        runner.calls.some(
-          (call) => call.args.includes('list-panes') && call.args.includes('-a')
-        )
-      ).toBe(true)
+      expect(runner.terminalInventoryAttempts).toBeGreaterThan(
+        inventoryAttempts
+      )
     )
     await expect(service.closeProject(project.id)).rejects.toMatchObject({
       code: 'PROJECT_BUSY'
@@ -190,25 +189,24 @@ describe('TreeportService with injected command adapters', () => {
 
     releaseInventory()
     const [refreshed] = await refreshing
-    runner.tmuxInventoryGate = null
+    runner.terminalInventoryGate = null
     expect(refreshed?.worktrees[0]?.terminals).toHaveLength(1)
   })
 
-  it('publishes a terminal only after its tmux session is ready', async () => {
+  it('publishes a terminal only after the host creates it', async () => {
     const { main, runner, service } = await fixture()
     const project = await service.registerProject(main)
     const mainWorktree = project.worktrees[0]!
     runner.calls.length = 0
     let releaseTerminal!: () => void
-    runner.tmuxCreateGate = new Promise<void>((resolve) => {
+    runner.terminalCreateGate = new Promise<void>((resolve) => {
       releaseTerminal = resolve
     })
 
+    const createAttempts = runner.terminalCreateAttempts
     const creatingTerminal = service.createTerminal(mainWorktree.id, 'Starting')
     await vi.waitFor(() =>
-      expect(
-        runner.calls.some((call) => call.args.includes('new-session'))
-      ).toBe(true)
+      expect(runner.terminalCreateAttempts).toBe(createAttempts + 1)
     )
     const snapshot = await service.listProjects()
     expect(
@@ -219,7 +217,7 @@ describe('TreeportService with injected command adapters', () => {
 
     releaseTerminal()
     const terminal = await creatingTerminal
-    runner.tmuxCreateGate = null
+    runner.terminalCreateGate = null
     expect(terminal.status).toBe('running')
     expect((await service.getTerminal(terminal.id)).status).toBe('running')
   })
@@ -229,28 +227,25 @@ describe('TreeportService with injected command adapters', () => {
     const project = await service.registerProject(main)
     const mainWorktree = project.worktrees[0]!
     let releaseTerminal!: () => void
-    runner.tmuxCreateGate = new Promise<void>((resolve) => {
+    runner.terminalCreateGate = new Promise<void>((resolve) => {
       releaseTerminal = resolve
     })
 
+    const createAttempts = runner.terminalCreateAttempts
     const first = service.createTerminal(mainWorktree.id, 'First')
     await vi.waitFor(() =>
-      expect(
-        runner.calls.filter((call) => call.args.includes('new-session'))
-      ).toHaveLength(1)
+      expect(runner.terminalCreateAttempts).toBe(createAttempts + 1)
     )
     const second = service.createTerminal(mainWorktree.id, 'Second')
     await Promise.resolve()
-    expect(
-      runner.calls.filter((call) => call.args.includes('new-session'))
-    ).toHaveLength(1)
+    expect(runner.terminalCreateAttempts).toBe(createAttempts + 1)
 
     releaseTerminal()
     await expect(Promise.all([first, second])).resolves.toEqual([
       expect.objectContaining({ name: 'First' }),
       expect.objectContaining({ name: 'Second' })
     ])
-    runner.tmuxCreateGate = null
+    runner.terminalCreateGate = null
   })
 
   it('queues removal behind a terminal mutation before its lock is acquired', async () => {
@@ -264,11 +259,9 @@ describe('TreeportService with injected command adapters', () => {
       )
     ).worktree
     const preview = await service.removePreview(linked.id)
-    const createCallsBefore = runner.calls.filter((call) =>
-      call.args.includes('new-session')
-    ).length
+    const createCallsBefore = runner.terminalCreateAttempts
     let releaseTerminal!: () => void
-    runner.tmuxCreateGate = new Promise<void>((resolve) => {
+    runner.terminalCreateGate = new Promise<void>((resolve) => {
       releaseTerminal = resolve
     })
 
@@ -287,9 +280,7 @@ describe('TreeportService with injected command adapters', () => {
         removalSettled = true
       })
     await vi.waitFor(() =>
-      expect(
-        runner.calls.filter((call) => call.args.includes('new-session'))
-      ).toHaveLength(createCallsBefore + 1)
+      expect(runner.terminalCreateAttempts).toBe(createCallsBefore + 1)
     )
     expect(removalSettled).toBe(false)
 
@@ -298,10 +289,10 @@ describe('TreeportService with injected command adapters', () => {
     await expect(removing).resolves.toMatchObject({
       error: { code: 'REMOVE_PREVIEW_STALE' }
     })
-    runner.tmuxCreateGate = null
+    runner.terminalCreateGate = null
   })
 
-  it('derives status and disappearance events from tmux inventory', async () => {
+  it('derives status and disappearance events from host inventory', async () => {
     const { main, runner, service } = await fixture()
     const project = await service.registerProject(main)
     const terminal = await service.createTerminal(
@@ -312,9 +303,7 @@ describe('TreeportService with injected command adapters', () => {
     const unsubscribe = service.events.subscribe((event) => {
       events.push(event.type)
     })
-    const sessionKey = `${project.worktrees[0]!.tmuxSocketName}/${
-      terminal.tmuxSessionName
-    }`
+    const sessionKey = `${project.worktrees[0]!.id}/${terminal.id}`
     const state = runner.sessions.get(sessionKey)!
     state.alive = false
     state.exitCode = 23
@@ -349,7 +338,7 @@ describe('TreeportService with injected command adapters', () => {
       service.deleteTerminal(worktree.terminals[0]!.id)
     ).rejects.toMatchObject({ code: 'LAST_TERMINAL' })
 
-    const successfulSessionKey = `${worktree.tmuxSocketName}/${successful.tmuxSessionName}`
+    const successfulSessionKey = `${worktree.id}/${successful.id}`
     const successfulState = runner.sessions.get(successfulSessionKey)!
     successfulState.alive = false
     successfulState.exitCode = 0
@@ -370,9 +359,7 @@ describe('TreeportService with injected command adapters', () => {
       ['code', '.'],
       { closeOnSuccess: true }
     )
-    const failedState = runner.sessions.get(
-      `${worktree.tmuxSocketName}/${failed.tmuxSessionName}`
-    )!
+    const failedState = runner.sessions.get(`${worktree.id}/${failed.id}`)!
     failedState.alive = false
     failedState.exitCode = 7
 
@@ -392,18 +379,14 @@ describe('TreeportService with injected command adapters', () => {
       ['true'],
       { closeOnSuccess: true }
     )
-    runner.sessions.delete(
-      `${worktree.tmuxSocketName}/${worktree.terminals[0]!.tmuxSessionName}`
-    )
+    runner.sessions.delete(`${worktree.id}/${worktree.terminals[0]!.id}`)
     const updatedEvents: string[] = []
     const unsubscribe = service.events.subscribe((event) => {
       if (event.type === 'terminal.updated') {
         updatedEvents.push(String(event.data.terminalId))
       }
     })
-    const retainedState = runner.sessions.get(
-      `${worktree.tmuxSocketName}/${retained.tmuxSessionName}`
-    )!
+    const retainedState = runner.sessions.get(`${worktree.id}/${retained.id}`)!
     retainedState.alive = false
     retainedState.exitCode = 0
 
@@ -432,24 +415,24 @@ describe('TreeportService with injected command adapters', () => {
       ['code', '.'],
       { closeOnSuccess: true }
     )
-    const sessionKey = `${worktree.tmuxSocketName}/${terminal.tmuxSessionName}`
+    const sessionKey = `${worktree.id}/${terminal.id}`
     const state = runner.sessions.get(sessionKey)!
     state.alive = false
     state.exitCode = 0
-    runner.tmuxKillSessionFails = true
+    runner.terminalKillFails = true
 
     await expect(service.getProjectSnapshot(project.id)).resolves.toMatchObject(
       {
         availability: {
           state: 'unavailable',
-          message: 'tmux session cleanup failed'
+          message: 'terminal cleanup failed'
         }
       }
     )
     expect(runner.sessions.has(sessionKey)).toBe(true)
   })
 
-  it('keeps metadata polling tmux-only while direct status reads observe Git', async () => {
+  it('can refresh host status without observing Git', async () => {
     const { main, runner, service } = await fixture()
     const project = await service.registerProject(main)
     const terminal = await service.createTerminal(
@@ -457,19 +440,16 @@ describe('TreeportService with injected command adapters', () => {
       'Polled'
     )
     runner.calls.splice(0)
+    const stateAttempts = runner.terminalStateAttempts
 
     await service.refreshTerminalStatus(terminal.id, false)
     await service.refreshTerminalStatus(terminal.id, false)
+    expect(runner.terminalStateAttempts).toBe(stateAttempts + 2)
     expect(
       runner.calls.filter(
         (call) => call.args[0] === 'worktree' && call.args[1] === 'list'
       )
     ).toHaveLength(0)
-    const tmuxPolls = runner.calls.filter((call) =>
-      call.args.includes('list-panes')
-    )
-    expect(tmuxPolls).toHaveLength(2)
-    expect(tmuxPolls.every((call) => call.args.includes('-t'))).toBe(true)
 
     await service.refreshTerminalStatus(terminal.id)
     expect(
@@ -505,8 +485,7 @@ describe('TreeportService with injected command adapters', () => {
     )!
     expect(moved).toMatchObject({
       id: linked.id,
-      path: await fs.realpath(movedPath),
-      tmuxSocketName: linked.tmuxSocketName
+      path: await fs.realpath(movedPath)
     })
     expect(moved.terminals.map((item) => item.id)).toContain(terminal.id)
     expect((await service.getWorktree(linked.id)).path).toBe(
@@ -558,12 +537,10 @@ describe('TreeportService with injected command adapters', () => {
     })
     expect(recoveredMain).toMatchObject({
       id: originalMain.id,
-      path: await fs.realpath(renamedMain),
-      tmuxSocketName: originalMain.tmuxSocketName
+      path: await fs.realpath(renamedMain)
     })
     expect(recoveredLinked).toMatchObject({
-      id: linked.id,
-      tmuxSocketName: linked.tmuxSocketName
+      id: linked.id
     })
     expect(recoveredLinked.terminals.map((item) => item.id)).toContain(
       terminal.id
@@ -616,12 +593,7 @@ describe('TreeportService with injected command adapters', () => {
       database: restartedDatabase,
       runner,
       git: new GitAdapter(runner),
-      tmux: new TmuxAdapter(
-        runner,
-        config.runtimeDir,
-        'tmux',
-        '/launcher with spaces.js'
-      ),
+      terminalHost: new TerminalHostDouble(runner),
       gh: new GhAdapter(runner)
     })
     await restarted.initialize()
@@ -637,7 +609,6 @@ describe('TreeportService with injected command adapters', () => {
     ).toMatchObject({
       id: linked.id,
       path: await fs.realpath(movedLinked),
-      tmuxSocketName: linked.tmuxSocketName,
       terminals: expect.arrayContaining([
         expect.objectContaining({
           id: terminal.id,
@@ -710,13 +681,10 @@ describe('TreeportService with injected command adapters', () => {
       project.repositoryPath
     )
     expect(await persistedWorktree(database, linked.id)).toMatchObject({
-      path: linked.path,
-      tmuxSocketName: linked.tmuxSocketName
+      path: linked.path
     })
     expect(
-      [...runner.sessions.keys()].some((key) =>
-        key.endsWith(`/${terminal.tmuxSessionName}`)
-      )
+      [...runner.sessions.keys()].some((key) => key.endsWith(`/${terminal.id}`))
     ).toBe(true)
   })
 
@@ -809,9 +777,7 @@ describe('TreeportService with injected command adapters', () => {
       )
     ).toBe(false)
     expect(
-      [...runner.sessions.keys()].some((key) =>
-        key.endsWith(`/${terminal.tmuxSessionName}`)
-      )
+      [...runner.sessions.keys()].some((key) => key.endsWith(`/${terminal.id}`))
     ).toBe(true)
 
     await fs.rm(main, { recursive: true })
@@ -824,13 +790,10 @@ describe('TreeportService with injected command adapters', () => {
     })
     expect(
       recovered.worktrees.find((worktree) => worktree.kind === 'main')
-    ).toMatchObject({
-      id: originalMain.id,
-      tmuxSocketName: originalMain.tmuxSocketName
-    })
+    ).toMatchObject({ id: originalMain.id })
     expect(
       recovered.worktrees.find((worktree) => worktree.id === linked.id)
-    ).toMatchObject({ tmuxSocketName: linked.tmuxSocketName })
+    ).toMatchObject({ id: linked.id })
   })
 
   it('retires externally removed worktrees only after a successful Git observation', async () => {
@@ -852,9 +815,7 @@ describe('TreeportService with injected command adapters', () => {
     )
     expect(await persistedWorktree(database, linked.id)).toBeNull()
     expect(
-      [...runner.sessions.keys()].some((key) =>
-        key.startsWith(`${linked.tmuxSocketName}/`)
-      )
+      [...runner.sessions.keys()].some((key) => key.startsWith(`${linked.id}/`))
     ).toBe(false)
     const externalOperation = (await database.db.get<{ id: string }>(sql`
       SELECT id FROM operations WHERE kind='external_remove'
@@ -904,12 +865,12 @@ describe('TreeportService with injected command adapters', () => {
       1
     )
     await fs.rm(linked.path, { recursive: true, force: true })
-    runner.tmuxKillFails = true
+    runner.terminalKillWorktreeFails = true
 
     const unavailable = await service.getProjectSnapshot(project.id)
     expect(unavailable.availability).toMatchObject({
       state: 'unavailable',
-      message: expect.stringContaining('tmux shutdown failed')
+      message: expect.stringContaining('terminal host cleanup failed')
     })
     expect(await persistedWorktree(database, linked.id)).not.toBeNull()
     expect(
@@ -922,7 +883,7 @@ describe('TreeportService with injected command adapters', () => {
     expect(events).not.toContain('worktree.removed')
     expect(events).not.toContain('terminal.removed')
 
-    runner.tmuxKillFails = false
+    runner.terminalKillWorktreeFails = false
     await expect(service.getProjectSnapshot(project.id)).resolves.toMatchObject(
       { availability: { state: 'available' } }
     )
@@ -963,7 +924,7 @@ describe('TreeportService with injected command adapters', () => {
       fs.rm(first.path, { recursive: true, force: true }),
       fs.rm(second.path, { recursive: true, force: true })
     ])
-    runner.tmuxKillFailureSockets.add(second.tmuxSocketName)
+    runner.terminalKillFailureWorktrees.add(second.id)
 
     const unavailable = await service.getProjectSnapshot(project.id)
     expect(unavailable.availability).toMatchObject({ state: 'unavailable' })
@@ -986,16 +947,16 @@ describe('TreeportService with injected command adapters', () => {
     ])
     expect(
       [...runner.sessions.keys()].some((key) =>
-        key.endsWith(`/${firstTerminal.tmuxSessionName}`)
+        key.endsWith(`/${firstTerminal.id}`)
       )
     ).toBe(false)
     expect(
       [...runner.sessions.keys()].some((key) =>
-        key.endsWith(`/${secondTerminal.tmuxSessionName}`)
+        key.endsWith(`/${secondTerminal.id}`)
       )
     ).toBe(true)
 
-    runner.tmuxKillFailureSockets.delete(second.tmuxSocketName)
+    runner.terminalKillFailureWorktrees.delete(second.id)
     await service.getProjectSnapshot(project.id)
     expect(await persistedWorktree(database, second.id)).toBeNull()
     unsubscribe()
@@ -1029,7 +990,7 @@ describe('TreeportService with injected command adapters', () => {
       expect(await persistedWorktree(database, linked.id)).not.toBeNull()
       expect(
         [...runner.sessions.keys()].some((key) =>
-          key.startsWith(`${linked.tmuxSocketName}/`)
+          key.startsWith(`${linked.id}/`)
         )
       ).toBe(true)
       expect(
@@ -1100,9 +1061,7 @@ describe('TreeportService with injected command adapters', () => {
     )
     expect(await persistedWorktree(database, linked.id)).not.toBeNull()
     expect(
-      [...runner.sessions.keys()].some((key) =>
-        key.endsWith(`/${terminal.tmuxSessionName}`)
-      )
+      [...runner.sessions.keys()].some((key) => key.endsWith(`/${terminal.id}`))
     ).toBe(true)
     await expect(
       service.createTerminal(linked.id, 'Blocked')

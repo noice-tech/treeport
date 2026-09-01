@@ -12,7 +12,7 @@ import {
   DomainError,
   ProductEventBus,
   type AppConfig,
-  type TmuxAdapter,
+  type TerminalSessionBackend,
   type TreeportService
 } from './core/index'
 import { testAccess } from './test-access'
@@ -33,7 +33,6 @@ function fixture(webDist = '/missing') {
     cacheDir: path.join('/tmp', `treeport-cache-${crypto.randomUUID()}`),
     runtimeDir: path.join('/tmp', `treeport-test-${crypto.randomUUID()}`),
     shell: '/bin/zsh',
-    tmuxPath: 'tmux',
     gitPath: 'git',
     ghPath: 'gh',
     apiUrl: 'http://127.0.0.1:8733',
@@ -174,7 +173,6 @@ function fixture(webDist = '/missing') {
       id,
       worktreeId: 'wt_1',
       name: 'Pi',
-      tmuxSessionName: 'treeport-term-1',
       argv: ['pi'],
       status: 'running',
       exitCode: null,
@@ -184,10 +182,7 @@ function fixture(webDist = '/missing') {
     database: {
       worktree: vi.fn(() => ({ id: 'wt_1', path: '/repo' }))
     },
-    getWorktree: vi.fn(() => ({
-      id: 'wt_1',
-      tmuxSocketName: 'treeport-wt-1'
-    })),
+    getWorktree: vi.fn(() => ({ id: 'wt_1' })),
     getWorktreeContext: vi.fn(() => ({ issue: 'TREE-123' })),
     requestWorkspaceOpen: vi.fn(async () => undefined),
     listWebPanelDefinitions: vi.fn(async () => [
@@ -322,8 +317,7 @@ function fixture(webDist = '/missing') {
     createTerminal: vi.fn(),
     getTerminal: vi.fn(async (id: string) => ({
       id,
-      worktreeId: 'wt_1',
-      tmuxSessionName: 'treeport-term-1'
+      worktreeId: 'wt_1'
     })),
     beginCreateWorktree: vi.fn(async () => ({
       id: 'op_create',
@@ -335,7 +329,8 @@ function fixture(webDist = '/missing') {
     ]),
     getOperation: vi.fn(async (id: string) => ({ id, status: 'running' })),
     removePreview: vi.fn(async () => ({ worktreeId: 'wt_1' })),
-    beginRemove: vi.fn(async () => ({ id: 'op_1' }))
+    beginRemove: vi.fn(async () => ({ id: 'op_1' })),
+    terminateAllTerminals: vi.fn(async () => 2)
   })
   const runtimeMetadata: TerminalRuntimeMetadata = {
     terminalId: 'term',
@@ -361,7 +356,7 @@ function fixture(webDist = '/missing') {
     trackTerminal: metadataTrack,
     acknowledgeBell: metadataAcknowledgeBell
   })
-  const capturePane = vi.fn(
+  const captureTerminal = vi.fn(
     async (): Promise<string | null> => 'Preparing changes\nRunning tests'
   )
   const applicationUpdateStatus: ApplicationUpdateStatus = {
@@ -389,10 +384,14 @@ function fixture(webDist = '/missing') {
     agentCommand: browserAgentCommand,
     requestPanelClose: browserRequestPanelClose
   })
+  const terminalHost = testAccess<TerminalSessionBackend>({
+    captureTerminal,
+    shutdownIfEmpty: vi.fn(async () => undefined)
+  })
   const app = createApp({
     service,
     config,
-    tmux: testAccess<TmuxAdapter>({ capturePane }),
+    terminalHost,
     applicationUpdate,
     terminalMetadata,
     browserSessions,
@@ -403,13 +402,14 @@ function fixture(webDist = '/missing') {
     applicationUpdate,
     browserAgentCommand,
     browserRequestPanelClose,
-    capturePane,
+    captureTerminal,
     config,
     metadataAcknowledgeBell,
     metadataGet,
     metadataSnapshot,
     metadataTrack,
-    service
+    service,
+    terminalHost
   }
 }
 
@@ -1700,17 +1700,12 @@ describe('HTTP API validation', () => {
   })
 
   it('captures recent terminal output with a bounded line count', async () => {
-    const { app, capturePane, service } = fixture()
+    const { app, captureTerminal, service } = fixture()
     const response = await app.request('/api/terminals/term/capture?lines=12')
 
     expect(response.status).toBe(200)
     expect(service.getTerminal).toHaveBeenCalledWith('term')
-    expect(service.getWorktree).toHaveBeenCalledWith('wt_1')
-    expect(capturePane).toHaveBeenCalledWith(
-      'treeport-wt-1',
-      'treeport-term-1',
-      12
-    )
+    expect(captureTerminal).toHaveBeenCalledWith('term', 12)
     expect(await response.json()).toMatchObject({
       terminalId: 'term',
       capturedAt: expect.any(String),
@@ -1722,21 +1717,29 @@ describe('HTTP API validation', () => {
     expect(invalid.status).toBe(400)
     expect(service.getTerminal).toHaveBeenCalledTimes(1)
 
-    capturePane.mockResolvedValueOnce(null)
+    captureTerminal.mockResolvedValueOnce(null)
     const unavailable = await app.request('/api/terminals/term/capture')
     expect(unavailable.status).toBe(409)
     expect(await unavailable.json()).toEqual({
       error: {
         code: 'TERMINAL_CAPTURE_UNAVAILABLE',
-        message: 'Terminal pane is unavailable',
+        message: 'Terminal is unavailable',
         details: { terminalId: 'term' }
       }
     })
-    expect(capturePane).toHaveBeenLastCalledWith(
-      'treeport-wt-1',
-      'treeport-term-1',
-      200
-    )
+    expect(captureTerminal).toHaveBeenLastCalledWith('term', 200)
+  })
+
+  it('shuts down an empty detached host after terminating all terminals', async () => {
+    const { app, service, terminalHost } = fixture()
+    const response = await app.request('/api/admin/terminate-terminals', {
+      method: 'POST'
+    })
+
+    expect(response.status).toBe(200)
+    expect(service.terminateAllTerminals).toHaveBeenCalledOnce()
+    expect(terminalHost.shutdownIfEmpty).toHaveBeenCalledOnce()
+    expect(await response.json()).toEqual({ terminated: 2 })
   })
 
   it('does not expose removed diagnostics and finish/discard routes', async () => {

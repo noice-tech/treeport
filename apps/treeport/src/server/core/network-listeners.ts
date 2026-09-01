@@ -8,7 +8,7 @@ import type { CommandRunner } from './command'
 
 export interface WorktreeListenerScope {
   worktreePath: string
-  panes: Array<{ pid: number; terminalId: string }>
+  terminalProcesses: Array<{ pid: number; terminalId: string }>
 }
 
 interface ProcessInfo {
@@ -41,12 +41,12 @@ function inWorktree(cwd: string | null, worktreePath: string): boolean {
 function terminalForProcess(
   pid: number,
   processes: Map<number, ProcessInfo>,
-  panes: Map<number, string>
+  terminalPids: Map<number, string>
 ): string | null {
   const visited = new Set<number>()
   let current = pid
   while (current > 0 && !visited.has(current)) {
-    const terminalId = panes.get(current)
+    const terminalId = terminalPids.get(current)
     if (terminalId) {
       return terminalId
     }
@@ -164,10 +164,12 @@ function parseEndpoint(value: string): { host: string; port: number } | null {
 function finalListeners(
   sockets: SocketInfo[],
   processes: Map<number, ProcessInfo>,
-  panes: Array<{ pid: number; terminalId: string }>,
+  terminalProcesses: Array<{ pid: number; terminalId: string }>,
   worktreePath: string
 ): WorktreeListener[] {
-  const paneMap = new Map(panes.map((pane) => [pane.pid, pane.terminalId]))
+  const terminalPids = new Map(
+    terminalProcesses.map((terminal) => [terminal.pid, terminal.terminalId])
+  )
   const listeners = new Map<string, WorktreeListener>()
   for (const socket of sockets) {
     const process = processes.get(socket.pid)
@@ -175,7 +177,7 @@ function finalListeners(
       continue
     }
 
-    const terminalId = terminalForProcess(socket.pid, processes, paneMap)
+    const terminalId = terminalForProcess(socket.pid, processes, terminalPids)
     if (!terminalId && !inWorktree(process.cwd, worktreePath)) {
       continue
     }
@@ -267,13 +269,16 @@ export class NetworkListenerAdapter {
             }
           })
       )
-      const paneMap = new Map(
-        scope.panes.map((pane) => [pane.pid, pane.terminalId])
+      const terminalPids = new Map(
+        scope.terminalProcesses.map((terminal) => [
+          terminal.pid,
+          terminal.terminalId
+        ])
       )
       const candidates = [...processes.values()].filter(
         (process) =>
           inWorktree(process.cwd, worktreePath) ||
-          terminalForProcess(process.pid, processes, paneMap) !== null
+          terminalForProcess(process.pid, processes, terminalPids) !== null
       )
       const sockets: SocketInfo[] = []
       await Promise.all(
@@ -301,7 +306,12 @@ export class NetworkListenerAdapter {
       return {
         supported: true,
         message: null,
-        listeners: finalListeners(sockets, processes, scope.panes, worktreePath)
+        listeners: finalListeners(
+          sockets,
+          processes,
+          scope.terminalProcesses,
+          worktreePath
+        )
       }
     }
 
@@ -393,7 +403,12 @@ export class NetworkListenerAdapter {
     return {
       supported: true,
       message: null,
-      listeners: finalListeners(sockets, processes, scope.panes, worktreePath)
+      listeners: finalListeners(
+        sockets,
+        processes,
+        scope.terminalProcesses,
+        worktreePath
+      )
     }
   }
 }

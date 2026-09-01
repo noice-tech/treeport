@@ -11,7 +11,7 @@ It does not start automatically after a restart. It also does not restart after 
 
 The daemon controls application startup, database checks, and the single-process data-directory lock.
 
-Treeport tmux servers must continue after daemon shutdown.
+Treeport's detached terminal host and its children must continue after API daemon shutdown.
 
 Tailscale Serve keeps its route separately and must stay as the remote authentication boundary.
 
@@ -103,7 +103,7 @@ A self-update stops and restarts a running service through the same manager. It 
 
 launchd uses `AbandonProcessGroup`. systemd uses `KillMode=process`.
 
-These settings let a normal daemon stop keep Treeport tmux servers active.
+These settings let a normal API daemon stop keep the separately detached terminal host active.
 
 The daemon ownership lock stays as the last protection against duplicate processes.
 

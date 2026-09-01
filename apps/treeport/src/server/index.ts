@@ -9,7 +9,6 @@ import {
   GitAdapter,
   loadConfig,
   SpawnCommandRunner,
-  TmuxAdapter,
   openDatabase,
   TreeportService
 } from './core/index'
@@ -21,6 +20,7 @@ import { authorizeRequest, rejectHttpRequest } from './request-security'
 import { createSocketServer } from './socket-server'
 import { TerminalMetadataManager } from './terminal-metadata'
 import { createUpdateStartupReporter } from './update-startup'
+import { connectOrStartTerminalHost } from './terminal-host-client'
 
 async function main(): Promise<void> {
   const config = loadConfig()
@@ -42,27 +42,25 @@ async function main(): Promise<void> {
     const launcherPath = fileURLToPath(
       new URL('./core/launcher.js', import.meta.url)
     )
-    const tmux = new TmuxAdapter(
-      runner,
-      config.runtimeDir,
-      config.tmuxPath,
-      launcherPath
-    )
     const gh = new GhAdapter(runner, config.ghPath)
+    const terminalHost = await connectOrStartTerminalHost({
+      dataDir: config.dataDir,
+      runtimeDir: config.runtimeDir,
+      launcherPath,
+      hostEntryPath: fileURLToPath(
+        new URL('./terminal-host-entry.js', import.meta.url)
+      )
+    })
     const service = new TreeportService({
       config,
       database,
       runner,
       git,
-      tmux,
+      terminalHost,
       gh
     })
     await service.initialize()
-    const terminalMetadata = new TerminalMetadataManager(
-      service,
-      tmux,
-      config.tmuxPath
-    )
+    const terminalMetadata = new TerminalMetadataManager(service, terminalHost)
     await terminalMetadata.initialize()
     const applicationUpdate = createApplicationUpdateManager(config)
     const browserSessions = new BrowserSessionManager(service, config)
@@ -70,7 +68,7 @@ async function main(): Promise<void> {
     const app = createApp({
       service,
       config,
-      tmux,
+      terminalHost,
       applicationUpdate,
       terminalMetadata,
       browserSessions
@@ -128,13 +126,15 @@ async function main(): Promise<void> {
     }
 
     service.attachHttpServer(server)
-    const { io, attachments } = createSocketServer(server, {
+    const socketDependencies: Parameters<typeof createSocketServer>[1] = {
       service,
       config,
-      tmux,
       terminalMetadata,
+      terminalHost,
       browserSessions
-    })
+    }
+
+    const { io, attachments } = createSocketServer(server, socketDependencies)
     await new Promise<void>((resolve, reject) => {
       server.once('error', reject)
       server.listen(config.port, config.host, () => {
@@ -149,7 +149,7 @@ async function main(): Promise<void> {
     console.log(`Treeport ${config.appVersion} listening on ${config.apiUrl}`)
     console.log(`database: ${config.databasePath}`)
     console.log(`git: ${prerequisites.gitVersion}`)
-    console.log(`tmux: ${prerequisites.tmuxVersion}`)
+    console.log(`terminal host: ${terminalHost.record.pid}`)
 
     let shuttingDown = false
     function shutdown(): void {
@@ -161,6 +161,7 @@ async function main(): Promise<void> {
       applicationUpdate.dispose()
       attachments.dispose()
       terminalMetadata.dispose()
+      terminalHost.dispose()
       const viteClosed = vite?.close()
       io.close(() => {
         void Promise.all([

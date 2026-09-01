@@ -2,12 +2,10 @@ import http, { type Server as HttpServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { io as createClient, type Socket } from 'socket.io-client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { IPty } from 'node-pty'
 import {
   ProductEventBus,
   type AppConfig,
-  type TreeportService,
-  type TmuxAdapter
+  type TreeportService
 } from './core/index'
 import type {
   BrowserClientMessage,
@@ -42,20 +40,22 @@ import type {
   BrowserTransport
 } from './browser-sessions'
 import type { TerminalMetadataManager } from './terminal-metadata'
+import type { TerminalAttachmentBackend } from './terminal-host-sessions'
 
 class FakePty {
   readonly pid = 1
   readonly cols = 100
   readonly rows = 30
-  readonly process = 'tmux'
+  readonly process = 'shell'
   handleFlowControl = false
   kills = 0
   writes: Array<string | Buffer> = []
-  private dataListener: ((data: string) => void) | null = null
+  private dataListener: ((data: string, sequence: number) => void) | null = null
+  private sequence = 0
   private exitListener:
     | ((event: { exitCode: number; signal?: number }) => void)
     | null = null
-  onData = (listener: (data: string) => void) => {
+  onData = (listener: (data: string, sequence: number) => void) => {
     this.dataListener = listener
     return { dispose: () => (this.dataListener = null) }
   }
@@ -66,7 +66,7 @@ class FakePty {
     return { dispose: () => (this.exitListener = null) }
   }
   emit(data: string) {
-    this.dataListener?.(data)
+    this.dataListener?.(data, ++this.sequence)
   }
   pause() {}
   resume() {}
@@ -107,23 +107,42 @@ async function fixture(
     refreshTerminalStatus: vi.fn(async () => ({
       id: 'term',
       worktreeId: 'wt',
-      tmuxSessionName: 'session',
       status: 'running',
       exitCode: null
     })),
     getWorktree: vi.fn(async () => ({
       id: 'wt',
-      path: '/tmp',
-      tmuxSocketName: 'socket'
+      path: '/tmp'
     }))
   })
-  // SAFETY: The test fixture provides the asserted contract used here.
-  const tmux = testAccess<TmuxAdapter>({
-    configureServer: vi.fn(async () => undefined),
-    useManualWindowSize: vi.fn(async () => undefined),
-    resizeWindow: vi.fn(async () => undefined),
-    sessionSize: vi.fn(async () => ({ cols: 100, rows: 30 })),
-    attachArgs: vi.fn(() => ['attach-session', '-t', 'session'])
+  const child = new FakePty()
+  ptys.push(child)
+  // SAFETY: The test fixture provides the terminal-host attachment contract.
+  const terminalHost = testAccess<TerminalAttachmentBackend>({
+    attach: vi.fn(async (_terminalId, listener) => ({
+      data: '',
+      fence: 0,
+      cols: 100,
+      rows: 30,
+      unsubscribe: child.onData(listener).dispose
+    })),
+    subscribeRuntime: vi.fn(() => () => undefined),
+    terminalTitleState: vi.fn(async () => null),
+    runtimeState: vi.fn(async () => ({
+      title: null,
+      status: 'running',
+      progress: null,
+      bell: null
+    })),
+    write: vi.fn((_terminalId, data) => child.write(data)),
+    prepareQueryAuthority: vi.fn(async () => ({
+      transitionId: 'transition',
+      fence: 0
+    })),
+    activateQueryAuthority: vi.fn(async () => undefined),
+    useHostQueryAuthority: vi.fn(async () => undefined),
+    resize: vi.fn(async () => undefined),
+    dispose: vi.fn()
   })
   const currentMetadata: TerminalRuntimeMetadata = {
     terminalId: 'term',
@@ -143,22 +162,12 @@ async function fixture(
     snapshot: metadataSnapshot,
     get: vi.fn(() => currentMetadata),
     trackTerminal: vi.fn(async () => undefined),
-    subscribe: vi.fn(() => () => undefined),
-    viewingHistory: vi.fn(() => false),
-    subscribeHistory: vi.fn(() => () => undefined)
+    subscribe: vi.fn(() => () => undefined)
   })
   const attachmentManager = new TerminalAttachmentManager(
     service,
-    tmux,
-    process.execPath,
     metadata,
-    // SAFETY: The test fixture provides the asserted contract used here.
-    (() => {
-      const value = new FakePty()
-      ptys.push(value)
-      // SAFETY: The test fixture provides the asserted contract used here.
-      return testAccess<IPty>(value)
-    }) as never
+    terminalHost
   )
   const server = http.createServer((_request, response) => {
     response.statusCode = 404
@@ -172,7 +181,6 @@ async function fixture(
     cacheDir: '/tmp',
     runtimeDir: '/tmp',
     shell: '/bin/sh',
-    tmuxPath: process.execPath,
     gitPath: 'git',
     ghPath: 'gh',
     apiUrl: 'http://127.0.0.1',
@@ -182,8 +190,8 @@ async function fixture(
   const socketServerDependencies = {
     service,
     config,
-    tmux,
     terminalMetadata: metadata,
+    terminalHost,
     attachmentManager
   }
   const { io, attachments } = browserSessions
@@ -247,6 +255,31 @@ function terminalClient(
   }
 
   return createClient(`${url}/terminals`, clientOptions)
+}
+
+async function activateQueryAuthority(
+  socket: Socket<TerminalServerToClientEvents, TerminalClientToServerEvents>,
+  generation: number
+): Promise<void> {
+  let phase = 0
+  await new Promise<void>((resolve) => {
+    socket.on('query_authority', (message) => {
+      if (message.generation !== generation) {
+        return
+      }
+
+      if (message.transitionId) {
+        socket.emit('query_authority', {
+          generation,
+          transitionId: message.transitionId
+        })
+        phase += 1
+      } else if (message.active && phase >= 2) {
+        resolve()
+      }
+    })
+    socket.emit('query_authority', { generation, transitionId: null })
+  })
 }
 
 async function closeClient(socket: Socket): Promise<void> {
@@ -657,22 +690,27 @@ describe('Socket.IO real network', () => {
     )
   })
 
-  it('negotiates exact terminal protocol modes and rejects unsupported versions', async () => {
+  it('requires the exact terminal protocol version', async () => {
     const value = await fixture()
     const current = terminalClient(value.url, 'tab-current')
     const currentReady = await new Promise<TerminalReady>((resolve) =>
       current.once('ready', (payload) => resolve(payload))
     )
-    expect(currentReady).toMatchObject({ cols: 100, rows: 30, revision: 1 })
+    expect(currentReady).toMatchObject({
+      cols: 100,
+      rows: 30,
+      revision: 1,
+      snapshot: ''
+    })
 
-    const legacy = terminalClient(value.url, 'tab-legacy', null)
-    const legacyReady = await new Promise<TerminalReady>((resolve) =>
-      legacy.once('ready', (payload) => resolve(payload))
+    const missing = terminalClient(value.url, 'tab-missing', null)
+    missing.io.reconnection(false)
+    const missingError = await new Promise<Error>((resolve) =>
+      missing.once('connect_error', resolve)
     )
-    expect(legacyReady).not.toHaveProperty('cols')
-    expect(legacyReady).not.toHaveProperty('revision')
+    expect(missingError.message).toBe('UNSUPPORTED_TERMINAL_PROTOCOL')
 
-    const unsupported = terminalClient(value.url, 'tab-unsupported', '3')
+    const unsupported = terminalClient(value.url, 'tab-unsupported', '2')
     unsupported.io.reconnection(false)
     const error = await new Promise<Error>((resolve) =>
       unsupported.once('connect_error', resolve)
@@ -680,7 +718,7 @@ describe('Socket.IO real network', () => {
     expect(error.message).toBe('UNSUPPORTED_TERMINAL_PROTOCOL')
 
     await closeClient(current)
-    await closeClient(legacy)
+    await closeClient(missing)
     await closeClient(unsupported)
   })
 
@@ -712,7 +750,6 @@ describe('Socket.IO real network', () => {
       id: 'term',
       worktreeId: 'wt',
       name: 'Terminal',
-      tmuxSessionName: 'session',
       argv: ['shell'],
       shellCommand: null,
       interactiveShell: false,
@@ -729,7 +766,7 @@ describe('Socket.IO real network', () => {
     await closeClient(probe)
   })
 
-  it('reconnects with a fresh PTY and stream without replaying disconnected input', async () => {
+  it('reconnects to the same hosted PTY with a fresh viewer stream', async () => {
     const value = await fixture()
     const socket = terminalClient(value.url)
     const readyEvents: Array<{
@@ -740,6 +777,7 @@ describe('Socket.IO real network', () => {
     socket.on('ready', (ready) => readyEvents.push(ready))
     await vi.waitFor(() => expect(readyEvents).toHaveLength(1))
     expect(value.ptys).toHaveLength(1)
+    await activateQueryAuthority(socket, readyEvents[0]!.generation)
 
     socket.volatile.emit('input', {
       generation: readyEvents[0]!.generation,
@@ -758,10 +796,10 @@ describe('Socket.IO real network', () => {
 
     await vi.waitFor(() => expect(readyEvents).toHaveLength(2))
 
-    expect(value.ptys).toHaveLength(2)
-    expect(value.ptys[0]!.kills).toBe(1)
+    expect(value.ptys).toHaveLength(1)
+    expect(value.ptys[0]!.kills).toBe(0)
     expect(readyEvents[1]!.streamId).not.toBe(readyEvents[0]!.streamId)
-    expect(value.ptys[1]!.writes).toHaveLength(0)
+    expect(value.ptys[0]!.writes).toEqual(['before'])
     await closeClient(socket)
   })
 
@@ -774,7 +812,7 @@ describe('Socket.IO real network', () => {
     // SAFETY: The test fixture provides the asserted contract used here.
     socket.emit('input', undefined as never)
     await vi.waitFor(() => expect(socket.connected).toBe(false))
-    expect(value.ptys[0]!.kills).toBe(1)
+    expect(value.ptys[0]!.kills).toBe(0)
 
     const probe = eventClient(value.url)
     await new Promise<void>((resolve, reject) => {
@@ -800,14 +838,14 @@ describe('Socket.IO real network', () => {
       data: 'x'.repeat(TERMINAL_TEST_OVERSIZED_BYTES)
     })
     await vi.waitFor(() => expect(socket.connected).toBe(false))
-    expect(value.ptys[0]!.kills).toBe(1)
+    expect(value.ptys[0]!.kills).toBe(0)
 
     const live = terminalClient(value.url, 'tab-b')
     await new Promise<void>((resolve) => live.once('ready', () => resolve()))
     await value.close()
     fixtures.splice(fixtures.indexOf(value), 1)
     await vi.waitFor(() => expect(live.connected).toBe(false))
-    expect(value.ptys.at(-1)!.kills).toBe(1)
+    expect(value.ptys[0]!.kills).toBe(0)
     await closeClient(socket)
     await closeClient(live)
   })

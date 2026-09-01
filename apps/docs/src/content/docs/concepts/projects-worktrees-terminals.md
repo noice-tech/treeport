@@ -59,7 +59,7 @@ A folder tree uses the selected folder directly. Treeport does not use Git opera
 
 ## Terminals
 
-Each terminal belongs to a tree. The terminal runs in a tmux session that Treeport manages.
+Each terminal belongs to a tree. Treeport's detached terminal host owns its PTY and canonical terminal state.
 
 When you close a client, the client disconnects from the terminal. The terminal and its process continue to run.
 

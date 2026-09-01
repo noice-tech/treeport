@@ -58,6 +58,7 @@
     "@radix-ui/react-context-menu": "^2.3.7",
     "@treeport/panel-sdk": "workspace:*",
     "@vitejs/plugin-react": "5.2.0",
+    "@xterm/addon-serialize": "^0.14.0",
     "@xterm/headless": "^6.0.0",
     "cmdk": "^1.1.1",
     "commander": "14.0.3",

@@ -649,18 +649,7 @@ export async function disableTailscaleRemote(): Promise<{
 export async function runDoctor(): Promise<DoctorCheck[]> {
   const paths = localPaths()
   const gitPath = process.env.TREEPORT_GIT_PATH?.trim() || 'git'
-  const tmuxPath = process.env.TREEPORT_TMUX_PATH?.trim() || 'tmux'
-  const [git, tmux] = await Promise.all([
-    executableCheck(gitPath, ['--version']),
-    executableCheck(tmuxPath, ['-V'])
-  ])
-  const tmuxMatch = /tmux\s+(\d+)\.(\d+)/i.exec(tmux.detail)
-  const tmuxSupported = Boolean(
-    tmux.ok &&
-    tmuxMatch &&
-    (Number(tmuxMatch[1]) > 3 ||
-      (Number(tmuxMatch[1]) === 3 && Number(tmuxMatch[2]) >= 2))
-  )
+  const git = await executableCheck(gitPath, ['--version'])
 
   const checkDirectory = (directoryPath: string) =>
     fs
@@ -678,13 +667,6 @@ export async function runDoctor(): Promise<DoctorCheck[]> {
   return [
     { name: 'Node', ok: true, detail: process.version },
     { name: 'Git', ...git },
-    {
-      name: 'tmux',
-      ok: tmuxSupported,
-      detail: tmuxSupported
-        ? tmux.detail
-        : `${tmux.detail}. Treeport requires tmux 3.2 or newer.`
-    },
     { name: 'Data directory', ...dataDirectory },
     { name: 'Runtime directory', ...runtimeDirectory }
   ]

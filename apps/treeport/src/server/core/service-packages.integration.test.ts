@@ -6,7 +6,7 @@ import { openDatabase } from './database'
 import { GhAdapter } from './gh'
 import { GitAdapter } from './git'
 import { TreeportService } from './service'
-import { TmuxAdapter } from './tmux'
+import { TerminalHostDouble } from './service.integration-fixture'
 import {
   databases,
   fixture,
@@ -15,7 +15,7 @@ import {
 
 describe('TreeportService with injected command adapters', () => {
   it('resolves repository terminal presets from each worktree and keeps usable choices through configuration errors', async () => {
-    const { main, service, config } = await fixture()
+    const { main, runner, service } = await fixture()
     const treeportDirectory = path.join(main, '.treeport')
     const configPath = path.join(treeportDirectory, 'terminal-presets.json')
     await fs.mkdir(treeportDirectory, { recursive: true })
@@ -208,19 +208,7 @@ describe('TreeportService with injected command adapters', () => {
         returnToShell: true
       }
     )
-    // SAFETY: The test fixture provides the asserted contract used here.
-    const launchSpec = JSON.parse(
-      await fs.readFile(
-        path.join(config.runtimeDir, 'launch-specs', `${terminal.id}.json`),
-        'utf8'
-      )
-    ) as {
-      argv: string[]
-      initialTitle: string
-      fallbackArgv: string[]
-      cwd: string
-      env: Record<string, string>
-    }
+    const launchSpec = runner.terminalCreateInputs.get(terminal.id)
     expect(launchSpec).toMatchObject({
       initialTitle: resolvedZed.name,
       argv: [
@@ -263,18 +251,7 @@ describe('TreeportService with injected command adapters', () => {
       shellCommand: 'echo one',
       interactiveShell: false
     })
-    await expect(
-      fs
-        .readFile(
-          path.join(
-            config.runtimeDir,
-            'launch-specs',
-            `${shellTerminal.id}.json`
-          ),
-          'utf8'
-        )
-        .then(JSON.parse)
-    ).resolves.toMatchObject({
+    expect(runner.terminalCreateInputs.get(shellTerminal.id)).toMatchObject({
       argv: ['/bin/zsh', '-lc', 'echo one'],
       fallbackArgv: ['/bin/zsh', '-l']
     })
@@ -524,12 +501,7 @@ describe('TreeportService with injected command adapters', () => {
       database: reopenedDatabase,
       runner,
       git: new GitAdapter(runner),
-      tmux: new TmuxAdapter(
-        runner,
-        config.runtimeDir,
-        'tmux',
-        '/launcher with spaces.js'
-      ),
+      terminalHost: new TerminalHostDouble(runner),
       gh: new GhAdapter(runner)
     })
     await reconstructed.initialize()
@@ -1068,12 +1040,7 @@ describe('TreeportService with injected command adapters', () => {
       database: reopenedDatabase,
       runner,
       git: new GitAdapter(runner),
-      tmux: new TmuxAdapter(
-        runner,
-        config.runtimeDir,
-        'tmux',
-        '/launcher with spaces.js'
-      ),
+      terminalHost: new TerminalHostDouble(runner),
       gh: new GhAdapter(runner)
     })
     expect(await reconstructed.listTerminalPresets()).toEqual([updated])

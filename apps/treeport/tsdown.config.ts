@@ -9,6 +9,7 @@ export default defineConfig({
   entry: {
     'node/cli/index': 'src/cli/index.ts',
     'node/server/index': 'src/server/index.ts',
+    'node/server/terminal-host-entry': 'src/server/terminal-host-entry.ts',
     'node/server/core/launcher': 'src/server/core/launcher.ts'
   },
   format: 'esm',

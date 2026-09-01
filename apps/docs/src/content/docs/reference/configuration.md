@@ -19,9 +19,8 @@ Environment variables replace listener preferences. They cannot enable a non-loo
 | `TREEPORT_PORT`          | `8733`                     | Daemon and web application port. `PORT` is a fallback. |
 | `TREEPORT_DATA_DIR`      | Platform data directory    | Durable Treeport application data.                     |
 | `TREEPORT_DATABASE_PATH` | `<data-dir>/treeport.db`   | SQLite database path.                                  |
-| `TREEPORT_RUNTIME_DIR`   | Platform runtime directory | Runtime files, including Treeport tmux state.          |
+| `TREEPORT_RUNTIME_DIR`   | Platform runtime directory | Runtime files and terminal-host discovery records.     |
 | `TREEPORT_SHELL`         | `$SHELL`, then `/bin/sh`   | Shell for login-shell terminals.                       |
-| `TREEPORT_TMUX_PATH`     | `tmux`                     | tmux executable or path.                               |
 | `TREEPORT_GIT_PATH`      | `git`                      | Git executable or path.                                |
 | `TREEPORT_GH_PATH`       | `gh`                       | Optional GitHub CLI executable or path.                |
 | `TREEPORT_API_URL`       | `http://<host>:<port>`     | Daemon URL for managed terminals and callbacks.        |
@@ -184,8 +183,7 @@ In user service mode, run `treeport service enable` again after you change one o
 - Treeport paths;
 - the listener;
 - the shell;
-- the Git path;
-- the tmux path.
+- the Git path.
 
 In advanced headless mode, use `treeport service enable --headless` instead.
 

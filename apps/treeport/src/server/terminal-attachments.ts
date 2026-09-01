@@ -1,14 +1,9 @@
 import crypto from 'node:crypto'
-import type { IDisposable, IPty } from 'node-pty'
-import * as pty from 'node-pty'
-import * as Effect from 'effect/Effect'
-import * as Fiber from 'effect/Fiber'
-import type * as Scope from 'effect/Scope'
 import {
   terminalBinarySchema,
   terminalInputSchema,
-  terminalLegacyTakeControlSchema,
   terminalOutputAckSchema,
+  terminalQueryAuthorityRequestSchema,
   terminalResizeSchema,
   terminalSizeSchema,
   terminalTakeControlSchema,
@@ -17,7 +12,6 @@ import {
   TERMINAL_MAX_INPUT_BYTES,
   TERMINAL_OUTPUT_HIGH_WATERMARK,
   TERMINAL_OUTPUT_LOW_WATERMARK,
-  TERMINAL_OUTPUT_STALL_TIMEOUT_MS,
   TERMINAL_PROTOCOL_VERSION,
   type TerminalAuth,
   type TerminalClientEvent,
@@ -26,36 +20,12 @@ import {
   type TerminalServerEvent,
   type TerminalServerPayload
 } from '@treeport/shared'
-import type { TreeportService, TmuxAdapter } from './core/index'
-import { resolveExecutablePath } from './core/index'
+import type { TreeportService } from './core/index'
 import type { TerminalMetadataManager } from './terminal-metadata'
+import type { TerminalAttachmentBackend } from './terminal-host-sessions'
 
-type PtySpawner = typeof pty.spawn
 type ConnectionState = 'initializing' | 'ready' | 'closed'
-type TerminalProtocolVersion = 1 | typeof TERMINAL_PROTOCOL_VERSION
-type AttachmentInitializationPhase =
-  | 'refresh_terminal'
-  | 'resolve_worktree'
-  | 'configure_server'
-  | 'track_metadata'
-  | 'configure_window_size'
-  | 'read_session_size'
-  | 'resize_fallback'
-  | 'spawn_pty'
-  | 'pause_pty'
-  | 'subscribe_metadata'
-  | 'subscribe_pty_data'
-  | 'subscribe_pty_exit'
-  | 'announce_ready'
-
-class AttachmentInitializationError {
-  readonly _tag = 'AttachmentInitializationError'
-
-  constructor(
-    readonly phase: AttachmentInitializationPhase,
-    readonly cause: unknown
-  ) {}
-}
+type TerminalProtocolVersion = typeof TERMINAL_PROTOCOL_VERSION
 
 const TERMINAL_MAX_QUEUED_INPUT_BYTES = 1024 * 1024
 const TERMINAL_MAX_QUEUED_INPUT_MESSAGES = 256
@@ -73,11 +43,7 @@ interface ClientConnection {
   transport: TerminalTransport
   state: ConnectionState
   clientId: string
-  pty: IPty | null
   streamId: string | null
-  stallTimeout: NodeJS.Timeout | null
-  dataDisposable: IDisposable | null
-  exitDisposable: IDisposable | null
   nextSequence: number
   lastAckSequence: number
   unacknowledgedBytes: number
@@ -85,11 +51,16 @@ interface ClientConnection {
   paused: boolean
   announcedReady: boolean
   metadataUnsubscribe: (() => void) | null
-  historyUnsubscribe: (() => void) | null
+  directOutputUnsubscribe: (() => void) | null
+  directRuntimeUnsubscribe: (() => void) | null
+  queryAuthorityActive: boolean
+  queryAuthorityGrantPending: boolean
+  queryTransitionId: string | null
+  pendingDirectOutput: Array<{ data: string; ownerSequence: number }>
+  pendingDirectOutputBytes: number
   protocolVersion: TerminalProtocolVersion
   queuedInputBytes: number
   queuedInputMessages: number
-  lifecycleFiber: Fiber.RuntimeFiber<void, never> | null
 }
 
 interface ControllerLease {
@@ -104,8 +75,6 @@ interface CanonicalTerminalDimensions {
   cols: number
   rows: number
   revision: number
-  socketName: string
-  sessionName: string
 }
 
 function errorMessage(cause: unknown): string {
@@ -115,33 +84,18 @@ function errorMessage(cause: unknown): string {
   return (message || 'Terminal attachment failed').slice(0, 1_000)
 }
 
-function tmuxEnvironment(): NodeJS.ProcessEnv {
-  // SAFETY: The surrounding boundary contract establishes this asserted value.
-  return Object.fromEntries(
-    Object.entries(process.env).filter(
-      ([key, value]) =>
-        value !== undefined && key !== 'TMUX' && key !== 'TMUX_PANE'
-    )
-  ) as NodeJS.ProcessEnv
-}
-
 export class TerminalAttachmentManager {
   private readonly clients = new Map<string, ClientConnection>()
   private readonly controllers = new Map<string, ControllerLease>()
   private readonly controllerGenerations = new Map<string, number>()
   private readonly dimensions = new Map<string, CanonicalTerminalDimensions>()
   private readonly operationTails = new Map<string, Promise<void>>()
-  private readonly tmuxExecutable: string
 
   constructor(
     private readonly service: TreeportService,
-    private readonly tmux: TmuxAdapter,
-    tmuxExecutable: string,
     private readonly metadata: TerminalMetadataManager,
-    private readonly spawnPty: PtySpawner = pty.spawn
-  ) {
-    this.tmuxExecutable = resolveExecutablePath(tmuxExecutable)
-  }
+    private readonly terminalHost: TerminalAttachmentBackend
+  ) {}
 
   accept(
     auth: TerminalAuth,
@@ -154,11 +108,7 @@ export class TerminalAttachmentManager {
       transport,
       state: 'initializing',
       clientId: auth.clientId,
-      pty: null,
       streamId: null,
-      stallTimeout: null,
-      dataDisposable: null,
-      exitDisposable: null,
       nextSequence: 1,
       lastAckSequence: 0,
       unacknowledgedBytes: 0,
@@ -166,35 +116,31 @@ export class TerminalAttachmentManager {
       paused: false,
       announcedReady: false,
       metadataUnsubscribe: null,
-      historyUnsubscribe: null,
+      directOutputUnsubscribe: null,
+      directRuntimeUnsubscribe: null,
+      queryAuthorityActive: false,
+      queryAuthorityGrantPending: false,
+      queryTransitionId: null,
+      pendingDirectOutput: [],
+      pendingDirectOutputBytes: 0,
       protocolVersion,
       queuedInputBytes: 0,
-      queuedInputMessages: 0,
-      lifecycleFiber: null
+      queuedInputMessages: 0
     }
     this.clients.set(connection.id, connection)
-    connection.lifecycleFiber = Effect.runFork(
-      Effect.yieldNow().pipe(
-        Effect.zipRight(
-          Effect.scoped(this.initialize(connection, auth.cols, auth.rows))
-        ),
-        Effect.catchAll((error) =>
-          Effect.sync(() => {
-            if (connection.state === 'closed') {
-              return
-            }
+    void this.initialize(connection, auth.cols, auth.rows).catch((cause) => {
+      if (connection.state === 'closed') {
+        return
+      }
 
-            this.send(connection, 'terminal_error', {
-              code: 'ATTACH_FAILED',
-              message: errorMessage(error.cause),
-              retryable: false
-            })
-            connection.transport.disconnect(false)
-            this.close(connection.id)
-          })
-        )
-      )
-    )
+      this.send(connection, 'terminal_error', {
+        code: 'ATTACH_FAILED',
+        message: errorMessage(cause),
+        retryable: false
+      })
+      connection.transport.disconnect(false)
+      this.close(connection.id)
+    })
     return connection.id
   }
 
@@ -253,29 +199,8 @@ export class TerminalAttachmentManager {
     }
 
     if (event === 'take_control') {
-      if (connection.protocolVersion === TERMINAL_PROTOCOL_VERSION) {
-        const parsed = terminalTakeControlSchema.safeParse(value)
-        if (!parsed.success) {
-          this.protocolError(
-            connection,
-            'INVALID_MESSAGE',
-            'Invalid controller request'
-          )
-          return
-        }
-
-        this.takeControl(
-          connection,
-          parsed.data.generation,
-          parsed.data.cols,
-          parsed.data.rows
-        )
-        return
-      }
-
-      const parsed = terminalLegacyTakeControlSchema.safeParse(value)
-      const dimensions = this.dimensions.get(connection.terminalId)
-      if (!parsed.success || !dimensions) {
+      const parsed = terminalTakeControlSchema.safeParse(value)
+      if (!parsed.success) {
         this.protocolError(
           connection,
           'INVALID_MESSAGE',
@@ -287,8 +212,27 @@ export class TerminalAttachmentManager {
       this.takeControl(
         connection,
         parsed.data.generation,
-        dimensions.cols,
-        dimensions.rows
+        parsed.data.cols,
+        parsed.data.rows
+      )
+      return
+    }
+
+    if (event === 'query_authority') {
+      const parsed = terminalQueryAuthorityRequestSchema.safeParse(value)
+      if (!parsed.success) {
+        this.protocolError(
+          connection,
+          'INVALID_MESSAGE',
+          'Invalid terminal query authority request'
+        )
+        return
+      }
+
+      this.changeQueryAuthority(
+        connection,
+        parsed.data.generation,
+        parsed.data.transitionId
       )
       return
     }
@@ -362,18 +306,22 @@ export class TerminalAttachmentManager {
 
     connection.state = 'closed'
     this.clients.delete(connectionId)
-    if (connection.stallTimeout) {
-      clearTimeout(connection.stallTimeout)
-      connection.stallTimeout = null
-    }
-
-    this.releaseExitSubscription(connection)
-    this.releaseDataSubscription(connection)
     this.releaseMetadataSubscription(connection)
-    this.releasePty(connection)
-    if (connection.lifecycleFiber) {
-      Effect.runFork(Fiber.interrupt(connection.lifecycleFiber))
-      connection.lifecycleFiber = null
+    connection.directOutputUnsubscribe?.()
+    connection.directRuntimeUnsubscribe?.()
+    connection.directOutputUnsubscribe = null
+    connection.directRuntimeUnsubscribe = null
+    connection.pendingDirectOutput = []
+    connection.pendingDirectOutputBytes = 0
+    const restoreHostAuthority =
+      connection.queryAuthorityActive || connection.queryTransitionId !== null
+    connection.queryAuthorityActive = false
+    connection.queryAuthorityGrantPending = false
+    connection.queryTransitionId = null
+    if (restoreHostAuthority) {
+      void this.enqueueTerminal(connection.terminalId, () =>
+        this.terminalHost.useHostQueryAuthority(connection.terminalId)
+      ).catch(() => undefined)
     }
 
     const lease = this.controllers.get(connection.terminalId)
@@ -418,370 +366,144 @@ export class TerminalAttachmentManager {
     this.dimensions.clear()
   }
 
-  private initialize(
+  private async initialize(
     connection: ClientConnection,
     cols: number,
     rows: number
-  ): Effect.Effect<void, AttachmentInitializationError, Scope.Scope> {
-    const isInitializing = () =>
+  ): Promise<void> {
+    const active = () =>
       this.clients.get(connection.id) === connection &&
-      connection.state === 'initializing' &&
+      connection.state !== 'closed' &&
       connection.transport.isConnected()
-    const promisePhase = <Value>(
-      phase: AttachmentInitializationPhase,
-      evaluate: () => Promise<Value>
-    ) =>
-      Effect.tryPromise({
-        try: evaluate,
-        catch: (cause) => new AttachmentInitializationError(phase, cause)
-      })
+    const terminal = await this.service.refreshTerminalStatus(
+      connection.terminalId,
+      false
+    )
+    if (!active()) {
+      return
+    }
 
-    return Effect.gen(this, function* () {
-      const terminal = yield* promisePhase('refresh_terminal', () =>
-        this.service.refreshTerminalStatus(connection.terminalId, false)
+    const worktree = await this.service.getWorktree(terminal.worktreeId)
+    await this.metadata.trackTerminal(terminal, worktree)
+    if (!active()) {
+      return
+    }
+
+    connection.streamId = crypto.randomUUID()
+    connection.metadataUnsubscribe = this.metadata.subscribe(
+      connection.terminalId,
+      (value) => {
+        if (connection.announcedReady && this.isActive(connection)) {
+          this.sendRuntimeMetadata(connection, value)
+        }
+      }
+    )
+    const initial = await this.terminalHost.attach(
+      connection.terminalId,
+      (data, ownerSequence) => {
+        if (connection.state === 'initializing') {
+          connection.pendingDirectOutputBytes += Buffer.byteLength(data)
+          if (
+            connection.pendingDirectOutputBytes > TERMINAL_OUTPUT_HIGH_WATERMARK
+          ) {
+            connection.transport.disconnect(true)
+            this.close(connection.id)
+            return
+          }
+
+          connection.pendingDirectOutput.push({ data, ownerSequence })
+        } else {
+          this.sendOutput(connection, data)
+        }
+      }
+    )
+    if (!active() || initial === null) {
+      initial?.unsubscribe()
+      return
+    }
+
+    connection.directOutputUnsubscribe = initial.unsubscribe
+    const size = terminalSizeSchema.parse({
+      cols: initial.cols || cols,
+      rows: initial.rows || rows
+    })
+    const current = this.dimensions.get(connection.terminalId)
+    const dimensions = current ?? {
+      ...size,
+      revision: 1
+    }
+    this.dimensions.set(connection.terminalId, dimensions)
+    connection.directRuntimeUnsubscribe =
+      await this.terminalHost.subscribeRuntime(
+        connection.terminalId,
+        (event) => {
+          if ('exitCode' in event && connection.announcedReady) {
+            this.send(connection, 'exit', { exitCode: event.exitCode ?? null })
+          }
+        }
       )
-      if (!isInitializing()) {
+    if (!active()) {
+      connection.directOutputUnsubscribe?.()
+      connection.directRuntimeUnsubscribe?.()
+      connection.directOutputUnsubscribe = null
+      connection.directRuntimeUnsubscribe = null
+      return
+    }
+
+    await this.enqueueTerminal(connection.terminalId, () => {
+      if (!active()) {
         return
       }
 
-      if (terminal.status === 'missing') {
-        return yield* Effect.fail(
-          new AttachmentInitializationError(
-            'refresh_terminal',
-            new Error('The tmux session for this terminal is missing')
-          )
+      this.claimController(connection)
+      connection.state = 'ready'
+      const lease = this.controllers.get(connection.terminalId)
+      if (
+        !this.send(connection, 'ready', {
+          connectionId: connection.id,
+          streamId: connection.streamId!,
+          generation: lease?.generation ?? 0,
+          controller: this.isController(connection),
+          reset: 'full',
+          cols: dimensions.cols,
+          rows: dimensions.rows,
+          revision: dimensions.revision,
+          snapshot: initial.data,
+          snapshotLinks: initial.links
+        })
+      ) {
+        return
+      }
+
+      connection.announcedReady = true
+      if (this.isController(connection)) {
+        this.publishControllerChanged(
+          connection.terminalId,
+          connection.clientId
         )
       }
 
-      const worktree = yield* promisePhase('resolve_worktree', () =>
-        this.service.getWorktree(terminal.worktreeId)
+      this.sendRuntimeMetadata(
+        connection,
+        this.metadata.get(connection.terminalId)
       )
-      yield* Effect.all(
-        [
-          promisePhase('configure_server', () =>
-            this.tmux.configureServer(worktree.tmuxSocketName)
-          ),
-          promisePhase('track_metadata', () =>
-            this.metadata.trackTerminal(terminal, worktree)
-          )
-        ],
-        { concurrency: 'unbounded' }
-      )
-      if (!isInitializing()) {
-        return
+      for (const output of connection.pendingDirectOutput.splice(0)) {
+        if (output.ownerSequence > initial.fence) {
+          this.sendOutput(connection, output.data)
+        }
       }
-
-      const initialDimensions = yield* Effect.tryPromise({
-        try: () =>
-          this.enqueueTerminal(connection.terminalId, async () => {
-            if (!isInitializing()) {
-              return null
-            }
-
-            const current = this.dimensions.get(connection.terminalId)
-            if (current) {
-              return current
-            }
-
-            await this.tmux
-              .useManualWindowSize(
-                worktree.tmuxSocketName,
-                terminal.tmuxSessionName
-              )
-              .catch((cause) => {
-                throw new AttachmentInitializationError(
-                  'configure_window_size',
-                  cause
-                )
-              })
-            if (!isInitializing()) {
-              return null
-            }
-
-            const sessionSize = await this.tmux
-              .sessionSize(worktree.tmuxSocketName, terminal.tmuxSessionName)
-              .catch((cause) => {
-                throw new AttachmentInitializationError(
-                  'read_session_size',
-                  cause
-                )
-              })
-            if (!isInitializing()) {
-              return null
-            }
-
-            let size
-            if (sessionSize) {
-              const parsed = terminalSizeSchema.safeParse(sessionSize)
-              if (!parsed.success) {
-                throw new AttachmentInitializationError(
-                  'read_session_size',
-                  new Error('tmux reported unsupported terminal dimensions')
-                )
-              }
-
-              size = parsed.data
-            } else {
-              const parsed = terminalSizeSchema.safeParse({ cols, rows })
-              if (!parsed.success) {
-                throw new AttachmentInitializationError(
-                  'resize_fallback',
-                  new Error('Terminal fallback dimensions are invalid')
-                )
-              }
-
-              size = parsed.data
-              await this.tmux
-                .resizeWindow(
-                  worktree.tmuxSocketName,
-                  terminal.tmuxSessionName,
-                  size.cols,
-                  size.rows
-                )
-                .catch((cause) => {
-                  throw new AttachmentInitializationError(
-                    'resize_fallback',
-                    cause
-                  )
-                })
-              if (!isInitializing()) {
-                return null
-              }
-            }
-
-            const initialized = {
-              ...size,
-              revision: 1,
-              socketName: worktree.tmuxSocketName,
-              sessionName: terminal.tmuxSessionName
-            }
-            this.dimensions.set(connection.terminalId, initialized)
-            return initialized
-          }),
-        catch: (cause) =>
-          cause instanceof AttachmentInitializationError
-            ? cause
-            : new AttachmentInitializationError('configure_window_size', cause)
-      })
-      if (!initialDimensions || !isInitializing()) {
-        return
-      }
-
-      const clientPty = yield* Effect.acquireRelease(
-        Effect.try({
-          try: () => {
-            const env = tmuxEnvironment()
-            env.TERM = 'xterm-256color'
-            const acquired = this.spawnPty(
-              this.tmuxExecutable,
-              this.tmux.attachArgs(
-                worktree.tmuxSocketName,
-                terminal.tmuxSessionName
-              ),
-              {
-                name: 'xterm-256color',
-                cols: initialDimensions.cols,
-                rows: initialDimensions.rows,
-                cwd: worktree.path,
-                env
-              }
-            )
-            connection.pty = acquired
-            connection.streamId = crypto.randomUUID()
-            return acquired
-          },
-          catch: (cause) =>
-            new AttachmentInitializationError('spawn_pty', cause)
-        }),
-        () => Effect.sync(() => this.releasePty(connection))
-      )
-      yield* Effect.try({
-        try: () => clientPty.pause(),
-        catch: (cause) => new AttachmentInitializationError('pause_pty', cause)
-      })
-      yield* Effect.acquireRelease(
-        Effect.try({
-          try: () => {
-            connection.metadataUnsubscribe = this.metadata.subscribe(
-              connection.terminalId,
-              (metadata) => {
-                if (connection.announcedReady && this.isActive(connection)) {
-                  this.sendRuntimeMetadata(connection, metadata)
-                }
-              }
-            )
-            connection.historyUnsubscribe = this.metadata.subscribeHistory(
-              connection.terminalId,
-              (viewing) => {
-                if (connection.announcedReady && this.isActive(connection)) {
-                  this.send(connection, 'history', { viewing })
-                }
-              }
-            )
-          },
-          catch: (cause) =>
-            new AttachmentInitializationError('subscribe_metadata', cause)
-        }),
-        () => Effect.sync(() => this.releaseMetadataSubscription(connection))
-      )
-      yield* Effect.acquireRelease(
-        Effect.try({
-          try: () => {
-            connection.dataDisposable = clientPty.onData((data) =>
-              this.sendOutput(connection, data)
-            )
-          },
-          catch: (cause) =>
-            new AttachmentInitializationError('subscribe_pty_data', cause)
-        }),
-        () => Effect.sync(() => this.releaseDataSubscription(connection))
-      )
-      yield* Effect.acquireRelease(
-        Effect.try({
-          try: () => {
-            connection.exitDisposable = clientPty.onExit(({ exitCode }) =>
-              this.send(connection, 'exit', { exitCode })
-            )
-          },
-          catch: (cause) =>
-            new AttachmentInitializationError('subscribe_pty_exit', cause)
-        }),
-        () => Effect.sync(() => this.releaseExitSubscription(connection))
-      )
-
-      yield* Effect.tryPromise({
-        try: () =>
-          this.enqueueTerminal(connection.terminalId, () => {
-            if (!isInitializing()) {
-              return false
-            }
-
-            const dimensions = this.dimensions.get(connection.terminalId)
-            if (!dimensions) {
-              throw new AttachmentInitializationError(
-                'announce_ready',
-                new Error('Terminal dimensions are unavailable')
-              )
-            }
-
-            if (
-              dimensions.cols !== initialDimensions.cols ||
-              dimensions.rows !== initialDimensions.rows
-            ) {
-              clientPty.resize(dimensions.cols, dimensions.rows)
-            }
-
-            this.claimController(connection)
-            connection.state = 'ready'
-            const lease = this.controllers.get(connection.terminalId)
-            const ready = {
-              connectionId: connection.id,
-              streamId: connection.streamId!,
-              generation: lease?.generation ?? 0,
-              controller: this.isController(connection),
-              reset: 'full' as const
-            }
-            if (
-              !this.send(
-                connection,
-                'ready',
-                connection.protocolVersion === TERMINAL_PROTOCOL_VERSION
-                  ? {
-                      ...ready,
-                      cols: dimensions.cols,
-                      rows: dimensions.rows,
-                      revision: dimensions.revision
-                    }
-                  : ready
-              )
-            ) {
-              return false
-            }
-
-            connection.announcedReady = true
-            if (this.isController(connection)) {
-              this.publishControllerChanged(
-                connection.terminalId,
-                connection.clientId
-              )
-            }
-
-            if (
-              !this.sendRuntimeMetadata(
-                connection,
-                this.metadata.get(connection.terminalId)
-              ) ||
-              !this.send(connection, 'history', {
-                viewing: this.metadata.viewingHistory(connection.terminalId)
-              }) ||
-              !this.isActive(connection)
-            ) {
-              return false
-            }
-
-            clientPty.resume()
-            this.broadcastControl(connection.terminalId)
-            return true
-          }),
-        catch: (cause) =>
-          cause instanceof AttachmentInitializationError
-            ? cause
-            : new AttachmentInitializationError('announce_ready', cause)
-      })
-      if (this.isActive(connection)) {
-        yield* Effect.never
-      }
+      connection.pendingDirectOutputBytes = 0
+      this.broadcastControl(connection.terminalId)
     })
-  }
-
-  private releaseExitSubscription(connection: ClientConnection): void {
-    const disposable = connection.exitDisposable
-    connection.exitDisposable = null
-    try {
-      disposable?.dispose()
-    } catch {
-      // Subscription disposal is best-effort; continue releasing the PTY.
-    }
-  }
-
-  private releaseDataSubscription(connection: ClientConnection): void {
-    const disposable = connection.dataDisposable
-    connection.dataDisposable = null
-    try {
-      disposable?.dispose()
-    } catch {
-      // Subscription disposal is best-effort; continue releasing the PTY.
-    }
   }
 
   private releaseMetadataSubscription(connection: ClientConnection): void {
     const metadataUnsubscribe = connection.metadataUnsubscribe
-    const historyUnsubscribe = connection.historyUnsubscribe
     connection.metadataUnsubscribe = null
-    connection.historyUnsubscribe = null
     try {
       metadataUnsubscribe?.()
     } catch {
-      // Metadata teardown must not prevent releasing the PTY.
-    }
-    try {
-      historyUnsubscribe?.()
-    } catch {
-      // History teardown must not prevent releasing the PTY.
-    }
-  }
-
-  private releasePty(connection: ClientConnection): void {
-    const clientPty = connection.pty
-    connection.pty = null
-    if (!clientPty) {
-      return
-    }
-
-    try {
-      clientPty.kill()
-    } catch {
-      // The tmux client may already have exited.
+      // Metadata teardown must not interrupt attachment teardown.
     }
   }
 
@@ -819,8 +541,13 @@ export class TerminalAttachmentManager {
       connection.unacknowledgedBytes >= TERMINAL_OUTPUT_HIGH_WATERMARK
     ) {
       connection.paused = true
-      connection.pty?.pause()
-      this.restartStallTimeout(connection)
+      this.send(connection, 'terminal_error', {
+        code: 'OUTPUT_STALLED',
+        message: 'Terminal viewer could not keep up with output',
+        retryable: true
+      })
+      connection.transport.disconnect(true)
+      this.close(connection.id)
     }
   }
 
@@ -865,32 +592,7 @@ export class TerminalAttachmentManager {
       connection.unacknowledgedBytes <= TERMINAL_OUTPUT_LOW_WATERMARK
     ) {
       connection.paused = false
-      if (connection.stallTimeout) {
-        clearTimeout(connection.stallTimeout)
-      }
-
-      connection.stallTimeout = null
-      connection.pty?.resume()
-    } else if (connection.paused) {
-      this.restartStallTimeout(connection)
     }
-  }
-
-  private restartStallTimeout(connection: ClientConnection): void {
-    if (connection.stallTimeout) {
-      clearTimeout(connection.stallTimeout)
-    }
-
-    connection.stallTimeout = setTimeout(() => {
-      this.send(connection, 'terminal_error', {
-        code: 'OUTPUT_STALLED',
-        message: 'Terminal output stalled',
-        retryable: true
-      })
-      connection.transport.disconnect(true)
-      this.close(connection.id)
-    }, TERMINAL_OUTPUT_STALL_TIMEOUT_MS)
-    connection.stallTimeout.unref()
   }
 
   private enqueueTerminal<Result>(
@@ -947,9 +649,13 @@ export class TerminalAttachmentManager {
       )
       if (
         this.isActive(connection) &&
-        this.canControl(connection, generation)
+        this.canControl(connection, generation) &&
+        connection.queryAuthorityActive
       ) {
-        connection.pty?.write(data)
+        this.terminalHost.write(connection.terminalId, data, {
+          attachmentId: connection.id,
+          generation
+        })
       }
     }).catch((error) => this.failInputWrite(connection, error))
   }
@@ -966,6 +672,122 @@ export class TerminalAttachmentManager {
     })
     connection.transport.disconnect(true)
     this.close(connection.id)
+  }
+
+  private changeQueryAuthority(
+    connection: ClientConnection,
+    generation: number,
+    transitionId: string | null
+  ): void {
+    void this.enqueueTerminal(connection.terminalId, async () => {
+      if (
+        !this.isActive(connection) ||
+        !this.canControl(connection, generation)
+      ) {
+        return
+      }
+
+      if (transitionId === null) {
+        if (connection.queryAuthorityActive) {
+          this.send(connection, 'query_authority', {
+            generation,
+            transitionId: null,
+            active: true
+          })
+          return
+        }
+
+        const otherAuthority = [...this.clients.values()].some(
+          (client) =>
+            client.terminalId === connection.terminalId &&
+            (client.queryAuthorityActive || client.queryTransitionId !== null)
+        )
+        if (otherAuthority) {
+          await this.revokeQueryAuthority(connection.terminalId)
+        }
+
+        const transition = await this.terminalHost.prepareQueryAuthority(
+          connection.terminalId
+        )
+        if (
+          !this.isActive(connection) ||
+          !this.canControl(connection, generation)
+        ) {
+          await this.terminalHost.useHostQueryAuthority(connection.terminalId)
+          return
+        }
+
+        connection.queryAuthorityGrantPending = false
+        connection.queryTransitionId = transition.transitionId
+        this.send(connection, 'query_authority', {
+          generation,
+          transitionId: transition.transitionId,
+          active: false
+        })
+        return
+      }
+
+      if (connection.queryTransitionId !== transitionId) {
+        return
+      }
+
+      if (!connection.queryAuthorityGrantPending) {
+        connection.queryAuthorityGrantPending = true
+        this.send(connection, 'query_authority', {
+          generation,
+          transitionId,
+          active: true
+        })
+        return
+      }
+
+      await this.terminalHost.activateQueryAuthority(
+        connection.terminalId,
+        transitionId,
+        connection.id,
+        generation
+      )
+      if (
+        !this.isActive(connection) ||
+        !this.canControl(connection, generation)
+      ) {
+        await this.terminalHost.useHostQueryAuthority(connection.terminalId)
+        return
+      }
+
+      connection.queryTransitionId = null
+      connection.queryAuthorityGrantPending = false
+      connection.queryAuthorityActive = true
+      this.send(connection, 'query_authority', {
+        generation,
+        transitionId: null,
+        active: true
+      })
+    }).catch((error) => this.failInputWrite(connection, error))
+  }
+
+  private async revokeQueryAuthority(terminalId: string): Promise<void> {
+    await this.terminalHost.useHostQueryAuthority(terminalId)
+    for (const client of this.clients.values()) {
+      if (
+        client.terminalId !== terminalId ||
+        (!client.queryAuthorityActive && client.queryTransitionId === null)
+      ) {
+        continue
+      }
+
+      client.queryAuthorityActive = false
+      client.queryAuthorityGrantPending = false
+      client.queryTransitionId = null
+      if (this.isActive(client)) {
+        const lease = this.controllers.get(terminalId)
+        this.send(client, 'query_authority', {
+          generation: lease?.generation ?? 0,
+          transitionId: null,
+          active: false
+        })
+      }
+    }
   }
 
   private resizeTerminal(
@@ -1014,26 +836,13 @@ export class TerminalAttachmentManager {
       (client) => client.terminalId === terminalId && this.isActive(client)
     )
     for (const client of active) {
-      if (client.protocolVersion === TERMINAL_PROTOCOL_VERSION) {
-        this.send(client, 'dimensions', {
-          cols: next.cols,
-          rows: next.rows,
-          revision: next.revision
-        })
-      }
+      this.send(client, 'dimensions', {
+        cols: next.cols,
+        rows: next.rows,
+        revision: next.revision
+      })
     }
-    for (const client of active) {
-      if (this.isActive(client)) {
-        client.pty?.resize(next.cols, next.rows)
-      }
-    }
-
-    await this.tmux.resizeWindow(
-      next.socketName,
-      next.sessionName,
-      next.cols,
-      next.rows
-    )
+    await this.terminalHost.resize(terminalId, next.cols, next.rows)
   }
 
   private failDimensionChange(terminalId: string, cause: unknown): void {
@@ -1134,6 +943,11 @@ export class TerminalAttachmentManager {
         clearTimeout(previous.timer)
       }
 
+      await this.revokeQueryAuthority(connection.terminalId)
+      if (!this.isActive(connection)) {
+        return
+      }
+
       this.controllers.set(connection.terminalId, {
         clientId: connection.clientId,
         connectionId: connection.id,
@@ -1152,26 +966,29 @@ export class TerminalAttachmentManager {
   }
 
   private expireControllerLease(terminalId: string, clientId: string): void {
-    const lease = this.controllers.get(terminalId)
-    if (!lease || lease.clientId !== clientId || lease.connectionId) {
-      return
-    }
+    void this.enqueueTerminal(terminalId, async () => {
+      const lease = this.controllers.get(terminalId)
+      if (!lease || lease.clientId !== clientId || lease.connectionId) {
+        return
+      }
 
-    const replacement = [...this.clients.values()].find(
-      (client) => client.terminalId === terminalId && client.state === 'ready'
-    )
-    if (replacement) {
-      lease.clientId = replacement.clientId
-      lease.connectionId = replacement.id
-      lease.generation = this.nextControllerGeneration(terminalId)
-      lease.expiresAt = Number.POSITIVE_INFINITY
-      lease.timer = null
-    } else {
-      this.controllers.delete(terminalId)
-    }
+      const replacement = [...this.clients.values()].find(
+        (client) => client.terminalId === terminalId && client.state === 'ready'
+      )
+      await this.revokeQueryAuthority(terminalId)
+      if (replacement) {
+        lease.clientId = replacement.clientId
+        lease.connectionId = replacement.id
+        lease.generation = this.nextControllerGeneration(terminalId)
+        lease.expiresAt = Number.POSITIVE_INFINITY
+        lease.timer = null
+      } else {
+        this.controllers.delete(terminalId)
+      }
 
-    this.broadcastControl(terminalId)
-    this.publishControllerChanged(terminalId, replacement?.clientId ?? null)
+      this.broadcastControl(terminalId)
+      this.publishControllerChanged(terminalId, replacement?.clientId ?? null)
+    }).catch((error) => this.failDimensionChange(terminalId, error))
   }
 
   private canControl(

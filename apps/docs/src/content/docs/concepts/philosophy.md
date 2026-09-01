@@ -13,11 +13,11 @@ Use familiar tabs, keyboard shortcuts, and mouse navigation to move between repo
 
 You can continue to use your editor, shell, coding agent, and review tools.
 
-## 2. Keep tmux out of the interface
+## 2. Keep terminal multiplexing focused
 
-Treeport uses tmux because tmux keeps terminal sessions active. In Treeport, tmux is an implementation component, not the user interface.
+Treeport's detached terminal host keeps terminal sessions active and reconnectable. It implements only the persistence, canonical history, and byte-stream fanout that Treeport needs.
 
-You do not need to use tmux sessions, windows, panes, prefixes, or configuration.
+It does not add windows, panes, layouts, prefix keys, or server-side copy mode. Browsers keep their own scrolling and selection.
 
 ## 3. Use specialist tools
 

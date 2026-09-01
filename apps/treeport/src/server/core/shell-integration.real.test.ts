@@ -1,15 +1,18 @@
-import crypto from 'node:crypto'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
+import { spawn, type IPty } from 'node-pty'
 import { afterEach, expect, it } from 'vitest'
-import { prepareShellIntegration } from './shell-integration'
+import {
+  integrateShellLaunch,
+  prepareShellIntegration
+} from './shell-integration'
 
 const execute = promisify(execFile)
 const temporary: string[] = []
-const sockets: string[] = []
+const children: IPty[] = []
 
 async function available(executable: string): Promise<string | null> {
   return execute('sh', ['-c', `command -v "$1"`, 'sh', executable])
@@ -17,159 +20,94 @@ async function available(executable: string): Promise<string | null> {
     .catch(() => null)
 }
 
-async function waitForTitleState(
-  tmux: string,
-  socket: string,
-  expected: (state: string) => boolean
+async function waitForOutput(
+  read: () => string,
+  expected: (output: string) => boolean
 ): Promise<string> {
   const deadline = Date.now() + 10_000
-  let state = ''
   while (Date.now() < deadline) {
-    state = (
-      await execute(tmux, [
-        '-L',
-        socket,
-        'display-message',
-        '-p',
-        '-t',
-        'title',
-        '#{@treeport-command}|#{pane_current_command}|#{pane_title}'
-      ])
-    ).stdout.trim()
-    if (expected(state)) {
-      return state
+    const output = read()
+    if (expected(output)) {
+      return output
     }
 
-    await new Promise((resolve) => setTimeout(resolve, 50))
+    await new Promise((resolve) => setTimeout(resolve, 25))
   }
 
-  return state
-}
-
-async function waitForPaneContent(
-  tmux: string,
-  socket: string,
-  expected: (content: string) => boolean
-): Promise<string> {
-  const deadline = Date.now() + 10_000
-  let content = ''
-  while (Date.now() < deadline) {
-    content = (
-      await execute(tmux, ['-L', socket, 'capture-pane', '-p', '-t', 'title'])
-    ).stdout
-    if (expected(content)) {
-      return content
-    }
-
-    await new Promise((resolve) => setTimeout(resolve, 50))
-  }
-
-  return content
+  throw new Error(
+    `Timed out waiting for shell output: ${JSON.stringify(read())}`
+  )
 }
 
 async function verifyCommandLifecycle(
-  tmux: string,
   executable: string,
   home: string,
-  environment: Record<string, string>
+  integration: string,
+  startupMarker: string
 ): Promise<void> {
-  const shell = path.basename(executable)
-  const socket = `treeport-title-${crypto.randomBytes(8).toString('hex')}`
-  sockets.push(socket)
-  await execute(tmux, [
-    '-L',
-    socket,
-    '-f',
-    '/dev/null',
-    'new-session',
-    '-d',
-    '-s',
-    'title',
-    '--',
-    'env',
-    `HOME=${home}`,
-    ...Object.entries(environment).map(([key, value]) => `${key}=${value}`),
-    executable,
-    '-l'
-  ])
-
-  const initialState = await waitForTitleState(tmux, socket, (state) =>
-    state.startsWith(`|${shell}|`)
+  const launch = integrateShellLaunch(
+    [executable, '-l'],
+    {
+      ...process.env,
+      HOME: home,
+      TERM: 'xterm-256color'
+    },
+    integration,
+    true
   )
-  const initialPaneTitle = initialState.slice(initialState.indexOf('|', 1) + 1)
-  await execute(tmux, [
-    '-L',
-    socket,
-    'send-keys',
-    '-t',
-    'title',
-    'sleep 30',
-    'Enter'
-  ])
-  await expect(
-    waitForTitleState(
-      tmux,
-      socket,
-      (state) => state === `sleep 30|sleep|${initialPaneTitle}`
+  const environment = Object.fromEntries(
+    Object.entries(launch.env).filter(
+      (entry): entry is [string, string] => entry[1] !== undefined
     )
-  ).resolves.toBe(`sleep 30|sleep|${initialPaneTitle}`)
+  )
+  const child = spawn(launch.argv[0]!, launch.argv.slice(1), {
+    cwd: home,
+    cols: 100,
+    rows: 30,
+    env: environment
+  })
+  children.push(child)
+  let output = ''
+  child.onData((data) => {
+    output += data
+  })
 
-  await execute(tmux, ['-L', socket, 'send-keys', '-t', 'title', 'C-c'])
   await expect(
-    waitForTitleState(
-      tmux,
-      socket,
-      (state) => state === `|${shell}|${initialPaneTitle}`
+    waitForOutput(
+      () => output,
+      (value) =>
+        value.includes(startupMarker) &&
+        value.includes('\u001b]777;command;\u001b\\')
     )
-  ).resolves.toBe(`|${shell}|${initialPaneTitle}`)
+  ).resolves.toContain(startupMarker)
 
-  const marker = `treeport-before-clear-${crypto.randomBytes(4).toString('hex')}`
-  await execute(tmux, [
-    '-L',
-    socket,
-    'send-keys',
-    '-t',
-    'title',
-    `printf '${marker}\\n'`,
-    'Enter'
-  ])
-  await expect(
-    waitForPaneContent(tmux, socket, (content) => content.includes(marker))
-  ).resolves.toContain(marker)
-
-  await execute(tmux, [
-    '-L',
-    socket,
-    'send-keys',
-    '-t',
-    'title',
-    'clear',
-    'Enter'
-  ])
-  await expect(
-    waitForPaneContent(tmux, socket, (content) => !content.includes(marker))
-  ).resolves.not.toContain(marker)
-  await expect(
-    waitForTitleState(
-      tmux,
-      socket,
-      (state) => state === `|${shell}|${initialPaneTitle}`
-    )
-  ).resolves.toBe(`|${shell}|${initialPaneTitle}`)
+  const command = `printf 'treeport-shell-result\\n'`
+  child.write(`${command}\r`)
+  const commandSequence = `\u001b]777;command;${command}\u001b\\`
+  const completed = await waitForOutput(
+    () => output,
+    (value) => {
+      const commandIndex = value.indexOf(commandSequence)
+      return (
+        commandIndex >= 0 &&
+        value.indexOf(
+          'treeport-shell-result',
+          commandIndex + commandSequence.length
+        ) >= 0 &&
+        value.indexOf(
+          '\u001b]777;command;\u001b\\',
+          commandIndex + commandSequence.length
+        ) >= 0
+      )
+    }
+  )
+  expect(completed).toContain(commandSequence)
 }
 
 afterEach(async () => {
-  const tmux = await available('tmux')
-  if (tmux) {
-    await Promise.all(
-      sockets
-        .splice(0)
-        .map((socket) =>
-          execute(tmux, ['-L', socket, 'kill-server']).catch(() => undefined)
-        )
-    )
+  for (const child of children.splice(0)) {
+    child.kill()
   }
-
   await Promise.all(
     temporary
       .splice(0)
@@ -177,11 +115,11 @@ afterEach(async () => {
   )
 })
 
-it('captures complete zsh and Bash commands and clears them at the prompt', async () => {
-  const tmux = await available('tmux')
+it('preserves user startup and reports complete zsh and Bash command lifecycles', async () => {
   const zsh = await available('zsh')
   const bash = await available('bash')
-  if (!tmux || !zsh || !bash) {
+  const fish = await available('fish')
+  if (!zsh || !bash) {
     return
   }
 
@@ -192,21 +130,42 @@ it('captures complete zsh and Bash commands and clears them at the prompt', asyn
 
   const zshHome = path.join(root, 'zsh-home')
   await fs.mkdir(zshHome)
-  await verifyCommandLifecycle(tmux, zsh, zshHome, {
-    ZDOTDIR: path.join(integration, 'zsh'),
-    TREEPORT_USER_ZDOTDIR: zshHome,
-    TREEPORT_TMUX_EXECUTABLE: tmux
-  })
+  await fs.writeFile(
+    path.join(zshHome, '.zshrc'),
+    "printf 'treeport-user-zsh-startup\\n'\n"
+  )
+  await verifyCommandLifecycle(
+    zsh,
+    zshHome,
+    integration,
+    'treeport-user-zsh-startup'
+  )
 
   const bashHome = path.join(root, 'bash-home')
   await fs.mkdir(bashHome)
-  await verifyCommandLifecycle(tmux, bash, bashHome, {
-    PROMPT_COMMAND: 'source "${TREEPORT_BASH_INTEGRATION_FILE}"',
-    TREEPORT_BASH_INTEGRATION_FILE: path.join(
+  await fs.writeFile(
+    path.join(bashHome, '.bash_profile'),
+    "printf 'treeport-user-bash-startup\\n'\n"
+  )
+  await verifyCommandLifecycle(
+    bash,
+    bashHome,
+    integration,
+    'treeport-user-bash-startup'
+  )
+
+  if (fish) {
+    const fishHome = path.join(root, 'fish-home')
+    await fs.mkdir(path.join(fishHome, '.config', 'fish'), { recursive: true })
+    await fs.writeFile(
+      path.join(fishHome, '.config', 'fish', 'config.fish'),
+      "printf 'treeport-user-fish-startup\\n'\n"
+    )
+    await verifyCommandLifecycle(
+      fish,
+      fishHome,
       integration,
-      'bash',
-      'treeport.bash'
-    ),
-    TREEPORT_TMUX_EXECUTABLE: tmux
-  })
+      'treeport-user-fish-startup'
+    )
+  }
 })

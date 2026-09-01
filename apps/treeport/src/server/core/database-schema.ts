@@ -70,7 +70,6 @@ export const worktrees = sqliteTable(
     lockReason: text('lock_reason'),
     prunable: integer().notNull().default(0),
     kind: text().notNull(),
-    tmuxSocketName: text('tmux_socket_name').notNull().unique(),
     managedWrapperPath: text('managed_wrapper_path'),
     treeContextJson: text('tree_context_json').notNull().default('{}'),
     prState: text('pr_state').notNull().default('unknown'),

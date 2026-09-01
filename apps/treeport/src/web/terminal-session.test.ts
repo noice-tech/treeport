@@ -7,11 +7,7 @@ import {
   it,
   vi
 } from 'vitest'
-import {
-  TERMINAL_SCROLL_EXIT_SEQUENCE,
-  type JsonValue,
-  type TerminalSize
-} from '@treeport/shared'
+import { type JsonValue, type TerminalSize } from '@treeport/shared'
 import type {
   terminalKeyboardInput as mapTerminalKeyboardInput,
   terminalOptions as createTerminalOptions,
@@ -127,8 +123,6 @@ class FakeSession {
     exitSerial: 0,
     fileTransfer: null,
     hasSelection: false,
-    selecting: false,
-    viewingHistory: false,
     pasteRequestSerial: 0,
     error: null
   }
@@ -250,7 +244,6 @@ function controllerSessionFixture() {
       exitSerial: 0,
       fileTransfer: null,
       hasSelection: false,
-      viewingHistory: false,
       pasteRequestSerial: 0,
       error: null
     }
@@ -276,6 +269,10 @@ function controllerSessionFixture() {
 }
 
 describe('terminal options', () => {
+  it('retains useful browser-owned scrollback', () => {
+    expect(terminalOptions().scrollback).toBe(50_000)
+  })
+
   it('opens OSC 8 links in Browser on Apple Cmd-click or touch', () => {
     const request = vi.fn(() => Promise.resolve(new Response()))
     vi.stubGlobal('navigator', { platform: 'MacIntel' })
@@ -509,6 +506,7 @@ describe('TerminalSession', () => {
     terminalSessionTestAccess(session).terminal = {
       cols: 5_000,
       rows: 1,
+      options: { disableStdin: false },
       dispose: vi.fn()
     }
     terminalSessionTestAccess(session).connect()
@@ -523,7 +521,7 @@ describe('TerminalSession', () => {
         reconnectionDelayMax: 1_000,
         randomizationFactor: 0.2,
         retries: 0,
-        query: { terminalProtocol: '2' }
+        query: { terminalProtocol: '6' }
       })
     )
     const options = testAccess<{
@@ -586,6 +584,203 @@ describe('TerminalSession', () => {
     session.dispose()
   })
 
+  it('keeps two synchronized clients scroll and selection independent', async () => {
+    const firstSocket = new FakeSocketIO()
+    const secondSocket = new FakeSocketIO()
+    const sockets = [firstSocket, secondSocket]
+    socketClient.io.mockImplementation(() => sockets.shift()!)
+    const firstSession = createTerminalSession('terminal-one')
+    const secondSession = createTerminalSession('terminal-one')
+    const content = ['', '']
+    const clearSelection = [vi.fn(), vi.fn()]
+    const selected = [true, true]
+    for (const [index, session] of [firstSession, secondSession].entries()) {
+      terminalSessionTestAccess(session).terminal = {
+        reset: vi.fn(() => {
+          content[index] = ''
+        }),
+        resize: vi.fn(),
+        options: { fontSize: 14 },
+        write: (data: string, callback: () => void) => {
+          content[index] += data
+          callback()
+        },
+        focus: vi.fn(),
+        hasSelection: () => selected[index],
+        clearSelection: () => {
+          selected[index] = false
+          clearSelection[index]!()
+        },
+        dispose: vi.fn()
+      }
+      terminalSessionTestAccess(session).connect()
+    }
+    for (const [index, socket] of [firstSocket, secondSocket].entries()) {
+      socket.emitServer('ready', {
+        connectionId: `connection-${index}`,
+        streamId: 'stream',
+        generation: 1,
+        controller: false,
+        reset: 'full',
+        cols: 80,
+        rows: 24,
+        revision: 1,
+        snapshot: 'shared history\r\n'
+      })
+      socket.emitServer('output', {
+        streamId: 'stream',
+        sequence: 1,
+        data: 'shared live output\r\n'
+      })
+    }
+    await vi.waitFor(() =>
+      expect(content).toEqual([
+        'shared history\r\nshared live output\r\n',
+        'shared history\r\nshared live output\r\n'
+      ])
+    )
+
+    firstSession.clearSelection()
+    expect(clearSelection[0]).toHaveBeenCalledOnce()
+    expect(clearSelection[1]).not.toHaveBeenCalled()
+    expect(firstSocket.volatile.emit).not.toHaveBeenCalledWith(
+      'input',
+      expect.anything()
+    )
+    expect(secondSocket.volatile.emit).not.toHaveBeenCalledWith(
+      'input',
+      expect.anything()
+    )
+    firstSession.dispose()
+    secondSession.dispose()
+  })
+
+  it('answers queries only after fenced controller authority and through handoff', async () => {
+    const { Terminal: BrowserTerminal } = await import('@xterm/xterm')
+    const socket = new FakeSocketIO()
+    socketClient.io.mockReturnValue(socket)
+    const session = createTerminalSession('terminal-one')
+    const terminal = new BrowserTerminal({
+      cols: 80,
+      rows: 24,
+      scrollback: 50_000,
+      allowProposedApi: true
+    })
+    terminal.onData((data) => session.sendText(data, { focus: false }))
+    terminalSessionTestAccess(session).terminal = terminal
+    terminalSessionTestAccess(session).connect()
+    socket.emitServer('ready', {
+      connectionId: 'connection-1',
+      streamId: 'stream-1',
+      generation: 1,
+      controller: true,
+      reset: 'full',
+      cols: 80,
+      rows: 24,
+      revision: 1,
+      snapshot: '\u001b[6nhistorical link',
+      snapshotLinks: [
+        {
+          buffer: 'normal',
+          uri: 'https://example.test/issue/42',
+          line: 0,
+          startColumn: 0,
+          endColumn: 15
+        }
+      ]
+    })
+    await vi.waitFor(() =>
+      expect(socket.emit).toHaveBeenCalledWith('query_authority', {
+        generation: 1,
+        transitionId: null
+      })
+    )
+    expect(socket.volatile.emit).not.toHaveBeenCalledWith(
+      'input',
+      expect.anything()
+    )
+    const grant = async (generation: number, transitionId: string) => {
+      socket.emitServer('query_authority', {
+        generation,
+        transitionId,
+        active: false
+      })
+      await vi.waitFor(() =>
+        expect(socket.emit).toHaveBeenCalledWith('query_authority', {
+          generation,
+          transitionId
+        })
+      )
+      socket.emit.mockClear()
+      socket.emitServer('query_authority', {
+        generation,
+        transitionId,
+        active: true
+      })
+      await vi.waitFor(() =>
+        expect(socket.emit).toHaveBeenCalledWith('query_authority', {
+          generation,
+          transitionId
+        })
+      )
+      socket.emitServer('query_authority', {
+        generation,
+        transitionId: null,
+        active: true
+      })
+    }
+
+    await grant(1, 'transition-1')
+    socket.emitServer('output', {
+      streamId: 'stream-1',
+      sequence: 1,
+      data: '\u001b[6n'
+    })
+    await vi.waitFor(() =>
+      expect(socket.volatile.emit).toHaveBeenCalledWith('input', {
+        generation: 1,
+        data: expect.stringMatching(
+          new RegExp(String.raw`^\u001b\[\d+;\d+R$`, 'u')
+        )
+      })
+    )
+    expect(
+      socket.volatile.emit.mock.calls.filter(([event]) => event === 'input')
+    ).toHaveLength(1)
+
+    socket.emitServer('control', { generation: 2, controller: false })
+    socket.emitServer('output', {
+      streamId: 'stream-1',
+      sequence: 2,
+      data: '\u001b[6n'
+    })
+    await Promise.resolve()
+    expect(
+      socket.volatile.emit.mock.calls.filter(([event]) => event === 'input')
+    ).toHaveLength(1)
+
+    socket.emitServer('control', { generation: 3, controller: true })
+    await vi.waitFor(() =>
+      expect(socket.emit).toHaveBeenCalledWith('query_authority', {
+        generation: 3,
+        transitionId: null
+      })
+    )
+    socket.emit.mockClear()
+    await grant(3, 'transition-2')
+    socket.emitServer('output', {
+      streamId: 'stream-1',
+      sequence: 3,
+      data: '\u001b[6n'
+    })
+    await vi.waitFor(() =>
+      expect(
+        socket.volatile.emit.mock.calls.filter(([event]) => event === 'input')
+      ).toHaveLength(2)
+    )
+    session.dispose()
+  })
+
   it('batches contiguous output writes while ACKing only parsed data', async () => {
     const socket = new FakeSocketIO()
     socketClient.io.mockReturnValue(socket)
@@ -610,7 +805,8 @@ describe('TerminalSession', () => {
       reset: 'full',
       cols: 100,
       rows: 30,
-      revision: 1
+      revision: 1,
+      snapshot: ''
     })
     socket.emitServer('output', {
       streamId: 'stream-1',
@@ -624,15 +820,18 @@ describe('TerminalSession', () => {
     })
 
     await vi.waitFor(() => expect(reset).toHaveBeenCalledOnce())
-    await vi.waitFor(() => expect(writes).toHaveLength(2))
-    expect(writes.map(({ data }) => data)).toEqual(['hello', ' world'])
+    await vi.waitFor(() => expect(writes).toHaveLength(1))
+    expect(writes[0]!.data).toBe('')
     expect(socket.emit).not.toHaveBeenCalledWith(
       'output_ack',
       expect.anything()
     )
 
     writes[0]!.callback()
+    await vi.waitFor(() => expect(writes).toHaveLength(3))
+    expect(writes.slice(1).map(({ data }) => data)).toEqual(['hello', ' world'])
     writes[1]!.callback()
+    writes[2]!.callback()
     expect(socket.emit).toHaveBeenLastCalledWith('output_ack', {
       streamId: 'stream-1',
       sequence: 2
@@ -647,10 +846,11 @@ describe('TerminalSession', () => {
       sequence: 3,
       data: 'later'
     })
-    await vi.waitFor(() => expect(writes).toHaveLength(3))
+    await vi.waitFor(() => expect(writes).toHaveLength(4))
+    const emitCountBeforeDisconnect = socket.emit.mock.calls.length
     socket.emitServer('disconnect', 'transport close')
-    writes[2]!.callback()
-    expect(socket.emit).toHaveBeenCalledTimes(2)
+    writes[3]!.callback()
+    expect(socket.emit).toHaveBeenCalledTimes(emitCountBeforeDisconnect)
     session.dispose()
   })
 
@@ -678,7 +878,8 @@ describe('TerminalSession', () => {
       reset: 'full',
       cols: 100,
       rows: 30,
-      revision: 1
+      revision: 1,
+      snapshot: ''
     })
     socket.emitServer('output', {
       streamId: 'stream-1',
@@ -692,18 +893,20 @@ describe('TerminalSession', () => {
       data: 'new grid'
     })
 
-    await vi.waitFor(() => expect(writes).toHaveLength(2))
-    expect(writes.map(({ data }) => data)).toEqual(['old grid', ''])
+    await vi.waitFor(() => expect(writes).toHaveLength(1))
+    expect(writes[0]!.data).toBe('')
     expect(resize).toHaveBeenCalledTimes(1)
 
     writes[0]!.callback()
-    expect(resize).toHaveBeenCalledTimes(1)
-    expect(writes).toHaveLength(2)
+    await vi.waitFor(() => expect(writes).toHaveLength(3))
+    expect(writes.slice(1).map(({ data }) => data)).toEqual(['old grid', ''])
     writes[1]!.callback()
+    expect(resize).toHaveBeenCalledTimes(1)
+    writes[2]!.callback()
 
     await vi.waitFor(() => expect(resize).toHaveBeenLastCalledWith(120, 40))
-    await vi.waitFor(() => expect(writes).toHaveLength(3))
-    expect(writes[2]!.data).toBe('new grid')
+    await vi.waitFor(() => expect(writes).toHaveLength(4))
+    expect(writes[3]!.data).toBe('new grid')
     session.dispose()
   })
 
@@ -731,15 +934,20 @@ describe('TerminalSession', () => {
       reset: 'full',
       cols: 100,
       rows: 30,
-      revision: 1
+      revision: 1,
+      snapshot: ''
     })
     await vi.waitFor(() => expect(reset).toHaveBeenCalledOnce())
+    await vi.waitFor(() => expect(writes).toHaveLength(1))
+    expect(writes[0]!.data).toBe('')
+    writes[0]!.callback()
     socket.emitServer('output', {
       streamId: 'stream-1',
       sequence: 1,
       data: 'stale'
     })
-    await vi.waitFor(() => expect(writes).toHaveLength(1))
+    await vi.waitFor(() => expect(writes).toHaveLength(2))
+    expect(writes[1]!.data).toBe('stale')
 
     socket.emitServer('ready', {
       connectionId: 'connection-2',
@@ -749,28 +957,32 @@ describe('TerminalSession', () => {
       reset: 'full',
       cols: 120,
       rows: 40,
-      revision: 2
+      revision: 2,
+      snapshot: ''
     })
     socket.emitServer('output', {
       streamId: 'stream-2',
       sequence: 1,
       data: 'fresh'
     })
-    await vi.waitFor(() => expect(writes).toHaveLength(2))
-    expect(writes[1]!.data).toBe('')
+    await vi.waitFor(() => expect(writes).toHaveLength(3))
+    expect(writes[2]!.data).toBe('')
 
-    writes[0]!.callback()
+    writes[1]!.callback()
     expect(socket.emit).not.toHaveBeenCalledWith(
       'output_ack',
       expect.anything()
     )
     expect(reset).toHaveBeenCalledOnce()
-    writes[1]!.callback()
+    writes[2]!.callback()
 
     await vi.waitFor(() => expect(reset).toHaveBeenCalledTimes(2))
-    await vi.waitFor(() => expect(writes).toHaveLength(3))
-    expect(writes[2]!.data).toBe('fresh')
-    writes[2]!.callback()
+    await vi.waitFor(() => expect(writes).toHaveLength(4))
+    expect(writes[3]!.data).toBe('')
+    writes[3]!.callback()
+    await vi.waitFor(() => expect(writes).toHaveLength(5))
+    expect(writes[4]!.data).toBe('fresh')
+    writes[4]!.callback()
     expect(socket.emit).toHaveBeenLastCalledWith('output_ack', {
       streamId: 'stream-2',
       sequence: 1
@@ -802,105 +1014,6 @@ describe('TerminalSession', () => {
     session.dispose()
   })
 
-  it('uses an isolated legacy sizing and takeover path for an old server', async () => {
-    const socket = new FakeSocketIO()
-    socketClient.io.mockReturnValue(socket)
-    const session = createTerminalSession('terminal-one')
-    let legacyDimensions = { cols: 120, rows: 40 }
-    const terminal = {
-      cols: 100,
-      rows: 30,
-      options: { fontSize: 14 },
-      reset: vi.fn(),
-      resize: vi.fn(),
-      focus: vi.fn(),
-      dispose: vi.fn()
-    }
-    Object.assign(session, {
-      host: {},
-      terminal,
-      fitAddon: {
-        fit: () => {
-          terminal.cols = legacyDimensions.cols
-          terminal.rows = legacyDimensions.rows
-        },
-        proposeDimensions: () => legacyDimensions
-      }
-    })
-    terminalSessionTestAccess(session).connect()
-    socket.emitServer('ready', {
-      connectionId: 'legacy-connection',
-      streamId: 'legacy-stream',
-      generation: 3,
-      controller: true,
-      reset: 'full'
-    })
-    await vi.waitFor(() => expect(terminal.reset).toHaveBeenCalledOnce())
-    legacyDimensions = { cols: 130, rows: 45 }
-    terminalSessionTestAccess(session).fit(true)
-    await vi.advanceTimersByTimeAsync(150)
-
-    expect(socket.emit).toHaveBeenCalledWith('resize', {
-      generation: 3,
-      cols: 130,
-      rows: 45
-    })
-    session.sendText('legacy input')
-    expect(socket.volatile.emit).toHaveBeenCalledWith('input', {
-      generation: 3,
-      data: 'legacy input'
-    })
-    expect(terminalSessionTestAccess(session).canInput()).toBe(true)
-    socket.emitServer('control', { generation: 4, controller: false })
-    session.requestControl()
-    expect(socket.emit).toHaveBeenCalledWith('take_control', { generation: 4 })
-    session.dispose()
-  })
-
-  it('reports history viewing and returns controllers and viewers to live output', () => {
-    const { control, session, socket } = controllerSessionFixture()
-    const history =
-      terminalSessionTestAccess(session).handleServerEvent.bind(session)
-
-    history('history', { viewing: true })
-    expect(session.getSnapshot().viewingHistory).toBe(true)
-
-    session.jumpToLatest()
-    expect(socket.volatile.emit).toHaveBeenLastCalledWith('input', {
-      generation: 4,
-      data: TERMINAL_SCROLL_EXIT_SEQUENCE
-    })
-    expect(session.getSnapshot().viewingHistory).toBe(false)
-
-    history('history', { viewing: true })
-    session.sendText('continue')
-    expect(socket.volatile.emit).toHaveBeenLastCalledWith('input', {
-      generation: 4,
-      data: `${TERMINAL_SCROLL_EXIT_SEQUENCE}continue`
-    })
-    expect(session.getSnapshot().viewingHistory).toBe(false)
-
-    history('history', { viewing: true })
-    control(false, 5)
-    socket.emit.mockClear()
-    socket.volatile.emit.mockClear()
-    session.jumpToLatest()
-    expect(socket.emit).toHaveBeenCalledWith('take_control', {
-      generation: 5,
-      cols: 100,
-      rows: 30
-    })
-    expect(socket.volatile.emit).not.toHaveBeenCalled()
-
-    control(true, 6)
-    expect(socket.volatile.emit).toHaveBeenCalledWith('input', {
-      generation: 6,
-      data: TERMINAL_SCROLL_EXIT_SEQUENCE
-    })
-    expect(session.getSnapshot().viewingHistory).toBe(false)
-    session.dispose()
-  })
-
   it('closes on render queue failure and does not run later operations', async () => {
     const socket = new FakeSocketIO()
     socketClient.io.mockReturnValue(socket)
@@ -922,7 +1035,8 @@ describe('TerminalSession', () => {
       reset: 'full',
       cols: 100,
       rows: 30,
-      revision: 1
+      revision: 1,
+      snapshot: ''
     })
     await vi.waitFor(() =>
       expect(session.getSnapshot()).toMatchObject({
@@ -1056,6 +1170,13 @@ describe('TerminalSession', () => {
     expect(socket.emit).not.toHaveBeenCalled()
 
     control(true, 6)
+    await vi.waitFor(() =>
+      expect(socket.emit).toHaveBeenCalledWith('query_authority', {
+        generation: 6,
+        transitionId: null
+      })
+    )
+    socket.emit.mockClear()
     await vi.advanceTimersByTimeAsync(150)
     expect(socket.emit).not.toHaveBeenCalled()
     measure({ cols: 130, rows: 45 })
@@ -1077,7 +1198,8 @@ describe('TerminalSession', () => {
       reset: 'full',
       cols: 100,
       rows: 30,
-      revision: 2
+      revision: 2,
+      snapshot: ''
     })
     await vi.advanceTimersByTimeAsync(150)
 
@@ -1097,7 +1219,7 @@ describe('TerminalSession', () => {
     session.dispose()
   })
 
-  it('clears a pending resize when control is lost before a later takeover', () => {
+  it('waits for query authority after clearing a pending resize on takeover', () => {
     const session = createTerminalSession('terminal-one')
     Object.assign(session, {
       ready: true,
@@ -1115,7 +1237,6 @@ describe('TerminalSession', () => {
         exitSerial: 0,
         fileTransfer: null,
         hasSelection: false,
-        viewingHistory: false,
         pasteRequestSerial: 0,
         error: null
       }
@@ -1126,6 +1247,12 @@ describe('TerminalSession', () => {
     handleControl('control', { generation: 5, controller: false })
     handleControl('control', { generation: 6, controller: true })
 
+    expect(terminalSessionTestAccess(session).canInput()).toBe(false)
+    terminalSessionTestAccess(session).handleServerEvent('query_authority', {
+      generation: 6,
+      transitionId: null,
+      active: true
+    })
     expect(terminalSessionTestAccess(session).canInput()).toBe(true)
     session.dispose()
   })
@@ -1146,7 +1273,8 @@ describe('TerminalSession', () => {
       reset: 'full',
       cols: 100,
       rows: 30,
-      revision: 1
+      revision: 1,
+      snapshot: ''
     })
     terminalSessionTestAccess(session).proposedDimensions = {
       cols: 5_000,
@@ -1209,7 +1337,8 @@ describe('TerminalSession', () => {
       reset: 'full',
       cols: 100,
       rows: 30,
-      revision: 1
+      revision: 1,
+      snapshot: ''
     })
 
     session.focus()
