@@ -152,12 +152,10 @@ export function trackTerminalSelection(
   terminal: Terminal,
   options: {
     requestControl: () => void
-    onSelectionStart: () => void
   }
 ): () => void {
   const handleMouseDown = (event: MouseEvent) => {
     options.requestControl()
-    options.onSelectionStart()
     // Selection stays inside this browser even when a full-screen application
     // has enabled mouse reporting. xterm interprets the platform modifier as
     // a request for local selection and never sends it to the child PTY.

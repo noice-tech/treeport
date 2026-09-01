@@ -123,8 +123,6 @@ class FakeSession {
     exitSerial: 0,
     fileTransfer: null,
     hasSelection: false,
-    selecting: false,
-    viewingHistory: false,
     pasteRequestSerial: 0,
     error: null
   }
@@ -246,7 +244,6 @@ function controllerSessionFixture() {
       exitSerial: 0,
       fileTransfer: null,
       hasSelection: false,
-      viewingHistory: false,
       pasteRequestSerial: 0,
       error: null
     }
@@ -595,7 +592,6 @@ describe('TerminalSession', () => {
     const firstSession = createTerminalSession('terminal-one')
     const secondSession = createTerminalSession('terminal-one')
     const content = ['', '']
-    const scrollToBottom = [vi.fn(), vi.fn()]
     const clearSelection = [vi.fn(), vi.fn()]
     const selected = [true, true]
     for (const [index, session] of [firstSession, secondSession].entries()) {
@@ -609,7 +605,6 @@ describe('TerminalSession', () => {
           content[index] += data
           callback()
         },
-        scrollToBottom: scrollToBottom[index],
         focus: vi.fn(),
         hasSelection: () => selected[index],
         clearSelection: () => {
@@ -645,10 +640,7 @@ describe('TerminalSession', () => {
       ])
     )
 
-    firstSession.jumpToLatest()
     firstSession.clearSelection()
-    expect(scrollToBottom[0]).toHaveBeenCalledOnce()
-    expect(scrollToBottom[1]).not.toHaveBeenCalled()
     expect(clearSelection[0]).toHaveBeenCalledOnce()
     expect(clearSelection[1]).not.toHaveBeenCalled()
     expect(firstSocket.volatile.emit).not.toHaveBeenCalledWith(
@@ -1238,7 +1230,6 @@ describe('TerminalSession', () => {
         exitSerial: 0,
         fileTransfer: null,
         hasSelection: false,
-        viewingHistory: false,
         pasteRequestSerial: 0,
         error: null
       }

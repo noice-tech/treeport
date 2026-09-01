@@ -209,7 +209,7 @@ test.describe('desktop terminal input and removal', () => {
     const screen = page.locator('.xterm-screen')
     await screen.hover()
     await page.mouse.wheel(0, -600)
-    await expect(page.getByText('Scrolled back', { exact: true })).toBeVisible()
+    await expect(screen).not.toContainText('local-history-119')
     expect(
       await page.evaluate(() =>
         window.__wsSent.filter((message: any) => message.type === 'input')
@@ -222,18 +222,6 @@ test.describe('desktop terminal input and removal', () => {
     await page.mouse.down()
     await page.mouse.move(bounds!.x + 120, bounds!.y + 10, { steps: 5 })
     await page.mouse.up()
-    await expect(
-      page.getByText('Selection is active', { exact: true })
-    ).toBeVisible()
-    expect(
-      await page.evaluate(() =>
-        window.__wsSent.filter((message: any) => message.type === 'input')
-      )
-    ).toEqual([])
-    await page.getByRole('button', { name: 'Clear' }).click()
-    await expect(
-      page.getByText('Selection is active', { exact: true })
-    ).toHaveCount(0)
     expect(
       await page.evaluate(() =>
         window.__wsSent.filter((message: any) => message.type === 'input')

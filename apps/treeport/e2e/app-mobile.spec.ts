@@ -391,7 +391,7 @@ test.describe('mobile terminal UI', () => {
       type: 'touchEnd',
       touchPoints: []
     })
-    await expect(page.getByText('Scrolled back', { exact: true })).toBeVisible()
+    await expect(screen).not.toContainText('mobile-history-119')
     expect(
       await page.evaluate(() => {
         const socket = window.__lastWs
@@ -407,8 +407,6 @@ test.describe('mobile terminal UI', () => {
         window.__wsSent.filter((message: any) => message.type === 'input')
       )
     ).toEqual([])
-    await page.getByRole('button', { name: 'Follow latest' }).click()
-    await expect(page.getByText('Scrolled back', { exact: true })).toHaveCount(0)
 
     await client.send('Input.dispatchTouchEvent', {
       type: 'touchStart',

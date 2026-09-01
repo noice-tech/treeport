@@ -86,8 +86,6 @@ export interface TerminalSessionSnapshot {
   exitSerial: number
   fileTransfer: TerminalFileTransfer | null
   hasSelection: boolean
-  selecting: boolean
-  viewingHistory: boolean
   pasteRequestSerial: number
   error: string | null
 }
@@ -103,8 +101,6 @@ const DEFAULT_SNAPSHOT: TerminalSessionSnapshot = {
   exitSerial: 0,
   fileTransfer: null,
   hasSelection: false,
-  selecting: false,
-  viewingHistory: false,
   pasteRequestSerial: 0,
   error: null
 }
@@ -474,16 +470,6 @@ export class TerminalSession {
     this.sendText(`${alt ? '\u001b' : ''}${prefix}${final}`, options)
   }
 
-  jumpToLatest(): void {
-    if (!this.ready) {
-      return
-    }
-
-    this.terminal?.scrollToBottom()
-    this.setViewingHistory(false)
-    this.focus()
-  }
-
   copySelection(): void {
     const selection = this.terminal?.getSelection() ?? ''
     if (!selection) {
@@ -513,25 +499,12 @@ export class TerminalSession {
     this.focus()
   }
 
-  clearSelectionAndJumpToLatest(): void {
-    if (!this.ready) {
-      return
-    }
-
-    this.terminal?.clearSelection()
-    this.terminal?.scrollToBottom()
-    this.setViewingHistory(false)
-    this.update({ selecting: false, hasSelection: false })
-    this.focus()
-  }
-
   clearSelection(): void {
     if (!this.terminal?.hasSelection?.()) {
       return
     }
 
     this.terminal.clearSelection()
-    this.update({ selecting: false })
     this.updateSelectionState()
   }
 
@@ -597,8 +570,7 @@ export class TerminalSession {
       }
     })
     this.selectionDragCancel = trackTerminalSelection(this.wrapper, terminal, {
-      requestControl: () => this.requestControl(),
-      onSelectionStart: () => this.update({ selecting: true })
+      requestControl: () => this.requestControl()
     })
     this.wrapper.addEventListener('click', () => this.requestControl(), true)
     this.wrapper.addEventListener(
@@ -767,7 +739,7 @@ export class TerminalSession {
       this.update({ title: title.trim().slice(0, 256) })
     )
     terminal.onScroll(() =>
-      this.setViewingHistory(
+      this.setTerminalScrolling(
         terminal.buffer.active.viewportY < terminal.buffer.active.baseY
       )
     )
@@ -975,7 +947,12 @@ export class TerminalSession {
       () => {
         this.cursorRestoreTimer = null
         this.cursorRestoreStartedAt = null
-        if (!this.wrapper || this.snapshotValue.viewingHistory) {
+        if (
+          !this.wrapper ||
+          (this.terminal &&
+            this.terminal.buffer.active.viewportY <
+              this.terminal.buffer.active.baseY)
+        ) {
           return
         }
 
@@ -1006,14 +983,6 @@ export class TerminalSession {
 
     if (this.wrapper.classList.contains('terminal-scrolling')) {
       this.scheduleTerminalCursorRestore()
-    }
-  }
-
-  private setViewingHistory(viewing: boolean): void {
-    this.setTerminalScrolling(viewing)
-
-    if (viewing !== this.snapshotValue.viewingHistory) {
-      this.update({ viewingHistory: viewing })
     }
   }
 
@@ -1129,7 +1098,7 @@ export class TerminalSession {
       this.ready = false
       this.streamId = null
       this.selectionDragCancel?.()
-      this.setViewingHistory(false)
+      this.setTerminalScrolling(false)
       this.controllerGeneration = 0
       this.controlRequestGeneration = null
       this.queryAuthorityActive = false
@@ -1148,8 +1117,6 @@ export class TerminalSession {
         controller: false,
         controlPending: false,
         hasSelection: false,
-        selecting: false,
-        viewingHistory: false,
         degraded: this.reconnectAllowed ? this.snapshotValue.degraded : false,
         error:
           !connected && !this.snapshotValue.error
@@ -1196,7 +1163,7 @@ export class TerminalSession {
       this.lastParsedSequence = 0
       this.parsedSequences.clear()
       this.selectionDragCancel?.()
-      this.setViewingHistory(false)
+      this.setTerminalScrolling(false)
       this.ready = true
       this.renderEpoch += 1
       const epoch = this.renderEpoch
@@ -1249,8 +1216,6 @@ export class TerminalSession {
         controller: message.controller,
         controlPending: false,
         hasSelection: false,
-        selecting: false,
-        viewingHistory: false,
         error: null
       })
       return
@@ -1834,7 +1799,6 @@ export class TerminalSession {
 
   private updateSelectionState(): void {
     this.update({
-      selecting: false,
       hasSelection: Boolean(this.terminal?.hasSelection())
     })
   }
