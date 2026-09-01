@@ -190,6 +190,7 @@ export class TerminalSession {
   private renderQueue: Promise<void> = Promise.resolve()
   private renderFailed = false
   private pendingTerminalWrites = 0
+  private focusAfterRender = false
   private expectedSequence = 1
   private lastParsedSequence = 0
   private readonly parsedSequences = new Set<number>()
@@ -358,6 +359,7 @@ export class TerminalSession {
     this.selectionDragCancel?.()
     this.wrapper?.remove()
     this.host = null
+    this.focusAfterRender = false
   }
 
   focus(options: { requestControl?: boolean } = {}): void {
@@ -365,6 +367,12 @@ export class TerminalSession {
       this.requestControl()
     }
 
+    if (this.wrapper?.style.visibility === 'hidden') {
+      this.focusAfterRender = true
+      return
+    }
+
+    this.focusAfterRender = false
     this.terminal?.focus()
   }
 
@@ -1167,6 +1175,7 @@ export class TerminalSession {
       this.queryAuthorityActive = false
 
       if (this.wrapper) {
+        this.focusAfterRender ||= this.wrapper.contains(document.activeElement)
         this.wrapper.style.visibility = 'hidden'
       }
 
@@ -1191,6 +1200,9 @@ export class TerminalSession {
 
         if (this.wrapper && epoch === this.renderEpoch) {
           this.wrapper.style.visibility = ''
+          if (this.focusAfterRender && this.host) {
+            this.focus()
+          }
         }
 
         if (

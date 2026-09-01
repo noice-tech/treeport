@@ -1892,6 +1892,7 @@ test.describe('desktop worktree and terminal workflows', () => {
     })
     await expect(topicTerminals).toHaveCount(3)
     await expect(createdTerminal).toBeVisible()
+    await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
     await createdTerminal.click()
     await expect(createdDevTerminal).toBeVisible()
     await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
