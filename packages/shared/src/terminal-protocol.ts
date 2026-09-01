@@ -1,7 +1,7 @@
 import { z } from 'zod'
 
 export const SOCKET_IO_PATH = '/api/socket.io/'
-export const TERMINAL_PROTOCOL_VERSION = 5
+export const TERMINAL_PROTOCOL_VERSION = 6
 export const TERMINAL_CONTROLLER_GRACE_MS = 10_000
 export const TERMINAL_OUTPUT_HIGH_WATERMARK = 256 * 1024
 export const TERMINAL_OUTPUT_LOW_WATERMARK = 64 * 1024
@@ -145,11 +145,21 @@ const terminalReadyBase = {
   reset: z.literal('full')
 }
 
+export const terminalSnapshotLinkSchema = z.strictObject({
+  buffer: z.enum(['normal', 'alternate']),
+  uri: z.string().min(1).max(4_096),
+  line: z.number().int().nonnegative(),
+  startColumn: z.number().int().nonnegative(),
+  endColumn: z.number().int().positive()
+})
+export type TerminalSnapshotLink = z.infer<typeof terminalSnapshotLinkSchema>
+
 export const terminalReadySchema = z.strictObject({
   ...terminalReadyBase,
   ...dimensions,
   revision: z.number().int().positive(),
-  snapshot: z.string()
+  snapshot: z.string(),
+  snapshotLinks: z.array(terminalSnapshotLinkSchema).max(10_000).default([])
 })
 export const terminalDimensionsSchema = z.strictObject({
   ...dimensions,

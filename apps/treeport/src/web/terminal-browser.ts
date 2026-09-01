@@ -1,5 +1,5 @@
 import type { Terminal } from '@xterm/xterm'
-import type { TerminalProgress } from '@treeport/shared'
+import type { TerminalProgress, TerminalSnapshotLink } from '@treeport/shared'
 
 export const TERMINAL_FONT_SIZE = 14
 
@@ -7,6 +7,32 @@ const TERMINAL_TOUCH_ROWS_PER_WHEEL = 1
 const TERMINAL_TOUCH_SELECTION_DELAY_MS = 450
 const TERMINAL_TOUCH_PASTE_DELAY_MS = 550
 const TERMINAL_TOUCH_SELECTION_SLOP = 10
+
+interface XtermCellInternals {
+  bg: number
+  extended?: { urlId: number }
+}
+
+interface XtermTerminalInternals {
+  _core: {
+    _oscLinkService: {
+      registerLink(data: { uri: string }): number
+      addLineToLink(id: number, line: number): void
+    }
+    _bufferService: {
+      buffers: Record<
+        TerminalSnapshotLink['buffer'],
+        {
+          lines: {
+            get(line: number): {
+              setCell(column: number, cell: XtermCellInternals): void
+            }
+          }
+        }
+      >
+    }
+  }
+}
 
 export function terminalProgressLabel(progress: TerminalProgress): string {
   const percentage =
@@ -86,6 +112,48 @@ export function terminalKeyboardInput(
 
 function usesMacKeyboard(): boolean {
   return /Mac|iPhone|iPad|iPod/.test(globalThis.navigator?.platform ?? '')
+}
+
+export function restoreTerminalSnapshotLinks(
+  terminal: Terminal,
+  links: TerminalSnapshotLink[]
+): void {
+  // SerializeAddon drops OSC 8 targets. Both Treeport xterms use the same
+  // pinned xterm version, so restore the canonical URL IDs at this explicit
+  // internal boundary after the serialized cells have been replayed.
+  // SAFETY: Treeport pins the browser xterm version and verifies this internal
+  // hyperlink restoration boundary in the reconnect E2E test.
+  const internals = Object(terminal) as XtermTerminalInternals
+  for (const link of links) {
+    const buffer = terminal.buffer[link.buffer]
+    const line = buffer.getLine(link.line)
+    if (!line || link.endColumn > line.length) {
+      continue
+    }
+
+    const linkId = internals._core._oscLinkService.registerLink({
+      uri: link.uri
+    })
+    internals._core._oscLinkService.addLineToLink(linkId, link.line)
+    for (let column = link.startColumn; column < link.endColumn; column += 1) {
+      const cell = line.getCell(column)
+      if (cell) {
+        // SAFETY: The pinned xterm cell implementation carries the mutable
+        // extended attributes copied back into its internal buffer below.
+        const internalCell = Object(cell) as XtermCellInternals
+        if (!internalCell.extended) {
+          continue
+        }
+
+        internalCell.extended.urlId = linkId
+        // xterm stores the presence of extended attributes in this bg flag.
+        internalCell.bg |= 1 << 28
+        internals._core._bufferService.buffers[link.buffer].lines
+          .get(link.line)
+          .setCell(column, internalCell)
+      }
+    }
+  }
 }
 
 export function activateTerminalLink(

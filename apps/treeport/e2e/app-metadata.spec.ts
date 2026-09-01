@@ -56,10 +56,25 @@ test.describe('desktop terminal links and metadata', () => {
       socket.onmessage?.({
         data: JSON.stringify({
           version: 1,
-          type: 'output',
+          type: 'ready',
+          connectionId: 'connection-reconnect',
           streamId: socket.streamId,
-          sequence: 2,
-          data: '\x1b]8;;https://example.test/pr/123\x1b\\#123 ↗\x1b]8;;\x1b\\\r\n'
+          generation: 1,
+          controller: false,
+          reset: 'full',
+          cols: 100,
+          rows: 30,
+          revision: 2,
+          snapshot: '\x1b[4m#123 ↗\x1b[0m\r\n',
+          snapshotLinks: [
+            {
+              buffer: 'normal',
+              uri: 'https://example.test/pr/123',
+              line: 0,
+              startColumn: 0,
+              endColumn: 6
+            }
+          ]
         })
       })
     })

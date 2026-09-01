@@ -1,5 +1,8 @@
 import { z } from 'zod'
-import { terminalProgressSchema } from '@treeport/shared'
+import {
+  terminalProgressSchema,
+  type TerminalSnapshotLink
+} from '@treeport/shared'
 import type {
   HostedTerminal,
   TerminalLaunchSpec,
@@ -228,6 +231,7 @@ export interface TerminalHostResults {
   state: TerminalSessionState
   attach: {
     data: string
+    links?: TerminalSnapshotLink[] | undefined
     fence: number
     cols: number
     rows: number

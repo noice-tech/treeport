@@ -8,6 +8,7 @@ import { rpc } from './api'
 import { errorMessage } from './error-message'
 import {
   activateTerminalLink,
+  restoreTerminalSnapshotLinks,
   TERMINAL_FONT_SIZE,
   terminalKeyboardInput,
   terminalOptions,
@@ -1196,6 +1197,7 @@ export class TerminalSession {
           await new Promise<void>((resolve) =>
             this.terminal!.write(message.snapshot, resolve)
           )
+          restoreTerminalSnapshotLinks(this.terminal, message.snapshotLinks)
         }
 
         if (this.wrapper && epoch === this.renderEpoch) {

@@ -38,6 +38,7 @@ class HostDouble implements TerminalAttachmentBackend {
     await this.snapshotGate
     return {
       data: this.snapshotData,
+      links: [],
       fence: this.snapshotFence,
       cols: 100,
       rows: 30,

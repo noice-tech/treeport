@@ -7,7 +7,11 @@ import { SerializeAddon } from '@xterm/addon-serialize'
 import xtermHeadless from '@xterm/headless'
 import type { IDisposable, IPty } from 'node-pty'
 import * as pty from 'node-pty'
-import { parseTerminalProgress, type TerminalProgress } from '@treeport/shared'
+import {
+  parseTerminalProgress,
+  type TerminalProgress,
+  type TerminalSnapshotLink
+} from '@treeport/shared'
 import {
   TERMINAL_PROGRESS_STALE_MS,
   type HostedTerminal,
@@ -26,6 +30,18 @@ const HOST_PARSER_LOW_WATERMARK = 256 * 1024
 const PROCESS_TREE_KILL_GRACE_MS = 500
 const execute = promisify(execFile)
 type HeadlessTerminal = InstanceType<typeof Terminal>
+
+interface HeadlessTerminalInternals {
+  _core: {
+    _oscLinkService: {
+      getLinkData(id: number): { uri: string } | undefined
+    }
+  }
+}
+
+interface HeadlessCellInternals {
+  extended?: { urlId?: number }
+}
 
 async function descendantPids(rootPid: number): Promise<number[]> {
   const rows = await execute('ps', ['-axo', 'pid=,ppid='])
@@ -105,6 +121,7 @@ export interface TerminalAttachmentBackend {
     listener: (data: string, sequence: number) => void
   ): Promise<{
     data: string
+    links: TerminalSnapshotLink[]
     fence: number
     cols: number
     rows: number
@@ -485,6 +502,7 @@ export class TerminalHostSessionManager {
 
   async snapshot(terminalId: string): Promise<{
     data: string
+    links: TerminalSnapshotLink[]
     fence: number
     cols: number
     rows: number
@@ -501,6 +519,62 @@ export class TerminalHostSessionManager {
         return null
       }
 
+      // SerializeAddon preserves hyperlink styling but not the OSC 8 target.
+      // Capture xterm's canonical hyperlink cells alongside the text snapshot
+      // so the browser can restore the native link metadata after replay.
+      const links: TerminalSnapshotLink[] = []
+      // SAFETY: Treeport pins the headless xterm version and verifies this
+      // internal hyperlink boundary with the snapshot behavior test.
+      const terminalInternals = Object(
+        session.terminal
+      ) as HeadlessTerminalInternals
+      for (const [bufferName, buffer] of [
+        ['normal', session.terminal.buffer.normal],
+        ['alternate', session.terminal.buffer.alternate]
+      ] as const) {
+        for (let lineIndex = 0; lineIndex < buffer.length; lineIndex += 1) {
+          const line = buffer.getLine(lineIndex)
+          if (!line) {
+            continue
+          }
+
+          let activeLink: { id: number; startColumn: number } | null = null
+          for (let column = 0; column <= line.length; column += 1) {
+            const cell = column < line.length ? line.getCell(column) : undefined
+            // SAFETY: The pinned xterm cell stores the OSC link ID in its
+            // extended attributes; the snapshot behavior test covers it.
+            const internalCell = cell
+              ? (Object(cell) as HeadlessCellInternals)
+              : undefined
+            const linkId = internalCell?.extended?.urlId
+            if (activeLink !== null && linkId === activeLink.id) {
+              continue
+            }
+
+            if (activeLink) {
+              const data = terminalInternals._core._oscLinkService.getLinkData(
+                activeLink.id
+              )
+              if (
+                data?.uri &&
+                data.uri.length <= 4_096 &&
+                links.length < 10_000
+              ) {
+                links.push({
+                  buffer: bufferName,
+                  uri: data.uri,
+                  line: lineIndex,
+                  startColumn: activeLink.startColumn,
+                  endColumn: column
+                })
+              }
+            }
+
+            activeLink = linkId ? { id: linkId, startColumn: column } : null
+          }
+        }
+      }
+
       // The PTY stays paused for this short serialization boundary. Output
       // after resume has a sequence greater than the returned fence. The
       // serialized state contains no original query sequence to replay.
@@ -508,6 +582,7 @@ export class TerminalHostSessionManager {
         data: session.serializer.serialize({
           scrollback: HOST_SCROLLBACK_LINES
         }),
+        links,
         fence: session.outputSequence,
         cols: session.terminal.cols,
         rows: session.terminal.rows

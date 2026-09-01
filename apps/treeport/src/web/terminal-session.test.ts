@@ -521,7 +521,7 @@ describe('TerminalSession', () => {
         reconnectionDelayMax: 1_000,
         randomizationFactor: 0.2,
         retries: 0,
-        query: { terminalProtocol: '5' }
+        query: { terminalProtocol: '6' }
       })
     )
     const options = testAccess<{
@@ -678,7 +678,16 @@ describe('TerminalSession', () => {
       cols: 80,
       rows: 24,
       revision: 1,
-      snapshot: 'historical query: \u001b[6n'
+      snapshot: '\u001b[6nhistorical link',
+      snapshotLinks: [
+        {
+          buffer: 'normal',
+          uri: 'https://example.test/issue/42',
+          line: 0,
+          startColumn: 0,
+          endColumn: 15
+        }
+      ]
     })
     await vi.waitFor(() =>
       expect(socket.emit).toHaveBeenCalledWith('query_authority', {
@@ -690,7 +699,6 @@ describe('TerminalSession', () => {
       'input',
       expect.anything()
     )
-
     const grant = async (generation: number, transitionId: string) => {
       socket.emitServer('query_authority', {
         generation,

@@ -5,6 +5,7 @@ import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import type { Socket } from 'node:net'
+import type { TerminalSnapshotLink } from '@treeport/shared'
 import type {
   HostedTerminal,
   TerminalProcess,
@@ -215,6 +216,7 @@ export class TerminalHostClient {
     listener: (data: string, sequence: number) => void
   ): Promise<{
     data: string
+    links: TerminalSnapshotLink[]
     fence: number
     cols: number
     rows: number
@@ -261,7 +263,7 @@ export class TerminalHostClient {
         )
       }
     }
-    return { ...snapshot, unsubscribe }
+    return { ...snapshot, links: snapshot.links ?? [], unsubscribe }
   }
 
   async subscribeRuntime(

@@ -114,7 +114,7 @@ describe('TerminalHostSessionManager', () => {
     manager.subscribeOutput('term', (data) => secondOutput.push(data))
     manager.subscribeRuntime('term', (event) => runtimeEvents.push(event))
     pty.emit(
-      '\u001b]2;Terminal title\u0007\u001b]777;command;pnpm test\u001b\\\u001b]9;4;1;50\u001b\\\u0007before attach\r\n'
+      '\u001b]2;Terminal title\u0007\u001b]777;command;pnpm test\u001b\\\u001b]9;4;1;50\u001b\\\u0007before attach \u001b]8;;https://example.test/issue/42\u001b\\#42\u001b]8;;\u001b\\\r\n'
     )
     const snapshot = await manager.snapshot('term')
     expect(manager.runtimeState('term')).toMatchObject({
@@ -129,9 +129,15 @@ describe('TerminalHostSessionManager', () => {
 
     expect(spawn).toHaveBeenCalledOnce()
     expect(snapshot?.data).toContain('before attach')
+    expect(snapshot?.links).toEqual([
+      expect.objectContaining({
+        buffer: 'normal',
+        uri: 'https://example.test/issue/42'
+      })
+    ])
     await vi.waitFor(() => expect(firstOutput).toHaveLength(2))
     expect(firstOutput).toEqual([
-      '\u001b]2;Terminal title\u0007\u001b]777;command;pnpm test\u001b\\\u001b]9;4;1;50\u001b\\\u0007before attach\r\n',
+      '\u001b]2;Terminal title\u0007\u001b]777;command;pnpm test\u001b\\\u001b]9;4;1;50\u001b\\\u0007before attach \u001b]8;;https://example.test/issue/42\u001b\\#42\u001b]8;;\u001b\\\r\n',
       'after attach\r\n'
     ])
     expect(secondOutput).toEqual(firstOutput)
