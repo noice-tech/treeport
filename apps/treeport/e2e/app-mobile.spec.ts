@@ -71,7 +71,6 @@ test.describe('mobile terminal UI', () => {
       .getByRole('button', { name: /background · \/repo, running.*bell/ })
       .click()
     await expect(page.locator('.xterm')).toBeVisible()
-    await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
     await expect(page.getByText('Viewing', { exact: true })).toBeVisible()
     await page.evaluate(() => {
       window.__wsSent = []
@@ -416,6 +415,8 @@ test.describe('mobile terminal UI', () => {
       type: 'touchEnd',
       touchPoints: []
     })
+    await expect(page.locator('.xterm-helper-textarea')).toBeEditable()
+    await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
     await waitForTerminalControl(page)
     await page.evaluate(() => {
       const socket = window.__lastWs

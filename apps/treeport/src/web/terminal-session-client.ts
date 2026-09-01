@@ -1102,9 +1102,6 @@ export class TerminalSession {
       this.controllerGeneration = 0
       this.controlRequestGeneration = null
       this.queryAuthorityActive = false
-      if (this.terminal) {
-        this.terminal.options.disableStdin = true
-      }
 
       this.cancelControllerResizeIntent()
       if (!this.reconnectAllowed) {
@@ -1168,9 +1165,6 @@ export class TerminalSession {
       this.renderEpoch += 1
       const epoch = this.renderEpoch
       this.queryAuthorityActive = false
-      if (this.terminal) {
-        this.terminal.options.disableStdin = true
-      }
 
       if (this.wrapper) {
         this.wrapper.style.visibility = 'hidden'
@@ -1311,9 +1305,6 @@ export class TerminalSession {
 
       if (controllerChanged) {
         this.queryAuthorityActive = false
-        if (this.terminal) {
-          this.terminal.options.disableStdin = true
-        }
 
         if (message.controller) {
           const epoch = this.renderEpoch
@@ -1364,9 +1355,6 @@ export class TerminalSession {
       }
 
       this.queryAuthorityActive = message.active
-      if (this.terminal) {
-        this.terminal.options.disableStdin = !message.active
-      }
 
       if (message.transitionId) {
         const transitionId = message.transitionId

@@ -600,7 +600,7 @@ describe('TerminalSession', () => {
           content[index] = ''
         }),
         resize: vi.fn(),
-        options: { fontSize: 14, disableStdin: true },
+        options: { fontSize: 14 },
         write: (data: string, callback: () => void) => {
           content[index] += data
           callback()
@@ -664,8 +664,7 @@ describe('TerminalSession', () => {
       cols: 80,
       rows: 24,
       scrollback: 50_000,
-      allowProposedApi: true,
-      disableStdin: true
+      allowProposedApi: true
     })
     terminal.onData((data) => session.sendText(data, { focus: false }))
     terminalSessionTestAccess(session).terminal = terminal
