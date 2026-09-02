@@ -47,6 +47,12 @@ Treeport transfers terminal input and output. It does not replace the terminal u
 
 Mouse input, keyboard shortcuts, alternate screens, and interactive prompts continue to work as the terminal application expects.
 
+### View Kitty images
+
+Treeport displays inline images that use the Kitty graphics protocol.
+
+A connected client displays an image when an application sends it. Treeport does not restore earlier images after a reconnect.
+
 A tree can have multiple named terminals:
 
 ```text

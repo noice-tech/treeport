@@ -100,6 +100,8 @@ The browser resets its local model and parses the snapshot while its terminal is
 
 The browser then parses ordered live output. Snapshot replay cannot contain an old terminal query.
 
+Kitty image data belongs to each browser client. Snapshot serialization does not include image data. A new client receives only subsequent image output.
+
 ## Terminal query authority
 
 Exactly one emulator can answer terminal queries at one time.

@@ -4727,6 +4727,7 @@ export class TreeportService {
       shellCommand,
       interactiveShell,
       env: {
+        PI_IMAGE_PROTOCOL: 'kitty',
         ...(options?.env ?? {}),
         TREEPORT_API_URL: this.deps.config.apiUrl,
         TREEPORT_MANAGED_API_URL: this.deps.config.apiUrl,

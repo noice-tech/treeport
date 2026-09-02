@@ -6,6 +6,17 @@ import {
 } from './app-fixture'
 
 test.describe('desktop worktree and terminal workflows', () => {
+  test('shows Kitty images from terminal output', async ({ page }) => {
+    const png =
+      'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAFUlEQVR4nGP8z8Dwn4GBgYEJRIAwAB8XAgICR7MUAAAAAElFTkSuQmCC'
+    await mockApp(page, [], {
+      initialTerminalOutput: `\x1b_Ga=T,f=100,q=2,C=1,c=4,r=2,i=1;${png}\x1b\\`
+    })
+
+    await page.getByRole('button', { name: 'Pi, running', exact: true }).click()
+    await expect(page.locator('.xterm-image-layer-top')).toBeVisible()
+  })
+
   test('creates worktrees with focus, rollback, retry, and preset snapshots', async ({
     page
   }) => {
