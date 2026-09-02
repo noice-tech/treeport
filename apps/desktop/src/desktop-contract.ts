@@ -6,6 +6,8 @@ export type DesktopCommand =
   | 'toggle-side-panel'
   | 'focus-location'
   | 'find-in-page'
+  | 'select-previous-worktree'
+  | 'select-next-worktree'
   | `select-tab-${1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9}`
 
 export type DesktopFileActionResult = 'opened' | 'rejected'

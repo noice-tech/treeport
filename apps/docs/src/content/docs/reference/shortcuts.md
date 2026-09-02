@@ -16,6 +16,8 @@ This page includes only Treeport-specific operations.
 | Action                           | Browser                                                    | macOS desktop           |
 | -------------------------------- | ---------------------------------------------------------- | ----------------------- |
 | Switch project                   | `Cmd+Shift+P` on Apple keyboards; `Ctrl+Shift+P` elsewhere | `Cmd+Shift+P`           |
+| Select the previous tree         | Use the sidebar                                            | `Cmd+Shift+[`           |
+| Select the next tree             | Use the sidebar                                            | `Cmd+Shift+]`           |
 | Select a tab in the active group | Use the sidebar                                            | `Cmd+1` through `Cmd+9` |
 | Create a tree in a repository    | Use **New tree**                                           | `Cmd+N`                 |
 | Open a tab in the active group   | Use **New panel**                                          | `Cmd+T`                 |
@@ -23,6 +25,8 @@ This page includes only Treeport-specific operations.
 | Toggle the side panel            | `Option+Cmd+B` on Apple keyboards; `Ctrl+Alt+B` elsewhere  | `Option+Cmd+B`          |
 | Close a tab in the active group  | Use its close operation                                    | `Cmd+W`                 |
 | Go back or forward               | Use browser history                                        | `Cmd+[` or `Cmd+]`      |
+
+The tree shortcuts follow the sidebar order and continue at the opposite end.
 
 Treeport has a terminal tab group and a tool tab group. The focused group is the active tab group.
 

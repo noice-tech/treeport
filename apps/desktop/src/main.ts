@@ -324,9 +324,13 @@ function installRendererSecurity(renderer: WebContents): void {
         ? 'toggle-side-panel'
         : undefined
       : input.shift
-        ? key === 't'
-          ? 'new-panel'
-          : undefined
+        ? code === 'bracketleft'
+          ? 'select-previous-worktree'
+          : code === 'bracketright'
+            ? 'select-next-worktree'
+            : key === 't'
+              ? 'new-panel'
+              : undefined
         : key === 'n'
           ? 'new-worktree'
           : key === 't'
@@ -688,7 +692,23 @@ function installMenu(): void {
           forward.accelerator = 'Command+]'
         }
 
-        return [back, forward]
+        return [
+          {
+            id: 'navigate-previous-worktree',
+            label: 'Previous Tree',
+            accelerator: 'CommandOrControl+Shift+[',
+            click: () => sendDesktopCommand('select-previous-worktree')
+          },
+          {
+            id: 'navigate-next-worktree',
+            label: 'Next Tree',
+            accelerator: 'CommandOrControl+Shift+]',
+            click: () => sendDesktopCommand('select-next-worktree')
+          },
+          { type: 'separator' },
+          back,
+          forward
+        ]
       })()
     },
     {

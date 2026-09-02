@@ -268,9 +268,13 @@ export function installBrowserWebviewPolicy(options: {
           ? 'toggle-side-panel'
           : undefined
         : input.shift
-          ? key === 't'
-            ? 'new-panel'
-            : undefined
+          ? code === 'bracketleft'
+            ? 'select-previous-worktree'
+            : code === 'bracketright'
+              ? 'select-next-worktree'
+              : key === 't'
+                ? 'new-panel'
+                : undefined
           : key === 't'
             ? 'new-terminal'
             : key === 'w'
