@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   parseTerminalServerEvent,
   TERMINAL_OUTPUT_HIGH_WATERMARK,
+  TERMINAL_OUTPUT_MAX_UNACKNOWLEDGED_BYTES,
   type TerminalServerEvent,
   type TerminalServerEventPayloads,
   type TerminalServerPayload
@@ -24,6 +25,7 @@ class HostDouble implements TerminalAttachmentBackend {
     attachmentId: string
     generation: number
   }> = []
+  readonly resizes: Array<{ cols: number; rows: number }> = []
   hostAuthorityCount = 0
   transitionSerial = 0
   snapshotFence = 0
@@ -94,7 +96,8 @@ class HostDouble implements TerminalAttachmentBackend {
     return Promise.resolve()
   }
 
-  resize() {
+  resize(_terminalId: string, cols: number, rows: number) {
+    this.resizes.push({ cols, rows })
     return Promise.resolve()
   }
 
@@ -257,22 +260,37 @@ describe('TerminalAttachmentManager', () => {
     })
     host.snapshotFence = 4
     const transport = new TransportDouble('viewer')
-    manager.accept(
+    const connectionId = manager.accept(
       { terminalId: 'terminal', clientId: 'client', cols: 100, rows: 30 },
       transport
     )
     await vi.waitFor(() => expect(host.outputListeners.size).toBe(1))
 
+    const concurrentSuffix = 'x'.repeat(TERMINAL_OUTPUT_HIGH_WATERMARK + 1)
     host.emit('already represented', 4)
     releaseSnapshot()
-    host.emit('concurrent suffix', 5)
+    host.emit(concurrentSuffix, 5)
     await waitForEvent(transport, 'ready')
     await waitForEvent(transport, 'output')
 
     expect(readyPayload(transport).snapshot).toBe('canonical snapshot')
-    expect(eventPayloads(transport, 'output').map((item) => item.data)).toEqual(
-      ['concurrent suffix']
+    const output = eventPayloads(transport, 'output')
+    expect(output.map((item) => item.data)).toEqual([concurrentSuffix])
+    expect(transport.connected).toBe(true)
+    manager.message(connectionId, 'resize', {
+      generation: readyPayload(transport).generation,
+      cols: 120,
+      rows: 40
+    })
+    await vi.waitFor(() =>
+      expect(host.resizes).toEqual([{ cols: 120, rows: 40 }])
     )
+    expect(transport.connected).toBe(true)
+
+    manager.message(connectionId, 'output_ack', {
+      streamId: output[0]!.streamId,
+      sequence: output[0]!.sequence
+    })
     manager.dispose()
   })
 
@@ -306,13 +324,25 @@ describe('TerminalAttachmentManager', () => {
       }
     }
 
-    const chunk = 'x'.repeat(TERMINAL_OUTPUT_HIGH_WATERMARK / 2)
-    host.emit(chunk, 1)
-    host.emit(chunk, 2)
+    const transientChunk = 'x'.repeat(TERMINAL_OUTPUT_HIGH_WATERMARK / 2)
+    host.emit(transientChunk, 1)
+    host.emit(transientChunk, 2)
+    expect(slow.connected).toBe(true)
+    const transientOutput = eventPayloads(slow, 'output').at(-1)!
+    manager.message(slowId, 'output_ack', {
+      streamId: transientOutput.streamId,
+      sequence: transientOutput.sequence
+    })
+
+    const stalledChunk = 'x'.repeat(
+      TERMINAL_OUTPUT_MAX_UNACKNOWLEDGED_BYTES / 2
+    )
+    host.emit(stalledChunk, 3)
+    host.emit(stalledChunk, 4)
     await vi.waitFor(() => expect(slow.disconnects).toEqual([true]))
     expect(fast.connected).toBe(true)
 
-    host.emit('still live', 3)
+    host.emit('still live', 5)
     await vi.waitFor(() =>
       expect(
         eventPayloads(fast, 'output').some((item) => item.data === 'still live')

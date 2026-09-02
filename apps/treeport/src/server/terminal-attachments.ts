@@ -12,6 +12,7 @@ import {
   TERMINAL_MAX_INPUT_BYTES,
   TERMINAL_OUTPUT_HIGH_WATERMARK,
   TERMINAL_OUTPUT_LOW_WATERMARK,
+  TERMINAL_OUTPUT_MAX_UNACKNOWLEDGED_BYTES,
   TERMINAL_PROTOCOL_VERSION,
   type TerminalAuth,
   type TerminalClientEvent,
@@ -29,6 +30,9 @@ type TerminalProtocolVersion = typeof TERMINAL_PROTOCOL_VERSION
 
 const TERMINAL_MAX_QUEUED_INPUT_BYTES = 1024 * 1024
 const TERMINAL_MAX_QUEUED_INPUT_MESSAGES = 256
+// The shared host cannot pause one viewer without pausing every viewer. Give a
+// progressing browser time to drain, but retain a hard per-viewer byte limit.
+const TERMINAL_OUTPUT_STALL_TIMEOUT_MS = 30_000
 
 export interface TerminalTransport {
   readonly id: string
@@ -48,7 +52,8 @@ interface ClientConnection {
   lastAckSequence: number
   unacknowledgedBytes: number
   outputBytes: Map<number, number>
-  paused: boolean
+  outputBacklogged: boolean
+  outputStallTimeout: NodeJS.Timeout | null
   announcedReady: boolean
   metadataUnsubscribe: (() => void) | null
   directOutputUnsubscribe: (() => void) | null
@@ -113,7 +118,8 @@ export class TerminalAttachmentManager {
       lastAckSequence: 0,
       unacknowledgedBytes: 0,
       outputBytes: new Map(),
-      paused: false,
+      outputBacklogged: false,
+      outputStallTimeout: null,
       announcedReady: false,
       metadataUnsubscribe: null,
       directOutputUnsubscribe: null,
@@ -306,6 +312,11 @@ export class TerminalAttachmentManager {
 
     connection.state = 'closed'
     this.clients.delete(connectionId)
+    if (connection.outputStallTimeout) {
+      clearTimeout(connection.outputStallTimeout)
+      connection.outputStallTimeout = null
+    }
+
     this.releaseMetadataSubscription(connection)
     connection.directOutputUnsubscribe?.()
     connection.directRuntimeUnsubscribe?.()
@@ -404,7 +415,8 @@ export class TerminalAttachmentManager {
         if (connection.state === 'initializing') {
           connection.pendingDirectOutputBytes += Buffer.byteLength(data)
           if (
-            connection.pendingDirectOutputBytes > TERMINAL_OUTPUT_HIGH_WATERMARK
+            connection.pendingDirectOutputBytes >=
+            TERMINAL_OUTPUT_MAX_UNACKNOWLEDGED_BYTES
           ) {
             connection.transport.disconnect(true)
             this.close(connection.id)
@@ -537,17 +549,18 @@ export class TerminalAttachmentManager {
     }
 
     if (
-      !connection.paused &&
+      connection.unacknowledgedBytes >= TERMINAL_OUTPUT_MAX_UNACKNOWLEDGED_BYTES
+    ) {
+      this.disconnectSlowViewer(connection)
+      return
+    }
+
+    if (
+      !connection.outputBacklogged &&
       connection.unacknowledgedBytes >= TERMINAL_OUTPUT_HIGH_WATERMARK
     ) {
-      connection.paused = true
-      this.send(connection, 'terminal_error', {
-        code: 'OUTPUT_STALLED',
-        message: 'Terminal viewer could not keep up with output',
-        retryable: true
-      })
-      connection.transport.disconnect(true)
-      this.close(connection.id)
+      connection.outputBacklogged = true
+      this.restartOutputStallTimeout(connection)
     }
   }
 
@@ -588,11 +601,43 @@ export class TerminalAttachmentManager {
     }
     connection.lastAckSequence = sequence
     if (
-      connection.paused &&
+      connection.outputBacklogged &&
       connection.unacknowledgedBytes <= TERMINAL_OUTPUT_LOW_WATERMARK
     ) {
-      connection.paused = false
+      connection.outputBacklogged = false
+      if (connection.outputStallTimeout) {
+        clearTimeout(connection.outputStallTimeout)
+        connection.outputStallTimeout = null
+      }
+    } else if (connection.outputBacklogged) {
+      this.restartOutputStallTimeout(connection)
     }
+  }
+
+  private restartOutputStallTimeout(connection: ClientConnection): void {
+    if (connection.outputStallTimeout) {
+      clearTimeout(connection.outputStallTimeout)
+    }
+
+    connection.outputStallTimeout = setTimeout(() => {
+      connection.outputStallTimeout = null
+      this.disconnectSlowViewer(connection)
+    }, TERMINAL_OUTPUT_STALL_TIMEOUT_MS)
+    connection.outputStallTimeout.unref()
+  }
+
+  private disconnectSlowViewer(connection: ClientConnection): void {
+    if (!this.isActive(connection)) {
+      return
+    }
+
+    this.send(connection, 'terminal_error', {
+      code: 'OUTPUT_STALLED',
+      message: 'Terminal viewer could not keep up with output',
+      retryable: true
+    })
+    connection.transport.disconnect(true)
+    this.close(connection.id)
   }
 
   private enqueueTerminal<Result>(
@@ -821,17 +866,6 @@ export class TerminalAttachmentManager {
     const next = { ...current, cols, rows, revision: current.revision + 1 }
     this.dimensions.set(terminalId, next)
 
-    for (const client of [...this.clients.values()]) {
-      if (
-        client.terminalId === terminalId &&
-        client.state === 'ready' &&
-        client.paused
-      ) {
-        client.transport.disconnect(true)
-        this.close(client.id)
-      }
-    }
-
     const active = [...this.clients.values()].filter(
       (client) => client.terminalId === terminalId && this.isActive(client)
     )
@@ -930,12 +964,6 @@ export class TerminalAttachmentManager {
 
       if (previous.connectionId === connection.id) {
         await this.applyDimensions(connection.terminalId, cols, rows)
-        return
-      }
-
-      if (connection.paused) {
-        connection.transport.disconnect(true)
-        this.close(connection.id)
         return
       }
 
