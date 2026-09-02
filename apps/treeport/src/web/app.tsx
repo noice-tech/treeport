@@ -919,15 +919,24 @@ function WorkspaceApp() {
     [closeDrawerAfterNavigation, navigateToWorkspace, projects]
   )
 
-  const selectWorktree = (worktree: WorktreeRecord) => {
-    focusSurface('terminal')
-    const target = targetForWorktree(projects, worktree, selectedTerminalId)
-    if (target) {
-      void navigateToWorkspace(target)
-    }
+  const selectWorktree = useCallback(
+    (worktree: WorktreeRecord) => {
+      focusSurface('terminal')
+      const target = targetForWorktree(projects, worktree, selectedTerminalId)
+      if (target) {
+        void navigateToWorkspace(target)
+      }
 
-    closeDrawerAfterNavigation()
-  }
+      closeDrawerAfterNavigation()
+    },
+    [
+      closeDrawerAfterNavigation,
+      focusSurface,
+      navigateToWorkspace,
+      projects,
+      selectedTerminalId
+    ]
+  )
 
   const rememberedTargetForProject = (project: ProjectRecord) =>
     targetForProject(
@@ -1224,6 +1233,26 @@ function WorkspaceApp() {
         return
       }
 
+      if (
+        command === 'select-previous-worktree' ||
+        command === 'select-next-worktree'
+      ) {
+        const worktrees = selectedProject.worktrees
+        const selectedIndex = worktrees.findIndex(
+          (worktree) => worktree.id === selectedWorktree.id
+        )
+        if (worktrees.length > 1 && selectedIndex !== -1) {
+          const offset = command === 'select-previous-worktree' ? -1 : 1
+          selectWorktree(
+            worktrees[
+              (selectedIndex + offset + worktrees.length) % worktrees.length
+            ]!
+          )
+        }
+
+        return
+      }
+
       const toolSurfaceHasFocus =
         toolPaneOpen && focusedSurfaceRef.current === 'tool'
       const selectedTabIndex = command.startsWith('select-tab-')
@@ -1270,6 +1299,7 @@ function WorkspaceApp() {
     selectedWorktree,
     selectedWorktreeTools.length,
     selectFocusedSurfaceByIndex,
+    selectWorktree,
     setToolPickerOpen,
     terminalWorkflows.selectedPendingTerminal,
     toggleToolPane,

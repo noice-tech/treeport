@@ -127,6 +127,26 @@ test('controls the local Browser through its exact bridge while another workspac
     path.join(os.tmpdir(), 'treeport-electron-browser-')
   )
   const project = projectFixture()
+  const topicWorktree = structuredClone(project.worktrees[0]!)
+  Object.assign(topicWorktree, {
+    id: 'wt_topic',
+    name: 'topic',
+    path: '/worktrees/topic',
+    branch: 'topic',
+    kind: 'linked',
+    tmuxSocketName: 'treeport-wt-topic',
+    panels: [],
+    terminals: [
+      {
+        ...topicWorktree.terminals[0]!,
+        id: 'term_topic',
+        worktreeId: 'wt_topic',
+        name: 'Topic Shell',
+        tmuxSessionName: 'treeport-term-topic'
+      }
+    ]
+  })
+  project.worktrees.push(topicWorktree)
   let applicationDocumentRequests = 0
   let popupRequests = 0
   let ownerTakeControlRequests = 0
@@ -463,6 +483,34 @@ test('controls the local Browser through its exact bridge while another workspac
     ).toBeVisible()
     expect(applicationDocumentRequests).toBe(0)
     await expect.poll(() => websocketRequests).toBeGreaterThan(0)
+
+    const pressTreeShortcut = (keyCode: '[' | ']') =>
+      electronApp!.evaluate(({ BrowserWindow }, shortcut) => {
+        const renderer = BrowserWindow.getAllWindows()[0]?.webContents
+        const modifiers = [
+          process.platform === 'darwin' ? 'meta' : 'control',
+          'shift'
+        ]
+        renderer?.sendInputEvent({
+          type: 'keyDown',
+          keyCode: shortcut,
+          modifiers
+        })
+        renderer?.sendInputEvent({
+          type: 'keyUp',
+          keyCode: shortcut,
+          modifiers
+        })
+      }, keyCode)
+    await pressTreeShortcut(']')
+    await expect(window).toHaveURL(
+      /\/worktrees\/wt_topic\/terminals\/term_topic$/
+    )
+    await pressTreeShortcut('[')
+    await expect(window).toHaveURL(
+      /\/worktrees\/wt_main\/terminals\/term_shell$/
+    )
+
     await window.getByRole('button', { name: 'Toggle side panel' }).click()
     const browserTab = window.getByRole('tab', { name: /, Browser$/ })
     await browserTab.click()

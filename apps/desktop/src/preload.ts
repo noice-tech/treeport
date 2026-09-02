@@ -121,6 +121,8 @@ const desktopBridge = Object.freeze({
           'toggle-side-panel',
           'focus-location',
           'find-in-page',
+          'select-previous-worktree',
+          'select-next-worktree',
           'select-tab-1',
           'select-tab-2',
           'select-tab-3',

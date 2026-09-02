@@ -1869,6 +1869,32 @@ test.describe('desktop worktree and terminal workflows', () => {
     const mocked = await mockApp(page, [], { desktopBridge: true })
 
     await page.getByRole('button', { name: /^topic(?:,|\s|$)/ }).click()
+    await expect(page).toHaveURL(/\/worktrees\/wt_topic\/terminals\/term_pi$/)
+    await requestTerminalControl(page)
+    await page.evaluate(() => {
+      window.__wsSent = []
+    })
+    await page.keyboard.press('Alt+ArrowUp')
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          window.__wsSent.some((message: any) => message.type === 'input')
+        )
+      )
+      .toBe(true)
+    await expect(page).toHaveURL(/\/worktrees\/wt_topic\/terminals\/term_pi$/)
+
+    await page.evaluate(() =>
+      window.__dispatchDesktopCommand('select-next-worktree')
+    )
+    await expect(page).toHaveURL(/\/worktrees\/wt_main\/terminals\/term_shell$/)
+    await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
+
+    await page.evaluate(() =>
+      window.__dispatchDesktopCommand('select-previous-worktree')
+    )
+    await expect(page).toHaveURL(/\/worktrees\/wt_topic\/terminals\/term_pi$/)
+    await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
 
     const topicTerminals = page
       .getByRole('list', { name: 'topic terminal tabs' })
