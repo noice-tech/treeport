@@ -507,6 +507,7 @@ describe('TreeportService with injected command adapters', () => {
     expect(initialLaunchSpec.fallbackArgv).toEqual(['/bin/zsh', '-l'])
     expect(initialLaunchSpec.setupTasks).toBeUndefined()
     expect(initialLaunchSpec.env).toMatchObject({
+      PI_IMAGE_PROTOCOL: 'kitty',
       TREEPORT_API_URL: config.apiUrl,
       TREEPORT_MANAGED_API_URL: config.apiUrl,
       TREEPORT_DAEMON_RECORD: path.join(config.runtimeDir, 'daemon.json'),

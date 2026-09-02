@@ -1,4 +1,5 @@
 import { FitAddon } from '@xterm/addon-fit'
+import { ImageAddon } from '@xterm/addon-image'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { Terminal } from '@xterm/xterm'
 import { io, type Socket } from 'socket.io-client'
@@ -559,6 +560,14 @@ export class TerminalSession {
     const terminal = new Terminal(terminalOptions(this.terminalId))
     const fitAddon = new FitAddon()
     terminal.loadAddon(fitAddon)
+    terminal.loadAddon(
+      new ImageAddon({
+        iipSupport: false,
+        kittySupport: true,
+        sixelSupport: false,
+        storageLimit: 64
+      })
+    )
     terminal.loadAddon(
       new WebLinksAddon((event, url) =>
         activateTerminalLink(event, url, this.terminalId)

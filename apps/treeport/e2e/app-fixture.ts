@@ -177,6 +177,7 @@ export async function mockApp(
     hostedBrowser?: boolean
     browserInstallRequired?: boolean
     browserBeforeUnload?: boolean
+    initialTerminalOutput?: string
   } = {}
 ) {
   const buildPanel = async (root: string, entry: string) => {
@@ -318,10 +319,16 @@ export async function mockApp(
   const socketFixture = {
     initialMetadata: initialTerminalMetadata,
     hostedBrowser: options.hostedBrowser ?? false,
-    browserInstallRequired: options.browserInstallRequired ?? false
+    browserInstallRequired: options.browserInstallRequired ?? false,
+    initialTerminalOutput: options.initialTerminalOutput
   }
   await page.addInitScript((fixture) => {
-    const { initialMetadata, hostedBrowser, browserInstallRequired } = fixture
+    const {
+      initialMetadata,
+      hostedBrowser,
+      browserInstallRequired,
+      initialTerminalOutput
+    } = fixture
     const terminalStatePrefix = '__treeport_terminal_state__:'
     const readTerminalState = (terminalId: string) => {
       const stored = localStorage.getItem(`${terminalStatePrefix}${terminalId}`)
@@ -593,9 +600,10 @@ export async function mockApp(
             streamId: this.streamId,
             sequence: 1,
             data:
-              this.terminalId === 'term_new'
+              initialTerminalOutput ??
+              (this.terminalId === 'term_new'
                 ? '[Treeport setup] bootstrap\\r\\nSETUP_OUTPUT\\r\\n[Treeport setup] bootstrap complete\\r\\nSHELL_READY\\r\\n'
-                : 'same persistent terminal session\\r\\n'
+                : 'same persistent terminal session\\r\\n')
           })
           if (!scope.__suppressInitialTitle) {
             this.deliverSocket('title', {
