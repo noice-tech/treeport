@@ -242,7 +242,13 @@ Treeport changes tree names to lowercase slugs. It replaces spaces and punctuati
 
 Before removal, Treeport gets a current safety preview.
 
-`--force` confirms the reported warnings when removal is permitted.
+`--force` confirms the reported Git warnings when removal is permitted. It does not skip configured cleanup commands.
+
+Treeport stops tree terminals before cleanup. It runs cleanup before Git removes the worktree.
+
+The command shows saved cleanup output after each command finishes. Cleanup failure keeps the Git worktree and returns exit code `5`.
+
+With `--json`, success includes cleanup command results in `cleanup.commands`.
 
 After confirmation, removal continues without the browser. It also continues after a Treeport restart.
 

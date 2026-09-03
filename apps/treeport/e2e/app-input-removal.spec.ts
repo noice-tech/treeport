@@ -297,6 +297,109 @@ test.describe('desktop terminal input and removal', () => {
     })
   })
 
+  test('shows cleanup progress, keeps a failed tree, and retries removal', async ({
+    page
+  }) => {
+    const mocked = await mockApp(page)
+    mocked.setRemovePreview({
+      cleanup: {
+        commands: ['Drop database', 'Remove cache'],
+        available: true,
+        unavailableReason: null
+      }
+    })
+    const menu = await openWorktreeContextMenu(page, 'topic')
+    await menu.getByRole('menuitem', { name: 'Remove tree…' }).click()
+    const dialog = page.getByRole('alertdialog', { name: 'Remove tree' })
+    await expect(dialog.getByText('Drop database')).toBeVisible()
+    await dialog.getByRole('button', { name: 'Remove tree' }).click()
+    await expect.poll(() => mocked.removeRequests()).toBe(1)
+
+    mocked.setRemovalCleanup('running', [
+      {
+        name: 'Drop database',
+        status: 'completed',
+        stdout: 'Database removed\n',
+        stderr: '',
+        exitCode: 0,
+        error: null,
+        outputTruncated: false
+      },
+      {
+        name: 'Remove cache',
+        status: 'running',
+        stdout: '',
+        stderr: '',
+        exitCode: null,
+        error: null,
+        outputTruncated: false
+      }
+    ])
+    await expect(page.getByText('Database removed')).toBeVisible()
+    await expect(
+      page.getByText('Running cleanup command: Remove cache')
+    ).toBeVisible()
+
+    mocked.setRemovalCleanup(
+      'failed',
+      [
+        {
+          name: 'Drop database',
+          status: 'completed',
+          stdout: 'Database removed\n',
+          stderr: '',
+          exitCode: 0,
+          error: null,
+          outputTruncated: false
+        },
+        {
+          name: 'Remove cache',
+          status: 'failed',
+          stdout: '',
+          stderr: 'Cache is in use\n',
+          exitCode: 1,
+          error: 'exit 1',
+          outputTruncated: false
+        }
+      ],
+      'Project cleanup command “Remove cache” failed. Git kept the tree.'
+    )
+    await expect(
+      page.getByText('Project cleanup failed. Git kept the tree.')
+    ).toBeVisible()
+    await expect(page.getByText('Cache is in use')).toBeVisible()
+    await page.getByRole('button', { name: 'Retry' }).click()
+    await expect(
+      page.getByRole('alertdialog', { name: 'Remove tree' })
+    ).toBeVisible()
+    await page.getByRole('button', { name: 'Remove tree' }).click()
+    await expect.poll(() => mocked.removeRequests()).toBe(2)
+    mocked.setRemovalCleanup('completed', [
+      {
+        name: 'Drop database',
+        status: 'completed',
+        stdout: 'Database removed\n',
+        stderr: '',
+        exitCode: 0,
+        error: null,
+        outputTruncated: false
+      },
+      {
+        name: 'Remove cache',
+        status: 'completed',
+        stdout: 'Cache removed\n',
+        stderr: '',
+        exitCode: 0,
+        error: null,
+        outputTruncated: false
+      }
+    ])
+    mocked.completeRemoval()
+    await expect(
+      page.getByText('Treeport completed project cleanup and removed the tree.')
+    ).toBeVisible()
+  })
+
   test('removes a clean worktree without a dialog and blocks repeated requests', async ({
     page
   }) => {
@@ -406,17 +509,23 @@ test.describe('desktop terminal input and removal', () => {
     await expect.poll(() => mocked.removeRequests()).toBe(1)
 
     const removingMenu = await openWorktreeContextMenu(page, 'topic')
+    await removingMenu
+      .getByRole('menuitem', { name: 'View removal progress' })
+      .click()
     await expect(
-      removingMenu.getByRole('menuitem', { name: 'Removal in progress' })
-    ).toBeDisabled()
-    await page.keyboard.press('Escape')
+      page.getByRole('alertdialog', { name: 'Remove topic' })
+    ).toBeVisible()
+    await page.getByRole('button', { name: 'Close' }).click()
 
     await page.reload()
     const restoredMenu = await openWorktreeContextMenu(page, 'topic')
+    await restoredMenu
+      .getByRole('menuitem', { name: 'View removal progress' })
+      .click()
     await expect(
-      restoredMenu.getByRole('menuitem', { name: 'Removal in progress' })
-    ).toBeDisabled()
-    await page.keyboard.press('Escape')
+      page.getByRole('alertdialog', { name: 'Remove topic' })
+    ).toBeVisible()
+    await page.getByRole('button', { name: 'Close' }).click()
 
     mocked.completeRemoval()
     const removedRefresh = page.waitForResponse(

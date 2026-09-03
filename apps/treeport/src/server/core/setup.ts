@@ -1,3 +1,4 @@
+import crypto from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { z } from 'zod'
@@ -59,7 +60,7 @@ const timeoutSchema = z.string().superRefine((value, context) => {
   }
 })
 
-const setupCommandSchema = z
+const lifecycleCommandSchema = z
   .object({
     name: z
       .string()
@@ -85,7 +86,8 @@ const setupCommandSchema = z
 const setupFileSchema = z
   .object({
     version: z.literal(1),
-    commands: z.array(setupCommandSchema)
+    commands: z.array(lifecycleCommandSchema),
+    cleanup: z.array(lifecycleCommandSchema).optional()
   })
   .strict()
 
@@ -100,6 +102,11 @@ export interface WorktreeSetupTask {
 export interface WorktreeSetupResult {
   label: string
   error: string | null
+}
+
+export interface WorktreeCleanupResolution {
+  tasks: WorktreeSetupTask[]
+  definitionHash: string | null
 }
 
 function formatIssuePath(issuePath: PropertyKey[]): string {
@@ -138,23 +145,11 @@ function isPathWithin(candidate: string, parent: string): boolean {
   )
 }
 
-export async function resolveWorktreeSetupTasks(input: {
-  shell: string
-  mainWorktreePath: string
-  worktreePath: string
-}): Promise<WorktreeSetupTask[]> {
-  const [mainWorktreePath, worktreePath] = await Promise.all([
-    fs.realpath(input.mainWorktreePath),
-    fs.realpath(input.worktreePath)
-  ])
+async function readNativeSetup(mainWorktreePath: string) {
   const filePath = path.join(mainWorktreePath, TREEPORT_SETUP_PATH)
   const file = await readOptionalJsonc(filePath)
   if (!file.found) {
-    return resolveZedCreateWorktreeSetupTasks({
-      ...input,
-      mainWorktreePath,
-      worktreePath
-    })
+    return { filePath, setup: null }
   }
 
   const parsed = setupFileSchema.safeParse(file.value)
@@ -165,12 +160,23 @@ export async function resolveWorktreeSetupTasks(input: {
     )
   }
 
+  return { filePath, setup: parsed.data }
+}
+
+async function resolveNativeTasks(input: {
+  mainWorktreePath: string
+  worktreePath: string
+  commands: z.infer<typeof lifecycleCommandSchema>[]
+  commandPath: 'commands' | 'cleanup'
+  filePath: string
+}): Promise<WorktreeSetupTask[]> {
+  const worktreePath = await fs.realpath(input.worktreePath)
   const environment = {
     TREEPORT_WORKTREE_PATH: worktreePath,
-    TREEPORT_MAIN_WORKTREE_PATH: mainWorktreePath
+    TREEPORT_MAIN_WORKTREE_PATH: input.mainWorktreePath
   }
 
-  return parsed.data.commands.map((command, index) => {
+  return input.commands.map((command, index) => {
     const expandedCwd = expandTreeportPaths(
       command.cwd ?? worktreePath,
       environment
@@ -180,7 +186,7 @@ export async function resolveWorktreeSetupTasks(input: {
       : path.resolve(worktreePath, expandedCwd)
     if (!isPathWithin(cwd, worktreePath)) {
       throw new Error(
-        `Invalid Treeport setup in ${filePath}: commands[${index}].cwd must stay inside the new tree`
+        `Invalid Treeport setup in ${input.filePath}: ${input.commandPath}[${index}].cwd must stay inside the tree`
       )
     }
 
@@ -202,6 +208,66 @@ export async function resolveWorktreeSetupTasks(input: {
         : DEFAULT_SETUP_TIMEOUT_MS
     }
   })
+}
+
+export async function resolveWorktreeSetupTasks(input: {
+  shell: string
+  mainWorktreePath: string
+  worktreePath: string
+}): Promise<WorktreeSetupTask[]> {
+  const mainWorktreePath = await fs.realpath(input.mainWorktreePath)
+  const native = await readNativeSetup(mainWorktreePath)
+  if (!native.setup) {
+    return resolveZedCreateWorktreeSetupTasks({
+      ...input,
+      mainWorktreePath,
+      worktreePath: await fs.realpath(input.worktreePath)
+    })
+  }
+
+  return resolveNativeTasks({
+    mainWorktreePath,
+    worktreePath: input.worktreePath,
+    commands: native.setup.commands,
+    commandPath: 'commands',
+    filePath: native.filePath
+  })
+}
+
+export async function resolveWorktreeCleanupTasks(input: {
+  mainWorktreePath: string
+  worktreePath: string
+}): Promise<WorktreeCleanupResolution> {
+  const mainWorktreePath = await fs.realpath(input.mainWorktreePath)
+  const native = await readNativeSetup(mainWorktreePath)
+  const commands = native.setup?.cleanup ?? []
+  if (commands.length === 0) {
+    return { tasks: [], definitionHash: null }
+  }
+
+  const tasks = await resolveNativeTasks({
+    mainWorktreePath,
+    worktreePath: input.worktreePath,
+    commands,
+    commandPath: 'cleanup',
+    filePath: native.filePath
+  })
+  const definitionHash = crypto
+    .createHash('sha256')
+    .update(
+      JSON.stringify(
+        tasks.map((task) => ({
+          argv: task.argv,
+          cwd: task.cwd,
+          env: Object.fromEntries(
+            Object.entries(task.env).sort(([a], [b]) => a.localeCompare(b))
+          ),
+          timeoutMs: task.timeoutMs
+        }))
+      )
+    )
+    .digest('hex')
+  return { tasks, definitionHash }
 }
 
 export async function runWorktreeSetupTasks(input: {

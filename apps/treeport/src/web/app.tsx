@@ -6,6 +6,7 @@ import type {
   BrowserPanel,
   ProductEventDataMap,
   ProjectRecord,
+  RemoveOperationRecord,
   RemovePreview,
   TerminalRecord,
   WebPanel,
@@ -93,7 +94,12 @@ type AppDialog =
   | { type: 'worktree'; project: ProjectRecord }
   | { type: 'panel'; projectId: string; worktreeId: string | null }
   | { type: 'presets' }
-  | { type: 'remove'; worktree: WorktreeRecord; preview: RemovePreview }
+  | {
+      type: 'remove'
+      worktree: WorktreeRecord
+      preview: RemovePreview
+      operation: RemoveOperationRecord | null
+    }
   | {
       type: 'close-panel'
       panel: BrowserPanel | WebPanel
@@ -981,7 +987,9 @@ function WorkspaceApp() {
     pendingRemovals,
     submitWorktreeCreation,
     prepareRemoval,
-    confirmRemoval
+    confirmRemoval,
+    viewRemoval,
+    retryRemoval
   } = useWorktreeWorkflows({
     projects,
     setDrawerOpen: (open) => {
@@ -993,10 +1001,22 @@ function WorkspaceApp() {
     },
     onWorktreeSubmitted: () => setDialog(null),
     onRemovalNeedsConfirmation: (worktree, preview, trigger) =>
-      openDialog({ type: 'remove', worktree, preview }, trigger),
+      openDialog(
+        { type: 'remove', worktree, preview, operation: null },
+        trigger
+      ),
+    onRemovalProgress: (worktree, preview, operation, open) =>
+      setDialog((current) =>
+        open ||
+        (current?.type === 'remove' && current.worktree.id === worktree.id)
+          ? { type: 'remove', worktree, preview, operation }
+          : current
+      ),
     onRemovalCompleted: (worktreeId) =>
       setDialog((current) =>
-        current?.type === 'remove' && current.worktree.id === worktreeId
+        current?.type === 'remove' &&
+        current.worktree.id === worktreeId &&
+        current.preview.cleanup.commands.length === 0
           ? null
           : current
       ),
@@ -1381,6 +1401,7 @@ function WorkspaceApp() {
           onCloseTerminal={terminalWorkflows.requestCloseTerminal}
           onSelectWorktree={selectWorktree}
           onPrepareRemoval={prepareRemoval}
+          onViewRemoval={viewRemoval}
           onOpenPanelDialog={(project, worktree, trigger) =>
             openDialog(
               {
@@ -1610,6 +1631,7 @@ function WorkspaceApp() {
       <RemoveWorktreeDialog
         worktree={dialog?.type === 'remove' ? dialog.worktree : null}
         preview={dialog?.type === 'remove' ? dialog.preview : null}
+        operation={dialog?.type === 'remove' ? dialog.operation : null}
         busy={
           dialog?.type === 'remove' &&
           pendingRemovals[dialog.worktree.id] !== undefined
@@ -1617,6 +1639,7 @@ function WorkspaceApp() {
         onOpenChange={(open) => !open && setDialog(null)}
         restoreFocusTo={dialogTriggerRef.current}
         onConfirm={confirmRemoval}
+        onRetry={(worktree) => void retryRemoval(worktree)}
       />
     </>
   )

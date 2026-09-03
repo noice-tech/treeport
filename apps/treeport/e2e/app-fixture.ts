@@ -4,6 +4,7 @@ import { expect, type Locator, type Page } from '@playwright/test'
 import { build as viteBuild } from 'vite'
 import type { ApplicationUpdateStatus } from '../src/server/application-update'
 import {
+  type CleanupCommandProgress,
   type JsonValue,
   type OperationRecord,
   type ProjectRecord,
@@ -1359,6 +1360,11 @@ export async function mockApp(
             eligible: true,
             reasons: [],
             warnings: [],
+            cleanup: {
+              commands: [],
+              available: true,
+              unavailableReason: null
+            },
             terminals: worktree.terminals.map(({ id, name, status }) => ({
               id,
               name,
@@ -1390,7 +1396,13 @@ export async function mockApp(
     const operationMatch = pathname.match(/^\/api\/operations\/([^/]+)$/)
     if (operationMatch && route.request().method() === 'GET') {
       await route.fulfill({
-        json: { operation: creationOperations.get(operationMatch[1]!) }
+        json: {
+          operation:
+            creationOperations.get(operationMatch[1]!) ??
+            (removeOperation?.id === operationMatch[1]!
+              ? removeOperation
+              : undefined)
+        }
       })
       return
     }
@@ -2167,6 +2179,11 @@ export async function mockApp(
             eligible: true,
             reasons: [],
             warnings: [],
+            cleanup: removePreviewOverride.cleanup ?? {
+              commands: [],
+              available: true,
+              unavailableReason: null
+            },
             terminals: [],
             confirmationToken: 'a'.repeat(64)
           },
@@ -2175,7 +2192,29 @@ export async function mockApp(
           gitWorktreeKey: 'worktrees/feature',
           repositoryIdentity: 'repository',
           phase: 'accepted',
-          managedWrapperPath: worktree.managedWrapperPath
+          managedWrapperPath: worktree.managedWrapperPath,
+          cleanupCommands: {
+            status:
+              (removePreviewOverride.cleanup?.commands.length ?? 0) > 0
+                ? 'pending'
+                : 'completed',
+            definitionHash:
+              (removePreviewOverride.cleanup?.commands.length ?? 0) > 0
+                ? 'cleanup-definition'
+                : null,
+            skippedReason: null,
+            commands: (removePreviewOverride.cleanup?.commands ?? []).map(
+              (name) => ({
+                name,
+                status: 'pending',
+                stdout: '',
+                stderr: '',
+                exitCode: null,
+                error: null,
+                outputTruncated: false
+              })
+            )
+          }
         },
         result: null,
         error: null,
@@ -2287,6 +2326,28 @@ export async function mockApp(
     },
     removeRequests: () => removeRequests,
     removeRequestBodies: () => [...removeRequestBodies],
+    setRemovalCleanup: (
+      status: 'pending' | 'running' | 'completed' | 'failed',
+      commands: CleanupCommandProgress[],
+      error: string | null = null
+    ) => {
+      if (removeOperation?.kind === 'remove') {
+        removeOperation = {
+          ...removeOperation,
+          status,
+          error,
+          request: {
+            ...removeOperation.request,
+            cleanupCommands: {
+              ...removeOperation.request.cleanupCommands,
+              status,
+              commands
+            }
+          },
+          updatedAt: new Date().toISOString()
+        }
+      }
+    },
     completeRemoval: () => {
       const worktree = state.worktrees[1]
       if (worktree && removeOperation?.kind === 'remove') {
@@ -2305,7 +2366,8 @@ export async function mockApp(
             cleanup: {
               status: 'completed',
               residualPath: null,
-              warning: null
+              warning: null,
+              commands: []
             }
           },
           updatedAt: new Date().toISOString()

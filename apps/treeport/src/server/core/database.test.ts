@@ -468,7 +468,15 @@ describe('SQLite migration and catalog ordering', () => {
       id: 'op_existing',
       projectId: 'p_existing',
       worktreeId: 'wt_existing',
-      request: { confirmation: true }
+      request: {
+        confirmation: true,
+        cleanupCommands: {
+          status: 'pending',
+          definitionHash: null,
+          skippedReason: null,
+          commands: []
+        }
+      }
     })
     expect(
       await reopened.db.all<{ name: string }>(sql`

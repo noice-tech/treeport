@@ -183,6 +183,8 @@ class SystemDouble implements CommandRunner {
   worktreeDeregistered: ((worktreePath: string) => void) | null = null
   repositoryIdentity: string | null = null
   headExists = true
+  readonly lifecycleCommandResults = new Map<string, CommandResult | Error>()
+  lifecycleCommandStarted: ((request: CommandRequest) => void) | null = null
 
   constructor(main: string) {
     this.main = main
@@ -428,6 +430,16 @@ class SystemDouble implements CommandRunner {
 
     if (args[0] === 'for-each-ref') {
       return ok(this.reachable ? 'refs/remotes/origin/trunk\n' : '')
+    }
+
+    const lifecycleResult = this.lifecycleCommandResults.get(request.executable)
+    if (lifecycleResult) {
+      this.lifecycleCommandStarted?.(request)
+      if (lifecycleResult instanceof Error) {
+        throw lifecycleResult
+      }
+
+      return lifecycleResult
     }
 
     if (request.executable === 'hold-setup') {

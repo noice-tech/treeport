@@ -21,7 +21,10 @@ import { DomainError } from '../../domain'
 import type { ProductEventBus } from '../../events'
 import type { GhAdapter } from '../../gh'
 import type { GitAdapter } from '../../git'
-import type { WorktreeSetupTask } from '../../setup'
+import {
+  resolveWorktreeCleanupTasks,
+  type WorktreeSetupTask
+} from '../../setup'
 import type { TerminalSessionBackend } from '../../terminal'
 import type {
   PromiseMutationLocks,
@@ -31,6 +34,8 @@ import type {
 const now = (): string => new Date().toISOString()
 const id = (prefix: string): string =>
   `${prefix}_${crypto.randomUUID().replaceAll('-', '')}`
+const CLEANUP_OUTPUT_MAX_LENGTH = 16 * 1024
+const CLEANUP_OUTPUT_TRUNCATION_MARKER = '[Earlier output was truncated]\n'
 
 interface CheckoutCleanupResult {
   removed: boolean
@@ -431,6 +436,8 @@ export class WorktreeRemovalService {
     preview: RemovePreview
     statusFingerprint: string
     prunable: boolean
+    cleanupTasks: WorktreeSetupTask[]
+    cleanupDefinitionHash: string | null
   }> {
     const worktree = await this.requireAvailableWorktree(worktreeId, true)
     worktree.terminals = await this.listWorktreeTerminals(worktree)
@@ -478,6 +485,30 @@ export class WorktreeRemovalService {
         : null
     const reasons: string[] = []
     const warnings: string[] = []
+    let cleanupTasks: WorktreeSetupTask[] = []
+    let cleanupDefinitionHash: string | null = null
+    let cleanupUnavailableReason: string | null = null
+    try {
+      const cleanup = await resolveWorktreeCleanupTasks({
+        mainWorktreePath: project.mainWorktreePath,
+        worktreePath: worktree.path
+      })
+      cleanupTasks = cleanup.tasks
+      cleanupDefinitionHash = cleanup.definitionHash
+    } catch (error) {
+      cleanupUnavailableReason =
+        error instanceof Error ? error.message : String(error)
+      reasons.push(
+        `Project cleanup is unavailable: ${cleanupUnavailableReason}`
+      )
+    }
+
+    if (live.prunable && cleanupTasks.length > 0) {
+      cleanupUnavailableReason =
+        'Treeport cannot safely run project cleanup for this prunable tree'
+      reasons.push(cleanupUnavailableReason)
+    }
+
     if (worktree.kind === 'main') {
       reasons.push('The main checkout cannot be removed')
     }
@@ -529,6 +560,11 @@ export class WorktreeRemovalService {
       eligible: reasons.length === 0,
       reasons,
       warnings,
+      cleanup: {
+        commands: cleanupTasks.map((task) => task.label),
+        available: cleanupUnavailableReason === null,
+        unavailableReason: cleanupUnavailableReason
+      },
       terminals: worktree.terminals.map(({ id: terminalId, name, status }) => ({
         id: terminalId,
         name,
@@ -545,7 +581,9 @@ export class WorktreeRemovalService {
         )
       },
       statusFingerprint: status.fingerprint,
-      prunable: live.prunable
+      prunable: live.prunable,
+      cleanupTasks,
+      cleanupDefinitionHash
     }
   }
 
@@ -626,7 +664,8 @@ export class WorktreeRemovalService {
 
     let operationStarted = false
     try {
-      const { preview, prunable } = await this.prepareRemovePreview(worktreeId)
+      const { preview, prunable, cleanupTasks, cleanupDefinitionHash } =
+        await this.prepareRemovePreview(worktreeId)
       if (!preview.eligible) {
         throw new DomainError(
           'REMOVE_REFUSED',
@@ -751,7 +790,21 @@ export class WorktreeRemovalService {
               gitWorktreeKey: checkoutBinding.git_worktree_key,
               repositoryIdentity,
               phase: 'accepted',
-              managedWrapperPath: checkoutBinding.managed_wrapper_path
+              managedWrapperPath: checkoutBinding.managed_wrapper_path,
+              cleanupCommands: {
+                status: cleanupTasks.length > 0 ? 'pending' : 'completed',
+                definitionHash: cleanupDefinitionHash,
+                skippedReason: null,
+                commands: cleanupTasks.map((task) => ({
+                  name: task.label,
+                  status: 'pending',
+                  stdout: '',
+                  stderr: '',
+                  exitCode: null,
+                  error: null,
+                  outputTruncated: false
+                }))
+              }
             })},
             NULL,NULL,${timestamp},${timestamp}
           )
@@ -836,7 +889,7 @@ export class WorktreeRemovalService {
         project.repositoryPath
       )
 
-      if (liveAccepted) {
+      if (liveAccepted && !gitRemoved) {
         if (
           !request.repositoryIdentity ||
           liveRepositoryIdentity !== request.repositoryIdentity
@@ -865,8 +918,141 @@ export class WorktreeRemovalService {
         }
 
         await this.deps.terminalHost.killWorktree(lockedWorktreeId)
-
         await persistPhase('terminals_stopped')
+
+        const cleanupAlreadyCompleted =
+          request.cleanupCommands.commands.length === 0 ||
+          request.cleanupCommands.commands.every(
+            (command) => command.status === 'completed'
+          )
+        if (!cleanupAlreadyCompleted) {
+          const cleanup = await resolveWorktreeCleanupTasks({
+            mainWorktreePath: project.mainWorktreePath,
+            worktreePath: preview.path
+          }).catch(async (error) => {
+            request.cleanupCommands.status = 'failed'
+            await this.deps.database.db.run(sql`
+            UPDATE operations
+            SET request_json=${serializeOperation(request)},updated_at=${now()}
+            WHERE id=${operationId}
+          `)
+            throw new Error(
+              `Project cleanup configuration is unavailable: ${
+                error instanceof Error ? error.message : String(error)
+              }`
+            )
+          })
+          if (
+            cleanup.definitionHash !== request.cleanupCommands.definitionHash
+          ) {
+            request.cleanupCommands.status = 'failed'
+            await this.deps.database.db.run(sql`
+            UPDATE operations
+            SET request_json=${serializeOperation(request)},updated_at=${now()}
+            WHERE id=${operationId}
+          `)
+            throw new Error(
+              'Project cleanup configuration changed after removal was accepted'
+            )
+          }
+
+          if (
+            cleanup.tasks.length !== request.cleanupCommands.commands.length ||
+            cleanup.tasks.some(
+              (task, index) =>
+                task.label !== request.cleanupCommands.commands[index]?.name
+            )
+          ) {
+            request.cleanupCommands.status = 'failed'
+            await this.deps.database.db.run(sql`
+            UPDATE operations
+            SET request_json=${serializeOperation(request)},updated_at=${now()}
+            WHERE id=${operationId}
+          `)
+            throw new Error(
+              'Project cleanup commands changed after removal was accepted'
+            )
+          }
+
+          request.cleanupCommands.status = 'running'
+          await this.deps.database.db.run(sql`
+          UPDATE operations
+          SET request_json=${serializeOperation(request)},updated_at=${now()}
+          WHERE id=${operationId}
+        `)
+          for (const [index, task] of cleanup.tasks.entries()) {
+            const progress = request.cleanupCommands.commands[index]!
+            if (progress.status === 'completed') {
+              continue
+            }
+
+            Object.assign(progress, {
+              status: 'running' as const,
+              stdout: '',
+              stderr: '',
+              exitCode: null,
+              error: null,
+              outputTruncated: false
+            })
+            await this.deps.database.db.run(sql`
+            UPDATE operations
+            SET request_json=${serializeOperation(request)},updated_at=${now()}
+            WHERE id=${operationId}
+          `)
+
+            const [executable, ...args] = task.argv
+            try {
+              const result = await this.deps.runner.run({
+                executable: executable!,
+                args,
+                cwd: task.cwd,
+                env: { ...process.env, ...task.env },
+                timeoutMs: task.timeoutMs
+              })
+              const stdout = boundedCleanupOutput(result.stdout)
+              const stderr = boundedCleanupOutput(result.stderr)
+              Object.assign(progress, {
+                status:
+                  result.exitCode === 0
+                    ? ('completed' as const)
+                    : ('failed' as const),
+                stdout: stdout.output,
+                stderr: stderr.output,
+                exitCode: result.exitCode,
+                error:
+                  result.exitCode === 0
+                    ? null
+                    : stderr.output.trim() ||
+                      stdout.output.trim() ||
+                      `exit ${result.exitCode}`,
+                outputTruncated: stdout.truncated || stderr.truncated
+              })
+            } catch (error) {
+              Object.assign(progress, {
+                status: 'failed' as const,
+                error: error instanceof Error ? error.message : String(error)
+              })
+            }
+
+            if (progress.status === 'failed') {
+              request.cleanupCommands.status = 'failed'
+            }
+
+            await this.deps.database.db.run(sql`
+            UPDATE operations
+            SET request_json=${serializeOperation(request)},updated_at=${now()}
+            WHERE id=${operationId}
+          `)
+            if (progress.status === 'failed') {
+              throw new Error(
+                `Project cleanup command “${progress.name}” failed: ${progress.error ?? 'unknown error'}`
+              )
+            }
+          }
+        }
+
+        request.cleanupCommands.status = 'completed'
+        await persistPhase('cleanup_commands_completed')
 
         if (request.prunable) {
           await this.deps.git.pruneWorktrees(project.repositoryPath)
@@ -892,6 +1078,10 @@ export class WorktreeRemovalService {
             'Git still reports the accepted worktree after removal'
           )
         }
+      } else if (!liveAccepted && !gitRemoved) {
+        request.cleanupCommands.status = 'skipped'
+        request.cleanupCommands.skippedReason =
+          'Git no longer reports the accepted tree; repository cleanup was not run'
       }
 
       gitRemoved = true
@@ -996,7 +1186,8 @@ export class WorktreeRemovalService {
               cleanup: {
                 status: cleanupWarning ? 'preserved' : 'completed',
                 residualPath,
-                warning: cleanupWarning
+                warning: cleanupWarning,
+                commands: request.cleanupCommands.commands
               }
             })},
             error=NULL,
@@ -1024,7 +1215,8 @@ export class WorktreeRemovalService {
                 cleanup: {
                   status: 'preserved',
                   residualPath: preview.path,
-                  warning
+                  warning,
+                  commands: request.cleanupCommands.commands
                 }
               })},
               error=NULL,
@@ -1037,9 +1229,12 @@ export class WorktreeRemovalService {
         })
       } else {
         const message = (
-          request.phase === 'terminals_stopped'
-            ? `Terminals were stopped, but Git removal failed: ${base}`
-            : base
+          request.cleanupCommands.status === 'failed'
+            ? `${base}. Git kept the tree.`
+            : request.phase === 'terminals_stopped' ||
+                request.phase === 'cleanup_commands_completed'
+              ? `Terminals were stopped, but Git removal failed: ${base}`
+              : base
         ).slice(0, 4_096)
         await this.deps.database.db.run(sql`
           UPDATE operations
@@ -1089,6 +1284,19 @@ function gitMarkerMatchesKey(
   return target.endsWith(`${path.sep}${normalizedKey}`)
 }
 
+function boundedCleanupOutput(value: string) {
+  if (value.length <= CLEANUP_OUTPUT_MAX_LENGTH) {
+    return { output: value, truncated: false }
+  }
+
+  return {
+    output: `${CLEANUP_OUTPUT_TRUNCATION_MARKER}${value.slice(
+      -(CLEANUP_OUTPUT_MAX_LENGTH - CLEANUP_OUTPUT_TRUNCATION_MARKER.length)
+    )}`,
+    truncated: true
+  }
+}
+
 function removeConfirmationToken(
   key: Buffer,
   preview: Omit<RemovePreview, 'confirmationToken'>,
@@ -1111,6 +1319,7 @@ function removeConfirmationToken(
         eligible: preview.eligible,
         reasons: preview.reasons,
         warnings: preview.warnings,
+        cleanup: preview.cleanup,
         statusFingerprint,
         terminalIds: preview.terminals.map((terminal) => terminal.id).sort()
       })

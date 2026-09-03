@@ -938,7 +938,14 @@ describe('TreeportService with injected command adapters', () => {
     expect(
       externalOperations.map(({ result_json }) => JSON.parse(result_json))
     ).toEqual([
-      expect.objectContaining({ worktreeId: first.id, external: true })
+      expect.objectContaining({
+        worktreeId: first.id,
+        external: true,
+        cleanup: {
+          status: 'skipped',
+          skippedReason: 'Git removed the tree outside Treeport'
+        }
+      })
     ])
     expect(events).toEqual([
       { type: 'terminal.removed', worktreeId: first.id },
