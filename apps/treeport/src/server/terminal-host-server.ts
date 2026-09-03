@@ -16,7 +16,9 @@ import {
   type TerminalHostResults
 } from './terminal-host-protocol'
 
-const TERMINAL_HOST_CONNECTION_HIGH_WATERMARK = 4 * 1024 * 1024
+// A valid frame can exceed this limit while Node owns it. Bound only the
+// additional frames waiting behind a write that returned false.
+const TERMINAL_HOST_MAX_QUEUED_BYTES = 4 * 1024 * 1024
 
 interface TerminalHostServerOptions {
   hostId: string
@@ -30,6 +32,11 @@ interface TerminalHostServerOptions {
   onShutdown?: () => void
 }
 
+interface QueuedFrame {
+  encoded: Buffer
+  next: QueuedFrame | null
+}
+
 interface HostConnection {
   socket: Socket
   authenticated: boolean
@@ -37,6 +44,10 @@ interface HostConnection {
   outputUnsubscribes: Map<string, () => void>
   runtimeUnsubscribes: Map<string, () => void>
   requestTail: Promise<void>
+  writeBlocked: boolean
+  queuedFrameHead: QueuedFrame | null
+  queuedFrameTail: QueuedFrame | null
+  queuedBytes: number
 }
 
 function tokensMatch(actual: string, expected: string): boolean {
@@ -70,16 +81,65 @@ export async function startTerminalHostServer(
     connection: HostConnection,
     frame: TerminalHostResponseFrame | TerminalHostEventFrame
   ): boolean => {
-    if (
-      connection.socket.destroyed ||
-      connection.socket.writableLength > TERMINAL_HOST_CONNECTION_HIGH_WATERMARK
-    ) {
-      connection.socket.destroy()
+    if (connection.socket.destroyed) {
       return false
     }
 
-    connection.socket.write(encodeTerminalHostFrame(frame))
-    return true
+    const encoded = encodeTerminalHostFrame(frame)
+    if (connection.writeBlocked) {
+      if (
+        connection.queuedBytes + encoded.byteLength >
+        TERMINAL_HOST_MAX_QUEUED_BYTES
+      ) {
+        connection.socket.destroy()
+        return false
+      }
+
+      const queuedFrame: QueuedFrame = { encoded, next: null }
+      if (connection.queuedFrameTail) {
+        connection.queuedFrameTail.next = queuedFrame
+      } else {
+        connection.queuedFrameHead = queuedFrame
+      }
+
+      connection.queuedFrameTail = queuedFrame
+      connection.queuedBytes += encoded.byteLength
+      return true
+    }
+
+    try {
+      connection.writeBlocked = !connection.socket.write(encoded)
+      return true
+    } catch {
+      connection.socket.destroy()
+      return false
+    }
+  }
+
+  const flush = (connection: HostConnection): void => {
+    if (connection.socket.destroyed) {
+      return
+    }
+
+    connection.writeBlocked = false
+    while (connection.queuedFrameHead) {
+      const queuedFrame = connection.queuedFrameHead
+      connection.queuedFrameHead = queuedFrame.next
+      if (!connection.queuedFrameHead) {
+        connection.queuedFrameTail = null
+      }
+
+      connection.queuedBytes -= queuedFrame.encoded.byteLength
+      try {
+        if (!connection.socket.write(queuedFrame.encoded)) {
+          connection.writeBlocked = true
+          return
+        }
+      } catch {
+        connection.socket.destroy()
+        return
+      }
+    }
   }
 
   const respond = <Method extends keyof TerminalHostResults>(
@@ -419,11 +479,18 @@ export async function startTerminalHostServer(
       decoder: new TerminalHostFrameDecoder(),
       outputUnsubscribes: new Map(),
       runtimeUnsubscribes: new Map(),
-      requestTail: Promise.resolve()
+      requestTail: Promise.resolve(),
+      writeBlocked: false,
+      queuedFrameHead: null,
+      queuedFrameTail: null,
+      queuedBytes: 0
     }
     connections.add(connection)
     const release = () => {
       connections.delete(connection)
+      connection.queuedFrameHead = null
+      connection.queuedFrameTail = null
+      connection.queuedBytes = 0
       for (const unsubscribe of connection.outputUnsubscribes.values()) {
         unsubscribe()
       }
@@ -443,6 +510,7 @@ export async function startTerminalHostServer(
     }
     socket.once('close', release)
     socket.on('error', () => undefined)
+    socket.on('drain', () => flush(connection))
     socket.on('data', (chunk) => {
       let frames
       try {

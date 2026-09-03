@@ -13,6 +13,11 @@ import {
   TERMINAL_HOST_PROTOCOL_VERSION,
   TerminalHostFrameDecoder
 } from './terminal-host-protocol'
+import { startTerminalHostServer } from './terminal-host-server'
+
+interface OutputSubscriptionFixture {
+  listener: ((data: string, sequence: number) => void) | null
+}
 
 async function waitFor(
   predicate: () => boolean | Promise<boolean>,
@@ -208,6 +213,169 @@ child.once('exit', (code) => process.exit(code ?? 1))
     )
     hostPids.delete(hostPid)
   }, 20_000)
+
+  it('delivers live output after a large snapshot without dropping or reordering frames', async () => {
+    const root = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'treeport-terminal-host-large-snapshot-')
+    )
+    roots.push(root)
+    const socketPath = path.join(root, 'host.sock')
+    const recordPath = path.join(root, 'host.json')
+    const outputSubscription: OutputSubscriptionFixture = { listener: null }
+    const sessions = {
+      initialize: async () => undefined,
+      get sessionCount() {
+        return 1
+      },
+      subscribeOutput(
+        _terminalId: string,
+        listener: (data: string, sequence: number) => void
+      ) {
+        outputSubscription.listener = listener
+        return () => {
+          outputSubscription.listener = null
+        }
+      },
+      snapshot: async () => {
+        setImmediate(() => outputSubscription.listener?.('after-snapshot', 1))
+        return {
+          data: 'x'.repeat(5 * 1024 * 1024),
+          links: [],
+          fence: 0,
+          cols: 80,
+          rows: 24
+        }
+      },
+      captureTerminal: async () => 'still-connected',
+      restoreHostQueryAuthority: async () => undefined
+    }
+    const host = await startTerminalHostServer({
+      hostId: 'large-snapshot-host',
+      hostKey: 'large-snapshot-key',
+      token: 'large-snapshot-token',
+      socketPath,
+      recordPath,
+      // SAFETY: The fixture implements every session-manager operation exercised by this host scenario.
+      sessions: sessions as never
+    })
+    const client = await TerminalHostClient.connect(
+      socketPath,
+      'large-snapshot-token',
+      'large-snapshot-key',
+      'large-snapshot-host'
+    )
+    clients.add(client)
+
+    try {
+      const received: string[] = []
+      const attachment = await client.attach('terminal', (output) => {
+        received.push(output)
+      })
+      expect(attachment?.data).toHaveLength(5 * 1024 * 1024)
+      await waitFor(
+        () => received.length > 0,
+        'Live output did not follow the large snapshot'
+      )
+      expect(received).toEqual(['after-snapshot'])
+      expect(await client.captureTerminal('terminal', 1)).toBe(
+        'still-connected'
+      )
+      attachment?.unsubscribe()
+    } finally {
+      client.dispose()
+      clients.delete(client)
+      await host.close()
+    }
+  })
+
+  it('disconnects a client whose queued live output stays over capacity without affecting the host', async () => {
+    const root = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'treeport-terminal-host-slow-client-')
+    )
+    roots.push(root)
+    const socketPath = path.join(root, 'host.sock')
+    const recordPath = path.join(root, 'host.json')
+    const outputSubscription: OutputSubscriptionFixture = { listener: null }
+    let unsubscribed = false
+    const sessions = {
+      initialize: async () => undefined,
+      get sessionCount() {
+        return 1
+      },
+      subscribeOutput(
+        _terminalId: string,
+        listener: (data: string, sequence: number) => void
+      ) {
+        outputSubscription.listener = listener
+        return () => {
+          outputSubscription.listener = null
+          unsubscribed = true
+        }
+      },
+      snapshot: async () => ({
+        data: '',
+        links: [],
+        fence: 0,
+        cols: 80,
+        rows: 24
+      }),
+      captureTerminal: async () => 'host-available',
+      restoreHostQueryAuthority: async () => undefined
+    }
+    const host = await startTerminalHostServer({
+      hostId: 'slow-client-host',
+      hostKey: 'slow-client-key',
+      token: 'slow-client-token',
+      socketPath,
+      recordPath,
+      // SAFETY: The fixture implements every session-manager operation exercised by this host scenario.
+      sessions: sessions as never
+    })
+    const slowClient = await TerminalHostClient.connect(
+      socketPath,
+      'slow-client-token',
+      'slow-client-key',
+      'slow-client-host'
+    )
+    clients.add(slowClient)
+
+    try {
+      await slowClient.attach('terminal', () => undefined)
+      const emitOutput = outputSubscription.listener
+      if (!emitOutput) {
+        throw new Error('The host did not subscribe the client to output')
+      }
+
+      for (let sequence = 1; sequence <= 32; sequence += 1) {
+        emitOutput('x'.repeat(256 * 1024), sequence)
+      }
+
+      await expect(slowClient.captureTerminal('terminal', 1)).rejects.toThrow(
+        'Terminal host connection closed'
+      )
+      await waitFor(
+        () => unsubscribed,
+        'The disconnected client retained its output subscription'
+      )
+
+      const nextClient = await TerminalHostClient.connect(
+        socketPath,
+        'slow-client-token',
+        'slow-client-key',
+        'slow-client-host'
+      )
+      clients.add(nextClient)
+      expect(await nextClient.captureTerminal('terminal', 1)).toBe(
+        'host-available'
+      )
+      nextClient.dispose()
+      clients.delete(nextClient)
+    } finally {
+      slowClient.dispose()
+      clients.delete(slowClient)
+      await host.close()
+    }
+  })
 
   it('refuses an incompatible live host without replacing or signaling it', async () => {
     const root = await fs.mkdtemp(
