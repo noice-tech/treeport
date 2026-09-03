@@ -150,7 +150,7 @@ export interface TerminalAttachmentBackend {
     terminalId: string,
     data: string | Buffer,
     authority: { attachmentId: string; generation: number }
-  ): void
+  ): Promise<void>
   prepareQueryAuthority(
     terminalId: string
   ): Promise<{ transitionId: string; fence: number }>
@@ -464,7 +464,12 @@ export class TerminalHostSessionManager {
       for (const listener of [...runtimeListeners]) {
         listener({ exitCode })
       }
-      void fs.rm(specPath, { force: true })
+      void fs.rm(specPath, { force: true }).catch((error) => {
+        console.error(
+          `[Treeport terminal host] Failed to remove launch spec ${specPath}:`,
+          error instanceof Error ? error.message : String(error)
+        )
+      })
     })
     this.sessions.set(input.terminalId, session)
   }
@@ -618,11 +623,11 @@ export class TerminalHostSessionManager {
     return () => session.runtimeListeners.delete(listener)
   }
 
-  write(
+  async write(
     terminalId: string,
     data: string | Buffer,
     authority: { attachmentId: string; generation: number }
-  ): void {
+  ): Promise<void> {
     const session = this.sessions.get(terminalId)
     if (
       !session ||
@@ -876,10 +881,6 @@ export class TerminalHostSessionManager {
     await Promise.all(
       [...this.sessions.values()].map((session) => this.destroy(session))
     )
-  }
-
-  dispose(): void {
-    void this.shutdown()
   }
 
   private parseNext(session: HostedTerminalSession): void {

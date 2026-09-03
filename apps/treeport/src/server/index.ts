@@ -2,6 +2,9 @@ import { createServer } from 'node:http'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { getRequestListener } from '@hono/node-server'
+import * as Effect from 'effect/Effect'
+import * as Exit from 'effect/Exit'
+import * as Scope from 'effect/Scope'
 import type { ViteDevServer } from 'vite'
 import {
   checkRuntimePrerequisites,
@@ -13,27 +16,47 @@ import {
   TreeportService
 } from './core/index'
 import { createApp } from './app'
+import { ApplicationDaemons } from './core/services/infrastructure/application-runtime'
 import { createApplicationUpdateManager } from './application-update'
 import { BrowserSessionManager } from './browser-sessions'
 import { acquireDaemonOwnership } from './daemon-ownership'
 import { authorizeRequest, rejectHttpRequest } from './request-security'
 import { createSocketServer } from './socket-server'
-import { TerminalMetadataManager } from './terminal-metadata'
+import { acquireTerminalMetadataManager } from './terminal-metadata'
 import { createUpdateStartupReporter } from './update-startup'
 import { connectOrStartTerminalHost } from './terminal-host-client'
 
 async function main(): Promise<void> {
   const config = loadConfig()
   const updateStartup = await createUpdateStartupReporter(config)
+  const resourceScope = await Effect.runPromise(Scope.make())
 
   try {
-    const ownership = await acquireDaemonOwnership(config)
+    const ownership = await Effect.runPromise(
+      Scope.extend(
+        Effect.acquireRelease(
+          Effect.promise(() => acquireDaemonOwnership(config)),
+          (owned) => Effect.promise(() => owned.release())
+        ),
+        resourceScope
+      )
+    )
     const prerequisites = await checkRuntimePrerequisites(config)
     const runner = new SpawnCommandRunner()
     await updateStartup.databaseOpening()
-    const database = await openDatabase(config.databasePath, {
-      backupDirectory: path.join(config.dataDir, 'database-backups')
-    })
+    const database = await Effect.runPromise(
+      Scope.extend(
+        Effect.acquireRelease(
+          Effect.promise(() =>
+            openDatabase(config.databasePath, {
+              backupDirectory: path.join(config.dataDir, 'database-backups')
+            })
+          ),
+          (opened) => Effect.sync(() => opened.close())
+        ),
+        resourceScope
+      )
+    )
     await updateStartup.databaseOpened({
       migrationState: database.migrationState,
       snapshotPaths: database.migrationSnapshotPaths
@@ -43,31 +66,80 @@ async function main(): Promise<void> {
       new URL('./core/launcher.js', import.meta.url)
     )
     const gh = new GhAdapter(runner, config.ghPath)
-    const terminalHost = await connectOrStartTerminalHost({
-      dataDir: config.dataDir,
-      runtimeDir: config.runtimeDir,
-      launcherPath,
-      hostEntryPath: fileURLToPath(
-        new URL('./terminal-host-entry.js', import.meta.url)
+    const terminalHost = await Effect.runPromise(
+      Scope.extend(
+        Effect.acquireRelease(
+          Effect.promise(() =>
+            connectOrStartTerminalHost({
+              dataDir: config.dataDir,
+              runtimeDir: config.runtimeDir,
+              launcherPath,
+              hostEntryPath: fileURLToPath(
+                new URL('./terminal-host-entry.js', import.meta.url)
+              )
+            })
+          ),
+          (host) => Effect.sync(() => host.dispose())
+        ),
+        resourceScope
       )
-    })
-    const service = new TreeportService({
-      config,
-      database,
-      runner,
-      git,
-      terminalHost,
-      gh
-    })
-    await service.initialize()
-    const terminalMetadata = new TerminalMetadataManager(
-      service,
-      terminalHost,
-      service.terminalMetadataMutations
     )
-    await terminalMetadata.initialize()
-    const applicationUpdate = createApplicationUpdateManager(config)
-    const browserSessions = new BrowserSessionManager(service, config)
+    const service = await Effect.runPromise(
+      Scope.extend(
+        Effect.acquireRelease(
+          Effect.sync(
+            () =>
+              new TreeportService({
+                config,
+                database,
+                runner,
+                git,
+                terminalHost,
+                gh
+              })
+          ),
+          (application) =>
+            Effect.promise(() =>
+              application.runEffect(application.drainMutations())
+            ).pipe(
+              Effect.ensuring(
+                Effect.promise(() => application.disposeRuntime())
+              )
+            )
+        ).pipe(
+          Effect.tap((application) =>
+            Effect.promise(() =>
+              application.runEffect(application.initialize())
+            )
+          )
+        ),
+        resourceScope
+      )
+    )
+    const terminalMetadata = await Effect.runPromise(
+      Scope.extend(
+        acquireTerminalMetadataManager(service, terminalHost),
+        resourceScope
+      )
+    )
+    const applicationUpdate = await Effect.runPromise(
+      Scope.extend(
+        Effect.acquireRelease(
+          Effect.sync(() => createApplicationUpdateManager(config)),
+          (manager) => Effect.sync(() => manager.dispose())
+        ),
+        resourceScope
+      )
+    )
+    const browserSessions = await Effect.runPromise(
+      Scope.extend(
+        Effect.acquireRelease(
+          Effect.sync(() => new BrowserSessionManager(service, config)),
+          (sessions) => Effect.promise(() => sessions.dispose())
+        ),
+        resourceScope
+      )
+    )
 
     const app = createApp({
       service,
@@ -148,7 +220,11 @@ async function main(): Promise<void> {
     })
     await ownership.publish()
     await updateStartup.ready()
-    applicationUpdate.beginPolling()
+    await service.runEffect(
+      Effect.flatMap(ApplicationDaemons, (daemons) =>
+        daemons.fork(applicationUpdate.polling)
+      )
+    )
 
     console.log(`Treeport ${config.appVersion} listening on ${config.apiUrl}`)
     console.log(`database: ${config.databasePath}`)
@@ -162,23 +238,12 @@ async function main(): Promise<void> {
       }
 
       shuttingDown = true
-      applicationUpdate.dispose()
       attachments.dispose()
-      terminalMetadata.dispose()
-      terminalHost.dispose()
       const viteClosed = vite?.close()
       io.close(() => {
-        void Promise.all([
-          service.drainMutations(),
-          terminalMetadata.drain(),
-          viteClosed
-        ]).then(async () => {
-          await browserSessions.dispose()
-          await service.disposeWebPanelRuntime()
-          database.close()
-          await ownership.release()
-          process.exit(0)
-        })
+        void Promise.resolve(viteClosed)
+          .then(() => Effect.runPromise(Scope.close(resourceScope, Exit.void)))
+          .then(() => process.exit(0))
       })
       setTimeout(() => process.exit(1), 5_000).unref()
     }
@@ -186,6 +251,7 @@ async function main(): Promise<void> {
     process.once('SIGINT', shutdown)
     process.once('SIGTERM', shutdown)
   } catch (error) {
+    await Effect.runPromise(Scope.close(resourceScope, Exit.fail(error)))
     await updateStartup.failed(
       error instanceof Error ? error : new Error(String(error))
     )

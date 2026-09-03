@@ -24,6 +24,7 @@ import {
   type BrowserSessionService,
   type BrowserTransport
 } from './browser-sessions'
+import { testAccess } from './test-access'
 
 const browsers: FakeBrowser[] = []
 
@@ -178,7 +179,7 @@ function fixture(
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z'
   }
-  const service = {
+  const panels = {
     authorizeBrowserPanel: vi.fn(async (_panelId: string) => ({
       panel,
       worktreePath: '/worktree'
@@ -193,14 +194,18 @@ function fixture(
     ),
     openBrowserPanelFromPanel: vi.fn(async () => ({
       panel: { ...panel, id: 'panel_popup' }
-    })),
+    }))
+  }
+  const service = testAccess<BrowserSessionService>({
+    runEffect: (effect: Promise<unknown>) => effect,
+    panels,
     events: {
       subscribe(listener: (event: ProductEvent) => void) {
         events.on('event', listener)
         return () => events.off('event', listener)
       }
     }
-  } satisfies BrowserSessionService
+  })
   const config = {
     cacheDir: '/cache',
     dataDir: '/data',
@@ -249,7 +254,7 @@ function fixture(
     transports.push(value)
     return value
   }
-  return { manager, service, events, transport, transports }
+  return { manager, service, panels, events, transport, transports }
 }
 
 beforeEach(() => browsers.splice(0))
@@ -386,13 +391,12 @@ describe('Browser sessions', () => {
       'panel_browser',
       'client-second'
     )
-    const authorized =
-      await value.service.authorizeBrowserPanel('panel_browser')
+    const authorized = await value.panels.authorizeBrowserPanel('panel_browser')
     let finishAuthorization!: () => void
     const authorization = new Promise<void>((resolve) => {
       finishAuthorization = resolve
     })
-    vi.mocked(value.service.authorizeBrowserPanel).mockImplementation(
+    vi.mocked(value.panels.authorizeBrowserPanel).mockImplementation(
       async () => {
         await authorization
         return authorized
@@ -447,12 +451,13 @@ describe('Browser sessions', () => {
       type: 'navigate',
       url: launchUrl
     })
-    expect(
-      launchValue.service.updateBrowserPanelState
-    ).toHaveBeenLastCalledWith('panel_browser', {
-      url: agentUrl,
-      title: 'Agent page'
-    })
+    expect(launchValue.panels.updateBrowserPanelState).toHaveBeenLastCalledWith(
+      'panel_browser',
+      {
+        url: agentUrl,
+        title: 'Agent page'
+      }
+    )
     await launchValue.manager.dispose()
 
     const storedUrl = 'http://localhost:4173/from-storage'
@@ -612,7 +617,7 @@ describe('Browser sessions', () => {
       }
     })
     await vi.waitFor(() =>
-      expect(value.service.updateBrowserPanelState).toHaveBeenCalledWith(
+      expect(value.panels.updateBrowserPanelState).toHaveBeenCalledWith(
         'panel_browser',
         {
           url: 'https://example.com/local',
@@ -626,7 +631,7 @@ describe('Browser sessions', () => {
       url: 'https://example.com/popup'
     })
     await vi.waitFor(() =>
-      expect(value.service.openBrowserPanelFromPanel).toHaveBeenCalledWith(
+      expect(value.panels.openBrowserPanelFromPanel).toHaveBeenCalledWith(
         'panel_browser',
         'https://example.com/popup'
       )
@@ -974,7 +979,7 @@ describe('Browser sessions', () => {
 
     browsers[0]!.callbacks.popup('https://example.com/popup')
     await vi.waitFor(() =>
-      expect(value.service.openBrowserPanelFromPanel).toHaveBeenCalledWith(
+      expect(value.panels.openBrowserPanelFromPanel).toHaveBeenCalledWith(
         'panel_browser',
         'https://example.com/popup'
       )
@@ -989,7 +994,7 @@ describe('Browser sessions', () => {
       await value.manager.issueTicket('panel_browser', 'client'),
       client.transport
     )
-    vi.mocked(value.service.authorizeBrowserPanel).mockRejectedValue(
+    vi.mocked(value.panels.authorizeBrowserPanel).mockRejectedValue(
       new Error('removed')
     )
     value.events.emit('event', {

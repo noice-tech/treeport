@@ -7,9 +7,10 @@ import {
   type TerminalRuntimeMetadata,
   type WorktreeRecord
 } from '@treeport/shared'
+import * as Effect from 'effect/Effect'
+import type { Scope } from 'effect/Scope'
 import type { TreeportService } from './core/index'
 import { DomainError } from './core/index'
-import type { PromiseMutationQueue } from './core/services/infrastructure/application-runtime'
 import {
   DatabaseTerminalBellStateStore,
   type TerminalBellState,
@@ -44,6 +45,22 @@ interface TerminalMetadataEntry extends TerminalRuntimeMetadata {
  * The terminal host remains the only parser and process owner; this manager
  * only persists BEL state and publishes title/progress changes.
  */
+export function acquireTerminalMetadataManager(
+  service: TreeportService,
+  terminalHost: TerminalAttachmentBackend,
+  bellStateStore?: TerminalBellStateStore
+): Effect.Effect<TerminalMetadataManager, never, Scope> {
+  return Effect.acquireRelease(
+    Effect.sync(
+      () => new TerminalMetadataManager(service, terminalHost, bellStateStore)
+    ),
+    (manager) =>
+      Effect.sync(() => manager.dispose()).pipe(
+        Effect.ensuring(Effect.promise(() => manager.drain()))
+      )
+  ).pipe(Effect.tap((manager) => Effect.promise(() => manager.initialize())))
+}
+
 export class TerminalMetadataManager {
   private readonly entries = new Map<string, TerminalMetadataEntry>()
   private readonly listeners = new Map<string, Set<MetadataListener>>()
@@ -57,7 +74,6 @@ export class TerminalMetadataManager {
   constructor(
     private readonly service: TreeportService,
     private readonly terminalHost: TerminalAttachmentBackend,
-    private readonly bellMutations: PromiseMutationQueue,
     bellStateStore?: TerminalBellStateStore
   ) {
     this.bellStateStore =
@@ -77,7 +93,9 @@ export class TerminalMetadataManager {
       this.unsubscribeEvents = this.service.events.subscribe((event) =>
         this.handleProductEvent(event)
       )
-      const projects = await this.service.listProjects()
+      const projects = await this.service.runEffect(
+        this.service.projects.listProjects()
+      )
       await Promise.all(
         projects.flatMap((project) =>
           project.worktrees.flatMap((worktree) =>
@@ -203,47 +221,64 @@ export class TerminalMetadataManager {
   }
 
   async acknowledgeBell(terminalId: string, sequence: number): Promise<void> {
-    await this.bellMutations.enqueue(terminalId, async () => {
-      const entry = this.entries.get(terminalId)
-      if (!entry) {
-        throw new DomainError(
-          'TERMINAL_NOT_FOUND',
-          `Terminal not found: ${terminalId}`,
-          404
-        )
-      }
+    await this.service.runEffect(
+      this.service.terminalMetadataMutation(
+        terminalId,
+        Effect.gen(this, function* () {
+          const entry = this.entries.get(terminalId)
+          if (!entry) {
+            return yield* Effect.fail(
+              new DomainError(
+                'TERMINAL_NOT_FOUND',
+                `Terminal not found: ${terminalId}`,
+                404
+              )
+            )
+          }
 
-      const latestSequence = entry.bell?.sequence ?? 0
-      if (sequence > latestSequence) {
-        throw new DomainError(
-          'BELL_SEQUENCE_AHEAD',
-          'Bell acknowledgement is ahead of the latest observed bell',
-          409
-        )
-      }
+          const latestSequence = entry.bell?.sequence ?? 0
+          if (sequence > latestSequence) {
+            return yield* Effect.fail(
+              new DomainError(
+                'BELL_SEQUENCE_AHEAD',
+                'Bell acknowledgement is ahead of the latest observed bell',
+                409
+              )
+            )
+          }
 
-      if (sequence <= entry.acknowledgedBellSequence) {
-        return
-      }
+          if (sequence <= entry.acknowledgedBellSequence) {
+            return
+          }
 
-      if (entry.bell && sequence === latestSequence && entry.bell.unread) {
-        await this.bellStateStore.markRead(terminalId, sequence)
-        const persisted = this.persistedBells.get(terminalId)
-        if (persisted?.sequence === sequence) {
-          this.persistedBells.set(terminalId, { ...persisted, unread: false })
-        }
+          if (entry.bell && sequence === latestSequence && entry.bell.unread) {
+            yield* Effect.promise(() =>
+              this.bellStateStore.markRead(terminalId, sequence)
+            )
+            yield* Effect.sync(() => {
+              const persisted = this.persistedBells.get(terminalId)
+              if (persisted?.sequence === sequence) {
+                this.persistedBells.set(terminalId, {
+                  ...persisted,
+                  unread: false
+                })
+              }
 
-        if (this.entries.get(terminalId) === entry) {
-          entry.bell = { ...entry.bell, unread: false }
-          entry.acknowledgedBellSequence = sequence
-          this.publish(entry)
-        }
+              if (this.entries.get(terminalId) === entry) {
+                entry.bell = { ...entry.bell!, unread: false }
+                entry.acknowledgedBellSequence = sequence
+                this.publish(entry)
+              }
+            })
+            return
+          }
 
-        return
-      }
-
-      entry.acknowledgedBellSequence = sequence
-    })
+          yield* Effect.sync(() => {
+            entry.acknowledgedBellSequence = sequence
+          })
+        })
+      )
+    )
   }
 
   removeTerminal(terminalId: string): void {
@@ -259,15 +294,22 @@ export class TerminalMetadataManager {
 
     const deletionVersion = (this.bellDeletionVersions.get(terminalId) ?? 0) + 1
     this.bellDeletionVersions.set(terminalId, deletionVersion)
-    void this.bellMutations
-      .enqueue(terminalId, async () => {
-        if (this.bellDeletionVersions.get(terminalId) !== deletionVersion) {
-          return
-        }
+    void this.service
+      .runEffect(
+        this.service.terminalMetadataMutation(
+          terminalId,
+          Effect.gen(this, function* () {
+            if (this.bellDeletionVersions.get(terminalId) !== deletionVersion) {
+              return
+            }
 
-        await this.bellStateStore.delete(terminalId)
-        this.persistedBells.delete(terminalId)
-      })
+            yield* Effect.promise(() => this.bellStateStore.delete(terminalId))
+            yield* Effect.sync(() => {
+              this.persistedBells.delete(terminalId)
+            })
+          })
+        )
+      )
       .catch((error) => {
         console.error(
           `[Treeport] Failed to delete terminal bell state for ${terminalId}:`,
@@ -305,7 +347,7 @@ export class TerminalMetadataManager {
   }
 
   async drain(): Promise<void> {
-    await this.bellMutations.drain()
+    await this.service.runEffect(this.service.drainTerminalMetadataMutations())
   }
 
   private handleProductEvent(event: ProductEvent): void {
@@ -332,9 +374,11 @@ export class TerminalMetadataManager {
 
     const { terminalId } = event.data
     void this.service
-      .getTerminal(terminalId)
+      .runEffect(this.service.terminals.getTerminal(terminalId))
       .then(async (terminal) => {
-        const worktree = await this.service.getWorktree(terminal.worktreeId)
+        const worktree = await this.service.runEffect(
+          this.service.projects.getWorktree(terminal.worktreeId)
+        )
         return this.trackTerminal(terminal, worktree)
       })
       .catch((error) => {
@@ -343,7 +387,13 @@ export class TerminalMetadataManager {
           error.code === 'TERMINAL_NOT_FOUND'
         ) {
           this.removeTerminal(terminalId)
+          return
         }
+
+        console.error(
+          `[Treeport] Failed to refresh terminal metadata for ${terminalId}:`,
+          error instanceof Error ? error.message : String(error)
+        )
       })
   }
 
@@ -426,37 +476,46 @@ export class TerminalMetadataManager {
     entry: TerminalMetadataEntry,
     observed: { sequence: number; at: string }
   ): Promise<void> {
-    await this.bellMutations.enqueue(entry.terminalId, async () => {
-      if (
-        this.entries.get(entry.terminalId) !== entry ||
-        observed.sequence <= (entry.bell?.sequence ?? 0)
-      ) {
-        return
-      }
-
-      this.bellDeletionVersions.set(
+    await this.service.runEffect(
+      this.service.terminalMetadataMutation(
         entry.terminalId,
-        (this.bellDeletionVersions.get(entry.terminalId) ?? 0) + 1
+        Effect.gen(this, function* () {
+          if (
+            this.entries.get(entry.terminalId) !== entry ||
+            observed.sequence <= (entry.bell?.sequence ?? 0)
+          ) {
+            return
+          }
+
+          yield* Effect.sync(() => {
+            this.bellDeletionVersions.set(
+              entry.terminalId,
+              (this.bellDeletionVersions.get(entry.terminalId) ?? 0) + 1
+            )
+          })
+          const bell = {
+            sequence: observed.sequence,
+            at: observed.at,
+            unread: true
+          }
+          const state = {
+            terminalId: entry.terminalId,
+            worktreeId: entry.worktreeId,
+            sequence: bell.sequence,
+            occurredAt: bell.at,
+            unread: true
+          }
+          yield* Effect.promise(() => this.bellStateStore.upsert(state))
+          yield* Effect.sync(() => {
+            this.persistedBells.set(entry.terminalId, state)
+            if (this.entries.get(entry.terminalId) === entry) {
+              entry.bell = bell
+              this.publish(entry)
+            }
+          })
+        })
       )
-      const bell = {
-        sequence: observed.sequence,
-        at: observed.at,
-        unread: true
-      }
-      const state = {
-        terminalId: entry.terminalId,
-        worktreeId: entry.worktreeId,
-        sequence: bell.sequence,
-        occurredAt: bell.at,
-        unread: true
-      }
-      await this.bellStateStore.upsert(state)
-      this.persistedBells.set(entry.terminalId, state)
-      if (this.entries.get(entry.terminalId) === entry) {
-        entry.bell = bell
-        this.publish(entry)
-      }
-    })
+    )
   }
 
   private reconcileTitleState(

@@ -3,221 +3,317 @@ import type {
   BrowserPanel,
   ProjectRecord,
   RecentProjectRecord,
-  TerminalRecord,
   WebPanel,
-  WebPanelDefinition,
   WebPanelPermission,
   WorktreeRecord
 } from '@treeport/shared'
 import { and, asc, desc, eq } from 'drizzle-orm'
-import type { TreeportDatabase } from '../../database'
+import * as Cause from 'effect/Cause'
+import * as Deferred from 'effect/Deferred'
+import * as Effect from 'effect/Effect'
+import * as Exit from 'effect/Exit'
 import { browserPanels, projects, webPanels } from '../../database-schema'
 import { DomainError } from '../../domain'
-import type { GitAdapter } from '../../git'
-
-export interface ProjectSnapshotDependencies {
-  readonly database: TreeportDatabase
-  readonly git: GitAdapter
-  readonly storedProjects: (openOnly?: boolean) => Promise<ProjectRecord[]>
-  readonly storedProject: (projectId: string) => Promise<ProjectRecord | null>
-  readonly projectOpenState: (projectId: string) => Promise<boolean | null>
-  readonly importWorktrees: (
-    projectId: string,
-    repositoryPath: string,
-    mainPath: string
-  ) => Promise<void>
-  readonly observeAvailableProject: (
-    project: ProjectRecord
-  ) => Promise<ProjectRecord>
-  readonly ensureProjectTerminals: (projectId: string) => Promise<void>
-  readonly listWorktreeTerminals: (
-    worktree: WorktreeRecord
-  ) => Promise<TerminalRecord[]>
-  readonly listWebPanelDefinitions: (
-    worktreeId: string
-  ) => Promise<WebPanelDefinition[]>
-  readonly getWorktree: (worktreeId: string) => Promise<WorktreeRecord>
-  readonly requireOpenProject: (projectId: string) => Promise<ProjectRecord>
-}
+import {
+  PanelOperations,
+  ProjectObservationOperations,
+  TerminalOperations
+} from '../domain-services'
+import type { ApplicationServices } from '../infrastructure/application-runtime'
+import { DatabasePort, GitPort } from '../infrastructure/ports'
+import { ProjectStore } from './project-store'
 
 export class ProjectSnapshotService {
-  private inFlight: Promise<ProjectRecord[]> | null = null
+  private inFlight: Deferred.Deferred<ProjectRecord[], never> | null = null
   private revision = 0
-
-  constructor(private readonly host: ProjectSnapshotDependencies) {}
 
   invalidate(): void {
     this.revision += 1
     this.inFlight = null
   }
 
-  listProjects(): Promise<ProjectRecord[]> {
-    if (this.inFlight) {
-      return this.inFlight
-    }
+  listProjects(): Effect.Effect<ProjectRecord[], never, ApplicationServices> {
+    const collectCurrentProjectsSnapshot =
+      this.collectCurrentProjectsSnapshot.bind(this)
 
-    const snapshot = this.collectCurrentProjectsSnapshot()
-    this.inFlight = snapshot
-    const clear = () => {
-      if (this.inFlight === snapshot) {
-        this.inFlight = null
-      }
-    }
-    void snapshot.then(clear, clear)
-    return snapshot
-  }
-
-  async listRecentProjects(): Promise<RecentProjectRecord[]> {
-    return this.host.database.db
-      .select({
-        id: projects.id,
-        name: projects.name,
-        kind: projects.kind,
-        rootPath: projects.repositoryPath,
-        repositoryPath: projects.repositoryPath,
-        lastOpenedAt: projects.lastOpenedAt
-      })
-      .from(projects)
-      .where(and(eq(projects.isOpen, 0), eq(projects.showInRecents, 1)))
-      .orderBy(desc(projects.lastOpenedAt), asc(projects.id))
-  }
-
-  async getProjectSnapshot(projectId: string): Promise<ProjectRecord> {
-    await this.host.requireOpenProject(projectId)
-    const project = (await this.listProjects()).find(
-      (candidate) => candidate.id === projectId
-    )
-    if (!project) {
-      throw new DomainError('PROJECT_NOT_FOUND', 'Project not found', 404)
-    }
-
-    return project
-  }
-
-  async getWorktreeSnapshot(worktreeId: string): Promise<WorktreeRecord> {
-    const binding = await this.host.getWorktree(worktreeId)
-    await this.host.requireOpenProject(binding.projectId)
-    const worktree = (await this.listProjects())
-      .flatMap((project) => project.worktrees)
-      .find((candidate) => candidate.id === worktreeId)
-    if (!worktree) {
-      throw new DomainError('WORKTREE_NOT_FOUND', 'Tree not found', 404)
-    }
-
-    return worktree
-  }
-
-  private async collectCurrentProjectsSnapshot(): Promise<ProjectRecord[]> {
-    while (true) {
-      const revision = this.revision
-      const projects = await this.collectProjectsSnapshot()
-      if (revision === this.revision) {
-        return projects
-      }
-    }
-  }
-
-  private async collectProjectsSnapshot(): Promise<ProjectRecord[]> {
-    const projects = await Promise.all(
-      (await this.host.storedProjects(true)).map(async (storedProject) => {
-        let project = storedProject
-        try {
-          if (project.kind === 'repository') {
-            await this.host.importWorktrees(
-              project.id,
-              project.repositoryPath,
-              project.mainWorktreePath
-            )
-          } else {
-            project = await this.host.observeAvailableProject(project)
+    return Effect.uninterruptibleMask((restore) =>
+      Effect.gen(this, function* () {
+        const candidate = yield* Deferred.make<ProjectRecord[], never>()
+        const active = yield* Effect.sync(() => {
+          if (this.inFlight) {
+            return this.inFlight
           }
 
-          await this.host.ensureProjectTerminals(project.id)
-          project = (await this.host.storedProject(project.id)) ?? project
-        } catch (error) {
-          project.availability = {
-            state: 'unavailable',
-            message: error instanceof Error ? error.message : String(error)
-          }
+          this.inFlight = candidate
+          return candidate
+        })
+        if (active !== candidate) {
+          return yield* restore(Deferred.await(active))
         }
 
-        if ((await this.host.projectOpenState(project.id)) !== true) {
-          return null
-        }
-
-        await Promise.all(
-          project.worktrees.map(async (worktree) => {
-            const [dirty, terminals] = await Promise.all([
-              project.kind === 'repository' &&
-              project.availability.state === 'available' &&
-              !worktree.prunable
-                ? this.host.git.dirtyState(worktree.path).catch(() => null)
-                : null,
-              this.host.listWorktreeTerminals(worktree).catch((error) => {
-                project.availability = {
-                  state: 'unavailable',
-                  message:
-                    error instanceof Error ? error.message : String(error)
-                }
-                return []
-              })
-            ])
-            worktree.dirty = dirty
-            worktree.terminals = terminals
-            const [storedBrowserPanels, storedWebPanels] = await Promise.all([
-              this.host.database.db
-                .select()
-                .from(browserPanels)
-                .where(eq(browserPanels.worktreeId, worktree.id))
-                .orderBy(asc(browserPanels.createdAt), asc(browserPanels.id)),
-              this.host.database.db
-                .select()
-                .from(webPanels)
-                .where(eq(webPanels.worktreeId, worktree.id))
-                .orderBy(asc(webPanels.createdAt), asc(webPanels.id))
-            ])
-            const definitions =
-              project.availability.state === 'available' &&
-              storedWebPanels.length > 0
-                ? await this.host
-                    .listWebPanelDefinitions(worktree.id)
-                    .catch(() => [])
-                : []
-            const definitionsById = new Map(
-              definitions.map((definition) => [definition.id, definition])
-            )
-            worktree.panels = [
-              ...terminals.map((terminal) => ({
-                id: `panel_${terminal.id}`,
-                kind: 'terminal' as const,
-                worktreeId: worktree.id,
-                terminalId: terminal.id,
-                title: terminal.name,
-                createdAt: terminal.createdAt,
-                updatedAt: terminal.updatedAt
-              })),
-              ...storedBrowserPanels.map(mapBrowserPanel),
-              ...storedWebPanels.map((panel) => {
-                const definition = definitionsById.get(panel.definitionId)
-                return mapWebPanel(
-                  panel,
-                  definition?.permissions ?? [],
-                  definition?.permissionsGranted ?? false
-                )
-              })
-            ].sort(
-              (left, right) =>
-                left.createdAt.localeCompare(right.createdAt) ||
-                left.id.localeCompare(right.id)
-            )
-          })
+        const result = yield* Effect.exit(
+          restore(collectCurrentProjectsSnapshot())
         )
-        return project
+        yield* Deferred.done(candidate, result)
+        yield* Effect.sync(() => {
+          if (this.inFlight === candidate) {
+            this.inFlight = null
+          }
+        })
+        if (Exit.isSuccess(result)) {
+          return result.value
+        }
+
+        return yield* Effect.failCause(result.cause)
       })
     )
-    return projects.filter(
-      (project): project is ProjectRecord => project !== null
-    )
+  }
+
+  listRecentProjects(): Effect.Effect<
+    RecentProjectRecord[],
+    never,
+    ApplicationServices
+  > {
+    return Effect.gen(function* () {
+      const database = yield* DatabasePort
+      return yield* Effect.promise(() =>
+        database.db
+          .select({
+            id: projects.id,
+            name: projects.name,
+            kind: projects.kind,
+            rootPath: projects.repositoryPath,
+            repositoryPath: projects.repositoryPath,
+            lastOpenedAt: projects.lastOpenedAt
+          })
+          .from(projects)
+          .where(and(eq(projects.isOpen, 0), eq(projects.showInRecents, 1)))
+          .orderBy(desc(projects.lastOpenedAt), asc(projects.id))
+      )
+    })
+  }
+
+  getProjectSnapshot(
+    projectId: string
+  ): Effect.Effect<ProjectRecord, DomainError<unknown>, ApplicationServices> {
+    const listProjects = this.listProjects.bind(this)
+
+    return Effect.gen(function* () {
+      const projectStore = yield* ProjectStore
+      yield* projectStore.requireOpenProject(projectId)
+      const project = (yield* listProjects()).find(
+        (candidate) => candidate.id === projectId
+      )
+      if (!project) {
+        return yield* Effect.fail(
+          new DomainError('PROJECT_NOT_FOUND', 'Project not found', 404)
+        )
+      }
+
+      return project
+    })
+  }
+
+  getWorktreeSnapshot(
+    worktreeId: string
+  ): Effect.Effect<WorktreeRecord, DomainError<unknown>, ApplicationServices> {
+    const listProjects = this.listProjects.bind(this)
+
+    return Effect.gen(function* () {
+      const projectStore = yield* ProjectStore
+      const binding = yield* projectStore.getWorktree(worktreeId)
+      yield* projectStore.requireOpenProject(binding.projectId)
+      const worktree = (yield* listProjects())
+        .flatMap((project) => project.worktrees)
+        .find((candidate) => candidate.id === worktreeId)
+      if (!worktree) {
+        return yield* Effect.fail(
+          new DomainError('WORKTREE_NOT_FOUND', 'Tree not found', 404)
+        )
+      }
+
+      return worktree
+    })
+  }
+
+  private collectCurrentProjectsSnapshot(): Effect.Effect<
+    ProjectRecord[],
+    never,
+    ApplicationServices
+  > {
+    const collectProjectsSnapshot = this.collectProjectsSnapshot.bind(this)
+
+    return Effect.gen(this, function* () {
+      while (true) {
+        const revision = this.revision
+        const projects = yield* collectProjectsSnapshot()
+        if (revision === this.revision) {
+          return projects
+        }
+      }
+    })
+  }
+
+  private collectProjectsSnapshot(): Effect.Effect<
+    ProjectRecord[],
+    never,
+    ApplicationServices
+  > {
+    return Effect.gen(function* () {
+      const database = yield* DatabasePort
+      const git = yield* GitPort
+      const observations = yield* ProjectObservationOperations
+      const panels = yield* PanelOperations
+      const projectStore = yield* ProjectStore
+      const terminalService = yield* TerminalOperations
+      const storedProjects = yield* projectStore.storedProjects(true)
+      const snapshots = yield* Effect.all(
+        storedProjects.map((storedProject) =>
+          Effect.gen(function* () {
+            let project = storedProject
+            const observation = yield* Effect.exit(
+              Effect.gen(function* () {
+                if (project.kind === 'repository') {
+                  yield* observations.importWorktrees(
+                    project.id,
+                    project.repositoryPath,
+                    project.mainWorktreePath
+                  )
+                } else {
+                  project = yield* observations.observeAvailableProject(project)
+                }
+
+                yield* terminalService.ensureProjectTerminals(project.id)
+                project =
+                  (yield* projectStore.storedProject(project.id)) ?? project
+              })
+            )
+            if (Exit.isFailure(observation)) {
+              if (Cause.isInterruptedOnly(observation.cause)) {
+                return yield* Effect.interrupt
+              }
+
+              const error = Cause.squash(observation.cause)
+              project.availability = {
+                state: 'unavailable',
+                message: error instanceof Error ? error.message : String(error)
+              }
+            }
+
+            if ((yield* projectStore.projectOpenState(project.id)) !== true) {
+              return null
+            }
+
+            yield* Effect.all(
+              project.worktrees.map((worktree) =>
+                Effect.gen(function* () {
+                  const dirty =
+                    project.kind === 'repository' &&
+                    project.availability.state === 'available' &&
+                    !worktree.prunable
+                      ? yield* Effect.tryPromise({
+                          try: () => git.dirtyState(worktree.path),
+                          catch: (cause) => cause
+                        }).pipe(Effect.orElseSucceed(() => null))
+                      : null
+                  const terminalInventory = yield* Effect.exit(
+                    terminalService.listWorktreeTerminals(worktree)
+                  )
+                  if (
+                    Exit.isFailure(terminalInventory) &&
+                    Cause.isInterruptedOnly(terminalInventory.cause)
+                  ) {
+                    return yield* Effect.interrupt
+                  }
+
+                  const terminals = Exit.isSuccess(terminalInventory)
+                    ? terminalInventory.value
+                    : []
+                  if (Exit.isFailure(terminalInventory)) {
+                    const error = Cause.squash(terminalInventory.cause)
+                    project.availability = {
+                      state: 'unavailable',
+                      message:
+                        error instanceof Error ? error.message : String(error)
+                    }
+                  }
+
+                  worktree.dirty = dirty
+                  worktree.terminals = terminals
+                  const [storedBrowserPanels, storedWebPanels] =
+                    yield* Effect.all(
+                      [
+                        Effect.promise(() =>
+                          database.db
+                            .select()
+                            .from(browserPanels)
+                            .where(eq(browserPanels.worktreeId, worktree.id))
+                            .orderBy(
+                              asc(browserPanels.createdAt),
+                              asc(browserPanels.id)
+                            )
+                        ),
+                        Effect.promise(() =>
+                          database.db
+                            .select()
+                            .from(webPanels)
+                            .where(eq(webPanels.worktreeId, worktree.id))
+                            .orderBy(
+                              asc(webPanels.createdAt),
+                              asc(webPanels.id)
+                            )
+                        )
+                      ],
+                      { concurrency: 'unbounded' }
+                    )
+                  const definitions =
+                    project.availability.state === 'available' &&
+                    storedWebPanels.length > 0
+                      ? yield* Effect.catchAll(
+                          panels.listWebPanelDefinitions(worktree.id),
+                          () => Effect.succeed([])
+                        )
+                      : []
+                  const definitionsById = new Map(
+                    definitions.map((definition) => [definition.id, definition])
+                  )
+                  worktree.panels = [
+                    ...terminals.map((terminal) => ({
+                      id: `panel_${terminal.id}`,
+                      kind: 'terminal' as const,
+                      worktreeId: worktree.id,
+                      terminalId: terminal.id,
+                      title: terminal.name,
+                      createdAt: terminal.createdAt,
+                      updatedAt: terminal.updatedAt
+                    })),
+                    ...storedBrowserPanels.map(mapBrowserPanel),
+                    ...storedWebPanels.map((panel) => {
+                      const definition = definitionsById.get(panel.definitionId)
+                      return mapWebPanel(
+                        panel,
+                        definition?.permissions ?? [],
+                        definition?.permissionsGranted ?? false
+                      )
+                    })
+                  ].sort(
+                    (left, right) =>
+                      left.createdAt.localeCompare(right.createdAt) ||
+                      left.id.localeCompare(right.id)
+                  )
+                })
+              ),
+              { concurrency: 'unbounded', discard: true }
+            )
+            return project
+          })
+        ),
+        { concurrency: 'unbounded' }
+      )
+      return snapshots.filter(
+        (project): project is ProjectRecord => project !== null
+      )
+    })
   }
 }
 

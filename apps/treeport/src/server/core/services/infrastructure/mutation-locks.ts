@@ -6,7 +6,7 @@ interface LockState {
   readonly worktrees: Set<string>
 }
 
-export interface LockRequest {
+interface LockRequest {
   readonly projectId?: string
   readonly worktreeIds?: Iterable<string>
   readonly checkProjectIds?: Iterable<string>

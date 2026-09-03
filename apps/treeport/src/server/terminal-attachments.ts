@@ -21,6 +21,7 @@ import {
   type TerminalServerEvent,
   type TerminalServerPayload
 } from '@treeport/shared'
+import * as Effect from 'effect/Effect'
 import type { TreeportService } from './core/index'
 import type { TerminalMetadataManager } from './terminal-metadata'
 import type { TerminalAttachmentBackend } from './terminal-host-sessions'
@@ -94,7 +95,6 @@ export class TerminalAttachmentManager {
   private readonly controllers = new Map<string, ControllerLease>()
   private readonly controllerGenerations = new Map<string, number>()
   private readonly dimensions = new Map<string, CanonicalTerminalDimensions>()
-  private readonly operationTails = new Map<string, Promise<void>>()
 
   constructor(
     private readonly service: TreeportService,
@@ -134,19 +134,29 @@ export class TerminalAttachmentManager {
       queuedInputMessages: 0
     }
     this.clients.set(connection.id, connection)
-    void this.initialize(connection, auth.cols, auth.rows).catch((cause) => {
-      if (connection.state === 'closed') {
-        return
-      }
+    void this.service
+      .runEffect(
+        this.service.terminalAttachmentMutation(
+          connection.terminalId,
+          Effect.tryPromise({
+            try: () => this.initialize(connection, auth.cols, auth.rows),
+            catch: (cause) => cause
+          })
+        )
+      )
+      .catch((cause) => {
+        if (connection.state === 'closed') {
+          return
+        }
 
-      this.send(connection, 'terminal_error', {
-        code: 'ATTACH_FAILED',
-        message: errorMessage(cause),
-        retryable: false
+        this.send(connection, 'terminal_error', {
+          code: 'ATTACH_FAILED',
+          message: errorMessage(cause),
+          retryable: false
+        })
+        connection.transport.disconnect(false)
+        this.close(connection.id)
       })
-      connection.transport.disconnect(false)
-      this.close(connection.id)
-    })
     return connection.id
   }
 
@@ -332,7 +342,12 @@ export class TerminalAttachmentManager {
     if (restoreHostAuthority) {
       void this.enqueueTerminal(connection.terminalId, () =>
         this.terminalHost.useHostQueryAuthority(connection.terminalId)
-      ).catch(() => undefined)
+      ).catch((error) => {
+        console.error(
+          `[Treeport] Failed to restore terminal query authority for ${connection.terminalId}:`,
+          error instanceof Error ? error.message : String(error)
+        )
+      })
     }
 
     const lease = this.controllers.get(connection.terminalId)
@@ -386,15 +401,16 @@ export class TerminalAttachmentManager {
       this.clients.get(connection.id) === connection &&
       connection.state !== 'closed' &&
       connection.transport.isConnected()
-    const terminal = await this.service.refreshTerminalStatus(
-      connection.terminalId,
-      false
+    const terminal = await this.service.runEffect(
+      this.service.terminals.refreshTerminalStatus(connection.terminalId, false)
     )
     if (!active()) {
       return
     }
 
-    const worktree = await this.service.getWorktree(terminal.worktreeId)
+    const worktree = await this.service.runEffect(
+      this.service.projects.getWorktree(terminal.worktreeId)
+    )
     await this.metadata.trackTerminal(terminal, worktree)
     if (!active()) {
       return
@@ -462,51 +478,46 @@ export class TerminalAttachmentManager {
       return
     }
 
-    await this.enqueueTerminal(connection.terminalId, () => {
-      if (!active()) {
-        return
-      }
+    if (!active()) {
+      return
+    }
 
-      this.claimController(connection)
-      connection.state = 'ready'
-      const lease = this.controllers.get(connection.terminalId)
-      if (
-        !this.send(connection, 'ready', {
-          connectionId: connection.id,
-          streamId: connection.streamId!,
-          generation: lease?.generation ?? 0,
-          controller: this.isController(connection),
-          reset: 'full',
-          cols: dimensions.cols,
-          rows: dimensions.rows,
-          revision: dimensions.revision,
-          snapshot: initial.data,
-          snapshotLinks: initial.links
-        })
-      ) {
-        return
-      }
+    this.claimController(connection)
+    connection.state = 'ready'
+    const lease = this.controllers.get(connection.terminalId)
+    if (
+      !this.send(connection, 'ready', {
+        connectionId: connection.id,
+        streamId: connection.streamId!,
+        generation: lease?.generation ?? 0,
+        controller: this.isController(connection),
+        reset: 'full',
+        cols: dimensions.cols,
+        rows: dimensions.rows,
+        revision: dimensions.revision,
+        snapshot: initial.data,
+        snapshotLinks: initial.links
+      })
+    ) {
+      return
+    }
 
-      connection.announcedReady = true
-      if (this.isController(connection)) {
-        this.publishControllerChanged(
-          connection.terminalId,
-          connection.clientId
-        )
-      }
+    connection.announcedReady = true
+    if (this.isController(connection)) {
+      this.publishControllerChanged(connection.terminalId, connection.clientId)
+    }
 
-      this.sendRuntimeMetadata(
-        connection,
-        this.metadata.get(connection.terminalId)
-      )
-      for (const output of connection.pendingDirectOutput.splice(0)) {
-        if (output.ownerSequence > initial.fence) {
-          this.sendOutput(connection, output.data)
-        }
+    this.sendRuntimeMetadata(
+      connection,
+      this.metadata.get(connection.terminalId)
+    )
+    for (const output of connection.pendingDirectOutput.splice(0)) {
+      if (output.ownerSequence > initial.fence) {
+        this.sendOutput(connection, output.data)
       }
-      connection.pendingDirectOutputBytes = 0
-      this.broadcastControl(connection.terminalId)
-    })
+    }
+    connection.pendingDirectOutputBytes = 0
+    this.broadcastControl(connection.terminalId)
   }
 
   private releaseMetadataSubscription(connection: ClientConnection): void {
@@ -644,23 +655,15 @@ export class TerminalAttachmentManager {
     terminalId: string,
     operation: () => Promise<Result> | Result
   ): Promise<Result> {
-    const result = (
-      this.operationTails.get(terminalId) ?? Promise.resolve()
-    ).then(operation)
-    const tail = result.then(
-      () => {
-        if (this.operationTails.get(terminalId) === tail) {
-          this.operationTails.delete(terminalId)
-        }
-      },
-      () => {
-        if (this.operationTails.get(terminalId) === tail) {
-          this.operationTails.delete(terminalId)
-        }
-      }
+    return this.service.runEffect(
+      this.service.terminalAttachmentMutation(
+        terminalId,
+        Effect.tryPromise({
+          try: async () => operation(),
+          catch: (cause) => cause
+        })
+      )
     )
-    this.operationTails.set(terminalId, tail)
-    return result
   }
 
   private writeInput(
@@ -683,7 +686,7 @@ export class TerminalAttachmentManager {
 
     connection.queuedInputBytes += bytes
     connection.queuedInputMessages += 1
-    void this.enqueueTerminal(connection.terminalId, () => {
+    void this.enqueueTerminal(connection.terminalId, async () => {
       connection.queuedInputBytes = Math.max(
         0,
         connection.queuedInputBytes - bytes
@@ -697,7 +700,7 @@ export class TerminalAttachmentManager {
         this.canControl(connection, generation) &&
         connection.queryAuthorityActive
       ) {
-        this.terminalHost.write(connection.terminalId, data, {
+        await this.terminalHost.write(connection.terminalId, data, {
           attachmentId: connection.id,
           generation
         })

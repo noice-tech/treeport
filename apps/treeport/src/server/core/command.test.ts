@@ -149,7 +149,7 @@ describe('SpawnCommandRunner', () => {
           '-e',
           `process.on('SIGTERM', () => { require('fs').writeFileSync(${JSON.stringify(cooperativeSignalFile)}, 'yes'); process.exit(0) }); setInterval(() => {}, 1000)`
         ],
-        timeoutMs: 100,
+        timeoutMs: 500,
         killGraceMs: 1_000
       })
       .catch((cause) => cause)
@@ -164,18 +164,18 @@ describe('SpawnCommandRunner', () => {
           '-e',
           `process.on('SIGTERM', () => require('fs').writeFileSync(${JSON.stringify(uncooperativeSignalFile)}, 'yes')); setInterval(() => {}, 1000)`
         ],
-        timeoutMs: 100,
-        killGraceMs: 100
+        timeoutMs: 500,
+        killGraceMs: 200
       })
       .catch((cause) => cause)
 
     expect(uncooperativeError).toBeInstanceOf(TimeoutCommandError)
     expect(uncooperativeError).toMatchObject({
       _tag: 'TimeoutCommandError',
-      timeoutMs: 100
+      timeoutMs: 500
     })
     expect(await fs.readFile(uncooperativeSignalFile, 'utf8')).toBe('yes')
-    expect(Date.now() - startedAt).toBeGreaterThanOrEqual(180)
+    expect(Date.now() - startedAt).toBeGreaterThanOrEqual(650)
   })
 
   it('does not leave a spawned descendant alive after a timeout', async () => {

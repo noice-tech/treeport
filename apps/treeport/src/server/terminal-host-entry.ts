@@ -34,10 +34,19 @@ async function main(): Promise<void> {
     }
 
     stopping = true
-    void host.close().finally(async () => {
-      await sessions.shutdown()
-      process.exit(0)
-    })
+    void host
+      .close()
+      .then(() => sessions.shutdown())
+      .then(
+        () => process.exit(0),
+        (error) => {
+          console.error(
+            '[Treeport terminal host] Shutdown failed:',
+            error instanceof Error ? error.message : String(error)
+          )
+          process.exit(1)
+        }
+      )
   }
   process.once('SIGINT', stop)
   process.once('SIGTERM', stop)

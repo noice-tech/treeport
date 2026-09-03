@@ -363,5 +363,10 @@ if (
   invokedPath &&
   path.resolve(invokedPath) === path.resolve(fileURLToPath(import.meta.url))
 ) {
-  void main()
+  void main().catch((error) => {
+    process.stderr.write(
+      `Treeport launcher: ${error instanceof Error ? error.message : String(error)}\n`
+    )
+    process.exit(127)
+  })
 }

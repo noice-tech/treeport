@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import * as Effect from 'effect/Effect'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { AppConfig } from './config'
 import {
@@ -10,6 +11,30 @@ import {
   type CommandRunner
 } from './command'
 import { PackageSystem } from './package-system'
+import { PackageMutations } from './services/package/package-mutations'
+
+function makeTestPackageSystem(config: AppConfig, runner: CommandRunner) {
+  const system = new PackageSystem(config, runner)
+  const run = <Result, Failure>(
+    effect: Effect.Effect<Result, Failure, PackageMutations>
+  ) => Effect.runPromise(effect.pipe(Effect.provide(PackageMutations.Default)))
+
+  return {
+    initialize: (...args: Parameters<PackageSystem['initialize']>) =>
+      run(system.initialize(...args)),
+    list: () => run(system.list()),
+    reload: (...args: Parameters<PackageSystem['reload']>) =>
+      run(system.reload(...args)),
+    terminalPresetDefinitions: (
+      ...args: Parameters<PackageSystem['terminalPresetDefinitions']>
+    ) => run(system.terminalPresetDefinitions(...args)),
+    update: (...args: Parameters<PackageSystem['update']>) =>
+      run(system.update(...args)),
+    webPanelDefinitions: (
+      ...args: Parameters<PackageSystem['webPanelDefinitions']>
+    ) => run(system.webPanelDefinitions(...args))
+  }
+}
 
 const directories: string[] = []
 
@@ -244,7 +269,7 @@ describe('PackageSystem', () => {
       })
     )
 
-    const packages = new PackageSystem(config, new UnexpectedRunner())
+    const packages = makeTestPackageSystem(config, new UnexpectedRunner())
     await packages.initialize(projects)
 
     const globalPanel = (await packages.webPanelDefinitions('project-b'))[0]!
@@ -399,7 +424,7 @@ describe('PackageSystem', () => {
       })
     )
 
-    const restarted = new PackageSystem(config, new UnexpectedRunner())
+    const restarted = makeTestPackageSystem(config, new UnexpectedRunner())
     await restarted.initialize(projects)
     expect(
       (await restarted.webPanelDefinitions('project-b'))[0]?.definition.id
@@ -447,7 +472,7 @@ describe('PackageSystem', () => {
       })
     )
 
-    const packages = new PackageSystem(config, new SpawnCommandRunner())
+    const packages = makeTestPackageSystem(config, new SpawnCommandRunner())
     await packages.initialize(projects)
 
     expect(
@@ -481,7 +506,7 @@ describe('PackageSystem', () => {
       })
     )
     const runner = new ManagedNpmDouble()
-    const packages = new PackageSystem(config, runner)
+    const packages = makeTestPackageSystem(config, runner)
     await packages.initialize(projects)
 
     expect(runner.calls).toHaveLength(2)

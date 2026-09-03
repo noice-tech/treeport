@@ -51,9 +51,13 @@ export interface BrowserOwnerTransport {
 }
 
 export interface BrowserSessionService {
-  authorizeBrowserPanel: TreeportService['authorizeBrowserPanel']
-  updateBrowserPanelState: TreeportService['updateBrowserPanelState']
-  openBrowserPanelFromPanel: TreeportService['openBrowserPanelFromPanel']
+  runEffect: TreeportService['runEffect']
+  panels: Pick<
+    TreeportService['panels'],
+    | 'authorizeBrowserPanel'
+    | 'openBrowserPanelFromPanel'
+    | 'updateBrowserPanelState'
+  >
   events: Pick<TreeportService['events'], 'subscribe'>
 }
 
@@ -273,12 +277,27 @@ export class BrowserSessionManager {
     )
     this.unsubscribe = service.events.subscribe((event) => {
       if (event.type === 'panel.removed') {
-        void this.closePanel(String(event.data.panelId), 'Panel closed')
+        void this.closePanel(String(event.data.panelId), 'Panel closed').catch(
+          (error) => {
+            console.error(
+              '[Treeport] Failed to close a removed Browser panel:',
+              error instanceof Error ? error.message : String(error)
+            )
+          }
+        )
       } else if (event.type === 'worktree.removed' && event.data.worktreeId) {
         for (const session of this.sessions.values()) {
           void this.service
-            .authorizeBrowserPanel(session.panelId)
+            .runEffect(
+              this.service.panels.authorizeBrowserPanel(session.panelId)
+            )
             .catch(() => this.closePanel(session.panelId, 'Worktree removed'))
+            .catch((error) => {
+              console.error(
+                `[Treeport] Failed to close Browser panel ${session.panelId} after its tree was removed:`,
+                error instanceof Error ? error.message : String(error)
+              )
+            })
         }
       }
     })
@@ -289,7 +308,9 @@ export class BrowserSessionManager {
     clientId: string,
     visible = true
   ): Promise<string> {
-    await this.service.authorizeBrowserPanel(panelId)
+    await this.service.runEffect(
+      this.service.panels.authorizeBrowserPanel(panelId)
+    )
     for (const [value, ticket] of this.tickets) {
       if (ticket.expiresAt < Date.now()) {
         this.tickets.delete(value)
@@ -313,7 +334,9 @@ export class BrowserSessionManager {
     panelId: string,
     clientId: string
   ): Promise<{ ticket: string; challenge: string }> {
-    await this.service.authorizeBrowserPanel(panelId)
+    await this.service.runEffect(
+      this.service.panels.authorizeBrowserPanel(panelId)
+    )
     for (const [value, ticket] of this.ownerTickets) {
       if (ticket.expiresAt < Date.now()) {
         this.ownerTickets.delete(value)
@@ -535,7 +558,9 @@ export class BrowserSessionManager {
 
   private async openPopup(session: BrowserSession, url: string): Promise<void> {
     await this.service
-      .openBrowserPanelFromPanel(session.panelId, url)
+      .runEffect(
+        this.service.panels.openBrowserPanelFromPanel(session.panelId, url)
+      )
       .catch((cause) =>
         this.broadcastNavigationError(
           session,
@@ -585,9 +610,11 @@ export class BrowserSessionManager {
         const pending = persistence.pending
         persistence.pending = null
         try {
-          const panel = await this.service.updateBrowserPanelState(
-            session.panelId,
-            pending
+          const panel = await this.service.runEffect(
+            this.service.panels.updateBrowserPanelState(
+              session.panelId,
+              pending
+            )
           )
           persistence.persistedUrl = panel.url
           persistence.persistedTitle = panel.title
@@ -625,7 +652,9 @@ export class BrowserSessionManager {
   }
 
   private async createSession(panelId: string): Promise<BrowserSession> {
-    const authorized = await this.service.authorizeBrowserPanel(panelId)
+    const authorized = await this.service.runEffect(
+      this.service.panels.authorizeBrowserPanel(panelId)
+    )
     const restoredUrl =
       authorized.panel.url === 'about:blank'
         ? null
@@ -707,8 +736,11 @@ export class BrowserSessionManager {
         session.agentDirectory,
         session.title,
         session.panelId,
-        (await this.service.authorizeBrowserPanel(session.panelId)).panel
-          .worktreeId,
+        (
+          await this.service.runEffect(
+            this.service.panels.authorizeBrowserPanel(session.panelId)
+          )
+        ).panel.worktreeId,
         {
           state: (state) => {
             if (
@@ -819,7 +851,9 @@ export class BrowserSessionManager {
   private async getSession(panelId: string): Promise<BrowserSession> {
     const existing = this.sessions.get(panelId)
     if (existing) {
-      await this.service.authorizeBrowserPanel(panelId)
+      await this.service.runEffect(
+        this.service.panels.authorizeBrowserPanel(panelId)
+      )
       return existing
     }
 

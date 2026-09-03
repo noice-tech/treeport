@@ -1,6 +1,8 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import * as Effect from 'effect/Effect'
+import * as Schedule from 'effect/Schedule'
 import { z } from 'zod'
 import {
   compareTreeportVersions,
@@ -63,7 +65,7 @@ export interface ApplicationUpdateStatus {
 export interface ApplicationUpdateManager {
   status(): Promise<ApplicationUpdateStatus>
   check(): Promise<void>
-  beginPolling(): void
+  readonly polling: Effect.Effect<void>
   start(): Promise<ApplicationUpdateStatus>
   dispose(): void
 }
@@ -136,9 +138,7 @@ export function createApplicationUpdateManager(
   let installation: LocalUpdateInstallation | null = null
   let checking = false
   let checkPromise: Promise<void> | null = null
-  let pollingStarted = false
   let disposed = false
-  let pollTimer: ReturnType<typeof setTimeout> | null = null
   let launching = false
   let launchError: string | null = null
 
@@ -322,30 +322,33 @@ export function createApplicationUpdateManager(
     })
   }
 
-  const scheduleNextCheck = (): void => {
-    if (disposed || !pollingStarted || staticBlockedReason) {
-      return
-    }
-
-    const delay = pollIntervalMs + Math.floor(random() * pollJitterMs)
-    pollTimer = setTimeout(() => {
-      pollTimer = null
-      void check().finally(scheduleNextCheck)
-    }, delay)
-    pollTimer.unref?.()
-  }
+  const polling = staticBlockedReason
+    ? Effect.void
+    : Effect.tryPromise({
+        try: check,
+        catch: (cause) => cause
+      }).pipe(
+        Effect.catchAll((cause) =>
+          Effect.sync(() =>
+            console.warn(
+              '[Treeport] Application update polling failed:',
+              cause instanceof Error ? cause.message : String(cause)
+            )
+          )
+        ),
+        Effect.repeat(
+          Schedule.spaced(pollIntervalMs).pipe(
+            Schedule.addDelay(() => Math.floor(random() * pollJitterMs)),
+            Schedule.whileInput(() => !disposed)
+          )
+        ),
+        Effect.asVoid
+      )
 
   return {
     status,
     check,
-    beginPolling() {
-      if (pollingStarted || disposed || staticBlockedReason) {
-        return
-      }
-
-      pollingStarted = true
-      void check().finally(scheduleNextCheck)
-    },
+    polling,
     async start() {
       const currentStatus = await status()
       if (!currentStatus.updateAvailable) {
@@ -451,11 +454,6 @@ export function createApplicationUpdateManager(
     },
     dispose() {
       disposed = true
-      pollingStarted = false
-      if (pollTimer) {
-        clearTimeout(pollTimer)
-        pollTimer = null
-      }
     }
   }
 }
