@@ -329,17 +329,23 @@ describe('TreeportService with injected command adapters', () => {
     const reviewPanel = path.join(webPanels, 'review')
     await fs.mkdir(reviewPanel, { recursive: true })
     await fs.writeFile(path.join(reviewPanel, 'index.html'), '<h1>Review</h1>')
-    await fs.mkdir(path.join(webPanels, 'code-review'))
+    await fs.writeFile(path.join(reviewPanel, 'icon.svg'), '<svg/>')
+    const codeReviewPanel = path.join(webPanels, 'code-review')
+    await fs.mkdir(codeReviewPanel)
     await fs.writeFile(
-      path.join(webPanels, 'code-review', 'index.html'),
+      path.join(codeReviewPanel, 'index.html'),
       '<h1>Code review</h1>'
     )
+    const outsideIcon = path.join(webPanels, 'outside-icon.svg')
+    await fs.writeFile(outsideIcon, '<svg/>')
+    await fs.symlink(outsideIcon, path.join(codeReviewPanel, 'icon.svg'))
     await fs.mkdir(path.join(webPanels, 'missing-entry'))
     const project = await service.registerProject(main)
     const worktree = project.worktrees[0]!
     expect(await service.listWebPanelDefinitions(worktree.id)).toEqual([
       {
         id: 'project:code-review',
+        icon: null,
         source: { type: 'project' },
         permissions: [],
         permissionsGranted: true,
@@ -348,6 +354,7 @@ describe('TreeportService with injected command adapters', () => {
       },
       {
         id: 'project:review',
+        icon: 'data:image/svg+xml;base64,PHN2Zy8+',
         source: { type: 'project' },
         permissions: [],
         permissionsGranted: true,

@@ -877,6 +877,7 @@ export async function mockApp(
     {
       id: 'project:review',
       title: 'Review',
+      icon: null,
       source: { type: 'project' as const },
       permissions: [],
       permissionsGranted: true,
@@ -887,6 +888,7 @@ export async function mockApp(
           {
             id: 'package:files:web-panel:files',
             title: 'Files',
+            icon: null,
             source: {
               type: 'package' as const,
               packageId: 'local:files',

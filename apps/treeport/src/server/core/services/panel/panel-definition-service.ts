@@ -22,6 +22,7 @@ import type {
 } from '../../web-panel-vite-runtime'
 
 const now = (): string => new Date().toISOString()
+const WEB_PANEL_ICON_MAX_BYTES = 64 * 1024
 
 export interface PanelDefinitionDependencies {
   readonly config: AppConfig
@@ -115,6 +116,7 @@ export class PanelDefinitionService {
         title: words
           ? `${words[0]!.toLocaleUpperCase()}${words.slice(1)}`
           : directory.name,
+        icon: null,
         source: { type: 'project' },
         permissions: [],
         permissionsGranted: true,
@@ -135,7 +137,7 @@ export class PanelDefinitionService {
   ): Promise<Array<WebPanelDefinition & ResolvedWebPanelSource>> {
     const worktree = await this.getWorktree(worktreeId)
     this.packages.syncProjects([await this.getProject(worktree.projectId)])
-    return [
+    const definitions = [
       ...(await this.localWebPanelDefinitions(worktreeId)),
       ...(await this.packages.webPanelDefinitions(worktree.projectId)).map(
         ({
@@ -167,6 +169,37 @@ export class PanelDefinitionService {
         }
       )
     ]
+    return Promise.all(
+      definitions.map(async (definition) => {
+        const realRoot = await fs.realpath(definition.root).catch(() => null)
+        const realIcon = await fs
+          .realpath(path.join(definition.root, 'icon.svg'))
+          .catch(() => null)
+        if (!realRoot || !realIcon) {
+          return definition
+        }
+
+        const relativeIcon = path.relative(realRoot, realIcon)
+        const iconSize = await fs
+          .stat(realIcon)
+          .then((value) => (value.isFile() ? value.size : null))
+          .catch(() => null)
+        if (
+          path.isAbsolute(relativeIcon) ||
+          relativeIcon === '..' ||
+          relativeIcon.startsWith(`..${path.sep}`) ||
+          iconSize === null ||
+          iconSize > WEB_PANEL_ICON_MAX_BYTES
+        ) {
+          return definition
+        }
+
+        return {
+          ...definition,
+          icon: `data:image/svg+xml;base64,${await fs.readFile(realIcon, 'base64')}`
+        }
+      })
+    )
   }
 
   async webPanelPermissionSourceKey(
@@ -336,6 +369,7 @@ export class PanelDefinitionService {
     return {
       id: definition.id,
       title: definition.title,
+      icon: definition.icon,
       source: definition.source,
       permissions: definition.permissions,
       permissionsGranted: definition.permissions.length === 0 ? true : granted,

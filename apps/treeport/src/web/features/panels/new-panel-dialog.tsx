@@ -4,8 +4,7 @@ import {
   Cog6ToothIcon,
   CommandLineIcon,
   GlobeAltIcon,
-  MagnifyingGlassIcon,
-  WindowIcon
+  MagnifyingGlassIcon
 } from '@heroicons/react/16/solid'
 import type {
   TerminalPresetDefinition,
@@ -33,6 +32,7 @@ import {
   terminalPresetCommand,
   terminalPresetProvenance
 } from '../../terminal-preset-definition'
+import { WebPanelIcon } from '../web-panels/web-panel-icon'
 import type { CreateTerminalInput } from '../terminals/terminal-workspace'
 import { describeWebPanelPermissions } from '../web-panels/web-panel-permissions'
 
@@ -397,9 +397,9 @@ export function NewPanelDialog({
                     onCreateWebPanel(definition)
                   }}
                 >
-                  <WindowIcon
-                    className="size-4 shrink-0 fill-zinc-400"
-                    aria-hidden="true"
+                  <WebPanelIcon
+                    icon={definition.icon}
+                    className="fill-zinc-400"
                   />
                   <span className="min-w-0 flex-1 truncate text-left">
                     {definition.title}

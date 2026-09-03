@@ -235,6 +235,7 @@ export interface WebPanelSandbox {
 export interface WebPanelDefinition {
   id: string
   title: string
+  icon: string | null
   source: WebPanelSource
   permissions: WebPanelPermission[]
   permissionsGranted: boolean
