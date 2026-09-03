@@ -39,8 +39,7 @@ function fixture(webDist = '/missing') {
     daemonLifecycle: 'treeport',
     webDevelopment: false
   }
-  // SAFETY: The test fixture provides the asserted contract used here.
-  const service = testAccess<TreeportService>({
+  const serviceMethods = {
     events: new ProductEventBus(),
     listProjects: vi.fn(async () => []),
     listRecentProjects: vi.fn(() => [
@@ -331,6 +330,18 @@ function fixture(webDist = '/missing') {
     removePreview: vi.fn(async () => ({ worktreeId: 'wt_1' })),
     beginRemove: vi.fn(async () => ({ id: 'op_1' })),
     terminateAllTerminals: vi.fn(async () => 2)
+  }
+  // SAFETY: The fixture exposes the same doubles through the temporary façade
+  // and the domain APIs used by the HTTP handlers.
+  const service = testAccess<TreeportService>({
+    ...serviceMethods,
+    projects: serviceMethods,
+    worktrees: serviceMethods,
+    terminals: serviceMethods,
+    terminalPresets: serviceMethods,
+    panels: serviceMethods,
+    treeFiles: serviceMethods,
+    packageManagement: serviceMethods
   })
   const runtimeMetadata: TerminalRuntimeMetadata = {
     terminalId: 'term',

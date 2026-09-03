@@ -191,10 +191,10 @@ function queryInput<T extends z.ZodType>(schema: T) {
   })
 }
 
-function createTreeFilesApi(service: TreeportService) {
+function createTreeFilesApi(treeFiles: TreeportService['treeFiles']) {
   return new Hono()
     .get('/api/panels/:panelId/files', async (context) =>
-      context.json(await service.listTreeFiles(context.req.param('panelId')))
+      context.json(await treeFiles.listTreeFiles(context.req.param('panelId')))
     )
     .post(
       '/api/panels/:panelId/files/read',
@@ -202,7 +202,7 @@ function createTreeFilesApi(service: TreeportService) {
       async (context) => {
         const body = context.req.valid('json')
         return context.json(
-          await service.readTreeFile(context.req.param('panelId'), body.path)
+          await treeFiles.readTreeFile(context.req.param('panelId'), body.path)
         )
       }
     )
@@ -211,7 +211,7 @@ function createTreeFilesApi(service: TreeportService) {
       jsonInput(writeTreeFileSchema),
       async (context) =>
         context.json(
-          await service.writeTreeFile(
+          await treeFiles.writeTreeFile(
             context.req.param('panelId'),
             context.req.valid('json')
           )
@@ -341,7 +341,7 @@ export function createApp({
       jsonInput(updateWebPanelPermissionGrantSchema),
       async (context) => {
         const body = context.req.valid('json')
-        const definition = await service.setWebPanelPermissionGrant(
+        const definition = await service.panels.setWebPanelPermissionGrant(
           context.req.param('worktreeId'),
           context.req.param('definitionId'),
           body.granted,
@@ -455,7 +455,7 @@ export function createApp({
 
   app.route('/', browserApi)
 
-  app.route('/', createTreeFilesApi(service))
+  app.route('/', createTreeFilesApi(service.treeFiles))
 
   const api = new Hono()
     .get('/api/health', (context) =>
@@ -484,7 +484,9 @@ export function createApp({
     })
 
     .get('/api/terminal-presets', async (context) =>
-      context.json({ presets: await service.listTerminalPresets() })
+      context.json({
+        presets: await service.terminalPresets.listTerminalPresets()
+      })
     )
 
     .get(
@@ -492,7 +494,7 @@ export function createApp({
       queryInput(treeContextFieldsQuerySchema),
       async (context) =>
         context.json(
-          await service.listTreeContextFields(
+          await service.projects.listTreeContextFields(
             context.req.valid('query').projectId
           )
         )
@@ -503,7 +505,7 @@ export function createApp({
       queryInput(terminalPresetDefinitionsQuerySchema),
       async (context) =>
         context.json(
-          await service.listTerminalPresetDefinitions(
+          await service.terminalPresets.listTerminalPresetDefinitions(
             context.req.valid('query')
           )
         )
@@ -515,7 +517,7 @@ export function createApp({
       async (context) => {
         const body = context.req.valid('json')
         return context.json(
-          { preset: await service.createTerminalPreset(body) },
+          { preset: await service.terminalPresets.createTerminalPreset(body) },
           201
         )
       }
@@ -528,7 +530,7 @@ export function createApp({
         const body = context.req.valid('json')
         const { expectedUpdatedAt, ...presetInput } = body
         return context.json({
-          preset: await service.updateTerminalPreset(
+          preset: await service.terminalPresets.updateTerminalPreset(
             context.req.param('presetId'),
             presetInput,
             expectedUpdatedAt
@@ -542,7 +544,7 @@ export function createApp({
       jsonInput(deleteTerminalPresetSchema),
       async (context) => {
         const body = context.req.valid('json')
-        await service.deleteTerminalPreset(
+        await service.terminalPresets.deleteTerminalPreset(
           context.req.param('presetId'),
           body.expectedUpdatedAt
         )
@@ -551,7 +553,7 @@ export function createApp({
     )
 
     .get('/api/packages', async (context) =>
-      context.json(await service.listPackages())
+      context.json(await service.packageManagement.listPackages())
     )
 
     .get(
@@ -559,7 +561,7 @@ export function createApp({
       queryInput(packageProjectQuerySchema),
       async (context) =>
         context.json({
-          project: await service.resolveRegisteredProject(
+          project: await service.projects.resolveRegisteredProject(
             context.req.valid('query').path
           )
         })
@@ -571,7 +573,10 @@ export function createApp({
       async (context) => {
         const body = context.req.valid('json')
         return context.json({
-          result: await service.installPackage(body.source, body.projectId)
+          result: await service.packageManagement.installPackage(
+            body.source,
+            body.projectId
+          )
         })
       }
     )
@@ -582,7 +587,10 @@ export function createApp({
       async (context) => {
         const body = context.req.valid('json')
         return context.json({
-          result: await service.removePackage(body.source, body.projectId)
+          result: await service.packageManagement.removePackage(
+            body.source,
+            body.projectId
+          )
         })
       }
     )
@@ -593,7 +601,7 @@ export function createApp({
       async (context) => {
         const body = context.req.valid('json')
         return context.json({
-          results: await service.updatePackages(body.source)
+          results: await service.packageManagement.updatePackages(body.source)
         })
       }
     )
@@ -603,16 +611,18 @@ export function createApp({
       jsonInput(packageReloadSchema),
       async (context) => {
         const body = context.req.valid('json')
-        return context.json(await service.reloadPackages(body.projectId))
+        return context.json(
+          await service.packageManagement.reloadPackages(body.projectId)
+        )
       }
     )
 
     .get('/api/projects', async (context) =>
-      context.json({ projects: await service.listProjects() })
+      context.json({ projects: await service.projects.listProjects() })
     )
 
     .get('/api/projects/recent', async (context) =>
-      context.json({ projects: await service.listRecentProjects() })
+      context.json({ projects: await service.projects.listRecentProjects() })
     )
 
     .get(
@@ -621,7 +631,7 @@ export function createApp({
       async (context) => {
         const query = context.req.valid('query')
         return context.json(
-          await service.browseDirectory(query.input, query.hidden)
+          await service.projects.browseDirectory(query.input, query.hidden)
         )
       }
     )
@@ -631,9 +641,12 @@ export function createApp({
       jsonInput(registerProjectSchema),
       async (context) => {
         const body = context.req.valid('json')
-        const registered = await service.registerProject(body.path, body.name)
+        const registered = await service.projects.registerProject(
+          body.path,
+          body.name
+        )
         return context.json(
-          { project: await service.getProjectSnapshot(registered.id) },
+          { project: await service.projects.getProjectSnapshot(registered.id) },
           201
         )
       }
@@ -641,23 +654,27 @@ export function createApp({
 
     .post('/api/projects/:projectId/open', async (context) =>
       context.json({
-        project: await service.openProject(context.req.param('projectId'))
+        project: await service.projects.openProject(
+          context.req.param('projectId')
+        )
       })
     )
 
     .post('/api/projects/:projectId/close', async (context) => {
-      await service.closeProject(context.req.param('projectId'))
+      await service.projects.closeProject(context.req.param('projectId'))
       return context.json({ ok: true })
     })
 
     .delete('/api/projects/:projectId/recent', async (context) => {
-      await service.dismissRecentProject(context.req.param('projectId'))
+      await service.projects.dismissRecentProject(
+        context.req.param('projectId')
+      )
       return context.json({ ok: true })
     })
 
     .get('/api/projects/:projectId', async (context) =>
       context.json({
-        project: await service.getProjectSnapshot(
+        project: await service.projects.getProjectSnapshot(
           context.req.param('projectId')
         )
       })
@@ -669,30 +686,32 @@ export function createApp({
       async (context) => {
         const body = context.req.valid('json')
         const projectId = context.req.param('projectId')
-        await service.updateProjectColor(projectId, body.color)
+        await service.projects.updateProjectColor(projectId, body.color)
         return context.json({
-          project: await service.getProjectSnapshot(projectId)
+          project: await service.projects.getProjectSnapshot(projectId)
         })
       }
     )
 
     .post('/api/projects/:projectId/refresh', async (context) => {
       const projectId = context.req.param('projectId')
-      await service.refreshProject(projectId)
+      await service.projects.refreshProject(projectId)
       return context.json({
-        project: await service.getProjectSnapshot(projectId)
+        project: await service.projects.getProjectSnapshot(projectId)
       })
     })
 
     .delete('/api/projects/:projectId', async (context) => {
-      await service.deleteProject(context.req.param('projectId'))
+      await service.projects.deleteProject(context.req.param('projectId'))
       return context.json({ ok: true })
     })
 
     .get('/api/projects/:projectId/worktrees', async (context) =>
       context.json({
         worktrees: (
-          await service.getProjectSnapshot(context.req.param('projectId'))
+          await service.projects.getProjectSnapshot(
+            context.req.param('projectId')
+          )
         ).worktrees
       })
     )
@@ -726,7 +745,7 @@ export function createApp({
 
         return context.json(
           {
-            operation: await service.beginCreateWorktree(
+            operation: await service.worktrees.beginCreateWorktree(
               context.req.param('projectId'),
               body.name,
               body.base,
@@ -742,15 +761,15 @@ export function createApp({
 
     .get('/api/worktrees/:worktreeId', async (context) => {
       const worktreeId = context.req.param('worktreeId')
-      await service.refreshPr(worktreeId, false)
+      await service.worktrees.refreshPr(worktreeId, false)
       return context.json({
-        worktree: await service.getWorktreeSnapshot(worktreeId)
+        worktree: await service.projects.getWorktreeSnapshot(worktreeId)
       })
     })
 
     .get('/api/worktrees/:worktreeId/context', async (context) =>
       context.json({
-        context: await service.getWorktreeContext(
+        context: await service.projects.getWorktreeContext(
           context.req.param('worktreeId')
         )
       })
@@ -760,7 +779,7 @@ export function createApp({
       '/api/worktrees/:worktreeId/open',
       jsonInput(requestWorkspaceOpenSchema),
       async (context) => {
-        await service.requestWorkspaceOpen(
+        await service.projects.requestWorkspaceOpen(
           context.req.param('worktreeId'),
           context.req.valid('json').sourceTerminalId
         )
@@ -774,7 +793,7 @@ export function createApp({
       async (context) => {
         const body = context.req.valid('json')
         return context.json(
-          await service.openBrowserPanel(
+          await service.panels.openBrowserPanel(
             context.req.param('worktreeId'),
             body.url,
             body.sourceTerminalId ?? null,
@@ -790,7 +809,7 @@ export function createApp({
       jsonInput(openBrowserPanelFromTerminalSchema),
       async (context) =>
         context.json(
-          await service.openBrowserPanelFromTerminal(
+          await service.panels.openBrowserPanelFromTerminal(
             context.req.param('terminalId'),
             context.req.valid('json').url
           ),
@@ -800,7 +819,7 @@ export function createApp({
 
     .get('/api/worktrees/:worktreeId/web-panel-definitions', async (context) =>
       context.json({
-        definitions: await service.listWebPanelDefinitions(
+        definitions: await service.panels.listWebPanelDefinitions(
           context.req.param('worktreeId')
         )
       })
@@ -813,7 +832,7 @@ export function createApp({
         const body = context.req.valid('json')
         return context.json(
           {
-            panel: await service.createWebPanel(
+            panel: await service.panels.createWebPanel(
               context.req.param('worktreeId'),
               body.definitionId,
               {
@@ -833,7 +852,7 @@ export function createApp({
       async (context) => {
         const body = context.req.valid('json')
         return context.json(
-          await service.openWebPanel(
+          await service.panels.openWebPanel(
             context.req.param('worktreeId'),
             body.definitionId,
             {
@@ -865,32 +884,41 @@ export function createApp({
           )
         }
 
-        await service.deletePanel(panelId, query.discardStoredData === 'true')
+        await service.panels.deletePanel(
+          panelId,
+          query.discardStoredData === 'true'
+        )
         return context.json({ ok: true })
       }
     )
 
     .get('/api/panels/:panelId/context', async (context) =>
       context.json({
-        context: await service.getWebPanelContext(context.req.param('panelId'))
+        context: await service.panels.getWebPanelContext(
+          context.req.param('panelId')
+        )
       })
     )
 
     .get('/api/panels/:panelId/diff', async (context) =>
       context.json({
-        diff: await service.getWebPanelDiff(context.req.param('panelId'))
+        diff: await service.panels.getWebPanelDiff(context.req.param('panelId'))
       })
     )
 
     .get('/api/panels/:panelId/network/listeners', async (context) =>
       context.json({
-        discovery: await service.getPanelListeners(context.req.param('panelId'))
+        discovery: await service.panels.getPanelListeners(
+          context.req.param('panelId')
+        )
       })
     )
 
     .get('/api/panels/:panelId/storage', async (context) =>
       context.json({
-        hasData: await service.hasWebPanelStorage(context.req.param('panelId'))
+        hasData: await service.panels.hasWebPanelStorage(
+          context.req.param('panelId')
+        )
       })
     )
 
@@ -900,7 +928,7 @@ export function createApp({
       async (context) => {
         const body = context.req.valid('json')
         return context.json({
-          value: await service.getWebPanelStorage(
+          value: await service.panels.getWebPanelStorage(
             context.req.param('panelId'),
             body.key
           )
@@ -913,7 +941,7 @@ export function createApp({
       jsonInput(setWebPanelStorageSchema),
       async (context) => {
         const body = context.req.valid('json')
-        await service.setWebPanelStorage(
+        await service.panels.setWebPanelStorage(
           context.req.param('panelId'),
           body.key,
           body.value
@@ -927,7 +955,7 @@ export function createApp({
       jsonInput(deleteWebPanelStorageSchema),
       async (context) => {
         const body = context.req.valid('json')
-        await service.deleteWebPanelStorage(
+        await service.panels.deleteWebPanelStorage(
           context.req.param('panelId'),
           body.key
         )
@@ -943,7 +971,7 @@ export function createApp({
       const requestedPath = decodeURI(
         pathname.slice(pathname.indexOf(assetMarker) + assetMarker.length)
       )
-      const resolution = await service.resolveWebPanelAsset(
+      const resolution = await service.panels.resolveWebPanelAsset(
         context.req.param('panelId'),
         requestedPath
       )
@@ -1049,7 +1077,7 @@ export function createApp({
           options.shellCommand = body.shellCommand
         }
 
-        const terminal = await service.createTerminal(
+        const terminal = await service.terminals.createTerminal(
           context.req.param('worktreeId'),
           body.name,
           body.argv,
@@ -1061,7 +1089,9 @@ export function createApp({
 
     .get('/api/worktrees/:worktreeId/remove-preview', async (context) =>
       context.json({
-        preview: await service.removePreview(context.req.param('worktreeId'))
+        preview: await service.worktrees.removePreview(
+          context.req.param('worktreeId')
+        )
       })
     )
 
@@ -1072,7 +1102,7 @@ export function createApp({
         const body = context.req.valid('json')
         return context.json(
           {
-            operation: await service.beginRemove(
+            operation: await service.worktrees.beginRemove(
               context.req.param('worktreeId'),
               body
             )
@@ -1084,7 +1114,10 @@ export function createApp({
 
     .post('/api/worktrees/:worktreeId/pr/refresh', async (context) =>
       context.json({
-        pr: await service.refreshPr(context.req.param('worktreeId'), true)
+        pr: await service.worktrees.refreshPr(
+          context.req.param('worktreeId'),
+          true
+        )
       })
     )
 
@@ -1093,7 +1126,7 @@ export function createApp({
       queryInput(terminalCaptureQuerySchema),
       async (context) => {
         const query = context.req.valid('query')
-        const terminal = await service.getTerminal(
+        const terminal = await service.terminals.getTerminal(
           context.req.param('terminalId')
         )
         const content = await terminalHost.captureTerminal(
@@ -1119,11 +1152,11 @@ export function createApp({
     )
 
     .get('/api/terminals/:terminalId', async (context) => {
-      const terminal = await service.refreshTerminalStatus(
+      const terminal = await service.terminals.refreshTerminalStatus(
         context.req.param('terminalId')
       )
       await metadataReady
-      const worktree = await service.getWorktree(terminal.worktreeId)
+      const worktree = await service.projects.getWorktree(terminal.worktreeId)
       await metadata.trackTerminal(terminal, worktree)
 
       return context.json({ terminal, metadata: metadata.get(terminal.id) })
@@ -1136,14 +1169,14 @@ export function createApp({
         const terminalId = context.req.param('terminalId')
         const body = context.req.valid('json')
         await metadataReady
-        await service.getTerminal(terminalId)
+        await service.terminals.getTerminal(terminalId)
         await metadata.acknowledgeBell(terminalId, body.sequence)
         return context.json({ ok: true })
       }
     )
 
     .post('/api/terminals/:terminalId/files', async (context) => {
-      await service.getTerminal(context.req.param('terminalId'))
+      await service.terminals.getTerminal(context.req.param('terminalId'))
 
       const contentLength = context.req.header('content-length')
       if (contentLength) {
@@ -1241,7 +1274,7 @@ export function createApp({
       async (context) => {
         const body = context.req.valid('json')
         return context.json({
-          terminal: await service.renameTerminal(
+          terminal: await service.terminals.renameTerminal(
             context.req.param('terminalId'),
             body.name
           )
@@ -1250,7 +1283,7 @@ export function createApp({
     )
 
     .delete('/api/terminals/:terminalId', async (context) => {
-      await service.deleteTerminal(context.req.param('terminalId'))
+      await service.terminals.deleteTerminal(context.req.param('terminalId'))
       return context.json({ ok: true })
     })
 
@@ -1281,19 +1314,21 @@ export function createApp({
         }
 
         return context.json({
-          operations: await service.listActiveOperations(filters)
+          operations: await service.worktrees.listActiveOperations(filters)
         })
       }
     )
 
     .get('/api/operations/:operationId', async (context) =>
       context.json({
-        operation: await service.getOperation(context.req.param('operationId'))
+        operation: await service.projects.getOperation(
+          context.req.param('operationId')
+        )
       })
     )
 
     .post('/api/admin/terminate-terminals', async (context) => {
-      const terminated = await service.terminateAllTerminals()
+      const terminated = await service.terminals.terminateAllTerminals()
       await terminalHost.shutdownIfEmpty()
       return context.json({ terminated })
     })
