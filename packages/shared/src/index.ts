@@ -17,6 +17,9 @@ export type {
   JsonValue,
   TreeFile,
   TreeFileListing,
+  TreeFileSearchFile,
+  TreeFileSearchMatch,
+  TreeFileSearchResult,
   TreeFileWrite,
   TreeFileWriteResult,
   WebPanel,
@@ -49,6 +52,9 @@ export const TREE_CONTEXT_VALUE_MAX_LENGTH = 16 * 1024
 export const TREE_CONTEXT_VALUES_MAX_LENGTH = 64 * 1024
 export const TREE_FILE_MAX_BYTES = 2 * 1024 * 1024
 export const TREE_FILE_LIST_MAX_ENTRIES = 50_000
+export const TREE_FILE_SEARCH_QUERY_MAX_LENGTH = 256
+export const TREE_FILE_SEARCH_MAX_MATCHES = 500
+export const TREE_FILE_SEARCH_PREVIEW_MAX_LENGTH = 300
 
 export function formatCommandLine(argv: readonly string[]): string {
   return argv
@@ -863,6 +869,16 @@ export const treeFilePathSchema = z
 
 export const readTreeFileSchema = z.strictObject({
   path: treeFilePathSchema
+})
+
+export const searchTreeFilesSchema = z.strictObject({
+  query: z
+    .string()
+    .min(1)
+    .max(TREE_FILE_SEARCH_QUERY_MAX_LENGTH)
+    .refine((value) => !/[\0\r\n]/.test(value), {
+      message: 'Search query must be one line and cannot contain NUL'
+    })
 })
 
 export const writeTreeFileSchema = z.strictObject({

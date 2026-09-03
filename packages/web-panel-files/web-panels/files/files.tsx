@@ -1,7 +1,11 @@
 import { Editor, type EditorOptions } from '@pierre/diffs/edit'
 import { EditProvider, File } from '@pierre/diffs/react'
 import { FileTree, useFileTree } from '@pierre/trees/react'
-import { treeport } from '@treeport/panel-sdk'
+import {
+  treeport,
+  type TreeFileSearchMatch,
+  type TreeFileSearchResult
+} from '@treeport/panel-sdk'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import './files.css'
@@ -16,6 +20,73 @@ interface DocumentState {
   saving: boolean
   conflict: boolean
   error: string | null
+}
+
+interface SearchNavigation {
+  path: string
+  lineNumber: number
+  column: number
+  length: number
+}
+
+const SEARCH_QUERY_MAX_LENGTH = 256
+const SEARCH_MAX_MATCHES = 500
+const SEARCH_PREVIEW_MAX_LENGTH = 300
+
+function searchContent(content: string, query: string) {
+  const expression = new RegExp(
+    query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
+    'iu'
+  )
+  const matches: TreeFileSearchMatch[] = []
+  const lines = content.split(/\r\n|\r|\n/)
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index]!
+    const match = expression.exec(line)
+    if (!match) {
+      continue
+    }
+
+    const length = match[0].length
+    let previewStart = Math.max(
+      0,
+      match.index - Math.floor((SEARCH_PREVIEW_MAX_LENGTH - length) / 2)
+    )
+    previewStart = Math.min(
+      previewStart,
+      Math.max(0, line.length - SEARCH_PREVIEW_MAX_LENGTH)
+    )
+    matches.push({
+      lineNumber: index + 1,
+      column: match.index,
+      length,
+      preview: line.slice(
+        previewStart,
+        previewStart + SEARCH_PREVIEW_MAX_LENGTH
+      ),
+      previewStart,
+      lineLength: line.length
+    })
+    if (matches.length > SEARCH_MAX_MATCHES) {
+      break
+    }
+  }
+
+  return matches
+}
+
+function focusSearchMatch(editor: Editor<undefined>, target: SearchNavigation) {
+  editor.focus({ lineNumber: target.lineNumber, character: target.column })
+  editor.setSelections([
+    {
+      start: { line: target.lineNumber - 1, character: target.column },
+      end: {
+        line: target.lineNumber - 1,
+        character: target.column + target.length
+      },
+      direction: 'forward'
+    }
+  ])
 }
 
 // ponytail: Unfocused panels stay stale, and focused panels can lag two seconds.
@@ -81,6 +152,18 @@ function FilesExplorer({
 }
 
 function FilesApp() {
+  const [sidebarMode, setSidebarMode] = useState<'files' | 'search'>('files')
+  const [searchInput, setSearchInput] = useState('')
+  const [submittedQuery, setSubmittedQuery] = useState('')
+  const [searchResult, setSearchResult] = useState<TreeFileSearchResult | null>(
+    null
+  )
+  const [searchLoading, setSearchLoading] = useState(false)
+  const [searchError, setSearchError] = useState<string | null>(null)
+  const searchPending = useRef(false)
+  const searchInputRef = useRef<HTMLInputElement>(null)
+  const filesControlRef = useRef<HTMLButtonElement>(null)
+  const pendingNavigationRef = useRef<SearchNavigation | null>(null)
   const [paths, setPaths] = useState<string[] | null>(null)
   const pathsRef = useRef(paths)
   pathsRef.current = paths
@@ -212,6 +295,108 @@ function FilesApp() {
     [setDocument]
   )
 
+  const openSearch = useCallback(() => {
+    setSidebarMode('search')
+    requestAnimationFrame(() => {
+      searchInputRef.current?.focus()
+      searchInputRef.current?.select()
+    })
+  }, [])
+
+  const openFiles = useCallback(() => {
+    setSidebarMode('files')
+    requestAnimationFrame(() => filesControlRef.current?.focus())
+  }, [])
+
+  const runSearch = useCallback(
+    (event: React.FormEvent) => {
+      event.preventDefault()
+      if (searchPending.current || searchInput.length === 0) {
+        return
+      }
+
+      const query = searchInput
+      searchPending.current = true
+      setSubmittedQuery(query)
+      setSearchResult(null)
+      setSearchError(null)
+      setSearchLoading(true)
+      void treeport.files
+        .search(query)
+        .then(
+          (result) => {
+            const dirtyDocuments = [...documentsRef.current.values()].filter(
+              (document) => document.currentContent !== document.savedContent
+            )
+            const dirtyPaths = new Set(
+              dirtyDocuments.map((document) => document.path)
+            )
+            const mergedFiles = result.files.filter(
+              (file) => !dirtyPaths.has(file.path)
+            )
+            for (const document of dirtyDocuments) {
+              const matches = searchContent(document.currentContent, query)
+              if (matches.length > 0) {
+                mergedFiles.push({ path: document.path, matches })
+              }
+            }
+            mergedFiles.sort((left, right) =>
+              left.path < right.path ? -1 : left.path > right.path ? 1 : 0
+            )
+
+            const files: TreeFileSearchResult['files'] = []
+            let matchCount = 0
+            let truncated = result.truncated
+            for (const file of mergedFiles) {
+              const remaining = SEARCH_MAX_MATCHES - matchCount
+              if (file.matches.length > remaining) {
+                truncated = true
+              }
+
+              if (remaining <= 0) {
+                continue
+              }
+
+              const matches = file.matches.slice(0, remaining)
+              files.push({ path: file.path, matches })
+              matchCount += matches.length
+            }
+
+            setSearchResult({ files, truncated })
+          },
+          (reason) => {
+            setSearchError(
+              reason instanceof Error ? reason.message : String(reason)
+            )
+          }
+        )
+        .finally(() => {
+          searchPending.current = false
+          setSearchLoading(false)
+        })
+    },
+    [searchInput]
+  )
+
+  const openSearchResult = useCallback(
+    (path: string, match: TreeFileSearchMatch) => {
+      const target = {
+        path,
+        lineNumber: match.lineNumber,
+        column: match.column,
+        length: match.length
+      }
+      pendingNavigationRef.current = target
+      openFile(path)
+      const editor = editorRef.current
+      if (editor?.getFile()?.name === path) {
+        focusSearchMatch(editor, target)
+        pendingNavigationRef.current = null
+      }
+    },
+    [openFile]
+  )
+
   const createEditor = useCallback(
     (options: EditorOptions<undefined>) =>
       new Editor<undefined>({
@@ -223,6 +408,11 @@ function FilesApp() {
         onAttach: (editor, file) => {
           editorRef.current = editor
           options.onAttach?.(editor, file)
+          const target = pendingNavigationRef.current
+          if (target && target.path === editor.getFile()?.name) {
+            focusSearchMatch(editor, target)
+            pendingNavigationRef.current = null
+          }
         },
         onChange: (file, annotations, event) => {
           options.onChange?.(file, annotations, event)
@@ -444,6 +634,13 @@ function FilesApp() {
     const onKeyDown = (event: KeyboardEvent) => {
       const key = event.key.toLowerCase()
       const command = event.metaKey || event.ctrlKey
+      if (key === 'f' && command && event.shiftKey && !event.altKey) {
+        event.preventDefault()
+        event.stopPropagation()
+        openSearch()
+        return
+      }
+
       const editorBody = editorBodyRef.current
       const editing = editorBody
         ? event.composedPath().includes(editorBody)
@@ -473,7 +670,7 @@ function FilesApp() {
     }
     window.addEventListener('keydown', onKeyDown, true)
     return () => window.removeEventListener('keydown', onKeyDown, true)
-  }, [saveSelected])
+  }, [openSearch, saveSelected])
 
   useEffect(() => {
     const workbench = workbenchRef.current
@@ -616,6 +813,11 @@ function FilesApp() {
     selectedDocument &&
     selectedDocument.currentContent !== selectedDocument.savedContent
   )
+  const searchMatchCount =
+    searchResult?.files.reduce(
+      (count, file) => count + file.matches.length,
+      0
+    ) ?? 0
   return (
     <div className="workbench" ref={workbenchRef}>
       <main className="editor" aria-label="Source editor">
@@ -685,27 +887,153 @@ function FilesApp() {
         tabIndex={0}
       />
       <aside className="explorer" aria-label="Files" ref={sidebarRef}>
-        {listLoading ? (
-          <p className="panel-message" role="status">
-            Reading files…
-          </p>
-        ) : listError ? (
-          <div className="panel-message error" role="alert">
-            <p>{listError}</p>
-            <button type="button" onClick={loadFiles}>
-              Retry
+        <nav className="sidebar-modes" aria-label="Files panel views">
+          <button
+            type="button"
+            ref={filesControlRef}
+            aria-pressed={sidebarMode === 'files'}
+            onClick={() => setSidebarMode('files')}
+          >
+            Files
+          </button>
+          <button
+            type="button"
+            aria-pressed={sidebarMode === 'search'}
+            onClick={openSearch}
+          >
+            Search
+          </button>
+        </nav>
+        <div className="sidebar-content" hidden={sidebarMode !== 'files'}>
+          {listLoading ? (
+            <p className="panel-message" role="status">
+              Reading files…
+            </p>
+          ) : listError ? (
+            <div className="panel-message error" role="alert">
+              <p>{listError}</p>
+              <button type="button" onClick={loadFiles}>
+                Retry
+              </button>
+            </div>
+          ) : paths?.length ? (
+            <FilesExplorer
+              paths={paths}
+              dirtyPaths={dirtyPaths}
+              onSelect={openFile}
+            />
+          ) : (
+            <p className="panel-message">This tree has no editable files.</p>
+          )}
+        </div>
+        <section
+          className="search-panel"
+          aria-label="Search results"
+          hidden={sidebarMode !== 'search'}
+        >
+          <form
+            className="search-form"
+            role="search"
+            aria-label="Search file contents"
+            onSubmit={runSearch}
+          >
+            <input
+              ref={searchInputRef}
+              type="search"
+              aria-label="Search file contents"
+              value={searchInput}
+              maxLength={SEARCH_QUERY_MAX_LENGTH}
+              required
+              onChange={(event) => setSearchInput(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Escape') {
+                  event.preventDefault()
+                  openFiles()
+                }
+              }}
+            />
+            <button type="submit" disabled={searchLoading}>
+              Search
             </button>
+          </form>
+          <div className="search-results">
+            {searchLoading ? (
+              <p className="panel-message" role="status">
+                Searching for “{submittedQuery}”…
+              </p>
+            ) : searchError ? (
+              <p className="panel-message error" role="alert">
+                {searchError}
+              </p>
+            ) : searchResult ? (
+              <>
+                <p className="search-summary" role="status">
+                  {searchMatchCount === 0
+                    ? `No results for “${submittedQuery}”.`
+                    : `${searchMatchCount} ${searchMatchCount === 1 ? 'result' : 'results'} in ${searchResult.files.length} ${searchResult.files.length === 1 ? 'file' : 'files'} for “${submittedQuery}”.`}
+                </p>
+                {searchResult.files.length > 0 ? (
+                  <ul className="search-groups" aria-label="Search matches">
+                    {searchResult.files.map((file) => (
+                      <li key={file.path} className="search-group">
+                        <h2 title={file.path}>{file.path}</h2>
+                        <ul>
+                          {file.matches.map((match) => {
+                            const matchStart = match.column - match.previewStart
+                            return (
+                              <li key={`${match.lineNumber}:${match.column}`}>
+                                <button
+                                  type="button"
+                                  aria-label={`${file.path}, line ${match.lineNumber}`}
+                                  onClick={() =>
+                                    openSearchResult(file.path, match)
+                                  }
+                                >
+                                  <span className="search-line-number">
+                                    {match.lineNumber}
+                                  </span>
+                                  <span className="search-preview">
+                                    {match.previewStart > 0 ? (
+                                      <span aria-hidden="true">…</span>
+                                    ) : null}
+                                    {match.preview.slice(0, matchStart)}
+                                    <mark>
+                                      {match.preview.slice(
+                                        matchStart,
+                                        matchStart + match.length
+                                      )}
+                                    </mark>
+                                    {match.preview.slice(
+                                      matchStart + match.length
+                                    )}
+                                    {match.previewStart + match.preview.length <
+                                    match.lineLength ? (
+                                      <span aria-hidden="true">…</span>
+                                    ) : null}
+                                  </span>
+                                </button>
+                              </li>
+                            )
+                          })}
+                        </ul>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+                {searchResult.truncated ? (
+                  <p className="search-truncated" role="status">
+                    Results are incomplete. Refine the search query.
+                  </p>
+                ) : null}
+              </>
+            ) : (
+              <p className="panel-message">
+                Search file contents in this tree.
+              </p>
+            )}
           </div>
-        ) : paths?.length ? (
-          <FilesExplorer
-            paths={paths}
-            dirtyPaths={dirtyPaths}
-            onSelect={openFile}
-          />
-        ) : (
-          <p className="panel-message">This tree has no editable files.</p>
-        )}
-        {truncated ? (
+        </section>
+        {sidebarMode === 'files' && truncated ? (
           <p className="listing-note" role="status">
             Showing the first 50,000 files.
           </p>

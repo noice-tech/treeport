@@ -5,12 +5,16 @@ import path from 'node:path'
 import {
   TREE_FILE_LIST_MAX_ENTRIES,
   TREE_FILE_MAX_BYTES,
+  TREE_FILE_SEARCH_MAX_MATCHES,
+  TREE_FILE_SEARCH_PREVIEW_MAX_LENGTH,
   treeFilePathSchema
 } from '@treeport/shared'
 import type {
   ProjectRecord,
   TreeFile,
   TreeFileListing,
+  TreeFileSearchFile,
+  TreeFileSearchResult,
   TreeFileWrite,
   TreeFileWriteResult,
   WorktreeRecord
@@ -33,6 +37,13 @@ export class TreeFileService {
 
   async listTreeFiles(panelId: string): Promise<TreeFileListing> {
     const { project, worktree } = await this.dependencies.authorize(panelId)
+    return this.listTreeFilesForTree(project, worktree)
+  }
+
+  private async listTreeFilesForTree(
+    project: ProjectRecord,
+    worktree: WorktreeRecord
+  ): Promise<TreeFileListing> {
     const root = await fs.realpath(worktree.path)
     const paths: string[] = []
     if (project.kind === 'repository') {
@@ -102,36 +113,106 @@ export class TreeFileService {
     requestedPath: string
   ): Promise<TreeFile> {
     const { worktree } = await this.dependencies.authorize(panelId)
-    const resolved = await this.resolveTreeFile(worktree.path, requestedPath)
-    const handle = await fs
-      .open(
-        resolved.canonicalPath,
-        fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW
+    const root = await fs.realpath(worktree.path)
+    const file = await this.readTreeFileFromRoot(root, requestedPath)
+    return {
+      path: file.path,
+      content: file.content,
+      revision: crypto.createHash('sha256').update(file.bytes).digest('hex')
+    }
+  }
+
+  async searchTreeFiles(
+    panelId: string,
+    query: string
+  ): Promise<TreeFileSearchResult> {
+    const { project, worktree } = await this.dependencies.authorize(panelId)
+    const listing = await this.listTreeFilesForTree(project, worktree)
+    const root = await fs.realpath(worktree.path)
+    const expression = new RegExp(
+      query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
+      'iu'
+    )
+    const files: TreeFileSearchFile[] = []
+    let matchCount = 0
+    let hasExtraMatch = false
+
+    for (let start = 0; start < listing.paths.length; start += 8) {
+      const batchPaths = listing.paths.slice(start, start + 8)
+      const reads = await Promise.allSettled(
+        batchPaths.map((filePath) => this.readTreeFileFromRoot(root, filePath))
       )
-      .catch((error) => {
-        if (
-          error instanceof Error &&
-          'code' in error &&
-          error.code === 'ENOENT'
-        ) {
-          throw new DomainError(
-            'TREE_FILE_NOT_FOUND',
-            'The selected file does not exist',
-            404
-          )
+      for (let index = 0; index < reads.length; index += 1) {
+        const read = reads[index]!
+        if (read.status === 'rejected') {
+          if (
+            read.reason instanceof DomainError &&
+            [
+              'TREE_FILE_NOT_FOUND',
+              'TREE_FILE_UNSUPPORTED',
+              'TREE_FILE_TOO_LARGE',
+              'INVALID_TREE_FILE_PATH'
+            ].includes(read.reason.code)
+          ) {
+            continue
+          }
+
+          throw read.reason
         }
 
-        throw error
-      })
-    try {
-      const { bytes, content } = await this.readTreeFileHandle(handle)
-      return {
-        path: resolved.path,
-        content,
-        revision: crypto.createHash('sha256').update(bytes).digest('hex')
+        const matches: TreeFileSearchFile['matches'] = []
+        const lines = read.value.content.split(/\r\n|\r|\n/)
+        for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+          const line = lines[lineIndex]!
+          const match = expression.exec(line)
+          if (!match) {
+            continue
+          }
+
+          if (matchCount === TREE_FILE_SEARCH_MAX_MATCHES) {
+            hasExtraMatch = true
+            break
+          }
+
+          const length = match[0].length
+          let previewStart = Math.max(
+            0,
+            match.index -
+              Math.floor((TREE_FILE_SEARCH_PREVIEW_MAX_LENGTH - length) / 2)
+          )
+          previewStart = Math.min(
+            previewStart,
+            Math.max(0, line.length - TREE_FILE_SEARCH_PREVIEW_MAX_LENGTH)
+          )
+          matches.push({
+            lineNumber: lineIndex + 1,
+            column: match.index,
+            length,
+            preview: line.slice(
+              previewStart,
+              previewStart + TREE_FILE_SEARCH_PREVIEW_MAX_LENGTH
+            ),
+            previewStart,
+            lineLength: line.length
+          })
+          matchCount += 1
+        }
+        if (matches.length > 0) {
+          files.push({ path: read.value.path, matches })
+        }
+
+        if (hasExtraMatch) {
+          break
+        }
       }
-    } finally {
-      await handle.close()
+      if (hasExtraMatch) {
+        break
+      }
+    }
+
+    return {
+      files,
+      truncated: listing.truncated || hasExtraMatch
     }
   }
 
@@ -158,7 +239,8 @@ export class TreeFileService {
       )
     }
 
-    const resolved = await this.resolveTreeFile(worktree.path, input.path)
+    const root = await fs.realpath(worktree.path)
+    const resolved = await this.resolveTreeFile(root, input.path)
     return this.dependencies.mutations.enqueue(
       resolved.canonicalPath,
       async () => {
@@ -207,8 +289,50 @@ export class TreeFileService {
     )
   }
 
+  private async readTreeFileFromRoot(root: string, requestedPath: string) {
+    const resolved = await this.resolveTreeFile(root, requestedPath)
+    const handle = await fs
+      .open(
+        resolved.canonicalPath,
+        fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW
+      )
+      .catch((error) => {
+        if (
+          error instanceof Error &&
+          'code' in error &&
+          (error.code === 'ENOENT' || error.code === 'ENOTDIR')
+        ) {
+          throw new DomainError(
+            'TREE_FILE_NOT_FOUND',
+            'The selected file does not exist',
+            404
+          )
+        }
+
+        if (
+          error instanceof Error &&
+          'code' in error &&
+          error.code === 'ELOOP'
+        ) {
+          throw new DomainError(
+            'TREE_FILE_UNSUPPORTED',
+            'Only existing regular files can be edited',
+            415
+          )
+        }
+
+        throw error
+      })
+    try {
+      const { bytes, content } = await this.readTreeFileHandle(handle)
+      return { path: resolved.path, bytes, content }
+    } finally {
+      await handle.close()
+    }
+  }
+
   private async resolveTreeFile(
-    worktreePath: string,
+    root: string,
     requestedPath: string
   ): Promise<{ canonicalPath: string; path: string }> {
     if (!treeFilePathSchema.safeParse(requestedPath).success) {
@@ -219,7 +343,6 @@ export class TreeFileService {
       )
     }
 
-    const root = await fs.realpath(worktreePath)
     const candidate = path.resolve(root, requestedPath)
     if (!isPathWithin(candidate, root)) {
       throw new DomainError(
@@ -256,7 +379,25 @@ export class TreeFileService {
       )
     }
 
-    const stat = await fs.lstat(candidate)
+    const stat = await fs.lstat(candidate).catch((error) => {
+      if (
+        error instanceof Error &&
+        'code' in error &&
+        (error.code === 'ENOENT' || error.code === 'ENOTDIR')
+      ) {
+        return null
+      }
+
+      throw error
+    })
+    if (!stat) {
+      throw new DomainError(
+        'TREE_FILE_NOT_FOUND',
+        'The selected file does not exist',
+        404
+      )
+    }
+
     if (stat.isSymbolicLink() || !stat.isFile()) {
       throw new DomainError(
         'TREE_FILE_UNSUPPORTED',

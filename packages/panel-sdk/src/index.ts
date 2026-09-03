@@ -113,6 +113,34 @@ export interface TreeFile {
   revision: string
 }
 
+/** One matching line in a tree-file search. */
+export interface TreeFileSearchMatch {
+  /** One-based line number in the file. */
+  lineNumber: number
+  /** Zero-based UTF-16 character offset in the complete line. */
+  column: number
+  /** UTF-16 length of the matched text. */
+  length: number
+  /** Bounded text from the matching line. */
+  preview: string
+  /** Zero-based offset of preview[0] in the complete line. */
+  previewStart: number
+  /** UTF-16 length of the complete line. */
+  lineLength: number
+}
+
+/** Matching lines grouped by tree-relative file path. */
+export interface TreeFileSearchFile {
+  path: string
+  matches: TreeFileSearchMatch[]
+}
+
+/** The bounded result of searching editable files in the current tree. */
+export interface TreeFileSearchResult {
+  files: TreeFileSearchFile[]
+  truncated: boolean
+}
+
 /** A revision-checked update to one existing tree file. */
 export interface TreeFileWrite {
   path: string
@@ -169,6 +197,7 @@ export interface TreeportPanelSdk {
   readonly files: {
     list(): Promise<TreeFileListing>
     read(path: string): Promise<TreeFile>
+    search(query: string): Promise<TreeFileSearchResult>
     write(input: TreeFileWrite): Promise<TreeFileWriteResult>
   }
   /** Durable storage deleted when this panel instance is closed. */
@@ -277,6 +306,7 @@ function call<Result>(
     | 'network.listeners'
     | 'files.list'
     | 'files.read'
+    | 'files.search'
     | 'files.write'
     | 'storage.get'
     | 'storage.set'
@@ -285,6 +315,7 @@ function call<Result>(
     key?: string
     value?: JsonValue
     path?: string
+    query?: string
     content?: string
     expectedRevision?: string
   }
@@ -346,6 +377,8 @@ export const treeport: TreeportPanelSdk = Object.freeze({
   files: Object.freeze({
     list: () => call<TreeFileListing>('files.list'),
     read: (path: string) => call<TreeFile>('files.read', { path }),
+    search: (query: string) =>
+      call<TreeFileSearchResult>('files.search', { query }),
     write: (input: TreeFileWrite) =>
       call<TreeFileWriteResult>('files.write', input)
   }),
