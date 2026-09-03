@@ -61,6 +61,30 @@ const createOperationResultSchema: z.ZodType<CreateOperationResult> =
     setupError: z.string().nullable()
   })
 
+const cleanupCommandProgressSchema = z.strictObject({
+  name: z.string(),
+  status: z.enum(['pending', 'running', 'completed', 'failed']),
+  stdout: z.string(),
+  stderr: z.string(),
+  exitCode: z.number().int().nullable(),
+  error: z.string().nullable(),
+  outputTruncated: z.boolean()
+})
+
+const emptyCleanupProgress = () => ({
+  status: 'pending' as const,
+  definitionHash: null,
+  skippedReason: null,
+  commands: []
+})
+
+const removeCleanupProgressSchema = z.strictObject({
+  status: z.enum(['pending', 'running', 'completed', 'failed', 'skipped']),
+  definitionHash: z.string().nullable(),
+  skippedReason: z.string().nullable(),
+  commands: z.array(cleanupCommandProgressSchema)
+})
+
 const removePreviewSchema = z.strictObject({
   worktreeId: z.string(),
   name: z.string(),
@@ -83,6 +107,13 @@ const removePreviewSchema = z.strictObject({
   eligible: z.boolean(),
   reasons: z.array(z.string()),
   warnings: z.array(z.string()),
+  cleanup: z
+    .strictObject({
+      commands: z.array(z.string()),
+      available: z.boolean(),
+      unavailableReason: z.string().nullable()
+    })
+    .default({ commands: [], available: true, unavailableReason: null }),
   terminals: z.array(
     z.strictObject({
       id: z.string(),
@@ -120,11 +151,15 @@ const removeOperationRequestSchema: z.ZodType<RemoveOperationRequest> = z.union(
           .enum([
             'accepted',
             'terminals_stopped',
+            'cleanup_commands_completed',
             'git_removed',
             'cleanup_pending'
           ])
           .default('accepted'),
-        managedWrapperPath: z.string().nullable().default(null)
+        managedWrapperPath: z.string().nullable().default(null),
+        cleanupCommands: removeCleanupProgressSchema.default(
+          emptyCleanupProgress()
+        )
       })
       .transform((request) => request satisfies RemoveOperationRequest),
     z.strictObject({ confirmation: z.boolean() }).transform(
@@ -138,7 +173,8 @@ const removeOperationRequestSchema: z.ZodType<RemoveOperationRequest> = z.union(
         gitWorktreeKey: null,
         repositoryIdentity: null,
         phase: null,
-        managedWrapperPath: null
+        managedWrapperPath: null,
+        cleanupCommands: emptyCleanupProgress()
       })
     )
   ]
@@ -155,7 +191,8 @@ const removeOperationResultSchema: z.ZodType<RemoveOperationResult> =
     cleanup: z.strictObject({
       status: z.enum(['completed', 'preserved']),
       residualPath: z.string().nullable(),
-      warning: z.string().nullable()
+      warning: z.string().nullable(),
+      commands: z.array(cleanupCommandProgressSchema).default([])
     })
   })
 
@@ -166,7 +203,16 @@ const externalRemoveOperationResultSchema: z.ZodType<ExternalRemoveOperationResu
     worktreeId: z.string(),
     path: z.string(),
     head: z.string(),
-    branch: z.string().nullable()
+    branch: z.string().nullable(),
+    cleanup: z
+      .strictObject({
+        status: z.literal('skipped'),
+        skippedReason: z.string()
+      })
+      .default({
+        status: 'skipped',
+        skippedReason: 'Git removed the tree outside Treeport'
+      })
   })
 
 type TreeportOrm = LibSQLDatabase<typeof schema>

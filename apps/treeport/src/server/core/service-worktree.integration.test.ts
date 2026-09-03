@@ -32,6 +32,27 @@ describe('TreeportService with injected command adapters', () => {
 
     const observed = await service.getWorktreeSnapshot(linked.id)
     expect(observed.prunable).toBe(true)
+    await fs.mkdir(path.join(main, '.treeport'), { recursive: true })
+    await fs.writeFile(
+      path.join(main, '.treeport', 'setup.json'),
+      JSON.stringify({
+        version: 1,
+        commands: [],
+        cleanup: [{ name: 'Cleanup resource', argv: ['cleanup-resource'] }]
+      })
+    )
+    await expect(service.removePreview(linked.id)).resolves.toMatchObject({
+      eligible: false,
+      cleanup: {
+        available: false,
+        unavailableReason: expect.stringMatching(/prunable tree/)
+      }
+    })
+
+    await fs.writeFile(
+      path.join(main, '.treeport', 'setup.json'),
+      JSON.stringify({ version: 1, commands: [], cleanup: [] })
+    )
     const preview = await service.removePreview(linked.id)
     expect(preview).toMatchObject({ eligible: true, warnings: [] })
 
@@ -365,6 +386,128 @@ describe('TreeportService with injected command adapters', () => {
         (call) => call.args.includes('branch') && call.args.includes('-D')
       )
     ).toBe(false)
+  })
+
+  it('runs durable cleanup before Git removal and keeps a failed tree retryable', async () => {
+    const { main, runner, service } = await fixture()
+    await fs.mkdir(path.join(main, '.treeport'), { recursive: true })
+    await fs.writeFile(
+      path.join(main, '.treeport', 'setup.json'),
+      JSON.stringify({
+        version: 1,
+        commands: [],
+        cleanup: [
+          { name: 'First cleanup', argv: ['cleanup-first'] },
+          { name: 'Second cleanup', argv: ['cleanup-second'] },
+          { name: 'Last cleanup', argv: ['cleanup-last'] }
+        ]
+      })
+    )
+    runner.lifecycleCommandResults.set('cleanup-first', {
+      stdout: 'first complete\n',
+      stderr: '',
+      exitCode: 0
+    })
+    runner.lifecycleCommandResults.set('cleanup-second', {
+      stdout: 'partial output\n',
+      stderr: 'database refused cleanup\n',
+      exitCode: 17
+    })
+    runner.lifecycleCommandResults.set('cleanup-last', {
+      stdout: 'last complete\n',
+      stderr: '',
+      exitCode: 0
+    })
+
+    const project = await service.registerProject(main)
+    const linked = (
+      await service.createWorktree(project.id, 'cleanup', 'default')
+    ).worktree
+    await service.createTerminal(linked.id, 'Development', ['pnpm', 'dev'])
+    runner.dirtyPaths.add(linked.path)
+    const started: string[] = []
+    runner.lifecycleCommandStarted = (request) => {
+      started.push(request.executable)
+      expect(
+        [...runner.sessions.values()].some(
+          (terminal) => terminal.worktreeId === linked.id
+        )
+      ).toBe(false)
+    }
+
+    const preview = await service.removePreview(linked.id)
+    expect(preview.forceRequired).toBe(true)
+    expect(preview.cleanup).toEqual({
+      commands: ['First cleanup', 'Second cleanup', 'Last cleanup'],
+      available: true,
+      unavailableReason: null
+    })
+    const failed = await waitForOperation(
+      service,
+      (
+        await service.beginRemove(linked.id, {
+          confirmationToken: preview.confirmationToken,
+          confirmDestructive: true
+        })
+      ).id
+    )
+    expect(failed).toMatchObject({
+      status: 'failed',
+      error: expect.stringMatching(/Second cleanup.*Git kept the tree/s),
+      request: {
+        cleanupCommands: {
+          status: 'failed',
+          commands: [
+            {
+              name: 'First cleanup',
+              status: 'completed',
+              stdout: 'first complete\n'
+            },
+            {
+              name: 'Second cleanup',
+              status: 'failed',
+              stderr: 'database refused cleanup\n',
+              exitCode: 17
+            },
+            { name: 'Last cleanup', status: 'pending' }
+          ]
+        }
+      }
+    })
+    expect(started).toEqual(['cleanup-first', 'cleanup-second'])
+    await expect(fs.stat(linked.path)).resolves.toBeTruthy()
+    await expect(service.getWorktree(linked.id)).resolves.toMatchObject({
+      id: linked.id
+    })
+
+    runner.lifecycleCommandResults.set('cleanup-second', {
+      stdout: 'second complete\n',
+      stderr: '',
+      exitCode: 0
+    })
+    const retry = await beginFromPreview(service, linked.id)
+    const completed = await waitForOperation(service, retry.id)
+    expect(completed).toMatchObject({
+      status: 'completed',
+      result: {
+        cleanup: {
+          status: 'completed',
+          commands: [
+            { name: 'First cleanup', status: 'completed' },
+            { name: 'Second cleanup', status: 'completed' },
+            { name: 'Last cleanup', status: 'completed' }
+          ]
+        }
+      }
+    })
+    expect(started).toEqual([
+      'cleanup-first',
+      'cleanup-second',
+      'cleanup-first',
+      'cleanup-second',
+      'cleanup-last'
+    ])
+    await expect(fs.stat(linked.path)).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
   it('does not run native setup when discovering or refreshing an existing worktree', async () => {

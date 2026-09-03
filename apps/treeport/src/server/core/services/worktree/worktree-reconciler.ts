@@ -399,7 +399,11 @@ export class WorktreeReconciler {
                 worktreeId: worktree.id,
                 path: worktree.path,
                 head: worktree.head,
-                branch: worktree.branch
+                branch: worktree.branch,
+                cleanup: {
+                  status: 'skipped',
+                  skippedReason: 'Git removed the tree outside Treeport'
+                }
               })},NULL,${retiredAt},${retiredAt}
             )
           `)

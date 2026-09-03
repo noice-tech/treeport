@@ -389,6 +389,29 @@ export interface DirtyState {
   total: number
 }
 
+export type CleanupCommandStatus =
+  | 'pending'
+  | 'running'
+  | 'completed'
+  | 'failed'
+
+export interface CleanupCommandProgress {
+  name: string
+  status: CleanupCommandStatus
+  stdout: string
+  stderr: string
+  exitCode: number | null
+  error: string | null
+  outputTruncated: boolean
+}
+
+export interface RemoveCleanupProgress {
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'skipped'
+  definitionHash: string | null
+  skippedReason: string | null
+  commands: CleanupCommandProgress[]
+}
+
 export interface RemovePreview {
   worktreeId: string
   name: string
@@ -404,6 +427,11 @@ export interface RemovePreview {
   eligible: boolean
   reasons: string[]
   warnings: string[]
+  cleanup: {
+    commands: string[]
+    available: boolean
+    unavailableReason: string | null
+  }
   terminals: Array<Pick<TerminalRecord, 'id' | 'name' | 'status'>>
   confirmationToken: string
 }
@@ -445,6 +473,7 @@ export interface CreateOperationResult {
 export type RemoveOperationPhase =
   | 'accepted'
   | 'terminals_stopped'
+  | 'cleanup_commands_completed'
   | 'git_removed'
   | 'cleanup_pending'
 
@@ -459,6 +488,7 @@ export interface RemoveOperationRequest {
   repositoryIdentity: string | null
   phase: RemoveOperationPhase | null
   managedWrapperPath: string | null
+  cleanupCommands: RemoveCleanupProgress
 }
 
 export interface RemoveOperationResult {
@@ -472,6 +502,7 @@ export interface RemoveOperationResult {
     status: 'completed' | 'preserved'
     residualPath: string | null
     warning: string | null
+    commands: CleanupCommandProgress[]
   }
 }
 
@@ -482,6 +513,10 @@ export interface ExternalRemoveOperationResult {
   path: string
   head: string
   branch: string | null
+  cleanup: {
+    status: 'skipped'
+    skippedReason: string
+  }
 }
 
 interface OperationRecordBase {

@@ -293,6 +293,7 @@ describe('CLI context and machine output', () => {
   let inspectionRequests = 0
   let observedDaemonLifecycle: 'treeport' | 'service' | 'external' = 'treeport'
   let creationOperation: OperationRecord | null = null
+  let removalOperations: OperationRecord[] = []
   let createdWorktree: WorktreeRecord | null = null
   let createdWebPanels: WebPanel[] = []
   let createdBrowserPanels: BrowserPanel[] = []
@@ -312,6 +313,7 @@ describe('CLI context and machine output', () => {
     inspectionRequests = 0
     observedDaemonLifecycle = 'treeport'
     creationOperation = null
+    removalOperations = []
     createdWorktree = null
     createdWebPanels = []
     createdBrowserPanels = []
@@ -816,6 +818,34 @@ describe('CLI context and machine output', () => {
             }
           })
         )
+        return
+      }
+
+      if (
+        request.method === 'GET' &&
+        request.url === '/api/worktrees/wt_context/remove-preview'
+      ) {
+        const accepted = removalOperations[0]
+        const preview =
+          accepted?.kind === 'remove' ? accepted.request.preview : null
+        response.end(JSON.stringify({ preview }))
+        return
+      }
+
+      if (
+        request.method === 'POST' &&
+        request.url === '/api/worktrees/wt_context/remove'
+      ) {
+        response.statusCode = 202
+        response.end(JSON.stringify({ operation: removalOperations.shift() }))
+        return
+      }
+
+      if (
+        request.method === 'GET' &&
+        request.url === '/api/operations/op_remove'
+      ) {
+        response.end(JSON.stringify({ operation: removalOperations.shift() }))
         return
       }
 
@@ -1329,6 +1359,235 @@ describe('CLI context and machine output', () => {
     expect(result.code).toBe(0)
     expect(result.stdout).toContain('Created tree child (wt_context)')
     expect(result.stdout).toContain('Terminal: Pi (term_context) — running')
+  })
+
+  it('prints cleanup output in order and keeps JSON removal output structured', async () => {
+    const cleanupCommands = [
+      {
+        name: 'Drop database',
+        status: 'completed' as const,
+        stdout: 'database removed\n',
+        stderr: '',
+        exitCode: 0,
+        error: null,
+        outputTruncated: false
+      },
+      {
+        name: 'Remove cache',
+        status: 'completed' as const,
+        stdout: '',
+        stderr: 'cache removed\n',
+        exitCode: 0,
+        error: null,
+        outputTruncated: false
+      }
+    ]
+    const preview = {
+      worktreeId: worktree.id,
+      name: worktree.name,
+      path: worktree.path,
+      head: worktree.head,
+      branch: worktree.branch,
+      detached: worktree.detached,
+      locked: false,
+      lockReason: null,
+      dirty: {
+        dirty: false,
+        staged: 0,
+        unstaged: 0,
+        untracked: 0,
+        conflicts: 0,
+        total: 0
+      },
+      detachedHeadReachable: true,
+      forceRequired: false,
+      eligible: true,
+      reasons: [],
+      warnings: [],
+      cleanup: {
+        commands: cleanupCommands.map((command) => command.name),
+        available: true,
+        unavailableReason: null
+      },
+      terminals: [],
+      confirmationToken: 'token'
+    }
+    const request = {
+      confirmation: null,
+      confirmationToken: 'token',
+      confirmDestructive: false,
+      preview,
+      checkoutIdentity: null,
+      prunable: false,
+      gitWorktreeKey: 'worktrees/agent-tools',
+      repositoryIdentity: 'repository',
+      phase: 'accepted' as const,
+      managedWrapperPath: null,
+      cleanupCommands: {
+        status: 'pending' as const,
+        definitionHash: 'definition',
+        skippedReason: null,
+        commands: cleanupCommands.map((command) => ({
+          ...command,
+          status: 'pending' as const,
+          stdout: '',
+          stderr: '',
+          exitCode: null
+        }))
+      }
+    }
+    const pending: OperationRecord = {
+      id: 'op_remove',
+      kind: 'remove',
+      projectId: project.id,
+      worktreeId: worktree.id,
+      status: 'pending',
+      request,
+      result: null,
+      error: null,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    }
+    const completed: OperationRecord = {
+      ...pending,
+      status: 'completed',
+      request: {
+        ...request,
+        phase: 'cleanup_pending',
+        cleanupCommands: {
+          ...request.cleanupCommands,
+          status: 'completed',
+          commands: cleanupCommands
+        }
+      },
+      result: {
+        removed: true,
+        worktreeId: worktree.id,
+        name: worktree.name,
+        branchPreserved: worktree.branch,
+        path: worktree.path,
+        recovered: false,
+        cleanup: {
+          status: 'completed',
+          residualPath: null,
+          warning: null,
+          commands: cleanupCommands
+        }
+      }
+    }
+    removalOperations = [pending, completed]
+    const human = await runCli(['worktree', 'remove', worktree.id], {
+      TREEPORT_API_URL: apiUrl
+    })
+    expect(human.code).toBe(0)
+    expect(human.stdout).toContain(
+      'Cleanup: Drop database\ndatabase removed\nCleanup: Remove cache\ncache removed'
+    )
+    expect(human.stdout).toContain(`Removed tree ${worktree.name}`)
+
+    removalOperations = [pending, completed]
+    const json = await runCli(['worktree', 'remove', worktree.id, '--json'], {
+      TREEPORT_API_URL: apiUrl
+    })
+    expect(json.code).toBe(0)
+    expect(JSON.parse(json.stdout)).toMatchObject({
+      removed: true,
+      cleanup: {
+        commands: [
+          { name: 'Drop database', stdout: 'database removed\n' },
+          { name: 'Remove cache', stderr: 'cache removed\n' }
+        ]
+      }
+    })
+  })
+
+  it('reports cleanup failure and states that Git kept the tree', async () => {
+    const failedCommand = {
+      name: 'Drop database',
+      status: 'failed' as const,
+      stdout: 'attempted cleanup\n',
+      stderr: 'database is busy\n',
+      exitCode: 12,
+      error: 'database is busy',
+      outputTruncated: false
+    }
+    const preview = {
+      worktreeId: worktree.id,
+      name: worktree.name,
+      path: worktree.path,
+      head: worktree.head,
+      branch: worktree.branch,
+      detached: worktree.detached,
+      locked: false,
+      lockReason: null,
+      dirty: {
+        dirty: false,
+        staged: 0,
+        unstaged: 0,
+        untracked: 0,
+        conflicts: 0,
+        total: 0
+      },
+      detachedHeadReachable: true,
+      forceRequired: false,
+      eligible: true,
+      reasons: [],
+      warnings: [],
+      cleanup: {
+        commands: [failedCommand.name],
+        available: true,
+        unavailableReason: null
+      },
+      terminals: [],
+      confirmationToken: 'token'
+    }
+    const request = {
+      confirmation: null,
+      confirmationToken: 'token',
+      confirmDestructive: false,
+      preview,
+      checkoutIdentity: null,
+      prunable: false,
+      gitWorktreeKey: 'worktrees/agent-tools',
+      repositoryIdentity: 'repository',
+      phase: 'terminals_stopped' as const,
+      managedWrapperPath: null,
+      cleanupCommands: {
+        status: 'failed' as const,
+        definitionHash: 'definition',
+        skippedReason: null,
+        commands: [failedCommand]
+      }
+    }
+    const pending: OperationRecord = {
+      id: 'op_remove',
+      kind: 'remove',
+      projectId: project.id,
+      worktreeId: worktree.id,
+      status: 'pending',
+      request,
+      result: null,
+      error: null,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    }
+    removalOperations = [
+      pending,
+      {
+        ...pending,
+        status: 'failed',
+        error:
+          'Project cleanup command “Drop database” failed. Git kept the tree.'
+      }
+    ]
+
+    const result = await runCli(['worktree', 'remove', worktree.id], {
+      TREEPORT_API_URL: apiUrl
+    })
+    expect(result.code).toBe(5)
+    expect(result.stdout).toContain('Cleanup: Drop database (failed)')
+    expect(result.stdout).toContain('database is busy')
+    expect(result.stderr).toContain('Git kept the tree')
   })
 
   it('opens and reuses web panels with JSON input', async () => {

@@ -133,6 +133,7 @@ export interface WorkspaceTreeProps {
     worktree: WorktreeRecord,
     trigger: HTMLElement
   ) => Promise<void>
+  onViewRemoval: (worktree: WorktreeRecord) => void
   onOpenPanelDialog: (
     project: ProjectRecord,
     worktree: WorktreeRecord | null,
@@ -159,6 +160,7 @@ export function WorkspaceTree({
   onCloseTerminal: closeTerminal,
   onSelectWorktree: selectWorktree,
   onPrepareRemoval: prepareRemoval,
+  onViewRemoval: viewRemoval,
   onOpenPanelDialog,
   onOpenWorktreeDialog
 }: WorkspaceTreeProps) {
@@ -329,23 +331,27 @@ export function WorkspaceTree({
                             <ContextMenuItem
                               variant="destructive"
                               disabled={
-                                project.availability.state === 'unavailable' ||
-                                Boolean(pendingRemovals[worktree.id])
+                                project.availability.state === 'unavailable'
                               }
-                              onSelect={() =>
+                              onSelect={() => {
+                                if (pendingRemovals[worktree.id]) {
+                                  viewRemoval(worktree)
+                                  return
+                                }
+
                                 void prepareRemoval(
                                   worktree,
                                   document.getElementById(
                                     `worktree-${worktree.id}`
                                   )!
                                 )
-                              }
+                              }}
                             >
                               <TrashIcon />
                               {project.availability.state === 'unavailable'
                                 ? 'Git repository unavailable'
                                 : pendingRemovals[worktree.id]
-                                  ? 'Removal in progress'
+                                  ? 'View removal progress'
                                   : 'Remove tree…'}
                             </ContextMenuItem>
                           </ContextMenuGroup>

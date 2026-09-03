@@ -1,18 +1,18 @@
 ---
-title: Tree setup
-description: Prepare new trees with repository setup commands.
+title: Tree setup and cleanup
+description: Prepare new trees and clean external resources during removal.
 ---
 
-Treeport can run repository setup commands when it creates a tree.
+Treeport can run repository commands when it creates or removes a tree.
 
-Use setup commands to install dependencies, copy local files, generate code, or prepare other prerequisites.
+Use setup commands to prepare a tree. Use cleanup commands to remove resources that exist outside the tree.
 
 Setup runs only for trees that Treeport creates.
 
 Treeport does not run setup when it registers, finds, or refreshes an existing tree.
 
-:::caution[Setup runs repository code]
-Setup commands run automatically with your user permissions. Use setup only in repositories and revisions that you trust.
+:::caution[Tree lifecycle commands run repository code]
+Setup and cleanup commands run with your user permissions. Configure these commands only in repositories that you trust.
 :::
 
 See [Security](/security/) for the Treeport trust boundaries.
@@ -43,6 +43,14 @@ Create `.treeport/setup.json` in the main tree:
         "GENERATED_ROOT": "${TREEPORT_WORKTREE_PATH}/generated"
       }
     }
+  ],
+  "cleanup": [
+    {
+      "name": "Drop tree database",
+      "argv": ["pnpm", "database:drop-tree"],
+      "cwd": "apps/api",
+      "timeout": "2m"
+    }
   ]
 }
 ```
@@ -62,13 +70,14 @@ Treeport reports unknown or invalid fields. It does not ignore them.
 The root object requires these fields:
 
 - `version`: The current value is `1`.
-- `commands`: An ordered array. An empty array disables setup.
+- `commands`: A required ordered array. An empty array disables setup.
+- `cleanup`: An optional ordered array. An empty or missing array disables cleanup.
 
-Each command supports these fields:
+Setup and cleanup commands support these fields:
 
-- `name`: Required name in setup progress and errors.
+- `name`: Required name in progress and errors.
 - `argv`: Required array with the executable and its literal arguments.
-- `cwd`: Optional directory in the new tree. The default is the tree root.
+- `cwd`: Optional directory in the tree. The default is the tree root.
 - `env`: Optional object with string environment names and values.
 - `timeout`: Optional positive duration with `ms`, `s`, `m`, or `h`.
 
@@ -82,7 +91,7 @@ A timeout applies to one command, not to the complete command list.
 
 Each command receives these variables:
 
-- `TREEPORT_WORKTREE_PATH`: The new tree path.
+- `TREEPORT_WORKTREE_PATH`: The linked tree path.
 - `TREEPORT_MAIN_WORKTREE_PATH`: The main tree path.
 
 Treeport replaces these exact placeholders in `argv`, `cwd`, and configured `env` values.
@@ -91,11 +100,11 @@ It does not replace other values, such as `$HOME` and `${OTHER_VARIABLE}`.
 
 The two Treeport variables are reserved. You cannot replace them in `env`.
 
-A `cwd` must resolve to the new tree or one of its child directories.
+A `cwd` must resolve to the linked tree or one of its child directories.
 
 Both `"packages/api"` and `"${TREEPORT_WORKTREE_PATH}/packages/api"` are valid.
 
-Treeport rejects a path that uses `..` to leave the new tree. It also rejects the main tree path.
+Treeport rejects a path that uses `..` to leave the linked tree. It also rejects the main tree path.
 
 An earlier command can create the directory. The directory must exist only when its command starts.
 
@@ -138,6 +147,28 @@ Setup can continue after the creation request returns. Thus, use the Setup termi
 
 It waits for setup and reports the first setup error. It then tries to create the default shell after success or failure.
 
+## Understand cleanup and removal
+
+Treeport runs cleanup commands in their listed order.
+
+Treeport stops all tree terminals before it starts cleanup. The linked tree stays available while cleanup runs.
+
+Treeport removes the Git worktree only after all cleanup commands succeed.
+
+A start error, timeout, signal, or nonzero exit stops cleanup. Treeport keeps the Git worktree and its files.
+
+The CLI and web interface show each completed command and its output. Treeport limits saved output and keeps its end.
+
+If Treeport restarts, it does not repeat commands with a saved successful result. It repeats an interrupted command because its result is not known.
+
+Make each cleanup command safe to repeat. A later removal attempt starts a new cleanup sequence.
+
+`--force` confirms Git warnings. It does not skip cleanup.
+
+If a prunable tree cannot run configured cleanup safely, Treeport refuses the removal. Restore the tree or clean the resource manually.
+
+Treeport does not run cleanup when Git removes a worktree outside Treeport. Start removal in Treeport when cleanup is required.
+
 ## Zed compatibility
 
 If `.treeport/setup.json` is not present, Treeport reads compatible `create_worktree` tasks from the main `.zed/tasks.json` file:
@@ -173,7 +204,7 @@ Treeport does not combine native and Zed commands during automatic setup:
 - An invalid native file reports an error. Treeport does not use Zed as a fallback.
 - When you remove the native file, Treeport uses Zed tasks again.
 
-This order applies only to automatic tree setup.
+This order applies only to automatic tree setup. Treeport does not use Zed tasks for cleanup.
 
 Zed tasks, including tasks with `create_worktree`, stay available from **New panel** in the tree sidebar.
 

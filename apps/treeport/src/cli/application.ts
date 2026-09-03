@@ -2155,6 +2155,41 @@ async function main(args: string[]): Promise<void> {
         }
       )
     ).operation
+    const displayedCleanupCommands = new Set<number>()
+    const displayFinishedCleanup = () => {
+      if (jsonOutput || operation.kind !== 'remove') {
+        return
+      }
+
+      operation.request.cleanupCommands.commands.forEach((command, index) => {
+        if (
+          displayedCleanupCommands.has(index) ||
+          (command.status !== 'completed' && command.status !== 'failed')
+        ) {
+          return
+        }
+
+        displayedCleanupCommands.add(index)
+        const lines = [
+          `Cleanup: ${command.name}${command.status === 'failed' ? ' (failed)' : ''}`
+        ]
+
+        if (command.stdout) {
+          lines.push(command.stdout.replace(/\n$/u, ''))
+        }
+
+        if (command.stderr) {
+          lines.push(command.stderr.replace(/\n$/u, ''))
+        }
+
+        if (command.outputTruncated) {
+          lines.push('Cleanup output was truncated.')
+        }
+
+        writeStdout(`${lines.join('\n')}\n`)
+      })
+    }
+    displayFinishedCleanup()
     while (operation.status === 'pending' || operation.status === 'running') {
       await new Promise((resolve) => setTimeout(resolve, 100))
       operation = (
@@ -2162,12 +2197,20 @@ async function main(args: string[]): Promise<void> {
           `/api/operations/${encodeURIComponent(operation.id)}`
         )
       ).operation
+      displayFinishedCleanup()
     }
     if (operation.status === 'failed') {
+      const cleanup =
+        operation.kind === 'remove'
+          ? operation.request.cleanupCommands.commands.find(
+              (command) => command.status === 'failed'
+            )
+          : null
       throw new CliError(
-        operation.error ?? 'Tree removal failed',
+        operation.error ?? 'Tree removal failed; Git kept the tree.',
         5,
-        'WORKTREE_REMOVAL_FAILED'
+        'WORKTREE_REMOVAL_FAILED',
+        cleanup ?? undefined
       )
     }
 

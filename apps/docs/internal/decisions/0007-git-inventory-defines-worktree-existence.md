@@ -44,6 +44,16 @@ After a daemon restart, Treeport checks Git again and continues the approved ope
 
 It does not request a second confirmation.
 
+Treeport stops tree terminals before it runs configured project cleanup.
+
+Project cleanup stays with the durable removal operation. Treeport saves each successful command before it starts the next command.
+
+After a restart, Treeport skips saved successful commands. It repeats a command when the saved state shows an interrupted execution.
+
+A project cleanup failure keeps the Git worktree. Git removal starts only after all project cleanup commands succeed.
+
+External Git removal does not run repository cleanup code. The external removal operation records that project cleanup was skipped.
+
 When Git removes the worktree, Treeport immediately removes the tree identity.
 
 Residual file cleanup stays with the operation.
@@ -62,8 +72,9 @@ It is not cleanup material for the earlier operation.
 
 - Users see whether Git reports the underlying worktree for a tree.
 - A browser refresh gets removal state from the durable operation.
-- A daemon restart continues approved removal before or after the Git boundary.
-- A failure before Git removal keeps a standard tree that the user can remove again.
+- A daemon restart continues approved removal before or after each cleanup and Git boundary.
+- A project cleanup failure keeps a standard tree that the user can remove again.
+- External Git removal never starts project cleanup.
 - A failure after Git removal can keep files but cannot keep an invalid tree.
 - Recovery checks repository, Git, and filesystem observations before each destructive boundary.
 - Worktree records do not contain cleanup lifecycle state or cleanup errors.

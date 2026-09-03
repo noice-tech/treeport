@@ -6,7 +6,9 @@ import {
   useQueryClient
 } from '@tanstack/react-query'
 import type {
+  OperationRecord,
   ProjectRecord,
+  RemoveOperationRecord,
   RemovePreview,
   TerminalSize,
   TreeContextValues,
@@ -53,6 +55,7 @@ export function useWorktreeWorkflows({
   setDrawerOpen,
   onWorktreeSubmitted,
   onRemovalNeedsConfirmation,
+  onRemovalProgress,
   onRemovalCompleted,
   selectedTerminalId
 }: {
@@ -63,6 +66,12 @@ export function useWorktreeWorkflows({
     worktree: WorktreeRecord,
     preview: RemovePreview,
     trigger?: HTMLElement
+  ) => void
+  onRemovalProgress: (
+    worktree: WorktreeRecord,
+    preview: RemovePreview,
+    operation: RemoveOperationRecord,
+    open: boolean
   ) => void
   onRemovalCompleted: (worktreeId: string) => void
   selectedTerminalId: string | null
@@ -357,19 +366,63 @@ export function useWorktreeWorkflows({
   ): Promise<void> => {
     setRemovalStage(worktree.id, 'removing')
     try {
-      await parseResponse(
-        rpc.api.worktrees[':worktreeId'].remove.$post({
-          param: { worktreeId: worktree.id },
-          json: {
-            confirmationToken: preview.confirmationToken,
-            confirmDestructive
-          }
-        })
+      const acceptedOperation = (
+        await parseResponse(
+          rpc.api.worktrees[':worktreeId'].remove.$post({
+            param: { worktreeId: worktree.id },
+            json: {
+              confirmationToken: preview.confirmationToken,
+              confirmDestructive
+            }
+          })
+        )
+      ).operation
+      if (acceptedOperation.kind !== 'remove') {
+        throw new Error('Tree removal returned an unexpected operation')
+      }
+
+      let operation: RemoveOperationRecord = acceptedOperation
+
+      onRemovalProgress(
+        worktree,
+        preview,
+        operation,
+        preview.cleanup.commands.length > 0
       )
       await queryClient.invalidateQueries({
         queryKey: ['worktree-removals']
       })
+      while (operation.status === 'pending' || operation.status === 'running') {
+        await new Promise((resolve) => setTimeout(resolve, 500))
+        const latest: OperationRecord = (
+          await parseResponse(
+            rpc.api.operations[':operationId'].$get({
+              param: { operationId: operation.id }
+            })
+          )
+        ).operation
+        if (latest.kind !== 'remove') {
+          throw new Error('Tree removal returned an unexpected operation')
+        }
+
+        operation = latest
+        onRemovalProgress(worktree, preview, operation, false)
+      }
+
+      await queryClient.invalidateQueries({
+        queryKey: ['worktree-removals']
+      })
       releaseRemoval(worktree.id)
+      if (operation.status === 'failed') {
+        onRemovalProgress(
+          worktree,
+          preview,
+          operation,
+          preview.cleanup.commands.length === 0
+        )
+        return
+      }
+
       onRemovalCompleted(worktree.id)
       void queryClient.invalidateQueries(
         { queryKey: projectsQueryKey },
@@ -437,7 +490,11 @@ export function useWorktreeWorkflows({
           })
         )
       ).preview
-      if (preview.eligible && preview.warnings.length === 0) {
+      if (
+        preview.eligible &&
+        preview.warnings.length === 0 &&
+        preview.cleanup.commands.length === 0
+      ) {
         await submitRemoval(worktree, preview, false, 1)
         return
       }
@@ -461,11 +518,49 @@ export function useWorktreeWorkflows({
     void submitRemoval(worktree, preview, preview.warnings.length > 0, 1)
   }
 
+  const viewRemoval = (worktree: WorktreeRecord) => {
+    const operation = (removalsQuery.data ?? []).find(
+      (candidate): candidate is RemoveOperationRecord =>
+        candidate.kind === 'remove' &&
+        candidate.request.preview?.worktreeId === worktree.id
+    )
+    if (operation?.request.preview) {
+      onRemovalProgress(worktree, operation.request.preview, operation, true)
+    }
+  }
+
+  const retryRemoval = async (worktree: WorktreeRecord): Promise<void> => {
+    if (removalGuardsRef.current.has(worktree.id)) {
+      return
+    }
+
+    removalGuardsRef.current.add(worktree.id)
+    setRemovalStage(worktree.id, 'checking')
+    try {
+      const preview = (
+        await parseResponse(
+          rpc.api.worktrees[':worktreeId']['remove-preview'].$get({
+            param: { worktreeId: worktree.id }
+          })
+        )
+      ).preview
+      releaseRemoval(worktree.id)
+      onRemovalNeedsConfirmation(worktree, preview)
+    } catch (error) {
+      releaseRemoval(worktree.id)
+      notifyError(error, {
+        operation: `retry removal for tree “${worktree.name}”`
+      })
+    }
+  }
+
   return {
     pendingWorktrees,
     pendingRemovals,
     submitWorktreeCreation,
     prepareRemoval,
-    confirmRemoval
+    confirmRemoval,
+    viewRemoval,
+    retryRemoval
   }
 }

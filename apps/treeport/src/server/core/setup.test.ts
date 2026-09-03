@@ -4,6 +4,7 @@ import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { CommandRequest, CommandResult, CommandRunner } from './command'
 import {
+  resolveWorktreeCleanupTasks,
   resolveWorktreeSetupTasks,
   runWorktreeSetupTasks,
   type WorktreeSetupTask
@@ -108,6 +109,108 @@ describe('worktree setup', () => {
     ])
   })
 
+  it('resolves ordered cleanup commands and hashes their execution definition', async () => {
+    const { main, worktree } = await repository()
+    const filePath = path.join(main, '.treeport', 'setup.json')
+    await fs.mkdir(path.join(worktree, 'apps', 'api'), { recursive: true })
+    await fs.writeFile(
+      filePath,
+      JSON.stringify({
+        version: 1,
+        commands: [],
+        cleanup: [
+          {
+            name: '  Drop database  ',
+            argv: ['node', '${TREEPORT_WORKTREE_PATH}/drop.mjs'],
+            cwd: 'apps/api',
+            env: { ADMIN: '${TREEPORT_MAIN_WORKTREE_PATH}/admin' },
+            timeout: '2m'
+          },
+          { name: 'Remove cache', argv: ['rm', '-rf', '.cache'] }
+        ]
+      })
+    )
+
+    const first = await resolveWorktreeCleanupTasks({
+      mainWorktreePath: main,
+      worktreePath: worktree
+    })
+    expect(first.tasks).toEqual([
+      {
+        label: 'Drop database',
+        argv: ['node', `${worktree}/drop.mjs`],
+        cwd: path.join(worktree, 'apps', 'api'),
+        env: {
+          ADMIN: `${main}/admin`,
+          TREEPORT_WORKTREE_PATH: worktree,
+          TREEPORT_MAIN_WORKTREE_PATH: main
+        },
+        timeoutMs: 120_000
+      },
+      expect.objectContaining({
+        label: 'Remove cache',
+        argv: ['rm', '-rf', '.cache'],
+        cwd: worktree,
+        timeoutMs: 30 * 60_000
+      })
+    ])
+    expect(first.definitionHash).toMatch(/^[a-f0-9]{64}$/)
+    await expect(
+      resolveWorktreeCleanupTasks({
+        mainWorktreePath: main,
+        worktreePath: worktree
+      })
+    ).resolves.toEqual(first)
+
+    await fs.writeFile(
+      filePath,
+      JSON.stringify({
+        version: 1,
+        commands: [],
+        cleanup: [
+          { name: 'Remove cache', argv: ['rm', '-rf', '.cache'] },
+          {
+            name: 'Drop database',
+            argv: ['node', '${TREEPORT_WORKTREE_PATH}/drop.mjs'],
+            cwd: 'apps/api',
+            env: { ADMIN: '${TREEPORT_MAIN_WORKTREE_PATH}/admin' },
+            timeout: '2m'
+          }
+        ]
+      })
+    )
+    expect(
+      (
+        await resolveWorktreeCleanupTasks({
+          mainWorktreePath: main,
+          worktreePath: worktree
+        })
+      ).definitionHash
+    ).not.toBe(first.definitionHash)
+  })
+
+  it('does not use Zed as a cleanup fallback', async () => {
+    const { main, worktree } = await repository()
+    await fs.mkdir(path.join(main, '.zed'), { recursive: true })
+    await fs.writeFile(
+      path.join(main, '.zed', 'tasks.json'),
+      JSON.stringify([
+        {
+          label: 'Zed setup',
+          command: 'setup',
+          hooks: ['create_worktree']
+        }
+      ])
+    )
+
+    await expect(
+      resolveWorktreeCleanupTasks({
+        mainWorktreePath: main,
+        worktreePath: worktree
+      })
+    ).resolves.toEqual({ tasks: [], definitionHash: null })
+  })
+
   it('rejects invalid native setup without weakening the versioned contract', async () => {
     const { main, worktree } = await repository()
     const invalidFiles: unknown[] = [
@@ -157,6 +260,11 @@ describe('worktree setup', () => {
       },
       {
         version: 1,
+        commands: [],
+        cleanup: [{ name: 'unknown field', argv: ['echo'], typo: true }]
+      },
+      {
+        version: 1,
         commands: [
           {
             name: 'main cwd',
@@ -180,6 +288,21 @@ describe('worktree setup', () => {
         })
       ).rejects.toThrow(/Invalid Treeport setup/)
     }
+
+    await fs.writeFile(
+      path.join(main, '.treeport', 'setup.json'),
+      JSON.stringify({
+        version: 1,
+        commands: [],
+        cleanup: [{ name: 'escape', argv: ['echo'], cwd: '../outside' }]
+      })
+    )
+    await expect(
+      resolveWorktreeCleanupTasks({
+        mainWorktreePath: main,
+        worktreePath: worktree
+      })
+    ).rejects.toThrow(/cleanup\[0\]\.cwd must stay inside the tree/)
   })
 
   it('uses only main-worktree native setup and falls back to Zed only when it is absent', async () => {
