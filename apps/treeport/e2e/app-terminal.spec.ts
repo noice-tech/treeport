@@ -1781,6 +1781,22 @@ test.describe('desktop worktree and terminal workflows', () => {
     await page.keyboard.insertText('export const value = 2')
     await expect(editor).toContainText('export const value = 2')
 
+    await editor.press('Control+Shift+f')
+    const contentSearch = filesFrame.getByRole('searchbox', {
+      name: 'Search file contents'
+    })
+    await expect(contentSearch).toBeFocused()
+    await contentSearch.fill('value = 2')
+    await contentSearch.press('Enter')
+    const unsavedMatch = filesFrame.getByRole('button', {
+      name: 'src/app.ts, line 2'
+    })
+    await expect(unsavedMatch).toBeVisible()
+    await unsavedMatch.click()
+    await expect(editor).toBeFocused()
+    await expect(editor).toContainText('export const value = 2')
+    await filesFrame.getByRole('button', { name: 'Files', exact: true }).click()
+
     await editor.press('Control+z')
     await expect(editor).toContainText('export const value = 1')
     await editor.press('Control+y')

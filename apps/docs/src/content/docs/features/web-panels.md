@@ -150,6 +150,7 @@ const diff = await treeport.diff()
 const input = context.launch.input
 
 const listing = await treeport.files.list()
+const matches = await treeport.files.search('before')
 const file = await treeport.files.read(listing.paths[0])
 await treeport.files.write({
   path: file.path,
@@ -190,6 +191,14 @@ It lists, reads, and changes existing regular files in the current tree. All pat
 The API supports UTF-8 files with a maximum size of 2 MiB. It does not create, rename, or delete files.
 
 A file listing contains a maximum of 50,000 paths. The `truncated` value reports if the tree contains more supported files.
+
+Use `treeport.files.search(query)` to search editable files in the current tree. The search uses case-insensitive literal matching.
+
+The query must contain one line and a maximum of 256 characters. The result contains a maximum of 500 matching lines.
+
+Each line preview contains a maximum of 300 characters. Search checks a maximum of 50,000 files with the 2 MiB file limit.
+
+The search result has `truncated: true` when more files or matching lines can exist.
 
 A read returns an opaque revision. Supply it as `expectedRevision` when you write the file.
 

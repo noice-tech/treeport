@@ -21,6 +21,7 @@ import type {
   TreeContextValues,
   TreeFile,
   TreeFileListing,
+  TreeFileSearchResult,
   TreeFileWrite,
   TreeFileWriteResult,
   WebPanel,
@@ -179,7 +180,7 @@ type PanelApi = Pick<
 >
 type TreeFileApi = Pick<
   TreeFileService,
-  'listTreeFiles' | 'readTreeFile' | 'writeTreeFile'
+  'listTreeFiles' | 'readTreeFile' | 'searchTreeFiles' | 'writeTreeFile'
 >
 type PackageManagementApi = Pick<
   PackageService,
@@ -754,6 +755,13 @@ export class TreeportService {
 
   readTreeFile(panelId: string, requestedPath: string): Promise<TreeFile> {
     return this.treeFileService.readTreeFile(panelId, requestedPath)
+  }
+
+  searchTreeFiles(
+    panelId: string,
+    query: string
+  ): Promise<TreeFileSearchResult> {
+    return this.treeFileService.searchTreeFiles(panelId, query)
   }
 
   writeTreeFile(

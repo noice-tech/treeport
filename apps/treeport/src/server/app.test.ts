@@ -278,6 +278,24 @@ function fixture(webDist = '/missing') {
       content: 'export const value = 1\n',
       revision: 'revision-1'
     })),
+    searchTreeFiles: vi.fn(async () => ({
+      files: [
+        {
+          path: 'src/app.ts',
+          matches: [
+            {
+              lineNumber: 1,
+              column: 13,
+              length: 5,
+              preview: 'export const value = 1',
+              previewStart: 0,
+              lineLength: 22
+            }
+          ]
+        }
+      ],
+      truncated: false
+    })),
     writeTreeFile: vi.fn(async (_panelId: string, input: { path: string }) => ({
       path: input.path,
       revision: 'revision-2'
@@ -668,6 +686,49 @@ describe('HTTP API validation', () => {
     ).toEqual({ paths: ['src/app.ts'], truncated: false })
     expect(service.listTreeFiles).toHaveBeenCalledWith('panel_review')
 
+    const searchFiles = await app.request(
+      '/api/panels/panel_review/files/search',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ query: 'value' })
+      }
+    )
+    expect(await searchFiles.json()).toEqual({
+      files: [
+        {
+          path: 'src/app.ts',
+          matches: [
+            {
+              lineNumber: 1,
+              column: 13,
+              length: 5,
+              preview: 'export const value = 1',
+              previewStart: 0,
+              lineLength: 22
+            }
+          ]
+        }
+      ],
+      truncated: false
+    })
+    expect(service.searchTreeFiles).toHaveBeenCalledWith(
+      'panel_review',
+      'value'
+    )
+    for (const query of ['', 'two\nlines']) {
+      expect(
+        (
+          await app.request('/api/panels/panel_review/files/search', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ query })
+          })
+        ).status
+      ).toBe(400)
+    }
+    expect(service.searchTreeFiles).toHaveBeenCalledOnce()
+
     const readFile = await app.request('/api/panels/panel_review/files/read', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -831,6 +892,7 @@ describe('HTTP API validation', () => {
           panel: { setTitle: (title: string | null) => void }
           context: () => Promise<object>
           network: { listeners: () => Promise<object> }
+          files: { search: (query: string) => Promise<object> }
           storage: {
             set: (key: string, value: JsonValue) => Promise<void>
           }
@@ -885,8 +947,32 @@ describe('HTTP API validation', () => {
         listeners: []
       })
 
+      const search = sdk.treeport.files.search('exact value')
+      const searchMessage = panelParent.postMessage.mock.calls.at(-1)![0]
+      expect(searchMessage).toMatchObject({
+        source: 'treeport-panel-v1',
+        method: 'files.search',
+        query: 'exact value'
+      })
+      dispatch('message', {
+        source: panelParent,
+        data: {
+          source: 'treeport-host-v1',
+          id: searchMessage.id,
+          ok: true,
+          value: {
+            files: [{ path: 'src/app.ts', matches: [] }],
+            truncated: false
+          }
+        }
+      })
+      await expect(search).resolves.toEqual({
+        files: [{ path: 'src/app.ts', matches: [] }],
+        truncated: false
+      })
+
       const stored = sdk.treeport.storage.set('comments', [{ line: 12 }])
-      const storageMessage = panelParent.postMessage.mock.calls[2]![0]
+      const storageMessage = panelParent.postMessage.mock.calls.at(-1)![0]
       expect(storageMessage).toMatchObject({
         source: 'treeport-panel-v1',
         method: 'storage.set',

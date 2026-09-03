@@ -1,7 +1,11 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { TREE_FILE_MAX_BYTES } from '@treeport/shared'
+import {
+  TREE_FILE_MAX_BYTES,
+  TREE_FILE_SEARCH_MAX_MATCHES,
+  TREE_FILE_SEARCH_PREVIEW_MAX_LENGTH
+} from '@treeport/shared'
 import { openDatabase } from './database'
 import { GhAdapter } from './gh'
 import { GitAdapter } from './git'
@@ -742,6 +746,18 @@ describe('TreeportService with injected command adapters', () => {
         'export const value = 1\n'
       ),
       fs.writeFile(path.join(folder, 'src', 'untracked.txt'), 'untracked\n'),
+      fs.writeFile(
+        path.join(folder, 'src', 'search.txt'),
+        'first NEEDLE here\r\nliteral a.b and axb here\rstandalone needle'
+      ),
+      fs.writeFile(
+        path.join(folder, 'long.txt'),
+        `${'x'.repeat(400)}NeEdLe${'y'.repeat(400)}\n`
+      ),
+      fs.writeFile(
+        path.join(folder, 'many.txt'),
+        `${Array.from({ length: 501 }, (_, index) => `overflow-match ${index}`).join('\n')}\n`
+      ),
       fs.writeFile(path.join(folder, 'binary.bin'), Buffer.from([0xff, 0x00])),
       fs.writeFile(
         path.join(folder, 'oversized.txt'),
@@ -800,6 +816,9 @@ describe('TreeportService with injected command adapters', () => {
     await expect(service.listTreeFiles(panel.id)).rejects.toMatchObject({
       code: 'WEB_PANEL_PERMISSION_REQUIRED'
     })
+    await expect(
+      service.searchTreeFiles(panel.id, 'value')
+    ).rejects.toMatchObject({ code: 'WEB_PANEL_PERMISSION_REQUIRED' })
 
     await service.setWebPanelPermissionGrant(
       worktree.id,
@@ -811,12 +830,76 @@ describe('TreeportService with injected command adapters', () => {
       paths: [
         '.treeport/settings.json',
         'binary.bin',
+        'long.txt',
+        'many.txt',
         'oversized.txt',
         'src/app.ts',
+        'src/search.txt',
         'src/untracked.txt'
       ],
       truncated: false
     })
+
+    const search = await service.searchTreeFiles(panel.id, 'needle')
+    expect(search).toEqual({
+      files: [
+        {
+          path: 'long.txt',
+          matches: [
+            {
+              lineNumber: 1,
+              column: 400,
+              length: 6,
+              preview: expect.stringContaining('NeEdLe'),
+              previewStart: 253,
+              lineLength: 806
+            }
+          ]
+        },
+        {
+          path: 'src/search.txt',
+          matches: [
+            {
+              lineNumber: 1,
+              column: 6,
+              length: 6,
+              preview: 'first NEEDLE here',
+              previewStart: 0,
+              lineLength: 17
+            },
+            {
+              lineNumber: 3,
+              column: 11,
+              length: 6,
+              preview: 'standalone needle',
+              previewStart: 0,
+              lineLength: 17
+            }
+          ]
+        }
+      ],
+      truncated: false
+    })
+    expect(search.files[0]!.matches[0]!.preview).toHaveLength(
+      TREE_FILE_SEARCH_PREVIEW_MAX_LENGTH
+    )
+    await expect(service.searchTreeFiles(panel.id, 'a.b')).resolves.toEqual({
+      files: [
+        {
+          path: 'src/search.txt',
+          matches: [
+            expect.objectContaining({ lineNumber: 2, column: 8, length: 3 })
+          ]
+        }
+      ],
+      truncated: false
+    })
+    const overflow = await service.searchTreeFiles(panel.id, 'overflow-match')
+    expect(overflow.files).toHaveLength(1)
+    expect(overflow.files[0]!.matches).toHaveLength(
+      TREE_FILE_SEARCH_MAX_MATCHES
+    )
+    expect(overflow.truncated).toBe(true)
 
     const opened = await service.readTreeFile(panel.id, 'src/app.ts')
     expect(opened).toMatchObject({
@@ -891,6 +974,9 @@ describe('TreeportService with injected command adapters', () => {
     await service.reloadPackages(project.id)
     await expect(
       service.readTreeFile(panel.id, 'src/app.ts')
+    ).rejects.toMatchObject({ code: 'WEB_PANEL_TREE_FILES_REQUIRED' })
+    await expect(
+      service.searchTreeFiles(panel.id, 'value')
     ).rejects.toMatchObject({ code: 'WEB_PANEL_TREE_FILES_REQUIRED' })
   })
 

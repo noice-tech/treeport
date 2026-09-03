@@ -4,6 +4,8 @@ import { expect, type Locator, type Page } from '@playwright/test'
 import { build as viteBuild } from 'vite'
 import type { ApplicationUpdateStatus } from '../src/server/application-update'
 import {
+  TREE_FILE_SEARCH_MAX_MATCHES,
+  TREE_FILE_SEARCH_PREVIEW_MAX_LENGTH,
   type CleanupCommandProgress,
   type JsonValue,
   type OperationRecord,
@@ -1532,6 +1534,81 @@ export async function mockApp(
       await route.fulfill({
         json: { paths: [...treeFiles.keys()].sort(), truncated: false }
       })
+      return
+    }
+
+    if (
+      /^\/api\/panels\/[^/]+\/files\/search$/.test(pathname) &&
+      route.request().method() === 'POST'
+    ) {
+      const body: { query: string } = route.request().postDataJSON()
+      const expression = new RegExp(
+        body.query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
+        'iu'
+      )
+      const files: Array<{
+        path: string
+        matches: Array<{
+          lineNumber: number
+          column: number
+          length: number
+          preview: string
+          previewStart: number
+          lineLength: number
+        }>
+      }> = []
+      let matchCount = 0
+      let truncated = false
+      for (const [filePath, file] of [...treeFiles.entries()].sort(
+        ([left], [right]) => (left < right ? -1 : left > right ? 1 : 0)
+      )) {
+        const matches = []
+        const lines = file.content.split(/\r\n|\r|\n/)
+        for (let index = 0; index < lines.length; index += 1) {
+          const line = lines[index]!
+          const match = expression.exec(line)
+          if (!match) {
+            continue
+          }
+
+          if (matchCount === TREE_FILE_SEARCH_MAX_MATCHES) {
+            truncated = true
+            break
+          }
+
+          const length = match[0].length
+          let previewStart = Math.max(
+            0,
+            match.index -
+              Math.floor((TREE_FILE_SEARCH_PREVIEW_MAX_LENGTH - length) / 2)
+          )
+          previewStart = Math.min(
+            previewStart,
+            Math.max(0, line.length - TREE_FILE_SEARCH_PREVIEW_MAX_LENGTH)
+          )
+          matches.push({
+            lineNumber: index + 1,
+            column: match.index,
+            length,
+            preview: line.slice(
+              previewStart,
+              previewStart + TREE_FILE_SEARCH_PREVIEW_MAX_LENGTH
+            ),
+            previewStart,
+            lineLength: line.length
+          })
+          matchCount += 1
+        }
+        if (matches.length > 0) {
+          files.push({ path: filePath, matches })
+        }
+
+        if (truncated) {
+          break
+        }
+      }
+
+      await route.fulfill({ json: { files, truncated } })
       return
     }
 

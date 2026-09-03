@@ -36,6 +36,7 @@ await treeport.storage.set('drafts', [{ file: 'src/app.ts', line: 12 }])
 const drafts = await treeport.storage.get('drafts')
 
 const files = await treeport.files.list()
+const matches = await treeport.files.search('before')
 const file = await treeport.files.read(files.paths[0])
 await treeport.files.write({
   path: file.path,
@@ -57,6 +58,14 @@ const stopFind = treeport.shortcuts.onFind(() => {
 Paths are tree-relative. The API does not create, rename, or delete files. It supports UTF-8 files with a maximum size of 2 MiB.
 
 `treeport.files.list()` returns a maximum of 50,000 paths. Its `truncated` value reports if more paths exist.
+
+`treeport.files.search(query)` searches editable files in the current tree. It uses case-insensitive literal matching.
+
+The query must contain one line and a maximum of 256 characters. The result contains a maximum of 500 matching lines.
+
+Each preview contains a maximum of 300 characters. The search reads a maximum of 50,000 files, and each file can contain 2 MiB.
+
+A search result has `truncated: true` when more files or matching lines can exist.
 
 A read returns an opaque revision. Supply that revision as `expectedRevision` when you write the file.
 

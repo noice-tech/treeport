@@ -35,6 +35,11 @@ const panelRequestMessageSchema = z.discriminatedUnion('method', [
   z.strictObject({ ...panelRequestFields, method: z.literal('files.list') }),
   z.strictObject({
     ...panelRequestFields,
+    method: z.literal('files.search'),
+    query: z.string()
+  }),
+  z.strictObject({
+    ...panelRequestFields,
     method: z.literal('files.read'),
     path: z.string()
   }),
@@ -220,6 +225,13 @@ export function WebPanelWorkspace({
         request = parseResponse(
           treeFilesRpc.api.panels[':panelId'].files.$get({
             param: { panelId: panel.id }
+          })
+        )
+      } else if (method === 'files.search') {
+        request = parseResponse(
+          treeFilesRpc.api.panels[':panelId'].files.search.$post({
+            param: { panelId: panel.id },
+            json: { query: message.query }
           })
         )
       } else if (method === 'files.read') {

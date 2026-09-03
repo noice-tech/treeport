@@ -35,6 +35,7 @@ import {
   packageUpdateSchema,
   readTreeFileSchema,
   registerProjectSchema,
+  searchTreeFilesSchema,
   requestWorkspaceOpenSchema,
   TERMINAL_MAX_UPLOAD_BYTES,
   removeWorktreeSchema,
@@ -195,6 +196,19 @@ function createTreeFilesApi(treeFiles: TreeportService['treeFiles']) {
   return new Hono()
     .get('/api/panels/:panelId/files', async (context) =>
       context.json(await treeFiles.listTreeFiles(context.req.param('panelId')))
+    )
+    .post(
+      '/api/panels/:panelId/files/search',
+      jsonInput(searchTreeFilesSchema),
+      async (context) => {
+        const body = context.req.valid('json')
+        return context.json(
+          await treeFiles.searchTreeFiles(
+            context.req.param('panelId'),
+            body.query
+          )
+        )
+      }
     )
     .post(
       '/api/panels/:panelId/files/read',
