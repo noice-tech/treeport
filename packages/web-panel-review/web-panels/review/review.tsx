@@ -473,6 +473,20 @@ function ReviewApp() {
 
   const files = loaded?.files ?? []
   const fileNames = useMemo(() => files.map((file) => file.name), [files])
+  const lineCounts = useMemo(
+    () =>
+      files.reduce(
+        (counts, file) => {
+          for (const hunk of file.hunks) {
+            counts.additions += hunk.additionLines
+            counts.deletions += hunk.deletionLines
+          }
+          return counts
+        },
+        { additions: 0, deletions: 0 }
+      ),
+    [files]
+  )
   const saved = useMemo(() => savedComments(comments), [comments])
   const unresolved = useMemo(
     () => saved.filter((comment) => !comment.resolved),
@@ -1140,6 +1154,13 @@ function ReviewApp() {
           </span>
         </div>
         <div className="actions">
+          <div
+            id="line-counts"
+            aria-label={`${lineCounts.additions} lines added and ${lineCounts.deletions} lines deleted`}
+          >
+            <span className="additions">+{lineCounts.additions}</span>
+            <span className="deletions">-{lineCounts.deletions}</span>
+          </div>
           <div
             id="viewed-progress"
             aria-label={`${viewedCount} of ${fileNames.length} files viewed`}
