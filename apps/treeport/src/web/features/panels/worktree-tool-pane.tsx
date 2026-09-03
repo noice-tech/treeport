@@ -8,12 +8,7 @@ import {
   type ReactNode,
   type RefObject
 } from 'react'
-import {
-  GlobeAltIcon,
-  PlusIcon,
-  WindowIcon,
-  XMarkIcon
-} from '@heroicons/react/16/solid'
+import { GlobeAltIcon, PlusIcon, XMarkIcon } from '@heroicons/react/16/solid'
 import { LoaderCircleIcon, PanelRightIcon } from 'lucide-react'
 import type {
   BrowserPanel,
@@ -49,6 +44,7 @@ import {
   TooltipTrigger
 } from '../../components/ui/tooltip'
 import { cn } from '../../lib/utils'
+import { WebPanelIcon } from '../web-panels/web-panel-icon'
 import { describeWebPanelPermissions } from '../web-panels/web-panel-permissions'
 import { useToolPicker } from './tool-picker-context'
 import { useWorkspaceSurfaceFocus } from './workspace-surface-focus-context'
@@ -105,7 +101,7 @@ function ToolPickerActions({
                 disabled={launchDisabled}
                 onSelect={() => onSelectWebPanel(definition)}
               >
-                <WindowIcon data-icon="inline-start" />
+                <WebPanelIcon icon={definition.icon} />
                 <span className="min-w-0 flex-1 truncate">
                   {definition.title}
                 </span>
@@ -156,7 +152,7 @@ function ToolPickerActions({
           disabled={launchDisabled}
           onClick={() => onSelectWebPanel(definition)}
         >
-          <WindowIcon data-icon="inline-start" />
+          <WebPanelIcon icon={definition.icon} />
           <span className="min-w-0 flex-1 truncate">{definition.title}</span>
           <span className="max-w-1/2 truncate text-xs text-zinc-500">
             {definitionSource(definition)}
@@ -559,7 +555,13 @@ export function WorktreeToolPane({
                         <GlobeAltIcon data-icon="inline-start" />
                       )
                     ) : (
-                      <WindowIcon data-icon="inline-start" />
+                      <WebPanelIcon
+                        icon={
+                          definitions.find(
+                            (definition) => definition.id === panel.definitionId
+                          )?.icon ?? null
+                        }
+                      />
                     )}
                     <span className="min-w-0 flex-1 overflow-hidden whitespace-nowrap [mask-image:linear-gradient(to_right,black_calc(100%_-_1rem),transparent)]">
                       {title}

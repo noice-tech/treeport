@@ -19,10 +19,15 @@ Packages can supply the same source layout with [`treeport.webPanels`](/features
 
 ```text
 .treeport/web-panels/review/
+├── icon.svg
 ├── index.html
 ├── review.tsx
 └── review.css
 ```
+
+Add an optional `icon.svg` file to show a custom panel icon. Treeport uses it in the panel lists and side panel.
+
+The icon file must be 64 KB or smaller. Treeport shows the default web panel icon when the file is invalid.
 
 ```html
 <div id="root"></div>

@@ -1259,6 +1259,7 @@ export class PackageSystem {
           definition: {
             id: `package:${parsed.packageId}:web-panel:${resourceId}`,
             title: titleFromPath(candidate.relativePath),
+            icon: null,
             source: metadata,
             permissions,
             permissionsGranted: permissions.length === 0,
