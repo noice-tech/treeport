@@ -5,26 +5,25 @@ import type {
   TerminalSize,
   TreeContextValues
 } from '@treeport/shared'
+import type * as Effect from 'effect/Effect'
+import type { DomainError } from '../../domain'
+import type { ApplicationServices } from '../infrastructure/application-runtime'
 import {
   type CreateWorktreeResult,
-  WorktreeCreationService,
-  type WorktreeServiceDependencies
+  WorktreeCreationService
 } from './worktree-creation-service'
 import { WorktreeRemovalService } from './worktree-removal-service'
 
-export type {
-  CreateWorktreeResult,
-  WorktreeServiceDependencies
-} from './worktree-creation-service'
+export type { CreateWorktreeResult } from './worktree-creation-service'
 
 /** Domain façade over the independent creation and durable-removal workflows. */
 export class WorktreeService {
   private readonly creation: WorktreeCreationService
   private readonly removal: WorktreeRemovalService
 
-  constructor(dependencies: WorktreeServiceDependencies) {
-    this.creation = new WorktreeCreationService(dependencies)
-    this.removal = new WorktreeRemovalService(dependencies)
+  constructor() {
+    this.creation = new WorktreeCreationService()
+    this.removal = new WorktreeRemovalService()
   }
 
   listActiveOperations(
@@ -32,7 +31,11 @@ export class WorktreeService {
       projectId?: string
       kind?: OperationRecord['kind']
     } = {}
-  ): Promise<OperationRecord[]> {
+  ): Effect.Effect<
+    OperationRecord[],
+    DomainError<unknown>,
+    ApplicationServices
+  > {
     return this.creation.listActiveOperations(filters)
   }
 
@@ -49,7 +52,7 @@ export class WorktreeService {
     },
     sourceWorktreeId?: string,
     treeContext?: TreeContextValues
-  ): Promise<OperationRecord> {
+  ): Effect.Effect<OperationRecord, DomainError<unknown>, ApplicationServices> {
     return this.creation.beginCreateWorktree(
       projectId,
       inputName,
@@ -73,7 +76,11 @@ export class WorktreeService {
     },
     sourceWorktreeId?: string,
     treeContext?: TreeContextValues
-  ): Promise<CreateWorktreeResult> {
+  ): Effect.Effect<
+    CreateWorktreeResult,
+    DomainError<unknown>,
+    ApplicationServices
+  > {
     return this.creation.createWorktree(
       projectId,
       inputName,
@@ -84,18 +91,23 @@ export class WorktreeService {
     )
   }
 
-  refreshPr(worktreeId: string, force = false): Promise<PrInfo> {
+  refreshPr(
+    worktreeId: string,
+    force = false
+  ): Effect.Effect<PrInfo, DomainError<unknown>, ApplicationServices> {
     return this.removal.refreshPr(worktreeId, force)
   }
 
-  removePreview(worktreeId: string): Promise<RemovePreview> {
+  removePreview(
+    worktreeId: string
+  ): Effect.Effect<RemovePreview, DomainError<unknown>, ApplicationServices> {
     return this.removal.removePreview(worktreeId)
   }
 
   beginRemove(
     worktreeId: string,
     request: { confirmationToken: string; confirmDestructive: boolean }
-  ): Promise<OperationRecord> {
+  ): Effect.Effect<OperationRecord, DomainError<unknown>, ApplicationServices> {
     return this.removal.beginRemove(worktreeId, request)
   }
 
@@ -103,7 +115,7 @@ export class WorktreeService {
     operationId: string,
     worktreeId: string,
     force: boolean
-  ): Promise<void> {
+  ): Effect.Effect<void, never, ApplicationServices> {
     return this.removal.resumeRemove(operationId, worktreeId, force)
   }
 }

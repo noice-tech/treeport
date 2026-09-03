@@ -147,7 +147,10 @@ export function createSocketServer(
 
         const metadataSnapshot = terminalMetadata.snapshot()
         const representedEventCount = queuedEvents.length
-        void Promise.all([service.listWebPanels(), service.listBrowserPanels()])
+        void Promise.all([
+          service.runEffect(service.panels.listWebPanels()),
+          service.runEffect(service.panels.listBrowserPanels())
+        ])
           .then(([webPanels, browserPanels]) => {
             if (!socket.connected) {
               return

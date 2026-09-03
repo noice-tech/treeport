@@ -6,7 +6,6 @@ import type {
   OpenBrowserPanelResult,
   OpenWebPanelResult,
   ProjectRecord,
-  TerminalRecord,
   WebPanel,
   WebPanelContext,
   WebPanelDefinition,
@@ -16,24 +15,32 @@ import type {
   WorktreeRecord
 } from '@treeport/shared'
 import { and, asc, desc, eq, ne } from 'drizzle-orm'
-import type { AppConfig } from '../../config'
-import type { TreeportDatabase } from '../../database'
+import * as Effect from 'effect/Effect'
 import {
   browserPanels,
   webPanels,
   webPanelStorage
 } from '../../database-schema'
 import { DomainError } from '../../domain'
-import type { ProductEventBus } from '../../events'
-import type { GitAdapter } from '../../git'
-import type { NetworkListenerAdapter } from '../../network-listeners'
-import type { PackageSystem } from '../../package-system'
-import type { TerminalSessionBackend } from '../../terminal'
 import type {
   ResolvedWebPanelSource,
-  WebPanelAssetResolution,
-  WebPanelViteRuntime
+  WebPanelAssetResolution
 } from '../../web-panel-vite-runtime'
+import {
+  ProjectObservationOperations,
+  ProjectSnapshotOperations,
+  TerminalOperations
+} from '../domain-services'
+import type { ApplicationServices } from '../infrastructure/application-runtime'
+import {
+  DatabasePort,
+  EventBusPort,
+  GitPort,
+  NetworkListenerPort,
+  TerminalHostPort,
+  WebPanelRuntimePort
+} from '../infrastructure/ports'
+import { ProjectStore } from '../project/project-store'
 import { PanelDefinitionService } from './panel-definition-service'
 
 const now = (): string => new Date().toISOString()
@@ -43,99 +50,63 @@ const WEB_PANEL_STORAGE_MAX_ENTRIES = 256
 const WEB_PANEL_STORAGE_MAX_TOTAL_BYTES = 1024 * 1024
 const WEB_PANEL_STORAGE_MAX_VALUE_BYTES = 64 * 1024
 
-export interface PanelServiceDependencies {
-  readonly config: AppConfig
-  readonly database: TreeportDatabase
-  readonly git: GitAdapter
-  readonly terminalHost: TerminalSessionBackend
-  readonly events: ProductEventBus
-  readonly packages: PackageSystem
-  readonly networkListeners: NetworkListenerAdapter
-  readonly webPanelRuntime: WebPanelViteRuntime
-  readonly requireAvailableWorktree: (
-    worktreeId: string,
-    allowPrunable?: boolean
-  ) => Promise<WorktreeRecord>
-  readonly getProject: (projectId: string) => Promise<ProjectRecord>
-  readonly getWorktree: (worktreeId: string) => Promise<WorktreeRecord>
-  readonly getTerminalFromBindings: (
-    terminalId: string
-  ) => Promise<TerminalRecord>
-  readonly invalidateProjectsSnapshot: () => void
-}
+type PanelEffect<A> = Effect.Effect<
+  A,
+  DomainError<unknown>,
+  ApplicationServices
+>
 
 export class PanelService {
-  private readonly definitions: PanelDefinitionService
+  private readonly definitions = new PanelDefinitionService()
 
-  constructor(private readonly host: PanelServiceDependencies) {
-    this.definitions = new PanelDefinitionService({
-      ...host,
-      getWorktree: (worktreeId) => this.getWorktree(worktreeId),
-      invalidateProjectsSnapshot: () => this.invalidateProjectsSnapshot()
-    })
+  private requireAvailableWorktree(
+    worktreeId: string,
+    allowPrunable = false
+  ): PanelEffect<WorktreeRecord> {
+    return Effect.flatMap(ProjectObservationOperations, (observations) =>
+      observations.requireAvailableWorktree(worktreeId, allowPrunable)
+    )
   }
 
-  private get deps() {
-    return this.host
+  private getProject(projectId: string): PanelEffect<ProjectRecord> {
+    return Effect.flatMap(ProjectStore, (store) => store.getProject(projectId))
   }
 
-  private get events() {
-    return this.host.events
-  }
-
-  private get packages() {
-    return this.host.packages
-  }
-
-  private get networkListeners() {
-    return this.host.networkListeners
-  }
-
-  private get webPanelRuntime() {
-    return this.host.webPanelRuntime
-  }
-
-  private requireAvailableWorktree(worktreeId: string, allowPrunable = false) {
-    return this.host.requireAvailableWorktree(worktreeId, allowPrunable)
-  }
-
-  private getProject(projectId: string) {
-    return this.host.getProject(projectId)
-  }
-
-  private getWorktree(worktreeId: string) {
-    return this.host.getWorktree(worktreeId)
-  }
-
-  private getTerminalFromBindings(terminalId: string) {
-    return this.host.getTerminalFromBindings(terminalId)
+  private getWorktree(worktreeId: string): PanelEffect<WorktreeRecord> {
+    return Effect.flatMap(ProjectStore, (store) =>
+      store.getWorktree(worktreeId)
+    )
   }
 
   private invalidateProjectsSnapshot() {
-    this.host.invalidateProjectsSnapshot()
+    return Effect.flatMap(ProjectSnapshotOperations, (snapshots) =>
+      Effect.sync(() => snapshots.invalidate())
+    )
   }
 
-  async effectiveWebPanelDefinitions(
+  effectiveWebPanelDefinitions(
     worktreeId: string
-  ): Promise<Array<WebPanelDefinition & ResolvedWebPanelSource>> {
+  ): PanelEffect<Array<WebPanelDefinition & ResolvedWebPanelSource>> {
     return this.definitions.effectiveWebPanelDefinitions(worktreeId)
   }
 
-  async webPanelPermissionSourceKey(
+  webPanelPermissionSourceKey(
     worktreeId: string,
     definition: WebPanelDefinition
-  ): Promise<string> {
+  ): PanelEffect<string> {
     return this.definitions.webPanelPermissionSourceKey(worktreeId, definition)
   }
 
   private webPanelPermissionsGranted(
     worktreeId: string,
     definition: WebPanelDefinition
-  ): Promise<boolean> {
+  ): PanelEffect<boolean> {
     return this.definitions.webPanelPermissionsGranted(worktreeId, definition)
   }
 
-  listWebPanelDefinitions(worktreeId: string): Promise<WebPanelDefinition[]> {
+  listWebPanelDefinitions(
+    worktreeId: string
+  ): PanelEffect<WebPanelDefinition[]> {
     return this.definitions.listWebPanelDefinitions(worktreeId)
   }
 
@@ -144,7 +115,7 @@ export class PanelService {
     definitionId: string,
     granted: boolean,
     expectedPermissions: WebPanelPermission[]
-  ): Promise<WebPanelDefinition> {
+  ): PanelEffect<WebPanelDefinition> {
     return this.definitions.setWebPanelPermissionGrant(
       worktreeId,
       definitionId,
@@ -156,680 +127,963 @@ export class PanelService {
   private requireWebPanelPermissions(
     worktreeId: string,
     definition: WebPanelDefinition
-  ): Promise<void> {
+  ): PanelEffect<void> {
     return this.definitions.requireWebPanelPermissions(worktreeId, definition)
   }
 
   private normalizeWebPanelLaunch(
     worktree: WorktreeRecord,
     launch: WebPanelLaunch
-  ) {
+  ): Effect.Effect<
+    { launch: WebPanelLaunch; inputJson: string },
+    DomainError<unknown>
+  > {
     return this.definitions.normalizeWebPanelLaunch(worktree, launch)
   }
 
-  async createBrowserPanel(
+  createBrowserPanel(
     worktreeId: string,
     requestedUrl?: string
-  ): Promise<BrowserPanel> {
-    await this.requireAvailableWorktree(worktreeId)
-    const parsedUrl = requestedUrl
-      ? browserUrlSchema.safeParse(requestedUrl)
-      : null
-    if (parsedUrl && !parsedUrl.success) {
-      throw new DomainError(
-        'INVALID_BROWSER_URL',
-        'Enter an absolute HTTP or HTTPS URL without credentials',
-        400
-      )
-    }
+  ): PanelEffect<BrowserPanel> {
+    const requireAvailableWorktree = this.requireAvailableWorktree.bind(this)
+    const invalidateProjectsSnapshot =
+      this.invalidateProjectsSnapshot.bind(this)
 
-    const url = parsedUrl ? new URL(parsedUrl.data).href : 'about:blank'
-    const timestamp = now()
-    const panel: BrowserPanel = {
-      id: id('panel'),
-      kind: 'browser',
-      worktreeId,
-      title: url === 'about:blank' ? 'Browser' : new URL(url).host,
-      url,
-      createdAt: timestamp,
-      updatedAt: timestamp
-    }
-    await this.deps.database.db.insert(browserPanels).values({
-      id: panel.id,
-      worktreeId: panel.worktreeId,
-      title: panel.title,
-      url: panel.url,
-      createdAt: panel.createdAt,
-      updatedAt: panel.updatedAt
+    return Effect.gen(function* () {
+      const database = yield* DatabasePort
+      const events = yield* EventBusPort
+      yield* requireAvailableWorktree(worktreeId)
+      const parsedUrl = requestedUrl
+        ? browserUrlSchema.safeParse(requestedUrl)
+        : null
+      if (parsedUrl && !parsedUrl.success) {
+        return yield* Effect.fail(
+          new DomainError(
+            'INVALID_BROWSER_URL',
+            'Enter an absolute HTTP or HTTPS URL without credentials',
+            400
+          )
+        )
+      }
+
+      const url = parsedUrl ? new URL(parsedUrl.data).href : 'about:blank'
+      const timestamp = now()
+      const panel: BrowserPanel = {
+        id: id('panel'),
+        kind: 'browser',
+        worktreeId,
+        title: url === 'about:blank' ? 'Browser' : new URL(url).host,
+        url,
+        createdAt: timestamp,
+        updatedAt: timestamp
+      }
+      yield* Effect.promise(() =>
+        database.db.insert(browserPanels).values({
+          id: panel.id,
+          worktreeId: panel.worktreeId,
+          title: panel.title,
+          url: panel.url,
+          createdAt: panel.createdAt,
+          updatedAt: panel.updatedAt
+        })
+      )
+      yield* invalidateProjectsSnapshot()
+      yield* Effect.sync(() => {
+        events.publish('panel.created', { worktreeId, panelId: panel.id })
+      })
+      return panel
     })
-    this.invalidateProjectsSnapshot()
-    this.events.publish('panel.created', { worktreeId, panelId: panel.id })
-    return panel
   }
 
-  async openBrowserPanel(
+  openBrowserPanel(
     worktreeId: string | null,
     requestedUrl?: string,
     sourceTerminalId: string | null = null,
     sourcePanelId: string | null = null
-  ): Promise<OpenBrowserPanelResult> {
-    if (sourceTerminalId) {
-      const terminal = await this.getTerminalFromBindings(sourceTerminalId)
-      if (worktreeId && terminal.worktreeId !== worktreeId) {
-        throw new DomainError(
-          'INVALID_PANEL_OPEN_SOURCE',
-          'The source terminal does not belong to the target tree',
-          400
+  ): PanelEffect<OpenBrowserPanelResult> {
+    const getBrowserPanel = this.getBrowserPanel.bind(this)
+    const createBrowserPanel = this.createBrowserPanel.bind(this)
+
+    return Effect.gen(function* () {
+      const events = yield* EventBusPort
+      const terminals = yield* TerminalOperations
+      let targetWorktreeId = worktreeId
+      if (sourceTerminalId) {
+        const terminal =
+          yield* terminals.getTerminalFromBindings(sourceTerminalId)
+        if (targetWorktreeId && terminal.worktreeId !== targetWorktreeId) {
+          return yield* Effect.fail(
+            new DomainError(
+              'INVALID_PANEL_OPEN_SOURCE',
+              'The source terminal does not belong to the target tree',
+              400
+            )
+          )
+        }
+
+        targetWorktreeId ??= terminal.worktreeId
+      }
+
+      if (sourcePanelId) {
+        const sourcePanel = yield* getBrowserPanel(sourcePanelId)
+        if (targetWorktreeId && sourcePanel.worktreeId !== targetWorktreeId) {
+          return yield* Effect.fail(
+            new DomainError(
+              'INVALID_PANEL_OPEN_SOURCE',
+              'The source Browser does not belong to the target tree',
+              400
+            )
+          )
+        }
+
+        targetWorktreeId ??= sourcePanel.worktreeId
+      }
+
+      if (!targetWorktreeId) {
+        return yield* Effect.fail(
+          new DomainError(
+            'INVALID_PANEL_OPEN_SOURCE',
+            'A target tree or panel source is required',
+            400
+          )
         )
       }
 
-      worktreeId ??= terminal.worktreeId
-    }
-
-    if (sourcePanelId) {
-      const sourcePanel = await this.getBrowserPanel(sourcePanelId)
-      if (worktreeId && sourcePanel.worktreeId !== worktreeId) {
-        throw new DomainError(
-          'INVALID_PANEL_OPEN_SOURCE',
-          'The source Browser does not belong to the target tree',
-          400
-        )
-      }
-
-      worktreeId ??= sourcePanel.worktreeId
-    }
-
-    if (!worktreeId) {
-      throw new DomainError(
-        'INVALID_PANEL_OPEN_SOURCE',
-        'A target tree or panel source is required',
-        400
+      const panel = yield* createBrowserPanel(targetWorktreeId, requestedUrl)
+      yield* Effect.sync(() =>
+        events.publish('panel.open_requested', {
+          worktreeId: targetWorktreeId,
+          panelId: panel.id,
+          panel,
+          sourceTerminalId,
+          sourcePanelId
+        })
       )
-    }
-
-    const panel = await this.createBrowserPanel(worktreeId, requestedUrl)
-    this.events.publish('panel.open_requested', {
-      worktreeId,
-      panelId: panel.id,
-      panel,
-      sourceTerminalId,
-      sourcePanelId
+      return { panel }
     })
-    return { panel }
   }
 
-  async openBrowserPanelFromTerminal(
+  openBrowserPanelFromTerminal(
     terminalId: string,
     requestedUrl: string
-  ): Promise<OpenBrowserPanelResult> {
+  ): PanelEffect<OpenBrowserPanelResult> {
     return this.openBrowserPanel(null, requestedUrl, terminalId, null)
   }
 
-  async openBrowserPanelFromPanel(
+  openBrowserPanelFromPanel(
     panelId: string,
     requestedUrl: string
-  ): Promise<OpenBrowserPanelResult> {
+  ): PanelEffect<OpenBrowserPanelResult> {
     return this.openBrowserPanel(null, requestedUrl, null, panelId)
   }
 
-  async getBrowserPanel(panelId: string): Promise<BrowserPanel> {
-    const [row] = await this.deps.database.db
-      .select()
-      .from(browserPanels)
-      .where(eq(browserPanels.id, panelId))
-      .limit(1)
-    if (!row) {
-      throw new DomainError('PANEL_NOT_FOUND', 'Browser not found', 404)
-    }
+  getBrowserPanel(panelId: string): PanelEffect<BrowserPanel> {
+    const requireAvailableWorktree = this.requireAvailableWorktree.bind(this)
 
-    await this.requireAvailableWorktree(row.worktreeId)
-    return mapBrowserPanel(row)
+    return Effect.gen(function* () {
+      const database = yield* DatabasePort
+      const [row] = yield* Effect.promise(() =>
+        database.db
+          .select()
+          .from(browserPanels)
+          .where(eq(browserPanels.id, panelId))
+          .limit(1)
+      )
+      if (!row) {
+        return yield* Effect.fail(
+          new DomainError('PANEL_NOT_FOUND', 'Browser not found', 404)
+        )
+      }
+
+      yield* requireAvailableWorktree(row.worktreeId)
+      return mapBrowserPanel(row)
+    })
   }
 
-  async authorizeBrowserPanel(panelId: string): Promise<{
-    panel: BrowserPanel
-    worktreePath: string
-  }> {
-    const panel = await this.getBrowserPanel(panelId)
-    const worktree = await this.getWorktree(panel.worktreeId)
-    return { panel, worktreePath: worktree.path }
+  authorizeBrowserPanel(
+    panelId: string
+  ): PanelEffect<{ panel: BrowserPanel; worktreePath: string }> {
+    const getBrowserPanel = this.getBrowserPanel.bind(this)
+    const getWorktree = this.getWorktree.bind(this)
+
+    return Effect.gen(function* () {
+      const panel = yield* getBrowserPanel(panelId)
+      const worktree = yield* getWorktree(panel.worktreeId)
+      return { panel, worktreePath: worktree.path }
+    })
   }
 
-  async updateBrowserPanelState(
+  updateBrowserPanelState(
     panelId: string,
     state: { url: string; title: string }
-  ): Promise<BrowserPanel> {
-    const panel = await this.getBrowserPanel(panelId)
-    const parsedUrl =
-      state.url === 'about:blank'
-        ? { success: true as const, data: 'about:blank' }
-        : browserUrlSchema.safeParse(state.url)
-    if (!parsedUrl.success) {
-      throw new DomainError(
-        'INVALID_BROWSER_URL',
-        'The hosted browser reported an unsupported URL',
-        400
+  ): PanelEffect<BrowserPanel> {
+    const getBrowserPanel = this.getBrowserPanel.bind(this)
+    const invalidateProjectsSnapshot =
+      this.invalidateProjectsSnapshot.bind(this)
+
+    return Effect.gen(function* () {
+      const database = yield* DatabasePort
+      const events = yield* EventBusPort
+      const panel = yield* getBrowserPanel(panelId)
+      const parsedUrl =
+        state.url === 'about:blank'
+          ? { success: true as const, data: 'about:blank' }
+          : browserUrlSchema.safeParse(state.url)
+      if (!parsedUrl.success) {
+        return yield* Effect.fail(
+          new DomainError(
+            'INVALID_BROWSER_URL',
+            'The hosted browser reported an unsupported URL',
+            400
+          )
+        )
+      }
+
+      const url =
+        parsedUrl.data === 'about:blank'
+          ? parsedUrl.data
+          : new URL(parsedUrl.data).href
+      const requestedTitle = state.title.trim().slice(0, 256)
+      const title =
+        requestedTitle ||
+        (url === 'about:blank' ? 'Browser' : new URL(url).host || 'Browser')
+      if (panel.url === url && panel.title === title) {
+        return panel
+      }
+
+      const observedAt = now()
+      const updatedAt =
+        observedAt > panel.updatedAt
+          ? observedAt
+          : new Date(Date.parse(panel.updatedAt) + 1).toISOString()
+      yield* Effect.promise(() =>
+        database.db
+          .update(browserPanels)
+          .set({ url, title, updatedAt })
+          .where(eq(browserPanels.id, panelId))
       )
-    }
-
-    const url =
-      parsedUrl.data === 'about:blank'
-        ? parsedUrl.data
-        : new URL(parsedUrl.data).href
-    const requestedTitle = state.title.trim().slice(0, 256)
-    const title =
-      requestedTitle ||
-      (url === 'about:blank' ? 'Browser' : new URL(url).host || 'Browser')
-    if (panel.url === url && panel.title === title) {
-      return panel
-    }
-
-    const observedAt = now()
-    const updatedAt =
-      observedAt > panel.updatedAt
-        ? observedAt
-        : new Date(Date.parse(panel.updatedAt) + 1).toISOString()
-    await this.deps.database.db
-      .update(browserPanels)
-      .set({ url, title, updatedAt })
-      .where(eq(browserPanels.id, panelId))
-    const updated = { ...panel, url, title, updatedAt }
-    this.invalidateProjectsSnapshot()
-    this.events.publish('panel.updated', {
-      worktreeId: panel.worktreeId,
-      panelId
-    })
-    return updated
-  }
-
-  async deleteBrowserPanel(panelId: string): Promise<void> {
-    const [row] = await this.deps.database.db
-      .select()
-      .from(browserPanels)
-      .where(eq(browserPanels.id, panelId))
-      .limit(1)
-    if (!row) {
-      throw new DomainError('PANEL_NOT_FOUND', 'Browser not found', 404)
-    }
-
-    await this.deps.database.db
-      .delete(browserPanels)
-      .where(eq(browserPanels.id, panelId))
-    this.invalidateProjectsSnapshot()
-    this.events.publish('panel.removed', {
-      worktreeId: row.worktreeId,
-      panelId
+      const updated = { ...panel, url, title, updatedAt }
+      yield* invalidateProjectsSnapshot()
+      yield* Effect.sync(() => {
+        events.publish('panel.updated', {
+          worktreeId: panel.worktreeId,
+          panelId
+        })
+      })
+      return updated
     })
   }
 
-  async deletePanel(panelId: string, discardStoredData = false): Promise<void> {
-    const [browserPanel] = await this.deps.database.db
-      .select({ id: browserPanels.id })
-      .from(browserPanels)
-      .where(eq(browserPanels.id, panelId))
-      .limit(1)
-    if (browserPanel) {
-      return this.deleteBrowserPanel(panelId)
-    }
+  deleteBrowserPanel(panelId: string): PanelEffect<void> {
+    const invalidateProjectsSnapshot =
+      this.invalidateProjectsSnapshot.bind(this)
 
-    return this.deleteWebPanel(panelId, discardStoredData)
+    return Effect.gen(function* () {
+      const database = yield* DatabasePort
+      const events = yield* EventBusPort
+      const [row] = yield* Effect.promise(() =>
+        database.db
+          .select()
+          .from(browserPanels)
+          .where(eq(browserPanels.id, panelId))
+          .limit(1)
+      )
+      if (!row) {
+        return yield* Effect.fail(
+          new DomainError('PANEL_NOT_FOUND', 'Browser not found', 404)
+        )
+      }
+
+      yield* Effect.promise(() =>
+        database.db.delete(browserPanels).where(eq(browserPanels.id, panelId))
+      )
+      yield* invalidateProjectsSnapshot()
+      yield* Effect.sync(() => {
+        events.publish('panel.removed', {
+          worktreeId: row.worktreeId,
+          panelId
+        })
+      })
+    })
   }
 
-  async createWebPanel(
+  deletePanel(panelId: string, discardStoredData = false): PanelEffect<void> {
+    const deleteBrowserPanel = this.deleteBrowserPanel.bind(this)
+    const deleteWebPanel = this.deleteWebPanel.bind(this)
+
+    return Effect.gen(function* () {
+      const database = yield* DatabasePort
+      const [browserPanel] = yield* Effect.promise(() =>
+        database.db
+          .select({ id: browserPanels.id })
+          .from(browserPanels)
+          .where(eq(browserPanels.id, panelId))
+          .limit(1)
+      )
+      return yield* browserPanel
+        ? deleteBrowserPanel(panelId)
+        : deleteWebPanel(panelId, discardStoredData)
+    })
+  }
+
+  createWebPanel(
     worktreeId: string,
     definitionId: string,
     launch: WebPanelLaunch = { input: null, cwd: null }
-  ): Promise<WebPanel> {
-    const worktree = await this.requireAvailableWorktree(worktreeId)
-    const definition = (
-      await this.effectiveWebPanelDefinitions(worktreeId)
-    ).find((candidate) => candidate.id === definitionId)
-    if (!definition) {
-      throw new DomainError(
-        'WEB_PANEL_DEFINITION_NOT_FOUND',
-        'Web panel definition not found',
-        404
-      )
-    }
+  ): PanelEffect<WebPanel> {
+    const requireAvailableWorktree = this.requireAvailableWorktree.bind(this)
+    const effectiveWebPanelDefinitions =
+      this.effectiveWebPanelDefinitions.bind(this)
+    const requireWebPanelPermissions =
+      this.requireWebPanelPermissions.bind(this)
+    const normalizeWebPanelLaunch = this.normalizeWebPanelLaunch.bind(this)
+    const invalidateProjectsSnapshot =
+      this.invalidateProjectsSnapshot.bind(this)
 
-    await this.requireWebPanelPermissions(worktreeId, definition)
-    const normalized = await this.normalizeWebPanelLaunch(worktree, launch)
-    const timestamp = now()
-    const panel: WebPanel = {
-      id: id('panel'),
-      kind: 'web',
-      worktreeId,
-      definitionId,
-      title: definition.title,
-      launch: normalized.launch,
-      permissions: definition.permissions,
-      sandbox: definition.sandbox,
-      createdAt: timestamp,
-      updatedAt: timestamp
-    }
-    await this.deps.database.db.insert(webPanels).values({
-      id: panel.id,
-      worktreeId: panel.worktreeId,
-      definitionId: panel.definitionId,
-      title: panel.title,
-      inputJson: normalized.inputJson,
-      launchCwd: panel.launch.cwd,
-      createdAt: panel.createdAt,
-      updatedAt: panel.updatedAt
+    return Effect.gen(function* () {
+      const database = yield* DatabasePort
+      const events = yield* EventBusPort
+      const worktree = yield* requireAvailableWorktree(worktreeId)
+      const definition = (yield* effectiveWebPanelDefinitions(worktreeId)).find(
+        (candidate) => candidate.id === definitionId
+      )
+      if (!definition) {
+        return yield* Effect.fail(
+          new DomainError(
+            'WEB_PANEL_DEFINITION_NOT_FOUND',
+            'Web panel definition not found',
+            404
+          )
+        )
+      }
+
+      yield* requireWebPanelPermissions(worktreeId, definition)
+      const normalized = yield* normalizeWebPanelLaunch(worktree, launch)
+      const timestamp = now()
+      const panel: WebPanel = {
+        id: id('panel'),
+        kind: 'web',
+        worktreeId,
+        definitionId,
+        title: definition.title,
+        launch: normalized.launch,
+        permissions: definition.permissions,
+        sandbox: definition.sandbox,
+        createdAt: timestamp,
+        updatedAt: timestamp
+      }
+      yield* Effect.promise(() =>
+        database.db.insert(webPanels).values({
+          id: panel.id,
+          worktreeId: panel.worktreeId,
+          definitionId: panel.definitionId,
+          title: panel.title,
+          inputJson: normalized.inputJson,
+          launchCwd: panel.launch.cwd,
+          createdAt: panel.createdAt,
+          updatedAt: panel.updatedAt
+        })
+      )
+      yield* invalidateProjectsSnapshot()
+      yield* Effect.sync(() => {
+        events.publish('panel.created', { worktreeId, panelId: panel.id })
+      })
+      return panel
     })
-    this.invalidateProjectsSnapshot()
-    this.events.publish('panel.created', { worktreeId, panelId: panel.id })
-    return panel
   }
 
-  async openWebPanel(
+  openWebPanel(
     worktreeId: string,
     definitionId: string,
     launch: WebPanelLaunch = { input: null, cwd: null },
     newInstance = false,
     sourceTerminalId: string | null = null
-  ): Promise<OpenWebPanelResult> {
-    const worktree = await this.requireAvailableWorktree(worktreeId)
-    const definition = (
-      await this.effectiveWebPanelDefinitions(worktreeId)
-    ).find((candidate) => candidate.id === definitionId)
-    if (!definition) {
-      throw new DomainError(
-        'WEB_PANEL_DEFINITION_NOT_FOUND',
-        'Web panel definition not found',
-        404
+  ): PanelEffect<OpenWebPanelResult> {
+    const requireAvailableWorktree = this.requireAvailableWorktree.bind(this)
+    const effectiveWebPanelDefinitions =
+      this.effectiveWebPanelDefinitions.bind(this)
+    const requireWebPanelPermissions =
+      this.requireWebPanelPermissions.bind(this)
+    const createWebPanel = this.createWebPanel.bind(this)
+    const normalizeWebPanelLaunch = this.normalizeWebPanelLaunch.bind(this)
+    const invalidateProjectsSnapshot =
+      this.invalidateProjectsSnapshot.bind(this)
+
+    return Effect.gen(function* () {
+      const database = yield* DatabasePort
+      const events = yield* EventBusPort
+      const worktree = yield* requireAvailableWorktree(worktreeId)
+      const definition = (yield* effectiveWebPanelDefinitions(worktreeId)).find(
+        (candidate) => candidate.id === definitionId
       )
-    }
-
-    await this.requireWebPanelPermissions(worktreeId, definition)
-    const finish = (result: OpenWebPanelResult): OpenWebPanelResult => {
-      this.events.publish('panel.open_requested', {
-        worktreeId,
-        panelId: result.panel.id,
-        panel: result.panel,
-        sourceTerminalId,
-        sourcePanelId: null
-      })
-      return result
-    }
-
-    if (newInstance) {
-      return finish({
-        panel: await this.createWebPanel(worktreeId, definitionId, launch),
-        created: true,
-        reused: false
-      })
-    }
-
-    const [existing] = await this.deps.database.db
-      .select()
-      .from(webPanels)
-      .where(
-        and(
-          eq(webPanels.worktreeId, worktreeId),
-          eq(webPanels.definitionId, definitionId)
+      if (!definition) {
+        return yield* Effect.fail(
+          new DomainError(
+            'WEB_PANEL_DEFINITION_NOT_FOUND',
+            'Web panel definition not found',
+            404
+          )
         )
-      )
-      .orderBy(desc(webPanels.createdAt), desc(webPanels.id))
-      .limit(1)
-    if (!existing) {
-      return finish({
-        panel: await this.createWebPanel(worktreeId, definitionId, launch),
-        created: true,
-        reused: false
-      })
-    }
+      }
 
-    const normalized = await this.normalizeWebPanelLaunch(worktree, launch)
-    const observedAt = now()
-    const updatedAt =
-      observedAt > existing.updatedAt
-        ? observedAt
-        : new Date(Date.parse(existing.updatedAt) + 1).toISOString()
-    await this.deps.database.db
-      .update(webPanels)
-      .set({
-        title: definition.title,
-        inputJson: normalized.inputJson,
-        launchCwd: normalized.launch.cwd,
-        updatedAt
+      yield* requireWebPanelPermissions(worktreeId, definition)
+      const finish = (result: OpenWebPanelResult): OpenWebPanelResult => {
+        events.publish('panel.open_requested', {
+          worktreeId,
+          panelId: result.panel.id,
+          panel: result.panel,
+          sourceTerminalId,
+          sourcePanelId: null
+        })
+        return result
+      }
+
+      if (newInstance) {
+        return finish({
+          panel: yield* createWebPanel(worktreeId, definitionId, launch),
+          created: true,
+          reused: false
+        })
+      }
+
+      const [existing] = yield* Effect.promise(() =>
+        database.db
+          .select()
+          .from(webPanels)
+          .where(
+            and(
+              eq(webPanels.worktreeId, worktreeId),
+              eq(webPanels.definitionId, definitionId)
+            )
+          )
+          .orderBy(desc(webPanels.createdAt), desc(webPanels.id))
+          .limit(1)
+      )
+      if (!existing) {
+        return finish({
+          panel: yield* createWebPanel(worktreeId, definitionId, launch),
+          created: true,
+          reused: false
+        })
+      }
+
+      const normalized = yield* normalizeWebPanelLaunch(worktree, launch)
+      const observedAt = now()
+      const updatedAt =
+        observedAt > existing.updatedAt
+          ? observedAt
+          : new Date(Date.parse(existing.updatedAt) + 1).toISOString()
+      yield* Effect.promise(() =>
+        database.db
+          .update(webPanels)
+          .set({
+            title: definition.title,
+            inputJson: normalized.inputJson,
+            launchCwd: normalized.launch.cwd,
+            updatedAt
+          })
+          .where(eq(webPanels.id, existing.id))
+      )
+      const panel = mapWebPanel(
+        {
+          ...existing,
+          title: definition.title,
+          inputJson: normalized.inputJson,
+          launchCwd: normalized.launch.cwd,
+          updatedAt
+        },
+        definition.permissions,
+        true
+      )
+      yield* invalidateProjectsSnapshot()
+      yield* Effect.sync(() => {
+        events.publish('panel.updated', { worktreeId, panelId: panel.id })
       })
-      .where(eq(webPanels.id, existing.id))
-    const panel = mapWebPanel(
-      {
-        ...existing,
-        title: definition.title,
-        inputJson: normalized.inputJson,
-        launchCwd: normalized.launch.cwd,
-        updatedAt
-      },
-      definition.permissions,
-      true
-    )
-    this.invalidateProjectsSnapshot()
-    this.events.publish('panel.updated', { worktreeId, panelId: panel.id })
-    return finish({ panel, created: false, reused: true })
+      return finish({ panel, created: false, reused: true })
+    })
   }
 
-  async deleteWebPanel(
+  deleteWebPanel(
     panelId: string,
     discardStoredData = false
-  ): Promise<void> {
-    const [panel] = await this.deps.database.db
-      .select()
-      .from(webPanels)
-      .where(eq(webPanels.id, panelId))
-      .limit(1)
-    if (!panel) {
-      throw new DomainError('PANEL_NOT_FOUND', 'Panel not found', 404)
-    }
+  ): PanelEffect<void> {
+    const requireAvailableWorktree = this.requireAvailableWorktree.bind(this)
+    const invalidateProjectsSnapshot =
+      this.invalidateProjectsSnapshot.bind(this)
 
-    await this.requireAvailableWorktree(panel.worktreeId)
-    const [storedValue] = await this.deps.database.db
-      .select({ key: webPanelStorage.key })
-      .from(webPanelStorage)
-      .where(eq(webPanelStorage.panelId, panelId))
-      .limit(1)
-    if (!discardStoredData && storedValue) {
-      throw new DomainError(
-        'PANEL_HAS_STORED_DATA',
-        'Closing this panel requires confirmation because its saved data will be deleted',
-        409
+    return Effect.gen(function* () {
+      const database = yield* DatabasePort
+      const events = yield* EventBusPort
+      const [panel] = yield* Effect.promise(() =>
+        database.db
+          .select()
+          .from(webPanels)
+          .where(eq(webPanels.id, panelId))
+          .limit(1)
       )
-    }
-
-    await this.deps.database.db
-      .delete(webPanels)
-      .where(eq(webPanels.id, panelId))
-    this.invalidateProjectsSnapshot()
-    this.events.publish('panel.removed', {
-      worktreeId: panel.worktreeId,
-      panelId
-    })
-  }
-
-  async requireWebPanelTreeFiles(panelId: string) {
-    const [panel] = await this.deps.database.db
-      .select()
-      .from(webPanels)
-      .where(eq(webPanels.id, panelId))
-      .limit(1)
-    if (!panel) {
-      throw new DomainError('PANEL_NOT_FOUND', 'Panel not found', 404)
-    }
-
-    const definition = (
-      await this.effectiveWebPanelDefinitions(panel.worktreeId)
-    ).find((candidate) => candidate.id === panel.definitionId)
-    if (!definition) {
-      throw new DomainError(
-        'WEB_PANEL_DEFINITION_NOT_FOUND',
-        'The definition for this panel is unavailable',
-        404
-      )
-    }
-
-    await this.requireWebPanelPermissions(panel.worktreeId, definition)
-    if (!definition.permissions.includes('tree-files')) {
-      throw new DomainError(
-        'WEB_PANEL_TREE_FILES_REQUIRED',
-        'This panel does not have permission to access tree files',
-        403
-      )
-    }
-
-    const worktree = await this.requireAvailableWorktree(panel.worktreeId)
-    const project = await this.getProject(worktree.projectId)
-    return { project, worktree }
-  }
-
-  async getWebPanelContext(panelId: string): Promise<WebPanelContext> {
-    const [panelRow] = await this.deps.database.db
-      .select()
-      .from(webPanels)
-      .where(eq(webPanels.id, panelId))
-      .limit(1)
-    if (!panelRow) {
-      throw new DomainError('PANEL_NOT_FOUND', 'Panel not found', 404)
-    }
-
-    const definition = (
-      await this.effectiveWebPanelDefinitions(panelRow.worktreeId)
-    ).find((candidate) => candidate.id === panelRow.definitionId)
-    const permissionsGranted = definition
-      ? await this.webPanelPermissionsGranted(panelRow.worktreeId, definition)
-      : false
-    const panel = mapWebPanel(
-      panelRow,
-      definition?.permissions ?? [],
-      permissionsGranted
-    )
-    const worktree = await this.getWorktree(panel.worktreeId)
-    const project = await this.getProject(worktree.projectId)
-    return {
-      apiVersion: 1,
-      panel,
-      launch: panel.launch,
-      project: {
-        id: project.id,
-        name: project.name,
-        kind: project.kind,
-        defaultBranch:
-          project.kind === 'repository' ? project.defaultBranch : null
-      },
-      worktree: {
-        id: worktree.id,
-        name: worktree.name,
-        kind: worktree.kind,
-        branch: worktree.branch,
-        head: worktree.kind === 'folder' ? null : worktree.head
+      if (!panel) {
+        return yield* Effect.fail(
+          new DomainError('PANEL_NOT_FOUND', 'Panel not found', 404)
+        )
       }
-    }
-  }
 
-  async getWebPanelDiff(panelId: string) {
-    const context = await this.getWebPanelContext(panelId)
-    if (
-      context.project.kind !== 'repository' ||
-      !context.project.defaultBranch
-    ) {
-      throw new DomainError(
-        'GIT_NOT_AVAILABLE',
-        'Git diff is not available for a folder project',
-        409
+      yield* requireAvailableWorktree(panel.worktreeId)
+      const [storedValue] = yield* Effect.promise(() =>
+        database.db
+          .select({ key: webPanelStorage.key })
+          .from(webPanelStorage)
+          .where(eq(webPanelStorage.panelId, panelId))
+          .limit(1)
       )
-    }
+      if (!discardStoredData && storedValue) {
+        return yield* Effect.fail(
+          new DomainError(
+            'PANEL_HAS_STORED_DATA',
+            'Closing this panel requires confirmation because its saved data will be deleted',
+            409
+          )
+        )
+      }
 
-    const worktree = await this.getWorktree(context.panel.worktreeId)
-    return this.deps.git.worktreeDiff(
-      worktree.path,
-      context.project.defaultBranch
-    )
-  }
-
-  async getBrowserPanelListeners(
-    panelId: string
-  ): Promise<WorktreeListenerDiscovery> {
-    const panel = await this.getBrowserPanel(panelId)
-    const worktree = await this.getWorktree(panel.worktreeId)
-    const terminalProcesses = await this.deps.terminalHost.listProcesses(
-      worktree.id
-    )
-    return this.networkListeners.listeners({
-      worktreePath: worktree.path,
-      terminalProcesses
+      yield* Effect.promise(() =>
+        database.db.delete(webPanels).where(eq(webPanels.id, panelId))
+      )
+      yield* invalidateProjectsSnapshot()
+      yield* Effect.sync(() => {
+        events.publish('panel.removed', {
+          worktreeId: panel.worktreeId,
+          panelId
+        })
+      })
     })
   }
 
-  async getPanelListeners(panelId: string): Promise<WorktreeListenerDiscovery> {
-    const [browserPanel] = await this.deps.database.db
-      .select({ id: browserPanels.id })
-      .from(browserPanels)
-      .where(eq(browserPanels.id, panelId))
-      .limit(1)
-    return browserPanel
-      ? this.getBrowserPanelListeners(panelId)
-      : this.getWebPanelListeners(panelId)
-  }
-
-  async getWebPanelListeners(
+  requireWebPanelTreeFiles(
     panelId: string
-  ): Promise<WorktreeListenerDiscovery> {
-    const context = await this.getWebPanelContext(panelId)
-    const worktree = await this.getWorktree(context.panel.worktreeId)
-    const terminalProcesses = await this.deps.terminalHost.listProcesses(
-      worktree.id
-    )
-    return this.networkListeners.listeners({
-      worktreePath: worktree.path,
-      terminalProcesses
+  ): PanelEffect<{ project: ProjectRecord; worktree: WorktreeRecord }> {
+    const effectiveWebPanelDefinitions =
+      this.effectiveWebPanelDefinitions.bind(this)
+    const requireWebPanelPermissions =
+      this.requireWebPanelPermissions.bind(this)
+    const requireAvailableWorktree = this.requireAvailableWorktree.bind(this)
+    const getProject = this.getProject.bind(this)
+
+    return Effect.gen(function* () {
+      const database = yield* DatabasePort
+      const [panel] = yield* Effect.promise(() =>
+        database.db
+          .select()
+          .from(webPanels)
+          .where(eq(webPanels.id, panelId))
+          .limit(1)
+      )
+      if (!panel) {
+        return yield* Effect.fail(
+          new DomainError('PANEL_NOT_FOUND', 'Panel not found', 404)
+        )
+      }
+
+      const definition = (yield* effectiveWebPanelDefinitions(
+        panel.worktreeId
+      )).find((candidate) => candidate.id === panel.definitionId)
+      if (!definition) {
+        return yield* Effect.fail(
+          new DomainError(
+            'WEB_PANEL_DEFINITION_NOT_FOUND',
+            'The definition for this panel is unavailable',
+            404
+          )
+        )
+      }
+
+      yield* requireWebPanelPermissions(panel.worktreeId, definition)
+      if (!definition.permissions.includes('tree-files')) {
+        return yield* Effect.fail(
+          new DomainError(
+            'WEB_PANEL_TREE_FILES_REQUIRED',
+            'This panel does not have permission to access tree files',
+            403
+          )
+        )
+      }
+
+      const worktree = yield* requireAvailableWorktree(panel.worktreeId)
+      const project = yield* getProject(worktree.projectId)
+      return { project, worktree }
     })
   }
 
-  async hasWebPanelStorage(panelId: string): Promise<boolean> {
-    await this.getWebPanelContext(panelId)
-    const [row] = await this.deps.database.db
-      .select({ key: webPanelStorage.key })
-      .from(webPanelStorage)
-      .where(eq(webPanelStorage.panelId, panelId))
-      .limit(1)
-    return row !== undefined
+  getWebPanelContext(panelId: string): PanelEffect<WebPanelContext> {
+    const effectiveWebPanelDefinitions =
+      this.effectiveWebPanelDefinitions.bind(this)
+    const webPanelPermissionsGranted =
+      this.webPanelPermissionsGranted.bind(this)
+    const getWorktree = this.getWorktree.bind(this)
+    const getProject = this.getProject.bind(this)
+
+    return Effect.gen(function* () {
+      const database = yield* DatabasePort
+      const [panelRow] = yield* Effect.promise(() =>
+        database.db
+          .select()
+          .from(webPanels)
+          .where(eq(webPanels.id, panelId))
+          .limit(1)
+      )
+      if (!panelRow) {
+        return yield* Effect.fail(
+          new DomainError('PANEL_NOT_FOUND', 'Panel not found', 404)
+        )
+      }
+
+      const definition = (yield* effectiveWebPanelDefinitions(
+        panelRow.worktreeId
+      )).find((candidate) => candidate.id === panelRow.definitionId)
+      const permissionsGranted = definition
+        ? yield* webPanelPermissionsGranted(panelRow.worktreeId, definition)
+        : false
+      const panel = mapWebPanel(
+        panelRow,
+        definition?.permissions ?? [],
+        permissionsGranted
+      )
+      const worktree = yield* getWorktree(panel.worktreeId)
+      const project = yield* getProject(worktree.projectId)
+      return {
+        apiVersion: 1,
+        panel,
+        launch: panel.launch,
+        project: {
+          id: project.id,
+          name: project.name,
+          kind: project.kind,
+          defaultBranch:
+            project.kind === 'repository' ? project.defaultBranch : null
+        },
+        worktree: {
+          id: worktree.id,
+          name: worktree.name,
+          kind: worktree.kind,
+          branch: worktree.branch,
+          head: worktree.kind === 'folder' ? null : worktree.head
+        }
+      }
+    })
   }
 
-  async getWebPanelStorage(
+  getWebPanelDiff(panelId: string) {
+    const getWebPanelContext = this.getWebPanelContext.bind(this)
+    const getWorktree = this.getWorktree.bind(this)
+
+    return Effect.gen(function* () {
+      const git = yield* GitPort
+      const context = yield* getWebPanelContext(panelId)
+      if (
+        context.project.kind !== 'repository' ||
+        !context.project.defaultBranch
+      ) {
+        return yield* Effect.fail(
+          new DomainError(
+            'GIT_NOT_AVAILABLE',
+            'Git diff is not available for a folder project',
+            409
+          )
+        )
+      }
+
+      const worktree = yield* getWorktree(context.panel.worktreeId)
+      return yield* Effect.promise(() =>
+        git.worktreeDiff(worktree.path, context.project.defaultBranch!)
+      )
+    })
+  }
+
+  getBrowserPanelListeners(
+    panelId: string
+  ): PanelEffect<WorktreeListenerDiscovery> {
+    const getBrowserPanel = this.getBrowserPanel.bind(this)
+    const getWorktree = this.getWorktree.bind(this)
+
+    return Effect.gen(function* () {
+      const terminalHost = yield* TerminalHostPort
+      const networkListeners = yield* NetworkListenerPort
+      const panel = yield* getBrowserPanel(panelId)
+      const worktree = yield* getWorktree(panel.worktreeId)
+      const terminalProcesses = yield* Effect.promise(() =>
+        terminalHost.listProcesses(worktree.id)
+      )
+      return yield* Effect.promise(() =>
+        networkListeners.listeners({
+          worktreePath: worktree.path,
+          terminalProcesses
+        })
+      )
+    })
+  }
+
+  getPanelListeners(panelId: string): PanelEffect<WorktreeListenerDiscovery> {
+    const getBrowserPanelListeners = this.getBrowserPanelListeners.bind(this)
+    const getWebPanelListeners = this.getWebPanelListeners.bind(this)
+
+    return Effect.gen(function* () {
+      const database = yield* DatabasePort
+      const [browserPanel] = yield* Effect.promise(() =>
+        database.db
+          .select({ id: browserPanels.id })
+          .from(browserPanels)
+          .where(eq(browserPanels.id, panelId))
+          .limit(1)
+      )
+      return yield* browserPanel
+        ? getBrowserPanelListeners(panelId)
+        : getWebPanelListeners(panelId)
+    })
+  }
+
+  getWebPanelListeners(
+    panelId: string
+  ): PanelEffect<WorktreeListenerDiscovery> {
+    const getWebPanelContext = this.getWebPanelContext.bind(this)
+    const getWorktree = this.getWorktree.bind(this)
+
+    return Effect.gen(function* () {
+      const terminalHost = yield* TerminalHostPort
+      const networkListeners = yield* NetworkListenerPort
+      const context = yield* getWebPanelContext(panelId)
+      const worktree = yield* getWorktree(context.panel.worktreeId)
+      const terminalProcesses = yield* Effect.promise(() =>
+        terminalHost.listProcesses(worktree.id)
+      )
+      return yield* Effect.promise(() =>
+        networkListeners.listeners({
+          worktreePath: worktree.path,
+          terminalProcesses
+        })
+      )
+    })
+  }
+
+  hasWebPanelStorage(panelId: string): PanelEffect<boolean> {
+    const getWebPanelContext = this.getWebPanelContext.bind(this)
+
+    return Effect.gen(function* () {
+      const database = yield* DatabasePort
+      yield* getWebPanelContext(panelId)
+      const [row] = yield* Effect.promise(() =>
+        database.db
+          .select({ key: webPanelStorage.key })
+          .from(webPanelStorage)
+          .where(eq(webPanelStorage.panelId, panelId))
+          .limit(1)
+      )
+      return row !== undefined
+    })
+  }
+
+  getWebPanelStorage(
     panelId: string,
     key: string
-  ): Promise<JsonValue | undefined> {
-    await this.getWebPanelContext(panelId)
-    const [row] = await this.deps.database.db
-      .select({ valueJson: webPanelStorage.valueJson })
-      .from(webPanelStorage)
-      .where(
-        and(eq(webPanelStorage.panelId, panelId), eq(webPanelStorage.key, key))
+  ): PanelEffect<JsonValue | undefined> {
+    const getWebPanelContext = this.getWebPanelContext.bind(this)
+
+    return Effect.gen(function* () {
+      const database = yield* DatabasePort
+      yield* getWebPanelContext(panelId)
+      const [row] = yield* Effect.promise(() =>
+        database.db
+          .select({ valueJson: webPanelStorage.valueJson })
+          .from(webPanelStorage)
+          .where(
+            and(
+              eq(webPanelStorage.panelId, panelId),
+              eq(webPanelStorage.key, key)
+            )
+          )
+          .limit(1)
       )
-      .limit(1)
-    // SAFETY: The surrounding boundary contract establishes this asserted value.
-    return row ? (JSON.parse(row.valueJson) as JsonValue) : undefined
+      // SAFETY: The surrounding boundary contract establishes this asserted value.
+      return row ? (JSON.parse(row.valueJson) as JsonValue) : undefined
+    })
   }
 
-  async setWebPanelStorage(
+  setWebPanelStorage(
     panelId: string,
     key: string,
     value: JsonValue
-  ): Promise<void> {
-    await this.getWebPanelContext(panelId)
-    const valueJson = JSON.stringify(value)
-    const valueBytes = Buffer.byteLength(valueJson)
-    if (valueBytes > WEB_PANEL_STORAGE_MAX_VALUE_BYTES) {
-      throw new DomainError(
-        'WEB_PANEL_STORAGE_VALUE_TOO_LARGE',
-        'Web panel storage values are limited to 64 KiB',
-        413
-      )
-    }
+  ): PanelEffect<void> {
+    const getWebPanelContext = this.getWebPanelContext.bind(this)
 
-    const storedValues = await this.deps.database.db
-      .select({ valueJson: webPanelStorage.valueJson })
-      .from(webPanelStorage)
-      .where(
-        and(eq(webPanelStorage.panelId, panelId), ne(webPanelStorage.key, key))
-      )
-    const storedBytes = storedValues.reduce(
-      (total, row) => total + Buffer.byteLength(row.valueJson),
-      0
-    )
-    if (
-      storedValues.length >= WEB_PANEL_STORAGE_MAX_ENTRIES ||
-      storedBytes + valueBytes > WEB_PANEL_STORAGE_MAX_TOTAL_BYTES
-    ) {
-      throw new DomainError(
-        'WEB_PANEL_STORAGE_QUOTA_EXCEEDED',
-        'Web panel storage is limited to 256 values and 1 MiB per panel',
-        413
-      )
-    }
+    return Effect.gen(function* () {
+      const database = yield* DatabasePort
+      yield* getWebPanelContext(panelId)
+      const valueJson = JSON.stringify(value)
+      const valueBytes = Buffer.byteLength(valueJson)
+      if (valueBytes > WEB_PANEL_STORAGE_MAX_VALUE_BYTES) {
+        return yield* Effect.fail(
+          new DomainError(
+            'WEB_PANEL_STORAGE_VALUE_TOO_LARGE',
+            'Web panel storage values are limited to 64 KiB',
+            413
+          )
+        )
+      }
 
-    const updatedAt = now()
-    await this.deps.database.db
-      .insert(webPanelStorage)
-      .values({ panelId, key, valueJson, updatedAt })
-      .onConflictDoUpdate({
-        target: [webPanelStorage.panelId, webPanelStorage.key],
-        set: { valueJson, updatedAt }
-      })
+      const storedValues = yield* Effect.promise(() =>
+        database.db
+          .select({ valueJson: webPanelStorage.valueJson })
+          .from(webPanelStorage)
+          .where(
+            and(
+              eq(webPanelStorage.panelId, panelId),
+              ne(webPanelStorage.key, key)
+            )
+          )
+      )
+      const storedBytes = storedValues.reduce(
+        (total, row) => total + Buffer.byteLength(row.valueJson),
+        0
+      )
+      if (
+        storedValues.length >= WEB_PANEL_STORAGE_MAX_ENTRIES ||
+        storedBytes + valueBytes > WEB_PANEL_STORAGE_MAX_TOTAL_BYTES
+      ) {
+        return yield* Effect.fail(
+          new DomainError(
+            'WEB_PANEL_STORAGE_QUOTA_EXCEEDED',
+            'Web panel storage is limited to 256 values and 1 MiB per panel',
+            413
+          )
+        )
+      }
+
+      const updatedAt = now()
+      yield* Effect.promise(() =>
+        database.db
+          .insert(webPanelStorage)
+          .values({ panelId, key, valueJson, updatedAt })
+          .onConflictDoUpdate({
+            target: [webPanelStorage.panelId, webPanelStorage.key],
+            set: { valueJson, updatedAt }
+          })
+      )
+    })
   }
 
-  async deleteWebPanelStorage(panelId: string, key: string): Promise<void> {
-    await this.getWebPanelContext(panelId)
-    await this.deps.database.db
-      .delete(webPanelStorage)
-      .where(
-        and(eq(webPanelStorage.panelId, panelId), eq(webPanelStorage.key, key))
+  deleteWebPanelStorage(panelId: string, key: string): PanelEffect<void> {
+    const getWebPanelContext = this.getWebPanelContext.bind(this)
+
+    return Effect.gen(function* () {
+      const database = yield* DatabasePort
+      yield* getWebPanelContext(panelId)
+      yield* Effect.promise(() =>
+        database.db
+          .delete(webPanelStorage)
+          .where(
+            and(
+              eq(webPanelStorage.panelId, panelId),
+              eq(webPanelStorage.key, key)
+            )
+          )
       )
+    })
   }
 
-  async resolveWebPanelAsset(
+  resolveWebPanelAsset(
     panelId: string,
     requestedPath: string
-  ): Promise<WebPanelAssetResolution> {
-    const [panel] = await this.deps.database.db
-      .select()
-      .from(webPanels)
-      .where(eq(webPanels.id, panelId))
-      .limit(1)
-    if (!panel) {
-      throw new DomainError('PANEL_NOT_FOUND', 'Panel not found', 404)
-    }
+  ): PanelEffect<WebPanelAssetResolution> {
+    const effectiveWebPanelDefinitions =
+      this.effectiveWebPanelDefinitions.bind(this)
+    const requireWebPanelPermissions =
+      this.requireWebPanelPermissions.bind(this)
 
-    const definition = (
-      await this.effectiveWebPanelDefinitions(panel.worktreeId)
-    ).find((candidate) => candidate.id === panel.definitionId)
-    if (!definition) {
-      throw new DomainError(
-        'WEB_PANEL_DEFINITION_NOT_FOUND',
-        'The definition for this panel is unavailable',
-        404
+    return Effect.gen(function* () {
+      const database = yield* DatabasePort
+      const webPanelRuntime = yield* WebPanelRuntimePort
+      const [panel] = yield* Effect.promise(() =>
+        database.db
+          .select()
+          .from(webPanels)
+          .where(eq(webPanels.id, panelId))
+          .limit(1)
       )
-    }
-
-    await this.requireWebPanelPermissions(panel.worktreeId, definition)
-    const encodedPanelId = encodeURIComponent(panelId)
-    return this.webPanelRuntime.resolve(
-      definition,
-      requestedPath,
-      `/api/web-panels/${encodedPanelId}/assets/`
-    )
-  }
-
-  async listBrowserPanels(): Promise<BrowserPanel[]> {
-    return this.deps.database.db
-      .select()
-      .from(browserPanels)
-      .orderBy(asc(browserPanels.createdAt), asc(browserPanels.id))
-      .then((rows) => rows.map(mapBrowserPanel))
-  }
-
-  async listWebPanels(): Promise<WebPanel[]> {
-    const rows = await this.deps.database.db
-      .select()
-      .from(webPanels)
-      .orderBy(asc(webPanels.createdAt), asc(webPanels.id))
-    return Promise.all(
-      rows.map(async (row) => {
-        const definition = (
-          await this.effectiveWebPanelDefinitions(row.worktreeId).catch(
-            () => []
-          )
-        ).find((candidate) => candidate.id === row.definitionId)
-        return mapWebPanel(
-          row,
-          definition?.permissions ?? [],
-          definition
-            ? await this.webPanelPermissionsGranted(row.worktreeId, definition)
-            : false
+      if (!panel) {
+        return yield* Effect.fail(
+          new DomainError('PANEL_NOT_FOUND', 'Panel not found', 404)
         )
-      })
-    )
+      }
+
+      const definition = (yield* effectiveWebPanelDefinitions(
+        panel.worktreeId
+      )).find((candidate) => candidate.id === panel.definitionId)
+      if (!definition) {
+        return yield* Effect.fail(
+          new DomainError(
+            'WEB_PANEL_DEFINITION_NOT_FOUND',
+            'The definition for this panel is unavailable',
+            404
+          )
+        )
+      }
+
+      yield* requireWebPanelPermissions(panel.worktreeId, definition)
+      const encodedPanelId = encodeURIComponent(panelId)
+      return yield* Effect.promise(() =>
+        webPanelRuntime.resolve(
+          definition,
+          requestedPath,
+          `/api/web-panels/${encodedPanelId}/assets/`
+        )
+      )
+    })
+  }
+
+  listBrowserPanels(): PanelEffect<BrowserPanel[]> {
+    return Effect.gen(function* () {
+      const database = yield* DatabasePort
+      const rows = yield* Effect.promise(() =>
+        database.db
+          .select()
+          .from(browserPanels)
+          .orderBy(asc(browserPanels.createdAt), asc(browserPanels.id))
+      )
+      return rows.map(mapBrowserPanel)
+    })
+  }
+
+  listWebPanels(): PanelEffect<WebPanel[]> {
+    const effectiveWebPanelDefinitions =
+      this.effectiveWebPanelDefinitions.bind(this)
+    const webPanelPermissionsGranted =
+      this.webPanelPermissionsGranted.bind(this)
+
+    return Effect.gen(function* () {
+      const database = yield* DatabasePort
+      const rows = yield* Effect.promise(() =>
+        database.db
+          .select()
+          .from(webPanels)
+          .orderBy(asc(webPanels.createdAt), asc(webPanels.id))
+      )
+      return yield* Effect.forEach(rows, (row) =>
+        Effect.gen(function* () {
+          const definitions = yield* Effect.catchAll(
+            effectiveWebPanelDefinitions(row.worktreeId),
+            () => Effect.succeed([])
+          )
+          const definition = definitions.find(
+            (candidate) => candidate.id === row.definitionId
+          )
+          return mapWebPanel(
+            row,
+            definition?.permissions ?? [],
+            definition
+              ? yield* webPanelPermissionsGranted(row.worktreeId, definition)
+              : false
+          )
+        })
+      )
+    })
   }
 }
 

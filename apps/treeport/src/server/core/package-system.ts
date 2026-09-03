@@ -3,6 +3,7 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { z } from 'zod'
+import * as Effect from 'effect/Effect'
 import {
   createTerminalPresetSchema,
   type PackageListing,
@@ -19,6 +20,9 @@ import {
 import type { AppConfig } from './config'
 import { runChecked, type CommandRunner } from './command'
 import { DomainError } from './domain'
+import { PackageMutations } from './services/package/package-mutations'
+
+type ApplicationServices = PackageMutations
 
 interface TreeportSettings {
   raw: object
@@ -139,6 +143,19 @@ const webPanelManifestEntrySchema = z.union([
 
 const EMPTY_SETTINGS: TreeportSettings = { raw: {}, packages: [] }
 const PACKAGE_OPERATION_TIMEOUT_MS = 5 * 60_000
+
+function packagePromise<Result>(
+  evaluate: () => Promise<Result>
+): Effect.Effect<Result, DomainError<unknown>> {
+  return Effect.tryPromise({
+    try: evaluate,
+    catch: (error) => error
+  }).pipe(
+    Effect.catchAll((error) =>
+      error instanceof DomainError ? Effect.fail(error) : Effect.die(error)
+    )
+  )
+}
 
 function sourceString(source: PackageSource): string {
   const parsed = z.string().safeParse(source)
@@ -374,7 +391,6 @@ export class PackageSystem {
   private readonly projectStates = new Map<string, ProjectPackageState>()
   private globalFingerprint: string | null = null
   private readonly projectFingerprints = new Map<string, string>()
-  private readonly operationTails = new Map<string, Promise<void>>()
 
   constructor(
     private readonly config: AppConfig,
@@ -396,27 +412,6 @@ export class PackageSystem {
     }
 
     return path.join(project.rootPath, '.treeport', 'settings.json')
-  }
-
-  private async serialize<T>(
-    key: string,
-    operation: () => Promise<T>
-  ): Promise<T> {
-    const previous = this.operationTails.get(key) ?? Promise.resolve()
-    let release!: () => void
-    const tail = new Promise<void>((resolve) => {
-      release = resolve
-    })
-    this.operationTails.set(key, tail)
-    await previous.catch(() => undefined)
-    try {
-      return await operation()
-    } finally {
-      release()
-      if (this.operationTails.get(key) === tail) {
-        this.operationTails.delete(key)
-      }
-    }
   }
 
   private async readSettingsFile(
@@ -1500,265 +1495,287 @@ export class PackageSystem {
     }
   }
 
-  private async reconcileGlobal(force = false): Promise<void> {
+  private reconcileGlobal(
+    force = false
+  ): Effect.Effect<void, never, ApplicationServices> {
+    const reconcileProject = this.reconcileProject.bind(this)
     const settingsPath = this.settingsPath('global')
-    const changed = await this.serialize('global', async () => {
-      const file = await this.readSettingsFile(settingsPath)
-      if (!force && file.fingerprint === this.globalFingerprint) {
-        return false
-      }
 
-      this.globalFingerprint = file.fingerprint
-      if (file.error) {
-        this.globalState = {
-          ...this.globalState,
-          diagnostics: [
-            diagnostic(
-              'global',
-              `Could not read ${settingsPath}: ${file.error.message}`,
-              { path: settingsPath }
-            )
-          ]
-        }
-        return false
-      }
-
-      const parsedSettings = this.parseSettings(
-        file.content,
-        settingsPath,
-        'global'
-      )
-      if (!parsedSettings.settings) {
-        this.globalState = {
-          ...this.globalState,
-          diagnostics: [parsedSettings.diagnostic!]
-        }
-        return false
-      }
-
-      const packages = new Map<string, ResolvedPackage>()
-      const diagnostics: PackageResourceDiagnostic[] = []
-      for (const configured of parsedSettings.settings.packages) {
-        let parsed: ParsedPackageSource
-        try {
-          parsed = await this.parseSource(
-            sourceString(configured),
-            settingsPath
-          )
-        } catch (error) {
-          diagnostics.push(
-            diagnostic(
-              'global',
-              error instanceof Error ? error.message : String(error),
-              {
-                source: sourceString(configured)
-              }
-            )
-          )
-          continue
-        }
-        if (packages.has(parsed.identity)) {
-          diagnostics.push(
-            diagnostic(
-              'global',
-              `Duplicate package identity ${parsed.identity}; the first entry wins`,
-              {
-                source: sourceString(configured)
-              }
-            )
-          )
-          continue
-        }
-
-        const resolved = await this.resolvePackage(
-          configured,
+    return Effect.gen(
+      function* (this: PackageSystem) {
+        const mutations = yield* PackageMutations
+        const changed = yield* mutations.enqueue(
           'global',
-          null,
-          parsedSettings.settings,
-          this.globalState.packages.get(parsed.identity)
-        )
-        packages.set(parsed.identity, resolved)
-        diagnostics.push(...resolved.diagnostics)
-      }
-      this.globalState = {
-        settings: parsedSettings.settings,
-        packages,
-        diagnostics
-      }
-      return true
-    })
+          Effect.promise(async () => {
+            const file = await this.readSettingsFile(settingsPath)
+            if (!force && file.fingerprint === this.globalFingerprint) {
+              return false
+            }
 
-    if (changed) {
-      await Promise.all(
-        [...this.projectContexts.keys()].map((projectId) =>
-          this.reconcileProject(projectId, true)
+            this.globalFingerprint = file.fingerprint
+            if (file.error) {
+              this.globalState = {
+                ...this.globalState,
+                diagnostics: [
+                  diagnostic(
+                    'global',
+                    `Could not read ${settingsPath}: ${file.error.message}`,
+                    { path: settingsPath }
+                  )
+                ]
+              }
+              return false
+            }
+
+            const parsedSettings = this.parseSettings(
+              file.content,
+              settingsPath,
+              'global'
+            )
+            if (!parsedSettings.settings) {
+              this.globalState = {
+                ...this.globalState,
+                diagnostics: [parsedSettings.diagnostic!]
+              }
+              return false
+            }
+
+            const packages = new Map<string, ResolvedPackage>()
+            const diagnostics: PackageResourceDiagnostic[] = []
+            for (const configured of parsedSettings.settings.packages) {
+              let parsed: ParsedPackageSource
+              try {
+                parsed = await this.parseSource(
+                  sourceString(configured),
+                  settingsPath
+                )
+              } catch (error) {
+                diagnostics.push(
+                  diagnostic(
+                    'global',
+                    error instanceof Error ? error.message : String(error),
+                    {
+                      source: sourceString(configured)
+                    }
+                  )
+                )
+                continue
+              }
+              if (packages.has(parsed.identity)) {
+                diagnostics.push(
+                  diagnostic(
+                    'global',
+                    `Duplicate package identity ${parsed.identity}; the first entry wins`,
+                    {
+                      source: sourceString(configured)
+                    }
+                  )
+                )
+                continue
+              }
+
+              const resolved = await this.resolvePackage(
+                configured,
+                'global',
+                null,
+                parsedSettings.settings,
+                this.globalState.packages.get(parsed.identity)
+              )
+              packages.set(parsed.identity, resolved)
+              diagnostics.push(...resolved.diagnostics)
+            }
+            this.globalState = {
+              settings: parsedSettings.settings,
+              packages,
+              diagnostics
+            }
+            return true
+          })
         )
-      )
-    }
+
+        if (changed) {
+          yield* Effect.all(
+            [...this.projectContexts.keys()].map((projectId) =>
+              reconcileProject(projectId, true)
+            ),
+            { concurrency: 'unbounded', discard: true }
+          )
+        }
+      }.bind(this)
+    )
   }
 
-  private async reconcileProject(
+  private reconcileProject(
     projectId: string,
     force = false
-  ): Promise<void> {
+  ): Effect.Effect<void, never, ApplicationServices> {
     const context = this.projectContexts.get(projectId)
     if (!context) {
-      return
+      return Effect.void
     }
 
     const settingsPath = this.settingsPath('project', projectId)
-    await this.serialize(`project:${projectId}`, async () => {
-      const file = await this.readSettingsFile(settingsPath)
-      if (
-        !force &&
-        file.fingerprint === this.projectFingerprints.get(projectId)
-      ) {
-        return
-      }
+    return Effect.gen(
+      function* (this: PackageSystem) {
+        const mutations = yield* PackageMutations
+        yield* mutations.enqueue(
+          `project:${projectId}`,
+          Effect.promise(async () => {
+            const file = await this.readSettingsFile(settingsPath)
+            if (
+              !force &&
+              file.fingerprint === this.projectFingerprints.get(projectId)
+            ) {
+              return
+            }
 
-      this.projectFingerprints.set(projectId, file.fingerprint)
-      const previous = this.projectStates.get(projectId)
-      if (file.error) {
-        const readDiagnostic = diagnostic(
-          'project',
-          `Could not read ${settingsPath}: ${file.error.message}`,
-          { projectId, path: settingsPath }
-        )
-        if (previous) {
-          this.projectStates.set(projectId, {
-            ...previous,
-            diagnostics: [readDiagnostic]
-          })
-        } else {
-          this.projectStates.set(projectId, {
-            context,
-            settings: EMPTY_SETTINGS,
-            ownPackages: new Map(),
-            effectivePackages: new Map(this.globalState.packages),
-            diagnostics: [readDiagnostic]
-          })
-        }
-
-        return
-      }
-
-      const parsedSettings = this.parseSettings(
-        file.content,
-        settingsPath,
-        'project',
-        projectId
-      )
-      if (!parsedSettings.settings) {
-        if (previous) {
-          this.projectStates.set(projectId, {
-            ...previous,
-            diagnostics: [parsedSettings.diagnostic!]
-          })
-        } else {
-          this.projectStates.set(projectId, {
-            context,
-            settings: EMPTY_SETTINGS,
-            ownPackages: new Map(),
-            effectivePackages: new Map(this.globalState.packages),
-            diagnostics: [parsedSettings.diagnostic!]
-          })
-        }
-
-        return
-      }
-
-      const ownPackages = new Map<string, ResolvedPackage>()
-      const effectivePackages = new Map(
-        [...this.globalState.packages.entries()].map(([identity, pkg]) => [
-          identity,
-          this.clonePackage(pkg)
-        ])
-      )
-      const diagnostics: PackageResourceDiagnostic[] = []
-      for (const configured of parsedSettings.settings.packages) {
-        let parsed: ParsedPackageSource
-        try {
-          parsed = await this.parseSource(
-            sourceString(configured),
-            settingsPath
-          )
-        } catch (error) {
-          diagnostics.push(
-            diagnostic(
-              'project',
-              error instanceof Error ? error.message : String(error),
-              {
-                source: sourceString(configured),
-                projectId
-              }
-            )
-          )
-          continue
-        }
-        if (ownPackages.has(parsed.identity)) {
-          diagnostics.push(
-            diagnostic(
-              'project',
-              `Duplicate package identity ${parsed.identity}; the first entry wins`,
-              { source: sourceString(configured), projectId }
-            )
-          )
-          continue
-        }
-
-        const filter = packageFilter(configured)
-        if (
-          filter?.autoload === false &&
-          effectivePackages.has(parsed.identity)
-        ) {
-          const delta = this.applyProjectDelta(
-            effectivePackages.get(parsed.identity)!,
-            filter,
-            projectId
-          )
-          ownPackages.set(parsed.identity, delta)
-          effectivePackages.set(parsed.identity, delta)
-          continue
-        }
-
-        const resolved = await this.resolvePackage(
-          configured,
-          'project',
-          projectId,
-          parsedSettings.settings,
-          previous?.ownPackages.get(parsed.identity)
-        )
-        const projectPackage =
-          filter?.autoload === false
-            ? this.applyProjectDelta(
-                {
-                  ...resolved,
-                  webPanels: resolved.webPanels.map((resource) => ({
-                    ...resource,
-                    enabled: false
-                  })),
-                  terminalPresets: resolved.terminalPresets.map((resource) => ({
-                    ...resource,
-                    enabled: false
-                  }))
-                },
-                filter,
-                projectId
+            this.projectFingerprints.set(projectId, file.fingerprint)
+            const previous = this.projectStates.get(projectId)
+            if (file.error) {
+              const readDiagnostic = diagnostic(
+                'project',
+                `Could not read ${settingsPath}: ${file.error.message}`,
+                { projectId, path: settingsPath }
               )
-            : resolved
-        ownPackages.set(parsed.identity, projectPackage)
-        effectivePackages.set(parsed.identity, projectPackage)
-        diagnostics.push(...projectPackage.diagnostics)
-      }
+              if (previous) {
+                this.projectStates.set(projectId, {
+                  ...previous,
+                  diagnostics: [readDiagnostic]
+                })
+              } else {
+                this.projectStates.set(projectId, {
+                  context,
+                  settings: EMPTY_SETTINGS,
+                  ownPackages: new Map(),
+                  effectivePackages: new Map(this.globalState.packages),
+                  diagnostics: [readDiagnostic]
+                })
+              }
 
-      this.projectStates.set(projectId, {
-        context,
-        settings: parsedSettings.settings,
-        ownPackages,
-        effectivePackages,
-        diagnostics
-      })
-    })
+              return
+            }
+
+            const parsedSettings = this.parseSettings(
+              file.content,
+              settingsPath,
+              'project',
+              projectId
+            )
+            if (!parsedSettings.settings) {
+              if (previous) {
+                this.projectStates.set(projectId, {
+                  ...previous,
+                  diagnostics: [parsedSettings.diagnostic!]
+                })
+              } else {
+                this.projectStates.set(projectId, {
+                  context,
+                  settings: EMPTY_SETTINGS,
+                  ownPackages: new Map(),
+                  effectivePackages: new Map(this.globalState.packages),
+                  diagnostics: [parsedSettings.diagnostic!]
+                })
+              }
+
+              return
+            }
+
+            const ownPackages = new Map<string, ResolvedPackage>()
+            const effectivePackages = new Map(
+              [...this.globalState.packages.entries()].map(
+                ([identity, pkg]) => [identity, this.clonePackage(pkg)]
+              )
+            )
+            const diagnostics: PackageResourceDiagnostic[] = []
+            for (const configured of parsedSettings.settings.packages) {
+              let parsed: ParsedPackageSource
+              try {
+                parsed = await this.parseSource(
+                  sourceString(configured),
+                  settingsPath
+                )
+              } catch (error) {
+                diagnostics.push(
+                  diagnostic(
+                    'project',
+                    error instanceof Error ? error.message : String(error),
+                    {
+                      source: sourceString(configured),
+                      projectId
+                    }
+                  )
+                )
+                continue
+              }
+              if (ownPackages.has(parsed.identity)) {
+                diagnostics.push(
+                  diagnostic(
+                    'project',
+                    `Duplicate package identity ${parsed.identity}; the first entry wins`,
+                    { source: sourceString(configured), projectId }
+                  )
+                )
+                continue
+              }
+
+              const filter = packageFilter(configured)
+              if (
+                filter?.autoload === false &&
+                effectivePackages.has(parsed.identity)
+              ) {
+                const delta = this.applyProjectDelta(
+                  effectivePackages.get(parsed.identity)!,
+                  filter,
+                  projectId
+                )
+                ownPackages.set(parsed.identity, delta)
+                effectivePackages.set(parsed.identity, delta)
+                continue
+              }
+
+              const resolved = await this.resolvePackage(
+                configured,
+                'project',
+                projectId,
+                parsedSettings.settings,
+                previous?.ownPackages.get(parsed.identity)
+              )
+              const projectPackage =
+                filter?.autoload === false
+                  ? this.applyProjectDelta(
+                      {
+                        ...resolved,
+                        webPanels: resolved.webPanels.map((resource) => ({
+                          ...resource,
+                          enabled: false
+                        })),
+                        terminalPresets: resolved.terminalPresets.map(
+                          (resource) => ({
+                            ...resource,
+                            enabled: false
+                          })
+                        )
+                      },
+                      filter,
+                      projectId
+                    )
+                  : resolved
+              ownPackages.set(parsed.identity, projectPackage)
+              effectivePackages.set(parsed.identity, projectPackage)
+              diagnostics.push(...projectPackage.diagnostics)
+            }
+
+            this.projectStates.set(projectId, {
+              context,
+              settings: parsedSettings.settings,
+              ownPackages,
+              effectivePackages,
+              diagnostics
+            })
+          })
+        )
+      }.bind(this)
+    )
   }
 
   private context(
@@ -1787,22 +1804,27 @@ export class PackageSystem {
     }
   }
 
-  async initialize(
+  initialize(
     projects: Array<Pick<ProjectRecord, 'id' | 'name' | 'rootPath'>>
-  ): Promise<void> {
-    this.syncProjects(projects)
-    await this.reconcileGlobal(true)
-    await Promise.all(
-      projects.map((project) => this.reconcileProject(project.id, true))
-    )
+  ): Effect.Effect<void, never, ApplicationServices> {
+    return Effect.gen(this, function* () {
+      this.syncProjects(projects)
+      yield* this.reconcileGlobal(true)
+      yield* Effect.all(
+        projects.map((project) => this.reconcileProject(project.id, true)),
+        { concurrency: 'unbounded', discard: true }
+      )
+    })
   }
 
-  async registerProject(
+  registerProject(
     project: Pick<ProjectRecord, 'id' | 'name' | 'rootPath'>
-  ): Promise<void> {
-    this.syncProjects([project])
-    await this.reconcileGlobal()
-    await this.reconcileProject(project.id, true)
+  ): Effect.Effect<void, never, ApplicationServices> {
+    return Effect.gen(this, function* () {
+      this.syncProjects([project])
+      yield* this.reconcileGlobal()
+      yield* this.reconcileProject(project.id, true)
+    })
   }
 
   forgetProject(projectId: string): void {
@@ -1811,75 +1833,87 @@ export class PackageSystem {
     this.projectFingerprints.delete(projectId)
   }
 
-  private async ensureProject(projectId: string): Promise<ProjectPackageState> {
-    await this.reconcileGlobal()
-    await this.reconcileProject(projectId)
-    const state = this.projectStates.get(projectId)
-    if (!state) {
-      throw new DomainError('PROJECT_NOT_FOUND', 'Project not found', 404)
-    }
+  private ensureProject(
+    projectId: string
+  ): Effect.Effect<
+    ProjectPackageState,
+    DomainError<unknown>,
+    ApplicationServices
+  > {
+    return Effect.gen(this, function* () {
+      yield* this.reconcileGlobal()
+      yield* this.reconcileProject(projectId)
+      const state = this.projectStates.get(projectId)
+      if (!state) {
+        return yield* Effect.fail(
+          new DomainError('PROJECT_NOT_FOUND', 'Project not found', 404)
+        )
+      }
 
-    return state
+      return state
+    })
   }
 
-  async webPanelDefinitions(projectId: string): Promise<ResolvedWebPanel[]> {
-    const state = await this.ensureProject(projectId)
-    return [...state.effectivePackages.values()].flatMap((pkg) =>
-      pkg.webPanels.filter((resource) => resource.enabled)
-    )
-  }
-
-  async terminalPresetDefinitions(
-    projectId?: string
-  ): Promise<TerminalPresetDefinition[]> {
-    await this.reconcileGlobal()
-    const packages = projectId
-      ? (await this.ensureProject(projectId)).effectivePackages
-      : this.globalState.packages
-    return [...packages.values()].flatMap((pkg) =>
-      pkg.terminalPresets
-        .filter((resource) => resource.enabled)
-        .map((resource) => resource.definition)
-    )
-  }
-
-  async list(): Promise<{
-    packages: PackageListing[]
-    diagnostics: PackageResourceDiagnostic[]
-  }> {
-    await this.reconcileGlobal()
-    await Promise.all(
-      [...this.projectContexts.keys()].map((projectId) =>
-        this.reconcileProject(projectId)
+  webPanelDefinitions(
+    projectId: string
+  ): Effect.Effect<
+    ResolvedWebPanel[],
+    DomainError<unknown>,
+    ApplicationServices
+  > {
+    return this.ensureProject(projectId).pipe(
+      Effect.map((state) =>
+        [...state.effectivePackages.values()].flatMap((pkg) =>
+          pkg.webPanels.filter((resource) => resource.enabled)
+        )
       )
     )
-    const packages: PackageListing[] = []
-    for (const pkg of this.globalState.packages.values()) {
-      packages.push({
-        source: pkg.source,
-        identity: pkg.identity,
-        scope: 'global',
-        projectId: null,
-        projectName: null,
-        installedPath: pkg.installedPath,
-        resources: {
-          webPanels: pkg.webPanels.filter((resource) => resource.enabled)
-            .length,
-          terminalPresets: pkg.terminalPresets.filter(
-            (resource) => resource.enabled
-          ).length
-        },
-        diagnostics: [...pkg.diagnostics]
-      })
-    }
-    for (const state of this.projectStates.values()) {
-      for (const pkg of state.ownPackages.values()) {
+  }
+
+  terminalPresetDefinitions(
+    projectId?: string
+  ): Effect.Effect<
+    TerminalPresetDefinition[],
+    DomainError<unknown>,
+    ApplicationServices
+  > {
+    return Effect.gen(this, function* () {
+      yield* this.reconcileGlobal()
+      const packages = projectId
+        ? (yield* this.ensureProject(projectId)).effectivePackages
+        : this.globalState.packages
+      return [...packages.values()].flatMap((pkg) =>
+        pkg.terminalPresets
+          .filter((resource) => resource.enabled)
+          .map((resource) => resource.definition)
+      )
+    })
+  }
+
+  list(): Effect.Effect<
+    {
+      packages: PackageListing[]
+      diagnostics: PackageResourceDiagnostic[]
+    },
+    never,
+    ApplicationServices
+  > {
+    return Effect.gen(this, function* () {
+      yield* this.reconcileGlobal()
+      yield* Effect.all(
+        [...this.projectContexts.keys()].map((projectId) =>
+          this.reconcileProject(projectId)
+        ),
+        { concurrency: 'unbounded', discard: true }
+      )
+      const packages: PackageListing[] = []
+      for (const pkg of this.globalState.packages.values()) {
         packages.push({
           source: pkg.source,
           identity: pkg.identity,
-          scope: 'project',
-          projectId: state.context.id,
-          projectName: state.context.name,
+          scope: 'global',
+          projectId: null,
+          projectName: null,
           installedPath: pkg.installedPath,
           resources: {
             webPanels: pkg.webPanels.filter((resource) => resource.enabled)
@@ -1891,16 +1925,36 @@ export class PackageSystem {
           diagnostics: [...pkg.diagnostics]
         })
       }
-    }
-    return {
-      packages,
-      diagnostics: [
-        ...this.globalState.diagnostics,
-        ...[...this.projectStates.values()].flatMap(
-          (state) => state.diagnostics
-        )
-      ]
-    }
+      for (const state of this.projectStates.values()) {
+        for (const pkg of state.ownPackages.values()) {
+          packages.push({
+            source: pkg.source,
+            identity: pkg.identity,
+            scope: 'project',
+            projectId: state.context.id,
+            projectName: state.context.name,
+            installedPath: pkg.installedPath,
+            resources: {
+              webPanels: pkg.webPanels.filter((resource) => resource.enabled)
+                .length,
+              terminalPresets: pkg.terminalPresets.filter(
+                (resource) => resource.enabled
+              ).length
+            },
+            diagnostics: [...pkg.diagnostics]
+          })
+        }
+      }
+      return {
+        packages,
+        diagnostics: [
+          ...this.globalState.diagnostics,
+          ...[...this.projectStates.values()].flatMap(
+            (state) => state.diagnostics
+          )
+        ]
+      }
+    })
   }
 
   private async currentSettings(
@@ -1973,313 +2027,348 @@ export class PackageSystem {
     return relative.startsWith('.') ? relative : `./${relative}`
   }
 
-  async install(
+  install(
     source: string,
     projectId?: string
-  ): Promise<PackageOperationResult> {
+  ): Effect.Effect<
+    PackageOperationResult,
+    DomainError<unknown>,
+    ApplicationServices
+  > {
     const scope: PackageScope = projectId ? 'project' : 'global'
-    if (projectId && !this.projectContexts.has(projectId)) {
-      throw new DomainError('PROJECT_NOT_FOUND', 'Project not found', 404)
-    }
 
-    const result = await this.serialize(
-      projectId ? `project:${projectId}` : 'global',
-      async () => {
-        const { settings, settingsPath } = await this.currentSettings(
-          scope,
-          projectId
+    return Effect.gen(this, function* () {
+      if (projectId && !this.projectContexts.has(projectId)) {
+        return yield* Effect.fail(
+          new DomainError('PROJECT_NOT_FOUND', 'Project not found', 404)
         )
-        const parsed = await this.parseSource(source, settingsPath)
-        const root = await this.ensureInstalled(
-          parsed,
-          scope,
-          projectId ?? null,
-          settings,
-          true
-        )
-        await this.loadPackage(
-          this.persistedSource(parsed, settingsPath),
-          parsed,
-          root,
-          scope,
-          projectId ?? null
-        )
-        const persisted = this.persistedSource(parsed, settingsPath)
-        let replaced = false
-        const next: PackageSource[] = []
-        for (const configured of settings.packages) {
-          const existing = await this.parseSource(
-            sourceString(configured),
-            settingsPath
-          )
-          if (existing.identity !== parsed.identity) {
-            next.push(configured)
-          } else if (!replaced) {
-            const filter = packageFilter(configured)
-            next.push(filter ? { ...filter, source: persisted } : persisted)
-            replaced = true
-          }
-        }
-        if (!replaced) {
-          next.push(persisted)
-        }
-
-        await this.writeSettings(settingsPath, settings, next)
-        return {
-          action: 'install' as const,
-          source: persisted,
-          scope,
-          projectId: projectId ?? null,
-          status: 'installed' as const
-        }
       }
-    )
-    if (scope === 'global') {
-      await this.reconcileGlobal(true)
-    } else {
-      await this.reconcileProject(projectId!, true)
-    }
 
-    return result
-  }
-
-  async remove(
-    source: string,
-    projectId?: string
-  ): Promise<PackageOperationResult> {
-    const scope: PackageScope = projectId ? 'project' : 'global'
-    const result = await this.serialize(
-      projectId ? `project:${projectId}` : 'global',
-      async () => {
-        const { settings, settingsPath } = await this.currentSettings(
-          scope,
-          projectId
-        )
-        const parsed = await this.parseSource(source, settingsPath)
-        const matching: PackageSource[] = []
-        const remaining: PackageSource[] = []
-        for (const configured of settings.packages) {
-          const existing = await this.parseSource(
-            sourceString(configured),
-            settingsPath
+      const mutations = yield* PackageMutations
+      const result = yield* mutations.enqueue(
+        projectId ? `project:${projectId}` : 'global',
+        packagePromise(async () => {
+          const { settings, settingsPath } = await this.currentSettings(
+            scope,
+            projectId
           )
-          ;(existing.identity === parsed.identity ? matching : remaining).push(
-            configured
-          )
-        }
-        if (matching.length === 0) {
-          throw new DomainError(
-            'PACKAGE_NOT_CONFIGURED',
-            `No configured package matches ${source}`,
-            404
-          )
-        }
-
-        if (parsed.type === 'npm') {
-          await this.runNpm(
-            'remove',
+          const parsed = await this.parseSource(source, settingsPath)
+          const root = await this.ensureInstalled(
             parsed,
             scope,
             projectId ?? null,
-            settings
-          )
-        }
-
-        await this.writeSettings(settingsPath, settings, remaining)
-        return {
-          action: 'remove' as const,
-          source: sourceString(matching[0]!),
-          scope,
-          projectId: projectId ?? null,
-          status: 'removed' as const
-        }
-      }
-    )
-    if (scope === 'global') {
-      await this.reconcileGlobal(true)
-    } else {
-      await this.reconcileProject(projectId!, true)
-    }
-
-    return result
-  }
-
-  async update(source?: string): Promise<PackageOperationResult[]> {
-    await this.reconcileGlobal()
-    await Promise.all(
-      [...this.projectContexts.keys()].map((projectId) =>
-        this.reconcileProject(projectId)
-      )
-    )
-    let requestedIdentity: string | undefined
-    if (source) {
-      requestedIdentity = (
-        await this.parseSource(source, this.settingsPath('global'))
-      ).identity
-    }
-
-    const targets: Array<{
-      configured: PackageSource
-      scope: PackageScope
-      projectId?: string
-      settings: TreeportSettings
-      settingsPath: string
-    }> = []
-    for (const configured of this.globalState.settings.packages) {
-      targets.push({
-        configured,
-        scope: 'global',
-        settings: this.globalState.settings,
-        settingsPath: this.settingsPath('global')
-      })
-    }
-    for (const state of this.projectStates.values()) {
-      for (const configured of state.settings.packages) {
-        targets.push({
-          configured,
-          scope: 'project',
-          projectId: state.context.id,
-          settings: state.settings,
-          settingsPath: this.settingsPath('project', state.context.id)
-        })
-      }
-    }
-
-    const matching: typeof targets = []
-    for (const target of targets) {
-      const parsed = await this.parseSource(
-        sourceString(target.configured),
-        target.settingsPath
-      )
-      if (!requestedIdentity || parsed.identity === requestedIdentity) {
-        matching.push(target)
-      }
-    }
-    if (source && matching.length === 0) {
-      throw new DomainError(
-        'PACKAGE_NOT_CONFIGURED',
-        `No configured package matches ${source}`,
-        404
-      )
-    }
-
-    const results: PackageOperationResult[] = []
-    for (const target of matching) {
-      const parsed = await this.parseSource(
-        sourceString(target.configured),
-        target.settingsPath
-      )
-      if (parsed.type === 'local') {
-        results.push({
-          action: 'update',
-          source: sourceString(target.configured),
-          scope: target.scope,
-          projectId: target.projectId ?? null,
-          status: 'skipped',
-          reason: 'Local packages are refreshed with treeport reload'
-        })
-        continue
-      }
-
-      if (parsed.exact) {
-        results.push({
-          action: 'update',
-          source: sourceString(target.configured),
-          scope: target.scope,
-          projectId: target.projectId ?? null,
-          status: 'skipped',
-          reason: 'Exact npm versions are pinned'
-        })
-        continue
-      }
-
-      if (
-        target.scope === 'project' &&
-        packageFilter(target.configured)?.autoload === false &&
-        this.globalState.packages.has(parsed.identity)
-      ) {
-        results.push({
-          action: 'update',
-          source: sourceString(target.configured),
-          scope: target.scope,
-          projectId: target.projectId ?? null,
-          status: 'skipped',
-          reason: 'Project delta inherits the global installation'
-        })
-        continue
-      }
-
-      await this.serialize(
-        target.projectId ? `project:${target.projectId}` : 'global',
-        () =>
-          this.runNpm(
-            'install',
-            parsed,
-            target.scope,
-            target.projectId ?? null,
-            target.settings,
+            settings,
             true
           )
+          await this.loadPackage(
+            this.persistedSource(parsed, settingsPath),
+            parsed,
+            root,
+            scope,
+            projectId ?? null
+          )
+          const persisted = this.persistedSource(parsed, settingsPath)
+          let replaced = false
+          const next: PackageSource[] = []
+          for (const configured of settings.packages) {
+            const existing = await this.parseSource(
+              sourceString(configured),
+              settingsPath
+            )
+            if (existing.identity !== parsed.identity) {
+              next.push(configured)
+            } else if (!replaced) {
+              const filter = packageFilter(configured)
+              next.push(filter ? { ...filter, source: persisted } : persisted)
+              replaced = true
+            }
+          }
+          if (!replaced) {
+            next.push(persisted)
+          }
+
+          await this.writeSettings(settingsPath, settings, next)
+          return {
+            action: 'install' as const,
+            source: persisted,
+            scope,
+            projectId: projectId ?? null,
+            status: 'installed' as const
+          }
+        })
       )
-      results.push({
-        action: 'update',
-        source: sourceString(target.configured),
-        scope: target.scope,
-        projectId: target.projectId ?? null,
-        status: 'updated'
-      })
-    }
-    await this.reload()
-    return results
+      if (scope === 'global') {
+        yield* this.reconcileGlobal(true)
+      } else {
+        yield* this.reconcileProject(projectId!, true)
+      }
+
+      return result
+    })
   }
 
-  async reload(projectId?: string): Promise<{
-    results: PackageOperationResult[]
-    diagnostics: PackageResourceDiagnostic[]
-  }> {
-    if (projectId) {
-      await this.reconcileGlobal()
-      await this.reconcileProject(projectId, true)
-      const state = this.projectStates.get(projectId)
+  remove(
+    source: string,
+    projectId?: string
+  ): Effect.Effect<
+    PackageOperationResult,
+    DomainError<unknown>,
+    ApplicationServices
+  > {
+    const scope: PackageScope = projectId ? 'project' : 'global'
+
+    return Effect.gen(this, function* () {
+      const mutations = yield* PackageMutations
+      const result = yield* mutations.enqueue(
+        projectId ? `project:${projectId}` : 'global',
+        packagePromise(async () => {
+          const { settings, settingsPath } = await this.currentSettings(
+            scope,
+            projectId
+          )
+          const parsed = await this.parseSource(source, settingsPath)
+          const matching: PackageSource[] = []
+          const remaining: PackageSource[] = []
+          for (const configured of settings.packages) {
+            const existing = await this.parseSource(
+              sourceString(configured),
+              settingsPath
+            )
+            ;(existing.identity === parsed.identity
+              ? matching
+              : remaining
+            ).push(configured)
+          }
+          if (matching.length === 0) {
+            throw new DomainError(
+              'PACKAGE_NOT_CONFIGURED',
+              `No configured package matches ${source}`,
+              404
+            )
+          }
+
+          if (parsed.type === 'npm') {
+            await this.runNpm(
+              'remove',
+              parsed,
+              scope,
+              projectId ?? null,
+              settings
+            )
+          }
+
+          await this.writeSettings(settingsPath, settings, remaining)
+          return {
+            action: 'remove' as const,
+            source: sourceString(matching[0]!),
+            scope,
+            projectId: projectId ?? null,
+            status: 'removed' as const
+          }
+        })
+      )
+      if (scope === 'global') {
+        yield* this.reconcileGlobal(true)
+      } else {
+        yield* this.reconcileProject(projectId!, true)
+      }
+
+      return result
+    })
+  }
+
+  update(
+    source?: string
+  ): Effect.Effect<
+    PackageOperationResult[],
+    DomainError<unknown>,
+    ApplicationServices
+  > {
+    return Effect.gen(this, function* () {
+      yield* this.reconcileGlobal()
+      yield* Effect.all(
+        [...this.projectContexts.keys()].map((projectId) =>
+          this.reconcileProject(projectId)
+        ),
+        { concurrency: 'unbounded', discard: true }
+      )
+      let requestedIdentity: string | undefined
+      if (source) {
+        requestedIdentity = (yield* packagePromise(() =>
+          this.parseSource(source, this.settingsPath('global'))
+        )).identity
+      }
+
+      const targets: Array<{
+        configured: PackageSource
+        scope: PackageScope
+        projectId?: string
+        settings: TreeportSettings
+        settingsPath: string
+      }> = []
+      for (const configured of this.globalState.settings.packages) {
+        targets.push({
+          configured,
+          scope: 'global',
+          settings: this.globalState.settings,
+          settingsPath: this.settingsPath('global')
+        })
+      }
+      for (const state of this.projectStates.values()) {
+        for (const configured of state.settings.packages) {
+          targets.push({
+            configured,
+            scope: 'project',
+            projectId: state.context.id,
+            settings: state.settings,
+            settingsPath: this.settingsPath('project', state.context.id)
+          })
+        }
+      }
+
+      const matching: typeof targets = []
+      for (const target of targets) {
+        const parsed = yield* packagePromise(() =>
+          this.parseSource(sourceString(target.configured), target.settingsPath)
+        )
+        if (!requestedIdentity || parsed.identity === requestedIdentity) {
+          matching.push(target)
+        }
+      }
+      if (source && matching.length === 0) {
+        throw new DomainError(
+          'PACKAGE_NOT_CONFIGURED',
+          `No configured package matches ${source}`,
+          404
+        )
+      }
+
+      const results: PackageOperationResult[] = []
+      const mutations = yield* PackageMutations
+      for (const target of matching) {
+        const parsed = yield* packagePromise(() =>
+          this.parseSource(sourceString(target.configured), target.settingsPath)
+        )
+        if (parsed.type === 'local') {
+          results.push({
+            action: 'update',
+            source: sourceString(target.configured),
+            scope: target.scope,
+            projectId: target.projectId ?? null,
+            status: 'skipped',
+            reason: 'Local packages are refreshed with treeport reload'
+          })
+          continue
+        }
+
+        if (parsed.exact) {
+          results.push({
+            action: 'update',
+            source: sourceString(target.configured),
+            scope: target.scope,
+            projectId: target.projectId ?? null,
+            status: 'skipped',
+            reason: 'Exact npm versions are pinned'
+          })
+          continue
+        }
+
+        if (
+          target.scope === 'project' &&
+          packageFilter(target.configured)?.autoload === false &&
+          this.globalState.packages.has(parsed.identity)
+        ) {
+          results.push({
+            action: 'update',
+            source: sourceString(target.configured),
+            scope: target.scope,
+            projectId: target.projectId ?? null,
+            status: 'skipped',
+            reason: 'Project delta inherits the global installation'
+          })
+          continue
+        }
+
+        yield* mutations.enqueue(
+          target.projectId ? `project:${target.projectId}` : 'global',
+          packagePromise(() =>
+            this.runNpm(
+              'install',
+              parsed,
+              target.scope,
+              target.projectId ?? null,
+              target.settings,
+              true
+            )
+          )
+        )
+        results.push({
+          action: 'update',
+          source: sourceString(target.configured),
+          scope: target.scope,
+          projectId: target.projectId ?? null,
+          status: 'updated'
+        })
+      }
+      yield* this.reload()
+      return results
+    })
+  }
+
+  reload(projectId?: string): Effect.Effect<
+    {
+      results: PackageOperationResult[]
+      diagnostics: PackageResourceDiagnostic[]
+    },
+    DomainError<unknown>,
+    ApplicationServices
+  > {
+    return Effect.gen(this, function* () {
+      if (projectId) {
+        yield* this.reconcileGlobal()
+        yield* this.reconcileProject(projectId, true)
+        const state = this.projectStates.get(projectId)
+        return {
+          results: [
+            {
+              action: 'reload',
+              source: null,
+              scope: 'project',
+              projectId,
+              status: 'reloaded'
+            }
+          ],
+          diagnostics: state?.diagnostics ?? []
+        }
+      }
+
+      yield* this.reconcileGlobal(true)
+      yield* Effect.all(
+        [...this.projectContexts.keys()].map((id) =>
+          this.reconcileProject(id, true)
+        ),
+        { concurrency: 'unbounded', discard: true }
+      )
+      const listed = yield* this.list()
       return {
         results: [
           {
             action: 'reload',
             source: null,
-            scope: 'project',
-            projectId,
+            scope: 'global',
+            projectId: null,
             status: 'reloaded'
-          }
+          },
+          ...[...this.projectContexts.keys()].map((id) => ({
+            action: 'reload' as const,
+            source: null,
+            scope: 'project' as const,
+            projectId: id,
+            status: 'reloaded' as const
+          }))
         ],
-        diagnostics: state?.diagnostics ?? []
+        diagnostics: listed.diagnostics
       }
-    }
-
-    await this.reconcileGlobal(true)
-    await Promise.all(
-      [...this.projectContexts.keys()].map((id) =>
-        this.reconcileProject(id, true)
-      )
-    )
-    const listed = await this.list()
-    return {
-      results: [
-        {
-          action: 'reload',
-          source: null,
-          scope: 'global',
-          projectId: null,
-          status: 'reloaded'
-        },
-        ...[...this.projectContexts.keys()].map((id) => ({
-          action: 'reload' as const,
-          source: null,
-          scope: 'project' as const,
-          projectId: id,
-          status: 'reloaded' as const
-        }))
-      ],
-      diagnostics: listed.diagnostics
-    }
+    })
   }
 }

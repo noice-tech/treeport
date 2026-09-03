@@ -1,3 +1,4 @@
+import * as Effect from 'effect/Effect'
 import { describe, expect, it, vi } from 'vitest'
 import {
   parseTerminalServerEvent,
@@ -31,6 +32,7 @@ class HostDouble implements TerminalAttachmentBackend {
   snapshotFence = 0
   snapshotData = 'canonical snapshot'
   snapshotGate: Promise<void> | null = null
+  writeError: Error | null = null
 
   async attach(
     _terminalId: string,
@@ -65,11 +67,15 @@ class HostDouble implements TerminalAttachmentBackend {
     })
   }
 
-  write(
+  async write(
     _terminalId: string,
     data: string | Buffer,
     authority: { attachmentId: string; generation: number }
-  ) {
+  ): Promise<void> {
+    if (this.writeError) {
+      throw this.writeError
+    }
+
     this.writes.push({ data, authority })
   }
 
@@ -143,24 +149,34 @@ class TransportDouble {
 
 function fixture() {
   const host = new HostDouble()
+  const refreshTerminalStatus = vi.fn(async () => ({
+    id: 'terminal',
+    worktreeId: 'worktree',
+    name: 'Shell',
+    argv: ['/bin/sh'],
+    shellCommand: null,
+    interactiveShell: true,
+    status: 'running',
+    exitCode: null,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z'
+  }))
+  const getWorktree = vi.fn(async () => ({
+    id: 'worktree',
+    path: '/tmp'
+  }))
   // SAFETY: This fixture supplies the service methods exercised by attachments.
   const service = testAccess<TreeportService>({
-    refreshTerminalStatus: vi.fn(async () => ({
-      id: 'terminal',
-      worktreeId: 'worktree',
-      name: 'Shell',
-      argv: ['/bin/sh'],
-      shellCommand: null,
-      interactiveShell: true,
-      status: 'running',
-      exitCode: null,
-      createdAt: '2026-01-01T00:00:00.000Z',
-      updatedAt: '2026-01-01T00:00:00.000Z'
-    })),
-    getWorktree: vi.fn(async () => ({
-      id: 'worktree',
-      path: '/tmp'
-    })),
+    refreshTerminalStatus,
+    terminals: { refreshTerminalStatus },
+    getWorktree,
+    projects: { getWorktree },
+    runEffect: vi.fn((effect) =>
+      Effect.isEffect(effect)
+        ? Effect.runPromise(effect as Effect.Effect<unknown, unknown, never>)
+        : effect
+    ),
+    terminalAttachmentMutation: vi.fn((_terminalId, effect) => effect),
     events: { publish: vi.fn() }
   })
   const metadataValue = {
@@ -350,6 +366,30 @@ describe('TerminalAttachmentManager', () => {
     )
     expect(host.outputListeners.size).toBe(1)
     manager.close(slowId)
+    manager.dispose()
+  })
+
+  it('reports an asynchronous terminal-host write failure and disconnects the controller', async () => {
+    const { host, manager } = fixture()
+    const transport = new TransportDouble('controller')
+    const connectionId = manager.accept(
+      { terminalId: 'terminal', clientId: 'client', cols: 100, rows: 30 },
+      transport
+    )
+    await waitForEvent(transport, 'ready')
+    const generation = readyPayload(transport).generation
+    await activateAuthority(manager, connectionId, transport, generation)
+
+    host.writeError = new Error('terminal host write failed')
+    manager.message(connectionId, 'input', { generation, data: 'input' })
+
+    await waitForEvent(transport, 'terminal_error')
+    expect(eventPayloads(transport, 'terminal_error')).toContainEqual({
+      code: 'INPUT_FAILED',
+      message: 'terminal host write failed',
+      retryable: true
+    })
+    expect(transport.disconnects).toEqual([true])
     manager.dispose()
   })
 

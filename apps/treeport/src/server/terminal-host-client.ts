@@ -259,7 +259,12 @@ export class TerminalHostClient {
       if (!listeners.size) {
         this.outputListeners.delete(terminalId)
         void this.request('unsubscribeOutput', { terminalId }).catch(
-          () => undefined
+          (error) => {
+            console.error(
+              `[Treeport] Failed to unsubscribe terminal output for ${terminalId}:`,
+              error instanceof Error ? error.message : String(error)
+            )
+          }
         )
       }
     }
@@ -300,7 +305,12 @@ export class TerminalHostClient {
       if (!listeners.size) {
         this.runtimeListeners.delete(terminalId)
         void this.request('unsubscribeRuntime', { terminalId }).catch(
-          () => undefined
+          (error) => {
+            console.error(
+              `[Treeport] Failed to unsubscribe terminal runtime for ${terminalId}:`,
+              error instanceof Error ? error.message : String(error)
+            )
+          }
         )
       }
     }
@@ -314,13 +324,13 @@ export class TerminalHostClient {
     terminalId: string,
     data: string | Buffer,
     authority: { attachmentId: string; generation: number }
-  ): void {
-    void this.request('write', {
+  ): Promise<void> {
+    return this.request('write', {
       terminalId,
       data: Buffer.isBuffer(data) ? data.toString('base64') : data,
       encoding: Buffer.isBuffer(data) ? 'base64' : 'utf8',
       authority
-    }).catch(() => undefined)
+    }).then(() => undefined)
   }
 
   prepareQueryAuthority(

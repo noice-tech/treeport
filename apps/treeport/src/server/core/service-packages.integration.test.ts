@@ -14,6 +14,7 @@ import { TerminalHostDouble } from './service.integration-fixture'
 import {
   databases,
   fixture,
+  integrationService,
   persistedWebPanel
 } from './service.integration-fixture'
 
@@ -507,15 +508,17 @@ describe('TreeportService with injected command adapters', () => {
     databases.splice(databases.indexOf(database), 1)
     const reopenedDatabase = await openDatabase(config.databasePath)
     databases.push(reopenedDatabase)
-    const reconstructed = new TreeportService({
-      config,
-      database: reopenedDatabase,
-      runner,
-      git: new GitAdapter(runner),
-      terminalHost: new TerminalHostDouble(runner),
-      gh: new GhAdapter(runner)
-    })
-    await reconstructed.initialize()
+    const reconstructed = integrationService(
+      new TreeportService({
+        config,
+        database: reopenedDatabase,
+        runner,
+        git: new GitAdapter(runner),
+        terminalHost: new TerminalHostDouble(runner),
+        gh: new GhAdapter(runner)
+      })
+    )
+    await reconstructed.runEffect(reconstructed.initialize())
 
     await expect(
       reconstructed.getWebPanelContext(panel.id)
@@ -1128,14 +1131,16 @@ describe('TreeportService with injected command adapters', () => {
     databases.splice(databases.indexOf(database), 1)
     const reopenedDatabase = await openDatabase(config.databasePath)
     databases.push(reopenedDatabase)
-    const reconstructed = new TreeportService({
-      config,
-      database: reopenedDatabase,
-      runner,
-      git: new GitAdapter(runner),
-      terminalHost: new TerminalHostDouble(runner),
-      gh: new GhAdapter(runner)
-    })
+    const reconstructed = integrationService(
+      new TreeportService({
+        config,
+        database: reopenedDatabase,
+        runner,
+        git: new GitAdapter(runner),
+        terminalHost: new TerminalHostDouble(runner),
+        gh: new GhAdapter(runner)
+      })
+    )
     expect(await reconstructed.listTerminalPresets()).toEqual([updated])
   })
 })

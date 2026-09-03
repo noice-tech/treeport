@@ -11,6 +11,7 @@ import { resolveZedWorktreePath } from './zed'
 import {
   beginFromPreview,
   fixture,
+  integrationService,
   persistedWorktree,
   services,
   waitForOperation
@@ -126,7 +127,7 @@ describe('TreeportService with injected command adapters', () => {
     })
 
     let drained = false
-    const draining = service.drainMutations().then(() => {
+    const draining = service.runEffect(service.drainMutations()).then(() => {
       drained = true
     })
     releaseFirst()
@@ -294,17 +295,19 @@ describe('TreeportService with injected command adapters', () => {
     const addCallsBeforeRestart = runner.calls.filter(
       (call) => call.args[0] === 'worktree' && call.args[1] === 'add'
     ).length
-    const restarted = new TreeportService({
-      config,
-      database,
-      runner,
-      git: new GitAdapter(runner),
-      terminalHost: new TerminalHostDouble(runner),
-      gh: new GhAdapter(runner)
-    })
+    const restarted = integrationService(
+      new TreeportService({
+        config,
+        database,
+        runner,
+        git: new GitAdapter(runner),
+        terminalHost: new TerminalHostDouble(runner),
+        gh: new GhAdapter(runner)
+      })
+    )
     restarted.attachHttpServer(http.createServer())
     services.push(restarted)
-    await restarted.initialize()
+    await restarted.runEffect(restarted.initialize())
 
     expect(await restarted.getOperation('op_interrupted_create')).toMatchObject(
       {
@@ -376,9 +379,8 @@ describe('TreeportService with injected command adapters', () => {
     expect(runner.sessions.size).toBe(3)
 
     const operation = await beginFromPreview(service, created.worktree.id)
-    expect((await waitForOperation(service, operation.id)).status).toBe(
-      'completed'
-    )
+    await service.runEffect(service.drainMutations())
+    expect((await service.getOperation(operation.id)).status).toBe('completed')
     expect(runner.sessions.size).toBe(1)
     expect((await service.getProject(project.id)).worktrees).toHaveLength(1)
     expect(
@@ -1371,21 +1373,23 @@ describe('TreeportService with injected command adapters', () => {
       (await fs.lstat(repurposed.path, { bigint: true })).ino.toString()
     ).toBe(repurposedInode)
 
-    const restarted = new TreeportService({
-      config,
-      database,
-      runner,
-      git: new GitAdapter(runner),
-      terminalHost: new TerminalHostDouble(runner),
-      gh: new GhAdapter(runner)
-    })
+    const restarted = integrationService(
+      new TreeportService({
+        config,
+        database,
+        runner,
+        git: new GitAdapter(runner),
+        terminalHost: new TerminalHostDouble(runner),
+        gh: new GhAdapter(runner)
+      })
+    )
     const events: Array<{ type: string; worktreeId: string }> = []
     const unsubscribe = restarted.events.subscribe((event) => {
       if (event.data.worktreeId !== null) {
         events.push({ type: event.type, worktreeId: event.data.worktreeId })
       }
     })
-    await restarted.initialize()
+    await restarted.runEffect(restarted.initialize())
     await Promise.all([
       waitForOperation(restarted, 'op_recoverable_root'),
       waitForOperation(restarted, 'op_quarantined_root'),
@@ -1577,15 +1581,18 @@ describe('TreeportService with injected command adapters', () => {
     )
     await fs.writeFile(preservedMarker, 'preserve')
 
-    const restarted = new TreeportService({
-      config,
-      database,
-      runner,
-      git: new GitAdapter(runner),
-      terminalHost: new TerminalHostDouble(runner),
-      gh: new GhAdapter(runner)
-    })
-    await restarted.initialize()
+    const restarted = integrationService(
+      new TreeportService({
+        config,
+        database,
+        runner,
+        git: new GitAdapter(runner),
+        terminalHost: new TerminalHostDouble(runner),
+        gh: new GhAdapter(runner)
+      })
+    )
+    await restarted.runEffect(restarted.initialize())
+    await restarted.runEffect(restarted.drainMutations())
 
     expect(await waitForOperation(restarted, 'op_before_git')).toMatchObject({
       status: 'completed',

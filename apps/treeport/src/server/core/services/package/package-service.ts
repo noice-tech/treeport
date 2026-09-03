@@ -1,150 +1,198 @@
 import type {
   PackageListing,
   PackageOperationResult,
-  PackageResourceDiagnostic,
-  ProjectRecord,
-  WebPanelDefinition
+  PackageResourceDiagnostic
 } from '@treeport/shared'
 import { eq } from 'drizzle-orm'
-import type { TreeportDatabase } from '../../database'
+import * as Effect from 'effect/Effect'
 import { webPanelPermissionGrants } from '../../database-schema'
-import type { ProductEventBus } from '../../events'
-import type { PackageSystem } from '../../package-system'
-import type { WebPanelViteRuntime } from '../../web-panel-vite-runtime'
-
-export interface PackageServiceDependencies {
-  readonly database: TreeportDatabase
-  readonly events: ProductEventBus
-  readonly packages: PackageSystem
-  readonly webPanelRuntime: WebPanelViteRuntime
-  readonly storedProjects: (openOnly?: boolean) => Promise<ProjectRecord[]>
-  readonly getProject: (projectId: string) => Promise<ProjectRecord>
-  readonly invalidateProjectsSnapshot: () => void
-  readonly effectiveWebPanelDefinitions: (
-    worktreeId: string
-  ) => Promise<WebPanelDefinition[]>
-  readonly webPanelPermissionSourceKey: (
-    worktreeId: string,
-    definition: WebPanelDefinition
-  ) => Promise<string>
-}
+import type { DomainError } from '../../domain'
+import { PanelOperations, ProjectSnapshotOperations } from '../domain-services'
+import type { ApplicationServices } from '../infrastructure/application-runtime'
+import {
+  DatabasePort,
+  EventBusPort,
+  PackageSystemPort,
+  WebPanelRuntimePort
+} from '../infrastructure/ports'
+import { ProjectStore } from '../project/project-store'
 
 export class PackageService {
-  constructor(private readonly dependencies: PackageServiceDependencies) {}
-
-  async listPackages(): Promise<{
-    packages: PackageListing[]
-    diagnostics: PackageResourceDiagnostic[]
-  }> {
-    const { packages, storedProjects } = this.dependencies
-    packages.syncProjects(await storedProjects())
-    return packages.list()
+  listPackages(): Effect.Effect<
+    {
+      packages: PackageListing[]
+      diagnostics: PackageResourceDiagnostic[]
+    },
+    never,
+    ApplicationServices
+  > {
+    return Effect.gen(function* () {
+      const packages = yield* PackageSystemPort
+      const projectStore = yield* ProjectStore
+      const projects = yield* projectStore.storedProjects()
+      yield* Effect.sync(() => packages.syncProjects(projects))
+      return yield* packages.list()
+    })
   }
 
-  async installPackage(
+  installPackage(
     source: string,
     projectId?: string
-  ): Promise<PackageOperationResult> {
-    const { getProject, packages, webPanelRuntime } = this.dependencies
-    if (projectId) {
-      packages.syncProjects([await getProject(projectId)])
-    }
+  ): Effect.Effect<
+    PackageOperationResult,
+    DomainError<unknown>,
+    ApplicationServices
+  > {
+    const resourcesChanged = this.resourcesChanged.bind(this)
 
-    const result = await packages.install(source, projectId)
-    await webPanelRuntime.disposeDevelopmentServers()
-    await this.resourcesChanged(projectId)
-    return result
+    return Effect.gen(function* () {
+      const packages = yield* PackageSystemPort
+      const projectStore = yield* ProjectStore
+      const webPanelRuntime = yield* WebPanelRuntimePort
+      if (projectId) {
+        const project = yield* projectStore.getProject(projectId)
+        yield* Effect.sync(() => packages.syncProjects([project]))
+      }
+
+      const result = yield* packages.install(source, projectId)
+      yield* Effect.promise(() => webPanelRuntime.disposeDevelopmentServers())
+      yield* resourcesChanged(projectId)
+      return result
+    })
   }
 
-  async removePackage(
+  removePackage(
     source: string,
     projectId?: string
-  ): Promise<PackageOperationResult> {
-    const {
-      database,
-      effectiveWebPanelDefinitions,
-      getProject,
-      packages,
-      storedProjects,
-      webPanelPermissionSourceKey,
-      webPanelRuntime
-    } = this.dependencies
-    if (projectId) {
-      packages.syncProjects([await getProject(projectId)])
-    }
+  ): Effect.Effect<
+    PackageOperationResult,
+    DomainError<unknown>,
+    ApplicationServices
+  > {
+    const resourcesChanged = this.resourcesChanged.bind(this)
 
-    const registeredProjects = projectId
-      ? [await getProject(projectId)]
-      : await storedProjects()
-    const collectPermissionSourceKeys = async () => {
-      const keys = new Set<string>()
-      for (const project of registeredProjects) {
-        const worktree = project.worktrees[0]
-        if (!worktree) {
-          continue
-        }
+    return Effect.gen(function* () {
+      const database = yield* DatabasePort
+      const packages = yield* PackageSystemPort
+      const panels = yield* PanelOperations
+      const projectStore = yield* ProjectStore
+      const webPanelRuntime = yield* WebPanelRuntimePort
+      if (projectId) {
+        const project = yield* projectStore.getProject(projectId)
+        yield* Effect.sync(() => packages.syncProjects([project]))
+      }
 
-        const definitions = await effectiveWebPanelDefinitions(
-          worktree.id
-        ).catch(() => [])
-        for (const definition of definitions) {
-          if (definition.permissions.length > 0) {
-            keys.add(await webPanelPermissionSourceKey(worktree.id, definition))
+      const registeredProjects = projectId
+        ? [yield* projectStore.getProject(projectId)]
+        : yield* projectStore.storedProjects()
+      const collectPermissionSourceKeys = Effect.gen(function* () {
+        const keys = new Set<string>()
+        for (const project of registeredProjects) {
+          const worktree = project.worktrees[0]
+          if (!worktree) {
+            continue
+          }
+
+          const definitions = yield* Effect.catchAll(
+            panels.effectiveWebPanelDefinitions(worktree.id),
+            () => Effect.succeed([])
+          )
+          for (const definition of definitions) {
+            if (definition.permissions.length > 0) {
+              keys.add(
+                yield* panels.webPanelPermissionSourceKey(
+                  worktree.id,
+                  definition
+                )
+              )
+            }
           }
         }
+        return keys
+      })
+      const before = yield* collectPermissionSourceKeys
+      const result = yield* packages.remove(source, projectId)
+      const after = yield* collectPermissionSourceKeys
+      for (const sourceKey of before) {
+        if (!after.has(sourceKey)) {
+          yield* Effect.promise(() =>
+            database.db
+              .delete(webPanelPermissionGrants)
+              .where(eq(webPanelPermissionGrants.sourceKey, sourceKey))
+          )
+        }
       }
-      return keys
-    }
-    const before = await collectPermissionSourceKeys()
-    const result = await packages.remove(source, projectId)
-    const after = await collectPermissionSourceKeys()
-    for (const sourceKey of before) {
-      if (!after.has(sourceKey)) {
-        await database.db
-          .delete(webPanelPermissionGrants)
-          .where(eq(webPanelPermissionGrants.sourceKey, sourceKey))
+      yield* Effect.promise(() => webPanelRuntime.disposeDevelopmentServers())
+      yield* resourcesChanged(projectId)
+      return result
+    })
+  }
+
+  updatePackages(
+    source?: string
+  ): Effect.Effect<
+    PackageOperationResult[],
+    DomainError<unknown>,
+    ApplicationServices
+  > {
+    const resourcesChanged = this.resourcesChanged.bind(this)
+
+    return Effect.gen(function* () {
+      const packages = yield* PackageSystemPort
+      const projectStore = yield* ProjectStore
+      const webPanelRuntime = yield* WebPanelRuntimePort
+      const projects = yield* projectStore.storedProjects()
+      yield* Effect.sync(() => packages.syncProjects(projects))
+      const results = yield* packages.update(source)
+      yield* Effect.promise(() => webPanelRuntime.disposeDevelopmentServers())
+      yield* resourcesChanged()
+      return results
+    })
+  }
+
+  reloadPackages(projectId?: string): Effect.Effect<
+    {
+      results: PackageOperationResult[]
+      diagnostics: PackageResourceDiagnostic[]
+    },
+    DomainError<unknown>,
+    ApplicationServices
+  > {
+    const resourcesChanged = this.resourcesChanged.bind(this)
+
+    return Effect.gen(function* () {
+      const packages = yield* PackageSystemPort
+      const projectStore = yield* ProjectStore
+      const webPanelRuntime = yield* WebPanelRuntimePort
+      const projects = yield* projectStore.storedProjects()
+      yield* Effect.sync(() => packages.syncProjects(projects))
+      if (projectId) {
+        yield* projectStore.getProject(projectId)
       }
-    }
-    await webPanelRuntime.disposeDevelopmentServers()
-    await this.resourcesChanged(projectId)
-    return result
+
+      const result = yield* packages.reload(projectId)
+      yield* Effect.promise(() => webPanelRuntime.disposeDevelopmentServers())
+      yield* resourcesChanged(projectId)
+      return result
+    })
   }
 
-  async updatePackages(source?: string): Promise<PackageOperationResult[]> {
-    const { packages, storedProjects, webPanelRuntime } = this.dependencies
-    packages.syncProjects(await storedProjects())
-    const results = await packages.update(source)
-    await webPanelRuntime.disposeDevelopmentServers()
-    await this.resourcesChanged()
-    return results
-  }
-
-  async reloadPackages(projectId?: string): Promise<{
-    results: PackageOperationResult[]
-    diagnostics: PackageResourceDiagnostic[]
-  }> {
-    const { getProject, packages, storedProjects, webPanelRuntime } =
-      this.dependencies
-    packages.syncProjects(await storedProjects())
-    if (projectId) {
-      await getProject(projectId)
-    }
-
-    const result = await packages.reload(projectId)
-    await webPanelRuntime.disposeDevelopmentServers()
-    await this.resourcesChanged(projectId)
-    return result
-  }
-
-  private async resourcesChanged(projectId?: string): Promise<void> {
-    const { events, getProject, invalidateProjectsSnapshot, storedProjects } =
-      this.dependencies
-    invalidateProjectsSnapshot()
-    const projects = projectId
-      ? [await getProject(projectId)]
-      : await storedProjects(true)
-    for (const project of projects) {
-      events.publish('project.updated', { projectId: project.id })
-    }
+  private resourcesChanged(
+    projectId?: string
+  ): Effect.Effect<void, DomainError<unknown>, ApplicationServices> {
+    return Effect.gen(function* () {
+      const events = yield* EventBusPort
+      const projectSnapshots = yield* ProjectSnapshotOperations
+      const projectStore = yield* ProjectStore
+      yield* Effect.sync(() => projectSnapshots.invalidate())
+      const projects = projectId
+        ? [yield* projectStore.getProject(projectId)]
+        : yield* projectStore.storedProjects(true)
+      yield* Effect.sync(() => {
+        for (const project of projects) {
+          events.publish('project.updated', { projectId: project.id })
+        }
+      })
+    })
   }
 }

@@ -7,851 +7,786 @@ import type {
   ProjectColor,
   ProjectRecord,
   RecentProjectRecord,
-  TerminalRecord,
   TreeContextFieldListing,
   TreeContextValues,
-  WebPanelDefinition,
   WorktreeRecord
 } from '@treeport/shared'
-import { and, asc, eq, sql } from 'drizzle-orm'
-import type { AppConfig } from '../../config'
-import type { TreeportDatabase } from '../../database'
-import { mapOperation, mapProject, mapWorktree } from '../../database'
-import { operations, projects, worktrees } from '../../database-schema'
+import { and, eq, sql } from 'drizzle-orm'
+import * as Effect from 'effect/Effect'
+import { projects, worktrees } from '../../database-schema'
 import { DomainError } from '../../domain'
-import type { ProductEventBus } from '../../events'
-import type { GitAdapter } from '../../git'
-import type { PackageSystem } from '../../package-system'
-import type { TerminalSessionBackend } from '../../terminal'
 import { loadTreeContextFields } from '../../tree-context'
-import type {
-  PromiseMutationLocks,
-  PromiseMutationQueue
+import {
+  ProjectObservationOperations,
+  ProjectRegistrationOperations,
+  ProjectSnapshotOperations,
+  TerminalOperations
+} from '../domain-services'
+import {
+  type ApplicationServices,
+  ProjectObservations,
+  WorktreeMutations
 } from '../infrastructure/application-runtime'
-import { ProjectRegistrationService } from './project-registration-service'
-import { ProjectSnapshotService } from './project-snapshot-service'
+import { MutationLocks } from '../infrastructure/mutation-locks'
+import {
+  ConfigPort,
+  DatabasePort,
+  EventBusPort,
+  GitPort,
+  PackageSystemPort,
+  TerminalHostPort
+} from '../infrastructure/ports'
+import { TerminalState } from '../terminal/terminal-state'
+import { ProjectDirectoryService } from './project-directory-service'
+import { ProjectFolderIdentities } from './project-folder-identities'
+import { ProjectStore } from './project-store'
 
 const now = (): string => new Date().toISOString()
 
-export interface ProjectServiceDependencies {
-  readonly config: AppConfig
-  readonly database: TreeportDatabase
-  readonly git: GitAdapter
-  readonly terminalHost: TerminalSessionBackend
-  readonly events: ProductEventBus
-  readonly packages: PackageSystem
-  readonly locks: PromiseMutationLocks
-  readonly worktreeMutations: PromiseMutationQueue
-  readonly projectObservations: PromiseMutationQueue
-  readonly listWorktreeTerminals: (
-    worktree: WorktreeRecord
-  ) => Promise<TerminalRecord[]>
-  readonly ensureProjectTerminals: (projectId: string) => Promise<void>
-  readonly clearWorktreeTerminalState: (
-    worktreeId: string,
-    discoveredTerminalIds?: Iterable<string>
-  ) => void
-  readonly trackedTerminalIds: (worktreeId: string) => Set<string>
-  readonly rememberTerminalIds: (
-    worktreeId: string,
-    terminalIds: Iterable<string>
-  ) => void
-  readonly listWebPanelDefinitions: (
-    worktreeId: string
-  ) => Promise<WebPanelDefinition[]>
-  readonly reconcileProjectWorktrees: (
-    projectId: string,
-    repositoryPath: string,
-    mainPath: string,
-    allowProjectLock: boolean,
-    allowClosed?: boolean
-  ) => Promise<void>
-}
-
 export class ProjectService {
-  private readonly observedFolderIdentities = new Map<
-    string,
-    { device: string; inode: string }
-  >()
-  private readonly registration: ProjectRegistrationService
-  private readonly snapshots: ProjectSnapshotService
+  private readonly directory = new ProjectDirectoryService()
 
-  constructor(private readonly host: ProjectServiceDependencies) {
-    this.snapshots = new ProjectSnapshotService({
-      database: host.database,
-      git: host.git,
-      storedProjects: (openOnly) => this.storedProjects(openOnly),
-      storedProject: (projectId) => this.storedProject(projectId),
-      projectOpenState: (projectId) => this.projectOpenState(projectId),
-      importWorktrees: (projectId, repositoryPath, mainPath) =>
-        this.importWorktrees(projectId, repositoryPath, mainPath),
-      observeAvailableProject: (project) =>
-        this.observeAvailableProject(project),
-      ensureProjectTerminals: (projectId) =>
-        this.ensureProjectTerminals(projectId),
-      listWorktreeTerminals: (worktree) => this.listWorktreeTerminals(worktree),
-      listWebPanelDefinitions: (worktreeId) =>
-        this.listWebPanelDefinitions(worktreeId),
-      getWorktree: (worktreeId) => this.getWorktree(worktreeId),
-      requireOpenProject: (projectId) => this.requireOpenProject(projectId)
-    })
-    this.registration = new ProjectRegistrationService({
-      ...host,
-      observedFolderIdentities: this.observedFolderIdentities,
-      storedProject: (projectId) => this.storedProject(projectId),
-      getProject: (projectId) => this.getProject(projectId),
-      getProjectSnapshot: (projectId) => this.getProjectSnapshot(projectId),
-      ensureProjectTerminals: (projectId) =>
-        this.ensureProjectTerminals(projectId),
-      invalidateProjectsSnapshot: () => this.invalidateProjectsSnapshot(),
-      reconcileProjectWorktrees: (
-        projectId,
-        repositoryPath,
-        mainPath,
-        allowProjectLock,
-        allowClosed
-      ) =>
-        this.reconcileProjectWorktrees(
-          projectId,
-          repositoryPath,
-          mainPath,
-          allowProjectLock,
-          allowClosed
-        ),
-      serializeProjectObservation: (projectId, operation) =>
-        this.serializeProjectObservation(projectId, operation)
-    })
-  }
-
-  private get deps() {
-    return this.host
-  }
-
-  private get events() {
-    return this.host.events
-  }
-
-  private get packages() {
-    return this.host.packages
-  }
-
-  private get locks() {
-    return this.host.locks
-  }
-
-  private get worktreeMutations() {
-    return this.host.worktreeMutations
-  }
-
-  private get projectObservations() {
-    return this.host.projectObservations
-  }
-
-  private listWorktreeTerminals(worktree: WorktreeRecord) {
-    return this.host.listWorktreeTerminals(worktree)
-  }
-
-  private ensureProjectTerminals(projectId: string) {
-    return this.host.ensureProjectTerminals(projectId)
-  }
-
-  private clearWorktreeTerminalState(
-    worktreeId: string,
-    terminalIds: Iterable<string> = []
-  ) {
-    this.host.clearWorktreeTerminalState(worktreeId, terminalIds)
-  }
-
-  private listWebPanelDefinitions(worktreeId: string) {
-    return this.host.listWebPanelDefinitions(worktreeId)
-  }
-
-  private reconcileProjectWorktrees(
-    projectId: string,
-    repositoryPath: string,
-    mainPath: string,
-    allowProjectLock: boolean,
-    allowClosed = false
-  ) {
-    return this.host.reconcileProjectWorktrees(
-      projectId,
-      repositoryPath,
-      mainPath,
-      allowProjectLock,
-      allowClosed
+  storedProjects(
+    openOnly = false
+  ): Effect.Effect<ProjectRecord[], never, ApplicationServices> {
+    return Effect.flatMap(ProjectStore, (store) =>
+      store.storedProjects(openOnly)
     )
   }
 
-  async storedProjects(openOnly = false): Promise<ProjectRecord[]> {
-    const projectRows = await this.deps.database.db
-      .select()
-      .from(projects)
-      .where(openOnly ? eq(projects.isOpen, 1) : undefined)
-      .orderBy(sql`${projects.name} COLLATE NOCASE`)
-    const worktreeRows = await this.deps.database.db
-      .select()
-      .from(worktrees)
-      .orderBy(
-        asc(worktrees.projectId),
-        sql`CASE ${worktrees.kind} WHEN 'main' THEN 0 ELSE 1 END`,
-        asc(worktrees.createdAt),
-        sql`rowid`
-      )
-    return projectRows.map((project) =>
-      mapProject(
-        project,
-        worktreeRows.filter((worktree) => worktree.projectId === project.id)
-      )
-    )
-  }
-
-  async storedProject(projectId: string): Promise<ProjectRecord | null> {
-    const [project] = await this.deps.database.db
-      .select()
-      .from(projects)
-      .where(eq(projects.id, projectId))
-      .limit(1)
-    if (!project) {
-      return null
-    }
-
-    const worktreeRows = await this.deps.database.db
-      .select()
-      .from(worktrees)
-      .where(eq(worktrees.projectId, projectId))
-      .orderBy(
-        sql`CASE ${worktrees.kind} WHEN 'main' THEN 0 ELSE 1 END`,
-        asc(worktrees.createdAt),
-        sql`rowid`
-      )
-    return mapProject(project, worktreeRows)
-  }
-
-  async storedWorktree(worktreeId: string): Promise<WorktreeRecord | null> {
-    const [row] = await this.deps.database.db
-      .select({
-        worktree: worktrees,
-        mainWorktreePath: projects.mainWorktreePath
-      })
-      .from(worktrees)
-      .innerJoin(projects, eq(worktrees.projectId, projects.id))
-      .where(eq(worktrees.id, worktreeId))
-      .limit(1)
-    return row ? mapWorktree(row.worktree, row.mainWorktreePath) : null
-  }
-
-  async projectOpenState(projectId: string): Promise<boolean | null> {
-    const [row] = await this.deps.database.db
-      .select({ isOpen: projects.isOpen })
-      .from(projects)
-      .where(eq(projects.id, projectId))
-      .limit(1)
-    return row ? Boolean(row.isOpen) : null
-  }
-
-  async storedOperation(operationId: string): Promise<OperationRecord | null> {
-    const [row] = await this.deps.database.db
-      .select()
-      .from(operations)
-      .where(eq(operations.id, operationId))
-      .limit(1)
-    return row ? mapOperation(row) : null
-  }
-
-  invalidateProjectsSnapshot(): void {
-    this.snapshots.invalidate()
-  }
-
-  listProjects(): Promise<ProjectRecord[]> {
-    return this.snapshots.listProjects()
-  }
-
-  listRecentProjects(): Promise<RecentProjectRecord[]> {
-    return this.snapshots.listRecentProjects()
-  }
-
-  getProjectSnapshot(projectId: string): Promise<ProjectRecord> {
-    return this.snapshots.getProjectSnapshot(projectId)
-  }
-
-  getWorktreeSnapshot(worktreeId: string): Promise<WorktreeRecord> {
-    return this.snapshots.getWorktreeSnapshot(worktreeId)
-  }
-
-  async requireAvailableWorktree(
-    worktreeId: string,
-    allowPrunable = false
-  ): Promise<WorktreeRecord> {
-    const binding = await this.storedWorktree(worktreeId)
-    if (!binding) {
-      throw new DomainError('WORKTREE_NOT_FOUND', 'Tree not found', 404)
-    }
-
-    const project = await this.observeAvailableProject(
-      await this.requireOpenProject(binding.projectId)
-    )
-
-    const worktree = project.worktrees.find(
-      (candidate) => candidate.id === worktreeId
-    )
-    if (!worktree) {
-      throw new DomainError('WORKTREE_NOT_FOUND', 'Tree not found', 404)
-    }
-
-    if (worktree.prunable && !allowPrunable) {
-      throw new DomainError(
-        'WORKTREE_UNAVAILABLE',
-        'Git reports this worktree as prunable',
-        409
-      )
-    }
-
-    return worktree
-  }
-
-  async getProject(projectId: string): Promise<ProjectRecord> {
-    const project = await this.storedProject(projectId)
-    if (!project) {
-      throw new DomainError('PROJECT_NOT_FOUND', 'Project not found', 404)
-    }
-
-    return project
-  }
-
-  async requireOpenProject(projectId: string): Promise<ProjectRecord> {
-    const project = await this.getProject(projectId)
-    if ((await this.projectOpenState(projectId)) !== true) {
-      throw new DomainError(
-        'PROJECT_CLOSED',
-        'Project is closed; open it before modifying it',
-        409
-      )
-    }
-
-    return project
-  }
-
-  async resolveRegisteredProject(identifier: string): Promise<ProjectRecord> {
-    const direct = await this.storedProject(identifier)
-    if (direct) {
-      return direct
-    }
-
-    const canonical = await fs
-      .realpath(path.resolve(identifier))
-      .catch(() => path.resolve(identifier))
-    const match = (await this.storedProjects()).find(
-      (project) =>
-        isPathWithin(canonical, project.rootPath) ||
-        project.worktrees.some((worktree) =>
-          isPathWithin(canonical, worktree.path)
-        )
-    )
-    if (!match) {
-      throw new DomainError(
-        'PROJECT_NOT_FOUND',
-        `No registered project contains ${identifier}`,
-        404
-      )
-    }
-
-    return match
-  }
-
-  async updateProjectColor(
-    projectId: string,
-    color: ProjectColor | null
-  ): Promise<ProjectRecord> {
-    await this.requireOpenProject(projectId)
-    if (
-      (await this.locks.isProjectLocked(projectId)) ||
-      (await this.worktreeMutations.isBusy(projectId))
-    ) {
-      throw new DomainError(
-        'PROJECT_BUSY',
-        'Project is already being modified',
-        409
-      )
-    }
-
-    await this.deps.database.db.run(sql`
-      UPDATE projects SET color = ${color}, updated_at = ${now()}
-      WHERE id = ${projectId}
-    `)
-    this.invalidateProjectsSnapshot()
-    this.events.publish('project.updated', { projectId })
-    return await this.getProject(projectId)
-  }
-
-  async listTreeContextFields(
+  storedProject(
     projectId: string
-  ): Promise<TreeContextFieldListing> {
-    const project = await this.getProject(projectId)
-    return loadTreeContextFields({
-      dataDir: this.deps.config.dataDir,
-      projectRoot: project.rootPath
-    })
-  }
-
-  async getWorktree(worktreeId: string): Promise<WorktreeRecord> {
-    const worktree = await this.storedWorktree(worktreeId)
-    if (!worktree) {
-      throw new DomainError('WORKTREE_NOT_FOUND', 'Tree not found', 404)
-    }
-
-    return worktree
-  }
-
-  async getWorktreeContext(worktreeId: string): Promise<TreeContextValues> {
-    const [row] = await this.deps.database.db
-      .select({ treeContextJson: worktrees.treeContextJson })
-      .from(worktrees)
-      .where(eq(worktrees.id, worktreeId))
-      .limit(1)
-    if (!row) {
-      throw new DomainError('WORKTREE_NOT_FOUND', 'Tree not found', 404)
-    }
-
-    return treeContextValuesSchema.parse(JSON.parse(row.treeContextJson))
-  }
-
-  async requestWorkspaceOpen(
-    worktreeId: string,
-    sourceTerminalId: string
-  ): Promise<void> {
-    const worktree = await this.getWorktree(worktreeId)
-    await this.requireOpenProject(worktree.projectId)
-    this.events.publish('workspace.open_requested', {
-      worktreeId,
-      sourceTerminalId
-    })
-  }
-
-  async getOperation(operationId: string): Promise<OperationRecord> {
-    const operation = await this.storedOperation(operationId)
-    if (!operation) {
-      throw new DomainError('OPERATION_NOT_FOUND', 'Operation not found', 404)
-    }
-
-    return operation
-  }
-
-  async resolveProject(identifier: string): Promise<ProjectRecord> {
-    const direct = await this.storedProject(identifier)
-    if (direct) {
-      return await this.requireOpenProject(direct.id)
-    }
-
-    const canonical = await fs
-      .realpath(path.resolve(identifier))
-      .catch(() => path.resolve(identifier))
-    const projects = await this.storedProjects()
-    const match = projects.find(
-      (project) =>
-        isPathWithin(canonical, project.rootPath) ||
-        project.worktrees.some((worktree) =>
-          isPathWithin(canonical, worktree.path)
-        )
+  ): Effect.Effect<ProjectRecord | null, never, ApplicationServices> {
+    return Effect.flatMap(ProjectStore, (store) =>
+      store.storedProject(projectId)
     )
-    if (!match) {
-      throw new DomainError(
-        'PROJECT_NOT_FOUND',
-        `No registered project contains ${identifier}`,
-        404
-      )
-    }
-
-    await this.requireOpenProject(match.id)
-    return match
   }
 
-  async resolveWorktree(identifier: string): Promise<WorktreeRecord> {
-    const direct = await this.storedWorktree(identifier)
-    if (direct) {
-      await this.requireOpenProject(direct.projectId)
-      return direct
-    }
-
-    const canonical = await fs
-      .realpath(path.resolve(identifier))
-      .catch(() => path.resolve(identifier))
-    const matches = (await this.storedProjects())
-      .flatMap((project) => project.worktrees)
-      .filter((worktree) => isPathWithin(canonical, worktree.path))
-      .sort((a, b) => b.path.length - a.path.length)
-    const match = matches[0]
-    if (!match) {
-      throw new DomainError(
-        'WORKTREE_NOT_FOUND',
-        `No registered tree contains ${identifier}`,
-        404
-      )
-    }
-
-    await this.requireOpenProject(match.projectId)
-    return match
+  storedWorktree(
+    worktreeId: string
+  ): Effect.Effect<WorktreeRecord | null, never, ApplicationServices> {
+    return Effect.flatMap(ProjectStore, (store) =>
+      store.storedWorktree(worktreeId)
+    )
   }
 
-  browseDirectory(
-    inputPath: string,
-    showHidden = false
-  ): Promise<DirectoryBrowseResponse> {
-    return this.registration.browseDirectory(inputPath, showHidden)
+  projectOpenState(
+    projectId: string
+  ): Effect.Effect<boolean | null, never, ApplicationServices> {
+    return Effect.flatMap(ProjectStore, (store) =>
+      store.projectOpenState(projectId)
+    )
+  }
+
+  storedOperation(
+    operationId: string
+  ): Effect.Effect<OperationRecord | null, never, ApplicationServices> {
+    return Effect.flatMap(ProjectStore, (store) =>
+      store.storedOperation(operationId)
+    )
+  }
+
+  private invalidateProjectsSnapshot() {
+    return Effect.flatMap(ProjectSnapshotOperations, (snapshots) =>
+      Effect.sync(() => snapshots.invalidate())
+    )
   }
 
   registerProject(
     inputPath: string,
     requestedName?: string
-  ): Promise<ProjectRecord> {
-    return this.registration.registerProject(inputPath, requestedName)
-  }
-
-  async observeAvailableProject(
-    project: ProjectRecord,
-    allowClosed = false
-  ): Promise<ProjectRecord> {
-    try {
-      if (project.kind === 'repository') {
-        await this.importWorktrees(
-          project.id,
-          project.repositoryPath,
-          project.mainWorktreePath,
-          true,
-          allowClosed
-        )
-      } else {
-        await this.serializeProjectObservation(project.id, async () => {
-          if (
-            (!allowClosed &&
-              (await this.projectOpenState(project.id)) !== true) ||
-            (await this.worktreeMutations.isBusy(project.id))
-          ) {
-            return
-          }
-
-          const [metadata] = await this.deps.database.db
-            .select({
-              device: projects.repositoryDevice,
-              inode: projects.repositoryInode
-            })
-            .from(projects)
-            .where(eq(projects.id, project.id))
-            .limit(1)
-          const [canonicalPath, folderStat] = await Promise.all([
-            fs.realpath(project.rootPath),
-            fs.stat(project.rootPath, { bigint: true })
-          ])
-          if (
-            !metadata ||
-            canonicalPath !== project.rootPath ||
-            !folderStat.isDirectory()
-          ) {
-            throw new Error(
-              'The registered folder path is not an available directory'
-            )
-          }
-
-          const device = folderStat.dev.toString()
-          const inode = folderStat.ino.toString()
-          const observedIdentity = this.observedFolderIdentities.get(project.id)
-          if (
-            observedIdentity &&
-            (observedIdentity.device !== device ||
-              observedIdentity.inode !== inode)
-          ) {
-            throw new Error(
-              'The registered folder path changed during this daemon session'
-            )
-          }
-
-          const folderWorktrees = project.worktrees.filter(
-            (worktree) =>
-              worktree.kind === 'folder' && worktree.path === project.rootPath
-          )
-          if (folderWorktrees.length !== 1 || project.worktrees.length !== 1) {
-            throw new Error(
-              'The registered folder does not have one folder workspace'
-            )
-          }
-
-          if (metadata.device !== device || metadata.inode !== inode) {
-            await this.deps.database.db
-              .update(projects)
-              .set({ repositoryDevice: device, repositoryInode: inode })
-              .where(eq(projects.id, project.id))
-          }
-
-          this.observedFolderIdentities.set(project.id, { device, inode })
-        })
-      }
-    } catch (error) {
-      throw new DomainError(
-        'PROJECT_UNAVAILABLE',
-        error instanceof Error ? error.message : String(error),
-        503
-      )
-    }
-
-    return await this.getProject(project.id)
-  }
-
-  async refreshProject(projectId: string): Promise<ProjectRecord> {
-    await this.requireOpenProject(projectId)
-    if (
-      (await this.worktreeMutations.isBusy(projectId)) ||
-      !(await this.locks.tryAcquire({ projectId }))
-    ) {
-      throw new DomainError(
-        'PROJECT_BUSY',
-        'Project is already being modified',
-        409
-      )
-    }
-
-    try {
-      const project = await this.observeAvailableProject(
-        await this.getProject(projectId)
-      )
-      await this.ensureProjectTerminals(projectId)
-      if (project.kind === 'repository') {
-        const defaultBranch = await this.deps.git.defaultBranch(
-          project.repositoryPath
-        )
-        await this.deps.database.db.run(sql`
-          UPDATE projects
-          SET default_branch = ${defaultBranch}, updated_at = ${now()}
-          WHERE id = ${projectId}
-        `)
-      }
-
-      await this.reconcile()
-      await this.packages.registerProject(await this.getProject(projectId))
-      this.invalidateProjectsSnapshot()
-      this.events.publish('project.updated', { projectId })
-      return await this.getProject(projectId)
-    } finally {
-      await this.locks.release({ projectId: projectId })
-    }
-  }
-
-  async openProject(projectId: string): Promise<ProjectRecord> {
-    await this.serializeProjectObservation(projectId, async () => {
-      await this.getProject(projectId)
-      if (
-        (await this.worktreeMutations.isBusy(projectId)) ||
-        !(await this.locks.tryAcquire({ projectId }))
-      ) {
-        throw new DomainError(
-          'PROJECT_BUSY',
-          'Project is already being modified',
-          409
-        )
-      }
-
-      try {
-        const timestamp = now()
-        await this.deps.database.db
-          .update(projects)
-          .set({
-            isOpen: 1,
-            showInRecents: 0,
-            lastOpenedAt: timestamp,
-            updatedAt: timestamp
-          })
-          .where(eq(projects.id, projectId))
-        await this.packages.registerProject(await this.getProject(projectId))
-        this.invalidateProjectsSnapshot()
-        this.events.publish('project.updated', { projectId })
-      } finally {
-        await this.locks.release({ projectId: projectId })
-      }
-    })
-
-    return this.getProjectSnapshot(projectId)
-  }
-
-  async closeProject(projectId: string): Promise<void> {
-    await this.serializeProjectObservation(projectId, async () => {
-      const project = await this.getProject(projectId)
-      if ((await this.projectOpenState(projectId)) !== true) {
-        return
-      }
-
-      const lockedWorktreeIds = project.worktrees.map((worktree) => worktree.id)
-      if (
-        (await this.worktreeMutations.isBusy(projectId)) ||
-        !(await this.locks.tryAcquire({
-          projectId,
-          worktreeIds: lockedWorktreeIds
-        }))
-      ) {
-        throw new DomainError(
-          'PROJECT_BUSY',
-          'Project is already being modified',
-          409
-        )
-      }
-
-      try {
-        await this.deps.database.db
-          .update(projects)
-          .set({ isOpen: 0, showInRecents: 1, updatedAt: now() })
-          .where(eq(projects.id, projectId))
-
-        this.invalidateProjectsSnapshot()
-        this.events.publish('project.updated', { projectId })
-      } finally {
-        await this.locks.release({
-          projectId,
-          worktreeIds: lockedWorktreeIds
-        })
-      }
-    })
-  }
-
-  async dismissRecentProject(projectId: string): Promise<void> {
-    await this.serializeProjectObservation(projectId, async () => {
-      await this.getProject(projectId)
-      if ((await this.projectOpenState(projectId)) !== false) {
-        throw new DomainError(
-          'PROJECT_NOT_RECENT',
-          'Project is open and cannot be removed from Recent projects',
-          409
-        )
-      }
-
-      await this.deps.database.db
-        .update(projects)
-        .set({ showInRecents: 0, updatedAt: now() })
-        .where(and(eq(projects.id, projectId), eq(projects.isOpen, 0)))
-      this.events.publish('project.updated', { projectId })
-    })
-  }
-
-  private serializeProjectObservation<T>(
-    projectId: string,
-    operation: () => Promise<T>
-  ): Promise<T> {
-    return this.projectObservations.enqueue(projectId, operation)
-  }
-
-  importWorktrees(
-    projectId: string,
-    repositoryPath: string,
-    mainPath: string,
-    allowProjectLock = false,
-    allowClosed = false
-  ): Promise<void> {
-    return this.serializeProjectObservation(projectId, () =>
-      this.reconcileProjectWorktrees(
-        projectId,
-        repositoryPath,
-        mainPath,
-        allowProjectLock,
-        allowClosed
-      )
+  ): Effect.Effect<ProjectRecord, DomainError<unknown>, ApplicationServices> {
+    return Effect.flatMap(ProjectRegistrationOperations, (registration) =>
+      registration.registerProject(inputPath, requestedName)
     )
   }
 
-  async deleteProject(projectId: string): Promise<void> {
-    if (await this.worktreeMutations.isBusy(projectId)) {
-      throw new DomainError(
-        'PROJECT_BUSY',
-        'Project is already being modified',
-        409
-      )
-    }
+  reconcile(): Effect.Effect<void, never, ApplicationServices> {
+    return Effect.flatMap(ProjectObservationOperations, (observations) =>
+      observations.reconcile()
+    )
+  }
 
-    let project = await this.getProject(projectId)
-    const lockedWorktrees = project.worktrees.map((worktree) => worktree.id)
-    if (
-      !(await this.locks.tryAcquire({
-        projectId,
-        worktreeIds: lockedWorktrees
-      }))
-    ) {
-      throw new DomainError(
-        'PROJECT_BUSY',
-        'A project tree is already being modified',
-        409
-      )
-    }
+  listProjects(): Effect.Effect<ProjectRecord[], never, ApplicationServices> {
+    return Effect.flatMap(ProjectSnapshotOperations, (snapshots) =>
+      snapshots.listProjects()
+    )
+  }
 
-    try {
-      project = await this.observeAvailableProject(project, true)
-      const additionalWorktrees = project.worktrees
-        .map((worktree) => worktree.id)
-        .filter((worktreeId) => !lockedWorktrees.includes(worktreeId))
+  listRecentProjects(): Effect.Effect<
+    RecentProjectRecord[],
+    never,
+    ApplicationServices
+  > {
+    return Effect.flatMap(ProjectSnapshotOperations, (snapshots) =>
+      snapshots.listRecentProjects()
+    )
+  }
+
+  getProjectSnapshot(
+    projectId: string
+  ): Effect.Effect<ProjectRecord, DomainError<unknown>, ApplicationServices> {
+    return Effect.flatMap(ProjectSnapshotOperations, (snapshots) =>
+      snapshots.getProjectSnapshot(projectId)
+    )
+  }
+
+  getWorktreeSnapshot(
+    worktreeId: string
+  ): Effect.Effect<WorktreeRecord, DomainError<unknown>, ApplicationServices> {
+    return Effect.flatMap(ProjectSnapshotOperations, (snapshots) =>
+      snapshots.getWorktreeSnapshot(worktreeId)
+    )
+  }
+
+  getProject(
+    projectId: string
+  ): Effect.Effect<ProjectRecord, DomainError<unknown>, ApplicationServices> {
+    return Effect.flatMap(ProjectStore, (store) => store.getProject(projectId))
+  }
+
+  requireOpenProject(
+    projectId: string
+  ): Effect.Effect<ProjectRecord, DomainError<unknown>, ApplicationServices> {
+    return Effect.flatMap(ProjectStore, (store) =>
+      store.requireOpenProject(projectId)
+    )
+  }
+
+  resolveRegisteredProject(
+    identifier: string
+  ): Effect.Effect<ProjectRecord, DomainError<unknown>, ApplicationServices> {
+    return Effect.gen(function* () {
+      const projectStore = yield* ProjectStore
+      const direct = yield* projectStore.storedProject(identifier)
+      if (direct) {
+        return direct
+      }
+
+      const canonical = yield* canonicalPath(identifier)
+      const match = (yield* projectStore.storedProjects()).find(
+        (project) =>
+          isPathWithin(canonical, project.rootPath) ||
+          project.worktrees.some((worktree) =>
+            isPathWithin(canonical, worktree.path)
+          )
+      )
+      if (!match) {
+        return yield* Effect.fail(
+          new DomainError(
+            'PROJECT_NOT_FOUND',
+            `No registered project contains ${identifier}`,
+            404
+          )
+        )
+      }
+
+      return match
+    })
+  }
+
+  updateProjectColor(
+    projectId: string,
+    color: ProjectColor | null
+  ): Effect.Effect<ProjectRecord, DomainError<unknown>, ApplicationServices> {
+    const invalidateProjectsSnapshot =
+      this.invalidateProjectsSnapshot.bind(this)
+
+    return Effect.gen(function* () {
+      const database = yield* DatabasePort
+      const events = yield* EventBusPort
+      const locks = yield* MutationLocks
+      const projectStore = yield* ProjectStore
+      const worktreeMutations = yield* WorktreeMutations
+      yield* projectStore.requireOpenProject(projectId)
       if (
-        (await this.worktreeMutations.isBusy(projectId)) ||
-        !(await this.locks.tryAcquire({ worktreeIds: additionalWorktrees }))
+        (yield* locks.isProjectLocked(projectId)) ||
+        (yield* worktreeMutations.isBusy(projectId))
       ) {
-        throw new DomainError(
-          'PROJECT_BUSY',
-          'A project tree is already being modified',
-          409
+        return yield* Effect.fail(
+          new DomainError(
+            'PROJECT_BUSY',
+            'Project is already being modified',
+            409
+          )
         )
       }
 
-      lockedWorktrees.push(...additionalWorktrees)
-      project = await this.getProject(projectId)
-      const linked = project.worktrees.filter(
-        (worktree) => worktree.kind === 'linked'
+      yield* Effect.promise(() =>
+        database.db.run(sql`
+          UPDATE projects SET color = ${color}, updated_at = ${now()}
+          WHERE id = ${projectId}
+        `)
       )
-      if (linked.length) {
-        throw new DomainError(
-          'PROJECT_HAS_WORKTREES',
-          'Remove linked trees before unregistering the project',
-          409
-        )
-      }
-
-      const terminalIdsByWorktree = new Map<string, string[]>()
-      for (const worktree of project.worktrees) {
-        terminalIdsByWorktree.set(
-          worktree.id,
-          await this.deps.terminalHost.killWorktree(worktree.id)
-        )
-      }
-      await this.deps.database.db.run(
-        sql`DELETE FROM projects WHERE id=${projectId}`
-      )
-      this.observedFolderIdentities.delete(projectId)
-      this.packages.forgetProject(projectId)
-      for (const worktree of project.worktrees) {
-        this.clearWorktreeTerminalState(
-          worktree.id,
-          terminalIdsByWorktree.get(worktree.id)
-        )
-      }
-      this.invalidateProjectsSnapshot()
-      this.events.publish('project.removed', { projectId })
-    } finally {
-      await this.locks.release({
-        projectId,
-        worktreeIds: lockedWorktrees
+      yield* invalidateProjectsSnapshot()
+      yield* Effect.sync(() => {
+        events.publish('project.updated', { projectId })
       })
-    }
+      return yield* projectStore.getProject(projectId)
+    })
   }
 
-  async reconcile(): Promise<void> {
-    const availableProjects = new Set<string>()
-    for (const project of await this.storedProjects(true)) {
-      try {
-        await this.observeAvailableProject(project)
-        availableProjects.add(project.id)
-      } catch {
-        // Keep metadata and terminal host untouched while the project folder is unavailable.
-      }
-    }
-    for (const project of await this.storedProjects(true)) {
-      if (!availableProjects.has(project.id)) {
-        continue
+  listTreeContextFields(
+    projectId: string
+  ): Effect.Effect<
+    TreeContextFieldListing,
+    DomainError<unknown>,
+    ApplicationServices
+  > {
+    return Effect.gen(function* () {
+      const config = yield* ConfigPort
+      const projectStore = yield* ProjectStore
+      const project = yield* projectStore.getProject(projectId)
+      return yield* Effect.promise(() =>
+        loadTreeContextFields({
+          dataDir: config.dataDir,
+          projectRoot: project.rootPath
+        })
+      )
+    })
+  }
+
+  getWorktree(
+    worktreeId: string
+  ): Effect.Effect<WorktreeRecord, DomainError<unknown>, ApplicationServices> {
+    return Effect.flatMap(ProjectStore, (store) =>
+      store.getWorktree(worktreeId)
+    )
+  }
+
+  getWorktreeContext(
+    worktreeId: string
+  ): Effect.Effect<
+    TreeContextValues,
+    DomainError<unknown>,
+    ApplicationServices
+  > {
+    return Effect.gen(function* () {
+      const database = yield* DatabasePort
+      const [row] = yield* Effect.promise(() =>
+        database.db
+          .select({ treeContextJson: worktrees.treeContextJson })
+          .from(worktrees)
+          .where(eq(worktrees.id, worktreeId))
+          .limit(1)
+      )
+      if (!row) {
+        return yield* Effect.fail(
+          new DomainError('WORKTREE_NOT_FOUND', 'Tree not found', 404)
+        )
       }
 
-      await this.ensureProjectTerminals(project.id).catch(() => undefined)
-    }
+      return treeContextValuesSchema.parse(JSON.parse(row.treeContextJson))
+    })
   }
+
+  requestWorkspaceOpen(
+    worktreeId: string,
+    sourceTerminalId: string
+  ): Effect.Effect<void, DomainError<unknown>, ApplicationServices> {
+    return Effect.gen(function* () {
+      const events = yield* EventBusPort
+      const projectStore = yield* ProjectStore
+      const worktree = yield* projectStore.getWorktree(worktreeId)
+      yield* projectStore.requireOpenProject(worktree.projectId)
+      yield* Effect.sync(() =>
+        events.publish('workspace.open_requested', {
+          worktreeId,
+          sourceTerminalId
+        })
+      )
+    })
+  }
+
+  getOperation(
+    operationId: string
+  ): Effect.Effect<OperationRecord, DomainError<unknown>, ApplicationServices> {
+    return Effect.flatMap(ProjectStore, (store) =>
+      store.getOperation(operationId)
+    )
+  }
+
+  resolveProject(
+    identifier: string
+  ): Effect.Effect<ProjectRecord, DomainError<unknown>, ApplicationServices> {
+    return Effect.gen(function* () {
+      const projectStore = yield* ProjectStore
+      const direct = yield* projectStore.storedProject(identifier)
+      if (direct) {
+        return yield* projectStore.requireOpenProject(direct.id)
+      }
+
+      const canonical = yield* canonicalPath(identifier)
+      const match = (yield* projectStore.storedProjects()).find(
+        (project) =>
+          isPathWithin(canonical, project.rootPath) ||
+          project.worktrees.some((worktree) =>
+            isPathWithin(canonical, worktree.path)
+          )
+      )
+      if (!match) {
+        return yield* Effect.fail(
+          new DomainError(
+            'PROJECT_NOT_FOUND',
+            `No registered project contains ${identifier}`,
+            404
+          )
+        )
+      }
+
+      yield* projectStore.requireOpenProject(match.id)
+      return match
+    })
+  }
+
+  resolveWorktree(
+    identifier: string
+  ): Effect.Effect<WorktreeRecord, DomainError<unknown>, ApplicationServices> {
+    return Effect.gen(function* () {
+      const projectStore = yield* ProjectStore
+      const direct = yield* projectStore.storedWorktree(identifier)
+      if (direct) {
+        yield* projectStore.requireOpenProject(direct.projectId)
+        return direct
+      }
+
+      const canonical = yield* canonicalPath(identifier)
+      const matches = (yield* projectStore.storedProjects())
+        .flatMap((project) => project.worktrees)
+        .filter((worktree) => isPathWithin(canonical, worktree.path))
+        .sort((a, b) => b.path.length - a.path.length)
+      const match = matches[0]
+      if (!match) {
+        return yield* Effect.fail(
+          new DomainError(
+            'WORKTREE_NOT_FOUND',
+            `No registered tree contains ${identifier}`,
+            404
+          )
+        )
+      }
+
+      yield* projectStore.requireOpenProject(match.projectId)
+      return match
+    })
+  }
+
+  browseDirectory(
+    inputPath: string,
+    showHidden = false
+  ): Effect.Effect<
+    DirectoryBrowseResponse,
+    DomainError<unknown>,
+    ApplicationServices
+  > {
+    return this.directory.browseDirectory(inputPath, showHidden)
+  }
+
+  refreshProject(
+    projectId: string
+  ): Effect.Effect<ProjectRecord, DomainError<unknown>, ApplicationServices> {
+    const invalidateProjectsSnapshot =
+      this.invalidateProjectsSnapshot.bind(this)
+
+    return Effect.gen(function* () {
+      const database = yield* DatabasePort
+      const events = yield* EventBusPort
+      const git = yield* GitPort
+      const locks = yield* MutationLocks
+      const packages = yield* PackageSystemPort
+      const observations = yield* ProjectObservationOperations
+      const projectStore = yield* ProjectStore
+      const terminals = yield* TerminalOperations
+      const worktreeMutations = yield* WorktreeMutations
+      yield* projectStore.requireOpenProject(projectId)
+      if (yield* worktreeMutations.isBusy(projectId)) {
+        return yield* Effect.fail(
+          new DomainError(
+            'PROJECT_BUSY',
+            'Project is already being modified',
+            409
+          )
+        )
+      }
+
+      return yield* Effect.acquireUseRelease(
+        locks
+          .tryAcquire({ projectId })
+          .pipe(
+            Effect.flatMap((acquired) =>
+              acquired
+                ? Effect.void
+                : Effect.fail(
+                    new DomainError(
+                      'PROJECT_BUSY',
+                      'Project is already being modified',
+                      409
+                    )
+                  )
+            )
+          ),
+        () =>
+          Effect.gen(function* () {
+            const project = yield* observations.observeAvailableProject(
+              yield* projectStore.getProject(projectId)
+            )
+            yield* terminals.ensureProjectTerminals(projectId)
+            if (project.kind === 'repository') {
+              const defaultBranch = yield* Effect.promise(() =>
+                git.defaultBranch(project.repositoryPath)
+              )
+              yield* Effect.promise(() =>
+                database.db.run(sql`
+                  UPDATE projects
+                  SET default_branch = ${defaultBranch}, updated_at = ${now()}
+                  WHERE id = ${projectId}
+                `)
+              )
+            }
+
+            yield* observations.reconcile()
+            const currentProject = yield* projectStore.getProject(projectId)
+            yield* packages.registerProject(currentProject)
+            yield* invalidateProjectsSnapshot()
+            yield* Effect.sync(() => {
+              events.publish('project.updated', { projectId })
+            })
+            return yield* projectStore.getProject(projectId)
+          }),
+        () => locks.release({ projectId })
+      )
+    })
+  }
+
+  openProject(
+    projectId: string
+  ): Effect.Effect<ProjectRecord, DomainError<unknown>, ApplicationServices> {
+    const invalidateProjectsSnapshot =
+      this.invalidateProjectsSnapshot.bind(this)
+
+    return Effect.gen(function* () {
+      const database = yield* DatabasePort
+      const events = yield* EventBusPort
+      const locks = yield* MutationLocks
+      const packages = yield* PackageSystemPort
+      const projectObservations = yield* ProjectObservations
+      const projectSnapshots = yield* ProjectSnapshotOperations
+      const projectStore = yield* ProjectStore
+      const worktreeMutations = yield* WorktreeMutations
+      yield* projectObservations.enqueue(
+        projectId,
+        Effect.gen(function* () {
+          yield* projectStore.getProject(projectId)
+          if (yield* worktreeMutations.isBusy(projectId)) {
+            return yield* Effect.fail(
+              new DomainError(
+                'PROJECT_BUSY',
+                'Project is already being modified',
+                409
+              )
+            )
+          }
+
+          yield* Effect.acquireUseRelease(
+            locks
+              .tryAcquire({ projectId })
+              .pipe(
+                Effect.flatMap((acquired) =>
+                  acquired
+                    ? Effect.void
+                    : Effect.fail(
+                        new DomainError(
+                          'PROJECT_BUSY',
+                          'Project is already being modified',
+                          409
+                        )
+                      )
+                )
+              ),
+            () =>
+              Effect.gen(function* () {
+                const timestamp = now()
+                yield* Effect.promise(() =>
+                  database.db
+                    .update(projects)
+                    .set({
+                      isOpen: 1,
+                      showInRecents: 0,
+                      lastOpenedAt: timestamp,
+                      updatedAt: timestamp
+                    })
+                    .where(eq(projects.id, projectId))
+                )
+                const project = yield* projectStore.getProject(projectId)
+                yield* packages.registerProject(project)
+                yield* invalidateProjectsSnapshot()
+                yield* Effect.sync(() => {
+                  events.publish('project.updated', { projectId })
+                })
+              }),
+            () => locks.release({ projectId })
+          )
+        })
+      )
+      return yield* projectSnapshots.getProjectSnapshot(projectId)
+    })
+  }
+
+  closeProject(
+    projectId: string
+  ): Effect.Effect<void, DomainError<unknown>, ApplicationServices> {
+    const invalidateProjectsSnapshot =
+      this.invalidateProjectsSnapshot.bind(this)
+
+    return Effect.gen(function* () {
+      const database = yield* DatabasePort
+      const events = yield* EventBusPort
+      const locks = yield* MutationLocks
+      const projectObservations = yield* ProjectObservations
+      const projectStore = yield* ProjectStore
+      const worktreeMutations = yield* WorktreeMutations
+      yield* projectObservations.enqueue(
+        projectId,
+        Effect.gen(function* () {
+          const project = yield* projectStore.getProject(projectId)
+          if ((yield* projectStore.projectOpenState(projectId)) !== true) {
+            return
+          }
+
+          const lockedWorktreeIds = project.worktrees.map(
+            (worktree) => worktree.id
+          )
+          if (yield* worktreeMutations.isBusy(projectId)) {
+            return yield* Effect.fail(
+              new DomainError(
+                'PROJECT_BUSY',
+                'Project is already being modified',
+                409
+              )
+            )
+          }
+
+          yield* Effect.acquireUseRelease(
+            locks
+              .tryAcquire({
+                projectId,
+                worktreeIds: lockedWorktreeIds
+              })
+              .pipe(
+                Effect.flatMap((acquired) =>
+                  acquired
+                    ? Effect.void
+                    : Effect.fail(
+                        new DomainError(
+                          'PROJECT_BUSY',
+                          'Project is already being modified',
+                          409
+                        )
+                      )
+                )
+              ),
+            () =>
+              Effect.gen(function* () {
+                yield* Effect.promise(() =>
+                  database.db
+                    .update(projects)
+                    .set({ isOpen: 0, showInRecents: 1, updatedAt: now() })
+                    .where(eq(projects.id, projectId))
+                )
+                yield* invalidateProjectsSnapshot()
+                yield* Effect.sync(() => {
+                  events.publish('project.updated', { projectId })
+                })
+              }),
+            () =>
+              locks.release({
+                projectId,
+                worktreeIds: lockedWorktreeIds
+              })
+          )
+        })
+      )
+    })
+  }
+
+  dismissRecentProject(
+    projectId: string
+  ): Effect.Effect<void, DomainError<unknown>, ApplicationServices> {
+    return Effect.gen(function* () {
+      const database = yield* DatabasePort
+      const events = yield* EventBusPort
+      const projectObservations = yield* ProjectObservations
+      const projectStore = yield* ProjectStore
+      yield* projectObservations.enqueue(
+        projectId,
+        Effect.gen(function* () {
+          yield* projectStore.getProject(projectId)
+          if ((yield* projectStore.projectOpenState(projectId)) !== false) {
+            return yield* Effect.fail(
+              new DomainError(
+                'PROJECT_NOT_RECENT',
+                'Project is open and cannot be removed from Recent projects',
+                409
+              )
+            )
+          }
+
+          yield* Effect.promise(() =>
+            database.db
+              .update(projects)
+              .set({ showInRecents: 0, updatedAt: now() })
+              .where(and(eq(projects.id, projectId), eq(projects.isOpen, 0)))
+          )
+          yield* Effect.sync(() =>
+            events.publish('project.updated', { projectId })
+          )
+        })
+      )
+    })
+  }
+
+  deleteProject(
+    projectId: string
+  ): Effect.Effect<void, DomainError<unknown>, ApplicationServices> {
+    const invalidateProjectsSnapshot =
+      this.invalidateProjectsSnapshot.bind(this)
+
+    return Effect.gen(function* () {
+      const database = yield* DatabasePort
+      const events = yield* EventBusPort
+      const locks = yield* MutationLocks
+      const packages = yield* PackageSystemPort
+      const folderIdentities = yield* ProjectFolderIdentities
+      const observations = yield* ProjectObservationOperations
+      const projectStore = yield* ProjectStore
+      const terminalHost = yield* TerminalHostPort
+      const terminalState = yield* TerminalState
+      const worktreeMutations = yield* WorktreeMutations
+      if (yield* worktreeMutations.isBusy(projectId)) {
+        return yield* Effect.fail(
+          new DomainError(
+            'PROJECT_BUSY',
+            'Project is already being modified',
+            409
+          )
+        )
+      }
+
+      let project = yield* projectStore.getProject(projectId)
+      const lockedWorktrees = project.worktrees.map((worktree) => worktree.id)
+      yield* Effect.acquireUseRelease(
+        locks
+          .tryAcquire({ projectId, worktreeIds: lockedWorktrees })
+          .pipe(
+            Effect.flatMap((acquired) =>
+              acquired
+                ? Effect.void
+                : Effect.fail(
+                    new DomainError(
+                      'PROJECT_BUSY',
+                      'A project tree is already being modified',
+                      409
+                    )
+                  )
+            )
+          ),
+        () =>
+          Effect.gen(function* () {
+            project = yield* observations.observeAvailableProject(project, true)
+            const additionalWorktrees = project.worktrees
+              .map((worktree) => worktree.id)
+              .filter((worktreeId) => !lockedWorktrees.includes(worktreeId))
+            if (yield* worktreeMutations.isBusy(projectId)) {
+              return yield* Effect.fail(
+                new DomainError(
+                  'PROJECT_BUSY',
+                  'A project tree is already being modified',
+                  409
+                )
+              )
+            }
+
+            yield* Effect.uninterruptible(
+              locks
+                .tryAcquire({ worktreeIds: additionalWorktrees })
+                .pipe(
+                  Effect.flatMap((acquired) =>
+                    acquired
+                      ? Effect.sync(() =>
+                          lockedWorktrees.push(...additionalWorktrees)
+                        )
+                      : Effect.fail(
+                          new DomainError(
+                            'PROJECT_BUSY',
+                            'A project tree is already being modified',
+                            409
+                          )
+                        )
+                  )
+                )
+            )
+            project = yield* projectStore.getProject(projectId)
+            const linked = project.worktrees.filter(
+              (worktree) => worktree.kind === 'linked'
+            )
+            if (linked.length) {
+              return yield* Effect.fail(
+                new DomainError(
+                  'PROJECT_HAS_WORKTREES',
+                  'Remove linked trees before unregistering the project',
+                  409
+                )
+              )
+            }
+
+            const terminalIdsByWorktree = new Map<string, string[]>()
+            for (const worktree of project.worktrees) {
+              terminalIdsByWorktree.set(
+                worktree.id,
+                yield* Effect.promise(() =>
+                  terminalHost.killWorktree(worktree.id)
+                )
+              )
+            }
+            yield* Effect.promise(() =>
+              database.db.run(sql`DELETE FROM projects WHERE id=${projectId}`)
+            )
+            yield* folderIdentities.remove(projectId)
+            yield* Effect.sync(() => packages.forgetProject(projectId))
+            for (const worktree of project.worktrees) {
+              const terminalIds = yield* terminalState.clearWorktree(
+                worktree.id,
+                terminalIdsByWorktree.get(worktree.id)
+              )
+              yield* Effect.sync(() => {
+                for (const terminalId of terminalIds) {
+                  events.publish('terminal.removed', {
+                    worktreeId: worktree.id,
+                    terminalId
+                  })
+                }
+              })
+            }
+            yield* invalidateProjectsSnapshot()
+            yield* Effect.sync(() => {
+              events.publish('project.removed', { projectId })
+            })
+          }),
+        () =>
+          locks.release({
+            projectId,
+            worktreeIds: lockedWorktrees
+          })
+      )
+    })
+  }
+}
+
+function canonicalPath(identifier: string): Effect.Effect<string> {
+  const resolved = path.resolve(identifier)
+  return Effect.promise(() => fs.realpath(resolved)).pipe(
+    Effect.orElseSucceed(() => resolved)
+  )
 }
 
 function isPathWithin(candidate: string, parent: string): boolean {

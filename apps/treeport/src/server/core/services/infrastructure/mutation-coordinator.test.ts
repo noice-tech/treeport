@@ -1,8 +1,45 @@
+import * as Context from 'effect/Context'
 import * as Deferred from 'effect/Deferred'
 import * as Effect from 'effect/Effect'
 import * as Fiber from 'effect/Fiber'
 import { describe, expect, it } from 'vitest'
+import { ApplicationDaemons } from './application-runtime'
 import { makeMutationCoordinator } from './mutation-coordinator'
+
+class TestValue extends Context.Tag('treeport/test/MutationCoordinatorValue')<
+  TestValue,
+  string
+>() {}
+
+describe('Application daemon ownership', () => {
+  it('interrupts long-running daemons when its layer scope closes', async () => {
+    let finalized = false
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const daemons = yield* ApplicationDaemons
+          const started = yield* Deferred.make<void>()
+          yield* daemons.fork(
+            Effect.gen(function* () {
+              yield* Deferred.succeed(started, undefined)
+              yield* Effect.never
+            }).pipe(
+              Effect.ensuring(
+                Effect.sync(() => {
+                  finalized = true
+                })
+              )
+            )
+          )
+          yield* Deferred.await(started)
+        }).pipe(Effect.provide(ApplicationDaemons.Default))
+      )
+    )
+
+    expect(finalized).toBe(true)
+  })
+})
 
 describe('MutationCoordinator', () => {
   it('preserves keyed ordering, cross-key concurrency, and failure isolation', async () => {
@@ -87,6 +124,42 @@ describe('MutationCoordinator', () => {
     )
 
     expect(calls.at(-1)).toBe('other:end')
+  })
+
+  it('captures the service context of each queued workflow', async () => {
+    const values = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const coordinator = yield* makeMutationCoordinator<string>()
+          const gate = yield* Deferred.make<void>()
+          const started = yield* Deferred.make<void>()
+
+          const first = yield* Effect.forkScoped(
+            coordinator
+              .enqueue(
+                'project',
+                Effect.gen(function* () {
+                  yield* Deferred.succeed(started, undefined)
+                  yield* Deferred.await(gate)
+                  return yield* TestValue
+                })
+              )
+              .pipe(Effect.provideService(TestValue, 'first'))
+          )
+          yield* Deferred.await(started)
+          const second = yield* Effect.forkScoped(
+            coordinator
+              .enqueue('project', TestValue)
+              .pipe(Effect.provideService(TestValue, 'second'))
+          )
+
+          yield* Deferred.succeed(gate, undefined)
+          return yield* Effect.all([Fiber.join(first), Fiber.join(second)])
+        })
+      )
+    )
+
+    expect(values).toEqual(['first', 'second'])
   })
 
   it('drains running and queued work', async () => {

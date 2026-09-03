@@ -399,7 +399,14 @@ export async function startTerminalHostServer(
 
         respond<'shutdown'>(connection, frame.id, null)
         setImmediate(() => {
-          void close().then(() => options.onShutdown?.())
+          void close()
+            .then(() => options.onShutdown?.())
+            .catch((error) => {
+              console.error(
+                '[Treeport terminal host] Requested shutdown failed:',
+                error instanceof Error ? error.message : String(error)
+              )
+            })
         })
     }
   }
@@ -426,7 +433,12 @@ export async function startTerminalHostServer(
       connection.outputUnsubscribes.clear()
       connection.runtimeUnsubscribes.clear()
       if (connection.authenticated) {
-        void options.sessions.restoreHostQueryAuthority()
+        void options.sessions.restoreHostQueryAuthority().catch((error) => {
+          console.error(
+            '[Treeport terminal host] Failed to restore query authority after a client disconnected:',
+            error instanceof Error ? error.message : String(error)
+          )
+        })
       }
     }
     socket.once('close', release)

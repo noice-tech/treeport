@@ -4,6 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach } from 'vitest'
 import { asc, eq, sql } from 'drizzle-orm'
+import type * as Effect from 'effect/Effect'
 import type { ProjectRecord, WebPanel, WorktreeRecord } from '@treeport/shared'
 import type { CommandRequest, CommandResult, CommandRunner } from './command'
 import {
@@ -17,6 +18,7 @@ import { GhAdapter } from './gh'
 import { GitAdapter } from './git'
 import { TreeportService } from './service'
 import type { AppConfig } from './config'
+import type { ApplicationServices } from './services/infrastructure/application-runtime'
 import type {
   HostedTerminal,
   TerminalCreateInput,
@@ -27,9 +29,289 @@ import type {
 const directories: string[] = []
 export const databases: TreeportDatabase[] = []
 export const services: TreeportService[] = []
+
+type ApplicationApis = TreeportService['projects'] &
+  TreeportService['worktrees'] &
+  TreeportService['terminals'] &
+  TreeportService['terminalPresets'] &
+  TreeportService['panels'] &
+  TreeportService['treeFiles'] &
+  TreeportService['packageManagement']
+
+type PromiseDomainApi<Api> = {
+  [Key in keyof Api as Api[Key] extends (
+    ...args: infer _Args
+  ) => Effect.Effect<infer _Result, infer _Failure, infer _Requirements>
+    ? Key
+    : never]: Api[Key] extends (
+    ...args: infer Args
+  ) => Effect.Effect<infer Result, infer _Failure, infer _Requirements>
+    ? (...args: Args) => Promise<Result>
+    : never
+}
+
+export type IntegrationService = TreeportService &
+  PromiseDomainApi<ApplicationApis>
+
+export function integrationService(
+  application: TreeportService
+): IntegrationService {
+  const run =
+    <Args extends unknown[], Result, Failure>(
+      operation: (
+        ...args: Args
+      ) => Effect.Effect<Result, Failure, ApplicationServices>
+    ) =>
+    (...args: Args): Promise<Result> =>
+      application.runEffect(operation(...args))
+
+  const facade = {
+    browseDirectory: run(
+      application.projects.browseDirectory.bind(application.projects)
+    ),
+    closeProject: run(
+      application.projects.closeProject.bind(application.projects)
+    ),
+    deleteProject: run(
+      application.projects.deleteProject.bind(application.projects)
+    ),
+    dismissRecentProject: run(
+      application.projects.dismissRecentProject.bind(application.projects)
+    ),
+    getOperation: run(
+      application.projects.getOperation.bind(application.projects)
+    ),
+    getProject: run(application.projects.getProject.bind(application.projects)),
+    getProjectSnapshot: run(
+      application.projects.getProjectSnapshot.bind(application.projects)
+    ),
+    getWorktree: run(
+      application.projects.getWorktree.bind(application.projects)
+    ),
+    getWorktreeContext: run(
+      application.projects.getWorktreeContext.bind(application.projects)
+    ),
+    getWorktreeSnapshot: run(
+      application.projects.getWorktreeSnapshot.bind(application.projects)
+    ),
+    listProjects: run(
+      application.projects.listProjects.bind(application.projects)
+    ),
+    listRecentProjects: run(
+      application.projects.listRecentProjects.bind(application.projects)
+    ),
+    listTreeContextFields: run(
+      application.projects.listTreeContextFields.bind(application.projects)
+    ),
+    openProject: run(
+      application.projects.openProject.bind(application.projects)
+    ),
+    reconcile: run(application.projects.reconcile.bind(application.projects)),
+    refreshProject: run(
+      application.projects.refreshProject.bind(application.projects)
+    ),
+    registerProject: run(
+      application.projects.registerProject.bind(application.projects)
+    ),
+    requestWorkspaceOpen: run(
+      application.projects.requestWorkspaceOpen.bind(application.projects)
+    ),
+    resolveProject: run(
+      application.projects.resolveProject.bind(application.projects)
+    ),
+    resolveRegisteredProject: run(
+      application.projects.resolveRegisteredProject.bind(application.projects)
+    ),
+    resolveWorktree: run(
+      application.projects.resolveWorktree.bind(application.projects)
+    ),
+    updateProjectColor: run(
+      application.projects.updateProjectColor.bind(application.projects)
+    ),
+
+    beginCreateWorktree: run(
+      application.worktrees.beginCreateWorktree.bind(application.worktrees)
+    ),
+    beginRemove: run(
+      application.worktrees.beginRemove.bind(application.worktrees)
+    ),
+    createWorktree: run(
+      application.worktrees.createWorktree.bind(application.worktrees)
+    ),
+    listActiveOperations: run(
+      application.worktrees.listActiveOperations.bind(application.worktrees)
+    ),
+    refreshPr: run(application.worktrees.refreshPr.bind(application.worktrees)),
+    removePreview: run(
+      application.worktrees.removePreview.bind(application.worktrees)
+    ),
+
+    createTerminal: run(
+      application.terminals.createTerminal.bind(application.terminals)
+    ),
+    deleteTerminal: run(
+      application.terminals.deleteTerminal.bind(application.terminals)
+    ),
+    getTerminal: run(
+      application.terminals.getTerminal.bind(application.terminals)
+    ),
+    refreshTerminalStatus: run(
+      application.terminals.refreshTerminalStatus.bind(application.terminals)
+    ),
+    renameTerminal: run(
+      application.terminals.renameTerminal.bind(application.terminals)
+    ),
+    terminateAllTerminals: run(
+      application.terminals.terminateAllTerminals.bind(application.terminals)
+    ),
+
+    createTerminalPreset: run(
+      application.terminalPresets.createTerminalPreset.bind(
+        application.terminalPresets
+      )
+    ),
+    deleteTerminalPreset: run(
+      application.terminalPresets.deleteTerminalPreset.bind(
+        application.terminalPresets
+      )
+    ),
+    listTerminalPresetDefinitions: run(
+      application.terminalPresets.listTerminalPresetDefinitions.bind(
+        application.terminalPresets
+      )
+    ),
+    listTerminalPresets: run(
+      application.terminalPresets.listTerminalPresets.bind(
+        application.terminalPresets
+      )
+    ),
+    updateTerminalPreset: run(
+      application.terminalPresets.updateTerminalPreset.bind(
+        application.terminalPresets
+      )
+    ),
+
+    authorizeBrowserPanel: run(
+      application.panels.authorizeBrowserPanel.bind(application.panels)
+    ),
+    createBrowserPanel: run(
+      application.panels.createBrowserPanel.bind(application.panels)
+    ),
+    createWebPanel: run(
+      application.panels.createWebPanel.bind(application.panels)
+    ),
+    deleteBrowserPanel: run(
+      application.panels.deleteBrowserPanel.bind(application.panels)
+    ),
+    deletePanel: run(application.panels.deletePanel.bind(application.panels)),
+    deleteWebPanel: run(
+      application.panels.deleteWebPanel.bind(application.panels)
+    ),
+    deleteWebPanelStorage: run(
+      application.panels.deleteWebPanelStorage.bind(application.panels)
+    ),
+    getBrowserPanel: run(
+      application.panels.getBrowserPanel.bind(application.panels)
+    ),
+    getBrowserPanelListeners: run(
+      application.panels.getBrowserPanelListeners.bind(application.panels)
+    ),
+    getPanelListeners: run(
+      application.panels.getPanelListeners.bind(application.panels)
+    ),
+    getWebPanelContext: run(
+      application.panels.getWebPanelContext.bind(application.panels)
+    ),
+    getWebPanelDiff: run(
+      application.panels.getWebPanelDiff.bind(application.panels)
+    ),
+    getWebPanelListeners: run(
+      application.panels.getWebPanelListeners.bind(application.panels)
+    ),
+    getWebPanelStorage: run(
+      application.panels.getWebPanelStorage.bind(application.panels)
+    ),
+    hasWebPanelStorage: run(
+      application.panels.hasWebPanelStorage.bind(application.panels)
+    ),
+    listBrowserPanels: run(
+      application.panels.listBrowserPanels.bind(application.panels)
+    ),
+    listWebPanelDefinitions: run(
+      application.panels.listWebPanelDefinitions.bind(application.panels)
+    ),
+    listWebPanels: run(
+      application.panels.listWebPanels.bind(application.panels)
+    ),
+    openBrowserPanel: run(
+      application.panels.openBrowserPanel.bind(application.panels)
+    ),
+    openBrowserPanelFromPanel: run(
+      application.panels.openBrowserPanelFromPanel.bind(application.panels)
+    ),
+    openBrowserPanelFromTerminal: run(
+      application.panels.openBrowserPanelFromTerminal.bind(application.panels)
+    ),
+    openWebPanel: run(application.panels.openWebPanel.bind(application.panels)),
+    resolveWebPanelAsset: run(
+      application.panels.resolveWebPanelAsset.bind(application.panels)
+    ),
+    setWebPanelPermissionGrant: run(
+      application.panels.setWebPanelPermissionGrant.bind(application.panels)
+    ),
+    setWebPanelStorage: run(
+      application.panels.setWebPanelStorage.bind(application.panels)
+    ),
+    updateBrowserPanelState: run(
+      application.panels.updateBrowserPanelState.bind(application.panels)
+    ),
+
+    listTreeFiles: run(
+      application.treeFiles.listTreeFiles.bind(application.treeFiles)
+    ),
+    readTreeFile: run(
+      application.treeFiles.readTreeFile.bind(application.treeFiles)
+    ),
+    searchTreeFiles: run(
+      application.treeFiles.searchTreeFiles.bind(application.treeFiles)
+    ),
+    writeTreeFile: run(
+      application.treeFiles.writeTreeFile.bind(application.treeFiles)
+    ),
+
+    installPackage: run(
+      application.packageManagement.installPackage.bind(
+        application.packageManagement
+      )
+    ),
+    listPackages: run(
+      application.packageManagement.listPackages.bind(
+        application.packageManagement
+      )
+    ),
+    reloadPackages: run(
+      application.packageManagement.reloadPackages.bind(
+        application.packageManagement
+      )
+    ),
+    removePackage: run(
+      application.packageManagement.removePackage.bind(
+        application.packageManagement
+      )
+    ),
+    updatePackages: run(
+      application.packageManagement.updatePackages.bind(
+        application.packageManagement
+      )
+    )
+  } satisfies PromiseDomainApi<ApplicationApis>
+
+  return Object.assign(application, facade)
+}
+
 afterEach(async () => {
   await Promise.all(
-    services.splice(0).map((service) => service.disposeWebPanelRuntime())
+    services.splice(0).map((service) => service.disposeRuntime())
   )
   databases.splice(0).forEach((database) => database.close())
   await Promise.all(
@@ -616,22 +898,24 @@ export async function fixture() {
   const git = new GitAdapter(runner)
   const terminalHost = new TerminalHostDouble(runner)
   const gh = new GhAdapter(runner)
-  const service = new TreeportService({
-    config,
-    database,
-    runner,
-    git,
-    terminalHost,
-    gh
-  })
+  const service = integrationService(
+    new TreeportService({
+      config,
+      database,
+      runner,
+      git,
+      terminalHost,
+      gh
+    })
+  )
   service.attachHttpServer(http.createServer())
   services.push(service)
-  await service.initialize()
+  await service.runEffect(service.initialize())
   return { root, main, runner, service, database, config }
 }
 
 export async function waitForOperation(
-  service: TreeportService,
+  service: IntegrationService,
   operationId: string
 ) {
   for (let attempt = 0; attempt < 50; attempt += 1) {
@@ -646,7 +930,7 @@ export async function waitForOperation(
 }
 
 export async function beginFromPreview(
-  service: TreeportService,
+  service: IntegrationService,
   worktreeId: string
 ) {
   const preview = await service.removePreview(worktreeId)

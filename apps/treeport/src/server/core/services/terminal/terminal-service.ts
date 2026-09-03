@@ -1,24 +1,46 @@
 import crypto from 'node:crypto'
 import path from 'node:path'
 import type {
-  ProjectRecord,
   TerminalRecord,
   TerminalSize,
   WorktreeRecord
 } from '@treeport/shared'
-import type { AppConfig } from '../../config'
+import * as Effect from 'effect/Effect'
+import * as Either from 'effect/Either'
+import * as Exit from 'effect/Exit'
 import { DomainError } from '../../domain'
-import type { ProductEventBus } from '../../events'
 import type { WorktreeSetupTask } from '../../setup'
 import type { TerminalSessionBackend } from '../../terminal'
-import type {
-  PromiseMutationLocks,
-  PromiseMutationQueue
+import {
+  ProjectObservationOperations,
+  ProjectSnapshotOperations
+} from '../domain-services'
+import {
+  ApplicationFibers,
+  type ApplicationServices,
+  ProjectObservations,
+  TerminalMutations,
+  TreeFileMutations,
+  WorktreeMutations
 } from '../infrastructure/application-runtime'
+import { MutationLocks } from '../infrastructure/mutation-locks'
+import {
+  ConfigPort,
+  EventBusPort,
+  TerminalHostPort
+} from '../infrastructure/ports'
+import { ProjectStore } from '../project/project-store'
+import { TerminalState } from './terminal-state'
 
 const now = (): string => new Date().toISOString()
 const id = (prefix: string): string =>
   `${prefix}_${crypto.randomUUID().replaceAll('-', '')}`
+
+type TerminalEffect<Result> = Effect.Effect<
+  Result,
+  DomainError<unknown>,
+  ApplicationServices
+>
 
 export interface TerminalLaunchOptions {
   setup?: { tasks: WorktreeSetupTask[]; error: string | null }
@@ -31,152 +53,75 @@ export interface TerminalLaunchOptions {
   shellCommand?: string
 }
 
-export interface TerminalServiceDependencies {
-  readonly config: AppConfig
-  readonly terminalHost: TerminalSessionBackend
-  readonly events: ProductEventBus
-  readonly locks: PromiseMutationLocks
-  readonly worktreeMutations: PromiseMutationQueue
-  readonly terminalMutations: PromiseMutationQueue
-  readonly storedProjects: (openOnly?: boolean) => Promise<ProjectRecord[]>
-  readonly storedWorktree: (
-    worktreeId: string
-  ) => Promise<WorktreeRecord | null>
-  readonly projectOpenState: (projectId: string) => Promise<boolean | null>
-  readonly getProject: (projectId: string) => Promise<ProjectRecord>
-  readonly getWorktree: (worktreeId: string) => Promise<WorktreeRecord>
-  readonly requireOpenProject: (projectId: string) => Promise<ProjectRecord>
-  readonly requireAvailableWorktree: (
-    worktreeId: string,
-    allowPrunable?: boolean
-  ) => Promise<WorktreeRecord>
-  readonly listProjects: () => Promise<ProjectRecord[]>
-  readonly invalidateProjectsSnapshot: () => void
-  readonly drainMutations: () => Promise<void>
-}
-
 export class TerminalService {
-  private readonly terminalStates = new Map<string, TerminalRecord>()
-  private readonly closeOnSuccessTerminalIds = new Set<string>()
-  private readonly terminalIdsByWorktree = new Map<string, Set<string>>()
-
-  constructor(private readonly host: TerminalServiceDependencies) {}
-
-  private get deps() {
-    return this.host
-  }
-
-  private get events() {
-    return this.host.events
-  }
-
-  private get locks() {
-    return this.host.locks
-  }
-
-  private get worktreeMutations() {
-    return this.host.worktreeMutations
-  }
-
-  private get terminalMutations() {
-    return this.host.terminalMutations
-  }
-
-  private storedProjects(openOnly = false) {
-    return this.host.storedProjects(openOnly)
-  }
-
-  private storedWorktree(worktreeId: string) {
-    return this.host.storedWorktree(worktreeId)
-  }
-
-  private projectOpenState(projectId: string) {
-    return this.host.projectOpenState(projectId)
-  }
-
-  private getProject(projectId: string) {
-    return this.host.getProject(projectId)
-  }
-
-  private getWorktree(worktreeId: string) {
-    return this.host.getWorktree(worktreeId)
-  }
-
-  private requireOpenProject(projectId: string) {
-    return this.host.requireOpenProject(projectId)
-  }
-
   private requireAvailableWorktree(worktreeId: string, allowPrunable = false) {
-    return this.host.requireAvailableWorktree(worktreeId, allowPrunable)
+    return Effect.flatMap(ProjectObservationOperations, (observations) =>
+      observations.requireAvailableWorktree(worktreeId, allowPrunable)
+    )
   }
 
   private listProjects() {
-    return this.host.listProjects()
+    return Effect.flatMap(ProjectSnapshotOperations, (snapshots) =>
+      snapshots.listProjects()
+    )
   }
 
   private invalidateProjectsSnapshot() {
-    this.host.invalidateProjectsSnapshot()
-  }
-
-  private drainMutations() {
-    return this.host.drainMutations()
-  }
-
-  trackedTerminalIds(worktreeId: string): Set<string> {
-    return new Set(this.terminalIdsByWorktree.get(worktreeId) ?? [])
-  }
-
-  rememberTerminalIds(worktreeId: string, terminalIds: Iterable<string>): void {
-    this.terminalIdsByWorktree.set(worktreeId, new Set(terminalIds))
+    return Effect.flatMap(ProjectSnapshotOperations, (snapshots) =>
+      Effect.sync(() => snapshots.invalidate())
+    )
   }
 
   clearWorktreeTerminalState(
     worktreeId: string,
     discoveredTerminalIds: Iterable<string> = []
-  ): void {
-    const terminalIds = new Set([
-      ...(this.terminalIdsByWorktree.get(worktreeId) ?? []),
-      ...discoveredTerminalIds
-    ])
-    for (const terminalId of terminalIds) {
-      this.terminalStates.delete(terminalId)
-      this.closeOnSuccessTerminalIds.delete(terminalId)
-      this.events.publish('terminal.removed', { worktreeId, terminalId })
-    }
-    this.terminalIdsByWorktree.delete(worktreeId)
+  ): TerminalEffect<void> {
+    return Effect.gen(function* () {
+      const events = yield* EventBusPort
+      const terminalState = yield* TerminalState
+      const terminalIds = yield* terminalState.clearWorktree(
+        worktreeId,
+        discoveredTerminalIds
+      )
+      yield* Effect.sync(() => {
+        for (const terminalId of terminalIds) {
+          events.publish('terminal.removed', { worktreeId, terminalId })
+        }
+      })
+    })
   }
 
-  async listWorktreeTerminals(
+  listWorktreeTerminals(
     worktree: WorktreeRecord
-  ): Promise<TerminalRecord[]> {
-    let sessions = (
-      await this.deps.terminalHost.listTerminals(worktree.id)
-    ).filter((terminal) => terminal.worktreeId === worktree.id)
-    if (!(await this.locks.isWorktreeLocked(worktree.id))) {
-      for (const terminal of sessions) {
-        if (
-          sessions.length <= 1 ||
-          !terminal.closeOnSuccess ||
-          terminal.status !== 'exited' ||
-          terminal.exitCode !== 0
-        ) {
-          continue
-        }
+  ): TerminalEffect<TerminalRecord[]> {
+    return Effect.gen(function* () {
+      const events = yield* EventBusPort
+      const locks = yield* MutationLocks
+      const terminalHost = yield* TerminalHostPort
+      const terminalState = yield* TerminalState
+      let sessions = (yield* Effect.promise(() =>
+        terminalHost.listTerminals(worktree.id)
+      )).filter((terminal) => terminal.worktreeId === worktree.id)
+      if (!(yield* locks.isWorktreeLocked(worktree.id))) {
+        for (const terminal of sessions) {
+          if (
+            sessions.length <= 1 ||
+            !terminal.closeOnSuccess ||
+            terminal.status !== 'exited' ||
+            terminal.exitCode !== 0
+          ) {
+            continue
+          }
 
-        await this.deps.terminalHost.killTerminal(terminal.id)
-        sessions = sessions.filter((candidate) => candidate.id !== terminal.id)
+          yield* Effect.promise(() => terminalHost.killTerminal(terminal.id))
+          sessions = sessions.filter(
+            (candidate) => candidate.id !== terminal.id
+          )
+        }
       }
-    }
 
-    const terminals = sessions
-      .map((terminal) => {
-        if (terminal.closeOnSuccess) {
-          this.closeOnSuccessTerminalIds.add(terminal.id)
-        } else {
-          this.closeOnSuccessTerminalIds.delete(terminal.id)
-        }
-
-        return {
+      const terminals = sessions
+        .map((terminal) => ({
           id: terminal.id,
           worktreeId: terminal.worktreeId,
           name: terminal.name,
@@ -187,506 +132,655 @@ export class TerminalService {
           exitCode: terminal.exitCode,
           createdAt: terminal.createdAt,
           updatedAt: terminal.updatedAt
+        }))
+        .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
+      yield* terminalState.updateCloseOnSuccess(
+        sessions.map((terminal) => ({
+          terminalId: terminal.id,
+          closeOnSuccess: terminal.closeOnSuccess
+        }))
+      )
+      if (yield* locks.isWorktreeLocked(worktree.id)) {
+        return terminals
+      }
+
+      const changes = yield* terminalState.reconcileInventory(
+        worktree.id,
+        terminals
+      )
+      yield* Effect.sync(() => {
+        for (const terminalId of changes.updatedTerminalIds) {
+          events.publish('terminal.updated', {
+            worktreeId: worktree.id,
+            terminalId
+          })
+        }
+        for (const terminalId of changes.removedTerminalIds) {
+          events.publish('terminal.removed', {
+            worktreeId: worktree.id,
+            terminalId
+          })
         }
       })
-      .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
-    if (await this.locks.isWorktreeLocked(worktree.id)) {
       return terminals
-    }
-
-    const previousIds = this.terminalIdsByWorktree.get(worktree.id)
-    const currentIds = new Set(terminals.map((terminal) => terminal.id))
-    for (const terminal of terminals) {
-      const previous = this.terminalStates.get(terminal.id)
-      this.terminalStates.set(terminal.id, terminal)
-      if (
-        previous &&
-        (previous.status !== terminal.status ||
-          previous.exitCode !== terminal.exitCode)
-      ) {
-        this.events.publish('terminal.updated', {
-          worktreeId: worktree.id,
-          terminalId: terminal.id
-        })
-      }
-    }
-    for (const terminalId of previousIds ?? []) {
-      if (!currentIds.has(terminalId)) {
-        this.terminalStates.delete(terminalId)
-        this.closeOnSuccessTerminalIds.delete(terminalId)
-        this.events.publish('terminal.removed', {
-          worktreeId: worktree.id,
-          terminalId
-        })
-      }
-    }
-    this.terminalIdsByWorktree.set(worktree.id, currentIds)
-    return terminals
-  }
-
-  async getTerminal(terminalId: string): Promise<TerminalRecord> {
-    const matches = (await this.listProjects())
-      .flatMap((project) => project.worktrees)
-      .flatMap((worktree) => worktree.terminals)
-      .filter((terminal) => terminal.id === terminalId)
-
-    if (matches.length > 1) {
-      throw new DomainError(
-        'TERMINAL_ID_CONFLICT',
-        'Terminal ID is present in more than one terminal host',
-        500
-      )
-    }
-
-    if (matches[0]) {
-      return matches[0]
-    }
-
-    throw new DomainError('TERMINAL_NOT_FOUND', 'Terminal not found', 404)
-  }
-
-  async getTerminalFromBindings(terminalId: string): Promise<TerminalRecord> {
-    const known = this.terminalStates.get(terminalId)
-    if (known) {
-      const worktree = await this.storedWorktree(known.worktreeId)
-      if (worktree) {
-        await this.requireOpenProject(worktree.projectId)
-        const terminal = (await this.listWorktreeTerminals(worktree)).find(
-          (candidate) => candidate.id === terminalId
-        )
-        if (terminal) {
-          return terminal
-        }
-      }
-    }
-
-    const inventories = await Promise.allSettled(
-      (await this.storedProjects(true))
-        .flatMap((project) => project.worktrees)
-        .map((worktree) => this.listWorktreeTerminals(worktree))
-    )
-    const matches = inventories
-      .filter(
-        (inventory): inventory is PromiseFulfilledResult<TerminalRecord[]> =>
-          inventory.status === 'fulfilled'
-      )
-      .flatMap((inventory) => inventory.value)
-      .filter((terminal) => terminal.id === terminalId)
-
-    if (matches.length > 1) {
-      throw new DomainError(
-        'TERMINAL_ID_CONFLICT',
-        'Terminal ID is present in more than one terminal host',
-        500
-      )
-    }
-
-    if (matches[0]) {
-      return matches[0]
-    }
-
-    const failure = inventories.find(
-      (inventory): inventory is PromiseRejectedResult =>
-        inventory.status === 'rejected'
-    )
-    if (failure) {
-      throw failure.reason
-    }
-
-    throw new DomainError('TERMINAL_NOT_FOUND', 'Terminal not found', 404)
-  }
-
-  async ensureProjectTerminals(projectId: string): Promise<void> {
-    const project = await this.getProject(projectId)
-    if ((await this.projectOpenState(projectId)) !== true) {
-      return
-    }
-
-    await Promise.all(
-      project.worktrees.map((worktree) =>
-        this.ensureWorktreeTerminal(worktree.id)
-      )
-    )
-  }
-
-  async ensureWorktreeTerminal(
-    worktreeId: string
-  ): Promise<TerminalRecord | null> {
-    if (await this.terminalMutations.isBusy(worktreeId)) {
-      return null
-    }
-
-    return this.terminalMutations.enqueue(worktreeId, async () => {
-      const worktree = await this.storedWorktree(worktreeId)
-      if (
-        !worktree ||
-        (await this.projectOpenState(worktree.projectId)) !== true ||
-        worktree.prunable ||
-        !(await this.locks.tryAcquire({ worktreeIds: [worktreeId] }))
-      ) {
-        return null
-      }
-
-      try {
-        const terminals = await this.listWorktreeTerminals(worktree)
-        if (terminals.length > 0) {
-          return terminals[0]!
-        }
-
-        return await this.createTerminalSession(worktree, 'Shell')
-      } finally {
-        await this.locks.release({ worktreeIds: [worktreeId] })
-      }
     })
   }
 
-  private async createTerminalSession(
+  getTerminal(terminalId: string): TerminalEffect<TerminalRecord> {
+    const listProjects = this.listProjects.bind(this)
+
+    return Effect.gen(this, function* () {
+      const matches = (yield* listProjects())
+        .flatMap((project) => project.worktrees)
+        .flatMap((worktree) => worktree.terminals)
+        .filter((terminal) => terminal.id === terminalId)
+
+      if (matches.length > 1) {
+        return yield* Effect.fail(
+          new DomainError(
+            'TERMINAL_ID_CONFLICT',
+            'Terminal ID is present in more than one terminal host',
+            500
+          )
+        )
+      }
+
+      if (matches[0]) {
+        return matches[0]
+      }
+
+      return yield* Effect.fail(
+        new DomainError('TERMINAL_NOT_FOUND', 'Terminal not found', 404)
+      )
+    })
+  }
+
+  getTerminalFromBindings(terminalId: string): TerminalEffect<TerminalRecord> {
+    const listWorktreeTerminals = this.listWorktreeTerminals.bind(this)
+
+    return Effect.gen(this, function* () {
+      const projectStore = yield* ProjectStore
+      const terminalState = yield* TerminalState
+      const known = yield* terminalState.terminal(terminalId)
+      if (known) {
+        const worktree = yield* projectStore.storedWorktree(known.worktreeId)
+        if (worktree) {
+          yield* projectStore.requireOpenProject(worktree.projectId)
+          const terminal = (yield* listWorktreeTerminals(worktree)).find(
+            (candidate) => candidate.id === terminalId
+          )
+          if (terminal) {
+            return terminal
+          }
+        }
+      }
+
+      const projects = yield* projectStore.storedProjects(true)
+      const inventories = yield* Effect.all(
+        projects
+          .flatMap((project) => project.worktrees)
+          .map((worktree) => Effect.exit(listWorktreeTerminals(worktree))),
+        { concurrency: 'unbounded' }
+      )
+      const matches = inventories
+        .filter(Exit.isSuccess)
+        .flatMap((inventory) => inventory.value)
+        .filter((terminal) => terminal.id === terminalId)
+
+      if (matches.length > 1) {
+        return yield* Effect.fail(
+          new DomainError(
+            'TERMINAL_ID_CONFLICT',
+            'Terminal ID is present in more than one terminal host',
+            500
+          )
+        )
+      }
+
+      if (matches[0]) {
+        return matches[0]
+      }
+
+      const failure = inventories.find(Exit.isFailure)
+      if (failure) {
+        return yield* Effect.failCause(failure.cause)
+      }
+
+      return yield* Effect.fail(
+        new DomainError('TERMINAL_NOT_FOUND', 'Terminal not found', 404)
+      )
+    })
+  }
+
+  ensureProjectTerminals(projectId: string): TerminalEffect<void> {
+    const ensureWorktreeTerminal = this.ensureWorktreeTerminal.bind(this)
+
+    return Effect.gen(function* () {
+      const projectStore = yield* ProjectStore
+      const project = yield* projectStore.getProject(projectId)
+      if ((yield* projectStore.projectOpenState(projectId)) !== true) {
+        return
+      }
+
+      yield* Effect.all(
+        project.worktrees.map((worktree) =>
+          ensureWorktreeTerminal(worktree.id)
+        ),
+        { concurrency: 'unbounded', discard: true }
+      )
+    })
+  }
+
+  ensureWorktreeTerminal(
+    worktreeId: string
+  ): TerminalEffect<TerminalRecord | null> {
+    const createTerminalSession = this.createTerminalSession.bind(this)
+    const listWorktreeTerminals = this.listWorktreeTerminals.bind(this)
+
+    return Effect.gen(function* () {
+      const locks = yield* MutationLocks
+      const projectStore = yield* ProjectStore
+      const terminalMutations = yield* TerminalMutations
+      if (yield* terminalMutations.isBusy(worktreeId)) {
+        return null
+      }
+
+      return yield* terminalMutations.enqueue(
+        worktreeId,
+        Effect.gen(function* () {
+          const worktree = yield* projectStore.storedWorktree(worktreeId)
+          if (
+            !worktree ||
+            (yield* projectStore.projectOpenState(worktree.projectId)) !==
+              true ||
+            worktree.prunable ||
+            !(yield* locks.tryAcquire({ worktreeIds: [worktreeId] }))
+          ) {
+            return null
+          }
+
+          return yield* Effect.gen(function* () {
+            const terminals = yield* listWorktreeTerminals(worktree)
+            if (terminals.length > 0) {
+              return terminals[0]!
+            }
+
+            return yield* createTerminalSession(worktree, 'Shell')
+          }).pipe(Effect.ensuring(locks.release({ worktreeIds: [worktreeId] })))
+        })
+      )
+    })
+  }
+
+  private createTerminalSession(
     worktree: WorktreeRecord,
     name: string,
     argv?: string[],
     options?: TerminalLaunchOptions
-  ): Promise<TerminalRecord> {
-    const project = await this.requireOpenProject(worktree.projectId)
-    const terminalId = id('term')
-    const shellCommand = options?.shellCommand ?? null
-    const interactiveShell = !argv && shellCommand === null
-    const commandArgv = argv
-      ? [...argv]
-      : shellCommand
-        ? [this.deps.config.shell, '-lc', shellCommand]
-        : [this.deps.config.shell, '-l']
-    const timestamp = now()
-    const session: Parameters<TerminalSessionBackend['createTerminal']>[0] = {
-      terminalId,
-      worktreeId: worktree.id,
-      name,
-      createdAt: timestamp,
-      cwd: options?.cwd ?? worktree.path,
-      argv: commandArgv,
-      shellCommand,
-      interactiveShell,
-      env: {
-        PI_IMAGE_PROTOCOL: 'kitty',
-        ...(options?.env ?? {}),
-        TREEPORT_API_URL: this.deps.config.apiUrl,
-        TREEPORT_MANAGED_API_URL: this.deps.config.apiUrl,
-        TREEPORT_DAEMON_RECORD: path.join(
-          this.deps.config.runtimeDir,
-          'daemon.json'
-        ),
-        TREEPORT_DAEMON_LIFECYCLE: this.deps.config.daemonLifecycle,
-        TREEPORT_PROJECT_ID: project.id,
-        TREEPORT_WORKTREE_ID: worktree.id,
-        TREEPORT_TERMINAL_ID: terminalId
+  ): TerminalEffect<TerminalRecord> {
+    const invalidateProjectsSnapshot =
+      this.invalidateProjectsSnapshot.bind(this)
+
+    return Effect.gen(function* () {
+      const config = yield* ConfigPort
+      const events = yield* EventBusPort
+      const projectStore = yield* ProjectStore
+      const terminalHost = yield* TerminalHostPort
+      const terminalState = yield* TerminalState
+      const project = yield* projectStore.requireOpenProject(worktree.projectId)
+      const terminalId = id('term')
+      const shellCommand = options?.shellCommand ?? null
+      const interactiveShell = !argv && shellCommand === null
+      const commandArgv = argv
+        ? [...argv]
+        : shellCommand
+          ? [config.shell, '-lc', shellCommand]
+          : [config.shell, '-l']
+      const timestamp = now()
+      const session: Parameters<TerminalSessionBackend['createTerminal']>[0] = {
+        terminalId,
+        worktreeId: worktree.id,
+        name,
+        createdAt: timestamp,
+        cwd: options?.cwd ?? worktree.path,
+        argv: commandArgv,
+        shellCommand,
+        interactiveShell,
+        env: {
+          PI_IMAGE_PROTOCOL: 'kitty',
+          ...(options?.env ?? {}),
+          TREEPORT_API_URL: config.apiUrl,
+          TREEPORT_MANAGED_API_URL: config.apiUrl,
+          TREEPORT_DAEMON_RECORD: path.join(config.runtimeDir, 'daemon.json'),
+          TREEPORT_DAEMON_LIFECYCLE: config.daemonLifecycle,
+          TREEPORT_PROJECT_ID: project.id,
+          TREEPORT_WORKTREE_ID: worktree.id,
+          TREEPORT_TERMINAL_ID: terminalId
+        }
       }
-    }
-    if (options?.initialTitle) {
-      session.initialTitle = options.initialTitle
-    }
+      if (options?.initialTitle) {
+        session.initialTitle = options.initialTitle
+      }
 
-    if (options?.returnToShell && !interactiveShell) {
-      session.fallbackArgv = [this.deps.config.shell, '-l']
-    }
+      if (options?.returnToShell && !interactiveShell) {
+        session.fallbackArgv = [config.shell, '-l']
+      }
 
-    if (options?.closeOnSuccess) {
-      session.closeOnSuccess = true
-    }
+      if (options?.closeOnSuccess) {
+        session.closeOnSuccess = true
+      }
 
-    if (options?.initialSize) {
-      session.initialSize = options.initialSize
-    }
+      if (options?.initialSize) {
+        session.initialSize = options.initialSize
+      }
 
-    if (options?.setup?.tasks.length) {
-      session.setupTasks = options.setup.tasks
-    }
+      if (options?.setup?.tasks.length) {
+        session.setupTasks = options.setup.tasks
+      }
 
-    if (options?.setup?.error) {
-      session.setupError = options.setup.error
-    }
+      if (options?.setup?.error) {
+        session.setupError = options.setup.error
+      }
 
-    try {
-      await this.deps.terminalHost.createTerminal(session)
-    } catch (error) {
-      throw new DomainError(
-        'TERMINAL_CREATE_FAILED',
-        error instanceof Error ? error.message : String(error),
-        500
+      yield* Effect.tryPromise({
+        try: () => terminalHost.createTerminal(session),
+        catch: (error) =>
+          new DomainError(
+            'TERMINAL_CREATE_FAILED',
+            error instanceof Error ? error.message : String(error),
+            500
+          )
+      })
+
+      const terminal: TerminalRecord = {
+        id: terminalId,
+        worktreeId: worktree.id,
+        name,
+        argv: commandArgv,
+        shellCommand,
+        interactiveShell,
+        status: 'running',
+        exitCode: null,
+        createdAt: timestamp,
+        updatedAt: timestamp
+      }
+      yield* terminalState.recordTerminal(
+        terminal,
+        options?.closeOnSuccess === true
       )
-    }
-
-    const terminal: TerminalRecord = {
-      id: terminalId,
-      worktreeId: worktree.id,
-      name,
-      argv: commandArgv,
-      shellCommand,
-      interactiveShell,
-      status: 'running',
-      exitCode: null,
-      createdAt: timestamp,
-      updatedAt: timestamp
-    }
-    this.terminalStates.set(terminalId, terminal)
-    if (options?.closeOnSuccess) {
-      this.closeOnSuccessTerminalIds.add(terminalId)
-    }
-
-    const terminalIds = this.terminalIdsByWorktree.get(worktree.id) ?? new Set()
-    terminalIds.add(terminalId)
-    this.terminalIdsByWorktree.set(worktree.id, terminalIds)
-    this.invalidateProjectsSnapshot()
-    this.events.publish('terminal.created', {
-      projectId: project.id,
-      worktreeId: worktree.id,
-      terminalId
+      yield* invalidateProjectsSnapshot()
+      yield* Effect.sync(() => {
+        events.publish('terminal.created', {
+          projectId: project.id,
+          worktreeId: worktree.id,
+          terminalId
+        })
+      })
+      return terminal
     })
-    return terminal
   }
 
-  async createTerminal(
+  createTerminal(
     worktreeId: string,
     name: string,
     argv?: string[],
     options?: TerminalLaunchOptions
-  ): Promise<TerminalRecord> {
-    await this.getWorktree(worktreeId)
-    return this.terminalMutations.enqueue(worktreeId, () =>
-      this.executeCreateTerminal(worktreeId, name, argv, options)
-    )
+  ): TerminalEffect<TerminalRecord> {
+    const executeCreateTerminal = this.executeCreateTerminal.bind(this)
+
+    return Effect.gen(function* () {
+      const projectStore = yield* ProjectStore
+      const terminalMutations = yield* TerminalMutations
+      yield* projectStore.getWorktree(worktreeId)
+      return yield* terminalMutations.enqueue(
+        worktreeId,
+        executeCreateTerminal(worktreeId, name, argv, options)
+      )
+    })
   }
 
-  async executeCreateTerminal(
+  executeCreateTerminal(
     worktreeId: string,
     name: string,
     argv?: string[],
     options?: TerminalLaunchOptions
-  ): Promise<TerminalRecord> {
-    await this.requireAvailableWorktree(worktreeId)
-    try {
-      const worktree = await this.storedWorktree(worktreeId)
+  ): TerminalEffect<TerminalRecord> {
+    const createTerminalSession = this.createTerminalSession.bind(this)
+    const invalidateProjectsSnapshot =
+      this.invalidateProjectsSnapshot.bind(this)
+    const requireAvailableWorktree = this.requireAvailableWorktree.bind(this)
+
+    return Effect.gen(function* () {
+      const locks = yield* MutationLocks
+      const projectStore = yield* ProjectStore
+      yield* requireAvailableWorktree(worktreeId)
+      const worktree = yield* projectStore.storedWorktree(worktreeId)
       if (!worktree) {
-        throw new DomainError('WORKTREE_NOT_FOUND', 'Tree not found', 404)
-      }
-
-      if (
-        worktree.prunable ||
-        !(await this.locks.tryAcquire({
-          worktreeIds: [worktreeId],
-          checkProjectIds: [worktree.projectId]
-        }))
-      ) {
-        throw new DomainError(
-          'WORKTREE_BUSY',
-          'Cannot create a terminal while the tree is being modified',
-          409
+        return yield* Effect.fail(
+          new DomainError('WORKTREE_NOT_FOUND', 'Tree not found', 404)
         )
       }
 
-      try {
-        return await this.createTerminalSession(worktree, name, argv, options)
-      } finally {
-        await this.locks.release({ worktreeIds: [worktreeId] })
+      if (worktree.prunable) {
+        return yield* Effect.fail(
+          new DomainError(
+            'WORKTREE_BUSY',
+            'Cannot create a terminal while the tree is being modified',
+            409
+          )
+        )
       }
-    } catch (error) {
-      this.invalidateProjectsSnapshot()
-      throw error
-    }
+
+      const acquired = yield* locks.tryAcquire({
+        worktreeIds: [worktreeId],
+        checkProjectIds: [worktree.projectId]
+      })
+      if (!acquired) {
+        return yield* Effect.fail(
+          new DomainError(
+            'WORKTREE_BUSY',
+            'Cannot create a terminal while the tree is being modified',
+            409
+          )
+        )
+      }
+
+      return yield* createTerminalSession(worktree, name, argv, options).pipe(
+        Effect.ensuring(locks.release({ worktreeIds: [worktreeId] }))
+      )
+    }).pipe(Effect.onError(() => invalidateProjectsSnapshot()))
   }
 
-  async refreshTerminalStatus(
+  refreshTerminalStatus(
     terminalId: string,
     observeGit = true
-  ): Promise<TerminalRecord> {
-    const terminal = observeGit
-      ? await this.getTerminal(terminalId)
-      : (this.terminalStates.get(terminalId) ??
-        (await this.getTerminalFromBindings(terminalId)))
-    const worktree = await this.getWorktree(terminal.worktreeId)
-    const state = await this.deps.terminalHost.terminalState(terminal.id)
-    await this.requireOpenProject(worktree.projectId)
-    if (!this.terminalStates.has(terminalId)) {
-      throw new DomainError('TERMINAL_NOT_FOUND', 'Terminal not found', 404)
-    }
+  ): TerminalEffect<TerminalRecord> {
+    const deleteTerminal = this.deleteTerminal.bind(this)
+    const getTerminal = this.getTerminal.bind(this)
+    const getTerminalFromBindings = this.getTerminalFromBindings.bind(this)
+    const invalidateProjectsSnapshot =
+      this.invalidateProjectsSnapshot.bind(this)
 
-    if (state.status === 'missing') {
-      this.terminalStates.delete(terminalId)
-      this.closeOnSuccessTerminalIds.delete(terminalId)
-      this.terminalIdsByWorktree.get(worktree.id)?.delete(terminalId)
-      this.invalidateProjectsSnapshot()
-      this.events.publish('terminal.removed', {
-        worktreeId: worktree.id,
-        terminalId
-      })
-      throw new DomainError('TERMINAL_NOT_FOUND', 'Terminal not found', 404)
-    }
-
-    const refreshed = {
-      ...terminal,
-      status: state.status,
-      exitCode: state.exitCode
-    }
-    this.terminalStates.set(terminalId, refreshed)
-    if (
-      state.status !== terminal.status ||
-      state.exitCode !== terminal.exitCode
-    ) {
-      this.invalidateProjectsSnapshot()
-      this.events.publish('terminal.updated', {
-        worktreeId: worktree.id,
-        terminalId
-      })
-    }
-
-    if (
-      state.status === 'exited' &&
-      state.exitCode === 0 &&
-      this.closeOnSuccessTerminalIds.has(terminalId)
-    ) {
-      try {
-        await this.deleteTerminal(terminalId)
-      } catch (error) {
-        if (!(error instanceof DomainError) || error.code !== 'LAST_TERMINAL') {
-          throw error
-        }
-
-        return refreshed
+    return Effect.gen(function* () {
+      const events = yield* EventBusPort
+      const projectStore = yield* ProjectStore
+      const terminalHost = yield* TerminalHostPort
+      const terminalState = yield* TerminalState
+      const cachedTerminal = yield* terminalState.terminal(terminalId)
+      const terminal = observeGit
+        ? yield* getTerminal(terminalId)
+        : (cachedTerminal ?? (yield* getTerminalFromBindings(terminalId)))
+      const worktree = yield* projectStore.getWorktree(terminal.worktreeId)
+      const state = yield* Effect.promise(() =>
+        terminalHost.terminalState(terminal.id)
+      )
+      yield* projectStore.requireOpenProject(worktree.projectId)
+      if (!(yield* terminalState.hasTerminal(terminalId))) {
+        return yield* Effect.fail(
+          new DomainError('TERMINAL_NOT_FOUND', 'Terminal not found', 404)
+        )
       }
 
-      throw new DomainError('TERMINAL_NOT_FOUND', 'Terminal not found', 404)
-    }
+      if (state.status === 'missing') {
+        yield* terminalState.removeTerminal(terminalId, worktree.id)
+        yield* invalidateProjectsSnapshot()
+        yield* Effect.sync(() => {
+          events.publish('terminal.removed', {
+            worktreeId: worktree.id,
+            terminalId
+          })
+        })
+        return yield* Effect.fail(
+          new DomainError('TERMINAL_NOT_FOUND', 'Terminal not found', 404)
+        )
+      }
 
-    return refreshed
-  }
-
-  async renameTerminal(
-    terminalId: string,
-    name: string
-  ): Promise<TerminalRecord> {
-    const terminal = await this.getTerminal(terminalId)
-    const projectId = (await this.getWorktree(terminal.worktreeId)).projectId
-    return this.worktreeMutations.enqueue(projectId, () =>
-      this.executeRenameTerminal(terminalId, name)
-    )
-  }
-
-  private async executeRenameTerminal(
-    terminalId: string,
-    name: string
-  ): Promise<TerminalRecord> {
-    const terminal = await this.getTerminal(terminalId)
-    const worktree = await this.getWorktree(terminal.worktreeId)
-    await this.requireOpenProject(worktree.projectId)
-    if (
-      !(await this.locks.tryAcquire({
-        worktreeIds: [worktree.id],
-        checkProjectIds: [worktree.projectId]
-      }))
-    ) {
-      throw new DomainError(
-        'WORKTREE_BUSY',
-        'Cannot rename a terminal during a destructive project operation',
-        409
-      )
-    }
-
-    try {
-      await this.deps.terminalHost.renameTerminal(terminal.id, name, now())
-      const renamed = await this.getTerminal(terminalId)
-      this.invalidateProjectsSnapshot()
-      this.events.publish('terminal.updated', {
-        worktreeId: terminal.worktreeId,
-        terminalId
-      })
-      return renamed
-    } finally {
-      await this.locks.release({ worktreeIds: [worktree.id] })
-    }
-  }
-
-  async deleteTerminal(terminalId: string): Promise<void> {
-    const terminal =
-      this.terminalStates.get(terminalId) ??
-      (await this.getTerminalFromBindings(terminalId))
-    const projectId = (await this.getWorktree(terminal.worktreeId)).projectId
-    return this.worktreeMutations.enqueue(projectId, () =>
-      this.executeDeleteTerminal(terminalId, terminal.worktreeId)
-    )
-  }
-
-  private async executeDeleteTerminal(
-    terminalId: string,
-    worktreeId: string
-  ): Promise<void> {
-    const worktree = await this.storedWorktree(worktreeId)
-    if (!worktree) {
-      throw new DomainError('WORKTREE_NOT_FOUND', 'Tree not found', 404)
-    }
-
-    await this.requireOpenProject(worktree.projectId)
-    if (
-      !(await this.locks.tryAcquire({
-        worktreeIds: [worktree.id],
-        checkProjectIds: [worktree.projectId]
-      }))
-    ) {
-      throw new DomainError(
-        'WORKTREE_BUSY',
-        'Cannot delete a terminal during a destructive project operation',
-        409
-      )
-    }
-
-    try {
-      const terminals = await this.listWorktreeTerminals(worktree)
-      const terminal = terminals.find(
-        (candidate) => candidate.id === terminalId
-      )
-      if (!terminal) {
-        throw new DomainError('TERMINAL_NOT_FOUND', 'Terminal not found', 404)
+      const refreshed = {
+        ...terminal,
+        status: state.status,
+        exitCode: state.exitCode
+      }
+      yield* terminalState.updateTerminal(refreshed)
+      if (
+        state.status !== terminal.status ||
+        state.exitCode !== terminal.exitCode
+      ) {
+        yield* invalidateProjectsSnapshot()
+        yield* Effect.sync(() => {
+          events.publish('terminal.updated', {
+            worktreeId: worktree.id,
+            terminalId
+          })
+        })
       }
 
       if (
-        terminals.length <= 1 ||
-        terminals.every(
-          (candidate) =>
-            candidate.id === terminalId ||
-            this.closeOnSuccessTerminalIds.has(candidate.id)
-        )
+        state.status === 'exited' &&
+        state.exitCode === 0 &&
+        (yield* terminalState.closeOnSuccessTerminalIds).has(terminalId)
       ) {
-        throw new DomainError(
-          'LAST_TERMINAL',
-          'Every open tree must keep at least one terminal',
-          409
+        const deletion = yield* Effect.either(deleteTerminal(terminalId))
+        if (Either.isLeft(deletion) && deletion.left.code === 'LAST_TERMINAL') {
+          return refreshed
+        }
+
+        if (Either.isLeft(deletion)) {
+          return yield* Effect.fail(deletion.left)
+        }
+
+        return yield* Effect.fail(
+          new DomainError('TERMINAL_NOT_FOUND', 'Terminal not found', 404)
         )
       }
 
-      await this.deps.terminalHost.killTerminal(terminal.id)
-    } finally {
-      await this.locks.release({ worktreeIds: [worktree.id] })
-    }
-    this.terminalStates.delete(terminalId)
-    this.closeOnSuccessTerminalIds.delete(terminalId)
-    this.terminalIdsByWorktree.get(worktree.id)?.delete(terminalId)
-    this.invalidateProjectsSnapshot()
-    this.events.publish('terminal.removed', {
-      worktreeId: worktree.id,
-      terminalId
+      return refreshed
     })
   }
 
-  async terminateAllTerminals(): Promise<number> {
-    await this.drainMutations()
-    let terminated = 0
-    for (const project of await this.listProjects()) {
-      for (const worktree of project.worktrees) {
-        const terminalIds = await this.deps.terminalHost.killWorktree(
-          worktree.id
+  renameTerminal(
+    terminalId: string,
+    name: string
+  ): TerminalEffect<TerminalRecord> {
+    const executeRenameTerminal = this.executeRenameTerminal.bind(this)
+    const getTerminal = this.getTerminal.bind(this)
+
+    return Effect.gen(function* () {
+      const projectStore = yield* ProjectStore
+      const worktreeMutations = yield* WorktreeMutations
+      const terminal = yield* getTerminal(terminalId)
+      const projectId = (yield* projectStore.getWorktree(terminal.worktreeId))
+        .projectId
+      return yield* worktreeMutations.enqueue(
+        projectId,
+        executeRenameTerminal(terminalId, name)
+      )
+    })
+  }
+
+  private executeRenameTerminal(
+    terminalId: string,
+    name: string
+  ): TerminalEffect<TerminalRecord> {
+    const getTerminal = this.getTerminal.bind(this)
+    const invalidateProjectsSnapshot =
+      this.invalidateProjectsSnapshot.bind(this)
+
+    return Effect.gen(function* () {
+      const events = yield* EventBusPort
+      const locks = yield* MutationLocks
+      const projectStore = yield* ProjectStore
+      const terminalHost = yield* TerminalHostPort
+      const terminal = yield* getTerminal(terminalId)
+      const worktree = yield* projectStore.getWorktree(terminal.worktreeId)
+      yield* projectStore.requireOpenProject(worktree.projectId)
+      const acquired = yield* locks.tryAcquire({
+        worktreeIds: [worktree.id],
+        checkProjectIds: [worktree.projectId]
+      })
+      if (!acquired) {
+        return yield* Effect.fail(
+          new DomainError(
+            'WORKTREE_BUSY',
+            'Cannot rename a terminal during a destructive project operation',
+            409
+          )
         )
-        terminated += terminalIds.length
-        this.clearWorktreeTerminalState(worktree.id, terminalIds)
       }
-    }
-    this.invalidateProjectsSnapshot()
-    return terminated
+
+      return yield* Effect.gen(function* () {
+        yield* Effect.promise(() =>
+          terminalHost.renameTerminal(terminal.id, name, now())
+        )
+        const renamed = yield* getTerminal(terminalId)
+        yield* invalidateProjectsSnapshot()
+        yield* Effect.sync(() => {
+          events.publish('terminal.updated', {
+            worktreeId: terminal.worktreeId,
+            terminalId
+          })
+        })
+        return renamed
+      }).pipe(Effect.ensuring(locks.release({ worktreeIds: [worktree.id] })))
+    })
+  }
+
+  deleteTerminal(terminalId: string): TerminalEffect<void> {
+    const executeDeleteTerminal = this.executeDeleteTerminal.bind(this)
+    const getTerminalFromBindings = this.getTerminalFromBindings.bind(this)
+
+    return Effect.gen(function* () {
+      const projectStore = yield* ProjectStore
+      const terminalState = yield* TerminalState
+      const worktreeMutations = yield* WorktreeMutations
+      const cachedTerminal = yield* terminalState.terminal(terminalId)
+      const terminal =
+        cachedTerminal ?? (yield* getTerminalFromBindings(terminalId))
+      const projectId = (yield* projectStore.getWorktree(terminal.worktreeId))
+        .projectId
+      yield* worktreeMutations.enqueue(
+        projectId,
+        executeDeleteTerminal(terminalId, terminal.worktreeId)
+      )
+    })
+  }
+
+  private executeDeleteTerminal(
+    terminalId: string,
+    worktreeId: string
+  ): TerminalEffect<void> {
+    const invalidateProjectsSnapshot =
+      this.invalidateProjectsSnapshot.bind(this)
+    const listWorktreeTerminals = this.listWorktreeTerminals.bind(this)
+
+    return Effect.gen(function* () {
+      const events = yield* EventBusPort
+      const locks = yield* MutationLocks
+      const projectStore = yield* ProjectStore
+      const terminalHost = yield* TerminalHostPort
+      const terminalState = yield* TerminalState
+      const worktree = yield* projectStore.storedWorktree(worktreeId)
+      if (!worktree) {
+        return yield* Effect.fail(
+          new DomainError('WORKTREE_NOT_FOUND', 'Tree not found', 404)
+        )
+      }
+
+      yield* projectStore.requireOpenProject(worktree.projectId)
+      const acquired = yield* locks.tryAcquire({
+        worktreeIds: [worktree.id],
+        checkProjectIds: [worktree.projectId]
+      })
+      if (!acquired) {
+        return yield* Effect.fail(
+          new DomainError(
+            'WORKTREE_BUSY',
+            'Cannot delete a terminal during a destructive project operation',
+            409
+          )
+        )
+      }
+
+      yield* Effect.gen(function* () {
+        const terminals = yield* listWorktreeTerminals(worktree)
+        const terminal = terminals.find(
+          (candidate) => candidate.id === terminalId
+        )
+        if (!terminal) {
+          return yield* Effect.fail(
+            new DomainError('TERMINAL_NOT_FOUND', 'Terminal not found', 404)
+          )
+        }
+
+        const closeOnSuccessTerminalIds =
+          yield* terminalState.closeOnSuccessTerminalIds
+        if (
+          terminals.length <= 1 ||
+          terminals.every(
+            (candidate) =>
+              candidate.id === terminalId ||
+              closeOnSuccessTerminalIds.has(candidate.id)
+          )
+        ) {
+          return yield* Effect.fail(
+            new DomainError(
+              'LAST_TERMINAL',
+              'Every open tree must keep at least one terminal',
+              409
+            )
+          )
+        }
+
+        yield* Effect.promise(() => terminalHost.killTerminal(terminal.id))
+      }).pipe(Effect.ensuring(locks.release({ worktreeIds: [worktree.id] })))
+
+      yield* terminalState.removeTerminal(terminalId, worktree.id)
+      yield* invalidateProjectsSnapshot()
+      yield* Effect.sync(() => {
+        events.publish('terminal.removed', {
+          worktreeId: worktree.id,
+          terminalId
+        })
+      })
+    })
+  }
+
+  terminateAllTerminals(): TerminalEffect<number> {
+    const clearWorktreeTerminalState =
+      this.clearWorktreeTerminalState.bind(this)
+    const invalidateProjectsSnapshot =
+      this.invalidateProjectsSnapshot.bind(this)
+    const listProjects = this.listProjects.bind(this)
+
+    return Effect.gen(function* () {
+      const applicationFibers = yield* ApplicationFibers
+      const projectObservations = yield* ProjectObservations
+      const terminalHost = yield* TerminalHostPort
+      const terminalMutations = yield* TerminalMutations
+      const treeFileMutations = yield* TreeFileMutations
+      const worktreeMutations = yield* WorktreeMutations
+      yield* Effect.all(
+        [
+          worktreeMutations.drain,
+          terminalMutations.drain,
+          treeFileMutations.drain,
+          projectObservations.drain
+        ],
+        { concurrency: 'unbounded', discard: true }
+      )
+      yield* applicationFibers.awaitEmpty
+
+      let terminated = 0
+      for (const project of yield* listProjects()) {
+        for (const worktree of project.worktrees) {
+          const terminalIds = yield* Effect.promise(() =>
+            terminalHost.killWorktree(worktree.id)
+          )
+          terminated += terminalIds.length
+          yield* clearWorktreeTerminalState(worktree.id, terminalIds)
+        }
+      }
+      yield* invalidateProjectsSnapshot()
+      return terminated
+    })
   }
 }

@@ -21,10 +21,10 @@ interface CoordinatorState<Key> {
 }
 
 export interface MutationCoordinator<Key> {
-  readonly enqueue: <Result, Error>(
+  readonly enqueue: <Result, Error, Requirements>(
     key: Key,
-    effect: Effect.Effect<Result, Error>
-  ) => Effect.Effect<Result, Error>
+    effect: Effect.Effect<Result, Error, Requirements>
+  ) => Effect.Effect<Result, Error, Requirements>
   readonly isBusy: (key: Key) => Effect.Effect<boolean>
   readonly drain: Effect.Effect<void>
 }
@@ -90,25 +90,28 @@ export function makeMutationCoordinator<Key>(): Effect.Effect<
         }
       })
 
-    const enqueue = <Result, Failure>(
+    const enqueue = <Result, Failure, Requirements>(
       key: Key,
-      effect: Effect.Effect<Result, Failure>
-    ): Effect.Effect<Result, Failure> =>
+      effect: Effect.Effect<Result, Failure, Requirements>
+    ): Effect.Effect<Result, Failure, Requirements> =>
       Effect.gen(function* () {
+        const context = yield* Effect.context<Requirements>()
+        const provided = Effect.provide(effect, context)
         const result = yield* Deferred.make<unknown, unknown>()
         const worker = yield* SynchronizedRef.modifyEffect(state, (current) => {
           const active = current.keys.get(key)
           if (active) {
             const keys = new Map(current.keys)
             keys.set(key, { ...active, pending: active.pending + 1 })
-            return Queue.offer(active.queue, { effect, result }).pipe(
-              Effect.as([null, { ...current, keys }] as const)
-            )
+            return Queue.offer(active.queue, {
+              effect: provided,
+              result
+            }).pipe(Effect.as([null, { ...current, keys }] as const))
           }
 
           return Effect.gen(function* () {
             const queue = yield* Queue.unbounded<QueuedMutation>()
-            yield* Queue.offer(queue, { effect, result })
+            yield* Queue.offer(queue, { effect: provided, result })
             const created: KeyState = { queue, pending: 1 }
             const keys = new Map(current.keys)
             keys.set(key, created)

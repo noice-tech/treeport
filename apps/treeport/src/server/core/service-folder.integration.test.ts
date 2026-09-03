@@ -10,6 +10,7 @@ import { TreeportService } from './service'
 import {
   databases,
   fixture,
+  integrationService,
   persistedProject,
   persistedProjectMetadata,
   persistedProjectOpen,
@@ -95,16 +96,18 @@ describe('ordinary folder projects', () => {
     databases.splice(databases.indexOf(database), 1)
     const reopenedDatabase = await openDatabase(config.databasePath)
     databases.push(reopenedDatabase)
-    const restartedService = new TreeportService({
-      config,
-      database: reopenedDatabase,
-      runner,
-      git: new GitAdapter(runner),
-      terminalHost: new TerminalHostDouble(runner),
-      gh: new GhAdapter(runner)
-    })
+    const restartedService = integrationService(
+      new TreeportService({
+        config,
+        database: reopenedDatabase,
+        runner,
+        git: new GitAdapter(runner),
+        terminalHost: new TerminalHostDouble(runner),
+        gh: new GhAdapter(runner)
+      })
+    )
     services.push(restartedService)
-    await restartedService.initialize()
+    await restartedService.runEffect(restartedService.initialize())
     const restarted = await restartedService.getProjectSnapshot(registered.id)
     expect(restarted).toMatchObject({
       availability: { state: 'available', message: null },

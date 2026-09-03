@@ -1,8 +1,8 @@
-import { describe, expect, it, vi } from 'vitest'
 import type { TerminalRecord } from '@treeport/shared'
+import * as Effect from 'effect/Effect'
+import { describe, expect, it, vi } from 'vitest'
 import { ProductEventBus } from './core/events'
 import type { TreeportService } from './core/index'
-import type { PromiseMutationQueue } from './core/services/infrastructure/application-runtime'
 import type {
   TerminalBellState,
   TerminalBellStateStore
@@ -62,7 +62,9 @@ class HostDouble implements TerminalAttachmentBackend {
   runtimeState() {
     return Promise.resolve(this.state)
   }
-  write() {}
+  write() {
+    return Promise.resolve()
+  }
   prepareQueryAuthority() {
     return Promise.resolve({ transitionId: 'transition', fence: 0 })
   }
@@ -123,25 +125,27 @@ function fixture(states: TerminalBellState[] = []) {
   for (const state of states) {
     bells.states.set(state.terminalId, state)
   }
+  const listProjects = vi.fn(async () => [])
+  const getTerminal = vi.fn(async () => terminal)
+  const getWorktree = vi.fn(async () => ({ id: 'worktree', path: '/repo' }))
   // SAFETY: The fixture supplies the service methods used by metadata.
   const service = testAccess<TreeportService>({
     events,
     database: {},
-    listProjects: vi.fn(async () => []),
-    getTerminal: vi.fn(async () => terminal),
-    getWorktree: vi.fn(async () => ({ id: 'worktree', path: '/repo' }))
+    listProjects,
+    getTerminal,
+    getWorktree,
+    projects: { listProjects, getWorktree },
+    terminals: { getTerminal },
+    runEffect: vi.fn((effect) =>
+      Effect.isEffect(effect)
+        ? Effect.runPromise(effect as Effect.Effect<unknown, unknown, never>)
+        : effect
+    ),
+    terminalMetadataMutation: vi.fn((_terminalId, effect) => effect),
+    drainTerminalMetadataMutations: vi.fn(() => Effect.void)
   })
-  const bellMutations: PromiseMutationQueue = {
-    enqueue: async (_key, task) => task(),
-    isBusy: async () => false,
-    drain: async () => undefined
-  }
-  const manager = new TerminalMetadataManager(
-    service,
-    host,
-    bellMutations,
-    bells
-  )
+  const manager = new TerminalMetadataManager(service, host, bells)
   return { bells, events, host, manager }
 }
 

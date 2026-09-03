@@ -11,6 +11,7 @@ import { TerminalHostDouble } from './service.integration-fixture'
 import {
   databases,
   fixture,
+  integrationService,
   persistedProject,
   persistedProjectMetadata,
   persistedProjectOpen,
@@ -588,15 +589,17 @@ describe('TreeportService with injected command adapters', () => {
 
     const restartedDatabase = await openDatabase(config.databasePath)
     databases.push(restartedDatabase)
-    const restarted = new TreeportService({
-      config,
-      database: restartedDatabase,
-      runner,
-      git: new GitAdapter(runner),
-      terminalHost: new TerminalHostDouble(runner),
-      gh: new GhAdapter(runner)
-    })
-    await restarted.initialize()
+    const restarted = integrationService(
+      new TreeportService({
+        config,
+        database: restartedDatabase,
+        runner,
+        git: new GitAdapter(runner),
+        terminalHost: new TerminalHostDouble(runner),
+        gh: new GhAdapter(runner)
+      })
+    )
+    await restarted.runEffect(restarted.initialize())
 
     const recovered = await restarted.getProjectSnapshot(project.id)
     expect(recovered).toMatchObject({

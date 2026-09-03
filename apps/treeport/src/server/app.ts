@@ -5,6 +5,8 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Hono } from 'hono'
+import * as Effect from 'effect/Effect'
+import * as Exit from 'effect/Exit'
 import { HTTPException } from 'hono/http-exception'
 import { requestId, type RequestIdVariables } from 'hono/request-id'
 import { validator } from 'hono/validator'
@@ -192,10 +194,15 @@ function queryInput<T extends z.ZodType>(schema: T) {
   })
 }
 
-function createTreeFilesApi(treeFiles: TreeportService['treeFiles']) {
+function createTreeFilesApi(
+  treeFiles: TreeportService['treeFiles'],
+  runEffect: TreeportService['runEffect']
+) {
   return new Hono()
     .get('/api/panels/:panelId/files', async (context) =>
-      context.json(await treeFiles.listTreeFiles(context.req.param('panelId')))
+      context.json(
+        await runEffect(treeFiles.listTreeFiles(context.req.param('panelId')))
+      )
     )
     .post(
       '/api/panels/:panelId/files/search',
@@ -203,9 +210,8 @@ function createTreeFilesApi(treeFiles: TreeportService['treeFiles']) {
       async (context) => {
         const body = context.req.valid('json')
         return context.json(
-          await treeFiles.searchTreeFiles(
-            context.req.param('panelId'),
-            body.query
+          await runEffect(
+            treeFiles.searchTreeFiles(context.req.param('panelId'), body.query)
           )
         )
       }
@@ -216,7 +222,9 @@ function createTreeFilesApi(treeFiles: TreeportService['treeFiles']) {
       async (context) => {
         const body = context.req.valid('json')
         return context.json(
-          await treeFiles.readTreeFile(context.req.param('panelId'), body.path)
+          await runEffect(
+            treeFiles.readTreeFile(context.req.param('panelId'), body.path)
+          )
         )
       }
     )
@@ -225,9 +233,11 @@ function createTreeFilesApi(treeFiles: TreeportService['treeFiles']) {
       jsonInput(writeTreeFileSchema),
       async (context) =>
         context.json(
-          await treeFiles.writeTreeFile(
-            context.req.param('panelId'),
-            context.req.valid('json')
+          await runEffect(
+            treeFiles.writeTreeFile(
+              context.req.param('panelId'),
+              context.req.valid('json')
+            )
           )
         )
     )
@@ -244,6 +254,7 @@ export function createApp({
   browserSessions,
   webDist
 }: AppDependencies) {
+  const runEffect = service.runEffect.bind(service)
   const app = new Hono<{ Variables: RequestIdVariables }>()
   app.use(
     '/api/*',
@@ -259,7 +270,6 @@ export function createApp({
       error instanceof Error ? error.message : String(error)
     )
   })
-  let terminalUploadQueue = Promise.resolve()
 
   app.onError((error, context) => {
     if (
@@ -355,11 +365,13 @@ export function createApp({
       jsonInput(updateWebPanelPermissionGrantSchema),
       async (context) => {
         const body = context.req.valid('json')
-        const definition = await service.panels.setWebPanelPermissionGrant(
-          context.req.param('worktreeId'),
-          context.req.param('definitionId'),
-          body.granted,
-          body.permissions
+        const definition = await runEffect(
+          service.panels.setWebPanelPermissionGrant(
+            context.req.param('worktreeId'),
+            context.req.param('definitionId'),
+            body.granted,
+            body.permissions
+          )
         )
         return context.json({ definition })
       }
@@ -469,7 +481,7 @@ export function createApp({
 
   app.route('/', browserApi)
 
-  app.route('/', createTreeFilesApi(service.treeFiles))
+  app.route('/', createTreeFilesApi(service.treeFiles, runEffect))
 
   const api = new Hono()
     .get('/api/health', (context) =>
@@ -499,7 +511,7 @@ export function createApp({
 
     .get('/api/terminal-presets', async (context) =>
       context.json({
-        presets: await service.terminalPresets.listTerminalPresets()
+        presets: await runEffect(service.terminalPresets.listTerminalPresets())
       })
     )
 
@@ -508,8 +520,10 @@ export function createApp({
       queryInput(treeContextFieldsQuerySchema),
       async (context) =>
         context.json(
-          await service.projects.listTreeContextFields(
-            context.req.valid('query').projectId
+          await runEffect(
+            service.projects.listTreeContextFields(
+              context.req.valid('query').projectId
+            )
           )
         )
     )
@@ -519,8 +533,10 @@ export function createApp({
       queryInput(terminalPresetDefinitionsQuerySchema),
       async (context) =>
         context.json(
-          await service.terminalPresets.listTerminalPresetDefinitions(
-            context.req.valid('query')
+          await runEffect(
+            service.terminalPresets.listTerminalPresetDefinitions(
+              context.req.valid('query')
+            )
           )
         )
     )
@@ -531,7 +547,11 @@ export function createApp({
       async (context) => {
         const body = context.req.valid('json')
         return context.json(
-          { preset: await service.terminalPresets.createTerminalPreset(body) },
+          {
+            preset: await runEffect(
+              service.terminalPresets.createTerminalPreset(body)
+            )
+          },
           201
         )
       }
@@ -544,10 +564,12 @@ export function createApp({
         const body = context.req.valid('json')
         const { expectedUpdatedAt, ...presetInput } = body
         return context.json({
-          preset: await service.terminalPresets.updateTerminalPreset(
-            context.req.param('presetId'),
-            presetInput,
-            expectedUpdatedAt
+          preset: await runEffect(
+            service.terminalPresets.updateTerminalPreset(
+              context.req.param('presetId'),
+              presetInput,
+              expectedUpdatedAt
+            )
           )
         })
       }
@@ -558,16 +580,18 @@ export function createApp({
       jsonInput(deleteTerminalPresetSchema),
       async (context) => {
         const body = context.req.valid('json')
-        await service.terminalPresets.deleteTerminalPreset(
-          context.req.param('presetId'),
-          body.expectedUpdatedAt
+        await runEffect(
+          service.terminalPresets.deleteTerminalPreset(
+            context.req.param('presetId'),
+            body.expectedUpdatedAt
+          )
         )
         return context.json({ ok: true })
       }
     )
 
     .get('/api/packages', async (context) =>
-      context.json(await service.packageManagement.listPackages())
+      context.json(await runEffect(service.packageManagement.listPackages()))
     )
 
     .get(
@@ -575,8 +599,10 @@ export function createApp({
       queryInput(packageProjectQuerySchema),
       async (context) =>
         context.json({
-          project: await service.projects.resolveRegisteredProject(
-            context.req.valid('query').path
+          project: await runEffect(
+            service.projects.resolveRegisteredProject(
+              context.req.valid('query').path
+            )
           )
         })
     )
@@ -587,9 +613,11 @@ export function createApp({
       async (context) => {
         const body = context.req.valid('json')
         return context.json({
-          result: await service.packageManagement.installPackage(
-            body.source,
-            body.projectId
+          result: await runEffect(
+            service.packageManagement.installPackage(
+              body.source,
+              body.projectId
+            )
           )
         })
       }
@@ -601,9 +629,8 @@ export function createApp({
       async (context) => {
         const body = context.req.valid('json')
         return context.json({
-          result: await service.packageManagement.removePackage(
-            body.source,
-            body.projectId
+          result: await runEffect(
+            service.packageManagement.removePackage(body.source, body.projectId)
           )
         })
       }
@@ -615,7 +642,9 @@ export function createApp({
       async (context) => {
         const body = context.req.valid('json')
         return context.json({
-          results: await service.packageManagement.updatePackages(body.source)
+          results: await runEffect(
+            service.packageManagement.updatePackages(body.source)
+          )
         })
       }
     )
@@ -626,17 +655,23 @@ export function createApp({
       async (context) => {
         const body = context.req.valid('json')
         return context.json(
-          await service.packageManagement.reloadPackages(body.projectId)
+          await runEffect(
+            service.packageManagement.reloadPackages(body.projectId)
+          )
         )
       }
     )
 
     .get('/api/projects', async (context) =>
-      context.json({ projects: await service.projects.listProjects() })
+      context.json({
+        projects: await runEffect(service.projects.listProjects())
+      })
     )
 
     .get('/api/projects/recent', async (context) =>
-      context.json({ projects: await service.projects.listRecentProjects() })
+      context.json({
+        projects: await runEffect(service.projects.listRecentProjects())
+      })
     )
 
     .get(
@@ -645,7 +680,9 @@ export function createApp({
       async (context) => {
         const query = context.req.valid('query')
         return context.json(
-          await service.projects.browseDirectory(query.input, query.hidden)
+          await runEffect(
+            service.projects.browseDirectory(query.input, query.hidden)
+          )
         )
       }
     )
@@ -655,12 +692,15 @@ export function createApp({
       jsonInput(registerProjectSchema),
       async (context) => {
         const body = context.req.valid('json')
-        const registered = await service.projects.registerProject(
-          body.path,
-          body.name
+        const registered = await runEffect(
+          service.projects.registerProject(body.path, body.name)
         )
         return context.json(
-          { project: await service.projects.getProjectSnapshot(registered.id) },
+          {
+            project: await runEffect(
+              service.projects.getProjectSnapshot(registered.id)
+            )
+          },
           201
         )
       }
@@ -668,28 +708,30 @@ export function createApp({
 
     .post('/api/projects/:projectId/open', async (context) =>
       context.json({
-        project: await service.projects.openProject(
-          context.req.param('projectId')
+        project: await runEffect(
+          service.projects.openProject(context.req.param('projectId'))
         )
       })
     )
 
     .post('/api/projects/:projectId/close', async (context) => {
-      await service.projects.closeProject(context.req.param('projectId'))
+      await runEffect(
+        service.projects.closeProject(context.req.param('projectId'))
+      )
       return context.json({ ok: true })
     })
 
     .delete('/api/projects/:projectId/recent', async (context) => {
-      await service.projects.dismissRecentProject(
-        context.req.param('projectId')
+      await runEffect(
+        service.projects.dismissRecentProject(context.req.param('projectId'))
       )
       return context.json({ ok: true })
     })
 
     .get('/api/projects/:projectId', async (context) =>
       context.json({
-        project: await service.projects.getProjectSnapshot(
-          context.req.param('projectId')
+        project: await runEffect(
+          service.projects.getProjectSnapshot(context.req.param('projectId'))
         )
       })
     )
@@ -700,31 +742,37 @@ export function createApp({
       async (context) => {
         const body = context.req.valid('json')
         const projectId = context.req.param('projectId')
-        await service.projects.updateProjectColor(projectId, body.color)
+        await runEffect(
+          service.projects.updateProjectColor(projectId, body.color)
+        )
         return context.json({
-          project: await service.projects.getProjectSnapshot(projectId)
+          project: await runEffect(
+            service.projects.getProjectSnapshot(projectId)
+          )
         })
       }
     )
 
     .post('/api/projects/:projectId/refresh', async (context) => {
       const projectId = context.req.param('projectId')
-      await service.projects.refreshProject(projectId)
+      await runEffect(service.projects.refreshProject(projectId))
       return context.json({
-        project: await service.projects.getProjectSnapshot(projectId)
+        project: await runEffect(service.projects.getProjectSnapshot(projectId))
       })
     })
 
     .delete('/api/projects/:projectId', async (context) => {
-      await service.projects.deleteProject(context.req.param('projectId'))
+      await runEffect(
+        service.projects.deleteProject(context.req.param('projectId'))
+      )
       return context.json({ ok: true })
     })
 
     .get('/api/projects/:projectId/worktrees', async (context) =>
       context.json({
         worktrees: (
-          await service.projects.getProjectSnapshot(
-            context.req.param('projectId')
+          await runEffect(
+            service.projects.getProjectSnapshot(context.req.param('projectId'))
           )
         ).worktrees
       })
@@ -736,7 +784,9 @@ export function createApp({
       async (context) => {
         const body = context.req.valid('json')
         let initialTerminal:
-          | NonNullable<Parameters<TreeportService['beginCreateWorktree']>[3]>
+          | NonNullable<
+              Parameters<TreeportService['worktrees']['beginCreateWorktree']>[3]
+            >
           | undefined
         if (body.initialTerminal) {
           initialTerminal = { name: body.initialTerminal.name }
@@ -759,13 +809,15 @@ export function createApp({
 
         return context.json(
           {
-            operation: await service.worktrees.beginCreateWorktree(
-              context.req.param('projectId'),
-              body.name,
-              body.base,
-              initialTerminal,
-              body.sourceWorktreeId,
-              body.context
+            operation: await runEffect(
+              service.worktrees.beginCreateWorktree(
+                context.req.param('projectId'),
+                body.name,
+                body.base,
+                initialTerminal,
+                body.sourceWorktreeId,
+                body.context
+              )
             )
           },
           202
@@ -775,16 +827,18 @@ export function createApp({
 
     .get('/api/worktrees/:worktreeId', async (context) => {
       const worktreeId = context.req.param('worktreeId')
-      await service.worktrees.refreshPr(worktreeId, false)
+      await runEffect(service.worktrees.refreshPr(worktreeId, false))
       return context.json({
-        worktree: await service.projects.getWorktreeSnapshot(worktreeId)
+        worktree: await runEffect(
+          service.projects.getWorktreeSnapshot(worktreeId)
+        )
       })
     })
 
     .get('/api/worktrees/:worktreeId/context', async (context) =>
       context.json({
-        context: await service.projects.getWorktreeContext(
-          context.req.param('worktreeId')
+        context: await runEffect(
+          service.projects.getWorktreeContext(context.req.param('worktreeId'))
         )
       })
     )
@@ -793,9 +847,11 @@ export function createApp({
       '/api/worktrees/:worktreeId/open',
       jsonInput(requestWorkspaceOpenSchema),
       async (context) => {
-        await service.projects.requestWorkspaceOpen(
-          context.req.param('worktreeId'),
-          context.req.valid('json').sourceTerminalId
+        await runEffect(
+          service.projects.requestWorkspaceOpen(
+            context.req.param('worktreeId'),
+            context.req.valid('json').sourceTerminalId
+          )
         )
         return context.json({ ok: true })
       }
@@ -807,11 +863,13 @@ export function createApp({
       async (context) => {
         const body = context.req.valid('json')
         return context.json(
-          await service.panels.openBrowserPanel(
-            context.req.param('worktreeId'),
-            body.url,
-            body.sourceTerminalId ?? null,
-            null
+          await runEffect(
+            service.panels.openBrowserPanel(
+              context.req.param('worktreeId'),
+              body.url,
+              body.sourceTerminalId ?? null,
+              null
+            )
           ),
           201
         )
@@ -823,9 +881,11 @@ export function createApp({
       jsonInput(openBrowserPanelFromTerminalSchema),
       async (context) =>
         context.json(
-          await service.panels.openBrowserPanelFromTerminal(
-            context.req.param('terminalId'),
-            context.req.valid('json').url
+          await runEffect(
+            service.panels.openBrowserPanelFromTerminal(
+              context.req.param('terminalId'),
+              context.req.valid('json').url
+            )
           ),
           201
         )
@@ -833,8 +893,10 @@ export function createApp({
 
     .get('/api/worktrees/:worktreeId/web-panel-definitions', async (context) =>
       context.json({
-        definitions: await service.panels.listWebPanelDefinitions(
-          context.req.param('worktreeId')
+        definitions: await runEffect(
+          service.panels.listWebPanelDefinitions(
+            context.req.param('worktreeId')
+          )
         )
       })
     )
@@ -846,13 +908,15 @@ export function createApp({
         const body = context.req.valid('json')
         return context.json(
           {
-            panel: await service.panels.createWebPanel(
-              context.req.param('worktreeId'),
-              body.definitionId,
-              {
-                input: body.input ?? null,
-                cwd: body.launchCwd ?? null
-              }
+            panel: await runEffect(
+              service.panels.createWebPanel(
+                context.req.param('worktreeId'),
+                body.definitionId,
+                {
+                  input: body.input ?? null,
+                  cwd: body.launchCwd ?? null
+                }
+              )
             )
           },
           201
@@ -866,15 +930,17 @@ export function createApp({
       async (context) => {
         const body = context.req.valid('json')
         return context.json(
-          await service.panels.openWebPanel(
-            context.req.param('worktreeId'),
-            body.definitionId,
-            {
-              input: body.input ?? null,
-              cwd: body.launchCwd ?? null
-            },
-            body.newInstance ?? false,
-            body.sourceTerminalId ?? null
+          await runEffect(
+            service.panels.openWebPanel(
+              context.req.param('worktreeId'),
+              body.definitionId,
+              {
+                input: body.input ?? null,
+                cwd: body.launchCwd ?? null
+              },
+              body.newInstance ?? false,
+              body.sourceTerminalId ?? null
+            )
           )
         )
       }
@@ -898,9 +964,11 @@ export function createApp({
           )
         }
 
-        await service.panels.deletePanel(
-          panelId,
-          query.discardStoredData === 'true'
+        await runEffect(
+          service.panels.deletePanel(
+            panelId,
+            query.discardStoredData === 'true'
+          )
         )
         return context.json({ ok: true })
       }
@@ -908,30 +976,32 @@ export function createApp({
 
     .get('/api/panels/:panelId/context', async (context) =>
       context.json({
-        context: await service.panels.getWebPanelContext(
-          context.req.param('panelId')
+        context: await runEffect(
+          service.panels.getWebPanelContext(context.req.param('panelId'))
         )
       })
     )
 
     .get('/api/panels/:panelId/diff', async (context) =>
       context.json({
-        diff: await service.panels.getWebPanelDiff(context.req.param('panelId'))
+        diff: await runEffect(
+          service.panels.getWebPanelDiff(context.req.param('panelId'))
+        )
       })
     )
 
     .get('/api/panels/:panelId/network/listeners', async (context) =>
       context.json({
-        discovery: await service.panels.getPanelListeners(
-          context.req.param('panelId')
+        discovery: await runEffect(
+          service.panels.getPanelListeners(context.req.param('panelId'))
         )
       })
     )
 
     .get('/api/panels/:panelId/storage', async (context) =>
       context.json({
-        hasData: await service.panels.hasWebPanelStorage(
-          context.req.param('panelId')
+        hasData: await runEffect(
+          service.panels.hasWebPanelStorage(context.req.param('panelId'))
         )
       })
     )
@@ -942,9 +1012,11 @@ export function createApp({
       async (context) => {
         const body = context.req.valid('json')
         return context.json({
-          value: await service.panels.getWebPanelStorage(
-            context.req.param('panelId'),
-            body.key
+          value: await runEffect(
+            service.panels.getWebPanelStorage(
+              context.req.param('panelId'),
+              body.key
+            )
           )
         })
       }
@@ -955,10 +1027,12 @@ export function createApp({
       jsonInput(setWebPanelStorageSchema),
       async (context) => {
         const body = context.req.valid('json')
-        await service.panels.setWebPanelStorage(
-          context.req.param('panelId'),
-          body.key,
-          body.value
+        await runEffect(
+          service.panels.setWebPanelStorage(
+            context.req.param('panelId'),
+            body.key,
+            body.value
+          )
         )
         return context.json({ ok: true })
       }
@@ -969,9 +1043,11 @@ export function createApp({
       jsonInput(deleteWebPanelStorageSchema),
       async (context) => {
         const body = context.req.valid('json')
-        await service.panels.deleteWebPanelStorage(
-          context.req.param('panelId'),
-          body.key
+        await runEffect(
+          service.panels.deleteWebPanelStorage(
+            context.req.param('panelId'),
+            body.key
+          )
         )
         return context.json({ ok: true })
       }
@@ -985,9 +1061,11 @@ export function createApp({
       const requestedPath = decodeURI(
         pathname.slice(pathname.indexOf(assetMarker) + assetMarker.length)
       )
-      const resolution = await service.panels.resolveWebPanelAsset(
-        context.req.param('panelId'),
-        requestedPath
+      const resolution = await runEffect(
+        service.panels.resolveWebPanelAsset(
+          context.req.param('panelId'),
+          requestedPath
+        )
       )
       if (resolution.kind === 'redirect') {
         context.header('cache-control', 'no-store')
@@ -1061,7 +1139,7 @@ export function createApp({
       async (context) => {
         const body = context.req.valid('json')
         const options: NonNullable<
-          Parameters<TreeportService['createTerminal']>[3]
+          Parameters<TreeportService['terminals']['createTerminal']>[3]
         > = {}
         if (body.initialTitle) {
           options.initialTitle = body.initialTitle
@@ -1091,11 +1169,13 @@ export function createApp({
           options.shellCommand = body.shellCommand
         }
 
-        const terminal = await service.terminals.createTerminal(
-          context.req.param('worktreeId'),
-          body.name,
-          body.argv,
-          Object.keys(options).length > 0 ? options : undefined
+        const terminal = await runEffect(
+          service.terminals.createTerminal(
+            context.req.param('worktreeId'),
+            body.name,
+            body.argv,
+            Object.keys(options).length > 0 ? options : undefined
+          )
         )
         return context.json({ terminal }, 201)
       }
@@ -1103,8 +1183,8 @@ export function createApp({
 
     .get('/api/worktrees/:worktreeId/remove-preview', async (context) =>
       context.json({
-        preview: await service.worktrees.removePreview(
-          context.req.param('worktreeId')
+        preview: await runEffect(
+          service.worktrees.removePreview(context.req.param('worktreeId'))
         )
       })
     )
@@ -1116,9 +1196,11 @@ export function createApp({
         const body = context.req.valid('json')
         return context.json(
           {
-            operation: await service.worktrees.beginRemove(
-              context.req.param('worktreeId'),
-              body
+            operation: await runEffect(
+              service.worktrees.beginRemove(
+                context.req.param('worktreeId'),
+                body
+              )
             )
           },
           202
@@ -1128,9 +1210,8 @@ export function createApp({
 
     .post('/api/worktrees/:worktreeId/pr/refresh', async (context) =>
       context.json({
-        pr: await service.worktrees.refreshPr(
-          context.req.param('worktreeId'),
-          true
+        pr: await runEffect(
+          service.worktrees.refreshPr(context.req.param('worktreeId'), true)
         )
       })
     )
@@ -1140,8 +1221,8 @@ export function createApp({
       queryInput(terminalCaptureQuerySchema),
       async (context) => {
         const query = context.req.valid('query')
-        const terminal = await service.terminals.getTerminal(
-          context.req.param('terminalId')
+        const terminal = await runEffect(
+          service.terminals.getTerminal(context.req.param('terminalId'))
         )
         const content = await terminalHost.captureTerminal(
           terminal.id,
@@ -1166,11 +1247,13 @@ export function createApp({
     )
 
     .get('/api/terminals/:terminalId', async (context) => {
-      const terminal = await service.terminals.refreshTerminalStatus(
-        context.req.param('terminalId')
+      const terminal = await runEffect(
+        service.terminals.refreshTerminalStatus(context.req.param('terminalId'))
       )
       await metadataReady
-      const worktree = await service.projects.getWorktree(terminal.worktreeId)
+      const worktree = await runEffect(
+        service.projects.getWorktree(terminal.worktreeId)
+      )
       await metadata.trackTerminal(terminal, worktree)
 
       return context.json({ terminal, metadata: metadata.get(terminal.id) })
@@ -1183,14 +1266,16 @@ export function createApp({
         const terminalId = context.req.param('terminalId')
         const body = context.req.valid('json')
         await metadataReady
-        await service.terminals.getTerminal(terminalId)
+        await runEffect(service.terminals.getTerminal(terminalId))
         await metadata.acknowledgeBell(terminalId, body.sequence)
         return context.json({ ok: true })
       }
     )
 
     .post('/api/terminals/:terminalId/files', async (context) => {
-      await service.terminals.getTerminal(context.req.param('terminalId'))
+      await runEffect(
+        service.terminals.getTerminal(context.req.param('terminalId'))
+      )
 
       const contentLength = context.req.header('content-length')
       if (contentLength) {
@@ -1219,67 +1304,77 @@ export function createApp({
         )
       }
 
-      const waitForPreviousUpload = terminalUploadQueue
-      let releaseUpload!: () => void
-      terminalUploadQueue = new Promise<void>((resolve) => {
-        releaseUpload = resolve
-      })
-      await waitForPreviousUpload
+      const contentType =
+        context.req.header('content-type')?.split(';', 1)[0]?.toLowerCase() ??
+        ''
+      const extension =
+        requestedExtension || UPLOAD_MIME_EXTENSIONS.get(contentType) || ''
+      const uploaded = await runEffect(
+        service.terminalUploadMutation(
+          Effect.gen(function* () {
+            const uploadDirectory = path.join(config.runtimeDir, 'uploads')
+            yield* Effect.promise(() =>
+              fs.mkdir(uploadDirectory, { recursive: true, mode: 0o700 })
+            )
+            yield* Effect.promise(() => fs.chmod(uploadDirectory, 0o700))
+            yield* Effect.promise(() => pruneTerminalUploads(uploadDirectory))
+            const filePath = path.join(
+              uploadDirectory,
+              `treeport-upload-${crypto.randomUUID()}${
+                extension ? `.${extension}` : ''
+              }`
+            )
+            yield* Effect.acquireUseRelease(
+              Effect.promise(() => fs.open(filePath, 'wx', 0o600)),
+              (file) =>
+                Effect.gen(function* () {
+                  let receivedBytes = 0
+                  const reader = context.req.raw.body?.getReader()
+                  if (!reader) {
+                    return
+                  }
 
-      try {
-        const contentType =
-          context.req.header('content-type')?.split(';', 1)[0]?.toLowerCase() ??
-          ''
-        const extension =
-          requestedExtension || UPLOAD_MIME_EXTENSIONS.get(contentType) || ''
-        const uploadDirectory = path.join(config.runtimeDir, 'uploads')
-        await fs.mkdir(uploadDirectory, { recursive: true, mode: 0o700 })
-        await fs.chmod(uploadDirectory, 0o700)
-        await pruneTerminalUploads(uploadDirectory)
-        const filePath = path.join(
-          uploadDirectory,
-          `treeport-upload-${crypto.randomUUID()}${
-            extension ? `.${extension}` : ''
-          }`
-        )
-        const file = await fs.open(filePath, 'wx', 0o600)
-        let complete = false
-        let receivedBytes = 0
-        try {
-          const reader = context.req.raw.body?.getReader()
-          if (reader) {
-            while (true) {
-              const { done, value } = await reader.read()
-              if (done) {
-                break
-              }
+                  while (true) {
+                    const { done, value } = yield* Effect.promise(() =>
+                      reader.read()
+                    )
+                    if (done) {
+                      break
+                    }
 
-              receivedBytes += value.byteLength
-              if (receivedBytes > TERMINAL_MAX_UPLOAD_BYTES) {
-                throw new DomainError(
-                  'FILE_TOO_LARGE',
-                  `Files are limited to ${TERMINAL_MAX_UPLOAD_BYTES} bytes`,
-                  413
+                    receivedBytes += value.byteLength
+                    if (receivedBytes > TERMINAL_MAX_UPLOAD_BYTES) {
+                      return yield* Effect.fail(
+                        new DomainError(
+                          'FILE_TOO_LARGE',
+                          `Files are limited to ${TERMINAL_MAX_UPLOAD_BYTES} bytes`,
+                          413
+                        )
+                      )
+                    }
+
+                    yield* Effect.promise(() => file.writeFile(value))
+                  }
+                }),
+              (file, exit) =>
+                Effect.promise(() =>
+                  file
+                    .close()
+                    .finally(() =>
+                      Exit.isFailure(exit)
+                        ? fs.rm(filePath, { force: true })
+                        : undefined
+                    )
                 )
-              }
-
-              await file.writeFile(value)
-            }
-          }
-
-          complete = true
-        } finally {
-          await file.close()
-          if (!complete) {
-            await fs.rm(filePath, { force: true })
-          }
-        }
-
-        await pruneTerminalUploads(uploadDirectory, filePath)
-        return context.json({ file: { path: filePath } }, 201)
-      } finally {
-        releaseUpload()
-      }
+            )
+            yield* Effect.promise(() =>
+              pruneTerminalUploads(uploadDirectory, filePath)
+            )
+            return { file: { path: filePath } }
+          })
+        )
+      )
+      return context.json(uploaded, 201)
     })
 
     .patch(
@@ -1288,16 +1383,20 @@ export function createApp({
       async (context) => {
         const body = context.req.valid('json')
         return context.json({
-          terminal: await service.terminals.renameTerminal(
-            context.req.param('terminalId'),
-            body.name
+          terminal: await runEffect(
+            service.terminals.renameTerminal(
+              context.req.param('terminalId'),
+              body.name
+            )
           )
         })
       }
     )
 
     .delete('/api/terminals/:terminalId', async (context) => {
-      await service.terminals.deleteTerminal(context.req.param('terminalId'))
+      await runEffect(
+        service.terminals.deleteTerminal(context.req.param('terminalId'))
+      )
       return context.json({ ok: true })
     })
 
@@ -1317,8 +1416,9 @@ export function createApp({
       }),
       async (context) => {
         const query = context.req.valid('query')
-        const filters: Parameters<TreeportService['listActiveOperations']>[0] =
-          {}
+        const filters: Parameters<
+          TreeportService['worktrees']['listActiveOperations']
+        >[0] = {}
         if (query.projectId) {
           filters.projectId = query.projectId
         }
@@ -1328,21 +1428,25 @@ export function createApp({
         }
 
         return context.json({
-          operations: await service.worktrees.listActiveOperations(filters)
+          operations: await runEffect(
+            service.worktrees.listActiveOperations(filters)
+          )
         })
       }
     )
 
     .get('/api/operations/:operationId', async (context) =>
       context.json({
-        operation: await service.projects.getOperation(
-          context.req.param('operationId')
+        operation: await runEffect(
+          service.projects.getOperation(context.req.param('operationId'))
         )
       })
     )
 
     .post('/api/admin/terminate-terminals', async (context) => {
-      const terminated = await service.terminals.terminateAllTerminals()
+      const terminated = await runEffect(
+        service.terminals.terminateAllTerminals()
+      )
       await terminalHost.shutdownIfEmpty()
       return context.json({ terminated })
     })

@@ -3,6 +3,8 @@ import crypto from 'node:crypto'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import * as Effect from 'effect/Effect'
+import * as Fiber from 'effect/Fiber'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ChildProcess, spawn } from 'node:child_process'
 import type {
@@ -240,6 +242,33 @@ describe('application update manager', () => {
     await fs.rm(dataDir, { recursive: true, force: true })
   })
 
+  it('checks immediately, repeats on its schedule, and stops after disposal', async () => {
+    vi.useFakeTimers()
+    const dataDir = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'treeport-application-update-polling-')
+    )
+    const resolveRelease = vi.fn(async () => release)
+    const manager = createApplicationUpdateManager(config(dataDir), {
+      resolveRelease,
+      inspectInstallation: async () => installation(dataDir),
+      readProgress: async () => idleProgress(),
+      pollIntervalMs: 100,
+      pollJitterMs: 0
+    })
+
+    const polling = Effect.runFork(manager.polling)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(resolveRelease).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(100)
+    expect(resolveRelease).toHaveBeenCalledTimes(2)
+
+    manager.dispose()
+    await vi.advanceTimersByTimeAsync(100)
+    await Effect.runPromise(Fiber.await(polling))
+    expect(resolveRelease).toHaveBeenCalledTimes(2)
+    await fs.rm(dataDir, { recursive: true, force: true })
+  })
+
   it('does not poll or start updates for an externally managed daemon', async () => {
     const dataDir = await fs.mkdtemp(
       path.join(os.tmpdir(), 'treeport-application-update-external-')
@@ -254,8 +283,7 @@ describe('application update manager', () => {
       pollJitterMs: 0
     })
 
-    manager.beginPolling()
-    await new Promise((resolve) => setTimeout(resolve, 5))
+    await Effect.runPromise(manager.polling)
     expect(resolveRelease).not.toHaveBeenCalled()
     expect(await manager.status()).toMatchObject({
       updateAvailable: false,

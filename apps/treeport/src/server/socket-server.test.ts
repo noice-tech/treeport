@@ -1,6 +1,7 @@
 import http, { type Server as HttpServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { io as createClient, type Socket } from 'socket.io-client'
+import * as Effect from 'effect/Effect'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   ProductEventBus,
@@ -21,7 +22,10 @@ import type {
   TerminalClientToServerEvents,
   TerminalRuntimeMetadata,
   TerminalReady,
-  TerminalServerToClientEvents
+  TerminalRecord,
+  TerminalServerToClientEvents,
+  BrowserPanel,
+  WebPanel
 } from '@treeport/shared'
 import {
   BROWSER_PROTOCOL_VERSION,
@@ -87,6 +91,11 @@ interface NetworkFixture {
   events: ProductEventBus
   metadata: TerminalMetadataManager
   metadataSnapshot: ReturnType<typeof vi.fn<() => TerminalRuntimeMetadata[]>>
+  listWebPanels: ReturnType<typeof vi.fn<() => Promise<WebPanel[]>>>
+  listBrowserPanels: ReturnType<typeof vi.fn<() => Promise<BrowserPanel[]>>>
+  refreshTerminalStatus: ReturnType<
+    typeof vi.fn<(terminalId?: string) => Promise<TerminalRecord>>
+  >
   ptys: FakePty[]
   service: TreeportService
   close(): Promise<void>
@@ -99,21 +108,42 @@ async function fixture(
 ): Promise<NetworkFixture> {
   const events = new ProductEventBus()
   const ptys: FakePty[] = []
+  const listWebPanels = vi.fn<() => Promise<WebPanel[]>>(async () => [])
+  const listBrowserPanels = vi.fn<() => Promise<BrowserPanel[]>>(async () => [])
+  const refreshTerminalStatus = vi.fn<
+    (terminalId?: string) => Promise<TerminalRecord>
+  >(async () => ({
+    id: 'term',
+    worktreeId: 'wt',
+    name: 'Terminal',
+    argv: ['shell'],
+    shellCommand: null,
+    interactiveShell: false,
+    status: 'running',
+    exitCode: null,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z'
+  }))
+  const getWorktree = vi.fn(async () => ({
+    id: 'wt',
+    path: '/tmp'
+  }))
   // SAFETY: The test fixture provides the asserted contract used here.
   const service = testAccess<TreeportService>({
     events,
-    listWebPanels: vi.fn(async () => []),
-    listBrowserPanels: vi.fn(async () => []),
-    refreshTerminalStatus: vi.fn(async () => ({
-      id: 'term',
-      worktreeId: 'wt',
-      status: 'running',
-      exitCode: null
-    })),
-    getWorktree: vi.fn(async () => ({
-      id: 'wt',
-      path: '/tmp'
-    }))
+    listWebPanels,
+    listBrowserPanels,
+    panels: { listWebPanels, listBrowserPanels },
+    refreshTerminalStatus,
+    terminals: { refreshTerminalStatus },
+    getWorktree,
+    projects: { getWorktree },
+    runEffect: vi.fn((effect) =>
+      Effect.isEffect(effect)
+        ? Effect.runPromise(effect as Effect.Effect<unknown, unknown, never>)
+        : effect
+    ),
+    terminalAttachmentMutation: vi.fn((_terminalId, effect) => effect)
   })
   const child = new FakePty()
   ptys.push(child)
@@ -210,6 +240,9 @@ async function fixture(
     events,
     metadata,
     metadataSnapshot,
+    listWebPanels,
+    listBrowserPanels,
+    refreshTerminalStatus,
     ptys,
     service,
     close: () =>
@@ -340,7 +373,7 @@ describe('Socket.IO real network', () => {
 
   it('snapshots durable WebPanel and BrowserPanel records and broadcasts closure to every client', async () => {
     const value = await fixture()
-    vi.mocked(value.service.listWebPanels).mockResolvedValue([
+    vi.mocked(value.listWebPanels).mockResolvedValue([
       {
         id: 'panel_review',
         kind: 'web',
@@ -354,7 +387,7 @@ describe('Socket.IO real network', () => {
         updatedAt: '2026-01-01T00:00:00.000Z'
       }
     ])
-    vi.mocked(value.service.listBrowserPanels).mockResolvedValue([
+    vi.mocked(value.listBrowserPanels).mockResolvedValue([
       {
         id: 'panel_browser',
         kind: 'browser',
@@ -653,7 +686,7 @@ describe('Socket.IO real network', () => {
       bypassedTerminal.once('connect_error', resolve)
     )
     expect(terminalError.message).toMatch(/websocket error/i)
-    expect(value.service.refreshTerminalStatus).toHaveBeenCalledTimes(1)
+    expect(value.refreshTerminalStatus).toHaveBeenCalledTimes(1)
 
     const foreignOrigin = eventClient(value.url, {
       extraHeaders: { ...tailscaleHeaders, Origin: 'https://evil.example' }
@@ -725,10 +758,10 @@ describe('Socket.IO real network', () => {
   it('does not finish attachment setup after a real pre-ready disconnect', async () => {
     const value = await fixture()
     type RefreshedTerminal = Awaited<
-      ReturnType<TreeportService['refreshTerminalStatus']>
+      ReturnType<typeof value.refreshTerminalStatus>
     >
     let finishRefresh!: (terminal: RefreshedTerminal) => void
-    vi.mocked(value.service.refreshTerminalStatus).mockReturnValueOnce(
+    vi.mocked(value.refreshTerminalStatus).mockReturnValueOnce(
       new Promise<RefreshedTerminal>((resolve) => {
         finishRefresh = resolve
       })
@@ -741,7 +774,7 @@ describe('Socket.IO real network', () => {
       socket.once('connect_error', reject)
     })
     await vi.waitFor(() =>
-      expect(value.service.refreshTerminalStatus).toHaveBeenCalledOnce()
+      expect(value.refreshTerminalStatus).toHaveBeenCalledOnce()
     )
 
     socket.disconnect()

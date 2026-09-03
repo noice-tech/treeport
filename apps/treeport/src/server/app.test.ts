@@ -2,6 +2,7 @@ import crypto from 'node:crypto'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import * as Effect from 'effect/Effect'
 import { describe, expect, it, vi } from 'vitest'
 import {
   DESKTOP_PROTOCOL_VERSION,
@@ -17,6 +18,7 @@ import {
 } from './core/index'
 import { testAccess } from './test-access'
 import { createApp } from './app'
+import type { WebPanelAssetResolution } from './core/web-panel-vite-runtime'
 import type {
   ApplicationUpdateManager,
   ApplicationUpdateStatus
@@ -330,7 +332,18 @@ function fixture(webDist = '/missing') {
     getWebPanelStorage: vi.fn(async () => [{ file: 'src/app.ts', line: 12 }]),
     setWebPanelStorage: vi.fn(async () => undefined),
     deleteWebPanelStorage: vi.fn(async () => undefined),
-    resolveWebPanelAsset: vi.fn(async () => '/missing'),
+    resolveWebPanelAsset: vi.fn<
+      (
+        panelId: string,
+        requestedPath: string
+      ) => Promise<WebPanelAssetResolution>
+    >(async () => ({
+      kind: 'asset',
+      path: '/missing',
+      immutable: true,
+      development: false,
+      allowNetworkRequests: false
+    })),
     createTerminal: vi.fn(),
     getTerminal: vi.fn(async (id: string) => ({
       id,
@@ -351,8 +364,14 @@ function fixture(webDist = '/missing') {
   }
   // SAFETY: The fixture exposes the same doubles through the temporary façade
   // and the domain APIs used by the HTTP handlers.
-  const service = testAccess<TreeportService>({
+  const service = testAccess<TreeportService & typeof serviceMethods>({
     ...serviceMethods,
+    runEffect: vi.fn((effect) =>
+      Effect.isEffect(effect)
+        ? Effect.runPromise(effect as Effect.Effect<unknown, unknown, never>)
+        : effect
+    ),
+    terminalUploadMutation: vi.fn((effect) => effect),
     projects: serviceMethods,
     worktrees: serviceMethods,
     terminals: serviceMethods,
