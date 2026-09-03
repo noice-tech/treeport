@@ -60,7 +60,11 @@ async function main(): Promise<void> {
       gh
     })
     await service.initialize()
-    const terminalMetadata = new TerminalMetadataManager(service, terminalHost)
+    const terminalMetadata = new TerminalMetadataManager(
+      service,
+      terminalHost,
+      service.terminalMetadataMutations
+    )
     await terminalMetadata.initialize()
     const applicationUpdate = createApplicationUpdateManager(config)
     const browserSessions = new BrowserSessionManager(service, config)

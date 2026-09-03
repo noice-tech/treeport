@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { TerminalRecord } from '@treeport/shared'
 import { ProductEventBus } from './core/events'
 import type { TreeportService } from './core/index'
+import type { PromiseMutationQueue } from './core/services/infrastructure/application-runtime'
 import type {
   TerminalBellState,
   TerminalBellStateStore
@@ -130,7 +131,17 @@ function fixture(states: TerminalBellState[] = []) {
     getTerminal: vi.fn(async () => terminal),
     getWorktree: vi.fn(async () => ({ id: 'worktree', path: '/repo' }))
   })
-  const manager = new TerminalMetadataManager(service, host, bells)
+  const bellMutations: PromiseMutationQueue = {
+    enqueue: async (_key, task) => task(),
+    isBusy: async () => false,
+    drain: async () => undefined
+  }
+  const manager = new TerminalMetadataManager(
+    service,
+    host,
+    bellMutations,
+    bells
+  )
   return { bells, events, host, manager }
 }
 

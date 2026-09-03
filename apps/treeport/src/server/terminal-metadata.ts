@@ -9,7 +9,7 @@ import {
 } from '@treeport/shared'
 import type { TreeportService } from './core/index'
 import { DomainError } from './core/index'
-import { KeyedTaskQueue } from './core/task-queue'
+import type { PromiseMutationQueue } from './core/services/infrastructure/application-runtime'
 import {
   DatabaseTerminalBellStateStore,
   type TerminalBellState,
@@ -47,7 +47,6 @@ interface TerminalMetadataEntry extends TerminalRuntimeMetadata {
 export class TerminalMetadataManager {
   private readonly entries = new Map<string, TerminalMetadataEntry>()
   private readonly listeners = new Map<string, Set<MetadataListener>>()
-  private readonly bellMutations = new KeyedTaskQueue<string>()
   private readonly bellDeletionVersions = new Map<string, number>()
   private readonly persistedBells = new Map<string, TerminalBellState>()
   private readonly bellStateStore: TerminalBellStateStore
@@ -58,6 +57,7 @@ export class TerminalMetadataManager {
   constructor(
     private readonly service: TreeportService,
     private readonly terminalHost: TerminalAttachmentBackend,
+    private readonly bellMutations: PromiseMutationQueue,
     bellStateStore?: TerminalBellStateStore
   ) {
     this.bellStateStore =
