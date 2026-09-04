@@ -86,6 +86,7 @@ type TerminalApi = Pick<
   | 'createTerminal'
   | 'deleteTerminal'
   | 'getTerminal'
+  | 'getTerminalForAttachment'
   | 'refreshTerminalStatus'
   | 'renameTerminal'
   | 'terminateAllTerminals'

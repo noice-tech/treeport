@@ -113,6 +113,39 @@ describe('GitAdapter', () => {
     ])
   })
 
+  it('reads a worktree launch identity with one Git process', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'treeport launch '))
+    temporary.push(root)
+    const main = path.join(root, 'main')
+    const linked = path.join(root, 'linked')
+    const common = path.join(main, '.git')
+    const gitDirectory = path.join(common, 'worktrees', 'linked')
+    await Promise.all([
+      fs.mkdir(linked, { recursive: true }),
+      fs.mkdir(gitDirectory, { recursive: true })
+    ])
+    const runner = new FakeRunner(() => ({
+      stdout: `${linked}\n${common}\n${gitDirectory}\n`,
+      stderr: '',
+      exitCode: 0
+    }))
+
+    await expect(
+      new GitAdapter(runner).worktreeLaunchIdentity(linked)
+    ).resolves.toEqual({
+      topLevel: await fs.realpath(linked),
+      commonDirectory: await fs.realpath(common),
+      gitDirectory: await fs.realpath(gitDirectory)
+    })
+    expect(runner.calls).toHaveLength(1)
+    expect(runner.calls[0]?.args).toEqual([
+      'rev-parse',
+      '--show-toplevel',
+      '--git-common-dir',
+      '--absolute-git-dir'
+    ])
+  })
+
   it('lists tracked and non-ignored untracked files without path delimiters', async () => {
     const runner = new FakeRunner(() => ({
       stdout: 'src/space file.ts\0src/世界.ts\0README.md\0',

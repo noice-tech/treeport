@@ -27,7 +27,7 @@ interface TerminalHostServerOptions {
   sessions: TerminalHostSessionManager
   pid?: number
   startedAt?: string
-  onShutdown?: () => void
+  onShutdown?: () => void | Promise<void>
 }
 
 interface HostConnection {
@@ -65,6 +65,7 @@ export async function startTerminalHostServer(
   }
   const connections = new Set<HostConnection>()
   let closing = false
+  let shuttingDown = false
 
   const send = (
     connection: HostConnection,
@@ -170,6 +171,16 @@ export async function startTerminalHostServer(
         ...record,
         liveSessionCount: options.sessions.sessionCount
       })
+      return
+    }
+
+    if (shuttingDown) {
+      fail(
+        connection,
+        frame.id,
+        'HOST_SHUTTING_DOWN',
+        'The terminal host is shutting down'
+      )
       return
     }
 
@@ -397,6 +408,11 @@ export async function startTerminalHostServer(
           return
         }
 
+        shuttingDown = true
+        await options.sessions.shutdown().catch((error) => {
+          shuttingDown = false
+          throw error
+        })
         respond<'shutdown'>(connection, frame.id, null)
         setImmediate(() => {
           void close()
@@ -458,9 +474,8 @@ export async function startTerminalHostServer(
           return
         }
 
-        connection.requestTail = connection.requestTail
-          .then(() => handleRequest(connection, frame))
-          .catch((error) => {
+        const run = () =>
+          handleRequest(connection, frame).catch((error) => {
             fail(
               connection,
               frame.id,
@@ -468,6 +483,14 @@ export async function startTerminalHostServer(
               error instanceof Error ? error.message : String(error)
             )
           })
+        if (connection.authenticated && frame.method === 'kill') {
+          // Wait for preceding control work so kill cannot overtake create for
+          // the same ID, but do not put slow physical cleanup on the control
+          // tail. Request IDs allow this response to arrive out of order.
+          void connection.requestTail.then(run)
+        } else {
+          connection.requestTail = connection.requestTail.then(run)
+        }
       }
     })
   })

@@ -373,8 +373,11 @@ export class TerminalMetadataManager {
     }
 
     const { terminalId } = event.data
-    void this.service
-      .runEffect(this.service.terminals.getTerminal(terminalId))
+    const terminalPromise =
+      event.type === 'terminal.created'
+        ? Promise.resolve(event.data.terminal)
+        : this.service.runEffect(this.service.terminals.getTerminal(terminalId))
+    void terminalPromise
       .then(async (terminal) => {
         const worktree = await this.service.runEffect(
           this.service.projects.getWorktree(terminal.worktreeId)

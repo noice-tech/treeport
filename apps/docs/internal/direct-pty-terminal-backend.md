@@ -77,7 +77,13 @@ The protocol supports handshake, create, inventory, atomic attach, output detach
 
 The host emits ordered output and runtime events. Runtime events carry title, command, progress, BEL, and exit changes. The daemon can reconnect and create new attachments after adoption.
 
+Requests that mutate or observe terminal control state remain ordered on each connection. A terminal-specific kill waits for preceding control work, performs logical removal, and then leaves its response pending while physical cleanup runs outside that control queue. Requests for unrelated terminals can therefore complete out of order and are correlated by request identifier. Worktree-wide kill remains an ordered barrier, and shutdown stops admission and drains all cleanup before the host exits.
+
 The host keeps terminal metadata in memory. Therefore, terminal inventory and canonical history survive API daemon replacement.
+
+The host starts ordinary login shells directly. It does not start a second Node.js launcher for these terminals.
+
+The host uses the launcher for setup tasks and command fallback. This path preserves setup output and fallback signal behavior.
 
 The host does not survive its own crash or a computer restart. Treeport can create replacement terminals after either event.
 
@@ -97,6 +103,8 @@ The daemon buffers output events that arrive before the attach response, with a 
 Each browser stream gets its own sequence and acknowledgement window. A reconnect performs a new atomic attach and establishes a new fence.
 
 The browser resets its local model and parses the snapshot while its terminal is hidden. It shows the terminal after the snapshot write callback.
+
+Browser readiness means that xterm rendered the snapshot and applied focus. A socket `ready` event alone does not make the browser ready.
 
 The browser then parses ordered live output. Snapshot replay cannot contain an old terminal query.
 
@@ -158,6 +166,24 @@ The cutover preserves projects, worktrees, panels, presets, operations, and sett
 
 There is no runtime switch or dual backend. Treeport starts and operates without an external terminal multiplexer.
 
+## Terminal creation boundary
+
+Terminal creation verifies only the selected launch target. It does not discover or reconcile unrelated Git worktrees.
+
+The check verifies the stored path, repository identity, Git common directory, and Git worktree key. The PTY spawn remains the final path check.
+
+A terminal tab represents a PTY that the host owns. The web application does not add a temporary terminal tab before host creation.
+
+Terminal creation and terminal cleanup use independent mutation lanes. Cleanup remains ordered with destructive worktree mutations, but a backlog of terminal removals does not delay new PTY creation.
+
+Removal has two phases. Logical removal synchronously detaches the session from inventory, listeners, parser state, and canonical terminal resources. Physical cleanup then removes any launcher spec and terminates the PTY process tree, including the graceful SIGTERM/SIGKILL escalation period. The session manager owns every pending physical-cleanup promise: terminal and worktree kill callers observe its result, and shutdown drains cleanup even if the requesting socket disconnects.
+
+Ordering is preserved for operations targeting the same terminal. Unrelated creation can proceed after a kill's logical phase while that old terminal's physical cleanup remains pending. Worktree-wide kill and host shutdown retain draining, exclusive semantics.
+
+The browser removes closed terminals immediately from its authoritative project cache, applies repeated `terminal.removed` events idempotently, and recovers with a project refresh only when the target worktree is missing. It submits rapid close requests in order so pending HTTP/1 responses cannot consume the browser's entire per-origin connection pool and starve terminal creation.
+
+Measure creation from the new-terminal command to output from input in the new xterm. Use warm p95 of 250 ms as the local target. The benchmark's delete/recreate churn profile also verifies that replacement latency does not form a 500 ms staircase behind old process cleanup.
+
 ## Verification boundaries
 
-Behavior coverage includes real API daemon crash and normal restart adoption, atomic snapshot/live fencing, normal and alternate screens, Unicode, resize/reflow, large history, detached/attached/handoff query authority, bounded parser and viewer queues, local browser scrolling and selection, shell startup metadata, and descendant process termination.
+Behavior coverage includes real API daemon crash and normal restart adoption, atomic snapshot/live fencing, normal and alternate screens, Unicode, resize/reflow, large history, detached/attached/handoff query authority, bounded parser and viewer queues, local browser scrolling and selection, shell startup metadata, descendant process termination, and replacement creation while terminal cleanup is deliberately stalled.

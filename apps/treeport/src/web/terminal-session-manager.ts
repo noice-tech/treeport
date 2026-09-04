@@ -17,6 +17,8 @@ export type { TerminalBellEvent, TerminalBellMetadata }
 export class TerminalSessionManager {
   private readonly pool: TerminalSessionPool
   private readonly runtimeMetadata: TerminalRuntimeMetadataStore
+  private readonly listeners = new Set<() => void>()
+  private connectingTerminalIds: ReadonlySet<string> = new Set()
 
   constructor(
     maxSessions = 8,
@@ -40,8 +42,14 @@ export class TerminalSessionManager {
     )
   }
 
-  subscribe = (listener: () => void): (() => void) =>
-    this.runtimeMetadata.subscribe(listener)
+  subscribe = (listener: () => void): (() => void) => {
+    const unsubscribeMetadata = this.runtimeMetadata.subscribe(listener)
+    this.listeners.add(listener)
+    return () => {
+      unsubscribeMetadata()
+      this.listeners.delete(listener)
+    }
+  }
 
   subscribeBellEvents = (
     listener: (event: TerminalBellEvent) => void
@@ -59,6 +67,30 @@ export class TerminalSessionManager {
     this.runtimeMetadata.getForegroundProcessSnapshot()
   getProgressSnapshot = (): ReadonlyMap<string, TerminalProgress> =>
     this.runtimeMetadata.getProgressSnapshot()
+  getConnectingSnapshot = (): ReadonlySet<string> => this.connectingTerminalIds
+
+  markConnecting(terminalId: string): void {
+    if (this.connectingTerminalIds.has(terminalId)) {
+      return
+    }
+
+    this.connectingTerminalIds = new Set([
+      ...this.connectingTerminalIds,
+      terminalId
+    ])
+    this.listeners.forEach((listener) => listener())
+  }
+
+  markReady(terminalId: string): void {
+    if (!this.connectingTerminalIds.has(terminalId)) {
+      return
+    }
+
+    const next = new Set(this.connectingTerminalIds)
+    next.delete(terminalId)
+    this.connectingTerminalIds = next
+    this.listeners.forEach((listener) => listener())
+  }
 
   getInitialSize(terminalId: string): TerminalSize | null {
     return this.pool.getInitialSize(terminalId)
@@ -85,12 +117,22 @@ export class TerminalSessionManager {
   forget(terminalId: string): void {
     this.pool.forget(terminalId)
     this.runtimeMetadata.forget(terminalId)
+    this.markReady(terminalId)
   }
 
   reconcile(terminals: Iterable<{ id: string }>): void {
     const terminalIds = [...terminals].map((terminal) => terminal.id)
     this.pool.reconcile(terminalIds)
     this.runtimeMetadata.reconcile(terminalIds)
+    const retained = new Set(
+      [...this.connectingTerminalIds].filter((terminalId) =>
+        terminalIds.includes(terminalId)
+      )
+    )
+    if (retained.size !== this.connectingTerminalIds.size) {
+      this.connectingTerminalIds = retained
+      this.listeners.forEach((listener) => listener())
+    }
   }
 
   acknowledgeBell(terminalId: string, sequence: number): Promise<void> {

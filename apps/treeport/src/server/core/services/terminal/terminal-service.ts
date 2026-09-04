@@ -54,12 +54,6 @@ export interface TerminalLaunchOptions {
 }
 
 export class TerminalService {
-  private requireAvailableWorktree(worktreeId: string, allowPrunable = false) {
-    return Effect.flatMap(ProjectObservationOperations, (observations) =>
-      observations.requireAvailableWorktree(worktreeId, allowPrunable)
-    )
-  }
-
   private listProjects() {
     return Effect.flatMap(ProjectSnapshotOperations, (snapshots) =>
       snapshots.listProjects()
@@ -195,6 +189,23 @@ export class TerminalService {
     })
   }
 
+  getTerminalForAttachment(terminalId: string): TerminalEffect<TerminalRecord> {
+    return Effect.gen(function* () {
+      const projectStore = yield* ProjectStore
+      const terminalState = yield* TerminalState
+      const terminal = yield* terminalState.terminal(terminalId)
+      if (!terminal) {
+        return yield* Effect.fail(
+          new DomainError('TERMINAL_NOT_FOUND', 'Terminal not found', 404)
+        )
+      }
+
+      const worktree = yield* projectStore.getWorktree(terminal.worktreeId)
+      yield* projectStore.requireOpenProject(worktree.projectId)
+      return terminal
+    })
+  }
+
   getTerminalFromBindings(terminalId: string): TerminalEffect<TerminalRecord> {
     const listWorktreeTerminals = this.listWorktreeTerminals.bind(this)
 
@@ -324,10 +335,8 @@ export class TerminalService {
     return Effect.gen(function* () {
       const config = yield* ConfigPort
       const events = yield* EventBusPort
-      const projectStore = yield* ProjectStore
       const terminalHost = yield* TerminalHostPort
       const terminalState = yield* TerminalState
-      const project = yield* projectStore.requireOpenProject(worktree.projectId)
       const terminalId = id('term')
       const shellCommand = options?.shellCommand ?? null
       const interactiveShell = !argv && shellCommand === null
@@ -353,7 +362,7 @@ export class TerminalService {
           TREEPORT_MANAGED_API_URL: config.apiUrl,
           TREEPORT_DAEMON_RECORD: path.join(config.runtimeDir, 'daemon.json'),
           TREEPORT_DAEMON_LIFECYCLE: config.daemonLifecycle,
-          TREEPORT_PROJECT_ID: project.id,
+          TREEPORT_PROJECT_ID: worktree.projectId,
           TREEPORT_WORKTREE_ID: worktree.id,
           TREEPORT_TERMINAL_ID: terminalId
         }
@@ -411,9 +420,10 @@ export class TerminalService {
       yield* invalidateProjectsSnapshot()
       yield* Effect.sync(() => {
         events.publish('terminal.created', {
-          projectId: project.id,
+          projectId: worktree.projectId,
           worktreeId: worktree.id,
-          terminalId
+          terminalId,
+          terminal
         })
       })
       return terminal
@@ -429,9 +439,7 @@ export class TerminalService {
     const executeCreateTerminal = this.executeCreateTerminal.bind(this)
 
     return Effect.gen(function* () {
-      const projectStore = yield* ProjectStore
       const terminalMutations = yield* TerminalMutations
-      yield* projectStore.getWorktree(worktreeId)
       return yield* terminalMutations.enqueue(
         worktreeId,
         executeCreateTerminal(worktreeId, name, argv, options)
@@ -448,12 +456,10 @@ export class TerminalService {
     const createTerminalSession = this.createTerminalSession.bind(this)
     const invalidateProjectsSnapshot =
       this.invalidateProjectsSnapshot.bind(this)
-    const requireAvailableWorktree = this.requireAvailableWorktree.bind(this)
-
     return Effect.gen(function* () {
       const locks = yield* MutationLocks
+      const observations = yield* ProjectObservationOperations
       const projectStore = yield* ProjectStore
-      yield* requireAvailableWorktree(worktreeId)
       const worktree = yield* projectStore.storedWorktree(worktreeId)
       if (!worktree) {
         return yield* Effect.fail(
@@ -485,9 +491,16 @@ export class TerminalService {
         )
       }
 
-      return yield* createTerminalSession(worktree, name, argv, options).pipe(
-        Effect.ensuring(locks.release({ worktreeIds: [worktreeId] }))
-      )
+      return yield* Effect.gen(function* () {
+        const verifiedWorktree =
+          yield* observations.verifyWorktreeLaunchTarget(worktreeId)
+        return yield* createTerminalSession(
+          verifiedWorktree,
+          name,
+          argv,
+          options
+        )
+      }).pipe(Effect.ensuring(locks.release({ worktreeIds: [worktreeId] })))
     }).pipe(Effect.onError(() => invalidateProjectsSnapshot()))
   }
 
@@ -607,40 +620,23 @@ export class TerminalService {
 
     return Effect.gen(function* () {
       const events = yield* EventBusPort
-      const locks = yield* MutationLocks
       const projectStore = yield* ProjectStore
       const terminalHost = yield* TerminalHostPort
       const terminal = yield* getTerminal(terminalId)
       const worktree = yield* projectStore.getWorktree(terminal.worktreeId)
       yield* projectStore.requireOpenProject(worktree.projectId)
-      const acquired = yield* locks.tryAcquire({
-        worktreeIds: [worktree.id],
-        checkProjectIds: [worktree.projectId]
-      })
-      if (!acquired) {
-        return yield* Effect.fail(
-          new DomainError(
-            'WORKTREE_BUSY',
-            'Cannot rename a terminal during a destructive project operation',
-            409
-          )
-        )
-      }
-
-      return yield* Effect.gen(function* () {
-        yield* Effect.promise(() =>
-          terminalHost.renameTerminal(terminal.id, name, now())
-        )
-        const renamed = yield* getTerminal(terminalId)
-        yield* invalidateProjectsSnapshot()
-        yield* Effect.sync(() => {
-          events.publish('terminal.updated', {
-            worktreeId: terminal.worktreeId,
-            terminalId
-          })
+      yield* Effect.promise(() =>
+        terminalHost.renameTerminal(terminal.id, name, now())
+      )
+      const renamed = yield* getTerminal(terminalId)
+      yield* invalidateProjectsSnapshot()
+      yield* Effect.sync(() => {
+        events.publish('terminal.updated', {
+          worktreeId: terminal.worktreeId,
+          terminalId
         })
-        return renamed
-      }).pipe(Effect.ensuring(locks.release({ worktreeIds: [worktree.id] })))
+      })
+      return renamed
     })
   }
 
@@ -674,7 +670,6 @@ export class TerminalService {
 
     return Effect.gen(function* () {
       const events = yield* EventBusPort
-      const locks = yield* MutationLocks
       const projectStore = yield* ProjectStore
       const terminalHost = yield* TerminalHostPort
       const terminalState = yield* TerminalState
@@ -686,53 +681,36 @@ export class TerminalService {
       }
 
       yield* projectStore.requireOpenProject(worktree.projectId)
-      const acquired = yield* locks.tryAcquire({
-        worktreeIds: [worktree.id],
-        checkProjectIds: [worktree.projectId]
-      })
-      if (!acquired) {
+      const terminals = yield* listWorktreeTerminals(worktree)
+      const terminal = terminals.find(
+        (candidate) => candidate.id === terminalId
+      )
+      if (!terminal) {
+        return yield* Effect.fail(
+          new DomainError('TERMINAL_NOT_FOUND', 'Terminal not found', 404)
+        )
+      }
+
+      const closeOnSuccessTerminalIds =
+        yield* terminalState.closeOnSuccessTerminalIds
+      if (
+        terminals.length <= 1 ||
+        terminals.every(
+          (candidate) =>
+            candidate.id === terminalId ||
+            closeOnSuccessTerminalIds.has(candidate.id)
+        )
+      ) {
         return yield* Effect.fail(
           new DomainError(
-            'WORKTREE_BUSY',
-            'Cannot delete a terminal during a destructive project operation',
+            'LAST_TERMINAL',
+            'Every open tree must keep at least one terminal',
             409
           )
         )
       }
 
-      yield* Effect.gen(function* () {
-        const terminals = yield* listWorktreeTerminals(worktree)
-        const terminal = terminals.find(
-          (candidate) => candidate.id === terminalId
-        )
-        if (!terminal) {
-          return yield* Effect.fail(
-            new DomainError('TERMINAL_NOT_FOUND', 'Terminal not found', 404)
-          )
-        }
-
-        const closeOnSuccessTerminalIds =
-          yield* terminalState.closeOnSuccessTerminalIds
-        if (
-          terminals.length <= 1 ||
-          terminals.every(
-            (candidate) =>
-              candidate.id === terminalId ||
-              closeOnSuccessTerminalIds.has(candidate.id)
-          )
-        ) {
-          return yield* Effect.fail(
-            new DomainError(
-              'LAST_TERMINAL',
-              'Every open tree must keep at least one terminal',
-              409
-            )
-          )
-        }
-
-        yield* Effect.promise(() => terminalHost.killTerminal(terminal.id))
-      }).pipe(Effect.ensuring(locks.release({ worktreeIds: [worktree.id] })))
-
+      yield* Effect.promise(() => terminalHost.killTerminal(terminal.id))
       yield* terminalState.removeTerminal(terminalId, worktree.id)
       yield* invalidateProjectsSnapshot()
       yield* Effect.sync(() => {

@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useRef } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useLocation } from '@tanstack/react-router'
 import type {
@@ -10,6 +10,7 @@ import type {
 import { parseResponse } from 'hono/client'
 import { rpc } from '../../api'
 import { useSidebar } from '../../components/ui/sidebar'
+import { upsertProjectTerminal } from '../../project-cache'
 import { projectsQueryKey } from '../../project-metadata'
 import { terminalSessions } from '../../terminal-session'
 import { TerminalView } from '../../terminal-view'
@@ -18,14 +19,6 @@ import { useWorkspaceNavigate } from '../../workspace-router-navigation'
 import { notifyError } from '../notifications/error-notifications'
 import { useWorkspaceSurfaceFocus } from '../panels/workspace-surface-focus-context'
 import { useProjectSwitcher } from '../sidebar/workspace-shell'
-
-export interface PendingTerminalCreation {
-  id: string
-  projectId: string
-  worktreeId: string
-  name: string
-  originPath: string
-}
 
 export interface CreateTerminalInput {
   name: string
@@ -41,16 +34,20 @@ export interface CreateTerminalInput {
 interface CreateTerminalMutationInput extends CreateTerminalInput {
   worktreeId: string
   initialSize?: TerminalSize
-  pendingTerminal: PendingTerminalCreation
+  request: {
+    sequence: number
+    projectId: string
+    worktreeId: string
+    name: string
+    originPath: string
+  }
 }
 
 export function useTerminalWorkflows({
   projects,
-  selectedWorktree,
   selectedTerminal
 }: {
   projects: ProjectRecord[]
-  selectedWorktree: WorktreeRecord | null
   selectedTerminal: TerminalRecord | null
 }) {
   const queryClient = useQueryClient()
@@ -58,21 +55,11 @@ export function useTerminalWorkflows({
   const location = useLocation()
   const navigateToWorkspace = useWorkspaceNavigate()
   const closingTerminalIdsRef = useRef(new Set<string>())
-  const nextPendingTerminalIdRef = useRef(0)
-  const selectedPendingTerminalIdRef = useRef<string | null>(null)
+  const closeRequestTailRef = useRef(Promise.resolve())
+  const nextCreateSequenceRef = useRef(0)
+  const latestCreateSequenceRef = useRef(0)
   const locationPathRef = useRef(location.pathname)
-  const [pendingTerminals, setPendingTerminals] = useState<
-    PendingTerminalCreation[]
-  >([])
-  const [selectedPendingTerminalId, setSelectedPendingTerminalId] = useState<
-    string | null
-  >(null)
   locationPathRef.current = location.pathname
-  const selectedPendingTerminal = pendingTerminals.find(
-    (terminal) =>
-      terminal.id === selectedPendingTerminalId &&
-      terminal.worktreeId === selectedWorktree?.id
-  )
   const selectedTerminalId = selectedTerminal?.id ?? null
 
   const createTerminal = useMutation({
@@ -131,86 +118,64 @@ export function useTerminalWorkflows({
       )
       return result.terminal
     },
-    onSuccess: async (terminal, { pendingTerminal }) => {
-      const pendingWasSelected =
-        selectedPendingTerminalIdRef.current === pendingTerminal.id
-      const shouldNavigate =
-        pendingWasSelected &&
-        locationPathRef.current === pendingTerminal.originPath
-      setPendingTerminals((current) =>
-        current.filter((candidate) => candidate.id !== pendingTerminal.id)
-      )
-      if (pendingWasSelected) {
-        selectedPendingTerminalIdRef.current = null
-        setSelectedPendingTerminalId(null)
-      }
-
-      const project = projects.find(
-        (candidate) => candidate.id === pendingTerminal.projectId
-      )
-      const worktree = project?.worktrees.find(
-        (candidate) => candidate.id === pendingTerminal.worktreeId
-      )
-      if (!project || !worktree) {
+    onSuccess: async (terminal, { request }) => {
+      let targetFound = false
+      queryClient.setQueryData<ProjectRecord[]>(projectsQueryKey, (current) => {
+        const update = upsertProjectTerminal(
+          current,
+          request.projectId,
+          request.worktreeId,
+          terminal
+        )
+        targetFound = update.found
+        return update.projects
+      })
+      if (!targetFound) {
         await queryClient.invalidateQueries({ queryKey: projectsQueryKey })
         return
       }
 
-      const replacesEmptyWorktree =
-        pendingTerminal.originPath ===
-        worktreeTarget(project.id, worktree.id).pathname
-      queryClient.setQueryData<ProjectRecord[]>(projectsQueryKey, (current) =>
-        current?.map((candidateProject) => ({
-          ...candidateProject,
-          worktrees: candidateProject.worktrees.map((candidateWorktree) =>
-            candidateWorktree.id === worktree.id
-              ? {
-                  ...candidateWorktree,
-                  terminals: [
-                    ...candidateWorktree.terminals.filter(
-                      (candidate) => candidate.id !== terminal.id
-                    ),
-                    terminal
-                  ]
-                }
-              : candidateWorktree
-          )
-        }))
+      terminalSessions.markConnecting(terminal.id)
+      const project = projects.find(
+        (candidate) => candidate.id === request.projectId
       )
-      if (shouldNavigate) {
+      const worktree = project?.worktrees.find(
+        (candidate) => candidate.id === request.worktreeId
+      )
+      const shouldNavigate =
+        request.sequence === latestCreateSequenceRef.current &&
+        locationPathRef.current === request.originPath
+      if (project && worktree && shouldNavigate) {
         await navigateToWorkspace(
           terminalTarget(project.id, worktree.id, terminal.id),
-          replacesEmptyWorktree
+          request.originPath ===
+            worktreeTarget(project.id, worktree.id).pathname
         )
       }
-
-      await queryClient.invalidateQueries({ queryKey: projectsQueryKey })
     },
-    onError: async (error, { pendingTerminal }) => {
-      setPendingTerminals((current) =>
-        current.filter((candidate) => candidate.id !== pendingTerminal.id)
-      )
-      if (selectedPendingTerminalIdRef.current === pendingTerminal.id) {
-        selectedPendingTerminalIdRef.current = null
-        setSelectedPendingTerminalId(null)
-      }
-
+    onError: (error, { request }) => {
       notifyError(error, {
-        operation: `create terminal “${pendingTerminal.name}”`
+        operation: `create terminal “${request.name}”`
       })
-      await queryClient.invalidateQueries({ queryKey: projectsQueryKey })
     }
   })
 
   const closeTerminal = useMutation({
-    mutationFn: ({ terminal }: { terminal: TerminalRecord; index: number }) =>
-      parseResponse(
-        rpc.api.terminals[':terminalId'].$delete({
-          param: { terminalId: terminal.id }
-        })
-      ),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: projectsQueryKey })
+    mutationFn: ({ terminal }: { terminal: TerminalRecord; index: number }) => {
+      // Keep rapid optimistic closes responsive without occupying every HTTP/1
+      // connection while the server performs ordered process cleanup.
+      const request = closeRequestTailRef.current.then(() =>
+        parseResponse(
+          rpc.api.terminals[':terminalId'].$delete({
+            param: { terminalId: terminal.id }
+          })
+        )
+      )
+      closeRequestTailRef.current = request.then(
+        () => undefined,
+        () => undefined
+      )
+      return request
     },
     onError: (error, closed) => {
       queryClient.setQueryData<ProjectRecord[]>(projectsQueryKey, (current) =>
@@ -265,21 +230,19 @@ export function useTerminalWorkflows({
       selectedTerminal?.worktreeId === currentWorktree.id
         ? terminalSessions.getInitialSize(selectedTerminal.id)
         : null
-    const pendingTerminal = {
-      id: `pending-terminal-${++nextPendingTerminalIdRef.current}`,
-      projectId: currentProject.id,
-      worktreeId: currentWorktree.id,
-      name: input.name,
-      originPath: location.pathname
-    }
-    selectedPendingTerminalIdRef.current = pendingTerminal.id
-    setPendingTerminals((current) => [...current, pendingTerminal])
-    setSelectedPendingTerminalId(pendingTerminal.id)
+    const sequence = ++nextCreateSequenceRef.current
+    latestCreateSequenceRef.current = sequence
     closeMobileWithoutFocusRestore()
     const mutation: CreateTerminalMutationInput = {
       worktreeId: currentWorktree.id,
       name: input.name,
-      pendingTerminal
+      request: {
+        sequence,
+        projectId: currentProject.id,
+        worktreeId: currentWorktree.id,
+        name: input.name,
+        originPath: location.pathname
+      }
     }
     if (input.initialTitle) {
       mutation.initialTitle = input.initialTitle
@@ -402,38 +365,19 @@ export function useTerminalWorkflows({
   }
 
   return {
-    pendingTerminals,
-    selectedPendingTerminal,
     createTerminalInWorktree,
-    requestCloseTerminal,
-    clearPendingTerminalSelection: () => {
-      selectedPendingTerminalIdRef.current = null
-      setSelectedPendingTerminalId(null)
-    },
-    selectPendingTerminal: (terminalId: string) => {
-      if (!pendingTerminals.some((terminal) => terminal.id === terminalId)) {
-        return
-      }
-
-      selectedPendingTerminalIdRef.current = terminalId
-      setSelectedPendingTerminalId(terminalId)
-      closeMobileWithoutFocusRestore()
-    }
+    requestCloseTerminal
   }
 }
 
 export function TerminalWorkspace({
   selectedWorktree,
   selectedTerminal,
-  selectedPendingTerminal,
-  pendingTerminals,
   loading,
   dialogOpen
 }: {
   selectedWorktree: WorktreeRecord | null
   selectedTerminal: TerminalRecord | null
-  selectedPendingTerminal: PendingTerminalCreation | undefined
-  pendingTerminals: PendingTerminalCreation[]
   loading: boolean
   dialogOpen: boolean
 }) {
@@ -446,12 +390,6 @@ export function TerminalWorkspace({
     <TerminalView
       worktree={selectedWorktree}
       terminal={selectedTerminal}
-      pendingTerminals={pendingTerminals.filter(
-        (terminal) => terminal.worktreeId === selectedWorktree?.id
-      )}
-      selectedPendingTerminalId={
-        selectedTerminal ? null : (selectedPendingTerminal?.id ?? null)
-      }
       loading={loading}
       autoFocusBlocked={
         focusedSurface === 'tool' ||

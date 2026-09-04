@@ -15,6 +15,7 @@ import type {
   ProjectRecord
 } from '@treeport/shared'
 import { createInvalidationCoalescer } from './metadata-sync'
+import { removeProjectTerminal, upsertProjectTerminal } from './project-cache'
 import { projectsQueryKey, recentProjectsQueryKey } from './project-metadata'
 import { terminalSessions } from './terminal-session'
 
@@ -96,6 +97,57 @@ export function useProjectEventsBridge(
     const productEvent = (value: ProductEvent) => {
       const event = parseProductEvent(value)
       if (!event) {
+        return
+      }
+
+      if (event.type === 'terminal.created') {
+        terminalSessions.markConnecting(event.data.terminal.id)
+        let targetFound = false
+        queryClient.setQueryData<ProjectRecord[]>(
+          projectsQueryKey,
+          (current) => {
+            const update = upsertProjectTerminal(
+              current,
+              event.data.projectId,
+              event.data.terminal.worktreeId,
+              event.data.terminal
+            )
+            targetFound = update.found
+            return update.projects
+          }
+        )
+        if (!targetFound) {
+          refresh()
+        }
+
+        return
+      }
+
+      if (event.type === 'terminal.removed') {
+        terminalSessions.forget(event.data.terminalId)
+        const worktreeId = event.data.worktreeId
+        if (!worktreeId) {
+          refresh()
+          return
+        }
+
+        let worktreeFound = false
+        queryClient.setQueryData<ProjectRecord[]>(
+          projectsQueryKey,
+          (current) => {
+            const update = removeProjectTerminal(
+              current,
+              worktreeId,
+              event.data.terminalId
+            )
+            worktreeFound = update.worktreeFound
+            return update.projects
+          }
+        )
+        if (!worktreeFound) {
+          refresh()
+        }
+
         return
       }
 

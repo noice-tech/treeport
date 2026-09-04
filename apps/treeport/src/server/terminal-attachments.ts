@@ -64,6 +64,8 @@ interface ClientConnection {
   queryTransitionId: string | null
   pendingDirectOutput: Array<{ data: string; ownerSequence: number }>
   pendingDirectOutputBytes: number
+  exitObserved: boolean
+  pendingExitCode: number | null
   protocolVersion: TerminalProtocolVersion
   queuedInputBytes: number
   queuedInputMessages: number
@@ -129,6 +131,8 @@ export class TerminalAttachmentManager {
       queryTransitionId: null,
       pendingDirectOutput: [],
       pendingDirectOutputBytes: 0,
+      exitObserved: false,
+      pendingExitCode: null,
       protocolVersion,
       queuedInputBytes: 0,
       queuedInputMessages: 0
@@ -402,7 +406,7 @@ export class TerminalAttachmentManager {
       connection.state !== 'closed' &&
       connection.transport.isConnected()
     const terminal = await this.service.runEffect(
-      this.service.terminals.refreshTerminalStatus(connection.terminalId, false)
+      this.service.terminals.getTerminalForAttachment(connection.terminalId)
     )
     if (!active()) {
       return
@@ -411,7 +415,6 @@ export class TerminalAttachmentManager {
     const worktree = await this.service.runEffect(
       this.service.projects.getWorktree(terminal.worktreeId)
     )
-    await this.metadata.trackTerminal(terminal, worktree)
     if (!active()) {
       return
     }
@@ -425,6 +428,27 @@ export class TerminalAttachmentManager {
         }
       }
     )
+    void this.metadata.trackTerminal(terminal, worktree).catch((error) => {
+      console.error(
+        `[Treeport] Failed to initialize terminal metadata for ${terminal.id}:`,
+        error instanceof Error ? error.message : String(error)
+      )
+    })
+    connection.directRuntimeUnsubscribe =
+      await this.terminalHost.subscribeRuntime(
+        connection.terminalId,
+        (event) => {
+          if ('exitCode' in event) {
+            connection.exitObserved = true
+            connection.pendingExitCode = event.exitCode ?? null
+            if (connection.announcedReady) {
+              this.send(connection, 'exit', {
+                exitCode: connection.pendingExitCode
+              })
+            }
+          }
+        }
+      )
     const initial = await this.terminalHost.attach(
       connection.terminalId,
       (data, ownerSequence) => {
@@ -445,9 +469,19 @@ export class TerminalAttachmentManager {
         }
       }
     )
-    if (!active() || initial === null) {
+    if (!active()) {
       initial?.unsubscribe()
       return
+    }
+
+    if (initial === null) {
+      await this.service.runEffect(
+        this.service.terminals.refreshTerminalStatus(
+          connection.terminalId,
+          false
+        )
+      )
+      throw new Error('Terminal is unavailable')
     }
 
     connection.directOutputUnsubscribe = initial.unsubscribe
@@ -461,27 +495,6 @@ export class TerminalAttachmentManager {
       revision: 1
     }
     this.dimensions.set(connection.terminalId, dimensions)
-    connection.directRuntimeUnsubscribe =
-      await this.terminalHost.subscribeRuntime(
-        connection.terminalId,
-        (event) => {
-          if ('exitCode' in event && connection.announcedReady) {
-            this.send(connection, 'exit', { exitCode: event.exitCode ?? null })
-          }
-        }
-      )
-    if (!active()) {
-      connection.directOutputUnsubscribe?.()
-      connection.directRuntimeUnsubscribe?.()
-      connection.directOutputUnsubscribe = null
-      connection.directRuntimeUnsubscribe = null
-      return
-    }
-
-    if (!active()) {
-      return
-    }
-
     this.claimController(connection)
     connection.state = 'ready'
     const lease = this.controllers.get(connection.terminalId)
@@ -503,6 +516,10 @@ export class TerminalAttachmentManager {
     }
 
     connection.announcedReady = true
+    if (connection.exitObserved) {
+      this.send(connection, 'exit', { exitCode: connection.pendingExitCode })
+    }
+
     if (this.isController(connection)) {
       this.publishControllerChanged(connection.terminalId, connection.clientId)
     }

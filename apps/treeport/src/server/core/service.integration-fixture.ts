@@ -155,6 +155,9 @@ export function integrationService(
     getTerminal: run(
       application.terminals.getTerminal.bind(application.terminals)
     ),
+    getTerminalForAttachment: run(
+      application.terminals.getTerminalForAttachment.bind(application.terminals)
+    ),
     refreshTerminalStatus: run(
       application.terminals.refreshTerminalStatus.bind(application.terminals)
     ),
@@ -517,9 +520,33 @@ class SystemDouble implements CommandRunner {
             !path.isAbsolute(relative))
         )
       })
-      return containingWorktree
-        ? ok(`${this.main}\n`)
-        : fail('fatal: not a git repository (or any parent directory): .git')
+      if (!containingWorktree) {
+        return fail(
+          'fatal: not a git repository (or any parent directory): .git'
+        )
+      }
+
+      if (args.includes('--absolute-git-dir')) {
+        const worktree = this.worktrees.find(
+          (candidate) => candidate.path === containingWorktree.worktreePath
+        )
+        if (!worktree) {
+          return fail('missing')
+        }
+
+        const canonicalMain = await fs
+          .realpath(this.main)
+          .catch(() => path.resolve(this.main))
+        const canonicalGitDirectory = path.resolve(
+          canonicalMain,
+          path.relative(this.main, worktree.gitWorktreeKey)
+        )
+        return ok(
+          `${containingWorktree.canonicalPath}\n${path.join(canonicalMain, '.git')}\n${canonicalGitDirectory}\n`
+        )
+      }
+
+      return ok(`${this.main}\n`)
     }
 
     if (

@@ -1216,9 +1216,16 @@ export class TerminalSession {
           }
         }
 
+        this.clearDegraded()
+        this.update({
+          phase: 'ready',
+          controller: message.controller,
+          controlPending: false,
+          hasSelection: false,
+          error: null
+        })
         if (
           message.controller &&
-          this.snapshotValue.controller &&
           this.controllerGeneration === message.generation
         ) {
           this.send('query_authority', {
@@ -1226,14 +1233,6 @@ export class TerminalSession {
             transitionId: null
           })
         }
-      })
-      this.clearDegraded()
-      this.update({
-        phase: 'ready',
-        controller: message.controller,
-        controlPending: false,
-        hasSelection: false,
-        error: null
       })
       return
     }

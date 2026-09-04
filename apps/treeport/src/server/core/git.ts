@@ -22,6 +22,12 @@ export interface GitDirtyStatus {
   fingerprint: string
 }
 
+export interface GitWorktreeLaunchIdentity {
+  topLevel: string
+  commonDirectory: string
+  gitDirectory: string
+}
+
 const repositoryIdentityKey = 'treeport.repositoryId'
 const uuidPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu
@@ -398,6 +404,41 @@ export class GitAdapter {
     }
 
     return persisted
+  }
+
+  async worktreeLaunchIdentity(
+    cwd: string
+  ): Promise<GitWorktreeLaunchIdentity> {
+    const result = await this.checked(cwd, [
+      'rev-parse',
+      '--show-toplevel',
+      '--git-common-dir',
+      '--absolute-git-dir'
+    ])
+    const values = result.stdout
+      .split(/\r?\n/u)
+      .map((value) => value.trim())
+      .filter(Boolean)
+    if (values.length !== 3) {
+      throw new Error('Git returned an incomplete worktree identity')
+    }
+
+    const canonicalize = (value: string) =>
+      fs
+        .realpath(path.isAbsolute(value) ? value : path.resolve(cwd, value))
+        .catch(() =>
+          path.resolve(
+            path.isAbsolute(value) ? value : path.resolve(cwd, value)
+          )
+        )
+    const [topLevel, commonDirectory, gitDirectory] = await Promise.all(
+      values.map(canonicalize)
+    )
+    return {
+      topLevel: topLevel!,
+      commonDirectory: commonDirectory!,
+      gitDirectory: gitDirectory!
+    }
   }
 
   async listWorktrees(cwd: string): Promise<GitWorktreeInfo[]> {

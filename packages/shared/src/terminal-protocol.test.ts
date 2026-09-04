@@ -249,6 +249,33 @@ describe('Socket.IO contracts', () => {
     ).toBeNull()
     expect(
       parseProductEvent({
+        id: 'event-created',
+        type: 'terminal.created',
+        at: '2026-01-01T00:00:00.000Z',
+        data: {
+          projectId: 'project',
+          worktreeId: 'worktree',
+          terminalId: 'term',
+          terminal: {
+            id: 'term',
+            worktreeId: 'worktree',
+            name: 'Shell',
+            argv: ['/bin/sh'],
+            shellCommand: null,
+            interactiveShell: true,
+            status: 'running',
+            exitCode: null,
+            createdAt: '2026-01-01T00:00:00.000Z',
+            updatedAt: '2026-01-01T00:00:00.000Z'
+          }
+        }
+      })
+    ).toMatchObject({
+      type: 'terminal.created',
+      data: { terminal: { id: 'term', status: 'running' } }
+    })
+    expect(
+      parseProductEvent({
         id: 'event-1',
         type: 'terminal.updated',
         at: '2026-01-01T00:00:00.000Z',

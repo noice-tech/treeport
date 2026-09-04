@@ -964,6 +964,7 @@ interface ProductEventPayloadMap {
     projectId?: string | undefined
     worktreeId: string
     terminalId: string
+    terminal: TerminalRecord
   }
   'terminal.updated': { worktreeId: string; terminalId: string }
   'terminal.removed': { worktreeId: string; terminalId: string }
