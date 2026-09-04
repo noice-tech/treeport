@@ -1226,6 +1226,7 @@ export class TerminalSession {
           message.controller &&
           this.controllerGeneration === message.generation
         ) {
+          this.scheduleFit()
           this.send('query_authority', {
             generation: message.generation,
             transitionId: null

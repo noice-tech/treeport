@@ -1179,7 +1179,7 @@ describe('TerminalSession', () => {
     session.dispose()
   })
 
-  it('publishes ready only after the initial snapshot write completes', async () => {
+  it('publishes ready after the initial snapshot and then fits the controller viewport', async () => {
     const socket = new FakeProtocolSocket()
     socketClient.create.mockReturnValue(socket)
     const session = createTerminalSession('terminal-one')
@@ -1210,6 +1210,10 @@ describe('TerminalSession', () => {
         }
       },
       host: {},
+      fitAddon: {
+        fit: vi.fn(),
+        proposeDimensions: () => ({ cols: 120, rows: 40 })
+      },
       focusAfterRender: true
     })
     terminalSessionTestAccess(session).connect()
@@ -1232,6 +1236,17 @@ describe('TerminalSession', () => {
     await vi.waitFor(() => expect(session.getSnapshot().phase).toBe('ready'))
     expect(session.getSnapshot().controller).toBe(true)
     expect(focus).toHaveBeenCalledOnce()
+
+    const fitController = vi
+      .mocked(requestAnimationFrame)
+      .mock.calls.at(-1)?.[0]
+    fitController?.(0)
+    await vi.advanceTimersByTimeAsync(150)
+    expect(socket.emit).toHaveBeenCalledWith('resize', {
+      generation: 1,
+      cols: 120,
+      rows: 40
+    })
     session.dispose()
   })
 
