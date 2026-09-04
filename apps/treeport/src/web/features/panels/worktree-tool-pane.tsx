@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type CSSProperties,
@@ -384,21 +385,26 @@ export function WorktreeToolPane({
   const toolPickerCommandRef = useRef<HTMLDivElement>(null)
   const paneRef = useRef<HTMLElement>(null)
   const restoredEmptyFocusRevisionRef = useRef(0)
-  const [sidePanelWidth, setSidePanelWidth] = useState(() => {
+  const [preferredSidePanelWidth, setPreferredSidePanelWidth] = useState(() => {
     const savedWidth = Number.parseInt(
       localStorage.getItem(SIDE_PANEL_WIDTH_STORAGE_KEY) ?? '',
       10
     )
     return Number.isFinite(savedWidth)
-      ? clampSidePanelWidth(
-          savedWidth,
-          Math.max(MIN_SIDE_PANEL_WIDTH, window.innerWidth - MIN_TERMINAL_WIDTH)
-        )
+      ? Math.max(MIN_SIDE_PANEL_WIDTH, savedWidth)
       : DEFAULT_SIDE_PANEL_WIDTH
   })
+  const [maximumSidePanelWidth, setMaximumSidePanelWidth] = useState(() =>
+    Math.max(MIN_SIDE_PANEL_WIDTH, window.innerWidth - MIN_TERMINAL_WIDTH)
+  )
+  const sidePanelWidth = clampSidePanelWidth(
+    preferredSidePanelWidth,
+    maximumSidePanelWidth
+  )
   const setAndSaveSidePanelWidth = (width: number) => {
-    setSidePanelWidth(width)
-    localStorage.setItem(SIDE_PANEL_WIDTH_STORAGE_KEY, String(width))
+    const nextWidth = Math.max(MIN_SIDE_PANEL_WIDTH, width)
+    setPreferredSidePanelWidth(nextWidth)
+    localStorage.setItem(SIDE_PANEL_WIDTH_STORAGE_KEY, String(nextWidth))
   }
   const [permissionDefinition, setPermissionDefinition] =
     useState<WebPanelDefinition | null>(null)
@@ -423,6 +429,26 @@ export function WorktreeToolPane({
 
     onOpenWebPanel(definition)
   }
+  useLayoutEffect(() => {
+    const layout = paneRef.current?.parentElement
+    if (!layout) {
+      return
+    }
+
+    const updateMaximumWidth = () => {
+      setMaximumSidePanelWidth(
+        Math.max(
+          MIN_SIDE_PANEL_WIDTH,
+          layout.getBoundingClientRect().width - MIN_TERMINAL_WIDTH
+        )
+      )
+    }
+    const observer = new ResizeObserver(updateMaximumWidth)
+    observer.observe(layout)
+    updateMaximumWidth()
+    return () => observer.disconnect()
+  }, [])
+
   useEffect(() => {
     if (
       emptyToolFocusRevision <= restoredEmptyFocusRevisionRef.current ||

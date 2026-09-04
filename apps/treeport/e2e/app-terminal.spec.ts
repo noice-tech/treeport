@@ -936,6 +936,39 @@ test.describe('desktop worktree and terminal workflows', () => {
         )
       )
       .not.toBe(browserWidthBeforeResize)
+    const preferredBrowserWidth = await page.evaluate(
+      () =>
+        window.__browserCommands
+          .filter((message) => message.type === 'resize')
+          .at(-1)?.width
+    )
+    const expandedViewport = page.viewportSize()
+    if (!preferredBrowserWidth || !expandedViewport) {
+      throw new Error('The resized Browser viewport is not available.')
+    }
+
+    await page.setViewportSize({ width: 900, height: expandedViewport.height })
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            window.__browserCommands
+              .filter((message) => message.type === 'resize')
+              .at(-1)?.width
+        )
+      )
+      .toBeLessThan(preferredBrowserWidth)
+    await page.setViewportSize(expandedViewport)
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            window.__browserCommands
+              .filter((message) => message.type === 'resize')
+              .at(-1)?.width
+        )
+      )
+      .toBe(preferredBrowserWidth)
     await expect(
       page.getByRole('heading', { name: 'Development servers' })
     ).toHaveCount(0)

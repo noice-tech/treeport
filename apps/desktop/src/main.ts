@@ -1,3 +1,5 @@
+import { mkdirSync, renameSync, writeFileSync } from 'node:fs'
+import fs from 'node:fs/promises'
 import path from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import {
@@ -15,6 +17,7 @@ import {
   Menu,
   nativeTheme,
   protocol,
+  screen,
   session,
   shell,
   type IpcMainEvent,
@@ -52,8 +55,26 @@ import { parseWorkspaceLink, type WorkspaceTarget } from './workspace-link'
 
 const dirname = __dirname
 const TITLEBAR_HEIGHT = 32
+const DEFAULT_WINDOW_WIDTH = 1440
+const DEFAULT_WINDOW_HEIGHT = 900
+const MINIMUM_WINDOW_WIDTH = 320
+const MINIMUM_WINDOW_HEIGHT = 600
+const WINDOW_STATE_FILE = 'window-state.json'
 const RENDERER_PARTITION = 'persist:treeport-desktop-renderer'
 const PRIVATE_RENDERER_URL = 'treeport-app://application/'
+
+const windowStateSchema = z.object({
+  version: z.literal(1),
+  bounds: z.object({
+    x: z.number().int(),
+    y: z.number().int(),
+    width: z.number().int().positive(),
+    height: z.number().int().positive()
+  }),
+  maximized: z.boolean()
+})
+
+type WindowState = z.infer<typeof windowStateSchema>
 
 type ReleaseVersion = readonly [number, number, number]
 
@@ -120,6 +141,7 @@ const seedComputerUrl =
   process.env.TREEPORT_DESKTOP_URL?.trim() || defaultComputerUrl
 
 let mainWindow: BrowserWindow | null = null
+let windowState: WindowState | null = null
 let store: ComputerStore | null = null
 let connection: ConnectionState = { status: 'empty' }
 let connectionGeneration = 0
@@ -763,13 +785,115 @@ function installMenu(): void {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template))
 }
 
+async function loadWindowState(): Promise<WindowState | null> {
+  const filePath = path.join(app.getPath('userData'), WINDOW_STATE_FILE)
+  const contents = await fs.readFile(filePath, 'utf8').catch((error) => {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
+      return null
+    }
+
+    throw error
+  })
+  if (contents === null) {
+    return null
+  }
+
+  return Promise.resolve()
+    .then(() => JSON.parse(contents))
+    .then((value) => {
+      const parsed = windowStateSchema.safeParse(value)
+      return parsed.success ? parsed.data : null
+    })
+    .catch(() => null)
+}
+
+function restoredWindowBounds(): WindowState['bounds'] | null {
+  if (!windowState) {
+    return null
+  }
+
+  const displays = screen.getAllDisplays()
+  const saved = windowState.bounds
+  let target = screen.getPrimaryDisplay()
+  let largestIntersection = 0
+  for (const display of displays) {
+    const workArea = display.workArea
+    const intersectionWidth = Math.max(
+      0,
+      Math.min(saved.x + saved.width, workArea.x + workArea.width) -
+        Math.max(saved.x, workArea.x)
+    )
+    const intersectionHeight = Math.max(
+      0,
+      Math.min(saved.y + saved.height, workArea.y + workArea.height) -
+        Math.max(saved.y, workArea.y)
+    )
+    const intersection = intersectionWidth * intersectionHeight
+    if (intersection > largestIntersection) {
+      largestIntersection = intersection
+      target = display
+    }
+  }
+
+  const workArea = target.workArea
+  const width = Math.max(
+    Math.min(MINIMUM_WINDOW_WIDTH, workArea.width),
+    Math.min(saved.width, workArea.width)
+  )
+  const height = Math.max(
+    Math.min(MINIMUM_WINDOW_HEIGHT, workArea.height),
+    Math.min(saved.height, workArea.height)
+  )
+  if (largestIntersection === 0) {
+    return {
+      x: Math.round(workArea.x + (workArea.width - width) / 2),
+      y: Math.round(workArea.y + (workArea.height - height) / 2),
+      width,
+      height
+    }
+  }
+
+  return {
+    x: Math.min(
+      Math.max(saved.x, workArea.x),
+      workArea.x + workArea.width - width
+    ),
+    y: Math.min(
+      Math.max(saved.y, workArea.y),
+      workArea.y + workArea.height - height
+    ),
+    width,
+    height
+  }
+}
+
+function persistWindowState(window: BrowserWindow): void {
+  windowState = {
+    version: 1,
+    bounds: window.getNormalBounds(),
+    maximized: window.isMaximized()
+  }
+  const filePath = path.join(app.getPath('userData'), WINDOW_STATE_FILE)
+  const temporaryPath = `${filePath}.${process.pid}.tmp`
+  try {
+    mkdirSync(path.dirname(filePath), { recursive: true })
+    writeFileSync(temporaryPath, `${JSON.stringify(windowState, null, 2)}\n`, {
+      mode: 0o600
+    })
+    renameSync(temporaryPath, filePath)
+  } catch (error) {
+    console.error('[Treeport] Could not save desktop window state', error)
+  }
+}
+
 function createWindow(url?: string): BrowserWindow {
+  const restoredBounds = restoredWindowBounds()
   const options: BrowserWindowConstructorOptions = {
     show: !desktopE2e,
-    width: 1440,
-    height: 900,
-    minWidth: 320,
-    minHeight: 600,
+    width: restoredBounds?.width ?? DEFAULT_WINDOW_WIDTH,
+    height: restoredBounds?.height ?? DEFAULT_WINDOW_HEIGHT,
+    minWidth: MINIMUM_WINDOW_WIDTH,
+    minHeight: MINIMUM_WINDOW_HEIGHT,
     backgroundColor: '#09090b',
     autoHideMenuBar: true,
     frame: false,
@@ -781,11 +905,21 @@ function createWindow(url?: string): BrowserWindow {
     },
     webPreferences: rendererWindowPreferences()
   }
+
+  if (restoredBounds) {
+    options.x = restoredBounds.x
+    options.y = restoredBounds.y
+  }
+
   if (process.platform === 'darwin') {
     options.trafficLightPosition = { x: 12, y: 9 }
   }
 
   const window = new BrowserWindow(options)
+  if (windowState?.maximized) {
+    window.maximize()
+  }
+
   mainWindow = window
   installRendererSecurity(window.webContents)
   browserWebviews = installBrowserWebviewPolicy({
@@ -811,7 +945,10 @@ function createWindow(url?: string): BrowserWindow {
     broadcastState()
   })
   window.on('focus', stopBellAttention)
-  window.on('close', disposeBrowserWebviews)
+  window.on('close', () => {
+    persistWindowState(window)
+    disposeBrowserWebviews()
+  })
   window.on('closed', () => {
     stopBellAttention()
     if (mainWindow === window) {
@@ -1178,6 +1315,7 @@ if (!hasSingleInstanceLock) {
     .whenReady()
     .then(async () => {
       await installRendererRequestRouting()
+      windowState = await loadWindowState()
       store = await ComputerStore.load(
         path.join(app.getPath('userData'), 'computers.json'),
         seedComputerUrl,

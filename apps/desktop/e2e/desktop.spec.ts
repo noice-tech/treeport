@@ -1160,6 +1160,12 @@ test('controls the local Browser through its exact bridge while another workspac
           )?.url
       )
       .toBe(`${origin}/site/profile`)
+    const windowSizeBeforeRestart = await electronApp.evaluate(
+      ({ BrowserWindow }) => {
+        const bounds = BrowserWindow.getAllWindows()[0]?.getNormalBounds()
+        return bounds ? { width: bounds.width, height: bounds.height } : null
+      }
+    )
     await electronApp.close()
     electronApp = await electron.launch({
       args: [`--user-data-dir=${userData}`, '.', workspaceLink(workspaceUrl)],
@@ -1172,6 +1178,14 @@ test('controls the local Browser through its exact bridge while another workspac
       }
     })
     const restartedWindow = await electronApp.firstWindow()
+    await expect
+      .poll(() =>
+        electronApp!.evaluate(({ BrowserWindow }) => {
+          const bounds = BrowserWindow.getAllWindows()[0]?.getNormalBounds()
+          return bounds ? { width: bounds.width, height: bounds.height } : null
+        })
+      )
+      .toEqual(windowSizeBeforeRestart)
     await restartedWindow.getByRole('tab', { name: /, Browser$/ }).click()
     await expect
       .poll(() =>
