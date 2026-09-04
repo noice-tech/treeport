@@ -28,6 +28,9 @@ import { connectOrStartTerminalHost } from './terminal-host-client'
 
 async function main(): Promise<void> {
   const config = loadConfig()
+  process.title = config.webDevelopment
+    ? 'treeport-server-dev'
+    : 'treeport-server'
   const updateStartup = await createUpdateStartupReporter(config)
   const resourceScope = await Effect.runPromise(Scope.make())
 
