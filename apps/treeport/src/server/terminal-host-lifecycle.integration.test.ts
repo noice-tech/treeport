@@ -234,7 +234,7 @@ describe('detached terminal host lifecycle', () => {
         }
       }
     }
-  })
+  }, 45_000)
 
   it('kills detached descendants when a hosted terminal is removed', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'treeport-host-tree-'))

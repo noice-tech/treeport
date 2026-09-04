@@ -1,6 +1,6 @@
 import { afterEach, expect, it, vi } from 'vitest'
 import { parseResponse, rpc } from './api'
-import { errorDetails } from './error-message'
+import { errorDescription, errorDetails } from './error-message'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -27,12 +27,12 @@ it('decodes the shared API failure envelope for user-visible errors', async () =
       Response.json(
         {
           error: {
-            code: 'PROJECT_NOT_FOUND',
-            message: 'The project no longer exists',
+            code: 'INTERNAL_ERROR',
+            message: 'Unexpected server error',
             details: { requestId: 'request-123' }
           }
         },
-        { status: 404, statusText: 'Not Found' }
+        { status: 500, statusText: 'Internal Server Error' }
       )
     )
   )
@@ -41,10 +41,14 @@ it('decodes the shared API failure envelope for user-visible errors', async () =
     () => null,
     (cause: unknown) => cause
   )
-  expect(errorDetails(failure)).toMatchObject({
-    message: 'The project no longer exists',
-    code: 'PROJECT_NOT_FOUND',
+  const details = errorDetails(failure)
+  expect(details).toMatchObject({
+    message: 'Unexpected server error',
+    code: 'INTERNAL_ERROR',
     requestId: 'request-123',
-    status: 404
+    status: 500
   })
+  expect(errorDescription(details)).toBe(
+    'Unexpected server error. Retry. If the problem continues, use the reference when checking Treeport logs. Reference: request-123.'
+  )
 })

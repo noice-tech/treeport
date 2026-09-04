@@ -453,7 +453,11 @@ function fixture(webDist = '/missing') {
       ]
     })),
     hasWebPanelStorage: vi.fn(async () => true),
-    getWebPanelStorage: vi.fn(async () => [{ file: 'src/app.ts', line: 12 }]),
+    getWebPanelStorage: vi.fn(
+      async (): Promise<JsonValue | undefined> => [
+        { file: 'src/app.ts', line: 12 }
+      ]
+    ),
     setWebPanelStorage: vi.fn(async () => undefined),
     deleteWebPanelStorage: vi.fn(async () => undefined),
     resolveWebPanelAsset: vi.fn<
@@ -958,8 +962,31 @@ describe('HTTP API validation', () => {
       body: JSON.stringify({ key: 'comments' })
     })
     expect(await restored.json()).toEqual({
+      found: true,
       value: [{ file: 'src/app.ts', line: 12 }]
     })
+
+    vi.mocked(service.getWebPanelStorage)
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce(null)
+    const missingStorage = await app.request(
+      '/api/panels/panel_review/storage/get',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ key: 'missing' })
+      }
+    )
+    expect(await missingStorage.json()).toEqual({ found: false, value: null })
+    const nullStorage = await app.request(
+      '/api/panels/panel_review/storage/get',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ key: 'null-value' })
+      }
+    )
+    expect(await nullStorage.json()).toEqual({ found: true, value: null })
 
     const removedStorage = await app.request(
       '/api/panels/panel_review/storage',

@@ -152,6 +152,19 @@ export function errorDetails(cause: unknown): ErrorDetails {
   }
 }
 
+export function errorDescription(details: ErrorDetails): string {
+  const message = /[.!?]$/.test(details.message)
+    ? details.message
+    : `${details.message}.`
+  return [
+    message,
+    details.recoveryHint,
+    details.requestId ? `Reference: ${details.requestId}.` : null
+  ]
+    .filter((part): part is string => Boolean(part))
+    .join(' ')
+}
+
 export function errorMessage(cause: unknown): string {
   return errorDetails(cause).message
 }

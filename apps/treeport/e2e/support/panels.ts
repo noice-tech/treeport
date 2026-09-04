@@ -543,11 +543,13 @@ export async function createPanelMock(
             project: {
               id: state.id,
               name: state.name,
+              kind: state.kind,
               defaultBranch: state.defaultBranch
             },
             worktree: {
               id: worktree.id,
               name: worktree.name,
+              kind: worktree.kind,
               branch: worktree.branch,
               head: worktree.head
             }
@@ -584,8 +586,9 @@ export async function createPanelMock(
     ) {
       const panelId = pathname.split('/')[3]!
       const body: { key: string } = route.request().postDataJSON()
+      const value = webPanelStorage.get(panelId)?.get(body.key)
       await route.fulfill({
-        json: { value: webPanelStorage.get(panelId)?.get(body.key) }
+        json: { found: value !== undefined, value: value ?? null }
       })
       return
     }

@@ -1287,10 +1287,12 @@ export function createApp({
       Effect.gen(function* () {
         const params = yield* routeParams
         const body = yield* requestBody(getWebPanelStorageSchema)
+        const value = yield* operation(() =>
+          service.panels.getWebPanelStorage(params.panelId!, body.key)
+        )
         return jsonContractResponse(storageValueResponseSchema, {
-          value: yield* operation(() =>
-            service.panels.getWebPanelStorage(params.panelId!, body.key)
-          )
+          found: value !== undefined,
+          value: value ?? null
         })
       })
     ),
