@@ -223,30 +223,31 @@ describe('TreeportService with injected command adapters', () => {
     expect((await service.getTerminal(terminal.id)).status).toBe('running')
   })
 
-  it('queues terminal creation behind an in-flight project mutation', async () => {
+  it('coalesces launch verification across a terminal creation burst', async () => {
     const { main, runner, service } = await fixture()
     const project = await service.registerProject(main)
     const mainWorktree = project.worktrees[0]!
-    let releaseTerminal!: () => void
-    runner.terminalCreateGate = new Promise<void>((resolve) => {
-      releaseTerminal = resolve
+    let releaseIdentity!: () => void
+    runner.worktreeLaunchIdentityGate = new Promise<void>((resolve) => {
+      releaseIdentity = resolve
     })
 
+    const identityAttempts = runner.worktreeLaunchIdentityAttempts
     const createAttempts = runner.terminalCreateAttempts
     const first = service.createTerminal(mainWorktree.id, 'First')
-    await vi.waitFor(() =>
-      expect(runner.terminalCreateAttempts).toBe(createAttempts + 1)
-    )
     const second = service.createTerminal(mainWorktree.id, 'Second')
-    await Promise.resolve()
-    expect(runner.terminalCreateAttempts).toBe(createAttempts + 1)
+    await vi.waitFor(() =>
+      expect(runner.worktreeLaunchIdentityAttempts).toBe(identityAttempts + 1)
+    )
+    expect(runner.terminalCreateAttempts).toBe(createAttempts)
 
-    releaseTerminal()
+    releaseIdentity()
     await expect(Promise.all([first, second])).resolves.toEqual([
       expect.objectContaining({ name: 'First' }),
       expect.objectContaining({ name: 'Second' })
     ])
-    runner.terminalCreateGate = null
+    expect(runner.worktreeLaunchIdentityAttempts).toBe(identityAttempts + 1)
+    runner.worktreeLaunchIdentityGate = null
   })
 
   it('creates terminals without waiting for queued terminal closes', async () => {
