@@ -81,7 +81,11 @@ async function main(): Promise<void> {
               launcherPath,
               hostEntryPath: fileURLToPath(
                 new URL('./terminal-host-entry.js', import.meta.url)
-              )
+              ),
+              environment: {
+                ...process.env,
+                TREEPORT_APP_VERSION: config.appVersion
+              }
             })
           ),
           (host) => Effect.sync(() => host.dispose())

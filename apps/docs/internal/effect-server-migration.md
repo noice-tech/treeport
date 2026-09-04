@@ -11,6 +11,7 @@ Treeport uses the Effect v3 package line selected in the workspace:
 - `@effect/platform` 0.97.x for HTTP routing, requests, responses, and sockets;
 - `@effect/platform-node` 0.108.x for the Node HTTP adapter;
 - `@effect/rpc` 0.76.x with NDJSON for typed project event streams;
+- `@effect/opentelemetry` 0.64.x with OpenTelemetry 2.x for opt-in trace export;
 - Effect Schema for request and protocol validation;
 - `ws` as the Node WebSocket implementation used by Effect Socket.
 
@@ -136,9 +137,14 @@ required.
 ## Observability
 
 Effect HTTP and RPC create spans and preserve incoming HTTP trace context.
-Socket connections create channel spans. Structured logs put request IDs, connection channels, WebSocket close codes and
-wire reasons, and application close reasons in log fields instead of metric
-labels.
+Socket connections create channel spans.
+The application runtime owns the OpenTelemetry exporter and flushes it during shutdown.
+Terminal-host IPC carries trace context for traced create, remove, and attachment work.
+The terminal host owns and flushes its process-local exporter.
+See [Agent-readable tracing](agent-tracing.md) for the internal capture procedure.
+
+Structured logs put request IDs and connection channels in log fields.
+They also put WebSocket close codes, wire reasons, and application close reasons in log fields.
 
 `server/network-telemetry.ts` defines low-cardinality metrics for:
 
