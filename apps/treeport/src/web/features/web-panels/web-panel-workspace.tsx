@@ -8,7 +8,7 @@ import {
   type WebPanel
 } from '@treeport/shared'
 import { parseResponse, rpc, treeFilesRpc } from '../../api'
-import { errorDetails, errorMessage } from '../../error-message'
+import { errorDescription, errorDetails } from '../../error-message'
 import { cn } from '../../lib/utils'
 
 export function WebPanelWorkspace({
@@ -207,7 +207,7 @@ export function WebPanelWorkspace({
             param: { panelId: panel.id },
             json: { key: message.key }
           })
-        ).then((result) => result.value)
+        ).then((result) => (result.found ? result.value : undefined))
       } else if (method === 'storage.set') {
         request = parseResponse(
           rpc.api.panels[':panelId'].storage.$put({
@@ -232,17 +232,19 @@ export function WebPanelWorkspace({
             { source: 'treeport-host-v1', id: message.id, ok: true, value },
             '*'
           ),
-        (error) =>
+        (error) => {
+          const details = errorDetails(error)
           panelWindow?.postMessage(
             {
               source: 'treeport-host-v1',
               id: message.id,
               ok: false,
-              error: errorMessage(error),
-              errorCode: errorDetails(error).code
+              error: errorDescription(details),
+              errorCode: details.code
             },
             '*'
           )
+        }
       )
     }
     window.addEventListener('message', receive)

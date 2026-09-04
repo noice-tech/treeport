@@ -481,7 +481,7 @@ export const rpc = {
                 param,
                 json
               }: RequestInput<{ panelId: string }, unknown>) =>
-                endpoint<{ value: JsonValue | null }>(
+                endpoint<{ found: boolean; value: JsonValue }>(
                   'POST',
                   `/api/panels/${id(param.panelId)}/storage/get`,
                   storageValueResponseSchema,

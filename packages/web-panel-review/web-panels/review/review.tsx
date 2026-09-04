@@ -1150,7 +1150,7 @@ function ReviewApp() {
           <strong>Code review</strong>
           <span id="summary">
             {loaded?.summary ??
-              (error ? 'Could not load context' : 'Loading context…')}
+              (error ? 'Could not load review' : 'Loading context…')}
           </span>
         </div>
         <div className="actions">

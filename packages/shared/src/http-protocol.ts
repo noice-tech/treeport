@@ -713,7 +713,8 @@ export const terminatedTerminalsResponseSchema = Schema.Struct({
 })
 export const hasDataResponseSchema = Schema.Struct({ hasData: Schema.Boolean })
 export const storageValueResponseSchema = Schema.Struct({
-  value: Schema.NullOr(jsonValueSchema)
+  found: Schema.Boolean,
+  value: jsonValueSchema
 })
 export const uploadedFileResponseSchema = Schema.Struct({
   file: Schema.Struct({ path: Schema.String })
