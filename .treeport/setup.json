@@ -16,5 +16,16 @@
         "${TREEPORT_WORKTREE_PATH}/apps/treeport/.treeport-dev/data/treeport.db"
       ]
     }
+  ],
+  "cleanup": [
+    {
+      "name": "Stop Treeport development runtime",
+      "argv": [
+        "node",
+        "${TREEPORT_MAIN_WORKTREE_PATH}/apps/treeport/scripts/cleanup-development-runtime.mjs",
+        "--worktree",
+        "${TREEPORT_WORKTREE_PATH}"
+      ]
+    }
   ]
 }
