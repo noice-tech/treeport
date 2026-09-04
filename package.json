@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "node scripts/development.mjs",
+    "dev:cli": "node scripts/development-cli.mjs",
     "dev:tailscale": "node scripts/development.mjs --tailscale",
     "dev:direct": "TREEPORT_HOST=127.0.0.1 TREEPORT_PORT=8733 TREEPORT_API_URL=http://127.0.0.1:8733 TREEPORT_DAEMON_LIFECYCLE=external TREEPORT_DESKTOP_URL=http://127.0.0.1:8733 turbo run dev",
     "dev:desktop": "pnpm dev",
