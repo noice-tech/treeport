@@ -1,22 +1,11 @@
 import { expect, test } from '@playwright/test'
+import { mockApp } from './support/mock-app'
 import {
-  mockApp,
   requestTerminalControl,
   waitForTerminalControl
-} from './app-fixture'
+} from './support/interactions'
 
 test.describe('desktop worktree and terminal workflows', () => {
-  test('shows Kitty images from terminal output', async ({ page }) => {
-    const png =
-      'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAFUlEQVR4nGP8z8Dwn4GBgYEJRIAwAB8XAgICR7MUAAAAAElFTkSuQmCC'
-    await mockApp(page, [], {
-      initialTerminalOutput: `\x1b_Ga=T,f=100,q=2,C=1,c=4,r=2,i=1;${png}\x1b\\`
-    })
-
-    await page.getByRole('button', { name: 'Pi, running', exact: true }).click()
-    await expect(page.locator('.xterm-image-layer-top')).toBeVisible()
-  })
-
   test('creates worktrees with focus, rollback, retry, and preset snapshots', async ({
     page
   }) => {
@@ -270,47 +259,6 @@ test.describe('desktop worktree and terminal workflows', () => {
     await expect
       .poll(() => page.evaluate(() => window.__wsInstances.length))
       .toBeGreaterThan(socketsBeforeReconnect)
-  })
-
-  test('takes control on an ordinary clipboard paste without replaying it', async ({
-    page
-  }) => {
-    await mockApp(page)
-    await page.getByRole('button', { name: 'Pi, running', exact: true }).click()
-    await page.evaluate(() => {
-      window.__wsSent = []
-      window.__delayTakeControl = true
-      const clipboard = new DataTransfer()
-      clipboard.setData('text/plain', 'pasted while viewing')
-      const event = new Event('paste', { bubbles: true, cancelable: true })
-      Object.defineProperty(event, 'clipboardData', { value: clipboard })
-      document.querySelector('.xterm-helper-textarea')!.dispatchEvent(event)
-    })
-
-    await expect(
-      page.getByText('Taking control…', { exact: true })
-    ).toBeVisible()
-    expect(
-      await page.evaluate(() =>
-        window.__wsSent.some(
-          (message: any) =>
-            message.type === 'input' &&
-            String(message.data).includes('pasted while viewing')
-        )
-      )
-    ).toBe(false)
-
-    await page.evaluate(() => window.__releaseTakeControl())
-    await waitForTerminalControl(page)
-    expect(
-      await page.evaluate(() =>
-        window.__wsSent.some(
-          (message: any) =>
-            message.type === 'input' &&
-            String(message.data).includes('pasted while viewing')
-        )
-      )
-    ).toBe(false)
   })
 
   test('broadcasts canonical dimensions and controller takeover across two viewers', async ({

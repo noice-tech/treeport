@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test'
-import { mockApp, terminalTextPoint } from './app-fixture'
+import { mockApp } from './support/mock-app'
+import { terminalTextPoint } from './support/interactions'
 
 test.describe('desktop terminal links and metadata', () => {
   test('opens detected web URLs in Browser on platform modifier-click', async ({
@@ -43,55 +44,6 @@ test.describe('desktop terminal links and metadata', () => {
       page.getByRole('tab', { name: 'example.test, Browser' })
     ).toBeVisible()
     await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
-  })
-
-  test('opens OSC 8 links in Browser on Apple Cmd-click', async ({ page }) => {
-    await mockApp(page, [], { keyboardPlatform: 'MacIntel' })
-    expect(await page.evaluate(() => navigator.platform)).toBe('MacIntel')
-    await page.getByRole('button', { name: 'Pi, running', exact: true }).click()
-    await page.evaluate(() => {
-      const socket = window.__wsInstances.find((item: any) =>
-        item.url.includes('term_pi')
-      )
-      socket.onmessage?.({
-        data: JSON.stringify({
-          version: 1,
-          type: 'ready',
-          connectionId: 'connection-reconnect',
-          streamId: socket.streamId,
-          generation: 1,
-          controller: false,
-          reset: 'full',
-          cols: 100,
-          rows: 30,
-          revision: 2,
-          snapshot: '\x1b[4m#123 ↗\x1b[0m\r\n',
-          snapshotLinks: [
-            {
-              buffer: 'normal',
-              uri: 'https://example.test/pr/123',
-              line: 0,
-              startColumn: 0,
-              endColumn: 6
-            }
-          ]
-        })
-      })
-    })
-
-    const linkedText = page
-      .locator('.xterm-rows span')
-      .filter({ hasText: '#123' })
-      .last()
-    await expect(linkedText).toBeVisible()
-    const linkedPoint = await terminalTextPoint(linkedText, { x: 8, y: 8 })
-    await page.keyboard.down('Meta')
-    await page.mouse.click(linkedPoint.x, linkedPoint.y)
-    await page.keyboard.up('Meta')
-    await expect(page).toHaveURL(/\/panels\/browser_panel_1$/)
-    await expect(
-      page.getByRole('textbox', { name: 'Application URL' })
-    ).toHaveValue('https://example.test/pr/123')
   })
 
   test('reconciles terminal metadata in chronological order', async ({

@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 import type { ApplicationUpdateStatus } from '../src/server/application-update'
-import { mockApp } from './app-fixture'
+import { mockApp } from './support/mock-app'
 
 const availableUpdate: ApplicationUpdateStatus = {
   currentVersion: '0.4.0',
