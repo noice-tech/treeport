@@ -142,29 +142,11 @@ export class ProjectObservationService {
   }
 
   verifyWorktreeLaunchTarget(
-    worktreeId: string
+    binding: WorktreeRecord
   ): Effect.Effect<WorktreeRecord, DomainError<unknown>, ApplicationServices> {
     return Effect.gen(function* () {
       const database = yield* DatabasePort
       const git = yield* GitPort
-      const projectStore = yield* ProjectStore
-      const binding = yield* projectStore.storedWorktree(worktreeId)
-      if (!binding) {
-        return yield* Effect.fail(
-          new DomainError('WORKTREE_NOT_FOUND', 'Tree not found', 404)
-        )
-      }
-
-      if (binding.prunable) {
-        return yield* Effect.fail(
-          new DomainError(
-            'WORKTREE_UNAVAILABLE',
-            'Git reports this worktree as prunable',
-            409
-          )
-        )
-      }
-
       const [metadata] = yield* Effect.promise(() =>
         database.db
           .select({
@@ -177,7 +159,7 @@ export class ProjectObservationService {
           })
           .from(worktrees)
           .innerJoin(projects, eq(worktrees.projectId, projects.id))
-          .where(eq(worktrees.id, worktreeId))
+          .where(eq(worktrees.id, binding.id))
           .limit(1)
       )
       if (!metadata) {

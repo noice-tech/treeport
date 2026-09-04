@@ -10,7 +10,10 @@ import type {
 import { parseResponse } from 'hono/client'
 import { rpc } from '../../api'
 import { useSidebar } from '../../components/ui/sidebar'
-import { upsertProjectTerminal } from '../../project-cache'
+import {
+  removeProjectTerminal,
+  upsertProjectTerminal
+} from '../../project-cache'
 import { projectsQueryKey } from '../../project-metadata'
 import { terminalSessions } from '../../terminal-session'
 import { TerminalView } from '../../terminal-view'
@@ -34,13 +37,9 @@ export interface CreateTerminalInput {
 interface CreateTerminalMutationInput extends CreateTerminalInput {
   worktreeId: string
   initialSize?: TerminalSize
-  request: {
-    sequence: number
-    projectId: string
-    worktreeId: string
-    name: string
-    originPath: string
-  }
+  sequence: number
+  projectId: string
+  originPath: string
 }
 
 export function useTerminalWorkflows({
@@ -57,7 +56,6 @@ export function useTerminalWorkflows({
   const closingTerminalIdsRef = useRef(new Set<string>())
   const closeRequestTailRef = useRef(Promise.resolve())
   const nextCreateSequenceRef = useRef(0)
-  const latestCreateSequenceRef = useRef(0)
   const locationPathRef = useRef(location.pathname)
   locationPathRef.current = location.pathname
   const selectedTerminalId = selectedTerminal?.id ?? null
@@ -118,12 +116,11 @@ export function useTerminalWorkflows({
       )
       return result.terminal
     },
-    onSuccess: async (terminal, { request }) => {
+    onSuccess: async (terminal, request) => {
       let targetFound = false
       queryClient.setQueryData<ProjectRecord[]>(projectsQueryKey, (current) => {
         const update = upsertProjectTerminal(
           current,
-          request.projectId,
           request.worktreeId,
           terminal
         )
@@ -135,7 +132,6 @@ export function useTerminalWorkflows({
         return
       }
 
-      terminalSessions.markConnecting(terminal.id)
       const project = projects.find(
         (candidate) => candidate.id === request.projectId
       )
@@ -143,7 +139,7 @@ export function useTerminalWorkflows({
         (candidate) => candidate.id === request.worktreeId
       )
       const shouldNavigate =
-        request.sequence === latestCreateSequenceRef.current &&
+        request.sequence === nextCreateSequenceRef.current &&
         locationPathRef.current === request.originPath
       if (project && worktree && shouldNavigate) {
         await navigateToWorkspace(
@@ -153,7 +149,7 @@ export function useTerminalWorkflows({
         )
       }
     },
-    onError: (error, { request }) => {
+    onError: (error, request) => {
       notifyError(error, {
         operation: `create terminal “${request.name}”`
       })
@@ -231,18 +227,13 @@ export function useTerminalWorkflows({
         ? terminalSessions.getInitialSize(selectedTerminal.id)
         : null
     const sequence = ++nextCreateSequenceRef.current
-    latestCreateSequenceRef.current = sequence
     closeMobileWithoutFocusRestore()
     const mutation: CreateTerminalMutationInput = {
       worktreeId: currentWorktree.id,
       name: input.name,
-      request: {
-        sequence,
-        projectId: currentProject.id,
-        worktreeId: currentWorktree.id,
-        name: input.name,
-        originPath: location.pathname
-      }
+      sequence,
+      projectId: currentProject.id,
+      originPath: location.pathname
     }
     if (input.initialTitle) {
       mutation.initialTitle = input.initialTitle
@@ -346,20 +337,10 @@ export function useTerminalWorkflows({
     }
 
     terminalSessions.forget(terminal.id)
-    queryClient.setQueryData<ProjectRecord[]>(projectsQueryKey, (current) =>
-      current?.map((candidateProject) => ({
-        ...candidateProject,
-        worktrees: candidateProject.worktrees.map((candidateWorktree) =>
-          candidateWorktree.id === worktree.id
-            ? {
-                ...candidateWorktree,
-                terminals: candidateWorktree.terminals.filter(
-                  (candidate) => candidate.id !== terminal.id
-                )
-              }
-            : candidateWorktree
-        )
-      }))
+    queryClient.setQueryData<ProjectRecord[]>(
+      projectsQueryKey,
+      (current) =>
+        removeProjectTerminal(current, worktree.id, terminal.id).projects
     )
     closeTerminal.mutate({ terminal, index })
   }

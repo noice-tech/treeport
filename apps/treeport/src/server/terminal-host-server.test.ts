@@ -2,48 +2,10 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { IPty } from 'node-pty'
 import { TerminalHostClient } from './terminal-host-client'
 import { startTerminalHostServer } from './terminal-host-server'
-import { TerminalHostSessionManager } from './terminal-host-sessions'
+import type { TerminalHostSessionManager } from './terminal-host-sessions'
 import { testAccess } from './test-access'
-
-class FakePty {
-  readonly pid: number
-  readonly cols = 80
-  readonly rows = 24
-  readonly process = 'shell'
-  handleFlowControl = false
-  private dataListener: ((data: string) => void) | null = null
-  private exitListener:
-    | ((event: { exitCode: number; signal?: number }) => void)
-    | null = null
-
-  constructor(pid: number) {
-    this.pid = pid
-  }
-
-  onData(listener: (data: string) => void) {
-    this.dataListener = listener
-    return { dispose: () => (this.dataListener = null) }
-  }
-
-  onExit(listener: (event: { exitCode: number; signal?: number }) => void) {
-    this.exitListener = listener
-    return { dispose: () => (this.exitListener = null) }
-  }
-
-  emit(data: string) {
-    this.dataListener?.(data)
-  }
-
-  write() {}
-  resize() {}
-  kill() {}
-  pause() {}
-  resume() {}
-  clear() {}
-}
 
 const directories: string[] = []
 afterEach(async () => {
@@ -55,49 +17,40 @@ afterEach(async () => {
 })
 
 describe('terminal host request scheduling', () => {
-  it('serves a new terminal while unrelated kills clean up and drains cleanup before shutdown', async () => {
+  it('creates a terminal while an unrelated kill is pending', async () => {
     const root = await fs.mkdtemp(
       path.join(os.tmpdir(), 'treeport-terminal-host-server-')
     )
     directories.push(root)
-    const socketPath = path.join(root, 'host.sock')
-    const ptys: FakePty[] = []
-    const spawn = vi.fn(() => {
-      const pty = new FakePty(100 + ptys.length)
-      ptys.push(pty)
-      queueMicrotask(() => pty.emit(`READY_${ptys.indexOf(pty)}\r\n`))
-      return testAccess<IPty>(pty)
+    let releaseKill!: () => void
+    let markKillStarted!: () => void
+    const killGate = new Promise<void>((resolve) => {
+      releaseKill = resolve
     })
-    let releaseCleanup!: () => void
-    const cleanupGate = new Promise<void>((resolve) => {
-      releaseCleanup = resolve
+    const killStarted = new Promise<void>((resolve) => {
+      markKillStarted = resolve
     })
-    let cleanupEntries = 0
-    const terminate = vi.fn(async (child: IPty) => {
-      cleanupEntries += 1
-      if (child.pid === 101) {
-        throw new Error('cleanup failed')
-      }
-
-      await cleanupGate
+    const createTerminal = vi.fn(async () => undefined)
+    const sessions = testAccess<TerminalHostSessionManager>({
+      sessionCount: 0,
+      initialize: async () => undefined,
+      createTerminal,
+      killTerminal: async () => {
+        markKillStarted()
+        await killGate
+      },
+      restoreHostQueryAuthority: async () => undefined
     })
-    const sessions = new TerminalHostSessionManager(
-      root,
-      path.join(root, 'launcher.mjs'),
-      // SAFETY: The fake implements the IPty methods used by this boundary.
-      spawn as never,
-      terminate
-    )
     const host = await startTerminalHostServer({
       hostId: 'host',
       hostKey: 'key',
       token: 'token',
-      socketPath,
+      socketPath: path.join(root, 'host.sock'),
       recordPath: path.join(root, 'host.json'),
       sessions
     })
     const client = await TerminalHostClient.connect(
-      socketPath,
+      host.record.socketPath,
       'token',
       'key',
       'host'
@@ -116,53 +69,15 @@ describe('terminal host request scheduling', () => {
 
     try {
       await client.createTerminal(input('old'))
-      await vi.waitFor(async () =>
-        expect(await client.captureTerminal('old', 10)).toContain('READY_0')
-      )
-
-      let firstKillSettled = false
-      const firstKill = client.killTerminal('old').finally(() => {
-        firstKillSettled = true
-      })
-      await vi.waitFor(() => expect(cleanupEntries).toBe(1))
-      const repeatedKill = client.killTerminal('old')
-      await expect(client.terminalState('old')).resolves.toEqual({
-        status: 'missing',
-        exitCode: null
-      })
-
-      await client.createTerminal(input('old'))
-      const attachment = await client.attach('old', () => undefined)
-      expect(attachment?.data).toContain('READY_1')
-      expect(firstKillSettled).toBe(false)
-
-      await expect(client.killTerminal('old')).rejects.toThrow('cleanup failed')
-      await vi.waitFor(() => expect(cleanupEntries).toBe(2))
-      await client.createTerminal(input('final'))
-      const finalKill = client.killTerminal('final')
-      await vi.waitFor(() => expect(cleanupEntries).toBe(3))
-      let shutdownSettled = false
-      const shutdown = client.shutdownIfEmpty().finally(() => {
-        shutdownSettled = true
-      })
-      const lateCreate = client.createTerminal(input('too-late'))
-      await new Promise((resolve) => setTimeout(resolve, 25))
-      expect(shutdownSettled).toBe(false)
-
-      releaseCleanup()
-      await expect(
-        Promise.all([firstKill, repeatedKill, finalKill, shutdown])
-      ).resolves.toBeDefined()
-      await expect(lateCreate).rejects.toMatchObject({
-        code: 'HOST_SHUTTING_DOWN'
-      })
-      expect(firstKillSettled).toBe(true)
-      expect(spawn).toHaveBeenCalledTimes(3)
-      expect(terminate).toHaveBeenCalledTimes(3)
+      const killing = client.killTerminal('old')
+      await killStarted
+      await expect(client.createTerminal(input('new'))).resolves.toBeUndefined()
+      expect(createTerminal).toHaveBeenCalledTimes(2)
+      releaseKill()
+      await killing
     } finally {
-      releaseCleanup()
+      releaseKill()
       client.dispose()
-      await sessions.shutdown()
       await host.close()
     }
   })

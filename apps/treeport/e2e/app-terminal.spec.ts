@@ -1879,7 +1879,7 @@ test.describe('desktop worktree and terminal workflows', () => {
     await expect(readmeEditor).toContainText('# Refreshed')
   })
 
-  test('creates replacement terminals while prior terminal closes are pending', async ({
+  test('creates a terminal while prior closes are pending', async ({
     page
   }) => {
     const mocked = await mockApp(page, [], { desktopBridge: true })
@@ -1887,21 +1887,16 @@ test.describe('desktop worktree and terminal workflows', () => {
     const terminals = page
       .getByRole('list', { name: 'topic terminal tabs' })
       .getByRole('listitem')
-    const projectRequestsBefore = mocked.projectRequests()
 
     await page.evaluate(() => {
-      for (let index = 0; index < 10; index += 1) {
+      for (let index = 0; index < 7; index += 1) {
         window.__dispatchDesktopCommand('new-terminal')
       }
     })
-    await expect.poll(() => mocked.terminalCreations()).toBe(10)
-    await expect(terminals).toHaveCount(11)
-    await expect(page.getByRole('button', { name: /, starting$/ })).toHaveCount(
-      0
-    )
+    await expect(terminals).toHaveCount(8)
 
     const releaseDeletes = mocked.delayNextTerminalDelete()
-    for (let count = 11; count > 1; count -= 1) {
+    for (let count = 8; count > 1; count -= 1) {
       await terminals
         .last()
         .getByRole('button', { name: /^Close / })
@@ -1910,60 +1905,15 @@ test.describe('desktop worktree and terminal workflows', () => {
     }
     await expect.poll(() => mocked.terminalDeletions()).toBe(1)
 
-    await page.evaluate(() => {
-      for (let index = 0; index < 10; index += 1) {
-        window.__dispatchDesktopCommand('new-terminal')
-      }
-    })
-    await expect.poll(() => mocked.terminalCreations()).toBe(20)
-    await expect(terminals).toHaveCount(11)
+    await page.evaluate(() => window.__dispatchDesktopCommand('new-terminal'))
+    await expect.poll(() => mocked.terminalCreations()).toBe(8)
+    await expect(terminals).toHaveCount(2)
     await expect(page).toHaveURL(
-      /\/worktrees\/wt_topic\/terminals\/term_dev_20$/
+      /\/worktrees\/wt_topic\/terminals\/term_dev_8$/
     )
-    await expect(page.getByRole('button', { name: /, starting$/ })).toHaveCount(
-      0
-    )
-    await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
-
-    await page.keyboard.press('x')
-    await expect
-      .poll(() =>
-        page.evaluate(() =>
-          window.__wsSent.some(
-            (message: any) => message.type === 'input' && message.data === 'x'
-          )
-        )
-      )
-      .toBe(true)
-    await page.evaluate(() => {
-      const socket = window.__wsInstances.find(
-        (candidate: any) => candidate.terminalId === 'term_dev_20'
-      )
-      socket?.deliverSocket('output', {
-        streamId: socket.streamId,
-        sequence: 2,
-        data: 'REPLACEMENT_READY\r\n'
-      })
-      for (let index = 1; index <= 10; index += 1) {
-        window.__eventSource.emit(
-          'terminal.removed',
-          JSON.stringify({
-            worktreeId: 'wt_topic',
-            terminalId: index === 1 ? 'term_dev' : `term_dev_${index}`
-          })
-        )
-      }
-    })
-    await expect(page.locator('.xterm-rows')).toContainText('REPLACEMENT_READY')
-    expect(mocked.projectRequests()).toBe(projectRequestsBefore)
 
     releaseDeletes()
-    await expect.poll(() => mocked.terminalDeletions()).toBe(10)
-    await expect(terminals).toHaveCount(11)
-    expect(mocked.projectRequests()).toBe(projectRequestsBefore)
-    await expect(
-      page.getByText(/Couldn’t create terminal/, { exact: false })
-    ).toHaveCount(0)
+    await expect.poll(() => mocked.terminalDeletions()).toBe(7)
   })
 
   test('handles Electron commands through worktree, terminal, and web-panel flows', async ({
@@ -2002,15 +1952,6 @@ test.describe('desktop worktree and terminal workflows', () => {
     const topicTerminals = page
       .getByRole('list', { name: 'topic terminal tabs' })
       .getByRole('listitem')
-    const projectReads: string[] = []
-    page.on('request', (request) => {
-      if (
-        request.method() === 'GET' &&
-        new URL(request.url()).pathname === '/api/projects'
-      ) {
-        projectReads.push(request.url())
-      }
-    })
     const releaseCreate = mocked.delayNextTerminalCreate()
     const createRequest = page.waitForRequest(
       (request) =>
@@ -2028,15 +1969,11 @@ test.describe('desktop worktree and terminal workflows', () => {
     await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
     await page.evaluate(() => window.__dispatchDesktopCommand('new-terminal'))
     await expect.poll(() => mocked.terminalCreations()).toBe(2)
-    await expect(page.getByRole('button', { name: /, starting$/ })).toHaveCount(
-      0
-    )
     await expect(topicTerminals).toHaveCount(1)
-    await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
     releaseCreate()
 
     const createdTerminal = page.getByRole('button', {
-      name: /^Shell, connecting/
+      name: /^Shell, running/
     })
     const createdDevTerminal = page.getByRole('button', {
       name: /^dev · \/worktrees\/topic,/
@@ -2047,33 +1984,6 @@ test.describe('desktop worktree and terminal workflows', () => {
     )
     await expect(createdTerminal).toBeVisible()
     await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
-    expect(projectReads).toHaveLength(0)
-    await page.evaluate(() => {
-      window.__wsSent = []
-    })
-    await page.keyboard.press('x')
-    await expect
-      .poll(() =>
-        page.evaluate(() =>
-          window.__wsSent.some(
-            (message: any) => message.type === 'input' && message.data === 'x'
-          )
-        )
-      )
-      .toBe(true)
-    await page.evaluate(() => {
-      const socket = window.__wsInstances.find(
-        (candidate: any) => candidate.terminalId === 'term_dev_2'
-      )
-      socket?.deliverSocket('output', {
-        streamId: socket.streamId,
-        sequence: 2,
-        data: 'RAPID_CREATE_READY\r\n'
-      })
-    })
-    await expect(page.locator('.xterm-rows')).toContainText(
-      'RAPID_CREATE_READY'
-    )
     await createdTerminal.click()
     await expect(createdDevTerminal).toBeVisible()
     await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
@@ -2122,9 +2032,6 @@ test.describe('desktop worktree and terminal workflows', () => {
     const releaseFailedCreate = mocked.delayNextTerminalCreate()
     await page.evaluate(() => window.__dispatchDesktopCommand('new-terminal'))
     await expect(topicTerminals).toHaveCount(2)
-    await expect(page.getByRole('button', { name: /, starting$/ })).toHaveCount(
-      0
-    )
     releaseFailedCreate()
     await expect(
       page.getByText('Couldn’t create terminal “Shell”', { exact: true })
@@ -2215,7 +2122,7 @@ test.describe('desktop worktree and terminal workflows', () => {
     })
     await expect(page.locator('iframe[title="Review"]')).toBeFocused()
 
-    await page.getByRole('button', { name: /^Shell, running/ }).click()
+    await createdTerminal.click()
     await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
     await expect(
       launchedPanelFrame.getByText('Preserved Review state')

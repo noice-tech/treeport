@@ -157,8 +157,7 @@ export function WorkspaceTree({
     attention: bellAttention,
     titles: runtimeTitles,
     programs: terminalPrograms,
-    progress: terminalProgress,
-    connecting: connectingTerminalIds
+    progress: terminalProgress
   } = useTerminalNavigationMetadata()
   const desktopBridge = window.treeportDesktop
   const newWorktreeShortcut = desktopBridge
@@ -362,11 +361,9 @@ export function WorkspaceTree({
                           progress.state !== 'paused' &&
                           progress.state !== 'error'
                         const status = [
-                          connectingTerminalIds.has(terminal.id)
-                            ? 'connecting'
-                            : progress
-                              ? terminalProgressLabel(progress)
-                              : terminal.status,
+                          progress
+                            ? terminalProgressLabel(progress)
+                            : terminal.status,
                           needsAttention ? 'bell' : null
                         ]
                           .filter(Boolean)

@@ -101,14 +101,12 @@ export function useProjectEventsBridge(
       }
 
       if (event.type === 'terminal.created') {
-        terminalSessions.markConnecting(event.data.terminal.id)
         let targetFound = false
         queryClient.setQueryData<ProjectRecord[]>(
           projectsQueryKey,
           (current) => {
             const update = upsertProjectTerminal(
               current,
-              event.data.projectId,
               event.data.terminal.worktreeId,
               event.data.terminal
             )

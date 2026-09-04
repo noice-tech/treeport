@@ -200,13 +200,6 @@ interface HostedTerminalSession extends HostedTerminal {
   runtimeListeners: Set<(event: TerminalHostRuntimeEvent) => void>
 }
 
-interface PendingTerminalCleanup {
-  terminalId: string
-  worktreeId: string
-  session: HostedTerminalSession
-  promise: Promise<void>
-}
-
 type PtySpawner = typeof pty.spawn
 
 /**
@@ -219,7 +212,10 @@ type PtySpawner = typeof pty.spawn
 export class TerminalHostSessionManager {
   readonly shellIntegrationDir: string
   private readonly sessions = new Map<string, HostedTerminalSession>()
-  private readonly pendingCleanups = new Set<PendingTerminalCleanup>()
+  private readonly pendingCleanups = new Set<{
+    worktreeId: string
+    promise: Promise<void>
+  }>()
   private initialization: Promise<void> | null = null
 
   constructor(
@@ -914,14 +910,7 @@ export class TerminalHostSessionManager {
     const session = this.sessions.get(terminalId)
     if (session) {
       await this.destroy(session)
-      return
     }
-
-    await Promise.all(
-      [...this.pendingCleanups]
-        .filter((cleanup) => cleanup.terminalId === terminalId)
-        .map((cleanup) => cleanup.promise)
-    )
   }
 
   async killWorktree(worktreeId: string): Promise<string[]> {
@@ -1018,13 +1007,6 @@ export class TerminalHostSessionManager {
   }
 
   private destroy(session: HostedTerminalSession): Promise<void> {
-    const pending = [...this.pendingCleanups].find(
-      (cleanup) => cleanup.session === session
-    )
-    if (pending) {
-      return pending.promise
-    }
-
     if (this.sessions.get(session.id) !== session) {
       return Promise.resolve()
     }
@@ -1046,8 +1028,6 @@ export class TerminalHostSessionManager {
     }
     session.parserWaiters.clear()
     session.parserQueue = []
-    session.parserQueuedBytes = 0
-    session.parserWriting = false
     session.serializer.dispose()
     session.terminal.dispose()
 
@@ -1057,10 +1037,8 @@ export class TerminalHostSessionManager {
         : Promise.resolve(),
       this.terminateProcessTree(session.pty)
     ]).then(() => undefined)
-    const ownedCleanup: PendingTerminalCleanup = {
-      terminalId: session.id,
+    const ownedCleanup = {
       worktreeId: session.worktreeId,
-      session,
       promise: physicalCleanup
     }
     const cleanup = physicalCleanup.finally(() =>

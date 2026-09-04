@@ -24,7 +24,6 @@
     "check:package": "node scripts/check-package.mjs",
     "test:package": "node scripts/smoke-package.mjs",
     "dev": "node scripts/development.mjs",
-    "benchmark:terminal-creation": "node scripts/benchmark-terminal-creation.mjs",
     "dev:server": "rm -rf .treeport-dev-dist && TREEPORT_DATA_DIR=.treeport-dev/data TREEPORT_RUNTIME_DIR=.treeport-dev/runtime TREEPORT_DAEMON_LIFECYCLE=external tsdown --watch --out-dir .treeport-dev-dist",
     "start": "TREEPORT_WEB_DIST=dist/web node dist/node/server/index.js",
     "db:generate": "drizzle-kit generate",

@@ -110,10 +110,6 @@ export function TerminalView({
           onStatusChangeRef.current()
         }
 
-        if (next.phase === 'ready' && previous.phase !== 'ready') {
-          terminalSessions.markReady(activeSession.terminalId)
-        }
-
         previous = next
         onStoreChange()
       })
@@ -136,10 +132,6 @@ export function TerminalView({
     }
 
     activeSession.mount(host)
-    if (activeSession.getSnapshot().phase === 'ready') {
-      terminalSessions.markReady(activeSession.terminalId)
-    }
-
     return () => activeSession.unmount(host)
   }, [activeSession])
 

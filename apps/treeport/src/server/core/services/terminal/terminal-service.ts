@@ -493,7 +493,7 @@ export class TerminalService {
 
       return yield* Effect.gen(function* () {
         const verifiedWorktree =
-          yield* observations.verifyWorktreeLaunchTarget(worktreeId)
+          yield* observations.verifyWorktreeLaunchTarget(worktree)
         return yield* createTerminalSession(
           verifiedWorktree,
           name,

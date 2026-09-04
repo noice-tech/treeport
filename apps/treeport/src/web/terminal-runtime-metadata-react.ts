@@ -7,15 +7,13 @@ const EMPTY_ATTENTION: ReadonlySet<string> = new Set()
 const EMPTY_TITLES: ReadonlyMap<string, string> = new Map()
 const EMPTY_PROGRAMS: ReadonlyMap<string, TerminalProgram> = new Map()
 const EMPTY_PROGRESS: ReadonlyMap<string, TerminalProgress> = new Map()
-const EMPTY_CONNECTING: ReadonlySet<string> = new Set()
 const EMPTY_BELLS: ReadonlyMap<string, TerminalBellMetadata> = new Map()
 
 const EMPTY_NAVIGATION_METADATA = {
   attention: EMPTY_ATTENTION,
   titles: EMPTY_TITLES,
   programs: EMPTY_PROGRAMS,
-  progress: EMPTY_PROGRESS,
-  connecting: EMPTY_CONNECTING
+  progress: EMPTY_PROGRESS
 }
 const EMPTY_BELL_METADATA = {
   bells: EMPTY_BELLS,
@@ -30,15 +28,13 @@ function getNavigationMetadata() {
   const titles = terminalSessions.getTitleSnapshot()
   const programs = terminalSessions.getProgramSnapshot()
   const progress = terminalSessions.getProgressSnapshot()
-  const connecting = terminalSessions.getConnectingSnapshot()
   if (
     navigationMetadata.attention !== attention ||
     navigationMetadata.titles !== titles ||
     navigationMetadata.programs !== programs ||
-    navigationMetadata.progress !== progress ||
-    navigationMetadata.connecting !== connecting
+    navigationMetadata.progress !== progress
   ) {
-    navigationMetadata = { attention, titles, programs, progress, connecting }
+    navigationMetadata = { attention, titles, programs, progress }
   }
 
   return navigationMetadata
