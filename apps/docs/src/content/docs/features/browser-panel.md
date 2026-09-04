@@ -95,6 +95,8 @@ On a touch screen, tap an HTTP or HTTPS terminal link to open it in that termina
 
 With a mouse, modifier-click the link.
 
+If a Browser panel has the exact URL in that tree, Treeport selects it instead of opening another panel.
+
 ## Open a browser panel from the CLI
 
 Open a blank browser panel:

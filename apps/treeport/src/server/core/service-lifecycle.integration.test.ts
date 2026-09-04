@@ -56,9 +56,23 @@ describe('TreeportService with injected command adapters', () => {
       url: 'https://example.com/restored'
     })
 
+    const reused = await service.openBrowserPanelFromTerminal(
+      terminal.id,
+      'https://example.com/restored'
+    )
+    expect(reused.panel).toMatchObject({
+      id: opened.panel.id,
+      url: 'https://example.com/restored'
+    })
+    expect(
+      (await service.listBrowserPanels()).filter(
+        (panel) => panel.url === 'https://example.com/restored'
+      )
+    ).toHaveLength(1)
+
     const terminalOpened = await service.openBrowserPanelFromTerminal(
       terminal.id,
-      'http://localhost:4173/'
+      'https://example.com/restored/'
     )
     const popupOpened = await service.openBrowserPanelFromPanel(
       opened.panel.id,
@@ -70,6 +84,13 @@ describe('TreeportService with injected command adapters', () => {
       events.filter((event) => event.type === 'panel.open_requested')
     ).toEqual(
       expect.arrayContaining([
+        expect.objectContaining({
+          data: expect.objectContaining({
+            panelId: reused.panel.id,
+            sourceTerminalId: terminal.id,
+            sourcePanelId: null
+          })
+        }),
         expect.objectContaining({
           data: expect.objectContaining({
             panelId: terminalOpened.panel.id,

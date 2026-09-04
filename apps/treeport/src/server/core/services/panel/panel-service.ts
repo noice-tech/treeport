@@ -199,12 +199,14 @@ export class PanelService {
     worktreeId: string | null,
     requestedUrl?: string,
     sourceTerminalId: string | null = null,
-    sourcePanelId: string | null = null
+    sourcePanelId: string | null = null,
+    reuseExistingUrl = false
   ): PanelEffect<OpenBrowserPanelResult> {
     const getBrowserPanel = this.getBrowserPanel.bind(this)
     const createBrowserPanel = this.createBrowserPanel.bind(this)
 
     return Effect.gen(function* () {
+      const database = yield* DatabasePort
       const events = yield* EventBusPort
       const terminals = yield* TerminalOperations
       let targetWorktreeId = worktreeId
@@ -249,7 +251,39 @@ export class PanelService {
         )
       }
 
-      const panel = yield* createBrowserPanel(targetWorktreeId, requestedUrl)
+      let existingPanel: BrowserPanel | null = null
+      if (reuseExistingUrl && requestedUrl) {
+        const parsedUrl = browserUrlSchema.safeParse(requestedUrl)
+        if (!parsedUrl.success) {
+          return yield* Effect.fail(
+            new DomainError(
+              'INVALID_BROWSER_URL',
+              'Enter an absolute HTTP or HTTPS URL without credentials',
+              400
+            )
+          )
+        }
+
+        const url = new URL(parsedUrl.data).href
+        const [existing] = yield* Effect.promise(() =>
+          database.db
+            .select()
+            .from(browserPanels)
+            .where(
+              and(
+                eq(browserPanels.worktreeId, targetWorktreeId),
+                eq(browserPanels.url, url)
+              )
+            )
+            .orderBy(desc(browserPanels.createdAt), desc(browserPanels.id))
+            .limit(1)
+        )
+        existingPanel = existing ? mapBrowserPanel(existing) : null
+      }
+
+      const panel =
+        existingPanel ??
+        (yield* createBrowserPanel(targetWorktreeId, requestedUrl))
       yield* Effect.sync(() =>
         events.publish('panel.open_requested', {
           worktreeId: targetWorktreeId,
@@ -267,7 +301,7 @@ export class PanelService {
     terminalId: string,
     requestedUrl: string
   ): PanelEffect<OpenBrowserPanelResult> {
-    return this.openBrowserPanel(null, requestedUrl, terminalId, null)
+    return this.openBrowserPanel(null, requestedUrl, terminalId, null, true)
   }
 
   openBrowserPanelFromPanel(

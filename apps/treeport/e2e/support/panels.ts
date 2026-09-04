@@ -325,7 +325,10 @@ export async function createPanelMock(
         candidate.terminals.some((terminal) => terminal.id === terminalId)
       )!
       const url = new URL(body.url).href
-      const panel = {
+      const existingPanel = worktree.panels.findLast(
+        (candidate) => candidate.kind === 'browser' && candidate.url === url
+      )
+      const panel = existingPanel ?? {
         id: `browser_panel_${++browserPanelCreations}`,
         kind: 'browser' as const,
         worktreeId: worktree.id,
@@ -334,7 +337,10 @@ export async function createPanelMock(
         createdAt: '2026-01-01T00:00:00.000Z',
         updatedAt: '2026-01-01T00:00:00.000Z'
       }
-      worktree.panels.push(panel)
+      if (!existingPanel) {
+        worktree.panels.push(panel)
+      }
+
       await route.fulfill({ status: 201, json: { panel } })
       await page.evaluate(
         ({ worktreeId, panel, sourceTerminalId }) =>
