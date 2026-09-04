@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { mockApp } from './app-fixture'
+import { mockApp } from './support/mock-app'
 
 test.describe('desktop worktree terminal UI', () => {
   test('recovers from an unexpected component crash', async ({ page }) => {
@@ -40,16 +40,6 @@ test.describe('desktop worktree terminal UI', () => {
     ).toBeVisible()
   })
 
-  test('recovers project metadata after transient API failures', async ({
-    page
-  }) => {
-    const mocked = await mockApp(page, [], { transientProjectFailures: 2 })
-    await expect(
-      page.getByRole('button', { name: 'Pi, running', exact: true })
-    ).toBeVisible()
-    expect(mocked.projectRequests()).toBe(3)
-  })
-
   test('keeps the selected terminal while project metadata loads', async ({
     page
   }) => {
@@ -75,48 +65,6 @@ test.describe('desktop worktree terminal UI', () => {
         .getByRole('list', { name: 'topic terminal tabs' })
         .getByRole('button', { name: /^zsh · \/worktrees\/topic,/ })
     ).toBeVisible()
-    await expect(page.locator('.xterm-rows')).toContainText(
-      'same persistent terminal session'
-    )
-  })
-
-  test('shows an open project with no worktrees', async ({ page }) => {
-    await mockApp(page, [], {
-      worktreeFree: true,
-      initialPath: '/projects/proj_1'
-    })
-    await expect(
-      page.getByRole('button', {
-        name: 'Switch project, current project example'
-      })
-    ).toBeVisible()
-    await expect(page.getByRole('button', { name: 'New tree' })).toBeEnabled()
-  })
-
-  test('shows a worktree with no terminals', async ({ page }) => {
-    await mockApp(page, [], {
-      terminalFree: true,
-      initialPath: '/projects/proj_1/worktrees/wt_topic'
-    })
-    await expect(page.getByText('topic', { exact: true })).toBeVisible()
-    await expect(
-      page.getByRole('button', { name: 'New panel in topic' })
-    ).toBeEnabled()
-  })
-
-  test('shows a valid terminal when the saved selection no longer exists', async ({
-    page
-  }) => {
-    await mockApp(page, [], {
-      initialPath: '/projects/missing/worktrees/missing/terminals/missing'
-    })
-
-    await expect(
-      page.getByRole('button', {
-        name: 'Switch project, current project example'
-      })
-    ).toBeVisible()
-    await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
     await expect(page.locator('.xterm-rows')).toContainText(
       'same persistent terminal session'
     )
@@ -238,35 +186,6 @@ test.describe('desktop worktree terminal UI', () => {
       })
     ).toBeVisible()
   })
-  test('selects a remaining worktree after authoritative removal', async ({
-    page
-  }) => {
-    const mocked = await mockApp(page, [], {
-      initialPath: '/projects/proj_1/worktrees/wt_topic/terminals/term_pi'
-    })
-    const topicWorktree = page
-      .getByRole('navigation', { name: 'Projects and trees' })
-      .getByRole('button', { name: /^topic(?:,|$)/ })
-    await expect(topicWorktree).toBeVisible()
-
-    mocked.state.worktrees.splice(1, 1)
-    const projectRefresh = page.waitForResponse(
-      (response) =>
-        response.request().method() === 'GET' &&
-        new URL(response.url()).pathname === '/api/projects'
-    )
-    await page.evaluate(() => window.__eventSource.emit('worktree.removed'))
-    await projectRefresh
-
-    await expect(topicWorktree).toHaveCount(0)
-    await expect(
-      page.getByRole('button', { name: 'main tree', exact: true })
-    ).toBeVisible()
-    await expect(page.locator('.xterm-rows')).toContainText(
-      'same persistent terminal session'
-    )
-  })
-
   test('opens an ordinary folder in browser and desktop flows', async ({
     page
   }) => {

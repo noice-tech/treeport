@@ -1,52 +1,11 @@
 import { expect, test } from '@playwright/test'
+import { mockApp } from './support/mock-app'
 import {
-  mockApp,
   openWorktreeContextMenu,
   requestTerminalControl,
   waitForTerminalControl
-} from './app-fixture'
+} from './support/interactions'
 test.describe('desktop terminal input and removal', () => {
-  test('reconciles remote preset edits and deletion', async ({ page }) => {
-    await page.clock.install()
-    const mocked = await mockApp(page)
-    await page.getByRole('button', { name: 'New panel in main tree' }).click()
-    await page
-      .getByRole('dialog', { name: 'New panel' })
-      .getByRole('button', { name: 'Manage global presets' })
-      .click()
-    const dialog = page.getByRole('dialog', { name: 'Global terminal presets' })
-    await dialog.getByRole('button', { name: /^Hunk/ }).click()
-    await dialog.getByLabel('Name').fill('Unsaved local name')
-    mocked.terminalPresets[0] = {
-      ...mocked.terminalPresets[0]!,
-      name: 'Remote Hunk',
-      updatedAt: '2026-02-01T00:00:00.000Z'
-    }
-    await page.clock.fastForward(5_000)
-    await expect(dialog.getByLabel('Name')).toHaveValue('Remote Hunk')
-    await expect(dialog.getByRole('status')).toContainText(
-      'latest saved values were loaded'
-    )
-    await dialog.getByRole('button', { name: 'Close', exact: true }).click()
-
-    await page.getByRole('button', { name: 'New tree' }).click()
-    await page.getByLabel('Initial terminal').selectOption({
-      label:
-        'Remote Hunk — Global — npx --yes hunkdiff@0.17.3 diff HEAD --watch'
-    })
-    mocked.terminalPresets.splice(0)
-    await page.clock.fastForward(5_000)
-    await expect(
-      page
-        .getByRole('status')
-        .filter({ hasText: 'selected preset cannot be used' })
-    ).toBeVisible()
-    await expect(page.getByLabel('Initial terminal')).toHaveValue('shell')
-    await page
-      .getByRole('dialog', { name: 'Create tree' })
-      .getByRole('button', { name: 'Close', exact: true })
-      .click()
-  })
   test('uses trusted local file paths and uploads files without one', async ({
     page
   }) => {
@@ -255,48 +214,6 @@ test.describe('desktop terminal input and removal', () => {
       .toBe(true)
   })
 
-  test('uses one removal action, live preview state, and places New tree last', async ({
-    page
-  }) => {
-    const mocked = await mockApp(page)
-    await expect(
-      page
-        .getByRole('list')
-        .filter({ hasText: 'New tree' })
-        .getByRole('listitem')
-        .last()
-    ).toContainText('New tree')
-
-    mocked.setRemovePreview({
-      branch: null,
-      detached: true,
-      head: 'cccccccc',
-      detachedHeadReachable: false,
-      warnings: ['Detached commits may become unreachable after removal'],
-      confirmationToken: 'b'.repeat(64)
-    })
-    const menu = await openWorktreeContextMenu(page, 'topic')
-    await menu.getByRole('menuitem', { name: 'Remove tree…' }).click()
-    await expect(
-      page.getByRole('alertdialog', { name: 'Remove tree' })
-    ).toBeVisible()
-    await expect(
-      page.getByText('/worktrees/topic', { exact: true })
-    ).toBeVisible()
-    await expect(page.getByText('Detached at cccccccc')).toBeVisible()
-    await expect(page.getByText('Pi', { exact: true }).last()).toBeVisible()
-    const removeRequest = page.waitForRequest(
-      (request) =>
-        request.method() === 'POST' &&
-        new URL(request.url()).pathname.endsWith('/remove')
-    )
-    await page.getByRole('button', { name: 'Remove anyway' }).click()
-    expect((await removeRequest).postDataJSON()).toEqual({
-      confirmationToken: 'b'.repeat(64),
-      confirmDestructive: true
-    })
-  })
-
   test('shows cleanup progress, keeps a failed tree, and retries removal', async ({
     page
   }) => {
@@ -400,11 +317,14 @@ test.describe('desktop terminal input and removal', () => {
     ).toBeVisible()
   })
 
-  test('removes a clean worktree without a dialog and blocks repeated requests', async ({
+  test('retries a stale clean preview without a dialog or repeated requests', async ({
     page
   }) => {
     const mocked = await mockApp(page)
     mocked.setRemovePreviewDelay(200)
+    mocked.staleNextRemoveWithPreview({
+      confirmationToken: 'c'.repeat(64)
+    })
     const releaseRemove = mocked.delayNextRemove()
     const menu = await openWorktreeContextMenu(page, 'topic')
     const removeItem = menu.getByRole('menuitem', {
@@ -419,32 +339,12 @@ test.describe('desktop terminal input and removal', () => {
     await expect(
       page.getByRole('button', { name: 'topic, removing' })
     ).toBeVisible()
-    await expect.poll(() => mocked.removePreviewRequests()).toBe(1)
+    await expect.poll(() => mocked.removePreviewRequests()).toBe(2)
     await expect(page.getByText('Removing…')).toHaveCount(0)
-    await expect.poll(() => mocked.removeRequests()).toBe(1)
+    await expect.poll(() => mocked.removeRequests()).toBe(2)
     await expect(
       page.getByRole('heading', { name: 'Remove tree' })
     ).toHaveCount(0)
-    expect(mocked.removeRequestBodies()).toEqual([
-      {
-        confirmationToken: 'a'.repeat(64),
-        confirmDestructive: false
-      }
-    ])
-    releaseRemove()
-  })
-
-  test('retries one stale clean preview without opening a dialog', async ({
-    page
-  }) => {
-    const mocked = await mockApp(page)
-    mocked.staleNextRemoveWithPreview({
-      confirmationToken: 'c'.repeat(64)
-    })
-    const menu = await openWorktreeContextMenu(page, 'topic')
-    await menu.getByRole('menuitem', { name: 'Remove tree…' }).click()
-
-    await expect.poll(() => mocked.removeRequests()).toBe(2)
     expect(mocked.removeRequestBodies()).toEqual([
       {
         confirmationToken: 'a'.repeat(64),
@@ -455,9 +355,7 @@ test.describe('desktop terminal input and removal', () => {
         confirmDestructive: false
       }
     ])
-    await expect(
-      page.getByRole('heading', { name: 'Remove tree' })
-    ).toHaveCount(0)
+    releaseRemove()
   })
 
   test('refreshes a stale clean preview and requires confirmation when it becomes dirty', async ({

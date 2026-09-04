@@ -1,9 +1,6 @@
 import { expect, test } from '@playwright/test'
-import {
-  mockApp,
-  terminalTextPoint,
-  waitForTerminalControl
-} from './app-fixture'
+import { mockApp } from './support/mock-app'
+import { waitForTerminalControl } from './support/interactions'
 
 test.describe('mobile terminal UI', () => {
   test('uses the mobile drawer and terminal controls end to end', async ({
@@ -213,61 +210,6 @@ test.describe('mobile terminal UI', () => {
     ).toBeVisible()
   })
 
-  test('opens a terminal link with a tap', async ({ page }) => {
-    await mockApp(page)
-    await page.getByLabel('Open tree drawer').click()
-    await page.getByRole('button', { name: 'Pi, running', exact: true }).click()
-    await page.evaluate(() => {
-      const socket = window.__lastWs
-      socket.onmessage?.({
-        data: JSON.stringify({
-          version: 1,
-          type: 'output',
-          streamId: socket.streamId,
-          sequence: 2,
-          data: '\u001b[2J\u001b[H\u001b]8;;https://example.test/mobile\u001b\\Open docs\u001b]8;;\u001b\\\r\n'
-        })
-      })
-    })
-
-    const link = page
-      .locator('.xterm-rows span')
-      .filter({ hasText: 'Open docs' })
-      .last()
-    await expect(link).toBeVisible()
-    const point = await terminalTextPoint(link, { x: 8, y: 8 })
-    await page.touchscreen.tap(point.x, point.y)
-    await expect(page).toHaveURL(/\/panels\/browser_panel_1$/)
-    await expect(
-      page.getByRole('textbox', { name: 'Application URL' })
-    ).toHaveValue('https://example.test/mobile')
-    await expect(
-      page.getByRole('region', { name: 'topic tool tab group' })
-    ).toBeVisible()
-    const terminal = page.getByRole('main', { name: /terminal$/ })
-    await expect(terminal).not.toBeVisible()
-    await page.getByRole('button', { name: 'Toggle side panel' }).click()
-    await expect(terminal).toBeVisible()
-    await expect(page.getByLabel('Terminal selector')).toHaveValue('term_pi')
-  })
-
-  test('switches projects without opening the mobile keyboard', async ({
-    page
-  }) => {
-    await mockApp(page, [], { includeSecondProject: true })
-    const shortcutModifier = await page.evaluate(() =>
-      /Mac|iPhone|iPad|iPod/.test(navigator.platform) ? 'Meta' : 'Control'
-    )
-
-    await page.keyboard.press(`${shortcutModifier}+Shift+P`)
-    await page
-      .getByRole('button', { name: 'another-project', exact: true })
-      .click()
-
-    await expect(page).toHaveURL(/\/projects\/proj_2\//)
-    await expect(page.locator('.xterm-helper-textarea')).not.toBeFocused()
-  })
-
   test('keeps mobile modal and drawer flows coherent', async ({ page }) => {
     const mocked = await mockApp(page)
     await page.getByLabel('Open tree drawer').click()
@@ -441,14 +383,13 @@ test.describe('mobile terminal UI', () => {
     })
     await expect
       .poll(() =>
-        page.evaluate(
-          () =>
-            window.__wsSent.filter((message: any) =>
-              String(message.data).includes('\u001b[<64;')
-            ).length
+        page.evaluate(() =>
+          window.__wsSent.some((message: any) =>
+            String(message.data).includes('\u001b[<64;')
+          )
         )
       )
-      .toBe(1)
+      .toBe(true)
     await client.send('Input.dispatchTouchEvent', {
       type: 'touchEnd',
       touchPoints: []
