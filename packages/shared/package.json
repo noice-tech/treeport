@@ -16,7 +16,9 @@
     "typecheck": "tsc --noEmit -p tsconfig.json --pretty"
   },
   "dependencies": {
+    "@effect/platform": "^0.97.1",
+    "@effect/rpc": "^0.76.2",
     "@treeport/panel-sdk": "workspace:*",
-    "zod": "catalog:"
+    "effect": "^3.22.1"
   }
 }

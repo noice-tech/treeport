@@ -1,4 +1,4 @@
-import { webPanelInputSchema } from '@treeport/shared'
+import { decodeUnknownOrNull, webPanelInputSchema } from '@treeport/shared'
 import type {
   BrowserPanel,
   ProjectRecord,
@@ -12,6 +12,7 @@ import * as Cause from 'effect/Cause'
 import * as Deferred from 'effect/Deferred'
 import * as Effect from 'effect/Effect'
 import * as Exit from 'effect/Exit'
+import * as Schema from 'effect/Schema'
 import { browserPanels, projects, webPanels } from '../../database-schema'
 import { DomainError } from '../../domain'
 import {
@@ -334,10 +335,11 @@ function mapWebPanel(
   permissions: WebPanelPermission[] = [],
   permissionsGranted = permissions.length === 0
 ): WebPanel {
-  const parsedInput = webPanelInputSchema
-    .nullable()
-    .safeParse(JSON.parse(row.inputJson))
-  if (!parsedInput.success) {
+  const parsedInput = decodeUnknownOrNull(
+    Schema.NullOr(webPanelInputSchema),
+    JSON.parse(row.inputJson)
+  )
+  if (parsedInput === null && row.inputJson !== 'null') {
     throw new Error(`Web panel ${row.id} has invalid stored launch input`)
   }
 
@@ -347,7 +349,7 @@ function mapWebPanel(
     worktreeId: row.worktreeId,
     definitionId: row.definitionId,
     title: row.title,
-    launch: { input: parsedInput.data, cwd: row.launchCwd },
+    launch: { input: parsedInput, cwd: row.launchCwd },
     permissions,
     sandbox: {
       allowSameOrigin: permissionsGranted && permissions.includes('same-origin')

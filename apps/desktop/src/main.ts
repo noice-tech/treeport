@@ -1,6 +1,11 @@
 import path from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
-import { browserUrlSchema } from '@treeport/shared'
+import {
+  browserUrlSchema,
+  decodeUnknownOrNull,
+  desktopHealthResponseSchema,
+  type DesktopHealthResponse
+} from '@treeport/shared'
 import {
   app,
   autoUpdater,
@@ -417,18 +422,6 @@ function installRendererSecurity(renderer: WebContents): void {
   })
 }
 
-const healthResponseSchema = z.object({
-  ok: z.literal(true),
-  version: z
-    .string()
-    .trim()
-    .min(1)
-    .nullish()
-    .catch(null)
-    .transform((version) => version ?? null),
-  hostname: z.string().optional()
-})
-
 const computerUpdateSchema = z.object({
   id: z.string(),
   origin: z.string(),
@@ -444,8 +437,17 @@ const nativeBrowserRegisterSchema = nativeBrowserPanelSchema.extend({
 const nativeBrowserCloseSchema = nativeBrowserPanelSchema.extend({
   force: z.boolean()
 })
+const nativeBrowserUrlSchema = z.string().transform((value, context) => {
+  const parsed = decodeUnknownOrNull(browserUrlSchema, value)
+  if (parsed) {
+    return parsed
+  }
+
+  context.addIssue({ code: 'custom', message: 'Invalid Browser URL' })
+  return z.NEVER
+})
 const nativeBrowserCommandSchema = z.discriminatedUnion('type', [
-  z.strictObject({ type: z.literal('navigate'), url: browserUrlSchema }),
+  z.strictObject({ type: z.literal('navigate'), url: nativeBrowserUrlSchema }),
   z.strictObject({ type: z.literal('back') }),
   z.strictObject({ type: z.literal('forward') }),
   z.strictObject({ type: z.literal('reload') }),
@@ -455,12 +457,10 @@ const nativeBrowserInputControlSchema = nativeBrowserPanelSchema.extend({
   locked: z.boolean()
 })
 
-type HealthResponse = z.infer<typeof healthResponseSchema>
-
 async function checkHealth(
   origin: string,
   signal: AbortSignal
-): Promise<HealthResponse | null> {
+): Promise<DesktopHealthResponse | null> {
   const response = await fetch(new URL('/api/health', origin).toString(), {
     redirect: 'error',
     signal: AbortSignal.any([signal, AbortSignal.timeout(1_500)])
@@ -470,8 +470,7 @@ async function checkHealth(
   }
 
   const body = await response.json().catch(() => null)
-  const result = healthResponseSchema.safeParse(body)
-  return result.success ? result.data : null
+  return decodeUnknownOrNull(desktopHealthResponseSchema, body)
 }
 
 async function connectSelected(

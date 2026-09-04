@@ -1,4 +1,8 @@
-import { browserUrlSchema } from '@treeport/shared'
+import {
+  browserPanelIdSchema,
+  browserUrlSchema,
+  decodeUnknownOrNull
+} from '@treeport/shared'
 import {
   clipboard,
   Menu,
@@ -10,7 +14,6 @@ import {
   type PopupOptions,
   type WebContents
 } from 'electron'
-import { z } from 'zod'
 import {
   createBrowserCdpBridge,
   type BrowserCdpBridge
@@ -23,11 +26,6 @@ import type {
 } from './desktop-contract'
 
 const BROWSER_PARTITION = 'persist:treeport-browser'
-const browserPanelIdSchema = z.string().min(1).max(128)
-const browserUrlWithBlankSchema = z.union([
-  z.literal('about:blank'),
-  browserUrlSchema
-])
 
 function browserBootstrapPanelId(value: string): string | null {
   if (!value.startsWith('about:blank#')) {
@@ -106,7 +104,7 @@ export function installBrowserWebviewPolicy(options: {
       if (
         !computer?.loopback ||
         partition !== BROWSER_PARTITION ||
-        !browserPanelIdSchema.safeParse(panelId).success ||
+        !decodeUnknownOrNull(browserPanelIdSchema, panelId) ||
         entries.has(panelId) ||
         pendingPanels.has(panelId) ||
         entries.size + pendingPanels.size >= 6
@@ -153,12 +151,12 @@ export function installBrowserWebviewPolicy(options: {
       errorDescription: string,
       validatedUrl: string
     ) => {
-      const parsedUrl = browserUrlSchema.safeParse(validatedUrl)
-      if (!parsedUrl.success) {
+      const parsedUrl = decodeUnknownOrNull(browserUrlSchema, validatedUrl)
+      if (!parsedUrl) {
         return
       }
 
-      const failedUrl = new URL(parsedUrl.data).href
+      const failedUrl = new URL(parsedUrl).href
       if (guest.getURL() !== failedUrl) {
         return
       }
@@ -217,22 +215,25 @@ export function installBrowserWebviewPolicy(options: {
       event: Electron.Event,
       targetUrl: string
     ) => {
-      if (!browserUrlWithBlankSchema.safeParse(targetUrl).success) {
+      if (
+        targetUrl !== 'about:blank' &&
+        !decodeUnknownOrNull(browserUrlSchema, targetUrl)
+      ) {
         event.preventDefault()
       }
     }
     guest.on('will-navigate', preventUnsupportedNavigation)
     guest.on('will-redirect', preventUnsupportedNavigation)
     const openInNewPanel = (url: string) => {
-      const popup = browserUrlSchema.safeParse(url)
+      const popup = decodeUnknownOrNull(browserUrlSchema, url)
       const panelId = entry.panelId
-      if (!popup.success || !panelId || options.trustedRenderer.isDestroyed()) {
+      if (!popup || !panelId || options.trustedRenderer.isDestroyed()) {
         return
       }
 
       options.trustedRenderer.send('native-browser:popup', {
         panelId,
-        url: new URL(popup.data).href
+        url: new URL(popup).href
       })
     }
     guest.setWindowOpenHandler(({ url }) => {
@@ -308,12 +309,12 @@ export function installBrowserWebviewPolicy(options: {
       }
 
       const template: MenuItemConstructorOptions[] = []
-      const link = browserUrlSchema.safeParse(params.linkURL)
+      const link = decodeUnknownOrNull(browserUrlSchema, params.linkURL)
       if (params.linkURL) {
-        if (link.success) {
+        if (link) {
           template.push({
             label: 'Open Link in New Tab',
-            click: () => openInNewPanel(link.data)
+            click: () => openInNewPanel(link)
           })
         }
 
@@ -394,7 +395,7 @@ export function installBrowserWebviewPolicy(options: {
         if (
           pending &&
           pendingPanels.has(panelId) &&
-          browserPanelIdSchema.safeParse(panelId).success
+          decodeUnknownOrNull(browserPanelIdSchema, panelId) !== null
         ) {
           pendingPanels.delete(panelId)
           pendingGuests.delete(webContentsId)

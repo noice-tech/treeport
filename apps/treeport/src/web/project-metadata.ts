@@ -1,6 +1,5 @@
 import { queryOptions } from '@tanstack/react-query'
-import { parseResponse } from 'hono/client'
-import { rpc } from './api'
+import { parseResponse, rpc } from './api'
 import { METADATA_STALE_TIME_MS } from './metadata-sync'
 
 export const projectsQueryKey = ['projects'] as const

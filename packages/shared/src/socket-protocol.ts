@@ -1,77 +1,96 @@
-import { z } from 'zod'
-import type { ProductEvent } from './index.js'
+/* eslint-disable anti-slop/no-unknown-parameters -- Effect Schema decoders validate untrusted protocol input at this boundary. */
+import * as Either from 'effect/Either'
+import * as Schema from 'effect/Schema'
 import { browserUrlSchema } from './browser-protocol.js'
-import { terminalRuntimeMetadataSchema } from './terminal-protocol.js'
+import { jsonValueSchema } from './json-schema.js'
+import {
+  terminalRuntimeMetadataFields,
+  terminalRuntimeMetadataSchema
+} from './terminal-protocol.js'
 import { webPanelPermissionSchema } from './web-panel-protocol.js'
 
-const identifierSchema = z.string().min(1).max(128)
-const eventEnvelope = <Type extends string, DataSchema extends z.ZodType>(
+export const EVENT_PROTOCOL_VERSION = 2
+
+const identifierSchema = Schema.String.pipe(
+  Schema.minLength(1),
+  Schema.maxLength(128)
+)
+const dateTimeString = Schema.String.pipe(
+  Schema.filter((value) => !Number.isNaN(Date.parse(value)))
+)
+const eventEnvelope = <Type extends string, Data extends Schema.Schema.Any>(
   type: Type,
-  data: DataSchema
+  data: Data
 ) =>
-  z.strictObject({
+  Schema.Struct({
     id: identifierSchema,
-    type: z.literal(type),
-    at: z.string().datetime(),
+    type: Schema.Literal(type),
+    at: dateTimeString,
     data
   })
-const projectEventDataSchema = z.strictObject({
+const projectEventDataSchema = Schema.Struct({
   projectId: identifierSchema,
-  worktreeId: z.null()
+  worktreeId: Schema.Null
 })
-const worktreeEventDataSchema = z.strictObject({
-  worktreeId: identifierSchema
-})
-const projectWorktreeEventDataSchema = z.strictObject({
+const worktreeEventDataSchema = Schema.Struct({ worktreeId: identifierSchema })
+const projectWorktreeEventDataSchema = Schema.Struct({
   projectId: identifierSchema,
   worktreeId: identifierSchema
 })
-const operationEventDataSchema = z.strictObject({
+const operationEventDataSchema = Schema.Struct({
   operationId: identifierSchema,
   worktreeId: identifierSchema
 })
-const webPanelSnapshotSchema = z.strictObject({
-  id: z.string().min(1),
-  kind: z.literal('web'),
-  worktreeId: z.string().min(1),
-  definitionId: z.string().min(1),
-  title: z.string().min(1),
-  launch: z.strictObject({
-    input: z.record(z.string(), z.json()).nullable(),
-    cwd: z.string().nullable()
+const webPanelSnapshotSchema = Schema.Struct({
+  id: identifierSchema,
+  kind: Schema.Literal('web'),
+  worktreeId: identifierSchema,
+  definitionId: identifierSchema,
+  title: nonEmptyString(),
+  launch: Schema.Struct({
+    input: Schema.NullOr(
+      Schema.mutable(
+        Schema.Record({ key: Schema.String, value: jsonValueSchema })
+      )
+    ),
+    cwd: Schema.NullOr(Schema.String)
   }),
-  permissions: z.array(webPanelPermissionSchema),
-  sandbox: z.strictObject({ allowSameOrigin: z.boolean() }),
-  createdAt: z.string(),
-  updatedAt: z.string()
+  permissions: Schema.mutable(Schema.Array(webPanelPermissionSchema)),
+  sandbox: Schema.Struct({ allowSameOrigin: Schema.Boolean }),
+  createdAt: Schema.String,
+  updatedAt: Schema.String
 })
-const browserPanelSnapshotSchema = z.strictObject({
-  id: z.string().min(1),
-  kind: z.literal('browser'),
-  worktreeId: z.string().min(1),
-  title: z.string().min(1).max(256),
-  url: z.union([z.literal('about:blank'), browserUrlSchema]),
-  createdAt: z.string(),
-  updatedAt: z.string()
+const browserPanelSnapshotSchema = Schema.Struct({
+  id: identifierSchema,
+  kind: Schema.Literal('browser'),
+  worktreeId: identifierSchema,
+  title: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(256)),
+  url: Schema.Union(Schema.Literal('about:blank'), browserUrlSchema),
+  createdAt: Schema.String,
+  updatedAt: Schema.String
 })
-const openPanelSnapshotSchema = z.discriminatedUnion('kind', [
+const openPanelSnapshotSchema = Schema.Union(
   webPanelSnapshotSchema,
   browserPanelSnapshotSchema
-])
-const terminalRecordSchema = z.strictObject({
+)
+const terminalRecordSchema = Schema.Struct({
   id: identifierSchema,
   worktreeId: identifierSchema,
-  name: z.string().min(1),
-  argv: z.array(z.string()),
-  shellCommand: z.string().nullable(),
-  interactiveShell: z.boolean(),
-  status: z.enum(['running', 'exited', 'missing']),
-  exitCode: z.number().int().nullable(),
-  createdAt: z.string(),
-  updatedAt: z.string()
+  name: nonEmptyString(),
+  argv: Schema.mutable(Schema.Array(Schema.String)),
+  shellCommand: Schema.NullOr(Schema.String),
+  interactiveShell: Schema.Boolean,
+  status: Schema.Literal('running', 'exited', 'missing'),
+  exitCode: Schema.NullOr(Schema.Int),
+  createdAt: Schema.String,
+  updatedAt: Schema.String
 })
 
-export const productEventSchema = z.discriminatedUnion('type', [
+function nonEmptyString() {
+  return Schema.String.pipe(Schema.minLength(1))
+}
+
+export const productEventSchema = Schema.Union(
   eventEnvelope('project.created', projectEventDataSchema),
   eventEnvelope('project.updated', projectEventDataSchema),
   eventEnvelope('project.removed', projectEventDataSchema),
@@ -80,15 +99,15 @@ export const productEventSchema = z.discriminatedUnion('type', [
   eventEnvelope('worktree.removed', projectWorktreeEventDataSchema),
   eventEnvelope(
     'create.started',
-    z.strictObject({
+    Schema.Struct({
       projectId: identifierSchema,
       operationId: identifierSchema,
-      worktreeId: z.null()
+      worktreeId: Schema.Null
     })
   ),
   eventEnvelope(
     'create.completed',
-    z.strictObject({
+    Schema.Struct({
       projectId: identifierSchema,
       operationId: identifierSchema,
       worktreeId: identifierSchema
@@ -96,16 +115,16 @@ export const productEventSchema = z.discriminatedUnion('type', [
   ),
   eventEnvelope(
     'create.failed',
-    z.strictObject({
+    Schema.Struct({
       projectId: identifierSchema,
       operationId: identifierSchema,
-      worktreeId: z.null()
+      worktreeId: Schema.Null
     })
   ),
   eventEnvelope(
     'terminal.created',
-    z.strictObject({
-      projectId: identifierSchema.optional(),
+    Schema.Struct({
+      projectId: Schema.optional(identifierSchema),
       worktreeId: identifierSchema,
       terminalId: identifierSchema,
       terminal: terminalRecordSchema
@@ -113,99 +132,130 @@ export const productEventSchema = z.discriminatedUnion('type', [
   ),
   eventEnvelope(
     'terminal.updated',
-    z.strictObject({
+    Schema.Struct({
       worktreeId: identifierSchema,
       terminalId: identifierSchema
     })
   ),
   eventEnvelope(
     'terminal.removed',
-    z.strictObject({
+    Schema.Struct({
       worktreeId: identifierSchema,
       terminalId: identifierSchema
     })
   ),
   eventEnvelope(
     'terminal.metadata',
-    terminalRuntimeMetadataSchema.extend({ worktreeId: z.null() })
+    Schema.Struct({
+      ...terminalRuntimeMetadataFields,
+      worktreeId: Schema.Null
+    })
   ),
   eventEnvelope(
     'terminal.controller_changed',
-    z.strictObject({
+    Schema.Struct({
       terminalId: identifierSchema,
-      controlled: z.boolean(),
-      worktreeId: z.null()
+      controlled: Schema.Boolean,
+      worktreeId: Schema.Null
     })
   ),
   eventEnvelope(
     'panel.created',
-    z.strictObject({ worktreeId: identifierSchema, panelId: identifierSchema })
+    Schema.Struct({
+      worktreeId: identifierSchema,
+      panelId: identifierSchema
+    })
   ),
   eventEnvelope(
     'panel.updated',
-    z.strictObject({ worktreeId: identifierSchema, panelId: identifierSchema })
+    Schema.Struct({
+      worktreeId: identifierSchema,
+      panelId: identifierSchema
+    })
   ),
   eventEnvelope(
     'panel.open_requested',
-    z.strictObject({
+    Schema.Struct({
       worktreeId: identifierSchema,
       panelId: identifierSchema,
       panel: openPanelSnapshotSchema,
-      sourceTerminalId: identifierSchema.nullable(),
-      sourcePanelId: identifierSchema.nullable()
+      sourceTerminalId: Schema.NullOr(identifierSchema),
+      sourcePanelId: Schema.NullOr(identifierSchema)
     })
   ),
   eventEnvelope(
     'panel.removed',
-    z.strictObject({ worktreeId: identifierSchema, panelId: identifierSchema })
+    Schema.Struct({
+      worktreeId: identifierSchema,
+      panelId: identifierSchema
+    })
   ),
   eventEnvelope(
     'workspace.open_requested',
-    z.strictObject({
+    Schema.Struct({
       worktreeId: identifierSchema,
       sourceTerminalId: identifierSchema
     })
   ),
   eventEnvelope(
     'remove.started',
-    operationEventDataSchema.extend({ kind: z.literal('remove') })
+    Schema.Struct({
+      ...operationEventDataSchema.fields,
+      kind: Schema.Literal('remove')
+    })
   ),
   eventEnvelope('remove.completed', operationEventDataSchema),
   eventEnvelope(
     'remove.failed',
-    operationEventDataSchema.extend({ error: z.string() })
+    Schema.Struct({
+      ...operationEventDataSchema.fields,
+      error: Schema.String
+    })
   )
-])
+)
 
-export const eventsSnapshotSchema = z.strictObject({
-  at: z.string().datetime(),
-  terminalMetadata: z.array(terminalRuntimeMetadataSchema),
-  webPanels: z.array(webPanelSnapshotSchema),
-  browserPanels: z.array(browserPanelSnapshotSchema)
+export type NetworkProductEvent = Schema.Schema.Type<typeof productEventSchema>
+
+export const eventsSnapshotSchema = Schema.Struct({
+  at: dateTimeString,
+  terminalMetadata: Schema.Array(terminalRuntimeMetadataSchema),
+  webPanels: Schema.Array(webPanelSnapshotSchema),
+  browserPanels: Schema.Array(browserPanelSnapshotSchema)
 })
+export type EventsSnapshot = Schema.Schema.Type<typeof eventsSnapshotSchema>
 
-export type EventsSnapshot = z.infer<typeof eventsSnapshotSchema>
+export const socketHandshakeSchema = Schema.Struct({
+  type: Schema.Literal('handshake'),
+  auth: jsonValueSchema,
+  query: Schema.Record({ key: Schema.String, value: Schema.String })
+})
+export type SocketHandshake = Schema.Schema.Type<typeof socketHandshakeSchema>
 
-export interface EventsServerToClientEvents {
-  snapshot: (snapshot: EventsSnapshot) => void
-  product_event: (event: ProductEvent) => void
+export const socketMessageSchema = Schema.Struct({
+  event: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(80)),
+  payload: jsonValueSchema
+})
+export type SocketMessage = Schema.Schema.Type<typeof socketMessageSchema>
+
+function decodeOrNull<S extends Schema.Schema<any, any, never>>(
+  schema: S,
+  value: unknown
+): Schema.Schema.Type<S> | null {
+  const parsed = Schema.decodeUnknownEither(schema, {
+    onExcessProperty: 'error'
+  })(value)
+  return Either.isRight(parsed) ? parsed.right : null
 }
 
-export type EventsClientToServerEvents = Record<never, never>
-
-const socketProtocolInputSchema = z.unknown()
-type SocketProtocolInput = z.input<typeof socketProtocolInputSchema>
-
-export function parseEventsSnapshot(
-  value: SocketProtocolInput
-): EventsSnapshot | null {
-  const parsed = eventsSnapshotSchema.safeParse(value)
-  return parsed.success ? parsed.data : null
+export function parseEventsSnapshot(value: unknown): EventsSnapshot | null {
+  return decodeOrNull(eventsSnapshotSchema, value)
 }
-
-export function parseProductEvent(
-  value: SocketProtocolInput
-): ProductEvent | null {
-  const parsed = productEventSchema.safeParse(value)
-  return parsed.success ? parsed.data : null
+export function parseProductEvent(value: unknown): NetworkProductEvent | null {
+  return decodeOrNull(productEventSchema, value)
+}
+export function parseSocketHandshake(value: unknown): SocketHandshake | null {
+  return decodeOrNull(socketHandshakeSchema, value)
+}
+export function parseSocketMessage(value: unknown): SocketMessage | null {
+  return decodeOrNull(socketMessageSchema, value)
 }

@@ -1,5 +1,9 @@
 import crypto from 'node:crypto'
-import { browserUrlSchema, webPanelInputSchema } from '@treeport/shared'
+import {
+  browserUrlSchema,
+  decodeUnknownOrNull,
+  webPanelInputSchema
+} from '@treeport/shared'
 import type {
   BrowserPanel,
   JsonValue,
@@ -16,6 +20,7 @@ import type {
 } from '@treeport/shared'
 import { and, asc, desc, eq, ne } from 'drizzle-orm'
 import * as Effect from 'effect/Effect'
+import * as Schema from 'effect/Schema'
 import {
   browserPanels,
   webPanels,
@@ -154,9 +159,9 @@ export class PanelService {
       const events = yield* EventBusPort
       yield* requireAvailableWorktree(worktreeId)
       const parsedUrl = requestedUrl
-        ? browserUrlSchema.safeParse(requestedUrl)
+        ? decodeUnknownOrNull(browserUrlSchema, requestedUrl)
         : null
-      if (parsedUrl && !parsedUrl.success) {
+      if (requestedUrl && !parsedUrl) {
         return yield* Effect.fail(
           new DomainError(
             'INVALID_BROWSER_URL',
@@ -166,7 +171,7 @@ export class PanelService {
         )
       }
 
-      const url = parsedUrl ? new URL(parsedUrl.data).href : 'about:blank'
+      const url = parsedUrl ? new URL(parsedUrl).href : 'about:blank'
       const timestamp = now()
       const panel: BrowserPanel = {
         id: id('panel'),
@@ -327,9 +332,9 @@ export class PanelService {
       const panel = yield* getBrowserPanel(panelId)
       const parsedUrl =
         state.url === 'about:blank'
-          ? { success: true as const, data: 'about:blank' }
-          : browserUrlSchema.safeParse(state.url)
-      if (!parsedUrl.success) {
+          ? 'about:blank'
+          : decodeUnknownOrNull(browserUrlSchema, state.url)
+      if (!parsedUrl) {
         return yield* Effect.fail(
           new DomainError(
             'INVALID_BROWSER_URL',
@@ -340,9 +345,7 @@ export class PanelService {
       }
 
       const url =
-        parsedUrl.data === 'about:blank'
-          ? parsedUrl.data
-          : new URL(parsedUrl.data).href
+        parsedUrl === 'about:blank' ? parsedUrl : new URL(parsedUrl).href
       const requestedTitle = state.title.trim().slice(0, 256)
       const title =
         requestedTitle ||
@@ -1104,10 +1107,11 @@ function mapWebPanel(
   permissions: WebPanelPermission[] = [],
   permissionsGranted = permissions.length === 0
 ): WebPanel {
-  const parsedInput = webPanelInputSchema
-    .nullable()
-    .safeParse(JSON.parse(row.inputJson))
-  if (!parsedInput.success) {
+  const parsedInput = decodeUnknownOrNull(
+    Schema.NullOr(webPanelInputSchema),
+    JSON.parse(row.inputJson)
+  )
+  if (parsedInput === null && row.inputJson !== 'null') {
     throw new Error(`Web panel ${row.id} has invalid stored launch input`)
   }
 
@@ -1118,7 +1122,7 @@ function mapWebPanel(
     definitionId: row.definitionId,
     title: row.title,
     launch: {
-      input: parsedInput.data,
+      input: parsedInput,
       cwd: row.launchCwd
     },
     permissions,

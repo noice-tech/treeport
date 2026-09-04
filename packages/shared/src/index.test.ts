@@ -1,21 +1,36 @@
 import { describe, expect, it } from 'vitest'
 import {
-  browseDirectoryQuerySchema,
-  createTerminalPresetSchema,
-  createTerminalSchema,
-  createWorktreeSchema,
-  registerProjectSchema,
-  removeWorktreeSchema,
-  spawnSchema,
+  browseDirectoryQuerySchema as browseDirectoryQueryEffectSchema,
+  createTerminalPresetSchema as createTerminalPresetEffectSchema,
+  createTerminalSchema as createTerminalEffectSchema,
+  createWorktreeSchema as createWorktreeEffectSchema,
+  registerProjectSchema as registerProjectEffectSchema,
+  removeWorktreeSchema as removeWorktreeEffectSchema,
+  spawnSchema as spawnEffectSchema,
   TERMINAL_ARGUMENT_MAX_LENGTH,
   TERMINAL_EXECUTABLE_MAX_LENGTH,
   TERMINAL_NAME_MAX_LENGTH,
   TERMINAL_PRESET_ARGUMENT_MAX_COUNT,
-  treeContextFieldDefinitionSchema,
-  treeContextValuesSchema,
-  updateProjectSchema,
-  updateTerminalPresetSchema
+  treeContextFieldDefinitionSchema as treeContextFieldDefinitionEffectSchema,
+  treeContextValuesSchema as treeContextValuesEffectSchema,
+  updateProjectSchema as updateProjectEffectSchema,
+  updateTerminalPresetSchema as updateTerminalPresetEffectSchema
 } from './index.js'
+import { testSchema } from './schema.test-support.js'
+
+const browseDirectoryQuerySchema = testSchema(browseDirectoryQueryEffectSchema)
+const createTerminalPresetSchema = testSchema(createTerminalPresetEffectSchema)
+const createTerminalSchema = testSchema(createTerminalEffectSchema)
+const createWorktreeSchema = testSchema(createWorktreeEffectSchema)
+const registerProjectSchema = testSchema(registerProjectEffectSchema)
+const removeWorktreeSchema = testSchema(removeWorktreeEffectSchema)
+const spawnSchema = testSchema(spawnEffectSchema)
+const treeContextFieldDefinitionSchema = testSchema(
+  treeContextFieldDefinitionEffectSchema
+)
+const treeContextValuesSchema = testSchema(treeContextValuesEffectSchema)
+const updateProjectSchema = testSchema(updateProjectEffectSchema)
+const updateTerminalPresetSchema = testSchema(updateTerminalPresetEffectSchema)
 
 describe('API input validation', () => {
   it('requires repository paths and valid names', () => {

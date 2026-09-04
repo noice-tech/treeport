@@ -1,19 +1,18 @@
 import { useEffect, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { io, type Socket } from 'socket.io-client'
+import { RpcClient } from '@effect/rpc'
 import {
-  parseEventsSnapshot,
-  parseProductEvent,
-  SOCKET_IO_PATH
+  EVENT_PROTOCOL_VERSION,
+  TreeportRpcs,
+  treeportRpcClientLayer,
+  type EventsSnapshot,
+  type NetworkProductEvent,
+  type ProductEventDataMap,
+  type ProjectRecord
 } from '@treeport/shared'
-import type {
-  EventsClientToServerEvents,
-  EventsServerToClientEvents,
-  EventsSnapshot,
-  ProductEvent,
-  ProductEventDataMap,
-  ProjectRecord
-} from '@treeport/shared'
+import * as Effect from 'effect/Effect'
+import * as Fiber from 'effect/Fiber'
+import * as Stream from 'effect/Stream'
 import { createInvalidationCoalescer } from './metadata-sync'
 import { removeProjectTerminal, upsertProjectTerminal } from './project-cache'
 import { projectsQueryKey, recentProjectsQueryKey } from './project-metadata'
@@ -36,15 +35,7 @@ export function useProjectEventsBridge(
   const [eventsDisconnected, setEventsDisconnected] = useState(false)
 
   useEffect(() => {
-    const events: Socket<
-      EventsServerToClientEvents,
-      EventsClientToServerEvents
-    > = io('/events', {
-      path: SOCKET_IO_PATH,
-      transports: ['websocket'],
-      autoConnect: false,
-      retries: 0
-    })
+    let disposed = false
     const refreshes = createInvalidationCoalescer(() =>
       queryClient.invalidateQueries(
         { queryKey: projectsQueryKey },
@@ -83,23 +74,12 @@ export function useProjectEventsBridge(
       ])
     }
     const refreshProjects = () => projectRefreshes.schedule()
-    const snapshot = (value: EventsSnapshot) => {
-      const payload = parseEventsSnapshot(value)
-      if (!payload) {
-        setEventsDisconnected(true)
-        return
-      }
-
+    const snapshot = (payload: EventsSnapshot) => {
       terminalSessions.replaceRuntimeMetadata(payload.terminalMetadata)
       setEventsDisconnected(false)
       refresh()
     }
-    const productEvent = (value: ProductEvent) => {
-      const event = parseProductEvent(value)
-      if (!event) {
-        return
-      }
-
+    const productEvent = (event: NetworkProductEvent) => {
       if (event.type === 'terminal.created') {
         let targetFound = false
         queryClient.setQueryData<ProjectRecord[]>(
@@ -189,16 +169,48 @@ export function useProjectEventsBridge(
         refresh()
       }
     }
-    const disconnected = () => setEventsDisconnected(true)
-    events.on('snapshot', snapshot)
-    events.on('product_event', productEvent)
-    events.on('disconnect', disconnected)
-    events.on('connect_error', disconnected)
-    events.connect()
+    const connect = Effect.scoped(
+      Effect.gen(function* () {
+        const client = yield* RpcClient.make(TreeportRpcs)
+        yield* client
+          .WatchProjectEvents({
+            protocol: EVENT_PROTOCOL_VERSION
+          })
+          .pipe(
+            Stream.runForEach((item) =>
+              Effect.sync(() => {
+                if (item._tag === 'Snapshot') {
+                  snapshot(item.snapshot)
+                } else {
+                  productEvent(item.event)
+                }
+              })
+            )
+          )
+      })
+    ).pipe(Effect.provide(treeportRpcClientLayer('/api/rpc')))
+    const program = Effect.forever(
+      connect.pipe(
+        Effect.catchAllCause((cause) =>
+          disposed
+            ? Effect.failCause(cause)
+            : Effect.sync(() => {
+                console.error(
+                  '[Treeport] Project event RPC disconnected',
+                  cause
+                )
+                setEventsDisconnected(true)
+              })
+        ),
+        Effect.zipRight(Effect.sleep(500))
+      )
+    )
+    const fiber = Effect.runFork(program)
     return () => {
+      disposed = true
       refreshes.dispose()
       projectRefreshes.dispose()
-      events.disconnect()
+      Effect.runFork(Fiber.interrupt(fiber))
     }
   }, [queryClient])
 

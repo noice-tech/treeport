@@ -1,6 +1,9 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { z } from 'zod'
+import * as Either from 'effect/Either'
+import * as ParseResult from 'effect/ParseResult'
+import * as Schema from 'effect/Schema'
 import {
   TREE_CONTEXT_FIELD_MAX_COUNT,
   treeContextFieldDefinitionSchema,
@@ -115,27 +118,29 @@ export async function loadTreeContextFields({
         break
       }
 
-      const parsedField = treeContextFieldDefinitionSchema.safeParse(input)
-      if (!parsedField.success) {
+      const parsedField = Schema.decodeUnknownEither(
+        treeContextFieldDefinitionSchema
+      )(input)
+      if (Either.isLeft(parsedField)) {
         diagnostics.push({
           scope: settings.scope,
           path: settings.path,
-          message: `${settings.path} treeContext.fields[${index}] is invalid: ${parsedField.error.issues[0]?.message ?? 'invalid field'}`
+          message: `${settings.path} treeContext.fields[${index}] is invalid: ${ParseResult.TreeFormatter.formatErrorSync(parsedField.left)}`
         })
         continue
       }
 
-      if (ids.has(parsedField.data.id)) {
+      if (ids.has(parsedField.right.id)) {
         diagnostics.push({
           scope: settings.scope,
           path: settings.path,
-          message: `${settings.path} contains duplicate tree context field ${parsedField.data.id}`
+          message: `${settings.path} contains duplicate tree context field ${parsedField.right.id}`
         })
         continue
       }
 
-      ids.add(parsedField.data.id)
-      fields.push(parsedField.data)
+      ids.add(parsedField.right.id)
+      fields.push(parsedField.right)
     }
     definitionsByScope.push(fields)
   }

@@ -7,7 +7,7 @@ Treeport supports remote access through [Tailscale Serve](https://tailscale.com/
 
 The daemon stays on loopback. Tailscale Serve supplies private HTTPS and authenticates each remote user.
 
-Serve adds the Tailscale user identity to HTTP and Socket.IO requests. Treeport rejects remote requests that do not have this identity.
+Serve adds the Tailscale user identity to HTTP and WebSocket requests. Treeport rejects remote requests that do not have this identity.
 
 Your tailnet ACLs and grants control access. Each permitted user can control Treeport terminals and trees.
 
@@ -130,7 +130,7 @@ Support for other authenticated private-network systems can be proposed in [issu
 
 Do not work around this limit with a LAN listener or public internet access.
 
-Treeport gives full terminal access. A future alternative must authenticate HTTP, Socket.IO, desktop, and CLI traffic.
+Treeport gives full terminal access. A future alternative must authenticate HTTP, WebSocket, desktop, and CLI traffic.
 
 It must also stop access when authentication fails.
 

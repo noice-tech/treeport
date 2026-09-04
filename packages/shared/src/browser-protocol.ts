@@ -1,354 +1,488 @@
-import { z } from 'zod'
+/* eslint-disable anti-slop/no-unknown-parameters -- Effect Schema decoders validate untrusted protocol input at this boundary. */
+import * as Either from 'effect/Either'
+import * as Schema from 'effect/Schema'
 
-export const BROWSER_PROTOCOL_VERSION = 4
+export const BROWSER_PROTOCOL_VERSION = 5
 export const BROWSER_MAX_FRAME_BYTES = 8 * 1024 * 1024
 export const BROWSER_MAX_MESSAGE_BYTES = 128 * 1024
 
 export type BrowserMouseButton = 'left' | 'right' | 'middle'
 
-export const browserUrlSchema: z.ZodType<string> = z
-  .string()
-  .min(1)
-  .max(4_096)
-  .refine((value) => {
-    if (!URL.canParse(value)) {
-      return false
+const opaqueTokenSchema = Schema.String.pipe(
+  Schema.minLength(32),
+  Schema.maxLength(256)
+)
+export const browserPanelIdSchema = Schema.String.pipe(
+  Schema.minLength(1),
+  Schema.maxLength(128)
+)
+const browserRequestIdSchema = Schema.String.pipe(
+  Schema.minLength(1),
+  Schema.maxLength(128)
+)
+const browserGenerationSchema = Schema.Int.pipe(Schema.positive())
+const browserRevisionSchema = Schema.NonNegativeInt
+
+export const browserUrlSchema = Schema.String.pipe(
+  Schema.minLength(1),
+  Schema.maxLength(4_096),
+  Schema.filter(
+    (value) => {
+      if (!URL.canParse(value)) {
+        return false
+      }
+
+      const url = new URL(value)
+      return (
+        (url.protocol === 'http:' || url.protocol === 'https:') &&
+        url.username === '' &&
+        url.password === ''
+      )
+    },
+    {
+      message: () =>
+        'Expected an absolute HTTP or HTTPS URL without credentials'
     }
+  )
+)
 
-    const url = new URL(value)
-    return (
-      (url.protocol === 'http:' || url.protocol === 'https:') &&
-      url.username === '' &&
-      url.password === ''
-    )
-  }, 'Expected an absolute HTTP or HTTPS URL without credentials')
-
-export const browserClientMessageSchema = z.discriminatedUnion('type', [
-  z.strictObject({ type: z.literal('navigate'), url: browserUrlSchema }),
-  z.strictObject({ type: z.literal('back') }),
-  z.strictObject({ type: z.literal('forward') }),
-  z.strictObject({ type: z.literal('reload') }),
-  z.strictObject({ type: z.literal('stop') }),
-  z.strictObject({
-    type: z.literal('resize'),
-    width: z.number().int().min(320).max(3_840),
-    height: z.number().int().min(200).max(2_160)
+export const browserClientMessageSchema = Schema.Union(
+  Schema.Struct({ type: Schema.Literal('navigate'), url: browserUrlSchema }),
+  Schema.Struct({ type: Schema.Literal('back') }),
+  Schema.Struct({ type: Schema.Literal('forward') }),
+  Schema.Struct({ type: Schema.Literal('reload') }),
+  Schema.Struct({ type: Schema.Literal('stop') }),
+  Schema.Struct({
+    type: Schema.Literal('resize'),
+    width: Schema.Int.pipe(Schema.between(320, 3_840)),
+    height: Schema.Int.pipe(Schema.between(200, 2_160))
   }),
-  z.strictObject({
-    type: z.literal('pointer'),
-    phase: z.enum(['move', 'down', 'up']),
-    x: z.number().finite().min(0).max(3_840),
-    y: z.number().finite().min(0).max(2_160),
-    button: z.enum(['left', 'right', 'middle']).optional()
+  Schema.Struct({
+    type: Schema.Literal('pointer'),
+    phase: Schema.Literal('move', 'down', 'up'),
+    x: Schema.Finite.pipe(Schema.between(0, 3_840)),
+    y: Schema.Finite.pipe(Schema.between(0, 2_160)),
+    button: Schema.optional(Schema.Literal('left', 'right', 'middle'))
   }),
-  z.strictObject({
-    type: z.literal('wheel'),
-    deltaX: z.number().finite().min(-10_000).max(10_000),
-    deltaY: z.number().finite().min(-10_000).max(10_000)
+  Schema.Struct({
+    type: Schema.Literal('wheel'),
+    deltaX: Schema.Finite.pipe(Schema.between(-10_000, 10_000)),
+    deltaY: Schema.Finite.pipe(Schema.between(-10_000, 10_000))
   }),
-  z.strictObject({
-    type: z.literal('key'),
-    phase: z.enum(['down', 'up']),
-    key: z.string().min(1).max(128)
+  Schema.Struct({
+    type: Schema.Literal('key'),
+    phase: Schema.Literal('down', 'up'),
+    key: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(128))
   }),
-  z.strictObject({
-    type: z.literal('insertText'),
-    text: z.string().max(64 * 1024)
+  Schema.Struct({
+    type: Schema.Literal('insertText'),
+    text: Schema.String.pipe(Schema.maxLength(64 * 1024))
   }),
-  z.strictObject({
-    type: z.literal('find'),
-    text: z.string().min(1).max(4_096),
-    forward: z.boolean(),
-    findNext: z.boolean()
+  Schema.Struct({
+    type: Schema.Literal('find'),
+    text: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(4_096)),
+    forward: Schema.Boolean,
+    findNext: Schema.Boolean
   }),
-  z.strictObject({ type: z.literal('stopFind') }),
-  z.strictObject({ type: z.literal('takeControl') }),
-  z.strictObject({ type: z.literal('setVisible'), visible: z.boolean() }),
-  z.strictObject({
-    type: z.literal('frameAck'),
-    sequence: z.number().int().positive()
+  Schema.Struct({ type: Schema.Literal('stopFind') }),
+  Schema.Struct({ type: Schema.Literal('takeControl') }),
+  Schema.Struct({
+    type: Schema.Literal('setVisible'),
+    visible: Schema.Boolean
+  }),
+  Schema.Struct({
+    type: Schema.Literal('frameAck'),
+    sequence: Schema.Int.pipe(Schema.positive())
   })
-])
+)
+export type BrowserClientMessage = Schema.Schema.Type<
+  typeof browserClientMessageSchema
+>
 
-export type BrowserClientMessage = z.infer<typeof browserClientMessageSchema>
-
-export const browserRuntimeStateSchema = z.strictObject({
-  url: z.union([z.literal('about:blank'), browserUrlSchema]),
-  title: z.string().max(256),
-  loading: z.boolean(),
-  canGoBack: z.boolean(),
-  canGoForward: z.boolean(),
-  viewport: z.strictObject({
-    width: z.number().finite().min(0).max(3_840),
-    height: z.number().finite().min(0).max(2_160)
+export const browserRuntimeStateSchema = Schema.Struct({
+  url: Schema.Union(Schema.Literal('about:blank'), browserUrlSchema),
+  title: Schema.String.pipe(Schema.maxLength(256)),
+  loading: Schema.Boolean,
+  canGoBack: Schema.Boolean,
+  canGoForward: Schema.Boolean,
+  viewport: Schema.Struct({
+    width: Schema.Finite.pipe(Schema.between(0, 3_840)),
+    height: Schema.Finite.pipe(Schema.between(0, 2_160))
   })
 })
+export type BrowserRuntimeState = Schema.Schema.Type<
+  typeof browserRuntimeStateSchema
+>
 
-export type BrowserRuntimeState = z.infer<typeof browserRuntimeStateSchema>
-
-export const browserSessionStateSchema = browserRuntimeStateSchema.extend({
-  controlled: z.boolean(),
-  hasController: z.boolean(),
-  controller: z.enum(['you', 'agent', 'other', 'none'])
+export const browserSessionStateSchema = Schema.Struct({
+  ...browserRuntimeStateSchema.fields,
+  controlled: Schema.Boolean,
+  hasController: Schema.Boolean,
+  controller: Schema.Literal('you', 'agent', 'other', 'none')
 })
+export type BrowserSessionState = Schema.Schema.Type<
+  typeof browserSessionStateSchema
+>
 
-export type BrowserSessionState = z.infer<typeof browserSessionStateSchema>
-
-export const browserServerMessageSchema = z.discriminatedUnion('type', [
-  z.strictObject({
-    type: z.literal('ready'),
+export const browserServerMessageSchema = Schema.Union(
+  Schema.Struct({
+    type: Schema.Literal('ready'),
     state: browserSessionStateSchema
   }),
-  z.strictObject({
-    type: z.literal('state'),
+  Schema.Struct({
+    type: Schema.Literal('state'),
     state: browserSessionStateSchema
   }),
-  z.strictObject({
-    type: z.literal('controlChanged'),
+  Schema.Struct({
+    type: Schema.Literal('controlChanged'),
     state: browserSessionStateSchema
   }),
-  z.strictObject({ type: z.literal('navigationError'), message: z.string() }),
-  z.strictObject({
-    type: z.literal('browserUnavailable'),
-    message: z.string(),
-    installCommand: z.string().nullable()
+  Schema.Struct({
+    type: Schema.Literal('navigationError'),
+    message: Schema.String
   }),
-  z.strictObject({ type: z.literal('browserCrashed'), message: z.string() }),
-  z.strictObject({ type: z.literal('closed'), reason: z.string() })
-])
+  Schema.Struct({
+    type: Schema.Literal('browserUnavailable'),
+    message: Schema.String,
+    installCommand: Schema.NullOr(Schema.String)
+  }),
+  Schema.Struct({
+    type: Schema.Literal('browserCrashed'),
+    message: Schema.String
+  }),
+  Schema.Struct({ type: Schema.Literal('closed'), reason: Schema.String })
+)
+export type BrowserServerMessage = Schema.Schema.Type<
+  typeof browserServerMessageSchema
+>
 
-export type BrowserServerMessage = z.infer<typeof browserServerMessageSchema>
-
-export const browserFrameSchema = z.strictObject({
-  sequence: z.number().int().positive(),
-  mimeType: z.literal('image/jpeg'),
-  timestamp: z.number(),
-  width: z.number().int().positive(),
-  height: z.number().int().positive(),
-  data: z
-    .union([z.instanceof(Uint8Array), z.instanceof(ArrayBuffer)])
-    .transform((value) =>
-      value instanceof Uint8Array ? value : new Uint8Array(value)
-    )
-    .refine((value) => value.byteLength <= BROWSER_MAX_FRAME_BYTES)
+export const browserFrameMetadataSchema = Schema.Struct({
+  sequence: Schema.Int.pipe(Schema.positive()),
+  mimeType: Schema.Literal('image/jpeg'),
+  timestamp: Schema.Number,
+  width: Schema.Int.pipe(Schema.positive()),
+  height: Schema.Int.pipe(Schema.positive()),
+  byteLength: Schema.Int.pipe(Schema.between(0, BROWSER_MAX_FRAME_BYTES))
 })
+export type BrowserFrameMetadata = Schema.Schema.Type<
+  typeof browserFrameMetadataSchema
+>
 
-export type BrowserFrame = z.infer<typeof browserFrameSchema>
+const browserFrameDataSchema = Schema.Union(
+  Schema.Uint8ArrayFromSelf,
+  Schema.declare(
+    (value): value is ArrayBuffer => value instanceof ArrayBuffer,
+    { identifier: 'ArrayBufferFromSelf' }
+  )
+).pipe(
+  Schema.transform(Schema.Uint8ArrayFromSelf, {
+    strict: true,
+    decode: (value) =>
+      value instanceof Uint8Array ? value : new Uint8Array(value),
+    encode: (value) => value
+  }),
+  Schema.filter((value) => value.byteLength <= BROWSER_MAX_FRAME_BYTES, {
+    message: () =>
+      `Browser frames cannot exceed ${BROWSER_MAX_FRAME_BYTES} bytes`
+  })
+)
 
-export const browserTicketRequestSchema = z.strictObject({
-  clientId: z.string().min(1).max(128),
-  visible: z.boolean()
+export const browserFrameSchema = Schema.Struct({
+  sequence: Schema.Int.pipe(Schema.positive()),
+  mimeType: Schema.Literal('image/jpeg'),
+  timestamp: Schema.Number,
+  width: Schema.Int.pipe(Schema.positive()),
+  height: Schema.Int.pipe(Schema.positive()),
+  data: browserFrameDataSchema
 })
+export type BrowserFrame = Schema.Schema.Type<typeof browserFrameSchema>
 
-export const browserOwnerTicketRequestSchema = z.strictObject({
-  clientId: z.string().min(1).max(128)
+export const browserTicketRequestSchema = Schema.Struct({
+  clientId: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(128)),
+  visible: Schema.Boolean
 })
-
-const opaqueTokenSchema = z.string().min(32).max(256)
-const browserPanelIdSchema = z.string().min(1).max(128)
-const browserRequestIdSchema = z.string().min(1).max(128)
-const browserGenerationSchema = z.number().int().positive()
-const browserRevisionSchema = z.number().int().nonnegative()
-
-export const browserOwnerEndpointSchema = z
-  .string()
-  .url()
-  .max(1_024)
-  .refine((value) => {
-    const url = new URL(value)
-    return (
-      url.protocol === 'http:' &&
-      url.hostname === '127.0.0.1' &&
-      url.username === '' &&
-      url.password === '' &&
-      url.search === '' &&
-      url.hash === '' &&
-      url.pathname !== '/'
-    )
-  }, 'Expected a private loopback Browser endpoint')
-
-const browserAgentArgumentSchema = z.string().max(4_096)
-
-export const browserAgentCommandSchema = z.discriminatedUnion('command', [
-  z.strictObject({ command: z.literal('snapshot'), args: z.tuple([]) }),
-  z.strictObject({
-    command: z.literal('click'),
-    args: z.tuple([browserAgentArgumentSchema])
-  }),
-  z.strictObject({
-    command: z.literal('fill'),
-    args: z.tuple([browserAgentArgumentSchema, browserAgentArgumentSchema])
-  }),
-  z.strictObject({
-    command: z.literal('press'),
-    args: z.tuple([browserAgentArgumentSchema])
-  }),
-  z.strictObject({
-    command: z.literal('console'),
-    args: z.union([z.tuple([]), z.tuple([browserAgentArgumentSchema.max(32)])])
-  }),
-  z.strictObject({ command: z.literal('requests'), args: z.tuple([]) }),
-  z.strictObject({ command: z.literal('screenshot'), args: z.tuple([]) }),
-  z.strictObject({
-    command: z.literal('goto'),
-    args: z.tuple([browserUrlSchema])
-  }),
-  z.strictObject({ command: z.literal('go-back'), args: z.tuple([]) }),
-  z.strictObject({ command: z.literal('go-forward'), args: z.tuple([]) }),
-  z.strictObject({ command: z.literal('reload'), args: z.tuple([]) })
-])
-
-export type BrowserAgentCommand = z.infer<typeof browserAgentCommandSchema>
-
-export const browserAuthSchema = z.strictObject({
+export const browserOwnerTicketRequestSchema = Schema.Struct({
+  clientId: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(128))
+})
+export const browserTicketResponseSchema = Schema.Struct({
+  ticket: opaqueTokenSchema
+})
+export const browserOwnerTicketResponseSchema = Schema.Struct({
   ticket: opaqueTokenSchema,
-  protocolVersion: z.literal(BROWSER_PROTOCOL_VERSION)
+  challenge: opaqueTokenSchema
 })
-
-export type BrowserAuth = z.infer<typeof browserAuthSchema>
-
-export const browserOwnerAuthSchema = z.strictObject({
-  ticket: opaqueTokenSchema,
-  protocolVersion: z.literal(BROWSER_PROTOCOL_VERSION),
-  endpoint: browserOwnerEndpointSchema,
+export const browserOwnerIdentitySchema = Schema.Struct({
+  panelId: browserPanelIdSchema,
   challenge: opaqueTokenSchema
 })
 
-export type BrowserOwnerAuth = z.infer<typeof browserOwnerAuthSchema>
+export const browserOwnerEndpointSchema = Schema.String.pipe(
+  Schema.maxLength(1_024),
+  Schema.filter(
+    (value) => {
+      if (!URL.canParse(value)) {
+        return false
+      }
 
-export const browserOwnerClientMessageSchema = z.discriminatedUnion('type', [
-  z.strictObject({
-    type: z.literal('ready'),
+      const url = new URL(value)
+      return (
+        url.protocol === 'http:' &&
+        url.hostname === '127.0.0.1' &&
+        url.username === '' &&
+        url.password === '' &&
+        url.search === '' &&
+        url.hash === '' &&
+        url.pathname !== '/'
+      )
+    },
+    { message: () => 'Expected a private loopback Browser endpoint' }
+  )
+)
+
+const browserAgentArgumentSchema = Schema.String.pipe(Schema.maxLength(4_096))
+export const browserAgentCommandSchema = Schema.Union(
+  Schema.Struct({ command: Schema.Literal('snapshot'), args: Schema.Tuple() }),
+  Schema.Struct({
+    command: Schema.Literal('click'),
+    args: Schema.Tuple(browserAgentArgumentSchema)
+  }),
+  Schema.Struct({
+    command: Schema.Literal('fill'),
+    args: Schema.Tuple(browserAgentArgumentSchema, browserAgentArgumentSchema)
+  }),
+  Schema.Struct({
+    command: Schema.Literal('press'),
+    args: Schema.Tuple(browserAgentArgumentSchema)
+  }),
+  Schema.Struct({
+    command: Schema.Literal('console'),
+    args: Schema.Union(
+      Schema.Tuple(),
+      Schema.Tuple(browserAgentArgumentSchema.pipe(Schema.maxLength(32)))
+    )
+  }),
+  Schema.Struct({ command: Schema.Literal('requests'), args: Schema.Tuple() }),
+  Schema.Struct({
+    command: Schema.Literal('screenshot'),
+    args: Schema.Tuple()
+  }),
+  Schema.Struct({
+    command: Schema.Literal('goto'),
+    args: Schema.Tuple(browserUrlSchema)
+  }),
+  Schema.Struct({ command: Schema.Literal('go-back'), args: Schema.Tuple() }),
+  Schema.Struct({
+    command: Schema.Literal('go-forward'),
+    args: Schema.Tuple()
+  }),
+  Schema.Struct({ command: Schema.Literal('reload'), args: Schema.Tuple() })
+)
+export type BrowserAgentCommand = Schema.Schema.Type<
+  typeof browserAgentCommandSchema
+>
+
+export const browserAuthSchema = Schema.Struct({
+  ticket: opaqueTokenSchema,
+  protocolVersion: Schema.Literal(BROWSER_PROTOCOL_VERSION)
+})
+export type BrowserAuth = Schema.Schema.Type<typeof browserAuthSchema>
+
+export const browserOwnerAuthSchema = Schema.Struct({
+  ticket: opaqueTokenSchema,
+  protocolVersion: Schema.Literal(BROWSER_PROTOCOL_VERSION),
+  endpoint: browserOwnerEndpointSchema,
+  challenge: opaqueTokenSchema
+})
+export type BrowserOwnerAuth = Schema.Schema.Type<typeof browserOwnerAuthSchema>
+
+export const browserOwnerClientMessageSchema = Schema.Union(
+  Schema.Struct({
+    type: Schema.Literal('ready'),
     generation: browserGenerationSchema,
     revision: browserRevisionSchema,
     state: browserRuntimeStateSchema
   }),
-  z.strictObject({
-    type: z.literal('state'),
+  Schema.Struct({
+    type: Schema.Literal('state'),
     generation: browserGenerationSchema,
     revision: browserRevisionSchema,
     state: browserRuntimeStateSchema
   }),
-  z.strictObject({
-    type: z.literal('popup'),
+  Schema.Struct({
+    type: Schema.Literal('popup'),
     generation: browserGenerationSchema,
     url: browserUrlSchema
   }),
-  z.strictObject({
-    type: z.literal('crashed'),
+  Schema.Struct({
+    type: Schema.Literal('crashed'),
     generation: browserGenerationSchema,
-    message: z.string().min(1).max(1_024)
+    message: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(1_024))
   }),
-  z.strictObject({
-    type: z.literal('runtimeControlResult'),
-    generation: browserGenerationSchema,
-    requestId: browserRequestIdSchema,
-    accepted: z.boolean()
-  }),
-  z.strictObject({
-    type: z.literal('takeControl'),
-    generation: browserGenerationSchema
-  }),
-  z.strictObject({
-    type: z.literal('released'),
-    generation: browserGenerationSchema
-  }),
-  z.strictObject({
-    type: z.literal('closeResult'),
+  Schema.Struct({
+    type: Schema.Literal('runtimeControlResult'),
     generation: browserGenerationSchema,
     requestId: browserRequestIdSchema,
-    canClose: z.boolean()
+    accepted: Schema.Boolean
+  }),
+  Schema.Struct({
+    type: Schema.Literal('takeControl'),
+    generation: browserGenerationSchema
+  }),
+  Schema.Struct({
+    type: Schema.Literal('released'),
+    generation: browserGenerationSchema
+  }),
+  Schema.Struct({
+    type: Schema.Literal('closeResult'),
+    generation: browserGenerationSchema,
+    requestId: browserRequestIdSchema,
+    canClose: Schema.Boolean
   })
-])
-
-export type BrowserOwnerClientMessage = z.infer<
+)
+export type BrowserOwnerClientMessage = Schema.Schema.Type<
   typeof browserOwnerClientMessageSchema
 >
 
-export const browserOwnerServerMessageSchema = z.discriminatedUnion('type', [
-  z.strictObject({
-    type: z.literal('claimGranted'),
+export const browserOwnerServerMessageSchema = Schema.Union(
+  Schema.Struct({
+    type: Schema.Literal('claimGranted'),
     panelId: browserPanelIdSchema,
     generation: browserGenerationSchema,
-    resumed: z.boolean(),
+    resumed: Schema.Boolean,
     state: browserRuntimeStateSchema
   }),
-  z.strictObject({
-    type: z.literal('claimRejected'),
-    message: z.string().min(1).max(1_024)
+  Schema.Struct({
+    type: Schema.Literal('claimRejected'),
+    message: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(1_024))
   }),
-  z.strictObject({
-    type: z.literal('runtimeControl'),
+  Schema.Struct({
+    type: Schema.Literal('runtimeControl'),
     generation: browserGenerationSchema,
     requestId: browserRequestIdSchema,
-    controller: z.enum(['agent', 'other', 'none']),
-    retainPaint: z.boolean()
+    controller: Schema.Literal('agent', 'other', 'none'),
+    retainPaint: Schema.Boolean
   }),
-  z.strictObject({
-    type: z.literal('closeRequest'),
+  Schema.Struct({
+    type: Schema.Literal('closeRequest'),
     generation: browserGenerationSchema,
     requestId: browserRequestIdSchema,
-    force: z.boolean()
+    force: Schema.Boolean
   }),
-  z.strictObject({ type: z.literal('closed'), reason: z.string().max(1_024) })
-])
-
-export type BrowserOwnerServerMessage = z.infer<
+  Schema.Struct({
+    type: Schema.Literal('closed'),
+    reason: Schema.String.pipe(Schema.maxLength(1_024))
+  })
+)
+export type BrowserOwnerServerMessage = Schema.Schema.Type<
   typeof browserOwnerServerMessageSchema
 >
-
-export interface BrowserAuthInput {
-  ticket?: string
-  protocolVersion?: number
-  panelId?: string
-}
-
-export interface BrowserOwnerAuthInput {
-  ticket?: string
-  protocolVersion?: number
-  endpoint?: string
-  challenge?: string
-}
 
 export interface BrowserClientToServerEvents {
   command: (message: BrowserClientMessage) => void
 }
-
 export interface BrowserServerToClientEvents {
   message: (message: BrowserServerMessage) => void
   frame: (frame: BrowserFrame) => void
 }
-
 export interface BrowserOwnerClientToServerEvents {
   ownerMessage: (message: BrowserOwnerClientMessage) => void
 }
-
 export interface BrowserOwnerServerToClientEvents {
   ownerMessage: (message: BrowserOwnerServerMessage) => void
 }
 
-export function parseBrowserAuth(value: BrowserAuthInput): BrowserAuth | null {
-  const result = browserAuthSchema.safeParse(value)
-  return result.success ? result.data : null
+function decodeOrNull<S extends Schema.Schema<any, any, never>>(
+  schema: S,
+  value: unknown
+): Schema.Schema.Type<S> | null {
+  const result = Schema.decodeUnknownEither(schema, {
+    onExcessProperty: 'error'
+  })(value)
+  return Either.isRight(result) ? result.right : null
 }
 
-export function parseBrowserOwnerAuth(
-  value: BrowserOwnerAuthInput
-): BrowserOwnerAuth | null {
-  const result = browserOwnerAuthSchema.safeParse(value)
-  return result.success ? result.data : null
+export function parseBrowserAuth(value: unknown): BrowserAuth | null {
+  return decodeOrNull(browserAuthSchema, value)
 }
-
+export function parseBrowserOwnerAuth(value: unknown): BrowserOwnerAuth | null {
+  return decodeOrNull(browserOwnerAuthSchema, value)
+}
 export function parseBrowserClientMessage(
-  value: BrowserClientMessage
+  value: unknown
 ): BrowserClientMessage | null {
-  const result = browserClientMessageSchema.safeParse(value)
-  return result.success ? result.data : null
+  return decodeOrNull(browserClientMessageSchema, value)
+}
+export function parseBrowserOwnerClientMessage(
+  value: unknown
+): BrowserOwnerClientMessage | null {
+  return decodeOrNull(browserOwnerClientMessageSchema, value)
+}
+export function parseBrowserServerMessage(
+  value: unknown
+): BrowserServerMessage | null {
+  return decodeOrNull(browserServerMessageSchema, value)
+}
+export function parseBrowserOwnerServerMessage(
+  value: unknown
+): BrowserOwnerServerMessage | null {
+  return decodeOrNull(browserOwnerServerMessageSchema, value)
+}
+export function parseBrowserFrameMetadata(
+  value: unknown
+): BrowserFrameMetadata | null {
+  return decodeOrNull(browserFrameMetadataSchema, value)
 }
 
-export function parseBrowserOwnerClientMessage(
-  value: BrowserOwnerClientMessage
-): BrowserOwnerClientMessage | null {
-  const result = browserOwnerClientMessageSchema.safeParse(value)
-  return result.success ? result.data : null
+export function encodeBrowserFrame(frame: BrowserFrame): Uint8Array {
+  const metadata = new TextEncoder().encode(
+    JSON.stringify({
+      sequence: frame.sequence,
+      mimeType: frame.mimeType,
+      timestamp: frame.timestamp,
+      width: frame.width,
+      height: frame.height,
+      byteLength: frame.data.byteLength
+    })
+  )
+  const encoded = new Uint8Array(
+    4 + metadata.byteLength + frame.data.byteLength
+  )
+  new DataView(encoded.buffer).setUint32(0, metadata.byteLength)
+  encoded.set(metadata, 4)
+  encoded.set(frame.data, 4 + metadata.byteLength)
+  return encoded
+}
+
+export function decodeBrowserFrame(value: Uint8Array): BrowserFrame | null {
+  if (value.byteLength < 4) {
+    return null
+  }
+
+  const metadataLength = new DataView(
+    value.buffer,
+    value.byteOffset,
+    value.byteLength
+  ).getUint32(0)
+  if (
+    metadataLength > value.byteLength - 4 ||
+    value.byteLength - 4 - metadataLength > BROWSER_MAX_FRAME_BYTES
+  ) {
+    return null
+  }
+
+  let decoded: unknown
+  try {
+    decoded = JSON.parse(
+      new TextDecoder().decode(value.subarray(4, 4 + metadataLength))
+    )
+  } catch {
+    return null
+  }
+  const metadata = parseBrowserFrameMetadata(decoded)
+  const data = value.subarray(4 + metadataLength)
+  if (!metadata || metadata.byteLength !== data.byteLength) {
+    return null
+  }
+
+  return { ...metadata, data }
 }

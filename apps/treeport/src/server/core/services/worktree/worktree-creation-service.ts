@@ -1,7 +1,7 @@
 import crypto from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import { treeContextValuesSchema } from '@treeport/shared'
+import { decodeUnknownOrNull, treeContextValuesSchema } from '@treeport/shared'
 import type {
   CreateOperationRequest,
   OperationRecord,
@@ -454,9 +454,17 @@ export class WorktreeCreationService {
         const locks = yield* MutationLocks
         const projectStore = yield* ProjectStore
         const runner = yield* CommandPort
-        const contextValues = yield* Effect.sync(() =>
-          treeContextValuesSchema.parse(treeContext ?? {})
-        )
+        const contextValues = yield* Effect.sync(() => {
+          const parsed = decodeUnknownOrNull(
+            treeContextValuesSchema,
+            treeContext ?? {}
+          )
+          if (!parsed) {
+            throw new Error('Tree context is invalid')
+          }
+
+          return parsed
+        })
         yield* projectStore.requireOpenProject(projectId)
 
         const { project, worktree } = yield* Effect.acquireUseRelease(

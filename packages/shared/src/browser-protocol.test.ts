@@ -1,15 +1,26 @@
 import { describe, expect, it } from 'vitest'
 import {
   BROWSER_MAX_FRAME_BYTES,
-  browserAgentCommandSchema,
-  browserFrameSchema,
-  browserOwnerAuthSchema,
-  browserOwnerClientMessageSchema,
-  browserOwnerServerMessageSchema,
+  browserAgentCommandSchema as browserAgentCommandEffectSchema,
+  browserFrameSchema as browserFrameEffectSchema,
+  browserOwnerAuthSchema as browserOwnerAuthEffectSchema,
+  browserOwnerClientMessageSchema as browserOwnerClientMessageEffectSchema,
+  browserOwnerServerMessageSchema as browserOwnerServerMessageEffectSchema,
   BROWSER_PROTOCOL_VERSION,
   parseBrowserAuth,
   parseBrowserClientMessage
 } from './browser-protocol.js'
+import { testSchema } from './schema.test-support.js'
+
+const browserAgentCommandSchema = testSchema(browserAgentCommandEffectSchema)
+const browserFrameSchema = testSchema(browserFrameEffectSchema)
+const browserOwnerAuthSchema = testSchema(browserOwnerAuthEffectSchema)
+const browserOwnerClientMessageSchema = testSchema(
+  browserOwnerClientMessageEffectSchema
+)
+const browserOwnerServerMessageSchema = testSchema(
+  browserOwnerServerMessageEffectSchema
+)
 
 describe('hosted browser protocol', () => {
   it('accepts bounded navigation and input commands and rejects privileged URLs', () => {

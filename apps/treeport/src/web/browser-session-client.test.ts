@@ -6,13 +6,7 @@ import {
 } from './browser-session-client'
 
 type SocketEvent = 'message' | 'frame' | 'disconnect' | 'connect_error'
-type TransportFrame = Omit<BrowserFrame, 'data'> & { data: ArrayBuffer }
-type SocketEventValue =
-  | BrowserFrame
-  | TransportFrame
-  | BrowserServerMessage
-  | Error
-  | undefined
+type SocketEventValue = BrowserFrame | BrowserServerMessage | Error | undefined
 
 class FakeSocket implements BrowserPanelSocket {
   connected = true
@@ -54,10 +48,6 @@ class FakeSocket implements BrowserPanelSocket {
   emitServer(event: SocketEvent, value?: SocketEventValue): void {
     this.handlers.get(event)?.forEach((listener) => listener(value))
   }
-
-  emitTransportFrame(value: TransportFrame): void {
-    this.handlers.get('frame')?.forEach((listener) => listener(value))
-  }
 }
 
 beforeEach(() => {
@@ -65,7 +55,7 @@ beforeEach(() => {
     'fetch',
     vi.fn(
       async () =>
-        new Response(JSON.stringify({ ticket: 'ticket-value' }), {
+        new Response(JSON.stringify({ ticket: 'b'.repeat(43) }), {
           status: 200
         })
     )
@@ -118,13 +108,13 @@ it('connects the Browser workspace directly and preserves command and frame cont
     }
   }
   socket.emitServer('message', ready)
-  socket.emitTransportFrame({
+  socket.emitServer('frame', {
     sequence: 7,
     mimeType: 'image/jpeg',
     timestamp: 123,
     width: 1_280,
     height: 800,
-    data: Uint8Array.from([1, 2, 3]).buffer
+    data: Uint8Array.from([1, 2, 3])
   })
 
   expect(messages).toEqual([ready])

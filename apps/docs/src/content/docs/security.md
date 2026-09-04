@@ -11,7 +11,7 @@ Direct access is limited to loopback. It uses the local operating-system user as
 
 Supported remote access uses Tailscale Serve identity with tailnet ACLs and grants.
 
-Treeport requires the Tailscale user identity on remote HTTP and Socket.IO requests. It does not create a separate login or session.
+Treeport requires the Tailscale user identity on remote HTTP and WebSocket requests. It does not create a separate login or session.
 
 ## Use the safe default
 

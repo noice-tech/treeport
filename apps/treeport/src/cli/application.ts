@@ -2,36 +2,55 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { Command, CommanderError } from 'commander'
-import { io, type Socket } from 'socket.io-client'
+import { RpcClient } from '@effect/rpc'
 import {
-  parseEventsSnapshot,
-  parseProductEvent,
-  SOCKET_IO_PATH,
+  apiErrorBodySchema,
+  browserAgentResponseSchema,
+  browserInstallResponseSchema,
+  browserInstallStatusSchema,
+  decodeUnknownOrNull,
+  EVENT_PROTOCOL_VERSION,
+  TreeportRpcs,
+  treeportRpcClientLayer,
+  okResponseSchema,
+  openBrowserPanelResponseSchema,
+  openWebPanelResponseSchema,
+  operationResponseSchema,
+  packageListingResponseSchema,
+  packageOperationResponseSchema,
+  packageOperationsResponseSchema,
+  packageProjectResponseSchema,
+  packageReloadResponseSchema,
+  projectResponseSchema,
+  projectsResponseSchema,
+  removePreviewResponseSchema,
+  terminalCaptureResponseSchema,
   TERMINAL_CAPTURE_DEFAULT_LINES,
   TERMINAL_CAPTURE_MAX_LINES,
+  terminalObservationResponseSchema,
+  terminalResponseSchema,
+  terminatedTerminalsResponseSchema,
+  treeContextResponseSchema,
   WEB_PANEL_INPUT_MAX_BYTES,
+  webPanelDefinitionsResponseSchema,
   webPanelInputSchema,
   type ApiErrorBody,
   type BrowserPanel,
   type CreateOperationRequest,
-  type EventsClientToServerEvents,
-  type EventsServerToClientEvents,
-  type PackageListing,
-  type PackageOperationResult,
-  type PackageResourceDiagnostic,
-  type OpenBrowserPanelResult,
-  type OpenWebPanelResult,
-  type OperationRecord,
+  type EventsSnapshot,
+  type NetworkProductEvent,
   type ProjectRecord,
-  type RemovePreview,
   type TreeportContext,
-  type TerminalCapture,
   type TerminalRecord,
   type TerminalRuntimeMetadata,
   type WebPanelDefinition,
   type WebPanelInput,
   type WorktreeRecord
 } from '@treeport/shared'
+import * as Effect from 'effect/Effect'
+import * as Fiber from 'effect/Fiber'
+import type * as Schema from 'effect/Schema'
+import * as Stream from 'effect/Stream'
 import { parseDurationMs } from '../duration.js'
 import { extractJsonOutput } from './args.js'
 import { OpenWorkspaceError, openWorkspace } from './open.js'
@@ -220,10 +239,17 @@ async function ensureServiceDaemon(): Promise<{
   return { apiUrl: state.apiUrl, pid: state.pid }
 }
 
-async function request<T>(
+type MutableSchemaType<Value> = Value extends readonly (infer Item)[]
+  ? MutableSchemaType<Item>[]
+  : Value extends object
+    ? { -readonly [Key in keyof Value]: MutableSchemaType<Value[Key]> }
+    : Value
+
+async function request<S extends Schema.Schema<any, any, never>>(
   pathname: string,
+  schema: S,
   options: RequestInit = {}
-): Promise<T> {
+): Promise<MutableSchemaType<Schema.Schema.Type<S>>> {
   const controller = new AbortController()
   const externalSignal = options.signal
   const abort = () => controller.abort()
@@ -248,21 +274,30 @@ async function request<T>(
       signal: controller.signal,
       headers
     })
-    // SAFETY: The validated CLI or Node contract establishes this asserted value.
-    const body = (await response.json().catch(() => ({}))) as T | ApiErrorBody
+    const body: unknown = await response.json().catch(() => ({}))
     if (!response.ok) {
-      // SAFETY: The validated CLI or Node contract establishes this asserted value.
-      const error = (body as ApiErrorBody).error
+      const failure = decodeUnknownOrNull(apiErrorBodySchema, body)
       throw new CliError(
-        error?.message || `HTTP ${response.status}`,
+        failure?.error.message || `HTTP ${response.status}`,
         5,
-        error?.code || 'API_ERROR',
-        error?.details
+        failure?.error.code || 'API_ERROR',
+        failure?.error.details
       )
     }
 
-    // SAFETY: The validated CLI or Node contract establishes this asserted value.
-    return body as T
+    const decoded = decodeUnknownOrNull(schema, body)
+    if (decoded === null) {
+      throw new CliError(
+        `Treeport daemon returned an invalid response for ${pathname}`,
+        3,
+        'DAEMON_PROTOCOL_ERROR',
+        { pathname }
+      )
+    }
+
+    // SAFETY: Effect Schema decoded the complete value above. This removes
+    // only Schema's compile-time readonly projection for existing CLI models.
+    return decoded as MutableSchemaType<Schema.Schema.Type<S>>
   } catch (error) {
     if (error instanceof CliError) {
       throw error
@@ -289,8 +324,9 @@ async function createWorktree(
   setupError: string | null
 }> {
   let operation = (
-    await request<{ operation: OperationRecord }>(
+    await request(
       `/api/projects/${encodeURIComponent(projectId)}/worktree-operations`,
+      operationResponseSchema,
       { method: 'POST', body: JSON.stringify(input) }
     )
   ).operation
@@ -298,8 +334,9 @@ async function createWorktree(
   while (operation.status === 'pending' || operation.status === 'running') {
     await new Promise((resolve) => setTimeout(resolve, 100))
     operation = (
-      await request<{ operation: OperationRecord }>(
-        `/api/operations/${encodeURIComponent(operation.id)}`
+      await request(
+        `/api/operations/${encodeURIComponent(operation.id)}`,
+        operationResponseSchema
       )
     ).operation
   }
@@ -330,8 +367,9 @@ async function createWorktree(
   }
 
   const project = (
-    await request<{ project: ProjectRecord }>(
-      `/api/projects/${encodeURIComponent(projectId)}`
+    await request(
+      `/api/projects/${encodeURIComponent(projectId)}`,
+      projectResponseSchema
     )
   ).project
   const worktree = project.worktrees.find((item) => item.id === worktreeId)
@@ -374,8 +412,7 @@ async function canonical(value: string): Promise<string> {
 }
 
 async function projects(): Promise<ProjectRecord[]> {
-  return (await request<{ projects: ProjectRecord[] }>('/api/projects'))
-    .projects
+  return (await request('/api/projects', projectsResponseSchema)).projects
 }
 
 function pathContains(candidate: string, parent: string): boolean {
@@ -450,8 +487,9 @@ async function localPackageProjectId(): Promise<string> {
     path: await canonical(workingDirectory)
   })
   return (
-    await request<{ project: Pick<ProjectRecord, 'id'> }>(
-      `/api/packages/project?${search.toString()}`
+    await request(
+      `/api/packages/project?${search.toString()}`,
+      packageProjectResponseSchema
     )
   ).project.id
 }
@@ -502,12 +540,12 @@ function parseWebPanelInput(value: string | undefined): WebPanelInput | null {
     )
   }
 
-  const validated = webPanelInputSchema.safeParse(parsed)
-  if (!validated.success) {
+  const validated = decodeUnknownOrNull(webPanelInputSchema, parsed)
+  if (!validated) {
     throw new CliError('--input must contain a JSON object', 2)
   }
 
-  return validated.data
+  return validated
 }
 
 async function webPanelDefinition(
@@ -515,8 +553,9 @@ async function webPanelDefinition(
   identifier: string
 ): Promise<WebPanelDefinition> {
   const definitions = (
-    await request<{ definitions: WebPanelDefinition[] }>(
-      `/api/worktrees/${encodeURIComponent(worktreeId)}/web-panel-definitions`
+    await request(
+      `/api/worktrees/${encodeURIComponent(worktreeId)}/web-panel-definitions`,
+      webPanelDefinitionsResponseSchema
     )
   ).definitions
   const exact = definitions.find((definition) => definition.id === identifier)
@@ -615,8 +654,9 @@ async function runBrowserAgentCommand(
   panelId?: string
 ): Promise<{ panelId: string; output: string }> {
   const { panel } = await resolveBrowserPanel(panelId)
-  const result = await request<{ output: string }>(
+  const result = await request(
     `/api/panels/${encodeURIComponent(panel.id)}/browser-agent`,
+    browserAgentResponseSchema,
     {
       method: 'POST',
       body: JSON.stringify({ command, args })
@@ -698,8 +738,9 @@ async function inspectTerminal(
   terminalId: string,
   signal?: AbortSignal
 ): Promise<TerminalObservation> {
-  return request<TerminalObservation>(
+  return request(
     `/api/terminals/${encodeURIComponent(terminalId)}`,
+    terminalObservationResponseSchema,
     signal ? { signal } : {}
   )
 }
@@ -752,10 +793,7 @@ async function waitForTerminal(
           controller.abort()
         }, timeoutMs)
   timeout?.unref()
-  let events: Socket<
-    EventsServerToClientEvents,
-    EventsClientToServerEvents
-  > | null = null
+  let events: Fiber.RuntimeFiber<void, unknown> | null = null
 
   try {
     observation = await inspectTerminal(terminalId, controller.signal)
@@ -768,16 +806,9 @@ async function waitForTerminal(
       return immediate
     }
 
-    events = io(`${apiUrl}/events`, {
-      path: SOCKET_IO_PATH,
-      transports: ['websocket'],
-      forceNew: true,
-      autoConnect: false,
-      reconnection: false,
-      retries: 0
-    })
     return await new Promise<TerminalWaitResult>((resolve, reject) => {
       let settled = false
+      let connected = false
       let queue = Promise.resolve()
       const finish = (result: TerminalWaitResult) => {
         if (!settled) {
@@ -795,122 +826,130 @@ async function waitForTerminal(
         queue = queue.then(task)
         void queue.catch(fail)
       }
+      const snapshot = async (value: EventsSnapshot) => {
+        if (!observation) {
+          throw new CliError(
+            'Treeport daemon sent an invalid event snapshot',
+            3,
+            'DAEMON_PROTOCOL_ERROR'
+          )
+        }
+
+        connected = true
+        const metadata = value.terminalMetadata.find(
+          (item) => item.terminalId === terminalId
+        )
+        if (metadata) {
+          observation = { ...observation, metadata }
+        }
+
+        const snapshotMatch = matched(value.at)
+        if (snapshotMatch) {
+          finish(snapshotMatch)
+          return
+        }
+
+        observation = await inspectTerminal(terminalId, controller.signal)
+        if (cancellation) {
+          throw new Error('Terminal wait cancelled')
+        }
+
+        const refreshedMatch = matched(new Date().toISOString())
+        if (refreshedMatch) {
+          finish(refreshedMatch)
+        }
+      }
+      const productEvent = async (event: NetworkProductEvent) => {
+        if (
+          event.type !== 'terminal.metadata' &&
+          event.type !== 'terminal.updated' &&
+          event.type !== 'terminal.removed'
+        ) {
+          return
+        }
+
+        if (event.data.terminalId !== terminalId) {
+          return
+        }
+
+        if (event.type === 'terminal.removed') {
+          throw new CliError(
+            `Terminal ${terminalId} was removed while waiting`,
+            5,
+            'TERMINAL_REMOVED',
+            { terminalId, condition }
+          )
+        }
+
+        if (event.type === 'terminal.metadata') {
+          const { worktreeId: _worktreeId, ...metadata } = event.data
+          if (!observation) {
+            throw new CliError(
+              'Treeport daemon sent invalid terminal metadata',
+              3,
+              'DAEMON_PROTOCOL_ERROR'
+            )
+          }
+
+          observation = { ...observation, metadata }
+        } else {
+          observation = await inspectTerminal(terminalId, controller.signal)
+          if (cancellation) {
+            throw new Error('Terminal wait cancelled')
+          }
+        }
+
+        const result = matched(event.at)
+        if (result) {
+          finish(result)
+        }
+      }
 
       controller.signal.addEventListener(
         'abort',
         () => fail(new Error('Terminal wait cancelled')),
         { once: true }
       )
-      events!.on('snapshot', (value) =>
-        enqueue(async () => {
-          const snapshot = parseEventsSnapshot(value)
-          if (!snapshot || !observation) {
-            throw new CliError(
-              'Treeport daemon sent an invalid event snapshot',
-              3,
-              'DAEMON_PROTOCOL_ERROR'
-            )
-          }
-
-          const metadata = snapshot.terminalMetadata.find(
-            (item) => item.terminalId === terminalId
-          )
-          if (metadata) {
-            observation = { ...observation, metadata }
-          }
-
-          const snapshotMatch = matched(snapshot.at)
-          if (snapshotMatch) {
-            finish(snapshotMatch)
-            return
-          }
-
-          observation = await inspectTerminal(terminalId, controller.signal)
-          if (cancellation) {
-            throw new Error('Terminal wait cancelled')
-          }
-
-          const refreshedMatch = matched(new Date().toISOString())
-          if (refreshedMatch) {
-            finish(refreshedMatch)
-          }
-        })
-      )
-      events!.on('product_event', (value) =>
-        enqueue(async () => {
-          const event = parseProductEvent(value)
-          if (!event) {
-            throw new CliError(
-              'Treeport daemon sent an invalid product event',
-              3,
-              'DAEMON_PROTOCOL_ERROR'
-            )
-          }
-
-          if (
-            event.type !== 'terminal.metadata' &&
-            event.type !== 'terminal.updated' &&
-            event.type !== 'terminal.removed'
-          ) {
-            return
-          }
-
-          if (event.data.terminalId !== terminalId) {
-            return
-          }
-
-          if (event.type === 'terminal.removed') {
-            throw new CliError(
-              `Terminal ${terminalId} was removed while waiting`,
-              5,
-              'TERMINAL_REMOVED',
-              { terminalId, condition }
-            )
-          }
-
-          if (event.type === 'terminal.metadata') {
-            const { worktreeId: _worktreeId, ...metadata } = event.data
-            if (!observation) {
-              throw new CliError(
-                'Treeport daemon sent invalid terminal metadata',
-                3,
-                'DAEMON_PROTOCOL_ERROR'
+      const program = Effect.scoped(
+        Effect.gen(function* () {
+          const client = yield* RpcClient.make(TreeportRpcs)
+          yield* client
+            .WatchProjectEvents({
+              protocol: EVENT_PROTOCOL_VERSION
+            })
+            .pipe(
+              Stream.runForEach((item) =>
+                Effect.sync(() => {
+                  if (item._tag === 'Snapshot') {
+                    enqueue(() => snapshot(item.snapshot))
+                  } else {
+                    enqueue(() => productEvent(item.event))
+                  }
+                })
               )
-            }
-
-            observation = { ...observation, metadata }
-          } else {
-            observation = await inspectTerminal(terminalId, controller.signal)
-            if (cancellation) {
-              throw new Error('Terminal wait cancelled')
-            }
-          }
-
-          const result = matched(event.at)
-          if (result) {
-            finish(result)
-          }
+            )
         })
-      )
-      events!.on('connect_error', (error) =>
-        fail(
-          new CliError(
-            `Cannot reach Treeport daemon at ${apiUrl}: ${error.message}`,
-            3,
-            'DAEMON_UNREACHABLE'
+      ).pipe(
+        Effect.provide(treeportRpcClientLayer(`${apiUrl}/api/rpc`)),
+        Effect.onExit(() =>
+          Effect.sync(() =>
+            fail(
+              connected
+                ? new CliError(
+                    'Treeport daemon event channel disconnected before the condition was observed',
+                    3,
+                    'DAEMON_DISCONNECTED'
+                  )
+                : new CliError(
+                    `Cannot reach Treeport daemon at ${apiUrl}`,
+                    3,
+                    'DAEMON_UNREACHABLE'
+                  )
+            )
           )
         )
       )
-      events!.on('disconnect', () =>
-        fail(
-          new CliError(
-            'Treeport daemon event channel disconnected before the condition was observed',
-            3,
-            'DAEMON_DISCONNECTED'
-          )
-        )
-      )
-      events!.connect()
+      events = Effect.runFork(program)
     })
   } catch (error) {
     if (cancellation === 'timeout') {
@@ -947,8 +986,9 @@ async function waitForTerminal(
 
     process.off('SIGINT', interrupt)
     controller.abort()
-    events?.removeAllListeners()
-    events?.disconnect()
+    if (events) {
+      Effect.runFork(Fiber.interrupt(events))
+    }
   }
 }
 
@@ -1040,13 +1080,10 @@ async function main(args: string[]): Promise<void> {
       await daemonUp({})
     }
 
-    const registered = await request<{ project: ProjectRecord }>(
-      '/api/projects',
-      {
-        method: 'POST',
-        body: JSON.stringify({ path: canonicalFolder })
-      }
-    )
+    const registered = await request('/api/projects', projectResponseSchema, {
+      method: 'POST',
+      body: JSON.stringify({ path: canonicalFolder })
+    })
     const targetWorktree = registered.project.worktrees
       .filter(
         (worktree) =>
@@ -1070,6 +1107,7 @@ async function main(args: string[]): Promise<void> {
     const opened = contextTerminalId
       ? await request(
           `/api/worktrees/${encodeURIComponent(targetWorktree.id)}/open`,
+          okResponseSchema,
           {
             method: 'POST',
             body: JSON.stringify({ sourceTerminalId: contextTerminalId })
@@ -1192,7 +1230,11 @@ async function main(args: string[]): Promise<void> {
     }
 
     if (options.terminateTerminals) {
-      await request('/api/admin/terminate-terminals', { method: 'POST' })
+      await request(
+        '/api/admin/terminate-terminals',
+        terminatedTerminalsResponseSchema,
+        { method: 'POST' }
+      )
     }
 
     if (lifecycle === 'service') {
@@ -1509,8 +1551,9 @@ async function main(args: string[]): Promise<void> {
     }
 
     const project = (
-      await request<{ project: ProjectRecord }>(
-        `/api/projects/${encodeURIComponent(projectId!)}`
+      await request(
+        `/api/projects/${encodeURIComponent(projectId!)}`,
+        projectResponseSchema
       )
     ).project
     const worktree = project.worktrees.find(
@@ -1538,8 +1581,9 @@ async function main(args: string[]): Promise<void> {
     }
 
     const treeContext = (
-      await request<{ context: Record<string, string> }>(
-        `/api/worktrees/${encodeURIComponent(worktree.id)}/context`
+      await request(
+        `/api/worktrees/${encodeURIComponent(worktree.id)}/context`,
+        treeContextResponseSchema
       )
     ).context
     const context: TreeportContext = {
@@ -1622,8 +1666,9 @@ async function main(args: string[]): Promise<void> {
         contextWorktreeId === worktree.id ? (contextTerminalId ?? null) : null
     }
 
-    const result = await request<OpenBrowserPanelResult>(
+    const result = await request(
       `/api/worktrees/${encodeURIComponent(worktree.id)}/browser-panels`,
+      openBrowserPanelResponseSchema,
       { method: 'POST', body: JSON.stringify(body) }
     )
     const output = {
@@ -1641,9 +1686,11 @@ async function main(args: string[]): Promise<void> {
     .description('Install the Chromium build used by Browser')
     .option('--json', 'emit machine-readable JSON')
   browserInstallCommand.action(async () => {
-    const result = await request<{ message: string }>('/api/browser/install', {
-      method: 'POST'
-    })
+    const result = await request(
+      '/api/browser/install',
+      browserInstallResponseSchema,
+      { method: 'POST' }
+    )
     print(result, () => result.message)
   })
 
@@ -1652,15 +1699,10 @@ async function main(args: string[]): Promise<void> {
     .description('Show hosted browser installation status')
     .option('--json', 'emit machine-readable JSON')
   browserStatusCommand.action(async () => {
-    const result = await request<{
-      installed: boolean
-      executablePath: string
-      playwrightVersion: string
-      browserRevision: string
-      channel: 'chromium'
-      launchReady: boolean
-      launchError: string | null
-    }>('/api/browser/status')
+    const result = await request(
+      '/api/browser/status',
+      browserInstallStatusSchema
+    )
     print(
       result,
       () =>
@@ -1673,7 +1715,9 @@ async function main(args: string[]): Promise<void> {
     .description("Remove Treeport's hosted Chromium build")
     .option('--json', 'emit machine-readable JSON')
   browserRemoveCommand.action(async () => {
-    await request('/api/browser/install', { method: 'DELETE' })
+    await request('/api/browser/install', okResponseSchema, {
+      method: 'DELETE'
+    })
     print({ removed: true }, () => 'Removed Treeport hosted Chromium')
   })
 
@@ -1837,10 +1881,10 @@ async function main(args: string[]): Promise<void> {
     }
 
     const result = (
-      await request<{ result: PackageOperationResult }>(
-        '/api/packages/install',
-        { method: 'POST', body: JSON.stringify(body) }
-      )
+      await request('/api/packages/install', packageOperationResponseSchema, {
+        method: 'POST',
+        body: JSON.stringify(body)
+      })
     ).result
     print(
       result,
@@ -1869,10 +1913,10 @@ async function main(args: string[]): Promise<void> {
     }
 
     const result = (
-      await request<{ result: PackageOperationResult }>(
-        '/api/packages/remove',
-        { method: 'POST', body: JSON.stringify(body) }
-      )
+      await request('/api/packages/remove', packageOperationResponseSchema, {
+        method: 'POST',
+        body: JSON.stringify(body)
+      })
     ).result
     print(result, () => `Removed ${result.source}`)
   })
@@ -1882,10 +1926,7 @@ async function main(args: string[]): Promise<void> {
     .description('List configured Treeport packages')
     .option('--json', 'emit machine-readable JSON')
   listPackagesCommand.action(async () => {
-    const result = await request<{
-      packages: PackageListing[]
-      diagnostics: PackageResourceDiagnostic[]
-    }>('/api/packages')
+    const result = await request('/api/packages', packageListingResponseSchema)
     print(result, () => {
       const lines = result.packages.map((pkg) => {
         const scope =
@@ -1957,15 +1998,12 @@ async function main(args: string[]): Promise<void> {
     }
 
     const results = (
-      await request<{ results: PackageOperationResult[] }>(
-        '/api/packages/update',
-        {
-          method: 'POST',
-          body: JSON.stringify(
-            source ? { source: await packageSource(source) } : {}
-          )
-        }
-      )
+      await request('/api/packages/update', packageOperationsResponseSchema, {
+        method: 'POST',
+        body: JSON.stringify(
+          source ? { source: await packageSource(source) } : {}
+        )
+      })
     ).results
     print(results, () =>
       results
@@ -1987,15 +2025,16 @@ async function main(args: string[]): Promise<void> {
     .option('--json', 'emit machine-readable JSON')
   reloadCommand.action(async () => {
     const options = reloadCommand.opts<{ local?: boolean }>()
-    const result = await request<{
-      results: PackageOperationResult[]
-      diagnostics: PackageResourceDiagnostic[]
-    }>('/api/packages/reload', {
-      method: 'POST',
-      body: JSON.stringify(
-        options.local ? { projectId: await localPackageProjectId() } : {}
-      )
-    })
+    const result = await request(
+      '/api/packages/reload',
+      packageReloadResponseSchema,
+      {
+        method: 'POST',
+        body: JSON.stringify(
+          options.local ? { projectId: await localPackageProjectId() } : {}
+        )
+      }
+    )
     print(result, () => {
       const lines = [
         ...result.results.map(
@@ -2024,7 +2063,7 @@ async function main(args: string[]): Promise<void> {
     .argument('<path>', 'folder path')
     .option('--json', 'emit machine-readable JSON')
   projectAddCommand.action(async (repository: string) => {
-    const body = await request<{ project: ProjectRecord }>('/api/projects', {
+    const body = await request('/api/projects', projectResponseSchema, {
       method: 'POST',
       body: JSON.stringify({ path: await canonical(repository) })
     })
@@ -2128,8 +2167,9 @@ async function main(args: string[]): Promise<void> {
     }>()
     const worktree = await resolveWorktree(identifier)
     const preview = (
-      await request<{ preview: RemovePreview }>(
-        `/api/worktrees/${worktree.id}/remove-preview`
+      await request(
+        `/api/worktrees/${worktree.id}/remove-preview`,
+        removePreviewResponseSchema
       )
     ).preview
     if (!preview.eligible) {
@@ -2144,8 +2184,9 @@ async function main(args: string[]): Promise<void> {
     }
 
     let operation = (
-      await request<{ operation: OperationRecord }>(
+      await request(
         `/api/worktrees/${worktree.id}/remove`,
+        operationResponseSchema,
         {
           method: 'POST',
           body: JSON.stringify({
@@ -2193,8 +2234,9 @@ async function main(args: string[]): Promise<void> {
     while (operation.status === 'pending' || operation.status === 'running') {
       await new Promise((resolve) => setTimeout(resolve, 100))
       operation = (
-        await request<{ operation: OperationRecord }>(
-          `/api/operations/${encodeURIComponent(operation.id)}`
+        await request(
+          `/api/operations/${encodeURIComponent(operation.id)}`,
+          operationResponseSchema
         )
       ).operation
       displayFinishedCleanup()
@@ -2251,8 +2293,9 @@ async function main(args: string[]): Promise<void> {
     }>()
     const worktree = await resolveWorktree(options.worktree)
     const definition = await webPanelDefinition(worktree.id, identifier)
-    const result = await request<OpenWebPanelResult>(
+    const result = await request(
       `/api/worktrees/${encodeURIComponent(worktree.id)}/panels/open`,
+      openWebPanelResponseSchema,
       {
         method: 'POST',
         body: JSON.stringify({
@@ -2325,8 +2368,9 @@ async function main(args: string[]): Promise<void> {
       body.argv = argv
     }
 
-    const result = await request<{ terminal: TerminalRecord }>(
+    const result = await request(
       `/api/worktrees/${worktree.id}/terminals`,
+      terminalResponseSchema,
       { method: 'POST', body: JSON.stringify(body) }
     )
     print(
@@ -2370,8 +2414,9 @@ async function main(args: string[]): Promise<void> {
         ? TERMINAL_CAPTURE_DEFAULT_LINES
         : parseCaptureLines(rawLines)
     const terminalId = resolveTerminalId(identifier)
-    const capture = await request<TerminalCapture>(
-      `/api/terminals/${encodeURIComponent(terminalId)}/capture?lines=${lines}`
+    const capture = await request(
+      `/api/terminals/${encodeURIComponent(terminalId)}/capture?lines=${lines}`,
+      terminalCaptureResponseSchema
     )
     if (jsonOutput) {
       print(capture)
@@ -2422,7 +2467,9 @@ async function main(args: string[]): Promise<void> {
     .argument('<terminal-id>', 'terminal to delete')
     .option('--json', 'emit machine-readable JSON')
   terminalDeleteCommand.action(async (terminalId: string) => {
-    await request(`/api/terminals/${terminalId}`, { method: 'DELETE' })
+    await request(`/api/terminals/${terminalId}`, okResponseSchema, {
+      method: 'DELETE'
+    })
     print({ ok: true, terminalId }, () => `Deleted ${terminalId}`)
   })
 
@@ -2517,12 +2564,15 @@ export async function runCliApplication(
             1
           )
     if (jsonOutput) {
-      const body: ApiErrorBody = {
-        error: { code: cliError.code, message: cliError.message }
-      }
-      if (cliError.details !== undefined) {
-        body.error.details = cliError.details
-      }
+      const errorBody =
+        cliError.details === undefined
+          ? { code: cliError.code, message: cliError.message }
+          : {
+              code: cliError.code,
+              message: cliError.message,
+              details: cliError.details
+            }
+      const body: ApiErrorBody = { error: errorBody }
 
       writeStderr(`${JSON.stringify(body)}\n`)
     } else {

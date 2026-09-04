@@ -4,6 +4,7 @@ import { constants as fsConstants } from 'node:fs'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import { decodeUnknownOrNull, projectsResponseSchema } from '@treeport/shared'
 import { z } from 'zod'
 import {
   daemonDown,
@@ -370,24 +371,12 @@ async function terminalIds(apiUrl: string): Promise<string[]> {
   const result = await fetch(`${apiUrl}/api/projects`)
     .then(async (response) => (response.ok ? response.json() : null))
     .catch(() => null)
-  const parsed = z
-    .looseObject({
-      projects: z.array(
-        z.looseObject({
-          worktrees: z.array(
-            z.looseObject({
-              terminals: z.array(z.looseObject({ id: z.string() }))
-            })
-          )
-        })
-      )
-    })
-    .safeParse(result)
-  if (!parsed.success) {
+  const parsed = decodeUnknownOrNull(projectsResponseSchema, result)
+  if (!parsed) {
     throw new Error('Treeport could not read the terminal inventory.')
   }
 
-  return parsed.data.projects
+  return parsed.projects
     .flatMap((project) => project.worktrees)
     .flatMap((worktree) => worktree.terminals)
     .map((terminal) => terminal.id)

@@ -116,7 +116,7 @@ function usesMacKeyboard(): boolean {
 
 export function restoreTerminalSnapshotLinks(
   terminal: Terminal,
-  links: TerminalSnapshotLink[]
+  links: ReadonlyArray<TerminalSnapshotLink>
 ): void {
   // SerializeAddon drops OSC 8 targets. Both Treeport xterms use the same
   // pinned xterm version, so restore the canonical URL IDs at this explicit

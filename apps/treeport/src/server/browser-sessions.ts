@@ -4,6 +4,7 @@ import path from 'node:path'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { createRequire } from 'node:module'
 import { z } from 'zod'
+import * as Effect from 'effect/Effect'
 import type {
   Browser as PlaywrightConnection,
   CDPSession,
@@ -12,6 +13,7 @@ import type {
 import type {
   BrowserAgentCommand,
   BrowserClientMessage,
+  BrowserPanel,
   BrowserFrame,
   BrowserOwnerAuth,
   BrowserOwnerClientMessage,
@@ -22,11 +24,16 @@ import type {
 import {
   BROWSER_MAX_FRAME_BYTES,
   browserOwnerEndpointSchema,
+  browserOwnerIdentitySchema,
   browserUrlSchema,
+  decodeUnknownOrNull,
+  isSchemaValue,
   parseBrowserClientMessage,
   parseBrowserOwnerClientMessage
 } from '@treeport/shared'
 import type { AppConfig, TreeportService } from './core/index'
+import type { ApplicationServices } from './core/services/infrastructure/application-runtime'
+import { networkTelemetry } from './network-telemetry'
 import {
   LatestBrowserFrameProducer,
   PlaywrightBrowser,
@@ -51,7 +58,7 @@ export interface BrowserOwnerTransport {
 }
 
 export interface BrowserSessionService {
-  runEffect: TreeportService['runEffect']
+  forkApplicationEffect: TreeportService['forkApplicationEffect']
   panels: Pick<
     TreeportService['panels'],
     | 'authorizeBrowserPanel'
@@ -155,6 +162,7 @@ interface BrowserAttachment {
   visible: boolean
   closing: boolean
   awaitingFrame: number | null
+  awaitingFrameSentAt: number | null
   pendingFrame: BrowserFrame | null
   viewport: { width: number; height: number }
 }
@@ -191,6 +199,7 @@ interface BrowserPanelStatePersistence {
 
 interface BrowserSession {
   panelId: string
+  worktreeId: string
   agentDirectory: string
   title: string
   browser: BrowserSessionBrowser | null
@@ -255,6 +264,10 @@ export class BrowserSessionManager {
   private readonly sessionCreations = new Map<string, Promise<BrowserSession>>()
   private readonly tickets = new Map<string, BrowserTicket>()
   private readonly ownerTickets = new Map<string, BrowserOwnerTicket>()
+  private readonly operationQueuedAt = new WeakMap<
+    BrowserScheduledOperation,
+    number
+  >()
   private readonly unsubscribe: () => void
   private installing: Promise<string> | null = null
 
@@ -277,88 +290,107 @@ export class BrowserSessionManager {
     )
     this.unsubscribe = service.events.subscribe((event) => {
       if (event.type === 'panel.removed') {
-        void this.closePanel(String(event.data.panelId), 'Panel closed').catch(
-          (error) => {
-            console.error(
-              '[Treeport] Failed to close a removed Browser panel:',
-              error instanceof Error ? error.message : String(error)
+        this.service.forkApplicationEffect(
+          Effect.tryPromise({
+            try: () =>
+              this.closePanel(String(event.data.panelId), 'Panel closed'),
+            catch: (cause) => cause
+          }).pipe(
+            Effect.catchAll((error) =>
+              Effect.logError('Failed to close a removed Browser panel').pipe(
+                Effect.annotateLogs({ cause: String(error) })
+              )
             )
-          }
+          )
         )
       } else if (event.type === 'worktree.removed' && event.data.worktreeId) {
         for (const session of this.sessions.values()) {
-          void this.service
-            .runEffect(
-              this.service.panels.authorizeBrowserPanel(session.panelId)
+          this.service.forkApplicationEffect(
+            this.service.panels.authorizeBrowserPanel(session.panelId).pipe(
+              Effect.catchAll(() =>
+                Effect.tryPromise({
+                  try: () =>
+                    this.closePanel(session.panelId, 'Worktree removed'),
+                  catch: (cause) => cause
+                })
+              ),
+              Effect.catchAll((error) =>
+                Effect.logError(
+                  `Failed to close Browser panel ${session.panelId} after its tree was removed`
+                ).pipe(Effect.annotateLogs({ cause: String(error) }))
+              ),
+              Effect.asVoid
             )
-            .catch(() => this.closePanel(session.panelId, 'Worktree removed'))
-            .catch((error) => {
-              console.error(
-                `[Treeport] Failed to close Browser panel ${session.panelId} after its tree was removed:`,
-                error instanceof Error ? error.message : String(error)
-              )
-            })
+          )
         }
       }
     })
   }
 
-  async issueTicket(
+  issueTicket(
     panelId: string,
     clientId: string,
     visible = true
-  ): Promise<string> {
-    await this.service.runEffect(
-      this.service.panels.authorizeBrowserPanel(panelId)
-    )
-    for (const [value, ticket] of this.tickets) {
-      if (ticket.expiresAt < Date.now()) {
-        this.tickets.delete(value)
+  ): Effect.Effect<string, unknown, ApplicationServices> {
+    return Effect.gen(this, function* () {
+      yield* this.service.panels.authorizeBrowserPanel(panelId)
+      for (const [value, ticket] of this.tickets) {
+        if (ticket.expiresAt < Date.now()) {
+          this.tickets.delete(value)
+        }
       }
-    }
-    if (this.tickets.size >= MAX_BROWSER_TICKETS) {
-      throw new Error('Too many Browser attachment requests are pending.')
-    }
+      if (this.tickets.size >= MAX_BROWSER_TICKETS) {
+        return yield* Effect.fail(
+          new Error('Too many Browser attachment requests are pending.')
+        )
+      }
 
-    const ticket = crypto.randomBytes(32).toString('base64url')
-    this.tickets.set(ticket, {
-      panelId,
-      clientId,
-      visible,
-      expiresAt: Date.now() + 30_000
+      const ticket = crypto.randomBytes(32).toString('base64url')
+      this.tickets.set(ticket, {
+        panelId,
+        clientId,
+        visible,
+        expiresAt: Date.now() + 30_000
+      })
+      return ticket
     })
-    return ticket
   }
 
-  async issueOwnerTicket(
+  issueOwnerTicket(
     panelId: string,
     clientId: string
-  ): Promise<{ ticket: string; challenge: string }> {
-    await this.service.runEffect(
-      this.service.panels.authorizeBrowserPanel(panelId)
-    )
-    for (const [value, ticket] of this.ownerTickets) {
-      if (ticket.expiresAt < Date.now()) {
-        this.ownerTickets.delete(value)
+  ): Effect.Effect<
+    { ticket: string; challenge: string },
+    unknown,
+    ApplicationServices
+  > {
+    return Effect.gen(this, function* () {
+      yield* this.service.panels.authorizeBrowserPanel(panelId)
+      for (const [value, ticket] of this.ownerTickets) {
+        if (ticket.expiresAt < Date.now()) {
+          this.ownerTickets.delete(value)
+        }
       }
-    }
-    if (this.ownerTickets.size >= MAX_BROWSER_TICKETS) {
-      throw new Error('Too many Browser owner requests are pending.')
-    }
+      if (this.ownerTickets.size >= MAX_BROWSER_TICKETS) {
+        return yield* Effect.fail(
+          new Error('Too many Browser owner requests are pending.')
+        )
+      }
 
-    const ticket = crypto.randomBytes(32).toString('base64url')
-    const currentOwner = this.sessions.get(panelId)?.localOwner
-    const challenge =
-      currentOwner?.clientId === clientId
-        ? currentOwner.challenge
-        : crypto.randomBytes(32).toString('base64url')
-    this.ownerTickets.set(ticket, {
-      panelId,
-      clientId,
-      challenge,
-      expiresAt: Date.now() + 30_000
+      const ticket = crypto.randomBytes(32).toString('base64url')
+      const currentOwner = this.sessions.get(panelId)?.localOwner
+      const challenge =
+        currentOwner?.clientId === clientId
+          ? currentOwner.challenge
+          : crypto.randomBytes(32).toString('base64url')
+      this.ownerTickets.set(ticket, {
+        panelId,
+        clientId,
+        challenge,
+        expiresAt: Date.now() + 30_000
+      })
+      return { ticket, challenge }
     })
-    return { ticket, challenge }
   }
 
   private stateFor(
@@ -435,6 +467,7 @@ export class BrowserSessionManager {
         existing.execute = operation.execute
         existing.completions.push(...operation.completions)
         existing.required ||= operation.required
+        networkTelemetry.droppedNow('browsers', 'coalesced')
         return true
       }
     }
@@ -444,10 +477,13 @@ export class BrowserSessionManager {
       (!operation.required &&
         scheduler.queue.length >= MAX_BROWSER_REGULAR_OPERATIONS)
     ) {
+      networkTelemetry.droppedNow('browsers', 'dropped')
       return false
     }
 
     scheduler.queue.push(operation)
+    this.operationQueuedAt.set(operation, Date.now())
+    networkTelemetry.queueDepthNow('browsers', scheduler.queue.length)
 
     if (operation.coalesceKey) {
       scheduler.coalesced.set(operation.coalesceKey, operation)
@@ -515,10 +551,22 @@ export class BrowserSessionManager {
     void (async () => {
       while (scheduler.queue.length > 0) {
         const operation = scheduler.queue.shift()!
+        networkTelemetry.queueDepthNow('browsers', scheduler.queue.length)
+        const queuedAt = this.operationQueuedAt.get(operation)
+        this.operationQueuedAt.delete(operation)
+        if (queuedAt !== undefined) {
+          networkTelemetry.durationNow(
+            'browsers',
+            'queue_wait',
+            Date.now() - queuedAt
+          )
+        }
+
         if (operation.coalesceKey) {
           scheduler.coalesced.delete(operation.coalesceKey)
         }
 
+        const started = Date.now()
         try {
           await operation.execute(operation.message)
           for (const completion of operation.completions) {
@@ -530,6 +578,12 @@ export class BrowserSessionManager {
           for (const completion of operation.completions) {
             completion.reject(error)
           }
+        } finally {
+          networkTelemetry.durationNow(
+            'browsers',
+            'operation',
+            Date.now() - started
+          )
         }
       }
       scheduler.running = false
@@ -540,11 +594,14 @@ export class BrowserSessionManager {
     session.scheduler.accepting = false
     const error = new Error(reason)
     for (const operation of session.scheduler.queue.splice(0)) {
+      this.operationQueuedAt.delete(operation)
+      networkTelemetry.droppedNow('browsers', 'dropped')
       for (const completion of operation.completions) {
         completion.reject(error)
       }
     }
     session.scheduler.coalesced.clear()
+    networkTelemetry.queueDepthNow('browsers', 0)
   }
 
   private broadcastNavigationError(
@@ -556,17 +613,20 @@ export class BrowserSessionManager {
     }
   }
 
-  private async openPopup(session: BrowserSession, url: string): Promise<void> {
-    await this.service
-      .runEffect(
-        this.service.panels.openBrowserPanelFromPanel(session.panelId, url)
+  private openPopup(session: BrowserSession, url: string): void {
+    this.service.forkApplicationEffect(
+      this.service.panels.openBrowserPanelFromPanel(session.panelId, url).pipe(
+        Effect.catchAll((cause) =>
+          Effect.sync(() =>
+            this.broadcastNavigationError(
+              session,
+              `Could not open the popup: ${cause instanceof Error ? cause.message : String(cause)}`
+            )
+          )
+        ),
+        Effect.asVoid
       )
-      .catch((cause) =>
-        this.broadcastNavigationError(
-          session,
-          `Could not open the popup: ${cause instanceof Error ? cause.message : String(cause)}`
-        )
-      )
+    )
   }
 
   private queuePanelState(
@@ -579,14 +639,13 @@ export class BrowserSessionManager {
 
     const parsed =
       value.url === 'about:blank'
-        ? { success: true as const, data: 'about:blank' }
-        : browserUrlSchema.safeParse(value.url)
-    if (!parsed.success) {
+        ? 'about:blank'
+        : decodeUnknownOrNull(browserUrlSchema, value.url)
+    if (!parsed) {
       return
     }
 
-    const url =
-      parsed.data === 'about:blank' ? parsed.data : new URL(parsed.data).href
+    const url = parsed === 'about:blank' ? parsed : new URL(parsed).href
     const requestedTitle = value.title.trim().slice(0, 256)
     const title =
       requestedTitle ||
@@ -605,31 +664,36 @@ export class BrowserSessionManager {
       return
     }
 
-    const write = (async () => {
-      while (persistence.pending !== null) {
-        const pending = persistence.pending
-        persistence.pending = null
-        try {
-          const panel = await this.service.runEffect(
-            this.service.panels.updateBrowserPanelState(
+    const write = new Promise<void>((resolve) => {
+      this.service.forkApplicationEffect(
+        Effect.gen(this, function* () {
+          while (persistence.pending !== null) {
+            const pending = persistence.pending
+            persistence.pending = null
+            const panel = yield* this.service.panels.updateBrowserPanelState(
               session.panelId,
               pending
             )
-          )
-          persistence.persistedUrl = panel.url
-          persistence.persistedTitle = panel.title
-        } catch (cause) {
-          const message = cause instanceof Error ? cause.message : String(cause)
-          for (const attachment of session.attachments.values()) {
-            attachment.transport.sendMessage({
-              type: 'navigationError',
-              message: `Could not save the Browser address and title: ${message}`
-            })
+            persistence.persistedUrl = panel.url
+            persistence.persistedTitle = panel.title
           }
-          return
-        }
-      }
-    })()
+        }).pipe(
+          Effect.catchAll((cause) =>
+            Effect.sync(() => {
+              const message =
+                cause instanceof Error ? cause.message : String(cause)
+              for (const attachment of session.attachments.values()) {
+                attachment.transport.sendMessage({
+                  type: 'navigationError',
+                  message: `Could not save the Browser address and title: ${message}`
+                })
+              }
+            })
+          ),
+          Effect.ensuring(Effect.sync(resolve))
+        )
+      )
+    })
     persistence.write = write
     void write.finally(() => {
       if (persistence.write !== write) {
@@ -651,14 +715,15 @@ export class BrowserSessionManager {
     }
   }
 
-  private async createSession(panelId: string): Promise<BrowserSession> {
-    const authorized = await this.service.runEffect(
-      this.service.panels.authorizeBrowserPanel(panelId)
-    )
+  private async createSession(
+    panelId: string,
+    authorized: { panel: BrowserPanel; worktreePath: string }
+  ): Promise<BrowserSession> {
     const restoredUrl =
       authorized.panel.url === 'about:blank'
         ? null
-        : browserUrlSchema.parse(authorized.panel.url)
+        : (decodeUnknownOrNull(browserUrlSchema, authorized.panel.url) ??
+          'about:blank')
     const agentDirectory = path.join(
       this.config.runtimeDir,
       'browsers',
@@ -669,6 +734,7 @@ export class BrowserSessionManager {
     await fs.chmod(agentDirectory, 0o700)
     const session: BrowserSession = {
       panelId,
+      worktreeId: authorized.panel.worktreeId,
       agentDirectory,
       title: `Treeport ${authorized.panel.title}`,
       browser: null,
@@ -736,11 +802,7 @@ export class BrowserSessionManager {
         session.agentDirectory,
         session.title,
         session.panelId,
-        (
-          await this.service.runEffect(
-            this.service.panels.authorizeBrowserPanel(session.panelId)
-          )
-        ).panel.worktreeId,
+        session.worktreeId,
         {
           state: (state) => {
             if (
@@ -848,43 +910,76 @@ export class BrowserSessionManager {
     return this.ensurePlaywrightRuntime(session)
   }
 
-  private async getSession(panelId: string): Promise<BrowserSession> {
-    const existing = this.sessions.get(panelId)
-    if (existing) {
-      await this.service.runEffect(
-        this.service.panels.authorizeBrowserPanel(panelId)
-      )
-      return existing
-    }
-
-    const pending = this.sessionCreations.get(panelId)
-    if (pending) {
-      return pending
-    }
-
-    const creation = this.createSession(panelId).finally(() => {
-      if (this.sessionCreations.get(panelId) === creation) {
-        this.sessionCreations.delete(panelId)
+  private getSession(
+    panelId: string
+  ): Effect.Effect<BrowserSession, unknown, ApplicationServices> {
+    return Effect.gen(this, function* () {
+      const authorized =
+        yield* this.service.panels.authorizeBrowserPanel(panelId)
+      const existing = this.sessions.get(panelId)
+      if (existing) {
+        return existing
       }
+
+      const pending = this.sessionCreations.get(panelId)
+      if (pending) {
+        return yield* Effect.tryPromise({
+          try: () => pending,
+          catch: (cause) => cause
+        })
+      }
+
+      const creation = this.createSession(panelId, authorized).finally(() => {
+        if (this.sessionCreations.get(panelId) === creation) {
+          this.sessionCreations.delete(panelId)
+        }
+      })
+      this.sessionCreations.set(panelId, creation)
+      return yield* Effect.tryPromise({
+        try: () => creation,
+        catch: (cause) => cause
+      })
     })
-    this.sessionCreations.set(panelId, creation)
-    return creation
   }
 
-  async accept(
+  accept(
     ticketValue: string,
     transport: BrowserTransport
-  ): Promise<string> {
-    const ticket = this.tickets.get(ticketValue)
-    this.tickets.delete(ticketValue)
-    if (!ticket || ticket.expiresAt < Date.now()) {
-      throw new Error('INVALID_BROWSER_TICKET')
-    }
+  ): Effect.Effect<string, unknown, ApplicationServices> {
+    return Effect.gen(this, function* () {
+      const ticket = this.tickets.get(ticketValue)
+      this.tickets.delete(ticketValue)
+      if (!ticket || ticket.expiresAt < Date.now()) {
+        return yield* Effect.fail(new Error('INVALID_BROWSER_TICKET'))
+      }
 
-    const session = await this.getSession(ticket.panelId)
+      yield* Effect.annotateCurrentSpan({
+        'treeport.connection.id': transport.id,
+        'treeport.panel.id': ticket.panelId,
+        'treeport.client.id': ticket.clientId
+      })
+      const session = yield* this.getSession(ticket.panelId)
+      return yield* Effect.tryPromise({
+        try: () => this.acceptSession(ticket, session, transport),
+        catch: (cause) => cause
+      }).pipe(
+        Effect.onInterrupt(() => Effect.sync(() => this.close(transport.id)))
+      )
+    })
+  }
+
+  private async acceptSession(
+    ticket: BrowserTicket,
+    session: BrowserSession,
+    transport: BrowserTransport
+  ): Promise<string> {
     const supersededAttachments = [...session.attachments.values()].filter(
       (candidate) => candidate.clientId === ticket.clientId
     )
+    if (supersededAttachments.length > 0) {
+      networkTelemetry.reconnectNow('browsers')
+    }
+
     if (
       session.attachments.size - supersededAttachments.length >=
       MAX_BROWSER_ATTACHMENTS
@@ -905,6 +1000,7 @@ export class BrowserSessionManager {
       visible: ticket.visible,
       closing: false,
       awaitingFrame: null,
+      awaitingFrameSentAt: null,
       pendingFrame: null,
       viewport: { ...session.state.viewport }
     }
@@ -984,40 +1080,68 @@ export class BrowserSessionManager {
     return attachment.id
   }
 
-  async acceptOwner(
+  acceptOwner(
     auth: BrowserOwnerAuth,
     transport: BrowserOwnerTransport
-  ): Promise<string> {
-    const ticket = this.ownerTickets.get(auth.ticket)
-    this.ownerTickets.delete(auth.ticket)
-    if (
-      !ticket ||
-      ticket.expiresAt < Date.now() ||
-      ticket.challenge !== auth.challenge ||
-      !browserOwnerEndpointSchema.safeParse(auth.endpoint).success
-    ) {
-      throw new Error('INVALID_BROWSER_OWNER_TICKET')
-    }
+  ): Effect.Effect<string, unknown, ApplicationServices> {
+    return Effect.gen(this, function* () {
+      const ticket = this.ownerTickets.get(auth.ticket)
+      this.ownerTickets.delete(auth.ticket)
+      if (
+        !ticket ||
+        ticket.expiresAt < Date.now() ||
+        ticket.challenge !== auth.challenge ||
+        !isSchemaValue(browserOwnerEndpointSchema, auth.endpoint)
+      ) {
+        return yield* Effect.fail(new Error('INVALID_BROWSER_OWNER_TICKET'))
+      }
 
-    const identityResponse = await fetch(new URL('identity', auth.endpoint), {
-      signal: AbortSignal.timeout(3_000),
-      redirect: 'error'
-    })
-    const identity = z
-      .strictObject({
-        panelId: z.string().min(1).max(128),
-        challenge: z.string().min(32).max(256)
+      yield* Effect.annotateCurrentSpan({
+        'treeport.connection.id': transport.id,
+        'treeport.panel.id': ticket.panelId,
+        'treeport.client.id': ticket.clientId
       })
-      .parse(await identityResponse.json())
-    if (
-      !identityResponse.ok ||
-      identity.panelId !== ticket.panelId ||
-      identity.challenge !== ticket.challenge
-    ) {
-      throw new Error('INVALID_BROWSER_OWNER_IDENTITY')
-    }
+      const identityResult = yield* Effect.tryPromise({
+        try: async (signal) => {
+          const response = await fetch(new URL('identity', auth.endpoint), {
+            signal: AbortSignal.any([signal, AbortSignal.timeout(3_000)]),
+            redirect: 'error'
+          })
+          return { response, body: await response.json() }
+        },
+        catch: (cause) => cause
+      })
+      const identity = decodeUnknownOrNull(
+        browserOwnerIdentitySchema,
+        identityResult.body
+      )
+      if (
+        !identityResult.response.ok ||
+        !identity ||
+        identity.panelId !== ticket.panelId ||
+        identity.challenge !== ticket.challenge
+      ) {
+        return yield* Effect.fail(new Error('INVALID_BROWSER_OWNER_IDENTITY'))
+      }
 
-    const session = await this.getSession(ticket.panelId)
+      const session = yield* this.getSession(ticket.panelId)
+      return yield* Effect.tryPromise({
+        try: () => this.acceptOwnerSession(ticket, auth, session, transport),
+        catch: (cause) => cause
+      }).pipe(
+        Effect.onInterrupt(() =>
+          Effect.sync(() => this.closeOwner(transport.id))
+        )
+      )
+    })
+  }
+
+  private async acceptOwnerSession(
+    ticket: BrowserOwnerTicket,
+    auth: BrowserOwnerAuth,
+    session: BrowserSession,
+    transport: BrowserOwnerTransport
+  ): Promise<string> {
     await this.scheduleOperation(
       session,
       async () => {
@@ -1036,6 +1160,10 @@ export class BrowserSessionManager {
           resolveReady = resolve
         })
         const resumed = previousOwner?.clientId === ticket.clientId
+        if (resumed) {
+          networkTelemetry.reconnectNow('browser-owners')
+        }
+
         let owner: BrowserLocalOwner
         if (previousOwner) {
           previousOwner.resolveReady?.()
@@ -1387,6 +1515,7 @@ export class BrowserSessionManager {
 
     if (attachment.transport.sendFrame(frame)) {
       attachment.awaitingFrame = frame.sequence
+      attachment.awaitingFrameSentAt = Date.now()
     }
   }
 
@@ -1409,12 +1538,17 @@ export class BrowserSessionManager {
       }
 
       if (attachment.awaitingFrame !== null) {
+        if (attachment.pendingFrame) {
+          networkTelemetry.droppedNow('browsers', 'coalesced')
+        }
+
         attachment.pendingFrame = frame
         continue
       }
 
       if (attachment.transport.sendFrame(frame)) {
         attachment.awaitingFrame = frame.sequence
+        attachment.awaitingFrameSentAt = Date.now()
       }
     }
   }
@@ -1454,10 +1588,20 @@ export class BrowserSessionManager {
       }
 
       attachment.awaitingFrame = null
+      if (attachment.awaitingFrameSentAt !== null) {
+        networkTelemetry.durationNow(
+          'browsers',
+          'ack_lag',
+          Date.now() - attachment.awaitingFrameSentAt
+        )
+      }
+
+      attachment.awaitingFrameSentAt = null
       const pending = attachment.pendingFrame
       attachment.pendingFrame = null
       if (pending && attachment.transport.sendFrame(pending)) {
         attachment.awaitingFrame = pending.sequence
+        attachment.awaitingFrameSentAt = Date.now()
       }
 
       return
@@ -1469,6 +1613,7 @@ export class BrowserSessionManager {
         this.sendLatestFrame(session, attachment)
       } else {
         attachment.awaitingFrame = null
+        attachment.awaitingFrameSentAt = null
         attachment.pendingFrame = null
       }
 
@@ -2241,11 +2386,24 @@ export class BrowserSessionManager {
     return `Reloaded ${page.url()}`
   }
 
-  async agentCommand(
+  agentCommand(
     panelId: string,
     input: BrowserAgentCommand
+  ): Effect.Effect<string, unknown, ApplicationServices> {
+    return Effect.gen(this, function* () {
+      const session = yield* this.getSession(panelId)
+      return yield* Effect.tryPromise({
+        try: () => this.runAgentCommand(panelId, input, session),
+        catch: (cause) => cause
+      })
+    })
+  }
+
+  private async runAgentCommand(
+    panelId: string,
+    input: BrowserAgentCommand,
+    session: BrowserSession
   ): Promise<string> {
-    const session = await this.getSession(panelId)
     let result = ''
     await this.scheduleOperation(session, async () => {
       const localOwner = session.localOwner

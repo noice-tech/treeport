@@ -1,5 +1,9 @@
-import { io, type Socket } from 'socket.io-client'
-import { z } from 'zod'
+import {
+  apiErrorBodySchema,
+  browserTicketResponseSchema,
+  createProtocolSocket,
+  decodeUnknownOrNull
+} from '@treeport/shared'
 import type {
   BrowserClientMessage,
   BrowserClientToServerEvents,
@@ -9,16 +13,9 @@ import type {
 } from '@treeport/shared'
 import {
   BROWSER_PROTOCOL_VERSION,
-  browserFrameSchema,
-  browserServerMessageSchema,
   parseBrowserClientMessage,
-  SOCKET_IO_PATH
+  parseBrowserServerMessage
 } from '@treeport/shared'
-
-const browserTicketResponseSchema = z.object({
-  ticket: z.string().optional(),
-  error: z.object({ message: z.string().optional() }).optional()
-})
 
 export interface BrowserPanelConnection {
   dispose(): void
@@ -37,9 +34,6 @@ export interface BrowserPanelSocket {
 }
 
 interface BrowserPanelSocketOptions {
-  path: string
-  transports: ['websocket']
-  forceNew: true
   reconnection: false
   auth: {
     ticket: string
@@ -56,11 +50,10 @@ const defaultSocketFactory: BrowserPanelSocketFactory = (
   namespace,
   options
 ) => {
-  // SAFETY: The adapter uses only the typed events in BrowserPanelSocket.
-  return io(namespace, options) as Socket<
+  return createProtocolSocket<
     BrowserServerToClientEvents,
     BrowserClientToServerEvents
-  >
+  >(namespace, options)
 }
 
 export function connectBrowserPanel(
@@ -119,11 +112,11 @@ export function connectBrowserPanel(
         body: JSON.stringify({ clientId, visible: currentVisible })
       }
     )
-    const result = browserTicketResponseSchema.parse(await response.json())
-    if (!response.ok || !result.ticket) {
-      throw new Error(
-        result.error?.message ?? 'Could not attach hosted browser'
-      )
+    const body: unknown = await response.json()
+    const result = decodeUnknownOrNull(browserTicketResponseSchema, body)
+    if (!response.ok || !result) {
+      const error = decodeUnknownOrNull(apiErrorBodySchema, body)
+      throw new Error(error?.error.message ?? 'Could not attach hosted browser')
     }
 
     if (disposed) {
@@ -132,9 +125,6 @@ export function connectBrowserPanel(
     }
 
     const connectedSocket = socketFactory('/browsers', {
-      path: SOCKET_IO_PATH,
-      transports: ['websocket'],
-      forceNew: true,
       reconnection: false,
       auth: { ticket: result.ticket, protocolVersion: BROWSER_PROTOCOL_VERSION }
     })
@@ -145,13 +135,12 @@ export function connectBrowserPanel(
         return
       }
 
-      const parsed = browserServerMessageSchema.safeParse(value)
-      if (!parsed.success) {
+      const message = parseBrowserServerMessage(value)
+      if (!message) {
         connectedSocket.disconnect()
         return
       }
 
-      const message = parsed.data
       handlers.message(message)
       if (message.type !== 'ready') {
         return
@@ -172,12 +161,7 @@ export function connectBrowserPanel(
         return
       }
 
-      const frame = browserFrameSchema.safeParse(value)
-      if (frame.success) {
-        handlers.frame(frame.data)
-      } else {
-        connectedSocket.disconnect()
-      }
+      handlers.frame(value)
     })
     connectedSocket.on('disconnect', () => {
       if (socket !== connectedSocket) {

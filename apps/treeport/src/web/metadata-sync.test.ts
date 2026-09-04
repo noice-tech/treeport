@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { DetailedError } from 'hono/client'
+import { DetailedError } from './api'
 import {
   apiRetryDelay,
   createInvalidationCoalescer,

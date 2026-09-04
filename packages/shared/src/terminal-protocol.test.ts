@@ -7,11 +7,17 @@ import {
   parseTerminalProgress,
   parseTerminalRuntimeMetadata,
   parseTerminalServerEvent,
-  terminalBellAcknowledgementSchema,
-  terminalSizeSchema
+  terminalBellAcknowledgementSchema as terminalBellAcknowledgementEffectSchema,
+  terminalSizeSchema as terminalSizeEffectSchema
 } from './index.js'
+import { testSchema } from './schema.test-support.js'
 
-describe('Socket.IO contracts', () => {
+const terminalBellAcknowledgementSchema = testSchema(
+  terminalBellAcknowledgementEffectSchema
+)
+const terminalSizeSchema = testSchema(terminalSizeEffectSchema)
+
+describe('WebSocket contracts', () => {
   it('strictly validates terminal auth and controller generations', () => {
     expect(
       parseTerminalAuth({

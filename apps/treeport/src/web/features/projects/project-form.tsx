@@ -7,8 +7,7 @@ import {
   HomeIcon
 } from '@heroicons/react/16/solid'
 import type { ProjectRecord } from '@treeport/shared'
-import { parseResponse } from 'hono/client'
-import { rpc } from '../../api'
+import { parseResponse, rpc } from '../../api'
 import { errorMessage } from '../../error-message'
 import { Button } from '../../components/ui/button'
 import { FormField } from '../../components/ui/form-field'

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { browserUrlSchema } from '@treeport/shared'
+import { browserUrlSchema, decodeUnknownOrNull } from '@treeport/shared'
 import type {
   BrowserClientMessage,
   BrowserPanel,
@@ -27,7 +27,7 @@ function browserState(
       : observedUrl || fallbackUrl
   const url =
     currentUrl === 'about:blank' ||
-    browserUrlSchema.safeParse(currentUrl).success
+    decodeUnknownOrNull(browserUrlSchema, currentUrl) !== null
       ? currentUrl
       : fallbackUrl
   const bounds = webview.getBoundingClientRect()

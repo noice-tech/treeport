@@ -2,10 +2,14 @@ import { FitAddon } from '@xterm/addon-fit'
 import { ImageAddon } from '@xterm/addon-image'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { Terminal } from '@xterm/xterm'
-import { io, type Socket } from 'socket.io-client'
-import { parseResponse } from 'hono/client'
-import { z } from 'zod'
-import { rpc } from './api'
+import * as Schema from 'effect/Schema'
+import { parseResponse, rpc } from './api'
+import {
+  createProtocolSocket,
+  decodeUnknownOrNull,
+  type ProtocolSocket,
+  type ProtocolSocketOptions
+} from '@treeport/shared'
 import { errorMessage } from './error-message'
 import {
   activateTerminalLink,
@@ -18,7 +22,6 @@ import {
 } from './terminal-browser'
 import {
   parseTerminalServerEvent,
-  SOCKET_IO_PATH,
   TERMINAL_MAX_INPUT_BYTES,
   TERMINAL_MAX_UPLOAD_BYTES,
   TERMINAL_PROTOCOL_VERSION,
@@ -30,7 +33,10 @@ import {
 } from '@treeport/shared'
 
 type ConnectionPhase = 'connecting' | 'ready' | 'reconnecting' | 'closed'
-export type TerminalSocketFactory = typeof io
+export type TerminalSocketFactory = (
+  namespace: string,
+  options: ProtocolSocketOptions
+) => ProtocolSocket<TerminalServerToClientEvents, TerminalClientToServerEvents>
 export type ArrowDirection = 'up' | 'down' | 'left' | 'right'
 export type TerminalFileTransfer = {
   state: 'uploading' | 'error'
@@ -38,16 +44,16 @@ export type TerminalFileTransfer = {
 }
 
 const TERMINAL_MAX_FILES_PER_TRANSFER = 8
-const BROWSER_LOCAL_FILE_PATH_SCHEMA = z
-  .string()
-  .max(16_384)
-  .startsWith('/')
-  .refine((filePath) =>
+const BROWSER_LOCAL_FILE_PATH_SCHEMA = Schema.String.pipe(
+  Schema.maxLength(16_384),
+  Schema.startsWith('/'),
+  Schema.filter((filePath) =>
     Array.from(filePath).every((character) => {
       const codePoint = character.codePointAt(0)!
       return codePoint > 31 && codePoint !== 127
     })
   )
+)
 const LOOPBACK_BROWSER_HOSTNAMES = new Set(['127.0.0.1', 'localhost', '[::1]'])
 const TERMINAL_MIN_VIEWER_FONT_SIZE = 4
 const TERMINAL_MIN_COLS = 2
@@ -159,7 +165,7 @@ export class TerminalSession {
   private resizeObserver: ResizeObserver | null = null
   private keyboardViewportCleanup: (() => void) | null = null
   private desktopLocalFilePasteCleanup: (() => void) | null = null
-  private socket: Socket<
+  private socket: ProtocolSocket<
     TerminalServerToClientEvents,
     TerminalClientToServerEvents
   > | null = null
@@ -214,7 +220,7 @@ export class TerminalSession {
 
   constructor(
     terminalId: string,
-    private readonly createSocket: TerminalSocketFactory = io
+    private readonly createSocket: TerminalSocketFactory = createProtocolSocket
   ) {
     this.terminalId = terminalId
   }
@@ -251,7 +257,7 @@ export class TerminalSession {
     }
 
     host.appendChild(this.wrapper)
-    this.socket?.io.reconnection(true)
+    this.socket?.manager.reconnection(true)
     if (!this.opened) {
       this.openTerminal()
     }
@@ -345,7 +351,7 @@ export class TerminalSession {
 
     this.resizeObserver?.disconnect()
     this.resizeObserver = null
-    this.socket?.io.reconnection(false)
+    this.socket?.manager.reconnection(false)
     if (this.wakeListenersAttached) {
       window.removeEventListener('online', this.reconnectWhenOnline)
       document.removeEventListener(
@@ -823,10 +829,10 @@ export class TerminalSession {
         sourcePaths = files.map((file) => {
           // SAFETY: Privileged browser platforms can add this optional, read-only capability to a File.
           const platformFile = file as File & { readonly path?: string }
-          const parsedPath = BROWSER_LOCAL_FILE_PATH_SCHEMA.safeParse(
+          return decodeUnknownOrNull(
+            BROWSER_LOCAL_FILE_PATH_SCHEMA,
             platformFile.path
           )
-          return parsedPath.success ? parsedPath.data : null
         })
       } else {
         sourcePaths = files.map(() => null)
@@ -1042,33 +1048,25 @@ export class TerminalSession {
       error: null
     })
     this.startDegradedTimer()
-    const socket: Socket<
-      TerminalServerToClientEvents,
-      TerminalClientToServerEvents
-    > = this.createSocket('/terminals', {
-      path: SOCKET_IO_PATH,
-      transports: ['websocket'],
-      forceNew: true,
-      multiplex: false,
+    const socket = this.createSocket('/terminals', {
       autoConnect: false,
       reconnection: true,
       reconnectionDelay: 100,
       reconnectionDelayMax: 1_000,
       randomizationFactor: 0.2,
-      retries: 0,
       query: { terminalProtocol: String(TERMINAL_PROTOCOL_VERSION) },
-      auth: (authorize) => {
+      authorize: () => {
         const dimensions = normalizeTerminalDimensions(
           this.proposedDimensions ?? {
             cols: this.terminal?.cols ?? 100,
             rows: this.terminal?.rows ?? 30
           }
         )
-        authorize({
+        return {
           terminalId: this.terminalId,
           clientId: getClientId(),
           ...dimensions
-        })
+        }
       }
     })
     this.socket = socket
@@ -1139,7 +1137,7 @@ export class TerminalSession {
             : this.snapshotValue.error
       })
     })
-    socket.io.on('reconnect_attempt', () => {
+    socket.manager.on('reconnect_attempt', () => {
       if (this.socket === socket && this.reconnectAllowed) {
         this.controlRequestGeneration = null
         this.startDegradedTimer()

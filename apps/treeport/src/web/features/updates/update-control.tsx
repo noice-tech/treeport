@@ -1,8 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { parseResponse } from 'hono/client'
 import { DownloadIcon, LoaderCircleIcon, TriangleAlertIcon } from 'lucide-react'
-import { rpc } from '../../api'
+import { parseResponse, rpc } from '../../api'
 import { Button } from '../../components/ui/button'
 import { errorMessage } from '../../error-message'
 import {

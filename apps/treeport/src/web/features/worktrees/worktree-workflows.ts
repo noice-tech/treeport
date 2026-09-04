@@ -14,8 +14,7 @@ import type {
   TreeContextValues,
   WorktreeRecord
 } from '@treeport/shared'
-import { parseResponse } from 'hono/client'
-import { rpc } from '../../api'
+import { parseResponse, rpc } from '../../api'
 import { errorDetails } from '../../error-message'
 import { projectsQueryKey } from '../../project-metadata'
 import { terminalSessions } from '../../terminal-session'

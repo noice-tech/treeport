@@ -6,6 +6,7 @@ import type {
   ServerResponse
 } from 'node:http'
 import path from 'node:path'
+import type { Duplex } from 'node:stream'
 import { TLSSocket } from 'node:tls'
 import { fileURLToPath } from 'node:url'
 import react from '@vitejs/plugin-react'
@@ -88,7 +89,12 @@ export class WebPanelViteRuntime {
   private readonly builds = new Map<string, Promise<string>>()
   private readonly developmentServers = new Map<
     string,
-    { base: string; server: ViteDevServer; allowNetworkRequests: boolean }
+    {
+      base: string
+      server: ViteDevServer
+      allowNetworkRequests: boolean
+      upgrade: (request: IncomingMessage, socket: Duplex, head: Buffer) => void
+    }
   >()
   private httpServer?: HttpServer
 
@@ -327,13 +333,32 @@ export class WebPanelViteRuntime {
       root: canonical,
       packageRoot: await fs.realpath(source.packageRoot)
     }
+    const previousUpgradeListeners = new Set(
+      this.httpServer.listeners('upgrade')
+    )
     const server = await createServer(
       this.viteConfig(developmentSource, base, { server: this.httpServer })
     )
+    const addedUpgradeListeners = this.httpServer
+      .listeners('upgrade')
+      .filter((listener) => !previousUpgradeListeners.has(listener))
+    if (addedUpgradeListeners.length !== 1) {
+      await server.close()
+      throw new Error('Web panel Vite did not register one HMR upgrade handler')
+    }
+
+    // SAFETY: Vite registered this listener on Node's upgrade event above.
+    const upgrade = addedUpgradeListeners[0] as (
+      request: IncomingMessage,
+      socket: Duplex,
+      head: Buffer
+    ) => void
+    this.httpServer.removeListener('upgrade', upgrade)
     const created = {
       base,
       server,
-      allowNetworkRequests: source.allowNetworkRequests
+      allowNetworkRequests: source.allowNetworkRequests,
+      upgrade
     }
     this.developmentServers.set(key, created)
     return created
@@ -483,6 +508,27 @@ export class WebPanelViteRuntime {
       )
     )
     development.server.middlewares(request, response, next)
+  }
+
+  handleDevelopmentUpgrade(
+    request: IncomingMessage,
+    socket: Duplex,
+    head: Buffer
+  ): boolean {
+    const pathname = new URL(request.url ?? '/', 'http://treeport.local')
+      .pathname
+    const match = /^\/api\/web-panel-dev\/([a-f0-9]{24})\/@vite-hmr$/u.exec(
+      pathname
+    )
+    const development = match
+      ? this.developmentServers.get(match[1]!)
+      : undefined
+    if (!development) {
+      return false
+    }
+
+    development.upgrade(request, socket, head)
+    return true
   }
 
   async disposeDevelopmentServers(): Promise<void> {

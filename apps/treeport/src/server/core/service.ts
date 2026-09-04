@@ -4,6 +4,7 @@ import type {
   IncomingMessage,
   ServerResponse
 } from 'node:http'
+import type { Duplex } from 'node:stream'
 import type { AppConfig } from './config'
 import type { CommandRunner } from './command'
 import type { TreeportDatabase } from './database'
@@ -18,6 +19,7 @@ import { ApplicationLifecycle } from './services/infrastructure/application-life
 import {
   type ApplicationRuntime,
   type ApplicationServices,
+  ApplicationFibers,
   TerminalAttachmentMutations,
   TerminalMetadataMutations,
   TerminalUploadMutations,
@@ -199,6 +201,20 @@ export class TreeportService {
     return runApplicationEffect(this.runtime, effect)
   }
 
+  forkEffect<Result, Failure>(
+    effect: Effect.Effect<Result, Failure, ApplicationServices>
+  ) {
+    return this.runtime.runFork(effect)
+  }
+
+  forkApplicationEffect(
+    effect: Effect.Effect<unknown, never, ApplicationServices>
+  ): void {
+    this.runtime.runFork(
+      Effect.flatMap(ApplicationFibers, (fibers) => fibers.fork(effect))
+    )
+  }
+
   terminalAttachmentMutation<Result>(
     terminalId: string,
     effect: Effect.Effect<Result, unknown, ApplicationServices>
@@ -246,6 +262,14 @@ export class TreeportService {
     next: () => void
   ): void {
     this.webPanelRuntime.handleDevelopmentRequest(request, response, next)
+  }
+
+  handleWebPanelDevelopmentUpgrade(
+    request: IncomingMessage,
+    socket: Duplex,
+    head: Buffer
+  ): boolean {
+    return this.webPanelRuntime.handleDevelopmentUpgrade(request, socket, head)
   }
 
   async disposeRuntime(): Promise<void> {

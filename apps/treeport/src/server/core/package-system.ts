@@ -6,6 +6,8 @@ import { z } from 'zod'
 import * as Effect from 'effect/Effect'
 import {
   createTerminalPresetSchema,
+  decodeUnknownOrNull,
+  isSchemaValue,
   type PackageListing,
   type PackageOperationResult,
   type PackageResourceDiagnostic,
@@ -137,7 +139,13 @@ const webPanelManifestEntrySchema = z.union([
   z.string(),
   z.strictObject({
     source: z.string(),
-    permissions: z.array(webPanelPermissionSchema).optional()
+    permissions: z
+      .array(
+        z.custom<WebPanelPermission>((value) =>
+          isSchemaValue(webPanelPermissionSchema, value)
+        )
+      )
+      .optional()
   })
 ])
 
@@ -943,7 +951,13 @@ export class PackageSystem {
       const parsedDefinition = z
         .strictObject({
           source: z.string(),
-          permissions: z.array(webPanelPermissionSchema).optional()
+          permissions: z
+            .array(
+              z.custom<WebPanelPermission>((value) =>
+                isSchemaValue(webPanelPermissionSchema, value)
+              )
+            )
+            .optional()
         })
         .parse(parsed.data)
       const { source, permissions = [] } = parsedDefinition
@@ -1298,16 +1312,12 @@ export class PackageSystem {
         )
         continue
       }
-      const result = createTerminalPresetSchema.safeParse(value)
-      if (!result.success) {
+      const result = decodeUnknownOrNull(createTerminalPresetSchema, value)
+      if (!result) {
         candidates.diagnostics.push(
           diagnostic(
             scope,
-            `Invalid terminal preset: ${result.error.issues
-              .map(
-                (issue) => `${issue.path.join('.') || 'value'} ${issue.message}`
-              )
-              .join('; ')}`,
+            'Invalid terminal preset: Request validation failed',
             {
               source,
               projectId: projectId ?? undefined,
@@ -1325,13 +1335,13 @@ export class PackageSystem {
           id: `package:${parsed.packageId}:terminal-preset:${encodeURIComponent(
             resourceName
           )}`,
-          name: result.data.name,
-          executable: result.data.executable,
-          args: [...result.data.args],
+          name: result.name,
+          executable: result.executable,
+          args: [...result.args],
           shellCommand: null,
           cwd: null,
           env: {},
-          closeOnSuccess: result.data.closeOnSuccess,
+          closeOnSuccess: result.closeOnSuccess,
           source: metadata
         },
         relativePath: candidate.relativePath,

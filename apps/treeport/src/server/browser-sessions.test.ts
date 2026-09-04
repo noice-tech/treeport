@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events'
 import http from 'node:http'
+import * as Effect from 'effect/Effect'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import { BROWSER_PROTOCOL_VERSION } from '@treeport/shared'
@@ -27,6 +28,13 @@ import {
 import { testAccess } from './test-access'
 
 const browsers: FakeBrowser[] = []
+
+function runEffect<Result, Failure, Requirements>(
+  effect: Effect.Effect<Result, Failure, Requirements>
+): Promise<Result> {
+  // SAFETY: Browser session test doubles provide every requested application service.
+  return Effect.runPromise(effect as Effect.Effect<Result, Failure, never>)
+}
 
 class FakeBrowser implements BrowserSessionBrowser {
   state: BrowserSessionBrowser['state'] = {
@@ -180,24 +188,32 @@ function fixture(
     updatedAt: '2026-01-01T00:00:00.000Z'
   }
   const panels = {
-    authorizeBrowserPanel: vi.fn(async (_panelId: string) => ({
-      panel,
-      worktreePath: '/worktree'
-    })),
+    authorizeBrowserPanel: vi.fn<
+      (
+        panelId: string
+      ) => Effect.Effect<
+        { panel: BrowserPanel; worktreePath: string },
+        unknown,
+        never
+      >
+    >((_panelId) => Effect.succeed({ panel, worktreePath: '/worktree' })),
     updateBrowserPanelState: vi.fn(
-      async (_panelId: string, state: { url: string; title: string }) => {
-        panel.url = state.url
-        panel.title = state.title || new URL(state.url).host || 'Browser'
-        panel.updatedAt = '2026-01-01T00:00:01.000Z'
-        return { ...panel }
-      }
+      (_panelId: string, state: { url: string; title: string }) =>
+        Effect.sync(() => {
+          panel.url = state.url
+          panel.title = state.title || new URL(state.url).host || 'Browser'
+          panel.updatedAt = '2026-01-01T00:00:01.000Z'
+          return { ...panel }
+        })
     ),
-    openBrowserPanelFromPanel: vi.fn(async () => ({
-      panel: { ...panel, id: 'panel_popup' }
-    }))
+    openBrowserPanelFromPanel: vi.fn(() =>
+      Effect.succeed({ panel: { ...panel, id: 'panel_popup' } })
+    )
   }
   const service = testAccess<BrowserSessionService>({
-    runEffect: (effect: Promise<unknown>) => effect,
+    forkApplicationEffect: (effect: Effect.Effect<void, never, never>) => {
+      Effect.runFork(effect)
+    },
     panels,
     events: {
       subscribe(listener: (event: ProductEvent) => void) {
@@ -263,23 +279,28 @@ describe('Browser sessions', () => {
   it('authorizes one-use attachment tickets, shares control, and drops stale frames', async () => {
     const value = fixture()
     const first = value.transport('first')
-    const firstTicket = await value.manager.issueTicket(
-      'panel_browser',
-      'client-first'
+    const firstTicket = await runEffect(
+      value.manager.issueTicket('panel_browser', 'client-first')
     )
-    await value.manager.accept(firstTicket, first.transport)
+    await runEffect(value.manager.accept(firstTicket, first.transport))
     expect(first.messages.at(-1)).toMatchObject({
       type: 'controlChanged',
       state: { controlled: true }
     })
     await expect(
-      value.manager.accept(firstTicket, value.transport('reuse').transport)
+      runEffect(
+        value.manager.accept(firstTicket, value.transport('reuse').transport)
+      )
     ).rejects.toThrow('INVALID_BROWSER_TICKET')
 
     const second = value.transport('second')
-    await value.manager.accept(
-      await value.manager.issueTicket('panel_browser', 'client-second'),
-      second.transport
+    await runEffect(
+      value.manager.accept(
+        await runEffect(
+          value.manager.issueTicket('panel_browser', 'client-second')
+        ),
+        second.transport
+      )
     )
     expect(second.messages.at(-1)).toMatchObject({
       type: 'controlChanged',
@@ -309,9 +330,13 @@ describe('Browser sessions', () => {
       data: new Uint8Array([3])
     })
     const lateObserver = value.transport('late-observer')
-    await value.manager.accept(
-      await value.manager.issueTicket('panel_browser', 'client-late'),
-      lateObserver.transport
+    await runEffect(
+      value.manager.accept(
+        await runEffect(
+          value.manager.issueTicket('panel_browser', 'client-late')
+        ),
+        lateObserver.transport
+      )
     )
     expect(lateObserver.frames).toHaveLength(1)
     expect([...lateObserver.frames[0]!.data]).toEqual([3])
@@ -383,30 +408,30 @@ describe('Browser sessions', () => {
 
   it('serializes concurrent attachments into one browser process', async () => {
     const value = fixture()
-    const firstTicket = await value.manager.issueTicket(
-      'panel_browser',
-      'client-first'
+    const firstTicket = await runEffect(
+      value.manager.issueTicket('panel_browser', 'client-first')
     )
-    const secondTicket = await value.manager.issueTicket(
-      'panel_browser',
-      'client-second'
+    const secondTicket = await runEffect(
+      value.manager.issueTicket('panel_browser', 'client-second')
     )
-    const authorized = await value.panels.authorizeBrowserPanel('panel_browser')
+    const authorized = await runEffect(
+      value.panels.authorizeBrowserPanel('panel_browser')
+    )
     let finishAuthorization!: () => void
     const authorization = new Promise<void>((resolve) => {
       finishAuthorization = resolve
     })
-    vi.mocked(value.panels.authorizeBrowserPanel).mockImplementation(
-      async () => {
+    vi.mocked(value.panels.authorizeBrowserPanel).mockImplementation(() =>
+      Effect.promise(async () => {
         await authorization
         return authorized
-      }
+      })
     )
     const first = value.transport('first')
     const second = value.transport('second')
     const attachments = Promise.all([
-      value.manager.accept(firstTicket, first.transport),
-      value.manager.accept(secondTicket, second.transport)
+      runEffect(value.manager.accept(firstTicket, first.transport)),
+      runEffect(value.manager.accept(secondTicket, second.transport))
     ])
     finishAuthorization()
     await attachments
@@ -442,10 +467,12 @@ describe('Browser sessions', () => {
     const launchValue = fixture(runAgentCli, { panelUrl: launchUrl })
 
     await expect(
-      launchValue.manager.agentCommand('panel_browser', {
-        command: 'goto',
-        args: [agentUrl]
-      })
+      runEffect(
+        launchValue.manager.agentCommand('panel_browser', {
+          command: 'goto',
+          args: [agentUrl]
+        })
+      )
     ).resolves.toBe('navigated')
     expect(browsers[0]!.commands[0]).toEqual({
       type: 'navigate',
@@ -463,9 +490,13 @@ describe('Browser sessions', () => {
     const storedUrl = 'http://localhost:4173/from-storage'
     const storedValue = fixture(null, { panelUrl: storedUrl })
     const client = storedValue.transport('stored-client')
-    await storedValue.manager.accept(
-      await storedValue.manager.issueTicket('panel_browser', 'stored-client'),
-      client.transport
+    await runEffect(
+      storedValue.manager.accept(
+        await runEffect(
+          storedValue.manager.issueTicket('panel_browser', 'stored-client')
+        ),
+        client.transport
+      )
     )
     expect(browsers[1]!.commands[0]).toEqual({
       type: 'navigate',
@@ -490,15 +521,18 @@ describe('Browser sessions', () => {
       localBrowser.browser as never
     const value = fixture(runAgentCli, { connectLocalAutomation })
     const remote = value.transport('remote')
-    await value.manager.accept(
-      await value.manager.issueTicket('panel_browser', 'remote-client'),
-      remote.transport
+    await runEffect(
+      value.manager.accept(
+        await runEffect(
+          value.manager.issueTicket('panel_browser', 'remote-client')
+        ),
+        remote.transport
+      )
     )
     expect(browsers).toHaveLength(1)
 
-    const ownerTicket = await value.manager.issueOwnerTicket(
-      'panel_browser',
-      'desktop-client'
+    const ownerTicket = await runEffect(
+      value.manager.issueOwnerTicket('panel_browser', 'desktop-client')
     )
     let automationRequests = 0
     const ownerServer = http.createServer((request, response) => {
@@ -558,14 +592,16 @@ describe('Browser sessions', () => {
         ownerConnected = false
       }
     }
-    await value.manager.acceptOwner(
-      {
-        ticket: ownerTicket.ticket,
-        challenge: ownerTicket.challenge,
-        endpoint: `http://127.0.0.1:${address.port}/private/`,
-        protocolVersion: BROWSER_PROTOCOL_VERSION
-      },
-      ownerTransport
+    await runEffect(
+      value.manager.acceptOwner(
+        {
+          ticket: ownerTicket.ticket,
+          challenge: ownerTicket.challenge,
+          endpoint: `http://127.0.0.1:${address.port}/private/`,
+          protocolVersion: BROWSER_PROTOCOL_VERSION
+        },
+        ownerTransport
+      )
     )
     expect(browsers[0]!.closes).toBe(1)
     expect(ownerMessages[0]).toMatchObject({
@@ -581,10 +617,12 @@ describe('Browser sessions', () => {
 
     const generation = claim.generation
     let agentSettled = false
-    const beforeReadyAgent = value.manager.agentCommand('panel_browser', {
-      command: 'snapshot',
-      args: []
-    })
+    const beforeReadyAgent = runEffect(
+      value.manager.agentCommand('panel_browser', {
+        command: 'snapshot',
+        args: []
+      })
+    )
     void beforeReadyAgent
       .finally(() => {
         agentSettled = true
@@ -638,13 +676,13 @@ describe('Browser sessions', () => {
     )
 
     const observer = value.transport('observer')
-    await value.manager.accept(
-      await value.manager.issueTicket(
-        'panel_browser',
-        'observer-client',
-        false
-      ),
-      observer.transport
+    await runEffect(
+      value.manager.accept(
+        await runEffect(
+          value.manager.issueTicket('panel_browser', 'observer-client', false)
+        ),
+        observer.transport
+      )
     )
     expect(observer.messages.at(-1)).toMatchObject({
       type: 'controlChanged',
@@ -705,9 +743,13 @@ describe('Browser sessions', () => {
 
     value.manager.close('remote')
     const reconnectedRemote = value.transport('remote-reconnected')
-    await value.manager.accept(
-      await value.manager.issueTicket('panel_browser', 'remote-client', true),
-      reconnectedRemote.transport
+    await runEffect(
+      value.manager.accept(
+        await runEffect(
+          value.manager.issueTicket('panel_browser', 'remote-client', true)
+        ),
+        reconnectedRemote.transport
+      )
     )
     expect(reconnectedRemote.messages.at(-1)).toMatchObject({
       type: 'controlChanged',
@@ -771,9 +813,8 @@ describe('Browser sessions', () => {
     await vi.waitFor(() => expect(reconnectedRemote.frames).toHaveLength(2))
     expect([...reconnectedRemote.frames[1]!.data]).toEqual([8])
 
-    const resumedTicket = await value.manager.issueOwnerTicket(
-      'panel_browser',
-      'desktop-client'
+    const resumedTicket = await runEffect(
+      value.manager.issueOwnerTicket('panel_browser', 'desktop-client')
     )
     expect(resumedTicket.challenge).toBe(ownerTicket.challenge)
     const resumedMessages: BrowserOwnerServerMessage[] = []
@@ -800,14 +841,16 @@ describe('Browser sessions', () => {
         resumedConnected = false
       }
     }
-    await value.manager.acceptOwner(
-      {
-        ticket: resumedTicket.ticket,
-        challenge: resumedTicket.challenge,
-        endpoint: `http://127.0.0.1:${address.port}/private/`,
-        protocolVersion: BROWSER_PROTOCOL_VERSION
-      },
-      resumedTransport
+    await runEffect(
+      value.manager.acceptOwner(
+        {
+          ticket: resumedTicket.ticket,
+          challenge: resumedTicket.challenge,
+          endpoint: `http://127.0.0.1:${address.port}/private/`,
+          protocolVersion: BROWSER_PROTOCOL_VERSION
+        },
+        resumedTransport
+      )
     )
     expect(resumedMessages[0]).toMatchObject({
       type: 'claimGranted',
@@ -828,10 +871,12 @@ describe('Browser sessions', () => {
       }
     })
     await expect(
-      value.manager.agentCommand('panel_browser', {
-        command: 'snapshot',
-        args: []
-      })
+      runEffect(
+        value.manager.agentCommand('panel_browser', {
+          command: 'snapshot',
+          args: []
+        })
+      )
     ).resolves.toBe('- button "Local target" [ref=e1]')
     expect(browsers).toHaveLength(1)
     expect(runAgentCli).not.toHaveBeenCalled()
@@ -850,9 +895,11 @@ describe('Browser sessions', () => {
   it('uses a page beforeunload request instead of a generic close confirmation', async () => {
     const value = fixture()
     const client = value.transport('client')
-    await value.manager.accept(
-      await value.manager.issueTicket('panel_browser', 'client'),
-      client.transport
+    await runEffect(
+      value.manager.accept(
+        await runEffect(value.manager.issueTicket('panel_browser', 'client')),
+        client.transport
+      )
     )
     const browser = browsers[0]!
     browser.closeRequiresConfirmation = true
@@ -886,15 +933,19 @@ describe('Browser sessions', () => {
       )
     const value = fixture(runAgentCli)
     const client = value.transport('client')
-    await value.manager.accept(
-      await value.manager.issueTicket('panel_browser', 'client'),
-      client.transport
+    await runEffect(
+      value.manager.accept(
+        await runEffect(value.manager.issueTicket('panel_browser', 'client')),
+        client.transport
+      )
     )
 
-    const agent = value.manager.agentCommand('panel_browser', {
-      command: 'snapshot',
-      args: []
-    })
+    const agent = runEffect(
+      value.manager.agentCommand('panel_browser', {
+        command: 'snapshot',
+        args: []
+      })
+    )
     await vi.waitFor(() =>
       expect(client.messages.at(-1)).toMatchObject({
         type: 'controlChanged',
@@ -972,9 +1023,11 @@ describe('Browser sessions', () => {
   it('routes browser popups through durable BrowserPanel creation', async () => {
     const value = fixture()
     const client = value.transport('client')
-    await value.manager.accept(
-      await value.manager.issueTicket('panel_browser', 'client'),
-      client.transport
+    await runEffect(
+      value.manager.accept(
+        await runEffect(value.manager.issueTicket('panel_browser', 'client')),
+        client.transport
+      )
     )
 
     browsers[0]!.callbacks.popup('https://example.com/popup')
@@ -990,12 +1043,14 @@ describe('Browser sessions', () => {
   it('closes the browser when its owning worktree is removed', async () => {
     const value = fixture()
     const client = value.transport('client')
-    await value.manager.accept(
-      await value.manager.issueTicket('panel_browser', 'client'),
-      client.transport
+    await runEffect(
+      value.manager.accept(
+        await runEffect(value.manager.issueTicket('panel_browser', 'client')),
+        client.transport
+      )
     )
-    vi.mocked(value.panels.authorizeBrowserPanel).mockRejectedValue(
-      new Error('removed')
+    vi.mocked(value.panels.authorizeBrowserPanel).mockReturnValue(
+      Effect.fail(new Error('removed'))
     )
     value.events.emit('event', {
       type: 'worktree.removed',
@@ -1013,9 +1068,11 @@ describe('Browser sessions', () => {
   it('closes the browser when the durable panel is removed', async () => {
     const value = fixture()
     const client = value.transport('client')
-    await value.manager.accept(
-      await value.manager.issueTicket('panel_browser', 'client'),
-      client.transport
+    await runEffect(
+      value.manager.accept(
+        await runEffect(value.manager.issueTicket('panel_browser', 'client')),
+        client.transport
+      )
     )
     value.events.emit('event', {
       type: 'panel.removed',

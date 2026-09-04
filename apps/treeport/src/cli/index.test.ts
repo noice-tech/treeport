@@ -10,14 +10,23 @@ import {
   symlink,
   writeFile
 } from 'node:fs/promises'
-import http, { type Server } from 'node:http'
+import http, { type RequestListener, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
-import { Server as SocketIOServer } from 'socket.io'
-import { browserAgentCommandSchema, SOCKET_IO_PATH } from '@treeport/shared'
+import { NodeHttpServer } from '@effect/platform-node'
+import { RpcSerialization, RpcServer } from '@effect/rpc'
+import {
+  browserAgentCommandSchema,
+  decodeUnknownOrNull,
+  TreeportRpcs
+} from '@treeport/shared'
+import * as Effect from 'effect/Effect'
+import * as Exit from 'effect/Exit'
+import * as Scope from 'effect/Scope'
+import * as Stream from 'effect/Stream'
 import type {
   BrowserPanel,
   OperationRecord,
@@ -253,7 +262,8 @@ describe('CLI executable', () => {
 
 describe('CLI context and machine output', () => {
   let server: Server
-  let socketServer: SocketIOServer
+  let rpcScope: Scope.CloseableScope
+  let rpcListener: RequestListener
   let apiUrl: string
   const requests: string[] = []
   const creationBodies: unknown[] = []
@@ -326,6 +336,11 @@ describe('CLI context and machine output', () => {
 
   beforeAll(async () => {
     server = http.createServer(async (request, response) => {
+      if (request.method === 'POST' && request.url === '/api/rpc') {
+        rpcListener(request, response)
+        return
+      }
+
       requests.push(`${request.method} ${request.url}`)
       response.setHeader('content-type', 'application/json')
 
@@ -335,6 +350,7 @@ describe('CLI context and machine output', () => {
             ok: true,
             version: packageVersion,
             protocolVersion: 1,
+            hostname: 'cli-test',
             pid: process.pid,
             instanceId: 'instance_context',
             installationMethod: 'development',
@@ -499,6 +515,14 @@ describe('CLI context and machine output', () => {
         return
       }
 
+      if (
+        request.method === 'GET' &&
+        request.url === '/api/projects/proj_invalid'
+      ) {
+        response.end(JSON.stringify({ project: { id: 'proj_invalid' } }))
+        return
+      }
+
       if (request.method === 'POST' && request.url === '/api/projects') {
         let source = ''
         for await (const chunk of request) {
@@ -559,27 +583,39 @@ describe('CLI context and machine output', () => {
               {
                 id: 'project:preview',
                 title: 'Preview',
-                source: { type: 'project' }
+                icon: null,
+                source: { type: 'project' },
+                permissions: [],
+                permissionsGranted: true,
+                sandbox: { allowSameOrigin: false }
               },
               {
                 id: 'package:one:review',
                 title: 'Review one',
+                icon: null,
                 source: {
                   type: 'package',
                   packageId: 'one',
                   source: 'npm:@acme/one',
                   scope: 'global'
-                }
+                },
+                permissions: [],
+                permissionsGranted: true,
+                sandbox: { allowSameOrigin: false }
               },
               {
                 id: 'package:two:review',
                 title: 'Review two',
+                icon: null,
                 source: {
                   type: 'package',
                   packageId: 'two',
                   source: 'npm:@acme/two',
                   scope: 'global'
-                }
+                },
+                permissions: [],
+                permissionsGranted: true,
+                sandbox: { allowSameOrigin: false }
               }
             ]
           })
@@ -625,8 +661,15 @@ describe('CLI context and machine output', () => {
         for await (const chunk of request) {
           source += chunk
         }
-        const body = browserAgentCommandSchema.parse(JSON.parse(source))
-        browserAgentBodies.push(body)
+        const body = decodeUnknownOrNull(
+          browserAgentCommandSchema,
+          JSON.parse(source)
+        )
+        if (!body) {
+          throw new Error('Invalid Browser agent command')
+        }
+
+        browserAgentBodies.push({ command: body.command, args: [...body.args] })
         response.end(
           JSON.stringify({
             output: '### Snapshot\n- button "Run checks" [ref=e2]'
@@ -910,94 +953,116 @@ describe('CLI context and machine output', () => {
         JSON.stringify({ error: { code: 'NOT_FOUND', message: 'Not found' } })
       )
     })
-    socketServer = new SocketIOServer(server, {
-      path: SOCKET_IO_PATH,
-      transports: ['websocket'],
-      serveClient: false
-    })
-    socketServer.of('/events').on('connection', (socket) => {
-      if (eventScenario === 'bell-snapshot') {
-        observedMetadata = {
-          ...observedMetadata,
-          bell: {
-            sequence: 1,
-            at: '2026-01-01T00:02:00.000Z',
-            unread: true
-          }
-        }
-      }
+    const handlers = TreeportRpcs.toLayer(
+      Effect.succeed({
+        WatchProjectEvents: () =>
+          Stream.unwrap(
+            Effect.sync(() => {
+              if (eventScenario === 'bell-snapshot') {
+                observedMetadata = {
+                  ...observedMetadata,
+                  bell: {
+                    sequence: 1,
+                    at: '2026-01-01T00:02:00.000Z',
+                    unread: true
+                  }
+                }
+              }
 
-      socket.emit('snapshot', {
-        at: timestamp,
-        terminalMetadata: [observedMetadata],
-        webPanels: [],
-        browserPanels: []
+              const snapshot = Stream.succeed({
+                _tag: 'Snapshot' as const,
+                snapshot: {
+                  at: timestamp,
+                  terminalMetadata: [observedMetadata],
+                  webPanels: [],
+                  browserPanels: []
+                }
+              })
+              if (
+                eventScenario === 'none' ||
+                eventScenario === 'slow-refresh' ||
+                eventScenario === 'bell-snapshot'
+              ) {
+                return Stream.concat(snapshot, Stream.never)
+              }
+
+              const event = Effect.sleep(10).pipe(
+                Effect.map(() => {
+                  if (eventScenario === 'working') {
+                    observedMetadata = {
+                      ...observedMetadata,
+                      progress: { state: 'indeterminate', value: null },
+                      progressStartedAt: '2026-01-01T00:01:00.000Z'
+                    }
+                    return {
+                      _tag: 'ProductEvent' as const,
+                      event: {
+                        id: 'event-1',
+                        type: 'terminal.metadata' as const,
+                        at: '2026-01-01T00:03:00.000Z',
+                        data: { ...observedMetadata, worktreeId: null }
+                      }
+                    }
+                  }
+
+                  if (eventScenario === 'bell') {
+                    observedMetadata = {
+                      ...observedMetadata,
+                      bell: {
+                        sequence: (observedMetadata.bell?.sequence ?? 0) + 1,
+                        at: '2026-01-01T00:02:00.000Z',
+                        unread: true
+                      }
+                    }
+                    return {
+                      _tag: 'ProductEvent' as const,
+                      event: {
+                        id: 'event-1',
+                        type: 'terminal.metadata' as const,
+                        at: '2026-01-01T00:03:00.000Z',
+                        data: { ...observedMetadata, worktreeId: null }
+                      }
+                    }
+                  }
+
+                  observedTerminal = {
+                    ...observedTerminal,
+                    status: 'exited',
+                    exitCode: 7
+                  }
+                  return {
+                    _tag: 'ProductEvent' as const,
+                    event: {
+                      id: 'event-1',
+                      type: 'terminal.updated' as const,
+                      at: '2026-01-01T00:03:00.000Z',
+                      data: {
+                        terminalId: observedTerminal.id,
+                        worktreeId: observedTerminal.worktreeId
+                      }
+                    }
+                  }
+                })
+              )
+              return Stream.concat(
+                snapshot,
+                Stream.concat(Stream.fromEffect(event), Stream.never)
+              )
+            })
+          )
       })
-      if (
-        eventScenario === 'none' ||
-        eventScenario === 'slow-refresh' ||
-        eventScenario === 'bell-snapshot'
-      ) {
-        return
-      }
-
-      const timer = setTimeout(() => {
-        let event:
-          | {
-              type: 'terminal.metadata'
-              data: TerminalRuntimeMetadata & { worktreeId: null }
-            }
-          | {
-              type: 'terminal.updated'
-              data: { terminalId: string; worktreeId: string }
-            }
-        if (eventScenario === 'working') {
-          observedMetadata = {
-            ...observedMetadata,
-            progress: { state: 'indeterminate', value: null },
-            progressStartedAt: '2026-01-01T00:01:00.000Z'
-          }
-          event = {
-            type: 'terminal.metadata',
-            data: { ...observedMetadata, worktreeId: null }
-          }
-        } else if (eventScenario === 'bell') {
-          observedMetadata = {
-            ...observedMetadata,
-            bell: {
-              sequence: (observedMetadata.bell?.sequence ?? 0) + 1,
-              at: '2026-01-01T00:02:00.000Z',
-              unread: true
-            }
-          }
-          event = {
-            type: 'terminal.metadata',
-            data: { ...observedMetadata, worktreeId: null }
-          }
-        } else {
-          observedTerminal = {
-            ...observedTerminal,
-            status: 'exited',
-            exitCode: 7
-          }
-          event = {
-            type: 'terminal.updated',
-            data: {
-              terminalId: observedTerminal.id,
-              worktreeId: observedTerminal.worktreeId
-            }
-          }
-        }
-
-        socket.emit('product_event', {
-          id: 'event-1',
-          type: event.type,
-          at: '2026-01-01T00:03:00.000Z',
-          data: event.data
-        })
-      }, 10)
-      socket.once('disconnect', () => clearTimeout(timer))
-    })
+    )
+    rpcScope = await Effect.runPromise(Scope.make())
+    const rpcApp = await Effect.runPromise(
+      Scope.extend(
+        RpcServer.toHttpApp(TreeportRpcs).pipe(
+          Effect.provide(handlers),
+          Effect.provide(RpcSerialization.layerNdjson)
+        ),
+        rpcScope
+      )
+    )
+    rpcListener = await Effect.runPromise(NodeHttpServer.makeHandler(rpcApp))
     await new Promise<void>((resolve) => {
       server.listen(0, '127.0.0.1', resolve)
     })
@@ -1007,7 +1072,10 @@ describe('CLI context and machine output', () => {
   })
 
   afterAll(async () => {
-    await new Promise<void>((resolve) => socketServer.close(() => resolve()))
+    await Effect.runPromise(Scope.close(rpcScope, Exit.void))
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve()))
+    )
   })
 
   it('prints context in concise human and compact JSON forms', async () => {
@@ -1240,6 +1308,26 @@ describe('CLI context and machine output', () => {
         code: 'AUTHENTICATION_REQUIRED',
         message:
           'Treeport accepts remote requests only through Tailscale Serve.'
+      }
+    })
+  })
+
+  it('rejects malformed successful API responses before using them', async () => {
+    const result = await runCli(['context', '--json'], {
+      TREEPORT_API_URL: apiUrl,
+      TREEPORT_PROJECT_ID: 'proj_invalid',
+      TREEPORT_WORKTREE_ID: worktree.id,
+      TREEPORT_TERMINAL_ID: terminal.id
+    })
+
+    expect(result.code).toBe(3)
+    expect(result.stdout).toBe('')
+    expect(JSON.parse(result.stderr)).toEqual({
+      error: {
+        code: 'DAEMON_PROTOCOL_ERROR',
+        message:
+          'Treeport daemon returned an invalid response for /api/projects/proj_invalid',
+        details: { pathname: '/api/projects/proj_invalid' }
       }
     })
   })
@@ -1613,7 +1701,7 @@ describe('CLI context and machine output', () => {
       environment,
       cwd
     )
-    expect(opened.code).toBe(0)
+    expect(opened.code, opened.stderr).toBe(0)
     expect(JSON.parse(opened.stdout)).toMatchObject({
       panel: { id: 'panel_1', definitionId: 'project:preview' },
       created: true,
@@ -1818,7 +1906,7 @@ describe('CLI context and machine output', () => {
     })
   })
 
-  it('waits for progress and bell Socket.IO events', async () => {
+  it('waits for progress and bell Effect RPC events', async () => {
     eventScenario = 'working'
     const working = await runCli(
       ['terminal', 'wait', terminal.id, '--until', 'working', '--json'],
@@ -1852,7 +1940,7 @@ describe('CLI context and machine output', () => {
     })
   })
 
-  it('observes a bell between inspection and the Socket.IO snapshot', async () => {
+  it('observes a bell between inspection and the Effect RPC snapshot', async () => {
     eventScenario = 'bell-snapshot'
     const result = await runCli(
       ['terminal', 'wait', terminal.id, '--until', 'bell', '--json'],
@@ -2289,7 +2377,7 @@ exit 1
 
     try {
       const help = await runPackagedCli([], environment)
-      expect(help.code).toBe(0)
+      expect(help.code, help.stderr).toBe(0)
       expect(help.stdout).toContain('start [options]')
       expect(help.stdout).not.toContain('start|up')
 

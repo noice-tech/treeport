@@ -1,72 +1,15 @@
 import { Activity, useEffect, useRef, useState } from 'react'
-import type { WebPanel } from '@treeport/shared'
-import { parseResponse } from 'hono/client'
-import { z } from 'zod'
-import { rpc, treeFilesRpc } from '../../api'
+import {
+  decodeUnknownOrNull,
+  panelDirtyMessageSchema,
+  panelRequestMessageSchema,
+  panelTitleMessageSchema,
+  workspaceSelectionMessageSchema,
+  type WebPanel
+} from '@treeport/shared'
+import { parseResponse, rpc, treeFilesRpc } from '../../api'
 import { errorDetails, errorMessage } from '../../error-message'
 import { cn } from '../../lib/utils'
-
-const panelTitleMessageSchema = z.object({
-  source: z.literal('treeport-panel-v1'),
-  method: z.literal('panel.title.set'),
-  title: z.string().nullable()
-})
-const workspaceSelectionMessageSchema = z.object({
-  source: z.literal('treeport-panel-v1'),
-  method: z.literal('workspace.select'),
-  index: z.number().int().min(0).max(8)
-})
-const panelDirtyMessageSchema = z.strictObject({
-  source: z.literal('treeport-panel-v1'),
-  method: z.literal('panel.dirty.set'),
-  dirty: z.boolean()
-})
-const panelRequestFields = {
-  source: z.literal('treeport-panel-v1'),
-  id: z.string()
-}
-const panelRequestMessageSchema = z.discriminatedUnion('method', [
-  z.strictObject({ ...panelRequestFields, method: z.literal('context') }),
-  z.strictObject({ ...panelRequestFields, method: z.literal('diff') }),
-  z.strictObject({
-    ...panelRequestFields,
-    method: z.literal('network.listeners')
-  }),
-  z.strictObject({ ...panelRequestFields, method: z.literal('files.list') }),
-  z.strictObject({
-    ...panelRequestFields,
-    method: z.literal('files.search'),
-    query: z.string()
-  }),
-  z.strictObject({
-    ...panelRequestFields,
-    method: z.literal('files.read'),
-    path: z.string()
-  }),
-  z.strictObject({
-    ...panelRequestFields,
-    method: z.literal('files.write'),
-    path: z.string(),
-    content: z.string(),
-    expectedRevision: z.string()
-  }),
-  z.strictObject({
-    ...panelRequestFields,
-    method: z.literal('storage.get'),
-    key: z.string()
-  }),
-  z.strictObject({
-    ...panelRequestFields,
-    method: z.literal('storage.set'),
-    key: z.string(),
-    value: z.json()
-  }),
-  z.strictObject({
-    ...panelRequestFields,
-    method: z.literal('storage.delete'),
-    key: z.string()
-  })
-])
 
 export function WebPanelWorkspace({
   panel,
@@ -172,35 +115,41 @@ export function WebPanelWorkspace({
         return
       }
 
-      const titleMessage = panelTitleMessageSchema.safeParse(event.data)
-      if (titleMessage.success) {
+      const titleMessage = decodeUnknownOrNull(
+        panelTitleMessageSchema,
+        event.data
+      )
+      if (titleMessage) {
         onTitleChange(
           panel.id,
-          titleMessage.data.title?.trim().slice(0, 256) || null
+          titleMessage.title?.trim().slice(0, 256) || null
         )
         return
       }
 
-      const dirtyMessage = panelDirtyMessageSchema.safeParse(event.data)
-      if (dirtyMessage.success) {
-        onDirtyChange(panel.id, dirtyMessage.data.dirty)
-        return
-      }
-
-      const selectionMessage = workspaceSelectionMessageSchema.safeParse(
+      const dirtyMessage = decodeUnknownOrNull(
+        panelDirtyMessageSchema,
         event.data
       )
-      if (selectionMessage.success) {
-        onSelectWorkspace(selectionMessage.data.index)
+      if (dirtyMessage) {
+        onDirtyChange(panel.id, dirtyMessage.dirty)
         return
       }
 
-      const parsedRequest = panelRequestMessageSchema.safeParse(event.data)
-      if (!parsedRequest.success) {
+      const selectionMessage = decodeUnknownOrNull(
+        workspaceSelectionMessageSchema,
+        event.data
+      )
+      if (selectionMessage) {
+        onSelectWorkspace(selectionMessage.index)
         return
       }
 
-      const message = parsedRequest.data
+      const message = decodeUnknownOrNull(panelRequestMessageSchema, event.data)
+      if (!message) {
+        return
+      }
+
       const { method } = message
       let request: Promise<unknown>
       if (method === 'context') {
