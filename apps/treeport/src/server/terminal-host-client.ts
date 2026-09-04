@@ -10,7 +10,8 @@ import type {
   HostedTerminal,
   TerminalProcess,
   TerminalSessionState,
-  TerminalTitleState
+  TerminalTitleState,
+  TerminalTraceContext
 } from './core/terminal'
 import type { TerminalHostRuntimeEvent } from './terminal-host-sessions'
 import {
@@ -146,6 +147,7 @@ export class TerminalHostClient {
   >()
   private readonly decoder = new TerminalHostFrameDecoder()
   private closed = false
+  private supportsTraceContext = false
 
   private constructor(
     private readonly socket: Socket,
@@ -191,6 +193,7 @@ export class TerminalHostClient {
       )
     }
 
+    client.supportsTraceContext = handshake.traceContext === true
     Object.assign(client.record, handshake)
     return client
   }
@@ -199,8 +202,11 @@ export class TerminalHostClient {
     return Promise.resolve(true)
   }
 
-  createTerminal(input: TerminalHostCreateInput): Promise<void> {
-    return this.request('create', input).then(() => undefined)
+  createTerminal(
+    input: TerminalHostCreateInput,
+    trace?: TerminalTraceContext
+  ): Promise<void> {
+    return this.request('create', input, trace).then(() => undefined)
   }
 
   listTerminals(worktreeId: string): Promise<HostedTerminal[]> {
@@ -213,7 +219,8 @@ export class TerminalHostClient {
 
   async attach(
     terminalId: string,
-    listener: (data: string, sequence: number) => void
+    listener: (data: string, sequence: number) => void,
+    trace?: TerminalTraceContext
   ): Promise<{
     data: string
     links: TerminalSnapshotLink[]
@@ -229,7 +236,7 @@ export class TerminalHostClient {
     this.outputListeners.set(terminalId, listeners)
     let snapshot: TerminalHostResults['attach']
     try {
-      snapshot = await this.request('attach', { terminalId })
+      snapshot = await this.request('attach', { terminalId }, trace)
     } catch (error) {
       listeners.delete(listener)
       if (!listeners.size) {
@@ -394,8 +401,11 @@ export class TerminalHostClient {
     return this.request('signal', { terminalId, signal }).then(() => undefined)
   }
 
-  killTerminal(terminalId: string): Promise<void> {
-    return this.request('kill', { terminalId }).then(() => undefined)
+  killTerminal(
+    terminalId: string,
+    trace?: TerminalTraceContext
+  ): Promise<void> {
+    return this.request('kill', { terminalId }, trace).then(() => undefined)
   }
 
   killWorktree(worktreeId: string): Promise<string[]> {
@@ -418,7 +428,8 @@ export class TerminalHostClient {
 
   private request<Method extends keyof TerminalHostResults>(
     method: Method,
-    input: TerminalHostRequestInput
+    input: TerminalHostRequestInput,
+    trace?: TerminalTraceContext
   ): Promise<TerminalHostResults[Method]> {
     if (this.closed) {
       return Promise.reject(new Error('Terminal host connection is closed'))
@@ -432,6 +443,10 @@ export class TerminalHostClient {
       method,
       input
     }
+    if (trace && this.supportsTraceContext) {
+      frame.trace = trace
+    }
+
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         this.pending.delete(id)

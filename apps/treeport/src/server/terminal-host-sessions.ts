@@ -19,7 +19,8 @@ import {
   type TerminalLaunchSpec,
   type TerminalProcess,
   type TerminalSessionState,
-  type TerminalTitleState
+  type TerminalTitleState,
+  type TerminalTraceContext
 } from './core/terminal'
 import {
   integrateShellLaunch,
@@ -121,7 +122,8 @@ export interface TerminalHostRuntimeEvent {
 export interface TerminalAttachmentBackend {
   attach(
     terminalId: string,
-    listener: (data: string, sequence: number) => void
+    listener: (data: string, sequence: number) => void,
+    trace?: TerminalTraceContext
   ): Promise<{
     data: string
     links: TerminalSnapshotLink[]

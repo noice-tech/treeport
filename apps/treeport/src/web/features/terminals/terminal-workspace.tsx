@@ -19,11 +19,18 @@ import { TerminalView } from '../../terminal-view'
 import { terminalTarget, worktreeTarget } from '../../workspace-navigation'
 import { useWorkspaceNavigate } from '../../workspace-router-navigation'
 import { notifyError } from '../notifications/error-notifications'
+import {
+  browserTrace,
+  forgetTerminalCorrelation,
+  newBrowserCorrelationId,
+  registerTerminalCorrelation
+} from '../../agent-tracing'
 import { useWorkspaceSurfaceFocus } from '../panels/workspace-surface-focus-context'
 import { useProjectSwitcher } from '../sidebar/workspace-shell'
 
 export interface CreateTerminalInput {
   name: string
+  correlationId?: string
   initialTitle?: string
   argv?: string[]
   shellCommand?: string
@@ -39,6 +46,8 @@ interface CreateTerminalMutationInput extends CreateTerminalInput {
   sequence: number
   projectId: string
   originPath: string
+  requestedAt: number
+  correlationId: string
 }
 
 export function useTerminalWorkflows({
@@ -70,8 +79,14 @@ export function useTerminalWorkflows({
       env,
       returnToShell,
       closeOnSuccess,
-      initialSize
+      initialSize,
+      correlationId,
+      requestedAt
     }: CreateTerminalMutationInput) => {
+      browserTrace('terminal.create.request.started', correlationId, {
+        queueWaitMs: Number((performance.now() - requestedAt).toFixed(3)),
+        worktreeId
+      })
       const json: CreateTerminalInput & { initialSize?: TerminalSize } = {
         name
       }
@@ -108,14 +123,23 @@ export function useTerminalWorkflows({
       }
 
       const result = await parseResponse(
-        rpc.api.worktrees[':worktreeId'].terminals.$post({
-          param: { worktreeId },
-          json
-        })
+        rpc.api.worktrees[':worktreeId'].terminals.$post(
+          {
+            param: { worktreeId },
+            json
+          },
+          { init: { headers: { 'x-request-id': correlationId } } }
+        )
       )
       return result.terminal
     },
     onSuccess: async (terminal, request) => {
+      registerTerminalCorrelation(terminal.id, request.correlationId)
+      browserTrace('terminal.create.response.received', request.correlationId, {
+        elapsedMs: Number((performance.now() - request.requestedAt).toFixed(3)),
+        terminalId: terminal.id,
+        worktreeId: request.worktreeId
+      })
       let targetFound = false
       queryClient.setQueryData<ProjectRecord[]>(projectsQueryKey, (current) => {
         const update = upsertProjectTerminal(
@@ -126,8 +150,15 @@ export function useTerminalWorkflows({
         targetFound = update.found
         return update.projects
       })
+      browserTrace('terminal.create.cache.updated', request.correlationId, {
+        targetFound,
+        terminalId: terminal.id
+      })
       if (!targetFound) {
         await queryClient.invalidateQueries({ queryKey: projectsQueryKey })
+        browserTrace('terminal.create.cache.refetched', request.correlationId, {
+          terminalId: terminal.id
+        })
         return
       }
 
@@ -141,14 +172,32 @@ export function useTerminalWorkflows({
         request.sequence === nextCreateSequenceRef.current &&
         locationPathRef.current === request.originPath
       if (project && worktree && shouldNavigate) {
+        browserTrace(
+          'terminal.create.navigation.started',
+          request.correlationId,
+          {
+            terminalId: terminal.id
+          }
+        )
         await navigateToWorkspace(
           terminalTarget(project.id, worktree.id, terminal.id),
           request.originPath ===
             worktreeTarget(project.id, worktree.id).pathname
         )
+        browserTrace(
+          'terminal.create.navigation.finished',
+          request.correlationId,
+          {
+            terminalId: terminal.id
+          }
+        )
       }
     },
     onError: (error, request) => {
+      browserTrace('terminal.create.failed', request.correlationId, {
+        elapsedMs: Number((performance.now() - request.requestedAt).toFixed(3)),
+        worktreeId: request.worktreeId
+      })
       notifyError(error, {
         operation: `create terminal “${request.name}”`
       })
@@ -156,16 +205,30 @@ export function useTerminalWorkflows({
   })
 
   const closeTerminal = useMutation({
-    mutationFn: ({ terminal }: { terminal: TerminalRecord; index: number }) => {
+    mutationFn: ({
+      terminal,
+      correlationId,
+      queuedAt
+    }: {
+      terminal: TerminalRecord
+      index: number
+      correlationId: string
+      queuedAt: number
+    }) => {
       // Keep rapid optimistic closes responsive without occupying every HTTP/1
       // connection while the server performs ordered process cleanup.
-      const request = closeRequestTailRef.current.then(() =>
-        parseResponse(
-          rpc.api.terminals[':terminalId'].$delete({
-            param: { terminalId: terminal.id }
-          })
+      const request = closeRequestTailRef.current.then(() => {
+        browserTrace('terminal.remove.request.started', correlationId, {
+          browserQueueWaitMs: Number((performance.now() - queuedAt).toFixed(3)),
+          terminalId: terminal.id
+        })
+        return parseResponse(
+          rpc.api.terminals[':terminalId'].$delete(
+            { param: { terminalId: terminal.id } },
+            { init: { headers: { 'x-request-id': correlationId } } }
+          )
         )
-      )
+      })
       closeRequestTailRef.current = request.then(
         () => undefined,
         () => undefined
@@ -173,6 +236,9 @@ export function useTerminalWorkflows({
       return request
     },
     onError: (error, closed) => {
+      browserTrace('terminal.remove.failed', closed.correlationId, {
+        terminalId: closed.terminal.id
+      })
       queryClient.setQueryData<ProjectRecord[]>(projectsQueryKey, (current) =>
         current?.map((project) => ({
           ...project,
@@ -196,8 +262,15 @@ export function useTerminalWorkflows({
         operation: `close terminal “${closed.terminal.name}”`
       })
     },
-    onSettled: (_, __, closed) => {
+    onSettled: (_, error, closed) => {
+      browserTrace('terminal.remove.settled', closed.correlationId, {
+        failed: error !== null,
+        terminalId: closed.terminal.id
+      })
       closingTerminalIdsRef.current.delete(closed.terminal.id)
+      if (!error) {
+        forgetTerminalCorrelation(closed.terminal.id)
+      }
     }
   })
 
@@ -226,13 +299,21 @@ export function useTerminalWorkflows({
         ? terminalSessions.getInitialSize(selectedTerminal.id)
         : null
     const sequence = ++nextCreateSequenceRef.current
+    const correlationId = input.correlationId ?? newBrowserCorrelationId()
+    const requestedAt = performance.now()
+    browserTrace('terminal.create.command.admitted', correlationId, {
+      sequence,
+      worktreeId: currentWorktree.id
+    })
     closeMobileWithoutFocusRestore()
     const mutation: CreateTerminalMutationInput = {
       worktreeId: currentWorktree.id,
       name: input.name,
       sequence,
       projectId: currentProject.id,
-      originPath: location.pathname
+      originPath: location.pathname,
+      requestedAt,
+      correlationId
     }
     if (input.initialTitle) {
       mutation.initialTitle = input.initialTitle
@@ -314,6 +395,12 @@ export function useTerminalWorkflows({
     const index = worktree.terminals.findIndex(
       (candidate) => candidate.id === terminal.id
     )
+    const correlationId = newBrowserCorrelationId()
+    const queuedAt = performance.now()
+    browserTrace('terminal.remove.command.admitted', correlationId, {
+      terminalId: terminal.id,
+      worktreeId: terminal.worktreeId
+    })
     closingTerminalIdsRef.current.add(terminal.id)
     void queryClient.cancelQueries({ queryKey: projectsQueryKey })
     if (selectedTerminalId === terminal.id) {
@@ -341,7 +428,7 @@ export function useTerminalWorkflows({
       (current) =>
         removeProjectTerminal(current, worktree.id, terminal.id).projects
     )
-    closeTerminal.mutate({ terminal, index })
+    closeTerminal.mutate({ terminal, index, correlationId, queuedAt })
   }
 
   return {

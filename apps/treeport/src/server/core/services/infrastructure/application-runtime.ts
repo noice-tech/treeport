@@ -15,6 +15,7 @@ import type { NetworkListenerAdapter } from '../../network-listeners'
 import type { PackageSystem } from '../../package-system'
 import type { TerminalSessionBackend } from '../../terminal'
 import type { WebPanelViteRuntime } from '../../web-panel-vite-runtime'
+import { tracingLayerFromEnvironment } from '../../../tracing'
 import {
   PanelOperations,
   ProjectObservationOperations,
@@ -53,49 +54,49 @@ import {
 export class WorktreeMutations extends Effect.Service<WorktreeMutations>()(
   'treeport/WorktreeMutations',
   {
-    scoped: makeMutationCoordinator<string>()
+    scoped: makeMutationCoordinator<string>('worktree')
   }
 ) {}
 
 export class TerminalMutations extends Effect.Service<TerminalMutations>()(
   'treeport/TerminalMutations',
   {
-    scoped: makeMutationCoordinator<string>()
+    scoped: makeMutationCoordinator<string>('terminal')
   }
 ) {}
 
 export class TreeFileMutations extends Effect.Service<TreeFileMutations>()(
   'treeport/TreeFileMutations',
   {
-    scoped: makeMutationCoordinator<string>()
+    scoped: makeMutationCoordinator<string>('tree_file')
   }
 ) {}
 
 export class ProjectObservations extends Effect.Service<ProjectObservations>()(
   'treeport/ProjectObservations',
   {
-    scoped: makeMutationCoordinator<string>()
+    scoped: makeMutationCoordinator<string>('project_observation')
   }
 ) {}
 
 export class TerminalMetadataMutations extends Effect.Service<TerminalMetadataMutations>()(
   'treeport/TerminalMetadataMutations',
   {
-    scoped: makeMutationCoordinator<string>()
+    scoped: makeMutationCoordinator<string>('terminal_metadata')
   }
 ) {}
 
 export class TerminalAttachmentMutations extends Effect.Service<TerminalAttachmentMutations>()(
   'treeport/TerminalAttachmentMutations',
   {
-    scoped: makeMutationCoordinator<string>()
+    scoped: makeMutationCoordinator<string>('terminal_attachment')
   }
 ) {}
 
 export class TerminalUploadMutations extends Effect.Service<TerminalUploadMutations>()(
   'treeport/TerminalUploadMutations',
   {
-    scoped: makeMutationCoordinator<string>()
+    scoped: makeMutationCoordinator<string>('terminal_upload')
   }
 ) {}
 
@@ -206,7 +207,11 @@ export function makeApplicationRuntime(resources: ApplicationResources) {
       MutationLocks.Default,
       ApplicationDaemons.Default,
       ApplicationFibers.Default,
-      TerminalState.Default
+      TerminalState.Default,
+      tracingLayerFromEnvironment(
+        'treeport',
+        resources.config.appVersion ?? 'unknown'
+      )
     )
   )
 }

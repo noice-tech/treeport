@@ -1332,6 +1332,9 @@ export function createApp({
       '/api/worktrees/:worktreeId/terminals',
       Effect.gen(function* () {
         const params = yield* routeParams
+        yield* Effect.annotateCurrentSpan({
+          'treeport.worktree.id': params.worktreeId!
+        })
         const body = yield* requestBody(createTerminalSchema)
         const options: NonNullable<
           Parameters<TreeportService['terminals']['createTerminal']>[3]
@@ -1373,7 +1376,7 @@ export function createApp({
           )
         )
         return jsonContractResponse(terminalResponseSchema, { terminal }, 201)
-      })
+      }).pipe(Effect.withSpan('treeport.terminal.create.request'))
     ),
     route(
       'GET',
@@ -1606,11 +1609,14 @@ export function createApp({
       '/api/terminals/:terminalId',
       Effect.gen(function* () {
         const params = yield* routeParams
+        yield* Effect.annotateCurrentSpan({
+          'treeport.terminal.id': params.terminalId!
+        })
         yield* operation(() =>
           service.terminals.deleteTerminal(params.terminalId!)
         )
         return jsonContractResponse(okResponseSchema, { ok: true })
-      })
+      }).pipe(Effect.withSpan('treeport.terminal.remove.request'))
     ),
     route(
       'GET',
@@ -1829,6 +1835,9 @@ export function createApp({
         ]).pipe(Effect.asVoid)
       )
     )
+    yield* Effect.annotateCurrentSpan({
+      'http.response.status_code': response.status
+    })
     yield* networkTelemetry.message(
       'http',
       'out',

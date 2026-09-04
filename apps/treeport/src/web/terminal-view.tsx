@@ -26,6 +26,7 @@ import {
   type TerminalSessionSnapshot
 } from './terminal-session'
 import { useTerminalNavigationMetadata } from './terminal-runtime-metadata-react'
+import { browserTrace, terminalCorrelation } from './agent-tracing'
 
 interface TerminalViewProps {
   worktree: WorktreeRecord | null
@@ -71,6 +72,7 @@ export function TerminalView({
     value: ''
   })
   const onStatusChangeRef = useRef(onStatusChange)
+  const readyTraceTerminalRef = useRef<string | null>(null)
   onStatusChangeRef.current = onStatusChange
   const isMobile = useIsMobile()
 
@@ -78,6 +80,13 @@ export function TerminalView({
     if (!terminal) {
       setSession(null)
       return
+    }
+
+    const correlationId = terminalCorrelation(terminal.id)
+    if (correlationId) {
+      browserTrace('terminal.render.committed', correlationId, {
+        terminalId: terminal.id
+      })
     }
 
     const next = terminalSessions.acquire(terminal.id)
@@ -131,7 +140,20 @@ export function TerminalView({
       return
     }
 
+    const correlationId = terminalCorrelation(activeSession.terminalId)
+    if (correlationId) {
+      browserTrace('terminal.xterm.mount.started', correlationId, {
+        terminalId: activeSession.terminalId
+      })
+    }
+
     activeSession.mount(host)
+    if (correlationId) {
+      browserTrace('terminal.xterm.mount.finished', correlationId, {
+        terminalId: activeSession.terminalId
+      })
+    }
+
     return () => activeSession.unmount(host)
   }, [activeSession])
 
@@ -140,6 +162,36 @@ export function TerminalView({
     session: activeSession,
     blocked: autoFocusBlocked
   })
+
+  useEffect(() => {
+    if (
+      !terminal ||
+      snapshot.phase !== 'ready' ||
+      readyTraceTerminalRef.current === terminal.id
+    ) {
+      return
+    }
+
+    readyTraceTerminalRef.current = terminal.id
+    const correlationId = terminalCorrelation(terminal.id)
+    if (!correlationId) {
+      return
+    }
+
+    browserTrace('terminal.attachment.ready', correlationId, {
+      terminalId: terminal.id
+    })
+    const frame = requestAnimationFrame(() => {
+      browserTrace('terminal.focus.observed', correlationId, {
+        focused:
+          document.activeElement?.classList.contains(
+            'xterm-helper-textarea'
+          ) === true,
+        terminalId: terminal.id
+      })
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [snapshot.phase, terminal])
 
   useEffect(() => {
     if (!activeSession) {
