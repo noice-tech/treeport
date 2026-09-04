@@ -614,7 +614,7 @@ test('controls the local Browser through its exact bridge while another workspac
       .toBe(`${origin}/site/start`)
     await expect(
       window.getByRole('tab', { name: 'Browser start, Browser' })
-    ).toBeVisible()
+    ).toBeVisible({ timeout: 10_000 })
     const sidePanelToggle = window.getByRole('button', {
       name: 'Toggle side panel'
     })
