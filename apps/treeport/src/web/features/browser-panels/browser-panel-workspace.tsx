@@ -436,17 +436,7 @@ export function BrowserPanelWorkspace({
 
   /* eslint-disable react-you-might-not-need-an-effect/no-event-handler -- Workspace route activation owns Browser focus. */
   useEffect(() => {
-    if (
-      !active ||
-      autoFocusBlocked ||
-      !autoFocusAddressRef.current ||
-      stateRef.current === null
-    ) {
-      return
-    }
-
-    if (stateRef.current.url !== 'about:blank') {
-      autoFocusAddressRef.current = false
+    if (!active || autoFocusBlocked || !autoFocusAddressRef.current) {
       return
     }
 
@@ -463,7 +453,7 @@ export function BrowserPanelWorkspace({
         if (
           !input ||
           input.value !== '' ||
-          stateRef.current?.url !== 'about:blank'
+          (stateRef.current?.url ?? 'about:blank') !== 'about:blank'
         ) {
           return
         }
