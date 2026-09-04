@@ -93,7 +93,7 @@ interface NetworkFixture {
   metadataSnapshot: ReturnType<typeof vi.fn<() => TerminalRuntimeMetadata[]>>
   listWebPanels: ReturnType<typeof vi.fn<() => Promise<WebPanel[]>>>
   listBrowserPanels: ReturnType<typeof vi.fn<() => Promise<BrowserPanel[]>>>
-  refreshTerminalStatus: ReturnType<
+  getTerminalForAttachment: ReturnType<
     typeof vi.fn<(terminalId?: string) => Promise<TerminalRecord>>
   >
   ptys: FakePty[]
@@ -110,7 +110,7 @@ async function fixture(
   const ptys: FakePty[] = []
   const listWebPanels = vi.fn<() => Promise<WebPanel[]>>(async () => [])
   const listBrowserPanels = vi.fn<() => Promise<BrowserPanel[]>>(async () => [])
-  const refreshTerminalStatus = vi.fn<
+  const getTerminalForAttachment = vi.fn<
     (terminalId?: string) => Promise<TerminalRecord>
   >(async () => ({
     id: 'term',
@@ -134,8 +134,8 @@ async function fixture(
     listWebPanels,
     listBrowserPanels,
     panels: { listWebPanels, listBrowserPanels },
-    refreshTerminalStatus,
-    terminals: { refreshTerminalStatus },
+    getTerminalForAttachment,
+    terminals: { getTerminalForAttachment },
     getWorktree,
     projects: { getWorktree },
     runEffect: vi.fn((effect) =>
@@ -242,7 +242,7 @@ async function fixture(
     metadataSnapshot,
     listWebPanels,
     listBrowserPanels,
-    refreshTerminalStatus,
+    getTerminalForAttachment,
     ptys,
     service,
     close: () =>
@@ -686,7 +686,7 @@ describe('Socket.IO real network', () => {
       bypassedTerminal.once('connect_error', resolve)
     )
     expect(terminalError.message).toMatch(/websocket error/i)
-    expect(value.refreshTerminalStatus).toHaveBeenCalledTimes(1)
+    expect(value.getTerminalForAttachment).toHaveBeenCalledTimes(1)
 
     const foreignOrigin = eventClient(value.url, {
       extraHeaders: { ...tailscaleHeaders, Origin: 'https://evil.example' }
@@ -758,10 +758,10 @@ describe('Socket.IO real network', () => {
   it('does not finish attachment setup after a real pre-ready disconnect', async () => {
     const value = await fixture()
     type RefreshedTerminal = Awaited<
-      ReturnType<typeof value.refreshTerminalStatus>
+      ReturnType<typeof value.getTerminalForAttachment>
     >
     let finishRefresh!: (terminal: RefreshedTerminal) => void
-    vi.mocked(value.refreshTerminalStatus).mockReturnValueOnce(
+    vi.mocked(value.getTerminalForAttachment).mockReturnValueOnce(
       new Promise<RefreshedTerminal>((resolve) => {
         finishRefresh = resolve
       })
@@ -774,7 +774,7 @@ describe('Socket.IO real network', () => {
       socket.once('connect_error', reject)
     })
     await vi.waitFor(() =>
-      expect(value.refreshTerminalStatus).toHaveBeenCalledOnce()
+      expect(value.getTerminalForAttachment).toHaveBeenCalledOnce()
     )
 
     socket.disconnect()

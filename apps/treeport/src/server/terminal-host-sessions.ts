@@ -21,7 +21,10 @@ import {
   type TerminalSessionState,
   type TerminalTitleState
 } from './core/terminal'
-import { prepareShellIntegration } from './core/shell-integration'
+import {
+  integrateShellLaunch,
+  prepareShellIntegration
+} from './core/shell-integration'
 
 const { Terminal } = xtermHeadless
 const HOST_SCROLLBACK_LINES = 50_000
@@ -167,7 +170,7 @@ export interface TerminalAttachmentBackend {
 
 interface HostedTerminalSession extends HostedTerminal {
   cwd: string
-  specPath: string
+  specPath: string | null
   title: string | null
   commandLine: string | null
   progress: TerminalProgress | null
@@ -209,6 +212,10 @@ type PtySpawner = typeof pty.spawn
 export class TerminalHostSessionManager {
   readonly shellIntegrationDir: string
   private readonly sessions = new Map<string, HostedTerminalSession>()
+  private readonly pendingCleanups = new Set<{
+    worktreeId: string
+    promise: Promise<void>
+  }>()
   private initialization: Promise<void> | null = null
 
   constructor(
@@ -241,56 +248,63 @@ export class TerminalHostSessionManager {
       throw new Error(`Terminal already exists: ${input.terminalId}`)
     }
 
-    const spec: TerminalLaunchSpec = {
-      argv: [...input.argv],
-      cwd: input.cwd,
-      env: { ...input.env },
-      shellIntegrationDir: this.shellIntegrationDir
-    }
-    if (input.initialTitle) {
-      spec.initialTitle = input.initialTitle
+    const directShell =
+      input.interactiveShell &&
+      input.shellCommand === null &&
+      !input.initialTitle &&
+      !input.fallbackArgv &&
+      !input.setupTasks?.length &&
+      !input.setupError
+    let specPath: string | null = null
+    if (!directShell) {
+      const spec: TerminalLaunchSpec = {
+        argv: [...input.argv],
+        cwd: input.cwd,
+        env: { ...input.env },
+        shellIntegrationDir: this.shellIntegrationDir
+      }
+      if (input.initialTitle) {
+        spec.initialTitle = input.initialTitle
+      }
+
+      if (input.fallbackArgv) {
+        spec.fallbackArgv = [...input.fallbackArgv]
+      }
+
+      if (input.setupTasks) {
+        spec.setupTasks = input.setupTasks
+      }
+
+      if (input.setupError) {
+        spec.setupError = input.setupError
+      }
+
+      specPath = path.join(
+        this.runtimeDir,
+        'terminal-specs',
+        `${input.terminalId}-${crypto.randomUUID()}.json`
+      )
+      await fs.writeFile(specPath, JSON.stringify(spec), { mode: 0o600 })
     }
 
-    if (input.fallbackArgv) {
-      spec.fallbackArgv = [...input.fallbackArgv]
-    }
-
-    if (input.setupTasks) {
-      spec.setupTasks = input.setupTasks
-    }
-
-    if (input.setupError) {
-      spec.setupError = input.setupError
-    }
-
-    const specPath = path.join(
-      this.runtimeDir,
-      'terminal-specs',
-      `${input.terminalId}-${crypto.randomUUID()}.json`
-    )
-    await fs.writeFile(specPath, JSON.stringify(spec), { mode: 0o600 })
     const size = input.initialSize ?? { cols: 100, rows: 30 }
-    const environment = Object.fromEntries(
+    const inheritedEnvironment = Object.fromEntries(
       Object.entries(process.env).filter(
         (entry): entry is [string, string] => entry[1] !== undefined
       )
     )
-    environment.TERM = 'xterm-256color'
-
-    let child: IPty
-    try {
-      child = this.spawnPty(process.execPath, [this.launcherPath, specPath], {
-        name: 'xterm-256color',
-        cols: size.cols,
-        rows: size.rows,
-        cwd: input.cwd,
-        env: environment
-      })
-    } catch (error) {
-      await fs.rm(specPath, { force: true })
-      throw error
-    }
-
+    inheritedEnvironment.TERM = 'xterm-256color'
+    const directLaunch = integrateShellLaunch(
+      input.argv,
+      { ...inheritedEnvironment, ...input.env },
+      this.shellIntegrationDir,
+      directShell
+    )
+    const directEnvironment = Object.fromEntries(
+      Object.entries(directLaunch.env).filter(
+        (entry): entry is [string, string] => entry[1] !== undefined
+      )
+    )
     const terminal = new Terminal({
       cols: size.cols,
       rows: size.rows,
@@ -304,6 +318,33 @@ export class TerminalHostSessionManager {
     // provides the same addon boundary.
     // SAFETY: Both Terminal implementations satisfy the shared addon contract.
     terminal.loadAddon(serializer as never)
+
+    let child: IPty
+    try {
+      child = directShell
+        ? this.spawnPty(directLaunch.argv[0]!, directLaunch.argv.slice(1), {
+            name: 'xterm-256color',
+            cols: size.cols,
+            rows: size.rows,
+            cwd: input.cwd,
+            env: directEnvironment
+          })
+        : this.spawnPty(process.execPath, [this.launcherPath, specPath!], {
+            name: 'xterm-256color',
+            cols: size.cols,
+            rows: size.rows,
+            cwd: input.cwd,
+            env: inheritedEnvironment
+          })
+    } catch (error) {
+      serializer.dispose()
+      terminal.dispose()
+      if (specPath) {
+        await fs.rm(specPath, { force: true })
+      }
+
+      throw error
+    }
     const outputListeners = new Set<(data: string, sequence: number) => void>()
     const runtimeListeners = new Set<
       (event: TerminalHostRuntimeEvent) => void
@@ -429,6 +470,8 @@ export class TerminalHostSessionManager {
       }
       return true
     })
+    // Register ownership before output listeners can enqueue startup data.
+    this.sessions.set(input.terminalId, session)
     session.dataDisposable = child.onData((data) => {
       const bytes = Buffer.byteLength(data)
       session.parserQueue.push({
@@ -464,14 +507,15 @@ export class TerminalHostSessionManager {
       for (const listener of [...runtimeListeners]) {
         listener({ exitCode })
       }
-      void fs.rm(specPath, { force: true }).catch((error) => {
-        console.error(
-          `[Treeport terminal host] Failed to remove launch spec ${specPath}:`,
-          error instanceof Error ? error.message : String(error)
-        )
-      })
+      if (specPath) {
+        void fs.rm(specPath, { force: true }).catch((error) => {
+          console.error(
+            `[Treeport terminal host] Failed to remove launch spec ${specPath}:`,
+            error instanceof Error ? error.message : String(error)
+          )
+        })
+      }
     })
-    this.sessions.set(input.terminalId, session)
   }
 
   get sessionCount(): number {
@@ -873,14 +917,23 @@ export class TerminalHostSessionManager {
     const sessions = [...this.sessions.values()].filter(
       (session) => session.worktreeId === worktreeId
     )
-    await Promise.all(sessions.map((session) => this.destroy(session)))
-    return sessions.map((session) => session.id)
+    const terminalIds = sessions.map((session) => session.id)
+    const started = sessions.map((session) => this.destroy(session))
+    const alreadyPending = [...this.pendingCleanups]
+      .filter((cleanup) => cleanup.worktreeId === worktreeId)
+      .map((cleanup) => cleanup.promise)
+    await Promise.all([...started, ...alreadyPending])
+    return terminalIds
   }
 
   async shutdown(): Promise<void> {
-    await Promise.all(
-      [...this.sessions.values()].map((session) => this.destroy(session))
+    const started = [...this.sessions.values()].map((session) =>
+      this.destroy(session)
     )
+    await Promise.all([
+      ...started,
+      ...[...this.pendingCleanups].map((cleanup) => cleanup.promise)
+    ])
   }
 
   private parseNext(session: HostedTerminalSession): void {
@@ -953,11 +1006,13 @@ export class TerminalHostSessionManager {
     }
   }
 
-  private async destroy(session: HostedTerminalSession): Promise<void> {
+  private destroy(session: HostedTerminalSession): Promise<void> {
     if (this.sessions.get(session.id) !== session) {
-      return
+      return Promise.resolve()
     }
 
+    // Logical removal is synchronous. The host can create and serve unrelated
+    // terminals while process-tree termination finishes in the background.
     this.sessions.delete(session.id)
     session.dataDisposable?.dispose()
     session.exitDisposable?.dispose()
@@ -975,9 +1030,25 @@ export class TerminalHostSessionManager {
     session.parserQueue = []
     session.serializer.dispose()
     session.terminal.dispose()
-    await Promise.all([
-      fs.rm(session.specPath, { force: true }),
+
+    const physicalCleanup = Promise.all([
+      session.specPath
+        ? fs.rm(session.specPath, { force: true })
+        : Promise.resolve(),
       this.terminateProcessTree(session.pty)
-    ])
+    ]).then(() => undefined)
+    const ownedCleanup = {
+      worktreeId: session.worktreeId,
+      promise: physicalCleanup
+    }
+    const cleanup = physicalCleanup.finally(() =>
+      this.pendingCleanups.delete(ownedCleanup)
+    )
+    ownedCleanup.promise = cleanup
+    this.pendingCleanups.add(ownedCleanup)
+    // The manager owns cleanup even when a socket caller disconnects before it
+    // observes the result. Callers still receive the original rejection.
+    void cleanup.catch(() => undefined)
+    return cleanup
   }
 }

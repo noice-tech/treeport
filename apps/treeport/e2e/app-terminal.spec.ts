@@ -1879,6 +1879,43 @@ test.describe('desktop worktree and terminal workflows', () => {
     await expect(readmeEditor).toContainText('# Refreshed')
   })
 
+  test('creates a terminal while prior closes are pending', async ({
+    page
+  }) => {
+    const mocked = await mockApp(page, [], { desktopBridge: true })
+    await page.getByRole('button', { name: /^topic(?:,|\s|$)/ }).click()
+    const terminals = page
+      .getByRole('list', { name: 'topic terminal tabs' })
+      .getByRole('listitem')
+
+    await page.evaluate(() => {
+      for (let index = 0; index < 7; index += 1) {
+        window.__dispatchDesktopCommand('new-terminal')
+      }
+    })
+    await expect(terminals).toHaveCount(8)
+
+    const releaseDeletes = mocked.delayNextTerminalDelete()
+    for (let count = 8; count > 1; count -= 1) {
+      await terminals
+        .last()
+        .getByRole('button', { name: /^Close / })
+        .click()
+      await expect(terminals).toHaveCount(count - 1)
+    }
+    await expect.poll(() => mocked.terminalDeletions()).toBe(1)
+
+    await page.evaluate(() => window.__dispatchDesktopCommand('new-terminal'))
+    await expect.poll(() => mocked.terminalCreations()).toBe(8)
+    await expect(terminals).toHaveCount(2)
+    await expect(page).toHaveURL(
+      /\/worktrees\/wt_topic\/terminals\/term_dev_8$/
+    )
+
+    releaseDeletes()
+    await expect.poll(() => mocked.terminalDeletions()).toBe(7)
+  })
+
   test('handles Electron commands through worktree, terminal, and web-panel flows', async ({
     page
   }) => {
@@ -1925,16 +1962,14 @@ test.describe('desktop worktree and terminal workflows', () => {
     expect((await createRequest).postDataJSON()).toMatchObject({
       name: 'Shell'
     })
-    await expect(
-      page.getByRole('button', { name: 'Shell, starting' })
-    ).toBeVisible()
-    await expect(page.getByText('Starting Shell…')).toHaveCount(0)
-    await expect(page.getByRole('main', { name: /terminal$/ })).toBeVisible()
+    await expect(page.getByRole('button', { name: /, starting$/ })).toHaveCount(
+      0
+    )
+    await expect(page).toHaveURL(/\/worktrees\/wt_topic\/terminals\/term_pi$/)
+    await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
     await page.evaluate(() => window.__dispatchDesktopCommand('new-terminal'))
     await expect.poll(() => mocked.terminalCreations()).toBe(2)
-    await expect(
-      page.getByRole('button', { name: 'Shell, starting' })
-    ).toHaveCount(2)
+    await expect(topicTerminals).toHaveCount(1)
     releaseCreate()
 
     const createdTerminal = page.getByRole('button', {
@@ -1944,6 +1979,9 @@ test.describe('desktop worktree and terminal workflows', () => {
       name: /^dev · \/worktrees\/topic,/
     })
     await expect(topicTerminals).toHaveCount(3)
+    await expect(page).toHaveURL(
+      /\/worktrees\/wt_topic\/terminals\/term_dev_2$/
+    )
     await expect(createdTerminal).toBeVisible()
     await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
     await createdTerminal.click()
@@ -1993,9 +2031,7 @@ test.describe('desktop worktree and terminal workflows', () => {
     mocked.failNextTerminalCreate()
     const releaseFailedCreate = mocked.delayNextTerminalCreate()
     await page.evaluate(() => window.__dispatchDesktopCommand('new-terminal'))
-    await expect(
-      page.getByRole('button', { name: 'Shell, starting' })
-    ).toBeVisible()
+    await expect(topicTerminals).toHaveCount(2)
     releaseFailedCreate()
     await expect(
       page.getByText('Couldn’t create terminal “Shell”', { exact: true })
@@ -2004,9 +2040,7 @@ test.describe('desktop worktree and terminal workflows', () => {
     await expect(
       page.getByText('Reference: request_terminal_create.')
     ).toBeVisible()
-    await expect(
-      page.getByRole('button', { name: 'Shell, starting' })
-    ).toHaveCount(0)
+    await expect(topicTerminals).toHaveCount(2)
 
     mocked.failNextTerminalCreateWithGateway()
     await page.evaluate(() => window.__dispatchDesktopCommand('new-terminal'))
@@ -2019,9 +2053,7 @@ test.describe('desktop worktree and terminal workflows', () => {
       'Check that Treeport is running, then retry.'
     )
     await expect(page.getByText('PRIVATE_PROXY_DIAGNOSTIC')).toHaveCount(0)
-    await expect(
-      page.getByRole('button', { name: 'Shell, starting' })
-    ).toHaveCount(0)
+    await expect(topicTerminals).toHaveCount(2)
 
     mocked.failNextTerminalCreateWithNetwork()
     await page.evaluate(() => window.__dispatchDesktopCommand('new-terminal'))
@@ -2034,9 +2066,7 @@ test.describe('desktop worktree and terminal workflows', () => {
       'Check that it is running and reachable, then retry.'
     )
     await expect(networkToast).not.toContainText('502 Bad Gateway')
-    await expect(
-      page.getByRole('button', { name: 'Shell, starting' })
-    ).toHaveCount(0)
+    await expect(topicTerminals).toHaveCount(2)
 
     await page.evaluate(() => window.__dispatchDesktopCommand('new-panel'))
     const launcherSearch = page.getByLabel('Search panels')

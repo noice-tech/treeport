@@ -249,6 +249,46 @@ describe('TreeportService with injected command adapters', () => {
     runner.terminalCreateGate = null
   })
 
+  it('creates terminals without waiting for queued terminal closes', async () => {
+    const { main, runner, service } = await fixture()
+    const project = await service.registerProject(main)
+    const worktree = project.worktrees[0]!
+    const terminals = await Promise.all(
+      Array.from({ length: 10 }, (_, index) =>
+        service.createTerminal(worktree.id, `First ${index + 1}`)
+      )
+    )
+    let releaseInventory!: () => void
+    runner.terminalInventoryGate = new Promise<void>((resolve) => {
+      releaseInventory = resolve
+    })
+
+    const inventoryAttempts = runner.terminalInventoryAttempts
+    const closing = terminals.map((terminal) =>
+      service.deleteTerminal(terminal.id)
+    )
+    await vi.waitFor(() =>
+      expect(runner.terminalInventoryAttempts).toBe(inventoryAttempts + 1)
+    )
+    const replacements = await Promise.all(
+      Array.from({ length: 10 }, (_, index) =>
+        service.createTerminal(worktree.id, `Replacement ${index + 1}`)
+      )
+    ).finally(releaseInventory)
+    await Promise.all(closing)
+    runner.terminalInventoryGate = null
+
+    expect(replacements).toHaveLength(10)
+    const remainingNames = (
+      await service.getWorktreeSnapshot(worktree.id)
+    ).terminals.map((terminal) => terminal.name)
+    expect(remainingNames).toHaveLength(11)
+    expect(remainingNames).toContain('Shell')
+    for (let index = 1; index <= 10; index += 1) {
+      expect(remainingNames).toContain(`Replacement ${index}`)
+    }
+  })
+
   it('queues removal behind a terminal mutation before its lock is acquired', async () => {
     const { main, runner, service } = await fixture()
     const project = await service.registerProject(main)
@@ -1052,7 +1092,7 @@ describe('TreeportService with injected command adapters', () => {
     expect((await service.getWorktree(linked.id)).head).toBe('newer-head')
   })
 
-  it('keeps cached bindings and rejects mutations while Git is unavailable', async () => {
+  it('keeps cached bindings and verifies terminal launches without all-worktree inventory', async () => {
     const { main, runner, service, database } = await fixture()
     const project = await service.registerProject(main)
     const linked = (
@@ -1073,9 +1113,17 @@ describe('TreeportService with injected command adapters', () => {
     expect(
       [...runner.sessions.keys()].some((key) => key.endsWith(`/${terminal.id}`))
     ).toBe(true)
+    const worktreeListCalls = runner.calls.filter(
+      (call) => call.args[0] === 'worktree' && call.args[1] === 'list'
+    ).length
     await expect(
-      service.createTerminal(linked.id, 'Blocked')
-    ).rejects.toMatchObject({ code: 'PROJECT_UNAVAILABLE' })
+      service.createTerminal(linked.id, 'Verified directly')
+    ).resolves.toMatchObject({ worktreeId: linked.id })
+    expect(
+      runner.calls.filter(
+        (call) => call.args[0] === 'worktree' && call.args[1] === 'list'
+      )
+    ).toHaveLength(worktreeListCalls)
 
     runner.listWorktreesFails = false
     await expect(service.getProjectSnapshot(project.id)).resolves.toMatchObject(

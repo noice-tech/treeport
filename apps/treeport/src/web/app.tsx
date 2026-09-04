@@ -1024,7 +1024,6 @@ function WorkspaceApp() {
   })
   const terminalWorkflows = useTerminalWorkflows({
     projects,
-    selectedWorktree,
     selectedTerminal
   })
   const selectTerminal = useCallback(
@@ -1032,18 +1031,12 @@ function WorkspaceApp() {
       focusSurface('terminal')
       setDesktopNotificationsOpen(false)
       setMobileNotificationsOpen(false)
-      terminalWorkflows.clearPendingTerminalSelection()
       navigateToTerminal(terminal)
     },
-    [
-      focusSurface,
-      navigateToTerminal,
-      terminalWorkflows.clearPendingTerminalSelection
-    ]
+    [focusSurface, navigateToTerminal]
   )
   const selectPanel = useCallback(
     (panel: BrowserPanel | WebPanel) => {
-      terminalWorkflows.clearPendingTerminalSelection()
       focusSurface('tool')
       revealTool(panel, false)
 
@@ -1059,8 +1052,7 @@ function WorkspaceApp() {
       focusSurface,
       navigateToWorkspace,
       projects,
-      revealTool,
-      terminalWorkflows.clearPendingTerminalSelection
+      revealTool
     ]
   )
   const selectWorkspaceByIndex = useCallback(
@@ -1075,25 +1067,9 @@ function WorkspaceApp() {
         return true
       }
 
-      const pendingTerminal = terminalWorkflows.pendingTerminals.filter(
-        (candidate) => candidate.worktreeId === selectedWorktree.id
-      )[index - selectedWorktree.terminals.length]
-      if (!pendingTerminal) {
-        return false
-      }
-
-      focusSurface('terminal')
-      terminalWorkflows.selectPendingTerminal(pendingTerminal.id)
-      return true
+      return false
     },
-    [
-      focusSurface,
-      selectedWorktree,
-      selectTerminal,
-      terminalWorkflows.pendingTerminals,
-      terminalWorkflows.selectPendingTerminal,
-      workspaceActionsBlocked
-    ]
+    [selectedWorktree, selectTerminal, workspaceActionsBlocked]
   )
 
   const selectFocusedSurfaceByIndex = useCallback(
@@ -1102,11 +1078,7 @@ function WorkspaceApp() {
         return false
       }
 
-      if (
-        toolPaneOpen &&
-        !terminalWorkflows.selectedPendingTerminal &&
-        focusedSurfaceRef.current === 'tool'
-      ) {
+      if (toolPaneOpen && focusedSurfaceRef.current === 'tool') {
         const panel = selectedWorktreeTools[index]
         if (!panel) {
           return false
@@ -1123,7 +1095,6 @@ function WorkspaceApp() {
       selectPanel,
       selectedWorktreeTools,
       selectWorkspaceByIndex,
-      terminalWorkflows.selectedPendingTerminal,
       toolPaneOpen,
       workspaceActionsBlocked
     ]
@@ -1303,10 +1274,7 @@ function WorkspaceApp() {
       } else if (command === 'close-panel') {
         if (toolSurfaceHasFocus && activePanel) {
           requestClosePanel(activePanel)
-        } else if (
-          !terminalWorkflows.selectedPendingTerminal &&
-          selectedTerminal
-        ) {
+        } else if (selectedTerminal) {
           terminalWorkflows.requestCloseTerminal(selectedTerminal)
         }
       }
@@ -1321,7 +1289,6 @@ function WorkspaceApp() {
     selectFocusedSurfaceByIndex,
     selectWorktree,
     setToolPickerOpen,
-    terminalWorkflows.selectedPendingTerminal,
     toggleToolPane,
     toolPaneOpen,
     workspaceActionsBlocked
@@ -1335,9 +1302,7 @@ function WorkspaceApp() {
       />
       <ProjectSwitcherShortcut blocked={dialog !== null} />
       <WorkspaceMobileHeader
-        selectedTerminalId={
-          terminalWorkflows.selectedPendingTerminal ? null : selectedTerminalId
-        }
+        selectedTerminalId={selectedTerminalId}
         terminals={activeProjectTerminals}
         onSelectTerminal={selectTerminal}
         updateControl={<UpdateControl />}
@@ -1381,23 +1346,11 @@ function WorkspaceApp() {
           projectsLoaded={projectsQuery.data !== undefined}
           activeProject={activeProject}
           selectedWorktree={selectedWorktree}
-          selectedTerminalId={
-            terminalWorkflows.selectedPendingTerminal
-              ? null
-              : selectedTerminalId
-          }
-          selectedPendingTerminalId={
-            terminalWorkflows.selectedPendingTerminal?.id ?? null
-          }
-          pendingTerminals={terminalWorkflows.pendingTerminals}
+          selectedTerminalId={selectedTerminalId}
           pendingWorktrees={pendingWorktrees}
           pendingRemovals={pendingRemovals}
           onRetryProjects={() => void projectsQuery.refetch()}
           onSelectTerminal={selectTerminal}
-          onSelectPendingTerminal={(pendingTerminalId) => {
-            focusSurface('terminal')
-            terminalWorkflows.selectPendingTerminal(pendingTerminalId)
-          }}
           onCloseTerminal={terminalWorkflows.requestCloseTerminal}
           onSelectWorktree={selectWorktree}
           onPrepareRemoval={prepareRemoval}
@@ -1449,10 +1402,6 @@ function WorkspaceApp() {
               <TerminalWorkspace
                 selectedWorktree={selectedWorktree}
                 selectedTerminal={selectedTerminal}
-                selectedPendingTerminal={
-                  terminalWorkflows.selectedPendingTerminal
-                }
-                pendingTerminals={terminalWorkflows.pendingTerminals}
                 loading={projectsQuery.isPending}
                 dialogOpen={dialog !== null}
               />

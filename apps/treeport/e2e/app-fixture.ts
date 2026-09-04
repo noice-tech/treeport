@@ -845,6 +845,7 @@ export async function mockApp(
   let removePreviewOverride: Partial<RemovePreview> = {}
   let fileUploadRequests = 0
   let terminalCreations = 0
+  let terminalDeletions = 0
   let terminalCreateGate: Promise<void> | null = null
   let releaseTerminalCreate: (() => void) | null = null
   let failTerminalCreate = false
@@ -2175,6 +2176,7 @@ export async function mockApp(
       pathname.startsWith('/api/terminals/') &&
       route.request().method() === 'DELETE'
     ) {
+      terminalDeletions += 1
       if (terminalDeleteGate) {
         await terminalDeleteGate
       }
@@ -2352,6 +2354,7 @@ export async function mockApp(
       return () => releaseBrowserInstall?.()
     },
     terminalCreations: () => terminalCreations,
+    terminalDeletions: () => terminalDeletions,
     delayNextTerminalCreate: () => {
       terminalCreateGate = new Promise<void>((resolve) => {
         releaseTerminalCreate = resolve

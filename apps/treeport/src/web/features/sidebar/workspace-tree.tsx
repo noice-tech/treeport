@@ -1,7 +1,6 @@
 import type { ReactNode } from 'react'
 import { CrownIcon, GitBranchIcon } from 'lucide-react'
 import {
-  ArrowPathIcon,
   FolderIcon,
   PlusIcon,
   TrashIcon,
@@ -115,18 +114,10 @@ export interface WorkspaceTreeProps {
   activeProject: ProjectRecord | null
   selectedWorktree: WorktreeRecord | null
   selectedTerminalId: string | null
-  selectedPendingTerminalId: string | null
-  pendingTerminals: Array<{
-    id: string
-    projectId: string
-    worktreeId: string
-    name: string
-  }>
   pendingWorktrees: PendingWorktreeCreation[]
   pendingRemovals: Record<string, RemovalStage>
   onRetryProjects: () => void
   onSelectTerminal: (terminal: TerminalRecord) => void
-  onSelectPendingTerminal: (terminalId: string) => void
   onCloseTerminal: (terminal: TerminalRecord) => void
   onSelectWorktree: (worktree: WorktreeRecord) => void
   onPrepareRemoval: (
@@ -150,13 +141,10 @@ export function WorkspaceTree({
   activeProject,
   selectedWorktree,
   selectedTerminalId,
-  selectedPendingTerminalId,
-  pendingTerminals,
   pendingWorktrees,
   pendingRemovals,
   onRetryProjects,
   onSelectTerminal: selectTerminal,
-  onSelectPendingTerminal: selectPendingTerminal,
   onCloseTerminal: closeTerminal,
   onSelectWorktree: selectWorktree,
   onPrepareRemoval: prepareRemoval,
@@ -473,59 +461,6 @@ export function WorkspaceTree({
                           </SidebarMenuSubItem>
                         )
                       })}
-                      {pendingTerminals
-                        .filter((pending) => pending.worktreeId === worktree.id)
-                        .map((pending, pendingIndex) => {
-                          const index = worktree.terminals.length + pendingIndex
-                          return (
-                            <SidebarMenuSubItem
-                              key={pending.id}
-                              className="min-w-0"
-                            >
-                              <SidebarMenuSubButton
-                                asChild
-                                isActive={
-                                  selectedPendingTerminalId === pending.id
-                                }
-                              >
-                                <Button
-                                  variant="ghost"
-                                  type="button"
-                                  className={cn(
-                                    'terminal-row grid h-auto min-h-11 w-full min-w-0 grid-cols-[1.25rem_minmax(0,1fr)_auto] gap-1.5 rounded-md px-2 py-1.5 text-left text-base/5 font-normal min-[701px]:min-h-7 min-[701px]:grid-cols-[1rem_minmax(0,1fr)_auto] min-[701px]:gap-1 min-[701px]:py-0 min-[701px]:text-xs/4',
-                                    selectedPendingTerminalId === pending.id
-                                      ? 'selected bg-cyan-400/8! text-cyan-50'
-                                      : 'text-zinc-300 hover:bg-white/5 hover:text-zinc-100'
-                                  )}
-                                  onClick={() =>
-                                    selectPendingTerminal(pending.id)
-                                  }
-                                  aria-label={`${pending.name}, starting`}
-                                  aria-keyshortcuts={
-                                    selectedWorktree?.id === worktree.id &&
-                                    index < 9
-                                      ? `Meta+${index + 1}`
-                                      : undefined
-                                  }
-                                >
-                                  <ArrowPathIcon
-                                    className="animate-spin fill-zinc-500"
-                                    aria-hidden="true"
-                                  />
-                                  <span className="truncate" aria-hidden="true">
-                                    {pending.name}
-                                  </span>
-                                  <span
-                                    className="text-[0.6875rem] text-zinc-500"
-                                    aria-hidden="true"
-                                  >
-                                    Starting…
-                                  </span>
-                                </Button>
-                              </SidebarMenuSubButton>
-                            </SidebarMenuSubItem>
-                          )
-                        })}
                     </SidebarMenuSub>
                   </SidebarMenuItem>
                 ))}

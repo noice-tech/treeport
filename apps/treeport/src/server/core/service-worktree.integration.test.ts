@@ -987,12 +987,12 @@ describe('TreeportService with injected command adapters', () => {
     expect((await service.getOperation(operation.id)).status).toBe('running')
     await expect(
       service.createTerminal(linked.id, 'Blocked during removal')
-    ).rejects.toMatchObject({ code: 'WORKTREE_NOT_FOUND' })
+    ).rejects.toMatchObject({ code: 'WORKTREE_BUSY' })
     expect(
       (await service.getProjectSnapshot(project.id)).worktrees.find(
         (worktree) => worktree.id === linked.id
       )
-    ).toBeUndefined()
+    ).toMatchObject({ id: linked.id })
     await expect(fs.stat(linked.path)).resolves.toBeTruthy()
     expect(events.filter((event) => event === 'remove.completed')).toHaveLength(
       0

@@ -83,7 +83,10 @@ describe('TerminalHostSessionManager', () => {
     )
     directories.push(runtimeDir)
     const pty = new FakePty()
-    const spawn = vi.fn(() => testAccess<IPty>(pty))
+    const spawn = vi.fn(() => {
+      queueMicrotask(() => pty.emit('immediate startup output\r\n'))
+      return testAccess<IPty>(pty)
+    })
     const terminate = vi.fn(async (child: IPty) => child.kill())
     const manager = new TerminalHostSessionManager(
       runtimeDir,
@@ -100,12 +103,32 @@ describe('TerminalHostSessionManager', () => {
       name: 'Shell',
       createdAt: '2026-01-01T00:00:00.000Z',
       cwd: runtimeDir,
-      argv: ['/bin/sh'],
+      argv: ['/bin/bash', '-l'],
       shellCommand: null,
       interactiveShell: true,
       initialSize: { cols: 80, rows: 24 },
-      env: {}
+      env: { HOME: '/home/test', TREEPORT_TERMINAL_ID: 'term' }
     })
+
+    expect(spawn).toHaveBeenCalledWith(
+      '/bin/bash',
+      ['-l'],
+      expect.objectContaining({
+        cwd: runtimeDir,
+        cols: 80,
+        rows: 24,
+        env: expect.objectContaining({
+          TERM: 'xterm-256color',
+          TREEPORT_TERMINAL_ID: 'term',
+          TREEPORT_SHELL_INTEGRATION: '1',
+          TREEPORT_USER_HOME: '/home/test',
+          HOME: path.join(runtimeDir, 'terminal-shell-integration/bash/home')
+        })
+      })
+    )
+    await expect(
+      fs.readdir(path.join(runtimeDir, 'terminal-specs'))
+    ).resolves.toEqual([])
 
     const firstOutput: string[] = []
     const secondOutput: string[] = []
@@ -128,6 +151,7 @@ describe('TerminalHostSessionManager', () => {
     pty.emit('after attach\r\n')
 
     expect(spawn).toHaveBeenCalledOnce()
+    expect(snapshot?.data).toContain('immediate startup output')
     expect(snapshot?.data).toContain('before attach')
     expect(snapshot?.links).toEqual([
       expect.objectContaining({
@@ -287,5 +311,94 @@ describe('TerminalHostSessionManager', () => {
     await manager.shutdown()
     expect(terminate).toHaveBeenCalledOnce()
     expect(pty.kills).toBe(1)
+  })
+
+  it('keeps fallback sessions on the launcher path until exit', async () => {
+    const runtimeDir = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'treeport-terminal-host-')
+    )
+    directories.push(runtimeDir)
+    const pty = new FakePty()
+    const spawn = vi.fn(() => testAccess<IPty>(pty))
+    const manager = new TerminalHostSessionManager(
+      runtimeDir,
+      '/treeport/launcher.js',
+      // SAFETY: The fake implements the IPty methods used by this boundary.
+      spawn as never,
+      async (child) => child.kill()
+    )
+
+    await manager.createTerminal({
+      terminalId: 'term',
+      worktreeId: 'worktree',
+      name: 'Command',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      cwd: runtimeDir,
+      argv: ['/bin/sh'],
+      shellCommand: null,
+      interactiveShell: true,
+      fallbackArgv: ['/bin/sh', '-l'],
+      env: {}
+    })
+
+    expect(spawn).toHaveBeenCalledWith(
+      process.execPath,
+      ['/treeport/launcher.js', expect.stringContaining('terminal-specs')],
+      expect.objectContaining({ cwd: runtimeDir })
+    )
+    await expect(
+      fs.readdir(path.join(runtimeDir, 'terminal-specs'))
+    ).resolves.toHaveLength(1)
+    pty.exit(0)
+    await vi.waitFor(async () =>
+      expect(
+        await fs.readdir(path.join(runtimeDir, 'terminal-specs'))
+      ).toHaveLength(0)
+    )
+    await manager.shutdown()
+  })
+
+  it('reports cleanup failure without retaining or poisoning the terminal ID', async () => {
+    const runtimeDir = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'treeport-terminal-host-')
+    )
+    directories.push(runtimeDir)
+    const ptys = [new FakePty(), new FakePty()]
+    const spawn = vi.fn(() => testAccess<IPty>(ptys.shift()!))
+    const terminate = vi
+      .fn<(child: IPty) => Promise<void>>()
+      .mockRejectedValueOnce(new Error('cleanup failed'))
+      .mockResolvedValue(undefined)
+    const manager = new TerminalHostSessionManager(
+      runtimeDir,
+      '/treeport/launcher.js',
+      // SAFETY: The fake implements the IPty methods used by this boundary.
+      spawn as never,
+      terminate
+    )
+    const input = (name: string) => ({
+      terminalId: 'term',
+      worktreeId: 'worktree',
+      name,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      cwd: runtimeDir,
+      argv: ['/bin/sh', '-l'],
+      shellCommand: null,
+      interactiveShell: true,
+      env: {}
+    })
+
+    await manager.createTerminal(input('First'))
+    await expect(manager.killTerminal('term')).rejects.toThrow('cleanup failed')
+    await expect(manager.terminalState('term')).resolves.toEqual({
+      status: 'missing',
+      exitCode: null
+    })
+
+    await expect(
+      manager.createTerminal(input('Replacement'))
+    ).resolves.toBeUndefined()
+    await expect(manager.shutdown()).resolves.toBeUndefined()
+    expect(terminate).toHaveBeenCalledTimes(2)
   })
 })

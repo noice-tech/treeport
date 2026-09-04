@@ -1,9 +1,10 @@
 import fs from 'node:fs/promises'
+import path from 'node:path'
 import type { ProjectRecord, WorktreeRecord } from '@treeport/shared'
 import { eq } from 'drizzle-orm'
 import * as Cause from 'effect/Cause'
 import * as Effect from 'effect/Effect'
-import { projects } from '../../database-schema'
+import { projects, worktrees } from '../../database-schema'
 import { DomainError } from '../../domain'
 import { TerminalOperations, WorktreeReconciliation } from '../domain-services'
 import {
@@ -11,7 +12,7 @@ import {
   ProjectObservations,
   WorktreeMutations
 } from '../infrastructure/application-runtime'
-import { DatabasePort } from '../infrastructure/ports'
+import { DatabasePort, GitPort } from '../infrastructure/ports'
 import { ProjectFolderIdentities } from './project-folder-identities'
 import { ProjectStore } from './project-store'
 
@@ -137,6 +138,129 @@ export class ProjectObservationService {
         )
       })
       return yield* projectStore.getProject(project.id)
+    })
+  }
+
+  verifyWorktreeLaunchTarget(
+    binding: WorktreeRecord
+  ): Effect.Effect<WorktreeRecord, DomainError<unknown>, ApplicationServices> {
+    return Effect.gen(function* () {
+      const database = yield* DatabasePort
+      const git = yield* GitPort
+      const [metadata] = yield* Effect.promise(() =>
+        database.db
+          .select({
+            projectKind: projects.kind,
+            repositoryPath: projects.repositoryPath,
+            isOpen: projects.isOpen,
+            device: projects.repositoryDevice,
+            inode: projects.repositoryInode,
+            gitWorktreeKey: worktrees.gitWorktreeKey
+          })
+          .from(worktrees)
+          .innerJoin(projects, eq(worktrees.projectId, projects.id))
+          .where(eq(worktrees.id, binding.id))
+          .limit(1)
+      )
+      if (!metadata) {
+        return yield* Effect.fail(
+          new DomainError('WORKTREE_NOT_FOUND', 'Tree not found', 404)
+        )
+      }
+
+      if (!metadata.isOpen) {
+        return yield* Effect.fail(
+          new DomainError(
+            'PROJECT_CLOSED',
+            'Project is closed; open it before modifying it',
+            409
+          )
+        )
+      }
+
+      return yield* Effect.tryPromise({
+        try: async () => {
+          const [
+            canonicalWorktree,
+            worktreeStat,
+            canonicalRepository,
+            repositoryStat
+          ] = await Promise.all([
+            fs.realpath(binding.path),
+            fs.stat(binding.path, { bigint: true }),
+            fs.realpath(metadata.repositoryPath),
+            fs.stat(metadata.repositoryPath, { bigint: true })
+          ])
+          if (
+            canonicalWorktree !== binding.path ||
+            !worktreeStat.isDirectory() ||
+            canonicalRepository !== metadata.repositoryPath ||
+            !repositoryStat.isDirectory() ||
+            repositoryStat.dev.toString() !== metadata.device ||
+            repositoryStat.ino.toString() !== metadata.inode
+          ) {
+            throw new Error('The registered tree path changed')
+          }
+
+          if (metadata.projectKind === 'folder') {
+            if (
+              binding.kind !== 'folder' ||
+              binding.path !== metadata.repositoryPath ||
+              metadata.gitWorktreeKey !== null
+            ) {
+              throw new Error('The registered folder tree identity changed')
+            }
+
+            return binding
+          }
+
+          if (!metadata.gitWorktreeKey) {
+            throw new Error('The Git worktree key is missing')
+          }
+
+          const identity = await git.worktreeLaunchIdentity(binding.path)
+          const expectedCommonPath = path.join(metadata.repositoryPath, '.git')
+          const expectedCommonDirectory = await fs
+            .realpath(expectedCommonPath)
+            .catch(() => path.resolve(expectedCommonPath))
+          const relativeGitDirectory = path.relative(
+            identity.commonDirectory,
+            identity.gitDirectory
+          )
+          const observedKey =
+            relativeGitDirectory === ''
+              ? 'main'
+              : relativeGitDirectory.split(path.sep).length === 2 &&
+                  relativeGitDirectory.startsWith(`worktrees${path.sep}`)
+                ? relativeGitDirectory.split(path.sep).join('/')
+                : null
+          if (identity.topLevel !== binding.path) {
+            throw new Error('Git reports a different worktree path')
+          }
+
+          if (identity.commonDirectory !== expectedCommonDirectory) {
+            throw new Error(
+              `Git reports a different repository (${identity.commonDirectory} instead of ${expectedCommonDirectory})`
+            )
+          }
+
+          if (observedKey !== metadata.gitWorktreeKey) {
+            throw new Error('Git reports a different worktree key')
+          }
+
+          if ((binding.kind === 'main') !== (observedKey === 'main')) {
+            throw new Error('Git reports a different worktree kind')
+          }
+
+          return binding
+        },
+        catch: (error) =>
+          new DomainError(
+            'WORKTREE_UNAVAILABLE',
+            error instanceof Error ? error.message : String(error),
+            409
+          )
+      })
     })
   }
 

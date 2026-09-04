@@ -1186,6 +1186,62 @@ describe('TerminalSession', () => {
     session.dispose()
   })
 
+  it('publishes ready only after the initial snapshot write completes', async () => {
+    const socket = new FakeSocketIO()
+    socketClient.io.mockReturnValue(socket)
+    const session = createTerminalSession('terminal-one')
+    let completeSnapshotWrite: (() => void) | null = null
+    const focus = vi.fn()
+    terminalSessionTestAccess(session).terminal = {
+      cols: 80,
+      rows: 24,
+      options: { fontSize: 14 },
+      reset: vi.fn(),
+      resize: vi.fn(),
+      write: vi.fn((_data: string, callback: () => void) => {
+        completeSnapshotWrite = callback
+      }),
+      focus,
+      dispose: vi.fn()
+    }
+    Object.assign(session, {
+      wrapper: {
+        style: { visibility: '' },
+        dataset: {},
+        contains: () => false,
+        remove: vi.fn(),
+        classList: {
+          contains: () => false,
+          add: vi.fn(),
+          remove: vi.fn()
+        }
+      },
+      host: {},
+      focusAfterRender: true
+    })
+    terminalSessionTestAccess(session).connect()
+    socket.emitServer('ready', {
+      connectionId: 'connection-1',
+      streamId: 'stream-1',
+      generation: 1,
+      controller: true,
+      reset: 'full',
+      cols: 80,
+      rows: 24,
+      revision: 1,
+      snapshot: 'initial output',
+      snapshotLinks: []
+    })
+    await vi.waitFor(() => expect(completeSnapshotWrite).not.toBeNull())
+
+    expect(session.getSnapshot().phase).toBe('connecting')
+    completeSnapshotWrite!()
+    await vi.waitFor(() => expect(session.getSnapshot().phase).toBe('ready'))
+    expect(session.getSnapshot().controller).toBe(true)
+    expect(focus).toHaveBeenCalledOnce()
+    session.dispose()
+  })
+
   it('cancels queued resize intent on a reconnect ready epoch', async () => {
     const { measure, session, socket } = controllerSessionFixture()
 

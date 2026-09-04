@@ -58,6 +58,18 @@ const openPanelSnapshotSchema = z.discriminatedUnion('kind', [
   webPanelSnapshotSchema,
   browserPanelSnapshotSchema
 ])
+const terminalRecordSchema = z.strictObject({
+  id: identifierSchema,
+  worktreeId: identifierSchema,
+  name: z.string().min(1),
+  argv: z.array(z.string()),
+  shellCommand: z.string().nullable(),
+  interactiveShell: z.boolean(),
+  status: z.enum(['running', 'exited', 'missing']),
+  exitCode: z.number().int().nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string()
+})
 
 export const productEventSchema = z.discriminatedUnion('type', [
   eventEnvelope('project.created', projectEventDataSchema),
@@ -95,7 +107,8 @@ export const productEventSchema = z.discriminatedUnion('type', [
     z.strictObject({
       projectId: identifierSchema.optional(),
       worktreeId: identifierSchema,
-      terminalId: identifierSchema
+      terminalId: identifierSchema,
+      terminal: terminalRecordSchema
     })
   ),
   eventEnvelope(

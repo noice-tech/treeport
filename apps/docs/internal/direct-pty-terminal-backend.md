@@ -77,7 +77,15 @@ The protocol supports handshake, create, inventory, atomic attach, output detach
 
 The host emits ordered output and runtime events. Runtime events carry title, command, progress, BEL, and exit changes. The daemon can reconnect and create new attachments after adoption.
 
+Each connection orders control requests. A terminal kill waits for earlier requests. Cleanup does not block unrelated requests.
+
+A worktree kill drains its terminal cleanup. Shutdown drains all cleanup before the host exits.
+
 The host keeps terminal metadata in memory. Therefore, terminal inventory and canonical history survive API daemon replacement.
+
+The host starts ordinary login shells directly. It does not start a second Node.js launcher for these terminals.
+
+The host uses the launcher for setup tasks and command fallback. This path preserves setup output and fallback signal behavior.
 
 The host does not survive its own crash or a computer restart. Treeport can create replacement terminals after either event.
 
@@ -97,6 +105,8 @@ The daemon buffers output events that arrive before the attach response, with a 
 Each browser stream gets its own sequence and acknowledgement window. A reconnect performs a new atomic attach and establishes a new fence.
 
 The browser resets its local model and parses the snapshot while its terminal is hidden. It shows the terminal after the snapshot write callback.
+
+Browser readiness means that xterm rendered the snapshot and applied focus. A socket `ready` event alone does not make the browser ready.
 
 The browser then parses ordered live output. Snapshot replay cannot contain an old terminal query.
 

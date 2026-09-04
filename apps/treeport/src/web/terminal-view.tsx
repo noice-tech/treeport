@@ -27,16 +27,9 @@ import {
 } from './terminal-session'
 import { useTerminalNavigationMetadata } from './terminal-runtime-metadata-react'
 
-interface PendingTerminalTab {
-  id: string
-  name: string
-}
-
 interface TerminalViewProps {
   worktree: WorktreeRecord | null
   terminal: TerminalRecord | null
-  pendingTerminals: PendingTerminalTab[]
-  selectedPendingTerminalId: string | null
   loading: boolean
   autoFocusBlocked: boolean
   onStatusChange: () => void
@@ -60,8 +53,6 @@ const EMPTY_SNAPSHOT: TerminalSessionSnapshot = {
 export function TerminalView({
   worktree,
   terminal,
-  pendingTerminals,
-  selectedPendingTerminalId,
   loading,
   autoFocusBlocked,
   onStatusChange
@@ -271,12 +262,9 @@ export function TerminalView({
       </div>
     </>
   )
-  const selectedPendingTerminal = pendingTerminals.find(
-    (candidate) => candidate.id === selectedPendingTerminalId
-  )
   const visibleTitle = terminal
     ? runtimeTitles.get(terminal.id) || terminal.name
-    : (selectedPendingTerminal?.name ?? '')
+    : ''
   return (
     <main
       ref={shellRef}
@@ -284,28 +272,9 @@ export function TerminalView({
         'terminal-shell grid min-h-0 min-w-0 grid-rows-[minmax(0,1fr)] bg-zinc-950 max-[700px]:grid-rows-[minmax(0,1fr)_3.25rem]',
         snapshot.bellActive && 'terminal-bell'
       )}
-      aria-label={
-        selectedPendingTerminal
-          ? `Starting ${selectedPendingTerminal.name} terminal`
-          : terminal
-            ? `${visibleTitle} terminal`
-            : 'Terminal panel'
-      }
+      aria-label={terminal ? `${visibleTitle} terminal` : 'Terminal panel'}
     >
-      {selectedPendingTerminal ? (
-        <div className="grid min-h-0 place-items-center bg-[radial-gradient(circle_at_center,var(--color-zinc-900)_0,var(--color-zinc-950)_55%)] p-8">
-          <div
-            className="flex items-center gap-2 text-sm text-zinc-300"
-            role="status"
-          >
-            <ArrowPathIcon
-              className="size-4 animate-spin fill-zinc-500"
-              aria-hidden="true"
-            />
-            Starting {selectedPendingTerminal.name}…
-          </div>
-        </div>
-      ) : terminal ? (
+      {terminal ? (
         <div className="relative min-h-0 min-w-0 overflow-hidden">
           <div
             key={terminal.id}
@@ -443,7 +412,10 @@ export function TerminalView({
                 : snapshot.controlPending
                   ? 'Taking control of terminal'
                   : 'Viewing terminal'
-              : ''}
+              : snapshot.phase === 'connecting' ||
+                  snapshot.phase === 'reconnecting'
+                ? 'Connecting terminal'
+                : ''}
             {snapshot.bellActive ? ` Bell from ${visibleTitle}` : ''}
           </span>
         </div>
